@@ -1,0 +1,115 @@
+{
+    "grimoire": {
+      "name": "project_grimoire",
+      "herbs": ".env",
+      "runes": "./apodocker.runes",
+      "context": "."
+    },
+    "potions": {
+      "create_network": {
+        "type": "networks",
+        "label": "Networks",
+        "incantation": "Creating network",
+        "herbs": "./.env",
+        "list": {
+          "backend": {
+            "overwrite": false,
+            "name": "project_backend_network",
+            "options": [
+              "--driver bridge",
+              "--attachable"
+            ]
+          },
+          "frontend": {
+            "overwrite": true,
+            "name": "project_frontend_network",
+            "options": [
+              "--driver bridge",
+              "--attachable"
+            ]
+          }
+        }
+      },
+      "launch_databases": {
+        "type": "docker-compose",
+        "label": "Databases",
+        "incantation": "Launching databases",
+        "location": "../databases/docker-compose.yml",
+        "herbs": "./db/.env",
+        "detached": true,
+        "ingredient-selection": "all",
+        "default": [
+          "mysql_test",
+          "sqlite_reader"
+        ],
+        "options": [
+          "-p project-databases",
+          "--env-file ../databases/.env",
+          "--profiles test"
+        ]
+      },
+      "launch-tools": {
+        "type": "docker",
+        "label": "Tools",
+        "incantation": "Launching developer tools",
+        "ingredient-selection": "all",
+        "herbs": "../misc/.env",
+        "list": {
+          "phpmyadmin": {
+            "name": "PhpMyAdmin",
+            "image": "phpmyadmin:5",
+            "options": [
+              "--name entreprise-phpmyadmin",
+              "-e PMA_PASSWORD=${herb:PMA}",
+              "--network entreprise_frontend_network"
+            ]
+          },
+          "mock-server": {
+            "name": "PhpMyAdmin",
+            "image": "mock-server-api:latest",
+            "options": [
+              "--name entreprise-phpmyadmin",
+              "-e PMA_PASSWORD=${herb:PMA}",
+              "--network entreprise_frontend_network"
+            ]
+          }
+        }
+      },
+      "check_for_something": {
+        "type": "script",
+        "label": "Check",
+        "incantation": "Checking for something",
+        "ingredient-selection": "all",
+        "cmd": [
+          "bash",
+          "-c",
+          "../scripts/xxx.sh",
+          "arg1",
+          "${herb:PERS_TOKEN}"
+        ]
+      },
+      "launch_second_services": {
+        "description": "Launching first projects",
+        "type": "vscode",
+        "folders": [
+          "../entreprise_repos/microservice_1",
+          "../entreprise_repos/microservice_2"
+        ]
+      },
+      "launch_third_services": {
+        "description": "Launching second projects",
+        "type": "devcontainer",
+        "folders": [
+          "../entreprise_repos/microservice_3",
+          "../entreprise_repos/microservice_4"
+        ]
+      }
+    },
+    "preparation": [
+      "create_network",
+      "launch_second_services",
+      "launch_databases",
+      "launch_first_service",
+      "launch_third_services"
+    ]
+  }

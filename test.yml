@@ -1,0 +1,100 @@
+
+name: "project_grimoire"
+runes: ./apo.runes # encrypted vault, injected as ${rune:XYZ}
+context: .
+
+# Each potion is a group. The user will choose for each potion what he wants to launch, if selection = 'user'
+potions:
+  create_network:
+    from: ./networks.yml # A file to take a basic conf from. Any other value written here will be overwritten
+    type: networks # will check if network exists and creates it if necessary.
+    label: "Networks"
+    incantation: "Creating network"
+    herbs: ./.env
+    body:
+      - backend:
+        overwrite: false # if true : deletes existing network and create new
+        name: project_backend_network
+        options:
+          - "--driver bridge"
+          - "--attachable"
+      frontend:
+        overwrite: true
+        name: project_frontend_network
+        options:
+          - "--driver bridge"
+          - "--attachable"
+
+  launch_databases:
+    pre: 
+    type: docker-compose # fetch a docker-compose file and launch it
+    label: "Databases"
+    incantation: "Launching databases"
+    location: ../databases/docker-compose.yml
+    # herbs overwrites the global herbs for this potion, NOT IN THE DOCKER-COMPOSE FILE !! use the --env-file options for this (or place a .env next to the docker-compose file)
+    herbs: ./db/.env
+    detached: true
+    # all services, user selected service or compose file default
+    selection: "all"
+    default:
+      - mysql_test
+      - sqlite_reader
+    options:
+      - "-p project-databases"
+      - "--env-file ../databases/.env"
+      - "--profiles test"
+
+  launch-tools:
+    type: docker # fetch  docker image and run them
+    label: "Tools"
+    incantation: "Launching developer tools"
+    ingredient-selection: "all"
+    herbs: ../misc/.env
+    list:
+      phpmyadmin:
+        name: "PhpMyAdmin"
+        image: phpmyadmin:5
+        options:
+          - "--name entreprise-phpmyadmin"
+          - "-e PMA_PASSWORD=${herb:PMA}"
+          - "--network entreprise_frontend_network"
+      mock-server:
+        name: "PhpMyAdmin"
+        image: mock-server-api:latest
+        options:
+          - "--name entreprise-phpmyadmin"
+          - "-e PMA_PASSWORD=${herb:PMA}"
+          - "--network entreprise_frontend_network"
+
+  check_for_something:
+    type: script
+    label: "Check"
+    incantation: "Checking for something"
+    ingredient-selection: "all"
+    cmd: ["bash", "-c", "../scripts/xxx.sh", "arg1", "${herb:PERS_TOKEN}"]
+
+  launch_second_services:
+    description: "Launching first projects"
+    type: vscode # goes to a folder and open vscode
+    folders:
+      - "../entreprise_repos/microservice_1"
+      - "../entreprise_repos/microservice_2"
+
+  launch_third_services:
+    description: "Launching second projects"
+    type: devcontainer # devcontainer cli of vscode, open in container directly
+    folders:
+      - "../entreprise_repos/microservice_3"
+      - "../entreprise_repos/microservice_4"
+
+# If needed, specify the order of the potions here
+order: 
+  - create_network
+  - launch_second_services
+  - launch_databases
+  - launch_first_service
+  - launch_third_services
+
+
+other:
+  
