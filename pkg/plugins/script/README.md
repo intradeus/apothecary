@@ -25,7 +25,7 @@ launch_a_script:
     incantation: "Checking for something"
     type: script.file
     body:
-        shell: bash | powershell | sh | cmd | python | ruby | perl | node | php | java | groovy | scala | go | cscript | wscript | jsc
+        shell: bash | powershell | cmd 
         file: ../path/to/scripts/xxx.sh
         args:
             - "arg1"

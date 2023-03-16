@@ -10,7 +10,7 @@ type Potion struct {
 	Label       string
 	FailStop    bool
 	Incantation string
-	Type        plugins.Plugin
+	Type        plugins.PluginInterface
 }
 
 // Constructor for the Potion struct
