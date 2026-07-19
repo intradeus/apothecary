@@ -1,0 +1,15 @@
+{
+	"/": [
+		"src/routes/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/channels": [
+		"src/routes/+layout.ts"
+	],
+	"/inbox": [
+		"src/routes/+layout.ts"
+	],
+	"/runs/[id]": [
+		"src/routes/+layout.ts"
+	]
+}
