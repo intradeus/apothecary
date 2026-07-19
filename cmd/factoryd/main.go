@@ -22,7 +22,11 @@ import (
 	"syscall"
 	"time"
 
+	coderadapter "factory/internal/adapters/coder"
 	"factory/internal/adapters/fake"
+	gitlabadapter "factory/internal/adapters/gitlab"
+	matrixadapter "factory/internal/adapters/matrix"
+	opencodeadapter "factory/internal/adapters/opencode"
 	"factory/internal/channels"
 	"factory/internal/config"
 	"factory/internal/engine"
@@ -128,6 +132,7 @@ func cmdServe(args []string) error {
 	log.Info("flows loaded", "dir", cfg.FlowsDir, "count", len(flows))
 
 	registry := channels.NewRegistry()
+	registry.Register("matrix", matrixadapter.Factory)
 	registry.Persist(store)
 	rows, err := store.LoadChannels(ctx)
 	if err != nil {
@@ -148,7 +153,41 @@ func cmdServe(args []string) error {
 		log.Warn("dev mode: in-memory fake adapters (no real workspaces, harness, or forge)")
 		envp, runner, forge = devAdapters()
 	} else {
-		return errors.New("real adapters (Coder/opencode/GitLab) are not implemented yet — run with -dev (M2-M4 pending)")
+		enginePort := 8080
+		if _, p, err := splitHostPort(cfg.Listen); err == nil {
+			fmt.Sscanf(p, "%d", &enginePort)
+		}
+		coderAdapter := coderadapter.New(coderadapter.Config{
+			URL:           cfg.Coder.URL,
+			Token:         config.ResolveEnv(cfg.Coder.TokenEnv),
+			Template:      cfg.Coder.Template,
+			RunsDir:       cfg.RunsDir,
+			EnginePort:    enginePort,
+			ExtraForwards: cfg.Coder.ExtraForwards,
+		})
+		defer coderAdapter.Close()
+		envp = coderAdapter
+
+		var authJSON []byte
+		if cfg.Providers.OpencodeAuthJSON != "" {
+			authJSON, err = os.ReadFile(cfg.Providers.OpencodeAuthJSON)
+			if err != nil {
+				return fmt.Errorf("providers.opencode_auth_json: %w", err)
+			}
+		}
+		runner = opencodeadapter.New(coderAdapter, opencodeadapter.Config{AuthJSON: authJSON})
+
+		gitlabToken := config.ResolveEnv(cfg.GitLab.TokenEnv)
+		if gitlabToken == "" {
+			log.Warn("forge: in-memory fake ($" + cfg.GitLab.TokenEnv + " unset) — forge_mr stages create no real MRs")
+			forge = &fake.Forge{}
+		} else {
+			forge = gitlabadapter.New(gitlabadapter.Config{
+				BaseURL:   cfg.GitLab.BaseURL,
+				Token:     gitlabToken,
+				ProjectID: cfg.GitLab.ProjectID,
+			})
+		}
 	}
 
 	ecfg := engine.Config{
@@ -161,6 +200,7 @@ func cmdServe(args []string) error {
 			ProjectID:     cfg.GitLab.ProjectID,
 		},
 		Commands: cfg.Project.Commands,
+		GitToken: config.ResolveEnv(cfg.GitLab.TokenEnv),
 		ProviderEnv: providerEnv(map[string]string{
 			"ANTHROPIC_API_KEY": cfg.Providers.AnthropicEnv,
 			"OPENAI_API_KEY":    cfg.Providers.OpenAIEnv,
@@ -178,6 +218,10 @@ func cmdServe(args []string) error {
 	}
 
 	api := httpapi.New(e, store, registry, cfg.RunsDir)
+	api.CPUIDir = cfg.CPUIDir
+	if cfg.CPUIDir != "" {
+		log.Info("serving CPUI", "dir", cfg.CPUIDir)
+	}
 	srv := &http.Server{Addr: cfg.Listen, Handler: api.Handler()}
 
 	reaperCtx, stopReaper := context.WithCancel(ctx)

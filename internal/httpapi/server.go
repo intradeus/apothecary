@@ -29,6 +29,9 @@ type Server struct {
 	Store    event.Store
 	Registry *channels.Registry
 	RunsDir  string
+	// CPUIDir, when set, is served at / with an SPA fallback to index.html
+	// (the built SvelteKit bundle; the CPUI talks only to this API).
+	CPUIDir string
 	// HoldTimeout is the ping long-poll hold (§8: 55 s).
 	HoldTimeout time.Duration
 	Log         *slog.Logger
@@ -58,7 +61,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/channels", s.listChannels)
 	mux.HandleFunc("POST /api/channels", s.addChannel)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.deleteChannel)
+	if s.CPUIDir != "" {
+		mux.HandleFunc("GET /", s.serveCPUI)
+	}
 	return mux
+}
+
+// serveCPUI serves the built CPUI bundle with an SPA fallback: files that
+// exist are served as-is, everything else gets index.html so client-side
+// routes deep-link correctly.
+func (s *Server) serveCPUI(w http.ResponseWriter, r *http.Request) {
+	p := filepath.Join(s.CPUIDir, filepath.Clean("/"+r.URL.Path))
+	if info, err := os.Stat(p); err == nil && !info.IsDir() {
+		http.ServeFile(w, r, p)
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(s.CPUIDir, "index.html"))
 }
 
 // --- helpers ----------------------------------------------------------------
@@ -221,6 +239,12 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		after = v
+	}
+	// Browser EventSource reconnects carry the last received id here.
+	if h := r.Header.Get("Last-Event-ID"); h != "" {
+		if v, err := strconv.ParseInt(h, 10, 64); err == nil && v > after {
+			after = v
+		}
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {

@@ -40,6 +40,9 @@ type Config struct {
 	// Coder agent connection, so workspaces reach the engine without any
 	// host firewall exposure. Default 8080.
 	EnginePort int
+	// ExtraForwards are additional loopback ports forwarded the same way
+	// (dev convenience: local git daemon, mock services).
+	ExtraForwards []int
 }
 
 type Adapter struct {
@@ -88,8 +91,12 @@ func New(cfg Config) *Adapter {
 }
 
 func (a *Adapter) defaultTunnelCmd(ctx context.Context, ws string) *exec.Cmd {
-	fwd := fmt.Sprintf("%d:127.0.0.1:%d", a.cfg.EnginePort, a.cfg.EnginePort)
-	cmd := exec.CommandContext(ctx, "coder", "ssh", ws, "--remote-forward", fwd, "--", "sleep", "infinity")
+	args := []string{"ssh", ws}
+	for _, port := range append([]int{a.cfg.EnginePort}, a.cfg.ExtraForwards...) {
+		args = append(args, "--remote-forward", fmt.Sprintf("%d:127.0.0.1:%d", port, port))
+	}
+	args = append(args, "--", "sleep", "infinity")
+	cmd := exec.CommandContext(ctx, "coder", args...)
 	cmd.Env = append(os.Environ(),
 		"CODER_URL="+a.cfg.URL,
 		"CODER_SESSION_TOKEN="+a.cfg.Token,
@@ -212,9 +219,16 @@ func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte,
 
 // --- EnvProvisioner ---------------------------------------------------------
 
-// WorkspaceName derives the workspace name from the run id (§12).
+// WorkspaceName derives the workspace name from the run id (§12). Coder
+// caps names at 32 chars, so a full 26-char ULID doesn't fit behind the
+// prefix — use its random tail (last 16 chars, the full 80 bits of ULID
+// entropy; the dropped prefix is just the timestamp).
 func WorkspaceName(runID string) string {
-	return "factory-" + strings.ToLower(runID)
+	id := strings.ToLower(runID)
+	if len(id) > 16 {
+		id = id[len(id)-16:]
+	}
+	return "factory-" + id
 }
 
 func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvID, error) {

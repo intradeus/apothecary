@@ -44,7 +44,7 @@ RUN chmod 0755 /usr/local/bin/init-firewall.sh /opt/factory/ask-human.mjs \
     # CAP_SYS_PTRACE). The lock file makes re-runs no-ops, so passing
     # different values later cannot alter the rules.
     && { echo "factory ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh"; \
-         echo 'Defaults!/usr/local/bin/init-firewall.sh env_keep += "FACTORY_REPO_URL FACTORY_CODER_PORT"'; \
+         echo 'Defaults!/usr/local/bin/init-firewall.sh env_keep += "FACTORY_REPO_URL FACTORY_CODER_PORT FACTORY_EXTRA_DOMAINS"'; \
        } > /etc/sudoers.d/factory-firewall \
     && chmod 0440 /etc/sudoers.d/factory-firewall
 

@@ -745,6 +745,10 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 
 func (x *exec) bootstrap(id ports.EnvID) error {
 	cfg := x.e.cfg
+	var prepare func(context.Context, ports.EnvID) error
+	if p, ok := x.e.runner.(ports.HarnessPreparer); ok {
+		prepare = p.PrepareEnv
+	}
 	err := RunBootstrap(x.ctx, x.e.envp, id, BootstrapSpec{
 		RunID:         x.rs.runID,
 		Token:         x.e.RunToken(x.rs.runID),
@@ -755,6 +759,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		AgentsMDPath:  cfg.AgentsMDPath,
 		ProviderEnv:   cfg.ProviderEnv,
 		GitToken:      cfg.GitToken,
+		Prepare:       prepare,
 		Setup:         cfg.Commands["setup"],
 		Timeout:       x.rs.fl.Defaults.Timeout,
 	})

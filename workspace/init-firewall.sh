@@ -28,6 +28,9 @@ fi
 
 DOMAINS="api.anthropic.com api.openai.com proxy.golang.org sum.golang.org registry.npmjs.org"
 [ -n "$REPO_HOST" ] && DOMAINS="$DOMAINS $REPO_HOST"
+# Extra provider hosts (template variable, e.g. an API router like
+# openrouter.ai when subscription auth goes through one).
+[ -n "${FACTORY_EXTRA_DOMAINS:-}" ] && DOMAINS="$DOMAINS $FACTORY_EXTRA_DOMAINS"
 
 GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
 

@@ -56,6 +56,12 @@ variable "coder_port" {
   default = 7080
 }
 
+variable "extra_allowed_domains" {
+  description = "Additional egress-allowed hosts (space separated), e.g. an API router"
+  type        = string
+  default     = ""
+}
+
 resource "coder_agent" "main" {
   os   = "linux"
   arch = "amd64"
@@ -112,6 +118,7 @@ resource "docker_container" "workspace" {
     "FACTORY_REPO_URL=${data.coder_parameter.repo_url.value}",
     "FACTORY_BRANCH=${data.coder_parameter.branch.value}",
     "FACTORY_CODER_PORT=${var.coder_port}",
+    "FACTORY_EXTRA_DOMAINS=${var.extra_allowed_domains}",
   ]
 
   # §8/§11: containers cannot reach the host's 127.0.0.1 — this mapping is

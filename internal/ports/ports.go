@@ -101,6 +101,15 @@ type AgentRunner interface {
 	Resume(ctx context.Context, env EnvID, s SessionID, reply string) (AgentResult, error)
 }
 
+// HarnessPreparer is optionally implemented by AgentRunner adapters that
+// generate harness-native config in the workspace at bootstrap (§5.2/§11
+// step 4: .factory/agents/ -> native agent defs + ask_human MCP wiring).
+// The engine type-asserts; fakes need not implement it. (Addition over the
+// §4 "final" port set — recorded in IMPLEMENTATION_NOTES.)
+type HarnessPreparer interface {
+	PrepareEnv(ctx context.Context, env EnvID) error
+}
+
 // RepoRef identifies the one project repo at the forge.
 type RepoRef struct {
 	URL           string

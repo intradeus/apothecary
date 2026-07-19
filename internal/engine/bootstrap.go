@@ -30,6 +30,10 @@ type BootstrapSpec struct {
 	// repo host (§11 step 3: the token never lands in .git/config).
 	GitToken string
 
+	// Prepare, when set, runs after the clone (§11 step 4): harness config
+	// generation from .factory/agents/ (ports.HarnessPreparer).
+	Prepare func(ctx context.Context, env ports.EnvID) error
+
 	Setup   string // project.commands.setup (§11 step 6)
 	Timeout time.Duration
 }
@@ -85,6 +89,12 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		}
 		if res.ExitCode != 0 {
 			return fmt.Errorf("bootstrap %s: exit %d: %s", s.name, res.ExitCode, tail(res.Output, 8<<10))
+		}
+	}
+
+	if spec.Prepare != nil {
+		if err := spec.Prepare(ctx, id); err != nil {
+			return fmt.Errorf("bootstrap harness-config: %w", err)
 		}
 	}
 

@@ -1,0 +1,9 @@
+.PHONY: verify test
+
+verify:
+	gofmt -l . | tee /dev/stderr | wc -l | grep -q '^0$$'
+	go vet ./...
+	go test ./...
+
+test:
+	go test ./...

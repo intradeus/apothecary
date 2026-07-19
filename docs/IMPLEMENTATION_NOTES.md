@@ -248,3 +248,83 @@ boring choice, recorded here). Newest at the bottom.
 - Template: params run_id/repo_url/branch only (non-secrets §11); per-run
   docker network + persistent home volume; NET_ADMIN for firewall init; the
   agent init script is rewritten to reach Coder via host.docker.internal.
+- **Coder caps workspace names at 32 chars** — names use the run id's last
+  16 chars (the ULID's full 80 random bits; the dropped prefix is only the
+  timestamp).
+
+## opencode adapter (M3, §5.2) — flag/behavior drift vs the design sketch
+
+Verified against opencode 1.17.8 (pinned in the image):
+
+- **No `--dangerously-skip-permissions` flag exists.** Permissions are
+  config-side: the generated opencode.json sets permission allow for
+  edit/bash/webfetch so non-interactive runs never hang on a prompt;
+  restriction happens per-agent via tools.
+- **No turn-cap flag in `run` mode** — `max_turns` is not enforceable
+  per-invocation; the §3 run-level budgets (cost + total turns) remain the
+  real bound. Recorded as accepted drift.
+- `--format json` emits NDJSON `{type, sessionID, part}` events;
+  `step_finish` parts carry `tokens{input,output,reasoning,cache{write,
+  read}}` and `cost`. Mapping: TurnsUsed = count(step_finish); CostUSD =
+  Σcost; InputTokens include cache write+read (what was actually sent);
+  OutputTokens include reasoning. Session id rides every event.
+- Prompts/replies travel via a workspace file (`$(cat /factory/prompt.txt)`)
+  — no CLI quoting pitfalls, no size surprises; provider keys are sourced
+  from /factory/provider.env inside the exec script.
+- **Generated config lives in the workspace user's config dir**
+  (~/.config/opencode/…), not `.opencode/` in the repo as §5.2 sketches:
+  nothing generated lands in the repo, so nothing needs git-excluding, and
+  repos with their own opencode config are not clobbered. auth.json seeding
+  (providers.opencode_auth_json) covers router/subscription auth — this
+  machine authenticates via openrouter.ai, which also required the firewall
+  to learn `extra_allowed_domains` (template variable).
+- **`read_only` semantics correction (found live)**: §5.1 says read_only
+  denies write/edit/patch, but §5.3's read-only agents MUST create their
+  artifact outputs (planner has no bash either — it would be unable to
+  deliver plan.md at all). read_only therefore denies edit/patch and keeps
+  write — and in opencode, `edit: false` disables the whole file-mod tool
+  group, so `write: true` must be set EXPLICITLY. Caught by the planner
+  itself raising an ask_human blocker ping ("I have no write tool") — which
+  incidentally proved the full §10 path (MCP tool → shim → tunnel → engine
+  inbox → curl answer) live before its formal test.
+- `ports.HarnessPreparer` (optional interface) is how bootstrap step 4
+  invokes harness config generation — an addition over the §4 "final" port
+  set; fakes don't implement it and the engine type-asserts.
+- M3 acceptance evidence (run 01KXW7Q86K4Q399JC5EYPJ712F): plan ($0.021,
+  7 turns) → plan_gate approved via curl → kill -9 mid-build → restart →
+  recovery re-entered build (re-Run; first attempt had no recorded session)
+  → build ($0.024, 9 turns, committed `factory(build): add Farewell
+  function and -bye flag`) → `make verify` green → run_completed
+  {cost $0.045, 16 turns, unwanted_pings 0}.
+
+## GitLab adapter (M4, §12/§13)
+
+- REST v4 with PRIVATE-TOKEN auth; no glab, no GitLab types crossing the
+  port. `CheckAccess` requires ≥ Developer (30) on the project (push
+  branches + open MRs); `FileExists` uses the files HEAD endpoint, or the
+  tree endpoint for trailing-slash directory paths (`.factory/agents/`);
+  `CreateDraftMR` prefixes `Draft: ` and targets the default branch with
+  remove_source_branch; `MRState` maps opened/locked→open.
+- The adapter is **bound to the one v1 project at construction**
+  (config gitlab.project_id): §4's `MRState(MRRef)` carries no repo.
+- **The repo-scoped token deliberately CANNOT merge**: gitlab.com fully
+  protects default branches (Maintainer-only merge), so the §4 flow's
+  "Lu merges" is enforced by GitLab itself — the factory can push branches
+  and open draft MRs but never merge them. Discovered via 401 on the merge
+  API with the Developer-role project access token; recorded as the
+  intended §15 posture, not a limitation.
+- **Verdict-contract hardening (found live)**: gpt-5-mini produced a full,
+  substantive verdict but printed the JSON as reply text instead of writing
+  artifacts/verdict.json → output_contract → abandoned (review has no
+  on_fail in the canonical flow). The §3.2 verdict contract line now
+  explicitly demands the file-writing tool and states that printing does
+  not count. The file requirement stays hard (that is what makes verdicts
+  trustworthy); deployments can additionally give review a self-retry
+  edge (`on_fail: {to: review, max: 2}`) — flows are data.
+- M4 acceptance evidence (run 01KXXBW7JP8K3ZJRPSBPNVJMSJ, project
+  intradeus/greeter-factory-test): full v1 flow — preflight against real
+  GitLab → plan → gate → build → verify → cross-vendor review APPROVE
+  (gpt-5-mini, proper verdict.json) → redact → push → **real draft MR !2**
+  → final_gate parked → Lu merged in GitLab → auto_complete fired in
+  **0.85 s** (merged_at 18:27:56.436Z, run_completed 18:27:57.289Z; ≤90 s
+  criterion). Totals: $0.072, 30 turns, 0 unwanted pings.

@@ -56,8 +56,9 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			fmt.Fprintf(&b, "Before finishing you MUST write %s (relative to repo root).\n", st.Output)
 		}
 		if st.Verdict {
-			b.WriteString(`Before finishing you MUST write artifacts/verdict.json exactly as` + "\n" +
-				`{"verdict":"APPROVE"|"REJECT","comments":["..."]} — comments required when REJECT.` + "\n")
+			b.WriteString(`Before finishing you MUST use your file-writing tool to create the file artifacts/verdict.json containing exactly` + "\n" +
+				`{"verdict":"APPROVE"|"REJECT","comments":["..."]} — comments required when REJECT.` + "\n" +
+				`Printing the JSON in your reply does NOT satisfy this contract; the file itself must exist on disk.` + "\n")
 		}
 	}
 	return b.String()

@@ -22,6 +22,9 @@ type File struct {
 	Providers   Provs   `yaml:"providers"`
 	FlowsDir    string  `yaml:"flows_dir"`
 	RunsDir     string  `yaml:"runs_dir"`
+	// CPUIDir is the built CPUI bundle; when set the engine serves it at /
+	// (SPA fallback). Empty = API only.
+	CPUIDir string `yaml:"cpui_dir"`
 	Limits      Limits  `yaml:"limits"`
 	Reaper      Reaper  `yaml:"reaper"`
 	Otel        Otel    `yaml:"otel"`
@@ -47,11 +50,18 @@ type Coder struct {
 	URL      string `yaml:"url"`
 	TokenEnv string `yaml:"token_env"`
 	Template string `yaml:"template"`
+	// ExtraForwards are additional host-loopback ports reverse-forwarded
+	// into workspaces alongside the engine port (dev convenience, e.g. a
+	// local git daemon).
+	ExtraForwards []int `yaml:"extra_forwards"`
 }
 
 type Provs struct {
 	AnthropicEnv string `yaml:"anthropic_env"`
 	OpenAIEnv    string `yaml:"openai_env"`
+	// OpencodeAuthJSON is a path to an opencode auth.json seeded into
+	// workspaces (subscription/router auth, §11 step 2).
+	OpencodeAuthJSON string `yaml:"opencode_auth_json"`
 }
 
 type Limits struct {
