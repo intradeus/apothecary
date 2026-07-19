@@ -89,8 +89,10 @@ func Parse(data []byte) (*File, error) {
 	}
 
 	// Defaults (§13 example values are the defaults where sensible).
+	// listen deviates from §13's 0.0.0.0: workspaces arrive via the Coder
+	// reverse tunnel, so the API needs no non-loopback bind at all.
 	if f.Listen == "" {
-		f.Listen = "0.0.0.0:8080"
+		f.Listen = "127.0.0.1:8080"
 	}
 	if f.Repo.DefaultBranch == "" {
 		f.Repo.DefaultBranch = "main"

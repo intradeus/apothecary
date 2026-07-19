@@ -45,6 +45,8 @@ func main() {
 		err = cmdServe(os.Args[2:])
 	case "rebuild-projections":
 		err = cmdRebuild(os.Args[2:])
+	case "envcheck":
+		err = cmdEnvcheck(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -61,7 +63,8 @@ func usage() {
 commands:
   validate <flow.yaml>                     parse and validate a flow file
   serve -config <factory.yaml> [-dev]      run the engine + HTTP API
-  rebuild-projections -config <factory.yaml>`)
+  rebuild-projections -config <factory.yaml>
+  envcheck -config <factory.yaml> [-keep]  M2 acceptance against live Coder`)
 }
 
 func cmdValidate(args []string) error {
@@ -255,13 +258,15 @@ func providerEnv(names map[string]string) map[string]string {
 }
 
 // engineURL derives the workspace-visible engine URL from the listen
-// address (§8: containers reach the host via host.docker.internal).
+// address. Workspaces reach the engine at their own localhost through the
+// Coder adapter's reverse tunnel (deviation from §8's host.docker.internal
+// path — no host firewall exposure needed).
 func engineURL(listen string) string {
 	_, port, err := splitHostPort(listen)
 	if err != nil {
 		port = "8080"
 	}
-	return "http://host.docker.internal:" + port
+	return "http://127.0.0.1:" + port
 }
 
 func splitHostPort(addr string) (string, string, error) {

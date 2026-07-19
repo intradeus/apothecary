@@ -21,7 +21,11 @@ type EnvSpec struct {
 }
 
 type Command struct {
-	Script  string // executed `bash -eo pipefail -c` in the repo root
+	Script string // executed `bash -eo pipefail` by the adapter
+	// Dir is the working directory relative to the workspace home
+	// ("" = home, "repo" = the checkout). Command stages run in the repo
+	// root (§3); bootstrap's clone step runs in home.
+	Dir     string
 	Timeout time.Duration
 }
 
@@ -48,6 +52,8 @@ type EnvProvisioner interface {
 	// Provision blocks until the environment is ready; 1 internal retry.
 	Provision(ctx context.Context, spec EnvSpec) (EnvID, error)
 	Exec(ctx context.Context, env EnvID, cmd Command) (ExecResult, error)
+	// ReadFile/WriteFile paths: relative = repo-root-relative
+	// (artifacts/plan.md), absolute = absolute (/factory/run.env).
 	ReadFile(ctx context.Context, env EnvID, path string) ([]byte, error)
 	WriteFile(ctx context.Context, env EnvID, path string, data []byte, mode fs.FileMode) error
 	Links(ctx context.Context, env EnvID) ([]AccessLink, error)

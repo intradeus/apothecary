@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -485,7 +484,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 
 	timeout := rs.fl.Defaults.Timeout
 	cctx, cancel := context.WithTimeout(x.ctx, timeout)
-	res, err := x.e.envp.Exec(cctx, rs.envID, ports.Command{Script: script, Timeout: timeout})
+	res, err := x.e.envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: "repo", Timeout: timeout})
 	cancel()
 	if err != nil {
 		if x.ctx.Err() != nil {
@@ -745,71 +744,28 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 }
 
 func (x *exec) bootstrap(id ports.EnvID) error {
-	rs := x.rs
 	cfg := x.e.cfg
-
-	if err := x.writeRunEnv(id); err != nil {
-		return x.bootstrapFailed("write run.env", err)
-	}
-	keys := make([]string, 0, len(cfg.ProviderEnv))
-	for k := range cfg.ProviderEnv {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var providers strings.Builder
-	for _, k := range keys {
-		fmt.Fprintf(&providers, "%s=%s\n", k, cfg.ProviderEnv[k])
-	}
-	if err := x.e.envp.WriteFile(x.ctx, id, "/factory/provider.env", []byte(providers.String()), 0o600); err != nil {
-		return x.bootstrapFailed("write provider.env", err)
-	}
-
-	type step struct{ name, script string }
-	steps := []step{
-		{"clone", fmt.Sprintf("git clone %q repo && cd repo && git switch -c %q origin/%s",
-			cfg.RepoURL, rs.branch, cfg.DefaultBranch)},
-		// Harness config generation from .factory/agents/ lands with the
-		// opencode adapter (M3); the AGENTS.md symlink is engine policy (§1).
-		{"agent-configs", agentConfigScript(cfg.AgentsMDPath)},
-		{"git-config", `cd repo && git config user.name "Factory" && git config user.email "factory@local"`},
-	}
-	for _, s := range steps {
-		res, err := x.e.envp.Exec(x.ctx, id, ports.Command{Script: s.script, Timeout: rs.fl.Defaults.Timeout})
-		if err != nil {
-			if x.ctx.Err() != nil {
-				return context.Cause(x.ctx)
-			}
-			return x.bootstrapFailed("bootstrap "+s.name, err)
-		}
-		if res.ExitCode != 0 {
-			return x.bootstrapFailed("bootstrap "+s.name, fmt.Errorf("exit %d: %s", res.ExitCode, tail(res.Output, 8<<10)))
-		}
-	}
-	setup := cfg.Commands["setup"]
-	res, err := x.e.envp.Exec(x.ctx, id, ports.Command{Script: "cd repo && " + setup, Timeout: rs.fl.Defaults.Timeout})
+	err := RunBootstrap(x.ctx, x.e.envp, id, BootstrapSpec{
+		RunID:         x.rs.runID,
+		Token:         x.e.RunToken(x.rs.runID),
+		EngineURL:     cfg.EngineURL,
+		RepoURL:       cfg.RepoURL,
+		DefaultBranch: cfg.DefaultBranch,
+		Branch:        x.rs.branch,
+		AgentsMDPath:  cfg.AgentsMDPath,
+		ProviderEnv:   cfg.ProviderEnv,
+		GitToken:      cfg.GitToken,
+		Setup:         cfg.Commands["setup"],
+		Timeout:       x.rs.fl.Defaults.Timeout,
+	})
 	if err != nil {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
 		}
-		return x.bootstrapFailed("setup", err)
-	}
-	if res.ExitCode != 0 {
-		return x.bootstrapFailed("setup", fmt.Errorf("exit %d: %s", res.ExitCode, tail(res.Output, 8<<10)))
+		x.rs.done = true
+		return x.append(&event.EnvFailed{Error: err.Error()})
 	}
 	return nil
-}
-
-func (x *exec) bootstrapFailed(what string, err error) error {
-	x.rs.done = true
-	return x.append(&event.EnvFailed{Error: what + ": " + err.Error()})
-}
-
-func agentConfigScript(agentsMDPath string) string {
-	script := "cd repo && echo generate-harness-agent-configs"
-	if agentsMDPath != "AGENTS.md" {
-		script += fmt.Sprintf(" && ln -sf %q AGENTS.md && echo AGENTS.md >> .git/info/exclude", agentsMDPath)
-	}
-	return script
 }
 
 // readVerdict reads and parses artifacts/verdict.json (§5.3 contract).

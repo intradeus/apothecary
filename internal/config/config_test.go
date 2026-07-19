@@ -50,7 +50,7 @@ flows_dir: /tmp/flows
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Listen != "0.0.0.0:8080" || f.Repo.DefaultBranch != "main" ||
+	if f.Listen != "127.0.0.1:8080" || f.Repo.DefaultBranch != "main" ||
 		f.Repo.AgentsMDPath != "AGENTS.md" || f.Limits.MaxConcurrentRuns != 3 ||
 		f.Limits.MaxEnvironments != 6 || f.Reaper.DestroyCompletedAfter != 48*time.Hour ||
 		f.Reaper.DestroyAbandoned != "never" {

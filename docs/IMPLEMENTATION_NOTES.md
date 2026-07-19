@@ -178,3 +178,73 @@ boring choice, recorded here). Newest at the bottom.
 - The §14 reaper runs hourly in serve; `destroy_completed_after` window,
   abandoned never reaped, failed runs kept (unspecified in the design —
   treated as inspection material like abandoned).
+
+## Coder adapter & workspace (M2, §11, §12)
+
+- **`ports.Command` gained `Dir`** ("" = home, "repo" = checkout): command
+  stages and `$CHANGED` run in the repo root explicitly instead of relying
+  on inline `cd` prefixes; the clone step runs in home. Adapters own the cwd
+  handling.
+- **Read/WriteFile path convention**: relative = repo-root-relative
+  (artifacts/…), absolute = absolute (/factory/…). Transfer is base64 over
+  `coder ssh` stdin; WriteFile sends a one-line script + payload on the same
+  stdin (bash consumes the first line, `base64 -d` the rest).
+- **Exec scripts travel on stdin** (`bash -eo pipefail -s`), sidestepping CLI
+  quoting entirely. Nonzero exit is a result; only transport failures
+  (process spawn error or ssh exit 255) go through the §12 3× retry.
+- **Status via `coder list --output json`** instead of REST (§12 lists REST)
+  — one code path with the rest of the CLI usage; Links stay REST. CLI flags
+  verified against Coder v2.35.2; behavior, not flags, is normative.
+- **Provision is idempotent**: an existing running workspace for the run id
+  is reused (crash recovery re-provision path); readiness = build status
+  `running` + an `ssh -- true` agent probe.
+- **Bootstrap extracted to `engine.RunBootstrap`** (pure port calls, no
+  events) so `factoryd envcheck` runs the identical sequence standalone; the
+  run loop wraps it and maps failures to env_failed. Added §11 step 3 git
+  auth: `GitToken` written to /factory/git-credentials + credential.helper
+  store — the token never lands in .git/config; omitted for public repos.
+- **Firewall (resolve-then-pin)**: allowed names resolve once at init, pin
+  into /etc/hosts, then ALL DNS is dropped — other names cannot resolve at
+  all. Host-gateway is allowed on the engine AND Coder ports (the workspace
+  agent's own websocket dies otherwise). The repo host is derived from
+  FACTORY_REPO_URL (container env, non-secret, via sudo env_keep — container
+  root cannot read /proc/1/environ without CAP_SYS_PTRACE). Sudoers allows
+  exactly `init-firewall.sh` with no arguments; a /run lock makes re-runs
+  no-ops. Plain per-IP iptables rules, no ipset (kernel-module dependency).
+  Two live-debugging findings baked into the script: (1) on user-defined
+  docker networks DNS goes to the embedded resolver at **127.0.0.11 through
+  a DNAT rule that rewrites the port before the filter chain** — the drop
+  must match the destination IP, not port 53; (2) the startup script is
+  `blocking`, so ssh (and therefore bootstrap) cannot run before the
+  firewall is up. Residuals: pinned IPs can go stale mid-run (CDN
+  rotation); NET_ADMIN stays granted (docker can't drop caps post-start)
+  but re-running the script cannot change the rule set.
+- **Workspace→engine path: reverse tunnel, not host.docker.internal**
+  (deviation from §8/§11, improvement over §15). The original design had
+  workspaces reach the engine at the host gateway, which requires opening
+  the engine port on the HOST firewall to all containers. Instead the Coder
+  adapter holds one supervised `coder ssh -R <port>:127.0.0.1:<port>` per
+  workspace: a listener inside the workspace on ITS localhost, forwarded to
+  the engine on the host's localhost, riding the agent's already-allowed
+  websocket to the Coder server. Consequences: `FACTORY_ENGINE_URL` is
+  `http://127.0.0.1:8080`; the engine (and §13 default `listen`) binds
+  127.0.0.1 — the §15 "API on 0.0.0.0 with no auth" residual disappears; no
+  UFW/host change needed; the firewall's gateway allowance shrinks to the
+  Coder port only. Tunnels auto-restart on drop (the shim's §10 backoff
+  covers the gap), stop on Destroy/Close, and re-establish via the
+  idempotent Provision on recovery. envcheck proves the path end-to-end
+  with a host-loopback probe listener fetched from inside the workspace.
+  The template's host.docker.internal mapping remains — the Coder agent
+  itself still needs it to reach the server.
+- **`factoryd envcheck`** is the M2 acceptance driver: provision → bootstrap
+  → verify command → firewall positive/negative checks (example.com blocked,
+  foreign DNS dead, provider APIs + repo host reachable, engine port not
+  filtered) → binary-safe Read/WriteFile round-trips → links, then destroy
+  (`-keep` to inspect).
+- Workspace image pins: Go 1.24.5, Node 22, opencode 1.17.8, code-server
+  latest-at-build. The ask_human shim (§10) ships in the image at
+  /opt/factory/ask-human.mjs — dependency-free Node MCP stdio server; it
+  re-reads /factory/run.env on 401 (token rotation after engine restart).
+- Template: params run_id/repo_url/branch only (non-secrets §11); per-run
+  docker network + persistent home volume; NET_ADMIN for firewall init; the
+  agent init script is rewritten to reach Coder via host.docker.internal.

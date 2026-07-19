@@ -39,7 +39,10 @@ type Config struct {
 	// ProviderEnv maps env var names to secret values written into the
 	// workspace at bootstrap (never through provisioner parameters, §11).
 	ProviderEnv map[string]string
-	EngineURL   string // reachable from workspaces; default http://host.docker.internal:8080
+	// GitToken authenticates clone/push for the repo host via a
+	// credential-store entry (§11 step 3); empty for public repos.
+	GitToken string
+	EngineURL   string // reachable from workspaces; default http://127.0.0.1:8080 (reverse tunnel)
 	// MRPollInterval is the auto_complete poll cadence (§3: 60s).
 	MRPollInterval time.Duration
 	// RunsDir receives stage logs (<run>/<stage>-<iter>.log, §12/§13);
@@ -61,7 +64,10 @@ func (c *Config) withDefaults() Config {
 		out.AgentsMDPath = "AGENTS.md"
 	}
 	if out.EngineURL == "" {
-		out.EngineURL = "http://host.docker.internal:8080"
+		// Workspaces reach the engine through the Coder adapter's reverse
+		// tunnel: localhost on both ends (deviation from §8's
+		// host.docker.internal path — see IMPLEMENTATION_NOTES).
+		out.EngineURL = "http://127.0.0.1:8080"
 	}
 	if out.MRPollInterval == 0 {
 		out.MRPollInterval = 60 * time.Second

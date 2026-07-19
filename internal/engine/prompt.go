@@ -24,7 +24,8 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		case flow.InputChanged:
 			stat := "(no diff available)"
 			res, err := x.e.envp.Exec(x.ctx, rs.envID, ports.Command{
-				Script:  fmt.Sprintf("cd repo && git diff --stat origin/%s...HEAD", x.e.cfg.DefaultBranch),
+				Script:  fmt.Sprintf("git diff --stat origin/%s...HEAD", x.e.cfg.DefaultBranch),
+				Dir:     "repo",
 				Timeout: rs.fl.Defaults.Timeout,
 			})
 			if err == nil && res.ExitCode == 0 {
