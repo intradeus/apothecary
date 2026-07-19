@@ -1,0 +1,23 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:14317
+
+exporters:
+  prometheus:
+    endpoint: 127.0.0.1:18889
+  debug:
+    verbosity: normal
+
+service:
+  telemetry:
+    metrics:
+      level: none # self-metrics off — :8888 tends to collide on dev hosts
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      exporters: [debug]

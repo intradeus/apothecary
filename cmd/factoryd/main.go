@@ -34,6 +34,7 @@ import (
 	"factory/internal/httpapi"
 	"factory/internal/pgstore"
 	"factory/internal/ports"
+	"factory/internal/telemetry"
 )
 
 func main() {
@@ -213,6 +214,19 @@ func cmdServe(args []string) error {
 		},
 	}
 	e := engine.New(ecfg, store, envp, runner, forge, []ports.NotificationChannel{registry}, flows)
+	if cfg.Otel.Endpoint != "" {
+		tel, err := telemetry.New(ctx, cfg.Otel.Endpoint)
+		if err != nil {
+			return fmt.Errorf("otel: %w", err)
+		}
+		defer func() {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			tel.Shutdown(sctx)
+		}()
+		e.SetSink(tel)
+		log.Info("otel telemetry enabled", "endpoint", cfg.Otel.Endpoint)
+	}
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)
 	}

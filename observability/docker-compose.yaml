@@ -1,0 +1,33 @@
+# Local observability stack (M6): otel-collector <- factoryd (OTLP/gRPC),
+# Prometheus scraping the collector, Grafana provisioned with dashboards.
+# host networking: everything on localhost, matching the engine's
+# 127.0.0.1-only posture (and Grafana reaches the local Postgres directly).
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    network_mode: host
+    command: ['--config=/etc/otelcol/config.yaml']
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+
+  prometheus:
+    image: prom/prometheus:latest
+    network_mode: host
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.listen-address=127.0.0.1:19090'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:latest
+    network_mode: host
+    environment:
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: '3001' # 3000 is commonly taken by a host Grafana
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

@@ -93,6 +93,7 @@ type Engine struct {
 	clock func() time.Time
 	newID func() string
 	log   *slog.Logger
+	sink  EventSink
 
 	mu      sync.Mutex
 	handles map[string]*runHandle
@@ -190,6 +191,36 @@ func New(cfg Config, store event.Store, envp ports.EnvProvisioner, runner ports.
 	}
 }
 
+// EventSink receives every freshly appended event exactly once (§7
+// telemetry projection). Replayed history is never re-emitted.
+type EventSink interface {
+	OnEvent(e event.Event)
+}
+
+// SetSink installs the telemetry sink; call before Recover. nil disables.
+func (e *Engine) SetSink(s EventSink) { e.sink = s }
+
+// emit fans freshly appended events to the sink (nil-safe).
+func (e *Engine) emit(evs []event.Event) {
+	if e.sink == nil {
+		return
+	}
+	for _, ev := range evs {
+		e.sink.OnEvent(ev)
+	}
+}
+
+// appendAndEmit is the store append for engine-side writers outside a run
+// goroutine (Archive, ReapOnce).
+func (e *Engine) appendAndEmit(ctx context.Context, runID string, ps ...event.Payload) error {
+	evs, err := e.store.Append(ctx, runID, ps...)
+	if err != nil {
+		return err
+	}
+	e.emit(evs)
+	return nil
+}
+
 // CreateRun performs §1 preflight and, if it passes, appends run_created and
 // starts the run's writer goroutine. Preflight failures refuse the run
 // naming the exact missing item — no events are written.
@@ -211,7 +242,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName string) (stri
 
 	runID := e.newID()
 	branch := fmt.Sprintf("factory/%s-%s", strings.ToLower(runID), slug(t.Title, 24))
-	if _, err := e.store.Append(ctx, runID, &event.RunCreated{
+	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
 		TicketTitle: t.Title,
 		TicketGoal:  t.Goal,
 		FlowName:    fl.Name,
@@ -291,13 +322,13 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	if !v.State.Terminal() {
 		return fmt.Errorf("run %s is %s; only terminal runs can be archived", runID, v.State)
 	}
-	if _, err := e.store.Append(ctx, runID, &event.RunArchived{}); err != nil {
+	if err := e.appendAndEmit(ctx, runID, &event.RunArchived{}); err != nil {
 		return err
 	}
 	if v.EnvID != "" {
 		if err := e.envp.Destroy(ctx, ports.EnvID(v.EnvID)); err != nil {
 			e.log.Warn("archive: env destroy failed", "run", runID, "env", v.EnvID, "err", err)
-		} else if _, err := e.store.Append(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
+		} else if err := e.appendAndEmit(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
 		}
 	}
@@ -552,7 +583,7 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter time.Durati
 			e.log.Warn("reaper: env destroy failed", "run", id, "env", v.EnvID, "err", err)
 			continue
 		}
-		if _, err := e.store.Append(ctx, id, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
+		if err := e.appendAndEmit(ctx, id, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
 		}
 		e.log.Info("reaper: destroyed env of completed run", "run", id, "env", v.EnvID)

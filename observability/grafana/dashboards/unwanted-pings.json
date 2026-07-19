@@ -1,0 +1,64 @@
+{
+  "uid": "factory-pings",
+  "title": "Factory · Unwanted pings per merged MR",
+  "tags": ["factory"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Unwanted pings per merged MR (target → 0)",
+      "description": "plan_approval and final_review are wanted touchpoints; everything else is waste. Completed runs = merged MRs in the v1 flow.",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "factory-pg" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT round(((SELECT count(*) FROM events WHERE type='ping_raised' AND payload->>'type' NOT IN ('plan_approval','final_review'))::numeric) / NULLIF((SELECT count(*) FROM events WHERE type='run_completed'),0), 2) AS unwanted_per_mr"
+        }
+      ],
+      "fieldConfig": { "defaults": { "decimals": 2, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 2 } ] } }, "overrides": [] }
+    },
+    {
+      "type": "barchart",
+      "title": "Pings by type (wanted vs waste)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "factory-pg" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT payload->>'type' AS type, count(*) AS pings FROM events WHERE type='ping_raised' GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "factory_pings_total (live, Prometheus)",
+      "datasource": { "type": "prometheus", "uid": "factory-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "factory_pings_total", "legendFormat": "{{type}}" }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "type": "table",
+      "title": "Per run: interaction profile",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "factory-pg" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT r.ticket_title AS run, r.state, count(*) FILTER (WHERE e.payload->>'type' IN ('plan_approval','final_review')) AS wanted, count(*) FILTER (WHERE e.payload->>'type' NOT IN ('plan_approval','final_review')) AS unwanted, string_agg(DISTINCT e.payload->>'type', ', ') AS types FROM runs r LEFT JOIN events e ON e.run_id=r.run_id AND e.type='ping_raised' GROUP BY r.run_id, r.ticket_title, r.state, r.created_at ORDER BY r.created_at DESC"
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    }
+  ],
+  "schemaVersion": 39
+}

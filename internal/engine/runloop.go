@@ -132,8 +132,8 @@ func (x *exec) exit(cause error) {
 	}
 }
 
-// append writes events through the single-writer goroutine and keeps the
-// in-memory view current.
+// append writes events through the single-writer goroutine, keeps the
+// in-memory view current, and feeds the telemetry sink (§7).
 func (x *exec) append(ps ...event.Payload) error {
 	evs, err := x.e.store.Append(x.bg, x.rs.runID, ps...)
 	if err != nil {
@@ -142,6 +142,7 @@ func (x *exec) append(ps ...event.Payload) error {
 	for i := range evs {
 		run.Apply(&x.rs.view, &evs[i])
 	}
+	x.e.emit(evs)
 	return nil
 }
 
