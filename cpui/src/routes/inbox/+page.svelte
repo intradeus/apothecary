@@ -99,6 +99,13 @@
             Reject with feedback
           </button>
         </div>
+      {:else if p.options?.length}
+        <textarea bind:value={feedback[p.ping_id]} placeholder="Optional note to send along…"></textarea>
+        <div class="row" style="margin-top:10px; flex-wrap:wrap; gap:8px">
+          {#each p.options as opt (opt)}
+            <button class="primary" disabled={busy[p.ping_id]} onclick={() => answer(p, opt)}>{opt}</button>
+          {/each}
+        </div>
       {:else}
         <textarea bind:value={feedback[p.ping_id]} placeholder="Your answer to the agent…"></textarea>
         <div class="row" style="margin-top:10px">

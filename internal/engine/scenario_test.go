@@ -408,7 +408,7 @@ stages:
 	gotAnswer := make(chan string, 1)
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		id := <-runIDCh
-		p, err := h.e.RaisePing(id, "clarification", "which database?", "postgres or sqlite")
+		p, err := h.e.RaisePing(id, "clarification", "which database?", "postgres or sqlite", nil, "")
 		if err != nil {
 			return ports.AgentResult{}, err
 		}
@@ -915,4 +915,81 @@ stages:
 	if len(started) != 2 || started[0] != "probe" || started[1] != "repair" {
 		t.Errorf("failure-path stages = %v, want [probe repair]", started)
 	}
+}
+
+// TestOptionPing covers PLAN4 M16 closed questions: the answer must be one
+// of the declared options; the chosen option (plus note) reaches the agent
+// and is recorded verbatim in ping_answered.
+func TestOptionPing(t *testing.T) {
+	doc := `name: ping
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runIDCh := make(chan string, 1)
+	gotAnswer := make(chan PingAnswer, 1)
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		id := <-runIDCh
+		p, err := h.e.RaisePing(id, "clarification", "which db?", "", []string{"postgres", "sqlite", "postgres"}, "artifacts/dbs.md")
+		if err != nil {
+			return ports.AgentResult{}, err
+		}
+		ans, _ := p.Await(context.Background())
+		gotAnswer <- ans
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDCh <- runID
+
+	p := h.waitPing(t, "clarification")
+	if len(p.Options) != 2 || p.Options[0] != "postgres" || p.Options[1] != "sqlite" { // deduped
+		t.Errorf("options = %v", p.Options)
+	}
+	if p.PayloadRef != "artifacts/dbs.md" {
+		t.Errorf("payload_ref = %q", p.PayloadRef)
+	}
+	// Free text refused for a closed question.
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "mysql"}); err == nil || !strings.Contains(err.Error(), "postgres | sqlite") {
+		t.Errorf("off-option answer err = %v", err)
+	}
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres", Feedback: "use v16"}); err != nil {
+		t.Fatal(err)
+	}
+	ans := <-gotAnswer
+	if ans.Answer != "postgres" || ans.Feedback != "use v16" {
+		t.Errorf("agent received %+v", ans)
+	}
+	h.e.Wait(runID)
+	pa, ok := findPayload[*event.PingAnswered](h.events(t, runID))
+	if !ok || pa.Answer != "postgres" || pa.Feedback != "use v16" {
+		t.Errorf("ping_answered = %+v", pa)
+	}
+	pr, _ := findPayload[*event.PingRaised](h.events(t, runID))
+	if len(pr.Options) != 2 {
+		t.Errorf("ping_raised options = %v", pr.Options)
+	}
+
+	// Invalid raises are refused up front.
+	h2 := newHarness(t, mustFlow(t, doc))
+	run2 := make(chan string, 1)
+	h2.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		id := <-run2
+		if _, err := h2.e.RaisePing(id, "clarification", "q", "", nil, "/etc/passwd"); err == nil {
+			t.Error("absolute artifact accepted")
+		}
+		if _, err := h2.e.RaisePing(id, "clarification", "q", "", []string{""}, ""); err == nil {
+			t.Error("empty option accepted")
+		}
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	rid, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run2 <- rid
+	h2.e.Wait(rid)
 }

@@ -208,11 +208,15 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 	for i := range evs {
 		switch p := evs[i].Payload.(type) {
 		case *event.PingRaised:
+			var opts []byte
+			if len(p.Options) > 0 {
+				opts, _ = json.Marshal(p.Options)
+			}
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO pings (ping_id, run_id, type, question, context, payload_ref, stage_id, status, raised_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8)
+				INSERT INTO pings (ping_id, run_id, type, question, context, payload_ref, stage_id, options, status, raised_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)
 				ON CONFLICT (ping_id) DO NOTHING`,
-				p.PingID, runID, p.Type, p.Question, p.Context, p.PayloadRef, p.StageID, evs[i].TS); err != nil {
+				p.PingID, runID, p.Type, p.Question, p.Context, p.PayloadRef, p.StageID, opts, evs[i].TS); err != nil {
 				return err
 			}
 		case *event.PingAnswered:
@@ -455,7 +459,7 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 		limit = 100
 	}
 	q := `SELECT ping_id, run_id, type, stage_id, question, context, payload_ref,
-	             status, answer, feedback, raised_at, answered_at
+	             options, status, answer, feedback, raised_at, answered_at
 	      FROM pings`
 	args := []any{}
 	if status != "" && status != "all" {
@@ -483,7 +487,7 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 func (s *Store) GetPing(ctx context.Context, id string) (run.PingView, error) {
 	v, err := scanPing(s.pool.QueryRow(ctx, `
 		SELECT ping_id, run_id, type, stage_id, question, context, payload_ref,
-		       status, answer, feedback, raised_at, answered_at
+		       options, status, answer, feedback, raised_at, answered_at
 		FROM pings WHERE ping_id=$1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.PingView{}, fmt.Errorf("ping %s: %w", id, ErrPingNotFound)
@@ -496,8 +500,12 @@ var ErrPingNotFound = errors.New("ping not found")
 
 func scanPing(row pgx.Row) (run.PingView, error) {
 	var v run.PingView
+	var opts []byte
 	err := row.Scan(&v.PingID, &v.RunID, &v.Type, &v.StageID, &v.Question, &v.Context,
-		&v.PayloadRef, &v.Status, &v.Answer, &v.Feedback, &v.RaisedAt, &v.AnsweredAt)
+		&v.PayloadRef, &opts, &v.Status, &v.Answer, &v.Feedback, &v.RaisedAt, &v.AnsweredAt)
+	if err == nil && len(opts) > 0 {
+		_ = json.Unmarshal(opts, &v.Options)
+	}
 	return v, err
 }
 

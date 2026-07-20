@@ -608,6 +608,11 @@ func validModel(m string) bool {
 	return true
 }
 
+// ValidArtifactPath reports whether p is a legal repo-root-relative
+// artifact path (also used by the engine to validate ask_human artifact
+// refs, PLAN4 M16).
+func ValidArtifactPath(p string) bool { return validArtifactPath(p) }
+
 // validArtifactPath accepts repo-root-relative paths only.
 func validArtifactPath(p string) bool {
 	if p == "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, "$") {

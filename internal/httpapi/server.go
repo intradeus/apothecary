@@ -243,6 +243,7 @@ type pingJSON struct {
 	Question   string    `json:"question"`
 	Context    string    `json:"context,omitempty"`
 	PayloadRef string    `json:"payload_ref,omitempty"`
+	Options    []string  `json:"options,omitempty"`
 	Status     string    `json:"status"`
 	RaisedAt   time.Time `json:"raised_at"`
 }
@@ -250,7 +251,7 @@ type pingJSON struct {
 func toPingJSON(p *engine.Ping) pingJSON {
 	return pingJSON{
 		PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID, Question: p.Question,
-		Context: p.Context, PayloadRef: p.PayloadRef, Status: "pending", RaisedAt: p.RaisedAt,
+		Context: p.Context, PayloadRef: p.PayloadRef, Options: p.Options, Status: "pending", RaisedAt: p.RaisedAt,
 	}
 }
 
@@ -465,14 +466,16 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Type     string `json:"type"`
-		Question string `json:"question"`
-		Context  string `json:"context"`
+		Type     string   `json:"type"`
+		Question string   `json:"question"`
+		Context  string   `json:"context"`
+		Options  []string `json:"options"`  // PLAN4 M16: closed answer set
+		Artifact string   `json:"artifact"` // PLAN4 M16: workspace file to review
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	p, err := s.Engine.RaisePing(runID, body.Type, body.Question, body.Context)
+	p, err := s.Engine.RaisePing(runID, body.Type, body.Question, body.Context, body.Options, body.Artifact)
 	switch {
 	case errors.Is(err, engine.ErrRunNotActive):
 		writeErr(w, http.StatusConflict, err.Error())

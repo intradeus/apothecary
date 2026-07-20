@@ -111,7 +111,8 @@ type Ping struct {
 	Question   string
 	Context    string
 	PayloadRef string
-	StageID    string // flow stage in flight when raised (PLAN4 M15)
+	StageID    string   // flow stage in flight when raised (PLAN4 M15)
+	Options    []string // agent-declared answer choices (PLAN4 M16)
 	RaisedAt   time.Time
 
 	gate     bool
@@ -548,12 +549,33 @@ func (e *Engine) Wait(runID string) {
 
 // RaisePing is the ask_human entry point (§10): an agent in the workspace
 // asks a question; the stage parks (its timeout suspends) until answered.
-// The returned Ping's Result channel yields the answer exactly once.
-func (e *Engine) RaisePing(runID, ptype, question, context_ string) (*Ping, error) {
+// options (PLAN4 M16) declare a closed answer set the human must pick
+// from; artifact points the question at a workspace file for the review
+// workbench. The returned Ping's Result channel yields the answer exactly
+// once.
+func (e *Engine) RaisePing(runID, ptype, question, context_ string, options []string, artifact string) (*Ping, error) {
 	switch ptype {
 	case "clarification", "blocker", "permission":
 	default:
 		return nil, fmt.Errorf("invalid ask_human ping type %q", ptype)
+	}
+	if len(options) > 8 {
+		return nil, fmt.Errorf("ask_human: at most 8 options (got %d)", len(options))
+	}
+	seen := map[string]bool{}
+	var opts []string
+	for _, o := range options {
+		o = strings.TrimSpace(o)
+		if o == "" || len(o) > 200 {
+			return nil, fmt.Errorf("ask_human: options must be non-empty strings of at most 200 chars")
+		}
+		if !seen[o] {
+			seen[o] = true
+			opts = append(opts, o)
+		}
+	}
+	if artifact != "" && !flow.ValidArtifactPath(artifact) {
+		return nil, fmt.Errorf("ask_human: artifact %q must be a repo-relative path", artifact)
 	}
 	e.mu.Lock()
 	h, ok := e.handles[runID]
@@ -563,6 +585,7 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string) (*Ping, erro
 	}
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
+		Options: opts, PayloadRef: artifact,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
@@ -626,6 +649,11 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 	}
 	if p.gate && ans.Answer != "approve" && ans.Answer != "reject" {
 		return fmt.Errorf("gate ping %s requires answer approve|reject", pingID)
+	}
+	if len(p.Options) > 0 && !slices.Contains(p.Options, ans.Answer) {
+		// The agent asked a closed question (PLAN4 M16): determinism is the
+		// point — the note field carries anything beyond the choice.
+		return fmt.Errorf("ping %s requires one of: %s", pingID, strings.Join(p.Options, " | "))
 	}
 	// The answers channel is drained only in agent stages and gates. Don't
 	// report success for an answer nobody will ever process, and don't wedge

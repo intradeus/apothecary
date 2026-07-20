@@ -17,6 +17,7 @@ type PingView struct {
 	Question   string     `json:"question"`
 	Context    string     `json:"context,omitempty"`
 	PayloadRef string     `json:"payload_ref,omitempty"`
+	Options    []string   `json:"options,omitempty"`
 	Status     string     `json:"status"` // pending|answered
 	Answer     string     `json:"answer,omitempty"`
 	Feedback   string     `json:"feedback,omitempty"`
@@ -35,7 +36,8 @@ func ReducePings(evs []event.Event) []PingView {
 			out = append(out, PingView{
 				PingID: p.PingID, RunID: evs[i].RunID, Type: p.Type, StageID: p.StageID,
 				Question: p.Question, Context: p.Context, PayloadRef: p.PayloadRef,
-				Status: "pending", RaisedAt: evs[i].TS,
+				Options: p.Options,
+				Status:  "pending", RaisedAt: evs[i].TS,
 			})
 		case *event.PingAnswered:
 			if j, ok := idx[p.PingID]; ok {

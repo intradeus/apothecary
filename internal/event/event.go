@@ -148,6 +148,10 @@ type PingRaised struct {
 	// (PLAN4 M15): the attribution key joining reviews to stages and,
 	// via stage_started.agent_hash, to prompt versions.
 	StageID string `json:"stage_id,omitempty"`
+	// Options are the agent-declared answer choices (PLAN4 M16): when
+	// non-empty, the answer MUST be one of them — the agent asked a closed
+	// question so it can branch deterministically.
+	Options []string `json:"options,omitempty"`
 }
 
 type PingAnswered struct {

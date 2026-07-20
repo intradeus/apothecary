@@ -657,3 +657,60 @@ func (x *env) createTicketFlow(t *testing.T, title, flow string) string {
 	_ = json.Unmarshal(data, &out)
 	return out.RunID
 }
+
+// TestOptionPingOverHTTP covers the PLAN4 M16 surface: options travel to
+// the inbox, off-option answers are refused, and the recorded pair keeps
+// the chosen option verbatim.
+func TestOptionPingOverHTTP(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	runIDCh := make(chan string, 1)
+	done := make(chan struct{})
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		id := <-runIDCh
+		p, err := x.e.RaisePing(id, "clarification", "pick a db", "", []string{"postgres", "sqlite"}, "artifacts/dbs.md")
+		if err != nil {
+			return ports.AgentResult{}, err
+		}
+		p.Await(context.Background())
+		close(done)
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	runID := x.createTicket(t, "T")
+	runIDCh <- runID
+
+	var ping run.PingView
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && ping.PingID == "" {
+		_, d := x.do(t, "GET", "/api/pings", nil, nil)
+		var pings []run.PingView
+		_ = json.Unmarshal(d, &pings)
+		if len(pings) > 0 {
+			ping = pings[0]
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if ping.PingID == "" {
+		t.Fatal("no option ping appeared")
+	}
+	if len(ping.Options) != 2 || ping.PayloadRef != "artifacts/dbs.md" {
+		t.Errorf("ping = %+v", ping)
+	}
+
+	resp, data := x.do(t, "POST", "/api/pings/"+ping.PingID+"/answer", map[string]string{"answer": "mysql"}, nil)
+	if resp.StatusCode != 400 || !strings.Contains(string(data), "postgres | sqlite") {
+		t.Errorf("off-option = %d: %s", resp.StatusCode, data)
+	}
+	resp, _ = x.do(t, "POST", "/api/pings/"+ping.PingID+"/answer", map[string]string{"answer": "sqlite", "feedback": "keep it simple"}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("answer = %d", resp.StatusCode)
+	}
+	<-done
+	x.e.Wait(runID)
+
+	_, d := x.do(t, "GET", "/api/pings/"+ping.PingID, nil, nil)
+	var stored run.PingView
+	_ = json.Unmarshal(d, &stored)
+	if stored.Answer != "sqlite" || stored.Feedback != "keep it simple" || len(stored.Options) != 2 {
+		t.Errorf("stored = %+v", stored)
+	}
+}

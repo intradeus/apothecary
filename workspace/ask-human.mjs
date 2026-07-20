@@ -54,6 +54,8 @@ async function askHuman(args) {
           type: args.type,
           question: args.question,
           context: args.context ?? "",
+          options: args.options ?? [],
+          artifact: args.artifact ?? "",
         }, env);
       } else {
         res = await callEngine("GET", `/api/runs/${env.APOTHECARY_RUN_ID}/pings/${pingId}`, null, env);
@@ -78,7 +80,11 @@ async function askHuman(args) {
     }
     if (res.status === 200) {
       const body = await res.json();
-      return body.feedback ? `${body.answer}\n${body.feedback}` : body.answer;
+      // Free-text answers arrive as answer:"text" + the text in feedback;
+      // option answers keep the chosen option in answer with an optional
+      // note in feedback (PLAN4 M16).
+      if (body.answer === "text") return body.feedback ?? "";
+      return body.feedback ? `${body.answer}\n(note: ${body.feedback})` : body.answer;
     }
     if (res.status === 204) {
       pingId = res.headers.get("x-ping-id") ?? pingId;
@@ -98,13 +104,27 @@ const TOOL = {
     "Ask the human operator a question and wait for their answer. Use when " +
     "blocked: unclear requirements (type=clarification), an obstacle you " +
     "cannot resolve (type=blocker), or an action needing approval " +
-    "(type=permission). The answer is returned as text.",
+    "(type=permission). The answer is returned as text. For closed " +
+    "questions, pass options — the human picks exactly one (buttons in " +
+    "their UI) and you can branch on the returned option deterministically. " +
+    "To have the human review a document you wrote, pass artifact with a " +
+    "repo-relative path (e.g. artifacts/comparison.md): they see it " +
+    "rendered with inline commenting.",
   inputSchema: {
     type: "object",
     properties: {
       type: { type: "string", enum: ["clarification", "blocker", "permission"] },
       question: { type: "string", description: "The question for the human" },
-      context: { type: "string", description: "Optional supporting context" },
+      context: { type: "string", description: "Optional supporting context (markdown renders)" },
+      options: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional closed answer set (max 8); the answer will be exactly one of these",
+      },
+      artifact: {
+        type: "string",
+        description: "Optional repo-relative file for the human to review (e.g. artifacts/plan.md)",
+      },
     },
     required: ["type", "question"],
   },

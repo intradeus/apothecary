@@ -169,6 +169,7 @@ export interface Ping {
   question: string;
   context?: string;
   payload_ref?: string;
+  options?: string[];
   status: 'pending' | 'answered';
   answer?: string;
   feedback?: string;

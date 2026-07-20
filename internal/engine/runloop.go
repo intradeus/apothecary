@@ -106,6 +106,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
 				Context: op.Context, PayloadRef: op.PayloadRef, StageID: op.StageID,
+				Options:  op.Options,
 				RaisedAt: e.clock(),
 				gate:     gatePingType(op.Type), done: make(chan struct{}),
 			}
@@ -460,7 +461,8 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
 			x.e.mu.Unlock()
 			if err := x.append(&event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
-				Question: req.p.Question, PayloadRef: req.p.PayloadRef, StageID: st.ID}); err != nil {
+				Question: req.p.Question, Context: req.p.Context,
+				PayloadRef: req.p.PayloadRef, StageID: st.ID, Options: req.p.Options}); err != nil {
 				close(req.ack)
 				return agentRes{}, false, err
 			}
@@ -519,8 +521,10 @@ func (x *exec) processAnswer(ar answerReq) (bool, error) {
 	x.e.mu.Unlock()
 
 	answer, feedback := ar.ans.Answer, ar.ans.Feedback
-	if !ar.p.gate {
-		// §6: agent (ask_human) answers are recorded as answer:"text".
+	if !ar.p.gate && len(ar.p.Options) == 0 {
+		// §6: free-text agent (ask_human) answers are recorded as
+		// answer:"text". Option answers (PLAN4 M16) keep the chosen option
+		// in answer and the optional note in feedback.
 		answer, feedback = "text", ar.ans.Answer
 	}
 	if err := x.append(&event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback}); err != nil {

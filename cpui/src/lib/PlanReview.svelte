@@ -13,6 +13,11 @@
 
   let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
 
+  // Gates answer approve/reject; ask_human artifact reviews (PLAN4 M16)
+  // answer with the composed review text — or a declared option with the
+  // review as its note.
+  const isGate = $derived(['plan_approval', 'final_review'].includes(ping.type));
+
   let blocks = $state<PlanBlock[]>([]);
   let path = $state('');
   let error = $state('');
@@ -67,12 +72,11 @@
     saveDraft(ping.ping_id, comments);
   }
 
-  async function requestChanges() {
-    if (comments.length === 0) return;
+  async function submit(answer: string, feedback?: string) {
     busy = true;
     error = '';
     try {
-      await api.answerPing(ping.ping_id, 'reject', composeFeedback(comments));
+      await api.answerPing(ping.ping_id, answer, feedback);
       clearDraft(ping.ping_id);
       onanswered();
     } catch (e) {
@@ -82,19 +86,23 @@
     }
   }
 
+  async function requestChanges() {
+    if (comments.length === 0) return;
+    await submit('reject', composeFeedback(comments));
+  }
+
+  async function sendReview() {
+    if (comments.length === 0) return;
+    await submit(composeFeedback(comments));
+  }
+
+  async function chooseOption(opt: string) {
+    await submit(opt, comments.length > 0 ? composeFeedback(comments) : undefined);
+  }
+
   async function approve() {
     if (comments.length > 0 && !confirm(`Approve and discard ${comments.length} unsent comment(s)?`)) return;
-    busy = true;
-    error = '';
-    try {
-      await api.answerPing(ping.ping_id, 'approve');
-      clearDraft(ping.ping_id);
-      onanswered();
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      busy = false;
-    }
+    await submit('approve');
   }
 </script>
 
@@ -145,12 +153,29 @@
           text first to quote it precisely. All comments submit together as one feedback prompt.
         </p>
       {/each}
-      <div class="row" style="margin-top:12px">
-        <button class="approve" disabled={busy} onclick={approve}>Approve</button>
-        <button class="reject" disabled={busy || comments.length === 0} onclick={requestChanges}>
-          Request changes ({comments.length})
-        </button>
-      </div>
+      {#if isGate}
+        <div class="row" style="margin-top:12px">
+          <button class="approve" disabled={busy} onclick={approve}>Approve</button>
+          <button class="reject" disabled={busy || comments.length === 0} onclick={requestChanges}>
+            Request changes ({comments.length})
+          </button>
+        </div>
+      {:else if ping.options?.length}
+        <div class="row" style="margin-top:12px; flex-wrap:wrap; gap:8px">
+          {#each ping.options as opt (opt)}
+            <button class="primary" disabled={busy} onclick={() => chooseOption(opt)}>{opt}</button>
+          {/each}
+        </div>
+        <p class="muted small" style="margin-top:6px">
+          Your pick answers the agent's closed question; comments (if any) ride along as a note.
+        </p>
+      {:else}
+        <div class="row" style="margin-top:12px">
+          <button class="primary" disabled={busy || comments.length === 0} onclick={sendReview}>
+            Send review ({comments.length})
+          </button>
+        </div>
+      {/if}
       <p class="muted small" style="margin-top:8px">Drafts survive reloads (kept in this browser).</p>
     </div>
   </div>
