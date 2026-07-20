@@ -160,6 +160,13 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 func (m *Mem) UpsertFlow(_ context.Context, row FlowRow) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// nil layout keeps the stored one (DESIGN3 §2.2; parity with pg's
+	// COALESCE) — a YAML-only save must not wipe node positions.
+	if row.Layout == nil {
+		if old, ok := m.flows[row.Name]; ok {
+			row.Layout = old.Layout
+		}
+	}
 	m.flows[row.Name] = row
 	if _, ok := m.versions[row.Hash]; !ok {
 		m.versions[row.Hash] = FlowVersion{Hash: row.Hash, Name: row.Name, YAML: row.YAML, CreatedAt: row.UpdatedAt}

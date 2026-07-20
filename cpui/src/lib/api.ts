@@ -98,10 +98,15 @@ export interface AgentImportReport {
   skipped: { file: string; error: string }[];
 }
 
+export interface FlowLayout {
+  nodes: Record<string, { x: number; y: number }>;
+}
+
 export interface FlowRow {
   name: string;
   yaml: string;
   hash: string;
+  layout?: FlowLayout | null;
   updated_at: string;
 }
 
@@ -265,8 +270,8 @@ export const api = {
   flows: () => req<FlowRow[]>('/api/flows'),
   flow: (name: string) => req<FlowRow>(`/api/flows/${encodeURIComponent(name)}`),
   createFlow: (name: string, yaml: string) => post('/api/flows', { name, yaml }) as Promise<FlowRow>,
-  saveFlow: (name: string, yaml: string) =>
-    put(`/api/flows/${encodeURIComponent(name)}`, { yaml }) as Promise<FlowRow>,
+  saveFlow: (name: string, yaml: string, layout?: FlowLayout) =>
+    put(`/api/flows/${encodeURIComponent(name)}`, { yaml, ...(layout ? { layout } : {}) }) as Promise<FlowRow>,
   deleteFlow: (name: string) => req<void>(`/api/flows/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   validateFlow: (yaml: string) =>
     post('/api/flows/validate', { yaml }) as Promise<{
@@ -275,6 +280,7 @@ export const api = {
       name?: string;
       hash?: string;
       stages?: number;
+      doc?: import('./flowdoc').FlowDoc;
     }>,
   flowVersions: (name: string) => req<FlowVersion[]>(`/api/flows/${encodeURIComponent(name)}/versions`),
   flowVersion: (hash: string) => req<FlowVersion>(`/api/flow-versions/${hash}`),

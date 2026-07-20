@@ -57,7 +57,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 	svc.KindValid = reg.Valid
 
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc); err != nil {
+	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
 		t.Fatal(err)
 	}
 	mk := func(port, kind, name string, sec map[string]string) string {

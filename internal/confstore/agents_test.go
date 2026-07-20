@@ -18,7 +18,7 @@ stages:
   - { id: plan,  type: agent, agent: planner, output: artifacts/plan.md }
   - { id: build, type: agent, agent: builder }
 `
-	if _, err := svc.SaveFlow(context.Background(), "f", flowYAML); err != nil {
+	if _, err := svc.SaveFlow(context.Background(), "f", flowYAML, nil); err != nil {
 		t.Fatal(err)
 	}
 	mkInt := func(port, name string) string {

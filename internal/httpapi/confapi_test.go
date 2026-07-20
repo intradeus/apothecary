@@ -50,7 +50,7 @@ func newConfEnv(t *testing.T) *confEnv {
 	kinds.RegisterFakes(reg)
 	conf := confstore.New(confstore.NewMem(), key)
 	conf.KindValid = reg.Valid
-	if _, err := conf.SaveFlow(t.Context(), "v1", v1FlowDoc); err != nil {
+	if _, err := conf.SaveFlow(t.Context(), "v1", v1FlowDoc, nil); err != nil {
 		t.Fatal(err)
 	}
 	resolver := resolve.New(conf, reg, "", 8080, "")

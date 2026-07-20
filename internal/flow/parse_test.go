@@ -81,14 +81,14 @@ func TestCanonicalV1(t *testing.T) {
 	if review.Model != "openai/gpt-5" {
 		t.Errorf("review model override = %q", review.Model)
 	}
-	if !review.Verdict || review.OnReject == nil || review.OnReject.To != "build" ||
-		review.OnReject.Max != 3 || review.OnReject.Feed != FeedComments {
-		t.Errorf("review verdict/edge = %+v %+v", review.Verdict, review.OnReject)
+	if !review.Verdict || review.Edge(EdgeReject) == nil || review.Edge(EdgeReject).To != "build" ||
+		review.Edge(EdgeReject).Max != 3 || review.Edge(EdgeReject).Feed != FeedComments {
+		t.Errorf("review verdict/edge = %+v %+v", review.Verdict, review.Edge(EdgeReject))
 	}
 
 	test := f.Stage("test")
-	if test.RunRef != "verify" || test.OnFail == nil || test.OnFail.To != "build" ||
-		test.OnFail.Max != 5 || test.OnFail.Feed != FeedOutput {
+	if test.RunRef != "verify" || test.Edge(EdgeFail) == nil || test.Edge(EdgeFail).To != "build" ||
+		test.Edge(EdgeFail).Max != 5 || test.Edge(EdgeFail).Feed != FeedOutput {
 		t.Errorf("test stage = %+v", test)
 	}
 
@@ -172,7 +172,7 @@ func TestValidationErrors(t *testing.T) {
 		{"forge_mr missing body", header + "stages:\n  - { id: s, type: forge_mr }\n",
 			"body is required", 4},
 		{"edge target missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: ghost, max: 2 } }\n",
-			`edge target "ghost" does not exist`, 4},
+			`on_fail target "ghost" does not exist`, 4},
 		{"edge max missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s } }\n",
 			"max is required", 4},
 		{"edge max zero", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 0 } }\n",
@@ -186,7 +186,17 @@ func TestValidationErrors(t *testing.T) {
 		{"two forge_mr", header + "stages:\n  - { id: a, type: forge_mr, body: artifacts/mr.md }\n  - { id: b, type: forge_mr, body: artifacts/mr.md }\n",
 			"at most one forge_mr", 5},
 		{"auto_complete not last", header + "stages:\n  - { id: g, type: human_gate, ping: final_review, auto_complete: mr_merged }\n  - { id: s, type: command, run: x }\n",
-			"must be the last stage", 4},
+			"must complete the run", 4},
+		{"reserved done id", header + "stages:\n  - { id: done, type: command, run: x }\n",
+			"reserved", 4},
+		{"on_success bad target", header + "stages:\n  - { id: a, type: command, run: x, on_success: nope }\n",
+			`on_success target "nope" does not exist`, 4},
+		{"success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: b }\n  - { id: b, type: command, run: x, on_success: a }\n",
+			"success cycle", 4},
+		{"self success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: a }\n",
+			"success cycle", 4},
+		{"unreachable stage", header + "stages:\n  - { id: a, type: command, run: x, on_success: done }\n  - { id: b, type: command, run: x, on_success: done }\n",
+			`stage "b" is unreachable`, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -203,5 +213,36 @@ func TestPingTypesOnGates(t *testing.T) {
 	}
 	if f.Stages[0].Ping != PingPlanApproval {
 		t.Errorf("ping = %q", f.Stages[0].Ping)
+	}
+}
+
+// TestExplicitSuccessGraph covers DESIGN3 §2.1: sugar defaults, explicit
+// overrides, and mid-flow termination.
+func TestExplicitSuccessGraph(t *testing.T) {
+	// Sugar: absent on_success chains document order; last -> done.
+	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x }\n  - { id: b, type: command, run: x }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Stages[0].OnSuccess != "b" || f.Stages[1].OnSuccess != TerminalDone {
+		t.Errorf("sugar chain = %q, %q", f.Stages[0].OnSuccess, f.Stages[1].OnSuccess)
+	}
+
+	// Explicit branching: a skips b on success; b is reached via a's
+	// on_fail and terminates the run early.
+	doc := header + `stages:
+  - { id: a, type: command, run: x, on_success: c, on_fail: { to: b, max: 1 } }
+  - { id: b, type: command, run: x, on_success: done }
+  - { id: c, type: command, run: x }
+`
+	f, err = Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Stages[0].OnSuccess != "c" || f.Stages[1].OnSuccess != TerminalDone || f.Stages[2].OnSuccess != TerminalDone {
+		t.Errorf("targets = %q %q %q", f.Stages[0].OnSuccess, f.Stages[1].OnSuccess, f.Stages[2].OnSuccess)
+	}
+	if f.Stages[0].Edge(EdgeFail) == nil || f.Stages[0].Edge(EdgeFail).To != "b" {
+		t.Errorf("edges = %+v", f.Stages[0].Edges)
 	}
 }

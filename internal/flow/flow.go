@@ -57,7 +57,20 @@ type Budget struct {
 	MaxTotalTurns int
 }
 
-// Edge is an on_fail / on_reject redirect. An exhausted edge abandons the run.
+// Edge kinds (DESIGN3 §2.1). on_success is not an Edge — it is a plain
+// target (Stage.OnSuccess) with no max/feed; loops are only expressible
+// through kinds that carry max.
+const (
+	EdgeFail   = "on_fail"
+	EdgeReject = "on_reject"
+)
+
+// TerminalDone is the reserved on_success target that completes the run.
+// Stage ids may not shadow it.
+const TerminalDone = "done"
+
+// Edge is a recoverable redirect (on_fail / on_reject / future kinds). An
+// exhausted edge abandons the run.
 type Edge struct {
 	To   string
 	Max  int
@@ -93,12 +106,21 @@ type Stage struct {
 	// forge_mr
 	Body string // artifact path used as MR description
 
-	OnFail   *Edge
-	OnReject *Edge
+	// OnSuccess is the explicit success target: a stage id or TerminalDone.
+	// Parse always fills it (YAML sugar: absent = next stage in document
+	// order, last stage = done), so the runtime model is fully explicit.
+	OnSuccess string
+
+	// Edges are the recoverable redirects by kind (EdgeFail, EdgeReject,
+	// future kinds — DESIGN3 §2.1). Never nil after Parse.
+	Edges map[string]*Edge
 
 	// Line is the stage's line in the source YAML, for error reporting.
 	Line int
 }
+
+// Edge returns the stage's edge of the given kind, or nil.
+func (s *Stage) Edge(kind string) *Edge { return s.Edges[kind] }
 
 type Flow struct {
 	Name        string

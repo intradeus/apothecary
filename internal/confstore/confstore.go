@@ -7,6 +7,7 @@ package confstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -89,12 +90,15 @@ type Project struct {
 	UpdatedAt     time.Time         `json:"updated_at"`
 }
 
-// FlowRow is the current version of a stored flow (§7).
+// FlowRow is the current version of a stored flow (§7). Layout is the
+// graph editor's node-position metadata (DESIGN3 §2.2) — display-only,
+// excluded from Hash, absent from versions.
 type FlowRow struct {
-	Name      string    `json:"name"`
-	YAML      string    `json:"yaml"`
-	Hash      string    `json:"hash"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Name      string          `json:"name"`
+	YAML      string          `json:"yaml"`
+	Hash      string          `json:"hash"`
+	Layout    json.RawMessage `json:"layout,omitempty"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // FlowVersion is one immutable content-addressed version (§7).

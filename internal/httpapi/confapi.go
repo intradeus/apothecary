@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -466,8 +467,9 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
-		YAML string `json:"yaml"`
+		Name   string          `json:"name"`
+		YAML   string          `json:"yaml"`
+		Layout json.RawMessage `json:"layout"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -479,7 +481,7 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	row, err := s.Conf.SaveFlow(r.Context(), body.Name, body.YAML)
+	row, err := s.Conf.SaveFlow(r.Context(), body.Name, body.YAML, body.Layout)
 	if err != nil {
 		confErr(w, err)
 		return
@@ -498,12 +500,13 @@ func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		YAML string `json:"yaml"`
+		YAML   string          `json:"yaml"`
+		Layout json.RawMessage `json:"layout"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	row, err := s.Conf.SaveFlow(r.Context(), r.PathValue("name"), body.YAML)
+	row, err := s.Conf.SaveFlow(r.Context(), r.PathValue("name"), body.YAML, body.Layout)
 	if err != nil {
 		confErr(w, err)
 		return
@@ -533,8 +536,14 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "errors": []string{err.Error()}})
 		return
 	}
+	// doc is the raw schema shape the graph editor edits (DESIGN3 §2.3).
+	doc, err := flow.ParseDoc("flow", []byte(body.YAML))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "errors": []string{err.Error()}})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "name": f.Name, "hash": f.Hash, "stages": len(f.Stages),
+		"ok": true, "name": f.Name, "hash": f.Hash, "stages": len(f.Stages), "doc": doc,
 	})
 }
 

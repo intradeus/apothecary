@@ -297,7 +297,7 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 		return nil // a real config exists; don't pollute it
 	}
 	if _, err := conf.GetFlow(ctx, "dev"); err != nil {
-		if _, err := conf.SaveFlow(ctx, "dev", devFlowYAML); err != nil {
+		if _, err := conf.SaveFlow(ctx, "dev", devFlowYAML, nil); err != nil {
 			return fmt.Errorf("dev flow: %w", err)
 		}
 	}

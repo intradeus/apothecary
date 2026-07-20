@@ -256,10 +256,17 @@ func (s *Store) UpsertFlow(ctx context.Context, row confstore.FlowRow) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// COALESCE keeps the stored layout when the save carries none
+	// (DESIGN3 §2.2: a YAML-tab edit must not wipe node positions).
+	var layout []byte
+	if len(row.Layout) > 0 {
+		layout = row.Layout
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO flows (name, yaml, hash, updated_at) VALUES ($1,$2,$3,$4)
-		ON CONFLICT (name) DO UPDATE SET yaml=$2, hash=$3, updated_at=$4`,
-		row.Name, row.YAML, row.Hash, row.UpdatedAt); err != nil {
+		INSERT INTO flows (name, yaml, hash, layout, updated_at) VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (name) DO UPDATE SET yaml=$2, hash=$3,
+			layout=COALESCE($4, flows.layout), updated_at=$5`,
+		row.Name, row.YAML, row.Hash, layout, row.UpdatedAt); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -273,9 +280,11 @@ func (s *Store) UpsertFlow(ctx context.Context, row confstore.FlowRow) error {
 
 func (s *Store) GetFlow(ctx context.Context, name string) (confstore.FlowRow, error) {
 	var r confstore.FlowRow
+	var layout []byte
 	err := s.pool.QueryRow(ctx,
-		`SELECT name, yaml, hash, updated_at FROM flows WHERE name=$1`, name).
-		Scan(&r.Name, &r.YAML, &r.Hash, &r.UpdatedAt)
+		`SELECT name, yaml, hash, layout, updated_at FROM flows WHERE name=$1`, name).
+		Scan(&r.Name, &r.YAML, &r.Hash, &layout, &r.UpdatedAt)
+	r.Layout = layout
 	if err == pgx.ErrNoRows {
 		return r, fmt.Errorf("flow %s: %w", name, confstore.ErrNotFound)
 	}
@@ -283,7 +292,7 @@ func (s *Store) GetFlow(ctx context.Context, name string) (confstore.FlowRow, er
 }
 
 func (s *Store) ListFlows(ctx context.Context) ([]confstore.FlowRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT name, yaml, hash, updated_at FROM flows ORDER BY name`)
+	rows, err := s.pool.Query(ctx, `SELECT name, yaml, hash, layout, updated_at FROM flows ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -291,9 +300,11 @@ func (s *Store) ListFlows(ctx context.Context) ([]confstore.FlowRow, error) {
 	var out []confstore.FlowRow
 	for rows.Next() {
 		var r confstore.FlowRow
-		if err := rows.Scan(&r.Name, &r.YAML, &r.Hash, &r.UpdatedAt); err != nil {
+		var layout []byte
+		if err := rows.Scan(&r.Name, &r.YAML, &r.Hash, &layout, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
+		r.Layout = layout
 		out = append(out, r)
 	}
 	return out, rows.Err()

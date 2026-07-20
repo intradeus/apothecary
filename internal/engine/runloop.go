@@ -184,8 +184,14 @@ func (x *exec) append(ps ...event.Payload) error {
 	return nil
 }
 
-func (x *exec) advance() {
-	x.rs.pos++
+// advance follows the stage's explicit on_success target (DESIGN3 §2.1):
+// done parks pos past the end, which the run loop reads as completion.
+func (x *exec) advance(st *flow.Stage) {
+	if st.OnSuccess == flow.TerminalDone {
+		x.rs.pos = len(x.rs.fl.Stages)
+	} else {
+		x.rs.pos = x.rs.fl.Index(st.OnSuccess) // parse-validated: always >= 0
+	}
 	x.rs.ph = phStart
 	x.rs.feed = ""
 	x.rs.feedAttempts = 0
@@ -212,10 +218,12 @@ func (x *exec) fail(reason string) error {
 	return x.append(&event.RunFailed{Reason: reason})
 }
 
-// takeEdge follows an on_fail/on_reject edge, abandoning the run when the
-// edge is exhausted (§2, §3).
-func (x *exec) takeEdge(st *flow.Stage, edge *flow.Edge, kind, feedContent string) error {
+// takeEdge follows a recoverable edge of the given kind (on_fail,
+// on_reject, future kinds — the registry lives in the flow package),
+// abandoning the run when the edge is absent or exhausted (§2, §3).
+func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
+	edge := st.Edge(kind)
 	if edge == nil {
 		return x.abandon(st.ID, "", fmt.Sprintf("stage %s: unrecoverable failure with no %s", st.ID, kind))
 	}
@@ -264,7 +272,7 @@ func (x *exec) routeAfterFail(st *flow.Stage) error {
 		feed = x.rs.lastFailure.Error
 	}
 	x.rs.ph = phStart
-	return x.takeEdge(st, st.OnFail, "on_fail", feed)
+	return x.takeEdge(st, flow.EdgeFail, feed)
 }
 
 // routeAfterComplete handles recovery when the crash hit between a
@@ -276,13 +284,13 @@ func (x *exec) routeAfterComplete(st *flow.Stage) error {
 			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); err != nil {
 				return err
 			}
-			return x.takeEdge(st, st.OnFail, "on_fail", "")
+			return x.takeEdge(st, flow.EdgeFail, "")
 		}
 		if !v.Approve {
-			return x.takeEdge(st, st.OnReject, "on_reject", strings.Join(v.Comments, "\n"))
+			return x.takeEdge(st, flow.EdgeReject, strings.Join(v.Comments, "\n"))
 		}
 	}
-	x.advance()
+	x.advance(st)
 	return nil
 }
 
@@ -336,13 +344,13 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); err != nil {
 			return err
 		}
-		return x.takeEdge(st, st.OnFail, "on_fail", "")
+		return x.takeEdge(st, flow.EdgeFail, "")
 	}
 	if res.err != nil {
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonHarnessError, Error: res.err.Error()}); err != nil {
 			return err
 		}
-		return x.takeEdge(st, st.OnFail, "on_fail", tail(res.r.Output, 8<<10))
+		return x.takeEdge(st, flow.EdgeFail, tail(res.r.Output, 8<<10))
 	}
 
 	// Output contract (§3): declared artifact must exist.
@@ -352,7 +360,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				Error: fmt.Sprintf("declared output %s not readable: %v", st.Output, err)}); aerr != nil {
 				return aerr
 			}
-			return x.takeEdge(st, st.OnFail, "on_fail", "")
+			return x.takeEdge(st, flow.EdgeFail, "")
 		}
 	}
 	var verdict *ports.Verdict
@@ -364,7 +372,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); aerr != nil {
 					return aerr
 				}
-				return x.takeEdge(st, st.OnFail, "on_fail", "")
+				return x.takeEdge(st, flow.EdgeFail, "")
 			}
 			verdict = v
 		}
@@ -401,9 +409,9 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		return err
 	}
 	if verdict != nil && !verdict.Approve {
-		return x.takeEdge(st, st.OnReject, "on_reject", strings.Join(verdict.Comments, "\n"))
+		return x.takeEdge(st, flow.EdgeReject, strings.Join(verdict.Comments, "\n"))
 	}
-	x.advance()
+	x.advance(st)
 	return nil
 }
 
@@ -563,7 +571,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); aerr != nil {
 				return aerr
 			}
-			return x.takeEdge(st, st.OnFail, "on_fail", "")
+			return x.takeEdge(st, flow.EdgeFail, "")
 		}
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra, Error: err.Error()}); aerr != nil {
 			return aerr
@@ -579,12 +587,12 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			ExitCode: &code, Error: tail(res.Output, 8<<10)}); err != nil {
 			return err
 		}
-		return x.takeEdge(st, st.OnFail, "on_fail", tail(res.Output, 8<<10))
+		return x.takeEdge(st, flow.EdgeFail, tail(res.Output, 8<<10))
 	}
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.advance()
+	x.advance(st)
 	return nil
 }
 
@@ -687,10 +695,10 @@ func (x *exec) routeGate(st *flow.Stage, ans PingAnswer, started time.Time) erro
 		if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 			return err
 		}
-		x.advance()
+		x.advance(st)
 		return nil
 	}
-	return x.takeEdge(st, st.OnReject, "on_reject", ans.Feedback)
+	return x.takeEdge(st, flow.EdgeReject, ans.Feedback)
 }
 
 // --- forge_mr stages --------------------------------------------------------
@@ -735,7 +743,7 @@ func (x *exec) stageForgeMR(st *flow.Stage) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.advance()
+	x.advance(st)
 	return nil
 }
 

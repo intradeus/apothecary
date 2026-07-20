@@ -2,6 +2,7 @@ package confstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -340,7 +341,10 @@ func ValidateFragment(fragment string) error {
 // SaveFlow validates the YAML through the flow parser (line-precise errors
 // travel to the API verbatim, §7) and upserts current + immutable version.
 // The document's name must match the addressed name — names are ids.
-func (s *Service) SaveFlow(ctx context.Context, name, yamlSrc string) (FlowRow, error) {
+// layout is the graph editor's display metadata (DESIGN3 §2.2): nil keeps
+// the stored one (a YAML-tab edit must not wipe node positions), non-nil
+// replaces it; it never influences the hash or versions.
+func (s *Service) SaveFlow(ctx context.Context, name, yamlSrc string, layout json.RawMessage) (FlowRow, error) {
 	f, err := flow.Parse(name, []byte(yamlSrc))
 	if err != nil {
 		return FlowRow{}, invalidf("%v", err)
@@ -348,9 +352,18 @@ func (s *Service) SaveFlow(ctx context.Context, name, yamlSrc string) (FlowRow, 
 	if f.Name != name {
 		return FlowRow{}, invalidf("flow document is named %q but addressed as %q — names are immutable ids (create a new flow to rename)", f.Name, name)
 	}
-	row := FlowRow{Name: name, YAML: yamlSrc, Hash: f.Hash, UpdatedAt: s.now().UTC()}
+	if len(layout) > 0 && !json.Valid(layout) {
+		return FlowRow{}, invalidf("flow %s: layout is not valid JSON", name)
+	}
+	row := FlowRow{Name: name, YAML: yamlSrc, Hash: f.Hash, Layout: layout, UpdatedAt: s.now().UTC()}
 	if err := s.db.UpsertFlow(ctx, row); err != nil {
 		return FlowRow{}, err
+	}
+	if len(layout) == 0 {
+		// Reflect the kept layout back to the caller.
+		if cur, err := s.db.GetFlow(ctx, name); err == nil {
+			row.Layout = cur.Layout
+		}
 	}
 	return row, nil
 }

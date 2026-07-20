@@ -37,53 +37,85 @@ const (
 
 var slugRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
-// raw* mirror the YAML schema exactly; unknown fields are rejected by the
-// strict decoder. Pointers distinguish "absent" from explicit zero values.
-type rawFlow struct {
-	Name        string      `yaml:"name"`
-	Description string      `yaml:"description"`
-	Defaults    rawDefaults `yaml:"defaults"`
-	Budget      rawBudget   `yaml:"budget"`
-	Stages      []rawStage  `yaml:"stages"`
+// Doc* mirror the YAML schema exactly (unknown fields rejected by the
+// strict decoder; pointers distinguish "absent" from explicit zeros). They
+// are exported with JSON tags as the graph editor's document model
+// (DESIGN3 §2.3): ParseDoc hands the raw shape to the UI, which serializes
+// its edits back to YAML.
+type Doc struct {
+	Name        string      `yaml:"name" json:"name"`
+	Description string      `yaml:"description" json:"description,omitempty"`
+	Defaults    DocDefaults `yaml:"defaults" json:"defaults"`
+	Budget      DocBudget   `yaml:"budget" json:"budget"`
+	Stages      []DocStage  `yaml:"stages" json:"stages"`
 }
 
-type rawDefaults struct {
-	Timeout  string `yaml:"timeout"`
-	Harness  string `yaml:"harness"`
-	Model    string `yaml:"model"`
-	MaxTurns *int   `yaml:"max_turns"`
+type DocDefaults struct {
+	Timeout  string `yaml:"timeout" json:"timeout,omitempty"`
+	Harness  string `yaml:"harness" json:"harness,omitempty"`
+	Model    string `yaml:"model" json:"model"`
+	MaxTurns *int   `yaml:"max_turns" json:"max_turns,omitempty"`
 }
 
-type rawBudget struct {
-	MaxCostUSD    *float64 `yaml:"max_cost_usd"`
-	MaxTotalTurns *int     `yaml:"max_total_turns"`
+type DocBudget struct {
+	MaxCostUSD    *float64 `yaml:"max_cost_usd" json:"max_cost_usd,omitempty"`
+	MaxTotalTurns *int     `yaml:"max_total_turns" json:"max_total_turns,omitempty"`
 }
 
-type rawStage struct {
-	ID           string   `yaml:"id"`
-	Type         string   `yaml:"type"`
-	Agent        string   `yaml:"agent"`
-	Model        string   `yaml:"model"`
-	Harness      string   `yaml:"harness"`
-	MaxTurns     *int     `yaml:"max_turns"`
-	Timeout      string   `yaml:"timeout"`
-	Input        []string `yaml:"input"`
-	Output       string   `yaml:"output"`
-	Verdict      bool     `yaml:"verdict"`
-	Run          string   `yaml:"run"`
-	RunRef       string   `yaml:"run_ref"`
-	Ping         string   `yaml:"ping"`
-	Payload      string   `yaml:"payload"`
-	AutoComplete string   `yaml:"auto_complete"`
-	Body         string   `yaml:"body"`
-	OnFail       *rawEdge `yaml:"on_fail"`
-	OnReject     *rawEdge `yaml:"on_reject"`
+type DocStage struct {
+	ID           string   `yaml:"id" json:"id"`
+	Type         string   `yaml:"type" json:"type"`
+	Agent        string   `yaml:"agent" json:"agent,omitempty"`
+	Model        string   `yaml:"model" json:"model,omitempty"`
+	Harness      string   `yaml:"harness" json:"harness,omitempty"`
+	MaxTurns     *int     `yaml:"max_turns" json:"max_turns,omitempty"`
+	Timeout      string   `yaml:"timeout" json:"timeout,omitempty"`
+	Input        []string `yaml:"input" json:"input,omitempty"`
+	Output       string   `yaml:"output" json:"output,omitempty"`
+	Verdict      bool     `yaml:"verdict" json:"verdict,omitempty"`
+	Run          string   `yaml:"run" json:"run,omitempty"`
+	RunRef       string   `yaml:"run_ref" json:"run_ref,omitempty"`
+	Ping         string   `yaml:"ping" json:"ping,omitempty"`
+	Payload      string   `yaml:"payload" json:"payload,omitempty"`
+	AutoComplete string   `yaml:"auto_complete" json:"auto_complete,omitempty"`
+	Body         string   `yaml:"body" json:"body,omitempty"`
+	OnSuccess    string   `yaml:"on_success" json:"on_success,omitempty"`
+	OnFail       *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
+	OnReject     *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
 }
 
-type rawEdge struct {
-	To   string `yaml:"to"`
-	Max  *int   `yaml:"max"`
-	Feed string `yaml:"feed"`
+// edges maps the declared edge kinds to their raw fields. Adding a kind
+// (DESIGN3 §2.1): one DocStage field, one row here, one edgeKinds row, one
+// raise site in the engine — parse, validation, routing and the edge_taken
+// event generalize.
+func (r *DocStage) edges() map[string]*DocEdge {
+	return map[string]*DocEdge{EdgeFail: r.OnFail, EdgeReject: r.OnReject}
+}
+
+// edgeKindSpec declares one recoverable edge kind: where it may appear and
+// which feeds it can carry.
+type edgeKindSpec struct {
+	on     []StageType
+	feedOK func(f Feed, st StageType) bool
+}
+
+var edgeKinds = map[string]edgeKindSpec{
+	EdgeFail: {
+		on:     []StageType{StageAgent, StageCommand},
+		feedOK: func(f Feed, _ StageType) bool { return f == "" || f == FeedOutput },
+	},
+	EdgeReject: {
+		on: []StageType{StageAgent, StageHumanGate},
+		feedOK: func(f Feed, st StageType) bool {
+			return f == "" || (f == FeedComments && st == StageAgent) || (f == FeedFeedback && st == StageHumanGate)
+		},
+	},
+}
+
+type DocEdge struct {
+	To   string `yaml:"to" json:"to"`
+	Max  *int   `yaml:"max" json:"max,omitempty"`
+	Feed string `yaml:"feed" json:"feed,omitempty"`
 }
 
 // Load reads, parses and validates a flow file, setting Flow.Hash.
@@ -106,7 +138,7 @@ func Parse(filename string, data []byte) (*Flow, error) {
 
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
-	var raw rawFlow
+	var raw Doc
 	if err := dec.Decode(&raw); err != nil {
 		return nil, p.wrapYAML(err)
 	}
@@ -122,6 +154,22 @@ func Parse(filename string, data []byte) (*Flow, error) {
 	sum := sha256.Sum256(data)
 	f.Hash = hex.EncodeToString(sum[:])
 	return f, nil
+}
+
+// ParseDoc validates the document (full Parse) and returns the raw schema
+// shape for the graph editor. The Doc preserves absent-vs-set (pointers,
+// empty strings), so the editor round-trips without baking defaults in.
+func ParseDoc(filename string, data []byte) (*Doc, error) {
+	if _, err := Parse(filename, data); err != nil {
+		return nil, err
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
+	var d Doc
+	if err := dec.Decode(&d); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 type parser struct {
@@ -172,7 +220,7 @@ func (p *parser) stageLine(i int) int {
 	return 0
 }
 
-func (p *parser) build(raw *rawFlow) (*Flow, error) {
+func (p *parser) build(raw *Doc) (*Flow, error) {
 	f := &Flow{Name: raw.Name, Description: raw.Description}
 
 	if raw.Name == "" {
@@ -206,10 +254,23 @@ func (p *parser) build(raw *rawFlow) (*Flow, error) {
 		f.Stages = append(f.Stages, *s)
 	}
 
+	// The success chain is explicit in the model (DESIGN3 §2.1); absent
+	// on_success is YAML sugar for "next stage in document order", last
+	// stage = done. After this loop every stage has a concrete target.
+	for i := range f.Stages {
+		if f.Stages[i].OnSuccess == "" {
+			if i == len(f.Stages)-1 {
+				f.Stages[i].OnSuccess = TerminalDone
+			} else {
+				f.Stages[i].OnSuccess = f.Stages[i+1].ID
+			}
+		}
+	}
+
 	return f, p.validateFlow(f, ids)
 }
 
-func (p *parser) buildDefaults(raw *rawDefaults) (Defaults, error) {
+func (p *parser) buildDefaults(raw *DocDefaults) (Defaults, error) {
 	line := p.keyLine("defaults")
 	// harness: any slug is valid document-side (DESIGN2 §6.3) — whether the
 	// kind exists is preflight's question at run creation, keeping flows
@@ -245,7 +306,7 @@ func (p *parser) buildDefaults(raw *rawDefaults) (Defaults, error) {
 	return d, nil
 }
 
-func (p *parser) buildBudget(raw *rawBudget) (Budget, error) {
+func (p *parser) buildBudget(raw *DocBudget) (Budget, error) {
 	line := p.keyLine("budget")
 	b := Budget{MaxCostUSD: defaultMaxCostUSD, MaxTotalTurns: defaultMaxTotalTurns}
 	if raw.MaxCostUSD != nil {
@@ -263,7 +324,7 @@ func (p *parser) buildBudget(raw *rawBudget) (Budget, error) {
 	return b, nil
 }
 
-func (p *parser) buildStage(raw *rawStage, idx int, d Defaults) (*Stage, error) {
+func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) {
 	line := p.stageLine(idx)
 	fail := func(format string, args ...any) (*Stage, error) {
 		id := raw.ID
@@ -278,6 +339,9 @@ func (p *parser) buildStage(raw *rawStage, idx int, d Defaults) (*Stage, error) 
 	}
 	if !slugRe.MatchString(raw.ID) {
 		return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
+	}
+	if raw.ID == TerminalDone {
+		return fail("id %q is reserved (the on_success terminal)", TerminalDone)
 	}
 	st := StageType(raw.Type)
 	switch st {
@@ -310,8 +374,9 @@ func (p *parser) buildStage(raw *rawStage, idx int, d Defaults) (*Stage, error) 
 		{"payload", raw.Payload != "", []StageType{StageHumanGate}},
 		{"auto_complete", raw.AutoComplete != "", []StageType{StageHumanGate}},
 		{"body", raw.Body != "", []StageType{StageForgeMR}},
-		{"on_fail", raw.OnFail != nil, []StageType{StageAgent, StageCommand}},
-		{"on_reject", raw.OnReject != nil, []StageType{StageAgent, StageHumanGate}},
+	}
+	for kind, re := range raw.edges() {
+		fields = append(fields, fieldSet{kind, re != nil, edgeKinds[kind].on})
 	}
 	for _, fs := range fields {
 		if fs.set && !containsType(fs.on, st) {
@@ -404,20 +469,28 @@ func (p *parser) buildStage(raw *rawStage, idx int, d Defaults) (*Stage, error) 
 		s.Body = raw.Body
 	}
 
-	var err error
-	if s.OnFail, err = p.buildEdge(raw.OnFail, "on_fail", s, line); err != nil {
-		return nil, err
+	if raw.OnSuccess != "" && raw.OnSuccess != TerminalDone && !slugRe.MatchString(raw.OnSuccess) {
+		return fail("on_success %q must be a stage id or %q", raw.OnSuccess, TerminalDone)
 	}
-	if s.OnReject, err = p.buildEdge(raw.OnReject, "on_reject", s, line); err != nil {
-		return nil, err
+	s.OnSuccess = raw.OnSuccess
+
+	s.Edges = map[string]*Edge{}
+	for kind, re := range raw.edges() {
+		e, err := p.buildEdge(re, kind, s, line)
+		if err != nil {
+			return nil, err
+		}
+		if e != nil {
+			s.Edges[kind] = e
+		}
 	}
-	if s.OnReject != nil && st == StageAgent && !s.Verdict {
+	if s.Edges[EdgeReject] != nil && st == StageAgent && !s.Verdict {
 		return fail("on_reject on an agent stage requires verdict: true")
 	}
 	return s, nil
 }
 
-func (p *parser) buildEdge(raw *rawEdge, kind string, s *Stage, line int) (*Edge, error) {
+func (p *parser) buildEdge(raw *DocEdge, kind string, s *Stage, line int) (*Edge, error) {
 	if raw == nil {
 		return nil, nil
 	}
@@ -434,29 +507,26 @@ func (p *parser) buildEdge(raw *rawEdge, kind string, s *Stage, line int) (*Edge
 		return fail("max must be >= 1, got %d", *raw.Max)
 	}
 	e := &Edge{To: raw.To, Max: *raw.Max, Feed: Feed(raw.Feed)}
-	// Feed must match what the edge can actually carry.
-	switch {
-	case e.Feed == "":
-	case e.Feed == FeedOutput && kind == "on_fail":
-	case e.Feed == FeedComments && kind == "on_reject" && s.Type == StageAgent:
-	case e.Feed == FeedFeedback && kind == "on_reject" && s.Type == StageHumanGate:
-	default:
+	// Feed must match what the edge kind can actually carry (registry).
+	if spec, ok := edgeKinds[kind]; !ok || !spec.feedOK(e.Feed, s.Type) {
 		return fail("feed %q is not valid for %s on a %s stage", raw.Feed, kind, s.Type)
 	}
 	return e, nil
 }
 
-// validateFlow holds the cross-stage rules.
+// validateFlow holds the cross-stage rules (DESIGN3 §2.1: explicit graph).
 func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	forgeMRAt := -1
 	for i := range f.Stages {
 		s := &f.Stages[i]
-		for _, e := range []*Edge{s.OnFail, s.OnReject} {
-			if e == nil {
-				continue
-			}
+		for kind, e := range s.Edges {
 			if _, ok := ids[e.To]; !ok {
-				return p.errf(s.Line, "stage %q: edge target %q does not exist", s.ID, e.To)
+				return p.errf(s.Line, "stage %q: %s target %q does not exist", s.ID, kind, e.To)
+			}
+		}
+		if s.OnSuccess != TerminalDone {
+			if _, ok := ids[s.OnSuccess]; !ok {
+				return p.errf(s.Line, "stage %q: on_success target %q does not exist", s.ID, s.OnSuccess)
 			}
 		}
 		if s.Type == StageForgeMR {
@@ -465,8 +535,55 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 			}
 			forgeMRAt = i
 		}
-		if s.Type == StageHumanGate && s.AutoComplete != "" && i != len(f.Stages)-1 {
-			return p.errf(s.Line, "stage %q: human_gate with auto_complete must be the last stage", s.ID)
+		if s.Type == StageHumanGate && s.AutoComplete != "" && s.OnSuccess != TerminalDone {
+			return p.errf(s.Line, "stage %q: human_gate with auto_complete must complete the run (on_success: done)", s.ID)
+		}
+	}
+
+	// Success-DAG rule: every stage's on_success chain must reach done. A
+	// success-only cycle through command stages would consume no turns and
+	// no cost — no budget would ever bound it; loops belong to edge kinds
+	// carrying max (on_fail/on_reject).
+	for i := range f.Stages {
+		seen := map[string]bool{}
+		cur := &f.Stages[i]
+		var path []string
+		for {
+			if seen[cur.ID] {
+				return p.errf(f.Stages[i].Line, "success cycle: %s -> %s — the on_success chain must reach %q (use on_fail/on_reject for loops; they carry max)",
+					strings.Join(path, " -> "), cur.ID, TerminalDone)
+			}
+			seen[cur.ID] = true
+			path = append(path, cur.ID)
+			if cur.OnSuccess == TerminalDone {
+				break
+			}
+			cur = &f.Stages[ids[cur.OnSuccess]]
+		}
+	}
+
+	// Reachability: every stage reachable from the entry (first stage) via
+	// on_success or any edge — an orphaned stage would never execute.
+	reached := map[string]bool{}
+	queue := []string{f.Stages[0].ID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if reached[id] {
+			continue
+		}
+		reached[id] = true
+		s := &f.Stages[ids[id]]
+		if s.OnSuccess != TerminalDone {
+			queue = append(queue, s.OnSuccess)
+		}
+		for _, e := range s.Edges {
+			queue = append(queue, e.To)
+		}
+	}
+	for i := range f.Stages {
+		if !reached[f.Stages[i].ID] {
+			return p.errf(f.Stages[i].Line, "stage %q is unreachable from the entry stage %q", f.Stages[i].ID, f.Stages[0].ID)
 		}
 	}
 	return nil

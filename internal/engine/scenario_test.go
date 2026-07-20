@@ -854,3 +854,65 @@ stages:
 		t.Errorf("reason = %q", sf.Reason)
 	}
 }
+
+// TestExplicitSuccessRouting proves the engine follows explicit on_success
+// edges (DESIGN3 §2.1): the entry stage skips over a fallback stage that
+// is only reachable via on_fail and itself completes the run early.
+func TestExplicitSuccessRouting(t *testing.T) {
+	branchDoc := `name: branch
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: probe,   type: command, run: probe.sh, on_success: finish, on_fail: { to: repair, max: 1 } }
+  - { id: repair,  type: command, run: repair.sh, on_success: done }
+  - { id: finish,  type: command, run: finish.sh }
+`
+	// Happy path: probe succeeds -> finish runs, repair never does.
+	h := newHarness(t, mustFlow(t, branchDoc))
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		return ports.ExecResult{ExitCode: 0, Output: cmd.Script}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "branch", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	var started []string
+	for _, ev := range h.events(t, runID) {
+		if ss, ok := ev.Payload.(*event.StageStarted); ok {
+			started = append(started, ss.StageID)
+		}
+	}
+	if len(started) != 2 || started[0] != "probe" || started[1] != "finish" {
+		t.Errorf("stages run = %v, want [probe finish]", started)
+	}
+
+	// Failure path: probe fails -> repair runs and completes the run early;
+	// finish never runs.
+	h2 := newHarness(t, mustFlow(t, branchDoc))
+	h2.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "probe.sh") {
+			return ports.ExecResult{ExitCode: 1, Output: "probe broke"}, nil
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+	runID2, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "branch", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2.e.Wait(runID2)
+	if v := h2.view(t, runID2); v.State != run.Completed {
+		t.Fatalf("failure path state = %s: %v", v.State, eventTypes(h2.events(t, runID2)))
+	}
+	started = nil
+	for _, ev := range h2.events(t, runID2) {
+		if ss, ok := ev.Payload.(*event.StageStarted); ok {
+			started = append(started, ss.StageID)
+		}
+	}
+	if len(started) != 2 || started[0] != "probe" || started[1] != "repair" {
+		t.Errorf("failure-path stages = %v, want [probe repair]", started)
+	}
+}

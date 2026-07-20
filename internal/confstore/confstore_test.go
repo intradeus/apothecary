@@ -30,7 +30,7 @@ stages:
 func seedProject(t *testing.T, svc *Service) Project {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc); err != nil {
+	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
 		t.Fatal(err)
 	}
 	mk := func(port, kind, name string, sec map[string]string) Integration {
@@ -113,7 +113,7 @@ func TestUpdateIntegrationSecretMerge(t *testing.T) {
 func TestProjectValidation(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc); err != nil {
+	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
 		t.Fatal(err)
 	}
 	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
@@ -229,11 +229,11 @@ func TestDeleteRules(t *testing.T) {
 func TestFlowNameIsImmutableID(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "other", testFlowDoc); err == nil || !strings.Contains(err.Error(), "immutable") {
+	if _, err := svc.SaveFlow(ctx, "other", testFlowDoc, nil); err == nil || !strings.Contains(err.Error(), "immutable") {
 		t.Errorf("name mismatch err = %v", err)
 	}
 	// Line-precise parser errors surface verbatim.
-	_, err := svc.SaveFlow(ctx, "v1", "name: v1\ndefaults: { model: nope }\nstages: []\n")
+	_, err := svc.SaveFlow(ctx, "v1", "name: v1\ndefaults: { model: nope }\nstages: []\n", nil)
 	if err == nil || !strings.Contains(err.Error(), "provider/model") {
 		t.Errorf("parser err = %v", err)
 	}
