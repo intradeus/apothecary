@@ -104,6 +104,11 @@ type StageStarted struct {
 	Iteration int    `json:"iteration"`
 	Harness   string `json:"harness,omitempty"`
 	Model     string `json:"model,omitempty"`
+	// Agent/AgentHash pin the agent-library entry and its exact content
+	// version (DESIGN3 §1): outcome events become joinable to the prompt
+	// version that produced them.
+	Agent     string `json:"agent,omitempty"`
+	AgentHash string `json:"agent_hash,omitempty"`
 }
 
 type StageCompleted struct {

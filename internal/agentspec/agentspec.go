@@ -1,6 +1,8 @@
-// Package agentspec parses the neutral agent definitions in
-// .apothecary/agents/<name>.yaml (DESIGN.md §5.1). These are harness-agnostic;
-// each harness adapter translates them into its native config (§5.2).
+// Package agentspec models the neutral, harness-agnostic agent
+// definitions (DESIGN.md §5.1). Since v3 they live in the per-project agent
+// library (DESIGN3 §1); Parse remains for the one-time repo import of the
+// retired .apothecary/agents/*.yaml contract. Each harness adapter
+// translates specs into its native config (§5.2).
 package agentspec
 
 import (
@@ -47,6 +49,11 @@ func Parse(stem string, data []byte) (*Spec, error) {
 	}
 	return &s, nil
 }
+
+// ValidName reports whether s is a legal agent name (lowercase slug; the
+// name becomes workspace file paths and CLI arguments). Shared by the
+// file parser and the DB-backed agent library (DESIGN3 §1).
+func ValidName(s string) bool { return validSlug(s) }
 
 func validSlug(s string) bool {
 	if s == "" {

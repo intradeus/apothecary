@@ -74,6 +74,30 @@ export interface Project {
   updated_at: string;
 }
 
+// Agent library (DESIGN3 §1): per-project, versioned, copiable.
+export interface Agent {
+  project_id: string;
+  name: string;
+  description: string;
+  read_only: boolean;
+  allow_bash: boolean;
+  prompt: string;
+  hash: string;
+  updated_at: string;
+}
+
+export interface AgentVersion {
+  hash: string;
+  name: string;
+  spec: { name: string; description: string; read_only: boolean; allow_bash: boolean; prompt: string };
+  created_at: string;
+}
+
+export interface AgentImportReport {
+  imported: string[];
+  skipped: { file: string; error: string }[];
+}
+
 export interface FlowRow {
   name: string;
   yaml: string;
@@ -224,6 +248,19 @@ export const api = {
   startEnvCheck: (projectId: string, keep: boolean) =>
     post(`/api/projects/${projectId}/envcheck`, { keep }) as Promise<{ check_id: string }>,
   envCheck: (checkId: string) => req<CheckRun>(`/api/envchecks/${checkId}`),
+
+  // agent library (DESIGN3 §1)
+  agents: (projectId: string) => req<Agent[]>(`/api/projects/${projectId}/agents`),
+  putAgent: (projectId: string, name: string, body: { description: string; read_only: boolean; allow_bash: boolean; prompt: string }) =>
+    put(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, body) as Promise<Agent>,
+  deleteAgent: (projectId: string, name: string) =>
+    req<void>(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  agentVersions: (projectId: string, name: string) =>
+    req<AgentVersion[]>(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}/versions`),
+  copyAgents: (projectId: string, fromProjectId: string, names?: string[]) =>
+    post(`/api/projects/${projectId}/agents/copy`, { from_project_id: fromProjectId, ...(names?.length ? { names } : {}) }) as Promise<{ copied: Agent[] }>,
+  importAgents: (projectId: string) =>
+    post(`/api/projects/${projectId}/agents/import-repo`) as Promise<AgentImportReport>,
 
   flows: () => req<FlowRow[]>('/api/flows'),
   flow: (name: string) => req<FlowRow>(`/api/flows/${encodeURIComponent(name)}`),

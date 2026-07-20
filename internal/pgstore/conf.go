@@ -408,4 +408,112 @@ func (s *Store) PutSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
+// --- agents (DESIGN3 §1) ----------------------------------------------------
+
+const agentCols = `project_id, name, description, read_only, allow_bash, prompt, hash, updated_at`
+
+func scanAgent(row pgx.Row) (confstore.Agent, error) {
+	var a confstore.Agent
+	err := row.Scan(&a.ProjectID, &a.Name, &a.Description, &a.ReadOnly, &a.AllowBash, &a.Prompt, &a.Hash, &a.UpdatedAt)
+	return a, err
+}
+
+func (s *Store) UpsertAgent(ctx context.Context, a confstore.Agent) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO agents (`+agentCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (project_id, name) DO UPDATE SET
+			description=$3, read_only=$4, allow_bash=$5, prompt=$6, hash=$7, updated_at=$8`,
+		a.ProjectID, a.Name, a.Description, a.ReadOnly, a.AllowBash, a.Prompt, a.Hash, a.UpdatedAt); err != nil {
+		if isFK(err) {
+			return fmt.Errorf("agent %s: project %s: %w", a.Name, a.ProjectID, confstore.ErrNotFound)
+		}
+		return err
+	}
+	v := confstore.AgentVersionRow(a, a.UpdatedAt)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO agent_versions (hash, name, spec, created_at) VALUES ($1,$2,$3,$4)
+		ON CONFLICT (hash) DO NOTHING`,
+		v.Hash, v.Name, []byte(v.Spec), v.CreatedAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) GetAgent(ctx context.Context, projectID, name string) (confstore.Agent, error) {
+	a, err := scanAgent(s.pool.QueryRow(ctx,
+		`SELECT `+agentCols+` FROM agents WHERE project_id=$1 AND name=$2`, projectID, name))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return confstore.Agent{}, fmt.Errorf("agent %s: %w", name, confstore.ErrNotFound)
+	}
+	return a, err
+}
+
+func (s *Store) ListAgents(ctx context.Context, projectID string) ([]confstore.Agent, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+agentCols+` FROM agents WHERE project_id=$1 ORDER BY name`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.Agent
+	for rows.Next() {
+		a, err := scanAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteAgent(ctx context.Context, projectID, name string) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM agents WHERE project_id=$1 AND name=$2`, projectID, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("agent %s: %w", name, confstore.ErrNotFound)
+	}
+	return nil // versions stay: immutable
+}
+
+func (s *Store) GetAgentVersion(ctx context.Context, hash string) (confstore.AgentVersion, error) {
+	var v confstore.AgentVersion
+	var spec []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT hash, name, spec, created_at FROM agent_versions WHERE hash=$1`, hash).
+		Scan(&v.Hash, &v.Name, &spec, &v.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return confstore.AgentVersion{}, fmt.Errorf("agent version %s: %w", hash, confstore.ErrNotFound)
+	}
+	v.Spec = spec
+	return v, err
+}
+
+func (s *Store) ListAgentVersions(ctx context.Context, name string) ([]confstore.AgentVersion, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT hash, name, spec, created_at FROM agent_versions WHERE name=$1 ORDER BY created_at DESC`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.AgentVersion
+	for rows.Next() {
+		var v confstore.AgentVersion
+		var spec []byte
+		if err := rows.Scan(&v.Hash, &v.Name, &spec, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		v.Spec = spec
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 var _ confstore.DB = (*Store)(nil)

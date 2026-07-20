@@ -30,8 +30,11 @@ exactly two touchpoints — plan approval and final review.
 - **Model auth for your coding agent**: an opencode `auth.json` (API keys
   and/or subscription login) or, for codex, an OpenAI API key / ChatGPT
   `auth.json`.
-- A target repository containing `AGENTS.md` and `.apothecary/agents/*.yaml`
-  agent specs (see `examples/target-repo/` for example agent specs).
+- A target repository containing `AGENTS.md` (the repo's conventions).
+  Agents themselves are defined **per project in the UI** (v3 agent
+  library) — `examples/agents/` has starter specs, and a legacy
+  `.apothecary/agents/` directory can be imported with one click on the
+  project's Agents panel.
 
 ## Install
 

@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
-	"sort"
 	"strings"
 
 	"apothecary/internal/agentspec"
@@ -47,19 +46,12 @@ const (
 	authPath   = "/home/apothecary/.local/share/opencode/auth.json"
 )
 
-// PrepareEnv generates harness-native config from .apothecary/agents/ (§5.2):
-// one agent markdown per spec plus the ask_human MCP registration. Config
+// PrepareEnv generates harness-native config from the project's agent
+// library specs (§5.2, DESIGN3 §1): one agent markdown per spec plus the
+// ask_human MCP registration (written even for zero specs). Config
 // lands in the workspace user's config dir — outside the repo, so nothing
 // needs git-excluding, regenerated every provision.
-func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID) error {
-	specs, err := a.readSpecs(ctx, env)
-	if err != nil {
-		return err
-	}
-	if len(specs) == 0 {
-		return fmt.Errorf("no agent specs found in .apothecary/agents/")
-	}
-
+func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
 	for _, s := range specs {
 		md := agentMarkdown(s)
 		p := path.Join(homeConfig, "agent", s.Name+".md")
@@ -104,37 +96,6 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 		return fmt.Errorf("seed auth.json: %w", err)
 	}
 	return nil
-}
-
-// readSpecs cats every spec file out of the repo in one exec.
-func (a *Adapter) readSpecs(ctx context.Context, env ports.EnvID) ([]*agentspec.Spec, error) {
-	const marker = "===APOTHECARY-SPEC "
-	script := `for f in .apothecary/agents/*.yaml .apothecary/agents/*.yml; do [ -e "$f" ] || continue; printf '\n` + marker + `%s\n' "$f"; cat "$f"; done`
-	res, err := a.envp.Exec(ctx, env, ports.Command{Script: script, Dir: "repo"})
-	if err != nil {
-		return nil, fmt.Errorf("list agent specs: %w", err)
-	}
-	if res.ExitCode != 0 {
-		return nil, fmt.Errorf("list agent specs: exit %d: %s", res.ExitCode, res.Output)
-	}
-	var specs []*agentspec.Spec
-	// Line-anchored split: a spec whose body merely contains the marker text
-	// mid-line must not corrupt parsing.
-	chunks := strings.Split("\n"+res.Output, "\n"+marker)
-	for _, chunk := range chunks[min(1, len(chunks)):] {
-		file, body, ok := strings.Cut(chunk, "\n")
-		if !ok {
-			continue
-		}
-		stem := strings.TrimSuffix(strings.TrimSuffix(path.Base(strings.TrimSpace(file)), ".yaml"), ".yml")
-		s, err := agentspec.Parse(stem, []byte(body))
-		if err != nil {
-			return nil, err
-		}
-		specs = append(specs, s)
-	}
-	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
-	return specs, nil
 }
 
 // agentMarkdown renders one opencode agent definition (frontmatter + prompt).

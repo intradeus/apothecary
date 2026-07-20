@@ -127,6 +127,13 @@ type DB interface {
 	GetFlowVersion(ctx Ctx, hash string) (FlowVersion, error)
 	ListFlowVersions(ctx Ctx, name string) ([]FlowVersion, error)
 
+	UpsertAgent(ctx Ctx, a Agent) error // also inserts the immutable version (ON CONFLICT DO NOTHING)
+	GetAgent(ctx Ctx, projectID, name string) (Agent, error)
+	ListAgents(ctx Ctx, projectID string) ([]Agent, error)
+	DeleteAgent(ctx Ctx, projectID, name string) error
+	GetAgentVersion(ctx Ctx, hash string) (AgentVersion, error)
+	ListAgentVersions(ctx Ctx, name string) ([]AgentVersion, error)
+
 	GetSettings(ctx Ctx) (map[string]string, error) // key -> raw JSON value
 	PutSetting(ctx Ctx, key, value string) error
 }

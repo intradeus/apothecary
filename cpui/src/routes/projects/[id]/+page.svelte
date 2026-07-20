@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type CheckRun, type FlowRow, type Integration, type PreflightStep, type Project } from '$lib/api';
+  import AgentsPanel from '$lib/AgentsPanel.svelte';
   import ProjectForm from '$lib/ProjectForm.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -142,6 +143,7 @@
       }}
     />
   {:else}
+    <AgentsPanel {project} />
     <div class="card">
       <h2>Repository</h2>
       <div class="mono small">{project.repo.url}</div>

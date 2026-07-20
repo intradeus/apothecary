@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 )
 
@@ -144,9 +145,11 @@ type Harness interface {
 	// SeedAuth writes the harness's auth material into the workspace at
 	// bootstrap step 2.
 	SeedAuth(ctx context.Context, env ports.EnvID) error
-	// Prepare generates harness-native config at bootstrap step 4
-	// (replaces the deleted ports.HarnessPreparer type-assert).
-	Prepare(ctx context.Context, env ports.EnvID) error
+	// Prepare generates harness-native config at bootstrap step 4 from the
+	// project's agent library specs (DESIGN3 §1: agents live in the DB, not
+	// the target repo). Implementations must write their base config (e.g.
+	// the ask_human MCP registration) even for zero specs.
+	Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
 }
 
 type HarnessKind interface {

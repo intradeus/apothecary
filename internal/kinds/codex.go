@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	codexadapter "apothecary/internal/adapters/codex"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 )
 
@@ -95,8 +96,8 @@ func (h *codexHarness) SeedAuth(ctx context.Context, env ports.EnvID) error {
 	return h.adapter.SeedAuthJSON(ctx, env, []byte(h.authJSON))
 }
 
-func (h *codexHarness) Prepare(ctx context.Context, env ports.EnvID) error {
-	return h.adapter.PrepareEnv(ctx, env)
+func (h *codexHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+	return h.adapter.PrepareEnv(ctx, env, specs)
 }
 
 // Models: codex routes OpenAI models; ids surface as `openai/<model>` (the

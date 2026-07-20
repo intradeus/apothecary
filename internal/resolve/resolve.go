@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/kinds"
@@ -126,6 +128,22 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		return nil, unresolvable(fmt.Errorf("harness %s: %v", harnessInt.Name, err))
 	}
 
+	// Agent library (DESIGN3 §1): the project's full agent set rides the
+	// resolution — Prepare writes them all, preflight checks flow
+	// references against the names, stage events record the hashes.
+	agents, err := r.conf.ListAgents(ctx, p.ID)
+	if err != nil {
+		return nil, fmt.Errorf("agents for project %s: %w", p.Name, err)
+	}
+	specs := make([]*agentspec.Spec, 0, len(agents))
+	agentNames := make([]string, 0, len(agents))
+	agentHashes := make(map[string]string, len(agents))
+	for _, a := range agents {
+		specs = append(specs, a.Spec())
+		agentNames = append(agentNames, a.Name)
+		agentHashes[a.Name] = a.Hash
+	}
+
 	gitUser, gitPass := account.GitCredential()
 
 	// Image resolution (§8): custom template ⇒ the template bakes its own
@@ -163,8 +181,12 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		Runner:        harness,
 		Forge:         forge,
 		SeedAuth:      harness.SeedAuth,
-		Prepare:       harness.Prepare,
-		Release:       release,
+		Prepare: func(ctx context.Context, env ports.EnvID) error {
+			return harness.Prepare(ctx, env, specs)
+		},
+		AgentNames:  agentNames,
+		AgentHashes: agentHashes,
+		Release:     release,
 	}
 	ok = true
 	return res, nil
@@ -378,6 +400,42 @@ func (r *Resolver) ListModels(ctx context.Context, id string) ([]kinds.ModelInfo
 		return nil, err
 	}
 	return h.Models(ctx)
+}
+
+// RepoAgentFiles reads the target repo's legacy .apothecary/agents/ files
+// via the project's forge (DESIGN3 §1.3: the one-time import into the
+// agent library). Returns file name -> content for *.yaml|*.yml entries.
+func (r *Resolver) RepoAgentFiles(ctx context.Context, projectID string) (map[string][]byte, error) {
+	p, err := r.conf.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	repoRef := ports.RepoRef{URL: p.Repo.URL, DefaultBranch: p.Repo.DefaultBranch, Locator: p.Repo.Locator}
+	forgeInt, forgeKind, err := r.forgeKind(ctx, p.ForgeID)
+	if err != nil {
+		return nil, err
+	}
+	forge, err := forgeKind.Forge(kindConfig(forgeInt), repoRef)
+	if err != nil {
+		return nil, err
+	}
+	const dir = ".apothecary/agents/"
+	names, err := forge.ListDir(ctx, repoRef, dir)
+	if err != nil {
+		return nil, fmt.Errorf("listing %s: %w", dir, err)
+	}
+	out := map[string][]byte{}
+	for _, n := range names {
+		if !strings.HasSuffix(n, ".yaml") && !strings.HasSuffix(n, ".yml") {
+			continue
+		}
+		data, err := forge.ReadFile(ctx, repoRef, dir+n)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s%s: %w", dir, n, err)
+		}
+		out[n] = data
+	}
+	return out, nil
 }
 
 var _ engine.Resolver = (*Resolver)(nil)

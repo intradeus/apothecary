@@ -53,9 +53,17 @@ type Resolution struct {
 	// SeedAuth writes harness-native auth material at bootstrap step 2;
 	// nil = nothing to seed.
 	SeedAuth func(ctx context.Context, env ports.EnvID) error
-	// Prepare generates harness-native config at bootstrap step 4; nil =
-	// nothing to generate (fakes).
+	// Prepare generates harness-native config at bootstrap step 4 — the
+	// resolver closes over the project's agent library specs (DESIGN3 §1);
+	// nil = nothing to generate (fakes).
 	Prepare func(ctx context.Context, env ports.EnvID) error
+	// AgentNames lists the project's agent library entries (preflight:
+	// every agent stage must reference one).
+	AgentNames []string
+	// AgentHashes maps agent name -> current content version; stage_started
+	// events record the hash so analytics correlate outcome with prompt
+	// version.
+	AgentHashes map[string]string
 	// Release decrements the resolver's provisioner refcount (§6.1 adapter
 	// cache); nil is fine.
 	Release func()

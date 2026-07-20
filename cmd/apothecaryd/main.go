@@ -322,7 +322,7 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if err != nil {
 		return err
 	}
-	_, err = conf.CreateProject(ctx, confstore.Project{
+	p, err := conf.CreateProject(ctx, confstore.Project{
 		Name:          "dev",
 		ForgeID:       forgeID,
 		ProvisionerID: provID,
@@ -335,7 +335,23 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 		Workspace:   confstore.WorkspaceConfig{Template: "dev"},
 		DefaultFlow: "dev",
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// Agent library (DESIGN3 §1): the dev flow's agents, seeded so tickets
+	// pass preflight immediately.
+	for _, a := range []confstore.Agent{
+		{Name: "planner", Description: "plans the work", ReadOnly: true,
+			Prompt: "You are the planning agent of the dev sandbox. Write a short plan."},
+		{Name: "builder", Description: "implements the plan", AllowBash: true,
+			Prompt: "You are the building agent of the dev sandbox. Implement the plan."},
+	} {
+		a.ProjectID = p.ID
+		if _, err := conf.SaveAgent(ctx, a); err != nil {
+			return fmt.Errorf("dev agent %s: %w", a.Name, err)
+		}
+	}
+	return nil
 }
 
 // engineURL derives the workspace-visible engine URL from the listen

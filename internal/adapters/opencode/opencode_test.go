@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 )
 
@@ -148,19 +149,14 @@ prompt: |
 
 func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	envp, id := envWith(t, nil)
-	// Simulate the repo's .apothecary/agents directory via the exec that lists specs.
-	specOut := "===APOTHECARY-SPEC .apothecary/agents/planner.yaml\n" +
-		"name: planner\ndescription: plans\nread_only: true\nallow_bash: false\nprompt: |\n  Plan carefully.\n" +
-		"\n===APOTHECARY-SPEC .apothecary/agents/builder.yaml\n" +
-		"name: builder\ndescription: builds\nread_only: false\nallow_bash: true\nprompt: |\n  Build it.\n"
-	envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "APOTHECARY-SPEC") {
-			return ports.ExecResult{ExitCode: 0, Output: specOut}, nil
-		}
-		return ports.ExecResult{ExitCode: 0}, nil
+	// Specs arrive from the project's agent library (DESIGN3 §1), not the
+	// repo — no exec involved.
+	specs := []*agentspec.Spec{
+		{Name: "builder", Description: "builds", ReadOnly: false, AllowBash: true, Prompt: "Build it.\n"},
+		{Name: "planner", Description: "plans", ReadOnly: true, AllowBash: false, Prompt: "Plan carefully.\n"},
 	}
 	a := New(envp, Config{})
-	if err := a.PrepareEnv(context.Background(), id); err != nil {
+	if err := a.PrepareEnv(context.Background(), id, specs); err != nil {
 		t.Fatal(err)
 	}
 	// Auth material arrives via SeedAuthJSON (DESIGN2 §4: the opencode kind
@@ -208,13 +204,16 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	}
 }
 
-func TestPrepareEnvFailsWithoutSpecs(t *testing.T) {
+func TestPrepareEnvZeroSpecsStillWritesConfig(t *testing.T) {
+	// Zero agents is legal at the adapter level (preflight guards flows
+	// that need them) — the ask_human MCP registration must exist anyway.
 	envp, id := envWith(t, nil)
-	envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		return ports.ExecResult{ExitCode: 0, Output: ""}, nil
-	}
 	a := New(envp, Config{})
-	if err := a.PrepareEnv(context.Background(), id); err == nil {
-		t.Error("expected error with no agent specs")
+	if err := a.PrepareEnv(context.Background(), id, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := envp.ReadFile(context.Background(), id, "/home/apothecary/.config/opencode/opencode.json")
+	if err != nil || !strings.Contains(string(cfg), "ask_human") {
+		t.Errorf("opencode.json missing ask_human MCP: %v\n%s", err, cfg)
 	}
 }

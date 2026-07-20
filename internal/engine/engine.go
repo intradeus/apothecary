@@ -382,14 +382,19 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	if err := res.Forge.CheckAccess(ctx, res.RepoRef); err != nil {
 		return fmt.Errorf("preflight: forge access: %w", err)
 	}
-	for _, path := range []string{res.AgentsMDPath, ".apothecary/agents/"} {
-		ok, err := res.Forge.FileExists(ctx, res.RepoRef, path)
-		if err != nil {
-			return fmt.Errorf("preflight: checking %s: %w", path, err)
-		}
-		if !ok {
-			return fmt.Errorf("preflight: %s not found in repo", path)
-		}
+	// AGENTS.md stays a repo file (it describes the repo); agents themselves
+	// live in the project's library since v3 — the .apothecary/agents/ repo
+	// contract is retired.
+	ok, err := res.Forge.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
+	if err != nil {
+		return fmt.Errorf("preflight: checking %s: %w", res.AgentsMDPath, err)
+	}
+	if !ok {
+		return fmt.Errorf("preflight: %s not found in repo", res.AgentsMDPath)
+	}
+	agents := map[string]bool{}
+	for _, n := range res.AgentNames {
+		agents[n] = true
 	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
@@ -397,6 +402,11 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 			if _, ok := res.Commands[st.RunRef]; !ok {
 				return fmt.Errorf("preflight: stage %q: run_ref %q not found in project.commands", st.ID, st.RunRef)
 			}
+		}
+		// Agents resolve like run_refs: the flow names them, the project
+		// defines them (DESIGN3 §1).
+		if st.Type == flow.StageAgent && !agents[st.Agent] {
+			return fmt.Errorf("preflight: stage %q: agent %q not found in the project's agent library", st.ID, st.Agent)
 		}
 		// One harness per project (§6.3): a stage pinning a different
 		// kind than the project's harness is refused here, not at parse
@@ -733,13 +743,11 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	fl, err := e.flows.Get(ctx, res.DefaultFlow)
 	steps = append(steps, step("flow:"+res.DefaultFlow, err))
 	steps = append(steps, step("forge_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
-	for _, path := range []string{res.AgentsMDPath, ".apothecary/agents/"} {
-		ok, ferr := res.Forge.FileExists(ctx, res.RepoRef, path)
-		if ferr == nil && !ok {
-			ferr = fmt.Errorf("%s not found in repo", path)
-		}
-		steps = append(steps, step("repo_file:"+path, ferr))
+	ok, ferr := res.Forge.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
+	if ferr == nil && !ok {
+		ferr = fmt.Errorf("%s not found in repo", res.AgentsMDPath)
 	}
+	steps = append(steps, step("repo_file:"+res.AgentsMDPath, ferr))
 	if fl != nil {
 		steps = append(steps, step("flow_refs", e.preflightFlowRefs(res, fl)))
 	}
@@ -747,12 +755,19 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 }
 
 func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
+	agents := map[string]bool{}
+	for _, n := range res.AgentNames {
+		agents[n] = true
+	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
 			if _, ok := res.Commands[st.RunRef]; !ok {
 				return fmt.Errorf("stage %q: run_ref %q not found in project.commands", st.ID, st.RunRef)
 			}
+		}
+		if st.Type == flow.StageAgent && !agents[st.Agent] {
+			return fmt.Errorf("stage %q: agent %q not found in the project's agent library", st.ID, st.Agent)
 		}
 		if st.Type == flow.StageAgent && st.Harness != "" && st.Harness != res.HarnessKind {
 			return fmt.Errorf("stage %q pins harness %q but the project's harness is %q", st.ID, st.Harness, res.HarnessKind)

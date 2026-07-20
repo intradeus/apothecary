@@ -6,6 +6,7 @@ package gitlab
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -146,6 +147,57 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 		return false, err
 	}
 	return true, nil
+}
+
+// ListDir lists blob names directly under dir at the default branch
+// (repository tree API); a missing directory is an empty list.
+func (a *Adapter) ListDir(ctx context.Context, repo ports.RepoRef, dir string) ([]string, error) {
+	ref := repo.DefaultBranch
+	if ref == "" {
+		ref = "main"
+	}
+	var entries []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	p := fmt.Sprintf("%s/repository/tree?path=%s&ref=%s&per_page=100",
+		a.path(), url.QueryEscape(strings.TrimSuffix(dir, "/")), url.QueryEscape(ref))
+	status, err := a.api(ctx, http.MethodGet, p, nil, &entries)
+	if status == http.StatusNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Type == "blob" {
+			out = append(out, e.Name)
+		}
+	}
+	return out, nil
+}
+
+// ReadFile returns a repo file's content at the default branch (files API,
+// base64 payload — GitLab's full-path PathEscape convention).
+func (a *Adapter) ReadFile(ctx context.Context, repo ports.RepoRef, path string) ([]byte, error) {
+	ref := repo.DefaultBranch
+	if ref == "" {
+		ref = "main"
+	}
+	var file struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	p := fmt.Sprintf("%s/repository/files/%s?ref=%s",
+		a.path(), url.PathEscape(path), url.QueryEscape(ref))
+	if _, err := a.api(ctx, http.MethodGet, p, nil, &file); err != nil {
+		return nil, err
+	}
+	if file.Encoding != "base64" {
+		return []byte(file.Content), nil
+	}
+	return base64.StdEncoding.DecodeString(strings.ReplaceAll(file.Content, "\n", ""))
 }
 
 // CreateDraftMR opens a draft merge request from branch onto the default

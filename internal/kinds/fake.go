@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 )
 
@@ -42,7 +43,14 @@ func (fakeAccount) EgressDomains() []string         { return nil }
 func (FakeForge) Account(Config) (ForgeAccount, error) { return fakeAccount{}, nil }
 
 func (FakeForge) Forge(Config, ports.RepoRef) (ports.Forge, error) {
-	return &fake.Forge{}, nil
+	return &fake.Forge{
+		// A legacy repo spec so the DESIGN3 §1.3 import path is exercisable
+		// in dev mode and tests.
+		Files: map[string][]byte{
+			".apothecary/agents/sample.yaml": []byte(
+				"name: sample\ndescription: imported sample\nread_only: true\nallow_bash: false\nprompt: |\n  You are the imported sample agent.\n"),
+		},
+	}, nil
 }
 
 // --- provisioner ------------------------------------------------------------
@@ -111,7 +119,10 @@ func (h *fakeHarness) Binary() string                              { return "tru
 func (h *fakeHarness) InstallLayer() []string                      { return nil }
 func (h *fakeHarness) EgressDomains() []string                     { return nil }
 func (h *fakeHarness) SeedAuth(context.Context, ports.EnvID) error { return nil }
-func (h *fakeHarness) Prepare(context.Context, ports.EnvID) error  { return nil }
+func (h *fakeHarness) Prepare(_ context.Context, _ ports.EnvID, specs []*agentspec.Spec) error {
+	h.runner.RecordPrepare(specs)
+	return nil
+}
 func (h *fakeHarness) Models(context.Context) ([]ModelInfo, error) {
 	return []ModelInfo{
 		{ID: "fake/fast-1", Name: "Fake · Fast 1"},

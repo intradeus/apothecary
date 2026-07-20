@@ -82,6 +82,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  "loop",
 		Commands:     map[string]string{"setup": "./setup.sh", "verify": "make lint && make test"},
+		AgentNames:   []string{"builder", "fallback", "planner", "reviewer", "sleeper"},
 		HarnessKind:  "fake",
 		Envp:         x.envp,
 		Runner:       x.runner,

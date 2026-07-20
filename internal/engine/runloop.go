@@ -300,7 +300,8 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if !reenter {
 		iter++
 		rs.iters[st.ID] = iter
-		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter, Harness: st.Harness, Model: st.Model}); err != nil {
+		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter, Harness: st.Harness, Model: st.Model,
+			Agent: st.Agent, AgentHash: x.res.AgentHashes[st.Agent]}); err != nil {
 			return err
 		}
 	}

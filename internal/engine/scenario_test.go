@@ -68,10 +68,14 @@ func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 		DefaultFlow:  flows[0].Name,
 		Commands:     map[string]string{"setup": "./scripts/setup.sh", "verify": "make lint && make test"},
 		ProviderEnv:  map[string]string{"ANTHROPIC_API_KEY": "sk-test"},
-		HarnessKind:  "fake",
-		Envp:         h.envp,
-		Runner:       h.runner,
-		Forge:        h.forge,
+		// The project's agent library (DESIGN3 §1): superset of every agent
+		// the test flows reference.
+		AgentNames:  []string{"builder", "fallback", "planner", "redactor", "reviewer", "sleeper"},
+		AgentHashes: map[string]string{"builder": "hash-builder", "planner": "hash-planner"},
+		HarnessKind: "fake",
+		Envp:        h.envp,
+		Runner:      h.runner,
+		Forge:       h.forge,
 	}
 	h.settings = &varSettings{L: Limits{}.withDefaults()}
 	cfg := Config{MRPollInterval: 5 * time.Millisecond}
@@ -746,12 +750,37 @@ func TestSetupFailureIsEnvFailed(t *testing.T) {
 	}
 }
 
-func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
+func TestStageStartedCarriesAgentHash(t *testing.T) {
+	// DESIGN3 §1: stage events pin the agent-library content version so
+	// analytics can correlate outcomes with prompt versions.
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.forge.MissingFiles = map[string]bool{".apothecary/agents/": true}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	found := false
+	for _, ev := range h.events(t, runID) {
+		if ss, ok := ev.Payload.(*event.StageStarted); ok && ss.StageID == "build" {
+			found = true
+			if ss.Agent != "builder" || ss.AgentHash != "hash-builder" {
+				t.Errorf("stage_started agent = %q hash = %q", ss.Agent, ss.AgentHash)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no stage_started for build")
+	}
+}
+
+func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
+	// v3: agents live in the project library, not the repo — a flow naming
+	// an agent the project lacks is refused by name.
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.res.AgentNames = []string{"planner"} // flow needs builder too
 	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
-	if err == nil || !strings.Contains(err.Error(), ".apothecary/agents/") {
-		t.Errorf("err = %v, want mention of .apothecary/agents/", err)
+	if err == nil || !strings.Contains(err.Error(), `agent "builder" not found in the project's agent library`) {
+		t.Errorf("err = %v, want missing-agent refusal", err)
 	}
 
 	h2 := newHarness(t, mustFlow(t, loopFlowDoc))

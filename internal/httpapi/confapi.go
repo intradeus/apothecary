@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/flow"
@@ -24,6 +26,9 @@ type IntegrationOps interface {
 	TestIntegration(ctx context.Context, id string) error
 	ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error)
 	ListModels(ctx context.Context, id string) ([]kinds.ModelInfo, error)
+	// RepoAgentFiles reads the target repo's legacy .apothecary/agents/
+	// files (DESIGN3 §1.3 one-time import): file name -> content.
+	RepoAgentFiles(ctx context.Context, projectID string) (map[string][]byte, error)
 }
 
 // confErr maps confstore errors to statuses: not found 404, conflicts and
@@ -300,6 +305,149 @@ func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listPresets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, wsimage.Presets())
+}
+
+// --- agents (DESIGN3 §1) ----------------------------------------------------
+
+type agentBody struct {
+	Description string `json:"description"`
+	ReadOnly    bool   `json:"read_only"`
+	AllowBash   bool   `json:"allow_bash"`
+	Prompt      string `json:"prompt"`
+}
+
+func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
+	// Project existence gives an honest 404 (an unknown project would
+	// otherwise read as an empty library).
+	if _, err := s.Conf.GetProject(r.Context(), r.PathValue("id")); err != nil {
+		confErr(w, err)
+		return
+	}
+	rows, err := s.Conf.ListAgents(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	if rows == nil {
+		rows = []confstore.Agent{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (s *Server) putAgent(w http.ResponseWriter, r *http.Request) {
+	var body agentBody
+	if !readJSON(w, r, &body) {
+		return
+	}
+	a, err := s.Conf.SaveAgent(r.Context(), confstore.Agent{
+		ProjectID: r.PathValue("id"), Name: r.PathValue("name"),
+		Description: body.Description, ReadOnly: body.ReadOnly,
+		AllowBash: body.AllowBash, Prompt: body.Prompt,
+	})
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
+	a, err := s.Conf.GetAgent(r.Context(), r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
+	if err := s.Conf.DeleteAgent(r.Context(), r.PathValue("id"), r.PathValue("name")); err != nil {
+		confErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listAgentVersions(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Conf.AgentVersions(r.Context(), r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	if rows == nil {
+		rows = []confstore.AgentVersion{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (s *Server) getAgentVersion(w http.ResponseWriter, r *http.Request) {
+	v, err := s.Conf.AgentVersion(r.Context(), r.PathValue("hash"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+func (s *Server) copyAgents(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		FromProjectID string   `json:"from_project_id"`
+		Names         []string `json:"names"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	copied, err := s.Conf.CopyAgents(r.Context(), r.PathValue("id"), body.FromProjectID, body.Names)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"copied": copied})
+}
+
+// importAgents is the one-time repo → library transition (DESIGN3 §1.3):
+// reads .apothecary/agents/ via the forge, saves each parseable spec.
+// Existing names are skipped, never overwritten.
+func (s *Server) importAgents(w http.ResponseWriter, r *http.Request) {
+	if s.Ops == nil {
+		writeErr(w, http.StatusServiceUnavailable, "repo import is not wired")
+		return
+	}
+	projectID := r.PathValue("id")
+	files, err := s.Ops.RepoAgentFiles(r.Context(), projectID)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	type skip struct {
+		File  string `json:"file"`
+		Error string `json:"error"`
+	}
+	imported := []string{}
+	skipped := []skip{}
+	for name, data := range files {
+		stem := strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
+		spec, err := agentspec.Parse(stem, data)
+		if err != nil {
+			skipped = append(skipped, skip{File: name, Error: err.Error()})
+			continue
+		}
+		if _, err := s.Conf.GetAgent(r.Context(), projectID, spec.Name); err == nil {
+			skipped = append(skipped, skip{File: name, Error: "agent already exists (not overwritten)"})
+			continue
+		}
+		if _, err := s.Conf.SaveAgent(r.Context(), confstore.Agent{
+			ProjectID: projectID, Name: spec.Name, Description: spec.Description,
+			ReadOnly: spec.ReadOnly, AllowBash: spec.AllowBash, Prompt: spec.Prompt,
+		}); err != nil {
+			skipped = append(skipped, skip{File: name, Error: err.Error()})
+			continue
+		}
+		imported = append(imported, spec.Name)
+	}
+	sort.Strings(imported)
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i].File < skipped[j].File })
+	writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "skipped": skipped})
 }
 
 // --- flows ------------------------------------------------------------------

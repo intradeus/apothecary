@@ -145,6 +145,18 @@ func (x *confEnv) wizard(t *testing.T) string {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(data, &p)
+
+	// Agent library (DESIGN3 §1): the v1 flow's agents must exist on the
+	// project — agents live in the DB, not the target repo.
+	for _, name := range []string{"planner", "builder", "reviewer"} {
+		resp, data := x.do(t, "PUT", "/api/projects/"+p.ID+"/agents/"+name, map[string]any{
+			"description": name + " agent", "read_only": name != "builder",
+			"allow_bash": name == "builder", "prompt": "You are the " + name + ".",
+		}, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create agent %s = %d: %s", name, resp.StatusCode, data)
+		}
+	}
 	return p.ID
 }
 
@@ -318,5 +330,98 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 			t.Fatal(err)
 		}
 		scan(fmt.Sprintf("event %s seq %d", ev.Type, ev.Seq), blob)
+	}
+}
+
+// TestAgentLibraryRoutes covers the DESIGN3 §1 API surface: CRUD +
+// versions + delete guard + cross-project copy + repo import.
+func TestAgentLibraryRoutes(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+
+	// List: the wizard seeded planner/builder/reviewer.
+	resp, data := x.do(t, "GET", "/api/projects/"+projectID+"/agents", nil, nil)
+	var agents []confstore.Agent
+	_ = json.Unmarshal(data, &agents)
+	if resp.StatusCode != 200 || len(agents) != 3 {
+		t.Fatalf("list = %d: %s", resp.StatusCode, data)
+	}
+
+	// Update bumps the hash and accumulates a version.
+	var before confstore.Agent
+	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/planner", nil, nil)
+	_ = json.Unmarshal(data, &before)
+	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/agents/planner", map[string]any{
+		"description": "plans harder", "read_only": true, "prompt": "You are the planner, v2.",
+	}, nil)
+	var after confstore.Agent
+	_ = json.Unmarshal(data, &after)
+	if resp.StatusCode != 200 || after.Hash == before.Hash {
+		t.Fatalf("update = %d, hash %s -> %s", resp.StatusCode, before.Hash, after.Hash)
+	}
+	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/planner/versions", nil, nil)
+	var versions []confstore.AgentVersion
+	_ = json.Unmarshal(data, &versions)
+	if len(versions) != 2 {
+		t.Fatalf("versions = %d, want 2: %s", len(versions), data)
+	}
+	resp, data = x.do(t, "GET", "/api/agent-versions/"+before.Hash, nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), before.Hash) {
+		t.Fatalf("agent-version = %d: %s", resp.StatusCode, data)
+	}
+
+	// Delete guard: planner is in the default flow -> 409; a spare -> 204.
+	resp, data = x.do(t, "DELETE", "/api/projects/"+projectID+"/agents/planner", nil, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("guarded delete = %d: %s", resp.StatusCode, data)
+	}
+	x.do(t, "PUT", "/api/projects/"+projectID+"/agents/spare", map[string]any{"prompt": "spare"}, nil)
+	resp, _ = x.do(t, "DELETE", "/api/projects/"+projectID+"/agents/spare", nil, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("spare delete = %d", resp.StatusCode)
+	}
+
+	// Copy into a second project; collision refuses.
+	var p2 struct {
+		ID string `json:"id"`
+	}
+	var intgs []confstore.Integration
+	_, data = x.do(t, "GET", "/api/integrations", nil, nil)
+	_ = json.Unmarshal(data, &intgs)
+	ids := map[string]string{}
+	for _, in := range intgs {
+		ids[in.Port] = in.ID
+	}
+	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
+		"name": "web2", "forge_id": ids["forge"], "provisioner_id": ids["provisioner"],
+		"harness_id": ids["harness"],
+		"repo":       map[string]string{"url": "https://forge.local/dev/fake-repo.git", "locator": "1", "default_branch": "main"},
+		"workspace":  map[string]any{"template": "dev"}, "default_flow": "v1",
+	}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("web2 = %d: %s", resp.StatusCode, data)
+	}
+	_ = json.Unmarshal(data, &p2)
+	resp, data = x.do(t, "POST", "/api/projects/"+p2.ID+"/agents/copy", map[string]any{
+		"from_project_id": projectID, "names": []string{"planner", "builder"},
+	}, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), "planner") {
+		t.Fatalf("copy = %d: %s", resp.StatusCode, data)
+	}
+	resp, _ = x.do(t, "POST", "/api/projects/"+p2.ID+"/agents/copy", map[string]any{
+		"from_project_id": projectID, "names": []string{"planner"},
+	}, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("copy collision = %d", resp.StatusCode)
+	}
+
+	// Repo import: the fake forge serves .apothecary/agents/sample.yaml.
+	resp, data = x.do(t, "POST", "/api/projects/"+projectID+"/agents/import-repo", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"imported":["sample"]`) {
+		t.Fatalf("import = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "POST", "/api/projects/"+projectID+"/agents/import-repo", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), "already exists") {
+		t.Fatalf("re-import = %d: %s", resp.StatusCode, data)
 	}
 }

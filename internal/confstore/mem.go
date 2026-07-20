@@ -18,6 +18,8 @@ type Mem struct {
 	projects     map[string]Project
 	flows        map[string]FlowRow
 	versions     map[string]FlowVersion
+	agents       map[string]Agent // key: projectID+"\x00"+name
+	agentVs      map[string]AgentVersion
 	settings     map[string]string
 
 	// BlockingRuns lists non-archived runs of a project (blocks project
@@ -33,6 +35,8 @@ func NewMem() *Mem {
 		projects:     map[string]Project{},
 		flows:        map[string]FlowRow{},
 		versions:     map[string]FlowVersion{},
+		agents:       map[string]Agent{},
+		agentVs:      map[string]AgentVersion{},
 		settings:     map[string]string{},
 	}
 }
@@ -224,6 +228,74 @@ func (m *Mem) ListFlowVersions(_ context.Context, name string) ([]FlowVersion, e
 	defer m.mu.Unlock()
 	var out []FlowVersion
 	for _, v := range m.versions {
+		if v.Name == name {
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func agentKey(projectID, name string) string { return projectID + "\x00" + name }
+
+func (m *Mem) UpsertAgent(_ context.Context, a Agent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.agents[agentKey(a.ProjectID, a.Name)] = a
+	if _, ok := m.agentVs[a.Hash]; !ok {
+		m.agentVs[a.Hash] = AgentVersionRow(a, a.UpdatedAt)
+	}
+	return nil
+}
+
+func (m *Mem) GetAgent(_ context.Context, projectID, name string) (Agent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.agents[agentKey(projectID, name)]
+	if !ok {
+		return Agent{}, notFound("agent", name)
+	}
+	return a, nil
+}
+
+func (m *Mem) ListAgents(_ context.Context, projectID string) ([]Agent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Agent
+	for _, a := range m.agents {
+		if a.ProjectID == projectID {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (m *Mem) DeleteAgent(_ context.Context, projectID, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.agents[agentKey(projectID, name)]; !ok {
+		return notFound("agent", name)
+	}
+	delete(m.agents, agentKey(projectID, name)) // versions stay: immutable
+	return nil
+}
+
+func (m *Mem) GetAgentVersion(_ context.Context, hash string) (AgentVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.agentVs[hash]
+	if !ok {
+		return AgentVersion{}, notFound("agent version", hash)
+	}
+	return v, nil
+}
+
+func (m *Mem) ListAgentVersions(_ context.Context, name string) ([]AgentVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []AgentVersion
+	for _, v := range m.agentVs {
 		if v.Name == name {
 			out = append(out, v)
 		}

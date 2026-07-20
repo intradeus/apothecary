@@ -27,7 +27,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
-	"sort"
 	"strings"
 
 	"apothecary/internal/agentspec"
@@ -58,14 +57,7 @@ const (
 // the ask_human MCP server, plus one role file per .apothecary/agents spec —
 // codex has no named-agent registry, so the role prompt is delivered
 // in-band as a prompt preamble (mechanism recorded in IMPLEMENTATION_NOTES).
-func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID) error {
-	specs, err := a.readSpecs(ctx, env)
-	if err != nil {
-		return err
-	}
-	if len(specs) == 0 {
-		return fmt.Errorf("no agent specs found in .apothecary/agents/")
-	}
+func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
 	for _, s := range specs {
 		if err := a.envp.WriteFile(ctx, env, path.Join(rolesDir, s.Name+".role"), []byte(roleText(s)), 0o644); err != nil {
 			return fmt.Errorf("write role %s: %w", s.Name, err)
@@ -111,38 +103,6 @@ func roleText(s *agentspec.Spec) string {
 	}
 	b.WriteString("\n")
 	return b.String()
-}
-
-// readSpecs cats every spec file out of the repo in one exec (same
-// mechanism as the opencode adapter).
-func (a *Adapter) readSpecs(ctx context.Context, env ports.EnvID) ([]*agentspec.Spec, error) {
-	const marker = "===APOTHECARY-SPEC "
-	script := `for f in .apothecary/agents/*.yaml .apothecary/agents/*.yml; do [ -e "$f" ] || continue; printf '\n` + marker + `%s\n' "$f"; cat "$f"; done`
-	res, err := a.envp.Exec(ctx, env, ports.Command{Script: script, Dir: "repo"})
-	if err != nil {
-		return nil, fmt.Errorf("list agent specs: %w", err)
-	}
-	if res.ExitCode != 0 {
-		return nil, fmt.Errorf("list agent specs: exit %d: %s", res.ExitCode, res.Output)
-	}
-	var specs []*agentspec.Spec
-	// Line-anchored split: a spec whose body merely contains the marker text
-	// mid-line must not corrupt parsing.
-	chunks := strings.Split("\n"+res.Output, "\n"+marker)
-	for _, chunk := range chunks[min(1, len(chunks)):] {
-		file, body, ok := strings.Cut(chunk, "\n")
-		if !ok {
-			continue
-		}
-		stem := strings.TrimSuffix(strings.TrimSuffix(path.Base(strings.TrimSpace(file)), ".yaml"), ".yml")
-		s, err := agentspec.Parse(stem, []byte(body))
-		if err != nil {
-			return nil, err
-		}
-		specs = append(specs, s)
-	}
-	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
-	return specs, nil
 }
 
 // --- AgentRunner ------------------------------------------------------------

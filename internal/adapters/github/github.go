@@ -8,6 +8,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -140,6 +141,63 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 		return len(entries) > 0, nil
 	}
 	return true, nil
+}
+
+// ListDir lists file names directly under dir at the default branch
+// (contents API returns an array for directories); missing dir = empty.
+func (a *Adapter) ListDir(ctx context.Context, repo ports.RepoRef, dir string) ([]string, error) {
+	ref := repo.DefaultBranch
+	if ref == "" {
+		ref = "main"
+	}
+	segs := strings.Split(strings.TrimSuffix(dir, "/"), "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	var entries []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	p := fmt.Sprintf("%s/contents/%s?ref=%s", a.repoPath(), strings.Join(segs, "/"), url.QueryEscape(ref))
+	status, err := a.api(ctx, http.MethodGet, p, nil, &entries)
+	if status == http.StatusNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Type == "file" {
+			out = append(out, e.Name)
+		}
+	}
+	return out, nil
+}
+
+// ReadFile returns a repo file's content at the default branch (contents
+// API, base64 with embedded newlines).
+func (a *Adapter) ReadFile(ctx context.Context, repo ports.RepoRef, path string) ([]byte, error) {
+	ref := repo.DefaultBranch
+	if ref == "" {
+		ref = "main"
+	}
+	segs := strings.Split(path, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	var file struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	p := fmt.Sprintf("%s/contents/%s?ref=%s", a.repoPath(), strings.Join(segs, "/"), url.QueryEscape(ref))
+	if _, err := a.api(ctx, http.MethodGet, p, nil, &file); err != nil {
+		return nil, err
+	}
+	if file.Encoding != "base64" {
+		return []byte(file.Content), nil
+	}
+	return base64.StdEncoding.DecodeString(strings.ReplaceAll(file.Content, "\n", ""))
 }
 
 // CreateDraftMR opens a native draft pull request onto the default branch.
