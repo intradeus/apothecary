@@ -1,0 +1,53 @@
+# Apothecary reference deployment (DESIGN2.md §15).
+#
+#   cp deploy/env.example deploy/.env    # then fill FACTORY_MASTER_KEY (factoryd keygen)
+#   docker compose -f deploy/docker-compose.yaml up -d
+#
+# Host network mode keeps 127.0.0.1:8080 and the Coder reverse tunnel
+# byte-identical to a bare-metal install (the -R target is the engine's own
+# loopback wherever it runs). Postgres binds a non-default loopback port
+# (collision precedent: the observability stack). Coder itself is NOT
+# bundled — it is an integration you configure in the UI.
+services:
+  postgres:
+    image: postgres:16
+    network_mode: host
+    environment:
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: ${FACTORY_PG_PASSWORD:?set FACTORY_PG_PASSWORD in deploy/.env}
+      POSTGRES_DB: factory
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=15432"]
+    volumes:
+      - factory-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 15432 -U factory"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  factoryd:
+    image: apothecary/factoryd:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FACTORY_POSTGRES_DSN: postgres://factory:${FACTORY_PG_PASSWORD}@127.0.0.1:15432/factory
+      FACTORY_MASTER_KEY: ${FACTORY_MASTER_KEY:?run `factoryd keygen` and set FACTORY_MASTER_KEY in deploy/.env}
+      FACTORY_LISTEN: 127.0.0.1:8080
+    volumes:
+      # Workspace image builds (§8) go through the host's docker daemon —
+      # the same one Coder's docker provider uses. This makes the engine
+      # root-equivalent on the host: documented §16 residual, it joins
+      # Coder as literal trusted control plane.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - factory-runs:/var/lib/factory/runs
+    restart: unless-stopped
+
+volumes:
+  factory-pgdata:
+  factory-runs:

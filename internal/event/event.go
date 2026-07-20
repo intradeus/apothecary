@@ -71,6 +71,9 @@ type RunCreated struct {
 	FlowHash    string `json:"flow_hash"`
 	RepoURL     string `json:"repo_url"`
 	Branch      string `json:"branch"`
+	// ProjectID scopes the run to its project (DESIGN2 §6.3); absent in
+	// pre-v2 events, projected as "".
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 type EnvRequested struct{}

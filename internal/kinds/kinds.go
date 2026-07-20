@@ -1,0 +1,257 @@
+// Package kinds is the adapter-kind registry (DESIGN2.md §4): every
+// integration kind declares a Descriptor (drives the generic CPUI form) and
+// constructs adapters from stored config+secrets. The engine itself stays
+// ports-only — the resolver (internal/resolve) is the sole consumer that
+// turns kinds into engine.Resolution fields.
+package kinds
+
+import (
+	"context"
+	"fmt"
+	"sort"
+
+	"factory/internal/ports"
+)
+
+// Config is an integration's stored configuration: plain values plus
+// decrypted secrets (confstore opens them; they never travel further than
+// adapter construction).
+type Config struct {
+	Values  map[string]any
+	Secrets map[string]string
+}
+
+// Str reads a string value with a default.
+func (c Config) Str(key, def string) string {
+	if v, ok := c.Values[key].(string); ok && v != "" {
+		return v
+	}
+	return def
+}
+
+// Ints reads an int list (JSON numbers arrive as float64).
+func (c Config) Ints(key string) []int {
+	raw, ok := c.Values[key].([]any)
+	if !ok {
+		return nil
+	}
+	var out []int
+	for _, v := range raw {
+		switch n := v.(type) {
+		case float64:
+			out = append(out, int(n))
+		case int:
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// Field describes one config/secret input (§4: descriptor-driven forms).
+type Field struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Default     string `json:"default,omitempty"`
+	Secret      bool   `json:"secret"`
+	Required    bool   `json:"required"`
+}
+
+// Descriptor identifies a kind and its form schema.
+type Descriptor struct {
+	Port   string  `json:"port"`
+	Kind   string  `json:"kind"`
+	Label  string  `json:"label"`
+	Fields []Field `json:"fields"`
+}
+
+// RepoInfo is one pickable repository (project wizard, §4).
+type RepoInfo struct {
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	Locator       string `json:"locator"`
+	DefaultBranch string `json:"default_branch"`
+}
+
+// ForgeAccount is the account-level forge client: token probe, repo
+// browsing, git credentials and egress contribution.
+type ForgeAccount interface {
+	Test(ctx context.Context) error
+	ListRepos(ctx context.Context) ([]RepoInfo, error)
+	// GitCredential is the (user, password) pair for the §11 step 3
+	// credential-store entry; empty user+pass = public repos only.
+	GitCredential() (user, pass string)
+	EgressDomains() []string
+}
+
+// ForgeKind constructs the account client and project-bound Forge port.
+type ForgeKind interface {
+	Descriptor() Descriptor
+	Account(cfg Config) (ForgeAccount, error)
+	Forge(cfg Config, repo ports.RepoRef) (ports.Forge, error)
+}
+
+// Provisioner is the EnvProvisioner port plus lifecycle/probe surface.
+type Provisioner interface {
+	ports.EnvProvisioner
+	Test(ctx context.Context) error
+	Close()
+}
+
+// ProvisionerDeps carry engine-side wiring a provisioner needs.
+type ProvisionerDeps struct {
+	RunsDir    string
+	EnginePort int
+	// Template is the effective template name: the project's
+	// workspace.template override, else the integration's configured one.
+	Template string
+}
+
+type ProvisionerKind interface {
+	Descriptor() Descriptor
+	New(cfg Config, deps ProvisionerDeps) (Provisioner, error)
+}
+
+// ProviderCreds is a resolved model-provider integration handed to
+// Harness.SeedAuth (§4): the harness writes whatever native auth format it
+// needs from these.
+type ProviderCreds struct {
+	Kind    string
+	EnvVars map[string]string
+	Secrets map[string]string
+}
+
+// Harness is the AgentRunner port plus the §4 capability surface.
+type Harness interface {
+	ports.AgentRunner
+	// Test statically validates config/auth material (no remote call — a
+	// harness has no server to probe).
+	Test(ctx context.Context) error
+	// Binary is the executable envcheck probes with `command -v`.
+	Binary() string
+	// InstallLayer returns Dockerfile lines installing the harness (§8.2).
+	InstallLayer() []string
+	EgressDomains() []string
+	// SeedAuth writes provider credentials in the harness's native format
+	// at bootstrap step 2.
+	SeedAuth(ctx context.Context, env ports.EnvID, providers []ProviderCreds) error
+	// Prepare generates harness-native config at bootstrap step 4
+	// (replaces the deleted ports.HarnessPreparer type-assert).
+	Prepare(ctx context.Context, env ports.EnvID) error
+}
+
+type HarnessKind interface {
+	Descriptor() Descriptor
+	New(cfg Config, envp ports.EnvProvisioner) (Harness, error)
+}
+
+// Provider is a model-provider integration: env mapping + probe + egress.
+type Provider interface {
+	Test(ctx context.Context) error
+	EnvVars() map[string]string
+	EgressDomains() []string
+}
+
+type ProviderKind interface {
+	Descriptor() Descriptor
+	New(cfg Config) (Provider, error)
+}
+
+// --- registry ---------------------------------------------------------------
+
+type Registry struct {
+	forges       map[string]ForgeKind
+	provisioners map[string]ProvisionerKind
+	harnesses    map[string]HarnessKind
+	providers    map[string]ProviderKind
+}
+
+func NewRegistry() *Registry {
+	return &Registry{
+		forges:       map[string]ForgeKind{},
+		provisioners: map[string]ProvisionerKind{},
+		harnesses:    map[string]HarnessKind{},
+		providers:    map[string]ProviderKind{},
+	}
+}
+
+func (r *Registry) RegisterForge(k ForgeKind)             { r.forges[k.Descriptor().Kind] = k }
+func (r *Registry) RegisterProvisioner(k ProvisionerKind) { r.provisioners[k.Descriptor().Kind] = k }
+func (r *Registry) RegisterHarness(k HarnessKind)         { r.harnesses[k.Descriptor().Kind] = k }
+func (r *Registry) RegisterProvider(k ProviderKind)       { r.providers[k.Descriptor().Kind] = k }
+
+func (r *Registry) Forge(kind string) (ForgeKind, error) {
+	k, ok := r.forges[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown forge kind %q", kind)
+	}
+	return k, nil
+}
+
+func (r *Registry) Provisioner(kind string) (ProvisionerKind, error) {
+	k, ok := r.provisioners[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown provisioner kind %q", kind)
+	}
+	return k, nil
+}
+
+func (r *Registry) Harness(kind string) (HarnessKind, error) {
+	k, ok := r.harnesses[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown harness kind %q", kind)
+	}
+	return k, nil
+}
+
+func (r *Registry) Provider(kind string) (ProviderKind, error) {
+	k, ok := r.providers[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown provider kind %q", kind)
+	}
+	return k, nil
+}
+
+// Valid reports whether (port, kind) is registered — wired into
+// confstore.Service.KindValid.
+func (r *Registry) Valid(port, kind string) bool {
+	switch port {
+	case "forge":
+		_, ok := r.forges[kind]
+		return ok
+	case "provisioner":
+		_, ok := r.provisioners[kind]
+		return ok
+	case "harness":
+		_, ok := r.harnesses[kind]
+		return ok
+	case "provider":
+		_, ok := r.providers[kind]
+		return ok
+	}
+	return false
+}
+
+// Descriptors lists every registered kind, stably ordered (GET /api/kinds).
+func (r *Registry) Descriptors() []Descriptor {
+	var out []Descriptor
+	for _, k := range r.forges {
+		out = append(out, k.Descriptor())
+	}
+	for _, k := range r.provisioners {
+		out = append(out, k.Descriptor())
+	}
+	for _, k := range r.harnesses {
+		out = append(out, k.Descriptor())
+	}
+	for _, k := range r.providers {
+		out = append(out, k.Descriptor())
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Port != out[j].Port {
+			return out[i].Port < out[j].Port
+		}
+		return out[i].Kind < out[j].Kind
+	})
+	return out
+}

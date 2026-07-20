@@ -74,8 +74,11 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 	return resp.StatusCode, nil
 }
 
-func projectPath(repo ports.RepoRef) string {
-	return fmt.Sprintf("/projects/%d", repo.ProjectID)
+// path is the bound project's API prefix. The adapter is constructed per
+// project (DESIGN2 §4: ForgeKind.Forge(cfg, repo) parses RepoRef.Locator),
+// so the RepoRef arguments carry branch/URL context only.
+func (a *Adapter) path() string {
+	return fmt.Sprintf("/projects/%d", a.projectID)
 }
 
 // CheckAccess verifies the token is valid, the project reachable, and the
@@ -94,8 +97,8 @@ func (a *Adapter) CheckAccess(ctx context.Context, repo ports.RepoRef) error {
 			} `json:"group_access"`
 		} `json:"permissions"`
 	}
-	if _, err := a.api(ctx, http.MethodGet, projectPath(repo), nil, &proj); err != nil {
-		return fmt.Errorf("project %d unreachable: %w", repo.ProjectID, err)
+	if _, err := a.api(ctx, http.MethodGet, a.path(), nil, &proj); err != nil {
+		return fmt.Errorf("project %d unreachable: %w", a.projectID, err)
 	}
 	const developer = 30
 	level := 0
@@ -106,7 +109,7 @@ func (a *Adapter) CheckAccess(ctx context.Context, repo ports.RepoRef) error {
 		level = g.AccessLevel
 	}
 	if level < developer {
-		return fmt.Errorf("token has access level %d on project %d; needs >= %d (Developer) to push and open MRs", level, repo.ProjectID, developer)
+		return fmt.Errorf("token has access level %d on project %d; needs >= %d (Developer) to push and open MRs", level, a.projectID, developer)
 	}
 	return nil
 }
@@ -123,7 +126,7 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 			Name string `json:"name"`
 		}
 		p := fmt.Sprintf("%s/repository/tree?path=%s&ref=%s&per_page=1",
-			projectPath(repo), url.QueryEscape(strings.TrimSuffix(path, "/")), url.QueryEscape(ref))
+			a.path(), url.QueryEscape(strings.TrimSuffix(path, "/")), url.QueryEscape(ref))
 		status, err := a.api(ctx, http.MethodGet, p, nil, &entries)
 		if status == http.StatusNotFound {
 			return false, nil
@@ -134,7 +137,7 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 		return len(entries) > 0, nil
 	}
 	p := fmt.Sprintf("%s/repository/files/%s?ref=%s",
-		projectPath(repo), url.PathEscape(path), url.QueryEscape(ref))
+		a.path(), url.PathEscape(path), url.QueryEscape(ref))
 	status, err := a.api(ctx, http.MethodHead, p, nil, nil)
 	if status == http.StatusNotFound {
 		return false, nil
@@ -159,7 +162,7 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 		IID    int    `json:"iid"`
 		WebURL string `json:"web_url"`
 	}
-	_, err := a.api(ctx, http.MethodPost, projectPath(repo)+"/merge_requests", map[string]any{
+	_, err := a.api(ctx, http.MethodPost, a.path()+"/merge_requests", map[string]any{
 		"source_branch":        branch,
 		"target_branch":        target,
 		"title":                title,

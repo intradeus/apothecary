@@ -29,17 +29,27 @@ stages:
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
 `
 
+// testProject is the id served by the test resolver (DESIGN2 §6.1).
+const testProject = "prj-test"
+
 type env struct {
-	e      *engine.Engine
-	store  *event.MemStore
-	envp   *fake.EnvProvisioner
-	runner *fake.AgentRunner
-	forge  *fake.Forge
-	reg    *channels.Registry
-	fakeCh *fake.Channel
-	srv    *Server
-	ts     *httptest.Server
+	e        *engine.Engine
+	store    *event.MemStore
+	envp     *fake.EnvProvisioner
+	runner   *fake.AgentRunner
+	forge    *fake.Forge
+	reg      *channels.Registry
+	fakeCh   *fake.Channel
+	res      *engine.Resolution
+	settings *varSettings
+	srv      *Server
+	ts       *httptest.Server
 }
+
+// varSettings is a mutable engine.SettingsSource for tests.
+type varSettings struct{ L engine.Limits }
+
+func (v *varSettings) Limits(context.Context) (engine.Limits, error) { return v.L, nil }
 
 func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	t.Helper()
@@ -54,7 +64,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	x.reg.Register("test", func(map[string]any) (ports.NotificationChannel, error) {
 		return x.fakeCh, nil
 	})
-	flows := map[string]*flow.Flow{}
+	flows := flow.MapSource{}
 	if len(docs) == 0 {
 		docs = []string{loopFlowDoc}
 	}
@@ -65,17 +75,23 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 		}
 		flows[f.Name] = f
 	}
-	if cfg.RepoURL == "" {
-		cfg.RepoURL = "https://gitlab.local/g/p.git"
-		cfg.DefaultBranch = "main"
+	x.res = &engine.Resolution{
+		ProjectID:    testProject,
+		ProjectName:  "test",
+		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
+		AgentsMDPath: "AGENTS.md",
+		DefaultFlow:  "loop",
+		Commands:     map[string]string{"setup": "./setup.sh", "verify": "make lint && make test"},
+		HarnessKind:  "fake",
+		Envp:         x.envp,
+		Runner:       x.runner,
+		Forge:        x.forge,
 	}
-	if cfg.Commands == nil {
-		cfg.Commands = map[string]string{"setup": "./setup.sh", "verify": "make lint && make test"}
-	}
+	x.settings = &varSettings{L: engine.Limits{MaxConcurrentRuns: 3, MaxEnvironments: 6}}
 	if cfg.MRPollInterval == 0 {
 		cfg.MRPollInterval = 5 * time.Millisecond
 	}
-	x.e = engine.New(cfg, x.store, x.envp, x.runner, x.forge, []ports.NotificationChannel{x.reg}, flows)
+	x.e = engine.New(cfg, x.store, engine.StaticResolver{R: x.res}, flows, x.settings, []ports.NotificationChannel{x.reg})
 	t.Cleanup(x.e.Shutdown)
 	x.srv = New(x.e, x.store, x.reg, cfg.RunsDir)
 	x.ts = httptest.NewServer(x.srv.Handler())
@@ -111,7 +127,7 @@ func (x *env) do(t *testing.T, method, path string, body any, hdr map[string]str
 
 func (x *env) createTicket(t *testing.T, title string) string {
 	t.Helper()
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": title, "goal": "g", "flow": "loop"}, nil)
+	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": title, "goal": "g", "flow": "loop", "project_id": testProject}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /api/tickets = %d: %s", resp.StatusCode, data)
 	}
@@ -302,7 +318,7 @@ stages:
 		}
 	}
 
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": "T", "flow": "ping"}, nil)
+	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": "T", "flow": "ping", "project_id": testProject}, nil)
 	if resp.StatusCode != 201 {
 		t.Fatalf("ticket = %d: %s", resp.StatusCode, data)
 	}
@@ -372,7 +388,8 @@ func TestPingAuthRequired(t *testing.T) {
 }
 
 func TestAbortAndArchiveAndCapacity(t *testing.T) {
-	x := newEnv(t, engine.Config{Limits: engine.Limits{MaxEnvironments: 1}})
+	x := newEnv(t, engine.Config{})
+	x.settings.L.MaxEnvironments = 1
 	if _, err := x.reg.Add("test", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +397,7 @@ func TestAbortAndArchiveAndCapacity(t *testing.T) {
 	x.e.Wait(runID) // completed; env kept until archive/reaper
 
 	// Env cap reached → 409 naming the archivable run + blocker notification.
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": "second", "flow": "loop"}, nil)
+	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": "second", "flow": "loop", "project_id": testProject}, nil)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("at capacity = %d: %s", resp.StatusCode, data)
 	}

@@ -19,8 +19,10 @@ import (
 	"time"
 
 	"factory/internal/channels"
+	"factory/internal/confstore"
 	"factory/internal/engine"
 	"factory/internal/event"
+	"factory/internal/kinds"
 	"factory/internal/run"
 )
 
@@ -29,6 +31,13 @@ type Server struct {
 	Store    event.Store
 	Registry *channels.Registry
 	RunsDir  string
+	// Conf is the config-plane store (DESIGN2 §10); nil disables those
+	// routes (bare test servers).
+	Conf *confstore.Service
+	// Kinds serves GET /api/kinds descriptors.
+	Kinds *kinds.Registry
+	// Ops runs integration tests / repo listing (the resolver); nil = 503.
+	Ops IntegrationOps
 	// CPUIDir, when set, is served at / with an SPA fallback to index.html
 	// (the built SvelteKit bundle; the CPUI talks only to this API).
 	CPUIDir string
@@ -61,6 +70,34 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/channels", s.listChannels)
 	mux.HandleFunc("POST /api/channels", s.addChannel)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.deleteChannel)
+	if s.Kinds != nil {
+		mux.HandleFunc("GET /api/kinds", s.listKinds)
+	}
+	if s.Conf != nil { // config plane (DESIGN2 §10)
+		mux.HandleFunc("GET /api/integrations", s.listIntegrations)
+		mux.HandleFunc("POST /api/integrations", s.createIntegration)
+		mux.HandleFunc("GET /api/integrations/{id}", s.getIntegration)
+		mux.HandleFunc("PUT /api/integrations/{id}", s.updateIntegration)
+		mux.HandleFunc("DELETE /api/integrations/{id}", s.deleteIntegration)
+		mux.HandleFunc("POST /api/integrations/{id}/test", s.testIntegration)
+		mux.HandleFunc("GET /api/integrations/{id}/repos", s.listIntegrationRepos)
+		mux.HandleFunc("GET /api/projects", s.listProjects)
+		mux.HandleFunc("POST /api/projects", s.createProject)
+		mux.HandleFunc("GET /api/projects/{id}", s.getProject)
+		mux.HandleFunc("PUT /api/projects/{id}", s.updateProject)
+		mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
+		mux.HandleFunc("POST /api/projects/{id}/preflight", s.preflightProject)
+		mux.HandleFunc("GET /api/flows", s.listFlows)
+		mux.HandleFunc("POST /api/flows", s.createFlow)
+		mux.HandleFunc("POST /api/flows/validate", s.validateFlow)
+		mux.HandleFunc("GET /api/flows/{name}", s.getFlow)
+		mux.HandleFunc("PUT /api/flows/{name}", s.putFlow)
+		mux.HandleFunc("DELETE /api/flows/{name}", s.deleteFlow)
+		mux.HandleFunc("GET /api/flows/{name}/versions", s.listFlowVersions)
+		mux.HandleFunc("GET /api/flow-versions/{hash}", s.getFlowVersion)
+		mux.HandleFunc("GET /api/settings", s.getSettings)
+		mux.HandleFunc("PUT /api/settings", s.putSettings)
+	}
 	if s.CPUIDir != "" {
 		mux.HandleFunc("GET /", s.serveCPUI)
 	}
@@ -146,17 +183,15 @@ func toPingJSON(p *engine.Ping) pingJSON {
 
 func (s *Server) postTicket(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title string `json:"title"`
-		Goal  string `json:"goal"`
-		Flow  string `json:"flow"`
+		Title     string `json:"title"`
+		Goal      string `json:"goal"`
+		Flow      string `json:"flow"`       // "" = the project's default flow
+		ProjectID string `json:"project_id"` // required (DESIGN2 §10)
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if body.Flow == "" {
-		body.Flow = "v1"
-	}
-	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{Title: body.Title, Goal: body.Goal}, body.Flow)
+	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{Title: body.Title, Goal: body.Goal}, body.Flow, body.ProjectID)
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())
@@ -173,6 +208,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	project := r.URL.Query().Get("project")
 	views := make([]run.View, 0, len(ids))
 	for _, id := range ids {
 		evs, err := s.Store.Events(r.Context(), id, 0)
@@ -180,9 +216,14 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if len(evs) > 0 {
-			views = append(views, run.Reduce(evs))
+		if len(evs) == 0 {
+			continue
 		}
+		v := run.Reduce(evs)
+		if project != "" && v.ProjectID != project {
+			continue
+		}
+		views = append(views, v)
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].CreatedAt.After(views[j].CreatedAt) })
 	writeJSON(w, http.StatusOK, views)

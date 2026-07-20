@@ -27,11 +27,9 @@ import (
 	"factory/internal/ports"
 )
 
-type Config struct {
-	// AuthJSON, when set, is seeded into the workspace as opencode's
-	// auth.json (§11 step 2: subscription/router auth).
-	AuthJSON []byte
-}
+// Config is reserved for adapter-level knobs; auth material arrives per
+// call via SeedAuthJSON (composed by the opencode kind, DESIGN2 §4).
+type Config struct{}
 
 type Adapter struct {
 	envp ports.EnvProvisioner
@@ -91,10 +89,19 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID) error {
 		return fmt.Errorf("write opencode.json: %w", err)
 	}
 
-	if len(a.cfg.AuthJSON) > 0 {
-		if err := a.envp.WriteFile(ctx, env, authPath, a.cfg.AuthJSON, 0o600); err != nil {
-			return fmt.Errorf("seed auth.json: %w", err)
-		}
+	return nil
+}
+
+// SeedAuthJSON writes opencode's auth.json (DESIGN2 §4 Harness.SeedAuth,
+// bootstrap step 2). The caller (the opencode kind) composes the content
+// from the harness's stored auth_json secret and provider integrations;
+// empty data is a no-op.
+func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if err := a.envp.WriteFile(ctx, env, authPath, data, 0o600); err != nil {
+		return fmt.Errorf("seed auth.json: %w", err)
 	}
 	return nil
 }
@@ -190,8 +197,8 @@ type event struct {
 	Type      string `json:"type"`
 	SessionID string `json:"sessionID"`
 	Part      struct {
-		Type   string `json:"type"`
-		Text   string `json:"text"`
+		Type   string  `json:"type"`
+		Text   string  `json:"text"`
 		Cost   float64 `json:"cost"`
 		Tokens struct {
 			Input     int `json:"input"`
@@ -246,7 +253,4 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-var (
-	_ ports.AgentRunner     = (*Adapter)(nil)
-	_ ports.HarnessPreparer = (*Adapter)(nil)
-)
+var _ ports.AgentRunner = (*Adapter)(nil)

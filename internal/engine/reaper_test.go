@@ -15,7 +15,7 @@ func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {
 	ctx := context.Background()
 
 	// Completed run with a live env.
-	doneID, err := h.e.CreateRun(ctx, Ticket{Title: "done"}, "loop")
+	doneID, err := h.e.CreateRun(ctx, Ticket{Title: "done"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {
 	// Abandoned run with a live env (must never be reaped).
 	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-ab"})
 	for _, p := range []event.Payload{
-		&event.RunCreated{TicketTitle: "ab", FlowName: "loop"},
+		&event.RunCreated{TicketTitle: "ab", FlowName: "loop", ProjectID: testProject},
 		&event.EnvRequested{}, &event.EnvReady{EnvID: string(envID)},
 		&event.RunAbandoned{StalledAt: "test", Reason: "edge exhausted"},
 	} {

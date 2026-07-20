@@ -211,9 +211,12 @@ func (p *parser) build(raw *rawFlow) (*Flow, error) {
 
 func (p *parser) buildDefaults(raw *rawDefaults) (Defaults, error) {
 	line := p.keyLine("defaults")
+	// harness: any slug is valid document-side (DESIGN2 §6.3) — whether the
+	// kind exists is preflight's question at run creation, keeping flows
+	// portable data. Empty means "the project's harness kind".
 	d := Defaults{
 		Timeout:  defaultTimeout,
-		Harness:  HarnessOpencode,
+		Harness:  raw.Harness,
 		Model:    raw.Model,
 		MaxTurns: defaultMaxTurns,
 	}
@@ -224,11 +227,8 @@ func (p *parser) buildDefaults(raw *rawDefaults) (Defaults, error) {
 		}
 		d.Timeout = t
 	}
-	if raw.Harness != "" {
-		if raw.Harness != HarnessOpencode {
-			return d, p.errf(line, "defaults.harness: unknown harness %q (supported: %s)", raw.Harness, HarnessOpencode)
-		}
-		d.Harness = raw.Harness
+	if raw.Harness != "" && !slugRe.MatchString(raw.Harness) {
+		return d, p.errf(line, "defaults.harness: %q is not a slug (lowercase [a-z0-9_-], starting with a letter)", raw.Harness)
 	}
 	if d.Model == "" {
 		return d, p.errf(line, "defaults.model is required (format provider/model)")
@@ -338,8 +338,8 @@ func (p *parser) buildStage(raw *rawStage, idx int, d Defaults) (*Stage, error) 
 			s.Model = raw.Model
 		}
 		if raw.Harness != "" {
-			if raw.Harness != HarnessOpencode {
-				return fail("unknown harness %q (supported: %s)", raw.Harness, HarnessOpencode)
+			if !slugRe.MatchString(raw.Harness) {
+				return fail("harness %q is not a slug (kind existence is checked at run creation)", raw.Harness)
 			}
 			s.Harness = raw.Harness
 		}

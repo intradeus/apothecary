@@ -28,27 +28,15 @@ type Ticket struct {
 	Goal  string
 }
 
+// Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
+// configuration lives in Resolutions, policy limits in the SettingsSource.
 type Config struct {
-	RepoURL       string
-	DefaultBranch string
-	AgentsMDPath  string
-	RepoRef       ports.RepoRef
-	// Commands is project.commands (§1): user-provided named shell commands.
-	// "setup" is mandatory and runs at bootstrap step 6.
-	Commands map[string]string
-	// ProviderEnv maps env var names to secret values written into the
-	// workspace at bootstrap (never through provisioner parameters, §11).
-	ProviderEnv map[string]string
-	// GitToken authenticates clone/push for the repo host via a
-	// credential-store entry (§11 step 3); empty for public repos.
-	GitToken string
-	EngineURL   string // reachable from workspaces; default http://127.0.0.1:8080 (reverse tunnel)
+	EngineURL string // reachable from workspaces; default http://127.0.0.1:8080 (reverse tunnel)
 	// MRPollInterval is the auto_complete poll cadence (§3: 60s).
 	MRPollInterval time.Duration
 	// RunsDir receives stage logs (<run>/<stage>-<iter>.log, §12/§13);
 	// empty disables log files.
 	RunsDir string
-	Limits  Limits
 }
 
 // Limits are the §14 caps: runs beyond MaxConcurrentRuns queue in pending
@@ -60,9 +48,6 @@ type Limits struct {
 
 func (c *Config) withDefaults() Config {
 	out := *c
-	if out.AgentsMDPath == "" {
-		out.AgentsMDPath = "AGENTS.md"
-	}
 	if out.EngineURL == "" {
 		// Workspaces reach the engine through the Coder adapter's reverse
 		// tunnel: localhost on both ends (deviation from §8's
@@ -72,23 +57,26 @@ func (c *Config) withDefaults() Config {
 	if out.MRPollInterval == 0 {
 		out.MRPollInterval = 60 * time.Second
 	}
-	if out.Limits.MaxConcurrentRuns == 0 {
-		out.Limits.MaxConcurrentRuns = 3
-	}
-	if out.Limits.MaxEnvironments == 0 {
-		out.Limits.MaxEnvironments = 6
-	}
 	return out
+}
+
+func (l Limits) withDefaults() Limits {
+	if l.MaxConcurrentRuns == 0 {
+		l.MaxConcurrentRuns = 3
+	}
+	if l.MaxEnvironments == 0 {
+		l.MaxEnvironments = 6
+	}
+	return l
 }
 
 type Engine struct {
 	cfg      Config
 	store    event.Store
-	envp     ports.EnvProvisioner
-	runner   ports.AgentRunner
-	forge    ports.Forge
+	resolver Resolver
+	flows    flow.Source
+	settings SettingsSource
 	channels []ports.NotificationChannel
-	flows    map[string]*flow.Flow
 
 	clock func() time.Time
 	newID func() string
@@ -172,16 +160,18 @@ var (
 	ErrPingAnswered = errors.New("ping already answered")
 )
 
-func New(cfg Config, store event.Store, envp ports.EnvProvisioner, runner ports.AgentRunner,
-	forge ports.Forge, channels []ports.NotificationChannel, flows map[string]*flow.Flow) *Engine {
+func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
+	settings SettingsSource, channels []ports.NotificationChannel) *Engine {
+	if settings == nil {
+		settings = StaticSettings{L: Limits{}.withDefaults()}
+	}
 	return &Engine{
 		cfg:      cfg.withDefaults(),
 		store:    store,
-		envp:     envp,
-		runner:   runner,
-		forge:    forge,
-		channels: channels,
+		resolver: resolver,
 		flows:    flows,
+		settings: settings,
+		channels: channels,
 		clock:    time.Now,
 		newID:    func() string { return ulid.Make().String() },
 		log:      slog.Default(),
@@ -189,6 +179,17 @@ func New(cfg Config, store event.Store, envp ports.EnvProvisioner, runner ports.
 		pings:    map[string]*Ping{},
 		tokens:   map[string]string{},
 	}
+}
+
+// limits reads the §6.4 policy settings, falling back to defaults on error
+// (a broken settings row must not brick admission).
+func (e *Engine) limits(ctx context.Context) Limits {
+	l, err := e.settings.Limits(ctx)
+	if err != nil {
+		e.log.Warn("settings read failed; using defaults", "err", err)
+		return Limits{}.withDefaults()
+	}
+	return l.withDefaults()
 }
 
 // EventSink receives every freshly appended event exactly once (§7
@@ -221,18 +222,31 @@ func (e *Engine) appendAndEmit(ctx context.Context, runID string, ps ...event.Pa
 	return nil
 }
 
-// CreateRun performs §1 preflight and, if it passes, appends run_created and
-// starts the run's writer goroutine. Preflight failures refuse the run
-// naming the exact missing item — no events are written.
-func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName string) (string, error) {
+// CreateRun performs §1 preflight against the project's resolved
+// configuration and, if it passes, appends run_created and starts the run's
+// writer goroutine. flowName "" means the project's default flow. Preflight
+// failures refuse the run naming the exact missing item — no events are
+// written.
+func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID string) (string, error) {
 	if strings.TrimSpace(t.Title) == "" {
 		return "", errors.New("ticket title is required")
 	}
-	fl, ok := e.flows[flowName]
-	if !ok {
-		return "", fmt.Errorf("flow %q not found", flowName)
+	if projectID == "" {
+		return "", errors.New("project_id is required")
 	}
-	if err := e.preflight(ctx, fl); err != nil {
+	res, err := e.resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return "", fmt.Errorf("preflight: %w", err)
+	}
+	defer res.release()
+	if flowName == "" {
+		flowName = res.DefaultFlow
+	}
+	fl, err := e.flows.Get(ctx, flowName)
+	if err != nil {
+		return "", fmt.Errorf("flow %q: %w", flowName, err)
+	}
+	if err := e.preflight(ctx, res, fl); err != nil {
 		return "", err
 	}
 
@@ -247,14 +261,16 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName string) (stri
 		TicketGoal:  t.Goal,
 		FlowName:    fl.Name,
 		FlowHash:    fl.Hash,
-		RepoURL:     e.cfg.RepoURL,
+		RepoURL:     res.RepoRef.URL,
 		Branch:      branch,
+		ProjectID:   projectID,
 	}); err != nil {
 		return "", err
 	}
+	lim := e.limits(ctx)
 	e.mu.Lock()
 	e.queue = append(e.queue, runID)
-	e.scheduleLocked()
+	e.scheduleLocked(lim)
 	e.mu.Unlock()
 	return runID, nil
 }
@@ -286,16 +302,17 @@ func (e *Engine) checkEnvCapacity(ctx context.Context) error {
 			archivable = append(archivable, id)
 		}
 	}
-	if live < e.cfg.Limits.MaxEnvironments {
+	maxEnvs := e.limits(ctx).MaxEnvironments
+	if live < maxEnvs {
 		return nil
 	}
 	e.notify(ctx, ports.Notification{
 		Type:  "blocker",
-		Title: fmt.Sprintf("environment capacity reached (%d/%d)", live, e.cfg.Limits.MaxEnvironments),
+		Title: fmt.Sprintf("environment capacity reached (%d/%d)", live, maxEnvs),
 		Body:  "archive finished runs to free environments: " + strings.Join(archivable, ", "),
 	})
 	return fmt.Errorf("%w (%d live, max %d); archivable runs: %s",
-		ErrEnvCapacity, live, e.cfg.Limits.MaxEnvironments, strings.Join(archivable, ", "))
+		ErrEnvCapacity, live, maxEnvs, strings.Join(archivable, ", "))
 }
 
 // Archive marks a terminal run archived and destroys its environment
@@ -326,7 +343,7 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 		return err
 	}
 	if v.EnvID != "" {
-		if err := e.envp.Destroy(ctx, ports.EnvID(v.EnvID)); err != nil {
+		if err := e.destroyEnv(ctx, v); err != nil {
 			e.log.Warn("archive: env destroy failed", "run", runID, "env", v.EnvID, "err", err)
 		} else if err := e.appendAndEmit(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
@@ -335,12 +352,32 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	return nil
 }
 
-func (e *Engine) preflight(ctx context.Context, fl *flow.Flow) error {
-	if err := e.forge.CheckAccess(ctx, e.cfg.RepoRef); err != nil {
+// destroyEnv resolves the run's project to reach its provisioner (§6.1:
+// no global envp anymore). Pre-v2 runs with no project cannot be destroyed
+// through the engine — their envs outlived the config that owned them.
+func (e *Engine) destroyEnv(ctx context.Context, v run.View) error {
+	if v.ProjectID == "" {
+		return fmt.Errorf("run %s has no project (pre-v2); destroy its environment manually", v.RunID)
+	}
+	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	if err != nil {
+		return err
+	}
+	defer res.release()
+	return res.Envp.Destroy(ctx, ports.EnvID(v.EnvID))
+}
+
+// preflight refuses a run naming the exact missing item (§1, extended by
+// DESIGN2 §6.3): forge access, repo files, run_ref resolution, and the
+// harness pin check. Model strings are deliberately NOT validated against
+// provider kinds — harnesses route provider/model themselves (openrouter
+// serves anthropic/*), so any check would false-negative.
+func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) error {
+	if err := res.Forge.CheckAccess(ctx, res.RepoRef); err != nil {
 		return fmt.Errorf("preflight: forge access: %w", err)
 	}
-	for _, path := range []string{e.cfg.AgentsMDPath, ".factory/agents/"} {
-		ok, err := e.forge.FileExists(ctx, e.cfg.RepoRef, path)
+	for _, path := range []string{res.AgentsMDPath, ".factory/agents/"} {
+		ok, err := res.Forge.FileExists(ctx, res.RepoRef, path)
 		if err != nil {
 			return fmt.Errorf("preflight: checking %s: %w", path, err)
 		}
@@ -348,15 +385,18 @@ func (e *Engine) preflight(ctx context.Context, fl *flow.Flow) error {
 			return fmt.Errorf("preflight: %s not found in repo", path)
 		}
 	}
-	if _, ok := e.cfg.Commands["setup"]; !ok {
-		return errors.New(`preflight: project.commands.setup is not configured (mandatory)`)
-	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
-			if _, ok := e.cfg.Commands[st.RunRef]; !ok {
+			if _, ok := res.Commands[st.RunRef]; !ok {
 				return fmt.Errorf("preflight: stage %q: run_ref %q not found in project.commands", st.ID, st.RunRef)
 			}
+		}
+		// One harness per project (§6.3): a stage pinning a different
+		// kind than the project's harness is refused here, not at parse
+		// time — flows are portable data.
+		if st.Type == flow.StageAgent && st.Harness != "" && st.Harness != res.HarnessKind {
+			return fmt.Errorf("preflight: stage %q pins harness %q but the project's harness is %q", st.ID, st.Harness, res.HarnessKind)
 		}
 	}
 	return nil
@@ -376,6 +416,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 		created time.Time
 	}
 	var pending []pend
+	lim := e.limits(ctx)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, id := range ids {
@@ -400,14 +441,15 @@ func (e *Engine) Recover(ctx context.Context) error {
 	for _, p := range pending {
 		e.queue = append(e.queue, p.id)
 	}
-	e.scheduleLocked()
+	e.scheduleLocked(lim)
 	return nil
 }
 
 // scheduleLocked starts queued pending runs while concurrency slots are
-// free (§14). Callers hold e.mu.
-func (e *Engine) scheduleLocked() {
-	for len(e.handles) < e.cfg.Limits.MaxConcurrentRuns && len(e.queue) > 0 {
+// free (§14). Callers hold e.mu and pass limits read outside the lock
+// (settings live in the DB, §6.4).
+func (e *Engine) scheduleLocked(lim Limits) {
+	for len(e.handles) < lim.MaxConcurrentRuns && len(e.queue) > 0 {
 		id := e.queue[0]
 		e.queue = e.queue[1:]
 		e.startLocked(id)
@@ -579,7 +621,7 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter time.Durati
 		if e.clock().Sub(v.UpdatedAt) < destroyCompletedAfter {
 			continue
 		}
-		if err := e.envp.Destroy(ctx, ports.EnvID(v.EnvID)); err != nil {
+		if err := e.destroyEnv(ctx, v); err != nil {
 			e.log.Warn("reaper: env destroy failed", "run", id, "env", v.EnvID, "err", err)
 			continue
 		}
@@ -600,11 +642,67 @@ func (e *Engine) notify(ctx context.Context, n ports.Notification) {
 }
 
 func (e *Engine) finish(runID string, h *runHandle) {
+	lim := e.limits(context.Background())
 	e.mu.Lock()
 	delete(e.handles, runID)
-	e.scheduleLocked() // a slot freed; admit the next queued run
+	e.scheduleLocked(lim) // a slot freed; admit the next queued run
 	e.mu.Unlock()
 	close(h.done)
+}
+
+// PreflightProject runs the §6.3 checks for a project's default flow
+// without creating a run (POST /api/projects/{id}/preflight). Each step
+// reports independently so the UI can show exactly what failed.
+type PreflightStep struct {
+	ID    string `json:"id"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+func (e *Engine) PreflightProject(ctx context.Context, projectID string) []PreflightStep {
+	step := func(id string, err error) PreflightStep {
+		s := PreflightStep{ID: id, OK: err == nil}
+		if err != nil {
+			s.Error = err.Error()
+		}
+		return s
+	}
+	res, err := e.resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return []PreflightStep{step("resolve", err)}
+	}
+	defer res.release()
+	steps := []PreflightStep{step("resolve", nil)}
+
+	fl, err := e.flows.Get(ctx, res.DefaultFlow)
+	steps = append(steps, step("flow:"+res.DefaultFlow, err))
+	steps = append(steps, step("forge_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
+	for _, path := range []string{res.AgentsMDPath, ".factory/agents/"} {
+		ok, ferr := res.Forge.FileExists(ctx, res.RepoRef, path)
+		if ferr == nil && !ok {
+			ferr = fmt.Errorf("%s not found in repo", path)
+		}
+		steps = append(steps, step("repo_file:"+path, ferr))
+	}
+	if fl != nil {
+		steps = append(steps, step("flow_refs", e.preflightFlowRefs(res, fl)))
+	}
+	return steps
+}
+
+func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
+	for i := range fl.Stages {
+		st := &fl.Stages[i]
+		if st.Type == flow.StageCommand && st.RunRef != "" {
+			if _, ok := res.Commands[st.RunRef]; !ok {
+				return fmt.Errorf("stage %q: run_ref %q not found in project.commands", st.ID, st.RunRef)
+			}
+		}
+		if st.Type == flow.StageAgent && st.Harness != "" && st.Harness != res.HarnessKind {
+			return fmt.Errorf("stage %q pins harness %q but the project's harness is %q", st.ID, st.Harness, res.HarnessKind)
+		}
+	}
+	return nil
 }
 
 func slug(s string, maxLen int) string {

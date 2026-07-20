@@ -1,0 +1,305 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"factory/internal/channels"
+	"factory/internal/confstore"
+	"factory/internal/engine"
+	"factory/internal/event"
+	"factory/internal/kinds"
+	"factory/internal/resolve"
+	"factory/internal/secrets"
+	"factory/internal/seed"
+)
+
+// confEnv is the full config-plane stack over Mem + fake kinds: the same
+// wiring serve uses, minus Postgres.
+type confEnv struct {
+	*env
+	conf     *confstore.Service
+	resolver *resolve.Resolver
+}
+
+func newConfEnv(t *testing.T) *confEnv {
+	t.Helper()
+	key, err := secrets.ParseKey(secrets.GenerateKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := kinds.NewRegistry()
+	kinds.RegisterFakes(reg)
+	conf := confstore.New(confstore.NewMem(), key)
+	conf.KindValid = reg.Valid
+	if err := seed.Flows(t.Context(), conf); err != nil {
+		t.Fatal(err)
+	}
+	resolver := resolve.New(conf, reg, "", 8080)
+	t.Cleanup(resolver.Close)
+
+	store := event.NewMemStore()
+	chreg := channels.NewRegistry()
+	e := engine.New(engine.Config{}, store, resolver, conf.FlowSource(), resolve.Settings{Conf: conf}, nil)
+	t.Cleanup(e.Shutdown)
+
+	srv := New(e, store, chreg, "")
+	srv.Conf = conf
+	srv.Kinds = reg
+	srv.Ops = resolver
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return &confEnv{env: &env{e: e, store: store, srv: srv, ts: ts}, conf: conf, resolver: resolver}
+}
+
+// waitPingType polls the inbox for a pending ping of the given type.
+func (x *confEnv) waitPingType(t *testing.T, ptype string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		_, data := x.do(t, "GET", "/api/pings?status=pending", nil, nil)
+		var pings []struct {
+			PingID string `json:"ping_id"`
+			Type   string `json:"type"`
+		}
+		_ = json.Unmarshal(data, &pings)
+		for _, p := range pings {
+			if p.Type == ptype {
+				return p.PingID
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no pending %s ping appeared", ptype)
+	return ""
+}
+
+// wizard drives the whole UI configuration path over HTTP and returns the
+// project id: integrations -> repo pick -> project.
+func (x *confEnv) wizard(t *testing.T) string {
+	t.Helper()
+	mk := func(port, name string, secretVals map[string]string) string {
+		resp, data := x.do(t, "POST", "/api/integrations", map[string]any{
+			"port": port, "kind": "fake", "name": name, "secrets": secretVals,
+		}, nil)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create %s integration = %d: %s", port, resp.StatusCode, data)
+		}
+		var out struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(data, &out)
+		return out.ID
+	}
+	forgeID := mk("forge", "f", map[string]string{"token": "glpat-PLANTED-forge-token"})
+	provID := mk("provisioner", "c", nil)
+	harnessID := mk("harness", "h", nil)
+	providerID := mk("provider", "p", map[string]string{"api_key": "sk-PLANTED-provider-key"})
+
+	// Repo picker.
+	resp, data := x.do(t, "GET", "/api/integrations/"+forgeID+"/repos", nil, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("repos = %d: %s", resp.StatusCode, data)
+	}
+	var repos []kinds.RepoInfo
+	_ = json.Unmarshal(data, &repos)
+	if len(repos) == 0 {
+		t.Fatal("no repos to pick")
+	}
+
+	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
+		"name": "web", "forge_id": forgeID, "provisioner_id": provID,
+		"harness_id": harnessID, "provider_ids": []string{providerID},
+		"repo": map[string]string{
+			"url": repos[0].URL, "locator": repos[0].Locator, "default_branch": repos[0].DefaultBranch,
+		},
+		"commands":  map[string]string{"verify": "true"},
+		"workspace": map[string]any{"template": "dev"},
+	}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create project = %d: %s", resp.StatusCode, data)
+	}
+	var p struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(data, &p)
+	return p.ID
+}
+
+func TestConfigPlaneCRUDAndMasking(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+
+	// GET /api/kinds serves descriptors for the generic forms.
+	resp, data := x.do(t, "GET", "/api/kinds", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"port":"forge"`) {
+		t.Fatalf("kinds = %d: %s", resp.StatusCode, data)
+	}
+
+	// Masking: list + get show masks, never values.
+	resp, data = x.do(t, "GET", "/api/integrations", nil, nil)
+	if resp.StatusCode != 200 {
+		t.Fatal(resp.StatusCode)
+	}
+	if strings.Contains(string(data), "PLANTED") {
+		t.Fatalf("integration list leaks secrets: %s", data)
+	}
+	if !strings.Contains(string(data), "••••") {
+		t.Fatalf("no mask in list: %s", data)
+	}
+
+	// Update with absent secret keeps it (§3): rename only, then verify the
+	// stored secret still decrypts.
+	var list []integrationJSON
+	_ = json.Unmarshal(data, &list)
+	var forgeID string
+	for _, in := range list {
+		if in.Port == "forge" {
+			forgeID = in.ID
+		}
+	}
+	resp, data = x.do(t, "PUT", "/api/integrations/"+forgeID, map[string]any{"name": "renamed"}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("update = %d: %s", resp.StatusCode, data)
+	}
+	in, err := x.conf.GetIntegration(t.Context(), forgeID)
+	if err != nil || in.Secrets["token"] != "glpat-PLANTED-forge-token" {
+		t.Fatalf("secret lost on update: %v %v", in.Secrets, err)
+	}
+
+	// Preflight passes against the fake forge.
+	resp, data = x.do(t, "POST", "/api/projects/"+projectID+"/preflight", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"ok":true`) {
+		t.Fatalf("preflight = %d: %s", resp.StatusCode, data)
+	}
+
+	// Settings roundtrip + validation.
+	resp, _ = x.do(t, "PUT", "/api/settings", map[string]any{
+		"max_concurrent_runs": 2, "max_environments": 4,
+		"destroy_completed_after": "24h", "destroy_abandoned": "never",
+	}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("settings put = %d", resp.StatusCode)
+	}
+	resp, data = x.do(t, "GET", "/api/settings", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"max_concurrent_runs":2`) {
+		t.Fatalf("settings get = %d: %s", resp.StatusCode, data)
+	}
+	resp, _ = x.do(t, "PUT", "/api/settings", map[string]any{
+		"max_concurrent_runs": 2, "max_environments": 4,
+		"destroy_completed_after": "24h", "destroy_abandoned": "sometimes",
+	}, nil)
+	if resp.StatusCode != 400 {
+		t.Fatalf("invalid settings = %d, want 400", resp.StatusCode)
+	}
+
+	// Flow validate: line-precise errors verbatim.
+	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{
+		"yaml": "name: bad\ndefaults: { model: nope }\nstages: []\n",
+	}, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), "provider/model") {
+		t.Fatalf("validate = %d: %s", resp.StatusCode, data)
+	}
+
+	// Flow versions accumulate content-addressed history.
+	var v1row confstore.FlowRow
+	_, data = x.do(t, "GET", "/api/flows/v1", nil, nil)
+	_ = json.Unmarshal(data, &v1row)
+	resp, _ = x.do(t, "PUT", "/api/flows/v1", map[string]string{"yaml": v1row.YAML + "# tweak\n"}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("flow put = %d", resp.StatusCode)
+	}
+	_, data = x.do(t, "GET", "/api/flows/v1/versions", nil, nil)
+	var versions []confstore.FlowVersion
+	_ = json.Unmarshal(data, &versions)
+	if len(versions) != 2 {
+		t.Fatalf("versions = %d, want 2", len(versions))
+	}
+	resp, data = x.do(t, "GET", "/api/flow-versions/"+v1row.Hash, nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), v1row.Hash) {
+		t.Fatalf("flow-version = %d: %s", resp.StatusCode, data)
+	}
+
+	// Delete rules surface as 409s naming the referrer.
+	resp, data = x.do(t, "DELETE", "/api/integrations/"+forgeID, nil, nil)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), "web") {
+		t.Fatalf("referenced delete = %d: %s", resp.StatusCode, data)
+	}
+	resp, _ = x.do(t, "DELETE", "/api/flows/v1", nil, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("default_flow delete = %d, want 409", resp.StatusCode)
+	}
+}
+
+// The M7 acceptance leak test: plant secret values, configure everything
+// through the API, drive a full fake run, then grep every API response and
+// every event payload for the planted values — none may appear.
+func TestNoSecretLeaksAnywhere(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+
+	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{
+		"title": "Add search", "goal": "g", "project_id": projectID,
+	}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ticket = %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	_ = json.Unmarshal(data, &out)
+
+	// The seeded v1 flow parks at its two human gates — answer them over
+	// the API like the CPUI would.
+	for _, gate := range []string{"plan_approval", "final_review"} {
+		p := x.waitPingType(t, gate)
+		resp, data := x.do(t, "POST", "/api/pings/"+p+"/answer", map[string]string{"answer": "approve"}, nil)
+		if resp.StatusCode != 200 {
+			t.Fatalf("answer %s = %d: %s", gate, resp.StatusCode, data)
+		}
+	}
+	x.e.Wait(out.RunID)
+
+	planted := []string{"glpat-PLANTED-forge-token", "sk-PLANTED-provider-key"}
+	scan := func(where string, blob []byte) {
+		for _, s := range planted {
+			if strings.Contains(string(blob), s) {
+				t.Errorf("SECRET LEAK in %s: %q visible", where, s)
+			}
+		}
+	}
+
+	// Every read endpoint.
+	for _, path := range []string{
+		"/api/kinds", "/api/integrations", "/api/projects", "/api/projects/" + projectID,
+		"/api/flows", "/api/flows/v1", "/api/settings", "/api/runs",
+		"/api/runs/" + out.RunID, "/api/pings?status=pending",
+	} {
+		resp, data := x.do(t, "GET", path, nil, nil)
+		if resp.StatusCode != 200 {
+			t.Fatalf("GET %s = %d", path, resp.StatusCode)
+		}
+		scan("GET "+path, data)
+	}
+
+	// Every event payload of the completed run.
+	evs, err := x.store.Events(t.Context(), out.RunID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) == 0 {
+		t.Fatal("no events recorded")
+	}
+	for _, ev := range evs {
+		blob, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scan(fmt.Sprintf("event %s seq %d", ev.Type, ev.Seq), blob)
+	}
+}

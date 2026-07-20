@@ -18,6 +18,13 @@ type EnvSpec struct {
 	RunID   string
 	RepoURL string
 	Branch  string
+	// Image is the workspace image tag built by the §8 pipeline (DESIGN2);
+	// empty on the custom-template compatibility path, where the template
+	// bakes its own image.
+	Image string
+	// EgressDomains is the fully derived firewall allowlist (DESIGN2 §8.4):
+	// repo host ∪ adapter contributions ∪ project extras. Non-secret.
+	EgressDomains []string
 }
 
 type Command struct {
@@ -101,20 +108,14 @@ type AgentRunner interface {
 	Resume(ctx context.Context, env EnvID, s SessionID, reply string) (AgentResult, error)
 }
 
-// HarnessPreparer is optionally implemented by AgentRunner adapters that
-// generate harness-native config in the workspace at bootstrap (§5.2/§11
-// step 4: .factory/agents/ -> native agent defs + ask_human MCP wiring).
-// The engine type-asserts; fakes need not implement it. (Addition over the
-// §4 "final" port set — recorded in IMPLEMENTATION_NOTES.)
-type HarnessPreparer interface {
-	PrepareEnv(ctx context.Context, env EnvID) error
-}
-
-// RepoRef identifies the one project repo at the forge.
+// RepoRef identifies a project repo at its forge.
 type RepoRef struct {
 	URL           string
 	DefaultBranch string
-	ProjectID     int // forge-side id (GitLab project id)
+	// Locator is the forge-kind-specific repo identifier (DESIGN2 §5):
+	// GitLab's numeric project id as a string, GitHub's "owner/repo".
+	// Filled by the repo picker; adapters parse their own locator.
+	Locator string
 }
 
 type MRRef struct {

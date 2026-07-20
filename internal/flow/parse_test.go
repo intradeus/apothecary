@@ -47,8 +47,10 @@ func TestCanonicalV1(t *testing.T) {
 	if len(f.Hash) != 64 {
 		t.Errorf("hash = %q, want 64 hex chars", f.Hash)
 	}
+	// harness is deliberately unpinned in the canonical flow (DESIGN2 §6.3):
+	// empty resolves to the project's harness kind at run creation.
 	if f.Defaults.Timeout != 30*time.Minute || f.Defaults.MaxTurns != 50 ||
-		f.Defaults.Harness != "opencode" || f.Defaults.Model != "anthropic/claude-sonnet-4-6" {
+		f.Defaults.Harness != "" || f.Defaults.Model != "anthropic/claude-sonnet-4-6" {
 		t.Errorf("defaults = %+v", f.Defaults)
 	}
 	if f.Budget.MaxCostUSD != 10.0 || f.Budget.MaxTotalTurns != 300 {

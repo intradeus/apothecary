@@ -23,8 +23,8 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			// already the TASK section
 		case flow.InputChanged:
 			stat := "(no diff available)"
-			res, err := x.e.envp.Exec(x.ctx, rs.envID, ports.Command{
-				Script:  fmt.Sprintf("git diff --stat origin/%s...HEAD", x.e.cfg.DefaultBranch),
+			res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
+				Script:  fmt.Sprintf("git diff --stat origin/%s...HEAD", x.res.RepoRef.DefaultBranch),
 				Dir:     "repo",
 				Timeout: rs.fl.Defaults.Timeout,
 			})
@@ -34,7 +34,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			fmt.Fprintf(&b, "# CHANGED FILES\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", stat)
 		default:
 			content := "(artifact missing)"
-			if data, err := x.e.envp.ReadFile(x.ctx, rs.envID, in); err == nil {
+			if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, in); err == nil {
 				content = tail(string(data), 16<<10)
 			}
 			fmt.Fprintf(&b, "# ARTIFACT: %s\n%s\n", in, content)

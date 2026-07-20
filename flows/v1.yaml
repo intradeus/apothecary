@@ -1,6 +1,8 @@
 name: v1
 description: plan-gated build with cross-vendor adversarial review
-defaults: { timeout: 30m, harness: opencode, model: anthropic/claude-sonnet-4-6, max_turns: 50 }
+# harness is deliberately unpinned (DESIGN2 §6.3): it resolves to the
+# project's harness kind at run creation, keeping this flow portable.
+defaults: { timeout: 30m, model: anthropic/claude-sonnet-4-6, max_turns: 50 }
 budget: { max_cost_usd: 10.0, max_total_turns: 300 }
 stages:
   - { id: plan,       type: agent, agent: planner, input: [ticket],

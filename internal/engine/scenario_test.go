@@ -16,6 +16,9 @@ import (
 	"factory/internal/run"
 )
 
+// testProject is the project id served by the harness's StaticResolver.
+const testProject = "prj-test"
+
 type harness struct {
 	e      *Engine
 	store  *event.MemStore
@@ -23,7 +26,17 @@ type harness struct {
 	runner *fake.AgentRunner
 	forge  *fake.Forge
 	ch     *fake.Channel
+	// res is the resolution every run gets; tests mutate it (Commands,
+	// GitPass, …) the way v1 tests mutated engine.Config.
+	res *Resolution
+	// settings is mutable so tests can shrink limits mid-test.
+	settings *varSettings
 }
+
+// varSettings is a mutable SettingsSource for tests.
+type varSettings struct{ L Limits }
+
+func (v *varSettings) Limits(context.Context) (Limits, error) { return v.L, nil }
 
 func mustFlow(t *testing.T, doc string) *flow.Flow {
 	t.Helper()
@@ -43,19 +56,26 @@ func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 		forge:  &fake.Forge{},
 		ch:     &fake.Channel{},
 	}
-	fm := map[string]*flow.Flow{}
+	fm := flow.MapSource{}
 	for _, f := range flows {
 		fm[f.Name] = f
 	}
-	cfg := Config{
-		RepoURL:       "https://gitlab.local/g/p.git",
-		DefaultBranch: "main",
-		RepoRef:       ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", ProjectID: 1},
-		Commands:      map[string]string{"setup": "./scripts/setup.sh", "verify": "make lint && make test"},
-		ProviderEnv:   map[string]string{"ANTHROPIC_API_KEY": "sk-test"},
-		MRPollInterval: 5 * time.Millisecond,
+	h.res = &Resolution{
+		ProjectID:    testProject,
+		ProjectName:  "test",
+		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
+		AgentsMDPath: "AGENTS.md",
+		DefaultFlow:  flows[0].Name,
+		Commands:     map[string]string{"setup": "./scripts/setup.sh", "verify": "make lint && make test"},
+		ProviderEnv:  map[string]string{"ANTHROPIC_API_KEY": "sk-test"},
+		HarnessKind:  "fake",
+		Envp:         h.envp,
+		Runner:       h.runner,
+		Forge:        h.forge,
 	}
-	h.e = New(cfg, h.store, h.envp, h.runner, h.forge, []ports.NotificationChannel{h.ch}, fm)
+	h.settings = &varSettings{L: Limits{}.withDefaults()}
+	cfg := Config{MRPollInterval: 5 * time.Millisecond}
+	h.e = New(cfg, h.store, StaticResolver{R: h.res}, fm, h.settings, []ports.NotificationChannel{h.ch})
 	t.Cleanup(h.e.Shutdown)
 	return h
 }
@@ -175,7 +195,7 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login", Goal: "Users must log in"}, "v1")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login", Goal: "Users must log in"}, "v1", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +281,7 @@ func TestTestFailBuildLoopThenPass(t *testing.T) {
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +335,7 @@ stages:
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "rev")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "rev", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +371,7 @@ func TestEdgeExhaustionAbandons(t *testing.T) {
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +413,7 @@ stages:
 		return ports.AgentResult{TurnsUsed: 2}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +465,7 @@ stages:
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "gated")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "gated", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +516,7 @@ stages:
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pricey")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pricey", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +548,7 @@ func TestCrashRecoveryResumesViaResume(t *testing.T) {
 	ctx := context.Background()
 	usage := &event.Usage{InputTokens: 100, OutputTokens: 50, CostUSD: 0.30}
 	for _, p := range []event.Payload{
-		&event.RunCreated{TicketTitle: "T", FlowName: "loop", FlowHash: fl.Hash, Branch: "factory/r-crash-t"},
+		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "factory/r-crash-t"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
@@ -588,7 +608,7 @@ func TestCrashRecoveryWithoutSessionReRuns(t *testing.T) {
 	envID, _ := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-c2"})
 	ctx := context.Background()
 	for _, p := range []event.Payload{
-		&event.RunCreated{TicketTitle: "T", FlowName: "loop", FlowHash: fl.Hash, Branch: "b"},
+		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
@@ -627,7 +647,7 @@ stages:
 		return ports.AgentResult{TurnsUsed: 1}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "slow")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "slow", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +681,7 @@ stages:
 		return ports.AgentResult{}, ctx.Err()
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "hang")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "hang", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +705,7 @@ func TestEnvFailureAfterRetry(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.envp.ProvisionErrs = []error{fmt.Errorf("docker daemon unreachable"), fmt.Errorf("still unreachable")}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -708,7 +728,7 @@ func TestSetupFailureIsEnvFailed(t *testing.T) {
 		}
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,29 +749,57 @@ func TestSetupFailureIsEnvFailed(t *testing.T) {
 func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.forge.MissingFiles = map[string]bool{".factory/agents/": true}
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
+	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err == nil || !strings.Contains(err.Error(), ".factory/agents/") {
 		t.Errorf("err = %v, want mention of .factory/agents/", err)
 	}
 
 	h2 := newHarness(t, mustFlow(t, loopFlowDoc))
-	delete(h2.e.cfg.Commands, "verify")
-	_, err = h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
+	delete(h2.res.Commands, "verify")
+	_, err = h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err == nil || !strings.Contains(err.Error(), `run_ref "verify"`) {
 		t.Errorf("err = %v, want mention of run_ref verify", err)
 	}
 
-	h3 := newHarness(t, mustFlow(t, loopFlowDoc))
-	delete(h3.e.cfg.Commands, "setup")
-	_, err = h3.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
-	if err == nil || !strings.Contains(err.Error(), "setup") {
-		t.Errorf("err = %v, want mention of setup", err)
+	// A flow pinning a foreign harness is refused at preflight (DESIGN2
+	// §6.3), naming stage and kinds.
+	h4 := newHarness(t, mustFlow(t, `name: pinned
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder, harness: codex }
+`))
+	_, err = h4.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pinned", testProject)
+	if err == nil || !strings.Contains(err.Error(), `pins harness "codex"`) {
+		t.Errorf("err = %v, want harness pin refusal", err)
 	}
 
 	// No events may exist after refusals.
-	ids, _ := h.store.RunIDs(context.Background())
-	if len(ids) != 0 {
-		t.Errorf("refused runs left events: %v", ids)
+	for _, hh := range []*harness{h, h2, h4} {
+		ids, _ := hh.store.RunIDs(context.Background())
+		if len(ids) != 0 {
+			t.Errorf("refused runs left events: %v", ids)
+		}
+	}
+}
+
+// commands.setup is OPTIONAL in v2 (DESIGN2 §8): a project without one
+// runs fine — bootstrap step 6 is simply skipped.
+func TestSetupIsOptional(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	delete(h.res.Commands, "setup")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatalf("setup-less project refused: %v", err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, want completed; events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	// No exec may have run the (absent) setup script.
+	for _, c := range h.envp.ExecCalls {
+		if strings.Contains(c.Cmd.Script, "setup.sh") {
+			t.Errorf("setup script executed despite being unset: %q", c.Cmd.Script)
+		}
 	}
 }
 
@@ -763,7 +811,7 @@ stages:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	// Planner never writes the declared artifact.
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "contract")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "contract", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

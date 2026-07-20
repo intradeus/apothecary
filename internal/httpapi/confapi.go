@@ -1,0 +1,375 @@
+package httpapi
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"factory/internal/confstore"
+	"factory/internal/flow"
+	"factory/internal/kinds"
+	"factory/internal/secrets"
+)
+
+// Config-plane routes (DESIGN2 §10). Secrets are write-only: requests carry
+// plaintext values, responses only masks (§3).
+
+// IntegrationOps is the slice of the resolver these routes need — an
+// interface so tests can stub it without a kinds registry.
+type IntegrationOps interface {
+	TestIntegration(ctx context.Context, id string) error
+	ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error)
+}
+
+// confErr maps confstore errors to statuses: not found 404, conflicts and
+// referenced-deletes 409, everything else 400 (validation messages).
+func confErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, confstore.ErrNotFound):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, confstore.ErrConflict), errors.Is(err, confstore.ErrReferenced):
+		writeErr(w, http.StatusConflict, err.Error())
+	default:
+		writeErr(w, http.StatusBadRequest, err.Error())
+	}
+}
+
+// --- kinds ------------------------------------------------------------------
+
+func (s *Server) listKinds(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.Kinds.Descriptors())
+}
+
+// --- integrations -----------------------------------------------------------
+
+type integrationJSON struct {
+	ID        string            `json:"id"`
+	Port      string            `json:"port"`
+	Kind      string            `json:"kind"`
+	Name      string            `json:"name"`
+	Config    map[string]any    `json:"config"`
+	Secrets   map[string]string `json:"secrets"` // masked, never values
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+func toIntegrationJSON(in confstore.Integration) integrationJSON {
+	return integrationJSON{
+		ID: in.ID, Port: in.Port, Kind: in.Kind, Name: in.Name,
+		Config: in.Config, Secrets: secrets.MaskAll(in.Secrets),
+		CreatedAt: in.CreatedAt, UpdatedAt: in.UpdatedAt,
+	}
+}
+
+func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Conf.ListIntegrations(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]integrationJSON, 0, len(rows))
+	for _, in := range rows {
+		out = append(out, toIntegrationJSON(in))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) createIntegration(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Port    string            `json:"port"`
+		Kind    string            `json:"kind"`
+		Name    string            `json:"name"`
+		Config  map[string]any    `json:"config"`
+		Secrets map[string]string `json:"secrets"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	in, err := s.Conf.CreateIntegration(r.Context(), confstore.Integration{
+		Port: body.Port, Kind: body.Kind, Name: body.Name,
+		Config: body.Config, Secrets: body.Secrets,
+	})
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toIntegrationJSON(in))
+}
+
+func (s *Server) getIntegration(w http.ResponseWriter, r *http.Request) {
+	in, err := s.Conf.GetIntegration(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toIntegrationJSON(in))
+}
+
+func (s *Server) updateIntegration(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name    string            `json:"name"`
+		Config  map[string]any    `json:"config"`
+		Secrets map[string]string `json:"secrets"` // §3 merge: present replaces, "" deletes, absent keeps
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	in, err := s.Conf.UpdateIntegration(r.Context(), r.PathValue("id"), body.Name, body.Config, body.Secrets)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toIntegrationJSON(in))
+}
+
+func (s *Server) deleteIntegration(w http.ResponseWriter, r *http.Request) {
+	if err := s.Conf.DeleteIntegration(r.Context(), r.PathValue("id")); err != nil {
+		confErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) testIntegration(w http.ResponseWriter, r *http.Request) {
+	if s.Ops == nil {
+		writeErr(w, http.StatusServiceUnavailable, "integration testing is not wired")
+		return
+	}
+	if err := s.Ops.TestIntegration(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) listIntegrationRepos(w http.ResponseWriter, r *http.Request) {
+	if s.Ops == nil {
+		writeErr(w, http.StatusServiceUnavailable, "repo listing is not wired")
+		return
+	}
+	repos, err := s.Ops.ListRepos(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	if repos == nil {
+		repos = []kinds.RepoInfo{}
+	}
+	writeJSON(w, http.StatusOK, repos)
+}
+
+// --- projects ---------------------------------------------------------------
+
+type projectBody struct {
+	Name          string                    `json:"name"`
+	ForgeID       string                    `json:"forge_id"`
+	ProvisionerID string                    `json:"provisioner_id"`
+	HarnessID     string                    `json:"harness_id"`
+	ProviderIDs   []string                  `json:"provider_ids"`
+	Repo          confstore.RepoConfig      `json:"repo"`
+	Commands      map[string]string         `json:"commands"`
+	Workspace     confstore.WorkspaceConfig `json:"workspace"`
+	DefaultFlow   string                    `json:"default_flow"`
+}
+
+func (b projectBody) toProject() confstore.Project {
+	return confstore.Project{
+		Name: b.Name, ForgeID: b.ForgeID, ProvisionerID: b.ProvisionerID,
+		HarnessID: b.HarnessID, ProviderIDs: b.ProviderIDs, Repo: b.Repo,
+		Commands: b.Commands, Workspace: b.Workspace, DefaultFlow: b.DefaultFlow,
+	}
+}
+
+func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Conf.ListProjects(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []confstore.Project{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	var body projectBody
+	if !readJSON(w, r, &body) {
+		return
+	}
+	p, err := s.Conf.CreateProject(r.Context(), body.toProject())
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
+	p, err := s.Conf.GetProject(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
+	var body projectBody
+	if !readJSON(w, r, &body) {
+		return
+	}
+	p, err := s.Conf.UpdateProject(r.Context(), r.PathValue("id"), body.toProject())
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	if err := s.Conf.DeleteProject(r.Context(), r.PathValue("id")); err != nil {
+		confErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) preflightProject(w http.ResponseWriter, r *http.Request) {
+	steps := s.Engine.PreflightProject(r.Context(), r.PathValue("id"))
+	ok := true
+	for _, st := range steps {
+		ok = ok && st.OK
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "steps": steps})
+}
+
+// --- flows ------------------------------------------------------------------
+
+func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Conf.ListFlows(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []confstore.FlowRow{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+		YAML string `json:"yaml"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if _, err := s.Conf.GetFlow(r.Context(), body.Name); err == nil {
+		writeErr(w, http.StatusConflict, "flow "+body.Name+" already exists (PUT to update)")
+		return
+	}
+	row, err := s.Conf.SaveFlow(r.Context(), body.Name, body.YAML)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, row)
+}
+
+func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
+	row, err := s.Conf.GetFlow(r.Context(), r.PathValue("name"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
+}
+
+func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		YAML string `json:"yaml"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	row, err := s.Conf.SaveFlow(r.Context(), r.PathValue("name"), body.YAML)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
+}
+
+func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
+	if err := s.Conf.DeleteFlow(r.Context(), r.PathValue("name")); err != nil {
+		confErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateFlow runs the parser without saving — line-precise errors travel
+// verbatim (§7).
+func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		YAML string `json:"yaml"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	f, err := flow.Parse("flow", []byte(body.YAML))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "errors": []string{err.Error()}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "name": f.Name, "hash": f.Hash, "stages": len(f.Stages),
+	})
+}
+
+func (s *Server) listFlowVersions(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Conf.FlowVersions(r.Context(), r.PathValue("name"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	if rows == nil {
+		rows = []confstore.FlowVersion{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (s *Server) getFlowVersion(w http.ResponseWriter, r *http.Request) {
+	v, err := s.Conf.FlowVersion(r.Context(), r.PathValue("hash"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// --- settings ---------------------------------------------------------------
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	set, err := s.Conf.Settings(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, set)
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	set := confstore.DefaultSettings()
+	if !readJSON(w, r, &set) {
+		return
+	}
+	if err := s.Conf.PutSettings(r.Context(), set); err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, set)
+}

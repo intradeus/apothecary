@@ -1,0 +1,9 @@
+# deploy/Dockerfile build context (repo root): keep it lean.
+.git
+cpui/node_modules
+cpui/build
+observability
+docs
+examples
+deploy/.env
+**/*.log

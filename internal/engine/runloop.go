@@ -24,11 +24,14 @@ const resumeReply = "The factory engine restarted while this stage was in flight
 	"Continue the task from where you left off: re-check the repository state and make sure you produce the required outputs."
 
 // exec bundles the per-run goroutine's context so stage executors stay short.
-// bg survives cancellation for terminal event appends.
+// bg survives cancellation for terminal event appends. res is the project's
+// resolved configuration (DESIGN2 §6.1), held for the run's whole life —
+// config edits apply to new runs only.
 type exec struct {
 	e   *Engine
 	rs  *runState
 	h   *runHandle
+	res *Resolution
 	ctx context.Context
 	bg  context.Context
 }
@@ -43,9 +46,30 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		return
 	}
 	view := run.Reduce(evs)
-	fl := e.flows[view.FlowName]
 	x := &exec{e: e, h: h, ctx: ctx, bg: bg}
-	if fl == nil {
+
+	// Resolve the project's configuration. Unresolvable (project deleted,
+	// pre-v2 run without one) is terminal and honest; anything else is
+	// treated as transient — the run stays non-terminal for the next boot.
+	if view.State.Terminal() {
+		x.rs = replay(evs, nil)
+		return
+	}
+	res, err := e.resolveForRun(bg, view)
+	if err != nil {
+		x.rs = &runState{runID: runID, view: view}
+		if errors.Is(err, ErrUnresolvable) {
+			_ = x.append(&event.RunFailed{Reason: err.Error()})
+		} else {
+			e.log.Error("run loop: resolution failed; run left non-terminal for recovery", "run", runID, "err", err)
+		}
+		return
+	}
+	defer res.release()
+	x.res = res
+
+	fl, err := e.flows.Get(bg, view.FlowName)
+	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
 		_ = x.append(&event.RunFailed{Reason: fmt.Sprintf("flow %q not found", view.FlowName)})
 		return
@@ -279,9 +303,9 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		var r ports.AgentResult
 		var err error
 		if reenter && haveSession {
-			r, err = x.e.runner.Resume(runCtx, rs.envID, session, resumeReply)
+			r, err = x.res.Runner.Resume(runCtx, rs.envID, session, resumeReply)
 		} else {
-			r, err = x.e.runner.Run(runCtx, rs.envID,
+			r, err = x.res.Runner.Run(runCtx, rs.envID,
 				ports.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns},
 				ports.AgentInput{Prompt: prompt})
 		}
@@ -308,7 +332,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 
 	// Output contract (§3): declared artifact must exist.
 	if st.Output != "" {
-		if _, err := x.e.envp.ReadFile(x.ctx, rs.envID, st.Output); err != nil {
+		if _, err := x.res.Envp.ReadFile(x.ctx, rs.envID, st.Output); err != nil {
 			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
 				Error: fmt.Sprintf("declared output %s not readable: %v", st.Output, err)}); aerr != nil {
 				return aerr
@@ -471,7 +495,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	rs := x.rs
 	script := st.Run
 	if st.RunRef != "" {
-		script = x.e.cfg.Commands[st.RunRef]
+		script = x.res.Commands[st.RunRef]
 	}
 	if rs.ph != phIn { // §2: on recovery, open command stages re-execute without a new attempt
 		iter := rs.iters[st.ID] + 1
@@ -485,7 +509,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 
 	timeout := rs.fl.Defaults.Timeout
 	cctx, cancel := context.WithTimeout(x.ctx, timeout)
-	res, err := x.e.envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: "repo", Timeout: timeout})
+	res, err := x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: "repo", Timeout: timeout})
 	cancel()
 	if err != nil {
 		if x.ctx.Err() != nil {
@@ -587,7 +611,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 				return x.routeGate(st, ar.ans, started)
 			}
 		case <-pollC:
-			state, err := x.e.forge.MRState(x.ctx, *rs.mr)
+			state, err := x.res.Forge.MRState(x.ctx, *rs.mr)
 			if err != nil {
 				x.e.log.Warn("auto_complete poll failed", "run", rs.runID, "err", err)
 				continue
@@ -640,7 +664,7 @@ func (x *exec) stageForgeMR(st *flow.Stage) error {
 	started := x.e.clock()
 
 	if rs.mr == nil { // recovery guard: never create the MR twice
-		body, err := x.e.envp.ReadFile(x.ctx, rs.envID, st.Body)
+		body, err := x.res.Envp.ReadFile(x.ctx, rs.envID, st.Body)
 		if err != nil {
 			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
 				Error: fmt.Sprintf("MR body %s not readable: %v", st.Body, err)}); aerr != nil {
@@ -649,7 +673,7 @@ func (x *exec) stageForgeMR(st *flow.Stage) error {
 			return x.abandon(st.ID, "", fmt.Sprintf("MR body artifact %s missing", st.Body))
 		}
 		title := mrTitle(string(body), rs.view.TicketTitle)
-		ref, err := x.e.forge.CreateDraftMR(x.ctx, x.e.cfg.RepoRef, rs.branch, title, string(body))
+		ref, err := x.res.Forge.CreateDraftMR(x.ctx, x.res.RepoRef, rs.branch, title, string(body))
 		if err != nil {
 			if x.ctx.Err() != nil {
 				return context.Cause(x.ctx)
@@ -686,7 +710,7 @@ func mrTitle(body, ticketTitle string) string {
 func (x *exec) ensureEnv() error {
 	rs := x.rs
 	if rs.envID != "" {
-		status, err := x.e.envp.Status(x.ctx, rs.envID)
+		status, err := x.res.Envp.Status(x.ctx, rs.envID)
 		if err == nil && status == ports.EnvRunning {
 			// Tokens are regenerated per boot; refresh the workspace copy so
 			// the ask_human shim can re-authenticate after an engine restart.
@@ -702,13 +726,19 @@ func (x *exec) ensureEnv() error {
 			return err
 		}
 	}
-	spec := ports.EnvSpec{RunID: rs.runID, RepoURL: x.e.cfg.RepoURL, Branch: rs.branch}
-	id, err := x.e.envp.Provision(x.ctx, spec)
+	spec := ports.EnvSpec{
+		RunID:         rs.runID,
+		RepoURL:       x.res.RepoRef.URL,
+		Branch:        rs.branch,
+		Image:         x.res.Image,
+		EgressDomains: x.res.EgressDomains,
+	}
+	id, err := x.res.Envp.Provision(x.ctx, spec)
 	if err != nil {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
 		}
-		id, err = x.e.envp.Provision(x.ctx, spec) // §2: failed after 1 retry
+		id, err = x.res.Envp.Provision(x.ctx, spec) // §2: failed after 1 retry
 	}
 	if err != nil {
 		if x.ctx.Err() != nil {
@@ -724,7 +754,7 @@ func (x *exec) ensureEnv() error {
 	if rs.done {
 		return nil
 	}
-	links, err := x.e.envp.Links(x.ctx, id)
+	links, err := x.res.Envp.Links(x.ctx, id)
 	if err != nil {
 		x.e.log.Warn("links unavailable", "run", rs.runID, "err", err)
 	}
@@ -741,27 +771,25 @@ func (x *exec) ensureEnv() error {
 func (x *exec) writeRunEnv(id ports.EnvID) error {
 	runEnv := fmt.Sprintf("FACTORY_RUN_ID=%s\nFACTORY_RUN_TOKEN=%s\nFACTORY_ENGINE_URL=%s\n",
 		x.rs.runID, x.e.RunToken(x.rs.runID), x.e.cfg.EngineURL)
-	return x.e.envp.WriteFile(x.ctx, id, "/factory/run.env", []byte(runEnv), 0o600)
+	return x.res.Envp.WriteFile(x.ctx, id, "/factory/run.env", []byte(runEnv), 0o600)
 }
 
 func (x *exec) bootstrap(id ports.EnvID) error {
-	cfg := x.e.cfg
-	var prepare func(context.Context, ports.EnvID) error
-	if p, ok := x.e.runner.(ports.HarnessPreparer); ok {
-		prepare = p.PrepareEnv
-	}
-	err := RunBootstrap(x.ctx, x.e.envp, id, BootstrapSpec{
+	res := x.res
+	err := RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
 		RunID:         x.rs.runID,
 		Token:         x.e.RunToken(x.rs.runID),
-		EngineURL:     cfg.EngineURL,
-		RepoURL:       cfg.RepoURL,
-		DefaultBranch: cfg.DefaultBranch,
+		EngineURL:     x.e.cfg.EngineURL,
+		RepoURL:       res.RepoRef.URL,
+		DefaultBranch: res.RepoRef.DefaultBranch,
 		Branch:        x.rs.branch,
-		AgentsMDPath:  cfg.AgentsMDPath,
-		ProviderEnv:   cfg.ProviderEnv,
-		GitToken:      cfg.GitToken,
-		Prepare:       prepare,
-		Setup:         cfg.Commands["setup"],
+		AgentsMDPath:  res.AgentsMDPath,
+		ProviderEnv:   res.ProviderEnv,
+		GitUser:       res.GitUser,
+		GitPass:       res.GitPass,
+		SeedAuth:      res.SeedAuth,
+		Prepare:       res.Prepare,
+		Setup:         res.Commands["setup"], // optional in v2: "" skips step 6
 		Timeout:       x.rs.fl.Defaults.Timeout,
 	})
 	if err != nil {
@@ -776,7 +804,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 
 // readVerdict reads and parses artifacts/verdict.json (§5.3 contract).
 func (x *exec) readVerdict(st *flow.Stage) (*ports.Verdict, error) {
-	data, err := x.e.envp.ReadFile(x.ctx, x.rs.envID, "artifacts/verdict.json")
+	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, "artifacts/verdict.json")
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("stage %s: artifacts/verdict.json missing", st.ID)

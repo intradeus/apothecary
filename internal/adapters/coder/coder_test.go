@@ -58,10 +58,10 @@ const listRunning = `[{"name":"factory-run1","latest_build":{"status":"running"}
 
 func TestProvisionCreatesThenWaits(t *testing.T) {
 	r := &scriptRunner{responses: []response{
-		{stdout: `[]`},          // status: absent
-		{stdout: ``, code: 0},   // create
-		{stdout: listRunning},   // status poll: running
-		{stdout: ``, code: 0},   // ssh -- true probe
+		{stdout: `[]`},        // status: absent
+		{stdout: ``, code: 0}, // create
+		{stdout: listRunning}, // status poll: running
+		{stdout: ``, code: 0}, // ssh -- true probe
 	}}
 	a := newTestAdapter(r)
 	id, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "RUN1", RepoURL: "https://g.local/r.git", Branch: "factory/x"})

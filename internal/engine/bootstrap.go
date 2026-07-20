@@ -26,15 +26,23 @@ type BootstrapSpec struct {
 
 	// ProviderEnv are the provider API keys (§11 step 2).
 	ProviderEnv map[string]string
-	// GitToken, when set, is written as a credential-store entry for the
-	// repo host (§11 step 3: the token never lands in .git/config).
-	GitToken string
+	// SeedAuth, when set, writes harness-native auth material right after
+	// provider.env (DESIGN2 §6.2, still step 2).
+	SeedAuth func(ctx context.Context, env ports.EnvID) error
+	// GitUser/GitPass form the credential-store entry for the repo host
+	// (§11 step 3: the token never lands in .git/config); forge-kind
+	// specific (gitlab "oauth2", github "x-access-token"). Both empty =
+	// public repo.
+	GitUser string
+	GitPass string
 
 	// Prepare, when set, runs after the clone (§11 step 4): harness config
-	// generation from .factory/agents/ (ports.HarnessPreparer).
+	// generation from .factory/agents/ (DESIGN2 §4 Harness.Prepare).
 	Prepare func(ctx context.Context, env ports.EnvID) error
 
-	Setup   string // project.commands.setup (§11 step 6)
+	// Setup is project.commands.setup (§11 step 6) — OPTIONAL in v2:
+	// empty means the step is skipped.
+	Setup   string
 	Timeout time.Duration
 }
 
@@ -60,11 +68,16 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	if err := envp.WriteFile(ctx, id, "/factory/provider.env", []byte(providers.String()), 0o600); err != nil {
 		return fmt.Errorf("write provider.env: %w", err)
 	}
+	if spec.SeedAuth != nil {
+		if err := spec.SeedAuth(ctx, id); err != nil {
+			return fmt.Errorf("seed harness auth: %w", err)
+		}
+	}
 
 	type step struct{ name, dir, script string }
 	var steps []step
-	if spec.GitToken != "" {
-		cred, err := credentialLine(spec.RepoURL, spec.GitToken)
+	if spec.GitPass != "" {
+		cred, err := credentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
 		if err != nil {
 			return fmt.Errorf("git credentials: %w", err)
 		}
@@ -98,6 +111,9 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		}
 	}
 
+	if spec.Setup == "" {
+		return nil // setup is optional in v2 (DESIGN2 §8): no step 6
+	}
 	res, err := envp.Exec(ctx, id, ports.Command{Script: spec.Setup, Dir: "repo", Timeout: spec.Timeout})
 	if err != nil {
 		return fmt.Errorf("setup: %w", err)
@@ -109,12 +125,15 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 }
 
 // credentialLine builds the git credential-store entry for the repo host.
-func credentialLine(repoURL, token string) (string, error) {
+func credentialLine(repoURL, user, pass string) (string, error) {
 	u, err := url.Parse(repoURL)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("cannot parse repo url %q", repoURL)
 	}
-	return fmt.Sprintf("%s://oauth2:%s@%s", u.Scheme, url.QueryEscape(token), u.Host), nil
+	if user == "" {
+		user = "oauth2"
+	}
+	return fmt.Sprintf("%s://%s:%s@%s", u.Scheme, url.QueryEscape(user), url.QueryEscape(pass), u.Host), nil
 }
 
 func agentConfigScript(agentsMDPath string) string {

@@ -1,1 +1,3 @@
 node_modules/
+# deployment secrets (FACTORY_MASTER_KEY, PG password) — never committed
+deploy/.env

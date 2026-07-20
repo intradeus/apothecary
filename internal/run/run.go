@@ -31,6 +31,7 @@ func (s State) Terminal() bool {
 // transaction as each append in the Postgres store.
 type View struct {
 	RunID        string    `json:"run_id"`
+	ProjectID    string    `json:"project_id,omitempty"` // DESIGN2 §6.3; "" on pre-v2 runs
 	State        State     `json:"state"`
 	TicketTitle  string    `json:"ticket_title"`
 	TicketGoal   string    `json:"-"` // not a read-model column; carried for prompt assembly on recovery
@@ -62,6 +63,7 @@ func Apply(v *View, e *event.Event) {
 	switch p := e.Payload.(type) {
 	case *event.RunCreated:
 		v.State = Pending
+		v.ProjectID = p.ProjectID
 		v.TicketTitle = p.TicketTitle
 		v.TicketGoal = p.TicketGoal
 		v.FlowName = p.FlowName

@@ -358,6 +358,69 @@ Verified against opencode 1.17.8 (pinned in the image):
   wanting fewer review stalls should pick a stronger reviewer model
   (flows are data).
 
+## Config plane (M7, DESIGN2 §1-§7, §10, §14-§15)
+
+- **flow_versions gained a `name` column** (deviation from the DESIGN2 §2
+  sketch): `GET /api/flows/{name}/versions` needs the linkage; hash stays
+  the PK, versions stay immutable.
+- **Engine stays kinds-free**: `engine.Resolution` carries only port-typed
+  fields plus plain funcs (SeedAuth/Prepare/Release); internal/resolve is
+  the sole place kinds, confstore and the engine meet. Scenario tests run
+  on `StaticResolver` over the bare fakes — the M1 suite survived the
+  refactor unchanged in substance.
+- **Provisioner cache key includes the effective template**
+  (project.workspace.template override), since coder adapters bind their
+  template at construction. Generations are refcounted by live
+  resolutions; a config edit stales the old instance, closed on last
+  release (locked by a resolve test). Forge/harness/provider adapters are
+  stateless and constructed per resolution.
+- **M7 requires `workspace.template` on every project** — the §8 image
+  pipeline lands in M9; until then the §8.4 custom-template path is the
+  only path. The validation moves behind the pipeline in M9.
+  `import-config` sets it to the v1 Coder template, keeping behavior
+  byte-identical after migration.
+- The canonical v1 flow **no longer pins `harness: opencode`** — under
+  §6.3 semantics an unpinned harness resolves to the project's kind, which
+  is what makes the seeded flow portable across projects (and dev mode).
+  The parser accepts any slug; kind existence is preflight's question.
+- **Pre-v2 runs (no project_id) fail terminally on recovery** with an
+  explicit reason, rather than spinning each boot; their environments must
+  be destroyed manually (engine has no global provisioner anymore).
+  Terminal pre-v2 runs are untouched.
+- **Settings reads are per-decision** (admission, reaper pass, run
+  finish) with defaults + a warning on read failure — a broken settings
+  row must not brick admission.
+- **Secret handling verified end-to-end**: secretbox roundtrip + wrong-key
+  refusal unit-tested; the httpapi leak test plants secret values,
+  configures everything over the API, drives a full fake run and greps
+  every read endpoint plus every event payload; the import test checks the
+  bytea at rest contains no plaintext (`position(...::bytea)`).
+- **Dev seeding**: `serve -dev` registers fake kinds and, on an empty DB,
+  creates fake integrations + a `dev` project (setup/verify = `true`,
+  template `dev`), so the compose smoke test can file tickets immediately.
+  A DB that already holds projects is never polluted.
+- `engine.CreateRun` resolves twice per run (preflight + run goroutine) —
+  deliberate: the run goroutine must resolve anyway for recovery, and
+  instances are cached.
+- **Coder release archives name their member `./coder`** — the deploy
+  image extracts `./coder`, not `coder` (found live: tar exit 2 in the
+  first image build).
+- **M7 acceptance evidence** (ephemeral Postgres 16 in docker): migration
+  0002 applied; full store suite green; serve booted from FACTORY_* env
+  vars alone; dev project seeded; ticket → 9-stage v1 flow → gates
+  answered via API → `run_completed` with project_id projected;
+  import-config on a synthetic v1 factory.yaml created 4 integrations +
+  project (template=factory, locator=123) + settings, zero plaintext at
+  rest; the **containerized** engine (deploy/Dockerfile, host network,
+  env-only boot) served the CPUI, seeded dev, and completed the same
+  9-stage flow, with coder v2.35.2 and the docker CLI verified inside the
+  image; `go test ./...` green.
+- **Operator migration note**: a factoryd built from this commit no longer
+  accepts `serve -config` — the v1 deployment must run `factoryd keygen`,
+  export the §1 FACTORY_* vars, run `factoryd import-config -config
+  /etc/factory/factory.yaml` once (with the old env present), then
+  `factoryd serve`.
+
 ## CPUI & Matrix (M5)
 
 - Matrix adapter: client-server API v3, PUT m.room.message with a ULID txn

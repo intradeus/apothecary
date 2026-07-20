@@ -1,6 +1,8 @@
-// Package config loads /etc/factory/factory.yaml (DESIGN.md §13). Strict
-// parsing: unknown fields are errors. Secrets are referenced by env-var name
-// (token_env / *_env) and resolved at wiring time, never stored in the file.
+// Package config holds the deployment-plane boot configuration (DESIGN2.md
+// §1: env vars, see env.go) and the retired v1 factory.yaml parser, kept
+// only as `factoryd import-config` input. Strict parsing: unknown fields
+// are errors; yaml secrets are referenced by env-var name (token_env /
+// *_env) and resolved at import time.
 package config
 
 import (
@@ -25,9 +27,9 @@ type File struct {
 	// CPUIDir is the built CPUI bundle; when set the engine serves it at /
 	// (SPA fallback). Empty = API only.
 	CPUIDir string `yaml:"cpui_dir"`
-	Limits      Limits  `yaml:"limits"`
-	Reaper      Reaper  `yaml:"reaper"`
-	Otel        Otel    `yaml:"otel"`
+	Limits  Limits `yaml:"limits"`
+	Reaper  Reaper `yaml:"reaper"`
+	Otel    Otel   `yaml:"otel"`
 }
 
 type Repo struct {

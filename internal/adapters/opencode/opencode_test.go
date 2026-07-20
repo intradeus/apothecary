@@ -152,8 +152,13 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 		}
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
-	a := New(envp, Config{AuthJSON: []byte(`{"openrouter":{"type":"api"}}`)})
+	a := New(envp, Config{})
 	if err := a.PrepareEnv(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	// Auth material arrives via SeedAuthJSON (DESIGN2 §4: the opencode kind
+	// composes it; the adapter just writes).
+	if err := a.SeedAuthJSON(context.Background(), id, []byte(`{"openrouter":{"type":"api"}}`)); err != nil {
 		t.Fatal(err)
 	}
 

@@ -59,7 +59,7 @@ func glStub(t *testing.T) (*httptest.Server, *[]string) {
 
 func testAdapter(ts *httptest.Server) (*Adapter, ports.RepoRef) {
 	return New(Config{BaseURL: ts.URL, Token: "tok", ProjectID: 7}),
-		ports.RepoRef{ProjectID: 7, DefaultBranch: "main"}
+		ports.RepoRef{Locator: "7", DefaultBranch: "main"}
 }
 
 func TestCheckAccess(t *testing.T) {
@@ -87,7 +87,7 @@ func TestCheckAccessInsufficientLevel(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	a := New(Config{BaseURL: ts.URL, Token: "tok", ProjectID: 7})
-	err := a.CheckAccess(context.Background(), ports.RepoRef{ProjectID: 7})
+	err := a.CheckAccess(context.Background(), ports.RepoRef{Locator: "7"})
 	if err == nil || !strings.Contains(err.Error(), "Developer") {
 		t.Errorf("err = %v, want access-level refusal", err)
 	}

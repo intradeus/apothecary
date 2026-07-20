@@ -175,12 +175,12 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 		run.Apply(&v, &evs[i])
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO runs (run_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		INSERT INTO runs (run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (run_id) DO UPDATE SET
-			state=$2, ticket_title=$3, flow_name=$4, flow_hash=$5,
-			current_stage=$6, mr_url=$7, env_id=$8, created_at=$9, updated_at=$10`,
-		v.RunID, string(v.State), v.TicketTitle, v.FlowName, v.FlowHash,
+			project_id=$2, state=$3, ticket_title=$4, flow_name=$5, flow_hash=$6,
+			current_stage=$7, mr_url=$8, env_id=$9, created_at=$10, updated_at=$11`,
+		v.RunID, v.ProjectID, string(v.State), v.TicketTitle, v.FlowName, v.FlowHash,
 		v.CurrentStage, v.MRURL, v.EnvID, v.CreatedAt, v.UpdatedAt); err != nil {
 		return err
 	}
@@ -211,9 +211,9 @@ func loadView(ctx context.Context, q interface {
 	var v run.View
 	var state string
 	err := q.QueryRow(ctx, `
-		SELECT run_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at
+		SELECT run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at
 		FROM runs WHERE run_id=$1`, runID).
-		Scan(&v.RunID, &state, &v.TicketTitle, &v.FlowName, &v.FlowHash,
+		Scan(&v.RunID, &v.ProjectID, &state, &v.TicketTitle, &v.FlowName, &v.FlowHash,
 			&v.CurrentStage, &v.MRURL, &v.EnvID, &v.CreatedAt, &v.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return v, false, nil
@@ -360,7 +360,7 @@ func (s *Store) RebuildProjections(ctx context.Context) (int, error) {
 // once serve wires this store).
 func (s *Store) RunViews(ctx context.Context) ([]run.View, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT run_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at
+		SELECT run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at
 		FROM runs ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -370,7 +370,7 @@ func (s *Store) RunViews(ctx context.Context) ([]run.View, error) {
 	for rows.Next() {
 		var v run.View
 		var state string
-		if err := rows.Scan(&v.RunID, &state, &v.TicketTitle, &v.FlowName, &v.FlowHash,
+		if err := rows.Scan(&v.RunID, &v.ProjectID, &state, &v.TicketTitle, &v.FlowName, &v.FlowHash,
 			&v.CurrentStage, &v.MRURL, &v.EnvID, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}

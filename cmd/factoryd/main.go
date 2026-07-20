@@ -1,11 +1,14 @@
-// factoryd is the Apothecary factory engine (DESIGN.md).
+// factoryd is the Apothecary factory engine (DESIGN.md, DESIGN2.md).
 //
-//	factoryd validate <flow.yaml>          parse and validate a flow file
-//	factoryd serve -config <path> [-dev]   run the engine + HTTP API
-//	factoryd rebuild-projections -config <path>
+//	factoryd serve [-dev]                    run the engine + HTTP API (env-var config, DESIGN2 §1)
+//	factoryd keygen                          print a fresh FACTORY_MASTER_KEY
+//	factoryd import-config -config <path>    one-shot v1 factory.yaml -> DB migration (DESIGN2 §14)
+//	factoryd validate <flow.yaml>            parse and validate a flow file
+//	factoryd rebuild-projections
+//	factoryd envcheck -project <name|id>     environment compliance check against live Coder
 //
-// -dev wires the in-memory fake adapters (workspaces, harness, forge) so a
-// full flow can be driven end-to-end before the real adapters land (M2-M4).
+// -dev registers the fake kinds and seeds a dev project so a full flow runs
+// end-to-end with no Coder/harness/forge.
 package main
 
 import (
@@ -17,23 +20,23 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	coderadapter "factory/internal/adapters/coder"
-	"factory/internal/adapters/fake"
-	gitlabadapter "factory/internal/adapters/gitlab"
 	matrixadapter "factory/internal/adapters/matrix"
-	opencodeadapter "factory/internal/adapters/opencode"
 	"factory/internal/channels"
 	"factory/internal/config"
+	"factory/internal/confstore"
 	"factory/internal/engine"
 	"factory/internal/flow"
 	"factory/internal/httpapi"
+	"factory/internal/kinds"
 	"factory/internal/pgstore"
 	"factory/internal/ports"
+	"factory/internal/resolve"
+	"factory/internal/secrets"
+	"factory/internal/seed"
 	"factory/internal/telemetry"
 )
 
@@ -48,6 +51,10 @@ func main() {
 		err = cmdValidate(os.Args[2:])
 	case "serve":
 		err = cmdServe(os.Args[2:])
+	case "keygen":
+		fmt.Println(secrets.GenerateKey())
+	case "import-config":
+		err = cmdImport(os.Args[2:])
 	case "rebuild-projections":
 		err = cmdRebuild(os.Args[2:])
 	case "envcheck":
@@ -66,10 +73,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage: factoryd <command>
 
 commands:
-  validate <flow.yaml>                     parse and validate a flow file
-  serve -config <factory.yaml> [-dev]      run the engine + HTTP API
-  rebuild-projections -config <factory.yaml>
-  envcheck -config <factory.yaml> [-keep]  M2 acceptance against live Coder`)
+  serve [-dev]                     run the engine + HTTP API (config via FACTORY_* env vars)
+  keygen                           print a fresh FACTORY_MASTER_KEY
+  import-config -config <path>     one-shot v1 factory.yaml -> DB migration
+  validate <flow.yaml>             parse and validate a flow file
+  rebuild-projections
+  envcheck -project <name|id> [-keep]`)
 }
 
 func cmdValidate(args []string) error {
@@ -86,15 +95,14 @@ func cmdValidate(args []string) error {
 
 func cmdRebuild(args []string) error {
 	fs := flag.NewFlagSet("rebuild-projections", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/factory/factory.yaml", "engine config file")
 	_ = fs.Parse(args)
 
-	cfg, err := config.Load(*cfgPath)
+	boot, err := config.FromEnv()
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
-	store, err := pgstore.Open(ctx, cfg.PostgresDSN)
+	store, err := pgstore.Open(ctx, boot.PostgresDSN)
 	if err != nil {
 		return err
 	}
@@ -107,115 +115,84 @@ func cmdRebuild(args []string) error {
 	return nil
 }
 
+// registry builds the kind registry: real kinds always, fakes with -dev.
+func registry(dev bool) *kinds.Registry {
+	reg := kinds.NewRegistry()
+	reg.RegisterForge(kinds.GitLab{})
+	reg.RegisterProvisioner(kinds.Coder{})
+	reg.RegisterHarness(kinds.Opencode{})
+	for _, pk := range kinds.ProviderKinds() {
+		reg.RegisterProvider(pk)
+	}
+	if dev {
+		kinds.RegisterFakes(reg)
+	}
+	return reg
+}
+
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/factory/factory.yaml", "engine config file")
-	dev := fs.Bool("dev", false, "use in-memory fake adapters (no Coder/opencode/GitLab)")
+	dev := fs.Bool("dev", false, "register fake kinds and seed a dev project (no Coder/opencode/forge)")
 	_ = fs.Parse(args)
 
 	log := slog.Default()
-	cfg, err := config.Load(*cfgPath)
+	boot, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	key, err := boot.Key()
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
 
-	store, err := pgstore.Open(ctx, cfg.PostgresDSN)
+	store, err := pgstore.Open(ctx, boot.PostgresDSN)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 
-	flows, err := loadFlows(cfg.FlowsDir)
-	if err != nil {
-		return err
-	}
-	log.Info("flows loaded", "dir", cfg.FlowsDir, "count", len(flows))
+	reg := registry(*dev)
+	conf := confstore.New(store, key)
+	conf.KindValid = reg.Valid
 
-	registry := channels.NewRegistry()
-	registry.Register("matrix", matrixadapter.Factory)
-	registry.Persist(store)
+	if err := seed.Flows(ctx, conf); err != nil {
+		return fmt.Errorf("seed flows: %w", err)
+	}
+	if *dev {
+		log.Warn("dev mode: fake kinds registered (no real workspaces, harness, or forge)")
+		if err := seedDevProject(ctx, conf); err != nil {
+			return fmt.Errorf("seed dev project: %w", err)
+		}
+	}
+
+	chreg := channels.NewRegistry()
+	chreg.Register("matrix", matrixadapter.Factory)
+	chreg.Persist(store)
 	rows, err := store.LoadChannels(ctx)
 	if err != nil {
 		return err
 	}
 	for _, r := range rows {
-		if err := registry.Restore(r.ID, r.Kind, r.Config); err != nil {
+		if err := chreg.Restore(r.ID, r.Kind, r.Config); err != nil {
 			return err
 		}
 	}
 
-	var (
-		envp   ports.EnvProvisioner
-		runner ports.AgentRunner
-		forge  ports.Forge
-	)
-	if *dev {
-		log.Warn("dev mode: in-memory fake adapters (no real workspaces, harness, or forge)")
-		envp, runner, forge = devAdapters()
-	} else {
-		enginePort := 8080
-		if _, p, err := splitHostPort(cfg.Listen); err == nil {
-			fmt.Sscanf(p, "%d", &enginePort)
-		}
-		coderAdapter := coderadapter.New(coderadapter.Config{
-			URL:           cfg.Coder.URL,
-			Token:         config.ResolveEnv(cfg.Coder.TokenEnv),
-			Template:      cfg.Coder.Template,
-			RunsDir:       cfg.RunsDir,
-			EnginePort:    enginePort,
-			ExtraForwards: cfg.Coder.ExtraForwards,
-		})
-		defer coderAdapter.Close()
-		envp = coderAdapter
-
-		var authJSON []byte
-		if cfg.Providers.OpencodeAuthJSON != "" {
-			authJSON, err = os.ReadFile(cfg.Providers.OpencodeAuthJSON)
-			if err != nil {
-				return fmt.Errorf("providers.opencode_auth_json: %w", err)
-			}
-		}
-		runner = opencodeadapter.New(coderAdapter, opencodeadapter.Config{AuthJSON: authJSON})
-
-		gitlabToken := config.ResolveEnv(cfg.GitLab.TokenEnv)
-		if gitlabToken == "" {
-			log.Warn("forge: in-memory fake ($" + cfg.GitLab.TokenEnv + " unset) — forge_mr stages create no real MRs")
-			forge = &fake.Forge{}
-		} else {
-			forge = gitlabadapter.New(gitlabadapter.Config{
-				BaseURL:   cfg.GitLab.BaseURL,
-				Token:     gitlabToken,
-				ProjectID: cfg.GitLab.ProjectID,
-			})
-		}
+	enginePort := 8080
+	if _, p, err := splitHostPort(boot.Listen); err == nil {
+		fmt.Sscanf(p, "%d", &enginePort)
 	}
+	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort)
+	defer resolver.Close()
 
 	ecfg := engine.Config{
-		RepoURL:       cfg.Repo.URL,
-		DefaultBranch: cfg.Repo.DefaultBranch,
-		AgentsMDPath:  cfg.Repo.AgentsMDPath,
-		RepoRef: ports.RepoRef{
-			URL:           cfg.Repo.URL,
-			DefaultBranch: cfg.Repo.DefaultBranch,
-			ProjectID:     cfg.GitLab.ProjectID,
-		},
-		Commands: cfg.Project.Commands,
-		GitToken: config.ResolveEnv(cfg.GitLab.TokenEnv),
-		ProviderEnv: providerEnv(map[string]string{
-			"ANTHROPIC_API_KEY": cfg.Providers.AnthropicEnv,
-			"OPENAI_API_KEY":    cfg.Providers.OpenAIEnv,
-		}),
-		EngineURL: engineURL(cfg.Listen),
-		RunsDir:   cfg.RunsDir,
-		Limits: engine.Limits{
-			MaxConcurrentRuns: cfg.Limits.MaxConcurrentRuns,
-			MaxEnvironments:   cfg.Limits.MaxEnvironments,
-		},
+		EngineURL: engineURL(boot.Listen),
+		RunsDir:   boot.RunsDir,
 	}
-	e := engine.New(ecfg, store, envp, runner, forge, []ports.NotificationChannel{registry}, flows)
-	if cfg.Otel.Endpoint != "" {
-		tel, err := telemetry.New(ctx, cfg.Otel.Endpoint)
+	e := engine.New(ecfg, store, resolver, conf.FlowSource(), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
+	if boot.OtelEndpoint != "" {
+		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {
 			return fmt.Errorf("otel: %w", err)
 		}
@@ -225,18 +202,21 @@ func cmdServe(args []string) error {
 			tel.Shutdown(sctx)
 		}()
 		e.SetSink(tel)
-		log.Info("otel telemetry enabled", "endpoint", cfg.Otel.Endpoint)
+		log.Info("otel telemetry enabled", "endpoint", boot.OtelEndpoint)
 	}
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)
 	}
 
-	api := httpapi.New(e, store, registry, cfg.RunsDir)
-	api.CPUIDir = cfg.CPUIDir
-	if cfg.CPUIDir != "" {
-		log.Info("serving CPUI", "dir", cfg.CPUIDir)
+	api := httpapi.New(e, store, chreg, boot.RunsDir)
+	api.Conf = conf
+	api.Kinds = reg
+	api.Ops = resolver
+	api.CPUIDir = boot.CPUIDir
+	if boot.CPUIDir != "" {
+		log.Info("serving CPUI", "dir", boot.CPUIDir)
 	}
-	srv := &http.Server{Addr: cfg.Listen, Handler: api.Handler()}
+	srv := &http.Server{Addr: boot.Listen, Handler: api.Handler()}
 
 	reaperCtx, stopReaper := context.WithCancel(ctx)
 	defer stopReaper()
@@ -246,7 +226,12 @@ func cmdServe(args []string) error {
 		for {
 			select {
 			case <-t.C:
-				if err := e.ReapOnce(reaperCtx, cfg.Reaper.DestroyCompletedAfter); err != nil {
+				set, err := conf.Settings(reaperCtx)
+				if err != nil {
+					log.Error("reaper: settings read failed", "err", err)
+					continue
+				}
+				if err := e.ReapOnce(reaperCtx, set.CompletedWindow()); err != nil {
 					log.Error("reaper pass failed", "err", err)
 				}
 			case <-reaperCtx.Done():
@@ -257,7 +242,7 @@ func cmdServe(args []string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("factoryd listening", "addr", cfg.Listen, "dev", *dev)
+		log.Info("factoryd listening", "addr", boot.Listen, "dev", *dev)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -281,44 +266,64 @@ func cmdServe(args []string) error {
 	return nil
 }
 
-func loadFlows(dir string) (map[string]*flow.Flow, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+// seedDevProject creates fake integrations and a "dev" project on first
+// -dev boot, so tickets can be filed immediately (M7 compose smoke test).
+func seedDevProject(ctx context.Context, conf *confstore.Service) error {
+	if _, err := conf.GetProjectByName(ctx, "dev"); err == nil {
+		return nil
+	}
+	projects, err := conf.ListProjects(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if len(paths) == 0 {
-		return nil, fmt.Errorf("no *.yaml flows found in %s", dir)
+	if len(projects) > 0 {
+		return nil // a real config exists; don't pollute it
 	}
-	flows := map[string]*flow.Flow{}
-	for _, p := range paths {
-		f, err := flow.Load(p)
+	mk := func(port, name string) (string, error) {
+		in, err := conf.CreateIntegration(ctx, confstore.Integration{
+			Port: port, Kind: "fake", Name: name,
+		})
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		if _, dup := flows[f.Name]; dup {
-			return nil, fmt.Errorf("duplicate flow name %q (%s)", f.Name, p)
-		}
-		flows[f.Name] = f
+		return in.ID, nil
 	}
-	return flows, nil
-}
-
-// providerEnv resolves env-var names from config into actual secret values;
-// unset providers are simply omitted (§11: only keys the flow needs).
-func providerEnv(names map[string]string) map[string]string {
-	out := map[string]string{}
-	for key, envName := range names {
-		if v := config.ResolveEnv(envName); v != "" {
-			out[key] = v
-		}
+	forgeID, err := mk(confstore.PortForge, "dev-forge")
+	if err != nil {
+		return err
 	}
-	return out
+	provID, err := mk(confstore.PortProvisioner, "dev-workspaces")
+	if err != nil {
+		return err
+	}
+	harnessID, err := mk(confstore.PortHarness, "dev-harness")
+	if err != nil {
+		return err
+	}
+	providerID, err := mk(confstore.PortProvider, "dev-provider")
+	if err != nil {
+		return err
+	}
+	_, err = conf.CreateProject(ctx, confstore.Project{
+		Name:          "dev",
+		ForgeID:       forgeID,
+		ProvisionerID: provID,
+		HarnessID:     harnessID,
+		ProviderIDs:   []string{providerID},
+		Repo: confstore.RepoConfig{
+			URL: "https://forge.local/dev/fake-repo.git", Locator: "1",
+			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
+		},
+		Commands:    map[string]string{"setup": "true", "verify": "true"},
+		Workspace:   confstore.WorkspaceConfig{Template: "dev"},
+		DefaultFlow: "v1",
+	})
+	return err
 }
 
 // engineURL derives the workspace-visible engine URL from the listen
 // address. Workspaces reach the engine at their own localhost through the
-// Coder adapter's reverse tunnel (deviation from §8's host.docker.internal
-// path — no host firewall exposure needed).
+// Coder adapter's reverse tunnel (see IMPLEMENTATION_NOTES).
 func engineURL(listen string) string {
 	_, port, err := splitHostPort(listen)
 	if err != nil {
@@ -333,47 +338,4 @@ func splitHostPort(addr string) (string, string, error) {
 		return "", "", fmt.Errorf("no port in %q", addr)
 	}
 	return addr[:i], addr[i+1:], nil
-}
-
-// devAdapters returns fakes good enough to drive full flows through the real
-// engine, API and Postgres: agents honor output contracts by parsing the
-// prompt's OUTPUT CONTRACT section, reviewers approve.
-func devAdapters() (ports.EnvProvisioner, ports.AgentRunner, ports.Forge) {
-	envp := fake.NewEnvProvisioner()
-	runner := &fake.AgentRunner{}
-	runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
-		select {
-		case <-time.After(200 * time.Millisecond): // a little realism
-		case <-ctx.Done():
-			return ports.AgentResult{}, ctx.Err()
-		}
-		if path, ok := declaredOutput(call.In.Prompt); ok {
-			content := fmt.Sprintf("# Dev stub: %s\n\nWritten by the dev-mode agent %q.\n", path, call.Spec.Agent)
-			if err := envp.WriteFile(ctx, call.Env, path, []byte(content), 0o644); err != nil {
-				return ports.AgentResult{}, err
-			}
-		}
-		if strings.Contains(call.In.Prompt, "artifacts/verdict.json") {
-			v := []byte(`{"verdict":"APPROVE","comments":[]}`)
-			if err := envp.WriteFile(ctx, call.Env, "artifacts/verdict.json", v, 0o644); err != nil {
-				return ports.AgentResult{}, err
-			}
-		}
-		return ports.AgentResult{TurnsUsed: 3, Usage: ports.Usage{InputTokens: 1000, OutputTokens: 200, CostUSD: 0.01}}, nil
-	}
-	return envp, runner, &fake.Forge{}
-}
-
-// declaredOutput extracts the artifact path from the §3.2 contract line
-// "Before finishing you MUST write <path> (relative to repo root)."
-func declaredOutput(prompt string) (string, bool) {
-	_, rest, ok := strings.Cut(prompt, "you MUST write ")
-	if !ok {
-		return "", false
-	}
-	path, _, ok := strings.Cut(rest, " (relative to repo root)")
-	if !ok || strings.ContainsAny(path, " \n") {
-		return "", false
-	}
-	return path, true
 }

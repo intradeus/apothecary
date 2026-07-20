@@ -38,7 +38,7 @@ func TestSinkReceivesFreshEventsOnly(t *testing.T) {
 	sink := &recordingSink{}
 	h.e.SetSink(sink)
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop")
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,7 @@ func TestCrashAfterFailureRoutesWithoutReexec(t *testing.T) {
 	envID, _ := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-f"})
 	ctx := context.Background()
 	for _, p := range []event.Payload{
-		&event.RunCreated{TicketTitle: "T", FlowName: "loop", FlowHash: fl.Hash, Branch: "b"},
+		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
@@ -73,7 +73,7 @@ func TestCrashAfterEdgeKeepsFeed(t *testing.T) {
 	envID, _ := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-e"})
 	ctx := context.Background()
 	for _, p := range []event.Payload{
-		&event.RunCreated{TicketTitle: "T", FlowName: "loop", FlowHash: fl.Hash, Branch: "b"},
+		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
@@ -119,7 +119,7 @@ func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 		return ports.AgentResult{TurnsUsed: 1}, nil
 	}
 	for _, p := range []event.Payload{
-		&event.RunCreated{TicketTitle: "T", FlowName: "loop", FlowHash: fl.Hash, Branch: "b"},
+		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
@@ -152,18 +152,18 @@ func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 // §14: runs beyond max_concurrent_runs queue in pending, FIFO.
 func TestConcurrencyQueueFIFO(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.e.cfg.Limits.MaxConcurrentRuns = 1
+	h.settings.L.MaxConcurrentRuns = 1
 	release := make(chan struct{})
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		<-release
 		return ports.AgentResult{TurnsUsed: 1}, nil
 	}
 
-	id1, err := h.e.CreateRun(context.Background(), Ticket{Title: "first"}, "loop")
+	id1, err := h.e.CreateRun(context.Background(), Ticket{Title: "first"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := h.e.CreateRun(context.Background(), Ticket{Title: "second"}, "loop")
+	id2, err := h.e.CreateRun(context.Background(), Ticket{Title: "second"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

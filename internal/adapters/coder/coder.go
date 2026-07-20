@@ -502,6 +502,33 @@ func (a *Adapter) Links(ctx context.Context, env ports.EnvID) ([]ports.AccessLin
 	return links, nil
 }
 
+// Test is the cheap auth/reachability probe (DESIGN2 §4: the UI "Test
+// connection" button): an authenticated REST call that fails on a bad URL
+// or token without touching workspaces.
+func (a *Adapter) Test(ctx context.Context) error {
+	if a.cfg.URL == "" {
+		return fmt.Errorf("coder: url is required")
+	}
+	if a.cfg.Token == "" {
+		return fmt.Errorf("coder: no token configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.URL+"/api/v2/users/me", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Coder-Session-Token", a.cfg.Token)
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("coder unreachable at %s: %w", a.cfg.URL, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("coder auth check: %d: %s", resp.StatusCode, tail(string(body), 256))
+	}
+	return nil
+}
+
 func tail(s string, n int) string {
 	if len(s) <= n {
 		return s
