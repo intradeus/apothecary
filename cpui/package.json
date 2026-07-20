@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@xyflow/svelte": "^1.6.2",
+    "marked": "^18.0.6",
     "yaml": "^2.9.0"
   }
 }

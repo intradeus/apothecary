@@ -213,6 +213,8 @@ export const api = {
     return res.text();
   },
   pendingPings: () => req<Ping[]>('/api/pings?status=pending'),
+  pingArtifact: (pingId: string) =>
+    req<{ path: string; content: string }>(`/api/pings/${pingId}/artifact`),
   answerPing: (pingId: string, answer: string, feedback?: string) =>
     post(`/api/pings/${pingId}/answer`, { answer, ...(feedback ? { feedback } : {}) }),
   channels: () => req<ChannelEntry[]>('/api/channels'),

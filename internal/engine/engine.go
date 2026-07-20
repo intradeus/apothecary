@@ -163,6 +163,11 @@ var (
 	ErrRunNotActive = errors.New("run is not active")
 	ErrPingNotFound = errors.New("ping not found")
 	ErrPingAnswered = errors.New("ping already answered")
+	// ErrArtifactIsURL marks a gate whose payload is a link (mr_url), not a
+	// workspace artifact — the UI keeps the link-out behavior (DESIGN3 §3).
+	ErrArtifactIsURL = errors.New("ping payload is a URL, not an artifact")
+	// ErrNoArtifact marks a ping without a readable payload artifact.
+	ErrNoArtifact = errors.New("ping has no payload artifact")
 )
 
 func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
@@ -634,6 +639,48 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 	case <-timeout.C:
 		return fmt.Errorf("run %s is busy; the answer was not accepted — try again", p.RunID)
 	}
+}
+
+// PingArtifact reads a gate ping's payload artifact out of the (still
+// alive) workspace so the CPUI can render it for review (DESIGN3 §3.1).
+// The path comes from the flow document, never from the request. Content
+// is capped at 1 MiB (tail beyond — the end of a plan beats the start).
+func (e *Engine) PingArtifact(ctx context.Context, pingID string) (path string, content []byte, err error) {
+	e.mu.Lock()
+	p := e.pings[pingID]
+	e.mu.Unlock()
+	if p == nil {
+		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
+	}
+	ref := p.PayloadRef
+	switch {
+	case ref == "":
+		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrNoArtifact)
+	case strings.HasPrefix(ref, "http://"), strings.HasPrefix(ref, "https://"):
+		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrArtifactIsURL)
+	}
+	evs, err := e.store.Events(ctx, p.RunID, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	v := run.Reduce(evs)
+	if v.EnvID == "" {
+		return "", nil, fmt.Errorf("run %s has no environment: %w", p.RunID, ErrNoArtifact)
+	}
+	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	if err != nil {
+		return "", nil, err
+	}
+	defer res.release()
+	data, err := res.Envp.ReadFile(ctx, ports.EnvID(v.EnvID), ref)
+	if err != nil {
+		return "", nil, fmt.Errorf("reading %s: %w", ref, err)
+	}
+	const maxLen = 1 << 20
+	if len(data) > maxLen {
+		data = data[len(data)-maxLen:]
+	}
+	return ref, data, nil
 }
 
 // PendingPings returns open pings (the CPUI inbox source until the DB

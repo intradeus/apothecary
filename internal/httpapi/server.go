@@ -68,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/pings/{pid}", s.repollPing)
 	mux.HandleFunc("POST /api/pings/{pid}/answer", s.answerPing)
 	mux.HandleFunc("GET /api/pings", s.listPings)
+	mux.HandleFunc("GET /api/pings/{pid}/artifact", s.pingArtifact)
 	mux.HandleFunc("GET /api/channels", s.listChannels)
 	mux.HandleFunc("POST /api/channels", s.addChannel)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.deleteChannel)
@@ -484,6 +485,25 @@ func (s *Server) listPings(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RaisedAt.Before(out[j].RaisedAt) })
 	writeJSON(w, http.StatusOK, out)
+}
+
+// pingArtifact serves a gate's payload artifact from the live workspace
+// (DESIGN3 §3.1) so the plan review workbench renders it in place. 409 for
+// URL payloads (the UI keeps the link-out).
+func (s *Server) pingArtifact(w http.ResponseWriter, r *http.Request) {
+	path, content, err := s.Engine.PingArtifact(r.Context(), r.PathValue("pid"))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]string{"path": path, "content": string(content)})
+	case errors.Is(err, engine.ErrPingNotFound):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, engine.ErrArtifactIsURL):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, engine.ErrNoArtifact):
+		writeErr(w, http.StatusGone, err.Error())
+	default:
+		writeErr(w, http.StatusBadGateway, "artifact read failed: "+err.Error())
+	}
 }
 
 // --- channels ---------------------------------------------------------------

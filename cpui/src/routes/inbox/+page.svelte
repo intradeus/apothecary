@@ -59,7 +59,10 @@
         <p class="mono small">
           {#if p.payload_ref.startsWith('http')}
             <a href={p.payload_ref} target="_blank" rel="noreferrer">{p.payload_ref} ↗</a>
-          {:else}{p.payload_ref}{/if}
+          {:else}
+            {p.payload_ref} —
+            <a href={`/pings/${p.ping_id}`}>review &amp; comment →</a>
+          {/if}
         </p>
       {/if}
       {#if gateTypes.includes(p.type)}
