@@ -32,6 +32,12 @@ const renderer = {
 };
 marked.use({ renderer });
 
+// mdToHtml renders markdown for ping questions/context/answers (same
+// escaped-HTML posture as plans — agent output is semi-trusted).
+export function mdToHtml(src: string): string {
+  return marked.parse(src, { async: false }) as string;
+}
+
 // planBlocks lexes the markdown into top-level blocks, each carrying its
 // source line range and nearest heading (marked tokens keep `raw`, so line
 // numbers are cumulative newline counts).

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { api, ago, type Ping } from '$lib/api';
+  import { mdToHtml } from '$lib/planreview';
   import { onMount } from 'svelte';
 
   let pings = $state<Ping[]>([]);
   let loaded = $state(false);
+  let tab = $state<'pending' | 'answered'>('pending');
   let feedback = $state<Record<string, string>>({});
   let busy = $state<Record<string, boolean>>({});
   let error = $state('');
@@ -12,7 +14,7 @@
 
   const refresh = async () => {
     try {
-      pings = await api.pendingPings();
+      pings = await api.pings(tab);
       loaded = true;
     } catch {
       /* retry next tick */
@@ -20,9 +22,13 @@
   };
 
   onMount(() => {
-    refresh();
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
+  });
+  $effect(() => {
+    void tab;
+    loaded = false;
+    refresh();
   });
 
   async function answer(p: Ping, ans: string) {
@@ -40,32 +46,52 @@
   }
 </script>
 
-<h1>Inbox</h1>
+<div class="row spread">
+  <h1 style="margin:0">Inbox</h1>
+  <div class="row" style="gap:0">
+    <button class:primary={tab === 'pending'} onclick={() => (tab = 'pending')}>Pending</button>
+    <button class:primary={tab === 'answered'} onclick={() => (tab = 'answered')}>Answered</button>
+  </div>
+</div>
 
 {#if error}<div class="error">{error}</div>{/if}
 
 {#if pings.length === 0}
-  <div class="empty">{loaded ? 'No pending pings — the apothecary needs nothing from you.' : 'Loading…'}</div>
+  <div class="empty">
+    {#if !loaded}Loading…{:else if tab === 'pending'}No pending pings — the apothecary needs nothing from you.{:else}No answered pings yet.{/if}
+  </div>
 {:else}
   {#each pings as p (p.ping_id)}
     <div class="card">
       <div class="row spread">
         <span class="pingtype {gateTypes.includes(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
-        <span class="muted small">{ago(p.raised_at)} · <a href={`/runs/${p.run_id}`}>view run</a></span>
+        <span class="muted small">
+          {#if p.stage_id}<span class="mono">{p.stage_id}</span> · {/if}
+          {ago(p.raised_at)} · <a href={`/runs/${p.run_id}`}>view run</a>
+        </span>
       </div>
-      <p style="margin:8px 0">{p.question}</p>
-      {#if p.context}<p class="muted small" style="white-space:pre-wrap">{p.context}</p>{/if}
+      <div class="md" style="margin:8px 0">{@html mdToHtml(p.question)}</div>
+      {#if p.context}<div class="md muted small">{@html mdToHtml(p.context)}</div>{/if}
       {#if p.payload_ref}
         <p class="mono small">
           {#if p.payload_ref.startsWith('http')}
             <a href={p.payload_ref} target="_blank" rel="noreferrer">{p.payload_ref} ↗</a>
-          {:else}
+          {:else if p.status === 'pending'}
             {p.payload_ref} —
             <a href={`/pings/${p.ping_id}`}>review &amp; comment →</a>
-          {/if}
+          {:else}{p.payload_ref}{/if}
         </p>
       {/if}
-      {#if gateTypes.includes(p.type)}
+
+      {#if p.status === 'answered'}
+        <div class="answerbox">
+          <div class="small muted">
+            answered {p.answered_at ? ago(p.answered_at) : ''} —
+            <strong class={p.answer === 'approve' ? 'ok' : p.answer === 'reject' ? 'bad' : ''}>{p.answer}</strong>
+          </div>
+          {#if p.feedback}<div class="md small" style="margin-top:4px">{@html mdToHtml(p.feedback)}</div>{/if}
+        </div>
+      {:else if gateTypes.includes(p.type)}
         <textarea bind:value={feedback[p.ping_id]} placeholder="Feedback (required when rejecting)"></textarea>
         <div class="row" style="margin-top:10px">
           <button class="approve" disabled={busy[p.ping_id]} onclick={() => answer(p, 'approve')}>Approve</button>
@@ -83,3 +109,23 @@
     </div>
   {/each}
 {/if}
+
+<style>
+  .answerbox {
+    border-left: 3px solid var(--border, #444);
+    padding: 6px 10px;
+    margin-top: 8px;
+  }
+  .answerbox .ok {
+    color: var(--green, #4caf7d);
+  }
+  .answerbox .bad {
+    color: var(--red, #e06c75);
+  }
+  .md :global(p) {
+    margin: 4px 0;
+  }
+  .md :global(pre) {
+    overflow-x: auto;
+  }
+</style>

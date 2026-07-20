@@ -144,6 +144,10 @@ type PingRaised struct {
 	Question   string `json:"question"`
 	Context    string `json:"context,omitempty"` // §9 pings.context; persisted so recovery keeps it
 	PayloadRef string `json:"payload_ref,omitempty"`
+	// StageID is the flow stage in flight when the ping was raised
+	// (PLAN4 M15): the attribution key joining reviews to stages and,
+	// via stage_started.agent_hash, to prompt versions.
+	StageID string `json:"stage_id,omitempty"`
 }
 
 type PingAnswered struct {

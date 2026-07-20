@@ -12,6 +12,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -208,10 +209,10 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 		switch p := evs[i].Payload.(type) {
 		case *event.PingRaised:
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO pings (ping_id, run_id, type, question, context, payload_ref, status, raised_at)
-				VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)
+				INSERT INTO pings (ping_id, run_id, type, question, context, payload_ref, stage_id, status, raised_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8)
 				ON CONFLICT (ping_id) DO NOTHING`,
-				p.PingID, runID, p.Type, p.Question, p.Context, p.PayloadRef, evs[i].TS); err != nil {
+				p.PingID, runID, p.Type, p.Question, p.Context, p.PayloadRef, p.StageID, evs[i].TS); err != nil {
 				return err
 			}
 		case *event.PingAnswered:
@@ -446,29 +447,58 @@ func (s *Store) LoadChannels(ctx context.Context) ([]ChannelRow, error) {
 	return out, rows.Err()
 }
 
-// PendingPings reads the pings projection (CPUI inbox backing for a future
-// step; the live engine registry remains canonical while runs are active).
-func (s *Store) PendingPings(ctx context.Context) ([]map[string]any, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT ping_id, run_id, type, question, context, payload_ref, raised_at
-		FROM pings WHERE status='pending' ORDER BY raised_at`)
+// ListPings reads the pings projection (PLAN4 M15): the durable
+// request/response surface. status filters pending|answered; "" or "all"
+// returns both. Newest first, capped by limit.
+func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q := `SELECT ping_id, run_id, type, stage_id, question, context, payload_ref,
+	             status, answer, feedback, raised_at, answered_at
+	      FROM pings`
+	args := []any{}
+	if status != "" && status != "all" {
+		q += ` WHERE status=$1`
+		args = append(args, status)
+	}
+	q += ` ORDER BY raised_at DESC LIMIT ` + fmt.Sprint(limit)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	var out []run.PingView
 	for rows.Next() {
-		var pingID, runID, typ, question, context_, payloadRef string
-		var raisedAt time.Time
-		if err := rows.Scan(&pingID, &runID, &typ, &question, &context_, &payloadRef, &raisedAt); err != nil {
+		v, err := scanPing(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{
-			"ping_id": pingID, "run_id": runID, "type": typ, "question": question,
-			"context": context_, "payload_ref": payloadRef, "raised_at": raisedAt,
-		})
+		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// GetPing reads one projected request/response pair by id.
+func (s *Store) GetPing(ctx context.Context, id string) (run.PingView, error) {
+	v, err := scanPing(s.pool.QueryRow(ctx, `
+		SELECT ping_id, run_id, type, stage_id, question, context, payload_ref,
+		       status, answer, feedback, raised_at, answered_at
+		FROM pings WHERE ping_id=$1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return run.PingView{}, fmt.Errorf("ping %s: %w", id, ErrPingNotFound)
+	}
+	return v, err
+}
+
+// ErrPingNotFound is the projection-read miss sentinel.
+var ErrPingNotFound = errors.New("ping not found")
+
+func scanPing(row pgx.Row) (run.PingView, error) {
+	var v run.PingView
+	err := row.Scan(&v.PingID, &v.RunID, &v.Type, &v.StageID, &v.Question, &v.Context,
+		&v.PayloadRef, &v.Status, &v.Answer, &v.Feedback, &v.RaisedAt, &v.AnsweredAt)
+	return v, err
 }
 
 var _ event.Store = (*Store)(nil)

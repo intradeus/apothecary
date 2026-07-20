@@ -111,6 +111,7 @@ type Ping struct {
 	Question   string
 	Context    string
 	PayloadRef string
+	StageID    string // flow stage in flight when raised (PLAN4 M15)
 	RaisedAt   time.Time
 
 	gate     bool

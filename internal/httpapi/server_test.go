@@ -95,6 +95,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	x.e = engine.New(cfg, x.store, engine.StaticResolver{R: x.res}, flows, x.settings, []ports.NotificationChannel{x.reg})
 	t.Cleanup(x.e.Shutdown)
 	x.srv = New(x.e, x.store, x.reg, cfg.RunsDir)
+	x.srv.Pings = EventPingStore{Store: x.store}
 	x.ts = httptest.NewServer(x.srv.Handler())
 	t.Cleanup(x.ts.Close)
 	return x
@@ -573,4 +574,86 @@ stages:
 	if _, _, err := x.e.PingArtifact(context.Background(), pid); err != nil {
 		t.Errorf("engine artifact err = %v", err)
 	}
+}
+
+// TestPingHistory covers the PLAN4 M15 durable surface: answered pings
+// stay queryable with both sides of the exchange and their stage.
+func TestPingHistory(t *testing.T) {
+	x := newEnv(t, engine.Config{}, `name: gated
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan, type: agent, agent: planner, output: artifacts/plan.md }
+  - { id: gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
+      on_reject: { to: plan, max: 2, feed: feedback } }
+`)
+	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		_ = x.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# P\n"), 0o644)
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	x.createTicketFlow(t, "T", "gated")
+
+	var pid string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && pid == "" {
+		_, d := x.do(t, "GET", "/api/pings", nil, nil)
+		var pings []run.PingView
+		_ = json.Unmarshal(d, &pings)
+		if len(pings) > 0 {
+			pid = pings[0].PingID
+			if pings[0].StageID != "gate" || pings[0].Status != "pending" {
+				t.Errorf("pending ping = %+v", pings[0])
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if pid == "" {
+		t.Fatal("no ping appeared in the projection list")
+	}
+
+	resp, _ := x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]string{"answer": "approve"}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("answer = %d", resp.StatusCode)
+	}
+
+	// History: the pair survives the answer (and the run's end).
+	deadline = time.Now().Add(5 * time.Second)
+	var got run.PingView
+	for time.Now().Before(deadline) {
+		resp, d := x.do(t, "GET", "/api/pings/"+pid, nil, nil)
+		if resp.StatusCode != 200 {
+			t.Fatalf("get ping = %d", resp.StatusCode)
+		}
+		_ = json.Unmarshal(d, &got)
+		if got.Status == "answered" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got.Status != "answered" || got.Answer != "approve" || got.StageID != "gate" || got.AnsweredAt == nil {
+		t.Errorf("stored ping = %+v", got)
+	}
+	_, d := x.do(t, "GET", "/api/pings?status=answered", nil, nil)
+	var answered []run.PingView
+	_ = json.Unmarshal(d, &answered)
+	if len(answered) != 1 || answered[0].PingID != pid {
+		t.Errorf("answered list = %+v", answered)
+	}
+	resp, _ = x.do(t, "GET", "/api/pings?status=bogus", nil, nil)
+	if resp.StatusCode != 400 {
+		t.Errorf("bogus status = %d", resp.StatusCode)
+	}
+}
+
+// createTicketFlow files a ticket on a named flow.
+func (x *env) createTicketFlow(t *testing.T, title, flow string) string {
+	t.Helper()
+	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": title, "goal": "g", "flow": flow, "project_id": testProject}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /api/tickets = %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	_ = json.Unmarshal(data, &out)
+	return out.RunID
 }

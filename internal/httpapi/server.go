@@ -39,6 +39,9 @@ type Server struct {
 	Kinds *kinds.Registry
 	// Ops runs integration tests / repo listing (the resolver); nil = 503.
 	Ops IntegrationOps
+	// Pings serves the durable request/response projection (PLAN4 M15);
+	// nil falls back to the engine's in-memory pending registry.
+	Pings PingStore
 	// CPUIDir, when set, is served at / with an SPA fallback to index.html
 	// (the built SvelteKit bundle; the CPUI talks only to this API).
 	CPUIDir string
@@ -68,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/pings/{pid}", s.repollPing)
 	mux.HandleFunc("POST /api/pings/{pid}/answer", s.answerPing)
 	mux.HandleFunc("GET /api/pings", s.listPings)
+	mux.HandleFunc("GET /api/pings/{pid}", s.getStoredPing)
 	mux.HandleFunc("GET /api/pings/{pid}/artifact", s.pingArtifact)
 	mux.HandleFunc("GET /api/channels", s.listChannels)
 	mux.HandleFunc("POST /api/channels", s.addChannel)
@@ -177,20 +181,76 @@ func (s *Server) authPing(w http.ResponseWriter, r *http.Request, runID string) 
 	return true
 }
 
+// PingStore is the durable request/response projection surface (PLAN4
+// M15): pgstore in production, EventPingStore over any event.Store in
+// tests/tools.
+type PingStore interface {
+	ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error)
+	GetPing(ctx context.Context, id string) (run.PingView, error)
+}
+
+// EventPingStore derives the projection by folding events — parity with
+// pgstore's SQL view via the shared run.ReducePings reducer.
+type EventPingStore struct{ Store event.Store }
+
+func (e EventPingStore) ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error) {
+	ids, err := e.Store.RunIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []run.PingView
+	for _, id := range ids {
+		evs, err := e.Store.Events(ctx, id, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range run.ReducePings(evs) {
+			if status == "" || status == "all" || v.Status == status {
+				out = append(out, v)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RaisedAt.After(out[j].RaisedAt) })
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (e EventPingStore) GetPing(ctx context.Context, id string) (run.PingView, error) {
+	all, err := e.ListPings(ctx, "all", 500)
+	if err != nil {
+		return run.PingView{}, err
+	}
+	for _, v := range all {
+		if v.PingID == id {
+			return v, nil
+		}
+	}
+	return run.PingView{}, fmt.Errorf("ping %s: %w", id, engine.ErrPingNotFound)
+}
+
+// pingJSON is the registry-fallback shape (Pings == nil); the projection
+// path serves run.PingView directly.
 type pingJSON struct {
 	PingID     string    `json:"ping_id"`
 	RunID      string    `json:"run_id"`
 	Type       string    `json:"type"`
+	StageID    string    `json:"stage_id,omitempty"`
 	Question   string    `json:"question"`
 	Context    string    `json:"context,omitempty"`
 	PayloadRef string    `json:"payload_ref,omitempty"`
+	Status     string    `json:"status"`
 	RaisedAt   time.Time `json:"raised_at"`
 }
 
 func toPingJSON(p *engine.Ping) pingJSON {
 	return pingJSON{
-		PingID: p.ID, RunID: p.RunID, Type: p.Type, Question: p.Question,
-		Context: p.Context, PayloadRef: p.PayloadRef, RaisedAt: p.RaisedAt,
+		PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID, Question: p.Question,
+		Context: p.Context, PayloadRef: p.PayloadRef, Status: "pending", RaisedAt: p.RaisedAt,
 	}
 }
 
@@ -474,17 +534,59 @@ func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPings(w http.ResponseWriter, r *http.Request) {
-	if st := r.URL.Query().Get("status"); st != "" && st != "pending" {
-		writeErr(w, http.StatusBadRequest, "only status=pending is supported")
+	status := r.URL.Query().Get("status")
+	switch status {
+	case "", "all", "pending", "answered":
+	default:
+		writeErr(w, http.StatusBadRequest, "status must be pending|answered|all")
 		return
 	}
-	pings := s.Engine.PendingPings()
-	out := make([]pingJSON, 0, len(pings))
-	for _, p := range pings {
-		out = append(out, toPingJSON(p))
+	if s.Pings == nil {
+		// Bare test servers: pending only, from the live registry.
+		pings := s.Engine.PendingPings()
+		out := make([]pingJSON, 0, len(pings))
+		for _, p := range pings {
+			out = append(out, toPingJSON(p))
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].RaisedAt.Before(out[j].RaisedAt) })
+		writeJSON(w, http.StatusOK, out)
+		return
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].RaisedAt.Before(out[j].RaisedAt) })
-	writeJSON(w, http.StatusOK, out)
+	if status == "" {
+		status = "pending" // inbox default; history is opt-in
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	rows, err := s.Pings.ListPings(r.Context(), status, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if status == "" || status == "pending" {
+		// Pending lists read oldest-first (inbox order).
+		sort.Slice(rows, func(i, j int) bool { return rows[i].RaisedAt.Before(rows[j].RaisedAt) })
+	}
+	if rows == nil {
+		rows = []run.PingView{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+// getStoredPing serves one durable request/response pair (PLAN4 M15).
+func (s *Server) getStoredPing(w http.ResponseWriter, r *http.Request) {
+	if s.Pings == nil {
+		writeErr(w, http.StatusServiceUnavailable, "ping projection is not wired")
+		return
+	}
+	v, err := s.Pings.GetPing(r.Context(), r.PathValue("pid"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, engine.ErrPingNotFound) || strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 // pingArtifact serves a gate's payload artifact from the live workspace

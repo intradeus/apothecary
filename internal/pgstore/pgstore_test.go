@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -104,25 +105,37 @@ func TestPingsProjection(t *testing.T) {
 	ctx := context.Background()
 	_, err := s.Append(ctx, "r1",
 		&event.RunCreated{TicketTitle: "T"},
-		&event.PingRaised{PingID: "p1", Type: "clarification", Question: "db?", Context: "pg or sqlite"},
+		&event.PingRaised{PingID: "p1", Type: "clarification", Question: "db?", Context: "pg or sqlite", StageID: "build"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := s.PendingPings(ctx)
+	pending, err := s.ListPings(ctx, "pending", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pending) != 1 || pending[0]["ping_id"] != "p1" || pending[0]["context"] != "pg or sqlite" {
+	if len(pending) != 1 || pending[0].PingID != "p1" || pending[0].Context != "pg or sqlite" || pending[0].StageID != "build" {
 		t.Errorf("pending = %+v", pending)
 	}
 
 	if _, err := s.Append(ctx, "r1", &event.PingAnswered{PingID: "p1", Answer: "text", Feedback: "pg"}); err != nil {
 		t.Fatal(err)
 	}
-	pending, _ = s.PendingPings(ctx)
+	pending, _ = s.ListPings(ctx, "pending", 0)
 	if len(pending) != 0 {
 		t.Errorf("pending after answer = %+v", pending)
+	}
+	// The pair is durable (PLAN4 M15): answered listing + by-id fetch.
+	answered, _ := s.ListPings(ctx, "answered", 0)
+	if len(answered) != 1 || answered[0].Answer != "text" || answered[0].Feedback != "pg" || answered[0].AnsweredAt == nil {
+		t.Errorf("answered = %+v", answered)
+	}
+	one, err := s.GetPing(ctx, "p1")
+	if err != nil || one.Status != "answered" {
+		t.Errorf("GetPing = %+v, %v", one, err)
+	}
+	if _, err := s.GetPing(ctx, "nope"); !errors.Is(err, ErrPingNotFound) {
+		t.Errorf("missing ping err = %v", err)
 	}
 }
 
@@ -179,7 +192,7 @@ func TestRebuildProjections(t *testing.T) {
 		t.Errorf("rebuilt %d runs, want 3", n)
 	}
 	views, _ := s.RunViews(ctx)
-	pending, _ := s.PendingPings(ctx)
+	pending, _ := s.ListPings(ctx, "pending", 0)
 	if len(views) != 3 || len(pending) != 3 {
 		t.Errorf("after rebuild: %d views, %d pings", len(views), len(pending))
 	}

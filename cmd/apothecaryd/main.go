@@ -213,6 +213,7 @@ func cmdServe(args []string) error {
 	api.Conf = conf
 	api.Kinds = reg
 	api.Ops = resolver
+	api.Pings = store // durable request/response projection (PLAN4 M15)
 	api.CPUIDir = boot.CPUIDir
 	if boot.CPUIDir != "" {
 		log.Info("serving CPUI", "dir", boot.CPUIDir)

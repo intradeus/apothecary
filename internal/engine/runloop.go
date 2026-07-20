@@ -105,8 +105,9 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		if _, ok := e.pings[op.PingID]; !ok {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
-				Context: op.Context, PayloadRef: op.PayloadRef, RaisedAt: e.clock(),
-				gate: gatePingType(op.Type), done: make(chan struct{}),
+				Context: op.Context, PayloadRef: op.PayloadRef, StageID: op.StageID,
+				RaisedAt: e.clock(),
+				gate:     gatePingType(op.Type), done: make(chan struct{}),
 			}
 		}
 	}
@@ -455,8 +456,11 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		case res := <-resCh:
 			return res, false, nil
 		case req := <-x.h.mailbox:
+			x.e.mu.Lock()
+			req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
+			x.e.mu.Unlock()
 			if err := x.append(&event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
-				Question: req.p.Question, PayloadRef: req.p.PayloadRef}); err != nil {
+				Question: req.p.Question, PayloadRef: req.p.PayloadRef, StageID: st.ID}); err != nil {
 				close(req.ack)
 				return agentRes{}, false, err
 			}
@@ -631,13 +635,13 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		p = &Ping{
 			ID: x.e.newID(), RunID: rs.runID, Type: string(st.Ping),
 			Question:   fmt.Sprintf("%s: %s", st.Ping, rs.view.TicketTitle),
-			PayloadRef: payloadRef, RaisedAt: x.e.clock(),
+			PayloadRef: payloadRef, StageID: st.ID, RaisedAt: x.e.clock(),
 			gate: true, done: make(chan struct{}),
 		}
 		x.e.mu.Lock()
 		x.e.pings[p.ID] = p
 		x.e.mu.Unlock()
-		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, PayloadRef: p.PayloadRef}); err != nil {
+		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, PayloadRef: p.PayloadRef, StageID: st.ID}); err != nil {
 			return err
 		}
 		x.e.notify(x.bg, ports.Notification{

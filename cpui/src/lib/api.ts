@@ -165,10 +165,15 @@ export interface Ping {
   ping_id: string;
   run_id: string;
   type: 'plan_approval' | 'final_review' | 'clarification' | 'blocker' | 'permission';
+  stage_id?: string;
   question: string;
   context?: string;
   payload_ref?: string;
+  status: 'pending' | 'answered';
+  answer?: string;
+  feedback?: string;
   raised_at: string;
+  answered_at?: string;
 }
 
 export interface ChannelEntry {
@@ -213,6 +218,9 @@ export const api = {
     return res.text();
   },
   pendingPings: () => req<Ping[]>('/api/pings?status=pending'),
+  pings: (status: 'pending' | 'answered' | 'all', limit = 100) =>
+    req<Ping[]>(`/api/pings?status=${status}&limit=${limit}`),
+  ping: (pingId: string) => req<Ping>(`/api/pings/${pingId}`),
   pingArtifact: (pingId: string) =>
     req<{ path: string; content: string }>(`/api/pings/${pingId}/artifact`),
   answerPing: (pingId: string, answer: string, feedback?: string) =>
