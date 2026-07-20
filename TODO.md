@@ -1,7 +1,5 @@
 - 1) i don't see any reaper working after completion. 
-- 2) In the inbox, when its pointing to a file, i would like to be able to SEE said file in the UI. Right now its just saying 'go look at "docs/plan.md"' so i have to open ide etc. Ideally, i would like to be able to leave comments directly on the file, and send all comments at once - would that be possible ? Im aware its also a backend change as we need to send the file (in the inbox payload ? how to manage). Sending the plan comments all at once make it very easy for me to manage. We should have a good markdown reader in the frontend, which can display mermaid flow charts in the readme if there are any too, for plans its nice.
 - 3) merge conflicts
 - 4) `channels` fold into `integrations`.
-- 5) db migration + migration table checks
+- 5) db migration + migration table checks and simplify
 - 6) openapi + client gen for frontend.
-- 7) flow builder with nice UI

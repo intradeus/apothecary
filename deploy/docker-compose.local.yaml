@@ -1,0 +1,51 @@
+# Local build stack: same shape as the reference deployment, but the image
+# is built FROM THE WORKING TREE instead of pulled from GHCR — for testing
+# uncommitted code as the real containerized service.
+#
+#   docker compose -p apothecary-local -f deploy/docker-compose.local.yaml up -d --build
+#
+# It runs BESIDE the published-image stack: own ports (engine on
+# 127.0.0.1:8081, postgres on 127.0.0.1:15434), own volumes, own project
+# name — nothing touches the production data. Secrets come from the same
+# deploy/.env (APOTHECARY_PG_PASSWORD, APOTHECARY_MASTER_KEY).
+services:
+  postgres:
+    image: postgres:16
+    network_mode: host
+    environment:
+      POSTGRES_USER: apothecary
+      POSTGRES_PASSWORD: ${APOTHECARY_PG_PASSWORD:?set APOTHECARY_PG_PASSWORD in deploy/.env}
+      POSTGRES_DB: apothecary
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=15434"]
+    volumes:
+      - apothecary-local-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 15434 -U apothecary"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  apothecaryd:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: apothecary/apothecaryd:local
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APOTHECARY_POSTGRES_DSN: postgres://apothecary:${APOTHECARY_PG_PASSWORD}@127.0.0.1:15434/apothecary
+      APOTHECARY_MASTER_KEY: ${APOTHECARY_MASTER_KEY:?run `apothecaryd keygen` and set APOTHECARY_MASTER_KEY in deploy/.env}
+      APOTHECARY_LISTEN: 127.0.0.1:8081
+    volumes:
+      # Same trusted-control-plane posture as the reference deployment: image
+      # builds go through the host's docker daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - apothecary-local-runs:/var/lib/apothecary/runs
+    restart: unless-stopped
+
+volumes:
+  apothecary-local-pgdata:
+  apothecary-local-runs:

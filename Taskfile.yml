@@ -1,0 +1,135 @@
+# Task runner (https://taskfile.dev) — the common dev/ops commands.
+#   task --list
+version: '3'
+
+dotenv: ['deploy/.env'] # APOTHECARY_MASTER_KEY / APOTHECARY_PG_PASSWORD for dev + compose tasks
+
+vars:
+  LOCAL_COMPOSE: docker compose -p apothecary-local -f deploy/docker-compose.local.yaml
+  PROD_COMPOSE: docker compose -p apothecary -f deploy/docker-compose.yaml
+  DEV_PG: apothecary-dev-pg
+  DEV_DSN: postgres://dev:dev@127.0.0.1:15433/dev
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  # --- local docker stack (builds from the working tree) ---------------------
+  local:
+    desc: Build the working tree and (re)start the local docker stack (UI on :8081)
+    cmds:
+      - '{{.LOCAL_COMPOSE}} up -d --build'
+      - sleep 2
+      - docker exec apothecary-local-apothecaryd-1 apothecaryd version
+      - 'echo "UI: http://127.0.0.1:8081"'
+
+  local:logs:
+    desc: Follow the local stack's daemon logs
+    cmds:
+      - '{{.LOCAL_COMPOSE}} logs -f apothecaryd'
+
+  local:down:
+    desc: Stop the local stack (data kept)
+    cmds:
+      - '{{.LOCAL_COMPOSE}} down'
+
+  local:destroy:
+    desc: Stop the local stack AND delete its volumes (fresh DB next start)
+    prompt: This wipes the local stack's database and runs dir. Continue?
+    cmds:
+      - '{{.LOCAL_COMPOSE}} down -v'
+
+  # --- go-run dev mode (fake kinds, no docker build) -------------------------
+  dev:
+    desc: Run the daemon from source with fake kinds + seeded sandbox (UI on :18080)
+    deps: [dev:db]
+    env:
+      APOTHECARY_POSTGRES_DSN: '{{.DEV_DSN}}'
+      APOTHECARY_LISTEN: 127.0.0.1:18080
+      APOTHECARY_RUNS_DIR: /tmp/apothecary-dev-runs
+    cmds:
+      - go run ./cmd/apothecaryd serve -dev
+
+  dev:db:
+    desc: Start (or reuse) the scratch dev Postgres on :15433
+    internal: true
+    cmds:
+      - docker start {{.DEV_PG}} 2>/dev/null ||
+        docker run -d --name {{.DEV_PG}}
+        -e POSTGRES_USER=dev -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=dev
+        -p 127.0.0.1:15433:5432 postgres:16
+      - for i in $(seq 1 30); do docker exec {{.DEV_PG}} pg_isready -U dev >/dev/null 2>&1 && break; sleep 0.5; done
+
+  dev:db:reset:
+    desc: Delete the scratch dev Postgres (fresh seed on next `task dev`)
+    cmds:
+      - docker rm -f {{.DEV_PG}} 2>/dev/null || true
+
+  # --- UI --------------------------------------------------------------------
+  ui:
+    desc: CPUI dev server with hot reload (proxies /api to :8080)
+    dir: cpui
+    cmds:
+      - npm run dev
+
+  ui:build:
+    desc: Production CPUI build (cpui/build)
+    dir: cpui
+    cmds:
+      - npm run build
+
+  # --- testing & verification ------------------------------------------------
+  test:
+    desc: 'Go tests (args pass through: task test -- ./internal/engine/ -run TestX -v)'
+    cmds:
+      - go test {{.CLI_ARGS | default "./..."}}
+
+  check:
+    desc: svelte-check (CPUI types)
+    dir: cpui
+    cmds:
+      - npm run check
+
+  fmt:
+    desc: gofmt the tree
+    cmds:
+      - gofmt -w ./cmd ./internal ./workspace 2>/dev/null || gofmt -w .
+
+  verify:
+    desc: 'The full pre-commit gate: gofmt, vet, go tests, svelte-check, UI build'
+    cmds:
+      - |
+        out="$(gofmt -l ./cmd ./internal)"
+        if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
+      - go vet ./...
+      - go test ./...
+      - cd cpui && npm run check
+      - cd cpui && npm run build
+      - echo "verify — all green"
+
+  # --- production stack (published image) ------------------------------------
+  prod:upgrade:
+    desc: Pull the latest release and restart the production stack
+    cmds:
+      - '{{.PROD_COMPOSE}} pull apothecaryd'
+      - '{{.PROD_COMPOSE}} up -d'
+      - sleep 2
+      - docker exec apothecary-apothecaryd-1 apothecaryd version
+
+  prod:logs:
+    desc: Follow the production daemon logs
+    cmds:
+      - '{{.PROD_COMPOSE}} logs -f apothecaryd'
+
+  # --- misc ------------------------------------------------------------------
+  keygen:
+    desc: Print a fresh APOTHECARY_MASTER_KEY
+    cmds:
+      - go run ./cmd/apothecaryd keygen
+
+  validate:
+    desc: 'Validate a flow file: task validate -- path/to/flow.yaml'
+    cmds:
+      - go run ./cmd/apothecaryd validate {{.CLI_ARGS}}

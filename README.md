@@ -115,14 +115,19 @@ Migrations apply at boot, and the workspace base image and Coder template
 are content-addressed — they rebuild/re-push themselves on first use after
 their sources change.
 
-To run an uncommitted tree, build a local image and pin it:
+To run an **uncommitted tree** as the real containerized service, use the
+local-build stack — it builds from the working tree and runs beside the
+published-image stack (own ports: engine `127.0.0.1:8081`, postgres
+`127.0.0.1:15434`; own volumes; same `deploy/.env` secrets):
 
 ```sh
-deploy/release.sh dev-local
-# deploy/.env → APOTHECARY_IMAGE=apothecary/apothecaryd:dev-local
+docker compose -p apothecary-local -f deploy/docker-compose.local.yaml up -d --build
 ```
 
-(or skip docker entirely: `go run ./cmd/apothecaryd serve -dev`).
+Alternatives: `deploy/release.sh vX` builds a pinnable versioned image for
+the main stack (`APOTHECARY_IMAGE=` in `deploy/.env`), and
+`go run ./cmd/apothecaryd serve -dev` skips docker entirely (fake kinds,
+seeded sandbox project).
 
 ## CLI
 
