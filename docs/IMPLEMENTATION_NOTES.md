@@ -652,6 +652,29 @@ in two steps (UI first, then full backend removal on his follow-up call):
   plan→build with usage + kill-resume — the credential-bearing halves of
   the §17 criteria.
 
+## Ship it (M11, DESIGN2 §15/§17)
+
+- **Versioning**: `factoryd version` + ldflags stamp (`deploy/Dockerfile`
+  ARG VERSION); `deploy/release.sh [vX.Y.Z]` builds
+  `apothecary/factoryd:<version>` (+ latest), prints the stamped version,
+  and pushes when `REGISTRY=` is set. The compose file honors
+  `APOTHECARY_IMAGE` so deployments pin releases in `deploy/.env`; default
+  tracks the working tree (`:dev`) — the right default for a single-repo
+  self-hosted install with no registry (this repo has no git remote).
+- **README.md** is the M11 install path: prerequisites (docker, external
+  Coder, forge PAT, harness auth, target repo with AGENTS.md +
+  .factory/agents), compose install with keygen, the UI configuration
+  walkthrough ending in envcheck + first ticket, upgrade notes
+  (migrations at boot; base image + template are content-addressed and
+  self-heal), full CLI table, dev workflow, and the short-form security
+  model.
+- **Acceptance caveat, stated honestly**: the §17 clean-machine criterion
+  was validated by construction on THIS machine — the production stack
+  runs from the compose file + env.example + keygen path the README
+  prescribes, with data intact across every M7–M10 roll. A genuinely
+  fresh box (or Lu deleting the volumes) is the final proof; no registry
+  publishing exists yet for the same reason there is no remote.
+
 ## CPUI & Matrix (M5)
 
 - Matrix adapter: client-server API v3, PUT m.room.message with a ULID txn

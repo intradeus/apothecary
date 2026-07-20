@@ -27,7 +27,9 @@ services:
     restart: unless-stopped
 
   factoryd:
-    image: apothecary/factoryd:dev
+    # Pin a release via APOTHECARY_IMAGE in deploy/.env (built by
+    # deploy/release.sh); the default builds from the working tree.
+    image: ${APOTHECARY_IMAGE:-apothecary/factoryd:dev}
     build:
       context: ..
       dockerfile: deploy/Dockerfile

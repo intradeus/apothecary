@@ -14,11 +14,12 @@ RUN npm run build
 
 # --- factoryd ----------------------------------------------------------------
 FROM golang:1.26-bookworm AS build
+ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /out/factoryd ./cmd/factoryd
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/factoryd ./cmd/factoryd
 
 # --- runtime -----------------------------------------------------------------
 FROM debian:bookworm-slim

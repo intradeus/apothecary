@@ -39,6 +39,9 @@ import (
 	"factory/internal/telemetry"
 )
 
+// version is stamped by the release build (deploy/release.sh, ldflags).
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -46,6 +49,8 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "version":
+		fmt.Printf("factoryd %s\n", version)
 	case "validate":
 		err = cmdValidate(os.Args[2:])
 	case "serve":
@@ -77,7 +82,8 @@ commands:
   import-config -config <path>     one-shot v1 factory.yaml -> DB migration
   validate <flow.yaml>             parse and validate a flow file
   rebuild-projections
-  envcheck -project <name|id> [-keep]`)
+  envcheck -project <name|id> [-keep]
+  version`)
 }
 
 func cmdValidate(args []string) error {
