@@ -26,7 +26,7 @@ data "coder_workspace_owner" "me" {}
 
 data "coder_parameter" "run_id" {
   name         = "run_id"
-  display_name = "Factory run id"
+  display_name = "Apothecary run id"
   type         = "string"
   mutable      = false
 }

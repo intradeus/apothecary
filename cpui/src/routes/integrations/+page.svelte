@@ -68,7 +68,7 @@
 
 <h1>Integrations</h1>
 <p class="muted small" style="margin-top:-8px">
-  Credentialed connections the factory works with. Secrets are write-only: they are stored
+  Credentialed connections the apothecary works with. Secrets are write-only: they are stored
   encrypted and this page only ever shows a mask.
 </p>
 

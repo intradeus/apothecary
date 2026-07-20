@@ -63,7 +63,10 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	sort.Strings(keys)
 	var providers strings.Builder
 	for _, k := range keys {
-		fmt.Fprintf(&providers, "%s=%s\n", k, spec.ProviderEnv[k])
+		// The file is sourced (`set -a; . provider.env`): values must be
+		// shell-quoted or a key containing $, quotes or spaces breaks every
+		// agent invocation.
+		fmt.Fprintf(&providers, "%s=%s\n", k, shellQuote(spec.ProviderEnv[k]))
 	}
 	if err := envp.WriteFile(ctx, id, "/apothecary/provider.env", []byte(providers.String()), 0o600); err != nil {
 		return fmt.Errorf("write provider.env: %w", err)
@@ -88,12 +91,18 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 			`git config --global credential.helper "store --file=/apothecary/git-credentials"`})
 	}
 	steps = append(steps,
-		step{"clone", "", fmt.Sprintf("git clone %q repo && cd repo && git switch -c %q origin/%s",
-			spec.RepoURL, spec.Branch, spec.DefaultBranch)},
+		// Idempotent for crash recovery: a restart mid-bootstrap re-runs the
+		// whole sequence against the same workspace. An existing clone is
+		// kept (it may hold agent commits); an existing branch is re-entered,
+		// never recreated.
+		step{"clone", "", fmt.Sprintf("[ -e repo/.git ] || git clone %q repo",
+			spec.RepoURL)},
+		step{"branch", "repo", fmt.Sprintf("git switch %q 2>/dev/null || git switch -c %q origin/%s",
+			spec.Branch, spec.Branch, spec.DefaultBranch)},
 		// Harness config generation from .apothecary/agents/ lands with the
 		// opencode adapter (M3); the AGENTS.md symlink is engine policy (§1).
 		step{"agent-configs", "repo", agentConfigScript(spec.AgentsMDPath)},
-		step{"git-config", "repo", `git config user.name "Factory" && git config user.email "apothecary@local"`},
+		step{"git-config", "repo", `git config user.name "Apothecary" && git config user.email "apothecary@local"`},
 	)
 	for _, s := range steps {
 		res, err := envp.Exec(ctx, id, ports.Command{Script: s.script, Dir: s.dir, Timeout: spec.Timeout})
@@ -137,9 +146,15 @@ func credentialLine(repoURL, user, pass string) (string, error) {
 }
 
 func agentConfigScript(agentsMDPath string) string {
-	script := "mkdir -p artifacts && echo artifacts/ >> .git/info/exclude"
+	script := "mkdir -p artifacts && grep -qx artifacts/ .git/info/exclude 2>/dev/null || echo artifacts/ >> .git/info/exclude"
 	if agentsMDPath != "AGENTS.md" {
-		script += fmt.Sprintf(" && ln -sf %q AGENTS.md && echo AGENTS.md >> .git/info/exclude", agentsMDPath)
+		script += fmt.Sprintf(" && ln -sf %q AGENTS.md && { grep -qx AGENTS.md .git/info/exclude 2>/dev/null || echo AGENTS.md >> .git/info/exclude; }", agentsMDPath)
 	}
 	return script
+}
+
+// shellQuote single-quotes s for POSIX sh: safe against $, backticks,
+// spaces and embedded quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

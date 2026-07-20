@@ -85,6 +85,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.envID = ports.EnvID(p.EnvID)
 		case *event.EnvFailed:
 			rs.done = true
+			if p.EnvID != "" {
+				rs.envID = ports.EnvID(p.EnvID)
+			}
 		case *event.StageStarted:
 			if fl != nil {
 				rs.pos = fl.Index(p.StageID)

@@ -2,6 +2,8 @@ package confstore
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"apothecary/internal/flow"
@@ -22,6 +24,9 @@ type flowSource struct {
 
 func (fs *flowSource) Get(ctx context.Context, name string) (*flow.Flow, error) {
 	row, err := fs.svc.db.GetFlow(ctx, name)
+	if errors.Is(err, ErrNotFound) {
+		return nil, fmt.Errorf("flow %q: %w", name, flow.ErrNotFound)
+	}
 	if err != nil {
 		return nil, err
 	}

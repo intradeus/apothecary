@@ -31,18 +31,21 @@ exactly two touchpoints — plan approval and final review.
   and/or subscription login) or, for codex, an OpenAI API key / ChatGPT
   `auth.json`.
 - A target repository containing `AGENTS.md` and `.apothecary/agents/*.yaml`
-  agent specs (see `examples/target-repo/`).
+  agent specs (see `examples/target-repo/` for example agent specs).
 
 ## Install
 
 ```sh
 git clone <this repo> && cd apothecary
 cp deploy/env.example deploy/.env
-docker compose -f deploy/docker-compose.yaml run --rm apothecaryd keygen
+docker run --rm ghcr.io/intradeus/apothecary/apothecaryd:latest keygen
 #  -> paste the output into deploy/.env as APOTHECARY_MASTER_KEY,
 #     and set APOTHECARY_PG_PASSWORD to anything strong
 docker compose -p apothecary -f deploy/docker-compose.yaml up -d
 ```
+
+(keygen runs via plain `docker run`: compose refuses to start anything —
+including keygen itself — until the key it generates is set.)
 
 Open **http://127.0.0.1:8080**. The stack is apothecaryd (engine + UI, bound
 to the host's loopback) and Postgres 16 on `127.0.0.1:15432`; both restart
@@ -88,27 +91,35 @@ release.yml`): tests run, then a version-stamped image
 `ghcr.io/intradeus/apothecary/apothecaryd` (also `:latest` and `:sha-…`)
 and a matching git tag is created.
 
-To run published releases, pin one in `deploy/.env`:
-
-```sh
-# deploy/.env
-APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v2.0.42
-```
+Compose runs `:latest` by default. To upgrade:
 
 ```sh
 docker compose -p apothecary -f deploy/docker-compose.yaml pull apothecaryd
 docker compose -p apothecary -f deploy/docker-compose.yaml up -d
 ```
 
+To stay on a fixed version instead, pin it in `deploy/.env`:
+
+```sh
+# deploy/.env
+APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v2.0.42
+```
+
 (If the GHCR package is private: `docker login ghcr.io` with a
 `read:packages` PAT first, or make the package public in its settings.)
 
-Without a pin, compose builds from the working tree (`git pull` +
-`up -d --build`) — the right mode for hacking on the factory itself.
-Either way, migrations apply at boot, and the workspace base image and
-Coder template are content-addressed — they rebuild/re-push themselves on
-first use after their sources change. `deploy/release.sh vX.Y.Z` does the
-same versioned build locally.
+Migrations apply at boot, and the workspace base image and Coder template
+are content-addressed — they rebuild/re-push themselves on first use after
+their sources change.
+
+To run an uncommitted tree, build a local image and pin it:
+
+```sh
+deploy/release.sh dev-local
+# deploy/.env → APOTHECARY_IMAGE=apothecary/apothecaryd:dev-local
+```
+
+(or skip docker entirely: `go run ./cmd/apothecaryd serve -dev`).
 
 ## CLI
 

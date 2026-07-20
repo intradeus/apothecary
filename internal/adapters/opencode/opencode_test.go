@@ -30,7 +30,8 @@ func TestParseEvents(t *testing.T) {
 	if got := r.Usage.CostUSD; got < 0.0152 || got > 0.0153 {
 		t.Errorf("cost = %v", got)
 	}
-	if r.Usage.InputTokens != 3+8145+0+50+0+10 {
+	// Cache reads (10 in the second step) are excluded: they were not sent.
+	if r.Usage.InputTokens != 3+8145+50 {
 		t.Errorf("input tokens = %d", r.Usage.InputTokens)
 	}
 	if r.Usage.OutputTokens != 4+0+30+10 {
@@ -90,7 +91,7 @@ func TestRunInvokesOpencodeWithPromptFile(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{`--format json`, `--agent "planner"`, `-m "openrouter/anthropic/claude-haiku-4.5"`, `provider.env`, `cat /apothecary/prompt.txt`} {
+	for _, want := range []string{`--format json`, `--agent 'planner'`, `-m 'openrouter/anthropic/claude-haiku-4.5'`, `provider.env`, `cat '/apothecary/prompt.txt'`} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)
 		}
@@ -111,7 +112,7 @@ func TestResumeUsesSessionFlag(t *testing.T) {
 		t.Errorf("session = %q", res.Session)
 	}
 	script := envp.ExecCalls[len(envp.ExecCalls)-1].Cmd.Script
-	if !strings.Contains(script, `--session "ses_prev"`) || !strings.Contains(script, "cat /apothecary/reply.txt") {
+	if !strings.Contains(script, `--session 'ses_prev'`) || !strings.Contains(script, "cat '/apothecary/reply.txt'") {
 		t.Errorf("resume script:\n%s", script)
 	}
 }
@@ -148,12 +149,12 @@ prompt: |
 func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	envp, id := envWith(t, nil)
 	// Simulate the repo's .apothecary/agents directory via the exec that lists specs.
-	specOut := "===FACTORY-SPEC .apothecary/agents/planner.yaml\n" +
+	specOut := "===APOTHECARY-SPEC .apothecary/agents/planner.yaml\n" +
 		"name: planner\ndescription: plans\nread_only: true\nallow_bash: false\nprompt: |\n  Plan carefully.\n" +
-		"===FACTORY-SPEC .apothecary/agents/builder.yaml\n" +
+		"\n===APOTHECARY-SPEC .apothecary/agents/builder.yaml\n" +
 		"name: builder\ndescription: builds\nread_only: false\nallow_bash: true\nprompt: |\n  Build it.\n"
 	envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "FACTORY-SPEC") {
+		if strings.Contains(cmd.Script, "APOTHECARY-SPEC") {
 			return ports.ExecResult{ExitCode: 0, Output: specOut}, nil
 		}
 		return ports.ExecResult{ExitCode: 0}, nil

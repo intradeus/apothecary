@@ -142,28 +142,44 @@ func TestExecNonzeroExitIsResultNotError(t *testing.T) {
 	}
 }
 
-func TestTransportFailureRetriesThreeTimes(t *testing.T) {
+func TestExecDoesNotRetryAmbiguous255(t *testing.T) {
+	// Exit 255 is indistinguishable from an ssh transport drop; exec'd
+	// commands can have side effects (full agent invocations), so Exec must
+	// surface it as a result after ONE attempt, never blind-retry.
 	r := &scriptRunner{responses: []response{
 		{code: 255, stderr: "connection reset"},
-		{code: 255, stderr: "connection reset"},
-		{stdout: "recovered", code: 0},
 	}}
 	a := newTestAdapter(r)
 	res, err := a.Exec(context.Background(), "ws", ports.Command{Script: "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Output != "recovered" || len(r.calls) != 3 {
+	if res.ExitCode != 255 || len(r.calls) != 1 {
 		t.Errorf("result = %+v after %d calls", res, len(r.calls))
 	}
 
-	// All three failing → error.
+	// Spawn failures (nothing ran remotely) still retry, then error.
 	r2 := &scriptRunner{responses: []response{
 		{err: errors.New("no coder binary")}, {err: errors.New("no coder binary")}, {err: errors.New("no coder binary")},
 	}}
 	a2 := newTestAdapter(r2)
 	if _, err := a2.Exec(context.Background(), "ws", ports.Command{Script: "true"}); err == nil {
-		t.Error("expected error after 3 transport failures")
+		t.Error("expected error after 3 spawn failures")
+	}
+	if len(r2.calls) != 3 {
+		t.Errorf("spawn failures retried %d times, want 3", len(r2.calls))
+	}
+
+	// Non-exec CLI calls (probes, status) keep the 255 retry.
+	r3 := &scriptRunner{responses: []response{
+		{code: 255, stderr: "connection reset"},
+		{code: 255, stderr: "connection reset"},
+		{stdout: "recovered", code: 0},
+	}}
+	a3 := newTestAdapter(r3)
+	stdout, _, code, err := a3.run(context.Background(), []string{"ssh", "ws", "--", "true"}, nil)
+	if err != nil || code != 0 || string(stdout) != "recovered" || len(r3.calls) != 3 {
+		t.Errorf("run() 255 retry broken: %q code=%d err=%v calls=%d", stdout, code, err, len(r3.calls))
 	}
 }
 
@@ -180,7 +196,7 @@ func TestReadFilePathResolutionAndDecode(t *testing.T) {
 	if string(data) != content {
 		t.Errorf("content = %q", data)
 	}
-	if !strings.Contains(string(r.calls[0].stdin), "$HOME/repo/artifacts/plan.md") {
+	if !strings.Contains(string(r.calls[0].stdin), `"$HOME"/repo/'artifacts/plan.md'`) {
 		t.Errorf("relative path not repo-resolved: %q", r.calls[0].stdin)
 	}
 
@@ -189,7 +205,7 @@ func TestReadFilePathResolutionAndDecode(t *testing.T) {
 	if _, err := a.ReadFile(context.Background(), "ws", "/apothecary/run.env"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(r.calls[1].stdin), " /apothecary/run.env") {
+	if !strings.Contains(string(r.calls[1].stdin), ` '/apothecary/run.env'`) {
 		t.Errorf("absolute path mangled: %q", r.calls[1].stdin)
 	}
 }
@@ -211,7 +227,7 @@ func TestWriteFileBase64Payload(t *testing.T) {
 	}
 	stdin := string(r.calls[0].stdin)
 	lines := strings.SplitN(stdin, "\n", 2)
-	if !strings.Contains(lines[0], "base64 -d > /apothecary/run.env") || !strings.Contains(lines[0], "chmod 600") {
+	if !strings.Contains(lines[0], `base64 -d > '/apothecary/run.env'`) || !strings.Contains(lines[0], "chmod 600") {
 		t.Errorf("script line = %q", lines[0])
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(lines[1]))

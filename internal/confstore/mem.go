@@ -45,6 +45,10 @@ func (m *Mem) UpsertIntegration(_ context.Context, r StoredIntegration) error {
 			return fmt.Errorf("integration %s/%s: %w", r.Port, r.Name, ErrConflict)
 		}
 	}
+	// Parity with the pg upsert: port and kind are immutable on update.
+	if old, ok := m.integrations[r.ID]; ok {
+		r.Port, r.Kind = old.Port, old.Kind
+	}
 	m.integrations[r.ID] = r
 	return nil
 }

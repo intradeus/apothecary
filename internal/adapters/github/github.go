@@ -68,6 +68,11 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-Ratelimit-Remaining") == "0" {
+		// Rate-limit 403s read like permission errors otherwise; name them.
+		return resp.StatusCode, fmt.Errorf("github %s %s: rate limit exhausted (resets at unix %s) — not a permissions problem",
+			method, path, resp.Header.Get("X-Ratelimit-Reset"))
+	}
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("github %s %s: %d: %s", method, path, resp.StatusCode, tail(string(data), 300))
 	}
@@ -110,8 +115,15 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 	if ref == "" {
 		ref = "main"
 	}
+	// Escape per segment: GitHub's contents API takes a real path, and an
+	// encoded slash (%2F) is GitLab's convention, not GitHub's — proxies may
+	// reject or normalize it.
+	segs := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
 	p := fmt.Sprintf("%s/contents/%s?ref=%s",
-		a.repoPath(), url.PathEscape(strings.TrimSuffix(path, "/")), url.QueryEscape(ref))
+		a.repoPath(), strings.Join(segs, "/"), url.QueryEscape(ref))
 	var raw json.RawMessage
 	status, err := a.api(ctx, http.MethodGet, p, nil, &raw)
 	if status == http.StatusNotFound {
@@ -140,13 +152,24 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 		Number  int    `json:"number"`
 		HTMLURL string `json:"html_url"`
 	}
-	_, err := a.api(ctx, http.MethodPost, a.repoPath()+"/pulls", map[string]any{
+	status, err := a.api(ctx, http.MethodPost, a.repoPath()+"/pulls", map[string]any{
 		"title": title,
 		"head":  branch,
 		"base":  base,
 		"body":  body,
 		"draft": true,
 	}, &pr)
+	if err != nil && status == http.StatusUnprocessableEntity && strings.Contains(err.Error(), "raft") {
+		// Plans without draft-PR support (private repos on Free) 422 here;
+		// degrade to a regular PR with the GitLab-style title prefix instead
+		// of failing the stage outright.
+		_, err = a.api(ctx, http.MethodPost, a.repoPath()+"/pulls", map[string]any{
+			"title": "Draft: " + title,
+			"head":  branch,
+			"base":  base,
+			"body":  body,
+		}, &pr)
+	}
 	if err != nil {
 		return ports.MRRef{}, err
 	}

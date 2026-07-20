@@ -108,8 +108,8 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 
 // readSpecs cats every spec file out of the repo in one exec.
 func (a *Adapter) readSpecs(ctx context.Context, env ports.EnvID) ([]*agentspec.Spec, error) {
-	const marker = "===FACTORY-SPEC "
-	script := `for f in .apothecary/agents/*.yaml; do [ -e "$f" ] || continue; printf '` + marker + `%s\n' "$f"; cat "$f"; done`
+	const marker = "===APOTHECARY-SPEC "
+	script := `for f in .apothecary/agents/*.yaml .apothecary/agents/*.yml; do [ -e "$f" ] || continue; printf '\n` + marker + `%s\n' "$f"; cat "$f"; done`
 	res, err := a.envp.Exec(ctx, env, ports.Command{Script: script, Dir: "repo"})
 	if err != nil {
 		return nil, fmt.Errorf("list agent specs: %w", err)
@@ -118,13 +118,15 @@ func (a *Adapter) readSpecs(ctx context.Context, env ports.EnvID) ([]*agentspec.
 		return nil, fmt.Errorf("list agent specs: exit %d: %s", res.ExitCode, res.Output)
 	}
 	var specs []*agentspec.Spec
-	chunks := strings.Split(res.Output, marker)
+	// Line-anchored split: a spec whose body merely contains the marker text
+	// mid-line must not corrupt parsing.
+	chunks := strings.Split("\n"+res.Output, "\n"+marker)
 	for _, chunk := range chunks[min(1, len(chunks)):] {
 		file, body, ok := strings.Cut(chunk, "\n")
 		if !ok {
 			continue
 		}
-		stem := strings.TrimSuffix(path.Base(strings.TrimSpace(file)), ".yaml")
+		stem := strings.TrimSuffix(strings.TrimSuffix(path.Base(strings.TrimSpace(file)), ".yaml"), ".yml")
 		s, err := agentspec.Parse(stem, []byte(body))
 		if err != nil {
 			return nil, err
@@ -162,22 +164,33 @@ func (a *Adapter) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec
 	if err := a.envp.WriteFile(ctx, env, promptPath, []byte(in.Prompt), 0o600); err != nil {
 		return ports.AgentResult{}, fmt.Errorf("write prompt: %w", err)
 	}
+	// shellQuote, not %q: Go's %q double-quotes, inside which the shell
+	// still expands $ and backticks (a model string like `openai/$(cmd)`
+	// would execute).
 	script := fmt.Sprintf(
 		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
-opencode run --format json --agent %q -m %q "$(cat %s)"`,
-		spec.Agent, spec.Model, promptPath)
+opencode run --format json --agent %s -m %s "$(cat %s)"`,
+		shellQuote(spec.Agent), shellQuote(spec.Model), shellQuote(promptPath))
 	return a.invoke(ctx, env, script)
 }
 
 func (a *Adapter) Resume(ctx context.Context, env ports.EnvID, session ports.SessionID, reply string) (ports.AgentResult, error) {
+	if session == "" {
+		return ports.AgentResult{}, fmt.Errorf("opencode resume: no session recorded for this stage")
+	}
 	if err := a.envp.WriteFile(ctx, env, replyPath, []byte(reply), 0o600); err != nil {
 		return ports.AgentResult{}, fmt.Errorf("write reply: %w", err)
 	}
 	script := fmt.Sprintf(
 		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
-opencode run --format json --session %q "$(cat %s)"`,
-		string(session), replyPath)
+opencode run --format json --session %s "$(cat %s)"`,
+		shellQuote(string(session)), shellQuote(replyPath))
 	return a.invoke(ctx, env, script)
+}
+
+// shellQuote single-quotes s for POSIX sh (inert $, backticks, spaces).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (a *Adapter) invoke(ctx context.Context, env ports.EnvID, script string) (ports.AgentResult, error) {
@@ -231,15 +244,19 @@ func parseEvents(output string) ports.AgentResult {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if ev.SessionID != "" {
+		if ev.SessionID != "" && r.Session == "" {
+			// First session id wins: late events can carry child/subtask
+			// sessions, and Resume must target the primary one.
 			r.Session = ports.SessionID(ev.SessionID)
 		}
 		switch ev.Type {
 		case "step_finish":
 			r.TurnsUsed++
 			r.Usage.CostUSD += ev.Part.Cost
-			// input excludes cache traffic; count what was actually sent.
-			r.Usage.InputTokens += ev.Part.Tokens.Input + ev.Part.Tokens.Cache.Write + ev.Part.Tokens.Cache.Read
+			// Cache writes were genuinely sent this turn; cache reads were
+			// not — counting them would inflate input several-fold on long
+			// sessions.
+			r.Usage.InputTokens += ev.Part.Tokens.Input + ev.Part.Tokens.Cache.Write
 			r.Usage.OutputTokens += ev.Part.Tokens.Output + ev.Part.Tokens.Reasoning
 		case "text":
 			if ev.Part.Text != "" {

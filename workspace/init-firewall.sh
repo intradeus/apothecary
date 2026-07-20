@@ -29,6 +29,8 @@ fail_closed() {
   iptables -P OUTPUT DROP 2>/dev/null || true
   iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
   iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+  ip6tables -F OUTPUT 2>/dev/null || true
+  ip6tables -P OUTPUT DROP 2>/dev/null || true
   GW="$(ip route | awk '/default/ {print $3; exit}')" || true
   [ -n "${GW:-}" ] && iptables -A OUTPUT -d "$GW" -p tcp --dport "${APOTHECARY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
   exit 1
@@ -99,11 +101,18 @@ for ip in $ALLOW_IPS; do
 done
 # Everything else — including all DNS — is dropped by the OUTPUT policy.
 
-# No IPv6 egress at all.
-if command -v ip6tables >/dev/null; then
-  ip6tables -F OUTPUT 2>/dev/null || true
-  ip6tables -P OUTPUT DROP 2>/dev/null || true
-  ip6tables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+# No IPv6 egress at all. With IPv6 enabled in the kernel, failing to apply
+# the drop MUST be fatal (a swallowed error here is silent fail-open on the
+# whole v6 stack); without IPv6 there is nothing to close.
+if [ -f /proc/net/if_inet6 ]; then
+  if command -v ip6tables >/dev/null; then
+    ip6tables -F OUTPUT
+    ip6tables -P OUTPUT DROP
+    ip6tables -A OUTPUT -o lo -j ACCEPT
+  else
+    echo "firewall: FATAL: kernel has IPv6 but ip6tables is missing" >&2
+    false # trips the ERR trap -> fail_closed
+  fi
 fi
 
 touch "$LOCK"

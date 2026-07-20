@@ -84,6 +84,7 @@ type Engine struct {
 	sink  EventSink
 
 	mu      sync.Mutex
+	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
 	handles map[string]*runHandle
 	queue   []string // pending runs waiting for a concurrency slot (§14 FIFO)
 	pings   map[string]*Ping
@@ -454,6 +455,11 @@ func (e *Engine) Recover(ctx context.Context) error {
 // free (§14). Callers hold e.mu and pass limits read outside the lock
 // (settings live in the DB, §6.4).
 func (e *Engine) scheduleLocked(lim Limits) {
+	if e.closing {
+		// A run finishing during Shutdown must not admit a queued run that
+		// nobody will cancel or wait for; it recovers on next boot.
+		return
+	}
 	for len(e.handles) < lim.MaxConcurrentRuns && len(e.queue) > 0 {
 		id := e.queue[0]
 		e.queue = e.queue[1:]
@@ -493,6 +499,7 @@ func (e *Engine) Abort(runID string) error {
 // resume via Recover on next boot.
 func (e *Engine) Shutdown() {
 	e.mu.Lock()
+	e.closing = true
 	hs := make([]*runHandle, 0, len(e.handles))
 	for _, h := range e.handles {
 		hs = append(hs, h)
@@ -546,9 +553,34 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string) (*Ping, erro
 	e.mu.Unlock()
 
 	req := raiseReq{p: p, ack: make(chan struct{})}
-	h.mailbox <- req
-	<-req.ack
+	// The mailbox is only drained while an agent stage is executing. Never
+	// block the caller (an HTTP handler + the workspace shim) forever: if no
+	// agent stage picks the ping up in time, withdraw it.
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
+	select {
+	case h.mailbox <- req:
+	case <-h.done:
+		e.dropPing(p.ID)
+		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+	case <-timeout.C:
+		e.dropPing(p.ID)
+		return nil, fmt.Errorf("run %s is not in an agent stage; ask_human is unavailable right now", runID)
+	}
+	select {
+	case <-req.ack:
+	case <-h.done:
+		e.dropPing(p.ID)
+		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+	}
 	return p, nil
+}
+
+// dropPing withdraws a never-delivered ping (RaisePing failure paths).
+func (e *Engine) dropPing(id string) {
+	e.mu.Lock()
+	delete(e.pings, id)
+	e.mu.Unlock()
 }
 
 // GetPing looks up a ping by id (nil if unknown).
@@ -579,8 +611,19 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 	if p.gate && ans.Answer != "approve" && ans.Answer != "reject" {
 		return fmt.Errorf("gate ping %s requires answer approve|reject", pingID)
 	}
-	h.answers <- answerReq{p: p, ans: ans}
-	return nil
+	// The answers channel is drained only in agent stages and gates. Don't
+	// report success for an answer nobody will ever process, and don't wedge
+	// the HTTP handler if the buffer is full.
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
+	select {
+	case h.answers <- answerReq{p: p, ans: ans}:
+		return nil
+	case <-h.done:
+		return fmt.Errorf("run %s: %w", p.RunID, ErrRunNotActive)
+	case <-timeout.C:
+		return fmt.Errorf("run %s is busy; the answer was not accepted — try again", p.RunID)
+	}
 }
 
 // PendingPings returns open pings (the CPUI inbox source until the DB
@@ -650,6 +693,14 @@ func (e *Engine) finish(runID string, h *runHandle) {
 	lim := e.limits(context.Background())
 	e.mu.Lock()
 	delete(e.handles, runID)
+	// Prune this run's pings: an open ping of a dead run is a permanently
+	// unanswerable inbox entry (recovery re-registers open pings from the
+	// event log), and answered ones are only read while the run lives.
+	for id, p := range e.pings {
+		if p.RunID == runID {
+			delete(e.pings, id)
+		}
+	}
 	e.scheduleLocked(lim) // a slot freed; admit the next queued run
 	e.mu.Unlock()
 	close(h.done)

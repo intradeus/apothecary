@@ -76,6 +76,9 @@ func Apply(v *View, e *event.Event) {
 		v.EnvID = p.EnvID
 	case *event.EnvFailed:
 		v.State = Failed
+		if p.EnvID != "" {
+			v.EnvID = p.EnvID
+		}
 	case *event.StageStarted:
 		v.CurrentStage = p.StageID
 	case *event.PingRaised:

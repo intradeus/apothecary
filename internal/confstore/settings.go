@@ -3,7 +3,7 @@ package confstore
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -45,16 +45,16 @@ func (s Settings) CompletedWindow() time.Duration {
 // Validate applies the v1 config rules (§6.4).
 func (s Settings) Validate() error {
 	if s.MaxConcurrentRuns < 1 {
-		return fmt.Errorf("settings: max_concurrent_runs must be >= 1")
+		return invalidf("settings: max_concurrent_runs must be >= 1")
 	}
 	if s.MaxEnvironments < 1 {
-		return fmt.Errorf("settings: max_environments must be >= 1")
+		return invalidf("settings: max_environments must be >= 1")
 	}
 	if d, err := time.ParseDuration(s.DestroyCompletedAfter); err != nil || d <= 0 {
-		return fmt.Errorf("settings: destroy_completed_after: invalid duration %q", s.DestroyCompletedAfter)
+		return invalidf("settings: destroy_completed_after: invalid duration %q", s.DestroyCompletedAfter)
 	}
 	if s.DestroyAbandoned != "never" {
-		return fmt.Errorf(`settings: destroy_abandoned must be "never", got %q`, s.DestroyAbandoned)
+		return invalidf(`settings: destroy_abandoned must be "never", got %q`, s.DestroyAbandoned)
 	}
 	return nil
 }
@@ -68,7 +68,9 @@ func (s *Service) Settings(ctx context.Context) (Settings, error) {
 	out := DefaultSettings()
 	assign := func(key string, into any) {
 		if raw, ok := rows[key]; ok {
-			_ = json.Unmarshal([]byte(raw), into)
+			if err := json.Unmarshal([]byte(raw), into); err != nil {
+				slog.Warn("settings: corrupt stored value, using default", "key", key, "err", err)
+			}
 		}
 	}
 	assign(keyMaxConcurrent, &out.MaxConcurrentRuns)

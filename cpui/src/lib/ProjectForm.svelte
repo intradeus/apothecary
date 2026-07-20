@@ -227,7 +227,7 @@
 
   <div class="card">
     <h2>4 · Workspace</h2>
-    <label for="p-fragment">Dockerfile fragment <span class="muted">— your toolchain layer, built on the factory base image
+    <label for="p-fragment">Dockerfile fragment <span class="muted">— your toolchain layer, built on the apothecary base image
       (RUN/ENV/ARG only); the harness is installed automatically</span></label>
     <textarea id="p-fragment" bind:value={fragment} rows="5" class="mono"
       placeholder={'RUN curl -fsSL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz | tar -C /usr/local -xz\nENV PATH=/usr/local/go/bin:$PATH'}></textarea>
@@ -242,7 +242,7 @@
     <label for="p-domains">Extra egress domains <span class="muted">— comma-separated; adapters contribute theirs automatically,
       presets add their registries</span></label>
     <input id="p-domains" bind:value={extraDomains} class="mono" placeholder="proxy.golang.org, registry.npmjs.org" />
-    <label for="p-template">Custom provisioner template <span class="muted">— ADVANCED, usually empty: the factory manages
+    <label for="p-template">Custom provisioner template <span class="muted">— ADVANCED, usually empty: the apothecary manages
       the template and builds the image above. Set a template name only to bypass the pipeline with your own template.</span></label>
     <input id="p-template" bind:value={template} placeholder="(managed)" />
   </div>

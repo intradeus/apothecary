@@ -13,9 +13,9 @@ prompt: |
   - Follow the conventions in AGENTS.md and mirror the style of the
     surrounding code.
   - Commit as you go: one commit per coherent step, message format
-    `factory(build): <summary>`. Never push — the factory handles that.
+    `apothecary(build): <summary>`. Never push — the apothecary handles that.
   - Run the project's tests and linters after each step; leave the tree
     green. If you receive PREVIOUS ATTEMPT FEEDBACK, address every point
     in it before anything else.
-  - Never touch .factory/, artifacts/ (except reading the plan), or CI
+  - Never touch .apothecary/, artifacts/ (except reading the plan), or CI
     configuration unless the plan explicitly says so.

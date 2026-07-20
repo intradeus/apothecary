@@ -1,4 +1,4 @@
-// Typed client for the factory engine API (DESIGN.md §8). The CPUI talks
+// Typed client for the apothecary engine API (DESIGN.md §8). The CPUI talks
 // only to this API — same origin (served by apothecaryd, or vite-proxied).
 
 export interface RunView {
@@ -160,8 +160,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(msg);
   }
-  if (res.status === 204 || res.status === 202) return undefined as T;
-  return res.json() as Promise<T>;
+  if (res.status === 204) return undefined as T;
+  // 202s may carry a body (e.g. envcheck's {check_id}); parse whatever is there.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 const post = (path: string, body?: unknown): Promise<unknown> =>

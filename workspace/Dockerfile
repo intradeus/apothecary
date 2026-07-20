@@ -1,4 +1,4 @@
-# Factory workspace BASE image (DESIGN2 §8.1): the invariants and nothing
+# Apothecary workspace BASE image (DESIGN2 §8.1): the invariants and nothing
 # else — Ubuntu, git/ripgrep, Node (the ask_human shim's runtime),
 # code-server, the shim, the firewall init, the non-root `apothecary` user.
 # NO language toolchains and NO harness: those are the user's Dockerfile

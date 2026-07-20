@@ -45,7 +45,7 @@
 {#if error}<div class="error">{error}</div>{/if}
 
 {#if pings.length === 0}
-  <div class="empty">{loaded ? 'No pending pings — the factory needs nothing from you.' : 'Loading…'}</div>
+  <div class="empty">{loaded ? 'No pending pings — the apothecary needs nothing from you.' : 'Loading…'}</div>
 {:else}
   {#each pings as p (p.ping_id)}
     <div class="card">

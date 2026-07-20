@@ -20,7 +20,7 @@ var errStageTimeout = errors.New("stage timeout")
 
 // resumeReply is what Resume sends when re-entering a crashed agent stage
 // with a previously recorded session (§2 crash recovery).
-const resumeReply = "The factory engine restarted while this stage was in flight. " +
+const resumeReply = "The apothecary engine restarted while this stage was in flight. " +
 	"Continue the task from where you left off: re-check the repository state and make sure you produce the required outputs."
 
 // exec bundles the per-run goroutine's context so stage executors stay short.
@@ -71,7 +71,13 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	fl, err := e.flows.Get(bg, view.FlowName)
 	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
-		_ = x.append(&event.RunFailed{Reason: fmt.Sprintf("flow %q not found", view.FlowName)})
+		if errors.Is(err, flow.ErrNotFound) {
+			_ = x.append(&event.RunFailed{Reason: fmt.Sprintf("flow %q not found", view.FlowName)})
+		} else {
+			// Transient source error (DB blip): leave the run non-terminal
+			// so the next boot recovers it.
+			e.log.Error("run loop: flow load failed; run left non-terminal for recovery", "run", runID, "err", err)
+		}
 		return
 	}
 	if fl.Hash != view.FlowHash {
@@ -81,6 +87,14 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	rs := replay(evs, fl)
 	x.rs = rs
 	if rs.done {
+		return
+	}
+	if rs.pos < 0 {
+		// The recorded current stage no longer exists in the (drifted) flow
+		// document. Failing honestly beats reporting a half-finished run
+		// completed, which is what falling through would do.
+		x.rs = rs
+		_ = x.fail(fmt.Sprintf("flow %q changed: the run's current stage no longer exists in it", fl.Name))
 		return
 	}
 
@@ -408,11 +422,18 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	}
 
 	suspend := func() {
-		if timer.Stop() {
-			remaining -= time.Since(lastArm)
-			if remaining <= 0 {
-				remaining = time.Millisecond
+		if !timer.Stop() {
+			// The timer fired concurrently with the ping; drain the stale
+			// tick so the later Reset re-arms cleanly instead of firing a
+			// spurious instant timeout after the human answers.
+			select {
+			case <-timer.C:
+			default:
 			}
+		}
+		remaining -= time.Since(lastArm)
+		if remaining <= 0 {
+			remaining = time.Millisecond
 		}
 	}
 	resume := func() {
@@ -454,9 +475,16 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			}
 		case <-timer.C:
 			cancelRun(errStageTimeout)
-			res := <-resCh
-			_ = res
-			return agentRes{}, true, nil
+			// Collect the cancelled attempt's output for the stage log, but
+			// don't trust the adapter to honor the context — after a grace
+			// period, abandon the goroutine rather than wedging the run.
+			select {
+			case res := <-resCh:
+				return res, true, nil
+			case <-time.After(30 * time.Second):
+				x.e.log.Warn("harness ignored cancellation; abandoning attempt", "run", x.rs.runID, "stage", st.ID)
+				return agentRes{}, true, nil
+			}
 		case <-x.ctx.Done():
 			cancelRun(context.Cause(x.ctx))
 			return agentRes{}, false, context.Cause(x.ctx)
@@ -483,6 +511,12 @@ func (x *exec) processAnswer(ar answerReq) (bool, error) {
 		answer, feedback = "text", ar.ans.Answer
 	}
 	if err := x.append(&event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback}); err != nil {
+		// Roll the in-memory claim back so a retried answer can succeed
+		// after recovery (the event log has no ping_answered).
+		x.e.mu.Lock()
+		ar.p.answered = false
+		ar.p.answer = nil
+		x.e.mu.Unlock()
 		return false, err
 	}
 	close(ar.p.done)
@@ -496,6 +530,15 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	script := st.Run
 	if st.RunRef != "" {
 		script = x.res.Commands[st.RunRef]
+		if script == "" {
+			// The command was deleted from project.commands after run
+			// creation. Executing "" would exit 0 and silently pass a gate.
+			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,
+				Error: fmt.Sprintf("run_ref %q no longer exists in project.commands", st.RunRef)}); err != nil {
+				return err
+			}
+			return x.fail(fmt.Sprintf("stage %s: run_ref %q no longer exists in project.commands", st.ID, st.RunRef))
+		}
 	}
 	if rs.ph != phIn { // §2: on recovery, open command stages re-execute without a new attempt
 		iter := rs.iters[st.ID] + 1
@@ -711,7 +754,16 @@ func (x *exec) ensureEnv() error {
 	rs := x.rs
 	if rs.envID != "" {
 		status, err := x.res.Envp.Status(x.ctx, rs.envID)
-		if err == nil && status == ports.EnvRunning {
+		if err != nil {
+			if x.ctx.Err() != nil {
+				return context.Cause(x.ctx)
+			}
+			// Transient (Coder unreachable, etc.): re-provisioning a healthy
+			// env and re-running bootstrap on top of it would be worse than
+			// waiting for the next boot.
+			return fmt.Errorf("recovery: env status: %w", err)
+		}
+		if status == ports.EnvRunning {
 			// Tokens are regenerated per boot; refresh the workspace copy so
 			// the ask_human shim can re-authenticate after an engine restart.
 			if err := x.writeRunEnv(rs.envID); err != nil {
@@ -719,7 +771,7 @@ func (x *exec) ensureEnv() error {
 			}
 			return nil
 		}
-		x.e.log.Warn("environment missing on recovery; re-provisioning", "run", rs.runID, "env", rs.envID)
+		x.e.log.Warn("environment not running on recovery; re-provisioning", "run", rs.runID, "env", rs.envID, "status", status)
 	}
 	if rs.view.State == run.Pending {
 		if err := x.append(&event.EnvRequested{}); err != nil {
@@ -814,7 +866,9 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 			return context.Cause(x.ctx)
 		}
 		x.rs.done = true
-		return x.append(&event.EnvFailed{Error: err.Error()})
+		// The workspace exists (Provision succeeded) — record its id so
+		// capacity counting, archive and the reaper can destroy it.
+		return x.append(&event.EnvFailed{Error: err.Error(), EnvID: string(id)})
 	}
 	return nil
 }

@@ -62,9 +62,12 @@ func (a *githubAccount) EgressDomains() []string {
 }
 
 func (GitHub) Forge(cfg Config, repo ports.RepoRef) (ports.Forge, error) {
-	locator := strings.TrimSpace(repo.Locator)
-	if !strings.Contains(locator, "/") {
-		return nil, fmt.Errorf(`github: repo locator must be "owner/repo", got %q`, repo.Locator)
+	locator := strings.TrimSuffix(strings.TrimSpace(repo.Locator), ".git")
+	if strings.Contains(locator, "://") || strings.Count(locator, "/") != 1 ||
+		strings.HasPrefix(locator, "/") || strings.HasSuffix(locator, "/") {
+		// A URL or nested path here produces garbage API routes and 404s far
+		// from the real mistake — refuse it with the shape spelled out.
+		return nil, fmt.Errorf(`github: repo locator must be "owner/repo" (not a URL), got %q`, repo.Locator)
 	}
 	return githubadapter.New(githubadapter.Config{
 		BaseURL: cfg.Str("base_url", "https://api.github.com"),

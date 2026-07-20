@@ -41,6 +41,11 @@ type Store struct {
 type sub struct {
 	ch     chan event.Event
 	cancel <-chan struct{}
+	// overflow is closed by Append when the buffer is full: appends hold
+	// s.mu and must never block on a slow consumer. The Watch goroutine
+	// exits; the SSE client re-syncs via after_seq on reconnect.
+	overflow chan struct{}
+	dropOnce sync.Once
 }
 
 // Open connects, applies pending migrations, and returns the store.
@@ -60,6 +65,19 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 func (s *Store) Close() { s.pool.Close() }
 
 func (s *Store) migrate(ctx context.Context) error {
+	// Advisory lock serializes concurrently booting instances — without it,
+	// two boots can both pass the applied-version check and race the DDL.
+	lockConn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer lockConn.Release()
+	const migLockKey = int64(0x61706f7468656361) // "apotheca"
+	if _, err := lockConn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migLockKey); err != nil {
+		return fmt.Errorf("migration lock: %w", err)
+	}
+	defer func() { _, _ = lockConn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migLockKey) }()
+
 	if _, err := s.pool.Exec(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version int PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
 		return fmt.Errorf("migrations table: %w", err)
@@ -154,6 +172,8 @@ func (s *Store) Append(ctx context.Context, runID string, payloads ...event.Payl
 			select {
 			case sb.ch <- e:
 			case <-sb.cancel:
+			default:
+				sb.dropOnce.Do(func() { close(sb.overflow) })
 			}
 		}
 	}
@@ -272,7 +292,7 @@ func (s *Store) RunIDs(ctx context.Context) ([]string, error) {
 func (s *Store) Watch(ctx context.Context, runID string, afterSeq int64) (<-chan event.Event, error) {
 	// Subscribe first, then replay, deduplicating by seq — live events
 	// committed during the replay query would otherwise be lost.
-	sb := &sub{ch: make(chan event.Event, 256), cancel: ctx.Done()}
+	sb := &sub{ch: make(chan event.Event, 256), cancel: ctx.Done(), overflow: make(chan struct{})}
 	s.mu.Lock()
 	s.subs[runID] = append(s.subs[runID], sb)
 	s.mu.Unlock()
@@ -307,6 +327,8 @@ func (s *Store) Watch(ctx context.Context, runID string, afterSeq int64) (<-chan
 				case <-ctx.Done():
 					return
 				}
+			case <-sb.overflow:
+				return
 			case <-ctx.Done():
 				return
 			}

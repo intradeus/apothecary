@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
 	"apothecary/internal/secrets"
@@ -26,15 +27,18 @@ type IntegrationOps interface {
 }
 
 // confErr maps confstore errors to statuses: not found 404, conflicts and
-// referenced-deletes 409, everything else 400 (validation messages).
+// referenced-deletes 409, validation 400, everything else (DB outages,
+// decryption failures) 500.
 func confErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, confstore.ErrNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, confstore.ErrConflict), errors.Is(err, confstore.ErrReferenced):
 		writeErr(w, http.StatusConflict, err.Error())
-	default:
+	case errors.Is(err, confstore.ErrInvalid), errors.Is(err, engine.ErrUnresolvable):
 		writeErr(w, http.StatusBadRequest, err.Error())
+	default:
+		writeErr(w, http.StatusInternalServerError, err.Error())
 	}
 }
 
@@ -323,6 +327,9 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.Conf.GetFlow(r.Context(), body.Name); err == nil {
 		writeErr(w, http.StatusConflict, "flow "+body.Name+" already exists (PUT to update)")
 		return
+	} else if !errors.Is(err, confstore.ErrNotFound) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	row, err := s.Conf.SaveFlow(r.Context(), body.Name, body.YAML)
 	if err != nil {
@@ -416,7 +423,13 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
-	set := confstore.DefaultSettings()
+	// Decode over the *stored* settings so absent fields keep their current
+	// values instead of reverting to compile-time defaults.
+	set, err := s.Conf.Settings(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if !readJSON(w, r, &set) {
 		return
 	}

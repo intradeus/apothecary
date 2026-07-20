@@ -27,12 +27,10 @@ services:
     restart: unless-stopped
 
   apothecaryd:
-    # Pin a release via APOTHECARY_IMAGE in deploy/.env (built by
-    # deploy/release.sh); the default builds from the working tree.
-    image: ${APOTHECARY_IMAGE:-apothecary/apothecaryd:dev}
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+    # Runs the published release image (CI pushes :latest and :v2.0.N on
+    # every main push). Pin a version — or point at a local build from
+    # deploy/release.sh — via APOTHECARY_IMAGE in deploy/.env.
+    image: ${APOTHECARY_IMAGE:-ghcr.io/intradeus/apothecary/apothecaryd:latest}
     network_mode: host
     depends_on:
       postgres:

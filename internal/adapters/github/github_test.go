@@ -37,7 +37,7 @@ func ghStub(t *testing.T) (*httptest.Server, *[]map[string]any) {
 		switch r.PathValue("path") {
 		case "AGENTS.md":
 			_, _ = w.Write([]byte(`{"name":"AGENTS.md","type":"file"}`))
-		case ".factory%2Fagents", ".apothecary/agents":
+		case ".apothecary/agents":
 			_, _ = w.Write([]byte(`[{"name":"planner.yaml"},{"name":"builder.yaml"}]`))
 		default:
 			w.WriteHeader(404)

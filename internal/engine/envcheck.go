@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -44,14 +45,15 @@ type EnvCheckOptions struct {
 
 // RunEnvCheck provisions, bootstraps and verifies one throwaway
 // environment, emitting steps as they complete. Returns the failure count.
-func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) int {
+// The named return matters: the deferred destroy step must be able to count
+// its own failure.
+func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) (failed int) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	failed := 0
 	step := func(id string, err error, detail string) bool {
 		s := CheckStep{ID: id, Status: "pass", Detail: detail}
 		if err != nil {
@@ -199,15 +201,6 @@ type envCheckState struct {
 // StartEnvCheck launches an envcheck for the project; one at a time per
 // project. Returns the check id immediately (202 semantics).
 func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool) (string, error) {
-	e.mu.Lock()
-	for _, st := range e.envchecks {
-		if st.snap.ProjectID == projectID && st.snap.Status == "running" {
-			e.mu.Unlock()
-			return "", fmt.Errorf("an envcheck for project %s is already running", projectID)
-		}
-	}
-	e.mu.Unlock()
-
 	res, err := e.resolver.Resolve(ctx, projectID)
 	if err != nil {
 		return "", err
@@ -216,19 +209,33 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	st := &envCheckState{snap: CheckRun{
 		ID: id, ProjectID: projectID, Status: "running", Keep: keep, StartedAt: e.clock(),
 	}}
+	// One lock section for check + insert: two concurrent calls must not
+	// both pass the duplicate guard.
 	e.mu.Lock()
+	for _, other := range e.envchecks {
+		if other.snap.ProjectID == projectID && other.snap.Status == "running" {
+			e.mu.Unlock()
+			res.release()
+			return "", fmt.Errorf("an envcheck for project %s is already running", projectID)
+		}
+	}
 	e.envchecks[id] = st
 	e.envcheckOrder = append(e.envcheckOrder, id)
-	for len(e.envcheckOrder) > 20 { // keep the last 20 (§9: diagnostics, not history)
-		delete(e.envchecks, e.envcheckOrder[0])
-		e.envcheckOrder = e.envcheckOrder[1:]
+	// Keep the last 20 finished (§9: diagnostics, not history) — never evict
+	// a running job: pollers would 404 mid-run and the duplicate guard above
+	// would stop seeing it.
+	for i := 0; len(e.envcheckOrder) > 20 && i < len(e.envcheckOrder); {
+		cand := e.envcheckOrder[i]
+		if e.envchecks[cand].snap.Status == "running" {
+			i++
+			continue
+		}
+		delete(e.envchecks, cand)
+		e.envcheckOrder = append(e.envcheckOrder[:i], e.envcheckOrder[i+1:]...)
 	}
 	e.mu.Unlock()
 
-	enginePort := 8080
-	if i := strings.LastIndex(e.cfg.EngineURL, ":"); i >= 0 {
-		fmt.Sscanf(e.cfg.EngineURL[i+1:], "%d", &enginePort)
-	}
+	enginePort := enginePortOf(e.cfg.EngineURL)
 	go func() {
 		defer res.release()
 		failed := RunEnvCheck(context.Background(), res, "envck"+strings.ToLower(id[max(0, len(id)-11):]),
@@ -249,6 +256,29 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 		e.mu.Unlock()
 	}()
 	return id, nil
+}
+
+// enginePortOf extracts the port from the engine URL, honoring scheme
+// defaults ("https://engine.example.com" → 443, not the scheme colon).
+func enginePortOf(engineURL string) int {
+	u, err := url.Parse(engineURL)
+	if err != nil {
+		return 8080
+	}
+	if p := u.Port(); p != "" {
+		n := 0
+		fmt.Sscanf(p, "%d", &n)
+		if n > 0 {
+			return n
+		}
+	}
+	switch u.Scheme {
+	case "https":
+		return 443
+	case "http":
+		return 80
+	}
+	return 8080
 }
 
 // EnvCheck returns a snapshot of a check run.

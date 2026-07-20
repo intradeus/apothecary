@@ -151,6 +151,11 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
 	}
+	if isFK(err) {
+		// FK backstop (0004): the referenced flow (or integration) vanished
+		// between the service-layer validation and this write.
+		return fmt.Errorf("project %s references a missing flow or integration: %w", p.Name, confstore.ErrInvalid)
+	}
 	return err
 }
 
@@ -333,6 +338,11 @@ func (s *Store) DeleteFlow(ctx context.Context, name string) error {
 		return fmt.Errorf("flow %s is referenced by %s: %w", name, strings.Join(refs, ", "), confstore.ErrReferenced)
 	}
 	tag, err := s.pool.Exec(ctx, `DELETE FROM flows WHERE name=$1`, name)
+	if isFK(err) {
+		// FK backstop (0004): a project grabbed the flow between the
+		// referrer check above and this delete.
+		return fmt.Errorf("flow %s is still referenced: %w", name, confstore.ErrReferenced)
+	}
 	if err != nil {
 		return err
 	}

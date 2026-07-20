@@ -29,6 +29,9 @@ var (
 	ErrReferenced = errors.New("still referenced")
 	// ErrConflict signals a unique-name collision (409).
 	ErrConflict = errors.New("name already in use")
+	// ErrInvalid marks validation failures (API maps to 400); errors not
+	// wrapped in any sentinel are treated as internal (500).
+	ErrInvalid = errors.New("invalid")
 )
 
 // Integration is a credentialed connection (§2) with decrypted secrets —

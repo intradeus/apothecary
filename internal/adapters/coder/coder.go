@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -222,6 +223,31 @@ func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte,
 	return nil, nil, 0, fmt.Errorf("coder %s: %w", strings.Join(args[:min(2, len(args))], " "), lastErr)
 }
 
+// execRun is run() without the exit-255 retry: a remote command's own exit
+// 255 is indistinguishable from an ssh transport failure, and re-running a
+// side-effectful command (a full agent invocation) is worse than reporting
+// the ambiguous exit honestly. Spawn failures (nothing ran remotely) still
+// retry.
+func (a *Adapter) execRun(ctx context.Context, args []string, stdin []byte) ([]byte, []byte, int, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		stdout, stderr, code, err := a.runner.Run(ctx, args, stdin)
+		if err == nil {
+			return stdout, stderr, code, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, nil, 0, ctx.Err()
+		}
+		select {
+		case <-time.After(time.Duration(attempt) * a.retryDelay):
+		case <-ctx.Done():
+			return nil, nil, 0, ctx.Err()
+		}
+	}
+	return nil, nil, 0, fmt.Errorf("coder %s: %w", strings.Join(args[:min(2, len(args))], " "), lastErr)
+}
+
 // --- EnvProvisioner ---------------------------------------------------------
 
 // WorkspaceName derives the workspace name from the run id (§12). Coder
@@ -243,6 +269,16 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 
 	// Idempotent for crash recovery: reuse an existing workspace.
 	if st, err := a.status(ctx, name); err == nil && st != ports.EnvAbsent {
+		if st != ports.EnvRunning && st != ports.EnvStarting {
+			// Autostop or a failed build leaves the workspace stopped, and
+			// waitReady only polls — issue the start ourselves. Errors are
+			// deliberately not fatal here: waitReady is the arbiter (a
+			// concurrent auto-start makes this a harmless no-op failure).
+			if _, stderr, code, serr := a.run(ctx, []string{"start", name, "--yes"}, nil); serr != nil || code != 0 {
+				slog.Warn("coder start failed; continuing to wait",
+					"workspace", name, "err", serr, "exit", code, "stderr", tail(string(stderr), 512))
+			}
+		}
 		if err := a.waitReady(ctx, name); err != nil {
 			return "", err
 		}
@@ -327,7 +363,10 @@ func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) 
 	if cmd.Dir != "" {
 		script = fmt.Sprintf("cd \"$HOME/%s\" || exit 90\n%s", cmd.Dir, cmd.Script)
 	}
-	stdout, stderr, code, err := a.run(ctx,
+	// execRun, not run: exec'd commands can have side effects (agent
+	// invocations, user scripts), so an ambiguous exit 255 must surface as
+	// a result instead of triggering a blind re-execution.
+	stdout, stderr, code, err := a.execRun(ctx,
 		[]string{"ssh", string(env), "--", "bash", "-eo", "pipefail", "-s"}, []byte(script))
 	if err != nil {
 		if ctx.Err() != nil {
@@ -362,11 +401,19 @@ func (a *Adapter) writeLog(env ports.EnvID, cmd ports.Command, output string) {
 }
 
 // resolvePath applies the port's path convention: relative = repo-root.
+// The result is shell-quoted: paths can carry repo-controlled names (agent
+// spec stems), which must never be interpretable — only the deliberate
+// $HOME prefix expands.
 func resolvePath(path string) string {
 	if strings.HasPrefix(path, "/") {
-		return path
+		return shellQuote(path)
 	}
-	return "$HOME/repo/" + path
+	return `"$HOME"/repo/` + shellQuote(path)
+}
+
+// shellQuote single-quotes s for POSIX sh (inert $, backticks, spaces).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (a *Adapter) ReadFile(ctx context.Context, env ports.EnvID, path string) ([]byte, error) {

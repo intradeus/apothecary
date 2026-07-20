@@ -160,7 +160,7 @@ func TestProjectValidation(t *testing.T) {
 	// Unknown default flow refused.
 	bad = base
 	bad.DefaultFlow = "nope"
-	if _, err := svc.CreateProject(ctx, bad); err == nil || !errors.Is(err, ErrNotFound) {
+	if _, err := svc.CreateProject(ctx, bad); err == nil || !errors.Is(err, ErrInvalid) {
 		t.Errorf("default_flow err = %v", err)
 	}
 

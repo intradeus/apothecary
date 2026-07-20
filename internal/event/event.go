@@ -93,6 +93,10 @@ type EnvReady struct {
 
 type EnvFailed struct {
 	Error string `json:"error"`
+	// EnvID is set when a workspace was provisioned before the failure
+	// (bootstrap errors): capacity counting, archive and the reaper need it
+	// to see — and destroy — the orphan.
+	EnvID string `json:"env_id,omitempty"`
 }
 
 type StageStarted struct {

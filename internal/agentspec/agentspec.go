@@ -36,8 +36,29 @@ func Parse(stem string, data []byte) (*Spec, error) {
 	if s.Name != stem {
 		return nil, fmt.Errorf("agent spec %s: name %q must equal the filename stem", stem, s.Name)
 	}
+	// The name becomes workspace file paths and CLI arguments (role files,
+	// --agent): keep it a strict slug so repo-controlled filenames can never
+	// carry shell- or path-meaningful characters.
+	if !validSlug(s.Name) {
+		return nil, fmt.Errorf("agent spec %s: name must match [a-z0-9][a-z0-9._-]* (lowercase slug)", stem)
+	}
 	if strings.TrimSpace(s.Prompt) == "" {
 		return nil, fmt.Errorf("agent spec %s: prompt is required", stem)
 	}
 	return &s, nil
+}
+
+func validSlug(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case i > 0 && (r == '-' || r == '_' || r == '.'):
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -71,8 +71,8 @@ func TestRunScriptShape(t *testing.T) {
 	// Role preamble + prompt piped via stdin (`-`); model prefix stripped;
 	// bypass flag (the workspace IS the sandbox); provider.env sourced.
 	for _, want := range []string{
-		`cat "/apothecary/agents/builder.role" "/apothecary/prompt.txt" |`,
-		`-m "gpt-5-codex"`,
+		`cat '/apothecary/agents/builder.role' '/apothecary/prompt.txt' |`,
+		`-m 'gpt-5-codex'`,
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check -",
 		"/apothecary/provider.env",
@@ -102,7 +102,7 @@ func TestResumeUsesThreadID(t *testing.T) {
 			script = c.Cmd.Script
 		}
 	}
-	if !strings.Contains(script, `resume "019f-abc"`) || !strings.Contains(script, `cat "/apothecary/reply.txt" |`) {
+	if !strings.Contains(script, `resume '019f-abc'`) || !strings.Contains(script, `cat '/apothecary/reply.txt' |`) {
 		t.Errorf("resume script:\n%s", script)
 	}
 }
@@ -127,12 +127,12 @@ func TestFailureCarriesRawOutput(t *testing.T) {
 
 func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 	envp, id := envWith(t)
-	specOut := "===FACTORY-SPEC .apothecary/agents/planner.yaml\n" +
+	specOut := "===APOTHECARY-SPEC .apothecary/agents/planner.yaml\n" +
 		"name: planner\ndescription: plans\nread_only: true\nallow_bash: false\nprompt: |\n  Plan carefully.\n" +
-		"===FACTORY-SPEC .apothecary/agents/builder.yaml\n" +
+		"\n===APOTHECARY-SPEC .apothecary/agents/builder.yaml\n" +
 		"name: builder\ndescription: builds\nread_only: false\nallow_bash: true\nprompt: |\n  Build it.\n"
 	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "FACTORY-SPEC") {
+		if strings.Contains(cmd.Script, "APOTHECARY-SPEC") {
 			return ports.ExecResult{ExitCode: 0, Output: specOut}, nil
 		}
 		return ports.ExecResult{ExitCode: 0}, nil

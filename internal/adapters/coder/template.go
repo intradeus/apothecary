@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"apothecary/workspace"
@@ -86,6 +89,12 @@ func (a *Adapter) EnsureTemplate(ctx context.Context) error {
 
 	push := []string{"templates", "push", a.cfg.Template,
 		"--directory", dir, "--name", want, "--yes"}
+	// The template's firewall opens the host gateway on Coder's own port for
+	// the agent websocket; default 7080 only fits the reference deployment,
+	// so pass the port derived from the integration's URL.
+	if p := coderPortOf(a.cfg.URL); p != 0 {
+		push = append(push, "--var", fmt.Sprintf("coder_port=%d", p))
+	}
 	_, stderr, code, err := a.run(ctx, push, nil)
 	if err != nil {
 		return err
@@ -105,6 +114,13 @@ func (a *Adapter) EnsureTemplate(ctx context.Context) error {
 			if ccode != 0 {
 				return fmt.Errorf("coder templates create %s: exit %d: %s", a.cfg.Template, ccode, tail(string(cerr), 2048))
 			}
+			// `templates create` auto-names its version; re-push the same
+			// content with the content-addressed name so the next boot's
+			// active-version check matches (no perpetual re-push).
+			if _, perr, pcode, err := a.run(ctx, push, nil); err != nil || pcode != 0 {
+				slog.Warn("coder: naming pass after templates create failed (harmless: next boot re-pushes once)",
+					"template", a.cfg.Template, "err", err, "exit", pcode, "stderr", tail(string(perr), 512))
+			}
 		// The wanted version exists but is not active (rollback, or an
 		// earlier active-detection miss): promote instead of re-pushing.
 		case strings.Contains(errText, "already exists") || strings.Contains(errText, "already in use"):
@@ -123,6 +139,30 @@ func (a *Adapter) EnsureTemplate(ctx context.Context) error {
 	}
 	a.tmplEnsured = true
 	return nil
+}
+
+// coderPortOf extracts the port the workspace agent must reach Coder on,
+// honoring scheme defaults; 0 = unknown (omit the variable, template
+// default applies).
+func coderPortOf(raw string) int {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return 0
+	}
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	switch u.Scheme {
+	case "https":
+		return 443
+	case "http":
+		return 80
+	}
+	return 0
 }
 
 // activeTemplateVersion returns the provisioner-side active version name.

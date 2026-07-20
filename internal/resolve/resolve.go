@@ -207,16 +207,24 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration, template string)
 	if err != nil {
 		return nil, nil, unresolvable(err)
 	}
-	key := in.UpdatedAt.UTC().String() + "|" + template
+	// Cache key includes the template so two projects sharing one
+	// integration with different templates coexist instead of evicting each
+	// other on every resolution; the generation is the integration's
+	// updated_at (config edits invalidate).
+	cacheKey := in.ID + "\x00" + template
+	gen := in.UpdatedAt.UTC().String()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e := r.cache[in.ID]
-	if e != nil && e.key != key {
+	e := r.cache[cacheKey]
+	if e != nil && e.key != gen {
 		e.stale = true
 		if e.refs == 0 {
 			e.prov.Close()
 		}
+		// Remove immediately: leaving a closed entry in the map would make
+		// the next acquire close it a second time.
+		delete(r.cache, cacheKey)
 		e = nil
 	}
 	if e == nil {
@@ -228,8 +236,8 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration, template string)
 		if err != nil {
 			return nil, nil, unresolvable(fmt.Errorf("provisioner %s: %v", in.Name, err))
 		}
-		e = &provEntry{key: key, prov: prov}
-		r.cache[in.ID] = e
+		e = &provEntry{key: gen, prov: prov}
+		r.cache[cacheKey] = e
 	}
 	e.refs++
 	entry := e

@@ -361,10 +361,13 @@ stages:
 	}
 	x.e.Wait(created.RunID)
 
-	// Double answer → 409.
+	// Re-answer after the run ended → 404: the engine prunes a finished
+	// run's pings (they would otherwise be permanently unanswerable inbox
+	// zombies). A double answer while the run is live is refused with 409
+	// via the answered flag.
 	resp, _ = x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]string{"answer": "again"}, nil)
-	if resp.StatusCode != http.StatusConflict {
-		t.Errorf("double answer = %d, want 409", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("post-run answer = %d, want 404", resp.StatusCode)
 	}
 }
 

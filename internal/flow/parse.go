@@ -474,7 +474,21 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 
 func validModel(m string) bool {
 	provider, model, ok := strings.Cut(m, "/")
-	return ok && provider != "" && model != ""
+	if !ok || provider == "" || model == "" {
+		return false
+	}
+	// Model strings reach harness CLIs as arguments; a strict charset means
+	// they can never carry shell-meaningful characters even if an adapter's
+	// quoting regresses.
+	for _, r := range m {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-' || r == '/' || r == ':':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validArtifactPath accepts repo-root-relative paths only.

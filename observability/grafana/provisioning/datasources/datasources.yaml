@@ -1,18 +1,18 @@
 apiVersion: 1
 
 datasources:
-  - name: Factory Events (Postgres)
-    uid: factory-pg
+  - name: Apothecary Events (Postgres)
+    uid: apothecary-pg
     type: grafana-postgresql-datasource
-    url: 127.0.0.1:54329
-    user: factory
-    database: factory_m5
+    url: 127.0.0.1:15432
+    user: apothecary
+    database: apothecary
     jsonData:
       sslmode: disable
       postgresVersion: 1600
     isDefault: true
 
-  - name: Factory Metrics (Prometheus)
-    uid: factory-prom
+  - name: Apothecary Metrics (Prometheus)
+    uid: apothecary-prom
     type: prometheus
     url: http://127.0.0.1:19090

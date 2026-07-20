@@ -60,7 +60,12 @@ func (h *opencodeHarness) Resume(ctx context.Context, env ports.EnvID, s ports.S
 
 // Test statically validates the auth material (§4: no remote to probe).
 func (h *opencodeHarness) Test(_ context.Context) error {
-	if h.authJSON != "" && !json.Valid([]byte(h.authJSON)) {
+	if h.authJSON == "" {
+		// The field is Required — failing here beats failing at the first
+		// model listing or run.
+		return fmt.Errorf("opencode: auth_json is required (harness-owned model auth)")
+	}
+	if !json.Valid([]byte(h.authJSON)) {
 		return fmt.Errorf("opencode: auth_json is not valid JSON")
 	}
 	return nil
@@ -72,13 +77,52 @@ func (h *opencodeHarness) InstallLayer() []string {
 	return []string{fmt.Sprintf("RUN npm install -g opencode-ai@%s", h.version)}
 }
 
+// providerDomains maps opencode/models.dev provider ids (auth_json top-level
+// keys — the same ids Models() filters by) to their API hosts. Providers
+// absent here (regional clouds like bedrock/vertex) need
+// workspace.extra_domains.
+var providerDomains = map[string][]string{
+	"anthropic":    {"api.anthropic.com"},
+	"openai":       {"api.openai.com"},
+	"openrouter":   {"openrouter.ai"},
+	"google":       {"generativelanguage.googleapis.com"},
+	"xai":          {"api.x.ai"},
+	"mistral":      {"api.mistral.ai"},
+	"groq":         {"api.groq.com"},
+	"deepseek":     {"api.deepseek.com"},
+	"togetherai":   {"api.together.xyz"},
+	"fireworks-ai": {"api.fireworks.ai"},
+	"cerebras":     {"api.cerebras.ai"},
+}
+
+// egressBaseline keeps the pre-derivation behavior when auth_json is absent
+// or unparseable at resolution time.
+var egressBaseline = []string{"api.anthropic.com", "api.openai.com", "openrouter.ai"}
+
 func (h *opencodeHarness) EgressDomains() []string {
-	// Harness-owned auth: the harness allows every provider API it can
-	// route to, so a key inside auth.json is never blocked by the very
-	// firewall that ships with it (the M3 openrouter lesson, generalized).
-	// Deliberately broader than strictly needed — precision deferred by
-	// user decision; workspace.extra_domains remains the manual lever.
-	return []string{"api.anthropic.com", "api.openai.com", "openrouter.ai"}
+	// Harness-owned auth: whatever auth.json can route to must not be
+	// blocked by the very firewall that ships with it (the M3 openrouter
+	// lesson, generalized) — so the allowlist is DERIVED from the same
+	// auth_json keys Models() advertises, keeping the two in agreement.
+	auth := map[string]json.RawMessage{}
+	if h.authJSON == "" || json.Unmarshal([]byte(h.authJSON), &auth) != nil || len(auth) == 0 {
+		return egressBaseline
+	}
+	seen := map[string]bool{}
+	var out []string
+	for providerID := range auth {
+		for _, d := range providerDomains[providerID] {
+			if !seen[d] {
+				seen[d] = true
+				out = append(out, d)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return egressBaseline
+	}
+	sort.Strings(out)
+	return out
 }
 
 // modelsCatalogURL is opencode's own model catalog source (models.dev —

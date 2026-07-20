@@ -24,6 +24,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
 	"apothecary/internal/run"
+	"apothecary/internal/secrets"
 )
 
 type Server struct {
@@ -478,8 +479,31 @@ func (s *Server) listPings(w http.ResponseWriter, r *http.Request) {
 
 // --- channels ---------------------------------------------------------------
 
+// maskChannel redacts secret-shaped config values (tokens etc.) before an
+// Entry leaves the server: channel storage is a documented plaintext
+// residual, but responses carry only masks, like integrations (§3).
+func maskChannel(e *channels.Entry) map[string]any {
+	cfg := make(map[string]any, len(e.Config))
+	for k, v := range e.Config {
+		lk := strings.ToLower(k)
+		secret := strings.Contains(lk, "token") || strings.Contains(lk, "secret") ||
+			strings.Contains(lk, "password") || strings.Contains(lk, "key")
+		if str, ok := v.(string); ok && secret {
+			cfg[k] = secrets.Mask(str)
+		} else {
+			cfg[k] = v
+		}
+	}
+	return map[string]any{"id": e.ID, "kind": e.Kind, "config": cfg}
+}
+
 func (s *Server) listChannels(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.Registry.List())
+	entries := s.Registry.List()
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, maskChannel(e))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // addChannel accepts the §8 flat shape: {"kind":"matrix", "homeserver":...,
@@ -500,7 +524,7 @@ func (s *Server) addChannel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, e)
+	writeJSON(w, http.StatusCreated, maskChannel(e))
 }
 
 func (s *Server) deleteChannel(w http.ResponseWriter, r *http.Request) {
