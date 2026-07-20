@@ -32,9 +32,7 @@ exactly two touchpoints — plan approval and final review.
   `auth.json`.
 - A target repository containing `AGENTS.md` (the repo's conventions).
   Agents themselves are defined **per project in the UI** (v3 agent
-  library) — `examples/agents/` has starter specs, and a legacy
-  `.apothecary/agents/` directory can be imported with one click on the
-  project's Agents panel.
+  library) — `artifacts/agents/` has ready-to-paste reference prompts.
 
 ## Install
 

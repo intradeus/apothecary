@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api, stateColors, fmtTime, fmtCost, type EventEnvelope, type RunView } from '$lib/api';
   import { onMount } from 'svelte';
@@ -80,6 +81,19 @@
     }
   }
 
+  async function restart() {
+    error = '';
+    try {
+      const { run_id } = await api.restart(runId);
+      await goto(`/runs/${run_id}`);
+      // Full reload semantics: this page keys its state off the route param
+      // captured at mount, so navigate hard to re-init streams.
+      location.reload();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function act(fn: () => Promise<unknown>) {
     error = '';
     try {
@@ -138,8 +152,13 @@
     {#if run.mr_url}<a href={run.mr_url} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
     {#if !terminal}
       <button class="danger" onclick={() => act(() => api.abort(runId))}>Abort</button>
-    {:else if run.state !== 'archived'}
-      <button onclick={() => act(() => api.archive(runId))}>Archive</button>
+    {:else}
+      <button class="primary" onclick={restart} title="Start over as a fresh run: same ticket, project and flow — new workspace, new branch">
+        Restart
+      </button>
+      {#if run.state !== 'archived'}
+        <button onclick={() => act(() => api.archive(runId))}>Archive</button>
+      {/if}
     {/if}
   </div>
 

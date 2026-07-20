@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
-	"strings"
 	"sync"
 
 	"apothecary/internal/agentspec"
@@ -400,42 +399,6 @@ func (r *Resolver) ListModels(ctx context.Context, id string) ([]kinds.ModelInfo
 		return nil, err
 	}
 	return h.Models(ctx)
-}
-
-// RepoAgentFiles reads the target repo's legacy .apothecary/agents/ files
-// via the project's forge (DESIGN3 §1.3: the one-time import into the
-// agent library). Returns file name -> content for *.yaml|*.yml entries.
-func (r *Resolver) RepoAgentFiles(ctx context.Context, projectID string) (map[string][]byte, error) {
-	p, err := r.conf.GetProject(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	repoRef := ports.RepoRef{URL: p.Repo.URL, DefaultBranch: p.Repo.DefaultBranch, Locator: p.Repo.Locator}
-	forgeInt, forgeKind, err := r.forgeKind(ctx, p.ForgeID)
-	if err != nil {
-		return nil, err
-	}
-	forge, err := forgeKind.Forge(kindConfig(forgeInt), repoRef)
-	if err != nil {
-		return nil, err
-	}
-	const dir = ".apothecary/agents/"
-	names, err := forge.ListDir(ctx, repoRef, dir)
-	if err != nil {
-		return nil, fmt.Errorf("listing %s: %w", dir, err)
-	}
-	out := map[string][]byte{}
-	for _, n := range names {
-		if !strings.HasSuffix(n, ".yaml") && !strings.HasSuffix(n, ".yml") {
-			continue
-		}
-		data, err := forge.ReadFile(ctx, repoRef, dir+n)
-		if err != nil {
-			return nil, fmt.Errorf("reading %s%s: %w", dir, n, err)
-		}
-		out[n] = data
-	}
-	return out, nil
 }
 
 var _ engine.Resolver = (*Resolver)(nil)

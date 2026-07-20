@@ -43,14 +43,7 @@ func (fakeAccount) EgressDomains() []string         { return nil }
 func (FakeForge) Account(Config) (ForgeAccount, error) { return fakeAccount{}, nil }
 
 func (FakeForge) Forge(Config, ports.RepoRef) (ports.Forge, error) {
-	return &fake.Forge{
-		// A legacy repo spec so the DESIGN3 §1.3 import path is exercisable
-		// in dev mode and tests.
-		Files: map[string][]byte{
-			".apothecary/agents/sample.yaml": []byte(
-				"name: sample\ndescription: imported sample\nread_only: true\nallow_bash: false\nprompt: |\n  You are the imported sample agent.\n"),
-		},
-	}, nil
+	return &fake.Forge{}, nil
 }
 
 // --- provisioner ------------------------------------------------------------

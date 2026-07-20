@@ -109,22 +109,6 @@
     }
   }
 
-  async function importRepo() {
-    busy = true;
-    error = '';
-    notice = '';
-    try {
-      const rep = await api.importAgents(project.id);
-      notice =
-        `Imported ${rep.imported.length ? rep.imported.join(', ') : 'nothing'}` +
-        (rep.skipped.length ? `; skipped: ${rep.skipped.map((s) => `${s.file} (${s.error})`).join('; ')}` : '');
-      await refresh();
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <div class="card">
@@ -138,9 +122,6 @@
         </select>
         <button onclick={copy} disabled={busy || !copyFrom}>Copy</button>
       {/if}
-      <button onclick={importRepo} disabled={busy} title="One-time import of the repo's legacy .apothecary/agents/">
-        Import from repo
-      </button>
       <button class="primary" onclick={() => openEditor()}>New agent</button>
     </div>
   </div>
@@ -183,8 +164,8 @@
     {/if}
   {:else}
     <div class="empty">
-      No agents yet — flows with agent stages will fail preflight. Create one, copy from another
-      project, or import the repo's legacy specs.
+      No agents yet — flows with agent stages will fail preflight. Create one or copy from
+      another project.
     </div>
   {/each}
 

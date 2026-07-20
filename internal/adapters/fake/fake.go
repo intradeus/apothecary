@@ -8,8 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"sort"
-	"strings"
 	"sync"
 
 	"apothecary/internal/agentspec"
@@ -259,37 +257,11 @@ type Forge struct {
 	AccessErr error
 	// MissingFiles marks paths FileExists reports false for (default: all exist).
 	MissingFiles map[string]bool
-	// Files backs ListDir/ReadFile: full repo path -> content.
-	Files map[string][]byte
 	// CreateErr fails CreateDraftMR when set.
 	CreateErr error
 
 	MRs    []*MR
 	nextID int
-}
-
-func (f *Forge) ListDir(_ context.Context, _ ports.RepoRef, dir string) ([]string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	prefix := strings.TrimSuffix(dir, "/") + "/"
-	var out []string
-	for p := range f.Files {
-		if rest, ok := strings.CutPrefix(p, prefix); ok && !strings.Contains(rest, "/") {
-			out = append(out, rest)
-		}
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-func (f *Forge) ReadFile(_ context.Context, _ ports.RepoRef, path string) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	data, ok := f.Files[path]
-	if !ok {
-		return nil, fmt.Errorf("file %s not found", path)
-	}
-	return data, nil
 }
 
 func (f *Forge) CheckAccess(_ context.Context, _ ports.RepoRef) error {

@@ -714,3 +714,54 @@ func TestOptionPingOverHTTP(t *testing.T) {
 		t.Errorf("stored = %+v", stored)
 	}
 }
+
+// TestRestartRun: a terminal run restarts as a FRESH run with the same
+// ticket/flow/project; active runs refuse with 409, unknown runs 404.
+func TestRestartRun(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	runID := x.createTicket(t, "Add search")
+	x.e.Wait(runID)
+
+	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/restart", nil, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("restart = %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	_ = json.Unmarshal(data, &out)
+	if out.RunID == "" || out.RunID == runID {
+		t.Fatalf("new run id = %q", out.RunID)
+	}
+	x.e.Wait(out.RunID)
+	_, d := x.do(t, "GET", "/api/runs/"+out.RunID, nil, nil)
+	var detail struct {
+		Run run.View `json:"run"`
+	}
+	_ = json.Unmarshal(d, &detail)
+	if detail.Run.State != run.Completed || detail.Run.TicketTitle != "Add search" || detail.Run.FlowName != "loop" {
+		t.Errorf("restarted run = %+v", detail.Run)
+	}
+
+	// Active runs refuse.
+	block := make(chan struct{})
+	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+		select {
+		case <-block:
+		case <-ctx.Done():
+		}
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	activeID := x.createTicket(t, "Busy")
+	resp, _ = x.do(t, "POST", "/api/runs/"+activeID+"/restart", nil, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("active restart = %d, want 409", resp.StatusCode)
+	}
+	close(block)
+	x.e.Wait(activeID)
+
+	resp, _ = x.do(t, "POST", "/api/runs/nope/restart", nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown restart = %d, want 404", resp.StatusCode)
+	}
+}

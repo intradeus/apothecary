@@ -365,6 +365,35 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	return nil
 }
 
+// RestartRun starts a terminal run over from scratch: a FRESH run (new
+// id, branch, workspace, events) with the original ticket, project and
+// flow name — resolved against the CURRENT config and flow version, and
+// re-preflighted like any new ticket. History is immutable; the old run
+// keeps its record.
+func (e *Engine) RestartRun(ctx context.Context, runID string) (string, error) {
+	e.mu.Lock()
+	_, active := e.handles[runID]
+	e.mu.Unlock()
+	if active {
+		return "", fmt.Errorf("run %s is still active; abort it first", runID)
+	}
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return "", err
+	}
+	if len(evs) == 0 {
+		return "", fmt.Errorf("run %s not found", runID)
+	}
+	v := run.Reduce(evs)
+	if !v.State.Terminal() {
+		return "", fmt.Errorf("run %s is %s; only terminal runs can be restarted", runID, v.State)
+	}
+	if v.ProjectID == "" {
+		return "", fmt.Errorf("run %s has no project; cannot restart", runID)
+	}
+	return e.CreateRun(ctx, Ticket{Title: v.TicketTitle, Goal: v.TicketGoal}, v.FlowName, v.ProjectID)
+}
+
 // destroyEnv resolves the run's project to reach its provisioner (§6.1:
 // no global envp anymore). Pre-v2 runs with no project cannot be destroyed
 // through the engine — their envs outlived the config that owned them.

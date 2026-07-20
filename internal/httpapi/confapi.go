@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/flow"
@@ -27,9 +25,6 @@ type IntegrationOps interface {
 	TestIntegration(ctx context.Context, id string) error
 	ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error)
 	ListModels(ctx context.Context, id string) ([]kinds.ModelInfo, error)
-	// RepoAgentFiles reads the target repo's legacy .apothecary/agents/
-	// files (DESIGN3 §1.3 one-time import): file name -> content.
-	RepoAgentFiles(ctx context.Context, projectID string) (map[string][]byte, error)
 }
 
 // confErr maps confstore errors to statuses: not found 404, conflicts and
@@ -404,51 +399,6 @@ func (s *Server) copyAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"copied": copied})
-}
-
-// importAgents is the one-time repo → library transition (DESIGN3 §1.3):
-// reads .apothecary/agents/ via the forge, saves each parseable spec.
-// Existing names are skipped, never overwritten.
-func (s *Server) importAgents(w http.ResponseWriter, r *http.Request) {
-	if s.Ops == nil {
-		writeErr(w, http.StatusServiceUnavailable, "repo import is not wired")
-		return
-	}
-	projectID := r.PathValue("id")
-	files, err := s.Ops.RepoAgentFiles(r.Context(), projectID)
-	if err != nil {
-		confErr(w, err)
-		return
-	}
-	type skip struct {
-		File  string `json:"file"`
-		Error string `json:"error"`
-	}
-	imported := []string{}
-	skipped := []skip{}
-	for name, data := range files {
-		stem := strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
-		spec, err := agentspec.Parse(stem, data)
-		if err != nil {
-			skipped = append(skipped, skip{File: name, Error: err.Error()})
-			continue
-		}
-		if _, err := s.Conf.GetAgent(r.Context(), projectID, spec.Name); err == nil {
-			skipped = append(skipped, skip{File: name, Error: "agent already exists (not overwritten)"})
-			continue
-		}
-		if _, err := s.Conf.SaveAgent(r.Context(), confstore.Agent{
-			ProjectID: projectID, Name: spec.Name, Description: spec.Description,
-			ReadOnly: spec.ReadOnly, AllowBash: spec.AllowBash, Prompt: spec.Prompt,
-		}); err != nil {
-			skipped = append(skipped, skip{File: name, Error: err.Error()})
-			continue
-		}
-		imported = append(imported, spec.Name)
-	}
-	sort.Strings(imported)
-	sort.Slice(skipped, func(i, j int) bool { return skipped[i].File < skipped[j].File })
-	writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "skipped": skipped})
 }
 
 // --- flows ------------------------------------------------------------------

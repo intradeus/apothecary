@@ -93,11 +93,6 @@ export interface AgentVersion {
   created_at: string;
 }
 
-export interface AgentImportReport {
-  imported: string[];
-  skipped: { file: string; error: string }[];
-}
-
 export interface FlowLayout {
   nodes: Record<string, { x: number; y: number }>;
 }
@@ -213,6 +208,7 @@ export const api = {
     post('/api/tickets', { title, goal, project_id: projectId, ...(flow ? { flow } : {}) }) as Promise<{ run_id: string }>,
   abort: (id: string) => post(`/api/runs/${id}/abort`),
   archive: (id: string) => post(`/api/runs/${id}/archive`),
+  restart: (id: string) => post(`/api/runs/${id}/restart`) as Promise<{ run_id: string }>,
   log: async (id: string, stage: string, n = 65536): Promise<string> => {
     const res = await fetch(`/api/runs/${id}/logs/${stage}?n=${n}`);
     if (!res.ok) throw new Error(`${res.status}`);
@@ -275,9 +271,6 @@ export const api = {
     req<AgentVersion[]>(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}/versions`),
   copyAgents: (projectId: string, fromProjectId: string, names?: string[]) =>
     post(`/api/projects/${projectId}/agents/copy`, { from_project_id: fromProjectId, ...(names?.length ? { names } : {}) }) as Promise<{ copied: Agent[] }>,
-  importAgents: (projectId: string) =>
-    post(`/api/projects/${projectId}/agents/import-repo`) as Promise<AgentImportReport>,
-
   flows: () => req<FlowRow[]>('/api/flows'),
   flow: (name: string) => req<FlowRow>(`/api/flows/${encodeURIComponent(name)}`),
   createFlow: (name: string, yaml: string) => post('/api/flows', { name, yaml }) as Promise<FlowRow>,

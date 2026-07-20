@@ -976,3 +976,15 @@ generalizes machinery that already existed. Notes:
   covered end-to-end at the engine and HTTP layers (validation, delivery,
   durable recording); no live agent invokes options until a real codex/
   opencode run asks with them.
+
+## Amendment: repo import removed (pre-release cleanup)
+
+The M12 one-time `.apothecary/agents/` repo import is deleted end to end
+(user decision: the project is unreleased, no legacy to migrate): the
+Agents-panel button, `POST /api/projects/{id}/agents/import-repo`,
+`IntegrationOps.RepoAgentFiles`, the resolver implementation, and the
+`Forge.ListDir`/`ReadFile` port methods added solely for it (gitlab,
+github, fake adapters). `agentspec.Parse` stays (name-rule + spec
+parsing). Reference agent prompts now live in `artifacts/agents/*.md`
+(+ `artifacts/flows/v1.yaml`, the explicit-edge reference flow), with the
+neutral YAML specs in `examples/agents/`.

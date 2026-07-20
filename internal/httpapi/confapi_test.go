@@ -416,13 +416,4 @@ func TestAgentLibraryRoutes(t *testing.T) {
 		t.Fatalf("copy collision = %d", resp.StatusCode)
 	}
 
-	// Repo import: the fake forge serves .apothecary/agents/sample.yaml.
-	resp, data = x.do(t, "POST", "/api/projects/"+projectID+"/agents/import-repo", nil, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), `"imported":["sample"]`) {
-		t.Fatalf("import = %d: %s", resp.StatusCode, data)
-	}
-	resp, data = x.do(t, "POST", "/api/projects/"+projectID+"/agents/import-repo", nil, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), "already exists") {
-		t.Fatalf("re-import = %d: %s", resp.StatusCode, data)
-	}
 }

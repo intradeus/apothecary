@@ -135,12 +135,6 @@ type Forge interface {
 	// CheckAccess verifies token validity, project reachability and scopes (§1 preflight).
 	CheckAccess(ctx context.Context, repo RepoRef) error
 	FileExists(ctx context.Context, repo RepoRef, path string) (bool, error)
-	// ListDir returns the file names (no paths, no subdirectories) directly
-	// under dir at the default branch; a missing directory is an empty
-	// list, not an error. (DESIGN3 §1.3: agent import.)
-	ListDir(ctx context.Context, repo RepoRef, dir string) ([]string, error)
-	// ReadFile returns a repo file's content at the default branch.
-	ReadFile(ctx context.Context, repo RepoRef, path string) ([]byte, error)
 	CreateDraftMR(ctx context.Context, repo RepoRef, branch, title, body string) (MRRef, error)
 	MRState(ctx context.Context, mr MRRef) (MRState, error)
 }

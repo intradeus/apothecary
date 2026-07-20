@@ -67,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/logs/{stage}", s.getLog)
 	mux.HandleFunc("POST /api/runs/{id}/abort", s.postAbort)
 	mux.HandleFunc("POST /api/runs/{id}/archive", s.postArchive)
+	mux.HandleFunc("POST /api/runs/{id}/restart", s.postRestart)
 	mux.HandleFunc("POST /api/runs/{id}/pings", s.postPing)
 	mux.HandleFunc("GET /api/runs/{id}/pings/{pid}", s.repollPing)
 	mux.HandleFunc("POST /api/pings/{pid}/answer", s.answerPing)
@@ -101,7 +102,6 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/projects/{id}/agents/{name}/versions", s.listAgentVersions)
 		mux.HandleFunc("GET /api/agent-versions/{hash}", s.getAgentVersion)
 		mux.HandleFunc("POST /api/projects/{id}/agents/copy", s.copyAgents)
-		mux.HandleFunc("POST /api/projects/{id}/agents/import-repo", s.importAgents)
 		mux.HandleFunc("POST /api/projects/{id}/preflight", s.preflightProject)
 		mux.HandleFunc("POST /api/projects/{id}/envcheck", s.startEnvCheck)
 		mux.HandleFunc("GET /api/envchecks/{id}", s.getEnvCheck)
@@ -339,6 +339,26 @@ func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// postRestart starts a terminal run over as a fresh run; 201 carries the
+// new run id. 409 when the run is active/non-terminal, 404 when unknown,
+// 400 when the re-preflight refuses (config drifted since the original).
+func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
+	newID, err := s.Engine.RestartRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusBadRequest
+		switch {
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		case strings.Contains(msg, "still active"), strings.Contains(msg, "only terminal"):
+			status = http.StatusConflict
+		}
+		writeErr(w, status, msg)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"run_id": newID})
 }
 
 // --- SSE --------------------------------------------------------------------
