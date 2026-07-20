@@ -1,30 +1,24 @@
-# Factory workspace image (DESIGN.md §11): Ubuntu base, Go + Node
-# toolchains, opencode (pinned), git, ripgrep, the ask_human shim,
-# init-firewall.sh, non-root user `factory`. No docker socket is ever
-# mounted; NET_ADMIN is granted only for the firewall init (template).
+# Factory workspace BASE image (DESIGN2 §8.1): the invariants and nothing
+# else — Ubuntu, git/ripgrep, Node (the ask_human shim's runtime),
+# code-server, the shim, the firewall init, the non-root `factory` user.
+# NO language toolchains and NO harness: those are the user's Dockerfile
+# fragment and the harness kind's InstallLayer, composed per project (§8.2).
+# Tagged apothecary/base:<sha16 of this embedded context>, built on demand.
 FROM ubuntu:24.04
 
-ARG GO_VERSION=1.24.5
-ARG OPENCODE_VERSION=1.17.8
 ARG NODE_MAJOR=22
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git ripgrep jq make build-essential unzip \
+        ca-certificates curl git ripgrep jq unzip \
         openssh-client sudo iptables iproute2 dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
-# Node (toolchain + shim runtime) via nodesource.
+# Node: the shim's runtime (and the install layer of npm-distributed
+# harnesses) via nodesource.
 RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
-
-# Go toolchain.
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
-ENV PATH="/usr/local/go/bin:${PATH}"
-
-# opencode, pinned (§0 harness; flags verified in M3).
-RUN npm install -g "opencode-ai@${OPENCODE_VERSION}"
 
 # code-server for the IDE deep link (§12 links).
 RUN curl -fsSL https://code-server.dev/install.sh | sh
@@ -50,4 +44,3 @@ RUN chmod 0755 /usr/local/bin/init-firewall.sh /opt/factory/ask-human.mjs \
 
 USER factory
 WORKDIR /home/factory
-ENV PATH="/usr/local/go/bin:/home/factory/go/bin:${PATH}"

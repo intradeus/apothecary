@@ -42,13 +42,12 @@ func seedProject(t *testing.T, svc *Service) Project {
 	}
 	forge := mk(PortForge, "gitlab", "gl", map[string]string{"token": "glpat-supersecret99"})
 	prov := mk(PortProvisioner, "coder", "coder", map[string]string{"token": "coder-tok"})
-	harness := mk(PortHarness, "opencode", "oc", nil)
-	provider := mk(PortProvider, "openrouter", "or", map[string]string{"api_key": "sk-or-abc"})
+	harness := mk(PortHarness, "opencode", "oc", map[string]string{"auth_json": `{"openrouter":{"type":"api","key":"sk-or-abc"}}`})
 	p, err := svc.CreateProject(ctx, Project{
 		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: harness.ID,
-		ProviderIDs: []string{provider.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
 		Workspace:   WorkspaceConfig{Template: "factory"},
+		DefaultFlow: "v1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,8 +122,17 @@ func TestProjectValidation(t *testing.T) {
 
 	base := Project{
 		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: harness.ID,
-		Repo:      RepoConfig{URL: "https://gitlab.com/g/p.git"},
-		Workspace: WorkspaceConfig{Template: "factory"},
+		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
+		Workspace:   WorkspaceConfig{Template: "factory"},
+		DefaultFlow: "v1",
+	}
+
+	// Flows are user-defined: an empty default_flow is refused (no built-in
+	// fallback exists).
+	bad0 := base
+	bad0.DefaultFlow = ""
+	if _, err := svc.CreateProject(ctx, bad0); err == nil || !strings.Contains(err.Error(), "default_flow is required") {
+		t.Errorf("empty default_flow err = %v", err)
 	}
 
 	// Wrong-port reference is refused naming the field.
@@ -141,11 +149,12 @@ func TestProjectValidation(t *testing.T) {
 		t.Errorf("fragment err = %v", err)
 	}
 
-	// M7: template required until the image pipeline lands.
-	bad = base
-	bad.Workspace.Template = ""
-	if _, err := svc.CreateProject(ctx, bad); err == nil || !strings.Contains(err.Error(), "workspace.template") {
-		t.Errorf("template err = %v", err)
+	// Since M9 the template is optional: empty = the managed image pipeline.
+	pipeline := base
+	pipeline.Name = "p-pipeline"
+	pipeline.Workspace.Template = ""
+	if _, err := svc.CreateProject(ctx, pipeline); err != nil {
+		t.Errorf("pipeline-path project refused: %v", err)
 	}
 
 	// Unknown default flow refused.

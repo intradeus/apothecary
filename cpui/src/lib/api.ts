@@ -3,6 +3,7 @@
 
 export interface RunView {
   run_id: string;
+  project_id?: string;
   state: 'pending' | 'provisioning' | 'running' | 'waiting_on_human' | 'completed' | 'abandoned' | 'failed' | 'archived';
   ticket_title: string;
   flow_name: string;
@@ -12,6 +13,115 @@ export interface RunView {
   env_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+// --- config plane (DESIGN2 §10) ---------------------------------------------
+
+// Model auth is harness-owned (post-M8 amendment) — no provider port.
+export type Port = 'forge' | 'provisioner' | 'harness';
+
+export interface KindField {
+  name: string;
+  label: string;
+  placeholder?: string;
+  default?: string;
+  secret: boolean;
+  required: boolean;
+}
+
+export interface KindDescriptor {
+  port: Port;
+  kind: string;
+  label: string;
+  fields: KindField[] | null;
+}
+
+export interface Integration {
+  id: string;
+  port: Port;
+  kind: string;
+  name: string;
+  config: Record<string, unknown>;
+  secrets: Record<string, string>; // masks only — values never round-trip
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RepoInfo {
+  name: string;
+  url: string;
+  locator: string;
+  default_branch: string;
+}
+
+// ModelInfo.id is the exact `provider/model` string flows use.
+export interface ModelInfo {
+  id: string;
+  name: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  forge_id: string;
+  provisioner_id: string;
+  harness_id: string;
+  repo: { url: string; locator: string; default_branch: string; agents_md_path: string };
+  commands: Record<string, string>;
+  workspace: { dockerfile_fragment?: string; extra_domains?: string[]; template?: string };
+  default_flow: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FlowRow {
+  name: string;
+  yaml: string;
+  hash: string;
+  updated_at: string;
+}
+
+export interface FlowVersion {
+  hash: string;
+  name: string;
+  yaml: string;
+  created_at: string;
+}
+
+export interface Settings {
+  max_concurrent_runs: number;
+  max_environments: number;
+  destroy_completed_after: string;
+  destroy_abandoned: string;
+}
+
+export interface PreflightStep {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface Preset {
+  name: string;
+  label: string;
+  lines: string[];
+  domains: string[];
+}
+
+export interface CheckStep {
+  id: string;
+  status: 'pass' | 'fail' | 'skip';
+  detail?: string;
+}
+
+export interface CheckRun {
+  id: string;
+  project_id: string;
+  status: 'running' | 'pass' | 'fail';
+  keep: boolean;
+  steps: CheckStep[] | null;
+  started_at: string;
+  finished_at?: string;
 }
 
 export interface EventEnvelope {
@@ -56,12 +166,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 const post = (path: string, body?: unknown): Promise<unknown> =>
   req(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
+const put = (path: string, body: unknown): Promise<unknown> =>
+  req(path, { method: 'PUT', body: JSON.stringify(body) });
 
 export const api = {
-  runs: () => req<RunView[]>('/api/runs'),
+  runs: (project?: string) => req<RunView[]>(`/api/runs${project ? `?project=${encodeURIComponent(project)}` : ''}`),
   run: (id: string) => req<{ run: RunView; events: EventEnvelope[] }>(`/api/runs/${id}`),
-  createTicket: (title: string, goal: string, flow?: string) =>
-    post('/api/tickets', { title, goal, ...(flow ? { flow } : {}) }) as Promise<{ run_id: string }>,
+  createTicket: (title: string, goal: string, projectId: string, flow?: string) =>
+    post('/api/tickets', { title, goal, project_id: projectId, ...(flow ? { flow } : {}) }) as Promise<{ run_id: string }>,
   abort: (id: string) => post(`/api/runs/${id}/abort`),
   archive: (id: string) => post(`/api/runs/${id}/archive`),
   log: async (id: string, stage: string, n = 65536): Promise<string> => {
@@ -76,6 +188,60 @@ export const api = {
   addChannel: (kind: string, config: Record<string, string>) =>
     post('/api/channels', { kind, ...config }) as Promise<ChannelEntry>,
   deleteChannel: (id: string) => req<void>(`/api/channels/${id}`, { method: 'DELETE' }),
+
+  // config plane (DESIGN2 §10)
+  kinds: () => req<KindDescriptor[]>('/api/kinds'),
+  integrations: () => req<Integration[]>('/api/integrations'),
+  createIntegration: (body: {
+    port: Port;
+    kind: string;
+    name: string;
+    config: Record<string, unknown>;
+    secrets: Record<string, string>;
+  }) => post('/api/integrations', body) as Promise<Integration>,
+  updateIntegration: (
+    id: string,
+    body: { name?: string; config?: Record<string, unknown>; secrets?: Record<string, string> }
+  ) => put(`/api/integrations/${id}`, body) as Promise<Integration>,
+  deleteIntegration: (id: string) => req<void>(`/api/integrations/${id}`, { method: 'DELETE' }),
+  testIntegration: (id: string) =>
+    post(`/api/integrations/${id}/test`) as Promise<{ ok: boolean; error?: string }>,
+  repos: (integrationId: string) => req<RepoInfo[]>(`/api/integrations/${integrationId}/repos`),
+  models: (integrationId: string) => req<ModelInfo[]>(`/api/integrations/${integrationId}/models`),
+
+  projects: () => req<Project[]>('/api/projects'),
+  project: (id: string) => req<Project>(`/api/projects/${id}`),
+  createProject: (body: Omit<Project, 'id' | 'created_at' | 'updated_at'>) =>
+    post('/api/projects', body) as Promise<Project>,
+  updateProject: (id: string, body: Omit<Project, 'id' | 'created_at' | 'updated_at'>) =>
+    put(`/api/projects/${id}`, body) as Promise<Project>,
+  deleteProject: (id: string) => req<void>(`/api/projects/${id}`, { method: 'DELETE' }),
+  preflight: (id: string) =>
+    post(`/api/projects/${id}/preflight`) as Promise<{ ok: boolean; steps: PreflightStep[] }>,
+  presets: () => req<Preset[]>('/api/presets'),
+  startEnvCheck: (projectId: string, keep: boolean) =>
+    post(`/api/projects/${projectId}/envcheck`, { keep }) as Promise<{ check_id: string }>,
+  envCheck: (checkId: string) => req<CheckRun>(`/api/envchecks/${checkId}`),
+
+  flows: () => req<FlowRow[]>('/api/flows'),
+  flow: (name: string) => req<FlowRow>(`/api/flows/${encodeURIComponent(name)}`),
+  createFlow: (name: string, yaml: string) => post('/api/flows', { name, yaml }) as Promise<FlowRow>,
+  saveFlow: (name: string, yaml: string) =>
+    put(`/api/flows/${encodeURIComponent(name)}`, { yaml }) as Promise<FlowRow>,
+  deleteFlow: (name: string) => req<void>(`/api/flows/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  validateFlow: (yaml: string) =>
+    post('/api/flows/validate', { yaml }) as Promise<{
+      ok: boolean;
+      errors?: string[];
+      name?: string;
+      hash?: string;
+      stages?: number;
+    }>,
+  flowVersions: (name: string) => req<FlowVersion[]>(`/api/flows/${encodeURIComponent(name)}/versions`),
+  flowVersion: (hash: string) => req<FlowVersion>(`/api/flow-versions/${hash}`),
+
+  settings: () => req<Settings>('/api/settings'),
+  saveSettings: (s: Settings) => put('/api/settings', s) as Promise<Settings>,
 
   /** SSE stream of a run's events; replays everything, then follows live. */
   events(id: string, afterSeq: number, onEvent: (e: EventEnvelope) => void): () => void {

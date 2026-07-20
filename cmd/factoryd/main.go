@@ -36,7 +36,6 @@ import (
 	"factory/internal/ports"
 	"factory/internal/resolve"
 	"factory/internal/secrets"
-	"factory/internal/seed"
 	"factory/internal/telemetry"
 )
 
@@ -116,14 +115,13 @@ func cmdRebuild(args []string) error {
 }
 
 // registry builds the kind registry: real kinds always, fakes with -dev.
+// Model auth is harness-owned (post-M8 amendment) — there is no provider
+// port.
 func registry(dev bool) *kinds.Registry {
 	reg := kinds.NewRegistry()
 	reg.RegisterForge(kinds.GitLab{})
 	reg.RegisterProvisioner(kinds.Coder{})
 	reg.RegisterHarness(kinds.Opencode{})
-	for _, pk := range kinds.ProviderKinds() {
-		reg.RegisterProvider(pk)
-	}
 	if dev {
 		kinds.RegisterFakes(reg)
 	}
@@ -156,9 +154,8 @@ func cmdServe(args []string) error {
 	conf := confstore.New(store, key)
 	conf.KindValid = reg.Valid
 
-	if err := seed.Flows(ctx, conf); err != nil {
-		return fmt.Errorf("seed flows: %w", err)
-	}
+	// No built-in flows: flows are user-defined, created in the UI (Lu,
+	// post-M8). Only -dev seeds one, for its fake sandbox.
 	if *dev {
 		log.Warn("dev mode: fake kinds registered (no real workspaces, harness, or forge)")
 		if err := seedDevProject(ctx, conf); err != nil {
@@ -183,7 +180,7 @@ func cmdServe(args []string) error {
 	if _, p, err := splitHostPort(boot.Listen); err == nil {
 		fmt.Sscanf(p, "%d", &enginePort)
 	}
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort)
+	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.BaseImage)
 	defer resolver.Close()
 
 	ecfg := engine.Config{
@@ -266,8 +263,24 @@ func cmdServe(args []string) error {
 	return nil
 }
 
-// seedDevProject creates fake integrations and a "dev" project on first
-// -dev boot, so tickets can be filed immediately (M7 compose smoke test).
+// devFlowYAML is the -dev sandbox flow: plan-gated build with an MR and a
+// final gate — enough to exercise every stage type against the fakes.
+// Dev-mode only; production flows are user-defined in the UI.
+const devFlowYAML = `name: dev
+description: dev-mode sandbox flow (fake adapters)
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan,       type: agent, agent: planner, input: [ticket], output: artifacts/plan.md }
+  - { id: plan_gate,  type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
+      on_reject: { to: plan, max: 3, feed: feedback } }
+  - { id: build,      type: agent, agent: builder, input: [ticket, artifacts/plan.md] }
+  - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
+  - { id: mr,         type: forge_mr, body: artifacts/plan.md }
+  - { id: final_gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged }
+`
+
+// seedDevProject creates a dev flow, fake integrations and a "dev" project
+// on first -dev boot, so tickets can be filed immediately (compose smoke).
 func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if _, err := conf.GetProjectByName(ctx, "dev"); err == nil {
 		return nil
@@ -278,6 +291,11 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	}
 	if len(projects) > 0 {
 		return nil // a real config exists; don't pollute it
+	}
+	if _, err := conf.GetFlow(ctx, "dev"); err != nil {
+		if _, err := conf.SaveFlow(ctx, "dev", devFlowYAML); err != nil {
+			return fmt.Errorf("dev flow: %w", err)
+		}
 	}
 	mk := func(port, name string) (string, error) {
 		in, err := conf.CreateIntegration(ctx, confstore.Integration{
@@ -300,23 +318,18 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if err != nil {
 		return err
 	}
-	providerID, err := mk(confstore.PortProvider, "dev-provider")
-	if err != nil {
-		return err
-	}
 	_, err = conf.CreateProject(ctx, confstore.Project{
 		Name:          "dev",
 		ForgeID:       forgeID,
 		ProvisionerID: provID,
 		HarnessID:     harnessID,
-		ProviderIDs:   []string{providerID},
 		Repo: confstore.RepoConfig{
 			URL: "https://forge.local/dev/fake-repo.git", Locator: "1",
 			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
 		},
 		Commands:    map[string]string{"setup": "true", "verify": "true"},
 		Workspace:   confstore.WorkspaceConfig{Template: "dev"},
-		DefaultFlow: "v1",
+		DefaultFlow: "dev",
 	})
 	return err
 }

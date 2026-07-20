@@ -8,7 +8,7 @@ function _layout($$renderer, $$props) {
     {
       $$renderer2.push("<!--[-1-->");
     }
-    $$renderer2.push(`<!--]--></a> <a href="/channels"${attr_class("", void 0, { "active": isActive("/channels") })}>Channels</a></nav> <div class="container">`);
+    $$renderer2.push(`<!--]--></a> <a href="/projects"${attr_class("", void 0, { "active": isActive("/projects") })}>Projects</a> <a href="/flows"${attr_class("", void 0, { "active": isActive("/flows") })}>Flows</a> <a href="/integrations"${attr_class("", void 0, { "active": isActive("/integrations") })}>Integrations</a> <a href="/settings"${attr_class("", void 0, { "active": isActive("/settings") })}>Settings</a> <a href="/channels"${attr_class("", void 0, { "active": isActive("/channels") })}>Channels</a></nav> <div class="container">`);
     children($$renderer2);
     $$renderer2.push(`<!----></div>`);
   });

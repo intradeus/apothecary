@@ -113,3 +113,7 @@ pre.log {
 
 .empty { color: var(--muted); text-align: center; padding: 40px 0; }
 .error { color: var(--red); font-size: 13px; margin-top: 8px; }
+
+/* whole-card links (projects/flows lists) */
+a.cardlink { display: flex; color: var(--text); }
+a.cardlink:hover { text-decoration: none; border-color: var(--muted); }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -80,10 +79,6 @@ func (m *Mem) DeleteIntegration(_ context.Context, id string) error {
 	var refs []string
 	for _, p := range m.projects {
 		if p.ForgeID == id || p.ProvisionerID == id || p.HarnessID == id {
-			refs = append(refs, p.Name)
-			continue
-		}
-		if slices.Contains(p.ProviderIDs, id) {
 			refs = append(refs, p.Name)
 		}
 	}

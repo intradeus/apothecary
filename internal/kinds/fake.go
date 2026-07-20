@@ -20,7 +20,6 @@ func RegisterFakes(r *Registry) {
 	r.RegisterForge(FakeForge{})
 	r.RegisterProvisioner(FakeProvisioner{})
 	r.RegisterHarness(FakeHarness{})
-	r.RegisterProvider(FakeProvider{})
 }
 
 // --- forge ------------------------------------------------------------------
@@ -106,14 +105,18 @@ func (h *fakeHarness) Resume(ctx context.Context, env ports.EnvID, s ports.Sessi
 	return h.runner.Resume(ctx, env, s, reply)
 }
 
-func (h *fakeHarness) Test(context.Context) error { return nil }
-func (h *fakeHarness) Binary() string             { return "true" }
-func (h *fakeHarness) InstallLayer() []string     { return nil }
-func (h *fakeHarness) EgressDomains() []string    { return nil }
-func (h *fakeHarness) SeedAuth(context.Context, ports.EnvID, []ProviderCreds) error {
-	return nil
+func (h *fakeHarness) Test(context.Context) error                  { return nil }
+func (h *fakeHarness) Binary() string                              { return "true" }
+func (h *fakeHarness) InstallLayer() []string                      { return nil }
+func (h *fakeHarness) EgressDomains() []string                     { return nil }
+func (h *fakeHarness) SeedAuth(context.Context, ports.EnvID) error { return nil }
+func (h *fakeHarness) Prepare(context.Context, ports.EnvID) error  { return nil }
+func (h *fakeHarness) Models(context.Context) ([]ModelInfo, error) {
+	return []ModelInfo{
+		{ID: "fake/fast-1", Name: "Fake · Fast 1"},
+		{ID: "fake/smart-1", Name: "Fake · Smart 1"},
+	}, nil
 }
-func (h *fakeHarness) Prepare(context.Context, ports.EnvID) error { return nil }
 
 // declaredOutput extracts the artifact path from the §3.2 contract line
 // "Before finishing you MUST write <path> (relative to repo root)."
@@ -127,30 +130,4 @@ func declaredOutput(prompt string) (string, bool) {
 		return "", false
 	}
 	return path, true
-}
-
-// --- provider ---------------------------------------------------------------
-
-type FakeProvider struct{}
-
-func (FakeProvider) Descriptor() Descriptor {
-	return Descriptor{
-		Port: "provider", Kind: "fake", Label: "Fake provider (dev)",
-		Fields: []Field{{Name: "api_key", Label: "API key", Secret: true}},
-	}
-}
-
-type fakeProvider struct{ key string }
-
-func (p fakeProvider) Test(context.Context) error { return nil }
-func (p fakeProvider) EnvVars() map[string]string {
-	if p.key == "" {
-		return map[string]string{}
-	}
-	return map[string]string{"FAKE_API_KEY": p.key}
-}
-func (p fakeProvider) EgressDomains() []string { return nil }
-
-func (FakeProvider) New(cfg Config) (Provider, error) {
-	return fakeProvider{key: cfg.Secrets["api_key"]}, nil
 }

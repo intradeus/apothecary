@@ -187,6 +187,11 @@ func (a *Adapter) invoke(ctx context.Context, env ports.EnvID, script string) (p
 	}
 	result := parseEvents(res.Output)
 	if res.ExitCode != 0 {
+		// Failed invocations often produce no text events at all (startup
+		// errors: unknown model, bad auth …) — the stage log and the
+		// on_fail feed must carry the RAW output, not an empty transcript
+		// (found live: a failed plan stage logged nothing).
+		result.Output = res.Output
 		return result, fmt.Errorf("opencode exit %d: %s", res.ExitCode, tail(res.Output, 2048))
 	}
 	return result, nil

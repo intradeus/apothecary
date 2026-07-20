@@ -18,6 +18,23 @@ if [ -e "$LOCK" ]; then
   exit 0
 fi
 
+# FAIL-CLOSED (found live in M9): if anything below errors, slam egress
+# shut rather than leaving it open. Loopback + established + the Coder
+# gateway port stay up so the workspace remains reachable for inspection;
+# the lock file is NOT written, so envcheck's firewall_initialized step
+# fails loudly.
+fail_closed() {
+  echo "firewall: FATAL — closing all egress" >&2
+  iptables -F OUTPUT 2>/dev/null || true
+  iptables -P OUTPUT DROP 2>/dev/null || true
+  iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+  iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+  GW="$(ip route | awk '/default/ {print $3; exit}')" || true
+  [ -n "${GW:-}" ] && iptables -A OUTPUT -d "$GW" -p tcp --dport "${FACTORY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
+  exit 1
+}
+trap fail_closed ERR
+
 REPO_URL="${FACTORY_REPO_URL:-}"
 CODER_PORT="${FACTORY_CODER_PORT:-7080}"
 
@@ -26,10 +43,13 @@ if [ -n "$REPO_URL" ]; then
   REPO_HOST="$(echo "$REPO_URL" | sed -E 's#^[a-z+]+://##; s#^[^@]*@##; s#[:/].*$##')"
 fi
 
-DOMAINS="api.anthropic.com api.openai.com proxy.golang.org sum.golang.org registry.npmjs.org"
-[ -n "$REPO_HOST" ] && DOMAINS="$DOMAINS $REPO_HOST"
-# Extra provider hosts (template variable, e.g. an API router like
-# openrouter.ai when subscription auth goes through one).
+# The allowlist is fully DERIVED (DESIGN2 §8.4): the engine computes it —
+# repo host ∪ adapter contributions ∪ project extras — and passes it via
+# FACTORY_EXTRA_DOMAINS. No names are baked into this script; only the
+# mechanics live here. REPO_HOST stays as belt-and-braces for custom
+# templates that pass v1 params only.
+DOMAINS=""
+[ -n "$REPO_HOST" ] && DOMAINS="$REPO_HOST"
 [ -n "${FACTORY_EXTRA_DOMAINS:-}" ] && DOMAINS="$DOMAINS $FACTORY_EXTRA_DOMAINS"
 
 GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
@@ -39,7 +59,11 @@ GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
 echo "firewall: pinning allowed hosts"
 ALLOW_IPS=""
 for d in $DOMAINS; do
-  ips="$(getent ahostsv4 "$d" | awk '{print $1}' | sort -u)"
+  # `|| true`: an unresolvable name (typo'd extra_domain) must NOT abort
+  # the script under set -e/pipefail — it is simply not allowed, and its
+  # envcheck egress step fails by name (found live: the abort left the
+  # workspace fail-open).
+  ips="$(getent ahostsv4 "$d" | awk '{print $1}' | sort -u || true)"
   if [ -z "$ips" ]; then
     echo "firewall: WARNING: cannot resolve $d" >&2
     continue

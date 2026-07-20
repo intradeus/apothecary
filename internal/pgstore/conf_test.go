@@ -50,7 +50,6 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 
 	p := confstore.Project{
 		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessID: "int1",
-		ProviderIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		Workspace:   confstore.WorkspaceConfig{Template: "factory", ExtraDomains: []string{"pypi.org"}},
@@ -64,7 +63,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		t.Fatalf("project roundtrip = %+v, %v", gp, err)
 	}
 
-	// Integration referenced (incl. provider_ids jsonb) → ErrReferenced.
+	// Integration referenced by the project → ErrReferenced.
 	if err := s.DeleteIntegration(ctx, "int1"); !errors.Is(err, confstore.ErrReferenced) ||
 		!strings.Contains(err.Error(), "web") {
 		t.Fatalf("referenced delete = %v", err)

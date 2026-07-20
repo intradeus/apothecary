@@ -124,24 +124,16 @@ func cmdImport(args []string) error {
 	}
 	created("integration", "harness/opencode "+harness.ID)
 
-	var providerIDs []string
+	// Model auth is harness-owned (post-M8): provider API keys from the v1
+	// env vars are NOT imported — fold them into the harness auth_json
+	// (opencode reads its auth.json natively).
 	for kind, envName := range map[string]string{
 		"anthropic": cfg.Providers.AnthropicEnv,
 		"openai":    cfg.Providers.OpenAIEnv,
 	} {
-		v := config.ResolveEnv(envName)
-		if v == "" {
-			continue
+		if config.ResolveEnv(envName) != "" {
+			fmt.Printf("note: $%s is set — add this %s key to the opencode integration's auth_json in the UI\n", envName, kind)
 		}
-		p, err := conf.CreateIntegration(ctx, confstore.Integration{
-			Port: confstore.PortProvider, Kind: kind, Name: kind,
-			Secrets: map[string]string{"api_key": v},
-		})
-		if err != nil {
-			return fmt.Errorf("provider %s: %w", kind, err)
-		}
-		providerIDs = append(providerIDs, p.ID)
-		created("integration", "provider/"+kind+" "+p.ID)
 	}
 
 	template := cfg.Coder.Template
@@ -153,7 +145,6 @@ func cmdImport(args []string) error {
 		ForgeID:       forge.ID,
 		ProvisionerID: provisioner.ID,
 		HarnessID:     harness.ID,
-		ProviderIDs:   providerIDs,
 		Repo: confstore.RepoConfig{
 			URL:           cfg.Repo.URL,
 			Locator:       strconv.Itoa(cfg.GitLab.ProjectID),

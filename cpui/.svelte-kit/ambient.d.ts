@@ -52,6 +52,7 @@ declare module '$env/static/private' {
 	export const CLAUDE_CODE_EXECPATH: string;
 	export const GDK_BACKEND: string;
 	export const ELECTRON_NO_ATTACH_CONSOLE: string;
+	export const GOPATH: string;
 	export const MCP_CONNECTION_NONBLOCKING: string;
 	export const LC_TIME: string;
 	export const XDG_RUNTIME_DIR: string;
@@ -65,6 +66,7 @@ declare module '$env/static/private' {
 	export const VSCODE_CWD: string;
 	export const SVELTEKIT_FORK: string;
 	export const GIT_CONFIG_COUNT: string;
+	export const GOTELEMETRY_GOPLS_CLIENT_START_TIME: string;
 	export const GIT_EDITOR: string;
 	export const SHLVL: string;
 	export const VSCODE_PID: string;
@@ -73,6 +75,8 @@ declare module '$env/static/private' {
 	export const LC_MEASUREMENT: string;
 	export const npm_package_name: string;
 	export const LC_IDENTIFICATION: string;
+	export const XDG_SESSION_CLASS: string;
+	export const npm_config_npm_version: string;
 	export const CLAUDE_CODE_ENTRYPOINT: string;
 	export const PWD: string;
 	export const GTK_MODULES: string;
@@ -86,6 +90,7 @@ declare module '$env/static/private' {
 	export const QT_QPA_PLATFORMTHEME: string;
 	export const MAIL: string;
 	export const LC_MONETARY: string;
+	export const GOMODCACHE: string;
 	export const COLOR: string;
 	export const DBUS_SESSION_BUS_ADDRESS: string;
 	export const npm_package_json: string;
@@ -97,7 +102,6 @@ declare module '$env/static/private' {
 	export const CLAUDE_EFFORT: string;
 	export const LOGNAME: string;
 	export const npm_command: string;
-	export const npm_config_npm_version: string;
 	export const FNM_RESOLVE_ENGINES: string;
 	export const CLAUDE_PID: string;
 	export const LC_ADDRESS: string;
@@ -109,7 +113,6 @@ declare module '$env/static/private' {
 	export const SHELL: string;
 	export const npm_config_global_prefix: string;
 	export const VSCODE_ESM_ENTRYPOINT: string;
-	export const XDG_SESSION_CLASS: string;
 	export const NODE: string;
 	export const npm_config_local_prefix: string;
 	export const XAUTHORITY: string;
@@ -137,6 +140,7 @@ declare module '$env/static/private' {
 	export const MOTD_SHOWN: string;
 	export const HOME: string;
 	export const FNM_NODE_DIST_MIRROR: string;
+	export const GOTELEMETRY_GOPLS_CLIENT_TOKEN: string;
 	export const CLAUDE_AGENT_SDK_VERSION: string;
 	export const XDG_SEAT_PATH: string;
 	export const LANG: string;
@@ -150,6 +154,7 @@ declare module '$env/static/private' {
 	export const VSCODE_L10N_BUNDLE_LOCATION: string;
 	export const DEBUGINFOD_URLS: string;
 	export const INIT_CWD: string;
+	export const GOPROXY: string;
 	export const CHROME_DESKTOP: string;
 }
 
@@ -251,6 +256,7 @@ declare module '$env/dynamic/private' {
 		CLAUDE_CODE_EXECPATH: string;
 		GDK_BACKEND: string;
 		ELECTRON_NO_ATTACH_CONSOLE: string;
+		GOPATH: string;
 		MCP_CONNECTION_NONBLOCKING: string;
 		LC_TIME: string;
 		XDG_RUNTIME_DIR: string;
@@ -264,6 +270,7 @@ declare module '$env/dynamic/private' {
 		VSCODE_CWD: string;
 		SVELTEKIT_FORK: string;
 		GIT_CONFIG_COUNT: string;
+		GOTELEMETRY_GOPLS_CLIENT_START_TIME: string;
 		GIT_EDITOR: string;
 		SHLVL: string;
 		VSCODE_PID: string;
@@ -272,6 +279,8 @@ declare module '$env/dynamic/private' {
 		LC_MEASUREMENT: string;
 		npm_package_name: string;
 		LC_IDENTIFICATION: string;
+		XDG_SESSION_CLASS: string;
+		npm_config_npm_version: string;
 		CLAUDE_CODE_ENTRYPOINT: string;
 		PWD: string;
 		GTK_MODULES: string;
@@ -285,6 +294,7 @@ declare module '$env/dynamic/private' {
 		QT_QPA_PLATFORMTHEME: string;
 		MAIL: string;
 		LC_MONETARY: string;
+		GOMODCACHE: string;
 		COLOR: string;
 		DBUS_SESSION_BUS_ADDRESS: string;
 		npm_package_json: string;
@@ -296,7 +306,6 @@ declare module '$env/dynamic/private' {
 		CLAUDE_EFFORT: string;
 		LOGNAME: string;
 		npm_command: string;
-		npm_config_npm_version: string;
 		FNM_RESOLVE_ENGINES: string;
 		CLAUDE_PID: string;
 		LC_ADDRESS: string;
@@ -308,7 +317,6 @@ declare module '$env/dynamic/private' {
 		SHELL: string;
 		npm_config_global_prefix: string;
 		VSCODE_ESM_ENTRYPOINT: string;
-		XDG_SESSION_CLASS: string;
 		NODE: string;
 		npm_config_local_prefix: string;
 		XAUTHORITY: string;
@@ -336,6 +344,7 @@ declare module '$env/dynamic/private' {
 		MOTD_SHOWN: string;
 		HOME: string;
 		FNM_NODE_DIST_MIRROR: string;
+		GOTELEMETRY_GOPLS_CLIENT_TOKEN: string;
 		CLAUDE_AGENT_SDK_VERSION: string;
 		XDG_SEAT_PATH: string;
 		LANG: string;
@@ -349,6 +358,7 @@ declare module '$env/dynamic/private' {
 		VSCODE_L10N_BUNDLE_LOCATION: string;
 		DEBUGINFOD_URLS: string;
 		INIT_CWD: string;
+		GOPROXY: string;
 		CHROME_DESKTOP: string;
 		[key: `PUBLIC_${string}`]: undefined;
 		[key: `${string}`]: string | undefined;

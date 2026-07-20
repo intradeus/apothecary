@@ -16,8 +16,21 @@ import (
 	"factory/internal/kinds"
 	"factory/internal/resolve"
 	"factory/internal/secrets"
-	"factory/internal/seed"
 )
+
+// v1FlowDoc is this suite's user-created flow (the product ships none):
+// gated build ending in an MR — enough to drive both human gates.
+const v1FlowDoc = `name: v1
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan,       type: agent, agent: planner, input: [ticket], output: artifacts/plan.md }
+  - { id: plan_gate,  type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
+      on_reject: { to: plan, max: 3, feed: feedback } }
+  - { id: build,      type: agent, agent: builder, input: [ticket, artifacts/plan.md] }
+  - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
+  - { id: mr,         type: forge_mr, body: artifacts/plan.md }
+  - { id: final_gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged }
+`
 
 // confEnv is the full config-plane stack over Mem + fake kinds: the same
 // wiring serve uses, minus Postgres.
@@ -37,10 +50,10 @@ func newConfEnv(t *testing.T) *confEnv {
 	kinds.RegisterFakes(reg)
 	conf := confstore.New(confstore.NewMem(), key)
 	conf.KindValid = reg.Valid
-	if err := seed.Flows(t.Context(), conf); err != nil {
+	if _, err := conf.SaveFlow(t.Context(), "v1", v1FlowDoc); err != nil {
 		t.Fatal(err)
 	}
-	resolver := resolve.New(conf, reg, "", 8080)
+	resolver := resolve.New(conf, reg, "", 8080, "")
 	t.Cleanup(resolver.Close)
 
 	store := event.NewMemStore()
@@ -98,8 +111,11 @@ func (x *confEnv) wizard(t *testing.T) string {
 	}
 	forgeID := mk("forge", "f", map[string]string{"token": "glpat-PLANTED-forge-token"})
 	provID := mk("provisioner", "c", nil)
-	harnessID := mk("harness", "h", nil)
-	providerID := mk("provider", "p", map[string]string{"api_key": "sk-PLANTED-provider-key"})
+	// Model auth is harness-owned: the second planted secret rides in
+	// auth_json, exercising the real credential path.
+	harnessID := mk("harness", "h", map[string]string{
+		"auth_json": `{"openrouter":{"type":"api","key":"sk-PLANTED-provider-key"}}`,
+	})
 
 	// Repo picker.
 	resp, data := x.do(t, "GET", "/api/integrations/"+forgeID+"/repos", nil, nil)
@@ -114,12 +130,13 @@ func (x *confEnv) wizard(t *testing.T) string {
 
 	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
 		"name": "web", "forge_id": forgeID, "provisioner_id": provID,
-		"harness_id": harnessID, "provider_ids": []string{providerID},
+		"harness_id": harnessID,
 		"repo": map[string]string{
 			"url": repos[0].URL, "locator": repos[0].Locator, "default_branch": repos[0].DefaultBranch,
 		},
-		"commands":  map[string]string{"verify": "true"},
-		"workspace": map[string]any{"template": "dev"},
+		"commands":     map[string]string{"verify": "true"},
+		"workspace":    map[string]any{"template": "dev"},
+		"default_flow": "v1",
 	}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create project = %d: %s", resp.StatusCode, data)

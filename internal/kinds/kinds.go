@@ -73,6 +73,13 @@ type RepoInfo struct {
 	DefaultBranch string `json:"default_branch"`
 }
 
+// ModelInfo is one model a harness can route to: ID is the exact
+// `provider/model` string flows use (`defaults.model`, stage `model:`).
+type ModelInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // ForgeAccount is the account-level forge client: token probe, repo
 // browsing, git credentials and egress contribution.
 type ForgeAccount interface {
@@ -112,16 +119,10 @@ type ProvisionerKind interface {
 	New(cfg Config, deps ProvisionerDeps) (Provisioner, error)
 }
 
-// ProviderCreds is a resolved model-provider integration handed to
-// Harness.SeedAuth (§4): the harness writes whatever native auth format it
-// needs from these.
-type ProviderCreds struct {
-	Kind    string
-	EnvVars map[string]string
-	Secrets map[string]string
-}
-
-// Harness is the AgentRunner port plus the §4 capability surface.
+// Harness is the AgentRunner port plus the §4 capability surface. The
+// harness owns model auth entirely (post-M8 amendment): its integration
+// config carries API keys and/or subscription logins in native format —
+// there is no separate provider port.
 type Harness interface {
 	ports.AgentRunner
 	// Test statically validates config/auth material (no remote call — a
@@ -132,9 +133,13 @@ type Harness interface {
 	// InstallLayer returns Dockerfile lines installing the harness (§8.2).
 	InstallLayer() []string
 	EgressDomains() []string
-	// SeedAuth writes provider credentials in the harness's native format
-	// at bootstrap step 2.
-	SeedAuth(ctx context.Context, env ports.EnvID, providers []ProviderCreds) error
+	// Models lists the models this harness can route to given its
+	// configured auth — the exact strings flows may use. Engine-side (no
+	// workspace involved); implementations should be cheap or cached.
+	Models(ctx context.Context) ([]ModelInfo, error)
+	// SeedAuth writes the harness's auth material into the workspace at
+	// bootstrap step 2.
+	SeedAuth(ctx context.Context, env ports.EnvID) error
 	// Prepare generates harness-native config at bootstrap step 4
 	// (replaces the deleted ports.HarnessPreparer type-assert).
 	Prepare(ctx context.Context, env ports.EnvID) error
@@ -145,25 +150,12 @@ type HarnessKind interface {
 	New(cfg Config, envp ports.EnvProvisioner) (Harness, error)
 }
 
-// Provider is a model-provider integration: env mapping + probe + egress.
-type Provider interface {
-	Test(ctx context.Context) error
-	EnvVars() map[string]string
-	EgressDomains() []string
-}
-
-type ProviderKind interface {
-	Descriptor() Descriptor
-	New(cfg Config) (Provider, error)
-}
-
 // --- registry ---------------------------------------------------------------
 
 type Registry struct {
 	forges       map[string]ForgeKind
 	provisioners map[string]ProvisionerKind
 	harnesses    map[string]HarnessKind
-	providers    map[string]ProviderKind
 }
 
 func NewRegistry() *Registry {
@@ -171,14 +163,12 @@ func NewRegistry() *Registry {
 		forges:       map[string]ForgeKind{},
 		provisioners: map[string]ProvisionerKind{},
 		harnesses:    map[string]HarnessKind{},
-		providers:    map[string]ProviderKind{},
 	}
 }
 
 func (r *Registry) RegisterForge(k ForgeKind)             { r.forges[k.Descriptor().Kind] = k }
 func (r *Registry) RegisterProvisioner(k ProvisionerKind) { r.provisioners[k.Descriptor().Kind] = k }
 func (r *Registry) RegisterHarness(k HarnessKind)         { r.harnesses[k.Descriptor().Kind] = k }
-func (r *Registry) RegisterProvider(k ProviderKind)       { r.providers[k.Descriptor().Kind] = k }
 
 func (r *Registry) Forge(kind string) (ForgeKind, error) {
 	k, ok := r.forges[kind]
@@ -204,14 +194,6 @@ func (r *Registry) Harness(kind string) (HarnessKind, error) {
 	return k, nil
 }
 
-func (r *Registry) Provider(kind string) (ProviderKind, error) {
-	k, ok := r.providers[kind]
-	if !ok {
-		return nil, fmt.Errorf("unknown provider kind %q", kind)
-	}
-	return k, nil
-}
-
 // Valid reports whether (port, kind) is registered — wired into
 // confstore.Service.KindValid.
 func (r *Registry) Valid(port, kind string) bool {
@@ -224,9 +206,6 @@ func (r *Registry) Valid(port, kind string) bool {
 		return ok
 	case "harness":
 		_, ok := r.harnesses[kind]
-		return ok
-	case "provider":
-		_, ok := r.providers[kind]
 		return ok
 	}
 	return false
@@ -242,9 +221,6 @@ func (r *Registry) Descriptors() []Descriptor {
 		out = append(out, k.Descriptor())
 	}
 	for _, k := range r.harnesses {
-		out = append(out, k.Descriptor())
-	}
-	for _, k := range r.providers {
 		out = append(out, k.Descriptor())
 	}
 	sort.Slice(out, func(i, j int) bool {

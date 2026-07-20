@@ -30,6 +30,10 @@
   <a href="/inbox" class:active={isActive('/inbox')}>
     Inbox{#if pendingCount > 0}<span class="badge">{pendingCount}</span>{/if}
   </a>
+  <a href="/projects" class:active={isActive('/projects')}>Projects</a>
+  <a href="/flows" class:active={isActive('/flows')}>Flows</a>
+  <a href="/integrations" class:active={isActive('/integrations')}>Integrations</a>
+  <a href="/settings" class:active={isActive('/settings')}>Settings</a>
   <a href="/channels" class:active={isActive('/channels')}>Channels</a>
 </nav>
 

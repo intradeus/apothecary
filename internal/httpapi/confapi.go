@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"factory/internal/confstore"
 	"factory/internal/flow"
 	"factory/internal/kinds"
 	"factory/internal/secrets"
+	"factory/internal/wsimage"
 )
 
 // Config-plane routes (DESIGN2 §10). Secrets are write-only: requests carry
@@ -20,6 +22,7 @@ import (
 type IntegrationOps interface {
 	TestIntegration(ctx context.Context, id string) error
 	ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error)
+	ListModels(ctx context.Context, id string) ([]kinds.ModelInfo, error)
 }
 
 // confErr maps confstore errors to statuses: not found 404, conflicts and
@@ -159,6 +162,22 @@ func (s *Server) listIntegrationRepos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, repos)
 }
 
+func (s *Server) listIntegrationModels(w http.ResponseWriter, r *http.Request) {
+	if s.Ops == nil {
+		writeErr(w, http.StatusServiceUnavailable, "model listing is not wired")
+		return
+	}
+	models, err := s.Ops.ListModels(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	if models == nil {
+		models = []kinds.ModelInfo{}
+	}
+	writeJSON(w, http.StatusOK, models)
+}
+
 // --- projects ---------------------------------------------------------------
 
 type projectBody struct {
@@ -166,7 +185,6 @@ type projectBody struct {
 	ForgeID       string                    `json:"forge_id"`
 	ProvisionerID string                    `json:"provisioner_id"`
 	HarnessID     string                    `json:"harness_id"`
-	ProviderIDs   []string                  `json:"provider_ids"`
 	Repo          confstore.RepoConfig      `json:"repo"`
 	Commands      map[string]string         `json:"commands"`
 	Workspace     confstore.WorkspaceConfig `json:"workspace"`
@@ -176,7 +194,7 @@ type projectBody struct {
 func (b projectBody) toProject() confstore.Project {
 	return confstore.Project{
 		Name: b.Name, ForgeID: b.ForgeID, ProvisionerID: b.ProvisionerID,
-		HarnessID: b.HarnessID, ProviderIDs: b.ProviderIDs, Repo: b.Repo,
+		HarnessID: b.HarnessID, Repo: b.Repo,
 		Commands: b.Commands, Workspace: b.Workspace, DefaultFlow: b.DefaultFlow,
 	}
 }
@@ -243,6 +261,41 @@ func (s *Server) preflightProject(w http.ResponseWriter, r *http.Request) {
 		ok = ok && st.OK
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "steps": steps})
+}
+
+// startEnvCheck launches the §9 compliance gate for a project: provisions a
+// throwaway workspace and verifies the derived contract. 202 + check id;
+// the UI polls GET /api/envchecks/{id}.
+func (s *Server) startEnvCheck(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Keep bool `json:"keep"`
+	}
+	if r.ContentLength > 0 && !readJSON(w, r, &body) {
+		return
+	}
+	id, err := s.Engine.StartEnvCheck(r.Context(), r.PathValue("id"), body.Keep)
+	if err != nil {
+		if strings.Contains(err.Error(), "already running") {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"check_id": id})
+}
+
+func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.Engine.EnvCheck(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "envcheck not found (only the last 20 are kept)")
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
+
+func (s *Server) listPresets(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, wsimage.Presets())
 }
 
 // --- flows ------------------------------------------------------------------

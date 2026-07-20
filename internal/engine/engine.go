@@ -88,6 +88,10 @@ type Engine struct {
 	queue   []string // pending runs waiting for a concurrency slot (§14 FIFO)
 	pings   map[string]*Ping
 	tokens  map[string]string // runID -> per-run bearer token (regenerated each boot, see notes)
+
+	// §9 envcheck jobs: in-memory, last 20 (diagnostics, not history).
+	envchecks     map[string]*envCheckState
+	envcheckOrder []string
 }
 
 type runHandle struct {
@@ -174,10 +178,11 @@ func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
 		channels: channels,
 		clock:    time.Now,
 		newID:    func() string { return ulid.Make().String() },
-		log:      slog.Default(),
-		handles:  map[string]*runHandle{},
-		pings:    map[string]*Ping{},
-		tokens:   map[string]string{},
+		log:       slog.Default(),
+		handles:   map[string]*runHandle{},
+		pings:     map[string]*Ping{},
+		tokens:    map[string]string{},
+		envchecks: map[string]*envCheckState{},
 	}
 }
 

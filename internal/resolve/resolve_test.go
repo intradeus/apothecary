@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,14 +72,14 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 		ForgeID:       mk(confstore.PortForge, "fake", "f", nil),
 		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c", nil),
 		HarnessID:     mk(confstore.PortHarness, "fake", "h", nil),
-		ProviderIDs:   []string{mk(confstore.PortProvider, "fake", "pr", map[string]string{"api_key": "sk-fake-1"})},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		Workspace:     confstore.WorkspaceConfig{Template: "tmpl", ExtraDomains: []string{"pypi.org"}},
+		DefaultFlow:   "v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(svc, reg, "", 8080), svc, p, made, closed
+	return New(svc, reg, "", 8080, ""), svc, p, made, closed
 }
 
 func TestResolveFillsResolution(t *testing.T) {
@@ -90,9 +91,6 @@ func TestResolveFillsResolution(t *testing.T) {
 	defer res.Release()
 	if res.ProjectID != p.ID || res.HarnessKind != "fake" || res.RepoRef.Locator != "1" {
 		t.Errorf("resolution = %+v", res)
-	}
-	if res.ProviderEnv["FAKE_API_KEY"] != "sk-fake-1" {
-		t.Errorf("provider env = %v", res.ProviderEnv)
 	}
 	// Egress: repo host + project extras (fake adapters contribute none).
 	for _, want := range []string{"gitlab.example.com", "pypi.org"} {
@@ -199,14 +197,61 @@ func TestUnresolvableMapping(t *testing.T) {
 	p2, err := svc.CreateProject(ctx, confstore.Project{
 		Name: "p2", ForgeID: mk(confstore.PortForge, "f2"),
 		ProvisionerID: mk(confstore.PortProvisioner, "c2"), HarnessID: ghost.ID,
-		Repo:      confstore.RepoConfig{URL: "https://x.example/g/p.git"},
-		Workspace: confstore.WorkspaceConfig{Template: "t"},
+		Repo:        confstore.RepoConfig{URL: "https://x.example/g/p.git"},
+		Workspace:   confstore.WorkspaceConfig{Template: "t"},
+		DefaultFlow: "v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Resolve(ctx, p2.ID); !errors.Is(err, engine.ErrUnresolvable) {
 		t.Errorf("unregistered kind err = %v", err)
+	}
+}
+
+// §8: empty workspace.template ⇒ the image pipeline (content-addressed tag
+// + EnsureImage); a custom template ⇒ neither.
+func TestImagePipelineVsCustomTemplate(t *testing.T) {
+	r, svc, p, _, _ := setup(t)
+	ctx := context.Background()
+
+	// setup()'s project pins a custom template.
+	res, err := r.Resolve(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Image != "" || res.EnsureImage != nil {
+		t.Errorf("custom-template path built an image: %q", res.Image)
+	}
+	res.Release()
+
+	// Clear the template -> pipeline path.
+	p.Workspace.Template = ""
+	p.Workspace.DockerfileFragment = "RUN apt-get install -y python3"
+	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
+		t.Fatal(err)
+	}
+	res2, err := r.Resolve(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Release()
+	if !strings.HasPrefix(res2.Image, "apothecary/ws:") || res2.EnsureImage == nil {
+		t.Errorf("pipeline path: image=%q ensure=%v", res2.Image, res2.EnsureImage != nil)
+	}
+
+	// The tag is input-sensitive: a different fragment gives a new tag.
+	p.Workspace.DockerfileFragment = "RUN apt-get install -y golang"
+	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
+		t.Fatal(err)
+	}
+	res3, err := r.Resolve(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res3.Release()
+	if res3.Image == res2.Image {
+		t.Error("fragment change did not change the image tag")
 	}
 }
 

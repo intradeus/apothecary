@@ -57,6 +57,11 @@ type Adapter struct {
 
 	tunnelMu sync.Mutex
 	tunnels  map[ports.EnvID]*tunnel
+
+	// Engine-pushed template state (template.go): checked/pushed at most
+	// once per process.
+	tmplMu      sync.Mutex
+	tmplEnsured bool
 }
 
 type tunnel struct {
@@ -250,8 +255,20 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 		"--parameter", "run_id=" + spec.RunID,
 		"--parameter", "repo_url=" + spec.RepoURL,
 		"--parameter", "branch=" + spec.Branch,
-		"--yes",
 	}
+	// Pipeline path (DESIGN2 §8.4): the engine-pushed template takes the
+	// built image and the derived egress list as per-workspace parameters.
+	// The custom-template path (spec.Image == "") passes v1 params only.
+	if spec.Image != "" {
+		if err := a.EnsureTemplate(ctx); err != nil {
+			return "", err
+		}
+		args = append(args,
+			"--parameter", "workspace_image="+spec.Image,
+			"--parameter", "extra_allowed_domains="+strings.Join(spec.EgressDomains, " "),
+		)
+	}
+	args = append(args, "--yes")
 	_, stderr, code, err := a.run(ctx, args, nil)
 	if err != nil {
 		return "", err

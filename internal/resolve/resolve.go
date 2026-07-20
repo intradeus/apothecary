@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/url"
 	"sort"
 	"sync"
@@ -23,6 +22,7 @@ import (
 	"factory/internal/engine"
 	"factory/internal/kinds"
 	"factory/internal/ports"
+	"factory/internal/wsimage"
 )
 
 type Resolver struct {
@@ -30,6 +30,7 @@ type Resolver struct {
 	reg        *kinds.Registry
 	runsDir    string
 	enginePort int
+	builder    *wsimage.Builder
 
 	mu    sync.Mutex
 	cache map[string]*provEntry // provisioner integration id -> entry
@@ -43,15 +44,21 @@ type provEntry struct {
 	stale bool
 }
 
-func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int) *Resolver {
+// New builds the resolver. baseImage is the FACTORY_BASE_IMAGE override
+// ("" = build the embedded base on demand, §8.1).
+func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, baseImage string) *Resolver {
 	return &Resolver{
 		conf:       conf,
 		reg:        reg,
 		runsDir:    runsDir,
 		enginePort: enginePort,
+		builder:    wsimage.New(runsDir, baseImage),
 		cache:      map[string]*provEntry{},
 	}
 }
+
+// SetImageBuilder swaps the image builder (tests).
+func (r *Resolver) SetImageBuilder(b *wsimage.Builder) { r.builder = b }
 
 // unresolvable wraps errors that no retry will heal (§6.1): missing
 // project/integration rows and unregistered kinds.
@@ -119,33 +126,22 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		return nil, unresolvable(fmt.Errorf("harness %s: %v", harnessInt.Name, err))
 	}
 
-	// Providers: env vars + creds for SeedAuth + egress.
-	var creds []kinds.ProviderCreds
-	providerEnv := map[string]string{}
-	var providerDomains []string
-	for _, id := range p.ProviderIDs {
-		provInt, err := r.integration(ctx, id, confstore.PortProvider)
-		if err != nil {
-			return nil, err
-		}
-		pk, err := r.reg.Provider(provInt.Kind)
-		if err != nil {
-			return nil, unresolvable(err)
-		}
-		provider, err := pk.New(kindConfig(provInt))
-		if err != nil {
-			return nil, unresolvable(fmt.Errorf("provider %s: %v", provInt.Name, err))
-		}
-		maps.Copy(providerEnv, provider.EnvVars())
-		providerDomains = append(providerDomains, provider.EgressDomains()...)
-		creds = append(creds, kinds.ProviderCreds{
-			Kind:    provInt.Kind,
-			EnvVars: provider.EnvVars(),
-			Secrets: provInt.Secrets,
-		})
-	}
-
 	gitUser, gitPass := account.GitCredential()
+
+	// Image resolution (§8): custom template ⇒ the template bakes its own
+	// image, no pipeline; else compose base + fragment + harness layer,
+	// content-addressed, ensured lazily by the engine (image_built event).
+	image := ""
+	var ensureImage func(ctx context.Context) (bool, error)
+	if p.Workspace.Template == "" {
+		dockerfile := wsimage.Compose(r.builder.BaseRef(), p.Workspace.DockerfileFragment, harness.InstallLayer())
+		image = wsimage.Tag(dockerfile)
+		builder := r.builder
+		ensureImage = func(ctx context.Context) (bool, error) {
+			_, cached, err := builder.Ensure(ctx, dockerfile)
+			return cached, err
+		}
+	}
 
 	res := &engine.Resolution{
 		ProjectID:    p.ID,
@@ -156,20 +152,18 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		Commands:     p.Commands,
 		GitUser:      gitUser,
 		GitPass:      gitPass,
-		ProviderEnv:  providerEnv,
 		EgressDomains: egressDomains(p, account.EgressDomains(),
-			harness.EgressDomains(), providerDomains),
-		Image:         "", // M7: custom-template path only; the §8 pipeline lands in M9
+			harness.EgressDomains()),
+		Image:         image,
+		EnsureImage:   ensureImage,
 		HarnessKind:   harnessInt.Kind,
 		HarnessBinary: harness.Binary(),
 		Envp:          prov,
 		Runner:        harness,
 		Forge:         forge,
-		SeedAuth: func(ctx context.Context, env ports.EnvID) error {
-			return harness.SeedAuth(ctx, env, creds)
-		},
-		Prepare: harness.Prepare,
-		Release: release,
+		SeedAuth:      harness.SeedAuth,
+		Prepare:       harness.Prepare,
+		Release:       release,
 	}
 	ok = true
 	return res, nil
@@ -330,16 +324,6 @@ func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
 			return err
 		}
 		return h.Test(ctx)
-	case confstore.PortProvider:
-		pk, err := r.reg.Provider(in.Kind)
-		if err != nil {
-			return err
-		}
-		p, err := pk.New(kindConfig(in))
-		if err != nil {
-			return err
-		}
-		return p.Test(ctx)
 	}
 	return fmt.Errorf("integration %s: unknown port %q", id, in.Port)
 }
@@ -363,6 +347,28 @@ func (r *Resolver) ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, 
 		return nil, err
 	}
 	return acc.ListRepos(ctx)
+}
+
+// ListModels serves the flow editor's model browser for a harness
+// integration: the exact `provider/model` strings flows may use, given the
+// harness's configured auth. Engine-side; Models must not touch the envp.
+func (r *Resolver) ListModels(ctx context.Context, id string) ([]kinds.ModelInfo, error) {
+	in, err := r.conf.GetIntegration(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if in.Port != confstore.PortHarness {
+		return nil, fmt.Errorf("integration %s is port %s; model listing needs a harness", in.Name, in.Port)
+	}
+	hk, err := r.reg.Harness(in.Kind)
+	if err != nil {
+		return nil, err
+	}
+	h, err := hk.New(kindConfig(in), nil)
+	if err != nil {
+		return nil, err
+	}
+	return h.Models(ctx)
 }
 
 var _ engine.Resolver = (*Resolver)(nil)

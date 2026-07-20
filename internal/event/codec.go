@@ -11,6 +11,7 @@ import (
 var registry = map[Type]func() Payload{
 	TypeRunCreated:      func() Payload { return &RunCreated{} },
 	TypeEnvRequested:    func() Payload { return &EnvRequested{} },
+	TypeImageBuilt:      func() Payload { return &ImageBuilt{} },
 	TypeEnvReady:        func() Payload { return &EnvReady{} },
 	TypeEnvFailed:       func() Payload { return &EnvFailed{} },
 	TypeStageStarted:    func() Payload { return &StageStarted{} },

@@ -12,15 +12,15 @@ import (
 	"time"
 )
 
-// Ports an integration can implement (DESIGN2 §2).
+// Ports an integration can implement. The provider port was removed
+// post-M8: the harness owns model auth (see IMPLEMENTATION_NOTES).
 const (
 	PortForge       = "forge"
 	PortProvisioner = "provisioner"
 	PortHarness     = "harness"
-	PortProvider    = "provider"
 )
 
-var ValidPorts = []string{PortForge, PortProvisioner, PortHarness, PortProvider}
+var ValidPorts = []string{PortForge, PortProvisioner, PortHarness}
 
 var (
 	ErrNotFound = errors.New("not found")
@@ -78,7 +78,6 @@ type Project struct {
 	ForgeID       string            `json:"forge_id"`
 	ProvisionerID string            `json:"provisioner_id"`
 	HarnessID     string            `json:"harness_id"`
-	ProviderIDs   []string          `json:"provider_ids"`
 	Repo          RepoConfig        `json:"repo"`
 	Commands      map[string]string `json:"commands"`
 	Workspace     WorkspaceConfig   `json:"workspace"`

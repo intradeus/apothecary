@@ -3,6 +3,9 @@ package kinds
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,12 +18,8 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 	r.RegisterForge(GitLab{})
 	r.RegisterProvisioner(Coder{})
 	r.RegisterHarness(Opencode{})
-	for _, pk := range ProviderKinds() {
-		r.RegisterProvider(pk)
-	}
 	for _, ok := range [][2]string{
 		{"forge", "gitlab"}, {"provisioner", "coder"}, {"harness", "opencode"},
-		{"provider", "anthropic"}, {"provider", "openai"}, {"provider", "openrouter"},
 	} {
 		if !r.Valid(ok[0], ok[1]) {
 			t.Errorf("%s/%s not valid", ok[0], ok[1])
@@ -29,9 +28,12 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 	if r.Valid("forge", "github") || r.Valid("harness", "codex") {
 		t.Error("unregistered kinds reported valid (they arrive in M10)")
 	}
+	if r.Valid("provider", "openrouter") {
+		t.Error("the provider port was removed (harness-owned auth); nothing may register it")
+	}
 	ds := r.Descriptors()
-	if len(ds) != 6 {
-		t.Fatalf("descriptors = %d, want 6", len(ds))
+	if len(ds) != 3 {
+		t.Fatalf("descriptors = %d, want 3", len(ds))
 	}
 	// Secret fields are flagged so the UI renders write-only inputs.
 	for _, d := range ds {
@@ -68,14 +70,18 @@ func TestOpencodeHarnessCapabilities(t *testing.T) {
 	if !strings.Contains(layer, "npm install -g opencode-ai@"+OpencodeVersion) {
 		t.Errorf("install layer = %q", layer)
 	}
+	// Harness-owned auth: the harness allows every provider API it routes
+	// to, so auth.json credentials are never firewalled out.
+	domains := h.EgressDomains()
+	for _, want := range []string{"api.anthropic.com", "api.openai.com", "openrouter.ai"} {
+		if !slices.Contains(domains, want) {
+			t.Errorf("egress %v missing %s", domains, want)
+		}
+	}
 
-	// SeedAuth composes the stored auth_json with openrouter provider creds
-	// in opencode's native shape.
-	err = h.SeedAuth(context.Background(), id, []ProviderCreds{
-		{Kind: "openrouter", Secrets: map[string]string{"api_key": "sk-or-123"}},
-		{Kind: "anthropic", Secrets: map[string]string{"api_key": "sk-ant"}}, // env-var provider: no auth.json entry
-	})
-	if err != nil {
+	// SeedAuth writes the stored auth_json verbatim — it IS the model auth
+	// (harness-owned auth).
+	if err := h.SeedAuth(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
 	data, err := envp.ReadFile(context.Background(), id, "/home/factory/.local/share/opencode/auth.json")
@@ -86,41 +92,67 @@ func TestOpencodeHarnessCapabilities(t *testing.T) {
 	if err := json.Unmarshal(data, &auth); err != nil {
 		t.Fatal(err)
 	}
-	if auth["openrouter"]["key"] != "sk-or-123" || auth["openrouter"]["type"] != "api" {
-		t.Errorf("auth.json = %s", data)
-	}
 	if _, ok := auth["opencode"]; !ok {
-		t.Error("stored auth_json base lost")
-	}
-	if _, ok := auth["anthropic"]; ok {
-		t.Error("env-var providers must not land in auth.json")
+		t.Errorf("auth.json not written verbatim: %s", data)
 	}
 
-	// Bad auth_json fails Test statically.
+	// Bad auth_json fails Test statically and refuses to seed.
 	bad, _ := Opencode{}.New(Config{Secrets: map[string]string{"auth_json": "{nope"}}, envp)
 	if err := bad.Test(context.Background()); err == nil {
 		t.Error("invalid auth_json passed Test")
 	}
+	if err := bad.SeedAuth(context.Background(), id); err == nil {
+		t.Error("invalid auth_json seeded without error")
+	}
 }
 
-func TestProviderEnvVarsAndDomains(t *testing.T) {
-	for _, pk := range ProviderKinds() {
-		p, err := pk.New(Config{Secrets: map[string]string{"api_key": "sk-x"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		env := p.EnvVars()
-		if len(env) != 1 {
-			t.Errorf("%s env = %v", pk.Descriptor().Kind, env)
-		}
-		for name, v := range env {
-			if !strings.HasSuffix(name, "_API_KEY") || v != "sk-x" {
-				t.Errorf("%s -> %s=%s", pk.Descriptor().Kind, name, v)
-			}
-		}
-		if len(p.EgressDomains()) == 0 {
-			t.Errorf("%s declares no egress domains", pk.Descriptor().Kind)
-		}
+func TestOpencodeModels(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"openrouter": {"name": "OpenRouter", "models": {
+				"anthropic/claude-sonnet-4-5": {"name": "Claude Sonnet 4.5"},
+				"openai/gpt-5": {"name": "GPT-5"}
+			}},
+			"anthropic": {"name": "Anthropic", "models": {
+				"claude-sonnet-4-5": {"name": "Claude Sonnet 4.5"}
+			}}
+		}`))
+	}))
+	defer ts.Close()
+	oldURL := modelsCatalogURL
+	modelsCatalogURL = ts.URL
+	modelsCache.Lock()
+	modelsCache.catalog = nil
+	modelsCache.Unlock()
+	defer func() {
+		modelsCatalogURL = oldURL
+		modelsCache.Lock()
+		modelsCache.catalog = nil
+		modelsCache.Unlock()
+	}()
+
+	// Only providers present in auth_json are listed; unknown auth entries
+	// (subscription logins the catalog doesn't know) are skipped silently.
+	h, _ := Opencode{}.New(Config{Secrets: map[string]string{
+		"auth_json": `{"openrouter":{"type":"api","key":"k"},"bespoke-login":{"type":"oauth"}}`,
+	}}, nil)
+	models, err := h.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, len(models))
+	for i, m := range models {
+		ids[i] = m.ID
+	}
+	want := []string{"openrouter/anthropic/claude-sonnet-4-5", "openrouter/openai/gpt-5"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v (anthropic must be absent: not in auth_json)", ids, want)
+	}
+
+	// No auth configured → a named error, not an avalanche of 167 providers.
+	bare, _ := Opencode{}.New(Config{}, nil)
+	if _, err := bare.Models(context.Background()); err == nil || !strings.Contains(err.Error(), "auth_json") {
+		t.Errorf("no-auth err = %v", err)
 	}
 }
 

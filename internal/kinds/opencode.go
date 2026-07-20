@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"net/http"
+	"sort"
+	"sync"
+	"time"
 
 	opencodeadapter "factory/internal/adapters/opencode"
 	"factory/internal/ports"
@@ -22,7 +25,13 @@ func (Opencode) Descriptor() Descriptor {
 		Port: "harness", Kind: "opencode", Label: "opencode",
 		Fields: []Field{
 			{Name: "version", Label: "Version", Default: OpencodeVersion},
-			{Name: "auth_json", Label: "auth.json (subscription/router auth, optional)", Secret: true},
+			// Harness-owned auth (user decision, post-M8): this one field
+			// carries ALL model credentials — API keys and/or subscription
+			// logins — in opencode's native format. The separate provider
+			// port remains an API-level option, off the UI paved road.
+			{Name: "auth_json", Label: "auth.json — model auth (API keys and/or subscription logins), e.g. contents of ~/.local/share/opencode/auth.json",
+				Secret: true, Required: true,
+				Placeholder: `{"openrouter":{"type":"api","key":"sk-or-…"}}`},
 		},
 	}
 }
@@ -64,41 +73,112 @@ func (h *opencodeHarness) InstallLayer() []string {
 }
 
 func (h *opencodeHarness) EgressDomains() []string {
-	// The openrouter lesson (IMPLEMENTATION_NOTES M3): router auth needs
-	// its domain allowed. Provider integrations contribute their own
-	// domains; this covers auth.json-only router setups.
-	if strings.Contains(h.authJSON, "openrouter") {
-		return []string{"openrouter.ai"}
-	}
-	return nil
+	// Harness-owned auth: the harness allows every provider API it can
+	// route to, so a key inside auth.json is never blocked by the very
+	// firewall that ships with it (the M3 openrouter lesson, generalized).
+	// Deliberately broader than strictly needed — precision deferred by
+	// user decision; workspace.extra_domains remains the manual lever.
+	return []string{"api.anthropic.com", "api.openai.com", "openrouter.ai"}
 }
 
-// SeedAuth composes opencode's auth.json (bootstrap step 2): the stored
-// auth_json secret is the base, and openrouter provider integrations are
-// overlaid in opencode's native shape. Anthropic/OpenAI keys need no
-// auth.json — opencode reads their standard env vars from provider.env.
-func (h *opencodeHarness) SeedAuth(ctx context.Context, env ports.EnvID, providers []ProviderCreds) error {
-	auth := map[string]any{}
+// modelsCatalogURL is opencode's own model catalog source (models.dev —
+// the same data the CLI bundles). Package var so tests can stub it.
+var modelsCatalogURL = "https://models.dev/api.json"
+
+// modelsCache is a package-level TTL cache of the catalog: the fetch is
+// engine-side (trusted host, no firewall in play) and the catalog moves
+// slowly.
+var modelsCache struct {
+	sync.Mutex
+	fetchedAt time.Time
+	catalog   map[string]catalogProvider
+}
+
+type catalogProvider struct {
+	Name   string                  `json:"name"`
+	Models map[string]catalogModel `json:"models"`
+}
+
+type catalogModel struct {
+	Name string `json:"name"`
+}
+
+func fetchCatalog(ctx context.Context) (map[string]catalogProvider, error) {
+	modelsCache.Lock()
+	defer modelsCache.Unlock()
+	if modelsCache.catalog != nil && time.Since(modelsCache.fetchedAt) < time.Hour {
+		return modelsCache.catalog, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsCatalogURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("model catalog unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("model catalog: %d", resp.StatusCode)
+	}
+	var catalog map[string]catalogProvider
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		return nil, fmt.Errorf("model catalog: %w", err)
+	}
+	modelsCache.catalog = catalog
+	modelsCache.fetchedAt = time.Now()
+	return catalog, nil
+}
+
+// Models lists `provider/model` strings for exactly the providers the
+// harness is authenticated against — the top-level keys of auth_json are
+// opencode's provider ids, and the catalog is opencode's own (models.dev).
+func (h *opencodeHarness) Models(ctx context.Context) ([]ModelInfo, error) {
+	auth := map[string]json.RawMessage{}
 	if h.authJSON != "" {
 		if err := json.Unmarshal([]byte(h.authJSON), &auth); err != nil {
-			return fmt.Errorf("opencode: auth_json: %w", err)
-		}
-	}
-	for _, p := range providers {
-		if p.Kind == "openrouter" {
-			if key := p.Secrets["api_key"]; key != "" {
-				auth["openrouter"] = map[string]any{"type": "api", "key": key}
-			}
+			return nil, fmt.Errorf("opencode: auth_json: %w", err)
 		}
 	}
 	if len(auth) == 0 {
+		return nil, fmt.Errorf("opencode: no providers configured — set auth_json on the integration first")
+	}
+	catalog, err := fetchCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []ModelInfo
+	for providerID := range auth {
+		p, ok := catalog[providerID]
+		if !ok {
+			continue // provider unknown to the catalog (e.g. bespoke auth entries)
+		}
+		for modelID, m := range p.Models {
+			name := m.Name
+			if name == "" {
+				name = modelID
+			}
+			out = append(out, ModelInfo{
+				ID:   providerID + "/" + modelID,
+				Name: p.Name + " · " + name,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// SeedAuth writes the stored auth_json — THE model-auth artifact
+// (harness-owned auth) — into the workspace at bootstrap step 2.
+func (h *opencodeHarness) SeedAuth(ctx context.Context, env ports.EnvID) error {
+	if h.authJSON == "" {
 		return nil
 	}
-	data, err := json.MarshalIndent(auth, "", "  ")
-	if err != nil {
-		return err
+	if !json.Valid([]byte(h.authJSON)) {
+		return fmt.Errorf("opencode: auth_json is not valid JSON")
 	}
-	return h.adapter.SeedAuthJSON(ctx, env, data)
+	return h.adapter.SeedAuthJSON(ctx, env, []byte(h.authJSON))
 }
 
 func (h *opencodeHarness) Prepare(ctx context.Context, env ports.EnvID) error {

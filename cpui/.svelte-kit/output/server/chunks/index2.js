@@ -1,28 +1,6 @@
-import "./state.svelte.js";
-import "clsx";
-import "@sveltejs/kit/internal";
-import "./exports.js";
-import "./utils2.js";
-import { w as writable } from "./index3.js";
-import "@sveltejs/kit/internal/server";
-import "./root.js";
+import "./client.js";
 import { g as getContext } from "./index.js";
-function create_updated_store() {
-  const { set, subscribe } = writable(false);
-  {
-    return {
-      subscribe,
-      // eslint-disable-next-line @typescript-eslint/require-await
-      check: async () => false
-    };
-  }
-}
-const stores = {
-  updated: /* @__PURE__ */ create_updated_store()
-};
-({
-  check: stores.updated.check
-});
+import "clsx";
 function context() {
   return getContext("__request__");
 }

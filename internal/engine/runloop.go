@@ -726,6 +726,23 @@ func (x *exec) ensureEnv() error {
 			return err
 		}
 	}
+	// §8.3: the workspace image is ensured lazily, right before
+	// provisioning; a build failure is a deterministic env_failed. Cache
+	// hits still record image_built{cached:true} (recovery re-entries may
+	// repeat the event — the log is append-only, the projection ignores it).
+	if x.res.EnsureImage != nil {
+		cached, err := x.res.EnsureImage(x.ctx)
+		if err != nil {
+			if x.ctx.Err() != nil {
+				return context.Cause(x.ctx)
+			}
+			rs.done = true
+			return x.append(&event.EnvFailed{Error: "image build: " + err.Error()})
+		}
+		if err := x.append(&event.ImageBuilt{Tag: x.res.Image, Cached: cached}); err != nil {
+			return err
+		}
+	}
 	spec := ports.EnvSpec{
 		RunID:         rs.runID,
 		RepoURL:       x.res.RepoRef.URL,

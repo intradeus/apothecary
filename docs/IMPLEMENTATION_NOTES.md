@@ -383,6 +383,18 @@ Verified against opencode 1.17.8 (pinned in the image):
   §6.3 semantics an unpinned harness resolves to the project's kind, which
   is what makes the seeded flow portable across projects (and dev mode).
   The parser accepts any slug; kind existence is preflight's question.
+- **The product ships NO built-in flows** (Lu, post-M8, superseding the
+  earlier seed design): the `flows/` dir AND the embedded seed package are
+  deleted; nothing is ever loaded from yaml at runtime and nothing is
+  seeded into production DBs. Flows are user-defined in the UI, and
+  `default_flow` is required with no fallback (the wizard demands an
+  existing flow). The DESIGN §3.1 document survives only as the parser
+  test fixture `internal/flow/testdata/v1.yaml`. `serve -dev` seeds its
+  own inline `dev` flow — fake-sandbox convenience, dev mode only.
+  `factoryd validate <file>` and import-config's flows_dir remain for
+  user-supplied files at the CLI. Lu's production DB keeps its `v1` row:
+  seeded pre-amendment and now referenced by his project — it is his user
+  data, not product config.
 - **Pre-v2 runs (no project_id) fail terminally on recovery** with an
   explicit reason, rather than spinning each boot; their environments must
   be destroyed manually (engine has no global provisioner anymore).
@@ -420,6 +432,174 @@ Verified against opencode 1.17.8 (pinned in the image):
   export the §1 FACTORY_* vars, run `factoryd import-config -config
   /etc/factory/factory.yaml` once (with the old env present), then
   `factoryd serve`.
+
+## CPUI config surface (M8, DESIGN2 §11)
+
+- **Forms are descriptor-driven end-to-end**: IntegrationForm renders from
+  `GET /api/kinds` fields — adding a backend kind (github, codex in M10)
+  needs zero frontend work. Secret inputs are write-only: password inputs
+  (textarea for `*_json` fields — a naming convention, not schema; recorded
+  as the boring heuristic), placeholder shows the stored mask, and only
+  typed keys are sent, so an untouched field keeps its value (§3 merge).
+  Clearing a secret from the UI is deliberately unsupported (edge case;
+  the API's `""`-deletes semantics remain curl-able).
+- **The project wizard is one sectioned form**, not a stepper: forge pick →
+  Browse repositories (ListRepos → click fills url/locator/branch/name) →
+  commands as free key/value rows (setup optional and labeled so) →
+  adapter picks → workspace (template required with an M9 note, fragment
+  textarea already wired for M9) → default flow. Same component edits
+  existing projects.
+- **Flow editor is a plain textarea** (§11: no component library; a code
+  editor widget is a later upgrade): Validate button surfaces the parser's
+  line-precise errors verbatim; Save bumps the content-addressed version;
+  history offers "load into editor" (restore = save that text again —
+  versions themselves stay immutable).
+- Ticket form gained the required project select (defaults to the newest
+  project); flow field empty = project default. Runs list/table carry a
+  project column and honor `/?project=` deep links from project pages.
+- Nav grew to Runs · Inbox · Projects · Flows · Integrations · Settings ·
+  Channels — flat wins over nesting at this page count.
+- **M8 verification**: svelte-check 0 errors; the full wizard sequence
+  (create integrations → Test → repo picker → project → preflight → ticket
+  on the project default flow → gates → run_completed with project_id →
+  flow validate/save/versions → settings PUT) exercised live against
+  `serve -dev` + Postgres through the exact endpoints the UI calls; the
+  production compose stack rebuilt and rolled to the new UI. The
+  real-MR-through-the-UI click-through (fresh DB, real tokens) is Lu's
+  acceptance pass, per the M5 precedent.
+
+## Harness-owned model auth (post-M8 design amendment)
+
+Lu's call after using the M8 UI: the harness/provider split read as
+redundant (his openrouter key would exist twice — as a provider integration
+AND inside opencode's auth_json). Amendment over DESIGN2 §4/§4.1, applied
+in two steps (UI first, then full backend removal on his follow-up call):
+
+- **The harness owns model auth.** opencode's `auth_json` (required,
+  relabeled) is THE place for model credentials — API keys and/or
+  subscription logins, in the harness's native format, written verbatim by
+  SeedAuth (which now takes no provider argument). Future harness kinds
+  (codex, M10) follow the same shape.
+- **The provider port is REMOVED end to end**: `Provider`/`ProviderKind`/
+  `ProviderCreds` interfaces, the anthropic/openai/openrouter kinds, the
+  fake provider, resolver provider resolution, `projects.provider_ids`
+  (migration `0003_drop_providers.sql` drops the column and deletes
+  `port='provider'` rows), confstore `PortProvider`, and the UI section.
+  Valid ports are forge|provisioner|harness.
+- `Resolution.ProviderEnv` / bootstrap's provider.env **mechanism stays**
+  (unfed, writes an empty file): it is the natural slot for a future
+  harness kind that authenticates via env var (codex + OPENAI_API_KEY) —
+  the harness would feed it, not a provider port.
+- **Egress derivation coarsens by design**: the opencode harness declares
+  the union of provider APIs it can route to (api.anthropic.com,
+  api.openai.com, openrouter.ai) unconditionally, so credentials inside
+  auth.json are never blocked by the workspace's own firewall. Broader
+  than strictly needed — accepted residual, precision explicitly deferred
+  ("update later"); `workspace.extra_domains` remains the manual lever.
+- `import-config` no longer imports provider env keys; it prints a note
+  telling the operator to fold them into the harness auth_json.
+
+## Harness model listing (post-M8)
+
+- `Harness.Models(ctx)` lists the exact `provider/model` strings flows may
+  use, given the harness's configured auth. Engine-side (no workspace):
+  the opencode kind fetches models.dev's api.json — the SAME catalog the
+  opencode CLI bundles — cached 1 h in-process, URL stubbed in tests, and
+  filters it to the top-level keys of auth_json (opencode's provider ids).
+  Unknown auth keys (bespoke subscription logins) are skipped silently; no
+  auth configured is a named error, not a 167-provider avalanche.
+- Served as `GET /api/integrations/{id}/models` (harness port only); the
+  flow editor gained an "Available models" panel — harness picker, filter,
+  click-to-copy. Discoverability only: model strings in flows remain
+  UNvalidated at save/preflight (the §6.3 rationale stands — harnesses
+  route prefixes the engine cannot second-guess).
+- Verified live: Lu's real opencode integration lists 343 openrouter
+  models through the deployed endpoint.
+- **Failed-invocation logs (found live)**: a plan stage died with
+  `harness_error` (model `anthropic/claude-sonnet-4.6` unroutable under
+  openrouter-only auth) and its stage log was EMPTY — the adapter's
+  `Output` carried only parsed text events, and startup failures produce
+  none. On nonzero exit the adapter now returns the RAW output, so the
+  stage log and the on_fail feed show the real error. Model strings under
+  router auth are `openrouter/<vendor>/<model>` — the first slash splits
+  provider/model, the rest is the model id (validModel already allowed
+  this); the models panel emits exactly these strings.
+
+## Workspace composability & dynamic envcheck (M9, DESIGN2 §8–§9)
+
+- **Single-copy embeds via `factory/workspace`**: the base-image context
+  (Dockerfile + shim + firewall) and the Coder template are `go:embed`ed by
+  a package living IN workspace/ — no duplicated files, no cross-directory
+  embed gymnastics. Base tag = `apothecary/base:<sha16 of embedded tree>`;
+  template version = `v<sha16 of template tree>`.
+- **The base image lost Go, opencode and build-essential** — toolchains are
+  fragments/presets, the harness is `InstallLayer()`. Node stays (shim
+  runtime + npm-installed harnesses). Existing fragments referencing the
+  old base ARGs (Lu's `${GO_VERSION}`) must pin versions explicitly — the
+  presets do.
+- **Composition & tags**: `wsimage.Compose` renders FROM base → USER root →
+  fragment → harness layer → USER factory; `Tag` hashes the composed file
+  (which embeds the base ref), so every input change moves the tag and
+  identical config is a docker-side no-op. Builds run one-at-a-time
+  (`docker build` via the socket, temp-dir context — no tar-stdin), logs to
+  `runs_dir/builds/<tag>.log`.
+- **image ensure is engine-side** (§8.3): between env_requested and
+  provision; failure ⇒ deterministic `env_failed{image build: …}`; the new
+  `image_built{tag, cached}` event may repeat on recovery re-entries
+  (append-only log; projection ignores it).
+- **Template push**: `EnsureTemplate` compares the provisioner's ACTIVE
+  version name against `v<sha16>` (CLI `templates versions list -o json`)
+  and pushes on drift, once per process. New params `workspace_image` /
+  `extra_allowed_domains` carry defaults, so pre-M9 creates (custom path:
+  v1 params only) keep working against the new active version. Fresh
+  deployments fall back to `templates create` when push reports the
+  template missing. Flags verified against Coder v2.35.
+- **Firewall names removed from the script**: init-firewall.sh keeps only
+  mechanics; the allowlist arrives fully derived via FACTORY_EXTRA_DOMAINS
+  (repo host kept as belt-and-braces for custom templates).
+- **workspace.template is optional again** (the M7 stopgap requirement is
+  gone): empty = managed template + built image; set = custom-template
+  escape hatch, no pipeline, no push, v1 params.
+- **Dynamic envcheck**: `engine.RunEnvCheck` derives the §9 catalog from
+  the Resolution (one egress step per domain, harness binary, image step
+  on the pipeline path) and is shared by the CLI (`envcheck -project`) and
+  the API (`POST /api/projects/{id}/envcheck` → 202 + poll
+  `GET /api/envchecks/{id}`; in-memory last 20). **Deviations from the §9/
+  §10 sketch, recorded**: the UI POLLS instead of SSE (2 s; check runs are
+  minutes long — SSE machinery wasn't worth it yet), and the manual
+  `build-image` endpoint is deferred (the envcheck image step and the run
+  path cover builds; logs land in runs_dir/builds).
+- UI: preset insert buttons (append visible fragment lines + their egress
+  domains), the template field demoted to "advanced, usually empty", and
+  an Envcheck panel (timeline of steps, keep-workspace toggle) on the
+  project page.
+- **Firewall fail-open bug (found by the acceptance run, fixed)**: an
+  unresolvable allowlist name aborted init-firewall.sh at the `getent`
+  pipeline (set -e) BEFORE any rule existed — the workspace came up with
+  open egress, which envcheck loudly caught (three failing deny steps).
+  Two fixes: `|| true` on the resolution pipeline (a typo'd domain is
+  simply not allowed; its egress step fails by name), and an ERR trap that
+  slams egress shut (loopback + established + Coder gateway only, no lock
+  file) on any unexpected script failure — fail-closed by construction.
+- **Coder version-JSON drift (found live)**: `templates versions list -o
+  json` carries NO "active" field — the CLI's Active column derives from
+  the template's `active_version_id`. The first re-check therefore
+  re-pushed and collided on the version name. activeTemplateVersion now
+  joins templates-list (active_version_id) with versions-list (id→name),
+  and a name collision falls back to `templates versions promote
+  --template=… --template-version=…` (flags verified against v2.35.2).
+- **M9 acceptance evidence** (live, Lu's machine, deployed stack):
+  greeter-factory-test (Go+make fragment) full envcheck PASS incl.
+  `verify` (`make verify` on the real repo) — first pass built
+  apothecary/base:e6830826… + ws:f9f248db… (cached=false), re-check
+  cached=true; py-smoke (python preset) PASS on its own image
+  (ws:987b4243…, base layer shared); the engine pushed template version
+  vc101fd0f… to the live Coder and provisioned real workspaces from the
+  built tags through the new parameters; induced failures produced named
+  steps — `egress:doesnotexist.invalid` (deny checks green, firewall
+  held) and a wrong Coder token surfacing Coder's 401 through the Test
+  endpoint. The make-not-found first attempt was itself the composability
+  working: the stripped base genuinely lacks what fragments don't add.
 
 ## CPUI & Matrix (M5)
 

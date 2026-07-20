@@ -173,7 +173,7 @@ stages:
 // --- scenarios --------------------------------------------------------------
 
 func TestHappyPathFullV1Flow(t *testing.T) {
-	v1, err := flow.Load("../../flows/v1.yaml")
+	v1, err := flow.Load("../flow/testdata/v1.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

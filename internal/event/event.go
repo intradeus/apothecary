@@ -12,6 +12,7 @@ type Type string
 const (
 	TypeRunCreated      Type = "run_created"
 	TypeEnvRequested    Type = "env_requested"
+	TypeImageBuilt      Type = "image_built" // DESIGN2 §6.3: pipeline ran between env_requested and env_ready
 	TypeEnvReady        Type = "env_ready"
 	TypeEnvFailed       Type = "env_failed"
 	TypeStageStarted    Type = "stage_started"
@@ -77,6 +78,13 @@ type RunCreated struct {
 }
 
 type EnvRequested struct{}
+
+// ImageBuilt records the §8 image pipeline outcome for a run's workspace
+// image; cached=true means the content-addressed tag already existed.
+type ImageBuilt struct {
+	Tag    string `json:"tag"`
+	Cached bool   `json:"cached"`
+}
 
 type EnvReady struct {
 	EnvID string `json:"env_id"`
@@ -172,6 +180,7 @@ type EnvDestroyed struct {
 
 func (*RunCreated) EventType() Type      { return TypeRunCreated }
 func (*EnvRequested) EventType() Type    { return TypeEnvRequested }
+func (*ImageBuilt) EventType() Type      { return TypeImageBuilt }
 func (*EnvReady) EventType() Type        { return TypeEnvReady }
 func (*EnvFailed) EventType() Type       { return TypeEnvFailed }
 func (*StageStarted) EventType() Type    { return TypeStageStarted }

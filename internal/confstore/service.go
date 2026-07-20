@@ -237,9 +237,6 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	if p.Commands == nil {
 		p.Commands = map[string]string{}
 	}
-	if p.ProviderIDs == nil {
-		p.ProviderIDs = []string{}
-	}
 	// commands.setup is OPTIONAL in v2 (DESIGN2 §8 decision): absent means
 	// bootstrap step 6 is skipped.
 	refs := []struct{ id, port, field string }{
@@ -259,26 +256,14 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 			return fmt.Errorf("project: %s references %s integration %q, need port %s", r.field, in.Port, in.Name, r.port)
 		}
 	}
-	for _, id := range p.ProviderIDs {
-		in, err := s.db.GetIntegration(ctx, id)
-		if err != nil {
-			return fmt.Errorf("project: provider_ids: %w", err)
-		}
-		if in.Port != PortProvider {
-			return fmt.Errorf("project: provider_ids references %s integration %q, need port provider", in.Port, in.Name)
-		}
-	}
 	if err := ValidateFragment(p.Workspace.DockerfileFragment); err != nil {
 		return err
 	}
-	// M7: the image pipeline lands in M9, so a project MUST name a
-	// user-managed template until then (§8.4 compatibility path). Recorded
-	// in IMPLEMENTATION_NOTES; the check moves behind the pipeline in M9.
-	if p.Workspace.Template == "" {
-		return fmt.Errorf("project: workspace.template is required until the image pipeline lands (M9)")
-	}
+	// workspace.template is OPTIONAL since M9: empty = the factory-managed
+	// template + built image (§8); set = the custom-template escape hatch.
+	// Flows are user-defined — there is no built-in default to fall back to.
 	if p.DefaultFlow == "" {
-		p.DefaultFlow = "v1"
+		return fmt.Errorf("project: default_flow is required (create a flow first)")
 	}
 	if _, err := s.db.GetFlow(ctx, p.DefaultFlow); err != nil {
 		return fmt.Errorf("project: default_flow %q: %w", p.DefaultFlow, err)

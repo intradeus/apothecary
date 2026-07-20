@@ -94,7 +94,7 @@ func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
 	var refs []string
 	rows, err := s.pool.Query(ctx, `
 		SELECT name FROM projects
-		WHERE forge_id=$1 OR provisioner_id=$1 OR harness_id=$1 OR provider_ids ? $1
+		WHERE forge_id=$1 OR provisioner_id=$1 OR harness_id=$1
 		ORDER BY name`, id)
 	if err != nil {
 		return err
@@ -139,18 +139,14 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	if err != nil {
 		return err
 	}
-	prov, err := json.Marshal(p.ProviderIDs)
-	if err != nil {
-		return err
-	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO projects (id, name, forge_id, provisioner_id, harness_id, provider_ids,
+		INSERT INTO projects (id, name, forge_id, provisioner_id, harness_id,
 		                      repo, commands, workspace, default_flow, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$2, forge_id=$3, provisioner_id=$4, harness_id=$5, provider_ids=$6,
-			repo=$7, commands=$8, workspace=$9, default_flow=$10, updated_at=$12`,
-		p.ID, p.Name, p.ForgeID, p.ProvisionerID, p.HarnessID, prov,
+			name=$2, forge_id=$3, provisioner_id=$4, harness_id=$5,
+			repo=$6, commands=$7, workspace=$8, default_flow=$9, updated_at=$11`,
+		p.ID, p.Name, p.ForgeID, p.ProvisionerID, p.HarnessID,
 		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt)
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
@@ -160,8 +156,8 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 
 func scanProject(row pgx.Row) (confstore.Project, error) {
 	var p confstore.Project
-	var repo, cmds, ws, prov []byte
-	err := row.Scan(&p.ID, &p.Name, &p.ForgeID, &p.ProvisionerID, &p.HarnessID, &prov,
+	var repo, cmds, ws []byte
+	err := row.Scan(&p.ID, &p.Name, &p.ForgeID, &p.ProvisionerID, &p.HarnessID,
 		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return p, err
@@ -175,13 +171,10 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 	if err := json.Unmarshal(ws, &p.Workspace); err != nil {
 		return p, err
 	}
-	if err := json.Unmarshal(prov, &p.ProviderIDs); err != nil {
-		return p, err
-	}
 	return p, nil
 }
 
-const projectCols = `id, name, forge_id, provisioner_id, harness_id, provider_ids,
+const projectCols = `id, name, forge_id, provisioner_id, harness_id,
 	repo, commands, workspace, default_flow, created_at, updated_at`
 
 func (s *Store) GetProject(ctx context.Context, id string) (confstore.Project, error) {

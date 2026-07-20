@@ -37,7 +37,9 @@ func wantErr(t *testing.T, doc, substr string, line int) {
 }
 
 func TestCanonicalV1(t *testing.T) {
-	f, err := Load("../../flows/v1.yaml")
+	// The DESIGN §3.1 document survives only as a test fixture — the
+	// product ships no built-in flows (user-defined, post-M8).
+	f, err := Load("testdata/v1.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

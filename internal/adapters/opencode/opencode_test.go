@@ -125,9 +125,15 @@ func TestRunNonzeroExitIsError(t *testing.T) {
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
 	a := New(envp, Config{})
-	_, err := a.Run(context.Background(), id, ports.AgentSpec{Agent: "builder", Model: "a/b"}, ports.AgentInput{})
+	res, err := a.Run(context.Background(), id, ports.AgentSpec{Agent: "builder", Model: "a/b"}, ports.AgentInput{})
 	if err == nil || !strings.Contains(err.Error(), "ProviderAuthError") {
 		t.Errorf("err = %v", err)
+	}
+	// The stage log and on_fail feed come from Output — on failure it must
+	// carry the RAW output (startup errors produce no text events; found
+	// live as an empty log for a failed plan stage).
+	if !strings.Contains(res.Output, "ProviderAuthError") {
+		t.Errorf("failed-run Output = %q, want raw error output", res.Output)
 	}
 }
 

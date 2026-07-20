@@ -45,21 +45,29 @@ data "coder_parameter" "branch" {
   mutable      = false
 }
 
-variable "workspace_image" {
-  description = "Pre-built factory workspace image"
-  type        = string
-  default     = "factory-workspace:latest"
+# Per-workspace parameters (DESIGN2 §8.4): image + derived egress list are
+# non-secret and per-run, so they ride as coder_parameters, not template
+# variables. Defaults keep pre-M9 (custom-path) creates working: they pass
+# only run_id/repo_url/branch.
+data "coder_parameter" "workspace_image" {
+  name         = "workspace_image"
+  display_name = "Workspace image"
+  type         = "string"
+  mutable      = false
+  default      = "factory-workspace:latest"
+}
+
+data "coder_parameter" "extra_allowed_domains" {
+  name         = "extra_allowed_domains"
+  display_name = "Egress-allowed hosts (space separated, engine-derived)"
+  type         = "string"
+  mutable      = false
+  default      = ""
 }
 
 variable "coder_port" {
   type    = number
   default = 7080
-}
-
-variable "extra_allowed_domains" {
-  description = "Additional egress-allowed hosts (space separated), e.g. an API router"
-  type        = string
-  default     = ""
 }
 
 resource "coder_agent" "main" {
@@ -107,7 +115,7 @@ resource "docker_volume" "home" {
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
   name  = "factory-ws-${lower(data.coder_parameter.run_id.value)}"
-  image = var.workspace_image
+  image = data.coder_parameter.workspace_image.value
 
   hostname = "factory-${lower(data.coder_parameter.run_id.value)}"
 
@@ -118,7 +126,7 @@ resource "docker_container" "workspace" {
     "FACTORY_REPO_URL=${data.coder_parameter.repo_url.value}",
     "FACTORY_BRANCH=${data.coder_parameter.branch.value}",
     "FACTORY_CODER_PORT=${var.coder_port}",
-    "FACTORY_EXTRA_DOMAINS=${var.extra_allowed_domains}",
+    "FACTORY_EXTRA_DOMAINS=${data.coder_parameter.extra_allowed_domains.value}",
   ]
 
   # §8/§11: containers cannot reach the host's 127.0.0.1 — this mapping is

@@ -29,18 +29,27 @@ declare module "$app/types" {
 	type MatcherParam<M> = M extends (param : string) => param is (infer U extends string) ? U : string;
 
 	export interface AppTypes {
-		RouteId(): "/" | "/channels" | "/inbox" | "/runs" | "/runs/[id]";
+		RouteId(): "/" | "/channels" | "/flows" | "/flows/[name]" | "/inbox" | "/integrations" | "/projects" | "/projects/new" | "/projects/[id]" | "/runs" | "/runs/[id]" | "/settings";
 		RouteParams(): {
+			"/flows/[name]": { name: string };
+			"/projects/[id]": { id: string };
 			"/runs/[id]": { id: string }
 		};
 		LayoutParams(): {
-			"/": { id?: string | undefined };
+			"/": { name?: string | undefined; id?: string | undefined };
 			"/channels": Record<string, never>;
+			"/flows": { name?: string | undefined };
+			"/flows/[name]": { name: string };
 			"/inbox": Record<string, never>;
+			"/integrations": Record<string, never>;
+			"/projects": { id?: string | undefined };
+			"/projects/new": Record<string, never>;
+			"/projects/[id]": { id: string };
 			"/runs": { id?: string | undefined };
-			"/runs/[id]": { id: string }
+			"/runs/[id]": { id: string };
+			"/settings": Record<string, never>
 		};
-		Pathname(): "/" | "/channels" | "/inbox" | `/runs/${string}` & {};
+		Pathname(): "/" | "/channels" | "/flows" | `/flows/${string}` & {} | "/inbox" | "/integrations" | "/projects" | "/projects/new" | `/projects/${string}` & {} | `/runs/${string}` & {} | "/settings";
 		ResolvedPathname(): `${"" | `/${string}`}${ReturnType<AppTypes['Pathname']>}`;
 		Asset(): string & {};
 	}
