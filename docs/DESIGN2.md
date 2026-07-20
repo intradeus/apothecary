@@ -19,7 +19,7 @@
 | Second harness | codex CLI (`@openai/codex`, pinned), exec mode + JSON event stream |
 | Image builds | `docker` CLI against the mounted socket; no docker Go SDK |
 | Embedded assets | `go:embed` for `workspace/` (base image context), `workspace/template/`, `flows/v1.yaml` |
-| Distribution | one factoryd OCI image + reference `docker-compose.yaml` in `deploy/` |
+| Distribution | one apothecaryd OCI image + reference `docker-compose.yaml` in `deploy/` |
 
 Everything else in DESIGN.md §0 (Go/pgx/yaml/ULID/stdlib HTTP/SvelteKit,
 Coder, opencode, GitLab) is unchanged.
@@ -31,15 +31,15 @@ environment is ignored; a missing required var refuses boot naming it:
 
 | var | req | default | meaning |
 |---|---|---|---|
-| `FACTORY_POSTGRES_DSN` | yes | — | pgx DSN |
-| `FACTORY_MASTER_KEY` | yes (serve) | — | base64 (std) of exactly 32 bytes; anything else refuses boot |
-| `FACTORY_LISTEN` | no | `127.0.0.1:8080` | unchanged semantics (reverse tunnel, loopback-only) |
-| `FACTORY_RUNS_DIR` | no | `/var/lib/factory/runs` | logs + artifacts; volume mount in Docker |
-| `FACTORY_CPUI_DIR` | no | `""` (API only) | the shipped image sets `/opt/apothecary/cpui` |
-| `FACTORY_OTEL_ENDPOINT` | no | `""` (disabled) | OTLP/gRPC collector |
-| `FACTORY_BASE_IMAGE` | no | `""` (build embedded, §8.1) | expert override of the base workspace image ref |
+| `APOTHECARY_POSTGRES_DSN` | yes | — | pgx DSN |
+| `APOTHECARY_MASTER_KEY` | yes (serve) | — | base64 (std) of exactly 32 bytes; anything else refuses boot |
+| `APOTHECARY_LISTEN` | no | `127.0.0.1:8080` | unchanged semantics (reverse tunnel, loopback-only) |
+| `APOTHECARY_RUNS_DIR` | no | `/var/lib/apothecary/runs` | logs + artifacts; volume mount in Docker |
+| `APOTHECARY_CPUI_DIR` | no | `""` (API only) | the shipped image sets `/opt/apothecary/cpui` |
+| `APOTHECARY_OTEL_ENDPOINT` | no | `""` (disabled) | OTLP/gRPC collector |
+| `APOTHECARY_BASE_IMAGE` | no | `""` (build embedded, §8.1) | expert override of the base workspace image ref |
 
-Commands: `factoryd keygen` prints a fresh base64 master key and nothing
+Commands: `apothecaryd keygen` prints a fresh base64 master key and nothing
 else. `serve` loses `-config` and keeps `-dev`. `validate`,
 `rebuild-projections` unchanged. `envcheck` and `import-config` per §9/§14.
 
@@ -110,7 +110,7 @@ as-is (not folded into integrations in v2).
 - Ciphertext layout: `nonce(24 bytes) || secretbox(plaintext)`; plaintext is
   a JSON object of the kind's secret fields, e.g. `{"token":"glpat-…"}`.
   Empty secrets = empty bytea.
-- Key: decoded `FACTORY_MASTER_KEY`. Wrong key at decrypt (any integration)
+- Key: decoded `APOTHECARY_MASTER_KEY`. Wrong key at decrypt (any integration)
   fails the operation with a clear "master key mismatch" error — never
   silently returns garbage.
 - **API masking (MUST):** GET responses render each secret field as
@@ -292,7 +292,7 @@ absent = skipped (no event, log line only). `RunBootstrap` takes the
   exists and constructs) → flow exists in the DB → **harness check**: flow
   stages that pin `harness:` must name the project's harness kind (one
   harness per project; mixed-harness flows out of scope) → `CheckAccess` →
-  `FileExists` (agents_md, `.factory/agents/`) → `run_ref` resolution.
+  `FileExists` (agents_md, `.apothecary/agents/`) → `run_ref` resolution.
   **Model strings are deliberately NOT validated against provider kinds**:
   harnesses route `provider/model` themselves (openrouter serves
   `anthropic/…`), so any such check would false-negative. Refusals name the
@@ -336,7 +336,7 @@ openssh-client/sudo/iptables/iproute2/dnsutils, Node (shim runtime),
 code-server, the `factory` user, shim + firewall + sudoers exactly as
 today. Tag: `apothecary/base:<hex sha256[:16] of the embedded tree>`;
 ensured on demand (`docker image inspect` → build from embedded context).
-`FACTORY_BASE_IMAGE` overrides the ref entirely (expert; envcheck gates).
+`APOTHECARY_BASE_IMAGE` overrides the ref entirely (expert; envcheck gates).
 
 ### 8.2 Composition (per project)
 
@@ -381,7 +381,7 @@ name = `v<sha256[:16] of embedded template tree>`; before Provision the
 adapter compares the active version name and pushes when drifted
 (idempotent, cached in memory). Template deltas from v1: `workspace_image`
 and `extra_allowed_domains` become **`coder_parameter`s** (non-secret ✓)
-wired to the container image and `FACTORY_EXTRA_DOMAINS`; everything else
+wired to the container image and `APOTHECARY_EXTRA_DOMAINS`; everything else
 (per-run network, NET_ADMIN, home volume, host-gateway for the Coder
 agent) is unchanged.
 
@@ -390,7 +390,7 @@ The firewall allowlist is **fully derived**: engine computes
 adapter's `EgressDomains()` ∪ `workspace.extra_domains`, deduped/sorted.
 `init-firewall.sh` drops its built-in provider/registry names and keeps
 only mechanics: resolve-then-pin, gateway allowance on the Coder port,
-`FACTORY_EXTRA_DOMAINS` consumption.
+`APOTHECARY_EXTRA_DOMAINS` consumption.
 
 **Custom template escape hatch:** `workspace.template` set ⇒ the engine
 never pushes, passes only v1's params (run_id/repo_url/branch), skips the
@@ -406,7 +406,7 @@ step reports `{id, title, status: pass|fail|skip, detail}`:
 |---|---|---|
 | `provision` | project's image/params (or custom template) | env ready |
 | `tunnel` | always | workspace curls the engine's loopback probe endpoint through the reverse tunnel |
-| `shim` | always | `/opt/factory/ask-human.mjs` present, `node` executes it with `--selfcheck` |
+| `shim` | always | `/opt/apothecary/ask-human.mjs` present, `node` executes it with `--selfcheck` |
 | `firewall_deny_http` | always | `curl https://example.com` fails |
 | `firewall_deny_dns` | always | resolving a non-pinned name fails |
 | `egress:<domain>` | one per derived allowlist entry | TCP+TLS connect succeeds — **any** HTTP status counts (401/403 fine); connectivity, not auth, is under test |
@@ -423,7 +423,7 @@ API: `POST /api/projects/{id}/envcheck {keep?: bool}` → `202 {check_id}`
 /api/envchecks/{id}` → status + steps; `GET /api/envchecks/{id}/events` →
 SSE. Results are in-memory (last 20) + a log file under
 `runs_dir/envchecks/`; not events, not runs — diagnostics, not history.
-CLI: `factoryd envcheck -project <name|id> [-keep]` (drives the same code
+CLI: `apothecaryd envcheck -project <name|id> [-keep]` (drives the same code
 path; requires the env vars of §1).
 
 ## 10. HTTP API (delta)
@@ -506,7 +506,7 @@ implementation and drift recorded (M3 precedent).
   documented residual** (v1 §5.1 precedent; mitigation unchanged: branch
   output is human-reviewed).
 - `Prepare`: writes codex config (`$CODEX_HOME/config.toml`) registering
-  the `ask_human` MCP stdio server (`node /opt/factory/ask-human.mjs`) and
+  the `ask_human` MCP stdio server (`node /opt/apothecary/ask-human.mjs`) and
   non-interactive defaults. Nothing lands in the repo.
 - `SeedAuth`: `OPENAI_API_KEY` arrives via provider.env (openai provider);
   optional `auth_json` secret (ChatGPT subscription) written to
@@ -516,7 +516,7 @@ implementation and drift recorded (M3 precedent).
   cost) — budgets ride `max_total_turns`, which §3 designed for exactly
   this.
 
-## 14. `factoryd import-config`
+## 14. `apothecaryd import-config`
 
 `import-config -config /etc/factory/factory.yaml [-force]` — one-shot,
 requires the v1 env vars (`GITLAB_TOKEN` etc.) present since the file only
@@ -532,16 +532,16 @@ row.
 
 ## 15. Distribution (`deploy/`)
 
-- **Image** (multi-stage): build CPUI (node) → build factoryd
-  (CGO_DISABLED) → runtime layer containing factoryd, `/opt/apothecary/
+- **Image** (multi-stage): build CPUI (node) → build apothecaryd
+  (CGO_DISABLED) → runtime layer containing apothecaryd, `/opt/apothecary/
   cpui`, the pinned `coder` CLI binary, the `docker` CLI, ca-certs, git
-  not required. `ENTRYPOINT ["factoryd","serve"]`; `FACTORY_CPUI_DIR`
+  not required. `ENTRYPOINT ["apothecaryd","serve"]`; `APOTHECARY_CPUI_DIR`
   preset. Version-tagged; `latest` floats.
-- **Compose** (reference): services `factoryd` (`network_mode: host`,
+- **Compose** (reference): services `apothecaryd` (`network_mode: host`,
   mounts `/var/run/docker.sock` and a `factory-runs` volume, `env_file`)
   and `postgres:16` (`network_mode: host`, listening `127.0.0.1:15432` —
   non-default port per the observability-stack collision precedent,
-  `factory-pgdata` volume, healthcheck; factoryd `depends_on` healthy).
+  `factory-pgdata` volume, healthcheck; apothecaryd `depends_on` healthy).
   Host networking keeps `127.0.0.1:8080` semantics and the reverse tunnel
   byte-identical to the bare-metal deployment (the `-R` target is the
   engine's own loopback wherever it runs). Bridge mode is a documented
@@ -557,7 +557,7 @@ enforcements: secrets encrypted at rest (secretbox, §3), write-only over
 the API, never in events/logs/parameters/telemetry; template invariants
 engine-pushed; user-supplied Dockerfile fragments restricted (§8.2) and
 everything user-customizable gated by deterministic envcheck (§9).
-**Residuals (documented):** `FACTORY_MASTER_KEY` lives in the container
+**Residuals (documented):** `APOTHECARY_MASTER_KEY` lives in the container
 env (operator-controlled host; the standard trade-off); the docker socket
 mount makes the engine root-equivalent on the host — it joins Coder as
 literal trusted control plane; fragments execute as root at build time —

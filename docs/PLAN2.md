@@ -24,7 +24,7 @@ Every knob belongs to exactly one of three planes:
 
 | Plane | Owner | Mechanism | Contents |
 |---|---|---|---|
-| **Deployment** | operator installing the service | env vars on the container | `FACTORY_LISTEN`, `FACTORY_POSTGRES_DSN`, `FACTORY_MASTER_KEY`, `FACTORY_RUNS_DIR`, `FACTORY_OTEL_ENDPOINT` |
+| **Deployment** | operator installing the service | env vars on the container | `APOTHECARY_LISTEN`, `APOTHECARY_POSTGRES_DSN`, `APOTHECARY_MASTER_KEY`, `APOTHECARY_RUNS_DIR`, `APOTHECARY_OTEL_ENDPOINT` |
 | **Policy** | user, in the UI | `settings` table | concurrency/env limits, reaper windows |
 | **User config** | user, in the UI | DB tables below | integrations, projects, flows, workspace contents, channels |
 
@@ -78,8 +78,8 @@ The existing `channels` table already has this shape; it may fold into
 UI-entered secrets land in the DB, so the v1 plaintext-jsonb residual
 (§9/§15) goes away. NaCl secretbox (`golang.org/x/crypto` — new dependency,
 recorded here per the no-new-deps rule) with a 32-byte key from
-`FACTORY_MASTER_KEY` (env var — decision #2). That key is the one secret
-that stays outside the UI; `factoryd keygen` generates it at install time.
+`APOTHECARY_MASTER_KEY` (env var — decision #2). That key is the one secret
+that stays outside the UI; `apothecaryd keygen` generates it at install time.
 
 API rules: secret fields are **write-only** — responses return a mask
 (`•••• last4`), never the value; secrets never appear in events, logs, or
@@ -171,7 +171,7 @@ because envcheck **proves the contract deterministically**.
 - The Forge port gains `ListRepos(ctx)` so project creation offers a repo
   dropdown after the forge account connects. PAT auth now; OAuth only if
   multi-user ever happens.
-- Agent specs (`.factory/agents/`) **stay in the target repo** — "prompts
+- Agent specs (`.apothecary/agents/`) **stay in the target repo** — "prompts
   versioned with the code they govern" is a v1 principle worth keeping.
   Revisit only on real friction.
 - `commands.setup` becomes **optional** (recommendation, veto-able): empty
@@ -181,25 +181,25 @@ because envcheck **proves the contract deterministically**.
 
 ## 9. Distribution: apothecary as a Docker service (decision #3)
 
-- **One image** containing factoryd, the built CPUI, and the pinned `coder`
+- **One image** containing apothecaryd, the built CPUI, and the pinned `coder`
   CLI; a reference `docker-compose.yaml` runs it with Postgres. Host network
   mode by default (Linux target; precedent: the observability stack), so
   `listen 127.0.0.1:8080` behaves exactly as today; Postgres binds a
   loopback port. Bridge mode with published ports is the portable
   alternative, detailed in DESIGN2.
-- **Docker socket mounted** into the factoryd container for §6 image builds.
+- **Docker socket mounted** into the apothecaryd container for §6 image builds.
   The engine was already trusted control plane; the socket makes that
   literal — documented residual alongside Coder's own socket (§15 posture).
 - The reverse tunnel is namespace-agnostic: `coder ssh -R` targets the
-  engine's own loopback wherever the engine runs, so containerizing factoryd
+  engine's own loopback wherever the engine runs, so containerizing apothecaryd
   changes nothing about the workspace→engine path.
-- `FACTORY_RUNS_DIR` is a volume mount; migrations keep applying at boot.
+- `APOTHECARY_RUNS_DIR` is a volume mount; migrations keep applying at boot.
 - Coder itself stays an **external integration** (URL + token), user-managed
   — not bundled in the compose stack.
 
 ## 10. Migration
 
-`factoryd import-config -config factory.yaml` — one-shot: reads the v1 file
+`apothecaryd import-config -config factory.yaml` — one-shot: reads the v1 file
 + env vars, creates the integrations, the one project, imports `flows_dir`
 into the flows table. The current setup survives verbatim; the file is
 retired afterwards.
@@ -208,7 +208,7 @@ retired afterwards.
 
 | # | deliverable | done when |
 |---|---|---|
-| M7 | config plane: schema + secretbox + `keygen`, registries with `Test()`, CRUD API with write-only secrets, per-project resolver in the engine, env-var bootstrap, `import-config`, factoryd image + compose | after import, serve boots from env vars alone; `docker compose up` with `-dev` adapters drives a full fake flow through the containerized engine; all M1 scenario tests green through the resolver; grep proves no secret in any API response, event, or log |
+| M7 | config plane: schema + secretbox + `keygen`, registries with `Test()`, CRUD API with write-only secrets, per-project resolver in the engine, env-var bootstrap, `import-config`, apothecaryd image + compose | after import, serve boots from env vars alone; `docker compose up` with `-dev` adapters drives a full fake flow through the containerized engine; all M1 scenario tests green through the resolver; grep proves no secret in any API response, event, or log |
 | M8 | CPUI config surface: integration pages with Test buttons, project wizard (connect forge → repo picker → commands → adapter picks), flow editor with validation + version history, settings page (limits/reaper), project picker on tickets | fresh DB → configure everything through the UI only → full run ends in a real MR, no yaml/env edits beyond the deployment vars |
 | M9 | workspace composability: base image split, toolchain fragment + presets, harness install layer, content-addressed builds with streamed logs, engine-pushed template with image/domains as parameters, derived firewall list, dynamic envcheck + check-run API/UI | two projects with different toolchains (Go and Python) both pass envcheck; the non-opencode project's image contains no opencode; a wrong token or missing domain produces a named, actionable failure in the UI |
 | M10 | prove the ports: GitHub forge adapter **and** codex harness adapter (decision #1) | a GitHub-hosted project runs the full flow to a real draft PR incl. `auto_complete` on merge; a codex project runs plan→build→verify with `Usage` populated and session resume verified (kill mid-build, M3 precedent); neither adapter required engine changes beyond registration |
@@ -222,7 +222,7 @@ flags, is normative).
 ## 12. Decisions taken
 
 1. **M10 = GitHub forge + codex harness, both committed** (Lu needs both).
-2. **Master key via env var** (`FACTORY_MASTER_KEY`) — fits the Docker
+2. **Master key via env var** (`APOTHECARY_MASTER_KEY`) — fits the Docker
    service deployment.
 3. **Apothecary ships as a Docker image** — drove §2 (env-var bootstrap),
    §9 (packaging, socket mount, host networking), M7/M11 acceptance.

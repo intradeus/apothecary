@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"factory/internal/flow"
-	"factory/internal/ports"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
 )
 
 // assemblePrompt builds the agent prompt exactly per the §3.2 template. The

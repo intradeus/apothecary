@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 // Resolution is everything a run needs from its project's configuration
@@ -28,7 +28,7 @@ type Resolution struct {
 	GitUser string
 	GitPass string
 	// ProviderEnv is the merged env-var map of the project's provider
-	// integrations, written to /factory/provider.env at bootstrap step 2.
+	// integrations, written to /apothecary/provider.env at bootstrap step 2.
 	ProviderEnv map[string]string
 	// EgressDomains is the derived firewall allowlist (DESIGN2 §8.4).
 	EgressDomains []string

@@ -8,8 +8,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"factory/internal/flow"
-	"factory/internal/secrets"
+	"apothecary/internal/flow"
+	"apothecary/internal/secrets"
 )
 
 // Service seals/opens secrets, stamps ids/timestamps and validates writes.

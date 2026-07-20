@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"factory/internal/event"
+	"apothecary/internal/event"
 )
 
 // appendAll pushes payloads through a MemStore so events carry real seq/ts.

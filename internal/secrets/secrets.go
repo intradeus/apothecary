@@ -1,6 +1,6 @@
 // Package secrets encrypts integration secrets at rest (DESIGN2.md §3):
 // NaCl secretbox, ciphertext = nonce(24) || box(JSON object), key from
-// FACTORY_MASTER_KEY (base64 std of exactly 32 bytes). The raw values never
+// APOTHECARY_MASTER_KEY (base64 std of exactly 32 bytes). The raw values never
 // leave the engine: API responses carry masks only.
 package secrets
 
@@ -23,7 +23,7 @@ type Key [keyLen]byte
 // configured master key — never silently return garbage (§3).
 var ErrKeyMismatch = errors.New("secrets: decryption failed (master key mismatch?)")
 
-// ParseKey decodes a FACTORY_MASTER_KEY value.
+// ParseKey decodes a APOTHECARY_MASTER_KEY value.
 func ParseKey(s string) (Key, error) {
 	var k Key
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
@@ -37,7 +37,7 @@ func ParseKey(s string) (Key, error) {
 	return k, nil
 }
 
-// GenerateKey returns a fresh base64 master key (factoryd keygen).
+// GenerateKey returns a fresh base64 master key (apothecaryd keygen).
 func GenerateKey() string {
 	var k Key
 	if _, err := rand.Read(k[:]); err != nil {

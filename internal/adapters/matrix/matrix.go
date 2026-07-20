@@ -18,8 +18,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"factory/internal/channels"
-	"factory/internal/ports"
+	"apothecary/internal/channels"
+	"apothecary/internal/ports"
 )
 
 type Config struct {

@@ -1,7 +1,7 @@
 package kinds
 
 import (
-	coderadapter "factory/internal/adapters/coder"
+	coderadapter "apothecary/internal/adapters/coder"
 )
 
 // Coder is the provisioner/coder kind (DESIGN2 §4.1).
@@ -13,7 +13,7 @@ func (Coder) Descriptor() Descriptor {
 		Fields: []Field{
 			{Name: "url", Label: "Coder server URL", Placeholder: "http://localhost:7080", Required: true},
 			{Name: "token", Label: "Session token", Secret: true, Required: true},
-			{Name: "template", Label: "Template name", Default: "factory", Required: true},
+			{Name: "template", Label: "Template name", Default: "apothecary", Required: true},
 		},
 	}
 }
@@ -21,7 +21,7 @@ func (Coder) Descriptor() Descriptor {
 func (Coder) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 	template := deps.Template
 	if template == "" {
-		template = cfg.Str("template", "factory")
+		template = cfg.Str("template", "apothecary")
 	}
 	return coderadapter.New(coderadapter.Config{
 		URL:           cfg.Str("url", ""),

@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/channels"
-	"factory/internal/engine"
-	"factory/internal/event"
-	"factory/internal/flow"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/channels"
+	"apothecary/internal/engine"
+	"apothecary/internal/event"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 const loopFlowDoc = `name: loop

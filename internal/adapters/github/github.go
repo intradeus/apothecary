@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 type Config struct {

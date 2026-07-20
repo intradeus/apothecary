@@ -2,6 +2,7 @@
 .git
 cpui/node_modules
 cpui/build
+cpui/.svelte-kit
 observability
 docs
 examples

@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"sort"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 // Config is an integration's stored configuration: plain values plus

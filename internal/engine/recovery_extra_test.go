@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/event"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/event"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 // Crash between stage_failed and the edge decision: recovery routes the
@@ -106,7 +106,7 @@ func TestCrashAfterEdgeKeepsFeed(t *testing.T) {
 	}
 }
 
-// Recovery must refresh /factory/run.env so the workspace shim can
+// Recovery must refresh /apothecary/run.env so the workspace shim can
 // re-authenticate with the regenerated token.
 func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
@@ -135,14 +135,14 @@ func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var content []byte
 	for time.Now().Before(deadline) {
-		if data, err := h.envp.ReadFile(ctx, envID, "/factory/run.env"); err == nil {
+		if data, err := h.envp.ReadFile(ctx, envID, "/apothecary/run.env"); err == nil {
 			content = data
 			break
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
 	token := h.e.RunToken("r-t")
-	if token == "" || !strings.Contains(string(content), "FACTORY_RUN_TOKEN="+token) {
+	if token == "" || !strings.Contains(string(content), "APOTHECARY_RUN_TOKEN="+token) {
 		t.Errorf("run.env not refreshed with new token %q:\n%s", token, content)
 	}
 	close(block)

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/event"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/event"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 // firewallAwareExec scripts a compliant workspace: deny-probes fail (the

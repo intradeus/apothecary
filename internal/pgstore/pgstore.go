@@ -4,7 +4,7 @@
 // as each append and are rebuildable from events alone.
 //
 // Watch fan-out is in-process: the engine is the only writer (§2
-// single-writer rule, one factoryd per machine in v1), so subscribers are
+// single-writer rule, one apothecaryd per machine in v1), so subscribers are
 // notified after commit without LISTEN/NOTIFY.
 package pgstore
 
@@ -21,8 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"factory/internal/event"
-	"factory/internal/run"
+	"apothecary/internal/event"
+	"apothecary/internal/run"
 )
 
 //go:embed migrations/*.sql
@@ -327,7 +327,7 @@ func (s *Store) unsubscribe(runID string, sb *sub) {
 	}
 }
 
-// --- projections rebuild (§6: factoryd rebuild-projections) -----------------
+// --- projections rebuild (§6: apothecaryd rebuild-projections) -----------------
 
 // RebuildProjections truncates the runs and pings tables and replays every
 // run's events through the same projection code the append path uses.

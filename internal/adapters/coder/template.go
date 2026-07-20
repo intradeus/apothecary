@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"factory/workspace"
+	"apothecary/workspace"
 )
 
 // Engine-pushed template (DESIGN2 §8.4): the embedded template tree is the
@@ -44,7 +44,7 @@ func templateVersionName() string {
 // EnsureTemplate pushes the embedded template as the active version when
 // the provisioner's active version differs. Cached per adapter instance —
 // one check per process lifetime is enough (the tree only changes with a
-// factoryd release).
+// apothecaryd release).
 func (a *Adapter) EnsureTemplate(ctx context.Context) error {
 	a.tmplMu.Lock()
 	defer a.tmplMu.Unlock()

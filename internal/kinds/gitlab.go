@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strconv"
 
-	gitlabadapter "factory/internal/adapters/gitlab"
-	"factory/internal/ports"
+	gitlabadapter "apothecary/internal/adapters/gitlab"
+	"apothecary/internal/ports"
 )
 
 // GitLab is the forge/gitlab kind (DESIGN2 §4.1): base_url + PAT, numeric

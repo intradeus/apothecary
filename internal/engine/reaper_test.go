@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/event"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/event"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {

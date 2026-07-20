@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 type call struct {
@@ -44,7 +44,7 @@ func (s *scriptRunner) Run(_ context.Context, args []string, stdin []byte) ([]by
 
 func newTestAdapter(r CmdRunner) *Adapter {
 	a := NewWithRunner(Config{
-		URL: "http://localhost:7080", Token: "tok", Template: "factory", Owner: "lu",
+		URL: "http://localhost:7080", Token: "tok", Template: "custom-tmpl", Owner: "lu",
 	}, r)
 	a.retryDelay = time.Millisecond
 	// Never spawn a real `coder ssh` tunnel in unit tests.
@@ -54,7 +54,7 @@ func newTestAdapter(r CmdRunner) *Adapter {
 	return a
 }
 
-const listRunning = `[{"name":"factory-run1","latest_build":{"status":"running"}}]`
+const listRunning = `[{"name":"apothecary-run1","latest_build":{"status":"running"}}]`
 
 func TestProvisionCreatesThenWaits(t *testing.T) {
 	r := &scriptRunner{responses: []response{
@@ -64,17 +64,17 @@ func TestProvisionCreatesThenWaits(t *testing.T) {
 		{stdout: ``, code: 0}, // ssh -- true probe
 	}}
 	a := newTestAdapter(r)
-	id, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "RUN1", RepoURL: "https://g.local/r.git", Branch: "factory/x"})
+	id, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "RUN1", RepoURL: "https://g.local/r.git", Branch: "apothecary/x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "factory-run1" {
+	if id != "apothecary-run1" {
 		t.Errorf("env id = %s", id)
 	}
 	create := r.calls[1]
 	joined := strings.Join(create.args, " ")
-	for _, want := range []string{"create factory-run1", "--template factory",
-		"run_id=RUN1", "repo_url=https://g.local/r.git", "branch=factory/x", "--yes"} {
+	for _, want := range []string{"create apothecary-run1", "--template custom-tmpl",
+		"run_id=RUN1", "repo_url=https://g.local/r.git", "branch=apothecary/x", "--yes"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("create args missing %q: %v", want, create.args)
 		}
@@ -92,7 +92,7 @@ func TestProvisionReusesExistingWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "factory-run1" {
+	if id != "apothecary-run1" {
 		t.Errorf("id = %s", id)
 	}
 	for _, c := range r.calls {
@@ -107,7 +107,7 @@ func TestExecSendsScriptOnStdinWithDir(t *testing.T) {
 		{stdout: "ok\n", code: 0},
 	}}
 	a := newTestAdapter(r)
-	res, err := a.Exec(context.Background(), "factory-run1", ports.Command{Script: "make test", Dir: "repo"})
+	res, err := a.Exec(context.Background(), "apothecary-run1", ports.Command{Script: "make test", Dir: "repo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestExecSendsScriptOnStdinWithDir(t *testing.T) {
 	}
 	c := r.calls[0]
 	joined := strings.Join(c.args, " ")
-	if !strings.HasPrefix(joined, "ssh factory-run1 -- bash -eo pipefail -s") {
+	if !strings.HasPrefix(joined, "ssh apothecary-run1 -- bash -eo pipefail -s") {
 		t.Errorf("args = %v", c.args)
 	}
 	stdin := string(c.stdin)
@@ -186,10 +186,10 @@ func TestReadFilePathResolutionAndDecode(t *testing.T) {
 
 	// Absolute path stays absolute.
 	r.responses = []response{{stdout: "", code: 0}}
-	if _, err := a.ReadFile(context.Background(), "ws", "/factory/run.env"); err != nil {
+	if _, err := a.ReadFile(context.Background(), "ws", "/apothecary/run.env"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(r.calls[1].stdin), " /factory/run.env") {
+	if !strings.Contains(string(r.calls[1].stdin), " /apothecary/run.env") {
 		t.Errorf("absolute path mangled: %q", r.calls[1].stdin)
 	}
 }
@@ -206,12 +206,12 @@ func TestReadFileMissingIsErrNotExist(t *testing.T) {
 func TestWriteFileBase64Payload(t *testing.T) {
 	r := &scriptRunner{responses: []response{{code: 0}}}
 	a := newTestAdapter(r)
-	if err := a.WriteFile(context.Background(), "ws", "/factory/run.env", []byte("SECRET=x\n"), 0o600); err != nil {
+	if err := a.WriteFile(context.Background(), "ws", "/apothecary/run.env", []byte("SECRET=x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdin := string(r.calls[0].stdin)
 	lines := strings.SplitN(stdin, "\n", 2)
-	if !strings.Contains(lines[0], "base64 -d > /factory/run.env") || !strings.Contains(lines[0], "chmod 600") {
+	if !strings.Contains(lines[0], "base64 -d > /apothecary/run.env") || !strings.Contains(lines[0], "chmod 600") {
 		t.Errorf("script line = %q", lines[0])
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(lines[1]))
@@ -294,7 +294,7 @@ func TestProvisionEstablishesTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.tunnelMu.Lock()
-	_, ok := a.tunnels["factory-run1"]
+	_, ok := a.tunnels["apothecary-run1"]
 	a.tunnelMu.Unlock()
 	if !ok {
 		t.Error("no tunnel registered after Provision")

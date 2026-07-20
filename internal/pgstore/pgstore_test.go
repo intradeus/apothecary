@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/event"
-	"factory/internal/run"
+	"apothecary/internal/event"
+	"apothecary/internal/run"
 )
 
 // open connects to TEST_POSTGRES_DSN or skips. Each test gets a clean slate

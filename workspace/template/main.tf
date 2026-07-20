@@ -1,4 +1,4 @@
-# Coder template "factory" (DESIGN.md §11, §12): one dev container per
+# Coder template (engine-pushed; name from the provisioner integration): one dev container per
 # workspace on its own network. Parameters carry ONLY non-secrets (run_id,
 # repo_url, branch) — secrets arrive via the engine's bootstrap WriteFiles.
 # The host.docker.internal -> host-gateway mapping is what lets the shim
@@ -54,7 +54,7 @@ data "coder_parameter" "workspace_image" {
   display_name = "Workspace image"
   type         = "string"
   mutable      = false
-  default      = "factory-workspace:latest"
+  default      = "apothecary-workspace:latest"
 }
 
 data "coder_parameter" "extra_allowed_domains" {
@@ -96,37 +96,37 @@ resource "coder_app" "code-server" {
   agent_id     = coder_agent.main.id
   slug         = "code-server"
   display_name = "VS Code"
-  url          = "http://localhost:13337/?folder=/home/factory/repo"
+  url          = "http://localhost:13337/?folder=/home/apothecary/repo"
   icon         = "/icon/code.svg"
   subdomain    = false
   share        = "owner"
 }
 
 resource "docker_network" "workspace" {
-  name = "factory-${lower(data.coder_parameter.run_id.value)}"
+  name = "apothecary-${lower(data.coder_parameter.run_id.value)}"
 }
 
 resource "docker_volume" "home" {
-  name = "factory-home-${lower(data.coder_parameter.run_id.value)}"
+  name = "apothecary-home-${lower(data.coder_parameter.run_id.value)}"
   # Keep home across container rebuilds within the run; destroyed with the
   # workspace.
 }
 
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
-  name  = "factory-ws-${lower(data.coder_parameter.run_id.value)}"
+  name  = "apothecary-ws-${lower(data.coder_parameter.run_id.value)}"
   image = data.coder_parameter.workspace_image.value
 
-  hostname = "factory-${lower(data.coder_parameter.run_id.value)}"
+  hostname = "apothecary-${lower(data.coder_parameter.run_id.value)}"
 
   entrypoint = ["sh", "-c", replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal")]
 
   env = [
     "CODER_AGENT_TOKEN=${coder_agent.main.token}",
-    "FACTORY_REPO_URL=${data.coder_parameter.repo_url.value}",
-    "FACTORY_BRANCH=${data.coder_parameter.branch.value}",
-    "FACTORY_CODER_PORT=${var.coder_port}",
-    "FACTORY_EXTRA_DOMAINS=${data.coder_parameter.extra_allowed_domains.value}",
+    "APOTHECARY_REPO_URL=${data.coder_parameter.repo_url.value}",
+    "APOTHECARY_BRANCH=${data.coder_parameter.branch.value}",
+    "APOTHECARY_CODER_PORT=${var.coder_port}",
+    "APOTHECARY_EXTRA_DOMAINS=${data.coder_parameter.extra_allowed_domains.value}",
   ]
 
   # §8/§11: containers cannot reach the host's 127.0.0.1 — this mapping is
@@ -146,7 +146,7 @@ resource "docker_container" "workspace" {
   }
 
   volumes {
-    container_path = "/home/factory"
+    container_path = "/home/apothecary"
     volume_name    = docker_volume.home.name
   }
 }

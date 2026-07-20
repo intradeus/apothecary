@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"factory/internal/event"
-	"factory/internal/flow"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/event"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 var errStageTimeout = errors.New("stage timeout")
@@ -786,9 +786,9 @@ func (x *exec) ensureEnv() error {
 // env_failed with the command's output tail (§1) — agents never repair the
 // environment.
 func (x *exec) writeRunEnv(id ports.EnvID) error {
-	runEnv := fmt.Sprintf("FACTORY_RUN_ID=%s\nFACTORY_RUN_TOKEN=%s\nFACTORY_ENGINE_URL=%s\n",
+	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
 		x.rs.runID, x.e.RunToken(x.rs.runID), x.e.cfg.EngineURL)
-	return x.res.Envp.WriteFile(x.ctx, id, "/factory/run.env", []byte(runEnv), 0o600)
+	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600)
 }
 
 func (x *exec) bootstrap(id ports.EnvID) error {

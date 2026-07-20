@@ -1,8 +1,8 @@
-# Apothecary service image (DESIGN2.md §15): factoryd + built CPUI + the
+# Apothecary service image (DESIGN2.md §15): apothecaryd + built CPUI + the
 # pinned coder CLI + the docker CLI (workspace image builds via the mounted
 # socket). Build from the repo root:
 #
-#   docker build -f deploy/Dockerfile -t apothecary/factoryd:dev .
+#   docker build -f deploy/Dockerfile -t apothecary/apothecaryd:dev .
 
 # --- CPUI --------------------------------------------------------------------
 FROM node:22-bookworm-slim AS cpui
@@ -12,14 +12,14 @@ RUN npm ci
 COPY cpui/ .
 RUN npm run build
 
-# --- factoryd ----------------------------------------------------------------
+# --- apothecaryd ----------------------------------------------------------------
 FROM golang:1.26-bookworm AS build
 ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/factoryd ./cmd/factoryd
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/apothecaryd ./cmd/apothecaryd
 
 # --- runtime -----------------------------------------------------------------
 FROM debian:bookworm-slim
@@ -39,13 +39,13 @@ RUN curl -fsSL "https://github.com/coder/coder/releases/download/v${CODER_VERSIO
         | tar -xz -C /usr/local/bin ./coder \
     && chmod 0755 /usr/local/bin/coder
 
-COPY --from=build /out/factoryd /usr/local/bin/factoryd
+COPY --from=build /out/apothecaryd /usr/local/bin/apothecaryd
 COPY --from=cpui /src/build /opt/apothecary/cpui
 
-ENV FACTORY_CPUI_DIR=/opt/apothecary/cpui \
-    FACTORY_RUNS_DIR=/var/lib/factory/runs
+ENV APOTHECARY_CPUI_DIR=/opt/apothecary/cpui \
+    APOTHECARY_RUNS_DIR=/var/lib/apothecary/runs
 
-VOLUME /var/lib/factory/runs
+VOLUME /var/lib/apothecary/runs
 
-ENTRYPOINT ["factoryd"]
+ENTRYPOINT ["apothecaryd"]
 CMD ["serve"]

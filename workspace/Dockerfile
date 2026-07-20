@@ -1,6 +1,6 @@
 # Factory workspace BASE image (DESIGN2 §8.1): the invariants and nothing
 # else — Ubuntu, git/ripgrep, Node (the ask_human shim's runtime),
-# code-server, the shim, the firewall init, the non-root `factory` user.
+# code-server, the shim, the firewall init, the non-root `apothecary` user.
 # NO language toolchains and NO harness: those are the user's Dockerfile
 # fragment and the harness kind's InstallLayer, composed per project (§8.2).
 # Tagged apothecary/base:<sha16 of this embedded context>, built on demand.
@@ -23,24 +23,24 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 # code-server for the IDE deep link (§12 links).
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# Non-root user; /factory receives run.env + provider.env at bootstrap.
+# Non-root user; /apothecary receives run.env + provider.env at bootstrap.
 RUN userdel -r ubuntu 2>/dev/null || true \
-    && useradd --create-home --shell /bin/bash --uid 1000 factory \
-    && mkdir -p /factory && chown factory:factory /factory
+    && useradd --create-home --shell /bin/bash --uid 1000 apothecary \
+    && mkdir -p /apothecary && chown apothecary:apothecary /apothecary
 
 # ask_human shim (§10) + firewall init (§11).
-COPY ask-human.mjs /opt/factory/ask-human.mjs
+COPY ask-human.mjs /opt/apothecary/ask-human.mjs
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-RUN chmod 0755 /usr/local/bin/init-firewall.sh /opt/factory/ask-human.mjs \
-    # The ONLY sudo the factory user has: firewall init, no arguments.
-    # env_keep passes the container's FACTORY_* config through (sudo strips
+RUN chmod 0755 /usr/local/bin/init-firewall.sh /opt/apothecary/ask-human.mjs \
+    # The ONLY sudo the apothecary user has: firewall init, no arguments.
+    # env_keep passes the container's APOTHECARY_* config through (sudo strips
     # env by default; container root cannot read /proc/1/environ without
     # CAP_SYS_PTRACE). The lock file makes re-runs no-ops, so passing
     # different values later cannot alter the rules.
-    && { echo "factory ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh"; \
-         echo 'Defaults!/usr/local/bin/init-firewall.sh env_keep += "FACTORY_REPO_URL FACTORY_CODER_PORT FACTORY_EXTRA_DOMAINS"'; \
-       } > /etc/sudoers.d/factory-firewall \
-    && chmod 0440 /etc/sudoers.d/factory-firewall
+    && { echo "apothecary ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh"; \
+         echo 'Defaults!/usr/local/bin/init-firewall.sh env_keep += "APOTHECARY_REPO_URL APOTHECARY_CODER_PORT APOTHECARY_EXTRA_DOMAINS"'; \
+       } > /etc/sudoers.d/apothecary-firewall \
+    && chmod 0440 /etc/sudoers.d/apothecary-firewall
 
-USER factory
-WORKDIR /home/factory
+USER apothecary
+WORKDIR /home/apothecary

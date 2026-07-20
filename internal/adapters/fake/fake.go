@@ -10,7 +10,7 @@ import (
 	"io/fs"
 	"sync"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 // --- EnvProvisioner ---------------------------------------------------------

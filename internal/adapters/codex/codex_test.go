@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/ports"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/ports"
 )
 
 func envWith(t *testing.T) (*fake.EnvProvisioner, ports.EnvID) {
@@ -71,18 +71,18 @@ func TestRunScriptShape(t *testing.T) {
 	// Role preamble + prompt piped via stdin (`-`); model prefix stripped;
 	// bypass flag (the workspace IS the sandbox); provider.env sourced.
 	for _, want := range []string{
-		`cat "/factory/agents/builder.role" "/factory/prompt.txt" |`,
+		`cat "/apothecary/agents/builder.role" "/apothecary/prompt.txt" |`,
 		`-m "gpt-5-codex"`,
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check -",
-		"/factory/provider.env",
+		"/apothecary/provider.env",
 		"--json",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)
 		}
 	}
-	if data, err := envp.ReadFile(context.Background(), id, "/factory/prompt.txt"); err != nil || string(data) != "build it" {
+	if data, err := envp.ReadFile(context.Background(), id, "/apothecary/prompt.txt"); err != nil || string(data) != "build it" {
 		t.Errorf("prompt file = %q, %v", data, err)
 	}
 }
@@ -102,7 +102,7 @@ func TestResumeUsesThreadID(t *testing.T) {
 			script = c.Cmd.Script
 		}
 	}
-	if !strings.Contains(script, `resume "019f-abc"`) || !strings.Contains(script, `cat "/factory/reply.txt" |`) {
+	if !strings.Contains(script, `resume "019f-abc"`) || !strings.Contains(script, `cat "/apothecary/reply.txt" |`) {
 		t.Errorf("resume script:\n%s", script)
 	}
 }
@@ -127,9 +127,9 @@ func TestFailureCarriesRawOutput(t *testing.T) {
 
 func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 	envp, id := envWith(t)
-	specOut := "===FACTORY-SPEC .factory/agents/planner.yaml\n" +
+	specOut := "===FACTORY-SPEC .apothecary/agents/planner.yaml\n" +
 		"name: planner\ndescription: plans\nread_only: true\nallow_bash: false\nprompt: |\n  Plan carefully.\n" +
-		"===FACTORY-SPEC .factory/agents/builder.yaml\n" +
+		"===FACTORY-SPEC .apothecary/agents/builder.yaml\n" +
 		"name: builder\ndescription: builds\nread_only: false\nallow_bash: true\nprompt: |\n  Build it.\n"
 	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.Contains(cmd.Script, "FACTORY-SPEC") {
@@ -142,7 +142,7 @@ func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	planner, err := envp.ReadFile(ctx, id, "/factory/agents/planner.role")
+	planner, err := envp.ReadFile(ctx, id, "/apothecary/agents/planner.role")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,13 +152,13 @@ func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 			t.Errorf("planner.role missing %q:\n%s", want, planner)
 		}
 	}
-	builder, _ := envp.ReadFile(ctx, id, "/factory/agents/builder.role")
+	builder, _ := envp.ReadFile(ctx, id, "/apothecary/agents/builder.role")
 	if strings.Contains(string(builder), "READ-ONLY") {
 		t.Error("builder.role must not be read-only")
 	}
-	cfg, err := envp.ReadFile(ctx, id, "/home/factory/.codex/config.toml")
+	cfg, err := envp.ReadFile(ctx, id, "/home/apothecary/.codex/config.toml")
 	if err != nil || !strings.Contains(string(cfg), "[mcp_servers.ask_human]") ||
-		!strings.Contains(string(cfg), "/opt/factory/ask-human.mjs") {
+		!strings.Contains(string(cfg), "/opt/apothecary/ask-human.mjs") {
 		t.Errorf("config.toml = %q, %v", cfg, err)
 	}
 }

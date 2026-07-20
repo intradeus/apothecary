@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 // Dynamic envcheck (DESIGN2 §9): the workspace compliance gate. The check
@@ -65,7 +65,7 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	skip := func(id, why string) { emit(CheckStep{ID: id, Status: "skip", Detail: why}) }
 
 	envp := res.Envp
-	branch := "factory/" + strings.ToLower(runID)
+	branch := "apothecary/" + strings.ToLower(runID)
 
 	// Image pipeline (§8) — only on the managed-template path.
 	if res.EnsureImage != nil {
@@ -125,7 +125,7 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	step("firewall_deny_dns", execExpect(ctx, envp, env,
 		"getent hosts example.com", "", false), "foreign DNS dead")
 	step("firewall_initialized", execExpect(ctx, envp, env,
-		"test -e /run/factory-firewall.done", "", true), "")
+		"test -e /run/apothecary-firewall.done", "", true), "")
 
 	// Egress positives: one per derived allowlist entry. TCP+TLS connect is
 	// the criterion — any HTTP status counts; connectivity, not auth.
@@ -143,14 +143,14 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		skip("harness_binary", "harness declares no binary")
 	}
 	step("shim", execExpect(ctx, envp, env,
-		"test -f /opt/factory/ask-human.mjs", "", true), "")
+		"test -f /opt/apothecary/ask-human.mjs", "", true), "")
 	step("tunnel", execExpect(ctx, envp, env,
 		fmt.Sprintf("curl -m 10 -s -o /dev/null http://127.0.0.1:%d/", opts.EnginePort), "", true),
 		"engine reachable from the workspace's own loopback")
 
 	blob := []byte("round-trip \x00\x01\xfe binary ok\n")
-	step("rw_absolute", rwRoundTrip(ctx, envp, env, "/factory/roundtrip.bin", blob), "")
-	step("rw_relative", rwRoundTrip(ctx, envp, env, "artifacts/roundtrip.txt", []byte("hello factory\n")), "")
+	step("rw_absolute", rwRoundTrip(ctx, envp, env, "/apothecary/roundtrip.bin", blob), "")
+	step("rw_relative", rwRoundTrip(ctx, envp, env, "artifacts/roundtrip.txt", []byte("hello apothecary\n")), "")
 
 	links, lerr := envp.Links(ctx, env)
 	detail := ""

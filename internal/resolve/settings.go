@@ -3,8 +3,8 @@ package resolve
 import (
 	"context"
 
-	"factory/internal/confstore"
-	"factory/internal/engine"
+	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
 )
 
 // Settings bridges the confstore settings rows to engine.SettingsSource

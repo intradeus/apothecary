@@ -60,7 +60,7 @@ type EnvProvisioner interface {
 	Provision(ctx context.Context, spec EnvSpec) (EnvID, error)
 	Exec(ctx context.Context, env EnvID, cmd Command) (ExecResult, error)
 	// ReadFile/WriteFile paths: relative = repo-root-relative
-	// (artifacts/plan.md), absolute = absolute (/factory/run.env).
+	// (artifacts/plan.md), absolute = absolute (/apothecary/run.env).
 	ReadFile(ctx context.Context, env EnvID, path string) ([]byte, error)
 	WriteFile(ctx context.Context, env EnvID, path string, data []byte, mode fs.FileMode) error
 	Links(ctx context.Context, env EnvID) ([]AccessLink, error)
@@ -72,7 +72,7 @@ type SessionID string
 
 // AgentSpec is what a harness needs to invoke one agent stage. The agent
 // name resolves inside the workspace (harness-native config generated at
-// bootstrap from .factory/agents/, §5.2).
+// bootstrap from .apothecary/agents/, §5.2).
 type AgentSpec struct {
 	Agent    string
 	Harness  string

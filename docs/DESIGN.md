@@ -11,7 +11,7 @@
 
 | Concern | Choice (MUST use) |
 |---|---|
-| Engine language | Go ≥ 1.24, single module `factory`, single binary `factoryd` |
+| Engine language | Go ≥ 1.24, single module `factory`, single binary `apothecaryd` |
 | DB | PostgreSQL ≥ 16, access via `jackc/pgx/v5`, hand-written SQL, migrations as numbered `.sql` files applied at boot |
 | YAML | `gopkg.in/yaml.v3` |
 | IDs | ULID (`oklog/ulid/v2`) for run/ping ids |
@@ -37,11 +37,11 @@ code. All project mechanics are configuration (§13):
   the rest (e.g. `verify`) are referenced from flow `command` stages via
   `run_ref`. **No build tool is assumed or enforced** — Makefile, just, npm
   scripts, anything: the user supplies the exact commands.
-- `.factory/agents/` specs (§5) must exist in the repo.
+- `.apothecary/agents/` specs (§5) must exist in the repo.
 
 **Preflight at run creation (engine code, no AI):** `Forge.CheckAccess`
 (token valid, project reachable, scopes sufficient) → `Forge.FileExists`
-for `repo.agents_md_path` and `.factory/agents/` → config validation
+for `repo.agents_md_path` and `.apothecary/agents/` → config validation
 (every `run_ref` used by the flow resolves in `project.commands`). Any
 failure refuses the run naming the exact missing item. The user's `setup`
 command failing at bootstrap fails the run deterministically as
@@ -106,7 +106,7 @@ Per-stage fields:
 |---|---|---|---|
 | `id` | all | yes | unique slug |
 | `type` | all | yes | `agent` \| `command` \| `human_gate` \| `forge_mr` |
-| `agent` | agent | yes | name resolving to `.factory/agents/<name>.yaml` |
+| `agent` | agent | yes | name resolving to `.apothecary/agents/<name>.yaml` |
 | `model`, `harness`, `max_turns`, `timeout` | agent | no | override defaults |
 | `input` | agent | no | ordered list of: `ticket`, artifact paths, `$CHANGED` |
 | `output` | agent | no | artifact path the agent MUST produce; missing/unparsable ⇒ `stage_failed{reason:"output_contract"}` |
@@ -224,7 +224,7 @@ substrate for every scenario in §15.
 
 ## 5. Agent specs and harness translation
 
-### 5.1 `.factory/agents/<name>.yaml` schema
+### 5.1 `.apothecary/agents/<name>.yaml` schema
 
 ```yaml
 name: reviewer                 # = filename stem
@@ -295,7 +295,7 @@ error?}` · `edge_taken{from, to, edge:on_fail|on_reject, count, max}` ·
 A `runs` read-model table `(run_id pk, state, ticket_title, flow_name,
 flow_hash, current_stage, mr_url, env_id, created_at, updated_at)` is
 updated in the same transaction as each append — projection, rebuildable
-from events (provide `factoryd rebuild-projections`).
+from events (provide `apothecaryd rebuild-projections`).
 
 ## 7. Telemetry
 
@@ -344,8 +344,8 @@ acceptable v1 (single-user dev machine); note in security section.
 A ~100-line Node script in the workspace image, registered as an MCP stdio
 server exposing one tool:
 `ask_human{type: "clarification"|"blocker"|"permission", question: string,
-context?: string}`. It reads `FACTORY_ENGINE_URL`, `FACTORY_RUN_ID`,
-`FACTORY_RUN_TOKEN` from env (written at bootstrap). Protocol: POST the
+context?: string}`. It reads `APOTHECARY_ENGINE_URL`, `APOTHECARY_RUN_ID`,
+`APOTHECARY_RUN_TOKEN` from env (written at bootstrap). Protocol: POST the
 ping; on 204, re-poll `GET .../pings/{ping_id}` every 5 s (server holds 55 s)
 indefinitely — the stage timeout is suspended while a ping is pending, so
 the shim never gives up; on network error, retry with backoff capped at
@@ -377,15 +377,15 @@ engine — the container's default-gateway IP on the engine port (what
 to other names (resolve-then-ipset pattern).
 
 **Bootstrap (engine-driven, ordered, after env_ready):**
-1. `WriteFile /factory/run.env` (0600): `FACTORY_RUN_ID`, `FACTORY_RUN_TOKEN`,
-   `FACTORY_ENGINE_URL`.
+1. `WriteFile /apothecary/run.env` (0600): `APOTHECARY_RUN_ID`, `APOTHECARY_RUN_TOKEN`,
+   `APOTHECARY_ENGINE_URL`.
 2. `WriteFile` provider keys file (0600) sourced into agent invocations:
    `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (only those the flow needs), and
    seed opencode `auth.json` if subscription auth is configured.
 3. `Exec`: `git clone` via token-in-URL rewritten to a credential helper
    (token never lands in `.git/config`), `git switch -c <branch>` from the
    default branch. Branch name: `factory/<run_id_lower26>-<slug(title,24)>`.
-4. `Exec`: generate `.opencode/` from `.factory/agents/` (§5.2); if
+4. `Exec`: generate `.opencode/` from `.apothecary/agents/` (§5.2); if
    `repo.agents_md_path` ≠ `AGENTS.md`, symlink it to `AGENTS.md`; append
    generated paths to `.git/info/exclude`.
 5. `Exec`: `git config user.name "Factory" && git config user.email
@@ -405,7 +405,7 @@ the branch again once the MR exists.
 | port call | implementation |
 |---|---|
 | Provision | `coder create --template factory --yes` + rich params (non-secrets), then poll `coder list` until running; then bootstrap §11 |
-| Exec | `coder ssh <ws> -- bash -eo pipefail -c '<script>'`, streamed to `/var/lib/factory/runs/<run>/<stage>-<iter>.log` |
+| Exec | `coder ssh <ws> -- bash -eo pipefail -c '<script>'`, streamed to `/var/lib/apothecary/runs/<run>/<stage>-<iter>.log` |
 | Read/WriteFile | `coder ssh <ws> -- cat` / `tee` (base64-wrapped for binary safety) |
 | Links | Coder REST: workspace apps → `{ide, terminal, app}` URLs |
 | Status / Destroy | Coder REST / `coder delete --yes` |
@@ -427,7 +427,7 @@ gitlab: { base_url: "https://gitlab.com", token_env: GITLAB_TOKEN, project_id: 1
 coder: { url: "http://localhost:7080", token_env: CODER_SESSION_TOKEN, template: factory }
 providers: { anthropic_env: ANTHROPIC_API_KEY, openai_env: OPENAI_API_KEY }
 flows_dir: /etc/factory/flows
-runs_dir: /var/lib/factory/runs        # logs + artifact copies, kept forever
+runs_dir: /var/lib/apothecary/runs        # logs + artifact copies, kept forever
 limits: { max_concurrent_runs: 3, max_environments: 6 }
 reaper: { destroy_completed_after: 48h, destroy_abandoned: never }
 otel: { endpoint: "" }                  # empty = disabled

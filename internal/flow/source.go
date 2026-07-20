@@ -13,7 +13,7 @@ type Source interface {
 	Get(ctx context.Context, name string) (*Flow, error)
 }
 
-// MapSource is the in-memory Source used by tests and `factoryd validate`.
+// MapSource is the in-memory Source used by tests and `apothecaryd validate`.
 type MapSource map[string]*Flow
 
 func (m MapSource) Get(_ context.Context, name string) (*Flow, error) {

@@ -5,7 +5,7 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 export default {
   preprocess: vitePreprocess(),
   kit: {
-    // SPA bundle served by factoryd (cpui_dir); index.html fallback covers
+    // SPA bundle served by apothecaryd (cpui_dir); index.html fallback covers
     // client-side routes like /runs/<id>.
     adapter: adapter({ fallback: 'index.html' })
   }

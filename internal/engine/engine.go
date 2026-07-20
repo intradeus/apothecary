@@ -17,10 +17,10 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"factory/internal/event"
-	"factory/internal/flow"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/event"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 type Ticket struct {
@@ -170,14 +170,14 @@ func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
 		settings = StaticSettings{L: Limits{}.withDefaults()}
 	}
 	return &Engine{
-		cfg:      cfg.withDefaults(),
-		store:    store,
-		resolver: resolver,
-		flows:    flows,
-		settings: settings,
-		channels: channels,
-		clock:    time.Now,
-		newID:    func() string { return ulid.Make().String() },
+		cfg:       cfg.withDefaults(),
+		store:     store,
+		resolver:  resolver,
+		flows:     flows,
+		settings:  settings,
+		channels:  channels,
+		clock:     time.Now,
+		newID:     func() string { return ulid.Make().String() },
 		log:       slog.Default(),
 		handles:   map[string]*runHandle{},
 		pings:     map[string]*Ping{},
@@ -260,7 +260,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	}
 
 	runID := e.newID()
-	branch := fmt.Sprintf("factory/%s-%s", strings.ToLower(runID), slug(t.Title, 24))
+	branch := fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), slug(t.Title, 24))
 	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
 		TicketTitle: t.Title,
 		TicketGoal:  t.Goal,
@@ -381,7 +381,7 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	if err := res.Forge.CheckAccess(ctx, res.RepoRef); err != nil {
 		return fmt.Errorf("preflight: forge access: %w", err)
 	}
-	for _, path := range []string{res.AgentsMDPath, ".factory/agents/"} {
+	for _, path := range []string{res.AgentsMDPath, ".apothecary/agents/"} {
 		ok, err := res.Forge.FileExists(ctx, res.RepoRef, path)
 		if err != nil {
 			return fmt.Errorf("preflight: checking %s: %w", path, err)
@@ -682,7 +682,7 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	fl, err := e.flows.Get(ctx, res.DefaultFlow)
 	steps = append(steps, step("flow:"+res.DefaultFlow, err))
 	steps = append(steps, step("forge_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
-	for _, path := range []string{res.AgentsMDPath, ".factory/agents/"} {
+	for _, path := range []string{res.AgentsMDPath, ".apothecary/agents/"} {
 		ok, ferr := res.Forge.FileExists(ctx, res.RepoRef, path)
 		if ferr == nil && !ok {
 			ferr = fmt.Errorf("%s not found in repo", path)

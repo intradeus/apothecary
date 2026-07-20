@@ -18,12 +18,12 @@ import (
 	"strings"
 	"time"
 
-	"factory/internal/channels"
-	"factory/internal/confstore"
-	"factory/internal/engine"
-	"factory/internal/event"
-	"factory/internal/kinds"
-	"factory/internal/run"
+	"apothecary/internal/channels"
+	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
+	"apothecary/internal/event"
+	"apothecary/internal/kinds"
+	"apothecary/internal/run"
 )
 
 type Server struct {

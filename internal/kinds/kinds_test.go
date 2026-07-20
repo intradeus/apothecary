@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/ports"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/ports"
 )
 
 func TestRegistryValidAndDescriptors(t *testing.T) {
@@ -84,7 +84,7 @@ func TestOpencodeHarnessCapabilities(t *testing.T) {
 	if err := h.SeedAuth(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	data, err := envp.ReadFile(context.Background(), id, "/home/factory/.local/share/opencode/auth.json")
+	data, err := envp.ReadFile(context.Background(), id, "/home/apothecary/.local/share/opencode/auth.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	codexadapter "factory/internal/adapters/codex"
-	"factory/internal/ports"
+	codexadapter "apothecary/internal/adapters/codex"
+	"apothecary/internal/ports"
 )
 
 // CodexVersion is the pinned harness version (flags + JSONL verified

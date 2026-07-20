@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/ports"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/ports"
 )
 
 // ndjson is a captured `opencode run --format json` stream (v1.17.8),
@@ -77,7 +77,7 @@ func TestRunInvokesOpencodeWithPromptFile(t *testing.T) {
 	}
 
 	// The prompt traveled via file, not the command line.
-	data, err := envp.ReadFile(context.Background(), id, "/factory/prompt.txt")
+	data, err := envp.ReadFile(context.Background(), id, "/apothecary/prompt.txt")
 	if err != nil || string(data) != "# TASK\nDo the thing" {
 		t.Errorf("prompt file = %q, %v", data, err)
 	}
@@ -90,7 +90,7 @@ func TestRunInvokesOpencodeWithPromptFile(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{`--format json`, `--agent "planner"`, `-m "openrouter/anthropic/claude-haiku-4.5"`, `provider.env`, `cat /factory/prompt.txt`} {
+	for _, want := range []string{`--format json`, `--agent "planner"`, `-m "openrouter/anthropic/claude-haiku-4.5"`, `provider.env`, `cat /apothecary/prompt.txt`} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)
 		}
@@ -111,7 +111,7 @@ func TestResumeUsesSessionFlag(t *testing.T) {
 		t.Errorf("session = %q", res.Session)
 	}
 	script := envp.ExecCalls[len(envp.ExecCalls)-1].Cmd.Script
-	if !strings.Contains(script, `--session "ses_prev"`) || !strings.Contains(script, "cat /factory/reply.txt") {
+	if !strings.Contains(script, `--session "ses_prev"`) || !strings.Contains(script, "cat /apothecary/reply.txt") {
 		t.Errorf("resume script:\n%s", script)
 	}
 }
@@ -147,10 +147,10 @@ prompt: |
 
 func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	envp, id := envWith(t, nil)
-	// Simulate the repo's .factory/agents directory via the exec that lists specs.
-	specOut := "===FACTORY-SPEC .factory/agents/planner.yaml\n" +
+	// Simulate the repo's .apothecary/agents directory via the exec that lists specs.
+	specOut := "===FACTORY-SPEC .apothecary/agents/planner.yaml\n" +
 		"name: planner\ndescription: plans\nread_only: true\nallow_bash: false\nprompt: |\n  Plan carefully.\n" +
-		"===FACTORY-SPEC .factory/agents/builder.yaml\n" +
+		"===FACTORY-SPEC .apothecary/agents/builder.yaml\n" +
 		"name: builder\ndescription: builds\nread_only: false\nallow_bash: true\nprompt: |\n  Build it.\n"
 	envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.Contains(cmd.Script, "FACTORY-SPEC") {
@@ -169,7 +169,7 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	planner, err := envp.ReadFile(ctx, id, "/home/factory/.config/opencode/agent/planner.md")
+	planner, err := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/planner.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,12 +178,12 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 			t.Errorf("planner.md missing %q:\n%s", want, planner)
 		}
 	}
-	builder, _ := envp.ReadFile(ctx, id, "/home/factory/.config/opencode/agent/builder.md")
+	builder, _ := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/builder.md")
 	if strings.Contains(string(builder), "edit: false") || !strings.Contains(string(builder), "bash: true") {
 		t.Errorf("builder.md tool perms wrong:\n%s", builder)
 	}
 
-	cfgData, err := envp.ReadFile(ctx, id, "/home/factory/.config/opencode/opencode.json")
+	cfgData, err := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/opencode.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,11 +197,11 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 		t.Fatal(err)
 	}
 	mcp, ok := cfg.MCP["ask_human"]
-	if !ok || mcp.Type != "local" || len(mcp.Command) != 2 || mcp.Command[1] != "/opt/factory/ask-human.mjs" {
+	if !ok || mcp.Type != "local" || len(mcp.Command) != 2 || mcp.Command[1] != "/opt/apothecary/ask-human.mjs" {
 		t.Errorf("ask_human MCP registration = %+v", cfg.MCP)
 	}
 
-	auth, err := envp.ReadFile(ctx, id, "/home/factory/.local/share/opencode/auth.json")
+	auth, err := envp.ReadFile(ctx, id, "/home/apothecary/.local/share/opencode/auth.json")
 	if err != nil || !strings.Contains(string(auth), "openrouter") {
 		t.Errorf("auth.json = %q, %v", auth, err)
 	}

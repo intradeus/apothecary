@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/event"
-	"factory/internal/flow"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/event"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 // testProject is the project id served by the harness's StaticResolver.
@@ -247,7 +247,7 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 	if mr.Title != "Add login form" {
 		t.Errorf("MR title = %q (should come from mr.md heading)", mr.Title)
 	}
-	if !strings.HasPrefix(mr.Branch, "factory/") || !strings.Contains(mr.Branch, "add-login") {
+	if !strings.HasPrefix(mr.Branch, "apothecary/") || !strings.Contains(mr.Branch, "add-login") {
 		t.Errorf("MR branch = %q", mr.Branch)
 	}
 	if got := len(h.ch.Sent()); got != 2 {
@@ -548,7 +548,7 @@ func TestCrashRecoveryResumesViaResume(t *testing.T) {
 	ctx := context.Background()
 	usage := &event.Usage{InputTokens: 100, OutputTokens: 50, CostUSD: 0.30}
 	for _, p := range []event.Payload{
-		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "factory/r-crash-t"},
+		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-crash-t"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
@@ -748,10 +748,10 @@ func TestSetupFailureIsEnvFailed(t *testing.T) {
 
 func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.forge.MissingFiles = map[string]bool{".factory/agents/": true}
+	h.forge.MissingFiles = map[string]bool{".apothecary/agents/": true}
 	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
-	if err == nil || !strings.Contains(err.Error(), ".factory/agents/") {
-		t.Errorf("err = %v, want mention of .factory/agents/", err)
+	if err == nil || !strings.Contains(err.Error(), ".apothecary/agents/") {
+		t.Errorf("err = %v, want mention of .apothecary/agents/", err)
 	}
 
 	h2 := newHarness(t, mustFlow(t, loopFlowDoc))

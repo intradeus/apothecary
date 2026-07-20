@@ -90,13 +90,13 @@ boring choice, recorded here). Newest at the bottom.
   completion; command stages contribute no cost/turns.
 - **Per-run bearer tokens are regenerated on every engine boot** (not
   persisted — they're secrets and events are not a secret store). Recovery
-  **rewrites `/factory/run.env`** in a still-running environment with the
+  **rewrites `/apothecary/run.env`** in a still-running environment with the
   fresh token; the shim (M3) re-reads the file on 401 before giving up.
 - **Flow-hash drift on recovery** (flow file edited while a run was in
   flight) logs a warning and continues with the current file.
 - Engine `Shutdown` cancels run goroutines *without* terminal events (runs
   resume via `Recover`); only `Abort` writes `run_failed{aborted}`.
-- Bootstrap step 4 (.opencode generation from `.factory/agents/`) is a
+- Bootstrap step 4 (.opencode generation from `.apothecary/agents/`) is a
   placeholder script until the opencode adapter lands (M3); the AGENTS.md
   symlink + git-exclude part is real.
 
@@ -141,13 +141,13 @@ boring choice, recorded here). Newest at the bottom.
 ## Postgres store (§0, §6, §9)
 
 - **Watch fan-out is in-process** (no LISTEN/NOTIFY): the engine is the only
-  writer (§2) and v1 is one factoryd per machine, so subscribers are notified
+  writer (§2) and v1 is one apothecaryd per machine, so subscribers are notified
   after commit in-memory; replay comes from the table with seq-based dedup
   against the live buffer. Revisit only with multi-process engines.
 - Seq assignment is `MAX(seq)+1` inside the append transaction — safe under
   the single-writer rule, no sequence object needed.
 - The runs and pings projections are folded in the append transaction via
-  the same `run.Apply` code the in-memory reducer uses; `factoryd
+  the same `run.Apply` code the in-memory reducer uses; `apothecaryd
   rebuild-projections` truncates and replays through that exact path.
   Ping rows insert with `ON CONFLICT DO NOTHING` so rebuild is idempotent.
 - Migrations: embedded numbered `.sql` files, tracked in
@@ -162,7 +162,7 @@ boring choice, recorded here). Newest at the bottom.
 - Secrets resolve from env-var names at wiring time (`token_env`, `*_env`);
   provider keys map to the standard `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`
   names inside the workspace and unset providers are omitted (§11).
-- `factoryd serve -dev` wires the in-memory fake adapters (agents honor
+- `apothecaryd serve -dev` wires the in-memory fake adapters (agents honor
   output contracts by parsing the §3.2 contract line, reviewers approve) so
   full flows run end-to-end through the real engine + API + Postgres before
   M2-M4 land. Without `-dev`, serve refuses with a clear message.
@@ -199,7 +199,7 @@ boring choice, recorded here). Newest at the bottom.
   is reused (crash recovery re-provision path); readiness = build status
   `running` + an `ssh -- true` agent probe.
 - **Bootstrap extracted to `engine.RunBootstrap`** (pure port calls, no
-  events) so `factoryd envcheck` runs the identical sequence standalone; the
+  events) so `apothecaryd envcheck` runs the identical sequence standalone; the
   run loop wraps it and maps failures to env_failed. Added §11 step 3 git
   auth: `GitToken` written to /factory/git-credentials + credential.helper
   store — the token never lands in .git/config; omitted for public repos.
@@ -207,7 +207,7 @@ boring choice, recorded here). Newest at the bottom.
   into /etc/hosts, then ALL DNS is dropped — other names cannot resolve at
   all. Host-gateway is allowed on the engine AND Coder ports (the workspace
   agent's own websocket dies otherwise). The repo host is derived from
-  FACTORY_REPO_URL (container env, non-secret, via sudo env_keep — container
+  APOTHECARY_REPO_URL (container env, non-secret, via sudo env_keep — container
   root cannot read /proc/1/environ without CAP_SYS_PTRACE). Sudoers allows
   exactly `init-firewall.sh` with no arguments; a /run lock makes re-runs
   no-ops. Plain per-IP iptables rules, no ipset (kernel-module dependency).
@@ -226,7 +226,7 @@ boring choice, recorded here). Newest at the bottom.
   adapter holds one supervised `coder ssh -R <port>:127.0.0.1:<port>` per
   workspace: a listener inside the workspace on ITS localhost, forwarded to
   the engine on the host's localhost, riding the agent's already-allowed
-  websocket to the Coder server. Consequences: `FACTORY_ENGINE_URL` is
+  websocket to the Coder server. Consequences: `APOTHECARY_ENGINE_URL` is
   `http://127.0.0.1:8080`; the engine (and §13 default `listen`) binds
   127.0.0.1 — the §15 "API on 0.0.0.0 with no auth" residual disappears; no
   UFW/host change needed; the firewall's gateway allowance shrinks to the
@@ -236,15 +236,15 @@ boring choice, recorded here). Newest at the bottom.
   with a host-loopback probe listener fetched from inside the workspace.
   The template's host.docker.internal mapping remains — the Coder agent
   itself still needs it to reach the server.
-- **`factoryd envcheck`** is the M2 acceptance driver: provision → bootstrap
+- **`apothecaryd envcheck`** is the M2 acceptance driver: provision → bootstrap
   → verify command → firewall positive/negative checks (example.com blocked,
   foreign DNS dead, provider APIs + repo host reachable, engine port not
   filtered) → binary-safe Read/WriteFile round-trips → links, then destroy
   (`-keep` to inspect).
 - Workspace image pins: Go 1.24.5, Node 22, opencode 1.17.8, code-server
   latest-at-build. The ask_human shim (§10) ships in the image at
-  /opt/factory/ask-human.mjs — dependency-free Node MCP stdio server; it
-  re-reads /factory/run.env on 401 (token rotation after engine restart).
+  /opt/apothecary/ask-human.mjs — dependency-free Node MCP stdio server; it
+  re-reads /apothecary/run.env on 401 (token rotation after engine restart).
 - Template: params run_id/repo_url/branch only (non-secrets §11); per-run
   docker network + persistent home volume; NET_ADMIN for firewall init; the
   agent init script is rewritten to reach Coder via host.docker.internal.
@@ -302,14 +302,14 @@ Verified against opencode 1.17.8 (pinned in the image):
 - REST v4 with PRIVATE-TOKEN auth; no glab, no GitLab types crossing the
   port. `CheckAccess` requires ≥ Developer (30) on the project (push
   branches + open MRs); `FileExists` uses the files HEAD endpoint, or the
-  tree endpoint for trailing-slash directory paths (`.factory/agents/`);
+  tree endpoint for trailing-slash directory paths (`.apothecary/agents/`);
   `CreateDraftMR` prefixes `Draft: ` and targets the default branch with
   remove_source_branch; `MRState` maps opened/locked→open.
 - The adapter is **bound to the one v1 project at construction**
   (config gitlab.project_id): §4's `MRState(MRRef)` carries no repo.
 - **The repo-scoped token deliberately CANNOT merge**: gitlab.com fully
-  protects default branches (Maintainer-only merge), so the §4 flow's
-  "Lu merges" is enforced by GitLab itself — the factory can push branches
+  protects default branches (Maintainer-only merge), so the §4 mergin flow's
+  is enforced by GitLab itself — the factory can push branches
   and open draft MRs but never merge them. Discovered via 401 on the merge
   API with the Developer-role project access token; recorded as the
   intended §15 posture, not a limitation.
@@ -391,7 +391,7 @@ Verified against opencode 1.17.8 (pinned in the image):
   existing flow). The DESIGN §3.1 document survives only as the parser
   test fixture `internal/flow/testdata/v1.yaml`. `serve -dev` seeds its
   own inline `dev` flow — fake-sandbox convenience, dev mode only.
-  `factoryd validate <file>` and import-config's flows_dir remain for
+  `apothecaryd validate <file>` and import-config's flows_dir remain for
   user-supplied files at the CLI. Lu's production DB keeps its `v1` row:
   seeded pre-amendment and now referenced by his project — it is his user
   data, not product config.
@@ -418,7 +418,7 @@ Verified against opencode 1.17.8 (pinned in the image):
   image extracts `./coder`, not `coder` (found live: tar exit 2 in the
   first image build).
 - **M7 acceptance evidence** (ephemeral Postgres 16 in docker): migration
-  0002 applied; full store suite green; serve booted from FACTORY_* env
+  0002 applied; full store suite green; serve booted from APOTHECARY_* env
   vars alone; dev project seeded; ticket → 9-stage v1 flow → gates
   answered via API → `run_completed` with project_id projected;
   import-config on a synthetic v1 factory.yaml created 4 integrations +
@@ -427,11 +427,11 @@ Verified against opencode 1.17.8 (pinned in the image):
   env-only boot) served the CPUI, seeded dev, and completed the same
   9-stage flow, with coder v2.35.2 and the docker CLI verified inside the
   image; `go test ./...` green.
-- **Operator migration note**: a factoryd built from this commit no longer
-  accepts `serve -config` — the v1 deployment must run `factoryd keygen`,
-  export the §1 FACTORY_* vars, run `factoryd import-config -config
+- **Operator migration note**: a apothecaryd built from this commit no longer
+  accepts `serve -config` — the v1 deployment must run `apothecaryd keygen`,
+  export the §1 APOTHECARY_* vars, run `apothecaryd import-config -config
   /etc/factory/factory.yaml` once (with the old env present), then
-  `factoryd serve`.
+  `apothecaryd serve`.
 
 ## CPUI config surface (M8, DESIGN2 §11)
 
@@ -555,7 +555,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
   deployments fall back to `templates create` when push reports the
   template missing. Flags verified against Coder v2.35.
 - **Firewall names removed from the script**: init-firewall.sh keeps only
-  mechanics; the allowlist arrives fully derived via FACTORY_EXTRA_DOMAINS
+  mechanics; the allowlist arrives fully derived via APOTHECARY_EXTRA_DOMAINS
   (repo host kept as belt-and-braces for custom templates).
 - **workspace.template is optional again** (the M7 stopgap requirement is
   gone): empty = managed template + built image; set = custom-template
@@ -604,7 +604,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
 ## GitHub forge + codex harness (M10, DESIGN2 §12–§13)
 
 - **Neither adapter touched the engine** — two `Register*` lines in
-  cmd/factoryd (the M10 port proof). The descriptor-driven UI picked both
+  cmd/apothecaryd (the M10 port proof). The descriptor-driven UI picked both
   up with zero frontend changes.
 - **GitHub** (§12 as specced): Bearer PAT + api-version header; Locator
   "owner/repo"; CheckAccess requires `permissions.push`; FileExists via
@@ -629,7 +629,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
     non-JSON tracing lines interleave and are skipped. CostUSD stays 0 —
     budgets ride max_total_turns (§3 anticipated).
   - Agent identity is a **role-file preamble** (`/factory/agents/
-    <name>.role`, generated by Prepare from .factory/agents specs);
+    <name>.role`, generated by Prepare from .apothecary/agents specs);
     read_only/allow_bash are instruction-level only — documented §13
     residual. config.toml registers the ask_human MCP server.
   - Model strings: flows keep `openai/<model>`; the adapter strips the
@@ -654,16 +654,16 @@ in two steps (UI first, then full backend removal on his follow-up call):
 
 ## Ship it (M11, DESIGN2 §15/§17)
 
-- **Versioning**: `factoryd version` + ldflags stamp (`deploy/Dockerfile`
+- **Versioning**: `apothecaryd version` + ldflags stamp (`deploy/Dockerfile`
   ARG VERSION); `deploy/release.sh [vX.Y.Z]` builds
-  `apothecary/factoryd:<version>` (+ latest), prints the stamped version,
+  `apothecary/apothecaryd:<version>` (+ latest), prints the stamped version,
   and pushes when `REGISTRY=` is set. The compose file honors
   `APOTHECARY_IMAGE` so deployments pin releases in `deploy/.env`; default
   tracks the working tree (`:dev`) — the right default for a single-repo
   self-hosted install with no registry (this repo has no git remote).
 - **README.md** is the M11 install path: prerequisites (docker, external
   Coder, forge PAT, harness auth, target repo with AGENTS.md +
-  .factory/agents), compose install with keygen, the UI configuration
+  .apothecary/agents), compose install with keygen, the UI configuration
   walkthrough ending in envcheck + first ticket, upgrade notes
   (migrations at boot; base image + template are content-addressed and
   self-heal), full CLI table, dev workflow, and the short-form security
@@ -672,29 +672,41 @@ in two steps (UI first, then full backend removal on his follow-up call):
   was validated by construction on THIS machine — the production stack
   runs from the compose file + env.example + keygen path the README
   prescribes, with data intact across every M7–M10 roll. A genuinely
-  fresh box (or Lu deleting the volumes) is the final proof; no registry
-  publishing exists yet for the same reason there is no remote.
+  fresh box is the final proof.
+- **CI/CD (post-M11, once the GitHub remote existed)**:
+  `.github/workflows/release.yml` — every push to main runs `go test` +
+  svelte-check, then builds with `--build-arg VERSION=v2.0.<run_number>`,
+  pushes `ghcr.io/intradeus/apothecary/apothecaryd:{vX,latest,sha-…}` via
+  the workflow GITHUB_TOKEN (packages:write), verifies the stamp
+  (`docker run … version`), and creates the matching git tag
+  (contents:write; skipped when it already exists — re-run safety).
+  Monotonic run-number versioning over semver-by-hand: every merge IS a
+  release, per Lu. Single-arch linux/amd64 (the deployment target);
+  GHCR package visibility follows the repo — private packages need a
+  `read:packages` login to pull.
 
-## CPUI & Matrix (M5)
+## The great rename: factory → apothecary (post-M11, Lu's call)
 
-- Matrix adapter: client-server API v3, PUT m.room.message with a ULID txn
-  id (idempotent per attempt), plain + HTML bodies; registered as the
-  `matrix` factory in the channels registry, so §8 channel CRUD constructs
-  it from {homeserver, access_token, room_id}.
-- The CPUI is a SvelteKit 2 / Svelte 5 SPA (adapter-static, no component
-  library per §0) served by factoryd itself from `cpui_dir` with an
-  index.html fallback — one binary + one static dir, no separate web
-  server, same-origin API (no CORS). `vite dev` proxies /api for UI work.
-- The SSE endpoint honors the browser `Last-Event-ID` reconnect header
-  (same semantics as `?after_seq=`), so EventSource-driven timelines resume
-  without gaps after network blips.
-- Timeline, totals, deep links and the pending-ping answer box are all
-  derived client-side from the raw event stream — the UI is a projection of
-  events, per the §2 principle; no bespoke view endpoints were added.
-- M4 acceptance evidence (run 01KXXBW7JP8K3ZJRPSBPNVJMSJ, project
-  intradeus/greeter-factory-test): full v1 flow — preflight against real
-  GitLab → plan → gate → build → verify → cross-vendor review APPROVE
-  (gpt-5-mini, proper verdict.json) → redact → push → **real draft MR !2**
-  → final_gate parked → Lu merged in GitLab → auto_complete fired in
-  **0.85 s** (merged_at 18:27:56.436Z, run_completed 18:27:57.289Z; ≤90 s
-  criterion). Totals: $0.072, 30 turns, 0 unwanted pings.
+Done pre-first-release — the only cheap moment. Renamed end to end:
+- Go module `factory` → `apothecary` (every import path); binary/cmd
+  `apothecaryd`; image `apothecary/apothecaryd`; CI image
+  `ghcr.io/intradeus/apothecary/apothecaryd`; compose service.
+- Env contract `APOTHECARY_*` → `APOTHECARY_*` — boot vars AND the workspace
+  contract (run.env keys, template env, sudoers env_keep, firewall
+  script, shim), all rolling together via the content-addressed base
+  image + template (new hashes ⇒ rebuilt/re-pushed on next use).
+- Workspace filesystem `/factory` → `/apothecary`, `/opt/apothecary` →
+  `/opt/apothecary`, runs dir `/var/lib/apothecary/runs`; unix user
+  `factory` → `apothecary` (home moves accordingly).
+- Branch prefix `apothecary/<run>-<slug>`, workspace names
+  `apothecary-<id>`, git identity `Apothecary <apothecary@local>`,
+  telemetry `apothecary.*` attrs + `apothecary_*` metrics (Grafana
+  dashboards updated to match), Coder-kind default template name
+  `apothecary` (existing integrations keep their stored value).
+- Historical docs swept too (`factoryd`, `FACTORY_*`, `/factory` paths) —
+  the design docs now read with current spellings.
+**Operational notes**: deploy/.env needs its two var names updated
+(APOTHECARY_PG_PASSWORD, APOTHECARY_MASTER_KEY — values unchanged); the
+stack must be RECREATED (down + up: new volumes, fresh DB, reconfigure in
+the UI); pre-rename workspaces/images/templates are orphaned leftovers;
+Prometheus metric history restarts under the new metric names.

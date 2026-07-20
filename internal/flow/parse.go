@@ -324,7 +324,7 @@ func (p *parser) buildStage(raw *rawStage, idx int, d Defaults) (*Stage, error) 
 	switch st {
 	case StageAgent:
 		if raw.Agent == "" {
-			return fail("agent is required (resolves to .factory/agents/<name>.yaml)")
+			return fail("agent is required (resolves to .apothecary/agents/<name>.yaml)")
 		}
 		if !slugRe.MatchString(raw.Agent) {
 			return fail("agent %q is not a slug", raw.Agent)

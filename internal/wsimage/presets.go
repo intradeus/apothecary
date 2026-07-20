@@ -18,7 +18,7 @@ func Presets() []Preset {
 			Name: "go", Label: "Go 1.24",
 			Lines: []string{
 				`RUN curl -fsSL "https://go.dev/dl/go1.24.5.linux-amd64.tar.gz" | tar -C /usr/local -xz`,
-				`ENV PATH="/usr/local/go/bin:/home/factory/go/bin:${PATH}"`,
+				`ENV PATH="/usr/local/go/bin:/home/apothecary/go/bin:${PATH}"`,
 			},
 			Domains: []string{"proxy.golang.org", "sum.golang.org", "storage.googleapis.com"},
 		},

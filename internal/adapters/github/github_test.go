@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 // ghStub fakes the GitHub v3 endpoints the adapter touches and records
@@ -37,7 +37,7 @@ func ghStub(t *testing.T) (*httptest.Server, *[]map[string]any) {
 		switch r.PathValue("path") {
 		case "AGENTS.md":
 			_, _ = w.Write([]byte(`{"name":"AGENTS.md","type":"file"}`))
-		case ".factory%2Fagents", ".factory/agents":
+		case ".factory%2Fagents", ".apothecary/agents":
 			_, _ = w.Write([]byte(`[{"name":"planner.yaml"},{"name":"builder.yaml"}]`))
 		default:
 			w.WriteHeader(404)
@@ -90,7 +90,7 @@ func TestFileExists(t *testing.T) {
 	if ok, err := a.FileExists(ctx, repo, "AGENTS.md"); err != nil || !ok {
 		t.Errorf("file = %v, %v", ok, err)
 	}
-	if ok, err := a.FileExists(ctx, repo, ".factory/agents/"); err != nil || !ok {
+	if ok, err := a.FileExists(ctx, repo, ".apothecary/agents/"); err != nil || !ok {
 		t.Errorf("dir = %v, %v", ok, err)
 	}
 	if ok, err := a.FileExists(ctx, repo, "nope.md"); err != nil || ok {
@@ -101,7 +101,7 @@ func TestFileExists(t *testing.T) {
 func TestCreateDraftMRIsNativeDraft(t *testing.T) {
 	ts, prs := ghStub(t)
 	a, repo := testAdapter(ts)
-	ref, err := a.CreateDraftMR(context.Background(), repo, "factory/x", "Add greeting", "body text")
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x", "Add greeting", "body text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestCreateDraftMRIsNativeDraft(t *testing.T) {
 	if title := pr["title"].(string); strings.HasPrefix(title, "Draft:") {
 		t.Errorf("title %q must NOT carry the GitLab-style prefix", title)
 	}
-	if pr["head"] != "factory/x" || pr["base"] != "main" {
+	if pr["head"] != "apothecary/x" || pr["base"] != "main" {
 		t.Errorf("branches = %v -> %v", pr["head"], pr["base"])
 	}
 }

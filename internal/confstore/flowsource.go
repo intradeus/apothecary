@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"factory/internal/flow"
+	"apothecary/internal/flow"
 )
 
 // FlowSource adapts the flows table to flow.Source (DESIGN2 §7): documents

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 // BootstrapSpec parameterizes the §11 bootstrap sequence. It is pure port
-// calls (no events), so `factoryd envcheck` can run it standalone; the run
+// calls (no events), so `apothecaryd envcheck` can run it standalone; the run
 // loop wraps it and maps failures to env_failed.
 type BootstrapSpec struct {
 	RunID     string
@@ -37,7 +37,7 @@ type BootstrapSpec struct {
 	GitPass string
 
 	// Prepare, when set, runs after the clone (§11 step 4): harness config
-	// generation from .factory/agents/ (DESIGN2 §4 Harness.Prepare).
+	// generation from .apothecary/agents/ (DESIGN2 §4 Harness.Prepare).
 	Prepare func(ctx context.Context, env ports.EnvID) error
 
 	// Setup is project.commands.setup (§11 step 6) — OPTIONAL in v2:
@@ -50,9 +50,9 @@ type BootstrapSpec struct {
 // Errors carry the step name and the output tail — the caller decides what
 // they mean (the engine: env_failed).
 func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
-	runEnv := fmt.Sprintf("FACTORY_RUN_ID=%s\nFACTORY_RUN_TOKEN=%s\nFACTORY_ENGINE_URL=%s\n",
+	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
 		spec.RunID, spec.Token, spec.EngineURL)
-	if err := envp.WriteFile(ctx, id, "/factory/run.env", []byte(runEnv), 0o600); err != nil {
+	if err := envp.WriteFile(ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600); err != nil {
 		return fmt.Errorf("write run.env: %w", err)
 	}
 
@@ -65,7 +65,7 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	for _, k := range keys {
 		fmt.Fprintf(&providers, "%s=%s\n", k, spec.ProviderEnv[k])
 	}
-	if err := envp.WriteFile(ctx, id, "/factory/provider.env", []byte(providers.String()), 0o600); err != nil {
+	if err := envp.WriteFile(ctx, id, "/apothecary/provider.env", []byte(providers.String()), 0o600); err != nil {
 		return fmt.Errorf("write provider.env: %w", err)
 	}
 	if spec.SeedAuth != nil {
@@ -81,19 +81,19 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		if err != nil {
 			return fmt.Errorf("git credentials: %w", err)
 		}
-		if err := envp.WriteFile(ctx, id, "/factory/git-credentials", []byte(cred+"\n"), 0o600); err != nil {
+		if err := envp.WriteFile(ctx, id, "/apothecary/git-credentials", []byte(cred+"\n"), 0o600); err != nil {
 			return fmt.Errorf("write git-credentials: %w", err)
 		}
 		steps = append(steps, step{"git-credential-helper", "",
-			`git config --global credential.helper "store --file=/factory/git-credentials"`})
+			`git config --global credential.helper "store --file=/apothecary/git-credentials"`})
 	}
 	steps = append(steps,
 		step{"clone", "", fmt.Sprintf("git clone %q repo && cd repo && git switch -c %q origin/%s",
 			spec.RepoURL, spec.Branch, spec.DefaultBranch)},
-		// Harness config generation from .factory/agents/ lands with the
+		// Harness config generation from .apothecary/agents/ lands with the
 		// opencode adapter (M3); the AGENTS.md symlink is engine policy (§1).
 		step{"agent-configs", "repo", agentConfigScript(spec.AgentsMDPath)},
-		step{"git-config", "repo", `git config user.name "Factory" && git config user.email "factory@local"`},
+		step{"git-config", "repo", `git config user.name "Factory" && git config user.email "apothecary@local"`},
 	)
 	for _, s := range steps {
 		res, err := envp.Exec(ctx, id, ports.Command{Script: s.script, Dir: s.dir, Timeout: spec.Timeout})

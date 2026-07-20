@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"factory/workspace"
+	"apothecary/workspace"
 )
 
 // Runner executes one docker CLI invocation in dir; swapped in tests.
@@ -44,7 +44,7 @@ func (cliRunner) Run(ctx context.Context, dir string, args ...string) (string, i
 type Builder struct {
 	docker  Runner
 	runsDir string
-	// baseOverride is FACTORY_BASE_IMAGE: an expert-supplied base ref that
+	// baseOverride is APOTHECARY_BASE_IMAGE: an expert-supplied base ref that
 	// replaces the embedded build entirely (envcheck is the gate, §8.1).
 	baseOverride string
 
@@ -112,7 +112,7 @@ func Compose(baseRef, fragment string, harnessLines []string) string {
 		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
-	sb.WriteString("USER factory\nWORKDIR /home/factory\n")
+	sb.WriteString("USER apothecary\nWORKDIR /home/apothecary\n")
 	return sb.String()
 }
 
@@ -156,7 +156,7 @@ func (b *Builder) ensureBase(ctx context.Context) error {
 		return nil
 	}
 	if b.baseOverride != "" {
-		return fmt.Errorf("base image %s (FACTORY_BASE_IMAGE) is not present on the docker daemon", ref)
+		return fmt.Errorf("base image %s (APOTHECARY_BASE_IMAGE) is not present on the docker daemon", ref)
 	}
 	dir, err := os.MkdirTemp("", "apothecary-base-*")
 	if err != nil {

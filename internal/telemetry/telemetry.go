@@ -1,5 +1,5 @@
 // Package telemetry implements §7: the engine emits OTel — one span per
-// run, a child span per stage attempt, and the four factory metrics — all
+// run, a child span per stage attempt, and the four apothecary metrics — all
 // DERIVED FROM THE EVENT STREAM, so harness-native telemetry is never
 // load-bearing and the emission is a pure projection of the source of
 // truth. OTLP/gRPC to the configured collector; disabled when no endpoint.
@@ -22,7 +22,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"factory/internal/event"
+	"apothecary/internal/event"
 )
 
 type Telemetry struct {
@@ -55,7 +55,7 @@ type runTrace struct {
 // absent (nil sink).
 func New(ctx context.Context, endpoint string) (*Telemetry, error) {
 	res, err := resource.New(ctx,
-		resource.WithAttributes(semconv.ServiceName("factoryd")),
+		resource.WithAttributes(semconv.ServiceName("apothecaryd")),
 	)
 	if err != nil {
 		return nil, err
@@ -76,21 +76,21 @@ func New(ctx context.Context, endpoint string) (*Telemetry, error) {
 		sdkmetric.WithResource(res),
 	)
 
-	t := &Telemetry{tp: tp, mp: mp, tracer: tp.Tracer("factoryd"), runs: map[string]*runTrace{}}
-	meter := mp.Meter("factoryd")
-	if t.runsTotal, err = meter.Int64Counter("factory_runs_total",
+	t := &Telemetry{tp: tp, mp: mp, tracer: tp.Tracer("apothecaryd"), runs: map[string]*runTrace{}}
+	meter := mp.Meter("apothecaryd")
+	if t.runsTotal, err = meter.Int64Counter("apothecary_runs_total",
 		metric.WithDescription("runs reaching a terminal state, by state")); err != nil {
 		return nil, err
 	}
-	if t.pingsTotal, err = meter.Int64Counter("factory_pings_total",
+	if t.pingsTotal, err = meter.Int64Counter("apothecary_pings_total",
 		metric.WithDescription("pings raised, by type")); err != nil {
 		return nil, err
 	}
-	if t.stageCost, err = meter.Float64Histogram("factory_stage_cost_usd",
+	if t.stageCost, err = meter.Float64Histogram("apothecary_stage_cost_usd",
 		metric.WithDescription("cost per completed stage attempt")); err != nil {
 		return nil, err
 	}
-	if t.stageTurns, err = meter.Int64Histogram("factory_stage_turns",
+	if t.stageTurns, err = meter.Int64Histogram("apothecary_stage_turns",
 		metric.WithDescription("turns per completed stage attempt")); err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (t *Telemetry) run(e *event.Event) *runTrace {
 	}
 	ctx, span := t.tracer.Start(context.Background(), "run",
 		trace.WithTimestamp(e.TS),
-		trace.WithAttributes(attribute.String("factory.run_id", e.RunID)))
+		trace.WithAttributes(attribute.String("apothecary.run_id", e.RunID)))
 	rt := &runTrace{ctx: ctx, span: span}
 	t.runs[e.RunID] = rt
 	return rt
@@ -138,8 +138,8 @@ func (t *Telemetry) OnEvent(e event.Event) {
 	switch p := e.Payload.(type) {
 	case *event.RunCreated:
 		rt.span.SetAttributes(
-			attribute.String("factory.flow", p.FlowName),
-			attribute.String("factory.ticket", p.TicketTitle),
+			attribute.String("apothecary.flow", p.FlowName),
+			attribute.String("apothecary.ticket", p.TicketTitle),
 		)
 	case *event.StageStarted:
 		if rt.stage != nil { // safety: an attempt left open
@@ -148,11 +148,11 @@ func (t *Telemetry) OnEvent(e event.Event) {
 		_, span := t.tracer.Start(rt.ctx, p.StageID,
 			trace.WithTimestamp(e.TS),
 			trace.WithAttributes(
-				attribute.String("factory.run_id", e.RunID),
-				attribute.String("factory.stage", p.StageID),
-				attribute.Int("factory.iteration", p.Iteration),
-				attribute.String("factory.harness", p.Harness),
-				attribute.String("factory.model", p.Model),
+				attribute.String("apothecary.run_id", e.RunID),
+				attribute.String("apothecary.stage", p.StageID),
+				attribute.Int("apothecary.iteration", p.Iteration),
+				attribute.String("apothecary.harness", p.Harness),
+				attribute.String("apothecary.model", p.Model),
 			))
 		rt.stage, rt.stageID, rt.harness, rt.model = span, p.StageID, p.Harness, p.Model
 	case *event.StageCompleted:

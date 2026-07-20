@@ -1,10 +1,10 @@
 package engine
 
 import (
-	"factory/internal/event"
-	"factory/internal/flow"
-	"factory/internal/ports"
-	"factory/internal/run"
+	"apothecary/internal/event"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 // phase is where the interpreter stands relative to the stage at pos.

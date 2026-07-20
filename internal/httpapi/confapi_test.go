@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/channels"
-	"factory/internal/confstore"
-	"factory/internal/engine"
-	"factory/internal/event"
-	"factory/internal/kinds"
-	"factory/internal/resolve"
-	"factory/internal/secrets"
+	"apothecary/internal/channels"
+	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
+	"apothecary/internal/event"
+	"apothecary/internal/kinds"
+	"apothecary/internal/resolve"
+	"apothecary/internal/secrets"
 )
 
 // v1FlowDoc is this suite's user-created flow (the product ships none):

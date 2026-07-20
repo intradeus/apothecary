@@ -9,7 +9,7 @@ CREATE TABLE events (
 );
 
 -- Read-model projection, updated in the same transaction as each append;
--- rebuildable from events (factoryd rebuild-projections).
+-- rebuildable from events (apothecaryd rebuild-projections).
 CREATE TABLE runs (
     run_id        text PRIMARY KEY,
     state         text NOT NULL,

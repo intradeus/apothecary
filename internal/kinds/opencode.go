@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	opencodeadapter "factory/internal/adapters/opencode"
-	"factory/internal/ports"
+	opencodeadapter "apothecary/internal/adapters/opencode"
+	"apothecary/internal/ports"
 )
 
 // OpencodeVersion is the pinned harness version (kept in lockstep with the

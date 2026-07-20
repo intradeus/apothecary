@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 func TestSendPutsMessageEvent(t *testing.T) {

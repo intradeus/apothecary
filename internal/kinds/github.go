@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	githubadapter "factory/internal/adapters/github"
-	"factory/internal/ports"
+	githubadapter "apothecary/internal/adapters/github"
+	"apothecary/internal/ports"
 )
 
 // GitHub is the forge/github kind (DESIGN2 §12): Bearer PAT, Locator is

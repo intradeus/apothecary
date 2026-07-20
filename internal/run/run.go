@@ -1,12 +1,12 @@
 // Package run holds the run lifecycle (DESIGN.md §2) and the runs read-model
 // projection (§6): a pure reduction over a run's events, rebuildable at any
-// time (factoryd rebuild-projections) and reused by crash recovery.
+// time (apothecaryd rebuild-projections) and reused by crash recovery.
 package run
 
 import (
 	"time"
 
-	"factory/internal/event"
+	"apothecary/internal/event"
 )
 
 type State string

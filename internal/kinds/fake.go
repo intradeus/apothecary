@@ -6,14 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/ports"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/ports"
 )
 
 // Fake kinds back `serve -dev` and tests: the whole config plane works
 // against them with no Coder/harness/forge. The fake harness honors §3.2
 // output contracts by parsing the prompt's OUTPUT CONTRACT section (moved
-// here from the v1 devAdapters in cmd/factoryd).
+// here from the v1 devAdapters in cmd/apothecaryd).
 
 // RegisterFakes registers one "fake" kind per port.
 func RegisterFakes(r *Registry) {

@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"factory/internal/adapters/fake"
-	"factory/internal/confstore"
-	"factory/internal/engine"
-	"factory/internal/kinds"
-	"factory/internal/ports"
-	"factory/internal/secrets"
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
+	"apothecary/internal/kinds"
+	"apothecary/internal/ports"
+	"apothecary/internal/secrets"
 )
 
 const testFlowDoc = `name: v1

@@ -13,7 +13,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 // Factory builds a channel from its stored config (e.g. matrix: homeserver,

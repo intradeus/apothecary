@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"testing"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 func TestEnvLifecycleAndFiles(t *testing.T) {
@@ -105,13 +105,13 @@ func TestForge(t *testing.T) {
 	if !ok {
 		t.Error("files exist by default")
 	}
-	f.MissingFiles = map[string]bool{".factory/agents/": true}
-	ok, _ = f.FileExists(ctx, ports.RepoRef{}, ".factory/agents/")
+	f.MissingFiles = map[string]bool{".apothecary/agents/": true}
+	ok, _ = f.FileExists(ctx, ports.RepoRef{}, ".apothecary/agents/")
 	if ok {
 		t.Error("missing file reported present")
 	}
 
-	ref, err := f.CreateDraftMR(ctx, ports.RepoRef{}, "factory/x", "Title", "body")
+	ref, err := f.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/x", "Title", "body")
 	if err != nil || ref.IID != 1 || ref.URL == "" {
 		t.Fatalf("create MR = %+v, %v", ref, err)
 	}

@@ -18,11 +18,11 @@ import (
 	"sort"
 	"sync"
 
-	"factory/internal/confstore"
-	"factory/internal/engine"
-	"factory/internal/kinds"
-	"factory/internal/ports"
-	"factory/internal/wsimage"
+	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
+	"apothecary/internal/kinds"
+	"apothecary/internal/ports"
+	"apothecary/internal/wsimage"
 )
 
 type Resolver struct {
@@ -44,7 +44,7 @@ type provEntry struct {
 	stale bool
 }
 
-// New builds the resolver. baseImage is the FACTORY_BASE_IMAGE override
+// New builds the resolver. baseImage is the APOTHECARY_BASE_IMAGE override
 // ("" = build the embedded base on demand, §8.1).
 func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, baseImage string) *Resolver {
 	return &Resolver{
@@ -150,9 +150,9 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		AgentsMDPath: p.Repo.AgentsMDPath,
 		DefaultFlow:  p.DefaultFlow,
 		Commands:     p.Commands,
-		GitUser:     gitUser,
-		GitPass:     gitPass,
-		ProviderEnv: harness.EnvVars(), // harness-owned auth via provider.env
+		GitUser:      gitUser,
+		GitPass:      gitPass,
+		ProviderEnv:  harness.EnvVars(), // harness-owned auth via provider.env
 		EgressDomains: egressDomains(p, account.EgressDomains(),
 			harness.EgressDomains()),
 		Image:         image,

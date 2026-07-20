@@ -1,4 +1,4 @@
-module factory
+module apothecary
 
 go 1.26.4
 

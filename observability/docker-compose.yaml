@@ -1,4 +1,4 @@
-# Local observability stack (M6): otel-collector <- factoryd (OTLP/gRPC),
+# Local observability stack (M6): otel-collector <- apothecaryd (OTLP/gRPC),
 # Prometheus scraping the collector, Grafana provisioned with dashboards.
 # host networking: everything on localhost, matching the engine's
 # 127.0.0.1-only posture (and Grafana reaches the local Postgres directly).

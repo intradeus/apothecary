@@ -23,8 +23,8 @@ import (
 	"sort"
 	"strings"
 
-	"factory/internal/agentspec"
-	"factory/internal/ports"
+	"apothecary/internal/agentspec"
+	"apothecary/internal/ports"
 )
 
 // Config is reserved for adapter-level knobs; auth material arrives per
@@ -41,13 +41,13 @@ func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
 }
 
 const (
-	promptPath = "/factory/prompt.txt"
-	replyPath  = "/factory/reply.txt"
-	homeConfig = "/home/factory/.config/opencode"
-	authPath   = "/home/factory/.local/share/opencode/auth.json"
+	promptPath = "/apothecary/prompt.txt"
+	replyPath  = "/apothecary/reply.txt"
+	homeConfig = "/home/apothecary/.config/opencode"
+	authPath   = "/home/apothecary/.local/share/opencode/auth.json"
 )
 
-// PrepareEnv generates harness-native config from .factory/agents/ (§5.2):
+// PrepareEnv generates harness-native config from .apothecary/agents/ (§5.2):
 // one agent markdown per spec plus the ask_human MCP registration. Config
 // lands in the workspace user's config dir — outside the repo, so nothing
 // needs git-excluding, regenerated every provision.
@@ -57,7 +57,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID) error {
 		return err
 	}
 	if len(specs) == 0 {
-		return fmt.Errorf("no agent specs found in .factory/agents/")
+		return fmt.Errorf("no agent specs found in .apothecary/agents/")
 	}
 
 	for _, s := range specs {
@@ -76,7 +76,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID) error {
 		"mcp": map[string]any{
 			"ask_human": map[string]any{
 				"type":    "local",
-				"command": []string{"node", "/opt/factory/ask-human.mjs"},
+				"command": []string{"node", "/opt/apothecary/ask-human.mjs"},
 				"enabled": true,
 			},
 		},
@@ -109,7 +109,7 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 // readSpecs cats every spec file out of the repo in one exec.
 func (a *Adapter) readSpecs(ctx context.Context, env ports.EnvID) ([]*agentspec.Spec, error) {
 	const marker = "===FACTORY-SPEC "
-	script := `for f in .factory/agents/*.yaml; do [ -e "$f" ] || continue; printf '` + marker + `%s\n' "$f"; cat "$f"; done`
+	script := `for f in .apothecary/agents/*.yaml; do [ -e "$f" ] || continue; printf '` + marker + `%s\n' "$f"; cat "$f"; done`
 	res, err := a.envp.Exec(ctx, env, ports.Command{Script: script, Dir: "repo"})
 	if err != nil {
 		return nil, fmt.Errorf("list agent specs: %w", err)
@@ -163,7 +163,7 @@ func (a *Adapter) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec
 		return ports.AgentResult{}, fmt.Errorf("write prompt: %w", err)
 	}
 	script := fmt.Sprintf(
-		`set -a; [ -f /factory/provider.env ] && . /factory/provider.env; set +a
+		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
 opencode run --format json --agent %q -m %q "$(cat %s)"`,
 		spec.Agent, spec.Model, promptPath)
 	return a.invoke(ctx, env, script)
@@ -174,7 +174,7 @@ func (a *Adapter) Resume(ctx context.Context, env ports.EnvID, session ports.Ses
 		return ports.AgentResult{}, fmt.Errorf("write reply: %w", err)
 	}
 	script := fmt.Sprintf(
-		`set -a; [ -f /factory/provider.env ] && . /factory/provider.env; set +a
+		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
 opencode run --format json --session %q "$(cat %s)"`,
 		string(session), replyPath)
 	return a.invoke(ctx, env, script)

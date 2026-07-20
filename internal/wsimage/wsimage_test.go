@@ -41,14 +41,14 @@ func TestComposeShape(t *testing.T) {
 	if lines[0] != "FROM apothecary/base:abc" || lines[1] != "USER root" {
 		t.Fatalf("head = %v", lines[:2])
 	}
-	// Fragment runs as root, harness after it, factory user restored last.
+	// Fragment runs as root, harness after it, apothecary user restored last.
 	iFrag := strings.Index(df, "python3")
 	iHarness := strings.Index(df, "opencode-ai")
-	iUser := strings.LastIndex(df, "USER factory")
+	iUser := strings.LastIndex(df, "USER apothecary")
 	if !(iFrag < iHarness && iHarness < iUser) {
 		t.Fatalf("ordering wrong:\n%s", df)
 	}
-	if !strings.HasSuffix(strings.TrimSpace(df), "WORKDIR /home/factory") {
+	if !strings.HasSuffix(strings.TrimSpace(df), "WORKDIR /home/apothecary") {
 		t.Fatalf("tail wrong:\n%s", df)
 	}
 }
@@ -112,7 +112,7 @@ func TestBaseOverrideMustExist(t *testing.T) {
 		t.Fatalf("base ref = %q", b.BaseRef())
 	}
 	_, _, err := b.Ensure(context.Background(), Compose(b.BaseRef(), "", nil))
-	if err == nil || !strings.Contains(err.Error(), "FACTORY_BASE_IMAGE") {
+	if err == nil || !strings.Contains(err.Error(), "APOTHECARY_BASE_IMAGE") {
 		t.Fatalf("missing override err = %v", err)
 	}
 	if len(fd.built) != 0 {

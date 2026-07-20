@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"factory/internal/secrets"
+	"apothecary/internal/secrets"
 )
 
 func newSvc(t *testing.T) (*Service, *Mem) {
@@ -46,7 +46,7 @@ func seedProject(t *testing.T, svc *Service) Project {
 	p, err := svc.CreateProject(ctx, Project{
 		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: harness.ID,
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
-		Workspace:   WorkspaceConfig{Template: "factory"},
+		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
 		DefaultFlow: "v1",
 	})
 	if err != nil {
@@ -123,7 +123,7 @@ func TestProjectValidation(t *testing.T) {
 	base := Project{
 		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: harness.ID,
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
-		Workspace:   WorkspaceConfig{Template: "factory"},
+		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
 		DefaultFlow: "v1",
 	}
 

@@ -1,6 +1,6 @@
 # Apothecary reference deployment (DESIGN2.md §15).
 #
-#   cp deploy/env.example deploy/.env    # then fill FACTORY_MASTER_KEY (factoryd keygen)
+#   cp deploy/env.example deploy/.env    # then fill APOTHECARY_MASTER_KEY (apothecaryd keygen)
 #   docker compose -f deploy/docker-compose.yaml up -d
 #
 # Host network mode keeps 127.0.0.1:8080 and the Coder reverse tunnel
@@ -13,23 +13,23 @@ services:
     image: postgres:16
     network_mode: host
     environment:
-      POSTGRES_USER: factory
-      POSTGRES_PASSWORD: ${FACTORY_PG_PASSWORD:?set FACTORY_PG_PASSWORD in deploy/.env}
-      POSTGRES_DB: factory
+      POSTGRES_USER: apothecary
+      POSTGRES_PASSWORD: ${APOTHECARY_PG_PASSWORD:?set APOTHECARY_PG_PASSWORD in deploy/.env}
+      POSTGRES_DB: apothecary
     command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=15432"]
     volumes:
-      - factory-pgdata:/var/lib/postgresql/data
+      - apothecary-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 15432 -U factory"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 15432 -U apothecary"]
       interval: 5s
       timeout: 3s
       retries: 12
     restart: unless-stopped
 
-  factoryd:
+  apothecaryd:
     # Pin a release via APOTHECARY_IMAGE in deploy/.env (built by
     # deploy/release.sh); the default builds from the working tree.
-    image: ${APOTHECARY_IMAGE:-apothecary/factoryd:dev}
+    image: ${APOTHECARY_IMAGE:-apothecary/apothecaryd:dev}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -38,18 +38,18 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      FACTORY_POSTGRES_DSN: postgres://factory:${FACTORY_PG_PASSWORD}@127.0.0.1:15432/factory
-      FACTORY_MASTER_KEY: ${FACTORY_MASTER_KEY:?run `factoryd keygen` and set FACTORY_MASTER_KEY in deploy/.env}
-      FACTORY_LISTEN: 127.0.0.1:8080
+      APOTHECARY_POSTGRES_DSN: postgres://apothecary:${APOTHECARY_PG_PASSWORD}@127.0.0.1:15432/apothecary
+      APOTHECARY_MASTER_KEY: ${APOTHECARY_MASTER_KEY:?run `apothecaryd keygen` and set APOTHECARY_MASTER_KEY in deploy/.env}
+      APOTHECARY_LISTEN: 127.0.0.1:8080
     volumes:
       # Workspace image builds (§8) go through the host's docker daemon —
       # the same one Coder's docker provider uses. This makes the engine
       # root-equivalent on the host: documented §16 residual, it joins
       # Coder as literal trusted control plane.
       - /var/run/docker.sock:/var/run/docker.sock
-      - factory-runs:/var/lib/factory/runs
+      - apothecary-runs:/var/lib/apothecary/runs
     restart: unless-stopped
 
 volumes:
-  factory-pgdata:
-  factory-runs:
+  apothecary-pgdata:
+  apothecary-runs:

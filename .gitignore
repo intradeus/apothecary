@@ -1,3 +1,21 @@
-node_modules/
-# deployment secrets (FACTORY_MASTER_KEY, PG password) — never committed
+# --- secrets ---------------------------------------------------------------
+# deployment secrets (APOTHECARY_MASTER_KEY, PG password) — never committed
 deploy/.env
+
+# --- Go --------------------------------------------------------------------
+# locally built binaries (the image builds its own)
+/apothecaryd
+*.test
+cover.out
+coverage.*
+
+# --- CPUI (SvelteKit) ------------------------------------------------------
+# all generated: dependencies, kit cache, static build output (the deploy
+# image builds the CPUI itself)
+node_modules/
+cpui/.svelte-kit/
+cpui/build/
+cpui/vite.config.ts.timestamp-*
+
+# --- misc ------------------------------------------------------------------
+*.log

@@ -1,5 +1,5 @@
 // Package agentspec parses the neutral agent definitions in
-// .factory/agents/<name>.yaml (DESIGN.md §5.1). These are harness-agnostic;
+// .apothecary/agents/<name>.yaml (DESIGN.md §5.1). These are harness-agnostic;
 // each harness adapter translates them into its native config (§5.2).
 package agentspec
 

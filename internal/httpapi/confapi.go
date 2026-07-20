@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"factory/internal/confstore"
-	"factory/internal/flow"
-	"factory/internal/kinds"
-	"factory/internal/secrets"
-	"factory/internal/wsimage"
+	"apothecary/internal/confstore"
+	"apothecary/internal/flow"
+	"apothecary/internal/kinds"
+	"apothecary/internal/secrets"
+	"apothecary/internal/wsimage"
 )
 
 // Config-plane routes (DESIGN2 §10). Secrets are write-only: requests carry

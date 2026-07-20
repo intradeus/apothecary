@@ -6,13 +6,13 @@
 // (the server holds 55 s) indefinitely — the stage timeout is suspended
 // while a ping is pending. On network error retry with backoff capped at
 // 60 s; if the engine is unreachable > 10 min, return a tool error string
-// and let the agent proceed. Credentials come from /factory/run.env and are
+// and let the agent proceed. Credentials come from /apothecary/run.env and are
 // re-read on 401 (the engine regenerates tokens on restart).
 
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-const RUN_ENV = "/factory/run.env";
+const RUN_ENV = "/apothecary/run.env";
 const POLL_INTERVAL_MS = 5_000;
 const UNREACHABLE_LIMIT_MS = 10 * 60_000;
 
@@ -28,10 +28,10 @@ function runEnv() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function callEngine(method, path, body, env) {
-  const res = await fetch(env.FACTORY_ENGINE_URL + path, {
+  const res = await fetch(env.APOTHECARY_ENGINE_URL + path, {
     method,
     headers: {
-      Authorization: `Bearer ${env.FACTORY_RUN_TOKEN}`,
+      Authorization: `Bearer ${env.APOTHECARY_RUN_TOKEN}`,
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -50,13 +50,13 @@ async function askHuman(args) {
     let res;
     try {
       if (pingId === null) {
-        res = await callEngine("POST", `/api/runs/${env.FACTORY_RUN_ID}/pings`, {
+        res = await callEngine("POST", `/api/runs/${env.APOTHECARY_RUN_ID}/pings`, {
           type: args.type,
           question: args.question,
           context: args.context ?? "",
         }, env);
       } else {
-        res = await callEngine("GET", `/api/runs/${env.FACTORY_RUN_ID}/pings/${pingId}`, null, env);
+        res = await callEngine("GET", `/api/runs/${env.APOTHECARY_RUN_ID}/pings/${pingId}`, null, env);
       }
     } catch (err) {
       downSince ??= Date.now();
@@ -131,7 +131,7 @@ rl.on("line", async (line) => {
       reply(id, {
         protocolVersion: params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "factory-ask-human", version: "1.0.0" },
+        serverInfo: { name: "apothecary-ask-human", version: "1.0.0" },
       });
       break;
     case "tools/list":

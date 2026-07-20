@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Egress firewall for factory workspaces (DESIGN.md §11).
+# Egress firewall for apothecary workspaces (DESIGN.md §11).
 #
 # Default-deny with an explicit allowlist: model provider APIs, the repo
-# host (derived from FACTORY_REPO_URL), Go/npm registries, and the host
+# host (derived from APOTHECARY_REPO_URL), Go/npm registries, and the host
 # gateway on the engine + Coder ports. The resolve-then-pin pattern: allowed
 # names are resolved once here, pinned into /etc/hosts and an ipset, then
 # ALL DNS is blocked — other names simply cannot resolve.
 #
 # Runs as root via a single NOPASSWD sudoers entry (no arguments accepted;
-# the FACTORY_* env vars pass through sudo env_keep). A lock file makes
+# the APOTHECARY_* env vars pass through sudo env_keep). A lock file makes
 # re-runs no-ops, so re-invocation cannot alter the rules.
 set -euo pipefail
 
-LOCK=/run/factory-firewall.done
+LOCK=/run/apothecary-firewall.done
 if [ -e "$LOCK" ]; then
   echo "firewall: already initialized"
   exit 0
@@ -30,13 +30,13 @@ fail_closed() {
   iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
   iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
   GW="$(ip route | awk '/default/ {print $3; exit}')" || true
-  [ -n "${GW:-}" ] && iptables -A OUTPUT -d "$GW" -p tcp --dport "${FACTORY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
+  [ -n "${GW:-}" ] && iptables -A OUTPUT -d "$GW" -p tcp --dport "${APOTHECARY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
   exit 1
 }
 trap fail_closed ERR
 
-REPO_URL="${FACTORY_REPO_URL:-}"
-CODER_PORT="${FACTORY_CODER_PORT:-7080}"
+REPO_URL="${APOTHECARY_REPO_URL:-}"
+CODER_PORT="${APOTHECARY_CODER_PORT:-7080}"
 
 REPO_HOST=""
 if [ -n "$REPO_URL" ]; then
@@ -45,12 +45,12 @@ fi
 
 # The allowlist is fully DERIVED (DESIGN2 §8.4): the engine computes it —
 # repo host ∪ adapter contributions ∪ project extras — and passes it via
-# FACTORY_EXTRA_DOMAINS. No names are baked into this script; only the
+# APOTHECARY_EXTRA_DOMAINS. No names are baked into this script; only the
 # mechanics live here. REPO_HOST stays as belt-and-braces for custom
 # templates that pass v1 params only.
 DOMAINS=""
 [ -n "$REPO_HOST" ] && DOMAINS="$REPO_HOST"
-[ -n "${FACTORY_EXTRA_DOMAINS:-}" ] && DOMAINS="$DOMAINS $FACTORY_EXTRA_DOMAINS"
+[ -n "${APOTHECARY_EXTRA_DOMAINS:-}" ] && DOMAINS="$DOMAINS $APOTHECARY_EXTRA_DOMAINS"
 
 GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
 

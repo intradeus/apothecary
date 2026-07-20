@@ -30,7 +30,7 @@ exactly two touchpoints — plan approval and final review.
 - **Model auth for your coding agent**: an opencode `auth.json` (API keys
   and/or subscription login) or, for codex, an OpenAI API key / ChatGPT
   `auth.json`.
-- A target repository containing `AGENTS.md` and `.factory/agents/*.yaml`
+- A target repository containing `AGENTS.md` and `.apothecary/agents/*.yaml`
   agent specs (see `examples/target-repo/`).
 
 ## Install
@@ -38,13 +38,13 @@ exactly two touchpoints — plan approval and final review.
 ```sh
 git clone <this repo> && cd apothecary
 cp deploy/env.example deploy/.env
-docker compose -f deploy/docker-compose.yaml run --rm factoryd keygen
-#  -> paste the output into deploy/.env as FACTORY_MASTER_KEY,
-#     and set FACTORY_PG_PASSWORD to anything strong
+docker compose -f deploy/docker-compose.yaml run --rm apothecaryd keygen
+#  -> paste the output into deploy/.env as APOTHECARY_MASTER_KEY,
+#     and set APOTHECARY_PG_PASSWORD to anything strong
 docker compose -p apothecary -f deploy/docker-compose.yaml up -d
 ```
 
-Open **http://127.0.0.1:8080**. The stack is factoryd (engine + UI, bound
+Open **http://127.0.0.1:8080**. The stack is apothecaryd (engine + UI, bound
 to the host's loopback) and Postgres 16 on `127.0.0.1:15432`; both restart
 automatically. Database migrations apply at boot.
 
@@ -57,7 +57,7 @@ automatically. Database migrations apply at boot.
 1. **Integrations** — add and **Test** each:
    - *Forge*: GitLab or GitHub + token.
    - *Provisioner*: Coder URL + session token (+ template name, default
-     `factory` — the engine manages the template's content for you).
+     `apothecary` — the engine manages the template's content for you).
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
      credentials) or codex (API key and/or ChatGPT `auth.json`).
 2. **Flows** — create one (a starter skeleton is offered; the editor
@@ -80,46 +80,61 @@ Settings (concurrency, environment caps, reaper) live under *Settings*
 and apply without a restart. Notification mirrors (Matrix) live under
 *Channels*.
 
-## Upgrade
+## Releases & upgrade
+
+**Every push to `main` releases automatically** (`.github/workflows/
+release.yml`): tests run, then a version-stamped image
+(`v2.0.<run>`) is pushed to
+`ghcr.io/intradeus/apothecary/apothecaryd` (also `:latest` and `:sha-…`)
+and a matching git tag is created.
+
+To run published releases, pin one in `deploy/.env`:
 
 ```sh
-git pull
-docker compose -p apothecary -f deploy/docker-compose.yaml up -d --build
+# deploy/.env
+APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v2.0.42
 ```
 
-Migrations apply at boot; the workspace base image and the Coder template
-are content-addressed and rebuild/re-push themselves on first use when
-their sources changed. To pin releases instead of tracking the working
-tree: `deploy/release.sh v2.x.y`, then set
-`APOTHECARY_IMAGE=apothecary/factoryd:v2.x.y` in `deploy/.env`
-(`REGISTRY=... deploy/release.sh v2.x.y` also pushes).
+```sh
+docker compose -p apothecary -f deploy/docker-compose.yaml pull apothecaryd
+docker compose -p apothecary -f deploy/docker-compose.yaml up -d
+```
+
+(If the GHCR package is private: `docker login ghcr.io` with a
+`read:packages` PAT first, or make the package public in its settings.)
+
+Without a pin, compose builds from the working tree (`git pull` +
+`up -d --build`) — the right mode for hacking on the factory itself.
+Either way, migrations apply at boot, and the workspace base image and
+Coder template are content-addressed — they rebuild/re-push themselves on
+first use after their sources change. `deploy/release.sh vX.Y.Z` does the
+same versioned build locally.
 
 ## CLI
 
 Everything ships in the image (`docker compose -p apothecary -f
-deploy/docker-compose.yaml exec factoryd <cmd>`, or `run --rm` for
+deploy/docker-compose.yaml exec apothecaryd <cmd>`, or `run --rm` for
 one-offs):
 
 | command | purpose |
 |---|---|
-| `factoryd serve [-dev]` | the engine (`-dev`: fake adapters + seeded sandbox project) |
-| `factoryd keygen` | generate `FACTORY_MASTER_KEY` |
-| `factoryd envcheck -project <name> [-keep]` | the compliance gate, from the terminal |
-| `factoryd validate <flow.yaml>` | check a flow file before pasting it into the UI |
-| `factoryd import-config -config <factory.yaml>` | one-shot migration from a v1 file-based deployment |
-| `factoryd rebuild-projections` | rebuild read models from the event log |
-| `factoryd version` | build version |
+| `apothecaryd serve [-dev]` | the engine (`-dev`: fake adapters + seeded sandbox project) |
+| `apothecaryd keygen` | generate `APOTHECARY_MASTER_KEY` |
+| `apothecaryd envcheck -project <name> [-keep]` | the compliance gate, from the terminal |
+| `apothecaryd validate <flow.yaml>` | check a flow file before pasting it into the UI |
+| `apothecaryd rebuild-projections` | rebuild read models from the event log |
+| `apothecaryd version` | build version |
 
-Boot environment (the whole deployment plane): `FACTORY_POSTGRES_DSN`,
-`FACTORY_MASTER_KEY` (required); `FACTORY_LISTEN` (default
-`127.0.0.1:8080`), `FACTORY_RUNS_DIR`, `FACTORY_CPUI_DIR`,
-`FACTORY_OTEL_ENDPOINT`, `FACTORY_BASE_IMAGE` (optional).
+Boot environment (the whole deployment plane): `APOTHECARY_POSTGRES_DSN`,
+`APOTHECARY_MASTER_KEY` (required); `APOTHECARY_LISTEN` (default
+`127.0.0.1:8080`), `APOTHECARY_RUNS_DIR`, `APOTHECARY_CPUI_DIR`,
+`APOTHECARY_OTEL_ENDPOINT`, `APOTHECARY_BASE_IMAGE` (optional).
 
 ## Development
 
 ```sh
 go test ./...                      # unit + scenario suites (in-memory fakes)
-go run ./cmd/factoryd serve -dev   # real engine/API/UI, fake vendors
+go run ./cmd/apothecaryd serve -dev   # real engine/API/UI, fake vendors
 cd cpui && npm run dev             # UI dev server (proxies /api)
 ```
 
@@ -135,5 +150,5 @@ default-deny egress firewall pinned to the derived allowlist
 (fail-closed), a per-run bearer token scoped to their own ping endpoints,
 and secrets injected as files at bootstrap — never through provisioner
 parameters. Integration secrets are secretbox-encrypted at rest under
-`FACTORY_MASTER_KEY` and never leave the engine unmasked. Residual risks
+`APOTHECARY_MASTER_KEY` and never leave the engine unmasked. Residual risks
 and their rationale: `docs/IMPLEMENTATION_NOTES.md`.

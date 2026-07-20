@@ -23,13 +23,13 @@ import (
 	"sync"
 	"time"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 type Config struct {
 	URL      string // Coder server, e.g. http://localhost:7080
 	Token    string // session token (engine-held, never enters workspaces §15)
-	Template string // template name, e.g. "factory"
+	Template string // template name, e.g. "apothecary"
 	Owner    string // workspace owner; "me" works for CLI, REST needs the login name
 	// RunsDir receives exec logs (<run>/... §12); empty disables.
 	RunsDir string
@@ -233,7 +233,7 @@ func WorkspaceName(runID string) string {
 	if len(id) > 16 {
 		id = id[len(id)-16:]
 	}
-	return "factory-" + id
+	return "apothecary-" + id
 }
 
 func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvID, error) {

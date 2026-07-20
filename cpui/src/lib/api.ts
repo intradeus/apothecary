@@ -1,5 +1,5 @@
 // Typed client for the factory engine API (DESIGN.md §8). The CPUI talks
-// only to this API — same origin (served by factoryd, or vite-proxied).
+// only to this API — same origin (served by apothecaryd, or vite-proxied).
 
 export interface RunView {
   run_id: string;

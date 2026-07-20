@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"factory/internal/ports"
+	"apothecary/internal/ports"
 )
 
 // glStub fakes the few v4 endpoints the adapter touches.
@@ -34,7 +34,7 @@ func glStub(t *testing.T) (*httptest.Server, *[]string) {
 	})
 	mux.HandleFunc("GET /api/v4/projects/7/repository/tree", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "tree:"+r.URL.Query().Get("path"))
-		if r.URL.Query().Get("path") == ".factory/agents" {
+		if r.URL.Query().Get("path") == ".apothecary/agents" {
 			_, _ = w.Write([]byte(`[{"name":"planner.yaml"}]`))
 			return
 		}
@@ -107,16 +107,16 @@ func TestFileExistsFileAndDirectory(t *testing.T) {
 		t.Errorf("MISSING.md = %v, %v", ok, err)
 	}
 	// Trailing slash routes to the tree endpoint (directories).
-	ok, err = a.FileExists(ctx, repo, ".factory/agents/")
+	ok, err = a.FileExists(ctx, repo, ".apothecary/agents/")
 	if err != nil || !ok {
-		t.Errorf(".factory/agents/ = %v, %v", ok, err)
+		t.Errorf(".apothecary/agents/ = %v, %v", ok, err)
 	}
 	ok, _ = a.FileExists(ctx, repo, "empty-dir/")
 	if ok {
 		t.Error("empty dir must report false")
 	}
 	joined := strings.Join(*calls, " ")
-	if !strings.Contains(joined, "tree:.factory/agents") {
+	if !strings.Contains(joined, "tree:.apothecary/agents") {
 		t.Errorf("directory check should use tree endpoint: %v", *calls)
 	}
 	if !strings.Contains(joined, "ref=main") {
@@ -127,7 +127,7 @@ func TestFileExistsFileAndDirectory(t *testing.T) {
 func TestCreateDraftMRPrefixesTitle(t *testing.T) {
 	ts, calls := glStub(t)
 	a, repo := testAdapter(ts)
-	ref, err := a.CreateDraftMR(context.Background(), repo, "factory/x-add-login", "Add login", "body text")
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x-add-login", "Add login", "body text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestCreateDraftMRPrefixesTitle(t *testing.T) {
 			mrCall = c
 		}
 	}
-	for _, want := range []string{`"title":"Draft: Add login"`, `"source_branch":"factory/x-add-login"`, `"target_branch":"main"`, `"description":"body text"`} {
+	for _, want := range []string{`"title":"Draft: Add login"`, `"source_branch":"apothecary/x-add-login"`, `"target_branch":"main"`, `"description":"body text"`} {
 		if !strings.Contains(mrCall, want) {
 			t.Errorf("MR payload missing %s: %s", want, mrCall)
 		}

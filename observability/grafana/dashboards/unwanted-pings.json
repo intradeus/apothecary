@@ -37,11 +37,11 @@
     },
     {
       "type": "timeseries",
-      "title": "factory_pings_total (live, Prometheus)",
+      "title": "apothecary_pings_total (live, Prometheus)",
       "datasource": { "type": "prometheus", "uid": "factory-prom" },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
       "targets": [
-        { "refId": "A", "expr": "factory_pings_total", "legendFormat": "{{type}}" }
+        { "refId": "A", "expr": "apothecary_pings_total", "legendFormat": "{{type}}" }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] }
     },
