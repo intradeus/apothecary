@@ -137,6 +137,10 @@ type Harness interface {
 	// configured auth — the exact strings flows may use. Engine-side (no
 	// workspace involved); implementations should be cheap or cached.
 	Models(ctx context.Context) ([]ModelInfo, error)
+	// EnvVars are env-var-style credentials written to provider.env at
+	// bootstrap step 2 (harness-owned auth: e.g. codex's OPENAI_API_KEY).
+	// nil/empty = nothing to write.
+	EnvVars() map[string]string
 	// SeedAuth writes the harness's auth material into the workspace at
 	// bootstrap step 2.
 	SeedAuth(ctx context.Context, env ports.EnvID) error

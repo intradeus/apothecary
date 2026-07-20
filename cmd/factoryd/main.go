@@ -120,8 +120,10 @@ func cmdRebuild(args []string) error {
 func registry(dev bool) *kinds.Registry {
 	reg := kinds.NewRegistry()
 	reg.RegisterForge(kinds.GitLab{})
+	reg.RegisterForge(kinds.GitHub{})
 	reg.RegisterProvisioner(kinds.Coder{})
 	reg.RegisterHarness(kinds.Opencode{})
+	reg.RegisterHarness(kinds.Codex{})
 	if dev {
 		kinds.RegisterFakes(reg)
 	}

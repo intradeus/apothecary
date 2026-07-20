@@ -16,24 +16,24 @@ import (
 func TestRegistryValidAndDescriptors(t *testing.T) {
 	r := NewRegistry()
 	r.RegisterForge(GitLab{})
+	r.RegisterForge(GitHub{})
 	r.RegisterProvisioner(Coder{})
 	r.RegisterHarness(Opencode{})
+	r.RegisterHarness(Codex{})
 	for _, ok := range [][2]string{
-		{"forge", "gitlab"}, {"provisioner", "coder"}, {"harness", "opencode"},
+		{"forge", "gitlab"}, {"forge", "github"}, {"provisioner", "coder"},
+		{"harness", "opencode"}, {"harness", "codex"},
 	} {
 		if !r.Valid(ok[0], ok[1]) {
 			t.Errorf("%s/%s not valid", ok[0], ok[1])
 		}
 	}
-	if r.Valid("forge", "github") || r.Valid("harness", "codex") {
-		t.Error("unregistered kinds reported valid (they arrive in M10)")
-	}
 	if r.Valid("provider", "openrouter") {
 		t.Error("the provider port was removed (harness-owned auth); nothing may register it")
 	}
 	ds := r.Descriptors()
-	if len(ds) != 3 {
-		t.Fatalf("descriptors = %d, want 3", len(ds))
+	if len(ds) != 5 {
+		t.Fatalf("descriptors = %d, want 5", len(ds))
 	}
 	// Secret fields are flagged so the UI renders write-only inputs.
 	for _, d := range ds {
@@ -153,6 +153,57 @@ func TestOpencodeModels(t *testing.T) {
 	bare, _ := Opencode{}.New(Config{}, nil)
 	if _, err := bare.Models(context.Background()); err == nil || !strings.Contains(err.Error(), "auth_json") {
 		t.Errorf("no-auth err = %v", err)
+	}
+}
+
+func TestCodexKindCapabilities(t *testing.T) {
+	h, err := Codex{}.New(Config{Secrets: map[string]string{"api_key": "sk-x"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Binary() != "codex" {
+		t.Errorf("binary = %q", h.Binary())
+	}
+	if layer := strings.Join(h.InstallLayer(), "\n"); !strings.Contains(layer, "@openai/codex@"+CodexVersion) {
+		t.Errorf("install layer = %q", layer)
+	}
+	// Harness-owned auth: the API key rides provider.env as OPENAI_API_KEY.
+	if env := h.EnvVars(); env["OPENAI_API_KEY"] != "sk-x" {
+		t.Errorf("env vars = %v", env)
+	}
+	if err := h.Test(context.Background()); err != nil {
+		t.Errorf("test with api_key = %v", err)
+	}
+	// No auth at all is a named refusal.
+	bare, _ := Codex{}.New(Config{}, nil)
+	if err := bare.Test(context.Background()); err == nil || !strings.Contains(err.Error(), "api_key or auth_json") {
+		t.Errorf("no-auth err = %v", err)
+	}
+	// opencode declares no env vars (auth.json only).
+	oc, _ := Opencode{}.New(Config{Secrets: map[string]string{"auth_json": "{}"}}, nil)
+	if len(oc.EnvVars()) != 0 {
+		t.Errorf("opencode env vars = %v", oc.EnvVars())
+	}
+}
+
+func TestGitHubForgeKind(t *testing.T) {
+	gh := GitHub{}
+	acc, err := gh.Account(Config{Secrets: map[string]string{"token": "ghp-x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, pass := acc.GitCredential()
+	if user != "x-access-token" || pass != "ghp-x" {
+		t.Errorf("credential = %s:%s", user, pass)
+	}
+	if d := acc.EgressDomains(); len(d) != 3 || d[0] != "github.com" {
+		t.Errorf("egress = %v", d)
+	}
+	if _, err := gh.Forge(Config{}, ports.RepoRef{Locator: "no-slash"}); err == nil {
+		t.Error("bad github locator accepted")
+	}
+	if _, err := gh.Forge(Config{}, ports.RepoRef{Locator: "lu/greeter"}); err != nil {
+		t.Errorf("owner/repo locator refused: %v", err)
 	}
 }
 

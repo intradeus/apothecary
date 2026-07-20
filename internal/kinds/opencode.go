@@ -165,9 +165,17 @@ func (h *opencodeHarness) Models(ctx context.Context) ([]ModelInfo, error) {
 			})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sortModels(out)
 	return out, nil
 }
+
+func sortModels(out []ModelInfo) {
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+}
+
+// EnvVars: opencode's credentials live entirely in auth.json — nothing
+// rides provider.env.
+func (h *opencodeHarness) EnvVars() map[string]string { return nil }
 
 // SeedAuth writes the stored auth_json — THE model-auth artifact
 // (harness-owned auth) — into the workspace at bootstrap step 2.

@@ -150,8 +150,9 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		AgentsMDPath: p.Repo.AgentsMDPath,
 		DefaultFlow:  p.DefaultFlow,
 		Commands:     p.Commands,
-		GitUser:      gitUser,
-		GitPass:      gitPass,
+		GitUser:     gitUser,
+		GitPass:     gitPass,
+		ProviderEnv: harness.EnvVars(), // harness-owned auth via provider.env
 		EgressDomains: egressDomains(p, account.EgressDomains(),
 			harness.EgressDomains()),
 		Image:         image,
