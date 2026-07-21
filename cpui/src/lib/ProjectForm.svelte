@@ -248,8 +248,8 @@
       {#each harnesses as h (h.id)}<option value={h.id}>{h.name} ({h.kind})</option>{/each}
     </select>
     {#if extraOptions.length > 0}
-      <label>Additional harnesses <span class="muted">— per-step: a flow stage can pin any of these by kind (one integration per kind)</span></label>
-      <div class="harness-extras">
+      <fieldset class="harness-extras">
+        <legend>Additional harnesses <span class="muted">— per-step: a stage can pin any of these by kind (one integration per kind)</span></legend>
         {#each extraOptions as h (h.id)}
           <label class="check">
             <input
@@ -261,7 +261,7 @@
             {h.name} <span class="muted">({h.kind}{#if h.kind === defaultKind} — same kind as default{/if})</span>
           </label>
         {/each}
-      </div>
+      </fieldset>
     {/if}
   </div>
 
@@ -292,3 +292,27 @@
     {busy ? 'Saving…' : existing ? 'Save project' : 'Create project'}
   </button>
 </form>
+
+<style>
+  .harness-extras {
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+    border-radius: 6px;
+    padding: 6px 12px 10px;
+    margin: 4px 0 8px;
+  }
+  .harness-extras legend {
+    padding: 0 6px;
+    font-size: 13px;
+  }
+  .harness-extras .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: normal;
+    margin: 3px 0;
+  }
+  .harness-extras .check input {
+    width: auto;
+    margin: 0;
+  }
+</style>
