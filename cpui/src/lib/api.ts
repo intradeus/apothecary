@@ -222,8 +222,14 @@ const put = (path: string, body: unknown): Promise<unknown> =>
 export const api = {
   runs: (project?: string) => req<RunView[]>(`/api/runs${project ? `?project=${encodeURIComponent(project)}` : ''}`),
   run: (id: string) => req<{ run: RunView; events: EventEnvelope[] }>(`/api/runs/${id}`),
-  createTicket: (title: string, goal: string, projectId: string, flow?: string) =>
-    post('/api/tickets', { title, goal, project_id: projectId, ...(flow ? { flow } : {}) }) as Promise<{ run_id: string }>,
+  createTicket: (title: string, goal: string, projectId: string, flow?: string, branch?: string) =>
+    post('/api/tickets', {
+      title,
+      goal,
+      project_id: projectId,
+      ...(flow ? { flow } : {}),
+      ...(branch ? { branch } : {})
+    }) as Promise<{ run_id: string }>,
   abort: (id: string) => post(`/api/runs/${id}/abort`),
   // Pause parks the run (workspace kept, nothing recovered until play);
   // play re-enters mid-stage like crash recovery, budgets intact.
@@ -339,8 +345,9 @@ export const api = {
 };
 
 // Tab grouping for the runs list. Exhaustive over RunView['state'] so adding
-// a state without classifying it is a type error. completed/abandoned are
-// terminal but keep their env until archived, so they still need attention.
+// a state without classifying it is a type error. Active = still moving or
+// waiting on someone; finished = every terminal state (completed/abandoned
+// keep their env until archived, but the run itself is done).
 export type RunTab = 'active' | 'finished';
 export const stateTab: Record<RunView['state'], RunTab> = {
   pending: 'active',
@@ -348,8 +355,8 @@ export const stateTab: Record<RunView['state'], RunTab> = {
   running: 'active',
   waiting_on_human: 'active',
   paused: 'active',
-  completed: 'active',
-  abandoned: 'active',
+  completed: 'finished',
+  abandoned: 'finished',
   failed: 'finished',
   archived: 'finished'
 };

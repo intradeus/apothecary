@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"sync"
@@ -366,5 +368,44 @@ func TestExecStreamsLiveLog(t *testing.T) {
 	// Unknown env: error, not empty success.
 	if _, err := a.TailExecLog(context.Background(), "nope", 0); err == nil {
 		t.Error("expected error for unknown env")
+	}
+}
+
+func TestLinksIncludeSSHAndVSCodeDesktop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/users/lu/workspace/apothecary-run1" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"latest_build":{"resources":[{"agents":[{"name":"main","apps":[{"slug":"code-server"}]}]}]}}`)
+	}))
+	defer srv.Close()
+	a := NewWithRunner(Config{URL: srv.URL, Token: "tok", Owner: "lu"}, &scriptRunner{})
+
+	links, err := a.Links(context.Background(), "apothecary-run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind := map[string]ports.AccessLink{}
+	for _, l := range links {
+		byKind[l.Kind] = l
+	}
+	if got := byKind["ssh"].Command; got != "coder ssh lu/apothecary-run1" {
+		t.Errorf("ssh command = %q", got)
+	}
+	if byKind["ssh"].URL != "" {
+		t.Errorf("ssh link should be command-only, got URL %q", byKind["ssh"].URL)
+	}
+	vs := byKind["vscode"].URL
+	if !strings.HasPrefix(vs, "vscode://coder.coder-remote/open?") {
+		t.Errorf("vscode link = %q", vs)
+	}
+	for _, want := range []string{"owner=lu", "workspace=apothecary-run1", "agent=main", "folder=%2Fhome%2Fapothecary%2Frepo"} {
+		if !strings.Contains(vs, want) {
+			t.Errorf("vscode link %q missing %q", vs, want)
+		}
+	}
+	if byKind["ide"].URL == "" || byKind["terminal"].URL == "" {
+		t.Errorf("web links missing: %+v", links)
 	}
 }

@@ -15,10 +15,20 @@
   let error = $state('');
   let answering = $state(false);
 
-  // Live projection niceties derived from the stream.
+  // Live projection niceties derived from the stream. Links carry a url
+  // (browser), a command (copy-paste, e.g. ssh), or both.
   const links = $derived(
-    (events.findLast((e) => e.type === 'env_ready')?.payload.links as { kind: string; url: string }[] | undefined) ?? []
+    (events.findLast((e) => e.type === 'env_ready')?.payload.links as
+      | { kind: string; url: string; command?: string }[]
+      | undefined) ?? []
   );
+  let copiedLink = $state('');
+  async function copyCommand(l: { kind: string; command?: string }) {
+    if (!l.command) return;
+    await navigator.clipboard.writeText(l.command);
+    copiedLink = l.kind;
+    setTimeout(() => (copiedLink = ''), 1500);
+  }
   const pendingPing = $derived.by(() => {
     const answered = new Set(events.filter((e) => e.type === 'ping_answered').map((e) => e.payload.ping_id));
     return events.findLast((e) => e.type === 'ping_raised' && !answered.has(e.payload.ping_id));
@@ -236,7 +246,15 @@
     <span class="mono">{run.run_id}</span>
     <span>flow {run.flow_name}</span>
     {#if totals.turns > 0}<span>{fmtCost(totals.cost)} · {totals.turns} turns</span>{/if}
-    {#each links as l (l.url)}<a href={l.url} target="_blank" rel="noreferrer">{l.kind} ↗</a>{/each}
+    {#each links as l (l.kind + (l.url || l.command))}
+      {#if l.url}
+        <a href={l.url} target="_blank" rel="noreferrer">{l.kind} ↗</a>
+      {:else if l.command}
+        <button class="linklike" title={`Copy: ${l.command}`} onclick={() => copyCommand(l)}>
+          {copiedLink === l.kind ? 'copied ✓' : `${l.kind} ⧉`}
+        </button>
+      {/if}
+    {/each}
     {#if run.mr_url}<a href={run.mr_url} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
     {#if !terminal}
       {#if run.state === 'paused'}
@@ -358,6 +376,15 @@
 {/if}
 
 <style>
+  .linklike {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent, #6ea8fe);
+    cursor: pointer;
+    font: inherit;
+  }
+  .linklike:hover { text-decoration: underline; border: none; }
   .working .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--green, #4caf7d); margin-right:8px; animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.25; } }
   .denials {

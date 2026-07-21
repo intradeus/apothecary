@@ -270,11 +270,12 @@ func (s *Server) postTicket(w http.ResponseWriter, r *http.Request) {
 		Goal      string `json:"goal"`
 		Flow      string `json:"flow"`       // "" = the project's default flow
 		ProjectID string `json:"project_id"` // required (DESIGN2 §10)
+		Branch    string `json:"branch"`     // "" = generated (apothecary/<id>-<slug>)
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{Title: body.Title, Goal: body.Goal}, body.Flow, body.ProjectID)
+	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{Title: body.Title, Goal: body.Goal, Branch: body.Branch}, body.Flow, body.ProjectID)
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())

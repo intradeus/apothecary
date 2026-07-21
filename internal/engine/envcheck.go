@@ -85,6 +85,8 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		Branch:        branch,
 		Image:         res.Image,
 		EgressDomains: res.EgressDomains,
+		GitUser:       res.GitUser,
+		GitPass:       res.GitPass,
 	})
 	if !step("provision", err, string(env)) {
 		return failed
@@ -121,13 +123,22 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		skip("verify", "project.commands.verify not configured")
 	}
 
-	// Firewall negatives: fixed.
-	step("firewall_deny_http", execExpect(ctx, envp, env,
-		"curl -m 8 -s -o /dev/null https://example.com", "", false), "example.com blocked")
-	step("firewall_deny_dns", execExpect(ctx, envp, env,
-		"getent hosts example.com", "", false), "foreign DNS dead")
-	step("firewall_initialized", execExpect(ctx, envp, env,
-		"test -e /run/apothecary-firewall.done", "", true), "")
+	// Firewall negatives: fixed. EgressOpen provisioners (devcontainer)
+	// run the repo's own container without the apothecary firewall — skip
+	// honestly instead of failing three invariants that do not exist there.
+	_, egressOpen := envp.(ports.EgressOpen)
+	if egressOpen {
+		for _, id := range []string{"firewall_deny_http", "firewall_deny_dns", "firewall_initialized"} {
+			skip(id, "provisioner declares open egress: workspace firewall not present (engine-side proxy filtering only)")
+		}
+	} else {
+		step("firewall_deny_http", execExpect(ctx, envp, env,
+			"curl -m 8 -s -o /dev/null https://example.com", "", false), "example.com blocked")
+		step("firewall_deny_dns", execExpect(ctx, envp, env,
+			"getent hosts example.com", "", false), "foreign DNS dead")
+		step("firewall_initialized", execExpect(ctx, envp, env,
+			"test -e /run/apothecary-firewall.done", "", true), "")
+	}
 
 	// Egress positives: one per derived allowlist entry. TCP+TLS connect is
 	// the criterion — any HTTP status counts; connectivity, not auth.
@@ -158,6 +169,9 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	}
 	step("shim", execExpect(ctx, envp, env,
 		"test -f /opt/apothecary/ask-human.mjs", "", true), "")
+	// Loopback parity holds on every provisioner (coder: reverse tunnel;
+	// devcontainer: in-container relay over the mounted unix socket), so
+	// one probe fits all.
 	step("tunnel", execExpect(ctx, envp, env,
 		fmt.Sprintf("curl -m 10 -s -o /dev/null http://127.0.0.1:%d/", opts.EnginePort), "", true),
 		"engine reachable from the workspace's own loopback")

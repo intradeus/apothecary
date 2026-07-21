@@ -127,6 +127,7 @@ func registry(dev bool) *kinds.Registry {
 	reg.RegisterForge(kinds.GitLab{})
 	reg.RegisterForge(kinds.GitHub{})
 	reg.RegisterProvisioner(kinds.Coder{})
+	reg.RegisterProvisioner(kinds.Devcontainer{})
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
 	if dev {

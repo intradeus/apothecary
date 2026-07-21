@@ -12,8 +12,14 @@ import (
 
 type EnvID string
 
-// EnvSpec carries only non-secrets (§11: secrets never pass through Coder
-// template parameters — they are written into the env after provisioning).
+// EnvSpec carries the §11 provisioning inputs. Everything the adapter may
+// expose to the vendor (template parameters, labels, generated configs)
+// must be non-secret; GitUser/GitPass are the one engine-held exception,
+// provided for adapters that must materialize the source BEFORE the
+// environment exists (clone-first models like devcontainer) — they run the
+// clone engine-side and must never let the credential reach the vendor
+// surface or the workspace (in-workspace git auth is bootstrap's job, §11
+// step 3).
 type EnvSpec struct {
 	RunID   string
 	RepoURL string
@@ -25,6 +31,11 @@ type EnvSpec struct {
 	// EgressDomains is the fully derived firewall allowlist (DESIGN2 §8.4):
 	// repo host ∪ adapter contributions ∪ project extras. Non-secret.
 	EgressDomains []string
+	// GitUser/GitPass are the forge git credential (see type comment).
+	// Empty for public repos; adapters without an engine-side source step
+	// (coder) ignore them.
+	GitUser string
+	GitPass string
 }
 
 type Command struct {
@@ -42,8 +53,11 @@ type ExecResult struct {
 }
 
 type AccessLink struct {
-	Kind string // ide | terminal | app
+	Kind string // ide | terminal | app | vscode | ssh
 	URL  string
+	// Command is the copy-paste alternative for access methods that aren't
+	// a browser URL (ssh). Links carry a URL, a Command, or both.
+	Command string
 }
 
 type EnvStatus string
@@ -139,6 +153,17 @@ const (
 // don't implement it.
 type WorkspaceReattacher interface {
 	Reattach(ctx context.Context, env EnvID) error
+}
+
+// EgressOpen is an OPTIONAL EnvProvisioner marker capability: this
+// provisioner runs workspaces WITHOUT the apothecary egress firewall
+// (devcontainer: the container is the repo's own user-authored config —
+// no NET_ADMIN, no init-firewall). Egress control degrades to engine-side
+// proxy filtering for tools that honor proxy env; envcheck keys its
+// firewall expectations on this marker so the gap is reported honestly
+// instead of as false failures.
+type EgressOpen interface {
+	EgressOpen()
 }
 
 // ExecLogTailer is an OPTIONAL EnvProvisioner capability: a live tail of

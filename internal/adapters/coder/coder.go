@@ -663,7 +663,11 @@ func (a *Adapter) whoami(ctx context.Context) (string, error) {
 }
 
 // Links queries the REST API for workspace apps (§12): IDE (code-server app),
-// web terminal, and any exposed app port.
+// web terminal, any exposed app port, plus the non-browser access methods —
+// raw SSH (a `coder ssh` command; works for any Coder user with access to
+// the workspace, no config-ssh needed) and VS Code Desktop over remote SSH
+// (Coder's vscode://coder.coder-remote deep link, handled by the Coder VS
+// Code extension, which prompts for install/auth on first use).
 func (a *Adapter) Links(ctx context.Context, env ports.EnvID) ([]ports.AccessLink, error) {
 	owner := a.owner(ctx)
 	u := fmt.Sprintf("%s/api/v2/users/%s/workspace/%s", a.cfg.URL, url.PathEscape(owner), url.PathEscape(string(env)))
@@ -698,9 +702,20 @@ func (a *Adapter) Links(ctx context.Context, env ports.EnvID) ([]ports.AccessLin
 	}
 	links := []ports.AccessLink{
 		{Kind: "terminal", URL: fmt.Sprintf("%s/@%s/%s/terminal", a.cfg.URL, owner, env)},
+		{Kind: "ssh", Command: fmt.Sprintf("coder ssh %s/%s", owner, env)},
 	}
 	for _, res := range ws.LatestBuild.Resources {
 		for _, ag := range res.Agents {
+			links = append(links, ports.AccessLink{
+				Kind: "vscode",
+				URL: "vscode://coder.coder-remote/open?" + url.Values{
+					"owner":     {owner},
+					"workspace": {string(env)},
+					"agent":     {ag.Name},
+					"folder":    {"/home/apothecary/repo"},
+					"url":       {a.cfg.URL},
+				}.Encode(),
+			})
 			for _, app := range ag.Apps {
 				kind := "app"
 				if app.Slug == "code-server" {

@@ -878,8 +878,10 @@ func workspaceLink(links []event.Link) string {
 			}
 		}
 	}
-	if len(links) > 0 {
-		return links[0].URL
+	for _, l := range links {
+		if l.URL != "" { // command-only links (ssh) can't be a ping deep link
+			return l.URL
+		}
 	}
 	return ""
 }
@@ -970,6 +972,10 @@ func (x *exec) ensureEnv() error {
 		Branch:        rs.branch,
 		Image:         x.res.Image,
 		EgressDomains: x.res.EgressDomains,
+		// For clone-first provisioners (devcontainer): the engine-side
+		// checkout needs the forge credential before the env exists.
+		GitUser: x.res.GitUser,
+		GitPass: x.res.GitPass,
 	}
 	id, err := x.res.Envp.Provision(x.ctx, spec)
 	if err != nil {
@@ -998,7 +1004,7 @@ func (x *exec) ensureEnv() error {
 	}
 	evLinks := make([]event.Link, 0, len(links))
 	for _, l := range links {
-		evLinks = append(evLinks, event.Link{Kind: l.Kind, URL: l.URL})
+		evLinks = append(evLinks, event.Link{Kind: l.Kind, URL: l.URL, Command: l.Command})
 	}
 	rs.links = evLinks // live counterpart of replay's env_ready capture
 	return x.append(&event.EnvReady{EnvID: string(id), Links: evLinks})
@@ -1022,9 +1028,11 @@ func (x *exec) writeProxyEnv(id ports.EnvID) error {
 }
 
 // proxyEnv builds the workspace's HTTP(S)_PROXY environment pointing at
-// the reverse-tunneled egress proxy on the workspace's own loopback (M18);
-// empty when proxy mode is off. NO_PROXY keeps loopback traffic (the
-// ask_human shim, the engine tunnel) off the proxy.
+// the egress proxy on the workspace's own loopback (M18) — reverse tunnels
+// (coder) and the devcontainer adapter's in-container relay both provide
+// loopback parity, so the address is invariant across provisioners; empty
+// when proxy mode is off. NO_PROXY keeps loopback traffic (the ask_human
+// shim, the engine endpoint) off the proxy.
 func (x *exec) proxyEnv() map[string]string {
 	if x.e.egress == nil || x.e.egress.Port() == 0 {
 		return nil

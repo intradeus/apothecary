@@ -8,10 +8,26 @@
   let projects = $state<Project[]>([]);
   let loaded = $state(false);
   let showForm = $state(false);
+  // Native <dialog>: modal over the list (backdrop, focus trap, Escape).
+  let dialogEl = $state<HTMLDialogElement | null>(null);
+  $effect(() => {
+    if (!dialogEl) return;
+    if (showForm && !dialogEl.open) dialogEl.showModal();
+    else if (!showForm && dialogEl.open) dialogEl.close();
+  });
   let title = $state('');
   let goal = $state('');
   let projectId = $state('');
   let flow = $state(''); // empty = the project's default flow
+  let branch = $state(''); // empty = generated (apothecary/<id>-<slug>)
+  // Prefill the branch with a slug of the title (same shape the engine
+  // generates) until the user edits the field — then their text wins.
+  let branchEdited = $state(false);
+  const slugify = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24).replace(/-+$/, '');
+  $effect(() => {
+    if (!branchEdited) branch = slugify(title);
+  });
   let submitting = $state(false);
   let error = $state('');
 
@@ -58,8 +74,15 @@
     submitting = true;
     error = '';
     try {
-      const { run_id } = await api.createTicket(title.trim(), goal.trim(), projectId, flow.trim() || undefined);
-      title = goal = '';
+      const { run_id } = await api.createTicket(
+        title.trim(),
+        goal.trim(),
+        projectId,
+        flow.trim() || undefined,
+        branch.trim() || undefined
+      );
+      title = goal = branch = '';
+      branchEdited = false;
       showForm = false;
       await goto(`/runs/${run_id}`);
     } catch (err) {
@@ -76,12 +99,18 @@
       <span class="muted"> · {projectName(projectFilter)}</span>
       <a class="small" href="/">all</a>{/if}
   </h1>
-  <button class="primary" onclick={() => (showForm = !showForm)}>
-    {showForm ? 'Cancel' : '+ New ticket'}
-  </button>
+  <button class="primary" onclick={() => (showForm = true)}>+ New ticket</button>
 </div>
 
-{#if showForm}
+<dialog
+  class="ticket-modal"
+  bind:this={dialogEl}
+  onclose={() => (showForm = false)}
+  onmousedown={(e) => {
+    // A click on the ::backdrop reports the dialog itself as target.
+    if (e.target === dialogEl) showForm = false;
+  }}
+>
   <form class="card" onsubmit={submit}>
     <h2>New ticket</h2>
     {#if projects.length === 0}
@@ -100,14 +129,18 @@
     <textarea id="t-goal" bind:value={goal} required placeholder="What should the factory build, and what does done look like?"></textarea>
     <label for="t-flow">Flow <span class="muted">— empty = project default{selectedProject ? ` (${selectedProject.default_flow})` : ''}</span></label>
     <input id="t-flow" bind:value={flow} placeholder={selectedProject?.default_flow ?? 'v1'} class="mono" />
+    <label for="t-branch">Branch <span class="muted">— prefilled from the title; empty = generated</span></label>
+    <input id="t-branch" bind:value={branch} oninput={() => (branchEdited = true)}
+      placeholder="feat/PROJ-123-short-description" class="mono" />
     {#if error}<div class="error">{error}</div>{/if}
-    <div style="margin-top:14px">
+    <div class="row" style="margin-top:14px; gap:8px">
       <button class="primary" type="submit" disabled={submitting || !title.trim() || !goal.trim() || !projectId}>
         {submitting ? 'Creating…' : 'Create run'}
       </button>
+      <button type="button" onclick={() => (showForm = false)}>Cancel</button>
     </div>
   </form>
-{/if}
+</dialog>
 
 <div class="tabs row" style="gap:0; margin-bottom:12px">
   <button class:primary={tab === 'active'} onclick={() => (tab = 'active')}>
@@ -149,3 +182,20 @@
     </table>
   </div>
 {/if}
+
+<style>
+  .ticket-modal {
+    width: min(560px, 92vw);
+    padding: 0;
+    border: 1px solid var(--border, #333);
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+  }
+  .ticket-modal::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .ticket-modal form {
+    margin: 0;
+  }
+</style>

@@ -60,6 +60,8 @@ const (
 type Link struct {
 	Kind string `json:"kind"`
 	URL  string `json:"url"`
+	// Command is the copy-paste form for non-browser access (ssh).
+	Command string `json:"command,omitempty"`
 }
 
 type Usage struct {

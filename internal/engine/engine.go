@@ -43,6 +43,10 @@ var ErrEgressOff = errors.New("egress proxy mode is off")
 type Ticket struct {
 	Title string
 	Goal  string
+	// Branch overrides the run's generated branch name ("" = the default
+	// apothecary/<run-id>-<title-slug>). Passed verbatim from the ticket
+	// form; CreateRun refuses names git check-ref-format would.
+	Branch string
 }
 
 // Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
@@ -323,7 +327,12 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	}
 
 	runID := e.newID()
-	branch := fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), slug(t.Title, 24))
+	branch := strings.TrimSpace(t.Branch)
+	if branch == "" {
+		branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), slug(t.Title, 24))
+	} else if err := checkBranch(branch); err != nil {
+		return "", fmt.Errorf("branch %q: %v", branch, err)
+	}
 	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
 		TicketTitle: t.Title,
 		TicketGoal:  t.Goal,
@@ -1100,6 +1109,31 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 		}
 		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
 			return fmt.Errorf("stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
+		}
+	}
+	return nil
+}
+
+// checkBranch refuses user-supplied branch names git check-ref-format
+// would: the run would otherwise die much later, at bootstrap's git switch.
+func checkBranch(s string) error {
+	if strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") || strings.Contains(s, "//") {
+		return errors.New(`"/" cannot lead, trail or repeat`)
+	}
+	if strings.Contains(s, "..") || strings.Contains(s, "@{") {
+		return errors.New(`".." and "@{" are not allowed`)
+	}
+	for seg := range strings.SplitSeq(s, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return errors.New(`path segments cannot start with "."`)
+		}
+		if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, ".lock") {
+			return errors.New(`path segments cannot end with "." or ".lock"`)
+		}
+	}
+	for _, r := range s {
+		if r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r) {
+			return fmt.Errorf("character %q is not allowed", r)
 		}
 	}
 	return nil
