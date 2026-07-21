@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, stateColors, fmtTime, fmtCost, type EventEnvelope, type RunView } from '$lib/api';
+  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EventEnvelope, type RunView } from '$lib/api';
   import { onMount } from 'svelte';
 
   const runId = page.params.id ?? '';
@@ -35,6 +35,33 @@
   });
   const terminal = $derived(run !== null && ['completed', 'abandoned', 'failed', 'archived'].includes(run.state));
 
+  // Live "is it actually doing something" feedback (working card):
+  // current stage + ticking elapsed from the latest stage_started, plus a
+  // polled tail of the workspace's exec output.
+  let now = $state(Date.now());
+  let liveTail = $state<string | null>(null);
+  let denials = $state<EgressDenial[]>([]);
+  let allowing = $state<Record<string, boolean>>({});
+  let showTail = $state(true);
+  let tailEl = $state<HTMLPreElement | null>(null);
+  const currentStage = $derived.by(() => {
+    const started = events.findLast((e) => e.type === 'stage_started');
+    if (!started) return null;
+    // A completion/failure for that stage after it means nothing is running.
+    const idx = events.lastIndexOf(started);
+    const doneAfter = events
+      .slice(idx + 1)
+      .some((e) => (e.type === 'stage_completed' || e.type === 'stage_failed') && e.payload.stage_id === started.payload.stage_id);
+    return doneAfter ? null : started;
+  });
+  const elapsed = $derived.by(() => {
+    if (!currentStage) return '';
+    const ms = now - new Date(currentStage.ts).getTime();
+    if (ms < 0) return '0s';
+    const s = Math.floor(ms / 1000);
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+  });
+
   const refreshRun = async () => {
     try {
       run = (await api.run(runId)).run;
@@ -44,13 +71,31 @@
   };
 
   onMount(() => {
+    const tick = setInterval(() => (now = Date.now()), 1000);
+    const poll = setInterval(async () => {
+      if (terminal || document.hidden) return;
+      try {
+        const t = await api.workspaceLog(runId);
+        liveTail = t;
+        if (t !== null && showTail && tailEl) {
+          requestAnimationFrame(() => tailEl && (tailEl.scrollTop = tailEl.scrollHeight));
+        }
+        denials = await api.egressDenials(runId);
+      } catch {
+        /* transient; keep last tail */
+      }
+    }, 2500);
     refreshRun();
     const stop = api.events(runId, 0, (ev) => {
       events = [...events, ev];
       // State-changing events refresh the header chip.
       if (ev.type.startsWith('run_') || ev.type.startsWith('ping_') || ev.type.startsWith('env_')) refreshRun();
     });
-    return stop;
+    return () => {
+      clearInterval(tick);
+      clearInterval(poll);
+      stop();
+    };
   });
 
   async function answer(ans: string) {
@@ -78,6 +123,34 @@
       logText = await api.log(runId, stage);
     } catch (e) {
       logText = `no log: ${e instanceof Error ? e.message : e}`;
+    }
+  }
+
+  async function allowEgress(host: string) {
+    allowing[host] = true;
+    error = '';
+    try {
+      await api.egressAllow(runId, host);
+      denials = await api.egressDenials(runId); // host clears from the list
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      allowing[host] = false;
+    }
+  }
+
+  let resuming = $state(false);
+  async function resume() {
+    resuming = true;
+    error = '';
+    try {
+      await api.resume(runId);
+      // Same run, now continuing — hard reload so the live streams re-init
+      // (this page keys off the route param captured at mount).
+      location.reload();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      resuming = false;
     }
   }
 
@@ -153,7 +226,13 @@
     {#if !terminal}
       <button class="danger" onclick={() => act(() => api.abort(runId))}>Abort</button>
     {:else}
-      <button class="primary" onclick={restart} title="Start over as a fresh run: same ticket, project and flow — new workspace, new branch">
+      {#if run.state === 'abandoned' || run.state === 'failed'}
+        <button class="primary" onclick={resume} disabled={resuming}
+          title="Re-run the failed stage in the same workspace — keeps the plan, build and commits; only retries what failed">
+          {resuming ? 'Resuming…' : `Try again${run.current_stage ? ` (${run.current_stage})` : ''}`}
+        </button>
+      {/if}
+      <button onclick={restart} title="Start over as a fresh run: same ticket, project and flow — new workspace, new branch">
         Restart
       </button>
       {#if run.state !== 'archived'}
@@ -161,6 +240,54 @@
       {/if}
     {/if}
   </div>
+
+  {#if !terminal && run.state !== 'pending'}
+    <div class="card working">
+      <div class="row spread">
+        <div>
+          <span class="pulse"></span>
+          {#if currentStage}
+            <strong class="mono">{currentStage.payload.stage_id}</strong>
+            <span class="muted">running for {elapsed}</span>
+            {#if currentStage.payload.agent}<span class="muted small"> · agent {currentStage.payload.agent}</span>{/if}
+          {:else}
+            <span class="muted">between stages…</span>
+          {/if}
+        </div>
+        <button onclick={() => (showTail = !showTail)}>{showTail ? 'Hide output' : 'Live output'}</button>
+      </div>
+      {#if denials.length > 0}
+        <div class="denials">
+          <strong>⚠ egress blocked</strong> — the workspace tried to reach hosts not in this run's
+          allowlist. Add them to the project's <em>extra domains</em> and restart:
+          <ul>
+            {#each denials as d (d.host)}
+              <li>
+                <span class="mono">{d.host}</span> <span class="muted small">×{d.count}</span>
+                <button class="small" disabled={allowing[d.host]} onclick={() => allowEgress(d.host)}>
+                  {allowing[d.host] ? 'allowing…' : "Add to project's allowlist"}
+                </button>
+              </li>
+            {/each}
+          </ul>
+          <p class="muted small" style="margin:6px 0 0">
+            Adds the host to the project's allowlist (every future run inherits it) and unblocks the
+            running agent instantly — no restart.
+          </p>
+        </div>
+      {/if}
+      {#if showTail}
+        {#if liveTail}
+          <pre class="mono small tail" bind:this={tailEl}>{liveTail}</pre>
+        {:else}
+          <p class="muted small" style="margin:8px 0 0">
+            No live output yet — it appears here as the workspace works (bootstrap, commands, agent
+            events). Some provisioners don't support live output.
+          </p>
+        {/if}
+      {/if}
+    </div>
+  {/if}
 
   {#if pendingPing}
     {@const ptype = pendingPing.payload.type as string}
@@ -213,3 +340,21 @@
 {:else}
   <div class="empty">{error || 'Loading…'}</div>
 {/if}
+
+<style>
+  .working .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--green, #4caf7d); margin-right:8px; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+  .denials {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--amber, #e0af68);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--amber, #e0af68) 8%, transparent);
+    font-size: 13px;
+  }
+  .denials ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+  .tail { max-height:280px; overflow-y:auto; white-space:pre-wrap; margin:10px 0 0; border:1px solid var(--border, #333); border-radius:6px; padding:8px; }
+</style>

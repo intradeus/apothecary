@@ -988,3 +988,153 @@ github, fake adapters). `agentspec.Parse` stays (name-rule + spec
 parsing). Reference agent prompts now live in `artifacts/agents/*.md`
 (+ `artifacts/flows/v1.yaml`, the explicit-edge reference flow), with the
 neutral YAML specs in `examples/agents/`.
+
+## Live run feedback (working card + workspace log tail)
+
+Between stage_started and a stage's end the UI used to show nothing —
+stage logs were post-hoc and the coder adapter buffered `coder ssh`
+output in memory. Now:
+
+- `ports.ExecLogTailer` is an OPTIONAL EnvProvisioner capability
+  (`TailExecLog(env, n)`). Read-side by design: a sink parameter on Exec
+  would have rippled into the AgentRunner path (harness adapters call
+  Envp.Exec directly); a tail lets each adapter capture however it wants
+  and the API degrade honestly when a provisioner can't stream.
+- coder: `CmdRunner.Run` gained a tee writer; Exec streams header +
+  stdout/stderr into `<RunsDir>/<env>/exec.log` AS THE COMMAND RUNS
+  (mutex-serialized MultiWriter; the post-hoc writeLog is gone — same
+  file, same format, now incremental). TailExecLog reads the tail; the
+  file is a coder-internal detail again.
+- fake: in-memory per-env transcript, so dev mode and tests exercise the
+  same surface.
+- `Engine.WorkspaceLogTail` (type-asserts the capability, ErrNoLiveLog
+  otherwise) → `GET /api/runs/{id}/workspace-log?n=` (text/plain tail,
+  404 when unsupported/no env).
+- Run page: non-pending active runs show a Working card — pulsing dot,
+  current stage + ticking elapsed (derived from the SSE event stream's
+  latest stage_started), and a collapsible autoscrolling live tail
+  polled every 2.5 s (paused when the tab is hidden). Transport note:
+  nothing here is websockets — run events are SSE, the tail and the
+  inbox poll.
+
+## M18 — Hostname-filtering egress proxy (permanent firewall fix)
+
+The resolve-then-pin firewall's failure modes — silent blocks, IP
+rotation, and per-provider domain sleuthing (found live: opencode-go's
+opencode.ai silently blocked) — are replaced by an engine-side egress
+proxy. Design:
+
+- `internal/egressproxy`: a CONNECT + absolute-form HTTP proxy on
+  loopback. Per-run Basic credentials `runID:HMAC(secret,runID)`
+  (deterministic — survives engine restarts; identifies the run's policy,
+  not a high-value secret). Filters BY HOSTNAME (exact or `*.suffix`)
+  against a per-run allowlist; ports 443/80 only; records every denial
+  (host ×count) for the run. Process-random signing secret.
+- Wiring: `main.go` starts the proxy (unless APOTHECARY_EGRESS_PROXY=off),
+  passes its port to the resolver (coder reverse-forwards it into every
+  workspace, like the engine port) and to the engine
+  (`SetEgress`/`EgressController`). The run loop sets the policy from
+  `res.EgressDomains` (already = derived domains ∪ project extra_domains)
+  before any workspace network use, and drops it at teardown.
+- Workspace: bootstrap writes `/apothecary/proxy.env`
+  (HTTP(S)_PROXY → 127.0.0.1:proxyPort with the run creds, NO_PROXY =
+  loopback); every bootstrap step and both harness adapters source it, so
+  git clone and agent invocations all leave through the proxy. The
+  template gains an `egress_proxy` parameter → `APOTHECARY_EGRESS_PROXY`;
+  when set, `init-firewall.sh` runs in PROXY MODE: OUTPUT drops everything
+  except loopback (reaches the tunneled proxy + shim + code-server),
+  established, and the coder gateway port. No IP pinning, no DNS, no
+  per-provider guessing.
+- Visibility (the point): `GET /api/runs/{id}/egress-denials` +
+  a Working-card banner list blocked hosts live — a silent 30-minute hang
+  becomes "⚠ egress blocked: telemetry.deepseek.com — add to extra
+  domains and restart".
+- extra_domains flows in unchanged (resolve.egressDomains already unions
+  it → the proxy allowlist). The static provider→domain map stays as the
+  auto-allowlist (now incl. opencode/opencode-go); a miss is a visible
+  denial, not a hang, so no live catalog fetch on the resolution path.
+- Fallback: proxy off (env, or provisioners that ignore the param) → the
+  derived IP-allowlist firewall, unchanged. envcheck passes proxyPort 0.
+- Not yet: proxy-mode envcheck assertions (checks still target allowlist
+  mode); keeping API keys engine-side via proxy injection (future — the
+  hook exists now that all egress is mediated).
+
+## M18 follow-up — "add to egress" instant unblock
+
+Since the proxy is engine-side in-memory state and the workspace already
+routes everything through it, a run's allowlist updates live:
+`egressproxy.AllowHost(runID, host)` appends to the run's policy and
+clears the host's denial — the agent's next request succeeds with no
+restart/re-provision. `POST /api/runs/{id}/egress-allow` does both: the
+instant proxy unblock (Engine.AllowEgress) AND persists the host to the
+project's workspace.extra_domains (best-effort, for future runs). The run
+page's egress-blocked banner grows an "Add to egress" button per denied
+host. Host validation rejects scheme/port/path; wildcards (`*.x`) allowed.
+
+Scope note: one proxy process per apothecary instance, but policy is
+per-RUN (map[runID]) — stricter than per-project. Each run's allowlist is
+its project's derived domains ∪ that project's extra_domains, isolated by
+per-run credentials; runs of different projects can never see each other's
+allowlist. Per-project egress config already exists as
+workspace.extra_domains (what the button persists to).
+
+## M18 fix — command stages bypassed the proxy
+
+Live bug: `git push` (a flow command stage) timed out 133s against
+gitlab.com in proxy mode. Cause: only bootstrap steps and agent runs
+sourced proxy.env; command stages ran raw via Envp.Exec and went DIRECT,
+hitting the firewall DROP (dropped packets → long timeout, not a proxy
+403). The allowlist was fine — gitlab.com is contributed by the forge
+account's EgressDomains (github: github.com/api/codeload; gitlab: the
+base_url host) and unioned into every run. Fix: coder.Exec sources
+proxy.env for EVERY workspace command (one chokepoint — bootstrap,
+command stages, agent runs all go through it). The explicit bootstrap/
+adapter sourcing stays (redundant, harmless). "Add to egress" button
+relabeled "Add to project's allowlist" (it already persisted to
+workspace.extra_domains — the label now says so).
+
+## Resume — "try again" from a failed stage
+
+A run that abandons/fails at a late stage (e.g. push) no longer needs a
+full restart. New forward event `run_resumed{stage_id}`: run.Apply →
+Running; state.go replay un-terminals, re-enters the stage
+(pos = Index(stage)), and clears all edgeCounts (fresh on_fail/on_reject
+budgets) + feed/lastFailure/gateAnswer. History stays immutable — resume
+is an append, not a rewind. Engine.ResumeRun validates
+(abandoned|failed, has a CurrentStage, has an EnvID — abandoned/failed
+runs are never reaped, so the workspace persists), appends the event, and
+re-queues the run; ensureEnv reuses the existing workspace (agent commits
+intact), and only the failed stage re-executes. POST
+/api/runs/{id}/resume (202, same run id). UI: "Try again (<stage>)"
+button on abandoned/failed runs, beside Restart (from-scratch, new run).
+Verified: abandon at push → resume → same EnvID, no env destroy, run
+completes; completed runs refuse resume.
+
+## M18 fix 2 — proxy CONNECT truncated large transfers
+
+Live: git push failed "Recv failure: Connection reset by peer" (routing
+was now correct — the error moved from a firewall timeout to a proxy-side
+reset). Bug: handleConnect's bidirectional io.Copy tore down BOTH sockets
+the instant either direction ended, RSTing an in-flight transfer in the
+other direction (clone downloads and survives; push uploads more and
+trips it). Fix: half-close — each direction CloseWrite()s its own write
+side on EOF and the full close waits for BOTH copies to finish; plus
+forward any TLS bytes the client pipelined into the hijack buffer before
+the 200. Regression test: 2 MiB bidirectional round-trip through the
+tunnel.
+
+## M18 fix 3 — egress broke after an engine restart (stale proxy.env + dead tunnel)
+
+Live: git push "Failed to connect to 127.0.0.1:<port>" after rebuilding
+the engine and hitting Try again. Root cause was a latent restart bug the
+proxy exposed: the reverse tunnel is a subprocess that dies with the
+engine, and the ensureEnv REUSE path (recovery/resume of a running
+workspace) refreshed run.env but never re-established the tunnel — so the
+workspace's engine/proxy loopback forwards were gone. The proxy also binds
+a random port with a process-random cred secret, so a restart invalidated
+the workspace's proxy.env. Fixes: (1) ports.WorkspaceReattacher optional
+capability — coder.Reattach re-establishes the tunnel (waitReady +
+ensureTunnel, idempotent); ensureEnv reuse path calls it. (2) reuse path
+also rewrites proxy.env (current port + creds) via a shared
+encodeEnvFile. This also fixes ask_human across restarts (same dead-tunnel
+cause). Fake provisioner doesn't implement Reattach (no tunnel) — no-op.

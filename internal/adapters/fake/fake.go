@@ -21,6 +21,9 @@ type Env struct {
 	Spec   ports.EnvSpec
 	Status ports.EnvStatus
 	Files  map[string][]byte
+	// execLog is the live transcript (ports.ExecLogTailer parity with the
+	// coder adapter): header + output per Exec.
+	execLog []byte
 }
 
 type ExecCall struct {
@@ -93,11 +96,36 @@ func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Comma
 	p.mu.Lock()
 	p.ExecCalls = append(p.ExecCalls, ExecCall{Env: id, Cmd: cmd})
 	fn := p.ExecFunc
+	e.execLog = append(e.execLog, []byte("--- [dir="+cmd.Dir+"]\n"+cmd.Script+"\n")...)
 	p.mu.Unlock()
 	if fn == nil {
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
-	return fn(e, cmd)
+	res, err := fn(e, cmd)
+	if err == nil && res.Output != "" {
+		p.mu.Lock()
+		e.execLog = append(e.execLog, []byte(res.Output+"\n")...)
+		p.mu.Unlock()
+	}
+	return res, err
+}
+
+// TailExecLog implements the optional ports.ExecLogTailer capability.
+func (p *EnvProvisioner) TailExecLog(_ context.Context, id ports.EnvID, n int) ([]byte, error) {
+	e, err := p.get(id)
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	log := e.execLog
+	if n <= 0 {
+		n = 64 << 10
+	}
+	if len(log) > n {
+		log = log[len(log)-n:]
+	}
+	return append([]byte(nil), log...), nil
 }
 
 func (p *EnvProvisioner) ReadFile(_ context.Context, id ports.EnvID, path string) ([]byte, error) {

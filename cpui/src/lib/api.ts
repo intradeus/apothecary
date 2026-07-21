@@ -148,6 +148,12 @@ export interface CheckRun {
   finished_at?: string;
 }
 
+export interface EgressDenial {
+  host: string;
+  count: number;
+  last: string;
+}
+
 export interface EventEnvelope {
   run_id: string;
   seq: number;
@@ -209,11 +215,27 @@ export const api = {
   abort: (id: string) => post(`/api/runs/${id}/abort`),
   archive: (id: string) => post(`/api/runs/${id}/archive`),
   restart: (id: string) => post(`/api/runs/${id}/restart`) as Promise<{ run_id: string }>,
+  resume: (id: string) => post(`/api/runs/${id}/resume`),
   log: async (id: string, stage: string, n = 65536): Promise<string> => {
     const res = await fetch(`/api/runs/${id}/logs/${stage}?n=${n}`);
     if (!res.ok) throw new Error(`${res.status}`);
     return res.text();
   },
+  // Live tail of the workspace's exec output (optional provisioner
+  // capability); null when unavailable (no env yet / unsupported).
+  workspaceLog: async (id: string, n = 65536): Promise<string | null> => {
+    const res = await fetch(`/api/runs/${id}/workspace-log?n=${n}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.text();
+  },
+  // Hosts the egress proxy blocked for this run (M18) — the visible
+  // diagnosis when a model/tool can't reach its endpoint.
+  egressDenials: (id: string) => req<EgressDenial[]>(`/api/runs/${id}/egress-denials`),
+  // Allow a host on this run's egress instantly (no restart) and persist
+  // it to the project's extra domains.
+  egressAllow: (id: string, host: string) =>
+    post(`/api/runs/${id}/egress-allow`, { host }) as Promise<{ allowed: string; persisted: boolean }>,
   pendingPings: () => req<Ping[]>('/api/pings?status=pending'),
   pings: (status: 'pending' | 'answered' | 'all', limit = 100) =>
     req<Ping[]>(`/api/pings?status=${status}&limit=${limit}`),
@@ -298,6 +320,21 @@ export const api = {
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as EventEnvelope);
     return () => es.close();
   }
+};
+
+// Tab grouping for the runs list. Exhaustive over RunView['state'] so adding
+// a state without classifying it is a type error. completed/abandoned are
+// terminal but keep their env until archived, so they still need attention.
+export type RunTab = 'active' | 'finished';
+export const stateTab: Record<RunView['state'], RunTab> = {
+  pending: 'active',
+  provisioning: 'active',
+  running: 'active',
+  waiting_on_human: 'active',
+  completed: 'active',
+  abandoned: 'active',
+  failed: 'finished',
+  archived: 'finished'
 };
 
 export const stateColors: Record<RunView['state'], string> = {

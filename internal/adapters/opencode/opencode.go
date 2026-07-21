@@ -129,7 +129,7 @@ func (a *Adapter) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec
 	// still expands $ and backticks (a model string like `openai/$(cmd)`
 	// would execute).
 	script := fmt.Sprintf(
-		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
+		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; [ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a
 opencode run --format json --agent %s -m %s "$(cat %s)"`,
 		shellQuote(spec.Agent), shellQuote(spec.Model), shellQuote(promptPath))
 	return a.invoke(ctx, env, script)
@@ -143,7 +143,7 @@ func (a *Adapter) Resume(ctx context.Context, env ports.EnvID, session ports.Ses
 		return ports.AgentResult{}, fmt.Errorf("write reply: %w", err)
 	}
 	script := fmt.Sprintf(
-		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
+		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; [ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a
 opencode run --format json --session %s "$(cat %s)"`,
 		shellQuote(string(session)), shellQuote(replyPath))
 	return a.invoke(ctx, env, script)

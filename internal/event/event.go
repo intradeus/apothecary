@@ -27,6 +27,7 @@ const (
 	TypeRunAbandoned    Type = "run_abandoned"
 	TypeRunFailed       Type = "run_failed"
 	TypeRunArchived     Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
+	TypeRunResumed      Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
 	TypeEnvDestroyed    Type = "env_destroyed"
 )
 
@@ -191,6 +192,14 @@ type RunFailed struct {
 
 type RunArchived struct{}
 
+// RunResumed un-terminals an abandoned/failed run and re-enters StageID
+// (the "try again" path): the workspace and prior stages are reused, only
+// the failed stage re-runs, with its retry budgets reset. History stays
+// immutable — this is a forward event, not a rewind.
+type RunResumed struct {
+	StageID string `json:"stage_id"`
+}
+
 type EnvDestroyed struct {
 	EnvID string `json:"env_id"`
 }
@@ -212,4 +221,5 @@ func (*RunCompleted) EventType() Type    { return TypeRunCompleted }
 func (*RunAbandoned) EventType() Type    { return TypeRunAbandoned }
 func (*RunFailed) EventType() Type       { return TypeRunFailed }
 func (*RunArchived) EventType() Type     { return TypeRunArchived }
+func (*RunResumed) EventType() Type      { return TypeRunResumed }
 func (*EnvDestroyed) EventType() Type    { return TypeEnvDestroyed }

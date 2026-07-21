@@ -769,6 +769,13 @@ func mrTitle(body, ticketTitle string) string {
 
 func (x *exec) ensureEnv() error {
 	rs := x.rs
+	// Install this run's egress allowlist on the proxy (M18) before any
+	// workspace network use (clone routes through it). Covers fresh
+	// provisions and recovery re-entries; the derived domains already
+	// include project extra_domains (resolve.egressDomains).
+	if x.e.egress != nil {
+		x.e.egress.SetPolicy(rs.runID, x.res.EgressDomains)
+	}
 	if rs.envID != "" {
 		status, err := x.res.Envp.Status(x.ctx, rs.envID)
 		if err != nil {
@@ -781,10 +788,26 @@ func (x *exec) ensureEnv() error {
 			return fmt.Errorf("recovery: env status: %w", err)
 		}
 		if status == ports.EnvRunning {
-			// Tokens are regenerated per boot; refresh the workspace copy so
-			// the ask_human shim can re-authenticate after an engine restart.
+			// Re-establish the reverse tunnel — it died with the previous
+			// engine process, so the workspace's engine/proxy loopback
+			// forwards are gone (found live: git push to 127.0.0.1:<proxy>
+			// refused after an engine restart + resume).
+			if r, ok := x.res.Envp.(ports.WorkspaceReattacher); ok {
+				if err := r.Reattach(x.ctx, rs.envID); err != nil {
+					if x.ctx.Err() != nil {
+						return context.Cause(x.ctx)
+					}
+					return fmt.Errorf("recovery: re-establish workspace tunnel: %w", err)
+				}
+			}
+			// Per-boot workspace state changes across restarts: the run
+			// token AND the egress proxy port+credentials. Refresh both so
+			// the shim re-authenticates and egress routes to the live proxy.
 			if err := x.writeRunEnv(rs.envID); err != nil {
 				x.e.log.Warn("refreshing run.env on recovery failed", "run", rs.runID, "err", err)
+			}
+			if err := x.writeProxyEnv(rs.envID); err != nil {
+				x.e.log.Warn("refreshing proxy.env on recovery failed", "run", rs.runID, "err", err)
 			}
 			return nil
 		}
@@ -860,6 +883,31 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600)
 }
 
+// writeProxyEnv (re)writes /apothecary/proxy.env from the current proxy
+// port+credentials — used on the reuse path so egress keeps working after
+// an engine restart changed the port/secret. Same encoder RunBootstrap
+// uses; a no-op file when proxy mode is off.
+func (x *exec) writeProxyEnv(id ports.EnvID) error {
+	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/proxy.env", []byte(encodeEnvFile(x.proxyEnv())), 0o600)
+}
+
+// proxyEnv builds the workspace's HTTP(S)_PROXY environment pointing at
+// the reverse-tunneled egress proxy on the workspace's own loopback (M18);
+// empty when proxy mode is off. NO_PROXY keeps loopback traffic (the
+// ask_human shim, the engine tunnel) off the proxy.
+func (x *exec) proxyEnv() map[string]string {
+	if x.e.egress == nil || x.e.egress.Port() == 0 {
+		return nil
+	}
+	user, pass := x.e.egress.Credentials(x.rs.runID)
+	addr := fmt.Sprintf("http://%s:%s@127.0.0.1:%d", user, pass, x.e.egress.Port())
+	const noProxy = "127.0.0.1,localhost,::1"
+	return map[string]string{
+		"HTTP_PROXY": addr, "HTTPS_PROXY": addr, "NO_PROXY": noProxy,
+		"http_proxy": addr, "https_proxy": addr, "no_proxy": noProxy,
+	}
+}
+
 func (x *exec) bootstrap(id ports.EnvID) error {
 	res := x.res
 	err := RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
@@ -876,6 +924,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		SeedAuth:      res.SeedAuth,
 		Prepare:       res.Prepare,
 		Setup:         res.Commands["setup"], // optional in v2: "" skips step 6
+		ProxyEnv:      x.proxyEnv(),
 		Timeout:       x.rs.fl.Defaults.Timeout,
 	})
 	if err != nil {

@@ -20,6 +20,7 @@ import (
 
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
+	"apothecary/internal/egressproxy"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
@@ -65,9 +66,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.streamEvents)
 	mux.HandleFunc("GET /api/runs/{id}/logs/{stage}", s.getLog)
+	mux.HandleFunc("GET /api/runs/{id}/workspace-log", s.getWorkspaceLog)
+	mux.HandleFunc("GET /api/runs/{id}/egress-denials", s.getEgressDenials)
+	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
 	mux.HandleFunc("POST /api/runs/{id}/abort", s.postAbort)
 	mux.HandleFunc("POST /api/runs/{id}/archive", s.postArchive)
 	mux.HandleFunc("POST /api/runs/{id}/restart", s.postRestart)
+	mux.HandleFunc("POST /api/runs/{id}/resume", s.postResume)
 	mux.HandleFunc("POST /api/runs/{id}/pings", s.postPing)
 	mux.HandleFunc("GET /api/runs/{id}/pings/{pid}", s.repollPing)
 	mux.HandleFunc("POST /api/pings/{pid}/answer", s.answerPing)
@@ -361,6 +366,26 @@ func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"run_id": newID})
 }
 
+// postResume re-enters the failed stage of an abandoned/failed run in its
+// existing workspace ("try again") — 202, the run continues under the same
+// id. 409 when active/not-resumable, 404 when unknown.
+func (s *Server) postResume(w http.ResponseWriter, r *http.Request) {
+	err := s.Engine.ResumeRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusBadRequest
+		switch {
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		case strings.Contains(msg, "still active"), strings.Contains(msg, "can be resumed"):
+			status = http.StatusConflict
+		}
+		writeErr(w, status, msg)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // --- SSE --------------------------------------------------------------------
 
 func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +448,115 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- logs -------------------------------------------------------------------
+
+// getWorkspaceLog serves the LIVE tail of the run's workspace exec output
+// (optional provisioner capability) — feedback while a stage is working.
+func (s *Server) getWorkspaceLog(w http.ResponseWriter, r *http.Request) {
+	n, _ := strconv.Atoi(r.URL.Query().Get("n"))
+	data, err := s.Engine.WorkspaceLogTail(r.Context(), r.PathValue("id"), n)
+	if err != nil {
+		status := http.StatusBadGateway
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			status = http.StatusNotFound
+		case errors.Is(err, engine.ErrNoLiveLog), os.IsNotExist(err):
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
+// getEgressDenials lists hosts the egress proxy blocked for this run (M18):
+// the visible diagnosis for "the firewall ate my model provider". Empty
+// list when proxy mode is off or nothing was blocked.
+func (s *Server) getEgressDenials(w http.ResponseWriter, r *http.Request) {
+	dens := s.Engine.EgressDenials(r.PathValue("id"))
+	if dens == nil {
+		dens = []egressproxy.Denial{}
+	}
+	writeJSON(w, http.StatusOK, dens)
+}
+
+// validEgressHost accepts a hostname or `*.suffix` wildcard — no scheme,
+// port or path (the proxy matches host only).
+func validEgressHost(h string) bool {
+	if h == "" || len(h) > 253 || strings.ContainsAny(h, " /:@") {
+		return false
+	}
+	body := strings.TrimPrefix(h, "*.")
+	if body == "" || !strings.Contains(body, ".") {
+		return false
+	}
+	for _, r := range body {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// postEgressAllow adds a host to a run's live proxy allowlist AND persists
+// it to the project's extra_domains (M18 "add to egress" button): the hung
+// agent proceeds instantly, and future runs never hit the wall.
+func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Host string `json:"host"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	host := strings.ToLower(strings.TrimSpace(body.Host))
+	if !validEgressHost(host) {
+		writeErr(w, http.StatusBadRequest, "host must be a bare hostname or *.wildcard (no scheme/port/path)")
+		return
+	}
+	runID := r.PathValue("id")
+
+	// Instant: unblock the live run.
+	if err := s.Engine.AllowEgress(runID, host); err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, engine.ErrEgressOff) {
+			status = http.StatusServiceUnavailable
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+
+	// Persist to the project so future runs inherit it (best-effort — the
+	// live unblock already succeeded).
+	persisted := false
+	if s.Conf != nil {
+		if evs, err := s.Store.Events(r.Context(), runID, 0); err == nil && len(evs) > 0 {
+			if pid := run.Reduce(evs).ProjectID; pid != "" {
+				if p, err := s.Conf.GetProject(r.Context(), pid); err == nil {
+					if !containsStr(p.Workspace.ExtraDomains, host) {
+						p.Workspace.ExtraDomains = append(p.Workspace.ExtraDomains, host)
+						if _, err := s.Conf.UpdateProject(r.Context(), pid, p); err == nil {
+							persisted = true
+						}
+					} else {
+						persisted = true
+					}
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"allowed": host, "persisted": persisted})
+}
+
+func containsStr(ss []string, v string) bool {
+	for _, s := range ss {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *Server) getLog(w http.ResponseWriter, r *http.Request) {
 	id, stage := r.PathValue("id"), r.PathValue("stage")

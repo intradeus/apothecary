@@ -94,34 +94,50 @@ var providerDomains = map[string][]string{
 	"togetherai":   {"api.together.xyz"},
 	"fireworks-ai": {"api.fireworks.ai"},
 	"cerebras":     {"api.cerebras.ai"},
+	"opencode":     {"opencode.ai"}, // OpenCode Zen gateway
+	"opencode-go":  {"opencode.ai"},
 }
 
-// egressBaseline keeps the pre-derivation behavior when auth_json is absent
-// or unparseable at resolution time.
+// opencodeInfra are the opencode CLI's own runtime endpoints, needed
+// regardless of model provider: models.dev (its model catalog) and the npm
+// registry (it is an npm package and version/plugin-checks at runtime —
+// found live as egress denials in a Go project). Always allowed.
+var opencodeInfra = []string{"models.dev", "registry.npmjs.org"}
+
+// egressBaseline is the provider fallback when auth_json is absent or
+// unparseable at resolution time.
 var egressBaseline = []string{"api.anthropic.com", "api.openai.com", "openrouter.ai"}
 
 func (h *opencodeHarness) EgressDomains() []string {
 	// Harness-owned auth: whatever auth.json can route to must not be
 	// blocked by the very firewall that ships with it (the M3 openrouter
-	// lesson, generalized) — so the allowlist is DERIVED from the same
-	// auth_json keys Models() advertises, keeping the two in agreement.
-	auth := map[string]json.RawMessage{}
-	if h.authJSON == "" || json.Unmarshal([]byte(h.authJSON), &auth) != nil || len(auth) == 0 {
-		return egressBaseline
-	}
+	// lesson, generalized) — so the provider allowlist is DERIVED from the
+	// same auth_json keys Models() advertises. The harness's own infra is
+	// always allowed on top.
 	seen := map[string]bool{}
 	var out []string
-	for providerID := range auth {
-		for _, d := range providerDomains[providerID] {
-			if !seen[d] {
+	add := func(ds ...string) {
+		for _, d := range ds {
+			if d != "" && !seen[d] {
 				seen[d] = true
 				out = append(out, d)
 			}
 		}
 	}
-	if len(out) == 0 {
-		return egressBaseline
+	add(opencodeInfra...)
+
+	auth := map[string]json.RawMessage{}
+	if h.authJSON == "" || json.Unmarshal([]byte(h.authJSON), &auth) != nil || len(auth) == 0 {
+		add(egressBaseline...)
+	} else {
+		for providerID := range auth {
+			add(providerDomains[providerID]...)
+		}
 	}
+	// M18: a missing provider domain is no longer a silent block — the
+	// egress proxy records it as a visible denial the user fixes via the
+	// project's extra_domains. So the static map plus extra_domains is
+	// enough; no catalog fetch on the resolution path.
 	sort.Strings(out)
 	return out
 }

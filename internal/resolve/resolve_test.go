@@ -79,7 +79,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(svc, reg, "", 8080, ""), svc, p, made, closed
+	return New(svc, reg, "", 8080, 0, ""), svc, p, made, closed
 }
 
 func TestResolveFillsResolution(t *testing.T) {

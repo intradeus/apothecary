@@ -138,6 +138,21 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.mr = &ports.MRRef{IID: p.MRIID, URL: p.MRURL}
 		case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
 			rs.done = true
+		case *event.RunResumed:
+			// "Try again": un-terminal and re-enter the failed stage fresh.
+			// Clearing edgeCounts restores every stage's on_fail/on_reject
+			// retry budget from the resume point; feed/lastFailure reset so
+			// the stage runs clean, not as a routed recovery.
+			rs.done = false
+			rs.ph = phStart
+			rs.feed = ""
+			rs.feedAttempts = 0
+			rs.lastFailure = nil
+			rs.gateAnswer = nil
+			rs.edgeCounts = map[string]int{}
+			if fl != nil {
+				rs.pos = fl.Index(p.StageID)
+			}
 		}
 	}
 	return rs

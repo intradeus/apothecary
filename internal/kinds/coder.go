@@ -29,6 +29,7 @@ func (Coder) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		Template:      template,
 		RunsDir:       deps.RunsDir,
 		EnginePort:    deps.EnginePort,
+		ProxyPort:     deps.ProxyPort,
 		ExtraForwards: cfg.Ints("extra_forwards"),
 	}), nil
 }

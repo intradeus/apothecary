@@ -38,7 +38,7 @@ RUN chmod 0755 /usr/local/bin/init-firewall.sh /opt/apothecary/ask-human.mjs \
     # CAP_SYS_PTRACE). The lock file makes re-runs no-ops, so passing
     # different values later cannot alter the rules.
     && { echo "apothecary ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh"; \
-         echo 'Defaults!/usr/local/bin/init-firewall.sh env_keep += "APOTHECARY_REPO_URL APOTHECARY_CODER_PORT APOTHECARY_EXTRA_DOMAINS"'; \
+         echo 'Defaults!/usr/local/bin/init-firewall.sh env_keep += "APOTHECARY_REPO_URL APOTHECARY_CODER_PORT APOTHECARY_EXTRA_DOMAINS APOTHECARY_EGRESS_PROXY"'; \
        } > /etc/sudoers.d/apothecary-firewall \
     && chmod 0440 /etc/sudoers.d/apothecary-firewall
 

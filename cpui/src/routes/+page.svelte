@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, stateColors, ago, type Project, type RunView } from '$lib/api';
+  import { api, stateColors, stateTab, ago, type Project, type RunView, type RunTab } from '$lib/api';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
@@ -44,6 +44,11 @@
     void projectFilter;
     refresh();
   });
+
+  let tab = $state<RunTab>('active');
+  const activeRuns = $derived(runs.filter((r) => stateTab[r.state] === 'active'));
+  const finishedRuns = $derived(runs.filter((r) => stateTab[r.state] === 'finished'));
+  const shownRuns = $derived(tab === 'active' ? activeRuns : finishedRuns);
 
   const selectedProject = $derived(projects.find((p) => p.id === projectId));
   const projectName = (id?: string) => projects.find((p) => p.id === id)?.name;
@@ -104,8 +109,20 @@
   </form>
 {/if}
 
-{#if runs.length === 0}
-  <div class="empty">{loaded ? 'No runs yet — create the first ticket.' : 'Loading…'}</div>
+<div class="tabs row" style="gap:0; margin-bottom:12px">
+  <button class:primary={tab === 'active'} onclick={() => (tab = 'active')}>
+    Active ({activeRuns.length})
+  </button>
+  <button class:primary={tab === 'finished'} onclick={() => (tab = 'finished')}>
+    Finished ({finishedRuns.length})
+  </button>
+</div>
+
+{#if shownRuns.length === 0}
+  <div class="empty">
+    {#if !loaded}Loading…{:else if runs.length === 0}No runs yet — create the first ticket.
+    {:else if tab === 'active'}No active runs.{:else}No finished runs.{/if}
+  </div>
 {:else}
   <div class="card" style="padding:4px 0">
     <table>
@@ -113,7 +130,7 @@
         <tr><th>Ticket</th><th>State</th><th>Stage</th><th>Project</th><th>Flow</th><th>MR</th><th>Updated</th></tr>
       </thead>
       <tbody>
-        {#each runs as r (r.run_id)}
+        {#each shownRuns as r (r.run_id)}
           <tr class="click" onclick={() => goto(`/runs/${r.run_id}`)}>
             <td>{r.ticket_title}<div class="mono muted">{r.run_id}</div></td>
             <td>

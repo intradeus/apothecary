@@ -41,6 +41,10 @@ type Config struct {
 	// Coder agent connection, so workspaces reach the engine without any
 	// host firewall exposure. Default 8080.
 	EnginePort int
+	// ProxyPort is the engine-side egress proxy (M18): reverse-forwarded
+	// like EnginePort and passed to the template so the workspace firewall
+	// runs in proxy mode. 0 = proxy mode off.
+	ProxyPort int
 	// ExtraForwards are additional loopback ports forwarded the same way
 	// (dev convenience: local git daemon, mock services).
 	ExtraForwards []int
@@ -70,9 +74,11 @@ type tunnel struct {
 	done   chan struct{}
 }
 
-// CmdRunner executes one coder CLI invocation; swapped in tests.
+// CmdRunner executes one coder CLI invocation; swapped in tests. tee,
+// when non-nil, receives stdout+stderr AS THEY ARRIVE (live exec log,
+// ports.ExecLogTailer); the returned buffers are unchanged.
 type CmdRunner interface {
-	Run(ctx context.Context, args []string, stdin []byte) (stdout, stderr []byte, exitCode int, err error)
+	Run(ctx context.Context, args []string, stdin []byte, tee io.Writer) (stdout, stderr []byte, exitCode int, err error)
 }
 
 func New(cfg Config) *Adapter {
@@ -98,7 +104,11 @@ func New(cfg Config) *Adapter {
 
 func (a *Adapter) defaultTunnelCmd(ctx context.Context, ws string) *exec.Cmd {
 	args := []string{"ssh", ws}
-	for _, port := range append([]int{a.cfg.EnginePort}, a.cfg.ExtraForwards...) {
+	forwards := append([]int{a.cfg.EnginePort}, a.cfg.ExtraForwards...)
+	if a.cfg.ProxyPort > 0 {
+		forwards = append(forwards, a.cfg.ProxyPort)
+	}
+	for _, port := range forwards {
 		args = append(args, "--remote-forward", fmt.Sprintf("%d:127.0.0.1:%d", port, port))
 	}
 	args = append(args, "--", "sleep", "infinity")
@@ -176,7 +186,7 @@ func NewWithRunner(cfg Config, r CmdRunner) *Adapter {
 
 type cliRunner struct{ url, token string }
 
-func (c *cliRunner) Run(ctx context.Context, args []string, stdin []byte) ([]byte, []byte, int, error) {
+func (c *cliRunner) Run(ctx context.Context, args []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
 	cmd := exec.CommandContext(ctx, "coder", args...)
 	cmd.Env = append(os.Environ(),
 		"CODER_URL="+c.url,
@@ -186,7 +196,15 @@ func (c *cliRunner) Run(ctx context.Context, args []string, stdin []byte) ([]byt
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	if tee != nil {
+		// stdout and stderr write from separate goroutines; serialize the
+		// shared tee so interleaved lines stay intact.
+		safe := &syncWriter{w: tee}
+		cmd.Stdout = io.MultiWriter(&out, safe)
+		cmd.Stderr = io.MultiWriter(&errb, safe)
+	} else {
+		cmd.Stdout, cmd.Stderr = &out, &errb
+	}
 	err := cmd.Run()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
@@ -196,13 +214,25 @@ func (c *cliRunner) Run(ctx context.Context, args []string, stdin []byte) ([]byt
 	return out.Bytes(), errb.Bytes(), code, err
 }
 
+// syncWriter serializes writes to a shared sink.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
 // run is the §12 single wrapper: 3 attempts on transport-level failures
 // (process failed to run, or ssh transport exit 255). Command-level nonzero
 // exits are results and are never retried.
 func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte, []byte, int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		stdout, stderr, code, err := a.runner.Run(ctx, args, stdin)
+		stdout, stderr, code, err := a.runner.Run(ctx, args, stdin, nil)
 		if err == nil && code != 255 {
 			return stdout, stderr, code, nil
 		}
@@ -228,10 +258,12 @@ func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte,
 // side-effectful command (a full agent invocation) is worse than reporting
 // the ambiguous exit honestly. Spawn failures (nothing ran remotely) still
 // retry.
-func (a *Adapter) execRun(ctx context.Context, args []string, stdin []byte) ([]byte, []byte, int, error) {
+func (a *Adapter) execRun(ctx context.Context, args []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		stdout, stderr, code, err := a.runner.Run(ctx, args, stdin)
+		// Retries only happen when the process never spawned, so a shared
+		// tee sees no duplicate output.
+		stdout, stderr, code, err := a.runner.Run(ctx, args, stdin, tee)
 		if err == nil {
 			return stdout, stderr, code, nil
 		}
@@ -260,6 +292,19 @@ func WorkspaceName(runID string) string {
 		id = id[len(id)-16:]
 	}
 	return "apothecary-" + id
+}
+
+// Reattach re-establishes the reverse tunnel for a running workspace after
+// an engine restart (ports.WorkspaceReattacher): the tunnel is a
+// subprocess that died with the previous engine, so the workspace's
+// engine/proxy loopback forwards are gone until re-created. Idempotent —
+// ensureTunnel is a no-op if a tunnel already exists.
+func (a *Adapter) Reattach(ctx context.Context, env ports.EnvID) error {
+	if err := a.waitReady(ctx, string(env)); err != nil {
+		return err
+	}
+	a.ensureTunnel(env)
+	return nil
 }
 
 func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvID, error) {
@@ -303,6 +348,13 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 			"--parameter", "workspace_image="+spec.Image,
 			"--parameter", "extra_allowed_domains="+strings.Join(spec.EgressDomains, " "),
 		)
+		// Proxy mode (M18): a non-empty egress_proxy switches the workspace
+		// firewall to loopback+gateway-only; all HTTP(S) goes through the
+		// reverse-tunneled proxy on the workspace's own loopback.
+		if a.cfg.ProxyPort > 0 {
+			args = append(args, "--parameter",
+				fmt.Sprintf("egress_proxy=127.0.0.1:%d", a.cfg.ProxyPort))
+		}
 	}
 	args = append(args, "--yes")
 	_, stderr, code, err := a.run(ctx, args, nil)
@@ -363,11 +415,27 @@ func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) 
 	if cmd.Dir != "" {
 		script = fmt.Sprintf("cd \"$HOME/%s\" || exit 90\n%s", cmd.Dir, cmd.Script)
 	}
+	// Source the egress proxy env (M18) for EVERY workspace command — not
+	// just bootstrap/agent runs, but flow command stages too (e.g. `git
+	// push`), which otherwise go direct and hit the firewall DROP. No-op
+	// when proxy mode is off (empty file).
+	script = "[ -s /apothecary/proxy.env ] && { set -a; . /apothecary/proxy.env; set +a; }\n" + script
+	// The live exec log (ports.ExecLogTailer): header + output stream into
+	// <RunsDir>/<env>/exec.log AS THE COMMAND RUNS, so the run page can
+	// tail work in progress. Best-effort — a log failure never fails Exec.
+	tee := a.openExecLog(env, cmd)
+	if tee != nil {
+		defer tee.Close()
+	}
+	var teeW io.Writer
+	if tee != nil {
+		teeW = tee
+	}
 	// execRun, not run: exec'd commands can have side effects (agent
 	// invocations, user scripts), so an ambiguous exit 255 must surface as
 	// a result instead of triggering a blind re-execution.
 	stdout, stderr, code, err := a.execRun(ctx,
-		[]string{"ssh", string(env), "--", "bash", "-eo", "pipefail", "-s"}, []byte(script))
+		[]string{"ssh", string(env), "--", "bash", "-eo", "pipefail", "-s"}, []byte(script), teeW)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ports.ExecResult{}, ctx.Err()
@@ -378,26 +446,55 @@ func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) 
 	if len(stderr) > 0 {
 		output += string(stderr)
 	}
-	a.writeLog(env, cmd, output)
 	return ports.ExecResult{ExitCode: code, Output: output}, nil
 }
 
-// writeLog streams exec output to the runs dir (§12), keyed by workspace —
-// best-effort; the engine's stage logs are the primary copy.
-func (a *Adapter) writeLog(env ports.EnvID, cmd ports.Command, output string) {
+// openExecLog opens the env's live exec log and writes the entry header;
+// nil when RunsDir is unset or the open fails.
+func (a *Adapter) openExecLog(env ports.EnvID, cmd ports.Command) *os.File {
 	if a.cfg.RunsDir == "" {
-		return
+		return nil
 	}
 	dir := filepath.Join(a.cfg.RunsDir, string(env))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+		return nil
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "exec.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return nil
+	}
+	fmt.Fprintf(f, "--- %s [dir=%s]\n%s\n", time.Now().UTC().Format(time.RFC3339), cmd.Dir, cmd.Script)
+	return f
+}
+
+// TailExecLog implements the optional ports.ExecLogTailer capability: the
+// last n bytes of the env's live exec log.
+func (a *Adapter) TailExecLog(_ context.Context, env ports.EnvID, n int) ([]byte, error) {
+	if a.cfg.RunsDir == "" {
+		return nil, fmt.Errorf("live exec log: runs dir is not configured")
+	}
+	path := filepath.Join(a.cfg.RunsDir, string(env), "exec.log")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "--- %s [dir=%s]\n%s\n%s\n", time.Now().UTC().Format(time.RFC3339), cmd.Dir, cmd.Script, output)
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		n = 64 << 10
+	}
+	off := info.Size() - int64(n)
+	if off < 0 {
+		off = 0
+	}
+	buf := make([]byte, info.Size()-off)
+	if _, err := f.ReadAt(buf, off); err != nil && err != io.EOF {
+		return nil, err
+	}
+	return buf, nil
 }
 
 // resolvePath applies the port's path convention: relative = repo-root.

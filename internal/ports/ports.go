@@ -131,6 +131,25 @@ const (
 	MRClosed MRState = "closed"
 )
 
+// WorkspaceReattacher is an OPTIONAL EnvProvisioner capability: after an
+// engine restart, re-establish any engine-side resources for a still-
+// running workspace that died with the previous process — notably the
+// reverse tunnel (workspace → engine/proxy loopback). Idempotent; called
+// on the recovery/resume reuse path. Adapters with no such state (fake)
+// don't implement it.
+type WorkspaceReattacher interface {
+	Reattach(ctx context.Context, env EnvID) error
+}
+
+// ExecLogTailer is an OPTIONAL EnvProvisioner capability: a live tail of
+// an environment's combined exec output (bootstrap, commands, agent
+// invocations) for run-page feedback. How output is captured is the
+// adapter's business; implementations that cannot stream simply don't
+// implement the interface and the API degrades honestly.
+type ExecLogTailer interface {
+	TailExecLog(ctx context.Context, env EnvID, n int) ([]byte, error)
+}
+
 type Forge interface {
 	// CheckAccess verifies token validity, project reachability and scopes (§1 preflight).
 	CheckAccess(ctx context.Context, repo RepoRef) error

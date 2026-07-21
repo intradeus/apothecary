@@ -65,6 +65,18 @@ data "coder_parameter" "extra_allowed_domains" {
   default      = ""
 }
 
+# M18: when set (host:port on the workspace's own loopback), the firewall
+# runs in proxy mode — loopback + coder gateway only, all HTTP(S) through
+# the reverse-tunneled hostname-filtering egress proxy. Empty = the derived
+# IP-allowlist firewall.
+data "coder_parameter" "egress_proxy" {
+  name         = "egress_proxy"
+  display_name = "Egress proxy (host:port on workspace loopback; empty = allowlist mode)"
+  type         = "string"
+  mutable      = false
+  default      = ""
+}
+
 variable "coder_port" {
   type    = number
   default = 7080
@@ -127,6 +139,7 @@ resource "docker_container" "workspace" {
     "APOTHECARY_BRANCH=${data.coder_parameter.branch.value}",
     "APOTHECARY_CODER_PORT=${var.coder_port}",
     "APOTHECARY_EXTRA_DOMAINS=${data.coder_parameter.extra_allowed_domains.value}",
+    "APOTHECARY_EGRESS_PROXY=${data.coder_parameter.egress_proxy.value}",
   ]
 
   # §8/§11: containers cannot reach the host's 127.0.0.1 — this mapping is

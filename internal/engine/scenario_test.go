@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/egressproxy"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -992,4 +993,112 @@ stages:
 	}
 	run2 <- rid
 	h2.e.Wait(rid)
+}
+
+// TestResumeRerunsFailedStage: a run that abandons at a command stage
+// resumes IN THE SAME WORKSPACE, re-running only the failed stage.
+func TestResumeRerunsFailedStage(t *testing.T) {
+	// A single command stage with no on_fail: it abandons on failure.
+	doc := `name: r
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: push, type: command, run: "push.sh" }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	fail := true
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "push.sh") && fail {
+			return ports.ExecResult{ExitCode: 1, Output: "connect timeout"}, nil
+		}
+		return ports.ExecResult{ExitCode: 0, Output: "pushed"}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "r", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned", v.State)
+	}
+	envBefore := h.view(t, runID).EnvID
+	if envBefore == "" {
+		t.Fatal("no env recorded")
+	}
+
+	// Fix the failing command; resume re-runs push in the SAME env.
+	fail = false
+	if err := h.e.ResumeRun(context.Background(), runID); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	v := h.view(t, runID)
+	if v.State != run.Completed {
+		t.Fatalf("after resume state = %s: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	if v.EnvID != envBefore {
+		t.Errorf("env changed on resume: %s -> %s (must reuse the workspace)", envBefore, v.EnvID)
+	}
+	// Exactly one env was ever provisioned (resume reused it, no restart).
+	if got := len(h.envp.Destroyed); got != 0 {
+		t.Errorf("env destroyed on resume (%d) — should be reused", got)
+	}
+	if countType(h.events(t, runID), event.TypeRunResumed) != 1 {
+		t.Error("no run_resumed event")
+	}
+
+	// A completed run cannot be resumed.
+	if err := h.e.ResumeRun(context.Background(), runID); err == nil || !strings.Contains(err.Error(), "can be resumed") {
+		t.Errorf("resume completed err = %v", err)
+	}
+}
+
+// stubEgress is a minimal EgressController for proxy-env tests.
+type stubEgress struct{ policy map[string][]string }
+
+func (s *stubEgress) SetPolicy(runID string, hosts []string) {
+	if s.policy == nil {
+		s.policy = map[string][]string{}
+	}
+	s.policy[runID] = hosts
+}
+func (s *stubEgress) DropPolicy(string)                      {}
+func (s *stubEgress) AllowHost(string, string) bool          { return true }
+func (s *stubEgress) Credentials(id string) (string, string) { return id, "tok-" + id }
+func (s *stubEgress) Port() int                              { return 45999 }
+func (s *stubEgress) Denials(string) []egressproxy.Denial    { return nil }
+
+// TestProxyEnvWrittenToWorkspace: with proxy mode on, bootstrap writes
+// /apothecary/proxy.env pointing at the live proxy, and the run's egress
+// policy is installed.
+func TestProxyEnvWrittenToWorkspace(t *testing.T) {
+	doc := `name: p
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	eg := &stubEgress{}
+	h.e.SetEgress(eg)
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "p", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	envID := h.view(t, runID).EnvID
+	env := h.envp.Env(ports.EnvID(envID))
+	if env == nil {
+		t.Fatal("no env")
+	}
+	pe := string(env.Files["/apothecary/proxy.env"])
+	for _, want := range []string{"HTTPS_PROXY", "127.0.0.1:45999", "tok-" + runID, "NO_PROXY"} {
+		if !strings.Contains(pe, want) {
+			t.Errorf("proxy.env missing %q:\n%s", want, pe)
+		}
+	}
+	// The run's allowlist was installed (derived domains reach the proxy).
+	if _, ok := eg.policy[runID]; !ok {
+		t.Errorf("no egress policy set for run; policies = %v", eg.policy)
+	}
 }

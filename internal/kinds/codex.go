@@ -73,7 +73,9 @@ func (h *codexHarness) InstallLayer() []string {
 }
 
 func (h *codexHarness) EgressDomains() []string {
-	return []string{"api.openai.com", "chatgpt.com", "auth.openai.com"}
+	// api endpoints + the npm registry (codex is an npm CLI and
+	// version-checks at runtime, same class as opencode's denials).
+	return []string{"api.openai.com", "chatgpt.com", "auth.openai.com", "registry.npmjs.org"}
 }
 
 // EnvVars: API-key auth rides the standard env var through provider.env —

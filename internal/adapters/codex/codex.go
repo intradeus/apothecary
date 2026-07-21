@@ -124,7 +124,7 @@ func (a *Adapter) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec
 	// still expands $ and backticks (a model string like `openai/$(cmd)`
 	// would execute).
 	script := fmt.Sprintf(
-		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
+		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; [ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a
 cat %s %s | codex exec --json -m %s --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -`,
 		shellQuote(path.Join(rolesDir, spec.Agent+".role")), shellQuote(promptPath), shellQuote(codexModel(spec.Model)))
 	return a.invoke(ctx, env, script)
@@ -138,7 +138,7 @@ func (a *Adapter) Resume(ctx context.Context, env ports.EnvID, session ports.Ses
 		return ports.AgentResult{}, fmt.Errorf("write reply: %w", err)
 	}
 	script := fmt.Sprintf(
-		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; set +a
+		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; [ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a
 cat %s | codex exec resume %s --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -`,
 		shellQuote(replyPath), shellQuote(string(session)))
 	return a.invoke(ctx, env, script)

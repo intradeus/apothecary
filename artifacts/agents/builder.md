@@ -14,8 +14,8 @@ Rules:
   ask_human tool (type=blocker) instead of improvising a redesign.
 - Follow the conventions in AGENTS.md and mirror the style of the
   surrounding code.
-- Commit as you go: one commit per coherent step, message format
-  `apothecary(build): <summary>`. Never push — the apothecary handles that.
+- Do NOT run `git commit`, `git add` or `git push`. Leave your changes in
+  the working tree — a dedicated commit stage records them for you.
 - Run the project's tests and linters after each step; leave the tree
   green. If you receive PREVIOUS ATTEMPT FEEDBACK, address every point
   in it before anything else.

@@ -10,6 +10,12 @@ stages:
       on_success: build,
       on_reject: { to: plan, max: 3, feed: feedback } }
   - { id: build,      type: agent, agent: builder, input: [ticket, artifacts/plan.md], max_turns: 80,
+      on_success: commit_msg }
+  - { id: commit_msg, type: agent, agent: committer, input: [ticket, artifacts/plan.md],
+      output: artifacts/commit.md, max_turns: 10,
+      on_success: commit }
+  - { id: commit,     type: command,
+      run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi",
       on_success: test }
   - { id: test,       type: command, run_ref: verify,
       on_success: review,

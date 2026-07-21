@@ -95,6 +95,11 @@ func Apply(v *View, e *event.Event) {
 		v.State = Failed
 	case *event.RunArchived:
 		v.State = Archived
+	case *event.RunResumed:
+		// Back to work: re-entering StageID in the same workspace. The env
+		// persisted (abandoned/failed runs are never reaped).
+		v.State = Running
+		v.CurrentStage = p.StageID
 	case *event.EnvDestroyed:
 		v.EnvID = ""
 	}

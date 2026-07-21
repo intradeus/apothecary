@@ -70,10 +70,13 @@ func TestOpencodeHarnessCapabilities(t *testing.T) {
 	if !strings.Contains(layer, "npm install -g opencode-ai@"+OpencodeVersion) {
 		t.Errorf("install layer = %q", layer)
 	}
-	// Harness-owned auth: the harness allows every provider API it routes
-	// to, so auth.json credentials are never firewalled out.
+	// Harness-owned auth: the derived egress allowlist (also the M18 proxy
+	// allowlist) carries the provider's domain — auth.json credentials are
+	// never firewalled out. The opencode provider maps to opencode.ai.
 	domains := h.EgressDomains()
-	for _, want := range []string{"api.anthropic.com", "api.openai.com", "openrouter.ai"} {
+	// opencode.ai from the opencode provider; models.dev + npm are the
+	// harness's own always-allowed infrastructure.
+	for _, want := range []string{"opencode.ai", "models.dev", "registry.npmjs.org"} {
 		if !slices.Contains(domains, want) {
 			t.Errorf("egress %v missing %s", domains, want)
 		}

@@ -18,6 +18,10 @@ type Boot struct {
 	CPUIDir      string // APOTHECARY_CPUI_DIR, default "" (API only)
 	OtelEndpoint string // APOTHECARY_OTEL_ENDPOINT, default "" (disabled)
 	BaseImage    string // APOTHECARY_BASE_IMAGE, default "" (build embedded, M9)
+	// EgressProxy toggles the hostname-filtering egress proxy (M18):
+	// "on" (default) or "off". Off falls back to the derived IP allowlist
+	// firewall.
+	EgressProxy bool
 }
 
 // FromEnv reads the §1 variables. Only the DSN is unconditionally required;
@@ -32,6 +36,7 @@ func FromEnv() (*Boot, error) {
 		CPUIDir:      os.Getenv("APOTHECARY_CPUI_DIR"),
 		OtelEndpoint: os.Getenv("APOTHECARY_OTEL_ENDPOINT"),
 		BaseImage:    os.Getenv("APOTHECARY_BASE_IMAGE"),
+		EgressProxy:  os.Getenv("APOTHECARY_EGRESS_PROXY") != "off",
 	}
 	if b.PostgresDSN == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")

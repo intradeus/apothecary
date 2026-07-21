@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"io/fs"
 	"os/exec"
 	"strings"
@@ -32,13 +33,17 @@ type response struct {
 	err    error
 }
 
-func (s *scriptRunner) Run(_ context.Context, args []string, stdin []byte) ([]byte, []byte, int, error) {
+func (s *scriptRunner) Run(_ context.Context, args []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
 	s.calls = append(s.calls, call{args: args, stdin: stdin})
 	if len(s.responses) == 0 {
 		return nil, nil, 0, nil
 	}
 	r := s.responses[0]
 	s.responses = s.responses[1:]
+	if tee != nil && r.stdout != "" {
+		// Emulate live streaming: the tee sees output before Run returns.
+		_, _ = tee.Write([]byte(r.stdout))
+	}
 	return []byte(r.stdout), []byte(r.stderr), r.code, r.err
 }
 
@@ -322,5 +327,44 @@ func TestDestroyToleratesAlreadyGone(t *testing.T) {
 	a := newTestAdapter(r)
 	if err := a.Destroy(context.Background(), "ws"); err != nil {
 		t.Errorf("destroy of missing workspace should be nil, got %v", err)
+	}
+}
+
+// TestExecStreamsLiveLog: exec output tees into <RunsDir>/<env>/exec.log
+// as it arrives, and TailExecLog serves the tail (ports.ExecLogTailer).
+func TestExecStreamsLiveLog(t *testing.T) {
+	dir := t.TempDir()
+	r := &scriptRunner{responses: []response{
+		{stdout: "{\"type\":\"step_start\"}\nworking...\n", code: 0},
+	}}
+	a := NewWithRunner(Config{
+		URL: "http://localhost:7080", Token: "tok", Template: "t", RunsDir: dir,
+	}, r)
+	a.retryDelay = time.Millisecond
+	a.tunnelCmd = func(ctx context.Context, _ string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sleep", "300")
+	}
+
+	if _, err := a.Exec(context.Background(), "apothecary-run1", ports.Command{Script: "opencode run", Dir: "repo"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := a.TailExecLog(context.Background(), "apothecary-run1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{"[dir=repo]", "opencode run", "step_start", "working..."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("exec.log missing %q:\n%s", want, got)
+		}
+	}
+	// Tail cap: ask for a small n and get only the end.
+	tailOnly, err := a.TailExecLog(context.Background(), "apothecary-run1", 12)
+	if err != nil || len(tailOnly) != 12 || !strings.HasSuffix(got, string(tailOnly)) {
+		t.Errorf("tail(12) = %q, %v", tailOnly, err)
+	}
+	// Unknown env: error, not empty success.
+	if _, err := a.TailExecLog(context.Background(), "nope", 0); err == nil {
+		t.Error("expected error for unknown env")
 	}
 }

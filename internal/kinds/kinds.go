@@ -110,6 +110,10 @@ type Provisioner interface {
 type ProvisionerDeps struct {
 	RunsDir    string
 	EnginePort int
+	// ProxyPort is the engine-side egress proxy's loopback port (M18); the
+	// provisioner reverse-forwards it into workspaces and signals proxy
+	// mode to the firewall. 0 = proxy mode off.
+	ProxyPort int
 	// Template is the effective template name: the project's
 	// workspace.template override, else the integration's configured one.
 	Template string

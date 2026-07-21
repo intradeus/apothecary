@@ -26,6 +26,10 @@ type BootstrapSpec struct {
 
 	// ProviderEnv are the provider API keys (§11 step 2).
 	ProviderEnv map[string]string
+	// ProxyEnv are the HTTP(S)_PROXY vars pointing at the egress proxy
+	// (M18): written to /apothecary/proxy.env and sourced by bootstrap
+	// network steps and agent invocations. Empty = proxy mode off.
+	ProxyEnv map[string]string
 	// SeedAuth, when set, writes harness-native auth material right after
 	// provider.env (DESIGN2 §6.2, still step 2).
 	SeedAuth func(ctx context.Context, env ports.EnvID) error
@@ -71,6 +75,15 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	if err := envp.WriteFile(ctx, id, "/apothecary/provider.env", []byte(providers.String()), 0o600); err != nil {
 		return fmt.Errorf("write provider.env: %w", err)
 	}
+
+	// Egress proxy env (M18): sourced by the network bootstrap steps below
+	// and by agent invocations, so all HTTP(S) leaves through the
+	// hostname-filtering proxy. Always write the file (empty when off) so
+	// the source prefix is unconditional.
+	if err := envp.WriteFile(ctx, id, "/apothecary/proxy.env", []byte(encodeEnvFile(spec.ProxyEnv)), 0o600); err != nil {
+		return fmt.Errorf("write proxy.env: %w", err)
+	}
+
 	if spec.SeedAuth != nil {
 		if err := spec.SeedAuth(ctx, id); err != nil {
 			return fmt.Errorf("seed harness auth: %w", err)
@@ -104,8 +117,12 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		step{"agent-configs", "repo", agentConfigScript(spec.AgentsMDPath)},
 		step{"git-config", "repo", `git config user.name "Apothecary" && git config user.email "apothecary@local"`},
 	)
+	// Every bootstrap step sources proxy.env so git clone (and anything
+	// else) leaves through the egress proxy (M18); a no-op when the file is
+	// empty (proxy mode off).
+	const sourceProxy = `[ -s /apothecary/proxy.env ] && { set -a; . /apothecary/proxy.env; set +a; }; `
 	for _, s := range steps {
-		res, err := envp.Exec(ctx, id, ports.Command{Script: s.script, Dir: s.dir, Timeout: spec.Timeout})
+		res, err := envp.Exec(ctx, id, ports.Command{Script: sourceProxy + s.script, Dir: s.dir, Timeout: spec.Timeout})
 		if err != nil {
 			return fmt.Errorf("bootstrap %s: %w", s.name, err)
 		}
@@ -123,7 +140,7 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	if spec.Setup == "" {
 		return nil // setup is optional in v2 (DESIGN2 §8): no step 6
 	}
-	res, err := envp.Exec(ctx, id, ports.Command{Script: spec.Setup, Dir: "repo", Timeout: spec.Timeout})
+	res, err := envp.Exec(ctx, id, ports.Command{Script: sourceProxy + spec.Setup, Dir: "repo", Timeout: spec.Timeout})
 	if err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}
@@ -157,4 +174,20 @@ func agentConfigScript(agentsMDPath string) string {
 // spaces and embedded quotes.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// encodeEnvFile renders a KEY=value env file (sorted keys, shell-quoted
+// values) — the sourced /apothecary/*.env format. Shared so bootstrap and
+// the reuse-path refresh produce byte-identical files.
+func encodeEnvFile(env map[string]string) string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s=%s\n", k, shellQuote(env[k]))
+	}
+	return b.String()
 }

@@ -33,12 +33,60 @@ fail_closed() {
   ip6tables -P OUTPUT DROP 2>/dev/null || true
   GW="$(ip route | awk '/default/ {print $3; exit}')" || true
   [ -n "${GW:-}" ] && iptables -A OUTPUT -d "$GW" -p tcp --dport "${APOTHECARY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
+  # Keep the Coder server + DERP reachable too, so a fail-closed workspace is
+  # still inspectable over `coder ssh` / the web terminal.
+  CH="$(getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1; exit}')" || true
+  [ -n "${CH:-}" ] && iptables -A OUTPUT -d "$CH" -p tcp --dport "${APOTHECARY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
   exit 1
 }
 trap fail_closed ERR
 
 REPO_URL="${APOTHECARY_REPO_URL:-}"
 CODER_PORT="${APOTHECARY_CODER_PORT:-7080}"
+EGRESS_PROXY="${APOTHECARY_EGRESS_PROXY:-}"
+GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
+
+# The Coder server — and its EMBEDDED DERP relay, which the agent's tailnet
+# needs for `coder ssh`, the web terminal and the IDE — is reached at
+# host.docker.internal in the docker deployment. That is a DIFFERENT address
+# than this workspace network's default-route gateway (custom docker networks
+# gateway ≠ host-gateway). Allowing only $GATEWAY:$CODER_PORT lets the agent's
+# *control* connection survive (it is ESTABLISHED before this script runs) but
+# silently drops every NEW DERP connection, so the tailnet degrades to derp=0
+# and all interactive access hangs (found live 2026-07: derp.Recv deadline
+# exceeded). Resolve it from /etc/hosts — docker pins it there, so no DNS is
+# needed — and allow it too. Empty on non-docker deployments (rule skipped).
+CODER_HOST_IP="$(getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1; exit}' || true)"
+
+# --- PROXY MODE (M18) ------------------------------------------------------
+# The engine runs a hostname-filtering egress proxy, reverse-tunneled onto
+# this workspace's own loopback. The firewall then needs only: loopback
+# (reaches the proxy, the ask_human shim, code-server), established
+# connections, and the Coder gateway port (the agent's own websocket).
+# EVERYTHING else — all direct egress, all DNS — is dropped: the workspace
+# cannot leave except through the proxy, which filters by hostname and
+# whose allowlist (derived domains ∪ project extra_domains) the engine sets
+# per run. No IP pinning, no name resolution, no per-provider guessing.
+if [ -n "$EGRESS_PROXY" ]; then
+  echo "firewall: PROXY MODE (egress via $EGRESS_PROXY)"
+  iptables -F OUTPUT
+  iptables -P OUTPUT DROP
+  iptables -A OUTPUT -o lo -j ACCEPT
+  iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+  iptables -A OUTPUT -d "$GATEWAY" -p tcp --dport "$CODER_PORT" -j ACCEPT
+  if [ -n "$CODER_HOST_IP" ]; then
+    iptables -A OUTPUT -d "$CODER_HOST_IP" -p tcp --dport "$CODER_PORT" -j ACCEPT
+  fi
+  if [ -f /proc/net/if_inet6 ] && command -v ip6tables >/dev/null; then
+    ip6tables -F OUTPUT
+    ip6tables -P OUTPUT DROP
+    ip6tables -A OUTPUT -o lo -j ACCEPT
+    ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+  fi
+  touch "$LOCK"
+  echo "firewall: initialized (proxy mode, gateway $GATEWAY, coder :$CODER_PORT)"
+  exit 0
+fi
 
 REPO_HOST=""
 if [ -n "$REPO_URL" ]; then
@@ -53,8 +101,6 @@ fi
 DOMAINS=""
 [ -n "$REPO_HOST" ] && DOMAINS="$REPO_HOST"
 [ -n "${APOTHECARY_EXTRA_DOMAINS:-}" ] && DOMAINS="$DOMAINS $APOTHECARY_EXTRA_DOMAINS"
-
-GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
 
 # Resolve every allowed name BEFORE any rule changes (DNS dies afterwards),
 # pin the results into /etc/hosts, and collect the IPs for the allow rules.
@@ -92,8 +138,13 @@ iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # Host gateway: ONLY the Coder server port (the agent's websocket — without
 # it the workspace agent itself dies). The engine is reached via the reverse
-# tunnel on localhost, never through the gateway.
+# tunnel on localhost, never through the gateway. host.docker.internal (the
+# Coder server + its DERP relay) is a distinct address from the gateway and
+# must be allowed too, or the agent's tailnet dies (see CODER_HOST_IP above).
 iptables -A OUTPUT -d "$GATEWAY" -p tcp --dport "$CODER_PORT" -j ACCEPT
+if [ -n "$CODER_HOST_IP" ]; then
+  iptables -A OUTPUT -d "$CODER_HOST_IP" -p tcp --dport "$CODER_PORT" -j ACCEPT
+fi
 # Allowlisted hosts, https/http only (plain per-IP rules: no ipset kernel
 # module dependency; the list is small).
 for ip in $ALLOW_IPS; do

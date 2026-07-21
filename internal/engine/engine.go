@@ -17,11 +17,28 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"apothecary/internal/egressproxy"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
+
+// EgressController is the engine's handle to the hostname-filtering egress
+// proxy (M18): per-run allowlist policy, deterministic workspace
+// credentials, and blocked-host visibility. nil disables proxy mode (the
+// workspace firewall falls back to the derived IP allowlist).
+type EgressController interface {
+	SetPolicy(runID string, hosts []string)
+	DropPolicy(runID string)
+	AllowHost(runID, host string) bool
+	Credentials(runID string) (user, pass string)
+	Port() int
+	Denials(runID string) []egressproxy.Denial
+}
+
+// ErrEgressOff marks an allow request when proxy mode is disabled.
+var ErrEgressOff = errors.New("egress proxy mode is off")
 
 type Ticket struct {
 	Title string
@@ -78,10 +95,11 @@ type Engine struct {
 	settings SettingsSource
 	channels []ports.NotificationChannel
 
-	clock func() time.Time
-	newID func() string
-	log   *slog.Logger
-	sink  EventSink
+	clock  func() time.Time
+	newID  func() string
+	log    *slog.Logger
+	sink   EventSink
+	egress EgressController
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -170,6 +188,9 @@ var (
 	ErrArtifactIsURL = errors.New("ping payload is a URL, not an artifact")
 	// ErrNoArtifact marks a ping without a readable payload artifact.
 	ErrNoArtifact = errors.New("ping has no payload artifact")
+	// ErrNoLiveLog marks a run whose provisioner does not implement the
+	// optional ExecLogTailer capability, or which has no environment yet.
+	ErrNoLiveLog = errors.New("no live workspace log")
 )
 
 func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
@@ -213,6 +234,32 @@ type EventSink interface {
 
 // SetSink installs the telemetry sink; call before Recover. nil disables.
 func (e *Engine) SetSink(s EventSink) { e.sink = s }
+
+// SetEgress installs the egress-proxy controller (M18); call before
+// Recover. nil = proxy mode off.
+func (e *Engine) SetEgress(c EgressController) { e.egress = c }
+
+// EgressDenials lists a run's proxy-blocked hosts (run page feedback).
+func (e *Engine) EgressDenials(runID string) []egressproxy.Denial {
+	if e.egress == nil {
+		return nil
+	}
+	return e.egress.Denials(runID)
+}
+
+// AllowEgress adds a host to a run's live proxy allowlist (the "add to
+// egress" fast path): instant, no restart. Returns ErrEgressOff when proxy
+// mode is off, ErrRunNotActive when the run has no active policy.
+// Persistence to the project (future runs) is the caller's job.
+func (e *Engine) AllowEgress(runID, host string) error {
+	if e.egress == nil {
+		return ErrEgressOff
+	}
+	if !e.egress.AllowHost(runID, host) {
+		return fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+	}
+	return nil
+}
 
 // emit fans freshly appended events to the sink (nil-safe).
 func (e *Engine) emit(evs []event.Event) {
@@ -392,6 +439,47 @@ func (e *Engine) RestartRun(ctx context.Context, runID string) (string, error) {
 		return "", fmt.Errorf("run %s has no project; cannot restart", runID)
 	}
 	return e.CreateRun(ctx, Ticket{Title: v.TicketTitle, Goal: v.TicketGoal}, v.FlowName, v.ProjectID)
+}
+
+// ResumeRun re-enters the stage where an abandoned/failed run stalled,
+// in the SAME workspace ("try again"): the plan/build/earlier stages and
+// the agent's commits are reused; only the failed stage re-runs, with
+// retry budgets reset. Distinct from RestartRun (a fresh run from stage
+// one). Refused when the run is active, not terminal, completed/archived,
+// has no stalled stage, or its workspace is gone.
+func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
+	e.mu.Lock()
+	_, active := e.handles[runID]
+	e.mu.Unlock()
+	if active {
+		return fmt.Errorf("run %s is still active", runID)
+	}
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return err
+	}
+	if len(evs) == 0 {
+		return fmt.Errorf("run %s not found", runID)
+	}
+	v := run.Reduce(evs)
+	if v.State != run.Abandoned && v.State != run.Failed {
+		return fmt.Errorf("run %s is %s; only abandoned or failed runs can be resumed (completed runs have nothing to retry)", runID, v.State)
+	}
+	if v.CurrentStage == "" {
+		return fmt.Errorf("run %s has no stage to resume (it never started one); restart it instead", runID)
+	}
+	if v.EnvID == "" {
+		return fmt.Errorf("run %s has no workspace to resume into; restart it instead", runID)
+	}
+	if err := e.appendAndEmit(ctx, runID, &event.RunResumed{StageID: v.CurrentStage}); err != nil {
+		return err
+	}
+	lim := e.limits(ctx)
+	e.mu.Lock()
+	e.queue = append(e.queue, runID)
+	e.scheduleLocked(lim)
+	e.mu.Unlock()
+	return nil
 }
 
 // destroyEnv resolves the run's project to reach its provisioner (§6.1:
@@ -741,6 +829,33 @@ func (e *Engine) PingArtifact(ctx context.Context, pingID string) (path string, 
 	return ref, data, nil
 }
 
+// WorkspaceLogTail serves the live tail of a run's workspace exec output
+// via the provisioner's OPTIONAL ExecLogTailer capability — the run-page
+// "is it actually doing something" feedback.
+func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]byte, error) {
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(evs) == 0 {
+		return nil, fmt.Errorf("run %s not found", runID)
+	}
+	v := run.Reduce(evs)
+	if v.EnvID == "" || v.ProjectID == "" {
+		return nil, fmt.Errorf("run %s: %w", runID, ErrNoLiveLog)
+	}
+	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer res.release()
+	tailer, ok := res.Envp.(ports.ExecLogTailer)
+	if !ok {
+		return nil, fmt.Errorf("run %s: provisioner has no live log: %w", runID, ErrNoLiveLog)
+	}
+	return tailer.TailExecLog(ctx, ports.EnvID(v.EnvID), n)
+}
+
 // PendingPings returns open pings (the CPUI inbox source until the DB
 // projection exists).
 func (e *Engine) PendingPings() []*Ping {
@@ -806,6 +921,9 @@ func (e *Engine) notify(ctx context.Context, n ports.Notification) {
 
 func (e *Engine) finish(runID string, h *runHandle) {
 	lim := e.limits(context.Background())
+	if e.egress != nil {
+		e.egress.DropPolicy(runID)
+	}
 	e.mu.Lock()
 	delete(e.handles, runID)
 	// Prune this run's pings: an open ping of a dead run is a permanently

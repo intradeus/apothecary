@@ -31,6 +31,7 @@ type Resolver struct {
 	reg        *kinds.Registry
 	runsDir    string
 	enginePort int
+	proxyPort  int
 	builder    *wsimage.Builder
 
 	mu    sync.Mutex
@@ -47,12 +48,13 @@ type provEntry struct {
 
 // New builds the resolver. baseImage is the APOTHECARY_BASE_IMAGE override
 // ("" = build the embedded base on demand, §8.1).
-func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, baseImage string) *Resolver {
+func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort, proxyPort int, baseImage string) *Resolver {
 	return &Resolver{
 		conf:       conf,
 		reg:        reg,
 		runsDir:    runsDir,
 		enginePort: enginePort,
+		proxyPort:  proxyPort,
 		builder:    wsimage.New(runsDir, baseImage),
 		cache:      map[string]*provEntry{},
 	}
@@ -252,6 +254,7 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration, template string)
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
 			RunsDir:    r.runsDir,
 			EnginePort: r.enginePort,
+			ProxyPort:  r.proxyPort,
 			Template:   template,
 		})
 		if err != nil {
@@ -338,7 +341,7 @@ func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{RunsDir: r.runsDir, EnginePort: r.enginePort})
+		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{RunsDir: r.runsDir, EnginePort: r.enginePort, ProxyPort: r.proxyPort})
 		if err != nil {
 			return err
 		}

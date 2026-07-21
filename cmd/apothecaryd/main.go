@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
+	"apothecary/internal/egressproxy"
 	"apothecary/internal/engine"
 	"apothecary/internal/flow"
 	"apothecary/internal/httpapi"
@@ -184,7 +186,30 @@ func cmdServe(args []string) error {
 	if _, p, err := splitHostPort(boot.Listen); err == nil {
 		fmt.Sscanf(p, "%d", &enginePort)
 	}
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.BaseImage)
+
+	// Hostname-filtering egress proxy (M18): loopback, reverse-forwarded
+	// into every workspace by the coder adapter. Its port is passed to the
+	// resolver (forward + template proxy mode) and the engine (per-run
+	// policy + workspace proxy.env). The signing secret is process-random —
+	// it only authenticates a run to its own allowlist, never persisted.
+	var proxyPort int
+	var egress engine.EgressController
+	if boot.EgressProxy {
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return fmt.Errorf("egress proxy secret: %w", err)
+		}
+		proxy := egressproxy.New(secret)
+		if err := proxy.Start("127.0.0.1:0"); err != nil {
+			return fmt.Errorf("egress proxy: %w", err)
+		}
+		defer proxy.Close()
+		proxyPort = proxy.Port()
+		egress = proxy
+		log.Info("egress proxy listening (hostname-filtering)", "port", proxyPort)
+	}
+
+	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, proxyPort, boot.BaseImage)
 	defer resolver.Close()
 
 	ecfg := engine.Config{
@@ -192,6 +217,9 @@ func cmdServe(args []string) error {
 		RunsDir:   boot.RunsDir,
 	}
 	e := engine.New(ecfg, store, resolver, conf.FlowSource(), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
+	if egress != nil {
+		e.SetEgress(egress)
+	}
 	if boot.OtelEndpoint != "" {
 		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {

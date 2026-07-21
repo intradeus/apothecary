@@ -15,6 +15,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/channels"
+	"apothecary/internal/egressproxy"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
@@ -763,5 +764,106 @@ func TestRestartRun(t *testing.T) {
 	resp, _ = x.do(t, "POST", "/api/runs/nope/restart", nil, nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown restart = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestWorkspaceLog: the live tail rides the optional ExecLogTailer
+// capability (the fake provisioner records an in-memory transcript).
+func TestWorkspaceLog(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	block := make(chan struct{})
+	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+		select {
+		case <-block:
+		case <-ctx.Done():
+		}
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	runID := x.createTicket(t, "T")
+
+	// While the agent stage is parked, bootstrap output is already visible.
+	var got string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, data := x.do(t, "GET", "/api/runs/"+runID+"/workspace-log", nil, nil)
+		if resp.StatusCode == 200 && strings.Contains(string(data), "git clone") {
+			got = string(data)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(got, "git clone") || !strings.Contains(got, "--- [dir=") {
+		t.Errorf("live log = %q", got)
+	}
+	close(block)
+	x.e.Wait(runID)
+
+	resp, _ := x.do(t, "GET", "/api/runs/nope/workspace-log", nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown run = %d, want 404", resp.StatusCode)
+	}
+}
+
+// fakeEgress is a minimal EgressController for the allow-endpoint test.
+type fakeEgress struct {
+	allowed map[string][]string
+	denied  map[string][]egressproxy.Denial
+}
+
+func (f *fakeEgress) SetPolicy(string, []string)          {}
+func (f *fakeEgress) DropPolicy(string)                   {}
+func (f *fakeEgress) Credentials(string) (string, string) { return "u", "p" }
+func (f *fakeEgress) Port() int                           { return 1 }
+func (f *fakeEgress) Denials(runID string) []egressproxy.Denial {
+	return f.denied[runID]
+}
+func (f *fakeEgress) AllowHost(runID, host string) bool {
+	if f.allowed == nil {
+		f.allowed = map[string][]string{}
+	}
+	f.allowed[runID] = append(f.allowed[runID], host)
+	return true
+}
+
+// TestEgressAllow: the "add to egress" button unblocks the live run
+// (instant) and persists the host to the project's extra_domains.
+func TestEgressAllow(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+	eg := &fakeEgress{}
+	x.e.SetEgress(eg)
+
+	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{
+		"title": "T", "goal": "g", "project_id": projectID,
+	}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ticket = %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	_ = json.Unmarshal(data, &out)
+
+	resp, data = x.do(t, "POST", "/api/runs/"+out.RunID+"/egress-allow", map[string]string{"host": "models.dev"}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("allow = %d: %s", resp.StatusCode, data)
+	}
+	if !strings.Contains(string(data), `"persisted":true`) {
+		t.Errorf("allow response = %s", data)
+	}
+	// Instant unblock reached the proxy.
+	if len(eg.allowed[out.RunID]) != 1 || eg.allowed[out.RunID][0] != "models.dev" {
+		t.Errorf("proxy allow = %v", eg.allowed)
+	}
+	// Persisted to the project's extra_domains.
+	p, _ := x.conf.GetProject(t.Context(), projectID)
+	if !containsStr(p.Workspace.ExtraDomains, "models.dev") {
+		t.Errorf("extra_domains = %v", p.Workspace.ExtraDomains)
+	}
+
+	// Bad host shapes are refused.
+	resp, _ = x.do(t, "POST", "/api/runs/"+out.RunID+"/egress-allow", map[string]string{"host": "http://x/y"}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad host = %d, want 400", resp.StatusCode)
 	}
 }
