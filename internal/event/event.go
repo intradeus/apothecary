@@ -28,6 +28,8 @@ const (
 	TypeRunFailed       Type = "run_failed"
 	TypeRunArchived     Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
 	TypeRunResumed      Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
+	TypeRunPaused       Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
+	TypeRunUnpaused     Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
 	TypeEnvDestroyed    Type = "env_destroyed"
 )
 
@@ -130,9 +132,13 @@ type StageFailed struct {
 type EdgeTaken struct {
 	From  string `json:"from"`
 	To    string `json:"to"`
-	Edge  string `json:"edge"` // on_fail|on_reject
+	Edge  string `json:"edge"` // on_fail|on_reject|on_timeout
 	Count int    `json:"count"`
 	Max   int    `json:"max"`
+	// Depth is the chain link taken (0 = the edge itself, 1+ = its then
+	// fallbacks); each link keeps its own counter across replay. Absent in
+	// pre-chain events, which were all depth 0.
+	Depth int `json:"depth,omitempty"`
 	// Feed is the content carried to the target stage (≤8 KB tail),
 	// persisted so crash recovery never loses feedback. Extension over the
 	// §6 catalog — see IMPLEMENTATION_NOTES.
@@ -200,6 +206,25 @@ type RunResumed struct {
 	StageID string `json:"stage_id"`
 }
 
+// RunPaused parks a run: the loop goroutine exits cleanly (a controlled
+// crash) and the run stays non-terminal but is NOT recovered on boot.
+// StageID is the stage in flight when pause hit, informational only —
+// replay keeps the stage events' own record of where to re-enter.
+type RunPaused struct {
+	StageID string `json:"stage_id,omitempty"`
+}
+
+// RunUnpaused (play) restarts a paused run's loop; it re-enters mid-stage
+// exactly like crash recovery (recorded harness sessions resume, commands
+// re-execute, gates re-arm). Unlike RunResumed it resets NO retry budgets —
+// the run continues, it does not start the stage's accounting over.
+// Waiting is set when the run still has an open ping at play time (a
+// paused gate): re-arming appends no new ping_raised, so the projection
+// needs it to land back on waiting_on_human instead of running.
+type RunUnpaused struct {
+	Waiting bool `json:"waiting,omitempty"`
+}
+
 type EnvDestroyed struct {
 	EnvID string `json:"env_id"`
 }
@@ -222,4 +247,6 @@ func (*RunAbandoned) EventType() Type    { return TypeRunAbandoned }
 func (*RunFailed) EventType() Type       { return TypeRunFailed }
 func (*RunArchived) EventType() Type     { return TypeRunArchived }
 func (*RunResumed) EventType() Type      { return TypeRunResumed }
+func (*RunPaused) EventType() Type       { return TypeRunPaused }
+func (*RunUnpaused) EventType() Type     { return TypeRunUnpaused }
 func (*EnvDestroyed) EventType() Type    { return TypeEnvDestroyed }

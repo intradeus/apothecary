@@ -4,7 +4,7 @@
 export interface RunView {
   run_id: string;
   project_id?: string;
-  state: 'pending' | 'provisioning' | 'running' | 'waiting_on_human' | 'completed' | 'abandoned' | 'failed' | 'archived';
+  state: 'pending' | 'provisioning' | 'running' | 'waiting_on_human' | 'paused' | 'completed' | 'abandoned' | 'failed' | 'archived';
   ticket_title: string;
   flow_name: string;
   flow_hash: string;
@@ -217,6 +217,10 @@ export const api = {
   createTicket: (title: string, goal: string, projectId: string, flow?: string) =>
     post('/api/tickets', { title, goal, project_id: projectId, ...(flow ? { flow } : {}) }) as Promise<{ run_id: string }>,
   abort: (id: string) => post(`/api/runs/${id}/abort`),
+  // Pause parks the run (workspace kept, nothing recovered until play);
+  // play re-enters mid-stage like crash recovery, budgets intact.
+  pause: (id: string) => post(`/api/runs/${id}/pause`),
+  play: (id: string) => post(`/api/runs/${id}/play`),
   archive: (id: string) => post(`/api/runs/${id}/archive`),
   restart: (id: string) => post(`/api/runs/${id}/restart`) as Promise<{ run_id: string }>,
   resume: (id: string) => post(`/api/runs/${id}/resume`),
@@ -335,6 +339,7 @@ export const stateTab: Record<RunView['state'], RunTab> = {
   provisioning: 'active',
   running: 'active',
   waiting_on_human: 'active',
+  paused: 'active',
   completed: 'active',
   abandoned: 'active',
   failed: 'finished',
@@ -346,6 +351,7 @@ export const stateColors: Record<RunView['state'], string> = {
   provisioning: 'var(--blue)',
   running: 'var(--blue)',
   waiting_on_human: 'var(--amber)',
+  paused: 'var(--muted)',
   completed: 'var(--green)',
   abandoned: 'var(--amber)',
   failed: 'var(--red)',

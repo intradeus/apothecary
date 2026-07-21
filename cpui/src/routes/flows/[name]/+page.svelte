@@ -2,7 +2,7 @@
   import { api, ago, type Agent, type FlowRow, type FlowVersion, type Integration, type ModelInfo, type Project } from '$lib/api';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
-  import { autoLayout, docToYaml, DONE, edgeOf, setEdge, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
+  import { ABORT, autoLayout, docToYaml, DONE, edgeOf, setEdge, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
@@ -135,12 +135,18 @@
     const s = doc.stages.find((x) => x.id === source);
     if (!s) return;
     if (handle === 'success') {
-      if (target !== s.id) s.on_success = target;
+      if (target !== s.id && target !== ABORT) s.on_success = target; // success never aborts
     } else {
       const kind = handle as EdgeKind;
-      if (target === DONE) return; // recoverable edges point at stages, not done
+      if (target === DONE) return; // recoverable edges point at stages or abort, not done
       const existing = edgeOf(s, kind);
-      setEdge(s, kind, { to: target, max: existing?.max ?? 3, feed: existing?.feed });
+      if (target === ABORT) {
+        // Dragging onto the abort terminal replaces the chain's first link
+        // with the immediate stop (no max/feed; nothing runs after abort).
+        setEdge(s, kind, { to: ABORT });
+      } else {
+        setEdge(s, kind, { to: target, max: existing?.max ?? 3, feed: existing?.feed, then: existing?.then });
+      }
     }
     markChanged();
   }

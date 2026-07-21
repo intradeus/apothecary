@@ -90,6 +90,8 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 			`{"stage_id":"test","reason":"exit_nonzero","exit_code":2}`},
 		{&EdgeTaken{From: "test", To: "build", Edge: "on_fail", Count: 1, Max: 5, Feed: "FAIL: x"},
 			`{"from":"test","to":"build","edge":"on_fail","count":1,"max":5,"feed":"FAIL: x"}`},
+		{&EdgeTaken{From: "test", To: "build", Edge: "on_fail", Count: 1, Max: 3, Depth: 1},
+			`{"from":"test","to":"build","edge":"on_fail","count":1,"max":3,"depth":1}`},
 		{&PingRaised{PingID: "p", Type: "clarification", Question: "q", Context: "ctx", PayloadRef: "artifacts/plan.md"},
 			`{"ping_id":"p","type":"clarification","question":"q","context":"ctx","payload_ref":"artifacts/plan.md"}`},
 		{&PingAnswered{PingID: "p", Answer: "approve"},
@@ -103,6 +105,8 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 		{&RunAbandoned{StalledAt: "test", Edge: "on_fail", Reason: "edge exhausted"},
 			`{"stalled_at":"test","edge":"on_fail","reason":"edge exhausted"}`},
 		{&RunFailed{Reason: "aborted"}, `{"reason":"aborted"}`},
+		{&RunPaused{StageID: "build"}, `{"stage_id":"build"}`},
+		{&RunUnpaused{}, `{}`},
 		{&EnvDestroyed{EnvID: "e"}, `{"env_id":"e"}`},
 	}
 	for _, tc := range cases {

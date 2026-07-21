@@ -2,3 +2,5 @@
 - 4) `channels` fold into `integrations`.
 - 5) db migration + migration table checks and simplify
 - 6) openapi + client gen for frontend.
+- 7) redo everything in DDD
+- 

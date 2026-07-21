@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -31,8 +33,12 @@ type runState struct {
 	ph  phase
 
 	iters      map[string]int             // stage id -> times started
-	edgeCounts map[string]int             // "from|kind" -> times taken
+	edgeCounts map[string]int             // "from|kind|depth" -> times that chain link was taken
 	sessions   map[string]ports.SessionID // stage id -> last recorded harness session
+
+	// links are the workspace access links from env_ready, kept for
+	// human_gate payload: workspace (manual_debug's SSH/terminal hand-off).
+	links []event.Link
 
 	cost     float64
 	turns    int
@@ -58,10 +64,16 @@ type runState struct {
 	done bool
 }
 
-func edgeKey(from, kind string) string { return from + "|" + kind }
+// chainKey identifies one link of an edge chain: depth 0 is the edge
+// itself, 1+ its then fallbacks. Pre-chain edge_taken events carry no
+// depth and land on 0, matching what they were.
+func chainKey(from, kind string, depth int) string {
+	return fmt.Sprintf("%s|%s|%d", from, kind, depth)
+}
 
 func gatePingType(t string) bool {
-	return t == string(flow.PingPlanApproval) || t == string(flow.PingFinalReview)
+	return t == string(flow.PingPlanApproval) || t == string(flow.PingFinalReview) ||
+		t == string(flow.PingManualDebug)
 }
 
 // replay folds a run's event history into runState. fl may be nil when the
@@ -83,6 +95,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.branch = p.Branch
 		case *event.EnvReady:
 			rs.envID = ports.EnvID(p.EnvID)
+			rs.links = p.Links
 		case *event.EnvFailed:
 			rs.done = true
 			if p.EnvID != "" {
@@ -111,7 +124,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.ph = phAfterFail
 			rs.lastFailure = p
 		case *event.EdgeTaken:
-			rs.edgeCounts[edgeKey(p.From, p.Edge)] = p.Count
+			rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
 			if fl != nil {
 				rs.pos = fl.Index(p.To)
 			}
@@ -153,6 +166,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			if fl != nil {
 				rs.pos = fl.Index(p.StageID)
 			}
+		case *event.RunPaused, *event.RunUnpaused:
+			// View-level only: ph/pos/counters stay exactly as the stage
+			// events left them, so play re-enters like crash recovery.
 		}
 	}
 	return rs

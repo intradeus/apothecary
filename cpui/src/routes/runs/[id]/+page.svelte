@@ -14,7 +14,6 @@
   let logText = $state('');
   let error = $state('');
   let answering = $state(false);
-  let feedback = $state('');
 
   // Live projection niceties derived from the stream.
   const links = $derived(
@@ -114,13 +113,12 @@
     };
   });
 
-  async function answer(ans: string) {
+  async function answer(ans: string, note?: string) {
     if (!pendingPing) return;
     answering = true;
     error = '';
     try {
-      await api.answerPing(pendingPing.payload.ping_id as string, ans, feedback.trim() || undefined);
-      feedback = '';
+      await api.answerPing(pendingPing.payload.ping_id as string, ans, note?.trim() || undefined);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -211,7 +209,7 @@
         return { text: `${p.stage_id} completed (${bits})`, cls: 'ok', stage: p.stage_id as string };
       }
       case 'stage_failed': return { text: `${p.stage_id} failed: ${p.reason}${p.error ? ` — ${String(p.error).slice(0, 200)}` : ''}`, cls: 'bad', stage: p.stage_id as string };
-      case 'edge_taken': return { text: `↩ ${p.edge} ${p.from} → ${p.to} (${p.count}/${p.max})`, cls: 'warn' };
+      case 'edge_taken': return { text: `↩ ${p.edge}${p.depth ? ` (then #${p.depth})` : ''} ${p.from} → ${p.to} (${p.count}/${p.max})`, cls: 'warn' };
       case 'ping_raised': return { text: `ping [${p.type}]: ${p.question}`, cls: 'warn' };
       case 'ping_answered': return { text: `answered: ${p.answer}${p.feedback ? ` — ${p.feedback}` : ''}`, cls: 'ok' };
       case 'verdict_received': return { text: p.approve ? 'review verdict: APPROVE' : `review verdict: REJECT (${p.n_comments} comments)`, cls: p.approve ? 'ok' : 'warn' };
@@ -219,6 +217,8 @@
       case 'run_completed': return { text: `run completed — ${fmtCost(p.total_cost_usd)} · ${p.total_turns} turns · ${p.unwanted_pings} unwanted pings`, cls: 'ok' };
       case 'run_abandoned': return { text: `abandoned at ${p.stalled_at}: ${p.reason}`, cls: 'bad' };
       case 'run_failed': return { text: `run failed: ${p.reason}`, cls: 'bad' };
+      case 'run_paused': return { text: `⏸ paused${p.stage_id ? ` at ${p.stage_id}` : ''}`, cls: '' };
+      case 'run_unpaused': return { text: '▶ resumed (play)', cls: 'info' };
       case 'run_archived': return { text: 'archived', cls: '' };
       case 'env_destroyed': return { text: 'workspace destroyed', cls: '' };
       default: return { text: e.type, cls: '' };
@@ -239,6 +239,17 @@
     {#each links as l (l.url)}<a href={l.url} target="_blank" rel="noreferrer">{l.kind} ↗</a>{/each}
     {#if run.mr_url}<a href={run.mr_url} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
     {#if !terminal}
+      {#if run.state === 'paused'}
+        <button class="primary" onclick={() => act(() => api.play(runId))}
+          title="Continue where it left off — the in-flight stage re-enters (agent sessions resume); retry budgets are untouched">
+          ▶ Play
+        </button>
+      {:else if run.state !== 'pending'}
+        <button onclick={() => act(() => api.pause(runId))}
+          title="Park the run: the current attempt is stopped, the workspace stays up for inspection, and nothing moves until Play">
+          ⏸ Pause
+        </button>
+      {/if}
       <button class="danger" onclick={() => act(() => api.abort(runId))}>Abort</button>
     {:else}
       {#if run.state === 'abandoned' || run.state === 'failed'}
@@ -256,7 +267,17 @@
     {/if}
   </div>
 
-  {#if !terminal && run.state !== 'pending'}
+  {#if run.state === 'paused'}
+    <div class="card" style="border-color:var(--muted)">
+      <strong>⏸ Paused</strong>
+      <span class="muted small">
+        — workspace kept for inspection{run.current_stage ? `; will re-enter “${run.current_stage}”` : ''}.
+        Play continues, Abort ends the run.
+      </span>
+    </div>
+  {/if}
+
+  {#if !terminal && run.state !== 'pending' && run.state !== 'paused'}
     <div class="card working">
       <div class="row spread">
         <div>
@@ -307,7 +328,7 @@
   {#if pendingPingView}
     <div class="card" style="border-color:var(--amber)">
       <div class="pingtype {GATE_TYPES.includes(pendingPingView.type) ? 'wanted' : 'unwanted'}">{pendingPingView.type}</div>
-      <PingCard ping={pendingPingView} busy={answering} bind:feedback onanswer={answer} />
+      <PingCard ping={pendingPingView} busy={answering} onanswer={answer} />
     </div>
   {/if}
 

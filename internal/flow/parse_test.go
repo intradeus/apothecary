@@ -102,6 +102,50 @@ func TestCanonicalV1(t *testing.T) {
 	}
 }
 
+// TestLiveV1FlowParses locks the repo's shipped example flow to the schema:
+// it exercises abort terminals, on_timeout, then-chains and manual_debug.
+func TestLiveV1FlowParses(t *testing.T) {
+	f, err := Load("../../artifacts/flows/v1.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	test := f.Stage("test")
+	if test.Edge(EdgeFail).Then == nil || test.Edge(EdgeFail).Then.To != "debug" {
+		t.Errorf("test.on_fail.then = %+v, want debug escalation", test.Edge(EdgeFail).Then)
+	}
+	if test.Edge(EdgeTimeout) == nil || test.Edge(EdgeTimeout).To != "test" {
+		t.Errorf("test.on_timeout = %+v, want self-retry", test.Edge(EdgeTimeout))
+	}
+	dbg := f.Stage("debug")
+	if dbg.Ping != PingManualDebug || dbg.Payload != PayloadWorkspace || dbg.Edge(EdgeReject).To != TerminalAbort {
+		t.Errorf("debug gate = %+v", dbg)
+	}
+	if f.Stage("final_gate").Edge(EdgeReject).To != TerminalAbort {
+		t.Errorf("final_gate.on_reject = %+v, want abort", f.Stage("final_gate").Edge(EdgeReject))
+	}
+
+	// The flow's failure philosophy: every agent/command stage declares
+	// on_fail, and every on_fail chain ends at a manual_debug rescue gate.
+	for i := range f.Stages {
+		s := &f.Stages[i]
+		if s.Type != StageAgent && s.Type != StageCommand {
+			continue
+		}
+		e := s.Edge(EdgeFail)
+		if e == nil {
+			t.Errorf("stage %s: no on_fail", s.ID)
+			continue
+		}
+		for e.Then != nil {
+			e = e.Then
+		}
+		tgt := f.Stage(e.To)
+		if tgt == nil || tgt.Ping != PingManualDebug {
+			t.Errorf("stage %s: on_fail chain ends at %q, want a manual_debug gate", s.ID, e.To)
+		}
+	}
+}
+
 func TestHashChangesWithContent(t *testing.T) {
 	a, err := Parse("a.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: \"true\" }\n"))
 	if err != nil {
@@ -189,6 +233,28 @@ func TestValidationErrors(t *testing.T) {
 			"must complete the run", 4},
 		{"reserved done id", header + "stages:\n  - { id: done, type: command, run: x }\n",
 			"reserved", 4},
+		{"reserved abort id", header + "stages:\n  - { id: abort, type: command, run: x }\n",
+			"reserved", 4},
+		{"edge to done", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: done, max: 1 } }\n",
+			"only on_success may complete the run", 4},
+		{"abort edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, max: 2 } }\n",
+			"max does not apply", 4},
+		{"abort edge with feed", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, feed: output } }\n",
+			"feed does not apply", 4},
+		{"abort edge with then", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, then: { to: s, max: 1 } } }\n",
+			"then does not apply", 4},
+		{"on_success abort", header + "stages:\n  - { id: s, type: command, run: x, on_success: abort }\n",
+			`on_success target "abort" does not exist`, 4},
+		{"on_timeout on gate", header + "stages:\n  - { id: g, type: human_gate, ping: plan_approval, on_timeout: { to: g, max: 1 } }\n",
+			`field "on_timeout" does not apply`, 4},
+		{"then target missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: ghost, max: 1 } } }\n",
+			`on_fail target "ghost" does not exist`, 4},
+		{"then max missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: s } } }\n",
+			"then #1", 4},
+		{"then bad feed", header + "stages:\n  - { id: a, type: agent, agent: x, verdict: true, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
+			`feed "output" is not valid`, 4},
+		{"unknown edge field", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
+			"bogus", 0},
 		{"on_success bad target", header + "stages:\n  - { id: a, type: command, run: x, on_success: nope }\n",
 			`on_success target "nope" does not exist`, 4},
 		{"success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: b }\n  - { id: b, type: command, run: x, on_success: a }\n",
@@ -213,6 +279,57 @@ func TestPingTypesOnGates(t *testing.T) {
 	}
 	if f.Stages[0].Ping != PingPlanApproval {
 		t.Errorf("ping = %q", f.Stages[0].Ping)
+	}
+
+	// manual_debug gate with the workspace payload (SSH-and-inspect stop).
+	doc = header + "stages:\n  - { id: g, type: human_gate, ping: manual_debug, payload: workspace }\n"
+	f, err = Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Stages[0].Ping != PingManualDebug || f.Stages[0].Payload != PayloadWorkspace {
+		t.Errorf("manual_debug gate = %+v", f.Stages[0])
+	}
+}
+
+// TestAbortAndThenChains covers the abort terminal (map + scalar sugar) and
+// retry-then-escalate chains.
+func TestAbortAndThenChains(t *testing.T) {
+	doc := header + `stages:
+  - { id: build, type: agent, agent: b }
+  - { id: test,  type: command, run: t,
+      on_fail: { to: test, max: 2, feed: output, then: { to: build, max: 3, feed: output } },
+      on_timeout: { to: test, max: 1, then: abort } }
+  - { id: gate,  type: human_gate, ping: final_review, on_reject: abort }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	test := f.Stage("test")
+	fe := test.Edge(EdgeFail)
+	if fe == nil || fe.To != "test" || fe.Max != 2 || fe.Feed != FeedOutput {
+		t.Fatalf("on_fail link 0 = %+v", fe)
+	}
+	if fe.Then == nil || fe.Then.To != "build" || fe.Then.Max != 3 || fe.Then.Then != nil {
+		t.Fatalf("on_fail link 1 = %+v", fe.Then)
+	}
+	te := test.Edge(EdgeTimeout)
+	if te == nil || te.To != "test" || te.Max != 1 || te.Then == nil || te.Then.To != TerminalAbort {
+		t.Fatalf("on_timeout chain = %+v", te)
+	}
+	ge := f.Stage("gate").Edge(EdgeReject)
+	if ge == nil || ge.To != TerminalAbort || ge.Max != 0 || ge.Then != nil {
+		t.Fatalf("gate on_reject = %+v", ge)
+	}
+
+	// The scalar sugar round-trips through ParseDoc for the editor.
+	d, err := ParseDoc("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Stages[2].OnReject == nil || d.Stages[2].OnReject.To != TerminalAbort || d.Stages[2].OnReject.Max != nil {
+		t.Fatalf("doc on_reject = %+v", d.Stages[2].OnReject)
 	}
 }
 

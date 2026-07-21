@@ -32,10 +32,11 @@
   <div class="meta">{stage.type} · {detail}</div>
   <Handle id="success" type="source" position={Position.Right} style="background:#4caf7d" />
   {#if stage.type === 'agent' || stage.type === 'command'}
-    <Handle id="on_fail" type="source" position={Position.Bottom} style="left:35%; background:#e06c75" />
+    <Handle id="on_fail" type="source" position={Position.Bottom} style="left:25%; background:#e06c75" />
+    <Handle id="on_timeout" type="source" position={Position.Bottom} style="left:50%; background:#7dcfff" />
   {/if}
   {#if stage.type === 'agent' || stage.type === 'human_gate'}
-    <Handle id="on_reject" type="source" position={Position.Bottom} style="left:65%; background:#e0af68" />
+    <Handle id="on_reject" type="source" position={Position.Bottom} style="left:75%; background:#e0af68" />
   {/if}
 </div>
 

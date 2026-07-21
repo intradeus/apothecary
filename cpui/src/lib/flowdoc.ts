@@ -6,15 +6,37 @@
 import { stringify } from 'yaml';
 
 export const DONE = 'done';
-export const EDGE_KINDS = ['on_fail', 'on_reject'] as const;
+// ABORT is the reserved edge target that deliberately stops the run
+// (projected as abandoned) — the explicit twin of DONE.
+export const ABORT = 'abort';
+export const EDGE_KINDS = ['on_fail', 'on_reject', 'on_timeout'] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
 export type StageKind = 'agent' | 'command' | 'human_gate' | 'forge_mr';
 
+// An edge is a chain: when a link's max is exhausted the next failure
+// falls through to `then` (retry-then-escalate). A link with to: abort
+// stops the run and carries no max/feed/then.
 export interface DocEdge {
   to: string;
   max?: number;
   feed?: string;
+  then?: DocEdge;
+}
+
+// chainLinks flattens an edge chain for editing/rendering (index = depth).
+export function chainLinks(e: DocEdge | undefined): DocEdge[] {
+  const out: DocEdge[] = [];
+  for (let cur = e; cur; cur = cur.then) out.push(cur);
+  return out;
+}
+
+// Which edge kinds a stage type may declare (mirror of the Go registry).
+export function edgeKindsFor(type: StageKind): EdgeKind[] {
+  const out: EdgeKind[] = [];
+  if (type === 'agent' || type === 'command') out.push('on_fail', 'on_timeout');
+  if (type === 'agent' || type === 'human_gate') out.push('on_reject');
+  return out;
 }
 
 export interface DocStage {
@@ -37,6 +59,7 @@ export interface DocStage {
   on_success?: string;
   on_fail?: DocEdge;
   on_reject?: DocEdge;
+  on_timeout?: DocEdge;
 }
 
 export interface FlowDoc {
@@ -56,12 +79,23 @@ export function effectiveSuccess(doc: FlowDoc, i: number): string {
 }
 
 export function edgeOf(s: DocStage, kind: EdgeKind): DocEdge | undefined {
-  return kind === 'on_fail' ? s.on_fail : s.on_reject;
+  return kind === 'on_fail' ? s.on_fail : kind === 'on_reject' ? s.on_reject : s.on_timeout;
 }
 
 export function setEdge(s: DocStage, kind: EdgeKind, e: DocEdge | undefined) {
   if (kind === 'on_fail') s.on_fail = e;
-  else s.on_reject = e;
+  else if (kind === 'on_reject') s.on_reject = e;
+  else s.on_timeout = e;
+}
+
+// pruneEdgeTarget drops chain links that target a deleted stage id,
+// splicing their fallbacks up; returns the surviving chain head.
+export function pruneEdgeTarget(e: DocEdge | undefined, id: string): DocEdge | undefined {
+  if (!e) return undefined;
+  const rest = pruneEdgeTarget(e.then, id);
+  if (e.to === id) return rest;
+  e.then = rest;
+  return e;
 }
 
 // successOrder returns stages ordered by the success chain from the entry
@@ -122,15 +156,21 @@ export function docToYaml(doc: FlowDoc): string {
     o.on_success = s.on_success ?? effectiveSuccess(doc, idx.get(s.id)!);
     for (const kind of EDGE_KINDS) {
       const e = edgeOf(s, kind);
-      if (e) {
-        const eo: Record<string, unknown> = { to: e.to, max: e.max };
-        if (e.feed) eo.feed = e.feed;
-        o[kind] = eo;
-      }
+      if (e) o[kind] = edgeToYamlValue(e);
     }
     return o;
   });
   return stringify(obj, { lineWidth: 0 });
+}
+
+// edgeToYamlValue serializes one chain link (recursing into then). An
+// abort link uses the parser's scalar sugar: `on_reject: abort`.
+function edgeToYamlValue(e: DocEdge): unknown {
+  if (e.to === ABORT) return ABORT;
+  const eo: Record<string, unknown> = { to: e.to, max: e.max };
+  if (e.feed) eo.feed = e.feed;
+  if (e.then) eo.then = edgeToYamlValue(e.then);
+  return eo;
 }
 
 // autoLayout places nodes left-to-right along the success chain, dropping

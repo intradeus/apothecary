@@ -454,6 +454,71 @@ stages:
 	}
 }
 
+// TestRecoveryAtGateSkipsEnv: a run parked at a human_gate whose workspace was
+// reaped must NOT block recovery re-provisioning it — a gate needs no
+// workspace. Before the fix, ensureEnv ran up front, saw the env gone, and
+// rebuilt the whole workspace before re-arming the gate; meanwhile the
+// buffered answers channel accepted answers that nothing drained, so
+// AnswerPing "succeeded" while the ping stayed pending forever.
+func TestRecoveryAtGateSkipsEnv(t *testing.T) {
+	doc := `name: gated
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan,      type: agent, agent: planner, output: artifacts/plan.md, on_success: plan_gate }
+  - { id: plan_gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md, on_success: done,
+      on_reject: { to: plan, max: 3, feed: feedback } }
+`
+	fl := mustFlow(t, doc)
+	h := newHarness(t, fl)
+	ctx := context.Background()
+
+	envID, err := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-gate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Event log of a run parked at plan_gate with an open ping.
+	for _, p := range []event.Payload{
+		&event.RunCreated{TicketTitle: "T", FlowName: "gated", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-gate-t"},
+		&event.EnvRequested{},
+		&event.EnvReady{EnvID: string(envID)},
+		&event.StageStarted{StageID: "plan", Iteration: 1},
+		&event.StageCompleted{StageID: "plan", TurnsUsed: 1},
+		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
+		&event.PingRaised{PingID: "ping-gate", Type: "plan_approval", Question: "plan_approval: T", StageID: "plan_gate", PayloadRef: "artifacts/plan.md"},
+	} {
+		if _, err := h.store.Append(ctx, "r-gate", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The workspace is gone (reaped): recovery must not resurrect it for a gate.
+	if err := h.envp.Destroy(ctx, envID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.e.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The gate re-arms and the answer is actually processed (not buffered and
+	// dropped) — the run completes on approve.
+	p := h.waitPing(t, "plan_approval")
+	if p.ID != "ping-gate" {
+		t.Fatalf("re-armed ping id = %q, want ping-gate", p.ID)
+	}
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-gate")
+	if v := h.view(t, "r-gate"); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, "r-gate")))
+	}
+	// Never re-provisioned: only the original EnvReady exists (a rebuild would
+	// append a second one).
+	if n := countType(h.events(t, "r-gate"), event.TypeEnvReady); n != 1 {
+		t.Errorf("EnvReady events = %d; the gate path must never provision the workspace", n)
+	}
+}
+
 func TestPlanGateRejectWithFeedback(t *testing.T) {
 	doc := `name: gated
 defaults: { model: anthropic/claude-sonnet-4-6 }
@@ -703,6 +768,394 @@ stages:
 	rf, _ := findPayload[*event.RunFailed](h.events(t, runID))
 	if rf.Reason != "aborted" {
 		t.Errorf("reason = %q", rf.Reason)
+	}
+}
+
+// TestAutoCompleteMergedWhileEngineDown: a run parked at a final gate whose
+// MR merged while the engine was NOT watching (down, or before the gate
+// armed) must complete on recovery via the immediate poll — with a huge
+// poll interval so a ticker tick can never be the reason it worked.
+func TestAutoCompleteMergedWhileEngineDown(t *testing.T) {
+	doc := `name: ac
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: mr,   type: forge_mr, body: artifacts/mr.md, on_success: gate }
+  - { id: gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged, on_success: done }
+`
+	fl := mustFlow(t, doc)
+	h := newHarness(t, fl)
+	h.e.cfg.MRPollInterval = time.Hour
+	ctx := context.Background()
+
+	// The MR exists on the forge and merged during the "downtime".
+	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-ac", "T", "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.forge.SetMRState(ref.IID, ports.MRMerged)
+
+	// Event log of a run parked at the gate with an open final_review ping.
+	for _, p := range []event.Payload{
+		&event.RunCreated{TicketTitle: "T", FlowName: "ac", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-ac"},
+		&event.EnvRequested{},
+		&event.EnvReady{EnvID: "env-ac"},
+		&event.StageStarted{StageID: "mr", Iteration: 1},
+		&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: "apothecary/r-ac"},
+		&event.StageCompleted{StageID: "mr"},
+		&event.StageStarted{StageID: "gate", Iteration: 1},
+		&event.PingRaised{PingID: "ping-ac", Type: "final_review", Question: "final_review: T", PayloadRef: ref.URL, StageID: "gate"},
+	} {
+		if _, err := h.store.Append(ctx, "r-ac", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := h.e.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-ac")
+
+	if v := h.view(t, "r-ac"); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, "r-ac")))
+	}
+	evs := h.events(t, "r-ac")
+	pa, ok := findPayload[*event.PingAnswered](evs)
+	if !ok || pa.Answer != "approve" || pa.Feedback != "auto: MR merged" {
+		t.Errorf("ping_answered = %+v, want the auto-approve", pa)
+	}
+	if n := countType(evs, event.TypePingRaised); n != 1 {
+		t.Errorf("ping_raised = %d, want 1 (re-arm must not re-raise)", n)
+	}
+}
+
+// TestAutoCompletePollFailureNotifies: a forge that keeps failing MRState
+// must surface ONE blocker notification (not silent warn-forever), and the
+// gate keeps working — completing automatically once the forge recovers.
+func TestAutoCompletePollFailureNotifies(t *testing.T) {
+	doc := `name: acf
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: prep, type: agent, agent: builder }
+  - { id: mr,   type: forge_mr, body: artifacts/mr.md }
+  - { id: gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"builder": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/mr.md", "# T\n\nbody")
+			return ports.AgentResult{TurnsUsed: 1}, nil
+		},
+	})
+	h.forge.SetMRStateErr(fmt.Errorf("gitlab GET /projects/7/merge_requests/1: 401: token expired"))
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "acf", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.waitPing(t, "final_review")
+
+	// The 3rd consecutive failed poll raises a blocker; further failures
+	// in the same streak stay quiet.
+	blockers := func() int {
+		n := 0
+		for _, s := range h.ch.Sent() {
+			if strings.Contains(s.Title, "auto_complete") {
+				n++
+			}
+		}
+		return n
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for blockers() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := blockers(); got != 1 {
+		t.Fatalf("auto_complete blockers = %d, want 1", got)
+	}
+	time.Sleep(50 * time.Millisecond) // many more failed polls at 5ms cadence
+	if got := blockers(); got != 1 {
+		t.Errorf("auto_complete blockers after streak = %d, want still 1 (no spam)", got)
+	}
+
+	// Forge recovers and the MR is merged: the run completes on its own.
+	h.forge.SetMRStateErr(nil)
+	h.forge.SetMRState(1, ports.MRMerged)
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+}
+
+// TestAbortEdgeStopsRunDeliberately: on_reject: abort is the explicit,
+// flow-authored stop — the run lands on abandoned with the human's
+// feedback in the reason, not on an "unrecoverable failure" message.
+func TestAbortEdgeStopsRunDeliberately(t *testing.T) {
+	doc := `name: ab
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder }
+  - { id: gate,  type: human_gate, ping: final_review, on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ab", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := h.waitPing(t, "final_review")
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "reject", Feedback: "we pivoted; not needed"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	ra, _ := findPayload[*event.RunAbandoned](h.events(t, runID))
+	if ra.StalledAt != "gate" || ra.Edge != "on_reject" ||
+		!strings.Contains(ra.Reason, "aborted by flow") || !strings.Contains(ra.Reason, "we pivoted") {
+		t.Errorf("run_abandoned = %+v", ra)
+	}
+	if got := countType(h.events(t, runID), event.TypeEdgeTaken); got != 0 {
+		t.Errorf("edge_taken = %d, want 0 (abort is terminal, not a redirect)", got)
+	}
+}
+
+// TestTimeoutEdgeRoutesSeparately: a stage declaring on_timeout routes
+// timeouts there, not through on_fail.
+func TestTimeoutEdgeRoutesSeparately(t *testing.T) {
+	doc := `name: tmo
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: a, type: agent, agent: sleeper, timeout: 30ms,
+      on_fail: { to: c, max: 1 }, on_timeout: { to: b, max: 1 } }
+  - { id: b, type: agent, agent: fallback, on_success: done }
+  - { id: c, type: agent, agent: fallback }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		if call.Spec.Agent == "sleeper" {
+			<-ctx.Done()
+			return ports.AgentResult{}, ctx.Err()
+		}
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "tmo", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	et, ok := findPayload[*event.EdgeTaken](h.events(t, runID))
+	if !ok || et.Edge != "on_timeout" || et.From != "a" || et.To != "b" || et.Depth != 0 {
+		t.Errorf("edge_taken = %+v, want on_timeout a->b", et)
+	}
+}
+
+// TestThenChainRetryThenEscalate: on_fail retries the stage itself, then
+// falls through to the escalation link, then abandons with the combined
+// budget in the reason.
+func TestThenChainRetryThenEscalate(t *testing.T) {
+	doc := `name: chain
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder }
+  - { id: test,  type: command, run_ref: verify,
+      on_fail: { to: test, max: 2, then: { to: build, max: 1, feed: output } } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	verifies := 0
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "make lint") {
+			verifies++
+			return ports.ExecResult{ExitCode: 1, Output: "FAIL: flaky"}, nil
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "chain", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	evs := h.events(t, runID)
+	var edges []*event.EdgeTaken
+	for _, e := range evs {
+		if p, ok := e.Payload.(*event.EdgeTaken); ok {
+			edges = append(edges, p)
+		}
+	}
+	// 2× retry test (depth 0), then 1× escalate to build (depth 1).
+	if len(edges) != 3 ||
+		edges[0].To != "test" || edges[0].Depth != 0 || edges[0].Count != 1 ||
+		edges[1].To != "test" || edges[1].Depth != 0 || edges[1].Count != 2 ||
+		edges[2].To != "build" || edges[2].Depth != 1 || edges[2].Count != 1 {
+		t.Errorf("edges = %+v", edges)
+	}
+	// Link 0 declares no feed; the escalation link feeds the output.
+	if edges[0].Feed != "" || !strings.Contains(edges[2].Feed, "FAIL: flaky") {
+		t.Errorf("feeds = %q / %q", edges[0].Feed, edges[2].Feed)
+	}
+	if verifies != 4 { // initial + 2 retries + 1 after the escalation build
+		t.Errorf("verify ran %d times, want 4", verifies)
+	}
+	ra, _ := findPayload[*event.RunAbandoned](evs)
+	if ra.StalledAt != "test" || ra.Edge != "on_fail" || !strings.Contains(ra.Reason, "max 2+1") {
+		t.Errorf("run_abandoned = %+v", ra)
+	}
+}
+
+// TestPausePlayMidAgent: pause parks the run (controlled crash), play
+// re-enters the in-flight stage and the run finishes. Aborting a paused
+// run (no live goroutine) also works.
+func TestPausePlayMidAgent(t *testing.T) {
+	doc := `name: pp
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	started := make(chan struct{})
+	attempt := 0
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		attempt++
+		if attempt == 1 {
+			close(started)
+			<-ctx.Done() // in flight when pause hits
+			return ports.AgentResult{}, ctx.Err()
+		}
+		return ports.AgentResult{TurnsUsed: 2}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pp", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := h.e.Pause(runID); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	v := h.view(t, runID)
+	if v.State != run.Paused {
+		t.Fatalf("state after pause = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	rp, ok := findPayload[*event.RunPaused](h.events(t, runID))
+	if !ok || rp.StageID != "build" {
+		t.Errorf("run_paused = %+v", rp)
+	}
+	// Paused runs are invisible to a second pause and to Recover.
+	if err := h.e.Pause(runID); err == nil {
+		t.Error("pausing a paused run must fail")
+	}
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if v := h.view(t, runID); v.State != run.Paused {
+		t.Fatalf("recover restarted a paused run: %s", v.State)
+	}
+
+	if err := h.e.Play(context.Background(), runID); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state after play = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	if attempt != 2 {
+		t.Errorf("builder attempts = %d, want 2 (re-entered after play)", attempt)
+	}
+	if _, ok := findPayload[*event.RunUnpaused](h.events(t, runID)); !ok {
+		t.Error("no run_unpaused event")
+	}
+
+	// And a paused run can be aborted directly (no goroutine to cancel).
+	run2, err := h.e.CreateRun(context.Background(), Ticket{Title: "T2"}, "pp", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shared RunFunc is past attempt 1 now, so this run completes on
+	// its own too fast to pause reliably; give it its own blocking gate.
+	h.e.Wait(run2)
+	if v := h.view(t, run2); v.State != run.Completed {
+		t.Fatalf("run2 = %s", v.State)
+	}
+	if err := h.e.Abort(run2); err == nil {
+		t.Error("aborting a completed run must fail")
+	}
+}
+
+// TestManualDebugGate: the SSH-and-inspect stop. A failing test escalates
+// to a manual_debug gate whose payload is the workspace link; approve
+// re-enters the flow, and the gate counts as a WANTED ping.
+func TestManualDebugGate(t *testing.T) {
+	doc := `name: dbg
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder }
+  - { id: test,  type: command, run_ref: verify, on_success: done,
+      on_fail: { to: build, max: 1, then: { to: debug, max: 1 } } }
+  - { id: debug, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: test, on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	verifies := 0
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "make lint") {
+			verifies++
+			if verifies <= 2 { // fails until a human "fixed" the workspace
+				return ports.ExecResult{ExitCode: 1, Output: "segfault"}, nil
+			}
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "dbg", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := h.waitPing(t, "manual_debug")
+	if !strings.HasSuffix(p.PayloadRef, "/terminal") {
+		t.Errorf("payload = %q, want the workspace terminal link", p.PayloadRef)
+	}
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve", Feedback: "fixed a stale lockfile"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	rc, _ := findPayload[*event.RunCompleted](h.events(t, runID))
+	if rc.UnwantedPings != 0 {
+		t.Errorf("unwanted_pings = %d, want 0 (gates are wanted)", rc.UnwantedPings)
+	}
+
+	// Reject path: the debug gate's on_reject: abort stops the run.
+	verifies = -1000 // keep verify failing forever for the second run
+	run2, err := h.e.CreateRun(context.Background(), Ticket{Title: "T2"}, "dbg", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2 := h.waitPing(t, "manual_debug", p.ID)
+	if err := h.e.AnswerPing(p2.ID, PingAnswer{Answer: "reject", Feedback: "cannot reproduce"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(run2)
+	if v := h.view(t, run2); v.State != run.Abandoned {
+		t.Fatalf("run2 state = %s", v.State)
+	}
+	ra, _ := findPayload[*event.RunAbandoned](h.events(t, run2))
+	if ra.StalledAt != "debug" || !strings.Contains(ra.Reason, "cannot reproduce") {
+		t.Errorf("run_abandoned = %+v", ra)
 	}
 }
 

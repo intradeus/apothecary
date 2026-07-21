@@ -1,11 +1,16 @@
 <script lang="ts">
   import type { Selection } from '$lib/FlowGraph.svelte';
   import {
+    ABORT,
     DONE,
     EDGE_KINDS,
+    chainLinks,
+    edgeKindsFor,
     edgeOf,
+    pruneEdgeTarget,
     setEdge,
     freshStage,
+    type DocEdge,
     type EdgeKind,
     type FlowDoc,
     type StageKind
@@ -63,14 +68,15 @@
 
   function renameStage(oldId: string, newId: string) {
     newId = newId.trim();
-    if (!newId || newId === oldId || newId === DONE) return;
+    if (!newId || newId === oldId || newId === DONE || newId === ABORT) return;
     if (doc.stages.some((s) => s.id === newId)) return;
     for (const s of doc.stages) {
       if (s.id === oldId) s.id = newId;
       if (s.on_success === oldId) s.on_success = newId;
       for (const kind of EDGE_KINDS) {
-        const e = edgeOf(s, kind);
-        if (e && e.to === oldId) e.to = newId;
+        for (const link of chainLinks(edgeOf(s, kind))) {
+          if (link.to === oldId) link.to = newId;
+        }
       }
     }
     onchange();
@@ -83,8 +89,7 @@
     for (const s of doc.stages) {
       if (s.on_success === id) s.on_success = DONE;
       for (const kind of EDGE_KINDS) {
-        const e = edgeOf(s, kind);
-        if (e && e.to === id) setEdge(s, kind, undefined);
+        setEdge(s, kind, pruneEdgeTarget(edgeOf(s, kind), id));
       }
     }
     onchange();
@@ -98,8 +103,43 @@
   }
 
   function feedOptions(kind: EdgeKind, type: StageKind): string[] {
-    if (kind === 'on_fail') return ['', 'output'];
+    if (kind === 'on_fail' || kind === 'on_timeout') return ['', 'output'];
     return type === 'agent' ? ['', 'comments'] : type === 'human_gate' ? ['', 'feedback'] : [''];
+  }
+
+  // retarget switches one chain link's target, normalizing the link's other
+  // fields: abort links carry no max/feed/then; stage links need a max.
+  function retarget(link: DocEdge, to: string) {
+    link.to = to;
+    if (to === ABORT) {
+      link.max = undefined;
+      link.feed = undefined;
+      link.then = undefined;
+    } else if (link.max == null) {
+      link.max = 3;
+    }
+    onchange();
+  }
+
+  // appendLink adds a fallback ("then") after the chain's last link.
+  function appendLink(e: DocEdge) {
+    let last = e;
+    while (last.then) last = last.then;
+    if (last.to === ABORT) return; // nothing runs after abort
+    last.then = { to: doc.stages[0]?.id ?? '', max: 3 };
+    onchange();
+  }
+
+  // dropLink removes the chain's last link (the whole edge if it is alone).
+  function dropLink(s: NonNullable<typeof stage>, kind: EdgeKind, e: DocEdge) {
+    const links = chainLinks(e);
+    if (links.length === 1) {
+      setEdge(s, kind, undefined);
+      onselect({ kind: 'stage', id: s.id });
+    } else {
+      links[links.length - 2].then = undefined;
+    }
+    onchange();
   }
 </script>
 
@@ -198,9 +238,11 @@
       <select id="st-ping" bind:value={s.ping} onchange={onchange}>
         <option value="plan_approval">plan_approval</option>
         <option value="final_review">final_review</option>
+        <option value="manual_debug">manual_debug — human inspects the workspace</option>
       </select>
-      <label for="st-payload">Payload <span class="muted">— artifact path or mr_url</span></label>
-      <input id="st-payload" bind:value={s.payload} oninput={onchange} placeholder="artifacts/plan.md" />
+      <label for="st-payload">Payload <span class="muted">— artifact path, mr_url or workspace (terminal/IDE link)</span></label>
+      <input id="st-payload" bind:value={s.payload} oninput={onchange}
+        placeholder={s.ping === 'manual_debug' ? 'workspace' : 'artifacts/plan.md'} />
       <label for="st-auto">Auto-complete</label>
       <select
         id="st-auto"
@@ -224,24 +266,26 @@
       {#each stageIds.filter((id) => id !== s.id) as id (id)}<option value={id}>{id}</option>{/each}
     </select>
 
-    <div class="row" style="margin-top:10px; gap:8px">
-      {#if (s.type === 'agent' || s.type === 'command') && !s.on_fail}
-        <button onclick={() => addEdge(s, 'on_fail')}>+ on_fail</button>
-      {/if}
-      {#if (s.type === 'agent' || s.type === 'human_gate') && !s.on_reject}
-        <button onclick={() => addEdge(s, 'on_reject')}>+ on_reject</button>
-      {/if}
-      {#each EDGE_KINDS as kind (kind)}
-        {#if edgeOf(s, kind)}
+    <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap">
+      {#each edgeKindsFor(s.type) as kind (kind)}
+        {#if !edgeOf(s, kind)}
+          <button onclick={() => addEdge(s, kind)}>+ {kind}</button>
+        {:else}
           <button onclick={() => onselect({ kind: 'edge', stage: s.id, edge: kind })}>{kind} →</button>
         {/if}
       {/each}
     </div>
+    {#if s.type === 'agent' || s.type === 'command'}
+      <p class="muted small" style="margin:6px 0 0">
+        Timeouts route via on_timeout when declared, else fall back to on_fail.
+      </p>
+    {/if}
   {:else if edgeSel?.stage}
     {@const s = edgeSel.stage}
     {@const kind = edgeSel.kind}
     {@const e = edgeOf(s, kind)}
     {#if e}
+      {@const links = chainLinks(e)}
       <div class="row spread">
         <h2 style="margin:0"><span class="mono">{kind}</span> from <span class="mono">{s.id}</span></h2>
         <button
@@ -253,32 +297,50 @@
           }}>Remove</button
         >
       </div>
-      <label for="ed-to">To</label>
-      <select id="ed-to" bind:value={e.to} onchange={onchange}>
-        {#each stageIds as id (id)}<option value={id}>{id}</option>{/each}
-      </select>
-      <label for="ed-max">Max <span class="muted">— attempts before the run is abandoned</span></label>
-      <input
-        id="ed-max"
-        type="number"
-        min="1"
-        value={e.max ?? 1}
-        oninput={(ev) => {
-          e.max = Number(ev.currentTarget.value) || 1;
-          onchange();
-        }}
-      />
-      <label for="ed-feed">Feed</label>
-      <select
-        id="ed-feed"
-        value={e.feed ?? ''}
-        onchange={(ev) => {
-          e.feed = ev.currentTarget.value || undefined;
-          onchange();
-        }}
-      >
-        {#each feedOptions(kind, s.type) as f (f)}<option value={f}>{f === '' ? '— nothing' : f}</option>{/each}
-      </select>
+      {#each links as link, depth (depth)}
+        <div class="link" class:fallback={depth > 0}>
+          {#if depth > 0}<div class="small muted" style="margin-bottom:2px">then (once the link above is exhausted)</div>{/if}
+          <label for="ed-to-{depth}">To</label>
+          <select id="ed-to-{depth}" value={link.to} onchange={(ev) => retarget(link, ev.currentTarget.value)}>
+            {#each stageIds as id (id)}<option value={id}>{id}</option>{/each}
+            <option value={ABORT}>abort — stop the run deliberately</option>
+          </select>
+          {#if link.to !== ABORT}
+            <label for="ed-max-{depth}">Max <span class="muted">— times this link may fire{depth === 0 && !link.then ? ' before the run is abandoned' : ''}</span></label>
+            <input
+              id="ed-max-{depth}"
+              type="number"
+              min="1"
+              value={link.max ?? 1}
+              oninput={(ev) => {
+                link.max = Number(ev.currentTarget.value) || 1;
+                onchange();
+              }}
+            />
+            <label for="ed-feed-{depth}">Feed</label>
+            <select
+              id="ed-feed-{depth}"
+              value={link.feed ?? ''}
+              onchange={(ev) => {
+                link.feed = ev.currentTarget.value || undefined;
+                onchange();
+              }}
+            >
+              {#each feedOptions(kind, s.type) as f (f)}<option value={f}>{f === '' ? '— nothing' : f}</option>{/each}
+            </select>
+          {/if}
+        </div>
+      {/each}
+      <div class="row" style="margin-top:10px; gap:8px">
+        {#if links[links.length - 1].to !== ABORT}
+          <button onclick={() => appendLink(e)}>+ then (fallback)</button>
+        {/if}
+        <button onclick={() => dropLink(s, kind, e)}>− remove last link</button>
+      </div>
+      <p class="muted small" style="margin:8px 0 0">
+        Links fire top-down: each keeps its own counter; when one is exhausted the next failure
+        falls through. An exhausted chain abandons the run.
+      </p>
     {/if}
   {:else}
     <h2 style="margin-top:0">Flow</h2>
@@ -347,7 +409,8 @@
     </div>
     <p class="muted small" style="margin-top:10px">
       Click a node or edge to edit it. Drag from a node's colored handles to rewire: green = success,
-      red = on_fail, orange = on_reject.
+      red = on_fail, cyan = on_timeout, orange = on_reject. Edges may target the abort terminal to
+      stop the run deliberately.
     </p>
   {/if}
 </div>
@@ -355,5 +418,10 @@
 <style>
   .inspector {
     min-width: 280px;
+  }
+  .link.fallback {
+    border-left: 2px solid var(--border, #444);
+    padding-left: 10px;
+    margin-top: 10px;
   }
 </style>

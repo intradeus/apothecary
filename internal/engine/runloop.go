@@ -34,6 +34,10 @@ type exec struct {
 	res *Resolution
 	ctx context.Context
 	bg  context.Context
+	// envEnsured records that ensureEnv ran (and succeeded) once this loop
+	// invocation, so it is done lazily before the first stage that needs the
+	// workspace — never for a human_gate.
+	envEnsured bool
 }
 
 func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
@@ -114,14 +118,6 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 	e.mu.Unlock()
 
-	if err := x.ensureEnv(); err != nil {
-		x.exit(err)
-		return
-	}
-	if rs.done { // env_failed is terminal
-		return
-	}
-
 	for !rs.done {
 		if cause := context.Cause(ctx); cause != nil {
 			x.exit(cause)
@@ -140,6 +136,22 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		} else if rs.ph == phAfterFail && st.Type != flow.StageForgeMR {
 			err = x.routeAfterFail(st)
 		} else {
+			// Ensure the workspace lazily, right before a stage that uses it —
+			// and NEVER for a human_gate. Ensuring it up front blocked a run
+			// parked at a gate whose workspace had been reaped: recovery tried
+			// to re-provision it before re-arming the gate, so answers were
+			// silently buffered and dropped (found live: rejecting a final_gate
+			// returned {"status":"answered"} but nothing happened).
+			if st.Type != flow.StageHumanGate && !x.envEnsured {
+				if eerr := x.ensureEnv(); eerr != nil {
+					x.exit(eerr)
+					return
+				}
+				if rs.done { // env_failed is terminal
+					return
+				}
+				x.envEnsured = true
+			}
 			switch st.Type {
 			case flow.StageAgent:
 				err = x.stageAgent(st)
@@ -159,12 +171,15 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 }
 
 // exit handles abnormal loop termination: abort marks the run failed,
-// shutdown leaves it for Recover, anything else is logged and left
-// non-terminal (recovered by replay on next boot).
+// pause parks it (non-terminal, skipped by Recover until play), shutdown
+// leaves it for Recover, anything else is logged and left non-terminal
+// (recovered by replay on next boot).
 func (x *exec) exit(cause error) {
 	switch {
 	case errors.Is(cause, errAborted):
 		_ = x.append(&event.RunFailed{Reason: "aborted"})
+	case errors.Is(cause, errPaused):
+		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage})
 	case errors.Is(cause, errShutdown), cause == nil:
 	default:
 		x.e.log.Error("run loop error; run left non-terminal for recovery",
@@ -221,34 +236,68 @@ func (x *exec) fail(reason string) error {
 }
 
 // takeEdge follows a recoverable edge of the given kind (on_fail,
-// on_reject, future kinds — the registry lives in the flow package),
-// abandoning the run when the edge is absent or exhausted (§2, §3).
+// on_reject, on_timeout — the registry lives in the flow package). The
+// edge is a chain: each link carries its own cumulative max, and a full
+// link falls through to its then fallback (retry-then-escalate). A link
+// targeting the abort terminal stops the run deliberately; an absent edge
+// or an exhausted chain abandons it (§2, §3).
 func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
 	edge := st.Edge(kind)
 	if edge == nil {
 		return x.abandon(st.ID, "", fmt.Sprintf("stage %s: unrecoverable failure with no %s", st.ID, kind))
 	}
-	key := edgeKey(st.ID, kind)
-	count := rs.edgeCounts[key] + 1
-	if count > edge.Max {
-		return x.abandon(st.ID, kind, fmt.Sprintf("%s from %s exhausted (max %d)", kind, st.ID, edge.Max))
+	depth := 0
+	for e := edge; e != nil; e, depth = e.Then, depth+1 {
+		if e.To == flow.TerminalAbort {
+			reason := fmt.Sprintf("aborted by flow: %s at stage %s", kind, st.ID)
+			if strings.TrimSpace(feedContent) != "" {
+				reason += ": " + tail(strings.TrimSpace(feedContent), 2<<10)
+			}
+			return x.abandon(st.ID, kind, reason)
+		}
+		key := chainKey(st.ID, kind, depth)
+		count := rs.edgeCounts[key] + 1
+		if count > e.Max {
+			continue // this link is exhausted; fall through to then
+		}
+		feed := ""
+		if e.Feed != "" {
+			feed = tail(feedContent, 8<<10)
+		}
+		// Feed is persisted in the event so a crash between edge_taken and
+		// the next stage_started loses nothing.
+		if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Count: count, Max: e.Max, Depth: depth, Feed: feed}); err != nil {
+			return err
+		}
+		rs.edgeCounts[key] = count
+		rs.pos = rs.fl.Index(e.To)
+		rs.ph = phStart
+		rs.feed = feed
+		rs.feedAttempts = e.Max + 1
+		return nil
 	}
-	feed := ""
-	if edge.Feed != "" {
-		feed = tail(feedContent, 8<<10)
+	return x.abandon(st.ID, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(edge)))
+}
+
+// chainMax renders a chain's budget for the abandon reason: "5" for a
+// single link, "2+3" for retry-then-escalate chains.
+func chainMax(e *flow.Edge) string {
+	parts := []string{}
+	for ; e != nil; e = e.Then {
+		parts = append(parts, fmt.Sprintf("%d", e.Max))
 	}
-	// Feed is persisted in the event so a crash between edge_taken and the
-	// next stage_started loses nothing.
-	if err := x.append(&event.EdgeTaken{From: st.ID, To: edge.To, Edge: kind, Count: count, Max: edge.Max, Feed: feed}); err != nil {
-		return err
+	return strings.Join(parts, "+")
+}
+
+// failEdgeKind picks the edge kind for a stage failure: timeouts route
+// through on_timeout when the stage declares it, everything else (and
+// timeouts without one) through on_fail.
+func failEdgeKind(st *flow.Stage, reason string) string {
+	if reason == event.ReasonTimeout && st.Edge(flow.EdgeTimeout) != nil {
+		return flow.EdgeTimeout
 	}
-	rs.edgeCounts[key] = count
-	rs.pos = rs.fl.Index(edge.To)
-	rs.ph = phStart
-	rs.feed = feed
-	rs.feedAttempts = edge.Max + 1
-	return nil
+	return flow.EdgeFail
 }
 
 // checkBudget abandons the run when §3 budget ceilings are exceeded.
@@ -270,11 +319,13 @@ func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
 // re-enter their executor, which is idempotent via the recorded MR.
 func (x *exec) routeAfterFail(st *flow.Stage) error {
 	feed := ""
+	kind := flow.EdgeFail
 	if x.rs.lastFailure != nil {
 		feed = x.rs.lastFailure.Error
+		kind = failEdgeKind(st, x.rs.lastFailure.Reason)
 	}
 	x.rs.ph = phStart
-	return x.takeEdge(st, flow.EdgeFail, feed)
+	return x.takeEdge(st, kind, feed)
 }
 
 // routeAfterComplete handles recovery when the crash hit between a
@@ -347,9 +398,17 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); err != nil {
 			return err
 		}
-		return x.takeEdge(st, flow.EdgeFail, "")
+		// Whatever the cancelled attempt printed rides along for edges that
+		// declare feed: output.
+		return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), tail(res.r.Output, 8<<10))
 	}
 	if res.err != nil {
+		// Run cancellation (abort/pause/shutdown) can surface as the harness
+		// result racing the ctx branch in awaitAgent; it is not a stage
+		// failure — mirror stageCommand and let the loop exit on the cause.
+		if x.ctx.Err() != nil {
+			return context.Cause(x.ctx)
+		}
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonHarnessError, Error: res.err.Error()}); err != nil {
 			return err
 		}
@@ -580,7 +639,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); aerr != nil {
 				return aerr
 			}
-			return x.takeEdge(st, flow.EdgeFail, "")
+			return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), "")
 		}
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra, Error: err.Error()}); aerr != nil {
 			return aerr
@@ -634,8 +693,13 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		}
 		rs.ph = phIn
 		payloadRef := st.Payload
-		if payloadRef == flow.PayloadMRURL {
+		switch payloadRef {
+		case flow.PayloadMRURL:
 			payloadRef = rs.view.MRURL
+		case flow.PayloadWorkspace:
+			// manual_debug hand-off: point the human at the workspace
+			// (terminal beats IDE beats whatever else env_ready recorded).
+			payloadRef = workspaceLink(rs.links)
 		}
 		p = &Ping{
 			ID: x.e.newID(), RunID: rs.runID, Type: string(st.Ping),
@@ -655,8 +719,60 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		})
 	}
 
+	// auto_complete polling (§3). pollMR reports merged=true once the forge
+	// says so (ping bookkeeping included); a hard error is an append
+	// failure or run cancellation. Repeated forge failures raise ONE
+	// blocker notification — polling that fails silently forever reads as
+	// "auto_complete is broken" from the outside, which is worse than the
+	// failure itself (the gate always keeps accepting manual approve/reject).
+	pollFails := 0
+	pollMR := func() (bool, error) {
+		state, serr := x.res.Forge.MRState(x.ctx, *rs.mr)
+		if serr != nil {
+			if x.ctx.Err() != nil {
+				return false, context.Cause(x.ctx)
+			}
+			pollFails++
+			x.e.log.Warn("auto_complete poll failed", "run", rs.runID, "attempt", pollFails, "err", serr)
+			if pollFails == autoCompleteFailNotify {
+				x.e.notify(x.bg, ports.Notification{
+					RunID: rs.runID, Type: "blocker",
+					Title: fmt.Sprintf("auto_complete cannot read the MR state (%d failed polls): %s", pollFails, rs.view.TicketTitle),
+					Body:  serr.Error() + " — merge detection is blind until this recovers; the gate still accepts approve/reject.",
+				})
+			}
+			return false, nil
+		}
+		pollFails = 0
+		if state != ports.MRMerged {
+			return false, nil
+		}
+		x.e.mu.Lock()
+		already := p.answered
+		if !already {
+			p.answered = true
+			p.answer = &PingAnswer{Answer: "approve", Feedback: "auto: MR merged"}
+		}
+		x.e.mu.Unlock()
+		if !already {
+			if err := x.append(&event.PingAnswered{PingID: p.ID, Answer: "approve", Feedback: "auto: MR merged"}); err != nil {
+				return false, err
+			}
+			close(p.done)
+		}
+		return true, nil
+	}
+
 	var pollC <-chan time.Time
 	if st.AutoComplete == flow.AutoCompleteMRMerged && rs.mr != nil {
+		// Poll once immediately: an MR merged while the engine was down (or
+		// before the gate armed) completes the run NOW, not one interval
+		// later — recovery re-entry lands here too.
+		if merged, err := pollMR(); err != nil {
+			return err
+		} else if merged {
+			return x.routeGate(st, PingAnswer{Answer: "approve"}, started)
+		}
 		t := time.NewTicker(x.e.cfg.MRPollInterval)
 		defer t.Stop()
 		pollC = t.C
@@ -672,25 +788,11 @@ func (x *exec) stageGate(st *flow.Stage) error {
 				return x.routeGate(st, ar.ans, started)
 			}
 		case <-pollC:
-			state, err := x.res.Forge.MRState(x.ctx, *rs.mr)
+			merged, err := pollMR()
 			if err != nil {
-				x.e.log.Warn("auto_complete poll failed", "run", rs.runID, "err", err)
-				continue
+				return err
 			}
-			if state == ports.MRMerged {
-				x.e.mu.Lock()
-				already := p.answered
-				if !already {
-					p.answered = true
-					p.answer = &PingAnswer{Answer: "approve", Feedback: "auto: MR merged"}
-				}
-				x.e.mu.Unlock()
-				if !already {
-					if err := x.append(&event.PingAnswered{PingID: p.ID, Answer: "approve", Feedback: "auto: MR merged"}); err != nil {
-						return err
-					}
-					close(p.done)
-				}
+			if merged {
 				return x.routeGate(st, PingAnswer{Answer: "approve"}, started)
 			}
 		case <-x.ctx.Done():
@@ -698,6 +800,10 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		}
 	}
 }
+
+// autoCompleteFailNotify is the consecutive-failure count at which the
+// auto_complete poll raises a blocker notification (once per streak).
+const autoCompleteFailNotify = 3
 
 func (x *exec) routeGate(st *flow.Stage, ans PingAnswer, started time.Time) error {
 	if ans.Answer == "approve" {
@@ -754,6 +860,23 @@ func (x *exec) stageForgeMR(st *flow.Stage) error {
 	}
 	x.advance(st)
 	return nil
+}
+
+// workspaceLink picks the link a debugging human wants first: the web
+// terminal, else the IDE, else the first recorded link. "" when the
+// workspace recorded none (the ping still renders, just without a link).
+func workspaceLink(links []event.Link) string {
+	for _, kind := range []string{"terminal", "ide"} {
+		for _, l := range links {
+			if l.Kind == kind {
+				return l.URL
+			}
+		}
+	}
+	if len(links) > 0 {
+		return links[0].URL
+	}
+	return ""
 }
 
 // mrTitle extracts the first `# ` heading, else falls back to the ticket title (§3.1).
@@ -872,6 +995,7 @@ func (x *exec) ensureEnv() error {
 	for _, l := range links {
 		evLinks = append(evLinks, event.Link{Kind: l.Kind, URL: l.URL})
 	}
+	rs.links = evLinks // live counterpart of replay's env_ready capture
 	return x.append(&event.EnvReady{EnvID: string(id), Links: evLinks})
 }
 

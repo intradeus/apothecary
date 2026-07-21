@@ -177,6 +177,7 @@ type answerReq struct {
 
 var (
 	errAborted  = errors.New("run aborted")
+	errPaused   = errors.New("run paused")
 	errShutdown = errors.New("engine shutting down")
 
 	// Sentinel errors for API status mapping.
@@ -571,6 +572,10 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if v.State.Terminal() {
 			continue
 		}
+		if v.State == run.Paused {
+			// The user parked it; only play (run_unpaused) re-admits it.
+			continue
+		}
 		if v.State == run.Pending {
 			pending = append(pending, pend{id, v.CreatedAt})
 			continue
@@ -617,15 +622,95 @@ func (e *Engine) startLocked(runID string) {
 }
 
 // Abort cancels the run context, kills any in-flight exec and marks the run
-// failed with reason "aborted" (§2). The environment is kept.
+// failed with reason "aborted" (§2). The environment is kept. Runs without
+// a live goroutine (paused, or still queued pending) are aborted directly:
+// they are dequeued and the terminal event is appended here — safe, no
+// writer goroutine exists.
 func (e *Engine) Abort(runID string) error {
+	e.mu.Lock()
+	h, ok := e.handles[runID]
+	if ok {
+		e.mu.Unlock()
+		h.cancel(errAborted)
+		return nil
+	}
+	// Not active: dequeue under the lock so scheduleLocked can never start
+	// it between our check and the append.
+	if i := slices.Index(e.queue, runID); i >= 0 {
+		e.queue = append(e.queue[:i], e.queue[i+1:]...)
+	}
+	e.mu.Unlock()
+
+	ctx := context.Background()
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return err
+	}
+	if len(evs) == 0 {
+		return fmt.Errorf("run %s not found", runID)
+	}
+	v := run.Reduce(evs)
+	if v.State.Terminal() {
+		return fmt.Errorf("run %s is already %s: %w", runID, v.State, ErrRunNotActive)
+	}
+	return e.appendAndEmit(ctx, runID, &event.RunFailed{Reason: "aborted"})
+}
+
+// Pause parks an active run: its goroutine exits cleanly (a controlled
+// crash — the event log stays consistent at every point) and the run is
+// NOT recovered on boot until Play. The workspace is kept as-is for
+// inspection; an in-flight agent attempt is cancelled and re-entered on
+// play via its recorded session, exactly like crash recovery.
+func (e *Engine) Pause(runID string) error {
 	e.mu.Lock()
 	h, ok := e.handles[runID]
 	e.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+		return fmt.Errorf("run %s: %w (only running runs can be paused)", runID, ErrRunNotActive)
 	}
-	h.cancel(errAborted)
+	h.cancel(errPaused)
+	return nil
+}
+
+// Play restarts a paused run through the normal scheduling queue; the loop
+// replays events and re-enters mid-stage like crash recovery. Distinct
+// from ResumeRun ("try again"): play resets no retry budgets — the run
+// simply continues.
+func (e *Engine) Play(ctx context.Context, runID string) error {
+	e.mu.Lock()
+	_, active := e.handles[runID]
+	e.mu.Unlock()
+	if active {
+		return fmt.Errorf("run %s is still active", runID)
+	}
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return err
+	}
+	if len(evs) == 0 {
+		return fmt.Errorf("run %s not found", runID)
+	}
+	v := run.Reduce(evs)
+	if v.State != run.Paused {
+		return fmt.Errorf("run %s is %s; only paused runs can be played", runID, v.State)
+	}
+	// A paused gate re-arms without a fresh ping_raised, so the event must
+	// carry whether the run lands back on waiting_on_human.
+	waiting := false
+	for _, p := range run.ReducePings(evs) {
+		if p.Status == "pending" {
+			waiting = true
+			break
+		}
+	}
+	if err := e.appendAndEmit(ctx, runID, &event.RunUnpaused{Waiting: waiting}); err != nil {
+		return err
+	}
+	lim := e.limits(ctx)
+	e.mu.Lock()
+	e.queue = append(e.queue, runID)
+	e.scheduleLocked(lim)
+	e.mu.Unlock()
 	return nil
 }
 

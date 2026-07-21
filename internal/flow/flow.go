@@ -24,12 +24,16 @@ const (
 )
 
 // PingType for human gates. The full ping taxonomy (clarification, blocker,
-// permission) belongs to ask_human; gates may only raise these two.
+// permission) belongs to ask_human; gates may only raise these three.
 type PingType string
 
 const (
 	PingPlanApproval PingType = "plan_approval"
 	PingFinalReview  PingType = "final_review"
+	// PingManualDebug parks the run so a human can open the workspace
+	// (terminal/IDE links) and inspect it. approve = continue on_success,
+	// reject = follow on_reject (typically abort), feedback feeds along.
+	PingManualDebug PingType = "manual_debug"
 )
 
 const (
@@ -41,8 +45,11 @@ const (
 	InputTicket  = "ticket"
 	InputChanged = "$CHANGED"
 
-	// PayloadMRURL is the one non-path human_gate payload.
-	PayloadMRURL = "mr_url"
+	// PayloadMRURL and PayloadWorkspace are the two non-path human_gate
+	// payloads: the run's MR link and the workspace's access link
+	// (terminal/IDE — resolved from env_ready at gate time).
+	PayloadMRURL     = "mr_url"
+	PayloadWorkspace = "workspace"
 )
 
 type Defaults struct {
@@ -59,22 +66,35 @@ type Budget struct {
 
 // Edge kinds (DESIGN3 §2.1). on_success is not an Edge — it is a plain
 // target (Stage.OnSuccess) with no max/feed; loops are only expressible
-// through kinds that carry max.
+// through kinds that carry max. on_timeout is raised instead of on_fail
+// when a stage times out AND the stage declares it; absent, timeouts fall
+// back to on_fail (purely additive).
 const (
-	EdgeFail   = "on_fail"
-	EdgeReject = "on_reject"
+	EdgeFail    = "on_fail"
+	EdgeReject  = "on_reject"
+	EdgeTimeout = "on_timeout"
 )
 
 // TerminalDone is the reserved on_success target that completes the run.
-// Stage ids may not shadow it.
-const TerminalDone = "done"
+// TerminalAbort is the reserved EDGE target that deliberately stops the run
+// (projected as abandoned, mirroring the frontend's Abort verb) — the
+// explicit form of "no edge / edge exhausted". Stage ids may shadow neither.
+const (
+	TerminalDone  = "done"
+	TerminalAbort = "abort"
+)
 
-// Edge is a recoverable redirect (on_fail / on_reject / future kinds). An
-// exhausted edge abandons the run.
+// Edge is a recoverable redirect (on_fail / on_reject / on_timeout). Each
+// link carries its own cumulative max; when a link is exhausted the NEXT
+// failure falls through to Then (retry-then-escalate chains). An exhausted
+// chain abandons the run. To may be TerminalAbort: taking that link stops
+// the run deliberately (max/feed/then don't apply — there is no target
+// stage to bound or feed).
 type Edge struct {
 	To   string
 	Max  int
-	Feed Feed // empty = nothing fed
+	Feed Feed  // empty = nothing fed
+	Then *Edge // fallback link once this one is exhausted; nil = abandon
 }
 
 // Stage is one validated flow stage. Model, Harness, MaxTurns and Timeout are

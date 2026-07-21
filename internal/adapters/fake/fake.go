@@ -287,6 +287,8 @@ type Forge struct {
 	MissingFiles map[string]bool
 	// CreateErr fails CreateDraftMR when set.
 	CreateErr error
+	// MRStateErr fails MRState when set (auto_complete poll failure paths).
+	MRStateErr error
 
 	MRs    []*MR
 	nextID int
@@ -317,12 +319,23 @@ func (f *Forge) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, tit
 func (f *Forge) MRState(_ context.Context, mr ports.MRRef) (ports.MRState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.MRStateErr != nil {
+		return "", f.MRStateErr
+	}
 	for _, m := range f.MRs {
 		if m.Ref.IID == mr.IID {
 			return m.State, nil
 		}
 	}
 	return "", fmt.Errorf("mr !%d not found", mr.IID)
+}
+
+// SetMRStateErr injects/clears an MRState failure while the engine is
+// polling (race-safe test control).
+func (f *Forge) SetMRStateErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.MRStateErr = err
 }
 
 // SetMRState transitions an MR (test control, e.g. simulating a merge for

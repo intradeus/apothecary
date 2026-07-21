@@ -70,6 +70,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/egress-denials", s.getEgressDenials)
 	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
 	mux.HandleFunc("POST /api/runs/{id}/abort", s.postAbort)
+	mux.HandleFunc("POST /api/runs/{id}/pause", s.postPause)
+	mux.HandleFunc("POST /api/runs/{id}/play", s.postPlay)
 	mux.HandleFunc("POST /api/runs/{id}/archive", s.postArchive)
 	mux.HandleFunc("POST /api/runs/{id}/restart", s.postRestart)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.postResume)
@@ -325,6 +327,8 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postAbort(w http.ResponseWriter, r *http.Request) {
 	err := s.Engine.Abort(r.PathValue("id"))
 	switch {
+	case err != nil && strings.Contains(err.Error(), "not found"):
+		writeErr(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, engine.ErrRunNotActive):
 		writeErr(w, http.StatusConflict, err.Error())
 	case err != nil:
@@ -332,6 +336,38 @@ func (s *Server) postAbort(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusAccepted)
 	}
+}
+
+// postPause parks an active run (202); 409 when it has no live goroutine.
+func (s *Server) postPause(w http.ResponseWriter, r *http.Request) {
+	err := s.Engine.Pause(r.PathValue("id"))
+	switch {
+	case errors.Is(err, engine.ErrRunNotActive):
+		writeErr(w, http.StatusConflict, err.Error())
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+	default:
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
+// postPlay restarts a paused run (202, same id); 409 when active or not
+// paused, 404 when unknown.
+func (s *Server) postPlay(w http.ResponseWriter, r *http.Request) {
+	err := s.Engine.Play(r.Context(), r.PathValue("id"))
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusBadRequest
+		switch {
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		case strings.Contains(msg, "still active"), strings.Contains(msg, "can be played"):
+			status = http.StatusConflict
+		}
+		writeErr(w, status, msg)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {

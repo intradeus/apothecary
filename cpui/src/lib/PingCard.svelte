@@ -6,20 +6,25 @@
   let {
     ping,
     busy = false,
-    feedback = $bindable(''),
     onanswer
   }: {
     ping: PingLike;
     busy?: boolean;
-    // The note/feedback textarea — bound by the caller so it can key it per
-    // ping (inbox) or hold a single value (run page).
-    feedback?: string;
-    onanswer: (answer: string) => void;
+    // answer is the choice (approve|reject|option|free text); note is the
+    // optional feedback that rides along (required only when rejecting).
+    onanswer: (answer: string, note?: string) => void;
   } = $props();
 
+  // Owned here (not a bindable prop): each card keeps its own draft, keyed by
+  // ping identity in the parent's {#each}, so a bind:{undefined} can't crash.
+  let note = $state('');
   const isGate = $derived(GATE_TYPES.includes(ping.type));
   const isPending = $derived((ping.status ?? 'pending') === 'pending');
   const options = $derived(ping.options ?? []);
+  // manual_debug is "go look at the workspace": approve = fixed/continue,
+  // reject = give up (routes on_reject — typically abort).
+  const approveLabel = $derived(ping.type === 'manual_debug' ? 'Resolved — continue' : 'Approve');
+  const rejectLabel = $derived(ping.type === 'manual_debug' ? 'Give up (reject)' : 'Reject with feedback');
 </script>
 
 <div class="md" style="margin:8px 0">{@html mdToHtml(ping.question)}</div>
@@ -44,22 +49,22 @@
     {#if ping.feedback}<div class="md small" style="margin-top:4px">{@html mdToHtml(ping.feedback)}</div>{/if}
   </div>
 {:else if isGate}
-  <textarea bind:value={feedback} placeholder="Feedback (required when rejecting)"></textarea>
+  <textarea bind:value={note} placeholder={ping.type === 'manual_debug' ? 'What you found / changed (required when giving up)' : 'Feedback (required when rejecting)'}></textarea>
   <div class="row" style="margin-top:10px">
-    <button class="approve" disabled={busy} onclick={() => onanswer('approve')}>Approve</button>
-    <button class="reject" disabled={busy || !feedback.trim()} onclick={() => onanswer('reject')}>Reject with feedback</button>
+    <button class="approve" disabled={busy} onclick={() => onanswer('approve', note)}>{approveLabel}</button>
+    <button class="reject" disabled={busy || !note.trim()} onclick={() => onanswer('reject', note)}>{rejectLabel}</button>
   </div>
 {:else if options.length}
-  <textarea bind:value={feedback} placeholder="Optional note to send along…"></textarea>
+  <textarea bind:value={note} placeholder="Optional note to send along…"></textarea>
   <div class="row" style="margin-top:10px; flex-wrap:wrap; gap:8px">
     {#each options as opt (opt)}
-      <button class="primary" disabled={busy} onclick={() => onanswer(opt)}>{opt}</button>
+      <button class="primary" disabled={busy} onclick={() => onanswer(opt, note)}>{opt}</button>
     {/each}
   </div>
 {:else}
-  <textarea bind:value={feedback} placeholder="Your answer to the agent…"></textarea>
+  <textarea bind:value={note} placeholder="Your answer to the agent…"></textarea>
   <div class="row" style="margin-top:10px">
-    <button class="primary" disabled={busy || !feedback.trim()} onclick={() => onanswer(feedback.trim())}>Send answer</button>
+    <button class="primary" disabled={busy || !note.trim()} onclick={() => onanswer(note.trim())}>Send answer</button>
   </div>
 {/if}
 

@@ -82,6 +82,7 @@ type DocStage struct {
 	OnSuccess    string   `yaml:"on_success" json:"on_success,omitempty"`
 	OnFail       *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
 	OnReject     *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
+	OnTimeout    *DocEdge `yaml:"on_timeout" json:"on_timeout,omitempty"`
 }
 
 // edges maps the declared edge kinds to their raw fields. Adding a kind
@@ -89,7 +90,7 @@ type DocStage struct {
 // raise site in the engine — parse, validation, routing and the edge_taken
 // event generalize.
 func (r *DocStage) edges() map[string]*DocEdge {
-	return map[string]*DocEdge{EdgeFail: r.OnFail, EdgeReject: r.OnReject}
+	return map[string]*DocEdge{EdgeFail: r.OnFail, EdgeReject: r.OnReject, EdgeTimeout: r.OnTimeout}
 }
 
 // edgeKindSpec declares one recoverable edge kind: where it may appear and
@@ -110,12 +111,56 @@ var edgeKinds = map[string]edgeKindSpec{
 			return f == "" || (f == FeedComments && st == StageAgent) || (f == FeedFeedback && st == StageHumanGate)
 		},
 	},
+	// on_timeout routes stage timeouts separately from failures ("stuck ≠
+	// broken": retry the same stage fresh vs. go fix the code). When a stage
+	// declares no on_timeout, the engine falls back to on_fail — existing
+	// flows behave exactly as before.
+	EdgeTimeout: {
+		on:     []StageType{StageAgent, StageCommand},
+		feedOK: func(f Feed, _ StageType) bool { return f == "" || f == FeedOutput },
+	},
 }
 
 type DocEdge struct {
-	To   string `yaml:"to" json:"to"`
-	Max  *int   `yaml:"max" json:"max,omitempty"`
-	Feed string `yaml:"feed" json:"feed,omitempty"`
+	To   string   `yaml:"to" json:"to"`
+	Max  *int     `yaml:"max" json:"max,omitempty"`
+	Feed string   `yaml:"feed" json:"feed,omitempty"`
+	Then *DocEdge `yaml:"then" json:"then,omitempty"`
+}
+
+// UnmarshalYAML accepts the mapping form ({to, max, feed, then}) and, as
+// sugar, a bare terminal name — `on_reject: abort` reads exactly like what
+// it does. A custom unmarshaler bypasses the decoder's KnownFields
+// strictness, so unknown keys are rejected by hand.
+func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return n.Decode(&e.To)
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			var err error
+			switch k.Value {
+			case "to":
+				err = v.Decode(&e.To)
+			case "max":
+				e.Max = new(int)
+				err = v.Decode(e.Max)
+			case "feed":
+				err = v.Decode(&e.Feed)
+			case "then":
+				e.Then = &DocEdge{}
+				err = v.Decode(e.Then)
+			default:
+				return fmt.Errorf("line %d: field %s not found in type flow.DocEdge", k.Line, k.Value)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("line %d: edge must be a mapping or %q", n.Line, TerminalAbort)
 }
 
 // Load reads, parses and validates a flow file, setting Flow.Hash.
@@ -343,6 +388,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if raw.ID == TerminalDone {
 		return fail("id %q is reserved (the on_success terminal)", TerminalDone)
 	}
+	if raw.ID == TerminalAbort {
+		return fail("id %q is reserved (the deliberate-stop edge terminal)", TerminalAbort)
+	}
 	st := StageType(raw.Type)
 	switch st {
 	case StageAgent, StageCommand, StageHumanGate, StageForgeMR:
@@ -443,15 +491,15 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 
 	case StageHumanGate:
 		switch PingType(raw.Ping) {
-		case PingPlanApproval, PingFinalReview:
+		case PingPlanApproval, PingFinalReview, PingManualDebug:
 			s.Ping = PingType(raw.Ping)
 		case "":
-			return fail("ping is required (%s|%s)", PingPlanApproval, PingFinalReview)
+			return fail("ping is required (%s|%s|%s)", PingPlanApproval, PingFinalReview, PingManualDebug)
 		default:
-			return fail("unknown ping %q (%s|%s)", raw.Ping, PingPlanApproval, PingFinalReview)
+			return fail("unknown ping %q (%s|%s|%s)", raw.Ping, PingPlanApproval, PingFinalReview, PingManualDebug)
 		}
-		if raw.Payload != "" && raw.Payload != PayloadMRURL && !validArtifactPath(raw.Payload) {
-			return fail("payload %q must be a relative artifact path or %q", raw.Payload, PayloadMRURL)
+		if raw.Payload != "" && raw.Payload != PayloadMRURL && raw.Payload != PayloadWorkspace && !validArtifactPath(raw.Payload) {
+			return fail("payload %q must be a relative artifact path, %q or %q", raw.Payload, PayloadMRURL, PayloadWorkspace)
 		}
 		s.Payload = raw.Payload
 		if raw.AutoComplete != "" && raw.AutoComplete != AutoCompleteMRMerged {
@@ -491,14 +539,40 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 }
 
 func (p *parser) buildEdge(raw *DocEdge, kind string, s *Stage, line int) (*Edge, error) {
+	return p.buildEdgeLink(raw, kind, s, line, 0)
+}
+
+// buildEdgeLink validates one link of an edge chain (depth 0 = the edge
+// itself, deeper = its then fallbacks).
+func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth int) (*Edge, error) {
 	if raw == nil {
 		return nil, nil
 	}
+	at := kind
+	if depth > 0 {
+		at = fmt.Sprintf("%s (then #%d)", kind, depth)
+	}
 	fail := func(format string, args ...any) (*Edge, error) {
-		return nil, p.errf(line, "stage %q: %s: %s", s.ID, kind, fmt.Sprintf(format, args...))
+		return nil, p.errf(line, "stage %q: %s: %s", s.ID, at, fmt.Sprintf(format, args...))
 	}
 	if raw.To == "" {
 		return fail("to is required")
+	}
+	if raw.To == TerminalDone {
+		return fail("%q is not a valid edge target (only on_success may complete the run)", TerminalDone)
+	}
+	if raw.To == TerminalAbort {
+		// The deliberate stop: taken on first arrival, feeds nothing, has no
+		// fallback. Anything else on the link is a contradiction.
+		switch {
+		case raw.Max != nil:
+			return fail("max does not apply when to is %q (abort is immediate)", TerminalAbort)
+		case raw.Feed != "":
+			return fail("feed does not apply when to is %q (there is no target stage)", TerminalAbort)
+		case raw.Then != nil:
+			return fail("then does not apply when to is %q (nothing runs after abort)", TerminalAbort)
+		}
+		return &Edge{To: TerminalAbort}, nil
 	}
 	if raw.Max == nil {
 		return fail("max is required")
@@ -511,6 +585,10 @@ func (p *parser) buildEdge(raw *DocEdge, kind string, s *Stage, line int) (*Edge
 	if spec, ok := edgeKinds[kind]; !ok || !spec.feedOK(e.Feed, s.Type) {
 		return fail("feed %q is not valid for %s on a %s stage", raw.Feed, kind, s.Type)
 	}
+	var err error
+	if e.Then, err = p.buildEdgeLink(raw.Then, kind, s, line, depth+1); err != nil {
+		return nil, err
+	}
 	return e, nil
 }
 
@@ -520,8 +598,13 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		for kind, e := range s.Edges {
-			if _, ok := ids[e.To]; !ok {
-				return p.errf(s.Line, "stage %q: %s target %q does not exist", s.ID, kind, e.To)
+			for link := e; link != nil; link = link.Then {
+				if link.To == TerminalAbort {
+					continue
+				}
+				if _, ok := ids[link.To]; !ok {
+					return p.errf(s.Line, "stage %q: %s target %q does not exist", s.ID, kind, link.To)
+				}
 			}
 		}
 		if s.OnSuccess != TerminalDone {
@@ -578,7 +661,11 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 			queue = append(queue, s.OnSuccess)
 		}
 		for _, e := range s.Edges {
-			queue = append(queue, e.To)
+			for link := e; link != nil; link = link.Then {
+				if link.To != TerminalAbort {
+					queue = append(queue, link.To)
+				}
+			}
 		}
 	}
 	for i := range f.Stages {

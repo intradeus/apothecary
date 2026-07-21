@@ -16,10 +16,13 @@ const (
 	Provisioning   State = "provisioning"
 	Running        State = "running"
 	WaitingOnHuman State = "waiting_on_human"
-	Completed      State = "completed"
-	Abandoned      State = "abandoned"
-	Failed         State = "failed"
-	Archived       State = "archived"
+	// Paused is non-terminal but NOT auto-recovered on boot: the user
+	// pressed pause; only run_unpaused (play) or an abort moves it on.
+	Paused    State = "paused"
+	Completed State = "completed"
+	Abandoned State = "abandoned"
+	Failed    State = "failed"
+	Archived  State = "archived"
 )
 
 // Terminal reports whether the state can only move to Archived.
@@ -100,6 +103,20 @@ func Apply(v *View, e *event.Event) {
 		// persisted (abandoned/failed runs are never reaped).
 		v.State = Running
 		v.CurrentStage = p.StageID
+	case *event.RunPaused:
+		v.State = Paused
+		if p.StageID != "" {
+			v.CurrentStage = p.StageID
+		}
+	case *event.RunUnpaused:
+		// Play: the loop restarts and re-enters where the stage events left
+		// off (crash-recovery path). A re-armed gate raises no new ping, so
+		// the event itself says whether the run is back to waiting.
+		if p.Waiting {
+			v.State = WaitingOnHuman
+		} else {
+			v.State = Running
+		}
 	case *event.EnvDestroyed:
 		v.EnvID = ""
 	}

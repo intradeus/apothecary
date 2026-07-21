@@ -27,6 +27,8 @@ var registry = map[Type]func() Payload{
 	TypeRunFailed:       func() Payload { return &RunFailed{} },
 	TypeRunArchived:     func() Payload { return &RunArchived{} },
 	TypeRunResumed:      func() Payload { return &RunResumed{} },
+	TypeRunPaused:       func() Payload { return &RunPaused{} },
+	TypeRunUnpaused:     func() Payload { return &RunUnpaused{} },
 	TypeEnvDestroyed:    func() Payload { return &EnvDestroyed{} },
 }
 

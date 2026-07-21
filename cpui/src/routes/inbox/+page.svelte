@@ -7,7 +7,6 @@
   let pings = $state<Ping[]>([]);
   let loaded = $state(false);
   let tab = $state<'pending' | 'answered'>('pending');
-  let feedback = $state<Record<string, string>>({});
   let busy = $state<Record<string, boolean>>({});
   let error = $state('');
 
@@ -30,12 +29,11 @@
     refresh();
   });
 
-  async function answer(p: Ping, ans: string) {
+  async function answer(p: Ping, ans: string, note?: string) {
     busy[p.ping_id] = true;
     error = '';
     try {
-      await api.answerPing(p.ping_id, ans, feedback[p.ping_id]?.trim() || undefined);
-      delete feedback[p.ping_id];
+      await api.answerPing(p.ping_id, ans, note?.trim() || undefined);
       await refresh();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -69,12 +67,7 @@
           {ago(p.raised_at)} · <a href={`/runs/${p.run_id}`}>view run</a>
         </span>
       </div>
-      <PingCard
-        ping={p}
-        busy={busy[p.ping_id] ?? false}
-        bind:feedback={feedback[p.ping_id]}
-        onanswer={(a) => answer(p, a)}
-      />
+      <PingCard ping={p} busy={busy[p.ping_id] ?? false} onanswer={(a, n) => answer(p, a, n)} />
     </div>
   {/each}
 {/if}
