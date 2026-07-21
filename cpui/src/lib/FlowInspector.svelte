@@ -107,15 +107,21 @@
     return type === 'agent' ? ['', 'comments'] : type === 'human_gate' ? ['', 'feedback'] : [''];
   }
 
+  const targetsGate = (id: string) => doc.stages.find((x) => x.id === id)?.type === 'human_gate';
+  // Unlimited (-1) needs a human on the link: gate target (each firing
+  // parks on a decision) or gate source (the link only fires on reject).
+  const unlimitedOK = (sourceType: StageKind, to: string) => sourceType === 'human_gate' || targetsGate(to);
+
   // retarget switches one chain link's target, normalizing the link's other
-  // fields: abort links carry no max/feed/then; stage links need a max.
-  function retarget(link: DocEdge, to: string) {
+  // fields: abort links carry no max/feed/then; stage links need a max, and
+  // -1 survives only while a gate remains on the link.
+  function retarget(sourceType: StageKind, link: DocEdge, to: string) {
     link.to = to;
     if (to === ABORT) {
       link.max = undefined;
       link.feed = undefined;
       link.then = undefined;
-    } else if (link.max == null) {
+    } else if (link.max == null || (link.max === -1 && !unlimitedOK(sourceType, to))) {
       link.max = 3;
     }
     onchange();
@@ -125,7 +131,7 @@
   function appendLink(e: DocEdge) {
     let last = e;
     while (last.then) last = last.then;
-    if (last.to === ABORT) return; // nothing runs after abort
+    if (last.to === ABORT || last.max === -1) return; // nothing runs after abort/unlimited
     last.then = { to: doc.stages[0]?.id ?? '', max: 3 };
     onchange();
   }
@@ -301,19 +307,37 @@
         <div class="link" class:fallback={depth > 0}>
           {#if depth > 0}<div class="small muted" style="margin-bottom:2px">then (once the link above is exhausted)</div>{/if}
           <label for="ed-to-{depth}">To</label>
-          <select id="ed-to-{depth}" value={link.to} onchange={(ev) => retarget(link, ev.currentTarget.value)}>
+          <select id="ed-to-{depth}" value={link.to} onchange={(ev) => retarget(s.type, link, ev.currentTarget.value)}>
             {#each stageIds as id (id)}<option value={id}>{id}</option>{/each}
             <option value={ABORT}>abort — stop the run deliberately</option>
           </select>
           {#if link.to !== ABORT}
-            <label for="ed-max-{depth}">Max <span class="muted">— times this link may fire{depth === 0 && !link.then ? ' before the run is abandoned' : ''}</span></label>
+            {@const canUnlimit = unlimitedOK(s.type, link.to)}
+            {#if canUnlimit}
+              <label class="row small" style="gap:6px; margin-top:6px">
+                <input
+                  type="checkbox"
+                  style="width:auto"
+                  checked={link.max === -1}
+                  onchange={(ev) => {
+                    link.max = ev.currentTarget.checked ? -1 : 3;
+                    if (link.max === -1) link.then = undefined;
+                    onchange();
+                  }}
+                />
+                ∞ no limit — every firing costs a human decision{targetsGate(link.to) ? '; rejecting the gate ends the run' : ''}
+              </label>
+            {/if}
+            <label for="ed-max-{depth}">Max <span class="muted">— times this link may fire{depth === 0 && !link.then ? ' before the run is abandoned' : ''}{canUnlimit ? ' · -1 = ∞ (unlimited)' : ''}</span></label>
             <input
               id="ed-max-{depth}"
               type="number"
-              min="1"
+              min={canUnlimit ? -1 : 1}
               value={link.max ?? 1}
               oninput={(ev) => {
-                link.max = Number(ev.currentTarget.value) || 1;
+                const v = Math.floor(Number(ev.currentTarget.value));
+                link.max = canUnlimit && v === -1 ? -1 : Math.max(1, v || 1);
+                if (link.max === -1) link.then = undefined;
                 onchange();
               }}
             />
@@ -332,7 +356,7 @@
         </div>
       {/each}
       <div class="row" style="margin-top:10px; gap:8px">
-        {#if links[links.length - 1].to !== ABORT}
+        {#if links[links.length - 1].to !== ABORT && links[links.length - 1].max !== -1}
           <button onclick={() => appendLink(e)}>+ then (fallback)</button>
         {/if}
         <button onclick={() => dropLink(s, kind, e)}>− remove last link</button>

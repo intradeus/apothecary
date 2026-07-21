@@ -9,6 +9,9 @@ export const DONE = 'done';
 // ABORT is the reserved edge target that deliberately stops the run
 // (projected as abandoned) — the explicit twin of DONE.
 export const ABORT = 'abort';
+// START is the entry marker's layout/link key. The entry itself is the
+// first stage in the document (DESIGN3 §2.1) — START is never serialized.
+export const START = 'start';
 export const EDGE_KINDS = ['on_fail', 'on_reject', 'on_timeout'] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
@@ -86,6 +89,17 @@ export function setEdge(s: DocStage, kind: EdgeKind, e: DocEdge | undefined) {
   if (kind === 'on_fail') s.on_fail = e;
   else if (kind === 'on_reject') s.on_reject = e;
   else s.on_timeout = e;
+}
+
+// setEntry makes the stage with the given id the flow's entry by moving it
+// to the front of the document (the entry IS stages[0]); docToYaml already
+// serializes entry-first. Returns true when the entry actually changed.
+export function setEntry(doc: FlowDoc, id: string): boolean {
+  const i = doc.stages.findIndex((s) => s.id === id);
+  if (i <= 0) return false;
+  const [s] = doc.stages.splice(i, 1);
+  doc.stages.unshift(s);
+  return true;
 }
 
 // pruneEdgeTarget drops chain links that target a deleted stage id,

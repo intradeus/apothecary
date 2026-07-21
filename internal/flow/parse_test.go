@@ -110,22 +110,24 @@ func TestLiveV1FlowParses(t *testing.T) {
 		t.Fatal(err)
 	}
 	test := f.Stage("test")
-	if test.Edge(EdgeFail).Then == nil || test.Edge(EdgeFail).Then.To != "debug" {
-		t.Errorf("test.on_fail.then = %+v, want debug escalation", test.Edge(EdgeFail).Then)
+	if test.Edge(EdgeFail).Then == nil || test.Edge(EdgeFail).Then.To != "debug_test" {
+		t.Errorf("test.on_fail.then = %+v, want debug_test escalation", test.Edge(EdgeFail).Then)
 	}
 	if test.Edge(EdgeTimeout) == nil || test.Edge(EdgeTimeout).To != "test" {
 		t.Errorf("test.on_timeout = %+v, want self-retry", test.Edge(EdgeTimeout))
 	}
-	dbg := f.Stage("debug")
+	dbg := f.Stage("debug_test")
 	if dbg.Ping != PingManualDebug || dbg.Payload != PayloadWorkspace || dbg.Edge(EdgeReject).To != TerminalAbort {
-		t.Errorf("debug gate = %+v", dbg)
+		t.Errorf("debug_test gate = %+v", dbg)
 	}
 	if f.Stage("final_gate").Edge(EdgeReject).To != TerminalAbort {
 		t.Errorf("final_gate.on_reject = %+v, want abort", f.Stage("final_gate").Edge(EdgeReject))
 	}
 
 	// The flow's failure philosophy: every agent/command stage declares
-	// on_fail, and every on_fail chain ends at a manual_debug rescue gate.
+	// on_fail, every on_fail chain ends at a manual_debug rescue gate, and
+	// that gate resumes the stage that escalated to it — the success chain
+	// replays from the failure point, never skipping stages.
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		if s.Type != StageAgent && s.Type != StageCommand {
@@ -142,6 +144,11 @@ func TestLiveV1FlowParses(t *testing.T) {
 		tgt := f.Stage(e.To)
 		if tgt == nil || tgt.Ping != PingManualDebug {
 			t.Errorf("stage %s: on_fail chain ends at %q, want a manual_debug gate", s.ID, e.To)
+			continue
+		}
+		if tgt.OnSuccess != s.ID {
+			t.Errorf("stage %s: rescue gate %s resumes %q, must resume the escalating stage %q",
+				s.ID, tgt.ID, tgt.OnSuccess, s.ID)
 		}
 	}
 }
@@ -235,6 +242,8 @@ func TestValidationErrors(t *testing.T) {
 			"reserved", 4},
 		{"reserved abort id", header + "stages:\n  - { id: abort, type: command, run: x }\n",
 			"reserved", 4},
+		{"reserved start id", header + "stages:\n  - { id: start, type: command, run: x }\n",
+			"reserved", 4},
 		{"edge to done", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: done, max: 1 } }\n",
 			"only on_success may complete the run", 4},
 		{"abort edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, max: 2 } }\n",
@@ -255,6 +264,12 @@ func TestValidationErrors(t *testing.T) {
 			`feed "output" is not valid`, 4},
 		{"unknown edge field", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
 			"bogus", 0},
+		{"unlimited without a gate on the link", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -1 } }\n",
+			"requires a human_gate", 4},
+		{"max below -1", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -2 } }\n",
+			"max must be >= 1", 4},
+		{"then after unlimited", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: g, max: -1, then: { to: s, max: 1 } } }\n  - { id: g, type: human_gate, ping: plan_approval, on_success: done }\n",
+			"unreachable", 4},
 		{"on_success bad target", header + "stages:\n  - { id: a, type: command, run: x, on_success: nope }\n",
 			`on_success target "nope" does not exist`, 4},
 		{"success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: b }\n  - { id: b, type: command, run: x, on_success: a }\n",
@@ -321,6 +336,36 @@ func TestAbortAndThenChains(t *testing.T) {
 	ge := f.Stage("gate").Edge(EdgeReject)
 	if ge == nil || ge.To != TerminalAbort || ge.Max != 0 || ge.Then != nil {
 		t.Fatalf("gate on_reject = %+v", ge)
+	}
+
+	// Unlimited links (max -1) parse on human_gate targets.
+	unl := header + `stages:
+  - { id: work,   type: command, run: w, on_success: done,
+      on_fail: { to: rescue, max: -1 } }
+  - { id: rescue, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: work, on_reject: abort }
+`
+	uf, err := Parse("t.yaml", []byte(unl))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := uf.Stage("work").Edge(EdgeFail); e.Max != UnlimitedMax || e.Then != nil {
+		t.Fatalf("unlimited link = %+v", e)
+	}
+
+	// Unlimited is also legal when the SOURCE is a human_gate (the link
+	// only fires when a human rejects it), regardless of the target type.
+	gsrc := header + `stages:
+  - { id: work, type: agent, agent: a, on_success: gate }
+  - { id: gate, type: human_gate, ping: plan_approval, on_success: done,
+      on_reject: { to: work, max: -1, feed: feedback } }
+`
+	gf, err := Parse("t.yaml", []byte(gsrc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := gf.Stage("gate").Edge(EdgeReject); e.Max != UnlimitedMax {
+		t.Fatalf("gate-source unlimited link = %+v", e)
 	}
 
 	// The scalar sugar round-trips through ParseDoc for the editor.

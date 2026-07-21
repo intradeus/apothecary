@@ -334,18 +334,75 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 	}
 }
 
+// TestBuiltinDefaultsAPI covers the compiled-in defaults layering over
+// the flows API: served when unshadowed, shadowed by a save (copy-on-
+// write), reset by deleting the override, undeletable themselves.
+func TestBuiltinDefaultsAPI(t *testing.T) {
+	x := newConfEnv(t)
+
+	// Unshadowed: the built-in serves with the flag.
+	resp, data := x.do(t, "GET", "/api/flows/default", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"builtin":true`) {
+		t.Fatalf("get default = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", "/api/flows", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"name":"default"`) {
+		t.Fatalf("list = %d: %s", resp.StatusCode, data)
+	}
+
+	// Saving under the built-in name creates the editable override.
+	override := "name: default\ndefaults: { model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	resp, data = x.do(t, "PUT", "/api/flows/default", map[string]string{"yaml": override}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", "/api/flows/default", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"shadows_builtin":true`) ||
+		strings.Contains(string(data), `"builtin":true`) {
+		t.Fatalf("shadowed get = %d: %s", resp.StatusCode, data)
+	}
+
+	// Deleting the override resets to the built-in; deleting again is a
+	// clear refusal, not a silent 404.
+	resp, _ = x.do(t, "DELETE", "/api/flows/default", nil, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("override delete = %d", resp.StatusCode)
+	}
+	resp, data = x.do(t, "GET", "/api/flows/default", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"builtin":true`) {
+		t.Fatalf("post-reset get = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "DELETE", "/api/flows/default", nil, nil)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), "built-in") {
+		t.Fatalf("builtin delete = %d: %s", resp.StatusCode, data)
+	}
+}
+
 // TestAgentLibraryRoutes covers the DESIGN3 §1 API surface: CRUD +
 // versions + delete guard + cross-project copy + repo import.
 func TestAgentLibraryRoutes(t *testing.T) {
 	x := newConfEnv(t)
 	projectID := x.wizard(t)
 
-	// List: the wizard seeded planner/builder/reviewer.
+	// List: the wizard seeded planner/builder/reviewer; the compiled-in
+	// defaults fill the rest of the library (committer, redactor) flagged
+	// builtin — authored names shadow their built-in counterparts.
 	resp, data := x.do(t, "GET", "/api/projects/"+projectID+"/agents", nil, nil)
-	var agents []confstore.Agent
+	var agents []struct {
+		confstore.Agent
+		Builtin bool `json:"builtin"`
+	}
 	_ = json.Unmarshal(data, &agents)
-	if resp.StatusCode != 200 || len(agents) != 3 {
-		t.Fatalf("list = %d: %s", resp.StatusCode, data)
+	authored, builtins := 0, 0
+	for _, a := range agents {
+		if a.Builtin {
+			builtins++
+		} else {
+			authored++
+		}
+	}
+	if resp.StatusCode != 200 || authored != 3 || builtins != 2 {
+		t.Fatalf("list = %d (authored %d, builtin %d): %s", resp.StatusCode, authored, builtins, data)
 	}
 
 	// Update bumps the hash and accumulates a version.
@@ -371,11 +428,18 @@ func TestAgentLibraryRoutes(t *testing.T) {
 		t.Fatalf("agent-version = %d: %s", resp.StatusCode, data)
 	}
 
-	// Delete guard: planner is in the default flow -> 409; a spare -> 204.
+	// Delete: planner is referenced by the default flow but shadows a
+	// built-in, so deleting the override is allowed (reset to default —
+	// the flow keeps resolving through the fallback). The referenced-and-
+	// unshadowed refusal is covered in confstore's delete-guard test.
 	resp, data = x.do(t, "DELETE", "/api/projects/"+projectID+"/agents/planner", nil, nil)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("guarded delete = %d: %s", resp.StatusCode, data)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("builtin-shadow delete = %d: %s", resp.StatusCode, data)
 	}
+	// Restore the authored planner (the copy section below copies it).
+	x.do(t, "PUT", "/api/projects/"+projectID+"/agents/planner", map[string]any{
+		"description": "planner agent", "read_only": true, "prompt": "You are the planner, v2.",
+	}, nil)
 	x.do(t, "PUT", "/api/projects/"+projectID+"/agents/spare", map[string]any{"prompt": "spare"}, nil)
 	resp, _ = x.do(t, "DELETE", "/api/projects/"+projectID+"/agents/spare", nil, nil)
 	if resp.StatusCode != http.StatusNoContent {

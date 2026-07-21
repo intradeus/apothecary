@@ -25,6 +25,7 @@ import (
 	"time"
 
 	matrixadapter "apothecary/internal/adapters/matrix"
+	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
@@ -216,7 +217,9 @@ func cmdServe(args []string) error {
 		EngineURL: engineURL(boot.Listen),
 		RunsDir:   boot.RunsDir,
 	}
-	e := engine.New(ecfg, store, resolver, conf.FlowSource(), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
+	// Flows resolve DB-first with the compiled-in defaults underneath
+	// (internal/builtin): an empty database still runs the "default" flow.
+	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
 	if egress != nil {
 		e.SetEgress(egress)
 	}

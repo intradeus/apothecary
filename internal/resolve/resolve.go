@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/kinds"
@@ -186,6 +187,25 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		specs = append(specs, a.Spec())
 		agentNames = append(agentNames, a.Name)
 		agentHashes[a.Name] = a.Hash
+	}
+	// Built-in fallback (internal/builtin): names the project hasn't
+	// authored resolve to the compiled-in defaults, so a fresh project runs
+	// the default flow with zero authored agents. Authoring an agent with a
+	// built-in's name shadows it (the loop above already added it).
+	authored := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		authored[a.Name] = true
+	}
+	for _, sp := range builtin.Agents() {
+		if authored[sp.Name] {
+			continue
+		}
+		specs = append(specs, sp)
+		agentNames = append(agentNames, sp.Name)
+		agentHashes[sp.Name] = confstore.AgentHash(confstore.Agent{
+			Name: sp.Name, Description: sp.Description,
+			ReadOnly: sp.ReadOnly, AllowBash: sp.AllowBash, Prompt: sp.Prompt,
+		})
 	}
 
 	gitUser, gitPass := account.GitCredential()

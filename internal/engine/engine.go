@@ -139,6 +139,13 @@ type Ping struct {
 	done     chan struct{}
 }
 
+// PingAnswerOther is the hardcoded escape hatch on option pings: always
+// answerable, never declared by the agent (RaisePing strips it), and the
+// note carries the human's actual free-text answer. Closed questions stay
+// deterministic — the agent branches on its options plus the one literal
+// "other" — without ever trapping the human in a wrong option set.
+const PingAnswerOther = "other"
+
 type PingAnswer struct {
 	Answer   string // approve|reject for gates, free text for agent pings
 	Feedback string
@@ -771,6 +778,13 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string, options []st
 		if o == "" || len(o) > 200 {
 			return nil, fmt.Errorf("ask_human: options must be non-empty strings of at most 200 chars")
 		}
+		// "other" is system-provided on every option ping; a declared one
+		// would duplicate the UI affordance. (Stripping every option this
+		// way leaves a free-text ping — which is what a question whose only
+		// option is "other" actually is.)
+		if strings.EqualFold(o, PingAnswerOther) {
+			continue
+		}
 		if !seen[o] {
 			seen[o] = true
 			opts = append(opts, o)
@@ -854,8 +868,15 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 	}
 	if len(p.Options) > 0 && !slices.Contains(p.Options, ans.Answer) {
 		// The agent asked a closed question (PLAN4 M16): determinism is the
-		// point — the note field carries anything beyond the choice.
-		return fmt.Errorf("ping %s requires one of: %s", pingID, strings.Join(p.Options, " | "))
+		// point — the note field carries anything beyond the choice. "other"
+		// is the hardcoded escape hatch; its note IS the human's answer.
+		if ans.Answer != PingAnswerOther {
+			return fmt.Errorf("ping %s requires one of: %s | %s (with your answer in the note)",
+				pingID, strings.Join(p.Options, " | "), PingAnswerOther)
+		}
+		if strings.TrimSpace(ans.Feedback) == "" {
+			return fmt.Errorf("ping %s: answer %q needs the note to carry your actual answer", pingID, PingAnswerOther)
+		}
 	}
 	// The answers channel is drained only in agent stages and gates. Don't
 	// report success for an answer nobody will ever process, and don't wedge

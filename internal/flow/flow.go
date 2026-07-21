@@ -78,11 +78,24 @@ const (
 // TerminalDone is the reserved on_success target that completes the run.
 // TerminalAbort is the reserved EDGE target that deliberately stops the run
 // (projected as abandoned, mirroring the frontend's Abort verb) — the
-// explicit form of "no edge / edge exhausted". Stage ids may shadow neither.
+// explicit form of "no edge / edge exhausted". ReservedStart is the graph
+// editor's entry-marker key (the entry IS the first stage in the document;
+// "start" is never a routing target). Stage ids may shadow none of them.
 const (
 	TerminalDone  = "done"
 	TerminalAbort = "abort"
+	ReservedStart = "start"
 )
+
+// UnlimitedMax marks a link that never exhausts (max: -1). It is only
+// valid when a human_gate sits on the link — as its TARGET (each firing
+// parks the run on a human decision; reject aborts) or as its SOURCE (the
+// link only fires when a human rejects the gate). Either way the loop is
+// bounded by human attention. Links between agents/commands must carry a
+// finite max — flow budgets cannot bound cost-free retries (a failing
+// command consumes no turns and no dollars; a broken harness can fail in
+// milliseconds).
+const UnlimitedMax = -1
 
 // Edge is a recoverable redirect (on_fail / on_reject / on_timeout). Each
 // link carries its own cumulative max; when a link is exhausted the NEXT
@@ -92,7 +105,7 @@ const (
 // stage to bound or feed).
 type Edge struct {
 	To   string
-	Max  int
+	Max  int   // >= 1, or UnlimitedMax on human_gate targets
 	Feed Feed  // empty = nothing fed
 	Then *Edge // fallback link once this one is exhausted; nil = abandon
 }

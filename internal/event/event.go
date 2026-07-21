@@ -157,7 +157,9 @@ type PingRaised struct {
 	StageID string `json:"stage_id,omitempty"`
 	// Options are the agent-declared answer choices (PLAN4 M16): when
 	// non-empty, the answer MUST be one of them — the agent asked a closed
-	// question so it can branch deterministically.
+	// question so it can branch deterministically — or the reserved "other"
+	// escape hatch (system-provided, never declared; the feedback then
+	// carries the human's actual answer).
 	Options []string `json:"options,omitempty"`
 }
 

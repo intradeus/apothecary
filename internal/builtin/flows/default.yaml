@@ -1,0 +1,79 @@
+name: default
+description: "built-in default: plan-gated build with cross-vendor adversarial review and manual-debug rescue"
+defaults: { timeout: 30m, model: anthropic/claude-sonnet-4-6, max_turns: 50 }
+budget: { max_cost_usd: 10.0, max_total_turns: 300 }
+# Failure philosophy: every agent/command stage first retries itself with
+# its error fed back, then escalates to its OWN manual_debug gate — a human
+# opens the workspace (terminal/IDE), fixes what agents can't, and approve
+# re-runs exactly the stage that escalated (the success chain replays from
+# there, so no stage is ever skipped). Rescue gates are unlimited (max -1):
+# the human decides when to stop — rejecting one aborts the run; plan_gate
+# rejections are unlimited too (each rejection IS a human decision). Timeouts fall
+# back to on_fail unless a stage declares on_timeout.
+stages:
+  - { id: plan,       type: agent, agent: planner, input: [ticket],
+      output: artifacts/plan.md, max_turns: 25,
+      on_success: plan_gate,
+      on_fail: { to: plan, max: 2, feed: output, then: { to: debug_plan, max: -1 } } }
+  - { id: debug_plan, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: plan,
+      on_reject: abort }
+  - { id: plan_gate,  type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
+      on_success: build,
+      on_reject: { to: plan, max: -1, feed: feedback } }
+  - { id: build,      type: agent, agent: builder, input: [ticket, artifacts/plan.md], max_turns: 80,
+      on_success: commit_msg,
+      on_fail: { to: build, max: 2, feed: output, then: { to: debug_build, max: -1 } } }
+  - { id: debug_build, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: build,
+      on_reject: abort }
+  - { id: commit_msg, type: agent, agent: committer, input: [ticket, artifacts/plan.md],
+      output: artifacts/commit.md, max_turns: 10,
+      on_success: commit,
+      on_fail: { to: commit_msg, max: 1, feed: output, then: { to: debug_commit_msg, max: -1 } } }
+  - { id: debug_commit_msg, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: commit_msg,
+      on_reject: abort }
+  # A failing commit (git identity, hooks) is not something a rerun fixes —
+  # hand it straight to a human, then re-run the commit itself.
+  - { id: commit,     type: command,
+      run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi",
+      on_success: test,
+      on_fail: { to: debug_commit, max: -1 } }
+  - { id: debug_commit, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: commit,
+      on_reject: abort }
+  - { id: test,       type: command, run_ref: verify,
+      on_success: review,
+      on_fail: { to: build, max: 5, feed: output, then: { to: debug_test, max: -1 } },
+      on_timeout: { to: test, max: 1, then: { to: build, max: 2, feed: output } } }
+  - { id: debug_test, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: test,
+      on_reject: abort }
+  - { id: review,     type: agent, agent: reviewer, model: openai/gpt-5,
+      input: [ticket, artifacts/plan.md, $CHANGED], verdict: true, max_turns: 30,
+      on_success: redact,
+      on_reject: { to: build, max: 3, feed: comments },
+      on_fail: { to: review, max: 1, feed: output, then: { to: debug_review, max: -1 } } }
+  - { id: debug_review, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: review,
+      on_reject: abort }
+  - { id: redact,     type: agent, agent: redactor, input: [ticket, $CHANGED],
+      output: artifacts/mr.md, max_turns: 15,
+      on_success: push,
+      on_fail: { to: redact, max: 1, feed: output, then: { to: debug_redact, max: -1 } } }
+  - { id: debug_redact, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: redact,
+      on_reject: abort }
+  - { id: push,       type: command, run: "git push -u origin HEAD",
+      on_success: mr,
+      on_fail: { to: push, max: 1, then: { to: debug_push, max: -1 } } }
+  - { id: debug_push, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: push,
+      on_reject: abort }
+  - { id: mr,         type: forge_mr, body: artifacts/mr.md,
+      on_success: final_gate }
+  - { id: final_gate, type: human_gate, ping: final_review, payload: mr_url,
+      auto_complete: mr_merged,
+      on_success: done,
+      on_reject: abort }

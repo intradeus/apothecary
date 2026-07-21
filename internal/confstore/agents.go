@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/builtin"
 	"apothecary/internal/flow"
 )
 
@@ -94,19 +95,25 @@ func (s *Service) ListAgents(ctx context.Context, projectID string) ([]Agent, er
 
 // DeleteAgent refuses when the project's default flow references the agent
 // (ErrReferenced); other flows are preflight's concern — flows are global,
-// projects are not.
+// projects are not. When a built-in agent of the same name exists, deletion
+// is always allowed: the reference keeps resolving through the fallback
+// (deleting an override IS "reset to default").
 func (s *Service) DeleteAgent(ctx context.Context, projectID, name string) error {
 	p, err := s.db.GetProject(ctx, projectID)
 	if err != nil {
 		return err
 	}
+	var f *flow.Flow
 	if row, err := s.db.GetFlow(ctx, p.DefaultFlow); err == nil {
-		if f, err := flow.Parse(row.Name, []byte(row.YAML)); err == nil {
-			for i := range f.Stages {
-				if f.Stages[i].Type == flow.StageAgent && f.Stages[i].Agent == name {
-					return fmt.Errorf("agent %s is used by stage %q of default flow %s: %w",
-						name, f.Stages[i].ID, p.DefaultFlow, ErrReferenced)
-				}
+		f, _ = flow.Parse(row.Name, []byte(row.YAML))
+	} else {
+		f = builtin.Flow(p.DefaultFlow)
+	}
+	if f != nil && builtin.Agent(name) == nil {
+		for i := range f.Stages {
+			if f.Stages[i].Type == flow.StageAgent && f.Stages[i].Agent == name {
+				return fmt.Errorf("agent %s is used by stage %q of default flow %s: %w",
+					name, f.Stages[i].ID, p.DefaultFlow, ErrReferenced)
 			}
 		}
 	}

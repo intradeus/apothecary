@@ -2,7 +2,7 @@
   import { api, ago, type Agent, type FlowRow, type FlowVersion, type Integration, type ModelInfo, type Project } from '$lib/api';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
-  import { ABORT, autoLayout, docToYaml, DONE, edgeOf, setEdge, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
+  import { ABORT, autoLayout, docToYaml, DONE, START, edgeOf, setEdge, setEntry, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
@@ -15,6 +15,15 @@
   let tab = $state<'graph' | 'yaml'>('graph');
   let graphDirty = $state(false);
   let selection = $state<Selection>(null);
+  // The inspector floats over the full-size canvas: it opens on node/edge
+  // click (or the Flow settings button) instead of permanently claiming
+  // half the graph's width.
+  let panelOpen = $state(false);
+
+  function select(s: Selection) {
+    selection = s;
+    if (s) panelOpen = true;
+  }
   let versions = $state<FlowVersion[]>([]);
   let error = $state('');
   let busy = $state(false);
@@ -132,6 +141,12 @@
 
   function onlink(source: string, handle: string, target: string) {
     if (!doc) return;
+    if (source === START) {
+      // Dragging the entry marker onto a stage makes it the entry (moves
+      // it to document front); terminals can't be an entry.
+      if (target !== DONE && target !== ABORT && setEntry(doc, target)) markChanged();
+      return;
+    }
     const s = doc.stages.find((x) => x.id === source);
     if (!s) return;
     if (handle === 'success') {
@@ -216,7 +231,10 @@
 
   async function remove() {
     if (!flow) return;
-    if (!confirm(`Delete flow "${flow.name}"? Versions remain retrievable by hash.`)) return;
+    const msg = flow.shadows_builtin
+      ? `Delete your copy of "${flow.name}" and reset to the built-in default? Versions remain retrievable by hash.`
+      : `Delete flow "${flow.name}"? Versions remain retrievable by hash.`;
+    if (!confirm(msg)) return;
     try {
       await api.deleteFlow(flow.name);
       await goto('/flows');
@@ -236,9 +254,21 @@
       </div>
       <button onclick={validate}>Validate</button>
       <button class="primary" onclick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : 'Save'}</button>
-      <button class="danger" onclick={remove}>Delete</button>
+      {#if !flow.builtin}
+        <button class="danger" onclick={remove}>{flow.shadows_builtin ? 'Reset to built-in' : 'Delete'}</button>
+      {/if}
     </div>
   </div>
+
+  {#if flow.builtin}
+    <div class="card" style="margin-bottom:10px; border-color:var(--blue)">
+      <strong>Built-in flow</strong>
+      <span class="muted small">
+        — ships with the binary and is always available, even on an empty database. Saving creates
+        your editable copy under the same name; deleting that copy later resets to this default.
+      </span>
+    </div>
+  {/if}
 
   {#if error}<div class="error">{error}</div>{/if}
 
@@ -248,25 +278,55 @@
       <select bind:value={contextId} style="width:auto">
         {#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{:else}<option value="">no projects</option>{/each}
       </select>
-      <span class="muted small">
+      <span class="muted small" style="flex:1">
         fills the agent / model / run_ref dropdowns — free text always works
       </span>
+      <button
+        onclick={() => {
+          selection = null;
+          panelOpen = true;
+        }}>Flow settings & stages</button
+      >
     </div>
-    <div class="row" style="align-items:stretch; gap:14px">
-      <div style="flex:1; min-width:0">
-        <FlowGraph {doc} {layout} {rev} onselect={(s) => (selection = s)} {onmove} {onlink} />
-      </div>
-      <FlowInspector
+    <div class="graph-shell">
+      <FlowGraph
         {doc}
-        {selection}
-        {agents}
-        {modelsByKind}
-        {harnessKinds}
-        {defaultHarnessKind}
-        {commands}
-        onchange={markChanged}
-        onselect={(s) => (selection = s)}
+        {layout}
+        {rev}
+        onselect={(s) => {
+          selection = s;
+          panelOpen = s !== null; // canvas click closes, node/edge click opens
+        }}
+        {onmove}
+        {onlink}
       />
+      {#if panelOpen}
+        <div class="inspector-float">
+          <div class="float-head">
+            <span class="muted small">
+              {selection ? (selection.kind === 'stage' ? `stage: ${selection.id}` : `${selection.edge} from ${selection.stage}`) : 'flow'}
+            </span>
+            <button
+              class="small"
+              onclick={() => {
+                panelOpen = false;
+                selection = null;
+              }}>✕ close</button
+            >
+          </div>
+          <FlowInspector
+            {doc}
+            {selection}
+            {agents}
+            {modelsByKind}
+            {harnessKinds}
+            {defaultHarnessKind}
+            {commands}
+            onchange={markChanged}
+            onselect={select}
+          />
+        </div>
+      {/if}
     </div>
   {:else}
     <textarea class="mono" style="min-height:380px; font-size:12.5px; line-height:1.6" bind:value={yaml}
@@ -307,3 +367,44 @@
 {:else}
   <div class="empty">Loading…</div>
 {/if}
+
+<style>
+  .graph-shell {
+    position: relative;
+    /* Full-viewport canvas: everything above (header, tabs, context row)
+       is ~210px; versions live below the fold. */
+    height: calc(100vh - 210px);
+    min-height: 440px;
+    /* Full-bleed out of the page's centered .container (1080px cap):
+       span the viewport with a small gutter — the 48px total also absorbs
+       the vertical scrollbar so no horizontal scroll appears. */
+    width: calc(100vw - 48px);
+    margin-left: calc(50% - 50vw + 24px);
+  }
+  .inspector-float {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 340px;
+    max-height: calc(100% - 20px);
+    overflow-y: auto;
+    z-index: 8;
+    border-radius: 8px;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+    background: var(--bg, #14161f);
+  }
+  .float-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--border, #333);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+  }
+  .inspector-float :global(.inspector) {
+    border-radius: 0 0 8px 8px;
+    margin: 0;
+  }
+</style>

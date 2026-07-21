@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"apothecary/internal/builtin"
 	"apothecary/internal/secrets"
 )
 
@@ -128,12 +129,15 @@ func TestProjectValidation(t *testing.T) {
 		DefaultFlow: "v1",
 	}
 
-	// Flows are user-defined: an empty default_flow is refused (no built-in
-	// fallback exists).
-	bad0 := base
-	bad0.DefaultFlow = ""
-	if _, err := svc.CreateProject(ctx, bad0); err == nil || !strings.Contains(err.Error(), "default_flow is required") {
-		t.Errorf("empty default_flow err = %v", err)
+	// An empty default_flow falls back to the compiled-in default
+	// (internal/builtin): fresh installs run without authoring a flow.
+	fb := base
+	fb.Name = "p-default-fallback"
+	fb.DefaultFlow = ""
+	if created, err := svc.CreateProject(ctx, fb); err != nil {
+		t.Errorf("empty default_flow refused: %v", err)
+	} else if created.DefaultFlow != builtin.DefaultFlowName {
+		t.Errorf("empty default_flow = %q, want %q", created.DefaultFlow, builtin.DefaultFlowName)
 	}
 
 	// Wrong-port reference is refused naming the field.

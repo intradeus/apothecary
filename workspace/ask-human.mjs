@@ -82,8 +82,13 @@ async function askHuman(args) {
       const body = await res.json();
       // Free-text answers arrive as answer:"text" + the text in feedback;
       // option answers keep the chosen option in answer with an optional
-      // note in feedback (PLAN4 M16).
+      // note in feedback (PLAN4 M16). "other" is the hardcoded escape
+      // hatch: the human rejected every offered option and the note IS
+      // their answer — render it unambiguously so the agent can't misread
+      // it as a chosen option.
       if (body.answer === "text") return body.feedback ?? "";
+      if (body.answer === "other")
+        return `other — none of the offered options fit; the human answered: ${body.feedback ?? ""}`;
       return body.feedback ? `${body.answer}\n(note: ${body.feedback})` : body.answer;
     }
     if (res.status === 204) {
@@ -107,9 +112,12 @@ const TOOL = {
     "(type=permission). The answer is returned as text. For closed " +
     "questions, pass options — the human picks exactly one (buttons in " +
     "their UI) and you can branch on the returned option deterministically. " +
-    "To have the human review a document you wrote, pass artifact with a " +
-    "repo-relative path (e.g. artifacts/comparison.md): they see it " +
-    "rendered with inline commenting.",
+    "The human ALWAYS also has an automatic 'other' escape hatch: if none " +
+    "of your options fit, the result starts with 'other —' followed by " +
+    "their free-text answer — handle that case rather than assuming one of " +
+    "your options. To have the human review a document you wrote, pass " +
+    "artifact with a repo-relative path (e.g. artifacts/comparison.md): " +
+    "they see it rendered with inline commenting.",
   inputSchema: {
     type: "object",
     properties: {
@@ -119,7 +127,9 @@ const TOOL = {
       options: {
         type: "array",
         items: { type: "string" },
-        description: "Optional closed answer set (max 8); the answer will be exactly one of these",
+        description:
+          "Optional closed answer set (max 8); the answer will be one of these, or 'other' " +
+          "with the human's own text (added automatically — never declare 'other' yourself)",
       },
       artifact: {
         type: "string",

@@ -67,7 +67,9 @@ stages:
   <a class="card row spread cardlink" href={`/flows/${encodeURIComponent(f.name)}`}>
     <div>
       <strong class="mono">{f.name}</strong>
-      <div class="small muted">hash {f.hash.slice(0, 12)} · updated {ago(f.updated_at)}</div>
+      {#if f.builtin}<span class="chip" title="Ships with the binary — saving in the editor creates your editable copy">built-in</span>{/if}
+      {#if f.shadows_builtin}<span class="chip" title="Your copy overrides the built-in of the same name; deleting it resets to the default">overrides built-in</span>{/if}
+      <div class="small muted">hash {f.hash.slice(0, 12)}{f.builtin ? ' · from the binary' : ` · updated ${ago(f.updated_at)}`}</div>
     </div>
     <span class="muted">→</span>
   </a>

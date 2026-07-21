@@ -8,7 +8,8 @@ import (
 )
 
 // seedAgentEnv builds a service over Mem with two projects and a default
-// flow referencing agents planner+builder on project A.
+// flow referencing agents planner+scribe on project A (scribe is NOT a
+// built-in name, so the delete guard has something to guard).
 func seedAgentEnv(t *testing.T) (*Service, Project, Project) {
 	t.Helper()
 	svc, _ := newSvc(t)
@@ -16,7 +17,7 @@ func seedAgentEnv(t *testing.T) (*Service, Project, Project) {
 defaults: { model: fake/fast-1 }
 stages:
   - { id: plan,  type: agent, agent: planner, output: artifacts/plan.md }
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, agent: scribe }
 `
 	if _, err := svc.SaveFlow(context.Background(), "f", flowYAML, nil); err != nil {
 		t.Fatal(err)
@@ -96,12 +97,22 @@ func TestAgentDeleteGuardedByDefaultFlow(t *testing.T) {
 	if _, err := svc.SaveAgent(ctx, Agent{ProjectID: pa.ID, Name: "planner", Prompt: "p"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := svc.SaveAgent(ctx, Agent{ProjectID: pa.ID, Name: "scribe", Prompt: "w"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.SaveAgent(ctx, Agent{ProjectID: pa.ID, Name: "spare", Prompt: "s"}); err != nil {
 		t.Fatal(err)
 	}
-	err := svc.DeleteAgent(ctx, pa.ID, "planner")
+	// scribe is referenced by the default flow and has NO built-in fallback:
+	// deletion would break the flow, so it is refused.
+	err := svc.DeleteAgent(ctx, pa.ID, "scribe")
 	if !errors.Is(err, ErrReferenced) || !strings.Contains(err.Error(), "default flow f") {
 		t.Errorf("guarded delete err = %v", err)
+	}
+	// planner is referenced too, but shadows a built-in: deleting the
+	// override falls back to the compiled-in default — always allowed.
+	if err := svc.DeleteAgent(ctx, pa.ID, "planner"); err != nil {
+		t.Errorf("builtin-shadow delete err = %v", err)
 	}
 	if err := svc.DeleteAgent(ctx, pa.ID, "spare"); err != nil {
 		t.Errorf("unreferenced delete err = %v", err)

@@ -88,6 +88,9 @@ export interface Agent {
   prompt: string;
   hash: string;
   updated_at: string;
+  // Served from the binary's defaults (not authored in this project);
+  // saving under the same name creates the project's own copy.
+  builtin?: boolean;
 }
 
 export interface AgentVersion {
@@ -107,6 +110,11 @@ export interface FlowRow {
   hash: string;
   layout?: FlowLayout | null;
   updated_at: string;
+  // Built-in layering: builtin = served from the binary (no DB row; saving
+  // creates your editable override); shadows_builtin = your row overrides a
+  // built-in name (deleting it resets to the compiled-in default).
+  builtin?: boolean;
+  shadows_builtin?: boolean;
 }
 
 export interface FlowVersion {

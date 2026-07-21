@@ -127,7 +127,8 @@
   </div>
   <p class="muted small" style="margin-top:2px">
     The prompts your flows run with — edit here, versioned on every save. Flows reference agents by
-    name; this project defines what each name means.
+    name; this project defines what each name means. Built-in agents ship with the binary and apply
+    until you customize them (your copy shadows the built-in; deleting the copy resets it).
   </p>
   {#if error}<div class="error">{error}</div>{/if}
   {#if notice}<div class="muted small">{notice}</div>{/if}
@@ -136,6 +137,7 @@
     <div class="row spread" style="padding:6px 0; border-top:1px solid var(--border, #333)">
       <div>
         <strong class="mono">{a.name}</strong>
+        {#if a.builtin}<span class="chip" title="Ships with the binary — editing creates this project's own copy">built-in</span>{/if}
         <span class="muted small">
           {a.description}
           {#if a.read_only}· read-only{/if}
@@ -144,9 +146,13 @@
         </span>
       </div>
       <div class="row">
-        <button onclick={() => showVersions(a.name)}>{versionsFor === a.name ? 'Hide versions' : 'Versions'}</button>
-        <button onclick={() => openEditor(a)}>Edit</button>
-        <button class="danger" onclick={() => remove(a.name)}>Delete</button>
+        {#if !a.builtin}
+          <button onclick={() => showVersions(a.name)}>{versionsFor === a.name ? 'Hide versions' : 'Versions'}</button>
+        {/if}
+        <button onclick={() => openEditor(a)}>{a.builtin ? 'Customize' : 'Edit'}</button>
+        {#if !a.builtin}
+          <button class="danger" onclick={() => remove(a.name)}>Delete</button>
+        {/if}
       </div>
     </div>
     {#if versionsFor === a.name}

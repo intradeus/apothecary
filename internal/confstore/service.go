@@ -10,6 +10,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"apothecary/internal/builtin"
 	"apothecary/internal/flow"
 	"apothecary/internal/secrets"
 )
@@ -324,12 +325,17 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	}
 	// workspace.template is OPTIONAL since M9: empty = the apothecary-managed
 	// template + built image (§8); set = the custom-template escape hatch.
-	// Flows are user-defined — there is no built-in default to fall back to.
+	// default_flow falls back to the compiled-in default (internal/builtin):
+	// a fresh install runs without authoring a flow first. A name resolves
+	// against the DB first, then the built-ins (same layering the engine's
+	// flow source uses).
 	if p.DefaultFlow == "" {
-		return invalidf("project: default_flow is required (create a flow first)")
+		p.DefaultFlow = builtin.DefaultFlowName
 	}
 	if _, err := s.db.GetFlow(ctx, p.DefaultFlow); errors.Is(err, ErrNotFound) {
-		return invalidf("project: default_flow %q: %v", p.DefaultFlow, err)
+		if builtin.Flow(p.DefaultFlow) == nil {
+			return invalidf("project: default_flow %q: %v", p.DefaultFlow, err)
+		}
 	} else if err != nil {
 		return fmt.Errorf("project: default_flow %q: %w", p.DefaultFlow, err)
 	}

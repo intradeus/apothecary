@@ -4,7 +4,8 @@
   import FlowStageNode from '$lib/FlowStageNode.svelte';
   import FlowDoneNode from '$lib/FlowDoneNode.svelte';
   import FlowAbortNode from '$lib/FlowAbortNode.svelte';
-  import { ABORT, DONE, EDGE_KINDS, chainLinks, effectiveSuccess, edgeOf, type FlowDoc } from '$lib/flowdoc';
+  import FlowStartNode from '$lib/FlowStartNode.svelte';
+  import { ABORT, DONE, START, EDGE_KINDS, chainLinks, effectiveSuccess, edgeOf, type FlowDoc } from '$lib/flowdoc';
 
   export type Selection = { kind: 'stage'; id: string } | { kind: 'edge'; stage: string; edge: string } | null;
 
@@ -24,7 +25,7 @@
     onlink: (source: string, handle: string, target: string) => void;
   } = $props();
 
-  const nodeTypes = { stage: FlowStageNode, done: FlowDoneNode, abort: FlowAbortNode };
+  const nodeTypes = { stage: FlowStageNode, done: FlowDoneNode, abort: FlowAbortNode, start: FlowStartNode };
 
   const edgeStyles: Record<string, string> = {
     on_fail: 'stroke:#e06c75; stroke-dasharray:6 3',
@@ -42,6 +43,15 @@
       position: layout[s.id] ?? { x: i * 240, y: 0 },
       data: { stage: s, entry: i === 0 }
     }));
+    // The entry marker: its edge points at stages[0]; dragging that edge
+    // onto another stage makes it the entry (moves it to document front).
+    const entryPos = doc.stages.length ? (layout[doc.stages[0].id] ?? { x: 0, y: 0 }) : { x: 0, y: 0 };
+    ns.push({
+      id: '__start',
+      type: 'start',
+      position: layout[START] ?? { x: entryPos.x - 170, y: entryPos.y },
+      data: {}
+    });
     ns.push({
       id: '__done',
       type: 'done',
@@ -59,6 +69,15 @@
       });
     }
     const es: Edge[] = [];
+    if (doc.stages.length) {
+      es.push({
+        id: 'entry|__start',
+        source: '__start',
+        target: doc.stages[0].id,
+        type: 'step',
+        style: 'stroke:#7aa2f7; stroke-width:2'
+      });
+    }
     doc.stages.forEach((s, i) => {
       const target = effectiveSuccess(doc, i);
       es.push({
@@ -66,6 +85,7 @@
         source: s.id,
         sourceHandle: 'success',
         target: target === DONE ? '__done' : target,
+        type: 'step',
         style: 'stroke:#4caf7d; stroke-width:2'
       });
       for (const kind of EDGE_KINDS) {
@@ -77,10 +97,11 @@
             source: s.id,
             sourceHandle: kind,
             target: link.to === ABORT ? '__abort' : link.to,
+            type: 'step',
             label:
               link.to === ABORT
                 ? `${kind}${depth > 0 ? ` then#${depth}` : ''}`
-                : `${kind}${depth > 0 ? ` then#${depth}` : ''} ×${link.max ?? '?'}${link.feed ? ` (${link.feed})` : ''}`,
+                : `${kind}${depth > 0 ? ` then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}${link.feed ? ` (${link.feed})` : ''}`,
             animated: true,
             style: edgeStyles[kind] + (depth > 0 ? '; opacity:0.65' : '')
           });
@@ -98,10 +119,15 @@
   function handleConnect(conn: Connection) {
     if (!conn.source || !conn.target) return;
     const target = conn.target === '__done' ? DONE : conn.target === '__abort' ? ABORT : conn.target;
+    if (conn.source === '__start') {
+      onlink(START, 'entry', target); // re-point the entry
+      return;
+    }
     onlink(conn.source, conn.sourceHandle ?? 'success', target);
   }
 
-  const nodeKey = (id: string) => (id === '__done' ? DONE : id === '__abort' ? ABORT : id);
+  const nodeKey = (id: string) =>
+    id === '__done' ? DONE : id === '__abort' ? ABORT : id === '__start' ? START : id;
 </script>
 
 <div class="graph-wrap">
@@ -109,15 +135,20 @@
     bind:nodes
     bind:edges
     {nodeTypes}
+    colorMode="dark"
     fitView
     deleteKey={null}
     onconnect={handleConnect}
     onnodedragstop={({ targetNode }) => {
       if (targetNode) onmove(nodeKey(targetNode.id), targetNode.position.x, targetNode.position.y);
     }}
-    onnodeclick={({ node }) => onselect(node.id === '__done' || node.id === '__abort' ? null : { kind: 'stage', id: node.id })}
+    onnodeclick={({ node }) => onselect(node.id.startsWith('__') ? null : { kind: 'stage', id: node.id })}
     onedgeclick={({ edge }) => {
       const [kind, stage] = edge.id.split('|');
+      if (kind === 'entry') {
+        onselect(doc.stages.length ? { kind: 'stage', id: doc.stages[0].id } : null);
+        return;
+      }
       onselect(kind === 'success' ? { kind: 'stage', id: stage } : { kind: 'edge', stage, edge: kind });
     }}
     onpaneclick={() => onselect(null)}
@@ -129,9 +160,24 @@
 
 <style>
   .graph-wrap {
-    height: 480px;
+    height: 100%;
+    min-height: 420px;
     border: 1px solid var(--border, #333);
     border-radius: 6px;
     overflow: hidden;
+  }
+  /* Edge labels: xyflow's defaults assume a light canvas; pin them to the
+     app's dark palette so on_fail/on_timeout/on_reject stay readable. */
+  .graph-wrap :global(.svelte-flow) {
+    --xy-edge-label-background-color: var(--bg2, #1f2430);
+    --xy-edge-label-color: var(--fg, #d5dbe8);
+  }
+  .graph-wrap :global(.svelte-flow__edge-label) {
+    background: var(--bg2, #1f2430);
+    color: var(--fg, #d5dbe8);
+    border: 1px solid var(--border, #333);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 10px;
   }
 </style>

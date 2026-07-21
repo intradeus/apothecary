@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/flow"
@@ -15,6 +17,43 @@ import (
 	"apothecary/internal/secrets"
 	"apothecary/internal/wsimage"
 )
+
+// flowResp / agentResp decorate store rows with the built-in layering
+// flags (internal/builtin): builtin = served from the binary, no DB row —
+// saving under the same name creates the editable override; shadows_builtin
+// = a DB row that overrides a built-in name — deleting it resets to the
+// compiled-in default.
+type flowResp struct {
+	confstore.FlowRow
+	Builtin        bool `json:"builtin,omitempty"`
+	ShadowsBuiltin bool `json:"shadows_builtin,omitempty"`
+}
+
+type agentResp struct {
+	confstore.Agent
+	Builtin bool `json:"builtin,omitempty"`
+}
+
+func builtinFlowRow(name string) (confstore.FlowRow, bool) {
+	y, ok := builtin.FlowYAML(name)
+	if !ok {
+		return confstore.FlowRow{}, false
+	}
+	return confstore.FlowRow{Name: name, YAML: y, Hash: builtin.Flow(name).Hash}, true
+}
+
+func builtinAgentRow(projectID, name string) (confstore.Agent, bool) {
+	sp := builtin.Agent(name)
+	if sp == nil {
+		return confstore.Agent{}, false
+	}
+	a := confstore.Agent{
+		ProjectID: projectID, Name: sp.Name, Description: sp.Description,
+		ReadOnly: sp.ReadOnly, AllowBash: sp.AllowBash, Prompt: sp.Prompt,
+	}
+	a.Hash = confstore.AgentHash(a)
+	return a, true
+}
 
 // Config-plane routes (DESIGN2 §10). Secrets are write-only: requests carry
 // plaintext values, responses only masks (§3).
@@ -324,10 +363,21 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	if rows == nil {
-		rows = []confstore.Agent{}
+	out := make([]agentResp, 0, len(rows)+len(builtin.Agents()))
+	authored := map[string]bool{}
+	for _, a := range rows {
+		authored[a.Name] = true
+		out = append(out, agentResp{Agent: a})
 	}
-	writeJSON(w, http.StatusOK, rows)
+	for _, sp := range builtin.Agents() {
+		if authored[sp.Name] {
+			continue
+		}
+		a, _ := builtinAgentRow(r.PathValue("id"), sp.Name)
+		out = append(out, agentResp{Agent: a, Builtin: true})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) putAgent(w http.ResponseWriter, r *http.Request) {
@@ -349,11 +399,17 @@ func (s *Server) putAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
 	a, err := s.Conf.GetAgent(r.Context(), r.PathValue("id"), r.PathValue("name"))
+	if errors.Is(err, confstore.ErrNotFound) {
+		if ba, ok := builtinAgentRow(r.PathValue("id"), r.PathValue("name")); ok {
+			writeJSON(w, http.StatusOK, agentResp{Agent: ba, Builtin: true})
+			return
+		}
+	}
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	writeJSON(w, http.StatusOK, agentResp{Agent: a})
 }
 
 func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
@@ -409,10 +465,21 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if rows == nil {
-		rows = []confstore.FlowRow{}
+	out := make([]flowResp, 0, len(rows)+1)
+	have := map[string]bool{}
+	for _, row := range rows {
+		have[row.Name] = true
+		out = append(out, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
 	}
-	writeJSON(w, http.StatusOK, rows)
+	for _, name := range builtin.FlowNames() {
+		if have[name] {
+			continue
+		}
+		row, _ := builtinFlowRow(name)
+		out = append(out, flowResp{FlowRow: row, Builtin: true})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
@@ -440,12 +507,19 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
-	row, err := s.Conf.GetFlow(r.Context(), r.PathValue("name"))
+	name := r.PathValue("name")
+	row, err := s.Conf.GetFlow(r.Context(), name)
+	if errors.Is(err, confstore.ErrNotFound) {
+		if brow, ok := builtinFlowRow(name); ok {
+			writeJSON(w, http.StatusOK, flowResp{FlowRow: brow, Builtin: true})
+			return
+		}
+	}
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, row)
+	writeJSON(w, http.StatusOK, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(name) != nil})
 }
 
 func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
@@ -461,11 +535,18 @@ func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, row)
+	writeJSON(w, http.StatusOK, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
 }
 
 func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
-	if err := s.Conf.DeleteFlow(r.Context(), r.PathValue("name")); err != nil {
+	name := r.PathValue("name")
+	if err := s.Conf.DeleteFlow(r.Context(), name); err != nil {
+		if errors.Is(err, confstore.ErrNotFound) && builtin.Flow(name) != nil {
+			// Deleting a DB override IS "reset to default"; with no override
+			// there is nothing to delete — built-ins live in the binary.
+			writeErr(w, http.StatusConflict, "flow "+name+" is built-in; there is no override to delete")
+			return
+		}
 		confErr(w, err)
 		return
 	}

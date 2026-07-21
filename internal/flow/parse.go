@@ -391,6 +391,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if raw.ID == TerminalAbort {
 		return fail("id %q is reserved (the deliberate-stop edge terminal)", TerminalAbort)
 	}
+	if raw.ID == ReservedStart {
+		return fail("id %q is reserved (the entry marker; the entry is the first stage)", ReservedStart)
+	}
 	st := StageType(raw.Type)
 	switch st {
 	case StageAgent, StageCommand, StageHumanGate, StageForgeMR:
@@ -577,8 +580,14 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 	if raw.Max == nil {
 		return fail("max is required")
 	}
-	if *raw.Max < 1 {
-		return fail("max must be >= 1, got %d", *raw.Max)
+	if *raw.Max == UnlimitedMax {
+		// Unlimited links never exhaust, so a fallback after one is dead
+		// weight; the human_gate-target rule is cross-stage (validateFlow).
+		if raw.Then != nil {
+			return fail("then after an unlimited link (max -1) is unreachable — it never exhausts")
+		}
+	} else if *raw.Max < 1 {
+		return fail("max must be >= 1 (or -1 for unlimited, human_gate targets only), got %d", *raw.Max)
 	}
 	e := &Edge{To: raw.To, Max: *raw.Max, Feed: Feed(raw.Feed)}
 	// Feed must match what the edge kind can actually carry (registry).
@@ -604,6 +613,15 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 				}
 				if _, ok := ids[link.To]; !ok {
 					return p.errf(s.Line, "stage %q: %s target %q does not exist", s.ID, kind, link.To)
+				}
+				if link.Max == UnlimitedMax {
+					// Unlimited needs a human on the link: gate target (each
+					// firing parks on a decision) or gate source (the link
+					// only fires when a human rejects).
+					if tgt := &f.Stages[ids[link.To]]; tgt.Type != StageHumanGate && s.Type != StageHumanGate {
+						return p.errf(s.Line, "stage %q: %s: max -1 (unlimited) requires a human_gate on the link (source or target) — every firing must cost a human decision; budgets cannot bound cost-free retries (use a finite max)",
+							s.ID, kind)
+					}
 				}
 			}
 		}

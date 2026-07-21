@@ -55,11 +55,16 @@
     <button class="reject" disabled={busy || !note.trim()} onclick={() => onanswer('reject', note)}>{rejectLabel}</button>
   </div>
 {:else if options.length}
-  <textarea bind:value={note} placeholder="Optional note to send along…"></textarea>
+  <textarea bind:value={note} placeholder="Optional note — or your own answer if none of the options fit"></textarea>
   <div class="row" style="margin-top:10px; flex-wrap:wrap; gap:8px">
     {#each options as opt (opt)}
       <button class="primary" disabled={busy} onclick={() => onanswer(opt, note)}>{opt}</button>
     {/each}
+    <button
+      disabled={busy || !note.trim()}
+      title="None of the options fit — sends the note text as your answer"
+      onclick={() => onanswer('other', note)}>Other…</button
+    >
   </div>
 {:else}
   <textarea bind:value={note} placeholder="Your answer to the agent…"></textarea>

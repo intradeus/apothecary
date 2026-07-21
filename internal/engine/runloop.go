@@ -258,7 +258,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		}
 		key := chainKey(st.ID, kind, depth)
 		count := rs.edgeCounts[key] + 1
-		if count > e.Max {
+		if e.Max != flow.UnlimitedMax && count > e.Max {
 			continue // this link is exhausted; fall through to then
 		}
 		feed := ""
@@ -281,11 +281,16 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 }
 
 // chainMax renders a chain's budget for the abandon reason: "5" for a
-// single link, "2+3" for retry-then-escalate chains.
+// single link, "2+3" for retry-then-escalate chains. (An unlimited final
+// link never exhausts, so ∞ only appears in mixed diagnostics.)
 func chainMax(e *flow.Edge) string {
 	parts := []string{}
 	for ; e != nil; e = e.Then {
-		parts = append(parts, fmt.Sprintf("%d", e.Max))
+		if e.Max == flow.UnlimitedMax {
+			parts = append(parts, "∞")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d", e.Max))
+		}
 	}
 	return strings.Join(parts, "+")
 }

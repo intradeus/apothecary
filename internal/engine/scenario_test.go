@@ -886,6 +886,69 @@ stages:
 	}
 }
 
+// TestUnlimitedRescueLoop: a max -1 link to a manual_debug gate never
+// exhausts — the human keeps rescuing as long as they approve, and ends
+// the run by rejecting. Each firing is human-gated, so "unlimited" is
+// bounded by human attention, not a runaway loop.
+func TestUnlimitedRescueLoop(t *testing.T) {
+	doc := `name: unl
+defaults: { model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: work,   type: command, run_ref: verify, on_success: done,
+      on_fail: { to: rescue, max: -1 } }
+  - { id: rescue, type: human_gate, ping: manual_debug, payload: workspace,
+      on_success: work, on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "make lint") {
+			return ports.ExecResult{ExitCode: 1, Output: "still broken"}, nil
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "unl", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three rescue rounds (well past any finite default), then give up.
+	var seen []string
+	for range 3 {
+		p := h.waitPing(t, "manual_debug", seen...)
+		seen = append(seen, p.ID)
+		if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := h.waitPing(t, "manual_debug", seen...)
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "reject", Feedback: "unfixable"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	evs := h.events(t, runID)
+	var last *event.EdgeTaken
+	edges := 0
+	for _, e := range evs {
+		if p, ok := e.Payload.(*event.EdgeTaken); ok && p.Edge == "on_fail" {
+			edges++
+			last = p
+		}
+	}
+	// 4 failures each fired the same unlimited link: counts 1..4, never
+	// exhausted, Max recorded as -1.
+	if edges != 4 || last.Count != 4 || last.Max != -1 {
+		t.Errorf("on_fail edges = %d, last = %+v (want 4 firings, count 4, max -1)", edges, last)
+	}
+	ra, _ := findPayload[*event.RunAbandoned](evs)
+	if !strings.Contains(ra.Reason, "unfixable") {
+		t.Errorf("run_abandoned = %+v", ra)
+	}
+}
+
 // TestAbortEdgeStopsRunDeliberately: on_reject: abort is the explicit,
 // flow-authored stop — the run lands on abandoned with the human's
 // feedback in the reason, not on an "unrecoverable failure" message.
@@ -1406,9 +1469,14 @@ stages:
 	if p.PayloadRef != "artifacts/dbs.md" {
 		t.Errorf("payload_ref = %q", p.PayloadRef)
 	}
-	// Free text refused for a closed question.
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "mysql"}); err == nil || !strings.Contains(err.Error(), "postgres | sqlite") {
+	// Free text refused for a closed question — the error offers the
+	// hardcoded escape hatch alongside the declared options.
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "mysql"}); err == nil || !strings.Contains(err.Error(), "postgres | sqlite | other") {
 		t.Errorf("off-option answer err = %v", err)
+	}
+	// "other" without the note is useless — the note IS the answer.
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "other", Feedback: "  "}); err == nil || !strings.Contains(err.Error(), "note") {
+		t.Errorf("bare other err = %v", err)
 	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres", Feedback: "use v16"}); err != nil {
 		t.Fatal(err)
@@ -1446,6 +1514,43 @@ stages:
 	}
 	run2 <- rid
 	h2.e.Wait(rid)
+
+	// The "other" escape hatch end-to-end: an agent-declared "other" is
+	// stripped (it is system-provided), and answering with it carries the
+	// human's actual answer to the agent in the note.
+	h3 := newHarness(t, mustFlow(t, doc))
+	run3 := make(chan string, 1)
+	got3 := make(chan PingAnswer, 1)
+	h3.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		id := <-run3
+		p, err := h3.e.RaisePing(id, "clarification", "pick one", "", []string{"a", "Other", "b"}, "")
+		if err != nil {
+			return ports.AgentResult{}, err
+		}
+		ans, _ := p.Await(context.Background())
+		got3 <- ans
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	rid3, err := h3.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run3 <- rid3
+	p3 := h3.waitPing(t, "clarification")
+	if len(p3.Options) != 2 || p3.Options[0] != "a" || p3.Options[1] != "b" {
+		t.Errorf("declared 'Other' not stripped: %v", p3.Options)
+	}
+	if err := h3.e.AnswerPing(p3.ID, PingAnswer{Answer: "other", Feedback: "neither — use c"}); err != nil {
+		t.Fatal(err)
+	}
+	if ans := <-got3; ans.Answer != "other" || ans.Feedback != "neither — use c" {
+		t.Errorf("agent received %+v", ans)
+	}
+	h3.e.Wait(rid3)
+	pa3, _ := findPayload[*event.PingAnswered](h3.events(t, rid3))
+	if pa3.Answer != "other" || pa3.Feedback != "neither — use c" {
+		t.Errorf("ping_answered = %+v", pa3)
+	}
 }
 
 // TestResumeRerunsFailedStage: a run that abandons at a command stage

@@ -209,7 +209,7 @@
         return { text: `${p.stage_id} completed (${bits})`, cls: 'ok', stage: p.stage_id as string };
       }
       case 'stage_failed': return { text: `${p.stage_id} failed: ${p.reason}${p.error ? ` — ${String(p.error).slice(0, 200)}` : ''}`, cls: 'bad', stage: p.stage_id as string };
-      case 'edge_taken': return { text: `↩ ${p.edge}${p.depth ? ` (then #${p.depth})` : ''} ${p.from} → ${p.to} (${p.count}/${p.max})`, cls: 'warn' };
+      case 'edge_taken': return { text: `↩ ${p.edge}${p.depth ? ` (then #${p.depth})` : ''} ${p.from} → ${p.to} (${p.count}/${p.max === -1 ? '∞' : p.max})`, cls: 'warn' };
       case 'ping_raised': return { text: `ping [${p.type}]: ${p.question}`, cls: 'warn' };
       case 'ping_answered': return { text: `answered: ${p.answer}${p.feedback ? ` — ${p.feedback}` : ''}`, cls: 'ok' };
       case 'verdict_received': return { text: p.approve ? 'review verdict: APPROVE' : `review verdict: REJECT (${p.n_comments} comments)`, cls: p.approve ? 'ok' : 'warn' };
