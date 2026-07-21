@@ -532,11 +532,11 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 		if st.Type == flow.StageAgent && !agents[st.Agent] {
 			return fmt.Errorf("preflight: stage %q: agent %q not found in the project's agent library", st.ID, st.Agent)
 		}
-		// One harness per project (§6.3): a stage pinning a different
-		// kind than the project's harness is refused here, not at parse
-		// time — flows are portable data.
-		if st.Type == flow.StageAgent && st.Harness != "" && st.Harness != res.HarnessKind {
-			return fmt.Errorf("preflight: stage %q pins harness %q but the project's harness is %q", st.ID, st.Harness, res.HarnessKind)
+		// Per-step harness (§6.3): a stage may pin any harness KIND in the
+		// project's set; one outside it is refused here, not at parse time —
+		// flows are portable data.
+		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
+			return fmt.Errorf("preflight: stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
 		}
 	}
 	return nil
@@ -992,8 +992,8 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 		if st.Type == flow.StageAgent && !agents[st.Agent] {
 			return fmt.Errorf("stage %q: agent %q not found in the project's agent library", st.ID, st.Agent)
 		}
-		if st.Type == flow.StageAgent && st.Harness != "" && st.Harness != res.HarnessKind {
-			return fmt.Errorf("stage %q pins harness %q but the project's harness is %q", st.ID, st.Harness, res.HarnessKind)
+		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
+			return fmt.Errorf("stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
 		}
 	}
 	return nil

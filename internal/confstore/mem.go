@@ -86,7 +86,14 @@ func (m *Mem) DeleteIntegration(_ context.Context, id string) error {
 	}
 	var refs []string
 	for _, p := range m.projects {
-		if p.ForgeID == id || p.ProvisionerID == id || p.HarnessID == id {
+		inSet := false
+		for _, h := range p.HarnessIDs {
+			if h == id {
+				inSet = true
+				break
+			}
+		}
+		if p.ForgeID == id || p.ProvisionerID == id || p.HarnessID == id || inSet {
 			refs = append(refs, p.Name)
 		}
 	}

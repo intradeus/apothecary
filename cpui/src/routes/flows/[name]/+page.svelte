@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ago, type Agent, type FlowRow, type FlowVersion, type ModelInfo, type Project } from '$lib/api';
+  import { api, ago, type Agent, type FlowRow, type FlowVersion, type Integration, type ModelInfo, type Project } from '$lib/api';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
   import { autoLayout, docToYaml, DONE, edgeOf, setEdge, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
@@ -24,11 +24,26 @@
   // agents from its library, models from its harness auth, run_refs from
   // its commands. Free text always works; flows stay portable.
   let projects = $state<Project[]>([]);
+  let integrations = $state<Integration[]>([]);
   let contextId = $state('');
   let agents = $state<Agent[]>([]);
-  let models = $state<ModelInfo[]>([]);
+  // Per-step harness: models are fetched per harness integration and keyed by
+  // kind, so a stage's model list scopes to the harness it pins.
+  let modelsByKind = $state<Record<string, ModelInfo[]>>({});
   const contextProject = $derived(projects.find((p) => p.id === contextId));
   const commands = $derived(Object.keys(contextProject?.commands ?? {}));
+  const harnessIdsOf = (p: Project | undefined) =>
+    p ? (p.harness_ids?.length ? p.harness_ids : p.harness_id ? [p.harness_id] : []) : [];
+  const defaultHarnessKind = $derived(
+    integrations.find((i) => i.id === contextProject?.harness_id)?.kind ?? ''
+  );
+  const harnessKinds = $derived.by(() => {
+    const ints = integrations;
+    const kinds = harnessIdsOf(contextProject)
+      .map((id) => ints.find((i) => i.id === id)?.kind)
+      .filter((k): k is string => !!k);
+    return [...new Set(kinds)];
+  });
 
   const dirty = $derived(flow !== null && (graphDirty || yaml !== flow.yaml));
 
@@ -47,6 +62,7 @@
         validation = { ok: false, detail: (r.errors ?? []).join('\n') };
       }
       projects = await api.projects();
+      integrations = await api.integrations().catch(() => []);
       const def = projects.find((p) => p.default_flow === flow!.name) ?? projects[0];
       if (def) {
         contextId = def.id;
@@ -60,9 +76,23 @@
   // Context loads are best-effort: dropdown assistance, not a gate.
   $effect(() => {
     const p = projects.find((x) => x.id === contextId);
+    const ints = integrations; // read synchronously so this re-runs once loaded
     if (!p) return;
     api.agents(p.id).then((a) => (agents = a)).catch(() => (agents = []));
-    api.models(p.harness_id).then((m) => (models = m)).catch(() => (models = []));
+    // Fetch each harness's live model list, keyed by kind (per-step harness).
+    const ids = harnessIdsOf(p);
+    const map: Record<string, ModelInfo[]> = {};
+    Promise.all(
+      ids.map(async (id) => {
+        const kind = ints.find((i) => i.id === id)?.kind;
+        if (!kind) return;
+        try {
+          map[kind] = await api.models(id);
+        } catch {
+          map[kind] = [];
+        }
+      })
+    ).then(() => (modelsByKind = map));
   });
 
   function currentYAML(): string {
@@ -224,7 +254,9 @@
         {doc}
         {selection}
         {agents}
-        {models}
+        {modelsByKind}
+        {harnessKinds}
+        {defaultHarnessKind}
         {commands}
         onchange={markChanged}
         onselect={(s) => (selection = s)}

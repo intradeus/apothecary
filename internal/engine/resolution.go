@@ -39,16 +39,28 @@ type Resolution struct {
 	// whether it was already there (§8.3 image_built{cached}). nil on the
 	// custom-template path.
 	EnsureImage func(ctx context.Context) (cached bool, err error)
-	// HarnessKind names the project's harness; flows pinning a different
-	// harness are refused at preflight (§6.3).
+	// HarnessKind names the project's DEFAULT harness — the one a stage runs
+	// on when it doesn't pin a `harness:` (§6.3).
 	HarnessKind string
-	// HarnessBinary is the harness executable (envcheck probes it with
+	// HarnessKinds are every harness kind in the project's set (per-step
+	// harness). A stage may only pin one of these; preflight refuses others.
+	// Empty ⇒ just HarnessKind.
+	HarnessKinds []string
+	// HarnessBinary is the default harness executable (envcheck probes it with
 	// `command -v`, §9).
 	HarnessBinary string
+	// HarnessBinaries is every harness's executable — envcheck probes them all,
+	// since any set member may run. Empty ⇒ just HarnessBinary.
+	HarnessBinaries []string
 
 	Envp   ports.EnvProvisioner
 	Runner ports.AgentRunner
-	Forge  ports.Forge
+	// Runners maps harness KIND → runner for the full set (per-step harness).
+	// A stage pinning `harness: <kind>` runs on Runners[kind]; unpinned stages
+	// use Runner (the default). nil in single-harness setups (fakes) — the
+	// engine falls back to Runner.
+	Runners map[string]ports.AgentRunner
+	Forge   ports.Forge
 
 	// SeedAuth writes harness-native auth material at bootstrap step 2;
 	// nil = nothing to seed.
@@ -73,6 +85,41 @@ func (r *Resolution) release() {
 	if r != nil && r.Release != nil {
 		r.Release()
 	}
+}
+
+// runnerFor returns the runner for a stage's pinned harness kind, falling
+// back to the default Runner when the stage pins nothing or the set isn't
+// populated (single-harness setups). Preflight guarantees a pinned kind is
+// in the set, so a miss here can only be the fallback.
+func (r *Resolution) runnerFor(harnessKind string) ports.AgentRunner {
+	if harnessKind != "" && r.Runners != nil {
+		if run, ok := r.Runners[harnessKind]; ok {
+			return run
+		}
+	}
+	return r.Runner
+}
+
+// harnessSet is the list of pinnable harness kinds, for error messages.
+func (r *Resolution) harnessSet() []string {
+	if len(r.HarnessKinds) > 0 {
+		return r.HarnessKinds
+	}
+	return []string{r.HarnessKind}
+}
+
+// harnessInSet reports whether a stage may pin the given harness kind: it
+// must be the default or a member of the resolved set.
+func (r *Resolution) harnessInSet(harnessKind string) bool {
+	if harnessKind == r.HarnessKind {
+		return true
+	}
+	for _, k := range r.HarnessKinds {
+		if k == harnessKind {
+			return true
+		}
+	}
+	return false
 }
 
 // Resolver turns a project id into a Resolution. Implementations cache

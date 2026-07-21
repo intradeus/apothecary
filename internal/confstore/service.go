@@ -280,6 +280,45 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 			return invalidf("project: %s references %s integration %q, need port %s", r.field, in.Port, in.Name, r.port)
 		}
 	}
+	// Per-step harness: normalize and validate the harness set. The default
+	// (HarnessID, validated above) is always a member; the set holds at most
+	// one integration per kind, so a stage's `harness: <kind>` maps to exactly
+	// one integration.
+	hasDefault := false
+	for _, id := range p.HarnessIDs {
+		if id == p.HarnessID {
+			hasDefault = true
+			break
+		}
+	}
+	if !hasDefault {
+		p.HarnessIDs = append([]string{p.HarnessID}, p.HarnessIDs...)
+	}
+	seenID := map[string]bool{}
+	seenKind := map[string]string{} // kind -> integration name, for the error
+	norm := make([]string, 0, len(p.HarnessIDs))
+	for _, id := range p.HarnessIDs {
+		if id == "" || seenID[id] {
+			continue
+		}
+		seenID[id] = true
+		in, err := s.db.GetIntegration(ctx, id)
+		if errors.Is(err, ErrNotFound) {
+			return invalidf("project: harness_ids: %v", err)
+		}
+		if err != nil {
+			return fmt.Errorf("project: harness_ids: %w", err)
+		}
+		if in.Port != PortHarness {
+			return invalidf("project: harness_ids references %s integration %q, need port %s", in.Port, in.Name, PortHarness)
+		}
+		if other, dup := seenKind[in.Kind]; dup {
+			return invalidf("project: harness_ids has two %q harnesses (%q and %q); the set allows one per kind", in.Kind, other, in.Name)
+		}
+		seenKind[in.Kind] = in.Name
+		norm = append(norm, id)
+	}
+	p.HarnessIDs = norm
 	if err := ValidateFragment(p.Workspace.DockerfileFragment); err != nil {
 		return err
 	}

@@ -30,6 +30,29 @@
   let forgeId = $state(init?.forge_id ?? forges[0]?.id ?? '');
   let provisionerId = $state(init?.provisioner_id ?? provisioners[0]?.id ?? '');
   let harnessId = $state(init?.harness_id ?? harnesses[0]?.id ?? '');
+  // Per-step harness: the default (harnessId) plus additional harnesses, one
+  // per kind. A flow stage may pin any of them by kind.
+  let extraHarnessIds = $state<string[]>(
+    (init?.harness_ids ?? []).filter((id) => id !== (init?.harness_id ?? harnesses[0]?.id ?? ''))
+  );
+  const defaultKind = $derived(harnesses.find((h) => h.id === harnessId)?.kind ?? '');
+  const extraOptions = $derived(harnesses.filter((h) => h.id !== harnessId));
+  // A kind is taken if the default covers it or another checked extra does.
+  const kindTaken = (h: Integration) =>
+    h.kind === defaultKind ||
+    extraHarnessIds.some((id) => id !== h.id && harnesses.find((x) => x.id === id)?.kind === h.kind);
+  // The final set: default first, then extras, deduped by kind (one per kind).
+  function harnessSet(): string[] {
+    const ids = [harnessId];
+    const seen = new Set([defaultKind]);
+    for (const id of extraHarnessIds) {
+      const k = harnesses.find((h) => h.id === id)?.kind;
+      if (!k || seen.has(k) || ids.includes(id)) continue;
+      seen.add(k);
+      ids.push(id);
+    }
+    return ids;
+  }
 
   let repoURL = $state(init?.repo.url ?? '');
   let locator = $state(init?.repo.locator ?? '');
@@ -111,6 +134,7 @@
         forge_id: forgeId,
         provisioner_id: provisionerId,
         harness_id: harnessId,
+        harness_ids: harnessSet(),
         repo: {
           url: repoURL.trim(),
           locator: locator.trim(),
@@ -219,10 +243,26 @@
     <select id="p-prov" bind:value={provisionerId} required>
       {#each provisioners as p (p.id)}<option value={p.id}>{p.name} ({p.kind})</option>{/each}
     </select>
-    <label for="p-harness">Harness <span class="muted">— brings its own model auth (configured on the integration)</span></label>
+    <label for="p-harness">Default harness <span class="muted">— brings its own model auth; used by stages that don't pin one</span></label>
     <select id="p-harness" bind:value={harnessId} required>
       {#each harnesses as h (h.id)}<option value={h.id}>{h.name} ({h.kind})</option>{/each}
     </select>
+    {#if extraOptions.length > 0}
+      <label>Additional harnesses <span class="muted">— per-step: a flow stage can pin any of these by kind (one integration per kind)</span></label>
+      <div class="harness-extras">
+        {#each extraOptions as h (h.id)}
+          <label class="check">
+            <input
+              type="checkbox"
+              bind:group={extraHarnessIds}
+              value={h.id}
+              disabled={kindTaken(h) && !extraHarnessIds.includes(h.id)}
+            />
+            {h.name} <span class="muted">({h.kind}{#if h.kind === defaultKind} — same kind as default{/if})</span>
+          </label>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <div class="card">

@@ -3,6 +3,7 @@ package confstore
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -168,6 +169,64 @@ func TestProjectValidation(t *testing.T) {
 	good := base
 	if _, err := svc.CreateProject(ctx, good); err != nil {
 		t.Errorf("valid project refused: %v", err)
+	}
+}
+
+func TestProjectHarnessSet(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
+		t.Fatal(err)
+	}
+	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
+	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "coder", Name: "c"})
+	oc, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
+	cx, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "codex", Name: "cx"})
+	oc2, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc2"})
+
+	base := Project{
+		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: oc.ID,
+		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
+		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
+		DefaultFlow: "v1",
+	}
+
+	// Empty set ⇒ the default is auto-added, so a project always has one.
+	p, err := svc.CreateProject(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.HarnessIDs, []string{oc.ID}) {
+		t.Errorf("default not auto-added to set: %v", p.HarnessIDs)
+	}
+
+	// A valid two-kind set round-trips.
+	multi := base
+	multi.Name = "multi"
+	multi.HarnessIDs = []string{oc.ID, cx.ID}
+	pm, err := svc.CreateProject(ctx, multi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(pm.HarnessIDs, []string{oc.ID, cx.ID}) {
+		t.Errorf("set = %v, want [oc cx]", pm.HarnessIDs)
+	}
+
+	// Two integrations of the SAME kind is refused (kind→integration must be
+	// unambiguous).
+	dup := base
+	dup.Name = "dup"
+	dup.HarnessIDs = []string{oc.ID, oc2.ID}
+	if _, err := svc.CreateProject(ctx, dup); err == nil || !strings.Contains(err.Error(), "one per kind") {
+		t.Errorf("dup-kind err = %v", err)
+	}
+
+	// A non-harness integration in the set is refused, naming the field.
+	wrong := base
+	wrong.Name = "wrong"
+	wrong.HarnessIDs = []string{oc.ID, forge.ID}
+	if _, err := svc.CreateProject(ctx, wrong); err == nil || !strings.Contains(err.Error(), "harness_ids") {
+		t.Errorf("wrong-port set err = %v", err)
 	}
 }
 

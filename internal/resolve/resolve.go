@@ -115,19 +115,62 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		}
 	}()
 
-	// Harness: wraps the provisioner for exec.
-	harnessInt, err := r.integration(ctx, p.HarnessID, confstore.PortHarness)
-	if err != nil {
-		return nil, err
+	// Harness set (per-step harness): the project holds one harness
+	// integration per kind; a flow stage may pin which kind it runs on, and
+	// HarnessID is the default (stages that don't pin one). Each harness wraps
+	// the provisioner for exec. Older projects carry just the default.
+	harnessIDs := p.HarnessIDs
+	if len(harnessIDs) == 0 {
+		harnessIDs = []string{p.HarnessID}
 	}
-	harnessKind, err := r.reg.Harness(harnessInt.Kind)
-	if err != nil {
-		return nil, unresolvable(err)
+	byKind := map[string]kinds.Harness{}
+	defaultKind := ""
+	for _, hid := range harnessIDs {
+		hi, err := r.integration(ctx, hid, confstore.PortHarness)
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := byKind[hi.Kind]; dup {
+			return nil, unresolvable(fmt.Errorf("project has two %q harness integrations; the set allows one per kind", hi.Kind))
+		}
+		hk, err := r.reg.Harness(hi.Kind)
+		if err != nil {
+			return nil, unresolvable(err)
+		}
+		h, err := hk.New(kindConfig(hi), prov)
+		if err != nil {
+			return nil, unresolvable(fmt.Errorf("harness %s: %v", hi.Name, err))
+		}
+		byKind[hi.Kind] = h
+		if hid == p.HarnessID {
+			defaultKind = hi.Kind
+		}
 	}
-	harness, err := harnessKind.New(kindConfig(harnessInt), prov)
-	if err != nil {
-		return nil, unresolvable(fmt.Errorf("harness %s: %v", harnessInt.Name, err))
+	if defaultKind == "" {
+		return nil, unresolvable(fmt.Errorf("project default harness %s is not in the harness set", p.HarnessID))
 	}
+	// Deterministic unions by sorted kind: the image tag is content-addressed,
+	// so the install-layer order must not depend on set/map ordering.
+	kindList := make([]string, 0, len(byKind))
+	for k := range byKind {
+		kindList = append(kindList, k)
+	}
+	sort.Strings(kindList)
+	runners := make(map[string]ports.AgentRunner, len(byKind))
+	providerEnv := map[string]string{}
+	var installLayers, harnessBinaries []string
+	egressContribs := [][]string{account.EgressDomains()}
+	for _, k := range kindList {
+		h := byKind[k]
+		runners[k] = h
+		installLayers = append(installLayers, h.InstallLayer()...)
+		egressContribs = append(egressContribs, h.EgressDomains())
+		for ek, ev := range h.EnvVars() {
+			providerEnv[ek] = ev
+		}
+		harnessBinaries = append(harnessBinaries, h.Binary())
+	}
+	harness := byKind[defaultKind] // default: Runner, HarnessBinary, provider.env base
 
 	// Agent library (DESIGN3 §1): the project's full agent set rides the
 	// resolution — Prepare writes them all, preflight checks flow
@@ -153,7 +196,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	image := ""
 	var ensureImage func(ctx context.Context) (bool, error)
 	if p.Workspace.Template == "" {
-		dockerfile := wsimage.Compose(r.builder.BaseRef(), p.Workspace.DockerfileFragment, harness.InstallLayer())
+		dockerfile := wsimage.Compose(r.builder.BaseRef(), p.Workspace.DockerfileFragment, installLayers)
 		image = wsimage.Tag(dockerfile)
 		builder := r.builder
 		ensureImage = func(ctx context.Context) (bool, error) {
@@ -163,27 +206,43 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	}
 
 	res := &engine.Resolution{
-		ProjectID:    p.ID,
-		ProjectName:  p.Name,
-		RepoRef:      repoRef,
-		AgentsMDPath: p.Repo.AgentsMDPath,
-		DefaultFlow:  p.DefaultFlow,
-		Commands:     p.Commands,
-		GitUser:      gitUser,
-		GitPass:      gitPass,
-		ProviderEnv:  harness.EnvVars(), // harness-owned auth via provider.env
-		EgressDomains: egressDomains(p, account.EgressDomains(),
-			harness.EgressDomains()),
-		Image:         image,
-		EnsureImage:   ensureImage,
-		HarnessKind:   harnessInt.Kind,
-		HarnessBinary: harness.Binary(),
-		Envp:          prov,
-		Runner:        harness,
-		Forge:         forge,
-		SeedAuth:      harness.SeedAuth,
+		ProjectID:       p.ID,
+		ProjectName:     p.Name,
+		RepoRef:         repoRef,
+		AgentsMDPath:    p.Repo.AgentsMDPath,
+		DefaultFlow:     p.DefaultFlow,
+		Commands:        p.Commands,
+		GitUser:         gitUser,
+		GitPass:         gitPass,
+		ProviderEnv:     providerEnv, // union of every harness's own auth env
+		EgressDomains:   egressDomains(p, egressContribs...),
+		Image:           image,
+		EnsureImage:     ensureImage,
+		HarnessKind:     defaultKind,
+		HarnessKinds:    kindList,
+		HarnessBinary:   harness.Binary(),
+		HarnessBinaries: harnessBinaries,
+		Envp:            prov,
+		Runner:          harness,
+		Runners:         runners,
+		Forge:           forge,
+		// Seed and prepare EVERY harness in the set: a stage may run on any of
+		// them, so all their auth + native configs must be in the workspace.
+		SeedAuth: func(ctx context.Context, env ports.EnvID) error {
+			for _, k := range kindList {
+				if err := byKind[k].SeedAuth(ctx, env); err != nil {
+					return fmt.Errorf("seed %s auth: %w", k, err)
+				}
+			}
+			return nil
+		},
 		Prepare: func(ctx context.Context, env ports.EnvID) error {
-			return harness.Prepare(ctx, env, specs)
+			for _, k := range kindList {
+				if err := byKind[k].Prepare(ctx, env, specs); err != nil {
+					return fmt.Errorf("prepare %s config: %w", k, err)
+				}
+			}
+			return nil
 		},
 		AgentNames:  agentNames,
 		AgentHashes: agentHashes,

@@ -138,11 +138,23 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	step("repo_reachable", execExpect(ctx, envp, env,
 		"git ls-remote --heads origin >/dev/null", "repo", true), "")
 
-	if res.HarnessBinary != "" {
-		step("harness_binary", execExpect(ctx, envp, env,
-			"command -v "+res.HarnessBinary, "", true), res.HarnessBinary)
-	} else {
+	// Per-step harness: probe every harness in the set — any of them may run.
+	binaries := res.HarnessBinaries
+	if len(binaries) == 0 && res.HarnessBinary != "" {
+		binaries = []string{res.HarnessBinary}
+	}
+	if len(binaries) == 0 {
 		skip("harness_binary", "harness declares no binary")
+	}
+	for _, b := range binaries {
+		if b == "" {
+			continue
+		}
+		name := "harness_binary"
+		if len(binaries) > 1 {
+			name = "harness_binary:" + b
+		}
+		step(name, execExpect(ctx, envp, env, "command -v "+b, "", true), b)
 	}
 	step("shim", execExpect(ctx, envp, env,
 		"test -f /opt/apothecary/ask-human.mjs", "", true), "")

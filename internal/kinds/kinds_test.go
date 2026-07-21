@@ -3,6 +3,7 @@ package kinds
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -156,6 +157,104 @@ func TestOpencodeModels(t *testing.T) {
 	bare, _ := Opencode{}.New(Config{}, nil)
 	if _, err := bare.Models(context.Background()); err == nil || !strings.Contains(err.Error(), "auth_json") {
 		t.Errorf("no-auth err = %v", err)
+	}
+}
+
+// TestOpencodeModelsLive covers the exact failure that motivated this: the
+// catalog (models.dev) keeps offering a retired model the provider no longer
+// serves. When the provider exposes an OpenAI-compatible /models endpoint and
+// we hold its api key, the LIVE list wins and the stale entry disappears.
+func TestOpencodeModelsLive(t *testing.T) {
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" || r.Header.Get("Authorization") != "Bearer k" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"qwen3.6-plus"},{"id":"qwen3.7-plus"}]}`))
+	}))
+	defer live.Close()
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{
+			"qwen3.5-plus":{"name":"Qwen 3.5 Plus (retired)"},
+			"qwen3.6-plus":{"name":"Qwen 3.6 Plus"}
+		}}}`, live.URL)
+	}))
+	defer catalog.Close()
+
+	oldURL := modelsCatalogURL
+	modelsCatalogURL = catalog.URL
+	modelsCache.Lock()
+	modelsCache.catalog = nil
+	modelsCache.Unlock()
+	defer func() {
+		modelsCatalogURL = oldURL
+		modelsCache.Lock()
+		modelsCache.catalog = nil
+		modelsCache.Unlock()
+	}()
+
+	h, _ := Opencode{}.New(Config{Secrets: map[string]string{
+		"auth_json": `{"opencode-go":{"type":"api","key":"k"}}`,
+	}}, nil)
+	models, err := h.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, len(models))
+	byID := map[string]string{}
+	for i, m := range models {
+		ids[i] = m.ID
+		byID[m.ID] = m.Name
+	}
+	want := []string{"opencode-go/qwen3.6-plus", "opencode-go/qwen3.7-plus"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v (retired qwen3.5-plus must be gone; live list wins)", ids, want)
+	}
+	// Catalog still supplies the display name when it knows the model; the
+	// live-only model falls back to its id.
+	if byID["opencode-go/qwen3.6-plus"] != "OpenCode Go · Qwen 3.6 Plus" {
+		t.Errorf("name = %q", byID["opencode-go/qwen3.6-plus"])
+	}
+	if byID["opencode-go/qwen3.7-plus"] != "OpenCode Go · qwen3.7-plus" {
+		t.Errorf("name = %q", byID["opencode-go/qwen3.7-plus"])
+	}
+}
+
+// TestOpencodeModelsFallback: when the live endpoint is unreachable/errors,
+// the catalog's static list is served — the picker never goes empty.
+func TestOpencodeModelsFallback(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer dead.Close()
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{
+			"qwen3.6-plus":{"name":"Qwen 3.6 Plus"}
+		}}}`, dead.URL)
+	}))
+	defer catalog.Close()
+
+	oldURL := modelsCatalogURL
+	modelsCatalogURL = catalog.URL
+	modelsCache.Lock()
+	modelsCache.catalog = nil
+	modelsCache.Unlock()
+	defer func() {
+		modelsCatalogURL = oldURL
+		modelsCache.Lock()
+		modelsCache.catalog = nil
+		modelsCache.Unlock()
+	}()
+
+	h, _ := Opencode{}.New(Config{Secrets: map[string]string{
+		"auth_json": `{"opencode-go":{"type":"api","key":"k"}}`,
+	}}, nil)
+	models, err := h.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].ID != "opencode-go/qwen3.6-plus" {
+		t.Fatalf("fallback models = %v, want [opencode-go/qwen3.6-plus]", models)
 	}
 }
 

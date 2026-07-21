@@ -82,6 +82,85 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 	return New(svc, reg, "", 8080, 0, ""), svc, p, made, closed
 }
 
+// altHarnessKind is a second harness kind for per-step-harness tests: it
+// delegates behaviour to the fake harness but reports its own kind, binary,
+// install layer and egress domain so the resolved union is observable.
+type altHarnessKind struct{}
+
+func (altHarnessKind) Descriptor() kinds.Descriptor {
+	return kinds.Descriptor{Port: "harness", Kind: "alt", Label: "Alt harness"}
+}
+func (altHarnessKind) New(cfg kinds.Config, envp ports.EnvProvisioner) (kinds.Harness, error) {
+	inner, err := kinds.FakeHarness{}.New(cfg, envp)
+	if err != nil {
+		return nil, err
+	}
+	return altHarness{inner}, nil
+}
+
+type altHarness struct{ kinds.Harness }
+
+func (altHarness) Binary() string          { return "alt-bin" }
+func (altHarness) InstallLayer() []string  { return []string{"RUN install-alt"} }
+func (altHarness) EgressDomains() []string { return []string{"alt.example.com"} }
+
+func TestResolveMultiHarness(t *testing.T) {
+	key, _ := secrets.ParseKey(secrets.GenerateKey())
+	svc := confstore.New(confstore.NewMem(), key)
+	reg := kinds.NewRegistry()
+	kinds.RegisterFakes(reg)
+	reg.RegisterProvisioner(countingProvKind{made: &atomic.Int32{}, closed: &atomic.Int32{}})
+	reg.RegisterHarness(altHarnessKind{})
+	svc.KindValid = reg.Valid
+	ctx := context.Background()
+	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(port, kind, name string) string {
+		in, err := svc.CreateIntegration(ctx, confstore.Integration{Port: port, Kind: kind, Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in.ID
+	}
+	def := mk(confstore.PortHarness, "fake", "h")
+	alt := mk(confstore.PortHarness, "alt", "h2")
+	p, err := svc.CreateProject(ctx, confstore.Project{
+		Name:          "multi",
+		ForgeID:       mk(confstore.PortForge, "fake", "f"),
+		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c"),
+		HarnessID:     def,
+		HarnessIDs:    []string{def, alt},
+		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
+		Workspace:     confstore.WorkspaceConfig{Template: "tmpl"},
+		DefaultFlow:   "v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := New(svc, reg, "", 8080, 0, "").Resolve(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Release()
+
+	if res.HarnessKind != "fake" {
+		t.Errorf("default harness kind = %q, want fake", res.HarnessKind)
+	}
+	if !slices.Equal(res.HarnessKinds, []string{"alt", "fake"}) {
+		t.Errorf("harness kinds = %v, want [alt fake]", res.HarnessKinds)
+	}
+	if res.Runners["fake"] == nil || res.Runners["alt"] == nil {
+		t.Errorf("runners missing a kind: %v", res.Runners)
+	}
+	if !slices.Contains(res.HarnessBinaries, "alt-bin") || !slices.Contains(res.HarnessBinaries, "true") {
+		t.Errorf("binaries = %v, want both harnesses", res.HarnessBinaries)
+	}
+	if !slices.Contains(res.EgressDomains, "alt.example.com") {
+		t.Errorf("egress %v missing alt harness domain", res.EgressDomains)
+	}
+}
+
 func TestResolveFillsResolution(t *testing.T) {
 	r, _, p, _, _ := setup(t)
 	res, err := r.Resolve(context.Background(), p.ID)

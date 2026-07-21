@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -156,8 +157,21 @@ var modelsCache struct {
 }
 
 type catalogProvider struct {
-	Name   string                  `json:"name"`
+	Name string `json:"name"`
+	// API is the provider's OpenAI-compatible base URL (models.dev supplies
+	// it, e.g. opencode-go → https://opencode.ai/zen/go/v1). Present ⇒ we can
+	// ask the provider what it ACTUALLY serves right now.
+	API    string                  `json:"api"`
 	Models map[string]catalogModel `json:"models"`
+}
+
+// authEntry is the slice of one opencode auth.json value we need: an
+// api-key entry carries a bearer we can use to query the provider's live
+// model list; subscription/oauth entries carry no static key and fall back
+// to the catalog.
+type authEntry struct {
+	Type string `json:"type"`
+	Key  string `json:"key"`
 }
 
 type catalogModel struct {
@@ -210,15 +224,17 @@ func (h *opencodeHarness) Models(ctx context.Context) ([]ModelInfo, error) {
 		return nil, err
 	}
 	var out []ModelInfo
-	for providerID := range auth {
+	for providerID, rawEntry := range auth {
 		p, ok := catalog[providerID]
 		if !ok {
 			continue // provider unknown to the catalog (e.g. bespoke auth entries)
 		}
-		for modelID, m := range p.Models {
-			name := m.Name
-			if name == "" {
-				name = modelID
+		var entry authEntry
+		_ = json.Unmarshal(rawEntry, &entry) // best-effort; oauth entries just yield an empty key
+		for _, modelID := range providerModelIDs(ctx, p, entry) {
+			name := modelID // catalog supplies a prettier name when it knows the model
+			if m, ok := p.Models[modelID]; ok && m.Name != "" {
+				name = m.Name
 			}
 			out = append(out, ModelInfo{
 				ID:   providerID + "/" + modelID,
@@ -228,6 +244,64 @@ func (h *opencodeHarness) Models(ctx context.Context) ([]ModelInfo, error) {
 	}
 	sortModels(out)
 	return out, nil
+}
+
+// providerModelIDs returns a provider's model ids: the AUTHORITATIVE live
+// list from the provider's own OpenAI-compatible /models endpoint when we
+// can reach it, else the models.dev catalog's static list. models.dev lags
+// real provider inventories — it kept offering a retired opencode-go model
+// that the gateway then rejected at run time — so the live list wins and
+// the catalog is fallback + name source.
+func providerModelIDs(ctx context.Context, p catalogProvider, entry authEntry) []string {
+	if live, err := liveModels(ctx, p, entry); err == nil && len(live) > 0 {
+		return live
+	}
+	ids := make([]string, 0, len(p.Models))
+	for id := range p.Models {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// liveModels queries {p.API}/models (OpenAI-compatible) with the api key
+// from auth.json and returns the model ids the provider actually serves.
+// Only attempts providers that expose a base URL and for which we hold a
+// static api key; the key is used solely as the request bearer and is
+// never logged. Any failure returns an error so the caller falls back to
+// the catalog.
+func liveModels(ctx context.Context, p catalogProvider, entry authEntry) ([]string, error) {
+	if p.API == "" || entry.Key == "" {
+		return nil, fmt.Errorf("no live model endpoint")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(p.API, "/")+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+entry.Key)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("provider %s models: %d", p.Name, resp.StatusCode)
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(body.Data))
+	for _, m := range body.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
 }
 
 func sortModels(out []ModelInfo) {

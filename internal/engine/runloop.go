@@ -324,13 +324,14 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	runCtx, cancelRun := context.WithCancelCause(x.ctx)
 	defer cancelRun(nil)
 	resCh := make(chan agentRes, 1)
+	runner := x.res.runnerFor(st.Harness) // per-step harness (default when unpinned)
 	go func() {
 		var r ports.AgentResult
 		var err error
 		if reenter && haveSession {
-			r, err = x.res.Runner.Resume(runCtx, rs.envID, session, resumeReply)
+			r, err = runner.Resume(runCtx, rs.envID, session, resumeReply)
 		} else {
-			r, err = x.res.Runner.Run(runCtx, rs.envID,
+			r, err = runner.Run(runCtx, rs.envID,
 				ports.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns},
 				ports.AgentInput{Prompt: prompt})
 		}

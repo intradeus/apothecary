@@ -1,4 +1,3 @@
-- 1) i don't see any reaper working after completion. 
 - 3) merge conflicts
 - 4) `channels` fold into `integrations`.
 - 5) db migration + migration table checks and simplify

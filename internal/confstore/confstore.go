@@ -77,17 +77,24 @@ type WorkspaceConfig struct {
 // Project picks one integration per port and adds repo/commands/workspace
 // specifics (§2).
 type Project struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	ForgeID       string            `json:"forge_id"`
-	ProvisionerID string            `json:"provisioner_id"`
-	HarnessID     string            `json:"harness_id"`
-	Repo          RepoConfig        `json:"repo"`
-	Commands      map[string]string `json:"commands"`
-	Workspace     WorkspaceConfig   `json:"workspace"`
-	DefaultFlow   string            `json:"default_flow"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	ForgeID       string `json:"forge_id"`
+	ProvisionerID string `json:"provisioner_id"`
+	HarnessID     string `json:"harness_id"`
+	// HarnessIDs is the full set of harness integrations available to the
+	// project (per-step harness): a flow stage may pin a harness KIND, which
+	// resolves to the set member of that kind. HarnessID (the default, used by
+	// stages that don't pin one) is always a member, and the set holds at most
+	// one integration per kind so kind→integration is unambiguous. Empty on
+	// pre-migration reads ⇒ treated as {HarnessID}.
+	HarnessIDs  []string          `json:"harness_ids"`
+	Repo        RepoConfig        `json:"repo"`
+	Commands    map[string]string `json:"commands"`
+	Workspace   WorkspaceConfig   `json:"workspace"`
+	DefaultFlow string            `json:"default_flow"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 // FlowRow is the current version of a stored flow (§7). Layout is the
