@@ -31,7 +31,7 @@ type Config struct {
 	URL      string // Coder server, e.g. http://localhost:7080
 	Token    string // session token (engine-held, never enters workspaces §15)
 	Template string // template name, e.g. "apothecary"
-	Owner    string // workspace owner; "me" works for CLI, REST needs the login name
+	Owner    string // workspace owner login; empty ⇒ resolved from the token (whoami)
 	// RunsDir receives exec logs (<run>/... §12); empty disables.
 	RunsDir string
 	// ProvisionTimeout bounds create+build+agent-ready (default 15m).
@@ -63,6 +63,11 @@ type Adapter struct {
 	tunnelMu sync.Mutex
 	tunnels  map[ports.EnvID]*tunnel
 
+	// ownerName caches the resolved workspace owner login (from whoami) when
+	// no username is configured; resolved once, reused for every link.
+	ownerMu   sync.Mutex
+	ownerName string
+
 	// Engine-pushed template state (template.go): checked/pushed at most
 	// once per process.
 	tmplMu      sync.Mutex
@@ -82,9 +87,10 @@ type CmdRunner interface {
 }
 
 func New(cfg Config) *Adapter {
-	if cfg.Owner == "" {
-		cfg.Owner = "me"
-	}
+	// cfg.Owner stays as configured (possibly empty): an empty owner is
+	// resolved once from the token via owner()/whoami — the workspaces are
+	// owned by the token's user, so @me in browser URLs would 404 for anyone
+	// not logged in as exactly that account.
 	if cfg.ProvisionTimeout == 0 {
 		cfg.ProvisionTimeout = 15 * time.Minute
 	}
@@ -609,10 +615,57 @@ func (a *Adapter) Destroy(ctx context.Context, env ports.EnvID) error {
 	return nil
 }
 
+// owner returns the workspace owner login used in REST paths and, crucially,
+// in the browser-facing app/terminal URLs. A configured username wins;
+// otherwise it is resolved once from the token (whoami) and cached — the
+// workspaces belong to the token's user, so a literal "@me" would 404 for a
+// human viewer who isn't logged in as exactly that account. Falls back to
+// "me" only if whoami fails (REST still accepts it for the token's own user).
+func (a *Adapter) owner(ctx context.Context) string {
+	if a.cfg.Owner != "" {
+		return a.cfg.Owner
+	}
+	a.ownerMu.Lock()
+	defer a.ownerMu.Unlock()
+	if a.ownerName != "" {
+		return a.ownerName
+	}
+	if name, err := a.whoami(ctx); err == nil && name != "" {
+		a.ownerName = name
+		return name
+	}
+	return "me"
+}
+
+// whoami resolves the token's Coder username via /api/v2/users/me.
+func (a *Adapter) whoami(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.URL+"/api/v2/users/me", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Coder-Session-Token", a.cfg.Token)
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("coder whoami: %d: %s", resp.StatusCode, tail(string(body), 256))
+	}
+	var u struct {
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(body, &u); err != nil {
+		return "", err
+	}
+	return u.Username, nil
+}
+
 // Links queries the REST API for workspace apps (§12): IDE (code-server app),
 // web terminal, and any exposed app port.
 func (a *Adapter) Links(ctx context.Context, env ports.EnvID) ([]ports.AccessLink, error) {
-	owner := a.cfg.Owner
+	owner := a.owner(ctx)
 	u := fmt.Sprintf("%s/api/v2/users/%s/workspace/%s", a.cfg.URL, url.PathEscape(owner), url.PathEscape(string(env)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

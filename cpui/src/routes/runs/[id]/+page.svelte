@@ -2,6 +2,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EventEnvelope, type RunView } from '$lib/api';
+  import PingCard from '$lib/PingCard.svelte';
+  import { GATE_TYPES, type PingLike } from '$lib/ping';
   import { onMount } from 'svelte';
 
   const runId = page.params.id ?? '';
@@ -22,6 +24,20 @@
     const answered = new Set(events.filter((e) => e.type === 'ping_answered').map((e) => e.payload.ping_id));
     return events.findLast((e) => e.type === 'ping_raised' && !answered.has(e.payload.ping_id));
   });
+  // Map the ping_raised event payload onto the shared PingCard shape (the
+  // inbox feeds it the durable Ping projection instead).
+  const pendingPingView = $derived<PingLike | null>(
+    pendingPing
+      ? {
+          ping_id: pendingPing.payload.ping_id as string,
+          type: pendingPing.payload.type as string,
+          question: pendingPing.payload.question as string,
+          context: pendingPing.payload.context as string | undefined,
+          payload_ref: pendingPing.payload.payload_ref as string | undefined,
+          options: pendingPing.payload.options as string[] | undefined
+        }
+      : null
+  );
   const totals = $derived.by(() => {
     let cost = 0, turns = 0;
     for (const e of events) {
@@ -209,7 +225,6 @@
     }
   }
 
-  const gateTypes = ['plan_approval', 'final_review'];
 </script>
 
 {#if run}
@@ -289,30 +304,10 @@
     </div>
   {/if}
 
-  {#if pendingPing}
-    {@const ptype = pendingPing.payload.type as string}
+  {#if pendingPingView}
     <div class="card" style="border-color:var(--amber)">
-      <div class="pingtype {gateTypes.includes(ptype) ? 'wanted' : 'unwanted'}">{ptype}</div>
-      <p style="margin:6px 0 10px">{pendingPing.payload.question}</p>
-      {#if pendingPing.payload.payload_ref}
-        <p class="mono small muted">
-          {#if String(pendingPing.payload.payload_ref).startsWith('http')}
-            <a href={String(pendingPing.payload.payload_ref)} target="_blank" rel="noreferrer">{pendingPing.payload.payload_ref} ↗</a>
-          {:else}{pendingPing.payload.payload_ref}{/if}
-        </p>
-      {/if}
-      {#if gateTypes.includes(ptype)}
-        <textarea bind:value={feedback} placeholder="Feedback (required when rejecting)"></textarea>
-        <div class="row" style="margin-top:10px">
-          <button class="approve" disabled={answering} onclick={() => answer('approve')}>Approve</button>
-          <button class="reject" disabled={answering || !feedback.trim()} onclick={() => answer('reject')}>Reject with feedback</button>
-        </div>
-      {:else}
-        <textarea bind:value={feedback} placeholder="Your answer to the agent…"></textarea>
-        <div class="row" style="margin-top:10px">
-          <button class="primary" disabled={answering || !feedback.trim()} onclick={() => answer(feedback.trim())}>Send answer</button>
-        </div>
-      {/if}
+      <div class="pingtype {GATE_TYPES.includes(pendingPingView.type) ? 'wanted' : 'unwanted'}">{pendingPingView.type}</div>
+      <PingCard ping={pendingPingView} busy={answering} bind:feedback onanswer={answer} />
     </div>
   {/if}
 

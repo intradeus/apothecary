@@ -18,7 +18,7 @@ type PingView struct {
 	Context    string     `json:"context,omitempty"`
 	PayloadRef string     `json:"payload_ref,omitempty"`
 	Options    []string   `json:"options,omitempty"`
-	Status     string     `json:"status"` // pending|answered
+	Status     string     `json:"status"` // pending|answered|withdrawn (run ended unanswered)
 	Answer     string     `json:"answer,omitempty"`
 	Feedback   string     `json:"feedback,omitempty"`
 	RaisedAt   time.Time  `json:"raised_at"`
@@ -46,6 +46,17 @@ func ReducePings(evs []event.Event) []PingView {
 				out[j].Answer = p.Answer
 				out[j].Feedback = p.Feedback
 				out[j].AnsweredAt = &ts
+			}
+		case *event.RunAbandoned, *event.RunFailed, *event.RunArchived, *event.RunCompleted:
+			// The run reached a terminal state with a still-open ping: its live
+			// handler is gone, so the ping can never be answered. Withdraw it so
+			// the inbox stops offering a request nothing will ever service (and
+			// "answer" stops 404ing on a ping the durable projection still shows
+			// as pending).
+			for j := range out {
+				if out[j].RunID == evs[i].RunID && out[j].Status == "pending" {
+					out[j].Status = "withdrawn"
+				}
 			}
 		}
 	}

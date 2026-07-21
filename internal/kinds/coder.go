@@ -14,6 +14,7 @@ func (Coder) Descriptor() Descriptor {
 			{Name: "url", Label: "Coder server URL", Placeholder: "http://localhost:7080", Required: true},
 			{Name: "token", Label: "Session token", Secret: true, Required: true},
 			{Name: "template", Label: "Template name", Default: "apothecary", Required: true},
+			{Name: "username", Label: "Coder username", Placeholder: "(auto-detected from token)"},
 		},
 	}
 }
@@ -27,6 +28,7 @@ func (Coder) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		URL:           cfg.Str("url", ""),
 		Token:         cfg.Secrets["token"],
 		Template:      template,
+		Owner:         cfg.Str("username", ""),
 		RunsDir:       deps.RunsDir,
 		EnginePort:    deps.EnginePort,
 		ProxyPort:     deps.ProxyPort,

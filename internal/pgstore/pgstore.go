@@ -225,6 +225,15 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 				p.PingID, p.Answer, p.Feedback, evs[i].TS); err != nil {
 				return err
 			}
+		case *event.RunAbandoned, *event.RunFailed, *event.RunArchived, *event.RunCompleted:
+			// Terminal run ⇒ withdraw any still-open ping: its live handler is
+			// gone, so it can never be answered. Keeps the inbox from showing a
+			// dead request (parity with run.ReducePings).
+			if _, err := tx.Exec(ctx, `
+				UPDATE pings SET status='withdrawn' WHERE run_id=$1 AND status='pending'`,
+				runID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
