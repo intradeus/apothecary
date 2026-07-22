@@ -1138,6 +1138,8 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		ProviderEnv:   res.ProviderEnv,
 		GitUser:       res.GitUser,
 		GitPass:       res.GitPass,
+		GitName:       res.GitName,
+		GitEmail:      res.GitEmail,
 		SeedAuth:      res.SeedAuth,
 		Prepare:       res.Prepare,
 		Setup:         res.Commands["setup"], // optional in v2: "" skips step 6

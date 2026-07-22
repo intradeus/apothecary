@@ -27,6 +27,11 @@ type Resolution struct {
 	// empty = public repo, no credential helper.
 	GitUser string
 	GitPass string
+	// GitName/GitEmail are the commit author identity stamped in the
+	// workspace's `git config user.*` (§11 step 3), configured per forge
+	// integration; either empty ⇒ bootstrap keeps its built-in default.
+	GitName  string
+	GitEmail string
 	// ProviderEnv is the merged env-var map of the project's provider
 	// integrations, written to /apothecary/provider.env at bootstrap step 2.
 	ProviderEnv map[string]string

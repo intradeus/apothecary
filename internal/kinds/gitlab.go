@@ -20,22 +20,28 @@ func (GitLab) Descriptor() Descriptor {
 		Fields: []Field{
 			{Name: "base_url", Label: "Base URL", Default: "https://gitlab.com", Required: true},
 			{Name: "token", Label: "Personal access token (api scope, Developer+)", Secret: true, Required: true},
+			{Name: "git_name", Label: "Commit author name", Placeholder: "Apothecary"},
+			{Name: "git_email", Label: "Commit author email", Placeholder: "apothecary@local"},
 		},
 	}
 }
 
 type gitlabAccount struct {
-	acc     *gitlabadapter.Account
-	baseURL string
-	token   string
+	acc      *gitlabadapter.Account
+	baseURL  string
+	token    string
+	gitName  string
+	gitEmail string
 }
 
 func (GitLab) Account(cfg Config) (ForgeAccount, error) {
 	base := cfg.Str("base_url", "https://gitlab.com")
 	return &gitlabAccount{
-		acc:     gitlabadapter.NewAccount(base, cfg.Secrets["token"]),
-		baseURL: base,
-		token:   cfg.Secrets["token"],
+		acc:      gitlabadapter.NewAccount(base, cfg.Secrets["token"]),
+		baseURL:  base,
+		token:    cfg.Secrets["token"],
+		gitName:  cfg.Str("git_name", ""),
+		gitEmail: cfg.Str("git_email", ""),
 	}, nil
 }
 
@@ -61,6 +67,9 @@ func (a *gitlabAccount) GitCredential() (string, string) {
 	}
 	return "oauth2", a.token
 }
+
+// GitIdentity: the operator-configured commit author (empty ⇒ bootstrap default).
+func (a *gitlabAccount) GitIdentity() (string, string) { return a.gitName, a.gitEmail }
 
 func (a *gitlabAccount) EgressDomains() []string {
 	if u, err := url.Parse(a.baseURL); err == nil && u.Host != "" {

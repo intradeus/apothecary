@@ -38,6 +38,7 @@ func (fakeAccount) ListRepos(context.Context) ([]RepoInfo, error) {
 	return []RepoInfo{{Name: "dev/fake-repo", URL: "https://forge.local/dev/fake-repo.git", Locator: "1", DefaultBranch: "main"}}, nil
 }
 func (fakeAccount) GitCredential() (string, string) { return "", "" }
+func (fakeAccount) GitIdentity() (string, string)   { return "", "" }
 func (fakeAccount) EgressDomains() []string         { return nil }
 
 func (FakeForge) Account(Config) (ForgeAccount, error) { return fakeAccount{}, nil }

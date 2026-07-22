@@ -89,6 +89,11 @@ type ForgeAccount interface {
 	// GitCredential is the (user, password) pair for the §11 step 3
 	// credential-store entry; empty user+pass = public repos only.
 	GitCredential() (user, pass string)
+	// GitIdentity is the author name+email stamped on the agent's commits
+	// (§11 step 3 `git config user.*`). Configured per forge integration so
+	// commits carry the human operator's identity, not a generic bot. Either
+	// empty ⇒ bootstrap keeps its built-in default for that field.
+	GitIdentity() (name, email string)
 	EgressDomains() []string
 }
 

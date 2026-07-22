@@ -19,19 +19,25 @@ func (GitHub) Descriptor() Descriptor {
 		Fields: []Field{
 			{Name: "base_url", Label: "API base URL", Default: "https://api.github.com", Required: true},
 			{Name: "token", Label: "Personal access token (repo scope, or fine-grained Contents:RW + Pull requests:RW)", Secret: true, Required: true},
+			{Name: "git_name", Label: "Commit author name", Placeholder: "Apothecary"},
+			{Name: "git_email", Label: "Commit author email", Placeholder: "apothecary@local"},
 		},
 	}
 }
 
 type githubAccount struct {
-	acc   *githubadapter.Account
-	token string
+	acc      *githubadapter.Account
+	token    string
+	gitName  string
+	gitEmail string
 }
 
 func (GitHub) Account(cfg Config) (ForgeAccount, error) {
 	return &githubAccount{
-		acc:   githubadapter.NewAccount(cfg.Str("base_url", "https://api.github.com"), cfg.Secrets["token"]),
-		token: cfg.Secrets["token"],
+		acc:      githubadapter.NewAccount(cfg.Str("base_url", "https://api.github.com"), cfg.Secrets["token"]),
+		token:    cfg.Secrets["token"],
+		gitName:  cfg.Str("git_name", ""),
+		gitEmail: cfg.Str("git_email", ""),
 	}, nil
 }
 
@@ -56,6 +62,9 @@ func (a *githubAccount) GitCredential() (string, string) {
 	}
 	return "x-access-token", a.token
 }
+
+// GitIdentity: the operator-configured commit author (empty ⇒ bootstrap default).
+func (a *githubAccount) GitIdentity() (string, string) { return a.gitName, a.gitEmail }
 
 func (a *githubAccount) EgressDomains() []string {
 	return []string{"github.com", "api.github.com", "codeload.github.com"}

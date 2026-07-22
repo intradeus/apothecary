@@ -212,6 +212,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	}
 
 	gitUser, gitPass := account.GitCredential()
+	gitName, gitEmail := account.GitIdentity()
 
 	// Image resolution (§8): custom template ⇒ the template bakes its own
 	// image, no pipeline; else compose base + fragment + harness layer,
@@ -237,6 +238,8 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		Commands:        p.Commands,
 		GitUser:         gitUser,
 		GitPass:         gitPass,
+		GitName:         gitName,
+		GitEmail:        gitEmail,
 		ProviderEnv:     providerEnv, // union of every harness's own auth env
 		EgressDomains:   egressDomains(p, egressContribs...),
 		Image:           image,

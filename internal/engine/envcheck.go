@@ -125,6 +125,8 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		SeedAuth: res.SeedAuth,
 		GitUser:  res.GitUser,
 		GitPass:  res.GitPass,
+		GitName:  res.GitName,
+		GitEmail: res.GitEmail,
 		Prepare:  res.Prepare,
 		Setup:    res.Commands["setup"],
 		Timeout:  10 * time.Minute,

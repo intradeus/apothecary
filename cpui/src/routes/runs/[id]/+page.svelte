@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EventEnvelope, type RunView } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
+  import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import { GATE_TYPES, type PingLike } from '$lib/ping';
   import { onMount } from 'svelte';
 
@@ -279,6 +280,7 @@
   <div class="row spread" style="margin-bottom:6px">
     <h1 style="margin:0">{run.ticket_title}</h1>
     <span class="chip"><span class="dot" style="background:{stateColors[run.state]}"></span>{run.state}</span>
+    <WorkspaceBadge state={run.state} envId={run.env_id} />
   </div>
   <div class="row small muted" style="margin-bottom:16px">
     <span class="mono">{run.run_id}</span>

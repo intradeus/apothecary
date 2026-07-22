@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, stateColors, stateTab, ago, type Project, type RunView, type RunTab } from '$lib/api';
   import AttachFiles from '$lib/AttachFiles.svelte';
+  import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
@@ -167,7 +168,7 @@
   <div class="card" style="padding:4px 0">
     <table>
       <thead>
-        <tr><th>Ticket</th><th>State</th><th>Stage</th><th>Project</th><th>Flow</th><th>MR</th><th>Updated</th></tr>
+        <tr><th>Ticket</th><th>State</th><th>Workspace</th><th>Stage</th><th>Project</th><th>Flow</th><th>MR</th><th>Updated</th></tr>
       </thead>
       <tbody>
         {#each shownRuns as r (r.run_id)}
@@ -176,6 +177,7 @@
             <td>
               <span class="chip"><span class="dot" style="background:{stateColors[r.state]}"></span>{r.state}</span>
             </td>
+            <td><WorkspaceBadge state={r.state} envId={r.env_id} /></td>
             <td class="mono">{r.current_stage ?? ''}</td>
             <td class="small">{projectName(r.project_id) ?? (r.project_id ? r.project_id.slice(-6) : '—')}</td>
             <td class="mono">{r.flow_name}</td>
