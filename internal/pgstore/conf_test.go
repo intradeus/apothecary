@@ -50,8 +50,13 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		t.Fatalf("dup err = %v", err)
 	}
 
+	// The default_flow FK (migration 0004) requires the flow to exist before
+	// the project that references it.
+	if err := s.UpsertFlow(ctx, confstore.FlowRow{Name: "v1", YAML: "a", Hash: "h1", UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessID: "int1",
+		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		Workspace:   confstore.WorkspaceConfig{Template: "custom-tmpl", ExtraDomains: []string{"pypi.org"}},
@@ -61,7 +66,8 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	gp, err := s.GetProjectByName(ctx, "web")
-	if err != nil || gp.Repo.Locator != "42" || gp.Workspace.ExtraDomains[0] != "pypi.org" {
+	if err != nil || gp.Repo.Locator != "42" || gp.Workspace.ExtraDomains[0] != "pypi.org" ||
+		len(gp.HarnessIDs) != 1 || gp.HarnessIDs[0] != "int1" {
 		t.Fatalf("project roundtrip = %+v, %v", gp, err)
 	}
 
@@ -71,10 +77,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		t.Fatalf("referenced delete = %v", err)
 	}
 
-	// Flows + immutable versions.
-	if err := s.UpsertFlow(ctx, confstore.FlowRow{Name: "v1", YAML: "a", Hash: "h1", UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	// A second flow version accumulates immutable history.
 	if err := s.UpsertFlow(ctx, confstore.FlowRow{Name: "v1", YAML: "b", Hash: "h2", UpdatedAt: now.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}

@@ -15,39 +15,21 @@
     type FlowDoc,
     type StageKind
   } from '$lib/flowdoc';
-  import type { Agent, ModelInfo } from '$lib/api';
 
+  // Flows are portable, project-independent data: this editor takes NOTHING
+  // from any project. Agent / harness / model / run_ref are free text and are
+  // validated against the project only at run creation (preflight).
   let {
     doc,
     selection,
-    agents,
-    modelsByKind,
-    harnessKinds,
-    defaultHarnessKind,
-    commands,
     onchange,
     onselect
   }: {
     doc: FlowDoc;
     selection: Selection;
-    agents: Agent[];
-    // Models per harness kind (per-step harness): a stage's model list scopes
-    // to the harness it pins, or the project default when unpinned.
-    modelsByKind: Record<string, ModelInfo[]>;
-    harnessKinds: string[];
-    defaultHarnessKind: string;
-    commands: string[];
     onchange: () => void;
     onselect: (sel: Selection) => void;
   } = $props();
-
-  // The kind whose models a stage should draw from: its pinned harness, else
-  // the project default.
-  const stageKind = (harness: string | undefined) => harness || defaultHarnessKind;
-  // The datalist id a model input points at. Kinds with no fetched models
-  // still get an (empty) list — free text always works.
-  const modelListId = (harness: string | undefined) => `fl-models-${stageKind(harness) || 'default'}`;
-  const allKinds = $derived([...new Set([...(harnessKinds ?? []), defaultHarnessKind].filter(Boolean))]);
 
   const stage = $derived(
     selection?.kind === 'stage' ? doc.stages.find((s) => s.id === selection.id) : undefined
@@ -149,18 +131,6 @@
   }
 </script>
 
-{#each allKinds as k (k)}
-  <datalist id="fl-models-{k}">
-    {#each modelsByKind[k] ?? [] as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
-  </datalist>
-{/each}
-<datalist id="fl-agents">
-  {#each agents as a (a.name)}<option value={a.name}>{a.description}</option>{/each}
-</datalist>
-<datalist id="fl-commands">
-  {#each commands as c (c)}<option value={c}></option>{/each}
-</datalist>
-
 <div class="card inspector">
   {#if stage}
     {@const s = stage}
@@ -173,22 +143,12 @@
     <div class="muted small">type: <span class="mono">{s.type}</span></div>
 
     {#if s.type === 'agent'}
-      <label for="st-agent">Agent <span class="muted">— from the context project's library</span></label>
-      <input id="st-agent" list="fl-agents" bind:value={s.agent} oninput={onchange} placeholder="builder" />
-      <label for="st-harness">Harness <span class="muted">— empty = project default ({defaultHarnessKind || 'project harness'})</span></label>
-      {#if harnessKinds.length > 0}
-        <select id="st-harness" bind:value={s.harness} onchange={onchange}>
-          <option value="">default{defaultHarnessKind ? ` — ${defaultHarnessKind}` : ''}</option>
-          {#each harnessKinds as k (k)}<option value={k}>{k}</option>{/each}
-          {#if s.harness && !harnessKinds.includes(s.harness)}
-            <option value={s.harness}>{s.harness} — not in context project</option>
-          {/if}
-        </select>
-      {:else}
-        <input id="st-harness" bind:value={s.harness} oninput={onchange} placeholder="project harness" />
-      {/if}
-      <label for="st-model">Model <span class="muted">— empty = flow default; suggestions from {stageKind(s.harness) || 'the harness'}</span></label>
-      <input id="st-model" list={modelListId(s.harness)} bind:value={s.model} oninput={onchange} placeholder={doc.defaults.model} />
+      <label for="st-agent">Agent <span class="muted">— an agent name in the project running this flow</span></label>
+      <input id="st-agent" bind:value={s.agent} oninput={onchange} placeholder="builder" />
+      <label for="st-harness">Harness <span class="muted">— override the flow default; empty = {doc.defaults.harness || 'flow default'}</span></label>
+      <input id="st-harness" bind:value={s.harness} oninput={onchange} placeholder={doc.defaults.harness || 'opencode'} />
+      <label for="st-model">Model <span class="muted">— override the flow default; empty = {doc.defaults.model || 'flow default'}</span></label>
+      <input id="st-model" bind:value={s.model} oninput={onchange} placeholder={doc.defaults.model} />
       <div class="row" style="gap:12px">
         <div style="flex:1">
           <label for="st-turns">Max turns</label>
@@ -235,8 +195,8 @@
         verdict (writes artifacts/verdict.json; REJECT routes on_reject)
       </label>
     {:else if s.type === 'command'}
-      <label for="st-runref">run_ref <span class="muted">— from the context project's commands</span></label>
-      <input id="st-runref" list="fl-commands" bind:value={s.run_ref} oninput={onchange} placeholder="verify" />
+      <label for="st-runref">run_ref <span class="muted">— a command name in the project running this flow</span></label>
+      <input id="st-runref" bind:value={s.run_ref} oninput={onchange} placeholder="verify" />
       <label for="st-run">…or literal script</label>
       <textarea id="st-run" bind:value={s.run} oninput={onchange} rows="3" placeholder="make test"></textarea>
     {:else if s.type === 'human_gate'}
@@ -377,8 +337,10 @@
         onchange();
       }}
     />
+    <label for="fl-harness">Default harness <span class="muted">— the harness kind stages run on unless they override it</span></label>
+    <input id="fl-harness" bind:value={doc.defaults.harness} oninput={onchange} placeholder="opencode" />
     <label for="fl-model">Default model</label>
-    <input id="fl-model" list={modelListId(undefined)} bind:value={doc.defaults.model} oninput={onchange} placeholder="openrouter/anthropic/claude-sonnet-4.6" />
+    <input id="fl-model" bind:value={doc.defaults.model} oninput={onchange} placeholder="openrouter/anthropic/claude-sonnet-4.6" />
     <div class="row" style="gap:12px">
       <div style="flex:1">
         <label for="fl-timeout">Default timeout</label>

@@ -93,7 +93,7 @@ func (m *Mem) DeleteIntegration(_ context.Context, id string) error {
 				break
 			}
 		}
-		if p.ForgeID == id || p.ProvisionerID == id || p.HarnessID == id || inSet {
+		if p.ForgeID == id || p.ProvisionerID == id || inSet {
 			refs = append(refs, p.Name)
 		}
 	}

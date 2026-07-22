@@ -39,15 +39,19 @@ type Resolution struct {
 	// whether it was already there (§8.3 image_built{cached}). nil on the
 	// custom-template path.
 	EnsureImage func(ctx context.Context) (cached bool, err error)
-	// HarnessKind names the project's DEFAULT harness — the one a stage runs
-	// on when it doesn't pin a `harness:` (§6.3).
+	// HarnessKind is a deterministic FALLBACK harness kind (the first
+	// available in the project's set) — NOT a project-chosen default. The
+	// real default is the flow's defaults.harness, applied per stage; this
+	// is reached only by a stage with no harness kind, which the required
+	// flow default prevents. Kept so single-harness callers (fakes, envcheck)
+	// have one concrete kind.
 	HarnessKind string
-	// HarnessKinds are every harness kind in the project's set (per-step
-	// harness). A stage may only pin one of these; preflight refuses others.
-	// Empty ⇒ just HarnessKind.
+	// HarnessKinds are every harness kind in the project's available set
+	// (per-step harness). A stage/flow may only name one of these; preflight
+	// refuses others. Empty ⇒ just HarnessKind.
 	HarnessKinds []string
-	// HarnessBinary is the default harness executable (envcheck probes it with
-	// `command -v`, §9).
+	// HarnessBinary is the fallback harness executable (envcheck probes it
+	// with `command -v`, §9).
 	HarnessBinary string
 	// HarnessBinaries is every harness's executable — envcheck probes them all,
 	// since any set member may run. Empty ⇒ just HarnessBinary.

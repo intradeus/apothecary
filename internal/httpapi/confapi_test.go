@@ -21,7 +21,7 @@ import (
 // v1FlowDoc is this suite's user-created flow (the product ships none):
 // gated build ending in an MR — enough to drive both human gates.
 const v1FlowDoc = `name: v1
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan,       type: agent, agent: planner, input: [ticket], output: artifacts/plan.md }
   - { id: plan_gate,  type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
@@ -131,7 +131,7 @@ func (x *confEnv) wizard(t *testing.T) string {
 
 	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
 		"name": "web", "forge_id": forgeID, "provisioner_id": provID,
-		"harness_id": harnessID,
+		"harness_ids": []string{harnessID},
 		"repo": map[string]string{
 			"url": repos[0].URL, "locator": repos[0].Locator, "default_branch": repos[0].DefaultBranch,
 		},
@@ -230,7 +230,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// Flow validate: line-precise errors verbatim.
 	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{
-		"yaml": "name: bad\ndefaults: { model: nope }\nstages: []\n",
+		"yaml": "name: bad\ndefaults: { harness: fake, model: nope }\nstages: []\n",
 	}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "provider/model") {
 		t.Fatalf("validate = %d: %s", resp.StatusCode, data)
@@ -351,7 +351,7 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 
 	// Saving under the built-in name creates the editable override.
-	override := "name: default\ndefaults: { model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	override := "name: default\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
 	resp, data = x.do(t, "PUT", "/api/flows/default", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
@@ -459,9 +459,9 @@ func TestAgentLibraryRoutes(t *testing.T) {
 	}
 	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
 		"name": "web2", "forge_id": ids["forge"], "provisioner_id": ids["provisioner"],
-		"harness_id": ids["harness"],
-		"repo":       map[string]string{"url": "https://forge.local/dev/fake-repo.git", "locator": "1", "default_branch": "main"},
-		"workspace":  map[string]any{"template": "dev"}, "default_flow": "v1",
+		"harness_ids": []any{ids["harness"]},
+		"repo":        map[string]string{"url": "https://forge.local/dev/fake-repo.git", "locator": "1", "default_branch": "main"},
+		"workspace":   map[string]any{"template": "dev"}, "default_flow": "v1",
 	}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("web2 = %d: %s", resp.StatusCode, data)

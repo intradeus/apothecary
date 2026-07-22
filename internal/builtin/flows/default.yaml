@@ -1,6 +1,6 @@
 name: default
 description: "built-in default: plan-gated build with cross-vendor adversarial review and manual-debug rescue"
-defaults: { timeout: 30m, model: anthropic/claude-sonnet-4-6, max_turns: 50 }
+defaults: { timeout: 30m, harness: opencode, model: opencode-go/qwen3.5-plus, max_turns: 50 }
 budget: { max_cost_usd: 10.0, max_total_turns: 300 }
 # Failure philosophy: every agent/command stage first retries itself with
 # its error fed back, then escalates to its OWN manual_debug gate — a human
@@ -50,7 +50,7 @@ stages:
   - { id: debug_test, type: human_gate, ping: manual_debug, payload: workspace,
       on_success: test,
       on_reject: abort }
-  - { id: review,     type: agent, agent: reviewer, model: openai/gpt-5,
+  - { id: review,     type: agent, agent: reviewer, model: opencode-go/glm-5.1,
       input: [ticket, artifacts/plan.md, $CHANGED], verdict: true, max_turns: 30,
       on_success: redact,
       on_reject: { to: build, max: 3, feed: comments },

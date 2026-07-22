@@ -262,7 +262,6 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	refs := []struct{ id, port, field string }{
 		{p.ForgeID, PortForge, "forge_id"},
 		{p.ProvisionerID, PortProvisioner, "provisioner_id"},
-		{p.HarnessID, PortHarness, "harness_id"},
 	}
 	for _, r := range refs {
 		if r.id == "" {
@@ -281,20 +280,10 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 			return invalidf("project: %s references %s integration %q, need port %s", r.field, in.Port, in.Name, r.port)
 		}
 	}
-	// Per-step harness: normalize and validate the harness set. The default
-	// (HarnessID, validated above) is always a member; the set holds at most
-	// one integration per kind, so a stage's `harness: <kind>` maps to exactly
-	// one integration.
-	hasDefault := false
-	for _, id := range p.HarnessIDs {
-		if id == p.HarnessID {
-			hasDefault = true
-			break
-		}
-	}
-	if !hasDefault {
-		p.HarnessIDs = append([]string{p.HarnessID}, p.HarnessIDs...)
-	}
+	// The project owns a SET of available harness integrations, no default:
+	// the flow names the harness kind. At least one is required (a project
+	// with no harness can run no agent stage); at most one per kind, so a
+	// flow's `harness: <kind>` maps to exactly one integration.
 	seenID := map[string]bool{}
 	seenKind := map[string]string{} // kind -> integration name, for the error
 	norm := make([]string, 0, len(p.HarnessIDs))
@@ -318,6 +307,9 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 		}
 		seenKind[in.Kind] = in.Name
 		norm = append(norm, id)
+	}
+	if len(norm) == 0 {
+		return invalidf("project: harness_ids is required (at least one harness integration)")
 	}
 	p.HarnessIDs = norm
 	if err := ValidateFragment(p.Workspace.DockerfileFragment); err != nil {

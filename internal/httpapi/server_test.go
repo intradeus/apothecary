@@ -24,7 +24,7 @@ import (
 )
 
 const loopFlowDoc = `name: loop
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
@@ -265,7 +265,7 @@ func TestSSEReplayAndLive(t *testing.T) {
 // → 204 + X-Ping-ID (hold expired) → GET re-poll → 200 with the answer.
 func TestShimProtocol(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: ping
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `)
@@ -538,7 +538,7 @@ func TestLogsEndpoint(t *testing.T) {
 // for URL payloads, 404 for unknown pings.
 func TestPingArtifact(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan, type: agent, agent: planner, output: artifacts/plan.md }
   - { id: gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
@@ -601,7 +601,7 @@ stages:
 // stay queryable with both sides of the exchange and their stage.
 func TestPingHistory(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan, type: agent, agent: planner, output: artifacts/plan.md }
   - { id: gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md,

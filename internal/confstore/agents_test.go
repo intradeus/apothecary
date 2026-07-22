@@ -14,7 +14,7 @@ func seedAgentEnv(t *testing.T) (*Service, Project, Project) {
 	t.Helper()
 	svc, _ := newSvc(t)
 	flowYAML := `name: f
-defaults: { model: fake/fast-1 }
+defaults: { harness: fake, model: fake/fast-1 }
 stages:
   - { id: plan,  type: agent, agent: planner, output: artifacts/plan.md }
   - { id: build, type: agent, agent: scribe }
@@ -32,7 +32,7 @@ stages:
 	f, c, h := mkInt(PortForge, "f"), mkInt(PortProvisioner, "c"), mkInt(PortHarness, "h")
 	mkProj := func(name string) Project {
 		p, err := svc.CreateProject(context.Background(), Project{
-			Name: name, ForgeID: f, ProvisionerID: c, HarnessID: h,
+			Name: name, ForgeID: f, ProvisionerID: c, HarnessIDs: []string{h},
 			Repo:        RepoConfig{URL: "https://forge.local/x.git"},
 			Workspace:   WorkspaceConfig{Template: "t"},
 			DefaultFlow: "f",

@@ -116,17 +116,13 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		}
 	}()
 
-	// Harness set (per-step harness): the project holds one harness
-	// integration per kind; a flow stage may pin which kind it runs on, and
-	// HarnessID is the default (stages that don't pin one). Each harness wraps
-	// the provisioner for exec. Older projects carry just the default.
-	harnessIDs := p.HarnessIDs
-	if len(harnessIDs) == 0 {
-		harnessIDs = []string{p.HarnessID}
-	}
+	// Harness set (per-step harness): the project holds the AVAILABLE harness
+	// integrations, one per kind, with NO default — the flow owns the default
+	// harness kind (defaults.harness) and a stage may override it. Each
+	// harness wraps the provisioner for exec.
 	byKind := map[string]kinds.Harness{}
-	defaultKind := ""
-	for _, hid := range harnessIDs {
+	firstKind := "" // the first-configured kind: the fallback default (below)
+	for _, hid := range p.HarnessIDs {
 		hi, err := r.integration(ctx, hid, confstore.PortHarness)
 		if err != nil {
 			return nil, err
@@ -143,12 +139,12 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			return nil, unresolvable(fmt.Errorf("harness %s: %v", hi.Name, err))
 		}
 		byKind[hi.Kind] = h
-		if hid == p.HarnessID {
-			defaultKind = hi.Kind
+		if firstKind == "" {
+			firstKind = hi.Kind
 		}
 	}
-	if defaultKind == "" {
-		return nil, unresolvable(fmt.Errorf("project default harness %s is not in the harness set", p.HarnessID))
+	if len(byKind) == 0 {
+		return nil, unresolvable(fmt.Errorf("project %s has no harness integrations", p.Name))
 	}
 	// Deterministic unions by sorted kind: the image tag is content-addressed,
 	// so the install-layer order must not depend on set/map ordering.
@@ -157,6 +153,13 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		kindList = append(kindList, k)
 	}
 	sort.Strings(kindList)
+	// The project has no default; the flow's defaults.harness drives selection
+	// per stage (runnerFor(stage.Harness)). The Resolution's default fields
+	// (Runner/HarnessKind/HarnessBinary) are a FALLBACK — the first-configured
+	// harness — reached only by a stage with no harness kind, which the
+	// required flow default (parse.go) prevents; envcheck also probes it.
+	// Preflight refuses a flow harness kind that is not in this set.
+	defaultKind := firstKind
 	runners := make(map[string]ports.AgentRunner, len(byKind))
 	providerEnv := map[string]string{}
 	var installLayers, harnessBinaries []string

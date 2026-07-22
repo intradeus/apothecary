@@ -45,9 +45,16 @@ services:
       # root-equivalent on the host: documented §16 residual, it joins
       # Coder as literal trusted control plane.
       - /var/run/docker.sock:/var/run/docker.sock
-      - apothecary-runs:/var/lib/apothecary/runs
+      # RunsDir is a HOST BIND MOUNT at the SAME path (not a named volume):
+      # the devcontainer provisioner asks the host daemon to bind-mount the
+      # engine-side checkout + shim dir (and the engine-bridge unix sockets)
+      # from here INTO each workspace container, and the daemon resolves
+      # those source paths host-side — a named volume would surface empty
+      # dirs. Coder is unaffected (it never mounts RunsDir into workspaces).
+      # This dir is a rebuildable cache (logs, checkouts, build artifacts);
+      # the durable state is Postgres.
+      - /var/lib/apothecary/runs:/var/lib/apothecary/runs
     restart: unless-stopped
 
 volumes:
   apothecary-pgdata:
-  apothecary-runs:

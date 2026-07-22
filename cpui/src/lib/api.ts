@@ -65,11 +65,9 @@ export interface Project {
   name: string;
   forge_id: string;
   provisioner_id: string;
-  harness_id: string;
-  // Full harness set (per-step harness): a flow stage may pin a harness kind,
-  // resolved to the set member of that kind. harness_id (the default) is always
-  // a member. Server-normalized; safe to omit on create.
-  harness_ids?: string[];
+  // The project's set of available harness integrations (no default — the
+  // flow names the harness kind). One integration per kind.
+  harness_ids: string[];
   repo: { url: string; locator: string; default_branch: string; agents_md_path: string };
   commands: Record<string, string>;
   workspace: { dockerfile_fragment?: string; extra_domains?: string[]; template?: string };
@@ -323,7 +321,8 @@ export const api = {
     post(`/api/projects/${projectId}/agents/copy`, { from_project_id: fromProjectId, ...(names?.length ? { names } : {}) }) as Promise<{ copied: Agent[] }>,
   flows: () => req<FlowRow[]>('/api/flows'),
   flow: (name: string) => req<FlowRow>(`/api/flows/${encodeURIComponent(name)}`),
-  createFlow: (name: string, yaml: string) => post('/api/flows', { name, yaml }) as Promise<FlowRow>,
+  createFlow: (name: string, yaml: string, layout?: FlowLayout) =>
+    post('/api/flows', { name, yaml, ...(layout ? { layout } : {}) }) as Promise<FlowRow>,
   saveFlow: (name: string, yaml: string, layout?: FlowLayout) =>
     put(`/api/flows/${encodeURIComponent(name)}`, { yaml, ...(layout ? { layout } : {}) }) as Promise<FlowRow>,
   deleteFlow: (name: string) => req<void>(`/api/flows/${encodeURIComponent(name)}`, { method: 'DELETE' }),

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ago, type Agent, type FlowRow, type FlowVersion, type Integration, type ModelInfo, type Project } from '$lib/api';
+  import { api, ago, type FlowRow, type FlowVersion } from '$lib/api';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
   import { ABORT, autoLayout, docToYaml, DONE, START, edgeOf, setEdge, setEntry, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
@@ -29,30 +29,9 @@
   let busy = $state(false);
   let validation = $state<{ ok: boolean; detail: string } | null>(null);
 
-  // Editing context (DESIGN3 §2.4): a project supplies the dropdowns —
-  // agents from its library, models from its harness auth, run_refs from
-  // its commands. Free text always works; flows stay portable.
-  let projects = $state<Project[]>([]);
-  let integrations = $state<Integration[]>([]);
-  let contextId = $state('');
-  let agents = $state<Agent[]>([]);
-  // Per-step harness: models are fetched per harness integration and keyed by
-  // kind, so a stage's model list scopes to the harness it pins.
-  let modelsByKind = $state<Record<string, ModelInfo[]>>({});
-  const contextProject = $derived(projects.find((p) => p.id === contextId));
-  const commands = $derived(Object.keys(contextProject?.commands ?? {}));
-  const harnessIdsOf = (p: Project | undefined) =>
-    p ? (p.harness_ids?.length ? p.harness_ids : p.harness_id ? [p.harness_id] : []) : [];
-  const defaultHarnessKind = $derived(
-    integrations.find((i) => i.id === contextProject?.harness_id)?.kind ?? ''
-  );
-  const harnessKinds = $derived.by(() => {
-    const ints = integrations;
-    const kinds = harnessIdsOf(contextProject)
-      .map((id) => ints.find((i) => i.id === id)?.kind)
-      .filter((k): k is string => !!k);
-    return [...new Set(kinds)];
-  });
+  // Flows are portable, project-independent data: the editor takes NOTHING
+  // from any project. Agent / harness / model / run_ref are free text here
+  // and are validated against the project only at run creation (preflight).
 
   const dirty = $derived(flow !== null && (graphDirty || yaml !== flow.yaml));
 
@@ -70,39 +49,11 @@
         tab = 'yaml';
         validation = { ok: false, detail: (r.errors ?? []).join('\n') };
       }
-      projects = await api.projects();
-      integrations = await api.integrations().catch(() => []);
-      const def = projects.find((p) => p.default_flow === flow!.name) ?? projects[0];
-      if (def) {
-        contextId = def.id;
-      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
   };
   onMount(load);
-
-  // Context loads are best-effort: dropdown assistance, not a gate.
-  $effect(() => {
-    const p = projects.find((x) => x.id === contextId);
-    const ints = integrations; // read synchronously so this re-runs once loaded
-    if (!p) return;
-    api.agents(p.id).then((a) => (agents = a)).catch(() => (agents = []));
-    // Fetch each harness's live model list, keyed by kind (per-step harness).
-    const ids = harnessIdsOf(p);
-    const map: Record<string, ModelInfo[]> = {};
-    Promise.all(
-      ids.map(async (id) => {
-        const kind = ints.find((i) => i.id === id)?.kind;
-        if (!kind) return;
-        try {
-          map[kind] = await api.models(id);
-        } catch {
-          map[kind] = [];
-        }
-      })
-    ).then(() => (modelsByKind = map));
-  });
 
   function currentYAML(): string {
     if (doc && (tab === 'graph' || graphDirty)) return docToYaml(doc);
@@ -127,7 +78,10 @@
       .then((r) => {
         if (r.ok && r.doc) {
           doc = r.doc;
-          for (const s of doc.stages) if (!(s.id in layout)) layout[s.id] = { x: 120, y: 240 };
+          // Place stages added in the YAML editor via the success-chain layout
+          // rather than dropping them all on one point (which overlaps them).
+          const auto = autoLayout(doc);
+          for (const s of doc.stages) if (!(s.id in layout)) layout[s.id] = auto[s.id];
           graphDirty = false;
           validation = null;
           rev++;
@@ -182,6 +136,16 @@
     }, 800);
   }
 
+  // autoArrange re-runs the success-chain layout, discarding manual positions,
+  // and persists the fresh map (via onmove's layout-only autosave path).
+  function autoArrange() {
+    if (!doc) return;
+    layout = autoLayout(doc);
+    rev++;
+    const first = doc.stages[0]?.id;
+    if (first) onmove(first, layout[first].x, layout[first].y);
+  }
+
   async function validate() {
     validation = null;
     try {
@@ -213,6 +177,30 @@
     } catch (e) {
       validation = { ok: false, detail: e instanceof Error ? e.message : String(e) };
     } finally {
+      busy = false;
+    }
+  }
+
+  // Clone rewrites the immutable top-level name (docToYaml/templates always
+  // emit `name:` at column 0) and creates a fresh flow from the current editor
+  // content plus node positions. Works on built-ins too — fork a default under
+  // your own name without shadowing it.
+  async function clone() {
+    if (!flow) return;
+    const name = prompt(`Clone "${flow.name}" as a new flow. New name (lowercase slug):`, `${flow.name}-copy`)?.trim();
+    if (!name) return;
+    if (!/^[a-z][a-z0-9_-]*$/.test(name)) {
+      error = `"${name}" is not a valid flow name (lowercase slug, starting with a letter).`;
+      return;
+    }
+    busy = true;
+    error = '';
+    try {
+      const y = currentYAML().replace(/^name:[^\n]*$/m, `name: ${name}`);
+      await api.createFlow(name, y, { nodes: layout });
+      await goto(`/flows/${encodeURIComponent(name)}`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
       busy = false;
     }
   }
@@ -253,6 +241,7 @@
         <button class:primary={tab === 'yaml'} onclick={() => switchTab('yaml')}>YAML</button>
       </div>
       <button onclick={validate}>Validate</button>
+      <button onclick={clone} disabled={busy}>Clone</button>
       <button class="primary" onclick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : 'Save'}</button>
       {#if !flow.builtin}
         <button class="danger" onclick={remove}>{flow.shadows_builtin ? 'Reset to built-in' : 'Delete'}</button>
@@ -274,19 +263,13 @@
 
   {#if tab === 'graph' && doc}
     <div class="row" style="margin-bottom:8px; gap:8px; align-items:center">
-      <span class="muted small">Editing context:</span>
-      <select bind:value={contextId} style="width:auto">
-        {#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{:else}<option value="">no projects</option>{/each}
-      </select>
-      <span class="muted small" style="flex:1">
-        fills the agent / model / run_ref dropdowns — free text always works
-      </span>
       <button
         onclick={() => {
           selection = null;
           panelOpen = true;
         }}>Flow settings & stages</button
       >
+      <button onclick={autoArrange} title="Re-lay out nodes along the success chain">Auto-arrange</button>
     </div>
     <div class="graph-shell">
       <FlowGraph
@@ -314,17 +297,7 @@
               }}>✕ close</button
             >
           </div>
-          <FlowInspector
-            {doc}
-            {selection}
-            {agents}
-            {modelsByKind}
-            {harnessKinds}
-            {defaultHarnessKind}
-            {commands}
-            onchange={markChanged}
-            onselect={select}
-          />
+          <FlowInspector {doc} {selection} onchange={markChanged} onselect={select} />
         </div>
       {/if}
     </div>
@@ -371,7 +344,7 @@
 <style>
   .graph-shell {
     position: relative;
-    /* Full-viewport canvas: everything above (header, tabs, context row)
+    /* Full-viewport canvas: everything above (header, tabs, toolbar row)
        is ~210px; versions live below the fold. */
     height: calc(100vh - 210px);
     min-height: 440px;

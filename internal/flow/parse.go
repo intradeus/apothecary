@@ -317,9 +317,10 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 
 func (p *parser) buildDefaults(raw *DocDefaults) (Defaults, error) {
 	line := p.keyLine("defaults")
-	// harness: any slug is valid document-side (DESIGN2 §6.3) — whether the
-	// kind exists is preflight's question at run creation, keeping flows
-	// portable data. Empty means "the project's harness kind".
+	// harness + model: the FLOW owns its defaults (the project has none). Any
+	// slug is valid document-side (DESIGN2 §6.3) — whether the kind exists in
+	// the project is preflight's question at run creation, keeping flows
+	// portable data. A stage may override; unpinned stages inherit these.
 	d := Defaults{
 		Timeout:  defaultTimeout,
 		Harness:  raw.Harness,
@@ -333,7 +334,10 @@ func (p *parser) buildDefaults(raw *DocDefaults) (Defaults, error) {
 		}
 		d.Timeout = t
 	}
-	if raw.Harness != "" && !slugRe.MatchString(raw.Harness) {
+	if d.Harness == "" {
+		return d, p.errf(line, "defaults.harness is required (the harness kind stages run on unless they override it)")
+	}
+	if !slugRe.MatchString(d.Harness) {
 		return d, p.errf(line, "defaults.harness: %q is not a slug (lowercase [a-z0-9_-], starting with a letter)", raw.Harness)
 	}
 	if d.Model == "" {

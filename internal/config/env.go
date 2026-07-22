@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"apothecary/internal/secrets"
 )
@@ -18,11 +19,19 @@ type Boot struct {
 	CPUIDir      string // APOTHECARY_CPUI_DIR, default "" (API only)
 	OtelEndpoint string // APOTHECARY_OTEL_ENDPOINT, default "" (disabled)
 	BaseImage    string // APOTHECARY_BASE_IMAGE, default "" (build embedded, M9)
-	// EgressProxy toggles the hostname-filtering egress proxy (M18):
-	// "on" (default) or "off". Off falls back to the derived IP allowlist
-	// firewall.
+	// EgressProxy toggles the hostname-filtering egress proxy (M18).
+	// APOTHECARY_EGRESS_PROXY: "off" disables (falls back to the derived IP
+	// allowlist firewall); "on"/unset enables on the default port; a port
+	// number sets a fixed port. Off falls back to the derived IP allowlist.
 	EgressProxy bool
+	// EgressProxyPort is the loopback port the proxy binds — STABLE across
+	// restarts (a fixed port, not ephemeral) so every workspace's proxy.env
+	// stays valid after the engine restarts. Default 8079.
+	EgressProxyPort int
 }
+
+// DefaultEgressProxyPort is the proxy's loopback port when unspecified.
+const DefaultEgressProxyPort = 8079
 
 // FromEnv reads the §1 variables. Only the DSN is unconditionally required;
 // the master key is validated by Key() where the caller needs it (serve),
@@ -36,7 +45,17 @@ func FromEnv() (*Boot, error) {
 		CPUIDir:      os.Getenv("APOTHECARY_CPUI_DIR"),
 		OtelEndpoint: os.Getenv("APOTHECARY_OTEL_ENDPOINT"),
 		BaseImage:    os.Getenv("APOTHECARY_BASE_IMAGE"),
-		EgressProxy:  os.Getenv("APOTHECARY_EGRESS_PROXY") != "off",
+	}
+	// Egress proxy: "off" disables; "on"/unset uses the default port; a bare
+	// port number sets a fixed port. Anything unparseable falls back to the
+	// default (loopback is always the host).
+	raw := os.Getenv("APOTHECARY_EGRESS_PROXY")
+	b.EgressProxy = raw != "off"
+	b.EgressProxyPort = DefaultEgressProxyPort
+	if raw != "" && raw != "on" && raw != "off" {
+		if p, err := strconv.Atoi(raw); err == nil && p > 0 && p < 65536 {
+			b.EgressProxyPort = p
+		}
 	}
 	if b.PostgresDSN == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")

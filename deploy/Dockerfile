@@ -1,6 +1,7 @@
 # Apothecary service image (DESIGN2.md §15): apothecaryd + built CPUI + the
 # pinned coder CLI + the docker CLI (workspace image builds via the mounted
-# socket). Build from the repo root:
+# socket) + Node & the pinned @devcontainers/cli (the devcontainer
+# provisioner shells out to it). Build from the repo root:
 #
 #   docker build -f deploy/Dockerfile -t apothecary/apothecaryd:dev .
 
@@ -25,13 +26,21 @@ RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/apothec
 FROM debian:bookworm-slim
 
 ARG CODER_VERSION=2.35.2
+# @devcontainers/cli is a Node CLI, so Node ships alongside it. Pinned like
+# the coder CLI; bump both per release.
+ARG DEVCONTAINER_CLI_VERSION=0.86.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl docker.io git \
-    && rm -rf /var/lib/apt/lists/* \
-    # docker.io pulls the daemon too on some bases; only the CLI is needed —
-    # the daemon arrives via the mounted /var/run/docker.sock.
-    && (dpkg -l docker.io >/dev/null 2>&1 || true)
+    # Node 22 (nodesource) is the runtime for @devcontainers/cli, which the
+    # devcontainer provisioner execs (`devcontainer up/exec`). docker.io
+    # pulls the daemon too on some bases; only the CLI is used — the daemon
+    # arrives via the mounted /var/run/docker.sock.
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @devcontainers/cli@${DEVCONTAINER_CLI_VERSION} \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/*
 
 # coder CLI, pinned per release (CLI<->server minor skew is tolerated; see
 # the README for upgrade guidance). The archive member is "./coder".

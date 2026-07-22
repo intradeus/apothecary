@@ -225,20 +225,22 @@ func (s *Server) listIntegrationModels(w http.ResponseWriter, r *http.Request) {
 // --- projects ---------------------------------------------------------------
 
 type projectBody struct {
-	Name          string                    `json:"name"`
-	ForgeID       string                    `json:"forge_id"`
-	ProvisionerID string                    `json:"provisioner_id"`
-	HarnessID     string                    `json:"harness_id"`
-	Repo          confstore.RepoConfig      `json:"repo"`
-	Commands      map[string]string         `json:"commands"`
-	Workspace     confstore.WorkspaceConfig `json:"workspace"`
-	DefaultFlow   string                    `json:"default_flow"`
+	Name          string `json:"name"`
+	ForgeID       string `json:"forge_id"`
+	ProvisionerID string `json:"provisioner_id"`
+	// HarnessIDs is the project's set of available harness integrations (no
+	// default — the flow names the harness kind).
+	HarnessIDs  []string                  `json:"harness_ids"`
+	Repo        confstore.RepoConfig      `json:"repo"`
+	Commands    map[string]string         `json:"commands"`
+	Workspace   confstore.WorkspaceConfig `json:"workspace"`
+	DefaultFlow string                    `json:"default_flow"`
 }
 
 func (b projectBody) toProject() confstore.Project {
 	return confstore.Project{
 		Name: b.Name, ForgeID: b.ForgeID, ProvisionerID: b.ProvisionerID,
-		HarnessID: b.HarnessID, Repo: b.Repo,
+		HarnessIDs: b.HarnessIDs, Repo: b.Repo,
 		Commands: b.Commands, Workspace: b.Workspace, DefaultFlow: b.DefaultFlow,
 	}
 }

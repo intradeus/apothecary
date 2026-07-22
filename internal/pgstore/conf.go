@@ -94,7 +94,7 @@ func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
 	var refs []string
 	rows, err := s.pool.Query(ctx, `
 		SELECT name FROM projects
-		WHERE forge_id=$1 OR provisioner_id=$1 OR harness_id=$1 OR harnesses ? $1
+		WHERE forge_id=$1 OR provisioner_id=$1 OR harnesses ? $1
 		ORDER BY name`, id)
 	if err != nil {
 		return err
@@ -148,13 +148,13 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 		return err
 	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO projects (id, name, forge_id, provisioner_id, harness_id,
+		INSERT INTO projects (id, name, forge_id, provisioner_id,
 		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$2, forge_id=$3, provisioner_id=$4, harness_id=$5,
-			repo=$6, commands=$7, workspace=$8, default_flow=$9, updated_at=$11, harnesses=$12`,
-		p.ID, p.Name, p.ForgeID, p.ProvisionerID, p.HarnessID,
+			name=$2, forge_id=$3, provisioner_id=$4,
+			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11`,
+		p.ID, p.Name, p.ForgeID, p.ProvisionerID,
 		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt, harnesses)
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
@@ -170,7 +170,7 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 func scanProject(row pgx.Row) (confstore.Project, error) {
 	var p confstore.Project
 	var repo, cmds, ws, harnesses []byte
-	err := row.Scan(&p.ID, &p.Name, &p.ForgeID, &p.ProvisionerID, &p.HarnessID,
+	err := row.Scan(&p.ID, &p.Name, &p.ForgeID, &p.ProvisionerID,
 		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses)
 	if err != nil {
 		return p, err
@@ -189,14 +189,10 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 			return p, err
 		}
 	}
-	// Pre-migration rows / empty sets: the default harness is the set.
-	if len(p.HarnessIDs) == 0 && p.HarnessID != "" {
-		p.HarnessIDs = []string{p.HarnessID}
-	}
 	return p, nil
 }
 
-const projectCols = `id, name, forge_id, provisioner_id, harness_id,
+const projectCols = `id, name, forge_id, provisioner_id,
 	repo, commands, workspace, default_flow, created_at, updated_at, harnesses`
 
 func (s *Store) GetProject(ctx context.Context, id string) (confstore.Project, error) {

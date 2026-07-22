@@ -81,13 +81,12 @@ type Project struct {
 	Name          string `json:"name"`
 	ForgeID       string `json:"forge_id"`
 	ProvisionerID string `json:"provisioner_id"`
-	HarnessID     string `json:"harness_id"`
-	// HarnessIDs is the full set of harness integrations available to the
-	// project (per-step harness): a flow stage may pin a harness KIND, which
-	// resolves to the set member of that kind. HarnessID (the default, used by
-	// stages that don't pin one) is always a member, and the set holds at most
-	// one integration per kind so kind→integration is unambiguous. Empty on
-	// pre-migration reads ⇒ treated as {HarnessID}.
+	// HarnessIDs is the project's set of AVAILABLE harness integrations (for
+	// auth + image layers) — the project has NO default harness. The FLOW
+	// owns the default (defaults.harness) and a stage may override it; the
+	// named kind resolves to the set member of that kind. At most one
+	// integration per kind, so kind→integration is unambiguous. A flow whose
+	// harness kind is not in this set is refused at run creation (preflight).
 	HarnessIDs  []string          `json:"harness_ids"`
 	Repo        RepoConfig        `json:"repo"`
 	Commands    map[string]string `json:"commands"`

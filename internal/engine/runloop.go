@@ -1085,12 +1085,21 @@ func (x *exec) writeProxyEnv(id ports.EnvID) error {
 // loopback parity, so the address is invariant across provisioners; empty
 // when proxy mode is off. NO_PROXY keeps loopback traffic (the ask_human
 // shim, the engine endpoint) off the proxy.
-func (x *exec) proxyEnv() map[string]string {
-	if x.e.egress == nil || x.e.egress.Port() == 0 {
+func (x *exec) proxyEnv() map[string]string { return x.e.proxyEnvFor(x.rs.runID) }
+
+// proxyEnvFor builds a run's HTTP(S)_PROXY environment pointing at the
+// egress proxy on the workspace's own loopback (M18) — reverse tunnels
+// (coder) and the devcontainer relay both give loopback parity, so the
+// address is provisioner-invariant; nil when proxy mode is off. Shared by
+// the run loop and envcheck (which must route its egress through the proxy
+// too). NO_PROXY keeps loopback traffic (the shim, the engine endpoint)
+// off the proxy.
+func (e *Engine) proxyEnvFor(runID string) map[string]string {
+	if e.egress == nil || e.egress.Port() == 0 {
 		return nil
 	}
-	user, pass := x.e.egress.Credentials(x.rs.runID)
-	addr := fmt.Sprintf("http://%s:%s@127.0.0.1:%d", user, pass, x.e.egress.Port())
+	user, pass := e.egress.Credentials(runID)
+	addr := fmt.Sprintf("http://%s:%s@127.0.0.1:%d", user, pass, e.egress.Port())
 	const noProxy = "127.0.0.1,localhost,::1"
 	return map[string]string{
 		"HTTP_PROXY": addr, "HTTPS_PROXY": addr, "NO_PROXY": noProxy,

@@ -39,13 +39,20 @@ services:
       APOTHECARY_POSTGRES_DSN: postgres://apothecary:${APOTHECARY_PG_PASSWORD}@127.0.0.1:15434/apothecary
       APOTHECARY_MASTER_KEY: ${APOTHECARY_MASTER_KEY:?run `apothecaryd keygen` and set APOTHECARY_MASTER_KEY in deploy/.env}
       APOTHECARY_LISTEN: 127.0.0.1:8081
+      # Distinct egress-proxy port from the reference stack (default 8079) so
+      # both can run side by side on the host's loopback. The port is stable
+      # across restarts (workspace proxy.env stays valid).
+      APOTHECARY_EGRESS_PROXY: "8078"
     volumes:
       # Same trusted-control-plane posture as the reference deployment: image
       # builds go through the host's docker daemon.
       - /var/run/docker.sock:/var/run/docker.sock
-      - apothecary-local-runs:/var/lib/apothecary/runs
+      # RunsDir must be a host bind mount at the SAME path, not a named
+      # volume — the devcontainer provisioner bind-mounts the engine-side
+      # checkout/shim into workspace containers, resolved host-side (see the
+      # reference compose for the full rationale).
+      - /var/lib/apothecary/runs:/var/lib/apothecary/runs
     restart: unless-stopped
 
 volumes:
   apothecary-local-pgdata:
-  apothecary-local-runs:

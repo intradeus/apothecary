@@ -1,6 +1,6 @@
 name: v1
 description: plan-gated build with cross-vendor adversarial review
-defaults: { timeout: 30m, model: anthropic/claude-sonnet-4-6, max_turns: 50 }
+defaults: { timeout: 30m, harness: opencode, model: anthropic/claude-sonnet-4-6, max_turns: 50 }
 budget: { max_cost_usd: 10.0, max_total_turns: 300 }
 # Failure philosophy: every agent/command stage first retries itself with
 # its error fed back, then escalates to its OWN manual_debug gate — a human

@@ -12,7 +12,8 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/hmac"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -194,18 +195,22 @@ func cmdServe(args []string) error {
 	// Hostname-filtering egress proxy (M18): loopback, reverse-forwarded
 	// into every workspace by the coder adapter. Its port is passed to the
 	// resolver (forward + template proxy mode) and the engine (per-run
-	// policy + workspace proxy.env). The signing secret is process-random —
-	// it only authenticates a run to its own allowlist, never persisted.
+	// policy + workspace proxy.env).
+	//
+	// Both the PORT and the signing SECRET are STABLE across restarts: the
+	// port is fixed (config), and the secret is derived from the persistent
+	// master key. So a workspace's proxy.env (host:port + per-run Basic
+	// creds) written at provision time stays valid after the engine
+	// restarts — only the reverse tunnel (a subprocess) needs re-
+	// establishing, which recovery does. An ephemeral port / random secret
+	// would silently break every surviving workspace on restart.
 	var proxyPort int
 	var egress engine.EgressController
 	if boot.EgressProxy {
-		secret := make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
-			return fmt.Errorf("egress proxy secret: %w", err)
-		}
-		proxy := egressproxy.New(secret)
-		if err := proxy.Start("127.0.0.1:0"); err != nil {
-			return fmt.Errorf("egress proxy: %w", err)
+		proxy := egressproxy.New(egressProxySecret(boot.MasterKeyRaw))
+		addr := fmt.Sprintf("127.0.0.1:%d", boot.EgressProxyPort)
+		if err := proxy.Start(addr); err != nil {
+			return fmt.Errorf("egress proxy: %w (another apothecaryd on this port? each instance needs its own APOTHECARY_EGRESS_PROXY port)", err)
 		}
 		defer proxy.Close()
 		proxyPort = proxy.Port()
@@ -377,7 +382,7 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 		Name:          "dev",
 		ForgeID:       forgeID,
 		ProvisionerID: provID,
-		HarnessID:     harnessID,
+		HarnessIDs:    []string{harnessID},
 		Repo: confstore.RepoConfig{
 			URL: "https://forge.local/dev/fake-repo.git", Locator: "1",
 			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
@@ -408,6 +413,18 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 // engineURL derives the workspace-visible engine URL from the listen
 // address. Workspaces reach the engine at their own localhost through the
 // Coder adapter's reverse tunnel (see IMPLEMENTATION_NOTES).
+// egressProxySecret derives the egress proxy's per-run credential-signing
+// secret from the persistent master key (domain-separated), so proxy Basic
+// credentials are STABLE across restarts — a workspace's proxy.env keeps
+// authenticating after the engine restarts. It is not the encryption key
+// and never seals data; a process-random secret would silently invalidate
+// every surviving workspace's proxy.env on restart.
+func egressProxySecret(masterKeyRaw string) []byte {
+	m := hmac.New(sha256.New, []byte(masterKeyRaw))
+	m.Write([]byte("apothecary-egress-proxy-signing-v1"))
+	return m.Sum(nil)
+}
+
 func engineURL(listen string) string {
 	_, port, err := splitHostPort(listen)
 	if err != nil {

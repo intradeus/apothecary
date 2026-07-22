@@ -33,8 +33,8 @@
       <strong>{p.name}</strong>
       <div class="mono small muted">{p.repo.url}</div>
       <div class="small muted">
-        forge: {intName(p.forge_id)} · workspaces: {intName(p.provisioner_id)} · harness:
-        {intName(p.harness_id)} · flow: {p.default_flow}
+        forge: {intName(p.forge_id)} · workspaces: {intName(p.provisioner_id)} · harnesses:
+        {(p.harness_ids ?? []).map(intName).join(', ') || '—'} · flow: {p.default_flow}
       </div>
     </div>
     <span class="muted">→</span>

@@ -18,7 +18,7 @@ import (
 )
 
 const testFlowDoc = `name: v1
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `
@@ -71,7 +71,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 		Name:          "p1",
 		ForgeID:       mk(confstore.PortForge, "fake", "f", nil),
 		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c", nil),
-		HarnessID:     mk(confstore.PortHarness, "fake", "h", nil),
+		HarnessIDs:    []string{mk(confstore.PortHarness, "fake", "h", nil)},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		Workspace:     confstore.WorkspaceConfig{Template: "tmpl", ExtraDomains: []string{"pypi.org"}},
 		DefaultFlow:   "v1",
@@ -129,7 +129,6 @@ func TestResolveMultiHarness(t *testing.T) {
 		Name:          "multi",
 		ForgeID:       mk(confstore.PortForge, "fake", "f"),
 		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c"),
-		HarnessID:     def,
 		HarnessIDs:    []string{def, alt},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		Workspace:     confstore.WorkspaceConfig{Template: "tmpl"},
@@ -275,7 +274,7 @@ func TestUnresolvableMapping(t *testing.T) {
 	}
 	p2, err := svc.CreateProject(ctx, confstore.Project{
 		Name: "p2", ForgeID: mk(confstore.PortForge, "f2"),
-		ProvisionerID: mk(confstore.PortProvisioner, "c2"), HarnessID: ghost.ID,
+		ProvisionerID: mk(confstore.PortProvisioner, "c2"), HarnessIDs: []string{ghost.ID},
 		Repo:        confstore.RepoConfig{URL: "https://x.example/g/p.git"},
 		Workspace:   confstore.WorkspaceConfig{Template: "t"},
 		DefaultFlow: "v1",
@@ -340,14 +339,14 @@ func TestIntegrationOps(t *testing.T) {
 	if err := r.TestIntegration(ctx, p.ForgeID); err != nil {
 		t.Errorf("forge test = %v", err)
 	}
-	if err := r.TestIntegration(ctx, p.HarnessID); err != nil {
+	if err := r.TestIntegration(ctx, p.HarnessIDs[0]); err != nil {
 		t.Errorf("harness test = %v", err)
 	}
 	repos, err := r.ListRepos(ctx, p.ForgeID)
 	if err != nil || len(repos) == 0 {
 		t.Fatalf("ListRepos = %v, %v", repos, err)
 	}
-	if _, err := r.ListRepos(ctx, p.HarnessID); err == nil {
+	if _, err := r.ListRepos(ctx, p.HarnessIDs[0]); err == nil {
 		t.Error("ListRepos on a non-forge must refuse")
 	}
 }

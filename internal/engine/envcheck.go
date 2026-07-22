@@ -41,6 +41,13 @@ type EnvCheckOptions struct {
 	EnginePort int    // tunnel probe target (workspace-local loopback)
 	Keep       bool   // keep the workspace for inspection
 	Timeout    time.Duration
+	// ProxyEnv is the workspace's HTTP(S)_PROXY environment when the engine
+	// runs in egress-proxy mode (M18): written to proxy.env so the check's
+	// clone + egress probes route through the proxy exactly as a real run
+	// does. Empty ⇒ allowlist mode (direct egress through the pinned
+	// firewall). The caller must also install the proxy allowlist policy for
+	// this check's run id.
+	ProxyEnv map[string]string
 }
 
 // RunEnvCheck provisions, bootstraps and verifies one throwaway
@@ -109,12 +116,16 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		Branch:        branch,
 		AgentsMDPath:  res.AgentsMDPath,
 		ProviderEnv:   res.ProviderEnv,
-		SeedAuth:      res.SeedAuth,
-		GitUser:       res.GitUser,
-		GitPass:       res.GitPass,
-		Prepare:       res.Prepare,
-		Setup:         res.Commands["setup"],
-		Timeout:       10 * time.Minute,
+		// In proxy mode the firewall drops all direct egress; the clone (and
+		// every egress probe below) must route through the proxy, exactly as
+		// a real run does — without this the check firewalls its own clone.
+		ProxyEnv: opts.ProxyEnv,
+		SeedAuth: res.SeedAuth,
+		GitUser:  res.GitUser,
+		GitPass:  res.GitPass,
+		Prepare:  res.Prepare,
+		Setup:    res.Commands["setup"],
+		Timeout:  10 * time.Minute,
 	}), "clone + seed auth + prepare + setup")
 
 	if verify, ok := res.Commands["verify"]; ok && verify != "" {
@@ -133,15 +144,27 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 			egressOpen = open
 		}
 	}
+	proxyMode := len(opts.ProxyEnv) > 0
 	if egressOpen {
 		for _, id := range []string{"firewall_deny_http", "firewall_deny_dns", "firewall_initialized"} {
 			skip(id, "provisioner reports open egress for this workspace: firewall not present (engine-side proxy filtering only)")
 		}
 	} else {
+		// example.com is not on the allowlist: in allowlist mode the firewall
+		// drops it; in proxy mode the proxy refuses the CONNECT. Either way a
+		// non-allowed host must NOT be reachable.
 		step("firewall_deny_http", execExpect(ctx, envp, env,
 			"curl -m 8 -s -o /dev/null https://example.com", "", false), "example.com blocked")
-		step("firewall_deny_dns", execExpect(ctx, envp, env,
-			"getent hosts example.com", "", false), "foreign DNS dead")
+		// DNS: allowlist mode blocks the resolver (names resolve only via the
+		// pinned /etc/hosts); proxy mode INTENTIONALLY leaves the loopback
+		// resolver up (all filtering is by hostname at the proxy), so the
+		// "foreign DNS dead" invariant only applies to allowlist mode.
+		if proxyMode {
+			skip("firewall_deny_dns", "proxy mode: DNS resolves locally by design; egress is filtered by hostname at the proxy, not by blocking DNS")
+		} else {
+			step("firewall_deny_dns", execExpect(ctx, envp, env,
+				"getent hosts example.com", "", false), "foreign DNS dead")
+		}
 		step("firewall_initialized", execExpect(ctx, envp, env,
 			"test -e /run/apothecary-firewall.done", "", true), "")
 	}
@@ -268,10 +291,22 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	e.mu.Unlock()
 
 	enginePort := enginePortOf(e.cfg.EngineURL)
+	checkRunID := "envck" + strings.ToLower(id[max(0, len(id)-11):])
+	// Proxy mode (M18): the check's workspace is firewalled exactly like a
+	// real run, so its egress must go through the proxy. Install the
+	// allowlist policy (derived egress domains) for this check's run id and
+	// hand RunEnvCheck the matching proxy.env; both empty ⇒ allowlist mode.
+	if e.egress != nil {
+		e.egress.SetPolicy(checkRunID, res.EgressDomains)
+	}
+	proxyEnv := e.proxyEnvFor(checkRunID)
 	go func() {
 		defer res.release()
-		failed := RunEnvCheck(context.Background(), res, "envck"+strings.ToLower(id[max(0, len(id)-11):]),
-			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep},
+		if e.egress != nil {
+			defer e.egress.DropPolicy(checkRunID)
+		}
+		failed := RunEnvCheck(context.Background(), res, checkRunID,
+			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep, ProxyEnv: proxyEnv},
 			func(s CheckStep) {
 				e.mu.Lock()
 				st.snap.Steps = append(st.snap.Steps, s)

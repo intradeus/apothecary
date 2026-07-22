@@ -97,6 +97,45 @@ func TestRunEnvCheckSkipsFirewallWhenEgressOpen(t *testing.T) {
 	}
 }
 
+// In proxy mode the check must route egress through the proxy (write
+// proxy.env) and NOT assert DNS is dead — proxy mode keeps the loopback
+// resolver up on purpose.
+func TestRunEnvCheckProxyModeWiresProxyAndSkipsDNS(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.envp.ExecFunc = firewallAwareExec()
+	h.res.EgressDomains = []string{"gitlab.local"}
+	h.res.HarnessBinary = "opencode"
+	proxyAddr := "http://run:sig@127.0.0.1:8079"
+	proxyEnv := map[string]string{
+		"HTTP_PROXY": proxyAddr, "HTTPS_PROXY": proxyAddr, "NO_PROXY": "127.0.0.1,localhost,::1",
+		"http_proxy": proxyAddr, "https_proxy": proxyAddr, "no_proxy": "127.0.0.1,localhost,::1",
+	}
+
+	var steps []CheckStep
+	failed := RunEnvCheck(context.Background(), h.res, "envck-proxy",
+		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", EnginePort: 9, Keep: true, ProxyEnv: proxyEnv},
+		func(s CheckStep) { steps = append(steps, s) })
+	if failed != 0 {
+		t.Fatalf("failed = %d, steps = %+v", failed, steps)
+	}
+	byID := map[string]CheckStep{}
+	for _, s := range steps {
+		byID[s.ID] = s
+	}
+	if byID["firewall_deny_dns"].Status != "skip" {
+		t.Errorf("firewall_deny_dns = %+v, want skip in proxy mode", byID["firewall_deny_dns"])
+	}
+	if byID["firewall_deny_http"].Status != "pass" || byID["egress:gitlab.local"].Status != "pass" {
+		t.Errorf("proxy-mode egress: deny_http=%+v gitlab=%+v", byID["firewall_deny_http"], byID["egress:gitlab.local"])
+	}
+	// proxy.env was written into the (kept) workspace so the clone + probes
+	// route through the proxy.
+	data, err := h.envp.ReadFile(context.Background(), "env-1", "/apothecary/proxy.env")
+	if err != nil || !strings.Contains(string(data), "127.0.0.1:8079") {
+		t.Errorf("proxy.env = %q, %v", data, err)
+	}
+}
+
 func TestRunEnvCheckNamesInducedFailure(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	// doesnotexist.invalid is in the allowlist but unreachable — the check

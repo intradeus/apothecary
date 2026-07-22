@@ -169,7 +169,7 @@ func (h *harness) agentScript(fns map[string]func(call fake.RunCall) (ports.Agen
 }
 
 const loopFlowDoc = `name: loop
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
@@ -321,7 +321,7 @@ func TestTestFailBuildLoopThenPass(t *testing.T) {
 
 func TestReviewRejectLoopThenApprove(t *testing.T) {
 	doc := `name: rev
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build,  type: agent, agent: builder }
   - { id: review, type: agent, agent: reviewer, verdict: true,
@@ -400,7 +400,7 @@ func TestEdgeExhaustionAbandons(t *testing.T) {
 
 func TestPingMidBuildAnswered(t *testing.T) {
 	doc := `name: ping
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `
@@ -462,7 +462,7 @@ stages:
 // AnswerPing "succeeded" while the ping stayed pending forever.
 func TestRecoveryAtGateSkipsEnv(t *testing.T) {
 	doc := `name: gated
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan,      type: agent, agent: planner, output: artifacts/plan.md, on_success: plan_gate }
   - { id: plan_gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md, on_success: done,
@@ -521,7 +521,7 @@ stages:
 
 func TestPlanGateRejectWithFeedback(t *testing.T) {
 	doc := `name: gated
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan,      type: agent, agent: planner, output: artifacts/plan.md }
   - { id: plan_gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
@@ -569,7 +569,7 @@ stages:
 
 func TestBudgetExceededAbandons(t *testing.T) {
 	doc := `name: pricey
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 budget: { max_cost_usd: 1.0 }
 stages:
   - { id: build, type: agent, agent: builder }
@@ -703,7 +703,7 @@ func TestCrashRecoveryWithoutSessionReRuns(t *testing.T) {
 
 func TestStageTimeoutTakesOnFail(t *testing.T) {
 	doc := `name: slow
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: a, type: agent, agent: sleeper, timeout: 30ms, on_fail: { to: b, max: 1 } }
   - { id: b, type: agent, agent: fallback }
@@ -739,7 +739,7 @@ stages:
 
 func TestAbortMarksRunFailed(t *testing.T) {
 	doc := `name: hang
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: a, type: agent, agent: sleeper }
 `
@@ -777,7 +777,7 @@ stages:
 // poll interval so a ticker tick can never be the reason it worked.
 func TestAutoCompleteMergedWhileEngineDown(t *testing.T) {
 	doc := `name: ac
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: mr,   type: forge_mr, body: artifacts/mr.md, on_success: gate }
   - { id: gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged, on_success: done }
@@ -833,7 +833,7 @@ stages:
 // gate keeps working — completing automatically once the forge recovers.
 func TestAutoCompletePollFailureNotifies(t *testing.T) {
 	doc := `name: acf
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: prep, type: agent, agent: builder }
   - { id: mr,   type: forge_mr, body: artifacts/mr.md }
@@ -892,7 +892,7 @@ stages:
 // bounded by human attention, not a runaway loop.
 func TestUnlimitedRescueLoop(t *testing.T) {
 	doc := `name: unl
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: work,   type: command, run_ref: verify, on_success: done,
       on_fail: { to: rescue, max: -1 } }
@@ -954,7 +954,7 @@ stages:
 // feedback in the reason, not on an "unrecoverable failure" message.
 func TestAbortEdgeStopsRunDeliberately(t *testing.T) {
 	doc := `name: ab
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: gate,  type: human_gate, ping: final_review, on_reject: abort }
@@ -987,7 +987,7 @@ stages:
 // timeouts there, not through on_fail.
 func TestTimeoutEdgeRoutesSeparately(t *testing.T) {
 	doc := `name: tmo
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: a, type: agent, agent: sleeper, timeout: 30ms,
       on_fail: { to: c, max: 1 }, on_timeout: { to: b, max: 1 } }
@@ -1023,7 +1023,7 @@ stages:
 // budget in the reason.
 func TestThenChainRetryThenEscalate(t *testing.T) {
 	doc := `name: chain
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify,
@@ -1080,7 +1080,7 @@ stages:
 // run (no live goroutine) also works.
 func TestPausePlayMidAgent(t *testing.T) {
 	doc := `name: pp
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `
@@ -1161,7 +1161,7 @@ stages:
 // re-enters the flow, and the gate counts as a WANTED ping.
 func TestManualDebugGate(t *testing.T) {
 	doc := `name: dbg
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_success: done,
@@ -1310,7 +1310,7 @@ func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
 	// A flow pinning a foreign harness is refused at preflight (DESIGN2
 	// §6.3), naming stage and kinds.
 	h4 := newHarness(t, mustFlow(t, `name: pinned
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder, harness: codex }
 `))
@@ -1351,7 +1351,7 @@ func TestSetupIsOptional(t *testing.T) {
 
 func TestOutputContractViolationFailsStage(t *testing.T) {
 	doc := `name: contract
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan, type: agent, agent: planner, output: artifacts/plan.md }
 `
@@ -1377,7 +1377,7 @@ stages:
 // is only reachable via on_fail and itself completes the run early.
 func TestExplicitSuccessRouting(t *testing.T) {
 	branchDoc := `name: branch
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: probe,   type: command, run: probe.sh, on_success: finish, on_fail: { to: repair, max: 1 } }
   - { id: repair,  type: command, run: repair.sh, on_success: done }
@@ -1439,7 +1439,7 @@ stages:
 // and is recorded verbatim in ping_answered.
 func TestOptionPing(t *testing.T) {
 	doc := `name: ping
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `
@@ -1558,7 +1558,7 @@ stages:
 func TestResumeRerunsFailedStage(t *testing.T) {
 	// A single command stage with no on_fail: it abandons on failure.
 	doc := `name: r
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: push, type: command, run: "push.sh" }
 `
@@ -1630,7 +1630,7 @@ func (s *stubEgress) Denials(string) []egressproxy.Denial    { return nil }
 // policy is installed.
 func TestProxyEnvWrittenToWorkspace(t *testing.T) {
 	doc := `name: p
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `

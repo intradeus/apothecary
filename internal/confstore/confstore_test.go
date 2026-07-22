@@ -22,7 +22,7 @@ func newSvc(t *testing.T) (*Service, *Mem) {
 }
 
 const testFlowDoc = `name: v1
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `
@@ -46,7 +46,7 @@ func seedProject(t *testing.T, svc *Service) Project {
 	prov := mk(PortProvisioner, "coder", "coder", map[string]string{"token": "coder-tok"})
 	harness := mk(PortHarness, "opencode", "oc", map[string]string{"auth_json": `{"openrouter":{"type":"api","key":"sk-or-abc"}}`})
 	p, err := svc.CreateProject(ctx, Project{
-		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: harness.ID,
+		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
 		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
 		DefaultFlow: "v1",
@@ -123,7 +123,7 @@ func TestProjectValidation(t *testing.T) {
 	harness, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
 
 	base := Project{
-		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: harness.ID,
+		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
 		DefaultFlow: "v1",
@@ -142,7 +142,7 @@ func TestProjectValidation(t *testing.T) {
 
 	// Wrong-port reference is refused naming the field.
 	bad := base
-	bad.HarnessID = forge.ID
+	bad.HarnessIDs = []string{forge.ID}
 	if _, err := svc.CreateProject(ctx, bad); err == nil || !strings.Contains(err.Error(), "harness_id") {
 		t.Errorf("wrong-port ref err = %v", err)
 	}
@@ -189,19 +189,27 @@ func TestProjectHarnessSet(t *testing.T) {
 	oc2, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc2"})
 
 	base := Project{
-		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessID: oc.ID,
+		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{oc.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
 		DefaultFlow: "v1",
 	}
 
-	// Empty set ⇒ the default is auto-added, so a project always has one.
+	// A single-harness set round-trips (no default designation).
 	p, err := svc.CreateProject(ctx, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(p.HarnessIDs, []string{oc.ID}) {
-		t.Errorf("default not auto-added to set: %v", p.HarnessIDs)
+		t.Errorf("harness set = %v, want [oc]", p.HarnessIDs)
+	}
+
+	// An empty set is refused — a project needs at least one harness.
+	empty := base
+	empty.Name = "empty"
+	empty.HarnessIDs = nil
+	if _, err := svc.CreateProject(ctx, empty); err == nil || !strings.Contains(err.Error(), "harness_ids is required") {
+		t.Errorf("empty-set err = %v", err)
 	}
 
 	// A valid two-kind set round-trips.
@@ -296,7 +304,7 @@ func TestFlowNameIsImmutableID(t *testing.T) {
 		t.Errorf("name mismatch err = %v", err)
 	}
 	// Line-precise parser errors surface verbatim.
-	_, err := svc.SaveFlow(ctx, "v1", "name: v1\ndefaults: { model: nope }\nstages: []\n", nil)
+	_, err := svc.SaveFlow(ctx, "v1", "name: v1\ndefaults: { harness: fake, model: nope }\nstages: []\n", nil)
 	if err == nil || !strings.Contains(err.Error(), "provider/model") {
 		t.Errorf("parser err = %v", err)
 	}

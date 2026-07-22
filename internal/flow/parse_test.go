@@ -9,7 +9,7 @@ import (
 
 // header is a minimal valid preamble; tests append stages to it.
 const header = `name: t
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 `
 
 func parseErr(t *testing.T, doc string) *Error {
@@ -52,7 +52,7 @@ func TestCanonicalV1(t *testing.T) {
 	// harness is deliberately unpinned in the canonical flow (DESIGN2 §6.3):
 	// empty resolves to the project's harness kind at run creation.
 	if f.Defaults.Timeout != 30*time.Minute || f.Defaults.MaxTurns != 50 ||
-		f.Defaults.Harness != "" || f.Defaults.Model != "anthropic/claude-sonnet-4-6" {
+		f.Defaults.Harness != "fake" || f.Defaults.Model != "anthropic/claude-sonnet-4-6" {
 		t.Errorf("defaults = %+v", f.Defaults)
 	}
 	if f.Budget.MaxCostUSD != 10.0 || f.Budget.MaxTotalTurns != 300 {
@@ -185,11 +185,13 @@ func TestValidationErrors(t *testing.T) {
 		substr string
 		line   int
 	}{
-		{"missing name", "defaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing name", "defaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"flow name is required", 0},
-		{"missing model", "name: t\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing harness", "name: t\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+			"defaults.harness is required", 2},
+		{"missing model", "name: t\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"defaults.model is required", 0},
-		{"bad model format", "name: t\ndefaults: { model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad model format", "name: t\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"provider/model", 2},
 		{"bad timeout", "name: t\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"invalid duration", 2},
