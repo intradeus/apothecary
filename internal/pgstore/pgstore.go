@@ -460,6 +460,49 @@ func (s *Store) LoadChannels(ctx context.Context) ([]ChannelRow, error) {
 	return out, rows.Err()
 }
 
+// --- run_exposed_ports (portrelay persistence) -----------------------------
+
+// SaveExposedPort records (or updates) a run's workspace-port → host-port
+// mapping so the exposure can be re-created on the same host port after an
+// engine restart. Standalone durable state, not an event.
+func (s *Store) SaveExposedPort(ctx context.Context, runID string, wsPort, hostPort int) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO run_exposed_ports (run_id, ws_port, host_port) VALUES ($1,$2,$3)
+		 ON CONFLICT (run_id, ws_port) DO UPDATE SET host_port = EXCLUDED.host_port`,
+		runID, wsPort, hostPort)
+	return err
+}
+
+// DeleteExposedPorts drops every saved port of a run (its environment is
+// being torn down).
+func (s *Store) DeleteExposedPorts(ctx context.Context, runID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM run_exposed_ports WHERE run_id=$1`, runID)
+	return err
+}
+
+// LoadExposedPorts returns every saved exposure as runID → wsPort →
+// hostPort (read once at boot).
+func (s *Store) LoadExposedPorts(ctx context.Context) (map[string]map[int]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT run_id, ws_port, host_port FROM run_exposed_ports`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[int]int{}
+	for rows.Next() {
+		var runID string
+		var wsPort, hostPort int
+		if err := rows.Scan(&runID, &wsPort, &hostPort); err != nil {
+			return nil, err
+		}
+		if out[runID] == nil {
+			out[runID] = map[int]int{}
+		}
+		out[runID][wsPort] = hostPort
+	}
+	return out, rows.Err()
+}
+
 // ListPings reads the pings projection (PLAN4 M15): the durable
 // request/response surface. status filters pending|answered; "" or "all"
 // returns both. Newest first, capped by limit.

@@ -26,7 +26,7 @@ func open(t *testing.T) *Store {
 	}
 	t.Cleanup(s.Close)
 	if _, err := s.pool.Exec(context.Background(),
-		`TRUNCATE events, runs, pings, channels`); err != nil {
+		`TRUNCATE events, runs, pings, channels, run_exposed_ports`); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -218,5 +218,41 @@ func TestChannelsCRUD(t *testing.T) {
 	rows, _ = s.LoadChannels(ctx)
 	if len(rows) != 0 {
 		t.Errorf("after delete = %+v", rows)
+	}
+}
+
+func TestExposedPortsCRUD(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	if err := s.SaveExposedPort(ctx, "run1", 3000, 41001); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveExposedPort(ctx, "run1", 5432, 41002); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveExposedPort(ctx, "run2", 8080, 41003); err != nil {
+		t.Fatal(err)
+	}
+	// Upsert: same (run, ws_port) updates the host port.
+	if err := s.SaveExposedPort(ctx, "run1", 3000, 41099); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.LoadExposedPorts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all["run1"][3000] != 41099 || all["run1"][5432] != 41002 || all["run2"][8080] != 41003 {
+		t.Errorf("loaded = %+v", all)
+	}
+	// Delete is per-run.
+	if err := s.DeleteExposedPorts(ctx, "run1"); err != nil {
+		t.Fatal(err)
+	}
+	all, _ = s.LoadExposedPorts(ctx)
+	if _, ok := all["run1"]; ok {
+		t.Errorf("run1 not pruned: %+v", all)
+	}
+	if all["run2"][8080] != 41003 {
+		t.Errorf("run2 must survive run1 delete: %+v", all)
 	}
 }

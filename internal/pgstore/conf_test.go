@@ -17,7 +17,9 @@ func openConf(t *testing.T) *Store {
 	t.Helper()
 	s := open(t)
 	if _, err := s.pool.Exec(context.Background(),
-		`TRUNCATE projects, integrations, flows, flow_versions, settings`); err != nil {
+		// CASCADE: later migrations (agents, project_harnesses) added tables
+		// with FKs into this set, so a plain TRUNCATE of the subset errors.
+		`TRUNCATE projects, integrations, flows, flow_versions, settings CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return s

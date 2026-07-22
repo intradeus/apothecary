@@ -1010,12 +1010,12 @@ func (x *exec) ensureEnv() error {
 	for _, l := range links {
 		evLinks = append(evLinks, event.Link{Kind: l.Kind, URL: l.URL, Command: l.Command})
 	}
-	// Auto-expose declared app ports; safe to fold into env_ready because
-	// this append happens on the run's own writer goroutine BEFORE the
-	// event exists (out-of-band appends would race the seq and clobber run
-	// state — see portrelay). The registry stays authoritative: after an
-	// engine restart these URLs are stale and the recovery path re-exposes
-	// on fresh ports, served live via GET /runs/{id}/ports.
+	// Auto-expose declared + previously-exposed ports; safe to fold into
+	// env_ready because this append happens on the run's own writer
+	// goroutine BEFORE the event exists (out-of-band appends would race the
+	// seq and clobber run state — see portrelay). The live registry stays
+	// authoritative (GET /runs/{id}/ports); persisted allocations make the
+	// re-exposed URLs match the pre-restart ones (best-effort).
 	for _, l := range x.autoExpose(id) {
 		evLinks = append(evLinks, l)
 	}
@@ -1023,16 +1023,26 @@ func (x *exec) ensureEnv() error {
 	return x.append(&event.EnvReady{EnvID: string(id), Links: evLinks})
 }
 
-// autoExpose publishes every port the environment declares (devcontainer
-// forwardPorts); best-effort — a failed exposure is a warning, never a
+// autoExpose publishes the union of the ports the environment DECLARES
+// (devcontainer forwardPorts) and the ports this run had exposed before a
+// restart (portRelay.SavedPorts — includes MANUAL exposures, which would
+// otherwise be lost on recovery). Each re-binds its persisted host port so
+// the URL survives. Best-effort — a failed exposure is a warning, never a
 // failed run.
 func (x *exec) autoExpose(id ports.EnvID) []event.Link {
 	exposer, ok := x.res.Envp.(ports.WorkspacePortExposer)
 	if !ok || x.e.portRelay == nil {
 		return nil
 	}
+	seen := map[int]bool{}
+	wsPorts := exposer.AppPorts(x.ctx, id)
+	wsPorts = append(wsPorts, x.e.portRelay.SavedPorts(x.rs.runID)...)
 	var out []event.Link
-	for _, port := range exposer.AppPorts(x.ctx, id) {
+	for _, port := range wsPorts {
+		if seen[port] {
+			continue
+		}
+		seen[port] = true
 		if url := x.e.portRelay.Existing(x.rs.runID, port); url != "" {
 			out = append(out, event.Link{Kind: "app", URL: url})
 			continue

@@ -120,6 +120,35 @@ func TestCreateDraftMRIsNativeDraft(t *testing.T) {
 	}
 }
 
+func TestCreateDraftMRReturnsExistingOnConflict(t *testing.T) {
+	var listQuery string
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/lu/greeter/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"Validation Failed","errors":[{"message":"A pull request already exists for lu:apothecary/x."}]}`))
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/pulls", func(w http.ResponseWriter, r *http.Request) {
+		listQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`[{"number":42,"html_url":"https://github.com/lu/greeter/pull/42"}]`))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	a, repo := testAdapter(ts)
+
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x", "Add greeting", "body")
+	if err != nil {
+		t.Fatalf("conflict must not error: %v", err)
+	}
+	if ref.IID != 42 || !strings.Contains(ref.URL, "/pull/42") {
+		t.Errorf("ref = %+v, want existing PR 42", ref)
+	}
+	for _, want := range []string{"state=open", "head=lu%3Aapothecary%2Fx", "base=main"} {
+		if !strings.Contains(listQuery, want) {
+			t.Errorf("lookup query %q missing %s", listQuery, want)
+		}
+	}
+}
+
 func TestMRStateMergedWinsOverClosed(t *testing.T) {
 	ts, _ := ghStub(t)
 	a, _ := testAdapter(ts)

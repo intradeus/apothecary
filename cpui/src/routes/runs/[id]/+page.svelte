@@ -39,9 +39,15 @@
     copiedLink = l.kind;
     setTimeout(() => (copiedLink = ''), 1500);
   }
+  // findLast ⇒ the LATEST unanswered ping: the operator answers a run's
+  // pings newest-first, and each answer reveals the next-earlier one.
   const pendingPing = $derived.by(() => {
     const answered = new Set(events.filter((e) => e.type === 'ping_answered').map((e) => e.payload.ping_id));
     return events.findLast((e) => e.type === 'ping_raised' && !answered.has(e.payload.ping_id));
+  });
+  const pendingCount = $derived.by(() => {
+    const answered = new Set(events.filter((e) => e.type === 'ping_answered').map((e) => e.payload.ping_id));
+    return events.filter((e) => e.type === 'ping_raised' && !answered.has(e.payload.ping_id)).length;
   });
   // Map the ping_raised event payload onto the shared PingCard shape (the
   // inbox feeds it the durable Ping projection instead).
@@ -390,10 +396,17 @@
   {/if}
 
   {#if pendingPingView}
-    <div class="card" style="border-color:var(--amber)">
-      <div class="pingtype {GATE_TYPES.includes(pendingPingView.type) ? 'wanted' : 'unwanted'}">{pendingPingView.type}</div>
-      <PingCard ping={pendingPingView} busy={answering} onanswer={answer} />
-    </div>
+    {#key pendingPingView.ping_id}
+      <div class="card" style="border-color:var(--amber)">
+        <div class="pingtype {GATE_TYPES.includes(pendingPingView.type) ? 'wanted' : 'unwanted'}">{pendingPingView.type}</div>
+        {#if pendingCount > 1}
+          <div class="small" style="color:var(--amber);opacity:0.85;margin:6px 0 2px">
+            answer this first — {pendingCount - 1} earlier ping{pendingCount - 1 > 1 ? 's' : ''} queued for this run
+          </div>
+        {/if}
+        <PingCard ping={pendingPingView} busy={answering} onanswer={answer} />
+      </div>
+    {/key}
   {/if}
 
   {#if error}<div class="error">{error}</div>{/if}

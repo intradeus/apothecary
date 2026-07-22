@@ -34,6 +34,55 @@ func (t tcpPortConn) Dial(ctx context.Context) (net.Conn, error) {
 }
 func (t tcpPortConn) Close() error { return nil }
 
+// engFakeStore is a portrelay.Store for engine tests.
+type engFakeStore struct{ rows map[string]map[int]int }
+
+func (s engFakeStore) SaveExposedPort(_ context.Context, r string, ws, h int) error {
+	if s.rows[r] == nil {
+		s.rows[r] = map[int]int{}
+	}
+	s.rows[r][ws] = h
+	return nil
+}
+func (s engFakeStore) DeleteExposedPorts(_ context.Context, r string) error {
+	delete(s.rows, r)
+	return nil
+}
+func (s engFakeStore) LoadExposedPorts(context.Context) (map[string]map[int]int, error) {
+	return s.rows, nil
+}
+
+// TestAutoExposeReExposesSavedManualPorts: on recovery, autoExpose must
+// re-create not just declared forwardPorts but also ports a run had exposed
+// manually before the restart (which used to be lost entirely).
+func TestAutoExposeReExposesSavedManualPorts(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.res.Envp = &exposerEnvp{EnvProvisioner: h.envp, appPorts: []int{3000}}
+
+	// The store remembers a MANUAL port (9999) that is NOT a declared port.
+	store := engFakeStore{rows: map[string]map[int]int{"r1": {9999: 0}}}
+	relay := portrelay.New("127.0.0.1")
+	if err := relay.Persist(store); err != nil {
+		t.Fatal(err)
+	}
+	defer relay.CloseAll()
+	h.e.SetPortRelay(relay)
+
+	x := &exec{e: h.e, rs: &runState{runID: "r1"}, res: h.res, ctx: context.Background(), bg: context.Background()}
+	x.autoExpose("env1")
+
+	exposed := map[int]bool{}
+	for _, e := range relay.List("r1") {
+		exposed[e.Port] = true
+	}
+	if !exposed[3000] {
+		t.Error("declared port 3000 not exposed")
+	}
+	if !exposed[9999] {
+		t.Error("saved manual port 9999 not re-exposed on recovery (regression)")
+	}
+}
+
 func TestExposeRunPort(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()

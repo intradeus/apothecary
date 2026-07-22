@@ -262,8 +262,10 @@ var ErrPortsOff = errors.New("port exposure is not configured")
 
 // ExposeRunPort publishes a workspace port of a live run and returns the
 // browser URL (the run-page "open the app" path). Idempotent per
-// (run, port). Exposures are engine-process-scoped and deliberately not
-// event-recorded — see portrelay's package comment.
+// (run, port). The live listener is engine-process-scoped and never
+// event-recorded; only the host-port ALLOCATION is persisted (portrelay's
+// Store), so the same URL comes back after a restart. See portrelay's
+// package comment.
 func (e *Engine) ExposeRunPort(ctx context.Context, runID string, port int) (string, error) {
 	if e.portRelay == nil {
 		return "", ErrPortsOff

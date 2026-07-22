@@ -241,13 +241,18 @@ func cmdServe(args []string) error {
 	}
 	// Workspace-port publisher: exposed app ports bind the CPUI's own
 	// interface (dynamic host ports; loopback by default). Before Recover —
-	// recovery re-creates auto-exposures.
+	// recovery re-creates the exposures. Persist() attaches durable storage
+	// (same handle as channels) so a run's ports come back on the same host
+	// port after a restart.
 	relayHost := boot.Listen
 	if h, _, err := net.SplitHostPort(boot.Listen); err == nil {
 		relayHost = h
 	}
 	portRelay := portrelay.New(relayHost)
 	defer portRelay.CloseAll()
+	if err := portRelay.Persist(store); err != nil {
+		return fmt.Errorf("load persisted port exposures: %w", err)
+	}
 	e.SetPortRelay(portRelay)
 
 	if err := e.Recover(ctx); err != nil {

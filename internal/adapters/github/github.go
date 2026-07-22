@@ -163,17 +163,46 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 		// Plans without draft-PR support (private repos on Free) 422 here;
 		// degrade to a regular PR with the GitLab-style title prefix instead
 		// of failing the stage outright.
-		_, err = a.api(ctx, http.MethodPost, a.repoPath()+"/pulls", map[string]any{
+		status, err = a.api(ctx, http.MethodPost, a.repoPath()+"/pulls", map[string]any{
 			"title": "Draft: " + title,
 			"head":  branch,
 			"base":  base,
 			"body":  body,
 		}, &pr)
 	}
+	if err != nil && status == http.StatusUnprocessableEntity && strings.Contains(err.Error(), "already exists") {
+		// A PR for this head branch already exists (422). Treat it as success —
+		// the stage is idempotent — by returning the existing one.
+		if existing, lookErr := a.findOpenPR(ctx, branch, base); lookErr == nil && existing.IID != 0 {
+			return existing, nil
+		}
+	}
 	if err != nil {
 		return ports.MRRef{}, err
 	}
 	return ports.MRRef{IID: pr.Number, URL: pr.HTMLURL}, nil
+}
+
+// findOpenPR returns the open PR from branch onto base, or a zero MRRef if
+// none is found. The head filter is scoped to the bound repo's owner.
+func (a *Adapter) findOpenPR(ctx context.Context, branch, base string) (ports.MRRef, error) {
+	head := branch
+	if owner, _, ok := strings.Cut(a.cfg.Locator, "/"); ok {
+		head = owner + ":" + branch
+	}
+	var prs []struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+	}
+	p := fmt.Sprintf("%s/pulls?state=open&head=%s&base=%s",
+		a.repoPath(), url.QueryEscape(head), url.QueryEscape(base))
+	if _, err := a.api(ctx, http.MethodGet, p, nil, &prs); err != nil {
+		return ports.MRRef{}, err
+	}
+	if len(prs) == 0 {
+		return ports.MRRef{}, nil
+	}
+	return ports.MRRef{IID: prs[0].Number, URL: prs[0].HTMLURL}, nil
 }
 
 // MRState maps the PR state to open|merged|closed: merged_at wins over

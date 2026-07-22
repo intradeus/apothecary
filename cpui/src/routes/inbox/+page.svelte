@@ -10,6 +10,21 @@
   let busy = $state<Record<string, boolean>>({});
   let error = $state('');
 
+  // Pending pings are grouped by run and shown one card per run: only the
+  // LATEST unanswered ping of each run is displayed, so the operator answers
+  // a run's pings newest-first, one after another (answering the shown ping
+  // reveals the next-earlier one on the next refresh). `pings` already
+  // arrives newest-first, so insertion order = latest-ping-first across runs.
+  const runGroups = $derived.by(() => {
+    const byRun = new Map<string, Ping[]>();
+    for (const p of pings) {
+      const arr = byRun.get(p.run_id) ?? [];
+      arr.push(p);
+      byRun.set(p.run_id, arr);
+    }
+    return [...byRun.values()];
+  });
+
   const refresh = async () => {
     try {
       pings = await api.pings(tab);
@@ -53,21 +68,46 @@
 
 {#if error}<div class="error">{error}</div>{/if}
 
+{#snippet card(p: Ping, queued: number)}
+  <!-- keyed by ping_id at the call site so answering rebuilds the card fresh
+       (PingCard's draft note must not carry over to the next ping) -->
+  <div class="card">
+    <div class="row spread">
+      <span class="pingtype {GATE_TYPES.includes(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
+      <span class="muted small">
+        {#if p.stage_id}<span class="mono">{p.stage_id}</span> · {/if}
+        {ago(p.raised_at)} · <a href={`/runs/${p.run_id}`}>view run</a>
+      </span>
+    </div>
+    {#if queued > 0}
+      <div class="queued small">
+        answer this first — {queued} earlier ping{queued > 1 ? 's' : ''} queued for this run
+      </div>
+    {/if}
+    <PingCard ping={p} busy={busy[p.ping_id] ?? false} onanswer={(a, n) => answer(p, a, n)} />
+  </div>
+{/snippet}
+
 {#if pings.length === 0}
   <div class="empty">
     {#if !loaded}Loading…{:else if tab === 'pending'}No pending pings — the apothecary needs nothing from you.{:else}No answered pings yet.{/if}
   </div>
+{:else if tab === 'pending'}
+  <!-- one card per run, showing only its latest pending ping -->
+  {#each runGroups as g (g[0].ping_id)}
+    {@render card(g[0], g.length - 1)}
+  {/each}
 {:else}
+  <!-- answered history: every ping, flat, newest-first -->
   {#each pings as p (p.ping_id)}
-    <div class="card">
-      <div class="row spread">
-        <span class="pingtype {GATE_TYPES.includes(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
-        <span class="muted small">
-          {#if p.stage_id}<span class="mono">{p.stage_id}</span> · {/if}
-          {ago(p.raised_at)} · <a href={`/runs/${p.run_id}`}>view run</a>
-        </span>
-      </div>
-      <PingCard ping={p} busy={busy[p.ping_id] ?? false} onanswer={(a, n) => answer(p, a, n)} />
-    </div>
+    {@render card(p, 0)}
   {/each}
 {/if}
+
+<style>
+  .queued {
+    margin: 6px 0 2px;
+    color: var(--amber);
+    opacity: 0.85;
+  }
+</style>

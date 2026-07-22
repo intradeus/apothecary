@@ -162,17 +162,42 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 		IID    int    `json:"iid"`
 		WebURL string `json:"web_url"`
 	}
-	_, err := a.api(ctx, http.MethodPost, a.path()+"/merge_requests", map[string]any{
+	status, err := a.api(ctx, http.MethodPost, a.path()+"/merge_requests", map[string]any{
 		"source_branch":        branch,
 		"target_branch":        target,
 		"title":                title,
 		"description":          body,
 		"remove_source_branch": true,
 	}, &mr)
+	if err != nil && status == http.StatusConflict {
+		// An open MR for this source branch already exists (409). Treat it as
+		// success — the stage is idempotent — by returning the existing one.
+		if existing, lookErr := a.findOpenMR(ctx, branch, target); lookErr == nil && existing.IID != 0 {
+			return existing, nil
+		}
+	}
 	if err != nil {
 		return ports.MRRef{}, err
 	}
 	return ports.MRRef{IID: mr.IID, URL: mr.WebURL}, nil
+}
+
+// findOpenMR returns the open MR from branch onto target, or a zero MRRef if
+// none is found.
+func (a *Adapter) findOpenMR(ctx context.Context, branch, target string) (ports.MRRef, error) {
+	var mrs []struct {
+		IID    int    `json:"iid"`
+		WebURL string `json:"web_url"`
+	}
+	p := fmt.Sprintf("%s/merge_requests?state=opened&source_branch=%s&target_branch=%s",
+		a.path(), url.QueryEscape(branch), url.QueryEscape(target))
+	if _, err := a.api(ctx, http.MethodGet, p, nil, &mrs); err != nil {
+		return ports.MRRef{}, err
+	}
+	if len(mrs) == 0 {
+		return ports.MRRef{}, nil
+	}
+	return ports.MRRef{IID: mrs[0].IID, URL: mrs[0].WebURL}, nil
 }
 
 // MRState maps GitLab's state to the port's open|merged|closed. The MRRef

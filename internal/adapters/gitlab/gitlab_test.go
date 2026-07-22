@@ -147,6 +147,35 @@ func TestCreateDraftMRPrefixesTitle(t *testing.T) {
 	}
 }
 
+func TestCreateDraftMRReturnsExistingOnConflict(t *testing.T) {
+	var listQuery string
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v4/projects/7/merge_requests", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"message":["Another open merge request already exists for this source branch: !9"]}`))
+	})
+	mux.HandleFunc("GET /api/v4/projects/7/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		listQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`[{"iid":9,"web_url":"http://gl.local/root/greeter/-/merge_requests/9"}]`))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	a, repo := testAdapter(ts)
+
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x-add-login", "Add login", "body")
+	if err != nil {
+		t.Fatalf("conflict must not error: %v", err)
+	}
+	if ref.IID != 9 || !strings.Contains(ref.URL, "/merge_requests/9") {
+		t.Errorf("ref = %+v, want existing MR 9", ref)
+	}
+	for _, want := range []string{"state=opened", "source_branch=apothecary%2Fx-add-login", "target_branch=main"} {
+		if !strings.Contains(listQuery, want) {
+			t.Errorf("lookup query %q missing %s", listQuery, want)
+		}
+	}
+}
+
 func TestMRStateMapping(t *testing.T) {
 	ts, _ := glStub(t)
 	a, _ := testAdapter(ts)
