@@ -109,7 +109,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		if _, ok := e.pings[op.PingID]; !ok {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
-				Context: op.Context, PayloadRef: op.PayloadRef, StageID: op.StageID,
+				Context: op.Context, PayloadRef: op.PayloadRef, PayloadRefs: op.PayloadRefs, StageID: op.StageID,
 				Options:  op.Options,
 				RaisedAt: e.clock(),
 				gate:     gatePingType(op.Type), done: make(chan struct{}),
@@ -527,7 +527,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			x.e.mu.Unlock()
 			if err := x.append(&event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
 				Question: req.p.Question, Context: req.p.Context,
-				PayloadRef: req.p.PayloadRef, StageID: st.ID, Options: req.p.Options}); err != nil {
+				PayloadRef: req.p.PayloadRef, PayloadRefs: req.p.PayloadRefs, StageID: st.ID, Options: req.p.Options}); err != nil {
 				close(req.ack)
 				return agentRes{}, false, err
 			}
@@ -600,6 +600,14 @@ func (x *exec) processAnswer(ar answerReq) (bool, error) {
 		ar.p.answer = nil
 		x.e.mu.Unlock()
 		return false, err
+	}
+	// Deliver any files the human attached to this answer into the workspace,
+	// recording their paths so the ask_human tool-return (agent pings) and the
+	// gate feed (gate pings) can point the agent at them.
+	if paths := x.pingAnswerPaths(ar.p.ID); len(paths) > 0 {
+		x.e.mu.Lock()
+		ar.p.deliveredPaths = paths
+		x.e.mu.Unlock()
 	}
 	close(ar.p.done)
 	return true, nil
@@ -790,7 +798,9 @@ func (x *exec) stageGate(st *flow.Stage) error {
 				return err
 			}
 			if handled && ar.p == p {
-				return x.routeGate(st, ar.ans, started)
+				ans := ar.ans
+				ans.Feedback += attachedFilesNote(ar.p.deliveredPaths)
+				return x.routeGate(st, ans, started)
 			}
 		case <-pollC:
 			merged, err := pollMR()
@@ -944,6 +954,9 @@ func (x *exec) ensureEnv() error {
 			// (fresh ports — the live registry, not the old env_ready event,
 			// is what the UI trusts).
 			x.autoExpose(rs.envID)
+			// Re-materialize goal + answer artifacts into the recovered
+			// workspace (idempotent; the associations are durable).
+			x.deliverRunArtifacts()
 			return nil
 		}
 		x.e.log.Warn("environment not running on recovery; re-provisioning", "run", rs.runID, "env", rs.envID, "status", status)
@@ -1004,6 +1017,9 @@ func (x *exec) ensureEnv() error {
 	if rs.done {
 		return nil
 	}
+	// After bootstrap (repo cloned, .apothecary/ git-excluded): deliver the
+	// human's goal + answer artifacts into the workspace for the agent.
+	x.deliverRunArtifacts()
 	links, err := x.res.Envp.Links(x.ctx, id)
 	if err != nil {
 		x.e.log.Warn("links unavailable", "run", rs.runID, "err", err)

@@ -50,6 +50,13 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		fmt.Fprintf(&b, "# PREVIOUS ATTEMPT FEEDBACK (iteration %d of %d)\n%s\n", iter, maxAttempts, tail(feed, 8<<10))
 	}
 
+	if goals := x.goalArtifacts(); len(goals) > 0 {
+		b.WriteString("# ATTACHED FILES\nThe human attached these files to the task; read them with your tools:\n")
+		for _, m := range goals {
+			fmt.Fprintf(&b, "- %s (%s, %s)\n", x.artifactPath(m), m.Filename, m.Mime)
+		}
+	}
+
 	if st.Output != "" || st.Verdict {
 		b.WriteString("# OUTPUT CONTRACT\n")
 		if st.Output != "" {

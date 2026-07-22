@@ -140,12 +140,12 @@
     };
   });
 
-  async function answer(ans: string, note?: string) {
+  async function answer(ans: string, note?: string, artifactIds?: string[]) {
     if (!pendingPing) return;
     answering = true;
     error = '';
     try {
-      await api.answerPing(pendingPing.payload.ping_id as string, ans, note?.trim() || undefined);
+      await api.answerPing(pendingPing.payload.ping_id as string, ans, note?.trim() || undefined, artifactIds);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {

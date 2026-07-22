@@ -44,11 +44,11 @@
     refresh();
   });
 
-  async function answer(p: Ping, ans: string, note?: string) {
+  async function answer(p: Ping, ans: string, note?: string, artifactIds?: string[]) {
     busy[p.ping_id] = true;
     error = '';
     try {
-      await api.answerPing(p.ping_id, ans, note?.trim() || undefined);
+      await api.answerPing(p.ping_id, ans, note?.trim() || undefined, artifactIds);
       await refresh();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -84,7 +84,7 @@
         answer this first — {queued} earlier ping{queued > 1 ? 's' : ''} queued for this run
       </div>
     {/if}
-    <PingCard ping={p} busy={busy[p.ping_id] ?? false} onanswer={(a, n) => answer(p, a, n)} />
+    <PingCard ping={p} busy={busy[p.ping_id] ?? false} onanswer={(a, n, ids) => answer(p, a, n, ids)} />
   </div>
 {/snippet}
 

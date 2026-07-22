@@ -163,7 +163,13 @@ func credentialLine(repoURL, user, pass string) (string, error) {
 }
 
 func agentConfigScript(agentsMDPath string) string {
-	script := "mkdir -p artifacts && grep -qx artifacts/ .git/info/exclude 2>/dev/null || echo artifacts/ >> .git/info/exclude"
+	// artifacts/ = the agent's own output dir; .apothecary/ = human-attached
+	// artifacts (goal + ping answers) delivered by the engine. Both are
+	// git-excluded so `git add -A` never stages them; kept SEPARATE so a
+	// builder that cleans artifacts/ can't delete the human's inputs.
+	script := "mkdir -p artifacts .apothecary/artifacts" +
+		" && { grep -qx artifacts/ .git/info/exclude 2>/dev/null || echo artifacts/ >> .git/info/exclude; }" +
+		" && { grep -qx .apothecary/ .git/info/exclude 2>/dev/null || echo .apothecary/ >> .git/info/exclude; }"
 	if agentsMDPath != "AGENTS.md" {
 		script += fmt.Sprintf(" && ln -sf %q AGENTS.md && { grep -qx AGENTS.md .git/info/exclude 2>/dev/null || echo AGENTS.md >> .git/info/exclude; }", agentsMDPath)
 	}

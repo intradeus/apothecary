@@ -7,3 +7,4 @@
 - 12) Adding artifacts in run's goal and in all human gates (documents, images)
 - 13) Abstract "forge MR" behind an 'Action' type (so 4 types : agent, command, human_gate and action). Actions being all 'hard coded' actions provided by apothecary.
 - 14) Allow user to specify a harness agent too, as well as the apo's project's agents.
+- 15) Set git email and name

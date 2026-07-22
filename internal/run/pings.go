@@ -10,19 +10,20 @@ import (
 // ping, both sides. Postgres maintains it transactionally (pgstore); tests
 // and event-store-only setups derive it with ReducePings.
 type PingView struct {
-	PingID     string     `json:"ping_id"`
-	RunID      string     `json:"run_id"`
-	Type       string     `json:"type"`
-	StageID    string     `json:"stage_id,omitempty"`
-	Question   string     `json:"question"`
-	Context    string     `json:"context,omitempty"`
-	PayloadRef string     `json:"payload_ref,omitempty"`
-	Options    []string   `json:"options,omitempty"`
-	Status     string     `json:"status"` // pending|answered|withdrawn (run ended unanswered)
-	Answer     string     `json:"answer,omitempty"`
-	Feedback   string     `json:"feedback,omitempty"`
-	RaisedAt   time.Time  `json:"raised_at"`
-	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+	PingID      string     `json:"ping_id"`
+	RunID       string     `json:"run_id"`
+	Type        string     `json:"type"`
+	StageID     string     `json:"stage_id,omitempty"`
+	Question    string     `json:"question"`
+	Context     string     `json:"context,omitempty"`
+	PayloadRef  string     `json:"payload_ref,omitempty"`
+	PayloadRefs []string   `json:"payload_refs,omitempty"` // ask_human multi-artifact; nil on old pings
+	Options     []string   `json:"options,omitempty"`
+	Status      string     `json:"status"` // pending|answered|withdrawn (run ended unanswered)
+	Answer      string     `json:"answer,omitempty"`
+	Feedback    string     `json:"feedback,omitempty"`
+	RaisedAt    time.Time  `json:"raised_at"`
+	AnsweredAt  *time.Time `json:"answered_at,omitempty"`
 }
 
 // ReducePings folds one run's events into its ping views, in raise order.
@@ -36,8 +37,8 @@ func ReducePings(evs []event.Event) []PingView {
 			out = append(out, PingView{
 				PingID: p.PingID, RunID: evs[i].RunID, Type: p.Type, StageID: p.StageID,
 				Question: p.Question, Context: p.Context, PayloadRef: p.PayloadRef,
-				Options: p.Options,
-				Status:  "pending", RaisedAt: evs[i].TS,
+				PayloadRefs: p.PayloadRefs, Options: p.Options,
+				Status: "pending", RaisedAt: evs[i].TS,
 			})
 		case *event.PingAnswered:
 			if j, ok := idx[p.PingID]; ok {

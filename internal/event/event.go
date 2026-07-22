@@ -153,6 +153,11 @@ type PingRaised struct {
 	Question   string `json:"question"`
 	Context    string `json:"context,omitempty"` // §9 pings.context; persisted so recovery keeps it
 	PayloadRef string `json:"payload_ref,omitempty"`
+	// PayloadRefs is the FULL set of workspace files the agent attached
+	// (ask_human multi-artifact). PayloadRef stays the PRIMARY ref (first, or
+	// a URL like mr_url) for back-compat and the review-vs-link decision;
+	// PayloadRefs is nil on pre-multi pings.
+	PayloadRefs []string `json:"payload_refs,omitempty"`
 	// StageID is the flow stage in flight when the ping was raised
 	// (PLAN4 M15): the attribution key joining reviews to stages and,
 	// via stage_started.agent_hash, to prompt versions.

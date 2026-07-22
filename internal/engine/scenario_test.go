@@ -409,7 +409,7 @@ stages:
 	gotAnswer := make(chan string, 1)
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		id := <-runIDCh
-		p, err := h.e.RaisePing(id, "clarification", "which database?", "postgres or sqlite", nil, "")
+		p, err := h.e.RaisePing(id, "clarification", "which database?", "postgres or sqlite", nil, nil)
 		if err != nil {
 			return ports.AgentResult{}, err
 		}
@@ -1448,7 +1448,7 @@ stages:
 	gotAnswer := make(chan PingAnswer, 1)
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		id := <-runIDCh
-		p, err := h.e.RaisePing(id, "clarification", "which db?", "", []string{"postgres", "sqlite", "postgres"}, "artifacts/dbs.md")
+		p, err := h.e.RaisePing(id, "clarification", "which db?", "", []string{"postgres", "sqlite", "postgres"}, []string{"artifacts/dbs.md"})
 		if err != nil {
 			return ports.AgentResult{}, err
 		}
@@ -1500,10 +1500,10 @@ stages:
 	run2 := make(chan string, 1)
 	h2.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		id := <-run2
-		if _, err := h2.e.RaisePing(id, "clarification", "q", "", nil, "/etc/passwd"); err == nil {
+		if _, err := h2.e.RaisePing(id, "clarification", "q", "", nil, []string{"/etc/passwd"}); err == nil {
 			t.Error("absolute artifact accepted")
 		}
-		if _, err := h2.e.RaisePing(id, "clarification", "q", "", []string{""}, ""); err == nil {
+		if _, err := h2.e.RaisePing(id, "clarification", "q", "", []string{""}, nil); err == nil {
 			t.Error("empty option accepted")
 		}
 		return ports.AgentResult{TurnsUsed: 1}, nil
@@ -1523,7 +1523,7 @@ stages:
 	got3 := make(chan PingAnswer, 1)
 	h3.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		id := <-run3
-		p, err := h3.e.RaisePing(id, "clarification", "pick one", "", []string{"a", "Other", "b"}, "")
+		p, err := h3.e.RaisePing(id, "clarification", "pick one", "", []string{"a", "Other", "b"}, nil)
 		if err != nil {
 			return ports.AgentResult{}, err
 		}

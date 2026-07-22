@@ -71,17 +71,22 @@ func callEngine(method, path string, body any, env map[string]string) (*http.Res
 }
 
 type askArgs struct {
-	Type     string   `json:"type"`
-	Question string   `json:"question"`
-	Context  string   `json:"context"`
-	Options  []string `json:"options"`
-	Artifact string   `json:"artifact"`
+	Type      string   `json:"type"`
+	Question  string   `json:"question"`
+	Context   string   `json:"context"`
+	Options   []string `json:"options"`
+	Artifact  string   `json:"artifact"`  // legacy single ref
+	Artifacts []string `json:"artifacts"` // multi refs
 }
 
 // askHuman drives the full §10 protocol; returns the answer text or an
 // error (surfaced as a tool-level error string, not a protocol error).
 func askHuman(args askArgs) (string, error) {
 	env := readRunEnv()
+	refs := args.Artifacts
+	if len(refs) == 0 && args.Artifact != "" {
+		refs = []string{args.Artifact}
+	}
 	pingID := ""
 	var downSince time.Time
 	backoff := backoffBase
@@ -91,11 +96,11 @@ func askHuman(args askArgs) (string, error) {
 		var err error
 		if pingID == "" {
 			res, err = callEngine("POST", "/api/runs/"+env["APOTHECARY_RUN_ID"]+"/pings", map[string]any{
-				"type":     args.Type,
-				"question": args.Question,
-				"context":  args.Context,
-				"options":  append([]string{}, args.Options...),
-				"artifact": args.Artifact,
+				"type":      args.Type,
+				"question":  args.Question,
+				"context":   args.Context,
+				"options":   append([]string{}, args.Options...),
+				"artifacts": append([]string{}, refs...),
 			}, env)
 		} else {
 			res, err = callEngine("GET", "/api/runs/"+env["APOTHECARY_RUN_ID"]+"/pings/"+pingID, nil, env)
@@ -122,8 +127,9 @@ func askHuman(args askArgs) (string, error) {
 			env = readRunEnv()
 		case http.StatusOK:
 			var body struct {
-				Answer   string `json:"answer"`
-				Feedback string `json:"feedback"`
+				Answer    string   `json:"answer"`
+				Feedback  string   `json:"feedback"`
+				Artifacts []string `json:"artifacts"` // workspace paths of the human's attachments
 			}
 			err := json.NewDecoder(res.Body).Decode(&body)
 			res.Body.Close()
@@ -136,16 +142,21 @@ func askHuman(args askArgs) (string, error) {
 			// hardcoded escape hatch: the human rejected every offered option
 			// and the note IS their answer — render it unambiguously so the
 			// agent can't misread it as a chosen option.
+			var answer string
 			switch {
 			case body.Answer == "text":
-				return body.Feedback, nil
+				answer = body.Feedback
 			case body.Answer == "other":
-				return "other — none of the offered options fit; the human answered: " + body.Feedback, nil
+				answer = "other — none of the offered options fit; the human answered: " + body.Feedback
 			case body.Feedback != "":
-				return body.Answer + "\n(note: " + body.Feedback + ")", nil
+				answer = body.Answer + "\n(note: " + body.Feedback + ")"
 			default:
-				return body.Answer, nil
+				answer = body.Answer
 			}
+			if len(body.Artifacts) > 0 {
+				answer += "\n\nThe human attached these files — read them with your tools:\n- " + strings.Join(body.Artifacts, "\n- ")
+			}
+			return answer, nil
 		case http.StatusNoContent:
 			if id := res.Header.Get("X-Ping-Id"); id != "" {
 				pingID = id
@@ -178,9 +189,9 @@ var toolDef = map[string]any{
 		"The human ALWAYS also has an automatic 'other' escape hatch: if none " +
 		"of your options fit, the result starts with 'other —' followed by " +
 		"their free-text answer — handle that case rather than assuming one of " +
-		"your options. To have the human review a document you wrote, pass " +
-		"artifact with a repo-relative path (e.g. artifacts/comparison.md): " +
-		"they see it rendered with inline commenting.",
+		"your options. To have the human review documents you wrote, pass " +
+		"artifacts with repo-relative paths (e.g. [\"artifacts/comparison.md\"]): " +
+		"they see them rendered with inline commenting.",
 	"inputSchema": map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -193,9 +204,10 @@ var toolDef = map[string]any{
 				"description": "Optional closed answer set (max 8); the answer will be one of these, or 'other' " +
 					"with the human's own text (added automatically — never declare 'other' yourself)",
 			},
-			"artifact": map[string]any{
-				"type":        "string",
-				"description": "Optional repo-relative file for the human to review (e.g. artifacts/plan.md)",
+			"artifacts": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Optional repo-relative files for the human to review (e.g. [\"artifacts/plan.md\"]); the first shows in the rich review pane, the rest as attachments",
 			},
 		},
 		"required": []string{"type", "question"},

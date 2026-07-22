@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/artifacts"
 	"apothecary/internal/event"
 	"apothecary/internal/run"
 )
@@ -26,7 +27,7 @@ func open(t *testing.T) *Store {
 	}
 	t.Cleanup(s.Close)
 	if _, err := s.pool.Exec(context.Background(),
-		`TRUNCATE events, runs, pings, channels, run_exposed_ports`); err != nil {
+		`TRUNCATE events, runs, pings, channels, run_exposed_ports, artifacts`); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -218,6 +219,56 @@ func TestChannelsCRUD(t *testing.T) {
 	rows, _ = s.LoadChannels(ctx)
 	if len(rows) != 0 {
 		t.Errorf("after delete = %+v", rows)
+	}
+}
+
+func TestArtifactsCRUD(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	mk := func(id string) artifacts.Meta {
+		return artifacts.Meta{ID: id, Scope: artifacts.ScopeOrphan, Filename: id + ".txt", Mime: "text/plain", Size: 3, SHA256: "abc"}
+	}
+	for _, id := range []string{"a1", "a2", "a3"} {
+		if err := s.InsertArtifact(ctx, mk(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AssociateArtifacts(ctx, []string{"a1"}, "run1", "", artifacts.ScopeGoal); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssociateArtifacts(ctx, []string{"a2"}, "run1", "ping1", artifacts.ScopePingAnswer); err != nil {
+		t.Fatal(err)
+	}
+	// Only orphans are claimed: re-homing a1 to another run is a silent no-op.
+	if err := s.AssociateArtifacts(ctx, []string{"a1"}, "run2", "", artifacts.ScopeGoal); err != nil {
+		t.Fatal(err)
+	}
+	if forRun, _ := s.ArtifactsForRun(ctx, "run1"); len(forRun) != 2 {
+		t.Errorf("ForRun(run1) = %d, want 2", len(forRun))
+	}
+	if forRun, _ := s.ArtifactsForRun(ctx, "run2"); len(forRun) != 0 {
+		t.Errorf("a1 was wrongly re-homed to run2: %d", len(forRun))
+	}
+	forPing, _ := s.ArtifactsForPing(ctx, "ping1", artifacts.ScopePingAnswer)
+	if len(forPing) != 1 || forPing[0].ID != "a2" {
+		t.Errorf("ForPing = %+v", forPing)
+	}
+	if got, err := s.GetArtifact(ctx, "a1"); err != nil || got.RunID != "run1" || got.Scope != artifacts.ScopeGoal {
+		t.Errorf("GetArtifact(a1) = %+v, %v", got, err)
+	}
+	if _, err := s.GetArtifact(ctx, "nope"); err != artifacts.ErrNotFound {
+		t.Errorf("GetArtifact(nope) err = %v, want ErrNotFound", err)
+	}
+	// a3 is still an orphan.
+	if orphans, _ := s.OrphanArtifactIDsBefore(ctx, time.Now().Add(time.Hour)); len(orphans) != 1 || orphans[0] != "a3" {
+		t.Errorf("orphans = %v, want [a3]", orphans)
+	}
+	// DeleteArtifactsForRun returns the ids (for blob cleanup) and drops them.
+	if del, _ := s.DeleteArtifactsForRun(ctx, "run1"); len(del) != 2 {
+		t.Errorf("deleted = %v, want 2", del)
+	}
+	if forRun, _ := s.ArtifactsForRun(ctx, "run1"); len(forRun) != 0 {
+		t.Errorf("run1 artifacts survived delete: %d", len(forRun))
 	}
 }
 

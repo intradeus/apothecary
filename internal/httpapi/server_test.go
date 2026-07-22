@@ -688,7 +688,7 @@ func TestOptionPingOverHTTP(t *testing.T) {
 	done := make(chan struct{})
 	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		id := <-runIDCh
-		p, err := x.e.RaisePing(id, "clarification", "pick a db", "", []string{"postgres", "sqlite"}, "artifacts/dbs.md")
+		p, err := x.e.RaisePing(id, "clarification", "pick a db", "", []string{"postgres", "sqlite"}, []string{"artifacts/dbs.md"})
 		if err != nil {
 			return ports.AgentResult{}, err
 		}

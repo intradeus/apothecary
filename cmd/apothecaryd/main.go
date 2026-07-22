@@ -27,6 +27,7 @@ import (
 	"time"
 
 	matrixadapter "apothecary/internal/adapters/matrix"
+	"apothecary/internal/artifacts"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
@@ -260,6 +261,9 @@ func cmdServe(args []string) error {
 	}
 	e.SetPortRelay(portRelay)
 
+	artStore := artifacts.New(store, boot.RunsDir, boot.ArtifactMaxBytes, boot.ArtifactMimeAllow)
+	e.SetArtifacts(artStore)
+
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)
 	}
@@ -269,6 +273,7 @@ func cmdServe(args []string) error {
 	api.Kinds = reg
 	api.Ops = resolver
 	api.Pings = store // durable request/response projection (PLAN4 M15)
+	api.Artifacts = artStore
 	api.CPUIDir = boot.CPUIDir
 	if boot.CPUIDir != "" {
 		log.Info("serving CPUI", "dir", boot.CPUIDir)
@@ -290,6 +295,12 @@ func cmdServe(args []string) error {
 				}
 				if err := e.ReapOnce(reaperCtx, set.CompletedWindow()); err != nil {
 					log.Error("reaper pass failed", "err", err)
+				}
+				// Sweep uploads that were never attached to a ticket/answer.
+				if n, err := artStore.GCOrphans(reaperCtx, 24*time.Hour); err != nil {
+					log.Error("reaper: artifact GC failed", "err", err)
+				} else if n > 0 {
+					log.Info("reaper: swept orphan artifacts", "count", n)
 				}
 			case <-reaperCtx.Done():
 				return

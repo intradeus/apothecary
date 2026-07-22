@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"apothecary/internal/secrets"
 )
@@ -28,10 +29,33 @@ type Boot struct {
 	// restarts (a fixed port, not ephemeral) so every workspace's proxy.env
 	// stays valid after the engine restarts. Default 8079.
 	EgressProxyPort int
+	// ArtifactMaxBytes caps each uploaded artifact (documents/images
+	// attached to a goal or ping answer). APOTHECARY_ARTIFACT_MAX_BYTES,
+	// default 25 MiB.
+	ArtifactMaxBytes int64
+	// ArtifactMimeAllow is the MIME allowlist for uploads (exact types or
+	// "text/*" wildcards). APOTHECARY_ARTIFACT_MIME_ALLOW (comma-separated),
+	// default DefaultArtifactMimeAllow.
+	ArtifactMimeAllow []string
 }
 
 // DefaultEgressProxyPort is the proxy's loopback port when unspecified.
 const DefaultEgressProxyPort = 8079
+
+// DefaultArtifactMaxBytes caps an uploaded artifact when unset (25 MiB).
+const DefaultArtifactMaxBytes = 25 << 20
+
+// DefaultArtifactMimeAllow is the upload MIME allowlist: text (covers
+// markdown/csv/plain via the wildcard), common images, PDF, JSON, MS Office.
+var DefaultArtifactMimeAllow = []string{
+	"text/*",
+	"image/png", "image/jpeg", "image/gif", "image/webp",
+	"application/pdf", "application/json",
+	"application/msword",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
 
 // FromEnv reads the §1 variables. Only the DSN is unconditionally required;
 // the master key is validated by Key() where the caller needs it (serve),
@@ -57,10 +81,32 @@ func FromEnv() (*Boot, error) {
 			b.EgressProxyPort = p
 		}
 	}
+	b.ArtifactMaxBytes = DefaultArtifactMaxBytes
+	if raw := os.Getenv("APOTHECARY_ARTIFACT_MAX_BYTES"); raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
+			b.ArtifactMaxBytes = n
+		}
+	}
+	b.ArtifactMimeAllow = DefaultArtifactMimeAllow
+	if raw := os.Getenv("APOTHECARY_ARTIFACT_MIME_ALLOW"); raw != "" {
+		if list := splitComma(raw); len(list) > 0 {
+			b.ArtifactMimeAllow = list
+		}
+	}
 	if b.PostgresDSN == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")
 	}
 	return b, nil
+}
+
+func splitComma(s string) []string {
+	var out []string
+	for p := range strings.SplitSeq(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Key parses APOTHECARY_MASTER_KEY, refusing boot with a precise message.

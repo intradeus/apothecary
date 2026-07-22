@@ -17,6 +17,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"apothecary/internal/artifacts"
 	"apothecary/internal/egressproxy"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
@@ -48,6 +49,9 @@ type Ticket struct {
 	// apothecary/<run-id>-<title-slug>). Passed verbatim from the ticket
 	// form; CreateRun refuses names git check-ref-format would.
 	Branch string
+	// ArtifactIDs are uploaded artifacts (POST /api/artifacts) attached to
+	// the goal: associated with the run and delivered into the workspace.
+	ArtifactIDs []string
 }
 
 // Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
@@ -106,6 +110,7 @@ type Engine struct {
 	sink      EventSink
 	egress    EgressController
 	portRelay *portrelay.Manager
+	artifacts ArtifactStore
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -129,21 +134,39 @@ type runHandle struct {
 // Ping is an open (or answered) human interaction. Gate pings are raised by
 // the engine at human_gate stages; agent pings arrive via RaisePing (§10).
 type Ping struct {
-	ID         string
-	RunID      string
-	Type       string // plan_approval|final_review|clarification|blocker|permission
-	Question   string
-	Context    string
-	PayloadRef string
-	StageID    string   // flow stage in flight when raised (PLAN4 M15)
-	Options    []string // agent-declared answer choices (PLAN4 M16)
-	RaisedAt   time.Time
+	ID          string
+	RunID       string
+	Type        string // plan_approval|final_review|clarification|blocker|permission
+	Question    string
+	Context     string
+	PayloadRef  string   // primary attachment (first, or a URL like mr_url)
+	PayloadRefs []string // full ask_human attachment set (agent→human multi)
+	StageID     string   // flow stage in flight when raised (PLAN4 M15)
+	Options     []string // agent-declared answer choices (PLAN4 M16)
+	RaisedAt    time.Time
 
-	gate     bool
-	answered bool        // guarded by Engine.mu
-	answer   *PingAnswer // set before done closes; read only after <-done
-	done     chan struct{}
+	gate           bool
+	answered       bool        // guarded by Engine.mu
+	answer         *PingAnswer // set before done closes; read only after <-done
+	deliveredPaths []string    // workspace paths of the answer's attachments; set before done closes
+	done           chan struct{}
 }
+
+// refs returns the ping's effective attachment refs: the full PayloadRefs
+// list, or the single PayloadRef for pre-multi pings.
+func (p *Ping) refs() []string {
+	if len(p.PayloadRefs) > 0 {
+		return p.PayloadRefs
+	}
+	if p.PayloadRef != "" {
+		return []string{p.PayloadRef}
+	}
+	return nil
+}
+
+// DeliveredArtifacts are the workspace paths the human's answer attachments
+// were written to. Valid only after Await returns true (set before done closes).
+func (p *Ping) DeliveredArtifacts() []string { return p.deliveredPaths }
 
 // PingAnswerOther is the hardcoded escape hatch on option pings: always
 // answerable, never declared by the agent (RaisePing strips it), and the
@@ -256,6 +279,20 @@ func (e *Engine) SetEgress(c EgressController) { e.egress = c }
 // SetPortRelay installs the workspace-port publisher; call before Recover.
 // nil = port exposure off.
 func (e *Engine) SetPortRelay(m *portrelay.Manager) { e.portRelay = m }
+
+// ArtifactStore persists and delivers human-attached files (goal + ping
+// answers). nil = artifacts off (uploads rejected at the API, delivery a
+// no-op). Implemented by *artifacts.Store.
+type ArtifactStore interface {
+	Associate(ctx context.Context, ids []string, runID, pingID, scope string) error
+	ForRun(ctx context.Context, runID string) ([]artifacts.Meta, error)
+	ForPing(ctx context.Context, pingID, scope string) ([]artifacts.Meta, error)
+	Bytes(ctx context.Context, id string) ([]byte, artifacts.Meta, error)
+	DeleteForRun(ctx context.Context, runID string) error
+}
+
+// SetArtifacts installs the artifact store; call before Recover. nil disables.
+func (e *Engine) SetArtifacts(a ArtifactStore) { e.artifacts = a }
 
 // ErrPortsOff marks an expose request when no port relay is configured.
 var ErrPortsOff = errors.New("port exposure is not configured")
@@ -401,6 +438,11 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	}); err != nil {
 		return "", err
 	}
+	if e.artifacts != nil && len(t.ArtifactIDs) > 0 {
+		if err := e.artifacts.Associate(ctx, t.ArtifactIDs, runID, "", artifacts.ScopeGoal); err != nil {
+			e.log.Warn("associate goal artifacts", "run", runID, "err", err)
+		}
+	}
 	lim := e.limits(ctx)
 	e.mu.Lock()
 	e.queue = append(e.queue, runID)
@@ -481,6 +523,11 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 			e.log.Warn("archive: env destroy failed", "run", runID, "env", v.EnvID, "err", err)
 		} else if err := e.appendAndEmit(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
+		}
+	}
+	if e.artifacts != nil {
+		if err := e.artifacts.DeleteForRun(ctx, runID); err != nil {
+			e.log.Warn("archive: artifact cleanup failed", "run", runID, "err", err)
 		}
 	}
 	return nil
@@ -831,7 +878,7 @@ func (e *Engine) Wait(runID string) {
 // from; artifact points the question at a workspace file for the review
 // workbench. The returned Ping's Result channel yields the answer exactly
 // once.
-func (e *Engine) RaisePing(runID, ptype, question, context_ string, options []string, artifact string) (*Ping, error) {
+func (e *Engine) RaisePing(runID, ptype, question, context_ string, options, artifactRefs []string) (*Ping, error) {
 	switch ptype {
 	case "clarification", "blocker", "permission":
 	default:
@@ -859,8 +906,22 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string, options []st
 			opts = append(opts, o)
 		}
 	}
-	if artifact != "" && !flow.ValidArtifactPath(artifact) {
-		return nil, fmt.Errorf("ask_human: artifact %q must be a repo-relative path", artifact)
+	var refs []string
+	for _, a := range artifactRefs {
+		if a = strings.TrimSpace(a); a == "" {
+			continue
+		}
+		if !flow.ValidArtifactPath(a) {
+			return nil, fmt.Errorf("ask_human: artifact %q must be a repo-relative path", a)
+		}
+		refs = append(refs, a)
+	}
+	if len(refs) > 8 {
+		return nil, fmt.Errorf("ask_human: at most 8 artifacts (got %d)", len(refs))
+	}
+	var primary string
+	if len(refs) > 0 {
+		primary = refs[0]
 	}
 	e.mu.Lock()
 	h, ok := e.handles[runID]
@@ -870,7 +931,7 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string, options []st
 	}
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Options: opts, PayloadRef: artifact,
+		Options: opts, PayloadRef: primary, PayloadRefs: refs,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
@@ -1002,6 +1063,48 @@ func (e *Engine) PingArtifact(ctx context.Context, pingID string) (path string, 
 		data = data[len(data)-maxLen:]
 	}
 	return ref, data, nil
+}
+
+// PingRefs lists a ping's attachment refs (workspace paths / URLs), primary
+// first — the agent→human multi-artifact set for the review UI.
+func (e *Engine) PingRefs(pingID string) []string {
+	p := e.GetPing(pingID)
+	if p == nil {
+		return nil
+	}
+	return p.refs()
+}
+
+// PingArtifactAt reads ONE of a ping's attached workspace files (agent→human
+// multi-artifact) for the UI to render or download. ref MUST be one of the
+// ping's attachments — this guards against arbitrary workspace reads. Unlike
+// PingArtifact (which tails a doc for review), it returns the file whole so
+// images survive.
+func (e *Engine) PingArtifactAt(ctx context.Context, pingID, ref string) ([]byte, error) {
+	p := e.GetPing(pingID)
+	if p == nil {
+		return nil, fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
+	}
+	if !slices.Contains(p.refs(), ref) {
+		return nil, fmt.Errorf("ping %s: %q is not an attachment", pingID, ref)
+	}
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		return nil, fmt.Errorf("ping %s: %w", pingID, ErrArtifactIsURL)
+	}
+	evs, err := e.store.Events(ctx, p.RunID, 0)
+	if err != nil {
+		return nil, err
+	}
+	v := run.Reduce(evs)
+	if v.EnvID == "" {
+		return nil, fmt.Errorf("run %s has no environment: %w", p.RunID, ErrNoArtifact)
+	}
+	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer res.release()
+	return res.Envp.ReadFile(ctx, ports.EnvID(v.EnvID), ref)
 }
 
 // WorkspaceLogTail serves the live tail of a run's workspace exec output

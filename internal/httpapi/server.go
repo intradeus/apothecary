@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/artifacts"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/egressproxy"
@@ -44,6 +45,9 @@ type Server struct {
 	// Pings serves the durable request/response projection (PLAN4 M15);
 	// nil falls back to the engine's in-memory pending registry.
 	Pings PingStore
+	// Artifacts is the human-attached-file store (goal + ping answers); nil
+	// disables uploads (POST /api/artifacts → 503) and delivery.
+	Artifacts *artifacts.Store
 	// CPUIDir, when set, is served at / with an SPA fallback to index.html
 	// (the built SvelteKit bundle; the CPUI talks only to this API).
 	CPUIDir string
@@ -84,6 +88,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pings", s.listPings)
 	mux.HandleFunc("GET /api/pings/{pid}", s.getStoredPing)
 	mux.HandleFunc("GET /api/pings/{pid}/artifact", s.pingArtifact)
+	mux.HandleFunc("GET /api/pings/{pid}/artifacts", s.getPingArtifacts)
+	mux.HandleFunc("POST /api/artifacts", s.postArtifacts)
+	mux.HandleFunc("GET /api/artifacts/{id}", s.getArtifact)
+	mux.HandleFunc("GET /api/runs/{id}/artifacts", s.getRunArtifacts)
 	mux.HandleFunc("GET /api/channels", s.listChannels)
 	mux.HandleFunc("POST /api/channels", s.addChannel)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.deleteChannel)
@@ -269,16 +277,17 @@ func toPingJSON(p *engine.Ping) pingJSON {
 
 func (s *Server) postTicket(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title     string `json:"title"`
-		Goal      string `json:"goal"`
-		Flow      string `json:"flow"`       // "" = the project's default flow
-		ProjectID string `json:"project_id"` // required (DESIGN2 §10)
-		Branch    string `json:"branch"`     // "" = generated (apothecary/<id>-<slug>)
+		Title       string   `json:"title"`
+		Goal        string   `json:"goal"`
+		Flow        string   `json:"flow"`         // "" = the project's default flow
+		ProjectID   string   `json:"project_id"`   // required (DESIGN2 §10)
+		Branch      string   `json:"branch"`       // "" = generated (apothecary/<id>-<slug>)
+		ArtifactIDs []string `json:"artifact_ids"` // uploaded goal attachments
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{Title: body.Title, Goal: body.Goal, Branch: body.Branch}, body.Flow, body.ProjectID)
+	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{Title: body.Title, Goal: body.Goal, Branch: body.Branch, ArtifactIDs: body.ArtifactIDs}, body.Flow, body.ProjectID)
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())
@@ -695,16 +704,21 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Type     string   `json:"type"`
-		Question string   `json:"question"`
-		Context  string   `json:"context"`
-		Options  []string `json:"options"`  // PLAN4 M16: closed answer set
-		Artifact string   `json:"artifact"` // PLAN4 M16: workspace file to review
+		Type      string   `json:"type"`
+		Question  string   `json:"question"`
+		Context   string   `json:"context"`
+		Options   []string `json:"options"`   // PLAN4 M16: closed answer set
+		Artifact  string   `json:"artifact"`  // legacy single workspace file to review
+		Artifacts []string `json:"artifacts"` // multi workspace files to review
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	p, err := s.Engine.RaisePing(runID, body.Type, body.Question, body.Context, body.Options, body.Artifact)
+	refs := body.Artifacts
+	if len(refs) == 0 && body.Artifact != "" {
+		refs = []string{body.Artifact}
+	}
+	p, err := s.Engine.RaisePing(runID, body.Type, body.Question, body.Context, body.Options, refs)
 	switch {
 	case errors.Is(err, engine.ErrRunNotActive):
 		writeErr(w, http.StatusConflict, err.Error())
@@ -734,8 +748,9 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 	ctx, cancel := context.WithTimeout(r.Context(), s.HoldTimeout)
 	defer cancel()
 	if ans, ok := p.Await(ctx); ok {
-		writeJSON(w, http.StatusOK, map[string]string{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"ping_id": p.ID, "answer": ans.Answer, "feedback": ans.Feedback,
+			"artifacts": p.DeliveredArtifacts(), // workspace paths of the human's answer files
 		})
 		return
 	}
@@ -744,13 +759,26 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 
 func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Answer   string `json:"answer"`
-		Feedback string `json:"feedback"`
+		Answer      string   `json:"answer"`
+		Feedback    string   `json:"feedback"`
+		ArtifactIDs []string `json:"artifact_ids"` // uploaded files attached to the answer
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	err := s.Engine.AnswerPing(r.PathValue("pid"), engine.PingAnswer{Answer: body.Answer, Feedback: body.Feedback})
+	pid := r.PathValue("pid")
+	// Claim the uploaded files for this ping BEFORE AnswerPing enqueues the
+	// answer, so processAnswer's delivery (which queries by ping_id) finds them.
+	if s.Artifacts != nil && len(body.ArtifactIDs) > 0 {
+		runID := ""
+		if p := s.Engine.GetPing(pid); p != nil {
+			runID = p.RunID
+		}
+		if err := s.Artifacts.Associate(r.Context(), body.ArtifactIDs, runID, pid, artifacts.ScopePingAnswer); err != nil {
+			s.Log.Warn("associate answer artifacts", "ping", pid, "err", err)
+		}
+	}
+	err := s.Engine.AnswerPing(pid, engine.PingAnswer{Answer: body.Answer, Feedback: body.Feedback})
 	switch {
 	case errors.Is(err, engine.ErrPingNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())

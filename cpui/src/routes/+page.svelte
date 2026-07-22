@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, stateColors, stateTab, ago, type Project, type RunView, type RunTab } from '$lib/api';
+  import AttachFiles from '$lib/AttachFiles.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
@@ -17,6 +18,7 @@
   });
   let title = $state('');
   let goal = $state('');
+  let files = $state<File[]>([]);
   let projectId = $state('');
   let flow = $state(''); // empty = the project's default flow
   let branch = $state(''); // empty = generated (apothecary/<id>-<slug>)
@@ -74,14 +76,18 @@
     submitting = true;
     error = '';
     try {
+      let artifactIds: string[] | undefined;
+      if (files.length) artifactIds = (await api.uploadArtifacts(files)).map((a) => a.id);
       const { run_id } = await api.createTicket(
         title.trim(),
         goal.trim(),
         projectId,
         flow.trim() || undefined,
-        branch.trim() || undefined
+        branch.trim() || undefined,
+        artifactIds
       );
       title = goal = branch = '';
+      files = [];
       branchEdited = false;
       showForm = false;
       await goto(`/runs/${run_id}`);
@@ -127,6 +133,7 @@
     <input id="t-title" bind:value={title} required placeholder="Add a Farewell function" />
     <label for="t-goal">Goal</label>
     <textarea id="t-goal" bind:value={goal} required placeholder="What should the factory build, and what does done look like?"></textarea>
+    <AttachFiles bind:files label="Attach documents / images for the agent to read" />
     <label for="t-flow">Flow <span class="muted">— empty = project default{selectedProject ? ` (${selectedProject.default_flow})` : ''}</span></label>
     <input id="t-flow" bind:value={flow} placeholder={selectedProject?.default_flow ?? 'v1'} class="mono" />
     <label for="t-branch">Branch <span class="muted">— prefilled from the title; empty = generated</span></label>

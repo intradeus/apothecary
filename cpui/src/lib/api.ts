@@ -180,12 +180,20 @@ export interface Ping {
   question: string;
   context?: string;
   payload_ref?: string;
+  payload_refs?: string[]; // full ask_human attachment set (agent→human multi)
   options?: string[];
   status: 'pending' | 'answered';
   answer?: string;
   feedback?: string;
   raised_at: string;
   answered_at?: string;
+}
+
+export interface ArtifactMeta {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
 }
 
 export interface ChannelEntry {
@@ -220,13 +228,21 @@ const put = (path: string, body: unknown): Promise<unknown> =>
 export const api = {
   runs: (project?: string) => req<RunView[]>(`/api/runs${project ? `?project=${encodeURIComponent(project)}` : ''}`),
   run: (id: string) => req<{ run: RunView; events: EventEnvelope[] }>(`/api/runs/${id}`),
-  createTicket: (title: string, goal: string, projectId: string, flow?: string, branch?: string) =>
+  createTicket: (
+    title: string,
+    goal: string,
+    projectId: string,
+    flow?: string,
+    branch?: string,
+    artifactIds?: string[]
+  ) =>
     post('/api/tickets', {
       title,
       goal,
       project_id: projectId,
       ...(flow ? { flow } : {}),
-      ...(branch ? { branch } : {})
+      ...(branch ? { branch } : {}),
+      ...(artifactIds?.length ? { artifact_ids: artifactIds } : {})
     }) as Promise<{ run_id: string }>,
   abort: (id: string) => post(`/api/runs/${id}/abort`),
   // Pause parks the run (workspace kept, nothing recovered until play);
@@ -268,8 +284,30 @@ export const api = {
   ping: (pingId: string) => req<Ping>(`/api/pings/${pingId}`),
   pingArtifact: (pingId: string) =>
     req<{ path: string; content: string }>(`/api/pings/${pingId}/artifact`),
-  answerPing: (pingId: string, answer: string, feedback?: string) =>
-    post(`/api/pings/${pingId}/answer`, { answer, ...(feedback ? { feedback } : {}) }),
+  // Agent-attached workspace files for a ping (multi ask_human): list them,
+  // plus a per-file URL to stream one (image thumbnail / download).
+  pingArtifacts: (pingId: string) =>
+    req<{ files: { path: string; mime: string }[] }>(`/api/pings/${pingId}/artifacts`),
+  pingArtifactFileUrl: (pingId: string, path: string) =>
+    `/api/pings/${pingId}/artifacts?path=${encodeURIComponent(path)}`,
+  answerPing: (pingId: string, answer: string, feedback?: string, artifactIds?: string[]) =>
+    post(`/api/pings/${pingId}/answer`, {
+      answer,
+      ...(feedback ? { feedback } : {}),
+      ...(artifactIds?.length ? { artifact_ids: artifactIds } : {})
+    }),
+  // Human-uploaded artifacts (documents/images) for goals + ping answers.
+  uploadArtifacts: (files: File[]): Promise<ArtifactMeta[]> => {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    // No JSON.stringify / Content-Type: the browser sets the multipart boundary.
+    return req<ArtifactMeta[]>('/api/artifacts', { method: 'POST', body: fd });
+  },
+  artifactUrl: (id: string) => `/api/artifacts/${id}`,
+  runArtifacts: (id: string) =>
+    req<{ goal: ArtifactMeta[]; answers: Record<string, ArtifactMeta[]> }>(
+      `/api/runs/${id}/artifacts`
+    ),
   channels: () => req<ChannelEntry[]>('/api/channels'),
   addChannel: (kind: string, config: Record<string, string>) =>
     post('/api/channels', { kind, ...config }) as Promise<ChannelEntry>,

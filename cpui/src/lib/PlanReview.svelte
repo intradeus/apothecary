@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type Ping } from '$lib/api';
+  import AttachFiles from '$lib/AttachFiles.svelte';
   import {
     clearDraft,
     composeFeedback,
@@ -24,6 +25,8 @@
   let loading = $state(true);
   let comments = $state<ReviewComment[]>([]);
   let busy = $state(false);
+  let files = $state<File[]>([]); // the human's answer attachments
+  let extraFiles = $state<{ path: string; mime: string }[]>([]); // agent-attached extras
 
   // Comment being written: anchored to a block, quote defaults to the
   // selected text (if the selection is inside the block) or the block head.
@@ -41,6 +44,13 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
+    }
+    // Extra agent-attached files (multi ask_human), beyond the primary doc.
+    try {
+      const { files: fs } = await api.pingArtifacts(ping.ping_id);
+      extraFiles = fs.filter((f) => f.path !== path);
+    } catch {
+      /* none */
     }
   });
 
@@ -76,7 +86,8 @@
     busy = true;
     error = '';
     try {
-      await api.answerPing(ping.ping_id, answer, feedback);
+      const ids = files.length ? (await api.uploadArtifacts(files)).map((a) => a.id) : undefined;
+      await api.answerPing(ping.ping_id, answer, feedback, ids);
       clearDraft(ping.ping_id);
       onanswered();
     } catch (e) {
@@ -114,6 +125,20 @@
   <div class="review row" style="align-items:flex-start; gap:14px">
     <div class="card plan" style="flex:2; min-width:0">
       <div class="muted small mono" style="margin-bottom:8px">{path}</div>
+      {#if extraFiles.length}
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px">
+          {#each extraFiles as f (f.path)}
+            {#if f.mime.startsWith('image/')}
+              <a href={api.pingArtifactFileUrl(ping.ping_id, f.path)} target="_blank" rel="noreferrer" title={f.path}>
+                <img src={api.pingArtifactFileUrl(ping.ping_id, f.path)} alt={f.path}
+                  style="max-height:80px; border-radius:4px; border:1px solid var(--border,#444)" />
+              </a>
+            {:else}
+              <a class="small mono" href={api.pingArtifactFileUrl(ping.ping_id, f.path)} target="_blank" rel="noreferrer">📎 {f.path}</a>
+            {/if}
+          {/each}
+        </div>
+      {/if}
       {#each blocks as b, i (i)}
         {@const n = comments.filter((c) => c.startLine === b.startLine).length}
         <div class="block" class:commented={n > 0}>
@@ -153,6 +178,9 @@
           text first to quote it precisely. All comments submit together as one feedback prompt.
         </p>
       {/each}
+      <div style="margin-top:12px">
+        <AttachFiles bind:files label="Attach files to your review" />
+      </div>
       {#if isGate}
         <div class="row" style="margin-top:12px">
           <button class="approve" disabled={busy} onclick={approve}>Approve</button>
