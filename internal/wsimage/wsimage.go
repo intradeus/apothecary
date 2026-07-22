@@ -10,11 +10,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -65,24 +65,49 @@ func sha16(data []byte) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// baseContextHash hashes the embedded base context (names + contents,
-// sorted) — the base tag changes exactly when the invariants change.
+// baseContextHash hashes the embedded base context (paths + contents,
+// walked recursively — the shim source lives in a subdirectory) — the base
+// tag changes exactly when the invariants change.
 func baseContextHash() string {
-	entries, _ := fs.ReadDir(workspace.BaseContext, ".")
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
 	h := sha256.New()
-	for _, n := range names {
-		data, _ := fs.ReadFile(workspace.BaseContext, n)
-		fmt.Fprintf(h, "%s\x00%d\x00", n, len(data))
-		h.Write(data)
-	}
+	hashFS(h, workspace.BaseContext)
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// hashFS feeds every file of fsys (sorted walk order) into h.
+func hashFS(h io.Writer, fsys fs.FS) {
+	_ = fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, rerr := fs.ReadFile(fsys, path)
+		if rerr != nil {
+			return rerr
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00", path, len(data))
+		h.Write(data)
+		return nil
+	})
+}
+
+// materializeFS writes every file of fsys under dir, creating subdirs.
+func materializeFS(fsys fs.FS, dir string) error {
+	return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path == "." {
+				return nil
+			}
+			return os.MkdirAll(filepath.Join(dir, path), 0o755)
+		}
+		data, rerr := fs.ReadFile(fsys, path)
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(filepath.Join(dir, path), data, 0o644)
+	})
 }
 
 // BaseRef is the base image reference: the override verbatim, else the
@@ -163,21 +188,8 @@ func (b *Builder) ensureBase(ctx context.Context) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	entries, err := fs.ReadDir(workspace.BaseContext, ".")
-	if err != nil {
+	if err := materializeFS(workspace.BaseContext, dir); err != nil {
 		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		data, err := fs.ReadFile(workspace.BaseContext, e.Name())
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), data, 0o644); err != nil {
-			return err
-		}
 	}
 	return b.build(ctx, dir, ref)
 }

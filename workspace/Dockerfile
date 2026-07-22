@@ -1,9 +1,18 @@
 # Apothecary workspace BASE image (DESIGN2 §8.1): the invariants and nothing
-# else — Ubuntu, git/ripgrep, Node (the ask_human shim's runtime),
-# code-server, the shim, the firewall init, the non-root `apothecary` user.
-# NO language toolchains and NO harness: those are the user's Dockerfile
-# fragment and the harness kind's InstallLayer, composed per project (§8.2).
-# Tagged apothecary/base:<sha16 of this embedded context>, built on demand.
+# else — Ubuntu, git/ripgrep, Node (the npm-distributed harnesses' runtime),
+# code-server, the static shim binary, the firewall init, the non-root
+# `apothecary` user. NO language toolchains and NO harness: those are the
+# user's Dockerfile fragment and the harness kind's InstallLayer, composed
+# per project (§8.2). Tagged apothecary/base:<sha16 of this embedded
+# context>, built on demand.
+
+# The shim (ask_human MCP server + engine relay) compiles from the embedded
+# source right here — static (CGO off), no toolchain on the engine host.
+FROM golang:1.26-alpine AS shimbuild
+COPY shim/ /src/
+RUN cd /src && go mod init apothecary-shim >/dev/null \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /apothecary-shim .
+
 FROM ubuntu:24.04
 
 ARG NODE_MAJOR=22
@@ -28,10 +37,10 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd --create-home --shell /bin/bash --uid 1000 apothecary \
     && mkdir -p /apothecary && chown apothecary:apothecary /apothecary
 
-# ask_human shim (§10) + firewall init (§11).
-COPY ask-human.mjs /opt/apothecary/ask-human.mjs
+# ask_human shim binary (§10) + firewall init (§11).
+COPY --from=shimbuild /apothecary-shim /opt/apothecary/shim
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-RUN chmod 0755 /usr/local/bin/init-firewall.sh /opt/apothecary/ask-human.mjs \
+RUN chmod 0755 /usr/local/bin/init-firewall.sh /opt/apothecary/shim \
     # The ONLY sudo the apothecary user has: firewall init, no arguments.
     # env_keep passes the container's APOTHECARY_* config through (sudo strips
     # env by default; container root cannot read /proc/1/environ without

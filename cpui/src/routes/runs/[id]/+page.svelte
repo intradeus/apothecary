@@ -16,12 +16,22 @@
   let answering = $state(false);
 
   // Live projection niceties derived from the stream. Links carry a url
-  // (browser), a command (copy-paste, e.g. ssh), or both.
-  const links = $derived(
-    (events.findLast((e) => e.type === 'env_ready')?.payload.links as
-      | { kind: string; url: string; command?: string }[]
-      | undefined) ?? []
-  );
+  // (browser), a command (copy-paste, e.g. ssh), or both. Exposed app
+  // ports come from the LIVE registry (polled): the env_ready copies go
+  // stale when the engine restarts, so live exposures replace any 'app'
+  // links the event carried.
+  let livePorts = $state<{ port: number; url: string }[]>([]);
+  const links = $derived.by(() => {
+    const fromEvent =
+      (events.findLast((e) => e.type === 'env_ready')?.payload.links as
+        | { kind: string; url: string; command?: string }[]
+        | undefined) ?? [];
+    const base = livePorts.length ? fromEvent.filter((l) => l.kind !== 'app') : fromEvent;
+    return [
+      ...base,
+      ...livePorts.map((p) => ({ kind: `app :${p.port}`, url: p.url, command: undefined }))
+    ];
+  });
   let copiedLink = $state('');
   async function copyCommand(l: { kind: string; command?: string }) {
     if (!l.command) return;
@@ -106,6 +116,7 @@
           requestAnimationFrame(() => tailEl && (tailEl.scrollTop = tailEl.scrollHeight));
         }
         denials = await api.egressDenials(runId);
+        livePorts = (await api.runPorts(runId)).ports;
       } catch {
         /* transient; keep last tail */
       }
@@ -160,6 +171,27 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       allowing[host] = false;
+    }
+  }
+
+  // Expose a workspace port on demand (the "browse the app" path); the
+  // resulting link joins the row via the livePorts poll.
+  let exposeInput = $state('');
+  let exposing = $state(false);
+  async function exposePort() {
+    const port = parseInt(exposeInput, 10);
+    if (!port || port < 1 || port > 65535) return;
+    exposing = true;
+    error = '';
+    try {
+      const res = await api.exposePort(runId, port);
+      livePorts = (await api.runPorts(runId)).ports;
+      exposeInput = '';
+      window.open(res.url, '_blank');
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      exposing = false;
     }
   }
 
@@ -256,6 +288,20 @@
       {/if}
     {/each}
     {#if run.mr_url}<a href={run.mr_url} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
+    {#if !terminal && run.env_id}
+      <span class="row" style="gap:4px" title="Publish a port the app inside the workspace listens on — opens it on an engine-host URL (per-run dynamic port, safe across concurrent runs)">
+        <input
+          class="mono small"
+          style="width:5.5em"
+          placeholder="port"
+          bind:value={exposeInput}
+          onkeydown={(e) => e.key === 'Enter' && exposePort()}
+        />
+        <button class="linklike" disabled={exposing || !exposeInput} onclick={exposePort}>
+          {exposing ? 'exposing…' : 'expose ↗'}
+        </button>
+      </span>
+    {/if}
     {#if !terminal}
       {#if run.state === 'paused'}
         <button class="primary" onclick={() => act(() => api.play(runId))}

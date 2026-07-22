@@ -68,7 +68,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 		"mcp": map[string]any{
 			"ask_human": map[string]any{
 				"type":    "local",
-				"command": []string{"node", "/opt/apothecary/ask-human.mjs"},
+				"command": []string{"/opt/apothecary/shim", "ask-human"},
 				"enabled": true,
 			},
 		},

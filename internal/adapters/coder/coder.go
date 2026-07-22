@@ -15,6 +15,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,9 +60,13 @@ type Adapter struct {
 	// tunnelCmd builds the long-lived reverse-forward process; swapped in
 	// tests.
 	tunnelCmd func(ctx context.Context, ws string) *exec.Cmd
+	// pfCmd builds one `coder port-forward` process (workspace port →
+	// engine-host loopback, ports.WorkspacePortExposer); swapped in tests.
+	pfCmd func(ctx context.Context, ws string, local, remote int) *exec.Cmd
 
 	tunnelMu sync.Mutex
 	tunnels  map[ports.EnvID]*tunnel
+	forwards map[string]*tunnel // "env|port" -> supervised port-forward
 
 	// ownerName caches the resolved workspace owner login (from whoami) when
 	// no username is configured; resolved once, reused for every link.
@@ -103,8 +108,10 @@ func New(cfg Config) *Adapter {
 		http:       &http.Client{Timeout: 30 * time.Second},
 		retryDelay: time.Second,
 		tunnels:    map[ports.EnvID]*tunnel{},
+		forwards:   map[string]*tunnel{},
 	}
 	a.tunnelCmd = a.defaultTunnelCmd
+	a.pfCmd = a.defaultPfCmd
 	return a
 }
 
@@ -169,18 +176,116 @@ func (a *Adapter) stopTunnel(env ports.EnvID) {
 	}
 }
 
-// Close stops all tunnel processes (engine shutdown; workspaces keep
-// running and tunnels re-establish on the next boot's Provision).
+// Close stops all tunnel and port-forward processes (engine shutdown;
+// workspaces keep running and tunnels re-establish on the next boot's
+// Provision; exposures re-create through the engine's port registry).
 func (a *Adapter) Close() {
 	a.tunnelMu.Lock()
 	envs := make([]ports.EnvID, 0, len(a.tunnels))
 	for env := range a.tunnels {
 		envs = append(envs, env)
 	}
+	fwd := make([]*tunnel, 0, len(a.forwards))
+	for key, t := range a.forwards {
+		fwd = append(fwd, t)
+		delete(a.forwards, key)
+	}
 	a.tunnelMu.Unlock()
 	for _, env := range envs {
 		a.stopTunnel(env)
 	}
+	for _, t := range fwd {
+		t.cancel()
+		<-t.done
+	}
+}
+
+// --- ports.WorkspacePortExposer ---------------------------------------------
+
+// defaultPfCmd: `coder port-forward <ws> --tcp <local>:<remote>` (binds
+// the engine host's loopback; flags verified against Coder v2.35).
+func (a *Adapter) defaultPfCmd(ctx context.Context, ws string, local, remote int) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "coder", "port-forward", ws,
+		"--tcp", fmt.Sprintf("%d:%d", local, remote))
+	cmd.Env = append(os.Environ(),
+		"CODER_URL="+a.cfg.URL,
+		"CODER_SESSION_TOKEN="+a.cfg.Token,
+	)
+	return cmd
+}
+
+// AppPorts: none to declare — the engine-pushed template's only app is
+// code-server, which already routes through Coder's own proxy (Links).
+func (a *Adapter) AppPorts(context.Context, ports.EnvID) []int { return nil }
+
+// ExposePort starts (idempotently per env+port) a supervised
+// `coder port-forward` subprocess onto a kernel-allocated engine-loopback
+// port and hands back a dialer for it. The returned PortConn owns the
+// subprocess: closing it (the engine's port registry, at env teardown)
+// stops the forward even if this adapter instance was refcount-closed by
+// a config edit meanwhile.
+func (a *Adapter) ExposePort(_ context.Context, env ports.EnvID, port int) (ports.PortConn, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	local := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close() // benign race: coder rebinds the freed port
+
+	key := fmt.Sprintf("%s|%d", env, port)
+	ctx, cancel := context.WithCancel(context.Background())
+	t := &tunnel{cancel: cancel, done: make(chan struct{})}
+	a.tunnelMu.Lock()
+	if old := a.forwards[key]; old != nil {
+		// Replace a stale forward (its local port is unknown to the new
+		// PortConn anyway).
+		a.tunnelMu.Unlock()
+		old.cancel()
+		<-old.done
+		a.tunnelMu.Lock()
+	}
+	a.forwards[key] = t
+	a.tunnelMu.Unlock()
+
+	go func() {
+		defer close(t.done)
+		for {
+			cmd := a.pfCmd(ctx, string(env), local, port)
+			_ = cmd.Run()
+			if ctx.Err() != nil {
+				return
+			}
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return &pfConn{a: a, key: key, t: t, local: local}, nil
+}
+
+type pfConn struct {
+	a     *Adapter
+	key   string
+	t     *tunnel
+	local int
+}
+
+func (p *pfConn) Dial(ctx context.Context) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", p.local))
+}
+
+func (p *pfConn) Close() error {
+	p.a.tunnelMu.Lock()
+	if p.a.forwards[p.key] == p.t {
+		delete(p.a.forwards, p.key)
+	}
+	p.a.tunnelMu.Unlock()
+	p.t.cancel()
+	<-p.t.done
+	return nil
 }
 
 // NewWithRunner is the test constructor.

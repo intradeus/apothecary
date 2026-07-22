@@ -3,12 +3,14 @@ package devcontainer
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -51,9 +53,18 @@ func (s *scriptRunner) Run(_ context.Context, bin string, args []string, stdin [
 
 func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 	t.Helper()
-	a := NewWithRunner(Config{RunsDir: t.TempDir()}, r)
+	shimSrc := filepath.Join(t.TempDir(), "apothecary-shim")
+	if err := os.WriteFile(shimSrc, []byte("#!fake-shim"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := NewWithRunner(Config{
+		RunsDir: t.TempDir(),
+		ShimBin: func(context.Context) (string, error) { return shimSrc, nil },
+		// Off by default so the base lifecycle tests stay firewall-agnostic;
+		// the firewall tests below opt in explicitly.
+		FirewallOff: true,
+	}, r)
 	a.retryDelay = time.Millisecond
-	// Tests never bind real gateway IPs.
 	a.listen = func(network, addr string) (net.Listener, error) {
 		return net.Listen("tcp", "127.0.0.1:0")
 	}
@@ -76,13 +87,12 @@ func find(t *testing.T, calls []call, bin, firstArg string) call {
 
 func TestProvisionClonesUpsAndInits(t *testing.T) {
 	r := &scriptRunner{responses: []response{
-		{code: 0},                 // git clone
-		{stdout: upOK},            // devcontainer up
-		{code: 0},                 // docker exec root-init
-		{stdout: "/usr/bin/node"}, // node probe
-		{stdout: "cid1\n"},        // docker ps -q (relay)
-		{code: 0},                 // docker exec -d relay
-		{code: 0},                 // ready/relay probe
+		{code: 0},          // git clone
+		{stdout: upOK},     // devcontainer up
+		{code: 0},          // docker exec root-init
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d relay
+		{code: 0},          // ready/relay probe
 	}}
 	a := newTestAdapter(t, r)
 	a.cfg.ProxyPort = 9090
@@ -129,11 +139,9 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), "apothecary/ws:abc") {
 		t.Errorf("override.json = %s, %v", data, err)
 	}
-	for _, f := range []string{"ask-human.mjs", "relay.mjs"} {
-		data, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "shim", f))
-		if err != nil || len(data) == 0 {
-			t.Errorf("%s not materialized: %v", f, err)
-		}
+	shim, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "shim", "shim"))
+	if err != nil || string(shim) != "#!fake-shim" {
+		t.Errorf("shim binary not materialized: %q, %v", shim, err)
 	}
 
 	init := find(t, r.calls, "docker", "exec")
@@ -153,12 +161,11 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 
 func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 	r := &scriptRunner{responses: []response{
-		{stdout: upOK},            // up (no clone: src pre-seeded)
-		{code: 0},                 // root-init
-		{stdout: "/usr/bin/node"}, // node probe
-		{stdout: "cid1\n"},        // docker ps -q (relay)
-		{code: 0},                 // docker exec -d relay
-		{code: 0},                 // ready/relay probe
+		{stdout: upOK},     // up (no clone: src pre-seeded)
+		{code: 0},          // root-init
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d relay
+		{code: 0},          // ready/relay probe
 	}}
 	a := newTestAdapter(t, r)
 	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
@@ -181,6 +188,181 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 	up := find(t, r.calls, "devcontainer", "up")
 	if strings.Contains(strings.Join(up.args, " "), "--override-config") {
 		t.Errorf("repo devcontainer must be honored, not overridden: %v", up.args)
+	}
+}
+
+func TestFallbackConfigFirewallExtendsOverride(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{code: 0},          // git clone
+		{stdout: upOK},     // up (no repo config → fallback)
+		{code: 0},          // root-init
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d relay
+		{code: 0},          // ready/relay/firewall probe
+	}}
+	a := newTestAdapter(t, r)
+	a.cfg.FirewallOff = false // firewall ON
+	a.cfg.ProxyPort = 9090
+	_, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "run1", RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
+		EgressDomains: []string{"g.local", "api.anthropic.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "override.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		CapAdd           []string          `json:"capAdd"`
+		ContainerEnv     map[string]string `json:"containerEnv"`
+		PostStartCommand string            `json:"postStartCommand"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(cfg.CapAdd, "NET_ADMIN") {
+		t.Errorf("capAdd = %v", cfg.CapAdd)
+	}
+	if !strings.Contains(cfg.PostStartCommand, "init-firewall.sh") {
+		t.Errorf("postStart = %q", cfg.PostStartCommand)
+	}
+	if cfg.ContainerEnv["APOTHECARY_EXTRA_DOMAINS"] != "g.local api.anthropic.com" ||
+		cfg.ContainerEnv["APOTHECARY_EGRESS_PROXY"] != "127.0.0.1:9090" ||
+		cfg.ContainerEnv["APOTHECARY_CODER_PORT"] != "1" {
+		t.Errorf("containerEnv = %v", cfg.ContainerEnv)
+	}
+	// Firewalled fact recorded and reported (egress NOT open).
+	open, _ := a.EgressOpen(context.Background(), "apothecary-run1")
+	if open {
+		t.Error("firewalled env must report EgressOpen=false")
+	}
+}
+
+func TestRepoConfigInjectsFirewallFeature(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: `{"configuration":{"image":"x"},"mergedConfiguration":{"image":"x"}}`}, // read-configuration (isCompose): not compose
+		{stdout: upOK},     // up
+		{code: 0},          // root-init
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d relay
+		{code: 0},          // ready/relay/firewall probe
+	}}
+	a := newTestAdapter(t, r)
+	a.cfg.FirewallOff = false
+	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
+	// A real .git DIR (gitExclude writes .git/info/exclude).
+	if err := os.MkdirAll(filepath.Join(src, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "run1", RepoURL: "https://g.local/r.git", EgressDomains: []string{"g.local"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	up := find(t, r.calls, "devcontainer", "up")
+	joined := strings.Join(up.args, " ")
+	if !strings.Contains(joined, `--additional-features {"./apothecary-firewall":{}}`) {
+		t.Errorf("feature not injected: %v", up.args)
+	}
+	// Feature materialized into the checkout, git-excluded, with the shared
+	// init-firewall.sh alongside.
+	fdir := filepath.Join(src, ".devcontainer", "apothecary-firewall")
+	for _, f := range []string{"devcontainer-feature.json", "install.sh", "apothecary-entrypoint.sh", "init-firewall.sh"} {
+		if _, err := os.Stat(filepath.Join(fdir, f)); err != nil {
+			t.Errorf("feature file %s missing: %v", f, err)
+		}
+	}
+	excl, _ := os.ReadFile(filepath.Join(src, ".git", "info", "exclude"))
+	if !strings.Contains(string(excl), ".devcontainer/apothecary-firewall/") {
+		t.Errorf("feature not git-excluded: %q", excl)
+	}
+	// firewall.env written to the shim mount with shell-quoted values.
+	fwEnv, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "shim", "firewall.env"))
+	if err != nil || !strings.Contains(string(fwEnv), "APOTHECARY_CODER_PORT='1'") {
+		t.Errorf("firewall.env = %q, %v", fwEnv, err)
+	}
+}
+
+func TestComposeConfigStaysOpen(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: `{"mergedConfiguration":{"dockerComposeFile":"docker-compose.yml"}}`}, // isCompose: yes
+		{stdout: upOK},     // up
+		{code: 0},          // root-init
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d relay
+		{code: 0},          // ready probe (no firewall done-file)
+	}}
+	a := newTestAdapter(t, r)
+	a.cfg.FirewallOff = false
+	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
+	if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{filepath.Join(src, ".git"), filepath.Join(src, ".devcontainer", "devcontainer.json")} {
+		if err := os.WriteFile(f, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
+		t.Fatal(err)
+	}
+	up := find(t, r.calls, "devcontainer", "up")
+	if strings.Contains(strings.Join(up.args, " "), "--additional-features") {
+		t.Errorf("compose config must NOT be firewalled: %v", up.args)
+	}
+	// Reported open, and the fact survives an adapter restart via the marker.
+	open, _ := a.EgressOpen(context.Background(), "apothecary-run1")
+	if !open {
+		t.Error("compose env must report EgressOpen=true")
+	}
+	fresh := newTestAdapter(t, &scriptRunner{})
+	fresh.cfg.RunsDir = a.cfg.RunsDir
+	open, _ = fresh.EgressOpen(context.Background(), "apothecary-run1")
+	if !open {
+		t.Error("EgressOpen must survive restart via the on-disk marker")
+	}
+}
+
+func TestFirewallOffSkipsInjection(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: upOK},     // up (no isCompose call when firewall off)
+		{code: 0},          // root-init
+		{stdout: "cid1\n"}, // relay ps
+		{code: 0},          // relay exec
+		{code: 0},          // ready probe
+	}}
+	a := newTestAdapter(t, r) // FirewallOff: true
+	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
+	if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{filepath.Join(src, ".git"), filepath.Join(src, ".devcontainer", "devcontainer.json")} {
+		if err := os.WriteFile(f, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.calls {
+		if c.bin == "devcontainer" && len(c.args) > 0 && c.args[0] == "read-configuration" {
+			t.Error("firewall off must not probe for compose")
+		}
+		if strings.Contains(strings.Join(c.args, " "), "--additional-features") {
+			t.Error("firewall off must not inject the feature")
+		}
+	}
+	open, _ := a.EgressOpen(context.Background(), "apothecary-run1")
+	if !open {
+		t.Error("firewall-off env must report EgressOpen=true")
 	}
 }
 
@@ -335,36 +517,78 @@ func TestDestroyAbsentIsNoop(t *testing.T) {
 	}
 }
 
-func TestLinksExposeDeclaredPortsOnContainerIP(t *testing.T) {
-	rc := `{"configuration":{"appPort":9000},"mergedConfiguration":{"forwardPorts":[3000,"5432","db:5432"]}}`
+func TestLinksAreTerminalOnly(t *testing.T) {
 	r := &scriptRunner{responses: []response{
 		{stdout: "eager_apothecary\n"}, // ps names
-		{stdout: "cid1\n"},             // ps -q (containerIP)
-		{stdout: "172.17.0.5 \n"},      // inspect IP
-		{stdout: rc + "\n"},            // read-configuration
 	}}
 	a := newTestAdapter(t, r)
 	links, err := a.Links(context.Background(), "apothecary-run1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var urls, cmds []string
-	for _, l := range links {
-		urls = append(urls, l.URL)
-		cmds = append(cmds, l.Command)
+	if len(links) != 1 || links[0].Kind != "terminal" ||
+		links[0].Command != "docker exec -it eager_apothecary bash" {
+		t.Errorf("links = %+v", links)
 	}
-	if !strings.Contains(strings.Join(cmds, " "), "docker exec -it eager_apothecary bash") {
-		t.Errorf("terminal link missing: %v", cmds)
+}
+
+func TestAppPortsParsesDeclaredPorts(t *testing.T) {
+	rc := `{"configuration":{"appPort":9000},"mergedConfiguration":{"forwardPorts":[3000,"5432","db:5432"]}}`
+	r := &scriptRunner{responses: []response{{stdout: rc + "\n"}}}
+	a := newTestAdapter(t, r)
+	got := a.AppPorts(context.Background(), "apothecary-run1")
+	if !slices.Equal(got, []int{3000, 5432, 9000}) {
+		t.Errorf("app ports = %v (service-qualified must be skipped)", got)
 	}
-	joined := strings.Join(urls, " ")
-	for _, want := range []string{"http://172.17.0.5:3000/", "http://172.17.0.5:5432/", "http://172.17.0.5:9000/"} {
+}
+
+func TestExposePortStartsReverseRelayAndDials(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: "cid1\n"}, // docker ps -q
+		{code: 0},          // docker exec -d relay --reverse
+	}}
+	a := newTestAdapter(t, r)
+	sock := filepath.Join(a.folderFor("apothecary-run1"), "shim", "app-3000.sock")
+	// Play the in-container relay: create the unix listener the adapter
+	// polls for, echoing one payload.
+	if err := os.MkdirAll(filepath.Dir(sock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = c.Write([]byte("app-payload"))
+	}()
+
+	pc, err := a.ExposePort(context.Background(), "apothecary-run1", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay := find(t, r.calls, "docker", "exec")
+	joined := strings.Join(relay.args, " ")
+	for _, want := range []string{"-d cid1 /opt/apothecary/shim relay", "--reverse /opt/apothecary/app-3000.sock:127.0.0.1:3000"} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("links missing %q: %v", want, urls)
+			t.Errorf("reverse relay args missing %q: %v", want, relay.args)
 		}
 	}
-	if strings.Contains(joined, "db:5432") {
-		t.Errorf("service-qualified port must be skipped: %v", urls)
+	c, err := pc.Dial(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
+	got, _ := io.ReadAll(c)
+	c.Close()
+	if string(got) != "app-payload" {
+		t.Errorf("dialed payload = %q", got)
+	}
+	_ = pc.Close()
 }
 
 func TestBridgePumpsBytesOverUnixSocket(t *testing.T) {
@@ -443,9 +667,8 @@ func TestBridgeOpensProxySocketWhenProxyModeOn(t *testing.T) {
 	}
 }
 
-func TestStartRelayResolvesNodeAndDetaches(t *testing.T) {
+func TestStartRelayDetachesStaticShim(t *testing.T) {
 	r := &scriptRunner{responses: []response{
-		{stdout: "/usr/local/share/nvm/current/bin/node\n"}, // command -v node
 		{stdout: "cid1\n"}, // docker ps -q
 		{code: 0},          // docker exec -d
 	}}
@@ -457,24 +680,13 @@ func TestStartRelayResolvesNodeAndDetaches(t *testing.T) {
 	relay := find(t, r.calls, "docker", "exec")
 	joined := strings.Join(relay.args, " ")
 	for _, want := range []string{
-		"-d cid1 /usr/local/share/nvm/current/bin/node /opt/apothecary/relay.mjs",
+		"-d cid1 /opt/apothecary/shim relay",
 		"8080:/opt/apothecary/engine.sock",
 		"9090:/opt/apothecary/proxy.sock",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("relay start missing %q: %v", want, relay.args)
 		}
-	}
-}
-
-func TestStartRelayWithoutNodeExplains(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stderr: "bash: command -v: no node", code: 1},
-	}}
-	a := newTestAdapter(t, r)
-	err := a.startRelay(context.Background(), "apothecary-run1")
-	if err == nil || !strings.Contains(err.Error(), "ghcr.io/devcontainers/features/node") {
-		t.Fatalf("want node guidance, got %v", err)
 	}
 }
 

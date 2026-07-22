@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -24,7 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/wsimage"
 )
 
 func TestLiveLifecycle(t *testing.T) {
@@ -36,9 +39,10 @@ func TestLiveLifecycle(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".devcontainer"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// node:*-slim: node is a hard requirement of the shim + engine relay.
+	// Deliberately node-less image: the static shim binary must carry the
+	// whole engine bridge on its own.
 	devc := `{
-  "image": "node:22-bookworm-slim",
+  "image": "debian:bookworm-slim",
   "containerEnv": {"SMOKE": "live-42"},
   "forwardPorts": [3000],
   "postCreateCommand": "touch /tmp/pc-ran"
@@ -74,7 +78,13 @@ func TestLiveLifecycle(t *testing.T) {
 	_, portStr, _ := net.SplitHostPort(engine.Addr().String())
 	enginePort, _ := strconv.Atoi(portStr)
 
-	a := New(Config{RunsDir: t.TempDir(), ProvisionTimeout: 8 * time.Minute, EnginePort: enginePort})
+	runsDir := t.TempDir()
+	a := New(Config{
+		RunsDir: runsDir, ProvisionTimeout: 8 * time.Minute, EnginePort: enginePort,
+		// The real thing: docker-built static shim (golang image pull on
+		// first ever run; content-addressed cache after).
+		ShimBin: wsimage.New(runsDir, "").EnsureShim,
+	})
 	defer a.Close()
 
 	id, err := a.Provision(ctx, ports.EnvSpec{RunID: "LIVETEST1", RepoURL: "file://" + repo})
@@ -131,19 +141,41 @@ func TestLiveLifecycle(t *testing.T) {
 		t.Errorf("loopback engine probe = %q (exit %d)", res.Output, res.ExitCode)
 	}
 
-	// Links: terminal command + the declared forwardPort on the container IP.
+	// Links: terminal command (app links are the port relay's business now).
 	links, err := a.Links(ctx, id)
 	must(err)
 	var kinds []string
-	appOK := false
 	for _, l := range links {
 		kinds = append(kinds, l.Kind)
-		if l.Kind == "app" && strings.HasSuffix(l.URL, ":3000/") {
-			appOK = true
-		}
-	}
-	if !appOK {
-		t.Errorf("no app link for declared forwardPort 3000: %v", links)
 	}
 	t.Logf("links: %v", kinds)
+
+	// Declared ports from the repo's devcontainer.
+	if ap := a.AppPorts(ctx, id); len(ap) != 1 || ap[0] != 3000 {
+		t.Errorf("AppPorts = %v, want [3000]", ap)
+	}
+
+	// Port exposure, full chain and zero extra runtimes: the "app" on
+	// :3000 is the shim's own forward relay looped back to the engine
+	// socket, so a browser GET traverses
+	//   portrelay -> app-3000.sock -> reverse relay -> 127.0.0.1:3000
+	//   -> forward relay -> engine.sock -> the live-pong server.
+	cid, err := a.containerID(ctx, string(id))
+	must(err)
+	must(exec.CommandContext(ctx, "docker", "exec", "-d", cid,
+		"/opt/apothecary/shim", "relay", "3000:/opt/apothecary/engine.sock").Run())
+	pc, err := a.ExposePort(ctx, id, 3000)
+	must(err)
+	mgr := portrelay.New("127.0.0.1")
+	defer mgr.CloseAll()
+	exposedURL, err := mgr.Expose("live-run", 3000, pc)
+	must(err)
+	resp, err := http.Get(exposedURL)
+	must(err)
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(page) != "live-pong" {
+		t.Errorf("exposed app GET = %q via %s", page, exposedURL)
+	}
+	t.Logf("exposed :3000 at %s", exposedURL)
 }

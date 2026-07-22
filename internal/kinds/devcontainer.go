@@ -18,6 +18,7 @@ func (Devcontainer) Descriptor() Descriptor {
 		Fields: []Field{
 			{Name: "devcontainer_path", Label: "devcontainer CLI", Placeholder: "devcontainer"},
 			{Name: "docker_path", Label: "docker CLI", Placeholder: "docker"},
+			{Name: "firewall", Label: "Egress firewall (on/off)", Placeholder: "on", Default: "on"},
 		},
 	}
 }
@@ -36,6 +37,8 @@ func (Devcontainer) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		RunsDir:         deps.RunsDir,
 		EnginePort:      deps.EnginePort,
 		ProxyPort:       deps.ProxyPort,
+		ShimBin:         deps.ShimBin,
+		FirewallOff:     cfg.Str("firewall", "on") == "off",
 	}), nil
 }
 

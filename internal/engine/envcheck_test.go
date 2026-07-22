@@ -64,6 +64,39 @@ func TestRunEnvCheckDerivedCatalog(t *testing.T) {
 	}
 }
 
+// openEgressEnvp wraps the fake with an EgressReporter that reports open.
+type openEgressEnvp struct{ *fake.EnvProvisioner }
+
+func (openEgressEnvp) EgressOpen(context.Context, ports.EnvID) (bool, error) { return true, nil }
+
+func TestRunEnvCheckSkipsFirewallWhenEgressOpen(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	// An open-egress workspace would PASS the deny-probes (nothing blocks) —
+	// so if the firewall steps ran they would FAIL. They must be skipped.
+	h.envp.ExecFunc = func(_ *fake.Env, _ ports.Command) (ports.ExecResult, error) {
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+	h.res.Envp = openEgressEnvp{h.envp}
+	h.res.EgressDomains = nil
+	h.res.HarnessBinary = "opencode"
+
+	var steps []CheckStep
+	failed := RunEnvCheck(context.Background(), h.res, "envck-open",
+		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", EnginePort: 9},
+		func(s CheckStep) { steps = append(steps, s) })
+	if failed != 0 {
+		t.Fatalf("failed = %d, steps = %+v", failed, steps)
+	}
+	for _, s := range steps {
+		switch s.ID {
+		case "firewall_deny_http", "firewall_deny_dns", "firewall_initialized":
+			if s.Status != "skip" {
+				t.Errorf("firewall step %s = %s, want skip", s.ID, s.Status)
+			}
+		}
+	}
+}
+
 func TestRunEnvCheckNamesInducedFailure(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	// doesnotexist.invalid is in the allowlist but unreachable — the check

@@ -2,7 +2,7 @@ package devcontainer
 
 import (
 	"context"
-	_ "embed"
+
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"apothecary/internal/ports"
 )
@@ -21,12 +22,9 @@ import (
 // hosts drop (found live: even a plain gateway-IP listener is unreachable
 // from containers on this class of host):
 //
-//	workspace 127.0.0.1:<port>          (relay.mjs, `docker exec -d node`)
+//	workspace 127.0.0.1:<port>          (`docker exec -d shim relay`)
 //	  -> /opt/apothecary/<name>.sock    (bind-mounted shim dir)
 //	  -> engine 127.0.0.1:<port>        (this file's unix->tcp pump)
-
-//go:embed relay.mjs
-var relayMJS []byte
 
 // bridgeSocks maps engine loopback ports to socket names in the shim dir;
 // proxy is present only when proxy mode is on.
@@ -38,7 +36,7 @@ func (a *Adapter) bridgeSocks() map[string]int {
 	return socks
 }
 
-// relayPairs are relay.mjs's argv: "<in-container port>:<socket path>".
+// relayPairs are the relay's forward argv: "<in-container port>:<socket path>".
 func (a *Adapter) relayPairs() []string {
 	var pairs []string
 	for sock, port := range a.bridgeSocks() {
@@ -129,32 +127,28 @@ func (a *Adapter) closeBridge(env ports.EnvID) {
 	delete(a.bridges, env)
 }
 
-// startRelay launches relay.mjs detached inside the container. node comes
-// from the workspace's own environment: it is already a hard requirement
-// of the ask_human shim, and the harnesses themselves are npm-distributed.
-// `devcontainer exec` resolves it through the remote user's login env
-// (nvm-style feature installs included); `docker exec -d` then runs that
-// exact binary, because detached execs get no login environment.
-func (a *Adapter) startRelay(ctx context.Context, name string) error {
-	nodeOut, _, code, err := a.run(ctx, a.cfg.DevcontainerBin,
-		[]string{"exec", "--id-label", label(name), "bash", "-lc", "command -v node"}, nil, nil)
-	if err != nil {
-		return err
-	}
-	nodePath := strings.TrimSpace(string(nodeOut))
-	if code != 0 || nodePath == "" {
-		return fmt.Errorf("workspace has no `node`, which the apothecary shim and engine relay require — add the node feature to the repo's devcontainer.json (e.g. \"ghcr.io/devcontainers/features/node:1\": {})")
-	}
+// containerID resolves the env's running container via the id label.
+func (a *Adapter) containerID(ctx context.Context, name string) (string, error) {
 	cidOut, _, code, err := a.run(ctx, a.cfg.DockerBin,
 		[]string{"ps", "-q", "--filter", "label=" + label(name)}, nil, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cid, _, _ := strings.Cut(strings.TrimSpace(string(cidOut)), "\n")
 	if code != 0 || cid == "" {
-		return fmt.Errorf("workspace %s: no running container for relay", name)
+		return "", fmt.Errorf("workspace %s: no running container", name)
 	}
-	args := append([]string{"exec", "-d", cid, nodePath, "/opt/apothecary/relay.mjs"}, a.relayPairs()...)
+	return cid, nil
+}
+
+// startRelay launches the mounted static shim's relay detached inside the
+// container — no runtime dependency on anything in the workspace image.
+func (a *Adapter) startRelay(ctx context.Context, name string) error {
+	cid, err := a.containerID(ctx, name)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"exec", "-d", cid, "/opt/apothecary/shim", "relay"}, a.relayPairs()...)
 	_, stderr, code, err := a.run(ctx, a.cfg.DockerBin, args, nil, nil)
 	if err != nil {
 		return err
@@ -164,3 +158,60 @@ func (a *Adapter) startRelay(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+// --- ports.WorkspacePortExposer ---------------------------------------------
+
+// AppPorts: the ports the repo's devcontainer declares (forwardPorts /
+// appPort) — auto-exposed by the engine at env_ready.
+func (a *Adapter) AppPorts(ctx context.Context, env ports.EnvID) []int {
+	return a.declaredPorts(ctx, string(env))
+}
+
+// ExposePort reaches env's 127.0.0.1:port through a REVERSE relay: the
+// shim listens on a bind-mounted unix socket in-container and pipes each
+// connection to the app port; the engine dials the socket file host-side.
+// Same channel as the engine bridge, so it works on hosts that drop
+// container→host IP traffic in either direction.
+func (a *Adapter) ExposePort(ctx context.Context, env ports.EnvID, port int) (ports.PortConn, error) {
+	name := string(env)
+	sock := fmt.Sprintf("app-%d.sock", port)
+	hostPath := filepath.Join(a.folderFor(name), "shim", sock)
+	cid, err := a.containerID(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	spec := fmt.Sprintf("/opt/apothecary/%s:127.0.0.1:%d", sock, port)
+	_, stderr, code, err := a.run(ctx, a.cfg.DockerBin,
+		[]string{"exec", "-d", cid, "/opt/apothecary/shim", "relay", "--reverse", spec}, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("expose port %d in %s: exit %d: %s", port, name, code, tail(string(stderr), 512))
+	}
+	// The relay creates the socket in-container; the bind mount surfaces it
+	// here. Bounded wait, then hand out the dialer.
+	for range 50 {
+		if _, err := os.Stat(hostPath); err == nil {
+			return unixPortConn{path: hostPath}, nil
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, fmt.Errorf("expose port %d in %s: relay socket never appeared", port, name)
+}
+
+// unixPortConn dials the reverse-relay socket per browser connection. The
+// relay process dies with the container and the socket file with the env
+// folder, so Close has nothing to own.
+type unixPortConn struct{ path string }
+
+func (u unixPortConn) Dial(ctx context.Context) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "unix", u.path)
+}
+
+func (u unixPortConn) Close() error { return nil }

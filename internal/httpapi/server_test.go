@@ -102,6 +102,26 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	return x
 }
 
+func TestExposePortEndpoint(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+
+	// Bad port: 400 before touching the engine.
+	res, _ := x.do(t, "POST", "/api/runs/r1/expose-port", map[string]any{"port": 0}, nil)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad port status = %d", res.StatusCode)
+	}
+	// No relay configured on the fixture engine: honest 503.
+	res, _ = x.do(t, "POST", "/api/runs/r1/expose-port", map[string]any{"port": 3000}, nil)
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("relay-off status = %d", res.StatusCode)
+	}
+	// Ports listing always answers (empty without a relay).
+	res, body := x.do(t, "GET", "/api/runs/r1/ports", nil, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"ports":[]`) {
+		t.Errorf("ports = %d %s", res.StatusCode, body)
+	}
+}
+
 func (x *env) do(t *testing.T, method, path string, body any, hdr map[string]string) (*http.Response, []byte) {
 	t.Helper()
 	var rd io.Reader

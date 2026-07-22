@@ -123,13 +123,19 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		skip("verify", "project.commands.verify not configured")
 	}
 
-	// Firewall negatives: fixed. EgressOpen provisioners (devcontainer)
-	// run the repo's own container without the apothecary firewall — skip
-	// honestly instead of failing three invariants that do not exist there.
-	_, egressOpen := envp.(ports.EgressOpen)
+	// Firewall negatives: fixed — but a provisioner may report (per env)
+	// that THIS workspace runs without the apothecary firewall (devcontainer
+	// on a compose config or with the firewall turned off). Skip honestly
+	// there instead of failing three invariants that do not exist.
+	egressOpen := false
+	if r, ok := envp.(ports.EgressReporter); ok {
+		if open, err := r.EgressOpen(ctx, env); err == nil {
+			egressOpen = open
+		}
+	}
 	if egressOpen {
 		for _, id := range []string{"firewall_deny_http", "firewall_deny_dns", "firewall_initialized"} {
-			skip(id, "provisioner declares open egress: workspace firewall not present (engine-side proxy filtering only)")
+			skip(id, "provisioner reports open egress for this workspace: firewall not present (engine-side proxy filtering only)")
 		}
 	} else {
 		step("firewall_deny_http", execExpect(ctx, envp, env,
@@ -168,7 +174,7 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		step(name, execExpect(ctx, envp, env, "command -v "+b, "", true), b)
 	}
 	step("shim", execExpect(ctx, envp, env,
-		"test -f /opt/apothecary/ask-human.mjs", "", true), "")
+		"test -x /opt/apothecary/shim", "", true), "")
 	// Loopback parity holds on every provisioner (coder: reverse tunnel;
 	// devcontainer: in-container relay over the mounted unix socket), so
 	// one probe fits all.

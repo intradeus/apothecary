@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/egressproxy"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
@@ -99,11 +100,12 @@ type Engine struct {
 	settings SettingsSource
 	channels []ports.NotificationChannel
 
-	clock  func() time.Time
-	newID  func() string
-	log    *slog.Logger
-	sink   EventSink
-	egress EgressController
+	clock     func() time.Time
+	newID     func() string
+	log       *slog.Logger
+	sink      EventSink
+	egress    EgressController
+	portRelay *portrelay.Manager
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -250,6 +252,59 @@ func (e *Engine) SetSink(s EventSink) { e.sink = s }
 // SetEgress installs the egress-proxy controller (M18); call before
 // Recover. nil = proxy mode off.
 func (e *Engine) SetEgress(c EgressController) { e.egress = c }
+
+// SetPortRelay installs the workspace-port publisher; call before Recover.
+// nil = port exposure off.
+func (e *Engine) SetPortRelay(m *portrelay.Manager) { e.portRelay = m }
+
+// ErrPortsOff marks an expose request when no port relay is configured.
+var ErrPortsOff = errors.New("port exposure is not configured")
+
+// ExposeRunPort publishes a workspace port of a live run and returns the
+// browser URL (the run-page "open the app" path). Idempotent per
+// (run, port). Exposures are engine-process-scoped and deliberately not
+// event-recorded — see portrelay's package comment.
+func (e *Engine) ExposeRunPort(ctx context.Context, runID string, port int) (string, error) {
+	if e.portRelay == nil {
+		return "", ErrPortsOff
+	}
+	if url := e.portRelay.Existing(runID, port); url != "" {
+		return url, nil
+	}
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return "", err
+	}
+	if len(evs) == 0 {
+		return "", fmt.Errorf("run %s not found", runID)
+	}
+	v := run.Reduce(evs)
+	if v.EnvID == "" || v.ProjectID == "" {
+		return "", fmt.Errorf("run %s has no environment", runID)
+	}
+	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	defer res.release()
+	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
+	if !ok {
+		return "", fmt.Errorf("run %s: provisioner does not support port exposure", runID)
+	}
+	pc, err := exposer.ExposePort(ctx, ports.EnvID(v.EnvID), port)
+	if err != nil {
+		return "", err
+	}
+	return e.portRelay.Expose(runID, port, pc)
+}
+
+// RunPorts lists a run's live exposures (the run-page ports panel).
+func (e *Engine) RunPorts(runID string) []portrelay.Exposure {
+	if e.portRelay == nil {
+		return nil
+	}
+	return e.portRelay.List(runID)
+}
 
 // EgressDenials lists a run's proxy-blocked hosts (run page feedback).
 func (e *Engine) EgressDenials(runID string) []egressproxy.Denial {
@@ -503,6 +558,9 @@ func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
 // no global envp anymore). Pre-v2 runs with no project cannot be destroyed
 // through the engine — their envs outlived the config that owned them.
 func (e *Engine) destroyEnv(ctx context.Context, v run.View) error {
+	if e.portRelay != nil {
+		e.portRelay.CloseRun(v.RunID) // exposures die with the env
+	}
 	if v.ProjectID == "" {
 		return fmt.Errorf("run %s has no project (pre-v2); destroy its environment manually", v.RunID)
 	}

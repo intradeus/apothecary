@@ -1,0 +1,8 @@
+{
+  "id": "apothecary-firewall",
+  "version": "1.0.0",
+  "name": "Apothecary egress firewall",
+  "description": "Default-deny egress for repo-authored dev containers (DESIGN.md §11): NET_ADMIN + init-firewall.sh at container start, driven by /opt/apothecary/firewall.env written per run by the engine. Injected engine-side; not a published feature.",
+  "capAdd": ["NET_ADMIN"],
+  "entrypoint": "/usr/local/bin/apothecary-entrypoint.sh"
+}

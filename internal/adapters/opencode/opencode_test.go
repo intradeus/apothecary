@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -194,7 +195,8 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 		t.Fatal(err)
 	}
 	mcp, ok := cfg.MCP["ask_human"]
-	if !ok || mcp.Type != "local" || len(mcp.Command) != 2 || mcp.Command[1] != "/opt/apothecary/ask-human.mjs" {
+	if !ok || mcp.Type != "local" ||
+		!slices.Equal(mcp.Command, []string{"/opt/apothecary/shim", "ask-human"}) {
 		t.Errorf("ask_human MCP registration = %+v", cfg.MCP)
 	}
 

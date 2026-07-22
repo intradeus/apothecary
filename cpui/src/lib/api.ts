@@ -258,6 +258,12 @@ export const api = {
   // it to the project's extra domains.
   egressAllow: (id: string, host: string) =>
     post(`/api/runs/${id}/egress-allow`, { host }) as Promise<{ allowed: string; persisted: boolean }>,
+  // Live workspace-port exposures (engine-process-scoped; the registry,
+  // not the env_ready event, is authoritative after restarts).
+  runPorts: (id: string) => req<{ ports: { port: number; url: string }[] }>(`/api/runs/${id}/ports`),
+  // Publish a workspace port and get its browser URL (idempotent per port).
+  exposePort: (id: string, port: number) =>
+    post(`/api/runs/${id}/expose-port`, { port }) as Promise<{ port: number; url: string }>,
   pendingPings: () => req<Ping[]>('/api/pings?status=pending'),
   pings: (status: 'pending' | 'answered' | 'all', limit = 100) =>
     req<Ping[]>(`/api/pings?status=${status}&limit=${limit}`),

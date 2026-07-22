@@ -63,6 +63,51 @@ func newTestAdapter(r CmdRunner) *Adapter {
 
 const listRunning = `[{"name":"apothecary-run1","latest_build":{"status":"running"}}]`
 
+func TestExposePortSupervisesPortForward(t *testing.T) {
+	a := newTestAdapter(&scriptRunner{})
+	type pfCall struct {
+		ws            string
+		local, remote int
+	}
+	calls := make(chan pfCall, 8)
+	a.pfCmd = func(ctx context.Context, ws string, local, remote int) *exec.Cmd {
+		calls <- pfCall{ws, local, remote}
+		return exec.CommandContext(ctx, "sleep", "300")
+	}
+	pc, err := a.ExposePort(context.Background(), "apothecary-run1", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := <-calls
+	if c.ws != "apothecary-run1" || c.remote != 3000 || c.local == 0 {
+		t.Errorf("port-forward args = %+v", c)
+	}
+	a.tunnelMu.Lock()
+	registered := len(a.forwards)
+	a.tunnelMu.Unlock()
+	if registered != 1 {
+		t.Errorf("forwards registered = %d", registered)
+	}
+	if err := pc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a.tunnelMu.Lock()
+	registered = len(a.forwards)
+	a.tunnelMu.Unlock()
+	if registered != 0 {
+		t.Errorf("forwards after close = %d", registered)
+	}
+}
+
+func TestDefaultPfCmdArgs(t *testing.T) {
+	a := newTestAdapter(&scriptRunner{})
+	cmd := a.defaultPfCmd(context.Background(), "apothecary-run1", 41234, 3000)
+	joined := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "port-forward apothecary-run1 --tcp 41234:3000") {
+		t.Errorf("pf cmd = %v", cmd.Args)
+	}
+}
+
 func TestProvisionCreatesThenWaits(t *testing.T) {
 	r := &scriptRunner{responses: []response{
 		{stdout: `[]`},        // status: absent

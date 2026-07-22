@@ -7,6 +7,7 @@ package ports
 import (
 	"context"
 	"io/fs"
+	"net"
 	"time"
 )
 
@@ -155,15 +156,44 @@ type WorkspaceReattacher interface {
 	Reattach(ctx context.Context, env EnvID) error
 }
 
-// EgressOpen is an OPTIONAL EnvProvisioner marker capability: this
-// provisioner runs workspaces WITHOUT the apothecary egress firewall
-// (devcontainer: the container is the repo's own user-authored config —
-// no NET_ADMIN, no init-firewall). Egress control degrades to engine-side
-// proxy filtering for tools that honor proxy env; envcheck keys its
-// firewall expectations on this marker so the gap is reported honestly
-// instead of as false failures.
-type EgressOpen interface {
-	EgressOpen()
+// EgressReporter is an OPTIONAL EnvProvisioner capability: report, PER
+// ENVIRONMENT, whether the workspace runs WITHOUT the apothecary egress
+// firewall. The devcontainer provisioner firewalls image/Dockerfile
+// dev containers but leaves compose ones open (their primary service
+// legitimately reaches sibling services by name, which a default-deny
+// firewall would break) and honors a per-project off switch — so the fact
+// varies per env and cannot be a type-level marker. Provisioners that
+// always firewall (coder) simply don't implement this; envcheck then keys
+// its firewall expectations on the reported value (defaulting to
+// firewalled/closed when absent).
+type EgressReporter interface {
+	EgressOpen(ctx context.Context, env EnvID) (bool, error)
+}
+
+// PortConn is one exposed workspace port as the engine consumes it: a
+// dialer for per-browser-connection streams plus teardown. The ENGINE owns
+// the handle (provisioner adapter instances are refcount-closed on config
+// edits; a subprocess or listener parented there would die with them).
+type PortConn interface {
+	Dial(ctx context.Context) (net.Conn, error)
+	Close() error
+}
+
+// WorkspacePortExposer is an OPTIONAL EnvProvisioner capability: reach a
+// TCP port inside the environment so the engine can publish it to the
+// human (the "browse the app under development" path). Adapters implement
+// whatever transport reaches their workspaces (coder: a supervised
+// port-forward subprocess; devcontainer: a reverse relay over the
+// bind-mounted unix sockets).
+type WorkspacePortExposer interface {
+	// ExposePort prepares access to env's 127.0.0.1:port and returns the
+	// dial handle. Idempotency across repeated exposures of the same port
+	// is the caller's job (the engine's port registry).
+	ExposePort(ctx context.Context, env EnvID, port int) (PortConn, error)
+	// AppPorts lists ports the environment declares it will serve (e.g.
+	// devcontainer forwardPorts) — auto-exposed at env_ready. Best-effort;
+	// empty is normal.
+	AppPorts(ctx context.Context, env EnvID) []int
 }
 
 // ExecLogTailer is an OPTIONAL EnvProvisioner capability: a live tail of

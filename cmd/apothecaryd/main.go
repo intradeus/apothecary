@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,6 +36,7 @@ import (
 	"apothecary/internal/httpapi"
 	"apothecary/internal/kinds"
 	"apothecary/internal/pgstore"
+	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolve"
 	"apothecary/internal/secrets"
@@ -237,6 +239,17 @@ func cmdServe(args []string) error {
 		e.SetSink(tel)
 		log.Info("otel telemetry enabled", "endpoint", boot.OtelEndpoint)
 	}
+	// Workspace-port publisher: exposed app ports bind the CPUI's own
+	// interface (dynamic host ports; loopback by default). Before Recover —
+	// recovery re-creates auto-exposures.
+	relayHost := boot.Listen
+	if h, _, err := net.SplitHostPort(boot.Listen); err == nil {
+		relayHost = h
+	}
+	portRelay := portrelay.New(relayHost)
+	defer portRelay.CloseAll()
+	e.SetPortRelay(portRelay)
+
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)
 	}

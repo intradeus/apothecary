@@ -7,13 +7,24 @@ package workspace
 
 import "embed"
 
-// BaseContext is the base-image build context: the Dockerfile plus the two
-// files it COPYs.
+// BaseContext is the base-image build context: the Dockerfile, the files
+// it COPYs, and the shim source tree its multi-stage build compiles (the
+// same tree wsimage.EnsureShim builds standalone for the devcontainer
+// provisioner).
 //
-//go:embed Dockerfile ask-human.mjs init-firewall.sh
+//go:embed Dockerfile init-firewall.sh shim
 var BaseContext embed.FS
 
 // Template is the engine-pushed Coder template (§8.4).
 //
 //go:embed template/main.tf
 var Template embed.FS
+
+// Feature is the injected devcontainer feature that brings the §11 egress
+// firewall to repo-authored dev containers (the devcontainer provisioner):
+// capAdd NET_ADMIN + a container-start entrypoint. init-firewall.sh is
+// NOT here — it is single-sourced from BaseContext and copied into the
+// materialized feature dir by the adapter.
+//
+//go:embed feature
+var Feature embed.FS

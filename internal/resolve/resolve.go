@@ -335,6 +335,7 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration, template string)
 			EnginePort: r.enginePort,
 			ProxyPort:  r.proxyPort,
 			Template:   template,
+			ShimBin:    r.builder.EnsureShim,
 		})
 		if err != nil {
 			return nil, nil, unresolvable(fmt.Errorf("provisioner %s: %v", in.Name, err))
@@ -420,7 +421,10 @@ func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{RunsDir: r.runsDir, EnginePort: r.enginePort, ProxyPort: r.proxyPort})
+		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
+			RunsDir: r.runsDir, EnginePort: r.enginePort, ProxyPort: r.proxyPort,
+			ShimBin: r.builder.EnsureShim,
+		})
 		if err != nil {
 			return err
 		}

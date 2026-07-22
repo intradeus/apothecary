@@ -1282,3 +1282,112 @@ Decisions and deviations:
 Verified live against @devcontainers/cli 0.86.0 + docker 29.5 (unit fakes +
 a `-tags live` end-to-end test: provision from a real repo, exec, file
 round-trips, loopback engine probe through the relay, links, destroy).
+
+## Static shim binary (retiring node from workspaces)
+
+The two in-workspace node helpers (`ask-human.mjs` MCP server, the
+devcontainer `relay.mjs`) are replaced by ONE static Go binary,
+`workspace/shim/` (`shim ask-human` | `shim relay`), so repo-authored dev
+containers no longer need node (the earlier hard "workspace has no node"
+failure is gone). Decisions:
+
+- **Built by docker, not the host toolchain.** `wsimage.EnsureShim`
+  (content-addressed `apothecary/shim:<sha16>`, `docker build` →
+  `create`/`cp`/`rm` extract, cached under `<RunsDir>/shim-cache/`) compiles
+  the embedded source in a `golang:alpine` stage; the coder base image
+  (`workspace/Dockerfile`) does the same via a multi-stage `COPY
+  --from=shimbuild`. Same daemon that runs workspaces ⇒ arch always matches.
+  `go:embed` of a prebuilt binary would be a chicken-and-egg; a nested
+  `go.mod` would break embed, so the shim is a normal `package main` in the
+  main module (`go mod init` happens inside the builder image).
+- **wsimage now walks subdirectories** (`baseContextHash`/`ensureBase` used
+  `fs.ReadDir(".")` and silently skipped dirs) — required to hash + ship the
+  embedded `shim/` tree.
+- The shim keeps `ask-human.mjs`'s protocol byte-for-byte (204 re-poll via
+  `X-Ping-Id`, 401 → re-read run.env, 60 s backoff cap, 10 min unreachable
+  limit, the `other —` rendering) and gains real unit tests the `.mjs` never
+  had (httptest for the MCP loop, real sockets for the relay). MCP
+  registration moved from `["node","…ask-human.mjs"]` to
+  `["/opt/apothecary/shim","ask-human"]` in the opencode/codex ADAPTERS
+  (`internal/adapters/{opencode,codex}`), not the kinds. **node stays in the
+  pipeline image** — the npm-distributed harnesses still need it; only the
+  shim's own runtime dependency died.
+
+## Dynamic workspace-port exposure (browse the app under development)
+
+A human can publish a port the workspace app listens on and open it in a
+browser; N concurrent runs, zero fixed host ports. New optional
+`ports.WorkspacePortExposer { ExposePort, AppPorts }` returning a
+`ports.PortConn` (dial + close), plus `internal/portrelay.Manager` (one
+kernel-allocated engine-host listener per (run, port), pumping browser
+conns through the PortConn). Applied to BOTH provisioners.
+
+- **Ownership is the engine's, not the adapter's.** Adapters are
+  refcount-closed on config edits (`internal/resolve`), so a forward
+  process parented in an adapter instance could be killed by an unrelated
+  edit — the capability hands the engine a `PortConn` it owns for the run's
+  life.
+- **Never re-emit `env_ready` for dynamic links.** `run.Apply` would clobber
+  `WaitingOnHuman`/`Paused` → `Running` (durable corruption), and an
+  out-of-band append races the run loop's single-writer seq. Live exposures
+  live in an in-memory registry served by `GET /api/runs/{id}/ports`; only
+  provision-time auto-exposures (declared `forwardPorts`) fold into the
+  single `env_ready` (appended on the writer goroutine). The CPUI merges the
+  live registry over the event's `app` links (its 2.5 s poll), so restarts —
+  which re-expose on fresh ports via the recovery path — stay correct.
+- coder: supervised `coder port-forward <ws> --tcp <alloc>:<port>`
+  subprocess (reuses the tunnel-supervision pattern; verified against Coder
+  v2.35). devcontainer: `shim relay --reverse` over a bind-mounted unix
+  socket (host→container IP is blocked on hardened hosts, so the reverse
+  relay mirrors the engine bridge). The dead container-IP `app` links the
+  devcontainer adapter used to emit are gone — unreachable off-host.
+- API `POST /api/runs/{id}/expose-port`; `cmd/apothecaryd` binds listeners
+  on the CPUI's own interface (loopback by default; the deploy already runs
+  `network_mode: host`). Same no-auth trust level as the CPUI itself —
+  documented. This SUPERSEDES the earlier appPort/compose-collision
+  follow-up: exposure needs no published host ports.
+
+## Devcontainer egress firewall (parity with the coder path)
+
+The §11 default-deny egress firewall now covers repo-authored dev
+containers. CLI gates verified live (@devcontainers/cli 0.86): a **relative**
+`--additional-features './apothecary-firewall'` local ref resolves, and a
+feature's `capAdd`+`entrypoint` apply on image, Dockerfile AND compose
+configs.
+
+- **Two mechanisms, one script.** Repos with no devcontainer use the §8
+  pipeline image (which already carries iptables + init-firewall.sh + the
+  sudoers grant): `writeFallbackConfig` adds `capAdd: [NET_ADMIN]`,
+  `containerEnv` (the `APOTHECARY_*` inputs) and a BLOCKING
+  `postStartCommand: sudo init-firewall.sh` (up waits on lifecycle hooks →
+  no race). Repos WITH a devcontainer get an injected feature
+  (`workspace/feature/`, materialized into
+  `.devcontainer/apothecary-firewall/` + `.git/info/exclude`) whose
+  container-start entrypoint sources `/opt/apothecary/firewall.env` (written
+  per run into the shim mount — never feature options, which would bust the
+  build cache) and runs the SAME `init-firewall.sh` verbatim. `waitReady`
+  probes `/run/apothecary-firewall.done` when firewalled; fail-closed writes
+  no lock, so a firewall failure times out into an honest `env_failed` with
+  the container left up for inspection. Loopback is ACCEPTed first, so the
+  unix-socket bridge/relay survive the DROP (`APOTHECARY_CODER_PORT=1`
+  closes the Coder-only gateway hole).
+- **`ports.EgressOpen` marker → `ports.EgressReporter` (per-env method).**
+  The firewall varies per env, so a type-level marker no longer fits: the
+  devcontainer adapter firewalls image/Dockerfile configs but leaves
+  **compose** open (its primary service reaches sibling services by name,
+  which default-deny would break) and honors a per-project `firewall: off`
+  switch. It records the fact in memory + an on-disk marker (survives engine
+  restart) and reports it; `envcheck` keys its firewall invariants on the
+  reported value (skips honestly for open envs), defaulting to closed when
+  the capability is absent (coder).
+- **Limits:** compose stays egress-open (feature works, but firewalling
+  would break sibling-service traffic — a future enhancement could allow the
+  compose subnet); a non-root container user makes the entrypoint's iptables
+  fail closed; a base image with no apt/apk/dnf fails the feature build (use
+  the firewall-off escape hatch). Feature injection adds a first-provision
+  image build (~apt install iptables), docker-layer-cached thereafter.
+
+All three verified live (`-tags live`): the shim relay end-to-end on a
+node-LESS `debian:bookworm-slim`; a full port-exposure round-trip
+(portrelay → reverse relay → in-container → forward relay → engine); and the
+firewall dropping foreign egress + DNS while loopback/relay stay alive.

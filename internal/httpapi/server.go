@@ -24,6 +24,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
+	"apothecary/internal/portrelay"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 )
@@ -69,6 +70,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/workspace-log", s.getWorkspaceLog)
 	mux.HandleFunc("GET /api/runs/{id}/egress-denials", s.getEgressDenials)
 	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
+	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
+	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
 	mux.HandleFunc("POST /api/runs/{id}/abort", s.postAbort)
 	mux.HandleFunc("POST /api/runs/{id}/pause", s.postPause)
 	mux.HandleFunc("POST /api/runs/{id}/play", s.postPlay)
@@ -584,6 +587,41 @@ func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"allowed": host, "persisted": persisted})
+}
+
+// postExposePort publishes a workspace port and returns its browser URL
+// (the run-page "open the app" path). Idempotent per (run, port).
+func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Port int `json:"port"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Port < 1 || body.Port > 65535 {
+		writeErr(w, http.StatusBadRequest, "port must be 1-65535")
+		return
+	}
+	url, err := s.Engine.ExposeRunPort(r.Context(), r.PathValue("id"), body.Port)
+	if err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, engine.ErrPortsOff) {
+			status = http.StatusServiceUnavailable
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"port": body.Port, "url": url})
+}
+
+// getRunPorts lists the run's LIVE exposures — the registry, not events,
+// is authoritative (exposures are engine-process-scoped).
+func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
+	ports := s.Engine.RunPorts(r.PathValue("id"))
+	if ports == nil {
+		ports = []portrelay.Exposure{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ports": ports})
 }
 
 func containsStr(ss []string, v string) bool {

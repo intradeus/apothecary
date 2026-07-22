@@ -155,7 +155,8 @@ func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 	}
 	cfg, err := envp.ReadFile(ctx, id, "/home/apothecary/.codex/config.toml")
 	if err != nil || !strings.Contains(string(cfg), "[mcp_servers.ask_human]") ||
-		!strings.Contains(string(cfg), "/opt/apothecary/ask-human.mjs") {
+		!strings.Contains(string(cfg), `command = "/opt/apothecary/shim"`) ||
+		!strings.Contains(string(cfg), `args = ["ask-human"]`) {
 		t.Errorf("config.toml = %q, %v", cfg, err)
 	}
 }

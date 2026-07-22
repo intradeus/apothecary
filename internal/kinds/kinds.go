@@ -117,6 +117,11 @@ type ProvisionerDeps struct {
 	// Template is the effective template name: the project's
 	// workspace.template override, else the integration's configured one.
 	Template string
+	// ShimBin builds (cached) and returns the host path of the static
+	// in-workspace shim binary (wsimage.EnsureShim). Provisioners whose
+	// images bake the shim (coder) ignore it; mount-based provisioners
+	// (devcontainer) call it at provision time.
+	ShimBin func(ctx context.Context) (string, error)
 }
 
 type ProvisionerKind interface {
