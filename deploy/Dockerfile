@@ -29,6 +29,12 @@ ARG CODER_VERSION=2.35.2
 # @devcontainers/cli is a Node CLI, so Node ships alongside it. Pinned like
 # the coder CLI; bump both per release.
 ARG DEVCONTAINER_CLI_VERSION=0.86.0
+# Docker CLI plugins. Debian's docker.io ships ONLY the plain `docker` CLI —
+# no buildx, no compose — so Compose-based devcontainers (dockerComposeFile)
+# fail with `spawn docker-compose ENOENT`. Drop the official plugin binaries
+# into the CLI plugins dir; pin + bump per release like the CLIs above.
+ARG COMPOSE_VERSION=v2.40.0
+ARG BUILDX_VERSION=v0.20.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl docker.io git \
@@ -41,6 +47,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && npm install -g @devcontainers/cli@${DEVCONTAINER_CLI_VERSION} \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
+
+# Compose v2 + buildx plugins for the docker CLI. `devcontainer up` on a
+# Compose project invokes `docker compose`; the docker-compose symlink covers
+# tools/paths that still spawn the legacy standalone binary.
+RUN mkdir -p /usr/local/lib/docker/cli-plugins \
+    && curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+        -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    && curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" \
+        -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+    && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose \
+                  /usr/local/lib/docker/cli-plugins/docker-buildx \
+    && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 
 # coder CLI, pinned per release (CLI<->server minor skew is tolerated; see
 # the README for upgrade guidance). The archive member is "./coder".

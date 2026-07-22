@@ -45,6 +45,14 @@ data "coder_parameter" "branch" {
   mutable      = false
 }
 
+data "coder_parameter" "project" {
+  name         = "project"
+  display_name = "Apothecary project"
+  type         = "string"
+  default      = ""
+  mutable      = false
+}
+
 # Per-workspace parameters (DESIGN2 §8.4): image + derived egress list are
 # non-secret and per-run, so they ride as coder_parameters, not template
 # variables. Defaults keep pre-M9 (custom-path) creates working: they pass
@@ -133,6 +141,18 @@ resource "docker_container" "workspace" {
   image = data.coder_parameter.workspace_image.value
 
   hostname = "apothecary-${lower(data.coder_parameter.run_id.value)}"
+
+  # Group/identify apothecary containers in `docker ps` (matches the labels
+  # the devcontainer provisioner sets): a marker for ALL apothecary
+  # containers, plus the run's project.
+  labels {
+    label = "apothecary"
+    value = "true"
+  }
+  labels {
+    label = "apothecary.project"
+    value = data.coder_parameter.project.value
+  }
 
   entrypoint = ["sh", "-c", replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal")]
 

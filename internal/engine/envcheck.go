@@ -91,6 +91,7 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		RepoURL:       res.RepoRef.URL,
 		Branch:        branch,
 		Name:          workspaceName(branch, runID),
+		Project:       res.ProjectName,
 		Image:         res.Image,
 		EgressDomains: res.EgressDomains,
 		GitUser:       res.GitUser,

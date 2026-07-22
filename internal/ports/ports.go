@@ -32,6 +32,11 @@ type EnvSpec struct {
 	// env identity. Empty ⇒ the adapter falls back to WorkspaceName(RunID),
 	// the legacy run-id scheme, so direct and test callers keep working.
 	Name string
+	// Project is the run's project name, stamped on the container as the
+	// apothecary.project docker label so containers can be grouped by project
+	// (`docker ps --filter label=apothecary.project=<name>`). Empty ⇒ the
+	// label is omitted.
+	Project string
 	// Image is the workspace image tag built by the §8 pipeline (DESIGN2);
 	// empty on the custom-template compatibility path, where the template
 	// bakes its own image.

@@ -175,7 +175,8 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	}}
 	a := newTestAdapter(t, r)
 	id, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "RUN1", Name: name, RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
+		RunID: "RUN1", Name: name, Project: "Acme Web",
+		RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -192,6 +193,13 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	}
 	if !strings.Contains(upJoined, "--workspace-folder "+filepath.Join(a.folderFor(name), "src")) {
 		t.Errorf("workspace-folder must be keyed by the engine name: %v", up.args)
+	}
+	// Metadata labels: the apothecary marker (always) and the project.
+	if !strings.Contains(upJoined, "--id-label apothecary=true") {
+		t.Errorf("up must mark the container apothecary-managed: %v", up.args)
+	}
+	if !strings.Contains(upJoined, "--id-label apothecary.project=Acme Web") {
+		t.Errorf("up must label the project: %v", up.args)
 	}
 	// ...and the container is renamed to it for docker ps.
 	rn := find(t, r.calls, "docker", "rename")

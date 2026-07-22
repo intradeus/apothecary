@@ -81,6 +81,17 @@ import (
 // environment; the value is the workspace name.
 const idLabel = "apothecary.env"
 
+// Metadata labels stamped on every container at `up` (as --id-label, so they
+// land on repo-authored containers too, which we can't inject runArgs into):
+// a marker to find ALL apothecary containers regardless of provisioner
+// (`docker ps --filter label=apothecary`) and the run's project name. They
+// ride the id-label set so they're set at create time, but every lookup keys
+// off idLabel alone, so their presence never widens a match.
+const (
+	managedLabel = "apothecary"
+	projectLabel = "apothecary.project"
+)
+
 type Config struct {
 	// DevcontainerBin is the @devcontainers/cli executable (default
 	// "devcontainer"; install with `npm install -g @devcontainers/cli`).
@@ -309,8 +320,12 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 	args := []string{"up",
 		"--workspace-folder", src,
 		"--id-label", label(name),
+		"--id-label", managedLabel + "=true",
 		"--mount", "type=bind,source=" + shimDir + ",target=/opt/apothecary",
 		"--log-format", "json",
+	}
+	if spec.Project != "" {
+		args = append(args, "--id-label", projectLabel+"="+spec.Project)
 	}
 	// Repos without a devcontainer run the §8 pipeline image via a
 	// generated fallback config (which carries iptables + init-firewall.sh

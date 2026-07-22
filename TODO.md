@@ -3,6 +3,7 @@
 - 5) db migration + migration table checks and simplify
 - 6) openapi + client gen for frontend.
 - 7) redo everything in DDD
-- 10) name coder workspaces, devcontainers containers etc. with the branch name slugified
 - 11) Split the run's status with its infra provision status. I wanna see on the runs list if it is still provisionned, even if its completed or abandonned or whatever. unsure if this is what 'archived' is ? Is a run being archived after x hours and that triggers the infra provisionning ?
 - 12) Adding artifacts in run's goal and in all human gates (documents, images)
+- 13) Abstract "forge MR" behind an 'Action' type (so 4 types : agent, command, human_gate and action). Actions being all 'hard coded' actions provided by apothecary.
+- 14) Allow user to specify a harness agent too, as well as the apo's project's agents.

@@ -467,6 +467,9 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 		args = append(args,
 			"--parameter", "workspace_image="+spec.Image,
 			"--parameter", "extra_allowed_domains="+strings.Join(spec.EgressDomains, " "),
+			// Non-secret; stamped onto the container as the apothecary.project
+			// label by the template so containers can be grouped by project.
+			"--parameter", "project="+spec.Project,
 		)
 		// Proxy mode (M18): a non-empty egress_proxy switches the workspace
 		// firewall to loopback+gateway-only; all HTTP(S) goes through the
