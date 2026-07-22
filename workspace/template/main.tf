@@ -126,7 +126,10 @@ resource "docker_volume" "home" {
 
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
-  name  = "apothecary-ws-${lower(data.coder_parameter.run_id.value)}"
+  # Name the container after the workspace itself — the engine sets the
+  # workspace name to the run's slugified branch (apo-<branch>-<tail>), so
+  # `docker ps` shows a human-friendly name instead of the run-id hash.
+  name  = data.coder_workspace.me.name
   image = data.coder_parameter.workspace_image.value
 
   hostname = "apothecary-${lower(data.coder_parameter.run_id.value)}"

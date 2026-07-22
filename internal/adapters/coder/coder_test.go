@@ -133,6 +133,33 @@ func TestProvisionCreatesThenWaits(t *testing.T) {
 	}
 }
 
+// The engine supplies a human-friendly, slug-of-branch workspace name; the
+// adapter must create the workspace under THAT name (which the template then
+// mirrors onto the container) rather than the run-id fallback.
+func TestProvisionUsesEngineSuppliedName(t *testing.T) {
+	const name = "apo-fix-branch-abcd"
+	r := &scriptRunner{responses: []response{
+		{stdout: `[]`},        // status: absent
+		{stdout: ``, code: 0}, // create
+		{stdout: `[{"name":"` + name + `","latest_build":{"status":"running"}}]`}, // poll: running
+		{stdout: ``, code: 0}, // ssh probe
+	}}
+	a := newTestAdapter(r)
+	id, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "RUN1", Name: name, RepoURL: "https://g.local/r.git", Branch: "fix/branch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != name {
+		t.Errorf("env id = %s, want the engine-supplied name %s", id, name)
+	}
+	create := r.calls[1]
+	if !strings.Contains(strings.Join(create.args, " "), "create "+name) {
+		t.Errorf("create must use the engine name: %v", create.args)
+	}
+}
+
 func TestProvisionReusesExistingWorkspace(t *testing.T) {
 	r := &scriptRunner{responses: []response{
 		{stdout: listRunning}, // status: running already (crash recovery)

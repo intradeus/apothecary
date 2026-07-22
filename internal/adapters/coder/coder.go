@@ -393,7 +393,9 @@ func (a *Adapter) execRun(ctx context.Context, args []string, stdin []byte, tee 
 
 // --- EnvProvisioner ---------------------------------------------------------
 
-// WorkspaceName derives the workspace name from the run id (§12). Coder
+// WorkspaceName is the FALLBACK env name, used only when EnvSpec.Name is
+// empty (direct/test callers); real runs get the engine's slug-of-branch
+// name (engine.workspaceName). It derives a name from the run id (§12): coder
 // caps names at 32 chars, so a full 26-char ULID doesn't fit behind the
 // prefix — use its random tail (last 16 chars, the full 80 bits of ULID
 // entropy; the dropped prefix is just the timestamp).
@@ -421,7 +423,14 @@ func (a *Adapter) Reattach(ctx context.Context, env ports.EnvID) error {
 func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvID, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.ProvisionTimeout)
 	defer cancel()
-	name := WorkspaceName(spec.RunID)
+	// The engine supplies a human-friendly, slug-of-branch name (unique per
+	// run via its run-id tail); fall back to the run-id scheme for direct
+	// callers. This becomes the coder workspace name AND — via the template's
+	// docker_container.name = the workspace name — the container name.
+	name := spec.Name
+	if name == "" {
+		name = WorkspaceName(spec.RunID)
+	}
 
 	// Idempotent for crash recovery: reuse an existing workspace.
 	if st, err := a.status(ctx, name); err == nil && st != ports.EnvAbsent {

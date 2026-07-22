@@ -61,6 +61,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -237,8 +238,10 @@ func (a *Adapter) run(ctx context.Context, bin string, args []string, stdin []by
 
 func label(name string) string { return idLabel + "=" + name }
 
-// WorkspaceName derives the environment name from the run id (same scheme
-// as the coder adapter: "apothecary-" + the ULID's random tail).
+// WorkspaceName is the FALLBACK env name, used only when EnvSpec.Name is
+// empty (direct/test callers); real runs get the engine's slug-of-branch
+// name. It derives a name from the run id, same scheme as the coder adapter:
+// "apothecary-" + the ULID's random tail.
 func WorkspaceName(runID string) string {
 	id := strings.ToLower(runID)
 	if len(id) > 16 {
@@ -274,7 +277,14 @@ type upResult struct {
 func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvID, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.ProvisionTimeout)
 	defer cancel()
-	name := WorkspaceName(spec.RunID)
+	// The engine supplies a human-friendly, slug-of-branch name (unique per
+	// run via its run-id tail); fall back to the run-id scheme for direct
+	// callers. It is the env identity (id-label, checkout dir) and, after the
+	// CLI builds the container, the container's docker name (renamed below).
+	name := spec.Name
+	if name == "" {
+		name = WorkspaceName(spec.RunID)
+	}
 
 	src, err := a.ensureSrc(ctx, name, spec)
 	if err != nil {
@@ -352,7 +362,27 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 	if err := a.waitReady(ctx, name, firewall); err != nil {
 		return "", err
 	}
+	// Last, once the container is up and wired: give it the human-friendly
+	// docker name. Nothing above depends on the name (all lookups key off the
+	// container ID or the apothecary.env id-label), so it's safe to do last.
+	a.renameContainer(ctx, res.ContainerID, name)
 	return ports.EnvID(name), nil
+}
+
+// renameContainer gives the CLI-built container a human-friendly docker name
+// (the run's slug). Cosmetic and best-effort: every lookup keys off the
+// apothecary.env id-label, and on reuse the container is already named `name`
+// so docker rejects the no-op rename — a non-zero exit is logged, never fatal.
+func (a *Adapter) renameContainer(ctx context.Context, containerID, name string) {
+	if containerID == "" {
+		return
+	}
+	if _, stderr, code, err := a.run(ctx, a.cfg.DockerBin,
+		[]string{"rename", containerID, name}, nil, nil); err != nil || code != 0 {
+		slog.Debug("devcontainer container rename skipped",
+			"container", containerID, "name", name, "exit", code, "err", err,
+			"stderr", tail(string(stderr), 256))
+	}
 }
 
 // parseUpResult extracts the result object from up's stdout (last

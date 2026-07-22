@@ -159,6 +159,48 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	a.Close()
 }
 
+// The engine supplies a human-friendly, slug-of-branch name; the adapter must
+// key the env off it (id-label + checkout dir) AND rename the CLI-built
+// container to it so `docker ps` shows the branch, not the run-id hash.
+func TestProvisionUsesEngineSuppliedName(t *testing.T) {
+	const name = "apo-fix-branch-abcd"
+	r := &scriptRunner{responses: []response{
+		{code: 0},          // git clone
+		{stdout: upOK},     // devcontainer up
+		{code: 0},          // docker exec root-init
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d relay
+		{code: 0},          // ready/relay probe
+		{code: 0},          // docker rename
+	}}
+	a := newTestAdapter(t, r)
+	id, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "RUN1", Name: name, RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != ports.EnvID(name) {
+		t.Errorf("env id = %s, want %s", id, name)
+	}
+	// The env is tracked under the engine name — both the id-label and the
+	// checkout dir (workspace-folder) key off it.
+	up := find(t, r.calls, "devcontainer", "up")
+	upJoined := strings.Join(up.args, " ")
+	if !strings.Contains(upJoined, "--id-label apothecary.env="+name) {
+		t.Errorf("up must id-label the engine name: %v", up.args)
+	}
+	if !strings.Contains(upJoined, "--workspace-folder "+filepath.Join(a.folderFor(name), "src")) {
+		t.Errorf("workspace-folder must be keyed by the engine name: %v", up.args)
+	}
+	// ...and the container is renamed to it for docker ps.
+	rn := find(t, r.calls, "docker", "rename")
+	if len(rn.args) < 3 || rn.args[1] != "cid1" || rn.args[2] != name {
+		t.Errorf("docker rename = %v, want [rename cid1 %s]", rn.args, name)
+	}
+	a.Close()
+}
+
 func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 	r := &scriptRunner{responses: []response{
 		{stdout: upOK},     // up (no clone: src pre-seeded)

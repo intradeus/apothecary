@@ -974,6 +974,7 @@ func (x *exec) ensureEnv() error {
 		RunID:         rs.runID,
 		RepoURL:       x.res.RepoRef.URL,
 		Branch:        rs.branch,
+		Name:          workspaceName(rs.branch, rs.runID),
 		Image:         x.res.Image,
 		EgressDomains: x.res.EgressDomains,
 		// For clone-first provisioners (devcontainer): the engine-side

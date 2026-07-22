@@ -1219,3 +1219,24 @@ func slug(s string, maxLen int) string {
 	}
 	return strings.TrimRight(b.String(), "-")
 }
+
+// workspaceName is the human-friendly workspace/container name for a run: an
+// "apo-" marker, the slugified branch, and a 2-char run-id tail to keep two
+// runs that share a branch (branches are free-text per ticket, so not unique)
+// on distinct names — which keeps reuse-by-name a same-run operation. Capped
+// at 32 chars, coder's workspace-name limit; adapters use it verbatim.
+func workspaceName(branch, runID string) string {
+	suffix := strings.ToLower(runID)
+	if len(suffix) > 2 {
+		suffix = suffix[len(suffix)-2:]
+	}
+	s := slug(branch, 32-len("apo-")-1-len(suffix)) // room for prefix + "-" + suffix
+	parts := []string{"apo"}
+	if s != "" {
+		parts = append(parts, s)
+	}
+	if suffix != "" {
+		parts = append(parts, suffix)
+	}
+	return strings.Join(parts, "-")
+}

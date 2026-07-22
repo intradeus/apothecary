@@ -25,6 +25,13 @@ type EnvSpec struct {
 	RunID   string
 	RepoURL string
 	Branch  string
+	// Name is the human-friendly workspace/container name the engine derives
+	// from the branch (engine.workspaceName: "apo-" + slugified branch + a
+	// short run-id tail for uniqueness, ≤32 chars for coder). Adapters use it
+	// verbatim as the coder workspace / devcontainer container name and the
+	// env identity. Empty ⇒ the adapter falls back to WorkspaceName(RunID),
+	// the legacy run-id scheme, so direct and test callers keep working.
+	Name string
 	// Image is the workspace image tag built by the §8 pipeline (DESIGN2);
 	// empty on the custom-template compatibility path, where the template
 	// bakes its own image.
