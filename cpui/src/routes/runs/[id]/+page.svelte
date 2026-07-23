@@ -4,6 +4,7 @@
   import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EventEnvelope, type RunView } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
+  import AttachFiles from '$lib/AttachFiles.svelte';
   import { GATE_TYPES, type PingLike } from '$lib/ping';
   import { onMount } from 'svelte';
 
@@ -217,16 +218,33 @@
     }
   }
 
+  // Restart opens a small form first: retry-after-failure is exactly when a
+  // human wants to steer the next attempt (direction + fresh files).
+  let showRestart = $state(false);
+  let restartGoal = $state('');
+  let restartFlow = $state('');
+  let restartFiles = $state<File[]>([]);
+  let restarting = $state(false);
+
   async function restart() {
     error = '';
+    restarting = true;
     try {
-      const { run_id } = await api.restart(runId);
+      let artifactIds: string[] | undefined;
+      if (restartFiles.length) artifactIds = (await api.uploadArtifacts(restartFiles)).map((a) => a.id);
+      const { run_id } = await api.restart(runId, {
+        flow: restartFlow.trim() || undefined,
+        goal: restartGoal.trim() || undefined,
+        artifact_ids: artifactIds
+      });
       await goto(`/runs/${run_id}`);
       // Full reload semantics: this page keys its state off the route param
       // captured at mount, so navigate hard to re-init streams.
       location.reload();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      restarting = false;
     }
   }
 
@@ -284,6 +302,7 @@
   </div>
   <div class="row small muted" style="margin-bottom:16px">
     <span class="mono">{run.run_id}</span>
+    {#if run.ticket_id}<a href={`/tickets/${run.ticket_id}`} title="This run's ticket">ticket ↗</a>{/if}
     <span>flow {run.flow_name}</span>
     {#if run.branch}<span title="Git branch for this run">branch <span class="mono">{run.branch}</span></span>{/if}
     {#if run.env_id}<span title="Workspace / container name">workspace <span class="mono">{run.env_id}</span></span>{/if}
@@ -332,14 +351,41 @@
           {resuming ? 'Resuming…' : `Try again${run.current_stage ? ` (${run.current_stage})` : ''}`}
         </button>
       {/if}
-      <button onclick={restart} title="Start over as a fresh run: same ticket, project and flow — new workspace, new branch">
-        Restart
+      <button onclick={() => (showRestart = !showRestart)}
+        title="Start over as a fresh run: same ticket and project — new workspace, new branch. You can add direction for the new attempt.">
+        {showRestart ? 'Cancel restart' : 'Restart'}
       </button>
       {#if run.state !== 'archived'}
         <button onclick={() => act(() => api.archive(runId))}>Archive</button>
       {/if}
     {/if}
   </div>
+
+  {#if showRestart}
+    <div class="card">
+      <h2 style="margin:0 0 10px">Restart as a new run</h2>
+      <label for="rs-goal">Direction for the new attempt <span class="muted">— optional; added to the ticket's goal</span></label>
+      <textarea id="rs-goal" bind:value={restartGoal} rows="2"
+        placeholder="e.g. This attempt broke the router — use the existing middleware."></textarea>
+      <AttachFiles bind:files={restartFiles} label="Attach files for the new run" />
+      <div class="row" style="gap:8px; align-items:flex-end; margin-top:10px">
+        <div style="flex:1">
+          <label for="rs-flow">Flow <span class="muted">— empty = same as this run ({run.flow_name})</span></label>
+          <input id="rs-flow" bind:value={restartFlow} placeholder={run.flow_name} class="mono" />
+        </div>
+        <button class="primary" onclick={restart} disabled={restarting}>
+          {restarting ? 'Restarting…' : '↻ Restart'}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  {#if run.run_goal}
+    <div class="card" style="border-color:var(--blue)">
+      <strong class="small">Direction for this run</strong>
+      <div style="white-space:pre-wrap; margin-top:4px">{run.run_goal}</div>
+    </div>
+  {/if}
 
   {#if run.state === 'paused'}
     <div class="card" style="border-color:var(--muted)">

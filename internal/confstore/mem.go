@@ -16,6 +16,7 @@ type Mem struct {
 	mu           sync.Mutex
 	integrations map[string]StoredIntegration
 	projects     map[string]Project
+	tickets      map[string]Ticket
 	flows        map[string]FlowRow
 	versions     map[string]FlowVersion
 	agents       map[string]Agent // key: projectID+"\x00"+name
@@ -33,6 +34,7 @@ func NewMem() *Mem {
 	return &Mem{
 		integrations: map[string]StoredIntegration{},
 		projects:     map[string]Project{},
+		tickets:      map[string]Ticket{},
 		flows:        map[string]FlowRow{},
 		versions:     map[string]FlowVersion{},
 		agents:       map[string]Agent{},
@@ -161,6 +163,47 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 		}
 	}
 	delete(m.projects, id)
+	return nil
+}
+
+func (m *Mem) UpsertTicket(_ context.Context, t Ticket) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.projects[t.ProjectID]; !ok {
+		return fmt.Errorf("ticket %s references a missing project: %w", t.ID, ErrInvalid)
+	}
+	m.tickets[t.ID] = t
+	return nil
+}
+
+func (m *Mem) GetTicket(_ context.Context, id string) (Ticket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.tickets[id]
+	if !ok {
+		return Ticket{}, notFound("ticket", id)
+	}
+	return t, nil
+}
+
+func (m *Mem) ListTickets(_ context.Context) ([]Ticket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Ticket, 0, len(m.tickets))
+	for _, t := range m.tickets {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (m *Mem) DeleteTicket(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.tickets[id]; !ok {
+		return notFound("ticket", id)
+	}
+	delete(m.tickets, id)
 	return nil
 }
 

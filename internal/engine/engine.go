@@ -44,14 +44,35 @@ type EgressController interface {
 var ErrEgressOff = errors.New("egress proxy mode is off")
 
 type Ticket struct {
-	Title string
-	Goal  string
-	// Branch overrides the run's generated branch name ("" = the default
-	// apothecary/<run-id>-<title-slug>). Passed verbatim from the ticket
-	// form; CreateRun refuses names git check-ref-format would.
+	// TicketID is the parent ticket this run belongs to. When set, Branch is
+	// treated as the ticket's BASE branch and the run gets its own unique
+	// actual branch = base + "-" + <run-id tail>. Empty (direct/test path) =
+	// legacy behavior: Branch is used verbatim / generated with the run id.
+	TicketID string
+	Title    string
+	Goal     string
+	// Branch is the base branch when TicketID is set, else the run's branch
+	// override ("" = the default apothecary/<run-id>-<title-slug>). Names git
+	// check-ref-format would refuse are rejected.
 	Branch string
+	// RunGoal is extra direction for THIS attempt, additive to Goal (which
+	// stays the enduring spec). Rendered as its own prompt section.
+	RunGoal string
 	// ArtifactIDs are uploaded artifacts (POST /api/artifacts) attached to
-	// the goal: associated with the run and delivered into the workspace.
+	// THIS RUN: associated with the run and delivered into its workspace.
+	ArtifactIDs []string
+	// TicketArtifactIDs are the parent ticket's attachments — owned by the
+	// ticket, delivered to every run of it. Snapshotted onto run_created;
+	// NOT associated to this run.
+	TicketArtifactIDs []string
+}
+
+// RunInput is the optional per-attempt input when starting a run from a
+// ticket or restarting one: a flow override plus this attempt's direction and
+// attachments.
+type RunInput struct {
+	Flow        string // "" = the ticket/original run's flow
+	Goal        string // extra direction for this attempt
 	ArtifactIDs []string
 }
 
@@ -299,6 +320,9 @@ type ArtifactStore interface {
 	Associate(ctx context.Context, ids []string, runID, pingID, scope string) error
 	ForRun(ctx context.Context, runID string) ([]artifacts.Meta, error)
 	ForPing(ctx context.Context, pingID, scope string) ([]artifacts.Meta, error)
+	// Meta resolves one artifact by id — ticket attachments belong to the
+	// ticket, not the run, so ForRun cannot find them.
+	Meta(ctx context.Context, id string) (artifacts.Meta, error)
 	Bytes(ctx context.Context, id string) ([]byte, artifacts.Meta, error)
 	DeleteForRun(ctx context.Context, runID string) error
 }
@@ -433,20 +457,38 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	}
 
 	runID := e.newID()
-	branch := strings.TrimSpace(t.Branch)
-	if branch == "" {
+	// base is the branch stem; the run's ACTUAL branch appends a per-run tail
+	// when the run belongs to a ticket, so each attempt is a unique, readable
+	// branch (no remote collisions) and the container name — slugified from
+	// the base — stays sane. The direct/test path (no ticket) is unchanged.
+	base := strings.TrimSpace(t.Branch)
+	branch := base
+	if t.TicketID != "" {
+		if base == "" {
+			base = "apothecary/" + slug(t.Title, 24)
+		}
+		branch = base + "-" + runIDTail(runID)
+		if err := CheckBranch(branch); err != nil {
+			return "", fmt.Errorf("branch %q: %v", branch, err)
+		}
+	} else if branch == "" {
+		base = ""
 		branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), slug(t.Title, 24))
-	} else if err := checkBranch(branch); err != nil {
+	} else if err := CheckBranch(branch); err != nil {
 		return "", fmt.Errorf("branch %q: %v", branch, err)
 	}
 	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
-		TicketTitle: t.Title,
-		TicketGoal:  t.Goal,
-		FlowName:    fl.Name,
-		FlowHash:    fl.Hash,
-		RepoURL:     res.RepoRef.URL,
-		Branch:      branch,
-		ProjectID:   projectID,
+		TicketTitle:       t.Title,
+		TicketGoal:        t.Goal,
+		RunGoal:           t.RunGoal,
+		FlowName:          fl.Name,
+		FlowHash:          fl.Hash,
+		RepoURL:           res.RepoRef.URL,
+		Branch:            branch,
+		BranchBase:        base,
+		ProjectID:         projectID,
+		TicketID:          t.TicketID,
+		TicketArtifactIDs: t.TicketArtifactIDs,
 	}); err != nil {
 		return "", err
 	}
@@ -549,8 +591,10 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 // id, branch, workspace, events) with the original ticket, project and
 // flow name — resolved against the CURRENT config and flow version, and
 // re-preflighted like any new ticket. History is immutable; the old run
-// keeps its record.
-func (e *Engine) RestartRun(ctx context.Context, runID string) (string, error) {
+// keeps its record. `in` carries this attempt's optional direction, extra
+// attachments and flow override — restart-after-failure is exactly when a
+// human wants to steer the next try.
+func (e *Engine) RestartRun(ctx context.Context, runID string, in RunInput) (string, error) {
 	e.mu.Lock()
 	_, active := e.handles[runID]
 	e.mu.Unlock()
@@ -571,7 +615,31 @@ func (e *Engine) RestartRun(ctx context.Context, runID string) (string, error) {
 	if v.ProjectID == "" {
 		return "", fmt.Errorf("run %s has no project; cannot restart", runID)
 	}
-	return e.CreateRun(ctx, Ticket{Title: v.TicketTitle, Goal: v.TicketGoal}, v.FlowName, v.ProjectID)
+	// A ticketed run restarts as a fresh attempt under the same ticket: reuse
+	// the ticket id + base branch, and CreateRun derives a new per-run tail
+	// (new unique branch, same readable stem). Legacy runs with no ticket keep
+	// the old behavior: preserve a user branch, but regenerate an auto branch
+	// so the OLD run's id doesn't get baked into the new run's name.
+	flowName := in.Flow
+	if flowName == "" {
+		flowName = v.FlowName
+	}
+	if v.TicketID != "" {
+		return e.CreateRun(ctx, Ticket{
+			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
+			RunGoal: in.Goal, ArtifactIDs: in.ArtifactIDs,
+			// The ticket's own attachments carry over to every attempt.
+			TicketArtifactIDs: v.TicketArtifactIDs,
+		}, flowName, v.ProjectID)
+	}
+	branch := v.Branch
+	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") {
+		branch = ""
+	}
+	return e.CreateRun(ctx, Ticket{
+		Title: v.TicketTitle, Goal: v.TicketGoal, Branch: branch,
+		RunGoal: in.Goal, ArtifactIDs: in.ArtifactIDs,
+	}, flowName, v.ProjectID)
 }
 
 // ResumeRun re-enters the stage where an abandoned/failed run stalled,
@@ -1362,9 +1430,9 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 	return nil
 }
 
-// checkBranch refuses user-supplied branch names git check-ref-format
+// CheckBranch refuses user-supplied branch names git check-ref-format
 // would: the run would otherwise die much later, at bootstrap's git switch.
-func checkBranch(s string) error {
+func CheckBranch(s string) error {
 	if strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") || strings.Contains(s, "//") {
 		return errors.New(`"/" cannot lead, trail or repeat`)
 	}
@@ -1408,16 +1476,24 @@ func slug(s string, maxLen int) string {
 	return strings.TrimRight(b.String(), "-")
 }
 
+// runIDTail is the 2-char per-run suffix: the last 2 chars of the lowercased
+// run id. Shared by the branch name (base + "-" + tail) and the workspace
+// name so both stay aligned and unique per run.
+func runIDTail(runID string) string {
+	s := strings.ToLower(runID)
+	if len(s) > 2 {
+		s = s[len(s)-2:]
+	}
+	return s
+}
+
 // workspaceName is the human-friendly workspace/container name for a run: an
 // "apo-" marker, the slugified branch, and a 2-char run-id tail to keep two
 // runs that share a branch (branches are free-text per ticket, so not unique)
 // on distinct names — which keeps reuse-by-name a same-run operation. Capped
 // at 32 chars, coder's workspace-name limit; adapters use it verbatim.
 func workspaceName(branch, runID string) string {
-	suffix := strings.ToLower(runID)
-	if len(suffix) > 2 {
-		suffix = suffix[len(suffix)-2:]
-	}
+	suffix := runIDTail(runID)
 	s := slug(branch, 32-len("apo-")-1-len(suffix)) // room for prefix + "-" + suffix
 	parts := []string{"apo"}
 	if s != "" {

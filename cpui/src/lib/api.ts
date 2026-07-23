@@ -9,6 +9,8 @@ export interface RunView {
   flow_name: string;
   flow_hash: string;
   current_stage?: string;
+  ticket_id?: string; // parent ticket (a ticket owns many runs)
+  run_goal?: string; // extra direction for THIS attempt (additive to the ticket's goal)
   branch?: string;
   mr_url?: string;
   env_id?: string;
@@ -77,6 +79,34 @@ export interface Project {
   commands: Record<string, string>;
   workspace: { dockerfile_fragment?: string; extra_domains?: string[]; template?: string };
   default_flow: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Per-attempt input when starting a run from a ticket or restarting one.
+// All optional: flow overrides the default, goal/artifacts add direction for
+// THIS attempt on top of the ticket's (they never modify the ticket).
+export interface RunInput {
+  flow?: string;
+  goal?: string;
+  artifact_ids?: string[];
+}
+
+const runInputBody = (o?: RunInput) => ({
+  ...(o?.flow ? { flow: o.flow } : {}),
+  ...(o?.goal ? { goal: o.goal } : {}),
+  ...(o?.artifact_ids?.length ? { artifact_ids: o.artifact_ids } : {})
+});
+
+// A ticket is a unit of work that owns many runs (each run is one attempt).
+// Flow is NOT here — it's chosen per run when starting one.
+export interface Ticket {
+  id: string;
+  project_id: string;
+  title: string;
+  goal: string;
+  base_branch: string; // stem; each run gets base_branch + a per-run suffix
+  artifact_ids: string[];
   created_at: string;
   updated_at: string;
 }
@@ -231,31 +261,44 @@ const put = (path: string, body: unknown): Promise<unknown> =>
   req(path, { method: 'PUT', body: JSON.stringify(body) });
 
 export const api = {
-  runs: (project?: string) => req<RunView[]>(`/api/runs${project ? `?project=${encodeURIComponent(project)}` : ''}`),
+  runs: (filter?: { project?: string; ticket?: string }) => {
+    const q = new URLSearchParams();
+    if (filter?.project) q.set('project', filter.project);
+    if (filter?.ticket) q.set('ticket', filter.ticket);
+    const s = q.toString();
+    return req<RunView[]>(`/api/runs${s ? `?${s}` : ''}`);
+  },
   run: (id: string) => req<{ run: RunView; events: EventEnvelope[] }>(`/api/runs/${id}`),
-  createTicket: (
-    title: string,
-    goal: string,
-    projectId: string,
-    flow?: string,
-    branch?: string,
-    artifactIds?: string[]
-  ) =>
-    post('/api/tickets', {
-      title,
-      goal,
-      project_id: projectId,
-      ...(flow ? { flow } : {}),
-      ...(branch ? { branch } : {}),
-      ...(artifactIds?.length ? { artifact_ids: artifactIds } : {})
-    }) as Promise<{ run_id: string }>,
+
+  // Tickets: a ticket owns many runs. Creating a ticket does NOT start a run;
+  // runs are started from the ticket (flow chosen per run).
+  tickets: (project?: string) =>
+    req<Ticket[]>(`/api/tickets${project ? `?project=${encodeURIComponent(project)}` : ''}`),
+  ticket: (id: string) => req<Ticket>(`/api/tickets/${id}`),
+  createTicket: (body: {
+    title: string;
+    goal: string;
+    project_id: string;
+    branch?: string;
+    artifact_ids?: string[];
+  }) => post('/api/tickets', body) as Promise<Ticket>,
+  updateTicket: (
+    id: string,
+    body: { title: string; goal: string; project_id: string; branch?: string; artifact_ids?: string[] }
+  ) => put(`/api/tickets/${id}`, body) as Promise<Ticket>,
+  deleteTicket: (id: string) => req<void>(`/api/tickets/${id}`, { method: 'DELETE' }),
+  // Per-attempt input: a flow override plus this run's own direction and
+  // attachments (additive to the ticket's — they never modify the ticket).
+  startTicketRun: (id: string, opts?: RunInput) =>
+    post(`/api/tickets/${id}/runs`, runInputBody(opts)) as Promise<{ run_id: string }>,
   abort: (id: string) => post(`/api/runs/${id}/abort`),
   // Pause parks the run (workspace kept, nothing recovered until play);
   // play re-enters mid-stage like crash recovery, budgets intact.
   pause: (id: string) => post(`/api/runs/${id}/pause`),
   play: (id: string) => post(`/api/runs/${id}/play`),
   archive: (id: string) => post(`/api/runs/${id}/archive`),
-  restart: (id: string) => post(`/api/runs/${id}/restart`) as Promise<{ run_id: string }>,
+  restart: (id: string, opts?: RunInput) =>
+    post(`/api/runs/${id}/restart`, runInputBody(opts)) as Promise<{ run_id: string }>,
   resume: (id: string) => post(`/api/runs/${id}/resume`),
   log: async (id: string, stage: string, n = 65536): Promise<string> => {
     const res = await fetch(`/api/runs/${id}/logs/${stage}?n=${n}`);

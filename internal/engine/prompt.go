@@ -17,6 +17,12 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# TASK\n%s\n\n%s\n", rs.view.TicketTitle, rs.view.TicketGoal)
 
+	// Per-attempt direction from the human (ticket goal stays the spec; this
+	// is additive — "last try broke the router, use the middleware instead").
+	if rs.view.RunGoal != "" {
+		fmt.Fprintf(&b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.view.RunGoal)
+	}
+
 	for _, in := range st.Input {
 		switch in {
 		case flow.InputTicket:

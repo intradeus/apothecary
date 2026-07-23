@@ -130,6 +130,11 @@ type DB interface {
 	ListProjects(ctx Ctx) ([]Project, error)
 	DeleteProject(ctx Ctx, id string) error
 
+	UpsertTicket(ctx Ctx, t Ticket) error
+	GetTicket(ctx Ctx, id string) (Ticket, error)
+	ListTickets(ctx Ctx) ([]Ticket, error)
+	DeleteTicket(ctx Ctx, id string) error
+
 	UpsertFlow(ctx Ctx, row FlowRow) error // also inserts the immutable version (ON CONFLICT DO NOTHING)
 	GetFlow(ctx Ctx, name string) (FlowRow, error)
 	ListFlows(ctx Ctx) ([]FlowRow, error)

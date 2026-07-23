@@ -261,6 +261,86 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 	return nil
 }
 
+// --- tickets ----------------------------------------------------------------
+
+const ticketCols = `id, project_id, title, goal, base_branch, artifact_ids, created_at, updated_at`
+
+func scanTicket(row pgx.Row) (confstore.Ticket, error) {
+	var t confstore.Ticket
+	var artifacts []byte
+	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Goal, &t.BaseBranch,
+		&artifacts, &t.CreatedAt, &t.UpdatedAt)
+	if err != nil {
+		return t, err
+	}
+	if len(artifacts) > 0 {
+		if err := json.Unmarshal(artifacts, &t.ArtifactIDs); err != nil {
+			return t, err
+		}
+	}
+	return t, nil
+}
+
+func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
+	ids := t.ArtifactIDs
+	if ids == nil {
+		ids = []string{}
+	}
+	artifacts, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO tickets (id, project_id, title, goal, base_branch, artifact_ids, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (id) DO UPDATE SET
+			project_id=$2, title=$3, goal=$4, base_branch=$5, artifact_ids=$6, updated_at=$8`,
+		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch, artifacts, t.CreatedAt, t.UpdatedAt)
+	if isFK(err) {
+		// FK backstop: the referenced project vanished between service-layer
+		// validation and this write.
+		return fmt.Errorf("ticket %s references a missing project: %w", t.ID, confstore.ErrInvalid)
+	}
+	return err
+}
+
+func (s *Store) GetTicket(ctx context.Context, id string) (confstore.Ticket, error) {
+	t, err := scanTicket(s.pool.QueryRow(ctx,
+		`SELECT `+ticketCols+` FROM tickets WHERE id=$1`, id))
+	if err == pgx.ErrNoRows {
+		return t, fmt.Errorf("ticket %s: %w", id, confstore.ErrNotFound)
+	}
+	return t, err
+}
+
+func (s *Store) ListTickets(ctx context.Context) ([]confstore.Ticket, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+ticketCols+` FROM tickets ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.Ticket
+	for rows.Next() {
+		t, err := scanTicket(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteTicket(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM tickets WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("ticket %s: %w", id, confstore.ErrNotFound)
+	}
+	return nil
+}
+
 // --- flows ------------------------------------------------------------------
 
 func (s *Store) UpsertFlow(ctx context.Context, row confstore.FlowRow) error {

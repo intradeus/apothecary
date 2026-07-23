@@ -66,7 +66,6 @@ func New(e *engine.Engine, store event.Store, reg *channels.Registry, runsDir st
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/tickets", s.postTicket)
 	mux.HandleFunc("GET /api/runs", s.listRuns)
 	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.streamEvents)
@@ -112,6 +111,14 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/projects/{id}", s.getProject)
 		mux.HandleFunc("PUT /api/projects/{id}", s.updateProject)
 		mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
+		// Tickets: a ticket owns many runs. Create/list/get/update/delete the
+		// ticket; POST .../runs starts an attempt (flow chosen per run).
+		mux.HandleFunc("GET /api/tickets", s.listTickets)
+		mux.HandleFunc("POST /api/tickets", s.createTicket)
+		mux.HandleFunc("GET /api/tickets/{id}", s.getTicket)
+		mux.HandleFunc("PUT /api/tickets/{id}", s.updateTicket)
+		mux.HandleFunc("DELETE /api/tickets/{id}", s.deleteTicket)
+		mux.HandleFunc("POST /api/tickets/{id}/runs", s.startTicketRun)
 		// Agent library (DESIGN3 §1): per-project, copiable, versioned.
 		mux.HandleFunc("GET /api/projects/{id}/agents", s.listAgents)
 		mux.HandleFunc("PUT /api/projects/{id}/agents/{name}", s.putAgent)
@@ -275,29 +282,6 @@ func toPingJSON(p *engine.Ping) pingJSON {
 
 // --- tickets & runs ---------------------------------------------------------
 
-func (s *Server) postTicket(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Title       string   `json:"title"`
-		Goal        string   `json:"goal"`
-		Flow        string   `json:"flow"`         // "" = the project's default flow
-		ProjectID   string   `json:"project_id"`   // required (DESIGN2 §10)
-		Branch      string   `json:"branch"`       // "" = generated (apothecary/<id>-<slug>)
-		ArtifactIDs []string `json:"artifact_ids"` // uploaded goal attachments
-	}
-	if !readJSON(w, r, &body) {
-		return
-	}
-	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{Title: body.Title, Goal: body.Goal, Branch: body.Branch, ArtifactIDs: body.ArtifactIDs}, body.Flow, body.ProjectID)
-	switch {
-	case errors.Is(err, engine.ErrEnvCapacity):
-		writeErr(w, http.StatusConflict, err.Error())
-	case err != nil:
-		writeErr(w, http.StatusBadRequest, err.Error())
-	default:
-		writeJSON(w, http.StatusCreated, map[string]string{"run_id": runID})
-	}
-}
-
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	ids, err := s.Store.RunIDs(r.Context())
 	if err != nil {
@@ -305,6 +289,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := r.URL.Query().Get("project")
+	ticket := r.URL.Query().Get("ticket")
 	// One snapshot of the reconciler's live-status map for the whole list —
 	// the workspace badge reads env_status to tell a live env from a stopped
 	// one (env_id alone can't, see run.View.EnvStatus).
@@ -321,6 +306,9 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		v := run.Reduce(evs)
 		if project != "" && v.ProjectID != project {
+			continue
+		}
+		if ticket != "" && v.TicketID != ticket {
 			continue
 		}
 		if v.EnvID != "" {
@@ -413,8 +401,19 @@ func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {
 // postRestart starts a terminal run over as a fresh run; 201 carries the
 // new run id. 409 when the run is active/non-terminal, 404 when unknown,
 // 400 when the re-preflight refuses (config drifted since the original).
+// The optional body {flow, goal, artifact_ids} steers THIS attempt —
+// restart-after-failure is when a human most wants to give direction.
 func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
-	newID, err := s.Engine.RestartRun(r.Context(), r.PathValue("id"))
+	var body struct {
+		Flow        string   `json:"flow"`
+		Goal        string   `json:"goal"`
+		ArtifactIDs []string `json:"artifact_ids"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
+
+	newID, err := s.Engine.RestartRun(r.Context(), r.PathValue("id"), engine.RunInput{
+		Flow: body.Flow, Goal: body.Goal, ArtifactIDs: body.ArtifactIDs,
+	})
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest

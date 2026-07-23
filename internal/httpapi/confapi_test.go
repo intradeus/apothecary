@@ -273,16 +273,7 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 	x := newConfEnv(t)
 	projectID := x.wizard(t)
 
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{
-		"title": "Add search", "goal": "g", "project_id": projectID,
-	}, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("ticket = %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		RunID string `json:"run_id"`
-	}
-	_ = json.Unmarshal(data, &out)
+	runID := x.runOnProject(t, projectID, "Add search")
 
 	// The seeded v1 flow parks at its two human gates — answer them over
 	// the API like the CPUI would.
@@ -293,7 +284,7 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 			t.Fatalf("answer %s = %d: %s", gate, resp.StatusCode, data)
 		}
 	}
-	x.e.Wait(out.RunID)
+	x.e.Wait(runID)
 
 	planted := []string{"glpat-PLANTED-forge-token", "sk-PLANTED-provider-key"}
 	scan := func(where string, blob []byte) {
@@ -308,7 +299,7 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 	for _, path := range []string{
 		"/api/kinds", "/api/integrations", "/api/projects", "/api/projects/" + projectID,
 		"/api/flows", "/api/flows/v1", "/api/settings", "/api/runs",
-		"/api/runs/" + out.RunID, "/api/pings?status=pending",
+		"/api/runs/" + runID, "/api/pings?status=pending",
 	} {
 		resp, data := x.do(t, "GET", path, nil, nil)
 		if resp.StatusCode != 200 {
@@ -318,7 +309,7 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 	}
 
 	// Every event payload of the completed run.
-	evs, err := x.store.Events(t.Context(), out.RunID, 0)
+	evs, err := x.store.Events(t.Context(), runID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

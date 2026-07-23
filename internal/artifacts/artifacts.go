@@ -28,8 +28,14 @@ import (
 // Scopes an artifact row can hold. `orphan` = uploaded but not yet attached
 // to a run/ping (GC-eligible); the rest are the attachment points.
 const (
-	ScopeOrphan     = "orphan"
-	ScopeGoal       = "goal"
+	ScopeOrphan = "orphan"
+	ScopeGoal   = "goal"
+	// ScopeTicketGoal is a TICKET's attachment: owned by the ticket (run_id
+	// stays empty), delivered into the workspace of EVERY run of that ticket.
+	// Distinct from ScopeGoal, which binds an artifact to one run — the
+	// artifacts table has a single run_id, so a ticket attachment could
+	// otherwise only ever reach the first run.
+	ScopeTicketGoal = "ticket_goal"
 	ScopePingAnswer = "ping_answer"
 )
 
@@ -152,6 +158,13 @@ func (s *Store) Bytes(ctx context.Context, id string) ([]byte, Meta, error) {
 
 func (s *Store) Associate(ctx context.Context, ids []string, runID, pingID, scope string) error {
 	return s.db.AssociateArtifacts(ctx, ids, runID, pingID, scope)
+}
+
+// Meta returns one artifact's metadata by id (no bytes). Used to resolve a
+// ticket's attachments, which are owned by the ticket rather than any run and
+// so can't be found through ForRun.
+func (s *Store) Meta(ctx context.Context, id string) (Meta, error) {
+	return s.db.GetArtifact(ctx, id)
 }
 
 func (s *Store) ForRun(ctx context.Context, runID string) ([]Meta, error) {

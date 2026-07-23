@@ -74,6 +74,35 @@ func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 
 const upOK = `{"outcome":"success","containerId":"cid1","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/src"}`
 
+// The checkout dir's BASENAME is the compose project name for compose-based
+// devcontainers (`<basename>_devcontainer`, no CLI flag to override). Two runs
+// must never share it: they did when every checkout was literally "src", so
+// compose reused the first run's containers and the second run's id-label
+// landed on nothing ("no running container").
+func TestSrcDirBasenameIsUniquePerRun(t *testing.T) {
+	a := newTestAdapter(t, &scriptRunner{})
+	one, two := a.srcDir("apo-feat-a-11"), a.srcDir("apo-fix-b-22")
+	if filepath.Base(one) == filepath.Base(two) {
+		t.Fatalf("runs share a compose project basename %q — containers would collide", filepath.Base(one))
+	}
+	if filepath.Base(one) != "apo-feat-a-11" {
+		t.Errorf("srcDir basename = %q, want the workspace name", filepath.Base(one))
+	}
+
+	// A pre-existing <folder>/src checkout still wins, so workspaces created
+	// before this fix keep resolving to their existing clone.
+	legacy := filepath.Join(a.folderFor("apo-old-99"), "src")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, ".git"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.srcDir("apo-old-99"); got != legacy {
+		t.Errorf("legacy checkout not honored: got %q, want %q", got, legacy)
+	}
+}
+
 // find returns the first recorded call whose bin and leading arg match.
 func find(t *testing.T, calls []call, bin, firstArg string) call {
 	t.Helper()
@@ -123,7 +152,9 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	up := find(t, r.calls, "devcontainer", "up")
 	joined = strings.Join(up.args, " ")
 	for _, want := range []string{
-		"--workspace-folder " + filepath.Join(a.folderFor("apothecary-run1"), "src"),
+		// Fresh clone → checkout named after the workspace (unique compose
+		// project per run); the legacy <folder>/src layout is covered below.
+		"--workspace-folder " + filepath.Join(a.folderFor("apothecary-run1"), "apothecary-run1"),
 		"--id-label apothecary.env=apothecary-run1",
 		"target=/opt/apothecary",
 	} {
@@ -192,7 +223,11 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	if !strings.Contains(upJoined, "--id-label apothecary.env="+name) {
 		t.Errorf("up must id-label the engine name: %v", up.args)
 	}
-	if !strings.Contains(upJoined, "--workspace-folder "+filepath.Join(a.folderFor(name), "src")) {
+	// The checkout dir is named after the workspace, NOT a shared literal
+	// "src": for compose-based devcontainers the CLI derives the compose
+	// project name from this basename, so a shared one collapses every run
+	// onto one compose project (and one set of containers).
+	if !strings.Contains(upJoined, "--workspace-folder "+filepath.Join(a.folderFor(name), name)) {
 		t.Errorf("workspace-folder must be keyed by the engine name: %v", up.args)
 	}
 	// Metadata labels: the apothecary marker (always) and the project.

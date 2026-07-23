@@ -74,33 +74,66 @@ func (x *exec) deliverArtifacts(metas []artifacts.Meta) []string {
 	return paths
 }
 
-// deliverRunArtifacts re-delivers ALL of a run's artifacts (goal +
-// ping-answer) into the workspace — idempotent, called from ensureEnv so a
-// restart re-materializes them.
-func (x *exec) deliverRunArtifacts() {
-	if x.e.artifacts == nil || x.rs.envID == "" {
-		return
+// ticketArtifacts resolves the parent ticket's attachments by id. They are
+// owned by the ticket (run_id empty), so ForRun cannot find them — the ids
+// ride on run_created instead. Missing ones are skipped, not fatal.
+func (x *exec) ticketArtifacts() []artifacts.Meta {
+	if x.e.artifacts == nil {
+		return nil
 	}
-	metas, err := x.e.artifacts.ForRun(x.ctx, x.rs.runID)
-	if err != nil {
-		x.e.log.Warn("artifact list", "run", x.rs.runID, "err", err)
-		return
+	var out []artifacts.Meta
+	for _, id := range x.rs.view.TicketArtifactIDs {
+		m, err := x.e.artifacts.Meta(x.ctx, id)
+		if err != nil {
+			x.e.log.Warn("ticket artifact missing", "run", x.rs.runID, "artifact", id, "err", err)
+			continue
+		}
+		out = append(out, m)
 	}
-	x.deliverArtifacts(metas)
+	return out
 }
 
-// goalArtifacts returns the run's goal attachments (for the prompt listing).
-func (x *exec) goalArtifacts() []artifacts.Meta {
+// runAndTicketArtifacts is every artifact this run should see: its own rows
+// (goal + ping-answer) plus the ticket's shared attachments, deduped by id.
+func (x *exec) runAndTicketArtifacts() []artifacts.Meta {
 	if x.e.artifacts == nil {
 		return nil
 	}
 	metas, err := x.e.artifacts.ForRun(x.ctx, x.rs.runID)
 	if err != nil {
-		return nil
+		x.e.log.Warn("artifact list", "run", x.rs.runID, "err", err)
+		metas = nil
 	}
-	var goals []artifacts.Meta
+	seen := make(map[string]struct{}, len(metas))
 	for _, m := range metas {
-		if m.Scope == artifacts.ScopeGoal {
+		seen[m.ID] = struct{}{}
+	}
+	for _, m := range x.ticketArtifacts() {
+		if _, dup := seen[m.ID]; dup {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		metas = append(metas, m)
+	}
+	return metas
+}
+
+// deliverRunArtifacts re-delivers ALL of a run's artifacts (its own goal +
+// ping-answer rows, plus the ticket's shared attachments) into the workspace
+// — idempotent, called from ensureEnv so a restart re-materializes them.
+func (x *exec) deliverRunArtifacts() {
+	if x.e.artifacts == nil || x.rs.envID == "" {
+		return
+	}
+	x.deliverArtifacts(x.runAndTicketArtifacts())
+}
+
+// goalArtifacts returns the attachments the human made to the task — the
+// run's own plus the ticket's — for the prompt listing.
+func (x *exec) goalArtifacts() []artifacts.Meta {
+	var goals []artifacts.Meta
+	for _, m := range x.runAndTicketArtifacts() {
+		if m.Scope == artifacts.ScopeGoal || m.Scope == artifacts.ScopeTicketGoal {
 			goals = append(goals, m)
 		}
 	}

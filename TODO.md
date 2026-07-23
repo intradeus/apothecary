@@ -8,3 +8,5 @@
 - 15) Import PR comments and choose which to fix/how
 - 16) since we're using proxies for firewalls, can we live update the firewall ? Like if an agent gets blocked cuz xyz.com is not answering, fails 3x, enters human debug mode, human updates firewall, i want the instance to instantly catch it so that when user clicks 'resolved' it doesnt have to restart the full instance.
 - 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now. Check the statuses of coder for inspiration.
+- 18) Add option to branch from something else than the main branch
+- 19) the ticket provides a goal+artifacts, but when starting a run we should be able to ALSO provide a run's goal+artifacts.

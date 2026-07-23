@@ -15,12 +15,14 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/channels"
+	"apothecary/internal/confstore"
 	"apothecary/internal/egressproxy"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/secrets"
 )
 
 const loopFlowDoc = `name: loop
@@ -97,6 +99,15 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	t.Cleanup(x.e.Shutdown)
 	x.srv = New(x.e, x.store, x.reg, cfg.RunsDir)
 	x.srv.Pings = EventPingStore{Store: x.store}
+	// Wire the config store so the ticket routes exist, seeded with the
+	// test project the static resolver already serves.
+	mem := confstore.NewMem()
+	_ = mem.UpsertProject(context.Background(), confstore.Project{ID: testProject, Name: "test"})
+	key, err := secrets.ParseKey(secrets.GenerateKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.srv.Conf = confstore.New(mem, key)
 	x.ts = httptest.NewServer(x.srv.Handler())
 	t.Cleanup(x.ts.Close)
 	return x
@@ -148,19 +159,131 @@ func (x *env) do(t *testing.T, method, path string, body any, hdr map[string]str
 	return resp, data
 }
 
-func (x *env) createTicket(t *testing.T, title string) string {
+// newTicket creates a ticket (no run) and returns its id. branch "" = default.
+func (x *env) newTicket(t *testing.T, title, branch string) string {
 	t.Helper()
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": title, "goal": "g", "flow": "loop", "project_id": testProject}, nil)
+	body := map[string]string{"title": title, "goal": "g", "project_id": testProject}
+	if branch != "" {
+		body["branch"] = branch
+	}
+	resp, data := x.do(t, "POST", "/api/tickets", body, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /api/tickets = %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil || out.ID == "" {
+		t.Fatalf("bad ticket response: %s", data)
+	}
+	return out.ID
+}
+
+// startRun starts a run under a ticket, returning the raw response (some tests
+// assert the capacity 409 here — capacity is checked at run start, not ticket
+// creation).
+func (x *env) startRun(t *testing.T, ticketID, flow string) (*http.Response, []byte) {
+	t.Helper()
+	var body any
+	if flow != "" {
+		body = map[string]string{"flow": flow}
+	}
+	return x.do(t, "POST", "/api/tickets/"+ticketID+"/runs", body, nil)
+}
+
+// createTicketFlow files a ticket and starts a run on a named flow, returning
+// the run id — the common "give me a running run" path.
+func (x *env) createTicketFlow(t *testing.T, title, flow string) string {
+	t.Helper()
+	resp, data := x.startRun(t, x.newTicket(t, title, ""), flow)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start run = %d: %s", resp.StatusCode, data)
 	}
 	var out struct {
 		RunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil || out.RunID == "" {
-		t.Fatalf("bad ticket response: %s", data)
+		t.Fatalf("bad run response: %s", data)
 	}
 	return out.RunID
+}
+
+func (x *env) createTicket(t *testing.T, title string) string {
+	return x.createTicketFlow(t, title, "loop")
+}
+
+// runOnProject creates a ticket on an arbitrary project (confEnv tests use a
+// wizard-created project, not testProject) and starts its run, returning the
+// run id.
+func (x *env) runOnProject(t *testing.T, projectID, title string) string {
+	t.Helper()
+	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": title, "goal": "g", "project_id": projectID}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /api/tickets = %d: %s", resp.StatusCode, data)
+	}
+	var tk struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &tk); err != nil || tk.ID == "" {
+		t.Fatalf("bad ticket response: %s", data)
+	}
+	resp, data = x.do(t, "POST", "/api/tickets/"+tk.ID+"/runs", nil, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start run = %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil || out.RunID == "" {
+		t.Fatalf("bad run response: %s", data)
+	}
+	return out.RunID
+}
+
+// TestTicketEntityFlow drives the ticket-first path end to end: create a
+// ticket, start a run under it, and confirm the run is linked (ticket_id) and
+// filterable by ?ticket=.
+func TestTicketEntityFlow(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+
+	tid := x.newTicket(t, "Add a health endpoint", "fix/task-9")
+
+	// The ticket is a real, gettable entity carrying the base branch.
+	resp, data := x.do(t, "GET", "/api/tickets/"+tid, nil, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get ticket = %d: %s", resp.StatusCode, data)
+	}
+	var raw map[string]any
+	_ = json.Unmarshal(data, &raw)
+	if raw["base_branch"] != "fix/task-9" || raw["project_id"] != testProject {
+		t.Fatalf("ticket = %s", data)
+	}
+
+	// Start a run under it; the run derives its suffixed branch and links back.
+	resp, data = x.startRun(t, tid, "loop")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start run = %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	_ = json.Unmarshal(data, &out)
+
+	// GET /api/runs?ticket=<id> returns exactly this run, linked + suffixed.
+	_, data = x.do(t, "GET", "/api/runs?ticket="+tid, nil, nil)
+	var views []run.View
+	if err := json.Unmarshal(data, &views); err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].RunID != out.RunID {
+		t.Fatalf("runs?ticket = %+v, want the one run", views)
+	}
+	if views[0].TicketID != tid {
+		t.Errorf("run.ticket_id = %q, want %q", views[0].TicketID, tid)
+	}
+	if !strings.HasPrefix(views[0].Branch, "fix/task-9-") {
+		t.Errorf("run.branch = %q, want fix/task-9-<tail>", views[0].Branch)
+	}
 }
 
 func TestTicketRunsAndDetail(t *testing.T) {
@@ -341,15 +464,8 @@ stages:
 		}
 	}
 
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": "T", "flow": "ping", "project_id": testProject}, nil)
-	if resp.StatusCode != 201 {
-		t.Fatalf("ticket = %d: %s", resp.StatusCode, data)
-	}
-	var created struct {
-		RunID string `json:"run_id"`
-	}
-	_ = json.Unmarshal(data, &created)
-	runIDCh <- created.RunID
+	runID := x.createTicketFlow(t, "T", "ping")
+	runIDCh <- runID
 
 	// Inbox shows the pending ping; answer it via the CPUI endpoint.
 	var pid string
@@ -375,14 +491,14 @@ stages:
 	// Let the first long-poll hold (5 ms) expire so the 204 + re-poll path
 	// is what the shim actually exercises.
 	time.Sleep(100 * time.Millisecond)
-	resp, data = x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]string{"answer": "yes, staging data only"}, nil)
+	resp, data := x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]string{"answer": "yes, staging data only"}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("answer = %d: %s", resp.StatusCode, data)
 	}
 	if got := <-gotAnswer; got != "yes, staging data only" {
 		t.Errorf("shim received %q", got)
 	}
-	x.e.Wait(created.RunID)
+	x.e.Wait(runID)
 
 	// Re-answer after the run ended → 404: the engine prunes a finished
 	// run's pings (they would otherwise be permanently unanswerable inbox
@@ -423,7 +539,8 @@ func TestAbortAndArchiveAndCapacity(t *testing.T) {
 	x.e.Wait(runID) // completed; env kept until archive/reaper
 
 	// Env cap reached → 409 naming the archivable run + blocker notification.
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": "second", "flow": "loop", "project_id": testProject}, nil)
+	// Capacity is checked at run start, so the ticket is fine but its run 409s.
+	resp, data := x.startRun(t, x.newTicket(t, "second", ""), "loop")
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("at capacity = %d: %s", resp.StatusCode, data)
 	}
@@ -550,10 +667,7 @@ stages:
 		}
 		return ports.AgentResult{TurnsUsed: 1}, nil
 	}
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": "T", "goal": "g", "flow": "gated", "project_id": testProject}, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("ticket = %d: %s", resp.StatusCode, data)
-	}
+	x.createTicketFlow(t, "T", "gated")
 
 	var pid string
 	deadline := time.Now().Add(5 * time.Second)
@@ -572,7 +686,7 @@ stages:
 		t.Fatal("no gate ping appeared")
 	}
 
-	resp, data = x.do(t, "GET", "/api/pings/"+pid+"/artifact", nil, nil)
+	resp, data := x.do(t, "GET", "/api/pings/"+pid+"/artifact", nil, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("artifact = %d: %s", resp.StatusCode, data)
 	}
@@ -663,20 +777,6 @@ stages:
 	if resp.StatusCode != 400 {
 		t.Errorf("bogus status = %d", resp.StatusCode)
 	}
-}
-
-// createTicketFlow files a ticket on a named flow.
-func (x *env) createTicketFlow(t *testing.T, title, flow string) string {
-	t.Helper()
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": title, "goal": "g", "flow": flow, "project_id": testProject}, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("POST /api/tickets = %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		RunID string `json:"run_id"`
-	}
-	_ = json.Unmarshal(data, &out)
-	return out.RunID
 }
 
 // TestOptionPingOverHTTP covers the PLAN4 M16 surface: options travel to
@@ -853,18 +953,9 @@ func TestEgressAllow(t *testing.T) {
 	eg := &fakeEgress{}
 	x.e.SetEgress(eg)
 
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{
-		"title": "T", "goal": "g", "project_id": projectID,
-	}, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("ticket = %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		RunID string `json:"run_id"`
-	}
-	_ = json.Unmarshal(data, &out)
+	out := x.runOnProject(t, projectID, "T")
 
-	resp, data = x.do(t, "POST", "/api/runs/"+out.RunID+"/egress-allow", map[string]string{"host": "models.dev"}, nil)
+	resp, data := x.do(t, "POST", "/api/runs/"+out+"/egress-allow", map[string]string{"host": "models.dev"}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("allow = %d: %s", resp.StatusCode, data)
 	}
@@ -872,7 +963,7 @@ func TestEgressAllow(t *testing.T) {
 		t.Errorf("allow response = %s", data)
 	}
 	// Instant unblock reached the proxy.
-	if len(eg.allowed[out.RunID]) != 1 || eg.allowed[out.RunID][0] != "models.dev" {
+	if len(eg.allowed[out]) != 1 || eg.allowed[out][0] != "models.dev" {
 		t.Errorf("proxy allow = %v", eg.allowed)
 	}
 	// Persisted to the project's extra_domains.
@@ -882,7 +973,7 @@ func TestEgressAllow(t *testing.T) {
 	}
 
 	// Bad host shapes are refused.
-	resp, _ = x.do(t, "POST", "/api/runs/"+out.RunID+"/egress-allow", map[string]string{"host": "http://x/y"}, nil)
+	resp, _ = x.do(t, "POST", "/api/runs/"+out+"/egress-allow", map[string]string{"host": "http://x/y"}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad host = %d, want 400", resp.StatusCode)
 	}

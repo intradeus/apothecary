@@ -27,6 +27,7 @@
 <nav class="top">
   <span class="brand">⚗ Apothecary</span>
   <a href="/" class:active={isActive('/')}>Runs</a>
+  <a href="/tickets" class:active={isActive('/tickets')}>Tickets</a>
   <a href="/inbox" class:active={isActive('/inbox')}>
     Inbox{#if pendingCount > 0}<span class="badge">{pendingCount}</span>{/if}
   </a>

@@ -80,6 +80,28 @@ type RunCreated struct {
 	// ProjectID scopes the run to its project (DESIGN2 §6.3); absent in
 	// pre-v2 events, projected as "".
 	ProjectID string `json:"project_id,omitempty"`
+	// TicketID links the run to its parent ticket (a ticket owns many runs);
+	// absent on pre-ticket runs and on direct/test runs, projected as "".
+	TicketID string `json:"ticket_id,omitempty"`
+	// BranchBase is the ticket's branch stem before the per-run suffix
+	// (Branch = BranchBase + "-" + run-id tail). Kept so restart and the
+	// workspace name can derive from the stem without re-parsing Branch.
+	BranchBase string `json:"branch_base,omitempty"`
+	// RunGoal is extra direction for THIS attempt ("last try broke the
+	// router — use the existing middleware"), rendered as its own prompt
+	// section. Additive: it never replaces the ticket's goal.
+	RunGoal string `json:"run_goal,omitempty"`
+	// TicketArtifactIDs snapshots the parent ticket's attachments at run
+	// start, and pins which ones this attempt saw even if the ticket changes
+	// later.
+	//
+	// There is deliberately NO run-side equivalent: the run's OWN attachments
+	// are linked in the artifacts table (run_id=<run>, scope=goal) and found
+	// via ForRun, so listing their ids here would be duplicate state that can
+	// drift. A TICKET's attachments are owned by the ticket (run_id empty,
+	// scope=ticket_goal) so they can reach EVERY run — which is exactly why
+	// ForRun cannot see them, and why their ids must ride on the event.
+	TicketArtifactIDs []string `json:"ticket_artifact_ids,omitempty"`
 }
 
 type EnvRequested struct{}

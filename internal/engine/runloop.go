@@ -983,11 +983,19 @@ func (x *exec) ensureEnv() error {
 			return err
 		}
 	}
+	// The container/workspace name derives from the branch STEM, not the
+	// suffixed actual branch: base already ends where the run-id tail begins,
+	// so workspaceName re-appending the tail would double it (apo-…-h1-h1).
+	// Legacy runs have no base — fall back to the actual branch.
+	nameBranch := rs.view.BranchBase
+	if nameBranch == "" {
+		nameBranch = rs.branch
+	}
 	spec := ports.EnvSpec{
 		RunID:         rs.runID,
 		RepoURL:       x.res.RepoRef.URL,
 		Branch:        rs.branch,
-		Name:          workspaceName(rs.branch, rs.runID),
+		Name:          workspaceName(nameBranch, rs.runID),
 		Project:       x.res.ProjectName,
 		Image:         x.res.Image,
 		EgressDomains: x.res.EgressDomains,

@@ -271,6 +271,29 @@ func (a *Adapter) folderFor(name string) string {
 	return filepath.Join(base, name)
 }
 
+// srcDir is the run's checkout — and the devcontainer CLI's "workspace
+// folder". Its BASENAME is load-bearing: for COMPOSE-based devcontainers the
+// CLI derives the docker-compose project name from it (`<basename>_devcontainer`)
+// and there is no flag to override it. When every run checked out to a folder
+// literally named "src", all runs collapsed onto one compose project — compose
+// reused the FIRST run's containers, our per-run `--id-label` never landed on
+// anything, and the next run failed with "no running container". Naming the
+// checkout after the workspace keeps each run's compose project distinct.
+//
+// The legacy <folder>/src layout wins when it is already a checkout, so
+// workspaces created before this fix keep resolving to their existing clone.
+func (a *Adapter) srcDir(name string) string {
+	if legacy := filepath.Join(a.folderFor(name), "src"); isCheckout(legacy) {
+		return legacy
+	}
+	return filepath.Join(a.folderFor(name), name)
+}
+
+func isCheckout(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
 // --- Provision --------------------------------------------------------------
 
 // upResult is `devcontainer up`'s machine-readable last stdout line.
@@ -425,8 +448,8 @@ func parseUpResult(stdout []byte) (upResult, error) {
 // mounted from. An existing checkout is kept (crash recovery; it may hold
 // agent commits via the bind mount).
 func (a *Adapter) ensureSrc(ctx context.Context, name string, spec ports.EnvSpec) (string, error) {
-	src := filepath.Join(a.folderFor(name), "src")
-	if _, err := os.Stat(filepath.Join(src, ".git")); err == nil {
+	src := a.srcDir(name)
+	if isCheckout(src) {
 		return src, nil
 	}
 	if err := os.MkdirAll(a.folderFor(name), 0o755); err != nil {
@@ -898,7 +921,7 @@ func (a *Adapter) Links(ctx context.Context, env ports.EnvID) ([]ports.AccessLin
 // (best-effort; repos without a config or with service-qualified entries
 // yield nothing).
 func (a *Adapter) declaredPorts(ctx context.Context, name string) []int {
-	src := filepath.Join(a.folderFor(name), "src")
+	src := a.srcDir(name)
 	stdout, _, code, err := a.run(ctx, a.cfg.DevcontainerBin,
 		[]string{"read-configuration", "--workspace-folder", src, "--include-merged-configuration", "--log-format", "json"}, nil, nil)
 	if err != nil || code != 0 {

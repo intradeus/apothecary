@@ -16,8 +16,8 @@ func TestCheckBranch(t *testing.T) {
 		"release-1.0",
 	}
 	for _, s := range valid {
-		if err := checkBranch(s); err != nil {
-			t.Errorf("checkBranch(%q) = %v, want nil", s, err)
+		if err := CheckBranch(s); err != nil {
+			t.Errorf("CheckBranch(%q) = %v, want nil", s, err)
 		}
 	}
 	invalid := []string{
@@ -28,8 +28,8 @@ func TestCheckBranch(t *testing.T) {
 		"car^et", "col:on", "ast*erisk", "back\\slash",
 	}
 	for _, s := range invalid {
-		if err := checkBranch(s); err == nil {
-			t.Errorf("checkBranch(%q) = nil, want error", s)
+		if err := CheckBranch(s); err == nil {
+			t.Errorf("CheckBranch(%q) = nil, want error", s)
 		}
 	}
 }

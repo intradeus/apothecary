@@ -19,7 +19,15 @@ func (f *fakeArtifacts) Associate(context.Context, []string, string, string, str
 	return nil
 }
 func (f *fakeArtifacts) ForRun(context.Context, string) ([]artifacts.Meta, error) {
-	return f.metas, nil
+	// Ticket-scoped artifacts are owned by the ticket (run_id empty), so the
+	// real store's ForRun never returns them — they resolve via Meta only.
+	var out []artifacts.Meta
+	for _, m := range f.metas {
+		if m.Scope != artifacts.ScopeTicketGoal {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 func (f *fakeArtifacts) ForPing(_ context.Context, pingID, scope string) (out []artifacts.Meta, _ error) {
 	for _, m := range f.metas {
@@ -36,6 +44,14 @@ func (f *fakeArtifacts) Bytes(_ context.Context, id string) ([]byte, artifacts.M
 		}
 	}
 	return nil, artifacts.Meta{}, artifacts.ErrNotFound
+}
+func (f *fakeArtifacts) Meta(_ context.Context, id string) (artifacts.Meta, error) {
+	for _, m := range f.metas {
+		if m.ID == id {
+			return m, nil
+		}
+	}
+	return artifacts.Meta{}, artifacts.ErrNotFound
 }
 func (f *fakeArtifacts) DeleteForRun(context.Context, string) error { return nil }
 

@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"apothecary/internal/event"
@@ -64,8 +65,9 @@ func TestReduceFullLifecycle(t *testing.T) {
 		t.Errorf("timestamps: created %v updated %v", v.CreatedAt, v.UpdatedAt)
 	}
 
-	// Reduce must equal the incremental fold.
-	if got := Reduce(evs); got != v {
+	// Reduce must equal the incremental fold (View holds slices now, so this
+	// is a deep comparison).
+	if got := Reduce(evs); !reflect.DeepEqual(got, v) {
 		t.Errorf("Reduce != fold:\n got %+v\nwant %+v", got, v)
 	}
 }

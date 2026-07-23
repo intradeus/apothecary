@@ -22,7 +22,18 @@ func (d *memArtifactDB) InsertArtifact(_ context.Context, m artifacts.Meta) erro
 	d.rows[m.ID] = m
 	return nil
 }
-func (d *memArtifactDB) AssociateArtifacts(context.Context, []string, string, string, string) error {
+
+// AssociateArtifacts mirrors the SQL: only `orphan` rows are claimed, so a
+// second Associate for an already-attached id is a no-op.
+func (d *memArtifactDB) AssociateArtifacts(_ context.Context, ids []string, runID, pingID, scope string) error {
+	for _, id := range ids {
+		m, ok := d.rows[id]
+		if !ok || m.Scope != artifacts.ScopeOrphan {
+			continue
+		}
+		m.RunID, m.PingID, m.Scope = runID, pingID, scope
+		d.rows[id] = m
+	}
 	return nil
 }
 func (d *memArtifactDB) ArtifactsForRun(context.Context, string) ([]artifacts.Meta, error) {
