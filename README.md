@@ -23,7 +23,9 @@ exactly two touchpoints — plan approval and final review.
 - A Linux host with **Docker** (the reference deployment uses host
   networking and the docker socket).
 - A **[Coder](https://coder.com) deployment** the host can reach (a local
-  `docker compose` Coder works fine) and a session token for it.
+  `docker compose` Coder works fine) and a **long-lived API token** for it
+  (see [Configure](#configure-all-in-the-ui) — a `coder login` session token
+  works but expires, silently stalling provisioning).
 - A **forge account**: GitLab PAT (`api` scope, Developer+ on the target
   project) or GitHub PAT (`repo` scope, or fine-grained Contents:RW +
   Pull requests:RW).
@@ -60,8 +62,26 @@ automatically. Database migrations apply at boot.
 
 1. **Integrations** — add and **Test** each:
    - *Forge*: GitLab or GitHub + token.
-   - *Provisioner*: Coder URL + session token (+ template name, default
+   - *Provisioner*: Coder URL + **API token** (+ template name, default
      `apothecary` — the engine manages the template's content for you).
+
+     > **Use a long-lived API token, not a login session token.** The engine
+     > holds this token and drives the `coder` CLI with it for the life of the
+     > deployment. A token from `coder login` is a *session* token governed by
+     > the deployment's session-duration setting (24h by default): once it
+     > expires, provisioning fails and existing workspaces show as
+     > **`workspace?`** (status unknown) in the UI. Instead mint a dedicated
+     > token:
+     >
+     > ```sh
+     > coder tokens create --name apothecary --lifetime 1y
+     > ```
+     >
+     > Paste that into the *API token* field and **Test**. Its lifetime is
+     > capped by the deployment's `CODER_MAX_TOKEN_LIFETIME` (a Coder admin
+     > setting) — raise that server-side if you need longer than the default.
+     > Rotate by creating a new token and updating the integration; the old
+     > one can then be revoked with `coder tokens remove <name>`.
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
      credentials) or codex (API key and/or ChatGPT `auth.json`).
 2. **Flows** — create one (a starter skeleton is offered; the editor

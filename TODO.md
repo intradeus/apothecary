@@ -5,5 +5,6 @@
 - 7) redo everything in DDD
 - 13) Abstract "forge MR" behind an 'Action' type (so 4 types : agent, command, human_gate and action). Actions being all 'hard coded' actions provided by apothecary.
 - 14) Allow user to specify a harness agent too, as well as the apo's project's agents.
-- 15) Set git email and name
-- 16) more devcontainer issues (http://127.0.0.1:8081/runs/01KY5TEDCXF864344Z3FE3NY5D)
+- 15) Import PR comments and choose which to fix/how
+- 16) since we're using proxies for firewalls, can we live update the firewall ? Like if an agent gets blocked cuz xyz.com is not answering, fails 3x, enters human debug mode, human updates firewall, i want the instance to instantly catch it so that when user clicks 'resolved' it doesnt have to restart the full instance.
+- 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now. Check the statuses of coder for inspiration.

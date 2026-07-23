@@ -703,6 +703,15 @@ func (a *Adapter) status(ctx context.Context, name string) (ports.EnvStatus, err
 		}
 		switch r.LatestBuild.Status {
 		case "running":
+			// Coder's build status is a PROVISION-lifecycle fact, not a
+			// liveness signal: it stays "running" after the container/host
+			// backing the workspace dies, while the agent shows disconnected
+			// (the "Running on the dashboard, but 'agent has disconnected'
+			// when you open it" state). The agent's connection status is the
+			// real health signal, so confirm before reporting the env live.
+			if st, ok := a.agentHealth(ctx, name); ok {
+				return st, nil
+			}
 			return ports.EnvRunning, nil
 		case "pending", "starting":
 			return ports.EnvStarting, nil
@@ -715,6 +724,73 @@ func (a *Adapter) status(ctx context.Context, name string) (ports.EnvStatus, err
 		}
 	}
 	return ports.EnvAbsent, nil
+}
+
+// agentHealth refines a nominally-"running" workspace by its agents' live
+// connection status — the same signal the Coder dashboard shows and that
+// `waitReady` proves via its post-build SSH probe. It reads the workspace's
+// REST record (authoritative for agent state, unlike the minimal `coder list`
+// fields) and maps:
+//
+//	any agent connected      → running   (workspace is reachable)
+//	none connected, some connecting → starting (agent still coming up)
+//	agents exist, none connected/connecting → stopped (disconnected/timeout:
+//	    the compute behind the agent is gone — the user's dead-workspace case)
+//
+// It returns ok=false when it genuinely can't tell — REST error, a template
+// that exposes no agent — so the caller keeps trusting the build status
+// rather than flapping a healthy workspace to "stopped" on a transient blip.
+func (a *Adapter) agentHealth(ctx context.Context, name string) (ports.EnvStatus, bool) {
+	owner := a.owner(ctx)
+	u := fmt.Sprintf("%s/api/v2/users/%s/workspace/%s", a.cfg.URL, url.PathEscape(owner), url.PathEscape(name))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("Coder-Session-Token", a.cfg.Token)
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var ws struct {
+		LatestBuild struct {
+			Resources []struct {
+				Agents []struct {
+					Status string `json:"status"`
+				} `json:"agents"`
+			} `json:"resources"`
+		} `json:"latest_build"`
+	}
+	if err := json.Unmarshal(body, &ws); err != nil {
+		return "", false
+	}
+	var total, connected, connecting int
+	for _, res := range ws.LatestBuild.Resources {
+		for _, ag := range res.Agents {
+			total++
+			switch ag.Status {
+			case "connected":
+				connected++
+			case "connecting":
+				connecting++
+			}
+		}
+	}
+	switch {
+	case total == 0:
+		return "", false // no agent to probe — trust the build status
+	case connected > 0:
+		return ports.EnvRunning, true
+	case connecting > 0:
+		return ports.EnvStarting, true
+	default:
+		return ports.EnvStopped, true // disconnected/timeout: not live
+	}
 }
 
 func (a *Adapter) Destroy(ctx context.Context, env ports.EnvID) error {

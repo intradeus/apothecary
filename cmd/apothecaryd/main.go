@@ -308,6 +308,29 @@ func cmdServe(args []string) error {
 		}
 	}()
 
+	// Live-workspace reconciler: refreshes each run's real container status
+	// (running/stopped/removed) so the workspace badge reflects reality, not
+	// just the event-sourced env_id. Runs far more often than the reaper —
+	// its whole job is catching out-of-band container changes promptly. An
+	// eager first pass populates the badge without waiting a full interval.
+	go func() {
+		if err := e.ReconcileEnvsOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
+			log.Error("env reconcile pass failed", "err", err)
+		}
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if err := e.ReconcileEnvsOnce(reaperCtx); err != nil {
+					log.Error("env reconcile pass failed", "err", err)
+				}
+			case <-reaperCtx.Done():
+				return
+			}
+		}
+	}()
+
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("apothecaryd listening", "addr", boot.Listen, "dev", *dev)

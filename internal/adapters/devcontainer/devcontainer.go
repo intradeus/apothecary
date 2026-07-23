@@ -151,7 +151,7 @@ type Adapter struct {
 // swapped in tests. tee, when non-nil, receives stdout+stderr AS THEY
 // ARRIVE (live exec log, ports.ExecLogTailer).
 type CmdRunner interface {
-	Run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer) (stdout, stderr []byte, exitCode int, err error)
+	Run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) (stdout, stderr []byte, exitCode int, err error)
 }
 
 func New(cfg Config) *Adapter {
@@ -186,11 +186,13 @@ func NewWithRunner(cfg Config, r CmdRunner) *Adapter {
 
 type cliRunner struct{}
 
-func (c *cliRunner) Run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
+func (c *cliRunner) Run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) ([]byte, []byte, int, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	// GIT_TERMINAL_PROMPT=0: the engine-side clone must fail, not hang,
-	// on missing/invalid credentials. Inert for docker/devcontainer.
+	// on missing/invalid credentials. Inert for docker/devcontainer. env
+	// carries per-call additions (see the Provision `up` call).
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(cmd.Env, env...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -227,10 +229,10 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 // never ran). Nonzero exits are results, never retried: docker reserves
 // 125–127 for its own errors and `devcontainer exec` propagates the remote
 // command's code verbatim, so a clean exit is authoritative.
-func (a *Adapter) run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
+func (a *Adapter) run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) ([]byte, []byte, int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		stdout, stderr, code, err := a.runner.Run(ctx, bin, args, stdin, tee)
+		stdout, stderr, code, err := a.runner.Run(ctx, bin, args, stdin, tee, env...)
 		if err == nil {
 			return stdout, stderr, code, nil
 		}
@@ -352,7 +354,14 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 		}
 		args = append(args, "--additional-features", `{"./apothecary-firewall":{}}`)
 	}
-	stdout, stderr, code, err := a.run(ctx, a.cfg.DevcontainerBin, args, nil, nil)
+	// BUILDX_BAKE_ENTITLEMENTS_FS=0: compose-based devcontainers build via
+	// `docker buildx bake`, which (buildx >=0.17) gates any fs.read outside
+	// the compose dir behind an interactive entitlement prompt. `devcontainer
+	// up` runs non-interactively, so the prompt can't be answered and the
+	// build aborts with "additional privileges requested". Disabling the
+	// filesystem entitlement check restores the pre-0.17 behavior. Scoped to
+	// this call so it never affects the other docker/git subprocesses.
+	stdout, stderr, code, err := a.run(ctx, a.cfg.DevcontainerBin, args, nil, nil, "BUILDX_BAKE_ENTITLEMENTS_FS=0")
 	if err != nil {
 		return "", err
 	}

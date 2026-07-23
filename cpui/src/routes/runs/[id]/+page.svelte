@@ -280,11 +280,13 @@
   <div class="row spread" style="margin-bottom:6px">
     <h1 style="margin:0">{run.ticket_title}</h1>
     <span class="chip"><span class="dot" style="background:{stateColors[run.state]}"></span>{run.state}</span>
-    <WorkspaceBadge state={run.state} envId={run.env_id} />
+    <WorkspaceBadge state={run.state} envId={run.env_id} envStatus={run.env_status} />
   </div>
   <div class="row small muted" style="margin-bottom:16px">
     <span class="mono">{run.run_id}</span>
     <span>flow {run.flow_name}</span>
+    {#if run.branch}<span title="Git branch for this run">branch <span class="mono">{run.branch}</span></span>{/if}
+    {#if run.env_id}<span title="Workspace / container name">workspace <span class="mono">{run.env_id}</span></span>{/if}
     {#if totals.turns > 0}<span>{fmtCost(totals.cost)} · {totals.turns} turns</span>{/if}
     {#each links as l (l.kind + (l.url || l.command))}
       {#if l.url}

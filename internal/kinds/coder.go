@@ -12,7 +12,7 @@ func (Coder) Descriptor() Descriptor {
 		Port: "provisioner", Kind: "coder", Label: "Coder",
 		Fields: []Field{
 			{Name: "url", Label: "Coder server URL", Placeholder: "http://localhost:7080", Required: true},
-			{Name: "token", Label: "Session token", Secret: true, Required: true},
+			{Name: "token", Label: "API token", Placeholder: "long-lived: coder tokens create --lifetime 1y", Secret: true, Required: true},
 			{Name: "template", Label: "Template name", Default: "apothecary", Required: true},
 			{Name: "username", Label: "Coder username", Placeholder: "(auto-detected from token)"},
 		},

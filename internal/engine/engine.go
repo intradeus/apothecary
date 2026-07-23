@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -122,6 +123,16 @@ type Engine struct {
 	// §9 envcheck jobs: in-memory, last 20 (diagnostics, not history).
 	envchecks     map[string]*envCheckState
 	envcheckOrder []string
+
+	// envStatus is the reconciled live container status per run (keyed by
+	// run id), refreshed by ReconcileEnvsOnce. It is deliberately NOT part of
+	// the event-sourced projection: a container stopped/removed out-of-band
+	// is external state, not a run-authored transition, so it is tracked in
+	// memory and surfaced to the workspace badge, never folded into the log.
+	// Empty for a run means "not yet reconciled" — the read path falls back
+	// to the env_id-based liveness guess.
+	envStatusMu sync.Mutex
+	envStatus   map[string]ports.EnvStatus
 }
 
 type runHandle struct {
@@ -249,6 +260,7 @@ func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
 		pings:     map[string]*Ping{},
 		tokens:    map[string]string{},
 		envchecks: map[string]*envCheckState{},
+		envStatus: map[string]ports.EnvStatus{},
 	}
 }
 
@@ -1187,6 +1199,79 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter time.Durati
 		e.log.Info("reaper: destroyed env of completed run", "run", id, "env", v.EnvID)
 	}
 	return nil
+}
+
+// ReconcileEnvsOnce refreshes the live container status of every run that
+// still holds an env_id, by querying the provisioner (docker/coder) rather
+// than the event log. This is what lets the workspace badge tell "live" from
+// "stopped/removed out-of-band" — the projection only knows an env was
+// provisioned and not yet destroyed, never whether the container is actually
+// up. The whole map is rebuilt each pass (runs whose env_id is gone drop out).
+//
+// A failed probe (Resolve or Status errored: provisioner unreachable, expired
+// coder session, deleted project) records EnvUnknown — NEVER the run's prior
+// value. Carrying the last-known status forward turns a persistent failure
+// into a permanent lie: a coder workspace last seen "running" before the
+// session expired would stay green "live" forever. Honest "unknown" beats a
+// stale "live"; a genuinely transient blip self-heals on the next 30s pass.
+func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
+	ids, err := e.store.RunIDs(ctx)
+	if err != nil {
+		return err
+	}
+	next := map[string]ports.EnvStatus{}
+	// Resolutions are cached per project within the pass — many runs share
+	// one project, and Resolve is not free.
+	resolved := map[string]*Resolution{}
+	defer func() {
+		for _, res := range resolved {
+			res.release()
+		}
+	}()
+	for _, id := range ids {
+		evs, err := e.store.Events(ctx, id, 0)
+		if err != nil {
+			return err
+		}
+		v := run.Reduce(evs)
+		// A run with no env_id has no workspace to report on; pre-v2 runs with
+		// no project can't be resolved to a provisioner (§6.1).
+		if v.EnvID == "" || v.ProjectID == "" {
+			continue
+		}
+		res, ok := resolved[v.ProjectID]
+		if !ok {
+			res, err = e.resolver.Resolve(ctx, v.ProjectID)
+			if err != nil {
+				e.log.Debug("env reconcile: resolve failed", "run", id, "project", v.ProjectID, "err", err)
+				next[id] = ports.EnvUnknown
+				continue
+			}
+			resolved[v.ProjectID] = res
+		}
+		st, err := res.Envp.Status(ctx, ports.EnvID(v.EnvID))
+		if err != nil {
+			e.log.Debug("env reconcile: status probe failed", "run", id, "env", v.EnvID, "err", err)
+			next[id] = ports.EnvUnknown
+			continue
+		}
+		next[id] = st
+	}
+	e.envStatusMu.Lock()
+	e.envStatus = next
+	e.envStatusMu.Unlock()
+	return nil
+}
+
+// EnvStatuses returns a snapshot copy of the reconciled per-run live
+// container status (keyed by run id). A run absent from the map has not been
+// reconciled yet; callers should fall back to the env_id-based guess.
+func (e *Engine) EnvStatuses() map[string]ports.EnvStatus {
+	e.envStatusMu.Lock()
+	defer e.envStatusMu.Unlock()
+	out := make(map[string]ports.EnvStatus, len(e.envStatus))
+	maps.Copy(out, e.envStatus)
+	return out
 }
 
 func (e *Engine) notify(ctx context.Context, n ports.Notification) {

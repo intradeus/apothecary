@@ -80,6 +80,12 @@ const (
 	EnvRunning  EnvStatus = "running"
 	EnvStopped  EnvStatus = "stopped"
 	EnvAbsent   EnvStatus = "absent"
+	// EnvUnknown is NOT returned by any adapter's Status — a provisioner
+	// either knows a workspace's state or errors. The engine synthesizes it
+	// when a status probe fails (provisioner unreachable, expired session,
+	// deleted project) so the UI can show "can't tell" instead of a stale
+	// last-known value dressed up as live.
+	EnvUnknown EnvStatus = "unknown"
 )
 
 type EnvProvisioner interface {

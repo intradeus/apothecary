@@ -41,8 +41,15 @@ type View struct {
 	FlowName     string    `json:"flow_name"`
 	FlowHash     string    `json:"flow_hash"`
 	CurrentStage string    `json:"current_stage,omitempty"`
+	Branch       string    `json:"branch,omitempty"` // the run's git branch (from RunCreated)
 	MRURL        string    `json:"mr_url,omitempty"`
 	EnvID        string    `json:"env_id,omitempty"`
+	// EnvStatus is the reconciled LIVE container status (running/starting/
+	// stopped/absent) — NOT a projected column and never set by Apply. The
+	// read path fills it from the engine's reconciler so the workspace badge
+	// can tell a live env from one stopped/removed out-of-band; empty means
+	// "not reconciled" and the UI falls back to the env_id liveness guess.
+	EnvStatus    string    `json:"env_status,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -71,6 +78,7 @@ func Apply(v *View, e *event.Event) {
 		v.TicketGoal = p.TicketGoal
 		v.FlowName = p.FlowName
 		v.FlowHash = p.FlowHash
+		v.Branch = p.Branch
 		v.CreatedAt = e.TS
 	case *event.EnvRequested:
 		v.State = Provisioning

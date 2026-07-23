@@ -9,8 +9,13 @@ export interface RunView {
   flow_name: string;
   flow_hash: string;
   current_stage?: string;
+  branch?: string;
   mr_url?: string;
   env_id?: string;
+  // Reconciled live container status. 'unknown' = the provisioner couldn't
+  // be reached (expired session, deleted project). Field absent = not yet
+  // reconciled; the badge falls back to env_id.
+  env_status?: 'running' | 'starting' | 'stopped' | 'absent' | 'unknown';
   created_at: string;
   updated_at: string;
 }

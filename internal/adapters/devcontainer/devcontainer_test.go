@@ -22,6 +22,7 @@ type call struct {
 	bin   string
 	args  []string
 	stdin []byte
+	env   []string
 }
 
 // scriptRunner replays canned responses and records calls.
@@ -37,8 +38,8 @@ type response struct {
 	err    error
 }
 
-func (s *scriptRunner) Run(_ context.Context, bin string, args []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
-	s.calls = append(s.calls, call{bin: bin, args: args, stdin: stdin})
+func (s *scriptRunner) Run(_ context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) ([]byte, []byte, int, error) {
+	s.calls = append(s.calls, call{bin: bin, args: args, stdin: stdin, env: env})
 	if len(s.responses) == 0 {
 		return nil, nil, 0, nil
 	}

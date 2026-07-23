@@ -50,8 +50,11 @@ func (s *scriptRunner) Run(_ context.Context, args []string, stdin []byte, tee i
 }
 
 func newTestAdapter(r CmdRunner) *Adapter {
+	// Dead port on purpose: status()'s agent-health REST probe gets an instant
+	// connection-refused and falls back to the build status, keeping these
+	// CLI-focused tests hermetic (agent-health has its own server-backed test).
 	a := NewWithRunner(Config{
-		URL: "http://localhost:7080", Token: "tok", Template: "custom-tmpl", Owner: "lu",
+		URL: "http://127.0.0.1:1", Token: "tok", Template: "custom-tmpl", Owner: "lu",
 	}, r)
 	a.retryDelay = time.Millisecond
 	// Never spawn a real `coder ssh` tunnel in unit tests.
@@ -338,6 +341,63 @@ func TestStatusMapping(t *testing.T) {
 			t.Errorf("%s -> %s, want %s", tc.json, st, tc.want)
 		}
 	}
+}
+
+// A workspace whose build is "running" but whose agent has disconnected is
+// the "Running on the dashboard, dead underneath" case: status() must consult
+// agent health and stop reporting it live.
+func TestStatusRunningRefinedByAgentHealth(t *testing.T) {
+	cases := []struct {
+		name        string
+		agentStatus string // "" ⇒ resources present but no agents
+		want        ports.EnvStatus
+	}{
+		{"connected", "connected", ports.EnvRunning},
+		{"connecting", "connecting", ports.EnvStarting},
+		{"disconnected", "disconnected", ports.EnvStopped},
+		{"timeout", "timeout", ports.EnvStopped},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v2/users/lu/workspace/ws" {
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = io.WriteString(w, `{"latest_build":{"resources":[{"agents":[{"name":"main","status":"`+tc.agentStatus+`"}]}]}}`)
+			}))
+			defer srv.Close()
+			r := &scriptRunner{responses: []response{{stdout: `[{"name":"ws","latest_build":{"status":"running"}}]`, code: 0}}}
+			a := NewWithRunner(Config{URL: srv.URL, Token: "tok", Owner: "lu"}, r)
+			a.retryDelay = time.Millisecond
+			st, err := a.Status(context.Background(), "ws")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st != tc.want {
+				t.Errorf("build running + agent %q -> %s, want %s", tc.agentStatus, st, tc.want)
+			}
+		})
+	}
+
+	// REST unreachable, or a template with no agents: trust the build status
+	// rather than flapping a healthy workspace to stopped.
+	t.Run("no-agents-falls-back-to-running", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"latest_build":{"resources":[{"agents":[]}]}}`)
+		}))
+		defer srv.Close()
+		r := &scriptRunner{responses: []response{{stdout: `[{"name":"ws","latest_build":{"status":"running"}}]`, code: 0}}}
+		a := NewWithRunner(Config{URL: srv.URL, Token: "tok", Owner: "lu"}, r)
+		a.retryDelay = time.Millisecond
+		st, err := a.Status(context.Background(), "ws")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st != ports.EnvRunning {
+			t.Errorf("no agents -> %s, want running (fallback)", st)
+		}
+	})
 }
 
 func TestTunnelSupervisorRestartsAndStops(t *testing.T) {

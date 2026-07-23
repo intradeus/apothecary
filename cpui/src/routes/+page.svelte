@@ -177,7 +177,7 @@
             <td>
               <span class="chip"><span class="dot" style="background:{stateColors[r.state]}"></span>{r.state}</span>
             </td>
-            <td><WorkspaceBadge state={r.state} envId={r.env_id} /></td>
+            <td><WorkspaceBadge state={r.state} envId={r.env_id} envStatus={r.env_status} /></td>
             <td class="mono">{r.current_stage ?? ''}</td>
             <td class="small">{projectName(r.project_id) ?? (r.project_id ? r.project_id.slice(-6) : '—')}</td>
             <td class="mono">{r.flow_name}</td>

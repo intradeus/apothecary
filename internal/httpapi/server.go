@@ -305,6 +305,10 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := r.URL.Query().Get("project")
+	// One snapshot of the reconciler's live-status map for the whole list —
+	// the workspace badge reads env_status to tell a live env from a stopped
+	// one (env_id alone can't, see run.View.EnvStatus).
+	envStatus := s.Engine.EnvStatuses()
 	views := make([]run.View, 0, len(ids))
 	for _, id := range ids {
 		evs, err := s.Store.Events(r.Context(), id, 0)
@@ -318,6 +322,11 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		v := run.Reduce(evs)
 		if project != "" && v.ProjectID != project {
 			continue
+		}
+		if v.EnvID != "" {
+			if st, ok := envStatus[v.RunID]; ok {
+				v.EnvStatus = string(st)
+			}
 		}
 		views = append(views, v)
 	}
@@ -334,7 +343,13 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	if len(last) > 100 {
 		last = last[len(last)-100:]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"run": run.Reduce(evs), "events": last})
+	v := run.Reduce(evs)
+	if v.EnvID != "" {
+		if st, ok := s.Engine.EnvStatuses()[v.RunID]; ok {
+			v.EnvStatus = string(st)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": v, "events": last})
 }
 
 func (s *Server) postAbort(w http.ResponseWriter, r *http.Request) {

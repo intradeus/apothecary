@@ -120,8 +120,12 @@ func TestLiveV1FlowParses(t *testing.T) {
 	if dbg.Ping != PingManualDebug || dbg.Payload != PayloadWorkspace || dbg.Edge(EdgeReject).To != TerminalAbort {
 		t.Errorf("debug_test gate = %+v", dbg)
 	}
-	if f.Stage("final_gate").Edge(EdgeReject).To != TerminalAbort {
-		t.Errorf("final_gate.on_reject = %+v, want abort", f.Stage("final_gate").Edge(EdgeReject))
+	// Approval gates (plan_gate, review, final_gate) reject into a feedback
+	// loop — rejecting the final MR review sends the agent back to build to
+	// address comments, not abort. The manual_debug rescue gates (asserted
+	// above via debug_test) are the ones that terminate at abort.
+	if fg := f.Stage("final_gate").Edge(EdgeReject); fg == nil || fg.To != "build" || fg.Feed != FeedFeedback {
+		t.Errorf("final_gate.on_reject = %+v, want feedback loop to build", f.Stage("final_gate").Edge(EdgeReject))
 	}
 
 	// The flow's failure philosophy: every agent/command stage declares
