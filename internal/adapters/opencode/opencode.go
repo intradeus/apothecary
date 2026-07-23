@@ -24,6 +24,7 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/wshome"
 )
 
 // Config is reserved for adapter-level knobs; auth material arrives per
@@ -42,9 +43,22 @@ func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
 const (
 	promptPath = "/apothecary/prompt.txt"
 	replyPath  = "/apothecary/reply.txt"
-	homeConfig = "/home/apothecary/.config/opencode"
-	authPath   = "/home/apothecary/.local/share/opencode/auth.json"
+	// defaultHome is the §8 pipeline image's workspace user. Repo-authored
+	// devcontainers run the REPO's user instead, so the real home is probed
+	// per env (see configDir/authFile) and this is only the fallback.
+	defaultHome = "/home/apothecary"
 )
+
+// configDir/authFile locate opencode's config in the home of the user it
+// actually runs as — writing them under a hardcoded home makes opencode
+// start with no provider and no agents.
+func (a *Adapter) configDir(ctx context.Context, env ports.EnvID) string {
+	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".config", "opencode")
+}
+
+func (a *Adapter) authFile(ctx context.Context, env ports.EnvID) string {
+	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".local", "share", "opencode", "auth.json")
+}
 
 // PrepareEnv generates harness-native config from the project's agent
 // library specs (§5.2, DESIGN3 §1): one agent markdown per spec plus the
@@ -52,9 +66,10 @@ const (
 // lands in the workspace user's config dir — outside the repo, so nothing
 // needs git-excluding, regenerated every provision.
 func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+	cfgDir := a.configDir(ctx, env)
 	for _, s := range specs {
 		md := agentMarkdown(s)
-		p := path.Join(homeConfig, "agent", s.Name+".md")
+		p := path.Join(cfgDir, "agent", s.Name+".md")
 		if err := a.envp.WriteFile(ctx, env, p, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("write agent config %s: %w", s.Name, err)
 		}
@@ -77,7 +92,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 	if err != nil {
 		return err
 	}
-	if err := a.envp.WriteFile(ctx, env, path.Join(homeConfig, "opencode.json"), data, 0o644); err != nil {
+	if err := a.envp.WriteFile(ctx, env, path.Join(cfgDir, "opencode.json"), data, 0o644); err != nil {
 		return fmt.Errorf("write opencode.json: %w", err)
 	}
 
@@ -92,7 +107,7 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 	if len(data) == 0 {
 		return nil
 	}
-	if err := a.envp.WriteFile(ctx, env, authPath, data, 0o600); err != nil {
+	if err := a.envp.WriteFile(ctx, env, a.authFile(ctx, env), data, 0o600); err != nil {
 		return fmt.Errorf("seed auth.json: %w", err)
 	}
 	return nil

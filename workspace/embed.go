@@ -28,3 +28,12 @@ var Template embed.FS
 //
 //go:embed feature
 var Feature embed.FS
+
+// HarnessFeature is the injected devcontainer feature that installs the
+// project's coding harness into repo-authored dev containers, which run the
+// REPO's image and so never get the §8 pipeline image that bakes it in. The
+// per-project install commands are NOT here — the adapter generates them
+// into the materialized feature dir (harness-binaries + harness-install.sh).
+//
+//go:embed harness-feature
+var HarnessFeature embed.FS

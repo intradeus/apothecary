@@ -21,7 +21,13 @@ exactly two touchpoints — plan approval and final review.
 ## Prerequisites
 
 - A Linux host with **Docker** (the reference deployment uses host
-  networking and the docker socket).
+  networking and the docker socket). The devcontainer provisioner runs each
+  run's workspace inside its own **Docker-in-Docker sandbox** (a `--privileged`
+  `docker:dind` container), so repo compose files run verbatim with no
+  cross-run collisions and teardown is total; `--privileged` is required
+  (rootless/sysbox is a future option). Its `RunsDir` must be a **persistent
+  path, not under `/tmp`** (dind masks `/tmp`) — the default
+  `/var/lib/apothecary/runs` is fine.
 - A **[Coder](https://coder.com) deployment** the host can reach (a local
   `docker compose` Coder works fine) and a **long-lived API token** for it
   (see [Configure](#configure-all-in-the-ui) — a `coder login` session token

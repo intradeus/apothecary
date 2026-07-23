@@ -6,7 +6,8 @@
 - 13) Abstract "forge MR" behind an 'Action' type (so 4 types : agent, command, human_gate and action). Actions being all 'hard coded' actions provided by apothecary.
 - 14) Allow user to specify a harness agent too, as well as the apo's project's agents.
 - 15) Import PR comments and choose which to fix/how
-- 16) since we're using proxies for firewalls, can we live update the firewall ? Like if an agent gets blocked cuz xyz.com is not answering, fails 3x, enters human debug mode, human updates firewall, i want the instance to instantly catch it so that when user clicks 'resolved' it doesnt have to restart the full instance.
+- 16) since we're using proxies for firewalls, can we live update the firewall ? Like if an agent gets blocked cuz xyz.com is not answering, fails 3x, enters human debug mode, human updates firewall, i want the instance to instantly catch it so that when user clicks 'resolved' it doesnt have to restart the full instance. With new dind sandboxing : apply the allowlist at the DinD boundary, sandbox-boundary egress firewall
 - 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now. Check the statuses of coder for inspiration.
 - 18) Add option to branch from something else than the main branch
-- 19) the ticket provides a goal+artifacts, but when starting a run we should be able to ALSO provide a run's goal+artifacts.
+- 19) DinD sandbox follow-ups: (a) sandbox-boundary egress firewall (default-deny the whole sandbox incl. compose side services — closes the "compose ⇒ firewall off" hole; see 16); (b) shared pull-through registry mirror + `--registry-mirror` on the inner dockerd to warm image pulls across runs (also replaces the per-run save|load for the pipeline image); (c) sysbox runtime to drop `--privileged`; (d) sandbox resource caps (`--memory`/`--cpus`) as project workspace config.
+- 20) Delete the coder adapter — devcontainer+DinD is the path forward; coder is unmaintained.

@@ -31,6 +31,7 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/wshome"
 )
 
 type Config struct{}
@@ -48,10 +49,17 @@ const (
 	promptPath = "/apothecary/prompt.txt"
 	replyPath  = "/apothecary/reply.txt"
 	rolesDir   = "/apothecary/agents"
-	codexHome  = "/home/apothecary/.codex"
-	authPath   = codexHome + "/auth.json"
-	configPath = codexHome + "/config.toml"
+	// defaultHome is the §8 pipeline image's workspace user. Repo-authored
+	// devcontainers run the REPO's user instead, so the real home is probed
+	// per env and this is only the fallback.
+	defaultHome = "/home/apothecary"
 )
+
+// codexHome locates .codex in the home of the user codex actually runs as —
+// under a hardcoded home the config and auth are silently invisible to it.
+func (a *Adapter) codexHome(ctx context.Context, env ports.EnvID) string {
+	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".codex")
+}
 
 // PrepareEnv generates codex-native config (§13): config.toml registering
 // the ask_human MCP server, plus one role file per .apothecary/agents spec —
@@ -68,7 +76,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 command = "/opt/apothecary/shim"
 args = ["ask-human"]
 `
-	if err := a.envp.WriteFile(ctx, env, configPath, []byte(cfg), 0o644); err != nil {
+	if err := a.envp.WriteFile(ctx, env, path.Join(a.codexHome(ctx, env), "config.toml"), []byte(cfg), 0o644); err != nil {
 		return fmt.Errorf("write config.toml: %w", err)
 	}
 	return nil
@@ -80,7 +88,7 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 	if len(data) == 0 {
 		return nil
 	}
-	if err := a.envp.WriteFile(ctx, env, authPath, data, 0o600); err != nil {
+	if err := a.envp.WriteFile(ctx, env, path.Join(a.codexHome(ctx, env), "auth.json"), data, 0o600); err != nil {
 		return fmt.Errorf("seed auth.json: %w", err)
 	}
 	return nil

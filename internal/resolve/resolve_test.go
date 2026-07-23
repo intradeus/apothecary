@@ -104,6 +104,30 @@ func (altHarness) Binary() string          { return "alt-bin" }
 func (altHarness) InstallLayer() []string  { return []string{"RUN install-alt"} }
 func (altHarness) EgressDomains() []string { return []string{"alt.example.com"} }
 
+// The harness install is handed to provisioners that don't get the §8 image
+// as plain shell, with its prerequisites derived from the command itself —
+// so nothing assumes a runtime a given harness may not need.
+func TestHarnessInstallShellAndRequires(t *testing.T) {
+	if got := shellLines([]string{"RUN npm install -g opencode-ai@1.2.3", "ENV X=1"}); !slices.Equal(
+		got, []string{"npm install -g opencode-ai@1.2.3"}) {
+		t.Errorf("shellLines = %q (RUN unwrapped, non-RUN dropped)", got)
+	}
+	cases := []struct {
+		cmds []string
+		want []string
+	}{
+		{[]string{"npm install -g opencode-ai@1"}, []string{"npm"}},
+		{[]string{"curl -fsSL https://x.dev/i | sh"}, []string{"curl"}},
+		{[]string{"pip install x", "pip install y"}, []string{"pip"}}, // deduped
+		{[]string{"sh -c 'echo hi'"}, nil},                            // always-present shell noise
+	}
+	for _, tc := range cases {
+		if got := requiredTools(tc.cmds); !slices.Equal(got, tc.want) {
+			t.Errorf("requiredTools(%q) = %q, want %q", tc.cmds, got, tc.want)
+		}
+	}
+}
+
 func TestResolveMultiHarness(t *testing.T) {
 	key, _ := secrets.ParseKey(secrets.GenerateKey())
 	svc := confstore.New(confstore.NewMem(), key)

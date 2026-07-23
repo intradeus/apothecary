@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 
 	"apothecary/internal/agentspec"
@@ -163,11 +164,22 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	runners := make(map[string]ports.AgentRunner, len(byKind))
 	providerEnv := map[string]string{}
 	var installLayers, harnessBinaries []string
+	var harnessInstall []ports.HarnessInstall
 	egressContribs := [][]string{account.EgressDomains()}
 	for _, k := range kindList {
 		h := byKind[k]
 		runners[k] = h
-		installLayers = append(installLayers, h.InstallLayer()...)
+		layer := h.InstallLayer()
+		installLayers = append(installLayers, layer...)
+		// Same install, vendor-neutral: provisioners that DON'T get the §8
+		// image (a repo-authored devcontainer runs the repo's own image) have
+		// to install the harness in-workspace, and they need shell, not
+		// Dockerfile syntax.
+		if cmds := shellLines(layer); len(cmds) > 0 {
+			harnessInstall = append(harnessInstall, ports.HarnessInstall{
+				Binary: h.Binary(), Requires: requiredTools(cmds), Commands: cmds,
+			})
+		}
 		egressContribs = append(egressContribs, h.EgressDomains())
 		for ek, ev := range h.EnvVars() {
 			providerEnv[ek] = ev
@@ -248,6 +260,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		HarnessKinds:    kindList,
 		HarnessBinary:   harness.Binary(),
 		HarnessBinaries: harnessBinaries,
+		HarnessInstall:  harnessInstall,
 		Envp:            prov,
 		Runner:          harness,
 		Runners:         runners,
@@ -377,6 +390,46 @@ func (r *Resolver) Close() {
 
 // egressDomains derives the firewall allowlist (DESIGN2 §8.4): repo host ∪
 // adapter contributions ∪ project extras, deduped and sorted.
+// shellLines converts a harness's Dockerfile InstallLayer into plain shell.
+// The kinds layer speaks Dockerfile because the §8 image build is its usual
+// consumer; a provisioner that installs the harness IN the workspace (a
+// repo-authored devcontainer runs the repo's own image) needs the command
+// itself. Directives with no shell equivalent (ENV, COPY…) are dropped.
+func shellLines(layer []string) []string {
+	var out []string
+	for _, l := range layer {
+		if cmd, ok := strings.CutPrefix(strings.TrimSpace(l), "RUN "); ok {
+			if cmd = strings.TrimSpace(cmd); cmd != "" {
+				out = append(out, cmd)
+			}
+		}
+	}
+	return out
+}
+
+// requiredTools names the tools an install command needs present before it
+// can run. An install command's FIRST token is exactly its prerequisite —
+// `npm install -g x` needs npm, `pip install x` needs pip, `curl … | sh`
+// needs curl — so nothing here assumes a particular runtime: a harness that
+// installs without Node never asks for Node. Deduped, order preserved.
+func requiredTools(cmds []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range cmds {
+		tool, _, _ := strings.Cut(strings.TrimSpace(c), " ")
+		// Skip shell noise that is always present anyway.
+		switch tool {
+		case "", "sh", "bash", "env", "set", "cd", "true":
+			continue
+		}
+		if !seen[tool] {
+			seen[tool] = true
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
 func egressDomains(p confstore.Project, contributions ...[]string) []string {
 	set := map[string]bool{}
 	if u, err := url.Parse(p.Repo.URL); err == nil && u.Hostname() != "" {

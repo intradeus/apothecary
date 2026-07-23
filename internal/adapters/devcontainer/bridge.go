@@ -5,9 +5,11 @@ import (
 
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -127,9 +129,10 @@ func (a *Adapter) closeBridge(env ports.EnvID) {
 	delete(a.bridges, env)
 }
 
-// containerID resolves the env's running container via the id label.
+// containerID resolves the env's running container via the id label (on the
+// run's inner daemon).
 func (a *Adapter) containerID(ctx context.Context, name string) (string, error) {
-	cidOut, _, code, err := a.run(ctx, a.cfg.DockerBin,
+	cidOut, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"ps", "-q", "--filter", "label=" + label(name)}, nil, nil)
 	if err != nil {
 		return "", err
@@ -141,6 +144,73 @@ func (a *Adapter) containerID(ctx context.Context, name string) (string, error) 
 	return cid, nil
 }
 
+// relayTarget picks the host the in-container relay should dial for port.
+//
+// The relay runs inside the WORKSPACE container, so its loopback only reaches
+// what the workspace itself serves. In a compose devcontainer the interesting
+// ports often belong to SIBLING services (a database, a cache): those have
+// their own network namespace and answer at <service>:<port> — the compose
+// service name is a DNS alias on the shared network — never on the workspace's
+// 127.0.0.1. Relaying to loopback there just gets connection-refused.
+//
+// Siblings are matched on declared image ports (Config.ExposedPorts), not a
+// runtime probe: a service's port is declarative, while an app's dev-server
+// port is started at runtime and never declared — so an unmatched port
+// correctly falls back to loopback, preserving today's behavior for
+// non-compose workspaces and for the workspace's own ports.
+func (a *Adapter) relayTarget(ctx context.Context, name, cid string, port int) string {
+	const loopback = "127.0.0.1"
+	project := a.inspectField(ctx, name, cid, `{{index .Config.Labels "com.docker.compose.project"}}`)
+	if project == "" {
+		return loopback // not a compose devcontainer: nothing else to reach
+	}
+	out, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"ps", "-q", "--filter", "label=com.docker.compose.project=" + project}, nil, nil)
+	if err != nil || code != 0 {
+		return loopback
+	}
+	var candidates []string
+	for _, sib := range strings.Fields(string(out)) {
+		if strings.HasPrefix(cid, sib) || strings.HasPrefix(sib, cid) {
+			continue // the workspace container itself
+		}
+		meta := a.inspectField(ctx, name, sib,
+			`{{index .Config.Labels "com.docker.compose.service"}} {{json .Config.ExposedPorts}}`)
+		svc, exposed, _ := strings.Cut(meta, " ")
+		if svc == "" || !strings.Contains(exposed, fmt.Sprintf("%q", strconv.Itoa(port)+"/tcp")) {
+			continue
+		}
+		candidates = append(candidates, svc)
+	}
+	if len(candidates) == 0 {
+		return loopback
+	}
+	// Deterministic on ties, and loud about it — silently guessing between two
+	// services would be a confusing way to reach the wrong database.
+	sort.Strings(candidates)
+	if len(candidates) > 1 {
+		slog.Warn("devcontainer: several compose services declare this port; relaying to the first",
+			"port", port, "services", candidates, "chosen", candidates[0])
+	}
+	return candidates[0]
+}
+
+// inspectField returns one `docker inspect --format` value from the run's
+// inner daemon, or "" on any failure (callers treat that as "unknown" and
+// fall back).
+func (a *Adapter) inspectField(ctx context.Context, name, ref, format string) string {
+	out, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"inspect", ref, "--format", format}, nil, nil)
+	if err != nil || code != 0 {
+		return ""
+	}
+	v := strings.TrimSpace(string(out))
+	if v == "<no value>" {
+		return ""
+	}
+	return v
+}
+
 // startRelay launches the mounted static shim's relay detached inside the
 // container — no runtime dependency on anything in the workspace image.
 func (a *Adapter) startRelay(ctx context.Context, name string) error {
@@ -149,7 +219,7 @@ func (a *Adapter) startRelay(ctx context.Context, name string) error {
 		return err
 	}
 	args := append([]string{"exec", "-d", cid, "/opt/apothecary/shim", "relay"}, a.relayPairs()...)
-	_, stderr, code, err := a.run(ctx, a.cfg.DockerBin, args, nil, nil)
+	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin, args, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -167,11 +237,12 @@ func (a *Adapter) AppPorts(ctx context.Context, env ports.EnvID) []int {
 	return a.declaredPorts(ctx, string(env))
 }
 
-// ExposePort reaches env's 127.0.0.1:port through a REVERSE relay: the
-// shim listens on a bind-mounted unix socket in-container and pipes each
-// connection to the app port; the engine dials the socket file host-side.
-// Same channel as the engine bridge, so it works on hosts that drop
-// container→host IP traffic in either direction.
+// ExposePort reaches the port through a REVERSE relay: the shim listens on a
+// bind-mounted unix socket in-container and pipes each connection to whoever
+// serves that port (the workspace itself, or a sibling compose service — see
+// relayTarget); the engine dials the socket file host-side. Same channel as
+// the engine bridge, so it works on hosts that drop container→host IP traffic
+// in either direction.
 func (a *Adapter) ExposePort(ctx context.Context, env ports.EnvID, port int) (ports.PortConn, error) {
 	name := string(env)
 	sock := fmt.Sprintf("app-%d.sock", port)
@@ -180,8 +251,8 @@ func (a *Adapter) ExposePort(ctx context.Context, env ports.EnvID, port int) (po
 	if err != nil {
 		return nil, err
 	}
-	spec := fmt.Sprintf("/opt/apothecary/%s:127.0.0.1:%d", sock, port)
-	_, stderr, code, err := a.run(ctx, a.cfg.DockerBin,
+	spec := fmt.Sprintf("/opt/apothecary/%s:%s:%d", sock, a.relayTarget(ctx, name, cid, port), port)
+	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"exec", "-d", cid, "/opt/apothecary/shim", "relay", "--reverse", spec}, nil, nil)
 	if err != nil {
 		return nil, err

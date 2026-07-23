@@ -148,6 +148,38 @@ prompt: |
   %s
 `
 
+// opencode reads its config and auth from $HOME. The §8 pipeline image runs
+// as `apothecary`, but a repo-authored devcontainer runs the REPO's user
+// (root, vscode, node…) — writing to a hardcoded /home/apothecary there left
+// opencode with no provider and no agents ("agent planner not found",
+// "Model not found"). Config must follow the workspace's real $HOME.
+func TestConfigFollowsWorkspaceHome(t *testing.T) {
+	envp, id := envWith(t, nil)
+	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "$HOME") {
+			return ports.ExecResult{Output: "/root\n"}, nil
+		}
+		return ports.ExecResult{}, nil
+	}
+	a := New(envp, Config{})
+	ctx := context.Background()
+	if err := a.PrepareEnv(ctx, id, []*agentspec.Spec{{Name: "planner", Prompt: "Plan.\n"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SeedAuthJSON(ctx, id, []byte(`{"openrouter":{"type":"api"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		"/root/.config/opencode/agent/planner.md",
+		"/root/.config/opencode/opencode.json",
+		"/root/.local/share/opencode/auth.json",
+	} {
+		if _, err := envp.ReadFile(ctx, id, p); err != nil {
+			t.Errorf("not written to the workspace's real home: %s (%v)", p, err)
+		}
+	}
+}
+
 func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	envp, id := envWith(t, nil)
 	// Specs arrive from the project's agent library (DESIGN3 §1), not the

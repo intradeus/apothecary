@@ -19,6 +19,7 @@ func (Devcontainer) Descriptor() Descriptor {
 			{Name: "devcontainer_path", Label: "devcontainer CLI", Placeholder: "devcontainer"},
 			{Name: "docker_path", Label: "docker CLI", Placeholder: "docker"},
 			{Name: "firewall", Label: "Egress firewall (on/off)", Placeholder: "on", Default: "on"},
+			{Name: "dind_image", Label: "DinD sandbox image", Placeholder: "docker:29-dind"},
 		},
 	}
 }
@@ -39,6 +40,7 @@ func (Devcontainer) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		ProxyPort:       deps.ProxyPort,
 		ShimBin:         deps.ShimBin,
 		FirewallOff:     cfg.Str("firewall", "on") == "off",
+		DinDImage:       cfg.Str("dind_image", ""), // "" ⇒ adapter default
 	}), nil
 }
 

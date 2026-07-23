@@ -1,0 +1,7 @@
+{
+  "id": "apothecary-harness",
+  "version": "1.0.0",
+  "name": "Apothecary coding harness",
+  "description": "Installs the project's coding harnesses into repo-authored dev containers, which run the repo's own image and so never get the pipeline image that bakes the harness in. Both the install commands and their prerequisites are generated engine-side (harness-install.sh, harness-requires, harness-binaries), so install.sh assumes no particular runtime — a harness that installs without Node never triggers a Node install. Deliberately declares NO dependsOn: that would install a runtime unconditionally and could shadow the version a project pinned; the script reuses whatever the image already has. Injected engine-side; not a published feature.",
+  "installsAfter": ["ghcr.io/devcontainers/features/node"]
+}

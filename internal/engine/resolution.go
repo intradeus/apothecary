@@ -58,6 +58,12 @@ type Resolution struct {
 	// HarnessBinary is the fallback harness executable (envcheck probes it
 	// with `command -v`, §9).
 	HarnessBinary string
+	// HarnessInstall is how to install each harness INSIDE the workspace,
+	// for provisioners that don't get the §8 image (a repo-authored
+	// devcontainer runs the repo's own image, which has no harness). Handed
+	// to the adapter via EnvSpec; ignored by provisioners whose image
+	// already carries them.
+	HarnessInstall []ports.HarnessInstall
 	// HarnessBinaries is every harness's executable — envcheck probes them all,
 	// since any set member may run. Empty ⇒ just HarnessBinary.
 	HarnessBinaries []string

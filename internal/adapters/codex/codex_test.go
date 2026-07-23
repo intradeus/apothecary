@@ -160,3 +160,29 @@ func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 		t.Errorf("config.toml = %q, %v", cfg, err)
 	}
 }
+
+// codex reads $CODEX_HOME, defaulting to $HOME/.codex. A repo-authored
+// devcontainer runs the REPO's user, so a hardcoded /home/apothecary left
+// codex with no config and no auth — it must follow the real $HOME.
+func TestCodexHomeFollowsWorkspaceHome(t *testing.T) {
+	envp, id := envWith(t)
+	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "$HOME") {
+			return ports.ExecResult{Output: "/home/vscode\n"}, nil
+		}
+		return ports.ExecResult{}, nil
+	}
+	a := New(envp, Config{})
+	ctx := context.Background()
+	if err := a.PrepareEnv(ctx, id, []*agentspec.Spec{{Name: "planner", Prompt: "Plan.\n"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SeedAuthJSON(ctx, id, []byte(`{"tokens":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/home/vscode/.codex/config.toml", "/home/vscode/.codex/auth.json"} {
+		if _, err := envp.ReadFile(ctx, id, p); err != nil {
+			t.Errorf("not written to the workspace's real home: %s (%v)", p, err)
+		}
+	}
+}

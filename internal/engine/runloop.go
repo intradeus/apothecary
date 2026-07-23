@@ -992,13 +992,16 @@ func (x *exec) ensureEnv() error {
 		nameBranch = rs.branch
 	}
 	spec := ports.EnvSpec{
-		RunID:         rs.runID,
-		RepoURL:       x.res.RepoRef.URL,
-		Branch:        rs.branch,
-		Name:          workspaceName(nameBranch, rs.runID),
-		Project:       x.res.ProjectName,
-		Image:         x.res.Image,
-		EgressDomains: x.res.EgressDomains,
+		RunID:   rs.runID,
+		RepoURL: x.res.RepoRef.URL,
+		Branch:  rs.branch,
+		Name:    workspaceName(nameBranch, rs.runID),
+		Project: x.res.ProjectName,
+		Image:   x.res.Image,
+		// Only used by provisioners that don't get the §8 image: a
+		// repo-authored devcontainer must install the harness itself.
+		HarnessInstall: x.res.HarnessInstall,
+		EgressDomains:  x.res.EgressDomains,
 		// For clone-first provisioners (devcontainer): the engine-side
 		// checkout needs the forge credential before the env exists.
 		GitUser: x.res.GitUser,

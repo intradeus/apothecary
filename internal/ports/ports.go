@@ -13,6 +13,22 @@ import (
 
 type EnvID string
 
+// HarnessInstall is one harness's in-workspace install. Binary is what the
+// engine probes with `command -v` (envcheck, §9); Commands are the shell
+// lines that install it. Kept vendor-neutral (no Dockerfile syntax) so an
+// adapter can run them however its environment allows — a devcontainer
+// feature, an exec, or a build layer.
+type HarnessInstall struct {
+	Binary string
+	// Requires are the tools Commands need present first (`npm` for an
+	// npm-installed harness, `curl` for a script-installed one). The
+	// installer provides each missing one before running Commands, so
+	// nothing assumes a particular runtime: a harness that needs no Node
+	// never triggers a Node install.
+	Requires []string
+	Commands []string
+}
+
 // EnvSpec carries the §11 provisioning inputs. Everything the adapter may
 // expose to the vendor (template parameters, labels, generated configs)
 // must be non-secret; GitUser/GitPass are the one engine-held exception,
@@ -41,6 +57,12 @@ type EnvSpec struct {
 	// empty on the custom-template compatibility path, where the template
 	// bakes its own image.
 	Image string
+	// HarnessInstall is how to install the project's harnesses INSIDE the
+	// workspace. It is set only for provisioners that do NOT get the §8
+	// pipeline image — a repo-authored devcontainer runs the repo's own
+	// image, which knows nothing about opencode/codex. Empty means the image
+	// already carries them (coder, and the devcontainer fallback config).
+	HarnessInstall []HarnessInstall
 	// EgressDomains is the fully derived firewall allowlist (DESIGN2 §8.4):
 	// repo host ∪ adapter contributions ∪ project extras. Non-secret.
 	EgressDomains []string
@@ -204,9 +226,12 @@ type PortConn interface {
 // port-forward subprocess; devcontainer: a reverse relay over the
 // bind-mounted unix sockets).
 type WorkspacePortExposer interface {
-	// ExposePort prepares access to env's 127.0.0.1:port and returns the
-	// dial handle. Idempotency across repeated exposures of the same port
-	// is the caller's job (the engine's port registry).
+	// ExposePort prepares access to the port AS SERVED BY the environment and
+	// returns the dial handle. Which container actually serves it is the
+	// adapter's business: a compose devcontainer's port may belong to a
+	// sibling service rather than the workspace's own loopback. Idempotency
+	// across repeated exposures of the same port is the caller's job (the
+	// engine's port registry).
 	ExposePort(ctx context.Context, env EnvID, port int) (PortConn, error)
 	// AppPorts lists ports the environment declares it will serve (e.g.
 	// devcontainer forwardPorts) — auto-exposed at env_ready. Best-effort;
