@@ -983,23 +983,6 @@ func (x *exec) ensureEnv() error {
 			return err
 		}
 	}
-	// §8.3: the workspace image is ensured lazily, right before
-	// provisioning; a build failure is a deterministic env_failed. Cache
-	// hits still record image_built{cached:true} (recovery re-entries may
-	// repeat the event — the log is append-only, the projection ignores it).
-	if x.res.EnsureImage != nil {
-		cached, err := x.res.EnsureImage(x.ctx)
-		if err != nil {
-			if x.ctx.Err() != nil {
-				return context.Cause(x.ctx)
-			}
-			rs.done = true
-			return x.append(&event.EnvFailed{Error: "image build: " + err.Error()})
-		}
-		if err := x.append(&event.ImageBuilt{Tag: x.res.Image, Cached: cached}); err != nil {
-			return err
-		}
-	}
 	// The container/workspace name derives from the branch STEM, not the
 	// suffixed actual branch: base already ends where the run-id tail begins,
 	// so workspaceName re-appending the tail would double it (apo-…-h1-h1).
@@ -1014,7 +997,6 @@ func (x *exec) ensureEnv() error {
 		Branch:  rs.branch,
 		Name:    workspaceName(nameBranch, rs.runID),
 		Project: x.res.ProjectName,
-		Image:   x.res.Image,
 		// Only used by provisioners that don't get the §8 image: a
 		// repo-authored devcontainer must install the harness itself.
 		HarnessInstall: x.res.HarnessInstall,

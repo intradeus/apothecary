@@ -19,7 +19,6 @@ type Boot struct {
 	RunsDir      string // APOTHECARY_RUNS_DIR, default /var/lib/apothecary/runs
 	CPUIDir      string // APOTHECARY_CPUI_DIR, default "" (API only)
 	OtelEndpoint string // APOTHECARY_OTEL_ENDPOINT, default "" (disabled)
-	BaseImage    string // APOTHECARY_BASE_IMAGE, default "" (build embedded, M9)
 	// EgressProxy toggles the hostname-filtering egress proxy (M18).
 	// APOTHECARY_EGRESS_PROXY: "off" disables (falls back to the derived IP
 	// allowlist firewall); "on"/unset enables on the default port; a port
@@ -72,7 +71,6 @@ func FromEnv() (*Boot, error) {
 		RunsDir:      getenvDefault("APOTHECARY_RUNS_DIR", "/var/lib/apothecary/runs"),
 		CPUIDir:      os.Getenv("APOTHECARY_CPUI_DIR"),
 		OtelEndpoint: os.Getenv("APOTHECARY_OTEL_ENDPOINT"),
-		BaseImage:    os.Getenv("APOTHECARY_BASE_IMAGE"),
 	}
 	// Egress proxy: "off" disables; "on"/unset uses the default port; a bare
 	// port number sets a fixed port. Anything unparseable falls back to the

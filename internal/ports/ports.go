@@ -53,15 +53,10 @@ type EnvSpec struct {
 	// (`docker ps --filter label=apothecary.project=<name>`). Empty ⇒ the
 	// label is omitted.
 	Project string
-	// Image is the workspace image tag built by the §8 pipeline (DESIGN2);
-	// empty on the custom-template compatibility path, where the template
-	// bakes its own image.
-	Image string
 	// HarnessInstall is how to install the project's harnesses INSIDE the
-	// workspace. It is set only for provisioners that do NOT get the §8
-	// pipeline image — a repo-authored devcontainer runs the repo's own
-	// image, which knows nothing about opencode/codex. Empty means the image
-	// already carries them (coder, and the devcontainer fallback config).
+	// workspace — a repo-authored devcontainer runs the repo's own image,
+	// which knows nothing about opencode/codex, so the harness is injected as
+	// a feature. Empty means the image already carries them.
 	HarnessInstall []HarnessInstall
 	// EgressDomains is the fully derived firewall allowlist (DESIGN2 §8.4):
 	// repo host ∪ adapter contributions ∪ project extras. Non-secret.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,7 +78,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(svc, reg, "", 8080, 0, ""), svc, p, made, closed
+	return New(svc, reg, "", 8080, 0), svc, p, made, closed
 }
 
 // altHarnessKind is a second harness kind for per-step-harness tests: it
@@ -161,7 +160,7 @@ func TestResolveMultiHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := New(svc, reg, "", 8080, 0, "").Resolve(ctx, p.ID)
+	res, err := New(svc, reg, "", 8080, 0).Resolve(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,40 +307,6 @@ func TestUnresolvableMapping(t *testing.T) {
 	}
 	if _, err := r.Resolve(ctx, p2.ID); !errors.Is(err, engine.ErrUnresolvable) {
 		t.Errorf("unregistered kind err = %v", err)
-	}
-}
-
-// §8: every project resolves through the image pipeline — a content-addressed
-// tag + a lazy EnsureImage — and the tag is input-sensitive.
-func TestImagePipeline(t *testing.T) {
-	r, svc, p, _, _ := setup(t)
-	ctx := context.Background()
-
-	p.Workspace.DockerfileFragment = "RUN apt-get install -y python3"
-	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
-		t.Fatal(err)
-	}
-	res2, err := r.Resolve(ctx, p.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res2.Release()
-	if !strings.HasPrefix(res2.Image, "apothecary/ws:") || res2.EnsureImage == nil {
-		t.Errorf("pipeline path: image=%q ensure=%v", res2.Image, res2.EnsureImage != nil)
-	}
-
-	// The tag is input-sensitive: a different fragment gives a new tag.
-	p.Workspace.DockerfileFragment = "RUN apt-get install -y golang"
-	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
-		t.Fatal(err)
-	}
-	res3, err := r.Resolve(ctx, p.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res3.Release()
-	if res3.Image == res2.Image {
-		t.Error("fragment change did not change the image tag")
 	}
 }
 

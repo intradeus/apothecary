@@ -392,6 +392,12 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	if err != nil {
 		return "", err
 	}
+	// Every workspace runs the repo's OWN devcontainer — apothecary injects its
+	// firewall + harness as features. A repo without one is unsupported (the
+	// engine preflight already refuses it; this is defense-in-depth).
+	if !hasRepoConfig(src) {
+		return "", fmt.Errorf("repo has no .devcontainer/devcontainer.json — apothecary requires a devcontainer")
+	}
 	shimDir, err := a.ensureShim(ctx, name)
 	if err != nil {
 		return "", err
@@ -409,9 +415,8 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	// sibling services by name, which a default-deny firewall would break)
 	// and OFF when the project turned it off. Recorded per env so envcheck
 	// and EgressOpen report the truth.
-	hasConfig := hasRepoConfig(src)
 	firewall := !a.cfg.FirewallOff
-	if firewall && hasConfig && a.isCompose(ctx, src) {
+	if firewall && a.isCompose(ctx, src) {
 		firewall = false
 	}
 
@@ -431,54 +436,35 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 		// agent commits) is untouched; only the container is rebuilt.
 		args = append(args, "--remove-existing-container")
 	}
-	// Repos without a devcontainer run the §8 pipeline image via a generated
-	// fallback config (which carries iptables + init-firewall.sh AND the
-	// harness already); repos WITH one are honored untouched, so anything
-	// apothecary needs in there rides in as an injected feature.
-	if !hasConfig {
-		if spec.Image == "" {
-			return "", fmt.Errorf("devcontainer: repo has no .devcontainer config and the spec carries no pipeline image (projects using this provisioner cannot set workspace.template)")
-		}
-		override, werr := a.writeFallbackConfig(name, spec.Image, firewall, spec)
-		if werr != nil {
-			return "", werr
-		}
-		// The pipeline image lives on the HOST daemon; copy it into the inner
-		// daemon so `up` can run it (repos WITH a devcontainer bring their own
-		// image, pulled by the inner daemon itself).
-		if err := a.loadPipelineImage(ctx, name, spec.Image); err != nil {
+	// The repo is honored untouched; anything apothecary needs rides in as an
+	// injected devcontainer feature (firewall + harness).
+	features := map[string]any{}
+	if firewall {
+		if err := a.materializeFeature(name, src); err != nil {
 			return "", err
 		}
-		args = append(args, "--override-config", override)
-	} else {
-		features := map[string]any{}
-		if firewall {
-			if err := a.materializeFeature(name, src); err != nil {
-				return "", err
-			}
-			// Per-run firewall config rides firewall.env in the mounted shim dir
-			// (NOT feature options — those would bust the build cache per run);
-			// the feature entrypoint sources it at container start.
-			if err := a.writeFirewallEnv(name, spec); err != nil {
-				return "", err
-			}
-			features["./apothecary-firewall"] = map[string]any{}
+		// Per-run firewall config rides firewall.env in the mounted shim dir
+		// (NOT feature options — those would bust the build cache per run);
+		// the feature entrypoint sources it at container start.
+		if err := a.writeFirewallEnv(name, spec); err != nil {
+			return "", err
 		}
-		// The repo's image has no harness — install it. Independent of the
-		// firewall: an unfirewalled repo container still needs opencode.
-		if len(spec.HarnessInstall) > 0 {
-			if err := a.materializeHarnessFeature(name, src, spec.HarnessInstall); err != nil {
-				return "", err
-			}
-			features["./apothecary-harness"] = map[string]any{}
+		features["./apothecary-firewall"] = map[string]any{}
+	}
+	// The repo's image has no harness — install it. Independent of the
+	// firewall: an unfirewalled repo container still needs opencode.
+	if len(spec.HarnessInstall) > 0 {
+		if err := a.materializeHarnessFeature(name, src, spec.HarnessInstall); err != nil {
+			return "", err
 		}
-		if len(features) > 0 {
-			blob, err := json.Marshal(features)
-			if err != nil {
-				return "", err
-			}
-			args = append(args, "--additional-features", string(blob))
+		features["./apothecary-harness"] = map[string]any{}
+	}
+	if len(features) > 0 {
+		blob, err := json.Marshal(features)
+		if err != nil {
+			return "", err
 		}
+		args = append(args, "--additional-features", string(blob))
 	}
 	// BUILDX_BAKE_ENTITLEMENTS_FS=0: compose-based devcontainers build via
 	// `docker buildx bake`, which (buildx >=0.17) gates any fs.read outside
@@ -606,27 +592,6 @@ func hasRepoConfig(src string) bool {
 		}
 	}
 	return false
-}
-
-// writeFallbackConfig generates the minimal config for repos without one:
-// the §8 pipeline image, which already carries the apothecary user, shim
-// binary, iptables and init-firewall.sh (with its sudoers grant). The
-// firewall rides containerEnv + a BLOCKING postStartCommand — the pipeline
-// image's own mechanism, no feature and (since up waits on lifecycle
-// hooks) no start-race.
-func (a *Adapter) writeFallbackConfig(name, image string, firewall bool, spec ports.EnvSpec) (string, error) {
-	cfg := map[string]any{"image": image}
-	if firewall {
-		cfg["capAdd"] = []string{"NET_ADMIN"}
-		cfg["containerEnv"] = firewallEnvVars(a.proxyAddr(), spec)
-		cfg["postStartCommand"] = "sudo /usr/local/bin/init-firewall.sh"
-	}
-	path := filepath.Join(a.folderFor(name), "override.json")
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return path, os.WriteFile(path, data, 0o644)
 }
 
 // proxyAddr is the workspace-loopback egress proxy address (M18) or "".
@@ -1348,7 +1313,7 @@ func (a *Adapter) Rebuild(ctx context.Context, spec ports.EnvSpec) error {
 		defer tee.Close()
 	}
 	src := a.srcDir(name)
-	if hasRepoConfig(src) && a.isCompose(ctx, src) {
+	if a.isCompose(ctx, src) {
 		if err := a.Destroy(ctx, ports.EnvID(name)); err != nil {
 			return fmt.Errorf("rebuild %s: teardown: %w", name, err)
 		}

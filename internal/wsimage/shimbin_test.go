@@ -33,7 +33,7 @@ func (f *shimFakeDocker) Run(_ context.Context, _ string, args ...string) (strin
 
 func TestEnsureShimBuildsExtractsAndCaches(t *testing.T) {
 	f := &shimFakeDocker{}
-	b := NewWithRunner(f, t.TempDir(), "")
+	b := NewWithRunner(f, t.TempDir())
 
 	path, err := b.EnsureShim(context.Background())
 	if err != nil {

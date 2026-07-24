@@ -1,18 +1,16 @@
-// Package workspace embeds the apothecary-owned workspace sources (DESIGN2
-// §8.1, §8.4) — single copies, consumed at runtime: the engine builds the
-// base image from BaseContext and pushes Template to the provisioner.
-// Everything here is invariant material (shim, firewall, agent wiring);
-// user-owned toolchain lines live in project config, never in files.
+// Package workspace embeds the apothecary-owned workspace sources — single
+// copies, consumed at runtime. Everything here is invariant material (shim,
+// firewall, agent wiring); the workspace itself is the target repo's own
+// devcontainer image, so apothecary builds no base image.
 package workspace
 
 import "embed"
 
-// BaseContext is the base-image build context: the Dockerfile, the files
-// it COPYs, and the shim source tree its multi-stage build compiles (the
-// same tree wsimage.EnsureShim builds standalone for the devcontainer
-// provisioner).
+// BaseContext holds the invariant material injected into every workspace: the
+// static shim's source tree (compiled by wsimage.EnsureShim, bind-mounted in)
+// and init-firewall.sh (single-sourced into the firewall devcontainer feature).
 //
-//go:embed Dockerfile init-firewall.sh shim
+//go:embed init-firewall.sh shim
 var BaseContext embed.FS
 
 // Feature is the injected devcontainer feature that brings the §11 egress

@@ -66,8 +66,7 @@ type RepoConfig struct {
 
 // WorkspaceConfig is projects.workspace (§2, §8).
 type WorkspaceConfig struct {
-	DockerfileFragment string   `json:"dockerfile_fragment,omitempty"`
-	ExtraDomains       []string `json:"extra_domains,omitempty"`
+	ExtraDomains []string `json:"extra_domains,omitempty"`
 }
 
 // Project picks one integration per port and adds repo/commands/workspace

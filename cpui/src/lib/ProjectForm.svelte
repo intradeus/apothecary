@@ -1,9 +1,8 @@
 <script lang="ts">
   // Project wizard/editor (DESIGN2 §11): connect forge → pick repo →
   // commands → adapter picks → workspace → default flow.
-  import { api, type FlowRow, type Integration, type Preset, type Project, type RepoInfo } from '$lib/api';
-  import { onMount } from 'svelte';
-
+  import { api, type FlowRow, type Integration, type Project, type RepoInfo } from '$lib/api';
+  
   let {
     integrations,
     flows,
@@ -68,7 +67,6 @@
   );
 
   let extraDomains = $state((init?.workspace.extra_domains ?? []).join(', '));
-  let fragment = $state(init?.workspace.dockerfile_fragment ?? '');
   // Flows are user-defined — no built-in fallback exists.
   let defaultFlow = $state(init?.default_flow ?? flowNames[0] ?? '');
 
@@ -78,23 +76,6 @@
   let repoError = $state('');
   let busy = $state(false);
   let error = $state('');
-
-  // Toolchain presets (§8.2): inserting appends visible, editable lines +
-  // egress domains — never a hidden dependency.
-  let presets = $state<Preset[]>([]);
-  onMount(() => {
-    api.presets().then((p) => (presets = p)).catch(() => {});
-  });
-
-  function insertPreset(p: Preset) {
-    const lines = p.lines.join('\n');
-    fragment = fragment.trim() ? fragment.trimEnd() + '\n' + lines + '\n' : lines + '\n';
-    const have = new Set(
-      extraDomains.split(',').map((d) => d.trim()).filter(Boolean)
-    );
-    for (const d of p.domains) have.add(d);
-    extraDomains = [...have].join(', ');
-  }
 
   async function loadRepos() {
     loadingRepos = true;
@@ -143,7 +124,6 @@
             .split(',')
             .map((d) => d.trim())
             .filter(Boolean),
-          ...(fragment.trim() ? { dockerfile_fragment: fragment } : {})
         },
         default_flow: defaultFlow
       };
@@ -258,20 +238,8 @@
 
   <div class="card">
     <h2>4 · Workspace</h2>
-    <label for="p-fragment">Dockerfile fragment <span class="muted">— your toolchain layer, built on the apothecary base image
-      (RUN/ENV/ARG only); the harness is installed automatically</span></label>
-    <textarea id="p-fragment" bind:value={fragment} rows="5" class="mono"
-      placeholder={'RUN curl -fsSL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz | tar -C /usr/local -xz\nENV PATH=/usr/local/go/bin:$PATH'}></textarea>
-    {#if presets.length > 0}
-      <div class="row" style="margin-top:6px">
-        <span class="muted small">Insert preset:</span>
-        {#each presets as p (p.name)}
-          <button type="button" onclick={() => insertPreset(p)}>+ {p.label}</button>
-        {/each}
-      </div>
-    {/if}
-    <label for="p-domains">Extra egress domains <span class="muted">— comma-separated; adapters contribute theirs automatically,
-      presets add their registries</span></label>
+    <p class="muted small" style="margin:0 0 8px">The workspace is the repo's own <span class="mono">.devcontainer</span> — apothecary injects the firewall and harness as features.</p>
+    <label for="p-domains">Extra egress domains <span class="muted">— comma-separated; adapters contribute theirs automatically</span></label>
     <input id="p-domains" bind:value={extraDomains} class="mono" placeholder="proxy.golang.org, registry.npmjs.org" />
   </div>
 

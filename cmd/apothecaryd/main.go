@@ -218,7 +218,7 @@ func cmdServe(args []string) error {
 		log.Info("egress proxy listening (hostname-filtering)", "port", proxyPort)
 	}
 
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, proxyPort, boot.BaseImage)
+	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, proxyPort)
 	defer resolver.Close()
 
 	ecfg := engine.Config{

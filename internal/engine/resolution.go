@@ -37,13 +37,6 @@ type Resolution struct {
 	ProviderEnv map[string]string
 	// EgressDomains is the derived firewall allowlist (DESIGN2 §8.4).
 	EgressDomains []string
-	// Image is the built workspace image tag (§8 pipeline); empty on the
-	// custom-template path, where the template bakes its own image.
-	Image string
-	// EnsureImage makes Image present on the docker daemon, returning
-	// whether it was already there (§8.3 image_built{cached}). nil on the
-	// custom-template path.
-	EnsureImage func(ctx context.Context) (cached bool, err error)
 	// HarnessKind is a deterministic FALLBACK harness kind (the first
 	// available in the project's set) — NOT a project-chosen default. The
 	// real default is the flow's defaults.harness, applied per stage; this

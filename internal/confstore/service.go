@@ -312,11 +312,6 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 		return invalidf("project: harness_ids is required (at least one harness integration)")
 	}
 	p.HarnessIDs = norm
-	if err := ValidateFragment(p.Workspace.DockerfileFragment); err != nil {
-		return err
-	}
-	// workspace.template is OPTIONAL since M9: empty = the apothecary-managed
-	// template + built image (§8); set = the custom-template escape hatch.
 	// default_flow falls back to the compiled-in default (internal/builtin):
 	// a fresh install runs without authoring a flow first. A name resolves
 	// against the DB first, then the built-ins (same layering the engine's
@@ -330,45 +325,6 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 		}
 	} else if err != nil {
 		return fmt.Errorf("project: default_flow %q: %w", p.DefaultFlow, err)
-	}
-	return nil
-}
-
-// ValidateFragment enforces the §8.2 Dockerfile fragment rules: physical
-// lines whose first token is FROM/COPY/ADD/USER/ENTRYPOINT/CMD (any case)
-// are rejected — the build context has no files and the engine owns
-// user/entry semantics.
-func ValidateFragment(fragment string) error {
-	forbidden := map[string]bool{
-		"FROM": true, "COPY": true, "ADD": true,
-		"USER": true, "ENTRYPOINT": true, "CMD": true,
-		// SHELL would rewrite how the engine-owned harness RUN lines execute;
-		// ONBUILD would smuggle any forbidden instruction past a first-token
-		// check.
-		"SHELL": true, "ONBUILD": true,
-	}
-	lines := strings.Split(fragment, "\n")
-	for i, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		if forbidden[strings.ToUpper(fields[0])] {
-			return invalidf("workspace.dockerfile_fragment line %d: %s is not allowed in fragments (engine-owned)", i+1, strings.ToUpper(fields[0]))
-		}
-	}
-	// A trailing line continuation would splice the fragment into the next
-	// engine-owned line of the composed Dockerfile (Docker strips comment
-	// lines before joining continuations, so scan back past those).
-	for i := len(lines) - 1; i >= 0; i-- {
-		t := strings.TrimSpace(lines[i])
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		if strings.HasSuffix(t, "\\") {
-			return invalidf("workspace.dockerfile_fragment line %d: must not end with a line continuation (engine-owned lines follow)", i+1)
-		}
-		break
 	}
 	return nil
 }

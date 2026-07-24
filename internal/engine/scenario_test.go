@@ -1328,6 +1328,23 @@ stages:
 	}
 }
 
+// A repo without a devcontainer is refused at run creation — apothecary runs
+// the repo's own devcontainer, there is no built fallback image.
+func TestPreflightRejectsRepoWithoutDevcontainer(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.forge.MissingFiles = map[string]bool{
+		".devcontainer/devcontainer.json": true,
+		".devcontainer.json":              true,
+	}
+	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	if err == nil || !strings.Contains(err.Error(), "devcontainer") {
+		t.Fatalf("err = %v, want devcontainer refusal", err)
+	}
+	if ids, _ := h.store.RunIDs(context.Background()); len(ids) != 0 {
+		t.Errorf("refused run left events: %v", ids)
+	}
+}
+
 // commands.setup is OPTIONAL in v2 (DESIGN2 §8): a project without one
 // runs fine — bootstrap step 6 is simply skipped.
 func TestSetupIsOptional(t *testing.T) {

@@ -48,16 +48,16 @@ type provEntry struct {
 	stale bool
 }
 
-// New builds the resolver. baseImage is the APOTHECARY_BASE_IMAGE override
-// ("" = build the embedded base on demand, §8.1).
-func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort, proxyPort int, baseImage string) *Resolver {
+// New builds the resolver. The builder exists solely to compile + cache the
+// static in-workspace shim (wsimage.EnsureShim → ProvisionerDeps.ShimBin).
+func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort, proxyPort int) *Resolver {
 	return &Resolver{
 		conf:       conf,
 		reg:        reg,
 		runsDir:    runsDir,
 		enginePort: enginePort,
 		proxyPort:  proxyPort,
-		builder:    wsimage.New(runsDir, baseImage),
+		builder:    wsimage.New(runsDir),
 		cache:      map[string]*provEntry{},
 	}
 }
@@ -162,18 +162,16 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	defaultKind := firstKind
 	runners := make(map[string]ports.AgentRunner, len(byKind))
 	providerEnv := map[string]string{}
-	var installLayers, harnessBinaries []string
+	var harnessBinaries []string
 	var harnessInstall []ports.HarnessInstall
 	egressContribs := [][]string{account.EgressDomains()}
 	for _, k := range kindList {
 		h := byKind[k]
 		runners[k] = h
 		layer := h.InstallLayer()
-		installLayers = append(installLayers, layer...)
-		// Same install, vendor-neutral: provisioners that DON'T get the §8
-		// image (a repo-authored devcontainer runs the repo's own image) have
-		// to install the harness in-workspace, and they need shell, not
-		// Dockerfile syntax.
+		// A repo-authored devcontainer runs the repo's own image, which knows
+		// nothing about opencode/codex — the harness is installed in-workspace
+		// via an injected feature, and it needs shell, not Dockerfile syntax.
 		if cmds := shellLines(layer); len(cmds) > 0 {
 			harnessInstall = append(harnessInstall, ports.HarnessInstall{
 				Binary: h.Binary(), Requires: requiredTools(cmds), Commands: cmds,
@@ -225,19 +223,6 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	gitUser, gitPass := account.GitCredential()
 	gitName, gitEmail := account.GitIdentity()
 
-	// Image resolution (§8): compose base + fragment + harness layer,
-	// content-addressed, ensured lazily by the engine (image_built event).
-	// The devcontainer adapter uses this pipeline image only for repos with
-	// no .devcontainer config; repos that bring their own devcontainer image
-	// ignore it.
-	dockerfile := wsimage.Compose(r.builder.BaseRef(), p.Workspace.DockerfileFragment, installLayers)
-	image := wsimage.Tag(dockerfile)
-	builder := r.builder
-	ensureImage := func(ctx context.Context) (bool, error) {
-		_, cached, err := builder.Ensure(ctx, dockerfile)
-		return cached, err
-	}
-
 	res := &engine.Resolution{
 		ProjectID:       p.ID,
 		ProjectName:     p.Name,
@@ -251,8 +236,6 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		GitEmail:        gitEmail,
 		ProviderEnv:     providerEnv, // union of every harness's own auth env
 		EgressDomains:   egressDomains(p, egressContribs...),
-		Image:           image,
-		EnsureImage:     ensureImage,
 		HarnessKind:     defaultKind,
 		HarnessKinds:    kindList,
 		HarnessBinary:   harness.Binary(),

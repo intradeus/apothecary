@@ -3,7 +3,6 @@ package devcontainer
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -85,6 +84,20 @@ func sandboxResp(rest []response) []response {
 	}, rest...)
 }
 
+// seedDevcontainer writes a minimal .devcontainer/devcontainer.json into the
+// env's checkout so hasRepoConfig passes — every repo must ship one now that
+// the pipeline-image fallback is gone.
+func seedDevcontainer(t *testing.T, a *Adapter, name string) {
+	t.Helper()
+	dc := filepath.Join(a.srcDir(name), ".devcontainer")
+	if err := os.MkdirAll(dc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dc, "devcontainer.json"), []byte(`{"image":"debian:bookworm-slim"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // armSandbox pre-creates the run folder + a dummy inner-daemon socket file, so
 // waitSandboxReady's os.Stat passes (the scripted version probe then confirms)
 // and dockerEnv activates → inner calls carry DOCKER_HOST. A plain file (not a
@@ -156,7 +169,6 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	r := &scriptRunner{responses: append(
 		[]response{{code: 0}}, // git clone (before ensureSandbox)
 		sandboxResp([]response{
-			{code: 0},          // loadPipelineImage: image inspect present → skip load
 			{stdout: upOK},     // devcontainer up
 			{code: 0},          // docker exec root-init
 			{stdout: "cid1\n"}, // docker ps -q (relay)
@@ -167,9 +179,10 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	a := newTestAdapter(t, r)
 	a.cfg.ProxyPort = 9090
 	armSandbox(t, a, "apothecary-run1")
+	seedDevcontainer(t, a, "apothecary-run1")
 	id, err := a.Provision(context.Background(), ports.EnvSpec{
 		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git",
-		GitUser: "oauth2", GitPass: "sekret", Image: "apothecary/ws:abc",
+		GitUser: "oauth2", GitPass: "sekret",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,14 +216,9 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 			t.Errorf("up args missing %q: %v", want, up.args)
 		}
 	}
-	// Repo has no devcontainer config in this test: the pipeline-image
-	// fallback must ride --override-config.
-	if !strings.Contains(joined, "--override-config") {
-		t.Errorf("fallback config expected for repo without devcontainer: %v", up.args)
-	}
-	data, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "override.json"))
-	if err != nil || !strings.Contains(string(data), "apothecary/ws:abc") {
-		t.Errorf("override.json = %s, %v", data, err)
+	// The repo brings its own devcontainer — no apothecary override config.
+	if strings.Contains(joined, "--override-config") {
+		t.Errorf("repo has its own devcontainer; no override expected: %v", up.args)
 	}
 	shim, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "shim", "shim"))
 	if err != nil || string(shim) != "#!fake-shim" {
@@ -240,7 +248,6 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	r := &scriptRunner{responses: append(
 		[]response{{code: 0}}, // git clone
 		sandboxResp([]response{
-			{code: 0},          // loadPipelineImage: inspect present → skip load
 			{stdout: upOK},     // devcontainer up
 			{code: 0},          // docker exec root-init
 			{stdout: "cid1\n"}, // docker ps -q (relay)
@@ -251,9 +258,10 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 		})...)}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, name)
+	seedDevcontainer(t, a, name)
 	id, err := a.Provision(context.Background(), ports.EnvSpec{
 		RunID: "RUN1", Name: name, Project: "Acme Web",
-		RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
+		RepoURL: "https://g.local/r.git",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -457,83 +465,6 @@ func TestRepoDevcontainerCombinesFirewallAndHarness(t *testing.T) {
 	}
 }
 
-// The fallback path runs the §8 pipeline image, which already bakes the
-// harness in — injecting it again would be redundant work every build.
-func TestFallbackImageSkipsHarnessFeature(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone
-		sandboxResp([]response{
-			{code: 0}, // loadPipelineImage: inspect present → skip load
-			{stdout: upOK}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0},
-		})...)}
-	a := newTestAdapter(t, r)
-	armSandbox(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
-		HarnessInstall: []ports.HarnessInstall{
-			{Binary: "opencode", Commands: []string{"npm install -g opencode-ai@1.2.3"}},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	up := find(t, r.calls, "devcontainer", "up")
-	if strings.Contains(strings.Join(up.args, " "), "apothecary-harness") {
-		t.Errorf("fallback image already has the harness: %v", up.args)
-	}
-}
-
-func TestFallbackConfigFirewallExtendsOverride(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone
-		sandboxResp([]response{
-			{code: 0},          // loadPipelineImage: inspect present → skip load
-			{stdout: upOK},     // up (no repo config → fallback)
-			{code: 0},          // root-init
-			{stdout: "cid1\n"}, // docker ps -q (relay)
-			{code: 0},          // docker exec -d relay
-			{code: 0},          // docker exec -d portscan
-			{code: 0},          // ready/relay/firewall probe
-		})...)}
-	a := newTestAdapter(t, r)
-	a.cfg.FirewallOff = false // firewall ON
-	a.cfg.ProxyPort = 9090
-	armSandbox(t, a, "apothecary-run1")
-	_, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
-		EgressDomains: []string{"g.local", "api.anthropic.com"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "override.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		CapAdd           []string          `json:"capAdd"`
-		ContainerEnv     map[string]string `json:"containerEnv"`
-		PostStartCommand string            `json:"postStartCommand"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(cfg.CapAdd, "NET_ADMIN") {
-		t.Errorf("capAdd = %v", cfg.CapAdd)
-	}
-	if !strings.Contains(cfg.PostStartCommand, "init-firewall.sh") {
-		t.Errorf("postStart = %q", cfg.PostStartCommand)
-	}
-	if cfg.ContainerEnv["APOTHECARY_EXTRA_DOMAINS"] != "g.local api.anthropic.com" ||
-		cfg.ContainerEnv["APOTHECARY_EGRESS_PROXY"] != "127.0.0.1:9090" {
-		t.Errorf("containerEnv = %v", cfg.ContainerEnv)
-	}
-	// Firewalled fact recorded and reported (egress NOT open).
-	open, _ := a.EgressOpen(context.Background(), "apothecary-run1")
-	if open {
-		t.Error("firewalled env must report EgressOpen=false")
-	}
-}
-
 func TestRepoConfigInjectsFirewallFeature(t *testing.T) {
 	r := &scriptRunner{responses: sandboxResp([]response{
 		{stdout: `{"configuration":{"image":"x"},"mergedConfiguration":{"image":"x"}}`}, // read-configuration (isCompose): not compose
@@ -666,15 +597,15 @@ func TestFirewallOffSkipsInjection(t *testing.T) {
 	}
 }
 
-func TestProvisionWithoutConfigOrImageFails(t *testing.T) {
-	// ensureSandbox runs before the missing-image check, so its script is
-	// consumed first; the error then fires with no further docker calls.
-	r := &scriptRunner{responses: append([]response{{code: 0}}, sandboxResp(nil)...)} // clone + sandbox
+func TestProvisionRejectsRepoWithoutDevcontainer(t *testing.T) {
+	// The guard fires right after the checkout, before the sandbox — only the
+	// clone runs; no config on disk means the repo is unsupported.
+	r := &scriptRunner{responses: []response{{code: 0}}} // clone
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	_, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"})
-	if err == nil || !strings.Contains(err.Error(), "no .devcontainer config") {
-		t.Fatalf("want missing-config error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), ".devcontainer/devcontainer.json") {
+		t.Fatalf("want no-devcontainer error, got %v", err)
 	}
 }
 
@@ -682,12 +613,12 @@ func TestProvisionSurfacesUpFailure(t *testing.T) {
 	r := &scriptRunner{responses: append(
 		[]response{{code: 0}}, // clone
 		sandboxResp([]response{
-			{code: 0}, // loadPipelineImage: inspect present → skip load
 			{stdout: `{"outcome":"error","message":"Dockerfile failed","description":"exit 1"}`, stderr: "build log tail", code: 1},
 		})...)}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
-	_, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "u", Image: "img"})
+	seedDevcontainer(t, a, "apothecary-run1")
+	_, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "u"})
 	if err == nil || !strings.Contains(err.Error(), "Dockerfile failed") {
 		t.Fatalf("want up failure with message, got %v", err)
 	}
@@ -816,9 +747,11 @@ func TestStatusMapping(t *testing.T) {
 // the run page's workspace-log poll shows it.
 func TestRebuildNonComposeRemovesContainer(t *testing.T) {
 	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // ensureSrc git clone
+		[]response{
+			{stdout: `{"mergedConfiguration":{}}`}, // Rebuild isCompose: not compose
+			{code: 0},                              // ensureSrc git clone
+		},
 		sandboxResp([]response{
-			{code: 0},          // loadPipelineImage: inspect present
 			{stdout: upOK},     // devcontainer up (teed into exec.log)
 			{code: 0},          // root-init
 			{stdout: "cid1\n"}, // docker ps -q (relay)
@@ -828,10 +761,10 @@ func TestRebuildNonComposeRemovesContainer(t *testing.T) {
 		})...)}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
-	// No .devcontainer on disk → non-compose (pipeline-image) path.
+	seedDevcontainer(t, a, "apothecary-run1") // non-compose devcontainer
 	err := a.Rebuild(context.Background(), ports.EnvSpec{
 		RunID: "run1", Name: "apothecary-run1",
-		RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
+		RepoURL: "https://g.local/r.git",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1007,30 +940,6 @@ func TestLegacyEnvFallsBackToHostDaemon(t *testing.T) {
 	}
 	if envHas(r.calls[0], "DOCKER_HOST") {
 		t.Errorf("legacy env must not carry DOCKER_HOST: %v", r.calls[0].env)
-	}
-}
-
-// The §8 pipeline image (host daemon) is streamed into the inner daemon only
-// when absent there; a repo with its own devcontainer never triggers it.
-func TestPipelineImageLoadedIntoSandbox(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone
-		sandboxResp([]response{
-			{code: 1}, // image inspect on inner: NOT present
-			{code: 0}, // /bin/sh -c "docker save … | docker load"
-			{stdout: upOK}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0},
-		})...)}
-	a := newTestAdapter(t, r)
-	armSandbox(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "u", Image: "apothecary/ws:abc",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	load := find(t, r.calls, "/bin/sh", "-c")
-	joined := strings.Join(load.args, " ")
-	if !strings.Contains(joined, "docker save apothecary/ws:abc |") || !strings.Contains(joined, "docker load") {
-		t.Errorf("expected save|load into the inner daemon: %v", load.args)
 	}
 }
 

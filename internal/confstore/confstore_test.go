@@ -147,13 +147,6 @@ func TestProjectValidation(t *testing.T) {
 		t.Errorf("wrong-port ref err = %v", err)
 	}
 
-	// Fragment rules (§8.2).
-	bad = base
-	bad.Workspace.DockerfileFragment = "RUN apt-get install -y python3\nCOPY sneaky /etc/"
-	if _, err := svc.CreateProject(ctx, bad); err == nil || !strings.Contains(err.Error(), "COPY") {
-		t.Errorf("fragment err = %v", err)
-	}
-
 	// Unknown default flow refused.
 	bad = base
 	bad.DefaultFlow = "nope"
@@ -231,23 +224,6 @@ func TestProjectHarnessSet(t *testing.T) {
 	wrong.HarnessIDs = []string{oc.ID, forge.ID}
 	if _, err := svc.CreateProject(ctx, wrong); err == nil || !strings.Contains(err.Error(), "harness_ids") {
 		t.Errorf("wrong-port set err = %v", err)
-	}
-}
-
-func TestValidateFragment(t *testing.T) {
-	ok := "RUN curl -fsSL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz | tar -C /usr/local -xz\nENV PATH=/usr/local/go/bin:$PATH\n# comment\n"
-	if err := ValidateFragment(ok); err != nil {
-		t.Errorf("valid fragment refused: %v", err)
-	}
-	for _, bad := range []string{"FROM alpine", "  copy a b", "USER root", "ENTRYPOINT [\"x\"]", "cmd echo", "ADD x y"} {
-		if err := ValidateFragment(bad); err == nil {
-			t.Errorf("fragment %q accepted", bad)
-		}
-	}
-	// A continuation line starting with COPY is part of a RUN's shell text —
-	// harmless (the shell has no COPY builtin), and allowed.
-	if err := ValidateFragment("RUN echo hello \\\n  world"); err != nil {
-		t.Errorf("continuation refused: %v", err)
 	}
 }
 

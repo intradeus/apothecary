@@ -796,6 +796,21 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 // harness pin check. Model strings are deliberately NOT validated against
 // provider kinds — harnesses route provider/model themselves (openrouter
 // serves anthropic/*), so any check would false-negative.
+// hasDevcontainer reports whether the repo carries a devcontainer config at
+// either standard path — the workspace definition apothecary requires.
+func hasDevcontainer(ctx context.Context, res *Resolution) (bool, error) {
+	for _, p := range []string{".devcontainer/devcontainer.json", ".devcontainer.json"} {
+		ok, err := res.Forge.FileExists(ctx, res.RepoRef, p)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) error {
 	if err := res.Forge.CheckAccess(ctx, res.RepoRef); err != nil {
 		return fmt.Errorf("preflight: forge access: %w", err)
@@ -809,6 +824,13 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	}
 	if !ok {
 		return fmt.Errorf("preflight: %s not found in repo", res.AgentsMDPath)
+	}
+	// Every workspace runs the repo's OWN devcontainer — there is no
+	// apothecary-built fallback image.
+	if dc, derr := hasDevcontainer(ctx, res); derr != nil {
+		return fmt.Errorf("preflight: checking for a devcontainer: %w", derr)
+	} else if !dc {
+		return fmt.Errorf("preflight: repo has no .devcontainer/devcontainer.json — apothecary runs the repo's own devcontainer")
 	}
 	agents := map[string]bool{}
 	for _, n := range res.AgentNames {
@@ -1540,6 +1562,11 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 		ferr = fmt.Errorf("%s not found in repo", res.AgentsMDPath)
 	}
 	steps = append(steps, step("repo_file:"+res.AgentsMDPath, ferr))
+	dc, dcErr := hasDevcontainer(ctx, res)
+	if dcErr == nil && !dc {
+		dcErr = fmt.Errorf("no .devcontainer/devcontainer.json in repo")
+	}
+	steps = append(steps, step("devcontainer", dcErr))
 	if fl != nil {
 		steps = append(steps, step("flow_refs", e.preflightFlowRefs(res, fl)))
 	}

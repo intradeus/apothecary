@@ -15,7 +15,6 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
 	"apothecary/internal/secrets"
-	"apothecary/internal/wsimage"
 )
 
 // flowResp / agentResp decorate store rows with the built-in layering
@@ -338,10 +337,6 @@ func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, snap)
-}
-
-func (s *Server) listPresets(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, wsimage.Presets())
 }
 
 // --- agents (DESIGN3 §1) ----------------------------------------------------

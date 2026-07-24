@@ -25,9 +25,8 @@ func TestFromEnvDefaultsAndOverrides(t *testing.T) {
 		t.Errorf("defaults = %+v", b)
 	}
 	t.Setenv("APOTHECARY_LISTEN", "127.0.0.1:9999")
-	t.Setenv("APOTHECARY_BASE_IMAGE", "ghcr.io/x/base:v1")
 	b, _ = FromEnv()
-	if b.Listen != "127.0.0.1:9999" || b.BaseImage != "ghcr.io/x/base:v1" {
+	if b.Listen != "127.0.0.1:9999" {
 		t.Errorf("overrides = %+v", b)
 	}
 }

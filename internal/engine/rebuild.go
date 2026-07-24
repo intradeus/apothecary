@@ -68,16 +68,6 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 		return err
 	}
 
-	// The image must be present on the daemon for the pipeline-image path
-	// (no-devcontainer repos); a devcontainer repo brings its own image and
-	// EnsureImage is nil. Best-effort — a stale cache re-pulls.
-	if res.EnsureImage != nil {
-		if _, ierr := res.EnsureImage(ctx); ierr != nil {
-			err = fmt.Errorf("rebuild %s: image: %w", runID, ierr)
-			return e.finishRebuild(ctx, runID, v.EnvID, err)
-		}
-	}
-
 	// Same spec ensureEnv builds (runloop.go). The name derives from the
 	// branch STEM (BranchBase), not the suffixed branch, or the CLI doubles
 	// the run-id tail.
@@ -91,7 +81,6 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 		Branch:         v.Branch,
 		Name:           workspaceName(nameBranch, runID),
 		Project:        res.ProjectName,
-		Image:          res.Image,
 		HarnessInstall: res.HarnessInstall,
 		EgressDomains:  res.EgressDomains,
 		GitUser:        res.GitUser,

@@ -88,7 +88,7 @@ export interface Project {
   harness_ids: string[];
   repo: { url: string; locator: string; default_branch: string; agents_md_path: string };
   commands: Record<string, string>;
-  workspace: { dockerfile_fragment?: string; extra_domains?: string[] };
+  workspace: { extra_domains?: string[] };
   default_flow: string;
   created_at: string;
   updated_at: string;
@@ -179,13 +179,6 @@ export interface PreflightStep {
   id: string;
   ok: boolean;
   error?: string;
-}
-
-export interface Preset {
-  name: string;
-  label: string;
-  lines: string[];
-  domains: string[];
 }
 
 export interface CheckStep {
@@ -411,7 +404,6 @@ export const api = {
   deleteProject: (id: string) => req<void>(`/api/projects/${id}`, { method: 'DELETE' }),
   preflight: (id: string) =>
     post(`/api/projects/${id}/preflight`) as Promise<{ ok: boolean; steps: PreflightStep[] }>,
-  presets: () => req<Preset[]>('/api/presets'),
   startEnvCheck: (projectId: string, keep: boolean) =>
     post(`/api/projects/${projectId}/envcheck`, { keep }) as Promise<{ check_id: string }>,
   envCheck: (checkId: string) => req<CheckRun>(`/api/envchecks/${checkId}`),

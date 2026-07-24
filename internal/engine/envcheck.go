@@ -76,23 +76,12 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	envp := res.Envp
 	branch := "apothecary/" + strings.ToLower(runID)
 
-	// Image pipeline (§8) — only on the managed-template path.
-	if res.EnsureImage != nil {
-		cached, err := res.EnsureImage(ctx)
-		if !step("image", err, fmt.Sprintf("%s (cached=%v)", res.Image, cached)) {
-			return failed
-		}
-	} else {
-		skip("image", "custom template: the template bakes its own image")
-	}
-
 	env, err := envp.Provision(ctx, ports.EnvSpec{
 		RunID:         runID,
 		RepoURL:       res.RepoRef.URL,
 		Branch:        branch,
 		Name:          workspaceName(branch, runID),
 		Project:       res.ProjectName,
-		Image:         res.Image,
 		EgressDomains: res.EgressDomains,
 		GitUser:       res.GitUser,
 		GitPass:       res.GitPass,

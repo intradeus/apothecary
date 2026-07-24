@@ -133,7 +133,6 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/projects/{id}/preflight", s.preflightProject)
 		mux.HandleFunc("POST /api/projects/{id}/envcheck", s.startEnvCheck)
 		mux.HandleFunc("GET /api/envchecks/{id}", s.getEnvCheck)
-		mux.HandleFunc("GET /api/presets", s.listPresets)
 		mux.HandleFunc("GET /api/flows", s.listFlows)
 		mux.HandleFunc("POST /api/flows", s.createFlow)
 		mux.HandleFunc("POST /api/flows/validate", s.validateFlow)
