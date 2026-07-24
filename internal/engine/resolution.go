@@ -35,8 +35,16 @@ type Resolution struct {
 	// ProviderEnv is the merged env-var map of the project's provider
 	// integrations, written to /apothecary/provider.env at bootstrap step 2.
 	ProviderEnv map[string]string
-	// EgressDomains is the derived firewall allowlist (DESIGN2 §8.4).
+	// EgressDomains is the derived egress allowlist (allow mode): repo host ∪
+	// harness/forge contributions ∪ registry defaults ∪ project extras.
 	EgressDomains []string
+	// EgressMode ("allow"|"deny", default allow) and EgressDenylist drive the
+	// per-project gateway posture; the escape-hatch CIDRs/ports permit specific
+	// raw external egress in allow mode.
+	EgressMode         string
+	EgressDenylist     []string
+	EgressAllowedCIDRs []string
+	EgressAllowedPorts []int
 	// CodeServerExtensions are project-declared VS Code extension ids baked
 	// into the workspace's code-server (§ code-server integration).
 	CodeServerExtensions []string

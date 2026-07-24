@@ -31,33 +31,6 @@ func TestFromEnvDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
-func TestEgressProxyConfig(t *testing.T) {
-	t.Setenv("APOTHECARY_POSTGRES_DSN", "postgres://x@localhost/db")
-	cases := []struct {
-		raw      string
-		wantOn   bool
-		wantPort int
-	}{
-		{"", true, DefaultEgressProxyPort},   // unset ⇒ on, default port
-		{"on", true, DefaultEgressProxyPort}, // explicit on
-		{"off", false, DefaultEgressProxyPort},
-		{"8078", true, 8078},                      // fixed port
-		{"garbage", true, DefaultEgressProxyPort}, // unparseable ⇒ default, still on
-	}
-	for _, c := range cases {
-		// Empty string is the unset-equivalent (t.Setenv can't truly unset).
-		t.Setenv("APOTHECARY_EGRESS_PROXY", c.raw)
-		b, err := FromEnv()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if b.EgressProxy != c.wantOn || b.EgressProxyPort != c.wantPort {
-			t.Errorf("APOTHECARY_EGRESS_PROXY=%q -> on=%v port=%d, want on=%v port=%d",
-				c.raw, b.EgressProxy, b.EgressProxyPort, c.wantOn, c.wantPort)
-		}
-	}
-}
-
 func TestKeyValidation(t *testing.T) {
 	b := &Boot{}
 	if _, err := b.Key(); err == nil || !strings.Contains(err.Error(), "keygen") {

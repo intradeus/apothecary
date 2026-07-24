@@ -21,7 +21,6 @@ import (
 	"apothecary/internal/artifacts"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
-	"apothecary/internal/egressproxy"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
@@ -74,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/workspace-log", s.getWorkspaceLog)
 	mux.HandleFunc("GET /api/runs/{id}/egress-denials", s.getEgressDenials)
 	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
+	mux.HandleFunc("GET /api/runs/{id}/egress-audit", s.getRunEgressAudit)
 	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
 	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
 	mux.HandleFunc("POST /api/runs/{id}/observed-ports", s.postObservedPorts)
@@ -131,6 +131,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/projects/{id}/agents/{name}/versions", s.listAgentVersions)
 		mux.HandleFunc("GET /api/agent-versions/{hash}", s.getAgentVersion)
 		mux.HandleFunc("POST /api/projects/{id}/agents/copy", s.copyAgents)
+		mux.HandleFunc("GET /api/projects/{id}/egress-audit", s.getProjectEgressAudit)
 		mux.HandleFunc("POST /api/projects/{id}/preflight", s.preflightProject)
 		mux.HandleFunc("POST /api/projects/{id}/envcheck", s.startEnvCheck)
 		mux.HandleFunc("GET /api/envchecks/{id}", s.getEnvCheck)
@@ -556,15 +557,48 @@ func (s *Server) getWorkspaceLog(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// getEgressDenials lists hosts the egress proxy blocked for this run (M18):
-// the visible diagnosis for "the firewall ate my model provider". Empty
-// list when proxy mode is off or nothing was blocked.
+// getEgressDenials lists hosts the per-project gateway blocked for this run:
+// the visible diagnosis for "the firewall ate my model provider". Empty list
+// when the run has no gateway or nothing was blocked.
 func (s *Server) getEgressDenials(w http.ResponseWriter, r *http.Request) {
-	dens := s.Engine.EgressDenials(r.PathValue("id"))
+	dens := s.Engine.EgressDenials(r.Context(), r.PathValue("id"))
 	if dens == nil {
-		dens = []egressproxy.Denial{}
+		dens = []ports.EgressDenial{}
 	}
 	writeJSON(w, http.StatusOK, dens)
+}
+
+// getRunEgressAudit serves the durable egress audit trail for a run — every
+// external host it reached or was blocked from, with counts, byte totals and
+// timestamps. Filterable via ?verdict=allow|deny, ?host=<substring>, ?limit=N.
+func (s *Server) getRunEgressAudit(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	rows, err := s.Engine.RunEgressAudit(r.Context(), r.PathValue("id"),
+		r.URL.Query().Get("verdict"), r.URL.Query().Get("host"), limit)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []ports.EgressAuditRow{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+// getProjectEgressAudit serves the durable egress audit trail across all of a
+// project's runs. Same filters as the run-level endpoint.
+func (s *Server) getProjectEgressAudit(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	rows, err := s.Engine.ProjectEgressAudit(r.Context(), r.PathValue("id"),
+		r.URL.Query().Get("verdict"), r.URL.Query().Get("host"), limit)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []ports.EgressAuditRow{}
+	}
+	writeJSON(w, http.StatusOK, rows)
 }
 
 // validEgressHost accepts a hostname or `*.suffix` wildcard — no scheme,
@@ -605,7 +639,7 @@ func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("id")
 
 	// Instant: unblock the live run.
-	if err := s.Engine.AllowEgress(runID, host); err != nil {
+	if err := s.Engine.AllowEgress(r.Context(), runID, host); err != nil {
 		status := http.StatusConflict
 		if errors.Is(err, engine.ErrEgressOff) {
 			status = http.StatusServiceUnavailable

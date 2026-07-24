@@ -28,9 +28,9 @@ func (Devcontainer) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		DockerBin:       cfg.Str("docker_path", "docker"),
 		RunsDir:         deps.RunsDir,
 		EnginePort:      deps.EnginePort,
-		ProxyPort:       deps.ProxyPort,
 		ShimBin:         deps.ShimBin,
-		FirewallOff:     cfg.Str("firewall", "on") == "off",
+		GatewayImage:    deps.GatewayImage,
+		GatewayOff:      cfg.Str("firewall", "on") == "off",
 		DinDImage:       cfg.Str("dind_image", ""), // "" ⇒ adapter default
 	}), nil
 }

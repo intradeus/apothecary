@@ -19,26 +19,12 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"apothecary/internal/artifacts"
-	"apothecary/internal/egressproxy"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
-
-// EgressController is the engine's handle to the hostname-filtering egress
-// proxy (M18): per-run allowlist policy, deterministic workspace
-// credentials, and blocked-host visibility. nil disables proxy mode (the
-// workspace firewall falls back to the derived IP allowlist).
-type EgressController interface {
-	SetPolicy(runID string, hosts []string)
-	DropPolicy(runID string)
-	AllowHost(runID, host string) bool
-	Credentials(runID string) (user, pass string)
-	Port() int
-	Denials(runID string) []egressproxy.Denial
-}
 
 // ErrEgressOff marks an allow request when proxy mode is disabled.
 var ErrEgressOff = errors.New("egress proxy mode is off")
@@ -136,13 +122,13 @@ type Engine struct {
 	settings SettingsSource
 	channels []ports.NotificationChannel
 
-	clock     func() time.Time
-	newID     func() string
-	log       *slog.Logger
-	sink      EventSink
-	egress    EgressController
-	portRelay *portrelay.Manager
-	artifacts ArtifactStore
+	clock       func() time.Time
+	newID       func() string
+	log         *slog.Logger
+	sink        EventSink
+	portRelay   *portrelay.Manager
+	artifacts   ArtifactStore
+	egressAudit EgressAuditStore
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -383,10 +369,6 @@ type EventSink interface {
 // SetSink installs the telemetry sink; call before Recover. nil disables.
 func (e *Engine) SetSink(s EventSink) { e.sink = s }
 
-// SetEgress installs the egress-proxy controller (M18); call before
-// Recover. nil = proxy mode off.
-func (e *Engine) SetEgress(c EgressController) { e.egress = c }
-
 // SetPortRelay installs the workspace-port publisher; call before Recover.
 // nil = port exposure off.
 func (e *Engine) SetPortRelay(m *portrelay.Manager) { e.portRelay = m }
@@ -407,6 +389,17 @@ type ArtifactStore interface {
 
 // SetArtifacts installs the artifact store; call before Recover. nil disables.
 func (e *Engine) SetArtifacts(a ArtifactStore) { e.artifacts = a }
+
+// EgressAuditStore persists and queries the durable egress audit trail (what
+// each workspace reached / was blocked from). nil = audit off. Implemented by
+// *pgstore.Store.
+type EgressAuditStore interface {
+	UpsertEgressAudit(ctx context.Context, rows []ports.EgressAuditRow) error
+	QueryEgressAudit(ctx context.Context, f ports.EgressAuditFilter) ([]ports.EgressAuditRow, error)
+}
+
+// SetEgressAudit installs the audit store; call before Recover. nil disables.
+func (e *Engine) SetEgressAudit(s EgressAuditStore) { e.egressAudit = s }
 
 // ErrPortsOff marks an expose request when no port relay is configured.
 var ErrPortsOff = errors.New("port exposure is not configured")
@@ -459,26 +452,149 @@ func (e *Engine) RunPorts(runID string) []portrelay.Exposure {
 	return e.portRelay.List(runID)
 }
 
-// EgressDenials lists a run's proxy-blocked hosts (run page feedback).
-func (e *Engine) EgressDenials(runID string) []egressproxy.Denial {
-	if e.egress == nil {
-		return nil
+// envNameForRun returns the run's env id, or — while it is still provisioning
+// (EnvReady not yet emitted) — the deterministic workspace name the provisioner
+// will use. This lets egress control and the workspace-log tail work DURING the
+// build, not only after the env is ready. Provisioners whose env id isn't this
+// name simply see a name that doesn't match, degrading to their pre-ready state.
+func (e *Engine) envNameForRun(v run.View, runID string) string {
+	if v.EnvID != "" {
+		return v.EnvID
 	}
-	return e.egress.Denials(runID)
+	nameBranch := v.BranchBase
+	if nameBranch == "" {
+		nameBranch = v.Branch
+	}
+	return workspaceName(nameBranch, runID)
 }
 
-// AllowEgress adds a host to a run's live proxy allowlist (the "add to
-// egress" fast path): instant, no restart. Returns ErrEgressOff when proxy
-// mode is off, ErrRunNotActive when the run has no active policy.
+// egressCtrl resolves a run to its provisioner's egress controller (the
+// per-project gateway), or ErrEgressOff when the run isn't live or the
+// provisioner has no gateway.
+func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressController, ports.EnvID, func(), error) {
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if len(evs) == 0 {
+		return nil, "", nil, fmt.Errorf("run %s not found", runID)
+	}
+	v := run.Reduce(evs)
+	if v.ProjectID == "" {
+		return nil, "", nil, fmt.Errorf("run %s: %w", runID, ErrEgressOff)
+	}
+	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	ctrl, ok := res.Envp.(ports.EgressController)
+	if !ok {
+		res.release()
+		return nil, "", nil, ErrEgressOff
+	}
+	// Works during provisioning too (EnvID not yet set): the most important time
+	// to "add to egress" is when the build is blocked on a denied domain.
+	return ctrl, ports.EnvID(e.envNameForRun(v, runID)), res.release, nil
+}
+
+// EgressDenials lists a run's gateway-blocked hosts (run page feedback).
+func (e *Engine) EgressDenials(ctx context.Context, runID string) []ports.EgressDenial {
+	ctrl, env, release, err := e.egressCtrl(ctx, runID)
+	if err != nil {
+		return nil
+	}
+	defer release()
+	return ctrl.EgressDenials(ctx, env)
+}
+
+// AllowEgress adds a host to a run's project egress policy live — the gateway
+// hot-reloads it, so the next request succeeds with no restart. Project-wide by
+// design. Returns ErrEgressOff when the run isn't live / has no gateway.
 // Persistence to the project (future runs) is the caller's job.
-func (e *Engine) AllowEgress(runID, host string) error {
-	if e.egress == nil {
-		return ErrEgressOff
+func (e *Engine) AllowEgress(ctx context.Context, runID, host string) error {
+	ctrl, env, release, err := e.egressCtrl(ctx, runID)
+	if err != nil {
+		return err
 	}
-	if !e.egress.AllowHost(runID, host) {
-		return fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+	defer release()
+	return ctrl.AllowEgress(ctx, env, host)
+}
+
+// auditRows converts a run's provisioner audit records into durable rows tagged
+// with the project + engine run id. Empty when the provisioner has no auditor.
+// Uses envNameForRun so it works DURING provisioning too (EnvID not yet set).
+func (e *Engine) auditRows(ctx context.Context, v run.View, envp ports.EnvProvisioner) []ports.EgressAuditRow {
+	auditor, ok := envp.(ports.EgressAuditor)
+	if !ok {
+		return nil
 	}
-	return nil
+	recs := auditor.EgressAudit(ctx, ports.EnvID(e.envNameForRun(v, v.RunID)))
+	rows := make([]ports.EgressAuditRow, 0, len(recs))
+	for _, r := range recs {
+		rows = append(rows, ports.EgressAuditRow{
+			Project: v.ProjectID, Run: v.RunID, Host: r.Host, DstIP: r.DstIP, Port: r.Port,
+			Proto: r.Proto, Verdict: r.Verdict, Count: r.Count, BytesOut: r.BytesOut,
+			BytesIn: r.BytesIn, First: r.First, Last: r.Last,
+		})
+	}
+	return rows
+}
+
+// IngestEgressAuditOnce pulls the aggregated egress audit of every ACTIVE run
+// (from the in-memory handle set — cheap, no full-history scan) and upserts it
+// into durable storage. This is the SINGLE audit path: the gateway writes a file
+// (the only channel out of the container), the engine ingests it to the DB, and
+// the UI reads the DB — so every audit fact is PERSISTED before it is delivered.
+// Run on a fast ticker for near-live freshness, and once more before env destroy.
+func (e *Engine) IngestEgressAuditOnce(ctx context.Context) error {
+	if e.egressAudit == nil {
+		return nil
+	}
+	e.mu.Lock()
+	ids := make([]string, 0, len(e.handles))
+	for id := range e.handles {
+		ids = append(ids, id)
+	}
+	e.mu.Unlock()
+
+	var rows []ports.EgressAuditRow
+	for _, id := range ids {
+		evs, err := e.store.Events(ctx, id, 0)
+		if err != nil {
+			continue
+		}
+		v := run.Reduce(evs)
+		if v.ProjectID == "" {
+			continue
+		}
+		res, err := e.resolver.Resolve(ctx, v.ProjectID)
+		if err != nil {
+			continue
+		}
+		rows = append(rows, e.auditRows(ctx, v, res.Envp)...)
+		res.release()
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return e.egressAudit.UpsertEgressAudit(ctx, rows)
+}
+
+// RunEgressAudit returns a run's egress audit from the durable store — the
+// single source of truth, kept near-live by IngestEgressAuditOnce. Filterable.
+func (e *Engine) RunEgressAudit(ctx context.Context, runID, verdict, host string, limit int) ([]ports.EgressAuditRow, error) {
+	if e.egressAudit == nil {
+		return nil, nil
+	}
+	return e.egressAudit.QueryEgressAudit(ctx, ports.EgressAuditFilter{Run: runID, Verdict: verdict, Host: host, Limit: limit})
+}
+
+// ProjectEgressAudit returns the durable audit rows for a whole project (filterable).
+func (e *Engine) ProjectEgressAudit(ctx context.Context, projectID, verdict, host string, limit int) ([]ports.EgressAuditRow, error) {
+	if e.egressAudit == nil {
+		return nil, nil
+	}
+	return e.egressAudit.QueryEgressAudit(ctx, ports.EgressAuditFilter{Project: projectID, Verdict: verdict, Host: host, Limit: limit})
 }
 
 // emit fans freshly appended events to the sink (nil-safe).
@@ -788,6 +904,13 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 		return err
 	}
 	defer res.release()
+	// Final audit flush before the env (and possibly the project gateway) is
+	// torn down, so the trail is durable even for the last activity.
+	if e.egressAudit != nil {
+		if rows := e.auditRows(ctx, v, res.Envp); len(rows) > 0 {
+			_ = e.egressAudit.UpsertEgressAudit(ctx, rows)
+		}
+	}
 	return res.Envp.Destroy(ctx, ports.EnvID(v.EnvID))
 }
 
@@ -1311,9 +1434,10 @@ func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]b
 		return nil, fmt.Errorf("run %s not found", runID)
 	}
 	v := run.Reduce(evs)
-	if v.EnvID == "" || v.ProjectID == "" {
+	if v.ProjectID == "" {
 		return nil, fmt.Errorf("run %s: %w", runID, ErrNoLiveLog)
 	}
+	env := e.envNameForRun(v, runID)
 	res, err := e.resolver.Resolve(ctx, v.ProjectID)
 	if err != nil {
 		return nil, err
@@ -1323,7 +1447,7 @@ func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]b
 	if !ok {
 		return nil, fmt.Errorf("run %s: provisioner has no live log: %w", runID, ErrNoLiveLog)
 	}
-	return tailer.TailExecLog(ctx, ports.EnvID(v.EnvID), n)
+	return tailer.TailExecLog(ctx, ports.EnvID(env), n)
 }
 
 // PendingPings returns open pings (the CPUI inbox source until the DB
@@ -1512,9 +1636,6 @@ func (e *Engine) notify(ctx context.Context, n ports.Notification) {
 
 func (e *Engine) finish(runID string, h *runHandle) {
 	lim := e.limits(context.Background())
-	if e.egress != nil {
-		e.egress.DropPolicy(runID)
-	}
 	e.mu.Lock()
 	delete(e.handles, runID)
 	// Prune this run's pings: an open ping of a dead run is a permanently

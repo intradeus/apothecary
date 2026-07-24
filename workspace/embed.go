@@ -6,21 +6,14 @@ package workspace
 
 import "embed"
 
-// BaseContext holds the invariant material injected into every workspace: the
+// BaseContext holds the invariant material apothecary compiles/injects: the
 // static shim's source tree (compiled by wsimage.EnsureShim, bind-mounted in)
-// and init-firewall.sh (single-sourced into the firewall devcontainer feature).
+// and the egress gateway daemon's source tree (compiled into the per-project
+// egress-gw image by wsimage.EnsureGatewayImage). Egress is enforced by that
+// external gateway now, so there is no in-container firewall feature.
 //
-//go:embed init-firewall.sh shim
+//go:embed shim gateway
 var BaseContext embed.FS
-
-// Feature is the injected devcontainer feature that brings the §11 egress
-// firewall to repo-authored dev containers (the devcontainer provisioner):
-// capAdd NET_ADMIN + a container-start entrypoint. init-firewall.sh is
-// NOT here — it is single-sourced from BaseContext and copied into the
-// materialized feature dir by the adapter.
-//
-//go:embed feature
-var Feature embed.FS
 
 // HarnessFeature is the injected devcontainer feature that installs the
 // project's coding harness into repo-authored dev containers, which run the

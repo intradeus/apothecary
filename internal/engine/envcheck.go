@@ -41,13 +41,6 @@ type EnvCheckOptions struct {
 	EnginePort int    // tunnel probe target (workspace-local loopback)
 	Keep       bool   // keep the workspace for inspection
 	Timeout    time.Duration
-	// ProxyEnv is the workspace's HTTP(S)_PROXY environment when the engine
-	// runs in egress-proxy mode (M18): written to proxy.env so the check's
-	// clone + egress probes route through the proxy exactly as a real run
-	// does. Empty ⇒ allowlist mode (direct egress through the pinned
-	// firewall). The caller must also install the proxy allowlist policy for
-	// this check's run id.
-	ProxyEnv map[string]string
 }
 
 // RunEnvCheck provisions, bootstraps and verifies one throwaway
@@ -83,6 +76,10 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		Name:                 workspaceName(branch, runID),
 		Project:              res.ProjectName,
 		EgressDomains:        res.EgressDomains,
+		EgressMode:           res.EgressMode,
+		EgressDenylist:       res.EgressDenylist,
+		EgressAllowedCIDRs:   res.EgressAllowedCIDRs,
+		EgressAllowedPorts:   res.EgressAllowedPorts,
 		CodeServerExtensions: res.CodeServerExtensions,
 		GitUser:              res.GitUser,
 		GitPass:              res.GitPass,
@@ -108,18 +105,14 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		Branch:        branch,
 		AgentsMDPath:  res.AgentsMDPath,
 		ProviderEnv:   res.ProviderEnv,
-		// In proxy mode the firewall drops all direct egress; the clone (and
-		// every egress probe below) must route through the proxy, exactly as
-		// a real run does — without this the check firewalls its own clone.
-		ProxyEnv: opts.ProxyEnv,
-		SeedAuth: res.SeedAuth,
-		GitUser:  res.GitUser,
-		GitPass:  res.GitPass,
-		GitName:  res.GitName,
-		GitEmail: res.GitEmail,
-		Prepare:  res.Prepare,
-		Setup:    res.Commands["setup"],
-		Timeout:  10 * time.Minute,
+		SeedAuth:      res.SeedAuth,
+		GitUser:       res.GitUser,
+		GitPass:       res.GitPass,
+		GitName:       res.GitName,
+		GitEmail:      res.GitEmail,
+		Prepare:       res.Prepare,
+		Setup:         res.Commands["setup"],
+		Timeout:       10 * time.Minute,
 	}), "clone + seed auth + prepare + setup")
 
 	if verify, ok := res.Commands["verify"]; ok && verify != "" {
@@ -128,39 +121,14 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		skip("verify", "project.commands.verify not configured")
 	}
 
-	// Firewall negatives: fixed — but a provisioner may report (per env)
-	// that THIS workspace runs without the apothecary firewall (devcontainer
-	// on a compose config or with the firewall turned off). Skip honestly
-	// there instead of failing three invariants that do not exist.
-	egressOpen := false
-	if r, ok := envp.(ports.EgressReporter); ok {
-		if open, err := r.EgressOpen(ctx, env); err == nil {
-			egressOpen = open
-		}
-	}
-	proxyMode := len(opts.ProxyEnv) > 0
-	if egressOpen {
-		for _, id := range []string{"firewall_deny_http", "firewall_deny_dns", "firewall_initialized"} {
-			skip(id, "provisioner reports open egress for this workspace: firewall not present (engine-side proxy filtering only)")
-		}
+	// Egress negative: in allow mode a non-allowlisted host must be blocked by
+	// the per-project gateway. In deny mode everything but the denylist is
+	// allowed, so example.com is expected to be reachable — skip the negative.
+	if res.EgressMode == "deny" {
+		skip("egress_deny", "deny mode: only the denylist is blocked; a generic host is expected reachable")
 	} else {
-		// example.com is not on the allowlist: in allowlist mode the firewall
-		// drops it; in proxy mode the proxy refuses the CONNECT. Either way a
-		// non-allowed host must NOT be reachable.
-		step("firewall_deny_http", execExpect(ctx, envp, env,
-			"curl -m 8 -s -o /dev/null https://example.com", "", false), "example.com blocked")
-		// DNS: allowlist mode blocks the resolver (names resolve only via the
-		// pinned /etc/hosts); proxy mode INTENTIONALLY leaves the loopback
-		// resolver up (all filtering is by hostname at the proxy), so the
-		// "foreign DNS dead" invariant only applies to allowlist mode.
-		if proxyMode {
-			skip("firewall_deny_dns", "proxy mode: DNS resolves locally by design; egress is filtered by hostname at the proxy, not by blocking DNS")
-		} else {
-			step("firewall_deny_dns", execExpect(ctx, envp, env,
-				"getent hosts example.com", "", false), "foreign DNS dead")
-		}
-		step("firewall_initialized", execExpect(ctx, envp, env,
-			"test -e /run/apothecary-firewall.done", "", true), "")
+		step("egress_deny", execExpect(ctx, envp, env,
+			"curl -m 8 -s -o /dev/null https://example.com", "", false), "non-allowlisted host blocked by gateway")
 	}
 
 	// Egress positives: one per derived allowlist entry. TCP+TLS connect is
@@ -286,21 +254,12 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 
 	enginePort := enginePortOf(e.cfg.EngineURL)
 	checkRunID := "envck" + strings.ToLower(id[max(0, len(id)-11):])
-	// Proxy mode (M18): the check's workspace is firewalled exactly like a
-	// real run, so its egress must go through the proxy. Install the
-	// allowlist policy (derived egress domains) for this check's run id and
-	// hand RunEnvCheck the matching proxy.env; both empty ⇒ allowlist mode.
-	if e.egress != nil {
-		e.egress.SetPolicy(checkRunID, res.EgressDomains)
-	}
-	proxyEnv := e.proxyEnvFor(checkRunID)
+	// Egress is enforced by the per-project gateway the provisioner brings up at
+	// Provision time (from the EnvSpec egress fields) — nothing to prime here.
 	go func() {
 		defer res.release()
-		if e.egress != nil {
-			defer e.egress.DropPolicy(checkRunID)
-		}
 		failed := RunEnvCheck(context.Background(), res, checkRunID,
-			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep, ProxyEnv: proxyEnv},
+			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep},
 			func(s CheckStep) {
 				e.mu.Lock()
 				st.snap.Steps = append(st.snap.Steps, s)

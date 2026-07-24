@@ -65,10 +65,17 @@ func (a *Adapter) sandboxState(ctx context.Context, name string) (string, error)
 	return state, nil
 }
 
+// egressNet is the run's --internal docker network (owned by egressgw.Manager);
+// the sandbox joins it as its ONLY NIC so all egress must traverse the gateway.
+func egressNet(name string) string { return "apo-egress-" + name }
+
 // ensureSandbox creates (or restarts) the run's nested-daemon container and
 // blocks until the inner daemon answers on its unix socket. All docker calls
-// here target the HOST daemon (hostRun), never the inner one.
-func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.EnvSpec) error {
+// here target the HOST daemon (hostRun), never the inner one. When gwIP is set
+// (a gateway is active), the sandbox joins the run's --internal network and is
+// default-routed to the gateway, so no inner container can bypass egress
+// filtering; gwIP=="" keeps the legacy default-bridge behaviour.
+func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP string) error {
 	runRoot := a.folderFor(name)
 	sock := a.sockPath(name)
 	// Guard the two externally-imposed limits the spike surfaced:
@@ -94,14 +101,33 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.Env
 			return err
 		}
 	default:
-		if err := a.createSandbox(ctx, name, spec); err != nil {
+		if err := a.createSandbox(ctx, name, spec, gwIP); err != nil {
 			return err
 		}
 	}
-	return a.waitSandboxReady(ctx, name)
+	if err := a.waitSandboxReady(ctx, name); err != nil {
+		return err
+	}
+	if gwIP != "" {
+		return a.wireSandboxEgress(ctx, name, gwIP)
+	}
+	return nil
 }
 
-func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.EnvSpec) error {
+// wireSandboxEgress points the sandbox's default route at the gateway and
+// disables IPv6, so every inner container's egress exits via the gateway (the
+// --internal network gives the sandbox no other route). Best-effort ipv6 off.
+func (a *Adapter) wireSandboxEgress(ctx context.Context, name, gwIP string) error {
+	if _, stderr, code, err := a.hostRun(ctx, []string{"exec", name, "ip", "route", "replace", "default", "via", gwIP}); err != nil {
+		return err
+	} else if code != 0 {
+		return fmt.Errorf("sandbox %s: set default route via %s: %s", name, gwIP, tail(string(stderr), 256))
+	}
+	_, _, _, _ = a.hostRun(ctx, []string{"exec", name, "sysctl", "-w", "net.ipv6.conf.all.disable_ipv6=1"})
+	return nil
+}
+
+func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP string) error {
 	runRoot := a.folderFor(name)
 	// Named volume for the inner /var/lib/docker (idempotent create).
 	if _, stderr, code, err := a.hostRun(ctx, []string{"volume", "create",
@@ -119,6 +145,11 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 	if spec.Project != "" {
 		args = append(args, "--label", projectLabel+"="+spec.Project)
 	}
+	// When a gateway is active the sandbox's ONLY NIC is the run's --internal
+	// network (no external route → no bypass) and its resolver is the gateway.
+	if gwIP != "" {
+		args = append(args, "--network", egressNet(name), "--dns", gwIP)
+	}
 	args = append(args,
 		"-v", a.sandboxVolume(name)+":/var/lib/docker",
 		"-v", runRoot+":"+runRoot, // Invariant A: identical path in host + sandbox
@@ -129,6 +160,12 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 		// its iptables/cgroup setup. We listen only on the parity-mount socket.
 		"dockerd", "--host=unix://"+a.sockPath(name),
 	)
+	// Inner containers resolve external names through the gateway too, so their
+	// DNS queries arrive where egress is filtered (compose service-name lookups
+	// stay local to the embedded 127.0.0.11 resolver — unaffected).
+	if gwIP != "" {
+		args = append(args, "--dns", gwIP)
+	}
 	if _, stderr, code, err := a.hostRun(ctx, args); err != nil {
 		return err
 	} else if code != 0 {

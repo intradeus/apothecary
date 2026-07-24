@@ -915,13 +915,9 @@ func mrTitle(body, ticketTitle string) string {
 
 func (x *exec) ensureEnv() error {
 	rs := x.rs
-	// Install this run's egress allowlist on the proxy (M18) before any
-	// workspace network use (clone routes through it). Covers fresh
-	// provisions and recovery re-entries; the derived domains already
-	// include project extra_domains (resolve.egressDomains).
-	if x.e.egress != nil {
-		x.e.egress.SetPolicy(rs.runID, x.res.EgressDomains)
-	}
+	// Egress policy is delivered to the per-project gateway by the provisioner
+	// at Provision time (from the EnvSpec egress fields), so there is nothing to
+	// prime here.
 	if rs.envID != "" {
 		status, err := x.res.Envp.Status(x.ctx, rs.envID)
 		// A container caught mid-restart reads Starting/Stopped for a moment;
@@ -958,14 +954,11 @@ func (x *exec) ensureEnv() error {
 					return fmt.Errorf("recovery: re-establish workspace tunnel: %w", err)
 				}
 			}
-			// Per-boot workspace state changes across restarts: the run
-			// token AND the egress proxy port+credentials. Refresh both so
-			// the shim re-authenticates and egress routes to the live proxy.
+			// Per-boot workspace state changes across restarts: the run token.
+			// Refresh it so the shim re-authenticates. Egress needs no refresh —
+			// the per-project gateway kept filtering across the restart.
 			if err := x.writeRunEnv(rs.envID); err != nil {
 				x.e.log.Warn("refreshing run.env on recovery failed", "run", rs.runID, "err", err)
-			}
-			if err := x.writeProxyEnv(rs.envID); err != nil {
-				x.e.log.Warn("refreshing proxy.env on recovery failed", "run", rs.runID, "err", err)
 			}
 			// Exposures also died with the previous process; re-create them
 			// (fresh ports — the live registry, not the old env_ready event,
@@ -1001,6 +994,10 @@ func (x *exec) ensureEnv() error {
 		// repo-authored devcontainer must install the harness itself.
 		HarnessInstall:       x.res.HarnessInstall,
 		EgressDomains:        x.res.EgressDomains,
+		EgressMode:           x.res.EgressMode,
+		EgressDenylist:       x.res.EgressDenylist,
+		EgressAllowedCIDRs:   x.res.EgressAllowedCIDRs,
+		EgressAllowedPorts:   x.res.EgressAllowedPorts,
 		CodeServerExtensions: x.res.CodeServerExtensions,
 		// For clone-first provisioners (devcontainer): the engine-side
 		// checkout needs the forge credential before the env exists.
@@ -1100,42 +1097,6 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600)
 }
 
-// writeProxyEnv (re)writes /apothecary/proxy.env from the current proxy
-// port+credentials — used on the reuse path so egress keeps working after
-// an engine restart changed the port/secret. Same encoder RunBootstrap
-// uses; a no-op file when proxy mode is off.
-func (x *exec) writeProxyEnv(id ports.EnvID) error {
-	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/proxy.env", []byte(encodeEnvFile(x.proxyEnv())), 0o600)
-}
-
-// proxyEnv builds the workspace's HTTP(S)_PROXY environment pointing at
-// the egress proxy on the workspace's own loopback (M18) — reverse tunnels
-// (coder) and the devcontainer adapter's in-container relay both provide
-// loopback parity, so the address is invariant across provisioners; empty
-// when proxy mode is off. NO_PROXY keeps loopback traffic (the ask_human
-// shim, the engine endpoint) off the proxy.
-func (x *exec) proxyEnv() map[string]string { return x.e.proxyEnvFor(x.rs.runID) }
-
-// proxyEnvFor builds a run's HTTP(S)_PROXY environment pointing at the
-// egress proxy on the workspace's own loopback (M18) — reverse tunnels
-// (coder) and the devcontainer relay both give loopback parity, so the
-// address is provisioner-invariant; nil when proxy mode is off. Shared by
-// the run loop and envcheck (which must route its egress through the proxy
-// too). NO_PROXY keeps loopback traffic (the shim, the engine endpoint)
-// off the proxy.
-func (e *Engine) proxyEnvFor(runID string) map[string]string {
-	if e.egress == nil || e.egress.Port() == 0 {
-		return nil
-	}
-	user, pass := e.egress.Credentials(runID)
-	addr := fmt.Sprintf("http://%s:%s@127.0.0.1:%d", user, pass, e.egress.Port())
-	const noProxy = "127.0.0.1,localhost,::1"
-	return map[string]string{
-		"HTTP_PROXY": addr, "HTTPS_PROXY": addr, "NO_PROXY": noProxy,
-		"http_proxy": addr, "https_proxy": addr, "no_proxy": noProxy,
-	}
-}
-
 func (x *exec) bootstrap(id ports.EnvID) error {
 	res := x.res
 	err := RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
@@ -1154,7 +1115,6 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		SeedAuth:      res.SeedAuth,
 		Prepare:       res.Prepare,
 		Setup:         res.Commands["setup"], // optional in v2: "" skips step 6
-		ProxyEnv:      x.proxyEnv(),
 		Timeout:       x.rs.fl.Defaults.Timeout,
 	})
 	if err != nil {

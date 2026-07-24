@@ -38,17 +38,16 @@
 // publish, and a fixed-port collision fails the second `devcontainer up`
 // loudly).
 //
-// SECURITY POSTURE: the §11 egress firewall is brought to repo-authored
-// containers by an injected devcontainer feature (workspace/feature/) that
-// contributes capAdd NET_ADMIN + a container-start entrypoint running the
-// shared init-firewall.sh, driven per run by /opt/apothecary/firewall.env.
-// Two cases stay egress-open (reported truthfully via ports.EgressReporter, envcheck
-// skips the firewall invariants): COMPOSE devcontainers, whose primary
-// service legitimately reaches sibling services by name that a default-
-// deny firewall would break; and the explicit per-project firewall=off
-// escape hatch (or a base image with no supported package manager, which
-// fails the feature build closed). A non-root container user makes the
-// feature entrypoint's iptables fail closed — a documented limitation.
+// SECURITY POSTURE: egress is filtered OUTSIDE the workspace by the per-project
+// egress gateway (internal/egressgw). The run's DinD sandbox joins a per-run
+// --internal docker network with no external route and is default-routed to the
+// gateway, so ALL egress — the workspace container AND every compose sibling
+// (a database, etc.) — traverses the gateway, which allows/denies by TLS SNI /
+// HTTP Host (no MITM). A privileged sandbox cannot bypass it (enforcement lives
+// in a separate container + the host bridge). This finally covers compose
+// devcontainers, which the old in-container firewall left wide open. The
+// per-project firewall=off switch (GatewayOff) is the escape hatch: the sandbox
+// then egresses directly on the host bridge, unfiltered. See ports.EgressController.
 package devcontainer
 
 import (
@@ -72,6 +71,8 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/egressgw"
+	"apothecary/internal/egressgw/policyfile"
 	"apothecary/internal/ports"
 	"apothecary/workspace"
 )
@@ -110,22 +111,19 @@ type Config struct {
 	// workspace's own 127.0.0.1 through the engine bridge (bridge.go).
 	// Default 8080.
 	EnginePort int
-	// ProxyPort is the engine-side egress proxy (M18), bridged the same
-	// way. 0 = proxy mode off. NOTE: with no workspace firewall the proxy
-	// filters only tools that honor proxy env — see the security posture
-	// note above.
-	ProxyPort int
 	// ShimBin builds (cached) and returns the host path of the static
 	// in-workspace shim binary (wsimage.EnsureShim), bind-mounted into
 	// every workspace at /opt/apothecary/shim. Required.
 	ShimBin func(ctx context.Context) (string, error)
-	// FirewallOff disables the §11 egress firewall for repo-authored dev
-	// containers. Default (false) = firewall ON — the safe default. Off =
-	// no NET_ADMIN, no init-firewall, egress open apart from engine-side
-	// proxy filtering: the escape hatch for base images the firewall
-	// toolchain cannot install on. (Compose configs are always left open
-	// regardless — their primary service reaches sibling services by name.)
-	FirewallOff bool
+	// GatewayImage builds (cached) and returns the tag of the per-project
+	// egress gateway image (wsimage.EnsureGatewayImage). Required for egress
+	// filtering; nil ⇒ no gateway (the sandbox runs on the default bridge,
+	// unfiltered — used by tests and the GatewayOff escape hatch).
+	GatewayImage func(ctx context.Context) (string, error)
+	// GatewayOff disables the egress gateway for this provisioner (the escape
+	// hatch). Default (false) = gateway ON. Off = the sandbox egresses directly
+	// via the host bridge with no filtering.
+	GatewayOff bool
 	// DinDImage is the sandbox image providing the per-run nested docker
 	// daemon (default "docker:29-dind"). Each run gets its own daemon so repo
 	// compose files run verbatim — container_name/ports collide with nothing
@@ -149,11 +147,10 @@ type Adapter struct {
 	bridgeMu sync.Mutex
 	bridges  map[ports.EnvID][]net.Listener // engine-side unix listeners per env
 
-	// fwMu guards the per-env firewall fact (whether THIS workspace runs
-	// firewalled). Recorded at Provision, read by EgressOpen and rebuilt
-	// from the on-disk marker after an engine restart.
-	fwMu       sync.Mutex
-	firewalled map[ports.EnvID]bool
+	// gw is the per-project egress gateway manager (nil ⇒ gateway off). It owns
+	// the gateway container + per-run --internal networks and the policy/denials
+	// files; Provision/Destroy drive its lifecycle.
+	gw *egressgw.Manager
 
 	// sibPortsMu guards the last sibling-port scan per env (port -> compose
 	// service). Populated by ScanSiblingPorts and consulted by relayTarget so
@@ -185,15 +182,18 @@ func New(cfg Config) *Adapter {
 	if cfg.DinDImage == "" {
 		cfg.DinDImage = "docker:29-dind"
 	}
-	return &Adapter{
+	a := &Adapter{
 		cfg:        cfg,
 		runner:     &cliRunner{},
 		retryDelay: time.Second,
 		listen:     net.Listen,
 		bridges:    map[ports.EnvID][]net.Listener{},
-		firewalled: map[ports.EnvID]bool{},
 		sibPorts:   map[ports.EnvID]map[int]string{},
 	}
+	if cfg.GatewayImage != nil && !cfg.GatewayOff {
+		a.gw = egressgw.NewManager(cfg.RunsDir, a.hostRun, cfg.GatewayImage)
+	}
+	return a
 }
 
 // NewWithRunner is the test constructor.
@@ -387,6 +387,23 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 		name = WorkspaceName(spec.RunID)
 	}
 
+	// Capture provisioning output (clone + devcontainer build) into the same
+	// exec.log the UI tails, so init/provision streams live instead of only
+	// post-ready commands. Rebuild supplies its own tee; Provision opens the log.
+	logW := tee
+	if logW == nil && a.cfg.RunsDir != "" {
+		if lf := a.openProvisionLog(name); lf != nil {
+			defer lf.Close()
+			logW = lf
+		}
+	}
+	plog := func(format string, args ...any) {
+		if logW != nil {
+			fmt.Fprintf(logW, format, args...)
+		}
+	}
+	plog("\n=== apothecary: provisioning %s @ %s ===\n→ preparing source checkout\n", name, time.Now().UTC().Format(time.RFC3339))
+
 	src, err := a.ensureSrc(ctx, name, spec)
 	if err != nil {
 		return "", err
@@ -401,22 +418,33 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	if err != nil {
 		return "", err
 	}
+	// Egress firewall: the run's DinD sandbox routes ALL egress (the workspace
+	// AND every compose sibling) through the per-project gateway
+	// (internal/egressgw). Bring it up BEFORE the sandbox so the sandbox can join
+	// the run's --internal network and default-route to the gateway — which is
+	// also why a privileged sandbox can't bypass it (its only NIC has no external
+	// route). This finally covers compose devcontainers, which the old in-
+	// container firewall left wide open.
+	plog("→ bringing up per-run sandbox + egress gateway\n")
+	var gwIP string
+	if a.gw != nil {
+		ip, gerr := a.gw.EnsureRunEgress(ctx, spec.Project, name, policyFor(spec))
+		if gerr != nil {
+			return "", gerr
+		}
+		gwIP = ip
+		// Record the owning project NOW (not after the build): if the build is
+		// blocked on a denied domain, "add to egress" must be able to find this
+		// run's gateway mid-provision to unblock it.
+		a.recordProject(name, spec.Project)
+	}
+
 	// Each run gets its own nested docker daemon (sandbox.go). Everything from
 	// here — devcontainer up, exec, docker ps/inspect/rename — targets that
 	// inner daemon (via runInner), so the repo's compose runs verbatim with no
 	// host-daemon collisions and Destroy is total.
-	if err := a.ensureSandbox(ctx, name, spec); err != nil {
+	if err := a.ensureSandbox(ctx, name, spec, gwIP); err != nil {
 		return "", err
-	}
-
-	// Firewall decision (§11 for repo-authored containers): on by default,
-	// but OFF for compose configs (the primary service legitimately reaches
-	// sibling services by name, which a default-deny firewall would break)
-	// and OFF when the project turned it off. Recorded per env so envcheck
-	// and EgressOpen report the truth.
-	firewall := !a.cfg.FirewallOff
-	if firewall && a.isCompose(ctx, src) {
-		firewall = false
 	}
 
 	args := []string{"up",
@@ -436,22 +464,11 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 		args = append(args, "--remove-existing-container")
 	}
 	// The repo is honored untouched; anything apothecary needs rides in as an
-	// injected devcontainer feature (firewall + harness).
+	// injected devcontainer feature (harness + code-server). Egress is no longer
+	// a feature — it is enforced externally by the per-project gateway, so the
+	// workspace container needs no NET_ADMIN and compose siblings are covered too.
 	features := map[string]any{}
-	if firewall {
-		if err := a.materializeFeature(name, src); err != nil {
-			return "", err
-		}
-		// Per-run firewall config rides firewall.env in the mounted shim dir
-		// (NOT feature options — those would bust the build cache per run);
-		// the feature entrypoint sources it at container start.
-		if err := a.writeFirewallEnv(name, spec); err != nil {
-			return "", err
-		}
-		features["./apothecary-firewall"] = map[string]any{}
-	}
-	// The repo's image has no harness — install it. Independent of the
-	// firewall: an unfirewalled repo container still needs opencode.
+	// The repo's image has no harness — install it as a feature.
 	if len(spec.HarnessInstall) > 0 {
 		if err := a.materializeHarnessFeature(name, src, spec.HarnessInstall); err != nil {
 			return "", err
@@ -480,7 +497,8 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	// build aborts with "additional privileges requested". Disabling the
 	// filesystem entitlement check restores the pre-0.17 behavior. Scoped to
 	// this call so it never affects the other docker/git subprocesses.
-	stdout, stderr, code, err := a.runInner(ctx, name, a.cfg.DevcontainerBin, args, nil, tee, "BUILDX_BAKE_ENTITLEMENTS_FS=0")
+	plog("→ building devcontainer (image + features; can take several minutes)\n")
+	stdout, stderr, code, err := a.runInner(ctx, name, a.cfg.DevcontainerBin, args, nil, logW, "BUILDX_BAKE_ENTITLEMENTS_FS=0")
 	if err != nil {
 		return "", err
 	}
@@ -489,20 +507,18 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 		return "", fmt.Errorf("devcontainer up %s: exit %d: %s%s", name, code,
 			strings.TrimSpace(res.Message+" "+res.Description), tail("\n"+string(stderr), 2048))
 	}
-	a.recordFirewall(ports.EnvID(name), firewall)
-
 	if err := a.rootInit(ctx, name, res); err != nil {
 		return "", err
 	}
-	// Engine bridge + in-container relay: loopback parity for the shim
-	// (and proxy) before anything runs in the workspace.
+	// Engine bridge + in-container relay: loopback parity for the shim before
+	// anything runs in the workspace.
 	if err := a.ensureBridge(ports.EnvID(name)); err != nil {
 		return "", err
 	}
 	if err := a.startRelay(ctx, name); err != nil {
 		return "", err
 	}
-	if err := a.waitReady(ctx, name, firewall); err != nil {
+	if err := a.waitReady(ctx, name); err != nil {
 		return "", err
 	}
 	// Last, once the container is up and wired: give it the human-friendly
@@ -601,22 +617,37 @@ func hasRepoConfig(src string) bool {
 	return false
 }
 
-// proxyAddr is the workspace-loopback egress proxy address (M18) or "".
-func (a *Adapter) proxyAddr() string {
-	if a.cfg.ProxyPort > 0 {
-		return fmt.Sprintf("127.0.0.1:%d", a.cfg.ProxyPort)
+// policyFor maps an EnvSpec's egress inputs to the gateway policy file. Allow
+// mode (the default) uses the derived allowlist; deny mode uses the denylist.
+func policyFor(spec ports.EnvSpec) policyfile.File {
+	if spec.EgressMode == string(policyfile.ModeDeny) {
+		return policyfile.File{
+			Mode:    policyfile.ModeDeny,
+			Domains: spec.EgressDenylist,
+		}
 	}
-	return ""
+	return policyfile.File{
+		Mode:         policyfile.ModeAllow,
+		Domains:      spec.EgressDomains,
+		AllowedCIDRs: spec.EgressAllowedCIDRs,
+		AllowedPorts: spec.EgressAllowedPorts,
+	}
 }
 
-// firewallEnvVars are the APOTHECARY_* inputs init-firewall.sh reads,
-// shared by the fallback (containerEnv) and feature (firewall.env) paths.
-func firewallEnvVars(proxyAddr string, spec ports.EnvSpec) map[string]string {
-	return map[string]string{
-		"APOTHECARY_REPO_URL":      spec.RepoURL,
-		"APOTHECARY_EXTRA_DOMAINS": strings.Join(spec.EgressDomains, " "),
-		"APOTHECARY_EGRESS_PROXY":  proxyAddr,
+// recordProject persists which project owns an env (a tiny marker in the run
+// folder), so EgressDenials/AllowEgress can locate the per-project gateway after
+// an engine restart without a docker call.
+func (a *Adapter) recordProject(name, project string) {
+	_ = os.WriteFile(filepath.Join(a.folderFor(name), "gwproject"), []byte(project), 0o644)
+}
+
+// projectFor reads the env's owning project (from the marker); "" when unknown.
+func (a *Adapter) projectFor(name string) string {
+	b, err := os.ReadFile(filepath.Join(a.folderFor(name), "gwproject"))
+	if err != nil {
+		return ""
 	}
+	return strings.TrimSpace(string(b))
 }
 
 // isCompose reports whether the repo's devcontainer is compose-based (its
@@ -639,43 +670,6 @@ func (a *Adapter) isCompose(ctx context.Context, src string) bool {
 	_, a1 := rc.Configuration["dockerComposeFile"]
 	_, a2 := rc.MergedConfiguration["dockerComposeFile"]
 	return a1 || a2
-}
-
-// materializeFeature writes the embedded firewall feature (plus the
-// single-sourced init-firewall.sh from BaseContext) into the checkout at
-// .devcontainer/apothecary-firewall/ and git-excludes it, so
-// `--additional-features './apothecary-firewall'` resolves relative to the
-// config dir without the agent ever seeing (or committing) it.
-func (a *Adapter) materializeFeature(name, src string) error {
-	dir := filepath.Join(src, ".devcontainer", "apothecary-firewall")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := fs.WalkDir(workspace.Feature, "feature", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, rerr := fs.ReadFile(workspace.Feature, p)
-		if rerr != nil {
-			return rerr
-		}
-		mode := fs.FileMode(0o644)
-		if strings.HasSuffix(p, ".sh") {
-			mode = 0o755
-		}
-		return os.WriteFile(filepath.Join(dir, filepath.Base(p)), data, mode)
-	}); err != nil {
-		return err
-	}
-	// init-firewall.sh is single-sourced from the base context.
-	fw, err := fs.ReadFile(workspace.BaseContext, "init-firewall.sh")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "init-firewall.sh"), fw, 0o755); err != nil {
-		return err
-	}
-	return gitExclude(src, ".devcontainer/apothecary-firewall/")
 }
 
 // materializeHarnessFeature writes the harness feature into the repo's
@@ -897,42 +891,6 @@ func gitExclude(src, entry string) error {
 	return err
 }
 
-// writeFirewallEnv writes the per-run APOTHECARY_* config the feature
-// entrypoint sources at container start (the mounted shim dir surfaces it
-// at /opt/apothecary/firewall.env).
-func (a *Adapter) writeFirewallEnv(name string, spec ports.EnvSpec) error {
-	dir := filepath.Join(a.folderFor(name), "shim")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	var b strings.Builder
-	env := firewallEnvVars(a.proxyAddr(), spec)
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&b, "%s=%s\n", k, shellQuote(env[k]))
-	}
-	return os.WriteFile(filepath.Join(dir, "firewall.env"), []byte(b.String()), 0o644)
-}
-
-// recordFirewall persists the per-env firewall fact in memory and as an
-// on-disk marker, so EgressOpen answers correctly after an engine restart
-// (a fresh adapter instance, same RunsDir).
-func (a *Adapter) recordFirewall(env ports.EnvID, firewall bool) {
-	a.fwMu.Lock()
-	a.firewalled[env] = firewall
-	a.fwMu.Unlock()
-	marker := filepath.Join(a.folderFor(string(env)), "firewalled")
-	val := "0"
-	if firewall {
-		val = "1"
-	}
-	_ = os.WriteFile(marker, []byte(val), 0o644)
-}
-
 // ensureShim places the static shim binary (ask_human MCP server + engine
 // relay, docker-built via cfg.ShimBin) into the per-env dir bind-mounted
 // at /opt/apothecary — the path harness configs (and startRelay) hardcode.
@@ -997,11 +955,8 @@ ln -sfn %[2]s "$H/repo"`, shellQuote(user), shellQuote(res.RemoteWorkspaceFolder
 // lock — so a missing done-file must time out into env_failed rather than
 // run agents under half-applied (or open) egress. (Loopback is ACCEPTed
 // first, so the relay probe keeps working under a DROP policy.)
-func (a *Adapter) waitReady(ctx context.Context, name string, firewall bool) error {
+func (a *Adapter) waitReady(ctx context.Context, name string) error {
 	script := fmt.Sprintf("timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/%d'", a.cfg.EnginePort)
-	if firewall {
-		script += " && test -e /run/apothecary-firewall.done"
-	}
 	for {
 		_, _, code, err := a.runInner(ctx, name, a.cfg.DevcontainerBin,
 			[]string{"exec", "--id-label", label(name), "bash", "-c", script}, nil, nil)
@@ -1011,9 +966,6 @@ func (a *Adapter) waitReady(ctx context.Context, name string, firewall bool) err
 		select {
 		case <-time.After(3 * time.Second):
 		case <-ctx.Done():
-			if firewall {
-				return fmt.Errorf("workspace %s: exec/relay/firewall not ready before deadline (firewall may have failed closed — check the container)", name)
-			}
 			return fmt.Errorf("workspace %s: exec/relay not ready before deadline", name)
 		}
 	}
@@ -1027,14 +979,12 @@ func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) 
 		ctx, cancel = context.WithTimeout(ctx, cmd.Timeout)
 		defer cancel()
 	}
-	// The script travels on stdin (bash -s): no CLI quoting pitfalls.
+	// The script travels on stdin (bash -s): no CLI quoting pitfalls. Egress is
+	// filtered externally by the gateway, so commands need no proxy-env sourcing.
 	script := cmd.Script
 	if cmd.Dir != "" {
 		script = fmt.Sprintf("cd \"$HOME/%s\" || exit 90\n%s", cmd.Dir, cmd.Script)
 	}
-	// Source the egress proxy env (M18) for EVERY workspace command; no-op
-	// when proxy mode is off (empty file).
-	script = "[ -s /apothecary/proxy.env ] && { set -a; . /apothecary/proxy.env; set +a; }\n" + script
 	tee := a.openExecLog(env, cmd)
 	if tee != nil {
 		defer tee.Close()
@@ -1217,6 +1167,11 @@ func (a *Adapter) Destroy(ctx context.Context, env ports.EnvID) error {
 			}
 		}
 	}
+	// Tear down this run's egress network and reap the project gateway if it was
+	// the project's last run (reads the project marker before RemoveAll).
+	if a.gw != nil {
+		_ = a.gw.DestroyRunEgress(ctx, a.projectFor(name), name)
+	}
 	a.closeBridge(env)
 	return os.RemoveAll(a.folderFor(name))
 }
@@ -1324,31 +1279,52 @@ func (a *Adapter) Reattach(ctx context.Context, env ports.EnvID) error {
 	if err := a.startRelay(ctx, string(env)); err != nil {
 		return err
 	}
-	// The firewall (if any) is already up in the still-running container;
-	// only re-probe the engine relay we just rebuilt.
-	return a.waitReady(ctx, string(env), false)
+	// The gateway (a separate host container) kept filtering throughout the
+	// engine restart; only re-probe the engine relay we just rebuilt.
+	return a.waitReady(ctx, string(env))
 }
 
-// EgressOpen (ports.EgressReporter) reports whether THIS workspace runs
-// without the apothecary firewall — read from the in-memory fact, or the
-// on-disk marker after an engine restart. Unknown env (no marker) defaults
-// to firewalled/closed, the safe assumption.
-func (a *Adapter) EgressOpen(_ context.Context, env ports.EnvID) (bool, error) {
-	a.fwMu.Lock()
-	if fw, ok := a.firewalled[env]; ok {
-		a.fwMu.Unlock()
-		return !fw, nil
+// EgressDenials (ports.EgressController) returns this run's blocked hosts, read
+// from the per-project gateway's denials file.
+func (a *Adapter) EgressDenials(_ context.Context, env ports.EnvID) []ports.EgressDenial {
+	if a.gw == nil {
+		return nil
 	}
-	a.fwMu.Unlock()
-	data, err := os.ReadFile(filepath.Join(a.folderFor(string(env)), "firewalled"))
-	if err != nil {
-		return false, nil // no marker: assume firewalled (closed)
+	project := a.projectFor(string(env))
+	out := []ports.EgressDenial{}
+	for _, d := range a.gw.Denials(project, string(env)) {
+		out = append(out, ports.EgressDenial{Host: d.Host, Count: d.Count, Last: d.Last})
 	}
-	fw := strings.TrimSpace(string(data)) == "1"
-	a.fwMu.Lock()
-	a.firewalled[env] = fw
-	a.fwMu.Unlock()
-	return !fw, nil
+	return out
+}
+
+// EgressAudit (ports.EgressAuditor) returns this run's aggregated egress trail
+// from the per-project gateway (filtered to the run).
+func (a *Adapter) EgressAudit(_ context.Context, env ports.EnvID) []ports.EgressAuditRecord {
+	if a.gw == nil {
+		return nil
+	}
+	out := []ports.EgressAuditRecord{}
+	for _, r := range a.gw.Audit(a.projectFor(string(env))) {
+		if r.Run != string(env) {
+			continue
+		}
+		out = append(out, ports.EgressAuditRecord{
+			Host: r.Host, DstIP: r.DstIP, Port: r.Port, Proto: r.Proto, Verdict: r.Verdict,
+			Count: r.Count, BytesOut: r.BytesOut, BytesIn: r.BytesIn, First: r.First, Last: r.Last,
+		})
+	}
+	return out
+}
+
+// AllowEgress (ports.EgressController) adds a host to the run's project policy
+// live — the gateway hot-reloads it, so the next request succeeds with no
+// restart. Project-wide by design (the policy is per project).
+func (a *Adapter) AllowEgress(_ context.Context, env ports.EnvID, host string) error {
+	if a.gw == nil {
+		return fmt.Errorf("egress gateway is off for this provisioner")
+	}
+	return a.gw.Allow(a.projectFor(string(env)), host)
 }
 
 // Close stops every engine-side bridge listener (engine shutdown;
@@ -1362,6 +1338,21 @@ func (a *Adapter) Close() {
 		}
 		delete(a.bridges, env)
 	}
+}
+
+// openProvisionLog opens (append) the env's exec.log — the same file the UI
+// tails via TailExecLog — so the clone + devcontainer build stream live during
+// provisioning, before the env is ready. nil when RunsDir is unset or open fails.
+func (a *Adapter) openProvisionLog(name string) *os.File {
+	dir := a.folderFor(name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "exec.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil
+	}
+	return f
 }
 
 // openExecLog opens the env's live exec log and writes the entry header;
@@ -1462,7 +1453,8 @@ func (a *Adapter) Rebuild(ctx context.Context, spec ports.EnvSpec) error {
 var _ ports.EnvProvisioner = (*Adapter)(nil)
 var _ ports.WorkspaceReattacher = (*Adapter)(nil)
 var _ ports.ExecLogTailer = (*Adapter)(nil)
-var _ ports.EgressReporter = (*Adapter)(nil)
+var _ ports.EgressController = (*Adapter)(nil)
+var _ ports.EgressAuditor = (*Adapter)(nil)
 var _ ports.WorkspacePortExposer = (*Adapter)(nil)
 var _ ports.WorkspaceRebuilder = (*Adapter)(nil)
 var _ ports.EditorStarter = (*Adapter)(nil)

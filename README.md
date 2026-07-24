@@ -14,9 +14,11 @@ exactly two touchpoints — plan approval and final review.
   refactor.
 - **Events are the source of truth.** Every transition is an event in
   Postgres; the UI is a projection; analytics are queries.
-- **Sandboxed by default.** Agents run in per-run containers behind a
-  default-deny egress firewall derived from your configuration, and prove
-  it with a deterministic environment check.
+- **Sandboxed by default.** Agents run in per-run Docker-in-Docker
+  sandboxes whose entire egress (the workspace AND any compose siblings)
+  is filtered by an external per-project gateway — a default-deny
+  allowlist (or allow-all denylist) derived from your configuration,
+  hot-reloadable and proven with a deterministic environment check.
 
 ## Prerequisites
 
@@ -100,8 +102,9 @@ automatically. Database migrations apply at boot.
    flow.
 4. **Preflight**, then **Envcheck** on the project page. Envcheck
    provisions a throwaway workspace and proves the whole contract —
-   image, firewall (default-deny, fail-closed), derived egress, harness
-   binary, ask-human shim, reverse tunnel — with named pass/fail steps.
+   image, egress gateway (a non-allowlisted host is blocked; each derived
+   domain reachable), harness binary, ask-human shim, engine tunnel — with
+   named pass/fail steps.
 5. **File a ticket** on the Runs page. Answer the plan gate in the Inbox;
    merge the draft MR/PR at the end (the run completes itself when you
    merge).
@@ -188,9 +191,12 @@ in `docs/IMPLEMENTATION_NOTES.md`.
 ## Security model (short form)
 
 Engine and host are trusted; **workspaces are not** (prompt injection is
-assumed). Workspaces get: no docker socket, a per-run docker network, a
-default-deny egress firewall pinned to the derived allowlist
-(fail-closed), a per-run bearer token scoped to their own ping endpoints,
+assumed). Workspaces get: a per-run Docker-in-Docker sandbox on its own
+`--internal` docker network with no external route, all egress forced
+through a per-project gateway that filters by hostname (TLS SNI / HTTP
+Host, no MITM) against the derived allowlist — a privileged sandbox can't
+bypass it because enforcement lives outside it; a per-run bearer token
+scoped to their own ping endpoints,
 and secrets injected as files at bootstrap — never through provisioner
 parameters. Integration secrets are secretbox-encrypted at rest under
 `APOTHECARY_MASTER_KEY` and never leave the engine unmasked. Residual risks

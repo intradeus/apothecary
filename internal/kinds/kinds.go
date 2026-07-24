@@ -115,14 +115,14 @@ type Provisioner interface {
 type ProvisionerDeps struct {
 	RunsDir    string
 	EnginePort int
-	// ProxyPort is the engine-side egress proxy's loopback port (M18); the
-	// provisioner reverse-forwards it into workspaces and signals proxy
-	// mode to the firewall. 0 = proxy mode off.
-	ProxyPort int
 	// ShimBin builds (cached) and returns the host path of the static
 	// in-workspace shim binary (wsimage.EnsureShim); the devcontainer
 	// provisioner bind-mounts it at provision time.
 	ShimBin func(ctx context.Context) (string, error)
+	// GatewayImage builds (cached) and returns the tag of the per-project egress
+	// gateway image (wsimage.EnsureGatewayImage); the devcontainer provisioner
+	// runs one gateway container per project to filter all workspace egress.
+	GatewayImage func(ctx context.Context) (string, error)
 }
 
 type ProvisionerKind interface {

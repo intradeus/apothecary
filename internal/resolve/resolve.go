@@ -33,7 +33,6 @@ type Resolver struct {
 	reg        *kinds.Registry
 	runsDir    string
 	enginePort int
-	proxyPort  int
 	builder    *wsimage.Builder
 
 	mu    sync.Mutex
@@ -50,13 +49,12 @@ type provEntry struct {
 
 // New builds the resolver. The builder exists solely to compile + cache the
 // static in-workspace shim (wsimage.EnsureShim → ProvisionerDeps.ShimBin).
-func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort, proxyPort int) *Resolver {
+func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int) *Resolver {
 	return &Resolver{
 		conf:       conf,
 		reg:        reg,
 		runsDir:    runsDir,
 		enginePort: enginePort,
-		proxyPort:  proxyPort,
 		builder:    wsimage.New(runsDir),
 		cache:      map[string]*provEntry{},
 	}
@@ -236,6 +234,10 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		GitEmail:             gitEmail,
 		ProviderEnv:          providerEnv, // union of every harness's own auth env
 		EgressDomains:        egressDomains(p, egressContribs...),
+		EgressMode:           p.Workspace.EgressMode,
+		EgressDenylist:       p.Workspace.DeniedDomains,
+		EgressAllowedCIDRs:   p.Workspace.EgressAllowedCIDRs,
+		EgressAllowedPorts:   p.Workspace.EgressAllowedPorts,
 		CodeServerExtensions: p.Workspace.CodeServerExtensions,
 		HarnessKind:          defaultKind,
 		HarnessKinds:         kindList,
@@ -329,10 +331,10 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provision
 	}
 	if e == nil {
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
-			RunsDir:    r.runsDir,
-			EnginePort: r.enginePort,
-			ProxyPort:  r.proxyPort,
-			ShimBin:    r.builder.EnsureShim,
+			RunsDir:      r.runsDir,
+			EnginePort:   r.enginePort,
+			ShimBin:      r.builder.EnsureShim,
+			GatewayImage: r.builder.EnsureGatewayImage,
 		})
 		if err != nil {
 			return nil, nil, unresolvable(fmt.Errorf("provisioner %s: %v", in.Name, err))
@@ -408,10 +410,46 @@ func requiredTools(cmds []string) []string {
 	return out
 }
 
+// baseEgressDefaults are seeded into every allow-mode allowlist. The egress
+// gateway now filters the DinD sandbox's INNER daemon AND the devcontainer BUILD
+// (image pulls, apt/npm/pip, and apothecary's own injected harness + code-server
+// features) — none of which the old design filtered (compose ran with no
+// firewall; the in-container firewall came up only AFTER the build). Without a
+// broad base, a normal build fails at `apt-get`/`npm install`. These are
+// read-only package/registry mirrors (low exfil value); tighten per project via
+// deny mode or by curating the allowlist.
+var baseEgressDefaults = []string{
+	// Container registries (inner image pulls: postgres, redis, …).
+	"registry-1.docker.io", "*.docker.io", "auth.docker.io",
+	"production.cloudflare.docker.com", "*.docker.com",
+	"ghcr.io", "*.githubusercontent.com",
+	"gcr.io", "*.gcr.io", "*.pkg.dev",
+	"quay.io", "*.quay.io",
+	"public.ecr.aws", "*.amazonaws.com",
+	"mcr.microsoft.com", "*.data.mcr.microsoft.com", "packages.microsoft.com",
+	// OS package mirrors (devcontainer base-image apt/apk during the build).
+	"deb.debian.org", "security.debian.org", "ftp.debian.org",
+	"archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com", "*.ubuntu.com",
+	"deb.nodesource.com", "dl-cdn.alpinelinux.org", "*.alpinelinux.org",
+	"*.fedoraproject.org", "download.fedoraproject.org",
+	// Language + tool registries (harness/setup installs).
+	"registry.npmjs.org", "*.npmjs.org", "registry.yarnpkg.com", "nodejs.org",
+	"pypi.org", "files.pythonhosted.org",
+	"proxy.golang.org", "sum.golang.org", "storage.googleapis.com",
+	"static.crates.io", "index.crates.io", "*.crates.io", "*.rubygems.org", "rubygems.org",
+	// Dev-tool CDNs (apothecary's injected code-server feature + VS Code extensions).
+	"code-server.dev", "open-vsx.org", "*.open-vsx.org",
+	"openvsx.eclipsecontent.org", "*.eclipsecontent.org",
+	"marketplace.visualstudio.com", "*.gallerycdn.vsassets.io", "*.vscode-unpkg.net",
+}
+
 func egressDomains(p confstore.Project, contributions ...[]string) []string {
 	set := map[string]bool{}
 	if u, err := url.Parse(p.Repo.URL); err == nil && u.Hostname() != "" {
 		set[u.Hostname()] = true
+	}
+	for _, d := range baseEgressDefaults {
+		set[d] = true
 	}
 	for _, list := range contributions {
 		for _, d := range list {
@@ -459,8 +497,8 @@ func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
 			return err
 		}
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
-			RunsDir: r.runsDir, EnginePort: r.enginePort, ProxyPort: r.proxyPort,
-			ShimBin: r.builder.EnsureShim,
+			RunsDir: r.runsDir, EnginePort: r.enginePort,
+			ShimBin: r.builder.EnsureShim, GatewayImage: r.builder.EnsureGatewayImage,
 		})
 		if err != nil {
 			return err

@@ -16,7 +16,6 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
-	"apothecary/internal/egressproxy"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
@@ -1009,34 +1008,12 @@ func TestWorkspaceLog(t *testing.T) {
 	}
 }
 
-// fakeEgress is a minimal EgressController for the allow-endpoint test.
-type fakeEgress struct {
-	allowed map[string][]string
-	denied  map[string][]egressproxy.Denial
-}
-
-func (f *fakeEgress) SetPolicy(string, []string)          {}
-func (f *fakeEgress) DropPolicy(string)                   {}
-func (f *fakeEgress) Credentials(string) (string, string) { return "u", "p" }
-func (f *fakeEgress) Port() int                           { return 1 }
-func (f *fakeEgress) Denials(runID string) []egressproxy.Denial {
-	return f.denied[runID]
-}
-func (f *fakeEgress) AllowHost(runID, host string) bool {
-	if f.allowed == nil {
-		f.allowed = map[string][]string{}
-	}
-	f.allowed[runID] = append(f.allowed[runID], host)
-	return true
-}
-
-// TestEgressAllow: the "add to egress" button unblocks the live run
-// (instant) and persists the host to the project's extra_domains.
+// TestEgressAllow: the "add to egress" button unblocks the live run (instant,
+// via the provisioner's per-project gateway) and persists the host to the
+// project's extra_domains.
 func TestEgressAllow(t *testing.T) {
 	x := newConfEnv(t)
 	projectID := x.wizard(t)
-	eg := &fakeEgress{}
-	x.e.SetEgress(eg)
 
 	out := x.runOnProject(t, projectID, "T")
 
@@ -1046,10 +1023,6 @@ func TestEgressAllow(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"persisted":true`) {
 		t.Errorf("allow response = %s", data)
-	}
-	// Instant unblock reached the proxy.
-	if len(eg.allowed[out]) != 1 || eg.allowed[out][0] != "models.dev" {
-		t.Errorf("proxy allow = %v", eg.allowed)
 	}
 	// Persisted to the project's extra_domains.
 	p, _ := x.conf.GetProject(t.Context(), projectID)

@@ -62,9 +62,20 @@ type EnvSpec struct {
 	// into the workspace's code-server (union with the repo devcontainer's own
 	// customizations.vscode.extensions, which the adapter reads). Non-secret.
 	CodeServerExtensions []string
-	// EgressDomains is the fully derived firewall allowlist (DESIGN2 §8.4):
-	// repo host ∪ adapter contributions ∪ project extras. Non-secret.
+	// EgressDomains is the fully derived firewall allowlist (deny-all + allowlist
+	// mode): repo host ∪ adapter contributions ∪ registry defaults ∪ project
+	// extras. Non-secret.
 	EgressDomains []string
+	// EgressMode selects the gateway posture: "allow" (deny-all + EgressDomains,
+	// the default) or "deny" (allow-all + EgressDenylist). Empty ⇒ allow.
+	EgressMode string
+	// EgressDenylist is the blocked-host list used in "deny" mode.
+	EgressDenylist []string
+	// EgressAllowedCIDRs/EgressAllowedPorts are the "allow" mode escape hatch for
+	// legitimate raw (non-HTTP/TLS) external egress that the default backstop
+	// would otherwise drop (e.g. an external managed database).
+	EgressAllowedCIDRs []string
+	EgressAllowedPorts []int
 	// GitUser/GitPass are the forge git credential (see type comment).
 	// Empty for public repos; adapters without an engine-side source step
 	// (coder) ignore them.
@@ -195,18 +206,74 @@ type WorkspaceReattacher interface {
 	Reattach(ctx context.Context, env EnvID) error
 }
 
-// EgressReporter is an OPTIONAL EnvProvisioner capability: report, PER
-// ENVIRONMENT, whether the workspace runs WITHOUT the apothecary egress
-// firewall. The devcontainer provisioner firewalls image/Dockerfile
-// dev containers but leaves compose ones open (their primary service
-// legitimately reaches sibling services by name, which a default-deny
-// firewall would break) and honors a per-project off switch — so the fact
-// varies per env and cannot be a type-level marker. Provisioners that
-// always firewall (coder) simply don't implement this; envcheck then keys
-// its firewall expectations on the reported value (defaulting to
-// firewalled/closed when absent).
-type EgressReporter interface {
-	EgressOpen(ctx context.Context, env EnvID) (bool, error)
+// EgressDenial is one blocked host as the run page consumes it (the gateway
+// tracks these per run; the engine surfaces them at GET /runs/{id}/egress-denials).
+type EgressDenial struct {
+	Host  string    `json:"host"`
+	Count int       `json:"count"`
+	Last  time.Time `json:"last"`
+}
+
+// EgressAuditRecord is one aggregated egress fact for a run (a (host, port,
+// verdict) tuple) with counts, byte totals and first/last timestamps.
+type EgressAuditRecord struct {
+	Host     string    `json:"host"`
+	DstIP    string    `json:"dst_ip"`
+	Port     int       `json:"port"`
+	Proto    string    `json:"proto"`
+	Verdict  string    `json:"verdict"`
+	Count    int64     `json:"count"`
+	BytesOut int64     `json:"bytes_out"`
+	BytesIn  int64     `json:"bytes_in"`
+	First    time.Time `json:"first"`
+	Last     time.Time `json:"last"`
+}
+
+// EgressAuditRow is a durable audit record (an EgressAuditRecord tagged with its
+// project + engine run id) as stored and queried in the audit trail.
+type EgressAuditRow struct {
+	Project  string    `json:"project"`
+	Run      string    `json:"run"`
+	Host     string    `json:"host"`
+	DstIP    string    `json:"dst_ip"`
+	Port     int       `json:"port"`
+	Proto    string    `json:"proto"`
+	Verdict  string    `json:"verdict"`
+	Count    int64     `json:"count"`
+	BytesOut int64     `json:"bytes_out"`
+	BytesIn  int64     `json:"bytes_in"`
+	First    time.Time `json:"first_seen"`
+	Last     time.Time `json:"last_seen"`
+}
+
+// EgressAuditFilter narrows an audit query; empty fields are ignored.
+type EgressAuditFilter struct {
+	Run     string
+	Project string
+	Verdict string
+	Host    string
+	Limit   int
+}
+
+// EgressAuditor is an OPTIONAL EnvProvisioner capability: the aggregated egress
+// audit trail for an environment (every host the workspace reached or was
+// blocked from, with counts + bytes + timestamps), read from the per-project
+// gateway. The engine ingests these into durable storage so the trail survives
+// the ephemeral gateway.
+type EgressAuditor interface {
+	EgressAudit(ctx context.Context, env EnvID) []EgressAuditRecord
+}
+
+// EgressController is an OPTIONAL EnvProvisioner capability: inspect and live-
+// edit a run's egress policy, backed by the per-project egress gateway
+// (internal/egressgw). AllowEgress is the "add to egress" fast path — it rewrites
+// the project policy file and the gateway hot-reloads it, so the next request
+// succeeds with no restart. Because the policy is per-project, an allow applies
+// to every run of the project; denials stay per-run. Provisioners without a
+// gateway simply don't implement it and the engine degrades honestly.
+type EgressController interface {
+	EgressDenials(ctx context.Context, env EnvID) []EgressDenial
+	AllowEgress(ctx context.Context, env EnvID, host string) error
 }
 
 // PortConn is one exposed workspace port as the engine consumes it: a

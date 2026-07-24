@@ -83,16 +83,16 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 		Project:              res.ProjectName,
 		HarnessInstall:       res.HarnessInstall,
 		EgressDomains:        res.EgressDomains,
+		EgressMode:           res.EgressMode,
+		EgressDenylist:       res.EgressDenylist,
+		EgressAllowedCIDRs:   res.EgressAllowedCIDRs,
+		EgressAllowedPorts:   res.EgressAllowedPorts,
 		CodeServerExtensions: res.CodeServerExtensions,
 		GitUser:              res.GitUser,
 		GitPass:              res.GitPass,
 	}
-
-	// Reinstall this run's egress allowlist before any network use (the
-	// rebuilt bootstrap clones through the proxy), mirroring ensureEnv.
-	if e.egress != nil {
-		e.egress.SetPolicy(runID, res.EgressDomains)
-	}
+	// Egress policy is delivered to the per-project gateway by the provisioner's
+	// Rebuild (from the EnvSpec egress fields) — nothing to prime here.
 
 	id := ports.EnvID(v.EnvID)
 	if rerr := rebuilder.Rebuild(ctx, spec); rerr != nil {
@@ -120,7 +120,6 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 		SeedAuth:      res.SeedAuth,
 		Prepare:       res.Prepare,
 		Setup:         res.Commands["setup"],
-		ProxyEnv:      e.proxyEnvFor(runID),
 		Timeout:       fl.Defaults.Timeout,
 	}); berr != nil {
 		err = fmt.Errorf("rebuild %s: bootstrap: %w", runID, berr)

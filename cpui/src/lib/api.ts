@@ -203,6 +203,21 @@ export interface EgressDenial {
   last: string;
 }
 
+export interface EgressAuditRow {
+  project: string;
+  run: string;
+  host: string;
+  dst_ip: string;
+  port: number;
+  proto: string; // tls | http | other
+  verdict: string; // allow | deny
+  count: number;
+  bytes_out: number;
+  bytes_in: number;
+  first_seen: string;
+  last_seen: string;
+}
+
 export interface EventEnvelope {
   run_id: string;
   seq: number;
@@ -331,6 +346,17 @@ export const api = {
   // it to the project's extra domains.
   egressAllow: (id: string, host: string) =>
     post(`/api/runs/${id}/egress-allow`, { host }) as Promise<{ allowed: string; persisted: boolean }>,
+  // Full egress audit trail for this run: every host reached/blocked, with
+  // counts, bytes and timestamps. Served live from the gateway (durable store
+  // as fallback). Filterable by verdict (allow|deny) and host substring.
+  egressAudit: (id: string, opts?: { verdict?: string; host?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.verdict) q.set('verdict', opts.verdict);
+    if (opts?.host) q.set('host', opts.host);
+    if (opts?.limit) q.set('limit', String(opts.limit));
+    const qs = q.toString();
+    return req<EgressAuditRow[]>(`/api/runs/${id}/egress-audit${qs ? `?${qs}` : ''}`);
+  },
   // Live workspace-port exposures (engine-process-scoped; the registry,
   // not the env_ready event, is authoritative after restarts), plus
   // runtime-discovered listeners not yet exposed (observed) for

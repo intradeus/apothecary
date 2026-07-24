@@ -67,6 +67,16 @@ type RepoConfig struct {
 // WorkspaceConfig is projects.workspace (§2, §8).
 type WorkspaceConfig struct {
 	ExtraDomains []string `json:"extra_domains,omitempty"`
+	// EgressMode selects the per-project egress gateway posture: "allow"
+	// (deny-all + ExtraDomains/derived allowlist, the default) or "deny"
+	// (allow-all + DeniedDomains). Empty ⇒ allow.
+	EgressMode string `json:"egress_mode,omitempty"`
+	// DeniedDomains is the blocked-host list used in "deny" mode.
+	DeniedDomains []string `json:"denied_domains,omitempty"`
+	// EgressAllowedCIDRs/EgressAllowedPorts are the "allow" mode escape hatch for
+	// legitimate raw (non-HTTP/TLS) external egress the default backstop drops.
+	EgressAllowedCIDRs []string `json:"egress_allowed_cidrs,omitempty"`
+	EgressAllowedPorts []int    `json:"egress_allowed_ports,omitempty"`
 	// CodeServerExtensions are VS Code extension ids pre-installed into the
 	// workspace's code-server at build time (union with the repo devcontainer's
 	// own customizations.vscode.extensions). Baked into the image, so they are

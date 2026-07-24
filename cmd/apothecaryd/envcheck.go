@@ -59,7 +59,7 @@ func cmdEnvcheck(args []string) error {
 	if _, p, err := splitHostPort(boot.Listen); err == nil {
 		fmt.Sscanf(p, "%d", &enginePort)
 	}
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, 0)
+	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort)
 	defer resolver.Close()
 	res, err := resolver.Resolve(ctx, project.ID)
 	if err != nil {

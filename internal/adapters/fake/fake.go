@@ -47,6 +47,11 @@ type EnvProvisioner struct {
 
 	ExecCalls []ExecCall
 	Destroyed []ports.EnvID
+
+	// Allowed records AllowEgress calls per env; Denied seeds EgressDenials
+	// (ports.EgressController) for the run-page egress endpoint tests.
+	Allowed map[ports.EnvID][]string
+	Denied  map[ports.EnvID][]ports.EgressDenial
 }
 
 func NewEnvProvisioner() *EnvProvisioner {
@@ -180,6 +185,27 @@ func (p *EnvProvisioner) Destroy(_ context.Context, id ports.EnvID) error {
 	p.Destroyed = append(p.Destroyed, id)
 	return nil
 }
+
+// --- EgressController (in-memory, for the allow/denials endpoint tests) ------
+
+// Allowed records AllowEgress calls per env; Denied seeds EgressDenials.
+func (p *EnvProvisioner) EgressDenials(_ context.Context, id ports.EnvID) []ports.EgressDenial {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Denied[id]
+}
+
+func (p *EnvProvisioner) AllowEgress(_ context.Context, id ports.EnvID, host string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Allowed == nil {
+		p.Allowed = map[ports.EnvID][]string{}
+	}
+	p.Allowed[id] = append(p.Allowed[id], host)
+	return nil
+}
+
+var _ ports.EgressController = (*EnvProvisioner)(nil)
 
 // --- AgentRunner ------------------------------------------------------------
 

@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/egressproxy"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -1627,33 +1628,17 @@ stages:
 	}
 }
 
-// stubEgress is a minimal EgressController for proxy-env tests.
-type stubEgress struct{ policy map[string][]string }
-
-func (s *stubEgress) SetPolicy(runID string, hosts []string) {
-	if s.policy == nil {
-		s.policy = map[string][]string{}
-	}
-	s.policy[runID] = hosts
-}
-func (s *stubEgress) DropPolicy(string)                      {}
-func (s *stubEgress) AllowHost(string, string) bool          { return true }
-func (s *stubEgress) Credentials(id string) (string, string) { return id, "tok-" + id }
-func (s *stubEgress) Port() int                              { return 45999 }
-func (s *stubEgress) Denials(string) []egressproxy.Denial    { return nil }
-
-// TestProxyEnvWrittenToWorkspace: with proxy mode on, bootstrap writes
-// /apothecary/proxy.env pointing at the live proxy, and the run's egress
-// policy is installed.
-func TestProxyEnvWrittenToWorkspace(t *testing.T) {
+// TestEgressPolicyReachesProvisioner: the derived egress allowlist and mode are
+// delivered to the provisioner via the EnvSpec at Provision time (the provisioner
+// then hands them to the per-project gateway). No engine-side proxy or proxy.env.
+func TestEgressPolicyReachesProvisioner(t *testing.T) {
 	doc := `name: p
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	eg := &stubEgress{}
-	h.e.SetEgress(eg)
+	h.res.EgressDomains = []string{"models.dev", "registry-1.docker.io"}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "p", testProject)
 	if err != nil {
@@ -1666,14 +1651,12 @@ stages:
 	if env == nil {
 		t.Fatal("no env")
 	}
-	pe := string(env.Files["/apothecary/proxy.env"])
-	for _, want := range []string{"HTTPS_PROXY", "127.0.0.1:45999", "tok-" + runID, "NO_PROXY"} {
-		if !strings.Contains(pe, want) {
-			t.Errorf("proxy.env missing %q:\n%s", want, pe)
-		}
+	// The allowlist reached the spec (the provisioner hands it to the gateway).
+	if !slices.Contains(env.Spec.EgressDomains, "models.dev") {
+		t.Errorf("EgressDomains not delivered to the provisioner: %v", env.Spec.EgressDomains)
 	}
-	// The run's allowlist was installed (derived domains reach the proxy).
-	if _, ok := eg.policy[runID]; !ok {
-		t.Errorf("no egress policy set for run; policies = %v", eg.policy)
+	// No proxy.env is written anymore.
+	if _, ok := env.Files["/apothecary/proxy.env"]; ok {
+		t.Errorf("proxy.env should no longer be written")
 	}
 }

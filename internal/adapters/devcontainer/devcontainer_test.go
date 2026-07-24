@@ -61,9 +61,9 @@ func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 	a := NewWithRunner(Config{
 		RunsDir: t.TempDir(),
 		ShimBin: func(context.Context) (string, error) { return shimSrc, nil },
-		// Off by default so the base lifecycle tests stay firewall-agnostic;
-		// the firewall tests below opt in explicitly.
-		FirewallOff: true,
+		// No GatewayImage ⇒ a.gw is nil ⇒ the egress gateway path is skipped and
+		// the sandbox runs on the default bridge, keeping the scripted-runner
+		// lifecycle tests independent of the (docker-heavy) gateway.
 	}, r)
 	a.retryDelay = time.Millisecond
 	a.noSandboxGuard = true // t.TempDir() is under /tmp; the guard has its own test
@@ -178,7 +178,6 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 			{code: 0},          // ready/relay probe
 		})...)}
 	a := newTestAdapter(t, r)
-	a.cfg.ProxyPort = 9090
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
 	id, err := a.Provision(context.Background(), ports.EnvSpec{
@@ -234,11 +233,45 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 		}
 	}
 
-	// The engine bridge came up for both sockets (proxy mode on).
-	if n := len(a.bridges["apothecary-run1"]); n != 2 {
-		t.Errorf("bridge listeners = %d, want 2 (engine + proxy)", n)
+	// The engine bridge came up (only the engine socket now — egress is external).
+	if n := len(a.bridges["apothecary-run1"]); n != 1 {
+		t.Errorf("bridge listeners = %d, want 1 (engine)", n)
 	}
 	a.Close()
+}
+
+// Provisioning streams into the same exec.log the UI tails (TailExecLog), so
+// init/build progress shows live before the env is ready — not just post-ready
+// command output.
+func TestProvisionStreamsToExecLog(t *testing.T) {
+	r := &scriptRunner{responses: append(
+		[]response{{code: 0}}, // git clone
+		sandboxResp([]response{
+			{stdout: upOK},     // devcontainer up (teed into exec.log)
+			{code: 0},          // root-init
+			{stdout: "cid1\n"}, // ps -q (relay)
+			{code: 0},          // relay exec
+			{code: 0},          // portscan exec
+			{code: 0},          // ready probe
+		})...)}
+	a := newTestAdapter(t, r)
+	armSandbox(t, a, "apothecary-run1")
+	seedDevcontainer(t, a, "apothecary-run1")
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := a.TailExecLog(context.Background(), "apothecary-run1", 0)
+	if err != nil {
+		t.Fatalf("tail exec log: %v", err)
+	}
+	for _, want := range []string{"provisioning apothecary-run1", "preparing source checkout",
+		"per-run sandbox + egress gateway", "building devcontainer"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("exec.log missing provisioning marker %q:\n%s", want, log)
+		}
+	}
 }
 
 // The engine supplies a human-friendly, slug-of-branch name; the adapter must
@@ -431,20 +464,20 @@ func TestHarnessFeatureRequiresAreHarnessDeclared(t *testing.T) {
 	}
 }
 
-// Firewall and harness are independent contributors to ONE
-// --additional-features object.
-func TestRepoDevcontainerCombinesFirewallAndHarness(t *testing.T) {
+// The harness feature is injected into the repo's devcontainer (its own image
+// knows nothing about opencode). Egress is NO LONGER a feature — it is enforced
+// by the external per-project gateway — so `up` must carry the harness (and
+// code-server) but never an apothecary-firewall feature.
+func TestRepoDevcontainerInjectsHarnessNotFirewall(t *testing.T) {
 	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: `{"configuration":{"image":"x"},"mergedConfiguration":{"image":"x"}}`}, // read-configuration (isCompose): not compose
 		{stdout: upOK},     // up
 		{code: 0},          // root-init
 		{stdout: "cid1\n"}, // docker ps -q (relay)
 		{code: 0},          // docker exec -d relay
 		{code: 0},          // docker exec -d portscan
-		{code: 0},          // ready/relay/firewall probe
+		{code: 0},          // ready/relay probe
 	})}
 	a := newTestAdapter(t, r)
-	a.cfg.FirewallOff = false
 	armSandbox(t, a, "apothecary-run1")
 	seedRepoDevcontainer(t, a, "apothecary-run1")
 
@@ -458,153 +491,14 @@ func TestRepoDevcontainerCombinesFirewallAndHarness(t *testing.T) {
 	}
 	up := find(t, r.calls, "devcontainer", "up")
 	joined := strings.Join(up.args, " ")
-	for _, want := range []string{"./apothecary-firewall", "./apothecary-harness"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("up args missing %q: %v", want, up.args)
-		}
+	if !strings.Contains(joined, "./apothecary-harness") {
+		t.Errorf("up args missing harness feature: %v", up.args)
+	}
+	if strings.Contains(joined, "apothecary-firewall") {
+		t.Errorf("egress is external now; no firewall feature should be injected: %v", up.args)
 	}
 	if n := strings.Count(joined, "--additional-features"); n != 1 {
 		t.Errorf("features must ride in ONE --additional-features object, got %d", n)
-	}
-}
-
-func TestRepoConfigInjectsFirewallFeature(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: `{"configuration":{"image":"x"},"mergedConfiguration":{"image":"x"}}`}, // read-configuration (isCompose): not compose
-		{stdout: upOK},     // up
-		{code: 0},          // root-init
-		{stdout: "cid1\n"}, // docker ps -q (relay)
-		{code: 0},          // docker exec -d relay
-		{code: 0},          // docker exec -d portscan
-		{code: 0},          // ready/relay/firewall probe
-	})}
-	a := newTestAdapter(t, r)
-	a.cfg.FirewallOff = false
-	armSandbox(t, a, "apothecary-run1")
-	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	// A real .git DIR (gitExclude writes .git/info/exclude).
-	if err := os.MkdirAll(filepath.Join(src, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "https://g.local/r.git", EgressDomains: []string{"g.local"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	up := find(t, r.calls, "devcontainer", "up")
-	joined := strings.Join(up.args, " ")
-	if !strings.Contains(joined, "--additional-features") || !strings.Contains(joined, `"./apothecary-firewall":{}`) {
-		t.Errorf("firewall feature not injected: %v", up.args)
-	}
-	// Feature materialized into the checkout, git-excluded, with the shared
-	// init-firewall.sh alongside.
-	fdir := filepath.Join(src, ".devcontainer", "apothecary-firewall")
-	for _, f := range []string{"devcontainer-feature.json", "install.sh", "apothecary-entrypoint.sh", "init-firewall.sh"} {
-		if _, err := os.Stat(filepath.Join(fdir, f)); err != nil {
-			t.Errorf("feature file %s missing: %v", f, err)
-		}
-	}
-	excl, _ := os.ReadFile(filepath.Join(src, ".git", "info", "exclude"))
-	if !strings.Contains(string(excl), ".devcontainer/apothecary-firewall/") {
-		t.Errorf("feature not git-excluded: %q", excl)
-	}
-	// firewall.env written to the shim mount with shell-quoted values.
-	fwEnv, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "shim", "firewall.env"))
-	if err != nil || !strings.Contains(string(fwEnv), "APOTHECARY_EGRESS_PROXY=") {
-		t.Errorf("firewall.env = %q, %v", fwEnv, err)
-	}
-}
-
-func TestComposeConfigStaysOpen(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: `{"mergedConfiguration":{"dockerComposeFile":"docker-compose.yml"}}`}, // isCompose: yes
-		{stdout: upOK},     // up
-		{code: 0},          // root-init
-		{stdout: "cid1\n"}, // docker ps -q (relay)
-		{code: 0},          // docker exec -d relay
-		{code: 0},          // docker exec -d portscan
-		{code: 0},          // ready probe (no firewall done-file)
-	})}
-	a := newTestAdapter(t, r)
-	a.cfg.FirewallOff = false
-	armSandbox(t, a, "apothecary-run1")
-	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	// .git is a real dir (the always-injected code-server feature appends to
-	// .git/info/exclude; its presence also makes ensureSrc skip cloning).
-	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git", "info")} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
-		t.Fatal(err)
-	}
-	up := find(t, r.calls, "devcontainer", "up")
-	// code-server is always injected, but a compose config must NOT get the
-	// firewall feature.
-	if strings.Contains(strings.Join(up.args, " "), "apothecary-firewall") {
-		t.Errorf("compose config must NOT be firewalled: %v", up.args)
-	}
-	// Reported open, and the fact survives an adapter restart via the marker.
-	open, _ := a.EgressOpen(context.Background(), "apothecary-run1")
-	if !open {
-		t.Error("compose env must report EgressOpen=true")
-	}
-	fresh := newTestAdapter(t, &scriptRunner{})
-	fresh.cfg.RunsDir = a.cfg.RunsDir
-	open, _ = fresh.EgressOpen(context.Background(), "apothecary-run1")
-	if !open {
-		t.Error("EgressOpen must survive restart via the on-disk marker")
-	}
-}
-
-func TestFirewallOffSkipsInjection(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: upOK},     // up (no isCompose call when firewall off)
-		{code: 0},          // root-init
-		{stdout: "cid1\n"}, // relay ps
-		{code: 0},          // relay exec
-		{code: 0},          // docker exec -d portscan
-		{code: 0},          // ready probe
-	})}
-	a := newTestAdapter(t, r) // FirewallOff: true
-	armSandbox(t, a, "apothecary-run1")
-	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	// .git is a real dir (the always-injected code-server feature appends to
-	// .git/info/exclude; its presence also makes ensureSrc skip cloning).
-	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git", "info")} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range r.calls {
-		if c.bin == "devcontainer" && len(c.args) > 0 && c.args[0] == "read-configuration" {
-			t.Error("firewall off must not probe for compose")
-		}
-		// code-server is always injected; the firewall + harness features must
-		// not be when firewall is off with no harness.
-		if strings.Contains(strings.Join(c.args, " "), "apothecary-firewall") {
-			t.Error("firewall off must not inject the firewall feature")
-		}
-	}
-	open, _ := a.EgressOpen(context.Background(), "apothecary-run1")
-	if !open {
-		t.Error("firewall-off env must report EgressOpen=true")
 	}
 }
 
@@ -659,7 +553,7 @@ func TestExecPropagatesExitAndCombinesOutput(t *testing.T) {
 		t.Errorf("exec args missing label: %v", c.args)
 	}
 	stdin := string(c.stdin)
-	if !strings.Contains(stdin, `cd "$HOME/repo"`) || !strings.Contains(stdin, "make test") || !strings.Contains(stdin, "proxy.env") {
+	if !strings.Contains(stdin, `cd "$HOME/repo"`) || !strings.Contains(stdin, "make test") {
 		t.Errorf("stdin = %q", stdin)
 	}
 }
@@ -1066,7 +960,7 @@ func TestSandboxGuardsRejectTmp(t *testing.T) {
 	a := newTestAdapter(t, &scriptRunner{})
 	a.noSandboxGuard = false
 	a.cfg.RunsDir = filepath.Join(os.TempDir(), "apothecary-runs")
-	err := a.ensureSandbox(context.Background(), "run1", ports.EnvSpec{})
+	err := a.ensureSandbox(context.Background(), "run1", ports.EnvSpec{}, "")
 	if err == nil || !strings.Contains(err.Error(), "masks /tmp") {
 		t.Fatalf("want /tmp guard error, got %v", err)
 	}
@@ -1407,33 +1301,12 @@ func TestBridgePumpsBytesOverUnixSocket(t *testing.T) {
 	}
 }
 
-func TestBridgeOpensProxySocketWhenProxyModeOn(t *testing.T) {
-	a := newTestAdapter(t, &scriptRunner{})
-	a.cfg.ProxyPort = 9090
-	var bound []string
-	a.listen = func(network, addr string) (net.Listener, error) {
-		bound = append(bound, network+"|"+filepath.Base(addr))
-		return net.Listen("unix", addr)
-	}
-	if err := a.ensureBridge("ws1"); err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	joined := strings.Join(bound, " ")
-	for _, want := range []string{"unix|engine.sock", "unix|proxy.sock"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("bridge sockets missing %q: %v", want, bound)
-		}
-	}
-}
-
 func TestStartRelayDetachesStaticShim(t *testing.T) {
 	r := &scriptRunner{responses: []response{
 		{stdout: "cid1\n"}, // docker ps -q
 		{code: 0},          // docker exec -d
 	}}
 	a := newTestAdapter(t, r)
-	a.cfg.ProxyPort = 9090
 	if err := a.startRelay(context.Background(), "apothecary-run1"); err != nil {
 		t.Fatal(err)
 	}
@@ -1442,11 +1315,14 @@ func TestStartRelayDetachesStaticShim(t *testing.T) {
 	for _, want := range []string{
 		"-d cid1 /opt/apothecary/shim relay",
 		"8080:/opt/apothecary/engine.sock",
-		"9090:/opt/apothecary/proxy.sock",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("relay start missing %q: %v", want, relay.args)
 		}
+	}
+	// Egress is external now — no proxy socket is relayed.
+	if strings.Contains(joined, "proxy.sock") {
+		t.Errorf("proxy.sock must not be relayed: %v", relay.args)
 	}
 }
 

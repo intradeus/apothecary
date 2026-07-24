@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EventEnvelope, type RunView } from '$lib/api';
+  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EgressAuditRow, type EventEnvelope, type RunView } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
@@ -93,6 +93,10 @@
   let liveTail = $state<string | null>(null);
   let denials = $state<EgressDenial[]>([]);
   let allowing = $state<Record<string, boolean>>({});
+  let audit = $state<EgressAuditRow[]>([]);
+  let showAudit = $state(false);
+  let auditVerdict = $state(''); // '' | 'allow' | 'deny'
+  let auditHost = $state('');
   let showTail = $state(true);
   let tailEl = $state<HTMLPreElement | null>(null);
   const currentStage = $derived.by(() => {
@@ -132,6 +136,7 @@
           requestAnimationFrame(() => tailEl && (tailEl.scrollTop = tailEl.scrollHeight));
         }
         denials = await api.egressDenials(runId);
+        if (showAudit) await refreshAudit();
         const pr = await api.runPorts(runId);
         livePorts = pr.ports;
         observedPorts = pr.observed ?? [];
@@ -185,11 +190,37 @@
     try {
       await api.egressAllow(runId, host);
       denials = await api.egressDenials(runId); // host clears from the list
+      if (showAudit) await refreshAudit();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
       allowing[host] = false;
     }
+  }
+
+  async function refreshAudit() {
+    try {
+      audit = await api.egressAudit(runId, {
+        verdict: auditVerdict || undefined,
+        host: auditHost.trim() || undefined
+      });
+    } catch {
+      /* transient */
+    }
+  }
+  async function toggleAudit() {
+    showAudit = !showAudit;
+    if (showAudit) await refreshAudit();
+  }
+  function fmtBytes(n: number): string {
+    if (!n) return '0';
+    const u = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)}${u[i]}`;
   }
 
   // Expose a workspace port on demand (the "browse the app" path); the
@@ -503,6 +534,50 @@
           </p>
         </div>
       {/if}
+      <div class="audit">
+        <button class="linklike" onclick={toggleAudit}>
+          {showAudit ? '▾' : '▸'} Egress audit{audit.length ? ` (${audit.length})` : ''}
+        </button>
+        {#if showAudit}
+          <div class="audit-controls">
+            <select bind:value={auditVerdict} onchange={refreshAudit}>
+              <option value="">all</option>
+              <option value="allow">allowed</option>
+              <option value="deny">denied</option>
+            </select>
+            <input
+              placeholder="filter host…"
+              bind:value={auditHost}
+              oninput={refreshAudit}
+              class="mono small" />
+            <span class="muted small">every host this workspace reached or was blocked from</span>
+          </div>
+          {#if audit.length === 0}
+            <p class="muted small" style="margin:6px 0 0">No egress recorded yet for this filter.</p>
+          {:else}
+            <div class="audit-scroll">
+              <table class="audit-table mono small">
+                <thead>
+                  <tr><th>host</th><th>verdict</th><th>proto</th><th class="num">×</th><th class="num">out</th><th class="num">in</th><th>last</th></tr>
+                </thead>
+                <tbody>
+                  {#each audit as r (r.host + ':' + r.port + ':' + r.verdict)}
+                    <tr>
+                      <td>{r.host}{r.port && r.port !== 443 ? `:${r.port}` : ''}</td>
+                      <td><span class="verdict {r.verdict}">{r.verdict}</span></td>
+                      <td class="muted">{r.proto}</td>
+                      <td class="num">{r.count}</td>
+                      <td class="num">{fmtBytes(r.bytes_out)}</td>
+                      <td class="num">{fmtBytes(r.bytes_in)}</td>
+                      <td class="muted">{fmtTime(r.last_seen)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        {/if}
+      </div>
       {#if showTail}
         {#if liveTail}
           <pre class="mono small tail" bind:this={tailEl}>{liveTail}</pre>
@@ -580,4 +655,15 @@
     padding-left: 18px;
   }
   .tail { max-height:280px; overflow-y:auto; white-space:pre-wrap; margin:10px 0 0; border:1px solid var(--border, #333); border-radius:6px; padding:8px; }
+  .audit { margin-top: 10px; }
+  .audit-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+  .audit-controls input { flex: 1; min-width: 120px; padding:2px 6px; }
+  .audit-scroll { max-height: 320px; overflow:auto; border:1px solid var(--border, #333); border-radius:6px; }
+  .audit-table { width:100%; border-collapse: collapse; }
+  .audit-table th, .audit-table td { text-align:left; padding:3px 8px; border-bottom:1px solid var(--border, #2a2a2a); white-space:nowrap; }
+  .audit-table thead th { position:sticky; top:0; background: var(--bg, #1a1a1a); color: var(--muted, #888); font-weight:normal; }
+  .audit-table td.num, .audit-table th.num { text-align:right; }
+  .verdict { padding:0 6px; border-radius:4px; font-size:11px; }
+  .verdict.allow { color: var(--green, #4caf7d); background: color-mix(in srgb, var(--green, #4caf7d) 12%, transparent); }
+  .verdict.deny  { color: var(--amber, #e0af68); background: color-mix(in srgb, var(--amber, #e0af68) 14%, transparent); }
 </style>

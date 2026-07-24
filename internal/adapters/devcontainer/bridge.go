@@ -28,14 +28,11 @@ import (
 //	  -> /opt/apothecary/<name>.sock    (bind-mounted shim dir)
 //	  -> engine 127.0.0.1:<port>        (this file's unix->tcp pump)
 
-// bridgeSocks maps engine loopback ports to socket names in the shim dir;
-// proxy is present only when proxy mode is on.
+// bridgeSocks maps engine loopback ports to socket names in the shim dir. Egress
+// no longer rides a bridged proxy socket — it is filtered externally by the
+// per-project gateway — so only the engine port is bridged.
 func (a *Adapter) bridgeSocks() map[string]int {
-	socks := map[string]int{"engine.sock": a.cfg.EnginePort}
-	if a.cfg.ProxyPort > 0 {
-		socks["proxy.sock"] = a.cfg.ProxyPort
-	}
-	return socks
+	return map[string]int{"engine.sock": a.cfg.EnginePort}
 }
 
 // relayPairs are the relay's forward argv: "<in-container port>:<socket path>".

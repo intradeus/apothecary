@@ -19,15 +19,6 @@ type Boot struct {
 	RunsDir      string // APOTHECARY_RUNS_DIR, default /var/lib/apothecary/runs
 	CPUIDir      string // APOTHECARY_CPUI_DIR, default "" (API only)
 	OtelEndpoint string // APOTHECARY_OTEL_ENDPOINT, default "" (disabled)
-	// EgressProxy toggles the hostname-filtering egress proxy (M18).
-	// APOTHECARY_EGRESS_PROXY: "off" disables (falls back to the derived IP
-	// allowlist firewall); "on"/unset enables on the default port; a port
-	// number sets a fixed port. Off falls back to the derived IP allowlist.
-	EgressProxy bool
-	// EgressProxyPort is the loopback port the proxy binds — STABLE across
-	// restarts (a fixed port, not ephemeral) so every workspace's proxy.env
-	// stays valid after the engine restarts. Default 8079.
-	EgressProxyPort int
 	// ArtifactMaxBytes caps each uploaded artifact (documents/images
 	// attached to a goal or ping answer). APOTHECARY_ARTIFACT_MAX_BYTES,
 	// default 25 MiB.
@@ -71,17 +62,6 @@ func FromEnv() (*Boot, error) {
 		RunsDir:      getenvDefault("APOTHECARY_RUNS_DIR", "/var/lib/apothecary/runs"),
 		CPUIDir:      os.Getenv("APOTHECARY_CPUI_DIR"),
 		OtelEndpoint: os.Getenv("APOTHECARY_OTEL_ENDPOINT"),
-	}
-	// Egress proxy: "off" disables; "on"/unset uses the default port; a bare
-	// port number sets a fixed port. Anything unparseable falls back to the
-	// default (loopback is always the host).
-	raw := os.Getenv("APOTHECARY_EGRESS_PROXY")
-	b.EgressProxy = raw != "off"
-	b.EgressProxyPort = DefaultEgressProxyPort
-	if raw != "" && raw != "on" && raw != "off" {
-		if p, err := strconv.Atoi(raw); err == nil && p > 0 && p < 65536 {
-			b.EgressProxyPort = p
-		}
 	}
 	b.ArtifactMaxBytes = DefaultArtifactMaxBytes
 	if raw := os.Getenv("APOTHECARY_ARTIFACT_MAX_BYTES"); raw != "" {

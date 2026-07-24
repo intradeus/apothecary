@@ -12,8 +12,6 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,7 +31,6 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
-	"apothecary/internal/egressproxy"
 	"apothecary/internal/engine"
 	"apothecary/internal/flow"
 	"apothecary/internal/httpapi"
@@ -194,33 +191,9 @@ func cmdServe(args []string) error {
 		fmt.Sscanf(p, "%d", &enginePort)
 	}
 
-	// Hostname-filtering egress proxy (M18): loopback, reverse-forwarded
-	// into every workspace by the provisioner. Its port is passed to the
-	// resolver (forward + proxy mode) and the engine (per-run
-	// policy + workspace proxy.env).
-	//
-	// Both the PORT and the signing SECRET are STABLE across restarts: the
-	// port is fixed (config), and the secret is derived from the persistent
-	// master key. So a workspace's proxy.env (host:port + per-run Basic
-	// creds) written at provision time stays valid after the engine
-	// restarts — only the reverse tunnel (a subprocess) needs re-
-	// establishing, which recovery does. An ephemeral port / random secret
-	// would silently break every surviving workspace on restart.
-	var proxyPort int
-	var egress engine.EgressController
-	if boot.EgressProxy {
-		proxy := egressproxy.New(egressProxySecret(boot.MasterKeyRaw))
-		addr := fmt.Sprintf("127.0.0.1:%d", boot.EgressProxyPort)
-		if err := proxy.Start(addr); err != nil {
-			return fmt.Errorf("egress proxy: %w (another apothecaryd on this port? each instance needs its own APOTHECARY_EGRESS_PROXY port)", err)
-		}
-		defer proxy.Close()
-		proxyPort = proxy.Port()
-		egress = proxy
-		log.Info("egress proxy listening (hostname-filtering)", "port", proxyPort)
-	}
-
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, proxyPort)
+	// Egress filtering now lives in the per-project gateway the devcontainer
+	// provisioner brings up (internal/egressgw) — no engine-side proxy.
+	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort)
 	defer resolver.Close()
 
 	ecfg := engine.Config{
@@ -231,9 +204,6 @@ func cmdServe(args []string) error {
 	// Flows resolve DB-first with the compiled-in defaults underneath
 	// (internal/builtin): an empty database still runs the "default" flow.
 	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
-	if egress != nil {
-		e.SetEgress(egress)
-	}
 	if boot.OtelEndpoint != "" {
 		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {
@@ -265,6 +235,7 @@ func cmdServe(args []string) error {
 
 	artStore := artifacts.New(store, boot.RunsDir, boot.ArtifactMaxBytes, boot.ArtifactMimeAllow)
 	e.SetArtifacts(artStore)
+	e.SetEgressAudit(store) // durable egress audit trail (pgstore)
 
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)
@@ -326,6 +297,25 @@ func cmdServe(args []string) error {
 			case <-t.C:
 				if err := e.ReconcileEnvsOnce(reaperCtx); err != nil {
 					log.Error("env reconcile pass failed", "err", err)
+				}
+			case <-reaperCtx.Done():
+				return
+			}
+		}
+	}()
+
+	// Egress audit ingest: persist each ACTIVE run's audit trail (from its
+	// per-project gateway) into the DB near-live, so the trail is durable BEFORE
+	// the UI reads it (the single audit path: gateway file → engine → DB → UI).
+	// Cheap — only active runs, not full history — so it can run often.
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if err := e.IngestEgressAuditOnce(reaperCtx); err != nil {
+					log.Error("egress audit ingest failed", "err", err)
 				}
 			case <-reaperCtx.Done():
 				return
@@ -448,18 +438,6 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 // engineURL derives the workspace-visible engine URL from the listen
 // address. Workspaces reach the engine at their own localhost through the
 // devcontainer bridge's in-container shim relay (loopback parity).
-// egressProxySecret derives the egress proxy's per-run credential-signing
-// secret from the persistent master key (domain-separated), so proxy Basic
-// credentials are STABLE across restarts — a workspace's proxy.env keeps
-// authenticating after the engine restarts. It is not the encryption key
-// and never seals data; a process-random secret would silently invalidate
-// every surviving workspace's proxy.env on restart.
-func egressProxySecret(masterKeyRaw string) []byte {
-	m := hmac.New(sha256.New, []byte(masterKeyRaw))
-	m.Write([]byte("apothecary-egress-proxy-signing-v1"))
-	return m.Sum(nil)
-}
-
 func engineURL(listen string) string {
 	_, port, err := splitHostPort(listen)
 	if err != nil {
