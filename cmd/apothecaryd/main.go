@@ -4,10 +4,10 @@
 //	apothecaryd keygen                          print a fresh APOTHECARY_MASTER_KEY
 //	apothecaryd validate <flow.yaml>            parse and validate a flow file
 //	apothecaryd rebuild-projections
-//	apothecaryd envcheck -project <name|id>     environment compliance check against live Coder
+//	apothecaryd envcheck -project <name|id>     environment compliance check against the live workspace
 //
 // -dev registers the fake kinds and seeds a dev project so a full flow runs
-// end-to-end with no Coder/harness/forge.
+// end-to-end with no real workspace/harness/forge.
 package main
 
 import (
@@ -130,7 +130,6 @@ func registry(dev bool) *kinds.Registry {
 	reg := kinds.NewRegistry()
 	reg.RegisterForge(kinds.GitLab{})
 	reg.RegisterForge(kinds.GitHub{})
-	reg.RegisterProvisioner(kinds.Coder{})
 	reg.RegisterProvisioner(kinds.Devcontainer{})
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
@@ -142,7 +141,7 @@ func registry(dev bool) *kinds.Registry {
 
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	dev := fs.Bool("dev", false, "register fake kinds and seed a dev project (no Coder/opencode/forge)")
+	dev := fs.Bool("dev", false, "register fake kinds and seed a dev project (no real workspace/opencode/forge)")
 	_ = fs.Parse(args)
 
 	log := slog.Default()
@@ -194,8 +193,8 @@ func cmdServe(args []string) error {
 	}
 
 	// Hostname-filtering egress proxy (M18): loopback, reverse-forwarded
-	// into every workspace by the coder adapter. Its port is passed to the
-	// resolver (forward + template proxy mode) and the engine (per-run
+	// into every workspace by the provisioner. Its port is passed to the
+	// resolver (forward + proxy mode) and the engine (per-run
 	// policy + workspace proxy.env).
 	//
 	// Both the PORT and the signing SECRET are STABLE across restarts: the
@@ -423,7 +422,6 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
 		},
 		Commands:    map[string]string{"setup": "true", "verify": "true"},
-		Workspace:   confstore.WorkspaceConfig{Template: "dev"},
 		DefaultFlow: "dev",
 	})
 	if err != nil {
@@ -447,7 +445,7 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 
 // engineURL derives the workspace-visible engine URL from the listen
 // address. Workspaces reach the engine at their own localhost through the
-// Coder adapter's reverse tunnel (see IMPLEMENTATION_NOTES).
+// devcontainer bridge's in-container shim relay (loopback parity).
 // egressProxySecret derives the egress proxy's per-run credential-signing
 // secret from the persistent master key (domain-separated), so proxy Basic
 // credentials are STABLE across restarts — a workspace's proxy.env keeps

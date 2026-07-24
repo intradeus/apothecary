@@ -639,15 +639,11 @@ func (a *Adapter) proxyAddr() string {
 
 // firewallEnvVars are the APOTHECARY_* inputs init-firewall.sh reads,
 // shared by the fallback (containerEnv) and feature (firewall.env) paths.
-// APOTHECARY_CODER_PORT=1 is a dead port: the script's gateway hole is a
-// Coder concept, and the devcontainer bridge rides unix sockets, so point
-// it at reserved port 1 rather than leaving Coder's 7080 default open.
 func firewallEnvVars(proxyAddr string, spec ports.EnvSpec) map[string]string {
 	return map[string]string{
 		"APOTHECARY_REPO_URL":      spec.RepoURL,
 		"APOTHECARY_EXTRA_DOMAINS": strings.Join(spec.EgressDomains, " "),
 		"APOTHECARY_EGRESS_PROXY":  proxyAddr,
-		"APOTHECARY_CODER_PORT":    "1",
 	}
 }
 

@@ -34,7 +34,7 @@ stages:
 		p, err := svc.CreateProject(context.Background(), Project{
 			Name: name, ForgeID: f, ProvisionerID: c, HarnessIDs: []string{h},
 			Repo:        RepoConfig{URL: "https://forge.local/x.git"},
-			Workspace:   WorkspaceConfig{Template: "t"},
+			Workspace:   WorkspaceConfig{},
 			DefaultFlow: "f",
 		})
 		if err != nil {

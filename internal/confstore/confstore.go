@@ -68,10 +68,6 @@ type RepoConfig struct {
 type WorkspaceConfig struct {
 	DockerfileFragment string   `json:"dockerfile_fragment,omitempty"`
 	ExtraDomains       []string `json:"extra_domains,omitempty"`
-	// Template names a user-managed provisioner template (§8.4 escape
-	// hatch + import-config compatibility path): the engine skips the image
-	// pipeline and template pushes entirely.
-	Template string `json:"template,omitempty"`
 }
 
 // Project picks one integration per port and adds repo/commands/workspace

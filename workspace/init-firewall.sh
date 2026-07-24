@@ -2,10 +2,11 @@
 # Egress firewall for apothecary workspaces (DESIGN.md §11).
 #
 # Default-deny with an explicit allowlist: model provider APIs, the repo
-# host (derived from APOTHECARY_REPO_URL), Go/npm registries, and the host
-# gateway on the engine + Coder ports. The resolve-then-pin pattern: allowed
-# names are resolved once here, pinned into /etc/hosts and an ipset, then
-# ALL DNS is blocked — other names simply cannot resolve.
+# host (derived from APOTHECARY_REPO_URL), Go/npm registries. The engine and
+# egress proxy are reached over the workspace's own loopback (the shim relay
+# bridges them), so no gateway hole is needed. The resolve-then-pin pattern:
+# allowed names are resolved once here, pinned into /etc/hosts, then ALL DNS
+# is blocked — other names simply cannot resolve.
 #
 # Runs as root via a single NOPASSWD sudoers entry (no arguments accepted;
 # the APOTHECARY_* env vars pass through sudo env_keep). A lock file makes
@@ -19,10 +20,10 @@ if [ -e "$LOCK" ]; then
 fi
 
 # FAIL-CLOSED (found live in M9): if anything below errors, slam egress
-# shut rather than leaving it open. Loopback + established + the Coder
-# gateway port stay up so the workspace remains reachable for inspection;
-# the lock file is NOT written, so envcheck's firewall_initialized step
-# fails loudly.
+# shut rather than leaving it open. Loopback + established stay up so the
+# workspace stays reachable (the shim relay is loopback) for inspection; the
+# lock file is NOT written, so envcheck's firewall_initialized step fails
+# loudly.
 fail_closed() {
   echo "firewall: FATAL — closing all egress" >&2
   iptables -F OUTPUT 2>/dev/null || true
@@ -31,52 +32,28 @@ fail_closed() {
   iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
   ip6tables -F OUTPUT 2>/dev/null || true
   ip6tables -P OUTPUT DROP 2>/dev/null || true
-  GW="$(ip route | awk '/default/ {print $3; exit}')" || true
-  [ -n "${GW:-}" ] && iptables -A OUTPUT -d "$GW" -p tcp --dport "${APOTHECARY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
-  # Keep the Coder server + DERP reachable too, so a fail-closed workspace is
-  # still inspectable over `coder ssh` / the web terminal.
-  CH="$(getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1; exit}')" || true
-  [ -n "${CH:-}" ] && iptables -A OUTPUT -d "$CH" -p tcp --dport "${APOTHECARY_CODER_PORT:-7080}" -j ACCEPT 2>/dev/null || true
   exit 1
 }
 trap fail_closed ERR
 
 REPO_URL="${APOTHECARY_REPO_URL:-}"
-CODER_PORT="${APOTHECARY_CODER_PORT:-7080}"
 EGRESS_PROXY="${APOTHECARY_EGRESS_PROXY:-}"
-GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
-
-# The Coder server — and its EMBEDDED DERP relay, which the agent's tailnet
-# needs for `coder ssh`, the web terminal and the IDE — is reached at
-# host.docker.internal in the docker deployment. That is a DIFFERENT address
-# than this workspace network's default-route gateway (custom docker networks
-# gateway ≠ host-gateway). Allowing only $GATEWAY:$CODER_PORT lets the agent's
-# *control* connection survive (it is ESTABLISHED before this script runs) but
-# silently drops every NEW DERP connection, so the tailnet degrades to derp=0
-# and all interactive access hangs (found live 2026-07: derp.Recv deadline
-# exceeded). Resolve it from /etc/hosts — docker pins it there, so no DNS is
-# needed — and allow it too. Empty on non-docker deployments (rule skipped).
-CODER_HOST_IP="$(getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1; exit}' || true)"
 
 # --- PROXY MODE (M18) ------------------------------------------------------
-# The engine runs a hostname-filtering egress proxy, reverse-tunneled onto
-# this workspace's own loopback. The firewall then needs only: loopback
-# (reaches the proxy, the ask_human shim, code-server), established
-# connections, and the Coder gateway port (the agent's own websocket).
-# EVERYTHING else — all direct egress, all DNS — is dropped: the workspace
-# cannot leave except through the proxy, which filters by hostname and
-# whose allowlist (derived domains ∪ project extra_domains) the engine sets
-# per run. No IP pinning, no name resolution, no per-provider guessing.
+# The engine runs a hostname-filtering egress proxy on the workspace's own
+# loopback (the shim relay bridges it). The firewall then needs only:
+# loopback (reaches the proxy, the ask_human shim, code-server) and
+# established connections. EVERYTHING else — all direct egress, all DNS — is
+# dropped: the workspace cannot leave except through the proxy, which filters
+# by hostname and whose allowlist (derived domains ∪ project extra_domains)
+# the engine sets per run. No IP pinning, no name resolution, no per-provider
+# guessing.
 if [ -n "$EGRESS_PROXY" ]; then
   echo "firewall: PROXY MODE (egress via $EGRESS_PROXY)"
   iptables -F OUTPUT
   iptables -P OUTPUT DROP
   iptables -A OUTPUT -o lo -j ACCEPT
   iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-  iptables -A OUTPUT -d "$GATEWAY" -p tcp --dport "$CODER_PORT" -j ACCEPT
-  if [ -n "$CODER_HOST_IP" ]; then
-    iptables -A OUTPUT -d "$CODER_HOST_IP" -p tcp --dport "$CODER_PORT" -j ACCEPT
-  fi
   if [ -f /proc/net/if_inet6 ] && command -v ip6tables >/dev/null; then
     ip6tables -F OUTPUT
     ip6tables -P OUTPUT DROP
@@ -84,7 +61,7 @@ if [ -n "$EGRESS_PROXY" ]; then
     ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
   fi
   touch "$LOCK"
-  echo "firewall: initialized (proxy mode, gateway $GATEWAY, coder :$CODER_PORT)"
+  echo "firewall: initialized (proxy mode)"
   exit 0
 fi
 
@@ -136,15 +113,8 @@ iptables -A OUTPUT -p udp --dport 53 -j DROP
 iptables -A OUTPUT -p tcp --dport 53 -j DROP
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-# Host gateway: ONLY the Coder server port (the agent's websocket — without
-# it the workspace agent itself dies). The engine is reached via the reverse
-# tunnel on localhost, never through the gateway. host.docker.internal (the
-# Coder server + its DERP relay) is a distinct address from the gateway and
-# must be allowed too, or the agent's tailnet dies (see CODER_HOST_IP above).
-iptables -A OUTPUT -d "$GATEWAY" -p tcp --dport "$CODER_PORT" -j ACCEPT
-if [ -n "$CODER_HOST_IP" ]; then
-  iptables -A OUTPUT -d "$CODER_HOST_IP" -p tcp --dport "$CODER_PORT" -j ACCEPT
-fi
+# The engine + egress proxy are reached over loopback (the shim relay), so no
+# gateway hole is opened here.
 # Allowlisted hosts, https/http only (plain per-IP rules: no ipset kernel
 # module dependency; the list is small).
 for ip in $ALLOW_IPS; do
@@ -167,4 +137,4 @@ if [ -f /proc/net/if_inet6 ]; then
 fi
 
 touch "$LOCK"
-echo "firewall: initialized (gateway $GATEWAY, coder :$CODER_PORT)"
+echo "firewall: initialized (allowlist mode)"

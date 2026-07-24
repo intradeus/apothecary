@@ -59,7 +59,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
-		Workspace:   confstore.WorkspaceConfig{Template: "custom-tmpl", ExtraDomains: []string{"pypi.org"}},
+		Workspace:   confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},
 		DefaultFlow: "v1", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {

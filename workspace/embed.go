@@ -15,11 +15,6 @@ import "embed"
 //go:embed Dockerfile init-firewall.sh shim
 var BaseContext embed.FS
 
-// Template is the engine-pushed Coder template (§8.4).
-//
-//go:embed template/main.tf
-var Template embed.FS
-
 // Feature is the injected devcontainer feature that brings the §11 egress
 // firewall to repo-authored dev containers (the devcontainer provisioner):
 // capAdd NET_ADMIN + a container-start entrypoint. init-firewall.sh is

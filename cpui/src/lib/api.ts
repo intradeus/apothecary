@@ -88,7 +88,7 @@ export interface Project {
   harness_ids: string[];
   repo: { url: string; locator: string; default_branch: string; agents_md_path: string };
   commands: Record<string, string>;
-  workspace: { dockerfile_fragment?: string; extra_domains?: string[]; template?: string };
+  workspace: { dockerfile_fragment?: string; extra_domains?: string[] };
   default_flow: string;
   created_at: string;
   updated_at: string;

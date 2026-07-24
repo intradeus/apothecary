@@ -43,12 +43,12 @@ func seedProject(t *testing.T, svc *Service) Project {
 		return in
 	}
 	forge := mk(PortForge, "gitlab", "gl", map[string]string{"token": "glpat-supersecret99"})
-	prov := mk(PortProvisioner, "coder", "coder", map[string]string{"token": "coder-tok"})
+	prov := mk(PortProvisioner, "devcontainer", "dc", map[string]string{"token": "coder-tok"})
 	harness := mk(PortHarness, "opencode", "oc", map[string]string{"auth_json": `{"openrouter":{"type":"api","key":"sk-or-abc"}}`})
 	p, err := svc.CreateProject(ctx, Project{
 		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
-		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
+		Workspace:   WorkspaceConfig{},
 		DefaultFlow: "v1",
 	})
 	if err != nil {
@@ -119,13 +119,13 @@ func TestProjectValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
-	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "coder", Name: "c"})
+	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "devcontainer", Name: "c"})
 	harness, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
 
 	base := Project{
 		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
-		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
+		Workspace:   WorkspaceConfig{},
 		DefaultFlow: "v1",
 	}
 
@@ -154,14 +154,6 @@ func TestProjectValidation(t *testing.T) {
 		t.Errorf("fragment err = %v", err)
 	}
 
-	// Since M9 the template is optional: empty = the managed image pipeline.
-	pipeline := base
-	pipeline.Name = "p-pipeline"
-	pipeline.Workspace.Template = ""
-	if _, err := svc.CreateProject(ctx, pipeline); err != nil {
-		t.Errorf("pipeline-path project refused: %v", err)
-	}
-
 	// Unknown default flow refused.
 	bad = base
 	bad.DefaultFlow = "nope"
@@ -183,7 +175,7 @@ func TestProjectHarnessSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
-	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "coder", Name: "c"})
+	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "devcontainer", Name: "c"})
 	oc, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
 	cx, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "codex", Name: "cx"})
 	oc2, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc2"})
@@ -191,7 +183,7 @@ func TestProjectHarnessSet(t *testing.T) {
 	base := Project{
 		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{oc.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
-		Workspace:   WorkspaceConfig{Template: "custom-tmpl"},
+		Workspace:   WorkspaceConfig{},
 		DefaultFlow: "v1",
 	}
 

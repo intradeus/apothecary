@@ -159,7 +159,6 @@
           <tr><td class="muted">Provisioner</td><td>{integrations.find((i) => i.id === project!.provisioner_id)?.name ?? project.provisioner_id}</td></tr>
           <tr><td class="muted">Harnesses</td><td>{(project.harness_ids ?? []).map((id) => integrations.find((i) => i.id === id)?.name ?? id).join(', ') || '—'}</td></tr>
           <tr><td class="muted">Default flow</td><td class="mono">{project.default_flow}</td></tr>
-          <tr><td class="muted">Template</td><td class="mono">{project.workspace.template ?? '—'}</td></tr>
           <tr><td class="muted">Extra domains</td><td class="mono">{(project.workspace.extra_domains ?? []).join(', ') || '—'}</td></tr>
         </tbody>
       </table>

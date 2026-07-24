@@ -1,8 +1,6 @@
 package kinds
 
 import (
-	"fmt"
-
 	devcontaineradapter "apothecary/internal/adapters/devcontainer"
 )
 
@@ -25,13 +23,6 @@ func (Devcontainer) Descriptor() Descriptor {
 }
 
 func (Devcontainer) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
-	// The template override is a Coder concept; here the workspace
-	// definition is the repo's devcontainer (or the §8 pipeline image as
-	// fallback), so a project pinning workspace.template is unresolvable,
-	// not silently ignored.
-	if deps.Template != "" {
-		return nil, fmt.Errorf("the devcontainer provisioner has no custom-template path: clear the project's workspace.template")
-	}
 	return devcontaineradapter.New(devcontaineradapter.Config{
 		DevcontainerBin: cfg.Str("devcontainer_path", "devcontainer"),
 		DockerBin:       cfg.Str("docker_path", "docker"),

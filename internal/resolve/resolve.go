@@ -105,8 +105,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	if err != nil {
 		return nil, err
 	}
-	template := p.Workspace.Template
-	prov, release, err := r.acquireProvisioner(provInt, template)
+	prov, release, err := r.acquireProvisioner(provInt)
 	if err != nil {
 		return nil, err
 	}
@@ -226,19 +225,17 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	gitUser, gitPass := account.GitCredential()
 	gitName, gitEmail := account.GitIdentity()
 
-	// Image resolution (§8): custom template ⇒ the template bakes its own
-	// image, no pipeline; else compose base + fragment + harness layer,
+	// Image resolution (§8): compose base + fragment + harness layer,
 	// content-addressed, ensured lazily by the engine (image_built event).
-	image := ""
-	var ensureImage func(ctx context.Context) (bool, error)
-	if p.Workspace.Template == "" {
-		dockerfile := wsimage.Compose(r.builder.BaseRef(), p.Workspace.DockerfileFragment, installLayers)
-		image = wsimage.Tag(dockerfile)
-		builder := r.builder
-		ensureImage = func(ctx context.Context) (bool, error) {
-			_, cached, err := builder.Ensure(ctx, dockerfile)
-			return cached, err
-		}
+	// The devcontainer adapter uses this pipeline image only for repos with
+	// no .devcontainer config; repos that bring their own devcontainer image
+	// ignore it.
+	dockerfile := wsimage.Compose(r.builder.BaseRef(), p.Workspace.DockerfileFragment, installLayers)
+	image := wsimage.Tag(dockerfile)
+	builder := r.builder
+	ensureImage := func(ctx context.Context) (bool, error) {
+		_, cached, err := builder.Ensure(ctx, dockerfile)
+		return cached, err
 	}
 
 	res := &engine.Resolution{
@@ -323,16 +320,14 @@ func kindConfig(in confstore.Integration) kinds.Config {
 
 // acquireProvisioner returns the cached instance for the integration's
 // current generation, constructing (and staling the old one) on change.
-func (r *Resolver) acquireProvisioner(in confstore.Integration, template string) (kinds.Provisioner, func(), error) {
+func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provisioner, func(), error) {
 	pk, err := r.reg.Provisioner(in.Kind)
 	if err != nil {
 		return nil, nil, unresolvable(err)
 	}
-	// Cache key includes the template so two projects sharing one
-	// integration with different templates coexist instead of evicting each
-	// other on every resolution; the generation is the integration's
-	// updated_at (config edits invalidate).
-	cacheKey := in.ID + "\x00" + template
+	// One cache entry per provisioner integration; the generation is the
+	// integration's updated_at (config edits invalidate).
+	cacheKey := in.ID
 	gen := in.UpdatedAt.UTC().String()
 
 	r.mu.Lock()
@@ -353,7 +348,6 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration, template string)
 			RunsDir:    r.runsDir,
 			EnginePort: r.enginePort,
 			ProxyPort:  r.proxyPort,
-			Template:   template,
 			ShimBin:    r.builder.EnsureShim,
 		})
 		if err != nil {

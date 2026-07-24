@@ -10,6 +10,6 @@
 - 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now. Check the statuses of coder for inspiration.
 - 18) Add option to branch from something else than the main branch
 - 19) DinD sandbox follow-ups: (a) sandbox-boundary egress firewall (default-deny the whole sandbox incl. compose side services — closes the "compose ⇒ firewall off" hole; see 16); (b) shared pull-through registry mirror + `--registry-mirror` on the inner dockerd to warm image pulls across runs (also replaces the per-run save|load for the pipeline image); (c) sysbox runtime to drop `--privileged`; (d) sandbox resource caps (`--memory`/`--cpus`) as project workspace config.
-- 20) Delete the coder adapter — devcontainer+DinD is the path forward; coder is unmaintained.
+- 20) DONE — coder adapter deleted; devcontainer+DinD is the only provisioner. (A future k8s pod provisioner slots in as a new adapter; see memory `k8s-provisioner-patterns` for the salvaged status-vs-liveness + port-forward patterns and the loopback-parity seam to fix first.)
 - 21) Agents must specify their inputs and outputs to auto fill-in the ouputs feeding in the flows.
 - 22) Code server (vs-code server) integration

@@ -67,7 +67,6 @@
         ]
   );
 
-  let template = $state(init?.workspace.template ?? '');
   let extraDomains = $state((init?.workspace.extra_domains ?? []).join(', '));
   let fragment = $state(init?.workspace.dockerfile_fragment ?? '');
   // Flows are user-defined — no built-in fallback exists.
@@ -140,7 +139,6 @@
         },
         commands,
         workspace: {
-          template: template.trim(),
           extra_domains: extraDomains
             .split(',')
             .map((d) => d.trim())
@@ -275,9 +273,6 @@
     <label for="p-domains">Extra egress domains <span class="muted">— comma-separated; adapters contribute theirs automatically,
       presets add their registries</span></label>
     <input id="p-domains" bind:value={extraDomains} class="mono" placeholder="proxy.golang.org, registry.npmjs.org" />
-    <label for="p-template">Custom provisioner template <span class="muted">— ADVANCED, usually empty: the apothecary manages
-      the template and builds the image above. Set a template name only to bypass the pipeline with your own template.</span></label>
-    <input id="p-template" bind:value={template} placeholder="(managed)" />
   </div>
 
   {#if error}<div class="error">{error}</div>{/if}

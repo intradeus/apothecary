@@ -73,7 +73,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c", nil),
 		HarnessIDs:    []string{mk(confstore.PortHarness, "fake", "h", nil)},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
-		Workspace:     confstore.WorkspaceConfig{Template: "tmpl", ExtraDomains: []string{"pypi.org"}},
+		Workspace:     confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},
 		DefaultFlow:   "v1",
 	})
 	if err != nil {
@@ -155,7 +155,7 @@ func TestResolveMultiHarness(t *testing.T) {
 		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c"),
 		HarnessIDs:    []string{def, alt},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
-		Workspace:     confstore.WorkspaceConfig{Template: "tmpl"},
+		Workspace:     confstore.WorkspaceConfig{},
 		DefaultFlow:   "v1",
 	})
 	if err != nil {
@@ -300,7 +300,7 @@ func TestUnresolvableMapping(t *testing.T) {
 		Name: "p2", ForgeID: mk(confstore.PortForge, "f2"),
 		ProvisionerID: mk(confstore.PortProvisioner, "c2"), HarnessIDs: []string{ghost.ID},
 		Repo:        confstore.RepoConfig{URL: "https://x.example/g/p.git"},
-		Workspace:   confstore.WorkspaceConfig{Template: "t"},
+		Workspace:   confstore.WorkspaceConfig{},
 		DefaultFlow: "v1",
 	})
 	if err != nil {
@@ -311,24 +311,12 @@ func TestUnresolvableMapping(t *testing.T) {
 	}
 }
 
-// §8: empty workspace.template ⇒ the image pipeline (content-addressed tag
-// + EnsureImage); a custom template ⇒ neither.
-func TestImagePipelineVsCustomTemplate(t *testing.T) {
+// §8: every project resolves through the image pipeline — a content-addressed
+// tag + a lazy EnsureImage — and the tag is input-sensitive.
+func TestImagePipeline(t *testing.T) {
 	r, svc, p, _, _ := setup(t)
 	ctx := context.Background()
 
-	// setup()'s project pins a custom template.
-	res, err := r.Resolve(ctx, p.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Image != "" || res.EnsureImage != nil {
-		t.Errorf("custom-template path built an image: %q", res.Image)
-	}
-	res.Release()
-
-	// Clear the template -> pipeline path.
-	p.Workspace.Template = ""
 	p.Workspace.DockerfileFragment = "RUN apt-get install -y python3"
 	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
 		t.Fatal(err)

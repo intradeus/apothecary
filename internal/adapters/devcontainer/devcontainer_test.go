@@ -524,8 +524,7 @@ func TestFallbackConfigFirewallExtendsOverride(t *testing.T) {
 		t.Errorf("postStart = %q", cfg.PostStartCommand)
 	}
 	if cfg.ContainerEnv["APOTHECARY_EXTRA_DOMAINS"] != "g.local api.anthropic.com" ||
-		cfg.ContainerEnv["APOTHECARY_EGRESS_PROXY"] != "127.0.0.1:9090" ||
-		cfg.ContainerEnv["APOTHECARY_CODER_PORT"] != "1" {
+		cfg.ContainerEnv["APOTHECARY_EGRESS_PROXY"] != "127.0.0.1:9090" {
 		t.Errorf("containerEnv = %v", cfg.ContainerEnv)
 	}
 	// Firewalled fact recorded and reported (egress NOT open).
@@ -583,7 +582,7 @@ func TestRepoConfigInjectsFirewallFeature(t *testing.T) {
 	}
 	// firewall.env written to the shim mount with shell-quoted values.
 	fwEnv, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "shim", "firewall.env"))
-	if err != nil || !strings.Contains(string(fwEnv), "APOTHECARY_CODER_PORT='1'") {
+	if err != nil || !strings.Contains(string(fwEnv), "APOTHECARY_EGRESS_PROXY=") {
 		t.Errorf("firewall.env = %q, %v", fwEnv, err)
 	}
 }
