@@ -77,14 +77,15 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	branch := "apothecary/" + strings.ToLower(runID)
 
 	env, err := envp.Provision(ctx, ports.EnvSpec{
-		RunID:         runID,
-		RepoURL:       res.RepoRef.URL,
-		Branch:        branch,
-		Name:          workspaceName(branch, runID),
-		Project:       res.ProjectName,
-		EgressDomains: res.EgressDomains,
-		GitUser:       res.GitUser,
-		GitPass:       res.GitPass,
+		RunID:                runID,
+		RepoURL:              res.RepoRef.URL,
+		Branch:               branch,
+		Name:                 workspaceName(branch, runID),
+		Project:              res.ProjectName,
+		EgressDomains:        res.EgressDomains,
+		CodeServerExtensions: res.CodeServerExtensions,
+		GitUser:              res.GitUser,
+		GitPass:              res.GitPass,
 	})
 	if !step("provision", err, string(env)) {
 		return failed

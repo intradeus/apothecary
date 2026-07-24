@@ -88,7 +88,7 @@ export interface Project {
   harness_ids: string[];
   repo: { url: string; locator: string; default_branch: string; agents_md_path: string };
   commands: Record<string, string>;
-  workspace: { extra_domains?: string[] };
+  workspace: { extra_domains?: string[]; code_server_extensions?: string[] };
   default_flow: string;
   created_at: string;
   updated_at: string;
@@ -308,6 +308,9 @@ export const api = {
   // re-runs bootstrap). Blocks until done; the run page shows progress via
   // the workspace-log tail and the rebuilding badge.
   rebuild: (id: string) => post(`/api/runs/${id}/rebuild`),
+  // Lazily start code-server in the workspace and get its browser URL (VS Code
+  // in the browser). Blocks while code-server boots on first open.
+  openEditor: (id: string) => post(`/api/runs/${id}/open-editor`) as Promise<{ url: string }>,
   log: async (id: string, stage: string, n = 65536): Promise<string> => {
     const res = await fetch(`/api/runs/${id}/logs/${stage}?n=${n}`);
     if (!res.ok) throw new Error(`${res.status}`);

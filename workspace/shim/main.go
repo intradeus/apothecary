@@ -9,6 +9,7 @@
 //	ask-human   MCP stdio server exposing the ask_human tool (§10)
 //	relay       loopback<->unix-socket pumps for the engine bridge
 //	portscan    listening-port discovery, reported to the engine
+//	probe       TCP reachability check (image-agnostic readiness)
 package main
 
 import (
@@ -27,12 +28,14 @@ func main() {
 		runRelay(os.Args[2:])
 	case "portscan":
 		runPortScan(os.Args[2:])
+	case "probe":
+		runProbe(os.Args[2:])
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... | shim portscan [--exclude <ports>]")
+	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... | shim portscan [--exclude <ports>] | shim probe [--wait <dur>] <host:port>")
 	os.Exit(2)
 }

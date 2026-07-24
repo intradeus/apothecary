@@ -67,6 +67,7 @@
   );
 
   let extraDomains = $state((init?.workspace.extra_domains ?? []).join(', '));
+  let codeServerExtensions = $state((init?.workspace.code_server_extensions ?? []).join(', '));
   // Flows are user-defined — no built-in fallback exists.
   let defaultFlow = $state(init?.default_flow ?? flowNames[0] ?? '');
 
@@ -124,6 +125,10 @@
             .split(',')
             .map((d) => d.trim())
             .filter(Boolean),
+          code_server_extensions: codeServerExtensions
+            .split(/[\s,]+/)
+            .map((e) => e.trim())
+            .filter(Boolean)
         },
         default_flow: defaultFlow
       };
@@ -241,6 +246,8 @@
     <p class="muted small" style="margin:0 0 8px">The workspace is the repo's own <span class="mono">.devcontainer</span> — apothecary injects the firewall and harness as features.</p>
     <label for="p-domains">Extra egress domains <span class="muted">— comma-separated; adapters contribute theirs automatically</span></label>
     <input id="p-domains" bind:value={extraDomains} class="mono" placeholder="proxy.golang.org, registry.npmjs.org" />
+    <label for="p-extensions">code-server extensions <span class="muted">— VS Code extension ids, pre-installed in the browser editor (union with the repo's devcontainer customizations; from Open VSX)</span></label>
+    <input id="p-extensions" bind:value={codeServerExtensions} class="mono" placeholder="golang.go, ms-python.python" />
   </div>
 
   {#if error}<div class="error">{error}</div>{/if}

@@ -37,6 +37,9 @@ type Resolution struct {
 	ProviderEnv map[string]string
 	// EgressDomains is the derived firewall allowlist (DESIGN2 §8.4).
 	EgressDomains []string
+	// CodeServerExtensions are project-declared VS Code extension ids baked
+	// into the workspace's code-server (§ code-server integration).
+	CodeServerExtensions []string
 	// HarnessKind is a deterministic FALLBACK harness kind (the first
 	// available in the project's set) — NOT a project-chosen default. The
 	// real default is the flow's defaults.harness, applied per stage; this

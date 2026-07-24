@@ -58,6 +58,10 @@ type EnvSpec struct {
 	// which knows nothing about opencode/codex, so the harness is injected as
 	// a feature. Empty means the image already carries them.
 	HarnessInstall []HarnessInstall
+	// CodeServerExtensions are project-declared VS Code extension ids baked
+	// into the workspace's code-server (union with the repo devcontainer's own
+	// customizations.vscode.extensions, which the adapter reads). Non-secret.
+	CodeServerExtensions []string
 	// EgressDomains is the fully derived firewall allowlist (DESIGN2 §8.4):
 	// repo host ∪ adapter contributions ∪ project extras. Non-secret.
 	EgressDomains []string
@@ -232,6 +236,19 @@ type WorkspacePortExposer interface {
 	// devcontainer forwardPorts) — auto-exposed at env_ready. Best-effort;
 	// empty is normal.
 	AppPorts(ctx context.Context, env EnvID) []int
+}
+
+// CodeServerPort is the fixed workspace-loopback port code-server binds
+// (avoids the engine 8080 / egress-proxy 8079 loopback ports the bridge uses).
+const CodeServerPort = 8471
+
+// EditorStarter is an OPTIONAL EnvProvisioner capability: start an in-workspace
+// code-server (VS Code in the browser) listening on the given loopback port, so
+// the engine can expose it (the "Open editor" path). Idempotent — a no-op when
+// code-server is already listening; returns when the port accepts connections.
+// The binary is installed by the injected code-server devcontainer feature.
+type EditorStarter interface {
+	StartEditor(ctx context.Context, env EnvID, port int) error
 }
 
 // WorkspaceRebuilder is an OPTIONAL EnvProvisioner capability: recreate the

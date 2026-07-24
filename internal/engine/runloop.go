@@ -999,8 +999,9 @@ func (x *exec) ensureEnv() error {
 		Project: x.res.ProjectName,
 		// Only used by provisioners that don't get the §8 image: a
 		// repo-authored devcontainer must install the harness itself.
-		HarnessInstall: x.res.HarnessInstall,
-		EgressDomains:  x.res.EgressDomains,
+		HarnessInstall:       x.res.HarnessInstall,
+		EgressDomains:        x.res.EgressDomains,
+		CodeServerExtensions: x.res.CodeServerExtensions,
 		// For clone-first provisioners (devcontainer): the engine-side
 		// checkout needs the forge credential before the env exists.
 		GitUser: x.res.GitUser,

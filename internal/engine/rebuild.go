@@ -76,15 +76,16 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 		nameBranch = v.Branch
 	}
 	spec := ports.EnvSpec{
-		RunID:          runID,
-		RepoURL:        res.RepoRef.URL,
-		Branch:         v.Branch,
-		Name:           workspaceName(nameBranch, runID),
-		Project:        res.ProjectName,
-		HarnessInstall: res.HarnessInstall,
-		EgressDomains:  res.EgressDomains,
-		GitUser:        res.GitUser,
-		GitPass:        res.GitPass,
+		RunID:                runID,
+		RepoURL:              res.RepoRef.URL,
+		Branch:               v.Branch,
+		Name:                 workspaceName(nameBranch, runID),
+		Project:              res.ProjectName,
+		HarnessInstall:       res.HarnessInstall,
+		EgressDomains:        res.EgressDomains,
+		CodeServerExtensions: res.CodeServerExtensions,
+		GitUser:              res.GitUser,
+		GitPass:              res.GitPass,
 	}
 
 	// Reinstall this run's egress allowlist before any network use (the

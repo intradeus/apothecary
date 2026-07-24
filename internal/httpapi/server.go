@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
 	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
 	mux.HandleFunc("POST /api/runs/{id}/observed-ports", s.postObservedPorts)
+	mux.HandleFunc("POST /api/runs/{id}/open-editor", s.postOpenEditor)
 	mux.HandleFunc("POST /api/runs/{id}/abort", s.postAbort)
 	mux.HandleFunc("POST /api/runs/{id}/pause", s.postPause)
 	mux.HandleFunc("POST /api/runs/{id}/play", s.postPlay)
@@ -658,6 +659,26 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"port": body.Port, "url": url})
+}
+
+// postOpenEditor lazily starts code-server in the run's workspace and returns
+// its browser URL (the run-page "Open editor" path). Blocks while code-server
+// boots on first open; idempotent thereafter.
+func (s *Server) postOpenEditor(w http.ResponseWriter, r *http.Request) {
+	url, err := s.Engine.OpenEditor(r.Context(), r.PathValue("id"))
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusConflict
+		switch {
+		case errors.Is(err, engine.ErrPortsOff), strings.Contains(msg, "does not support"):
+			status = http.StatusServiceUnavailable
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"url": url})
 }
 
 // postObservedPorts receives the in-workspace shim scanner's listener

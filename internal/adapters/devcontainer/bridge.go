@@ -346,12 +346,52 @@ func (a *Adapter) startPortScan(ctx context.Context, name, cid string) {
 	for _, port := range a.bridgeSocks() {
 		excl = append(excl, strconv.Itoa(port))
 	}
+	// code-server has its own "Open editor" affordance — don't also surface it
+	// as a discovered app port.
+	excl = append(excl, strconv.Itoa(ports.CodeServerPort))
 	args := []string{"exec", "-d", cid, "/opt/apothecary/shim", "portscan", "--exclude", strings.Join(excl, ",")}
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin, args, nil, nil)
 	if err != nil || code != 0 {
 		slog.Warn("devcontainer: port discovery scanner did not start",
 			"env", name, "exit", code, "err", err, "stderr", tail(string(stderr), 256))
 	}
+}
+
+// StartEditor (ports.EditorStarter) launches code-server in the workspace on
+// the given loopback port, ready to be exposed. Lazy + idempotent: it first
+// probes the port (image-agnostic, via the static shim) and no-ops if
+// code-server is already listening; otherwise it starts it detached and waits
+// for the listener. code-server itself is installed by the injected feature;
+// the baked --extensions-dir carries the pre-installed extensions. It opens
+// $HOME/repo (the checkout symlink) — a shell expands $HOME for the container's
+// own user.
+func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int) error {
+	name := string(env)
+	cid, err := a.containerID(ctx, name)
+	if err != nil {
+		return err
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	// Already up? (e.g. a prior Open editor, or code-server survived a plain
+	// engine restart.)
+	if _, _, code, _ := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"exec", cid, "/opt/apothecary/shim", "probe", addr}, nil, nil); code == 0 {
+		return nil
+	}
+	start := fmt.Sprintf(
+		`exec code-server --auth none --disable-telemetry --bind-addr %s --extensions-dir %s "$HOME/repo"`,
+		addr, codeServerExtDir)
+	if _, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"exec", "-d", cid, "sh", "-c", start}, nil, nil); err != nil || code != 0 {
+		return fmt.Errorf("start code-server in %s: exit %d: %s", name, code, tail(string(stderr), 512))
+	}
+	// Wait (bounded) for the listener before the engine exposes it, so the
+	// first browser load succeeds.
+	if _, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"exec", cid, "/opt/apothecary/shim", "probe", "--wait", "20s", addr}, nil, nil); err != nil || code != 0 {
+		return fmt.Errorf("code-server in %s did not start listening on %d within 20s", name, port)
+	}
+	return nil
 }
 
 // --- ports.WorkspacePortExposer ---------------------------------------------

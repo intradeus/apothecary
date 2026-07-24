@@ -67,6 +67,11 @@ type RepoConfig struct {
 // WorkspaceConfig is projects.workspace (§2, §8).
 type WorkspaceConfig struct {
 	ExtraDomains []string `json:"extra_domains,omitempty"`
+	// CodeServerExtensions are VS Code extension ids pre-installed into the
+	// workspace's code-server at build time (union with the repo devcontainer's
+	// own customizations.vscode.extensions). Baked into the image, so they are
+	// not reinstalled every run.
+	CodeServerExtensions []string `json:"code_server_extensions,omitempty"`
 }
 
 // Project picks one integration per port and adds repo/commands/workspace

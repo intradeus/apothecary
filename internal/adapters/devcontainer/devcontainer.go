@@ -459,6 +459,14 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 		}
 		features["./apothecary-harness"] = map[string]any{}
 	}
+	// code-server (VS Code in the browser) is ALWAYS injected — installed at
+	// build time (egress open), started lazily on demand. Extensions = the
+	// repo devcontainer's own customizations.vscode.extensions ∪ the project
+	// list, baked into the image (cached per list).
+	if err := a.materializeCodeServerFeature(ctx, name, src, spec.CodeServerExtensions); err != nil {
+		return "", err
+	}
+	features["./apothecary-codeserver"] = map[string]any{}
 	if len(features) > 0 {
 		blob, err := json.Marshal(features)
 		if err != nil {
@@ -738,6 +746,87 @@ func (a *Adapter) materializeHarnessFeature(name, src string, steps []ports.Harn
 		return err
 	}
 	return gitExclude(src, ".devcontainer/apothecary-harness/")
+}
+
+// codeServerExtDir is the image-baked, shared extensions dir the code-server
+// feature installs into at build time and the engine starts code-server with.
+// MUST match workspace/codeserver-feature/install.sh's EXT_DIR.
+const codeServerExtDir = "/usr/local/share/apothecary-code-server/extensions"
+
+// materializeCodeServerFeature writes the code-server feature into the repo's
+// .devcontainer so `up --additional-features` installs it at build time. The
+// extensions the feature pre-installs are the UNION of the repo devcontainer's
+// own customizations.vscode.extensions and the project list — sorted+deduped
+// into a generated `extensions` file, so an unchanged list is a build-cache hit.
+func (a *Adapter) materializeCodeServerFeature(ctx context.Context, name, src string, projectExts []string) error {
+	dir := filepath.Join(src, ".devcontainer", "apothecary-codeserver")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := fs.WalkDir(workspace.CodeServer, "codeserver-feature", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, rerr := fs.ReadFile(workspace.CodeServer, p)
+		if rerr != nil {
+			return rerr
+		}
+		mode := fs.FileMode(0o644)
+		if strings.HasSuffix(p, ".sh") {
+			mode = 0o755
+		}
+		return os.WriteFile(filepath.Join(dir, filepath.Base(p)), data, mode)
+	}); err != nil {
+		return err
+	}
+
+	set := map[string]bool{}
+	for _, e := range append(a.repoExtensions(ctx, src), projectExts...) {
+		if e = strings.TrimSpace(e); e != "" {
+			set[e] = true
+		}
+	}
+	exts := make([]string, 0, len(set))
+	for e := range set {
+		exts = append(exts, e)
+	}
+	sort.Strings(exts) // deterministic → stable feature content → stable build cache
+	var b strings.Builder
+	for _, e := range exts {
+		b.WriteString(e + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "extensions"), []byte(b.String()), 0o644); err != nil {
+		return err
+	}
+	return gitExclude(src, ".devcontainer/apothecary-codeserver/")
+}
+
+// repoExtensions reads customizations.vscode.extensions from the merged
+// devcontainer configuration (best-effort; empty on any miss).
+func (a *Adapter) repoExtensions(ctx context.Context, src string) []string {
+	stdout, _, code, err := a.run(ctx, a.cfg.DevcontainerBin,
+		[]string{"read-configuration", "--workspace-folder", src, "--include-merged-configuration", "--log-format", "json"}, nil, nil)
+	if err != nil || code != 0 {
+		return nil
+	}
+	var rc struct {
+		MergedConfiguration map[string]any `json:"mergedConfiguration"`
+	}
+	lines := strings.Split(strings.TrimSpace(string(stdout)), "\n")
+	if len(lines) == 0 || json.Unmarshal([]byte(lines[len(lines)-1]), &rc) != nil {
+		return nil
+	}
+	// customizations.vscode.extensions is []string.
+	cust, _ := rc.MergedConfiguration["customizations"].(map[string]any)
+	vscode, _ := cust["vscode"].(map[string]any)
+	raw, _ := vscode["extensions"].([]any)
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // gitExclude appends an entry to .git/info/exclude (idempotent) so the
@@ -1330,3 +1419,4 @@ var _ ports.ExecLogTailer = (*Adapter)(nil)
 var _ ports.EgressReporter = (*Adapter)(nil)
 var _ ports.WorkspacePortExposer = (*Adapter)(nil)
 var _ ports.WorkspaceRebuilder = (*Adapter)(nil)
+var _ ports.EditorStarter = (*Adapter)(nil)

@@ -1,0 +1,7 @@
+{
+  "id": "apothecary-codeserver",
+  "version": "1.0.0",
+  "name": "Apothecary code-server",
+  "description": "Installs code-server (VS Code in the browser) into a repo-authored dev container at BUILD time (egress is open then; the runtime firewall would block a later install), plus the project's + repo's declared VS Code extensions into a shared, baked --extensions-dir so they are not reinstalled every run. Deliberately declares NO entrypoint: code-server is started lazily on demand (the 'Open editor' action) via docker exec, so a workspace that never opens the editor pays no runtime cost. The extension list is engine-generated next to this script (extensions, one id per line); an unchanged list is a docker build-cache hit. Injected engine-side; not a published feature.",
+  "installsAfter": ["ghcr.io/devcontainers/features/node"]
+}

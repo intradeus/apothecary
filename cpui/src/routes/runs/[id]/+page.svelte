@@ -26,6 +26,9 @@
   // Runtime-discovered listeners not yet exposed (the shim's in-workspace
   // scan + engine-side compose-sibling scan): one-click exposes them.
   let observedPorts = $state<{ port: number; process?: string; service?: string }[]>([]);
+  // code-server has its own "Open editor" button — don't also list its port
+  // as a generic app link/chip.
+  const CODE_SERVER_PORT = 8471;
   const links = $derived.by(() => {
     const fromEvent =
       (events.findLast((e) => e.type === 'env_ready')?.payload.links as
@@ -34,7 +37,9 @@
     const base = livePorts.length ? fromEvent.filter((l) => l.kind !== 'app') : fromEvent;
     return [
       ...base,
-      ...livePorts.map((p) => ({ kind: `app :${p.port}`, url: p.url, command: undefined }))
+      ...livePorts
+        .filter((p) => p.port !== CODE_SERVER_PORT)
+        .map((p) => ({ kind: `app :${p.port}`, url: p.url, command: undefined }))
     ];
   });
   let copiedLink = $state('');
@@ -246,6 +251,22 @@
     }
   }
 
+  // Lazily start code-server + open it. First open blocks a few seconds while
+  // code-server boots; opened in a new tab so this page keeps streaming.
+  let opening = $state(false);
+  async function openEditor() {
+    opening = true;
+    error = '';
+    try {
+      const { url } = await api.openEditor(runId);
+      window.open(url, '_blank');
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      opening = false;
+    }
+  }
+
   // Restart opens a small form first: retry-after-failure is exactly when a
   // human wants to steer the next attempt (direction + fresh files).
   let showRestart = $state(false);
@@ -345,6 +366,12 @@
       {/if}
     {/each}
     {#if run.mr_url}<a href={run.mr_url} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
+    {#if run.env_id}
+      <button class="linklike" onclick={openEditor} disabled={opening}
+        title="Open VS Code (code-server) in the browser on this workspace — the repo at $HOME/repo, the agent's commits, an in-container terminal.">
+        {opening ? 'opening editor…' : 'Open editor ↗'}
+      </button>
+    {/if}
     {#each observedPorts as p (p.port)}
       <button
         class="linklike"

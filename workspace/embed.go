@@ -30,3 +30,12 @@ var Feature embed.FS
 //
 //go:embed harness-feature
 var HarnessFeature embed.FS
+
+// CodeServer is the injected devcontainer feature that installs code-server
+// (VS Code in the browser) + the project's/repo's VS Code extensions at build
+// time. The extension list is NOT here — the adapter generates the
+// `extensions` file into the materialized feature dir. Always injected;
+// code-server is started lazily on demand ("Open editor"), not at build.
+//
+//go:embed codeserver-feature
+var CodeServer embed.FS
