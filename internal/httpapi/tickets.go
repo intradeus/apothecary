@@ -134,18 +134,20 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Body is optional (empty ⇒ project default flow, no direction).
 	var body struct {
-		Flow        string   `json:"flow"`
-		Goal        string   `json:"goal"`
-		ArtifactIDs []string `json:"artifact_ids"`
+		Flow         string   `json:"flow"`
+		Goal         string   `json:"goal"`
+		SourceBranch string   `json:"source_branch"`
+		ArtifactIDs  []string `json:"artifact_ids"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
 	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{
-		TicketID: t.ID,
-		Title:    t.Title,
-		Goal:     t.Goal,
-		Branch:   t.BaseBranch,
-		RunGoal:  body.Goal,
+		TicketID:     t.ID,
+		Title:        t.Title,
+		Goal:         t.Goal,
+		Branch:       t.BaseBranch,
+		SourceBranch: body.SourceBranch,
+		RunGoal:      body.Goal,
 		// This attempt's own uploads bind to the run; the ticket's are shared
 		// by every run and only snapshotted here.
 		ArtifactIDs:       body.ArtifactIDs,

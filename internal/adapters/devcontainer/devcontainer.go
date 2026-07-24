@@ -622,15 +622,17 @@ func hasRepoConfig(src string) bool {
 func policyFor(spec ports.EnvSpec) policyfile.File {
 	if spec.EgressMode == string(policyfile.ModeDeny) {
 		return policyfile.File{
-			Mode:    policyfile.ModeDeny,
-			Domains: spec.EgressDenylist,
+			Mode:           policyfile.ModeDeny,
+			Domains:        spec.EgressDenylist,
+			BlockedDomains: spec.EgressBlocked,
 		}
 	}
 	return policyfile.File{
-		Mode:         policyfile.ModeAllow,
-		Domains:      spec.EgressDomains,
-		AllowedCIDRs: spec.EgressAllowedCIDRs,
-		AllowedPorts: spec.EgressAllowedPorts,
+		Mode:           policyfile.ModeAllow,
+		Domains:        spec.EgressDomains,
+		BlockedDomains: spec.EgressBlocked,
+		AllowedCIDRs:   spec.EgressAllowedCIDRs,
+		AllowedPorts:   spec.EgressAllowedPorts,
 	}
 }
 
@@ -1325,6 +1327,14 @@ func (a *Adapter) AllowEgress(_ context.Context, env ports.EnvID, host string) e
 		return fmt.Errorf("egress gateway is off for this provisioner")
 	}
 	return a.gw.Allow(a.projectFor(string(env)), host)
+}
+
+// SetEgressRule (ports.EgressController) live-toggles a host allow/deny.
+func (a *Adapter) SetEgressRule(_ context.Context, env ports.EnvID, host string, allow bool) error {
+	if a.gw == nil {
+		return fmt.Errorf("egress gateway is off for this provisioner")
+	}
+	return a.gw.SetRule(a.projectFor(string(env)), host, allow)
 }
 
 // Close stops every engine-side bridge listener (engine shutdown;

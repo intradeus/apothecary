@@ -2,7 +2,7 @@ package devcontainer
 
 import (
 	"context"
-
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -361,13 +361,16 @@ func (a *Adapter) startPortScan(ctx context.Context, name, cid string) {
 // for the listener. code-server itself is installed by the injected feature;
 // the baked --extensions-dir carries the pre-installed extensions. It opens
 // $HOME/repo (the checkout symlink) — a shell expands $HOME for the container's
-// own user.
-func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int) error {
+// own user. The project's UI settings (theme + prefs) are written as VS Code
+// user settings on EVERY call: code-server live-watches settings.json, so this
+// also refreshes an already-running editor with the latest project config.
+func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int, settings ports.EditorSettings) error {
 	name := string(env)
 	cid, err := a.containerID(ctx, name)
 	if err != nil {
 		return err
 	}
+	a.applyEditorSettings(ctx, name, cid, settings)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	// Already up? (e.g. a prior Open editor, or code-server survived a plain
 	// engine restart.)
@@ -389,6 +392,56 @@ func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int) er
 		return fmt.Errorf("code-server in %s did not start listening on %d within 20s", name, port)
 	}
 	return nil
+}
+
+// applyEditorSettings writes the project's editor UI defaults (theme + prefs)
+// as VS Code user settings into the container user's own writable code-server
+// data dir. code-server live-watches settings.json, so this both seeds the
+// first launch and refreshes a running editor. Best-effort: a settings failure
+// must never block opening the editor, so errors are logged, not returned.
+func (a *Adapter) applyEditorSettings(ctx context.Context, name, cid string, settings ports.EditorSettings) {
+	blob := codeServerSettingsJSON(settings)
+	if blob == nil {
+		return
+	}
+	// settings.json rides on stdin (bash -i cat): no CLI quoting of the JSON.
+	script := `mkdir -p "$HOME/.local/share/code-server/User" && ` +
+		`cat > "$HOME/.local/share/code-server/User/settings.json"`
+	if _, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"exec", "-i", cid, "sh", "-c", script}, blob, nil); err != nil || code != 0 {
+		slog.Warn("devcontainer: could not apply code-server settings",
+			"env", name, "exit", code, "err", err, "stderr", tail(string(stderr), 256))
+	}
+}
+
+// codeServerSettingsJSON renders the neutral EditorSettings to a VS Code
+// settings.json object, emitting only the keys the project actually set. nil
+// when nothing is set (leave the user's own settings.json untouched).
+func codeServerSettingsJSON(s ports.EditorSettings) []byte {
+	m := map[string]any{}
+	if s.Theme != "" {
+		m["workbench.colorTheme"] = s.Theme
+	}
+	if s.FontSize > 0 {
+		m["editor.fontSize"] = s.FontSize
+	}
+	if s.TabSize > 0 {
+		m["editor.tabSize"] = s.TabSize
+	}
+	if s.FormatOnSave {
+		m["editor.formatOnSave"] = true
+	}
+	if s.WordWrap {
+		m["editor.wordWrap"] = "on"
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // --- ports.WorkspacePortExposer ---------------------------------------------

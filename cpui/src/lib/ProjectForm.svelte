@@ -66,8 +66,68 @@
         ]
   );
 
-  let extraDomains = $state((init?.workspace.extra_domains ?? []).join(', '));
+  // Egress firewall. Allowlist (deny-all, permit these) vs denylist (allow-all,
+  // block these); the domains table binds to whichever list the mode selects.
+  // Both are kept so flipping the mode never loses the other list. blocked_domains
+  // is the live force-block managed from the run page — carried through untouched.
+  let egressMode = $state<'allow' | 'deny'>(init?.workspace.egress_mode === 'deny' ? 'deny' : 'allow');
+  let allowDomains = $state<string[]>([...(init?.workspace.extra_domains ?? [])]);
+  let denyDomains = $state<string[]>([...(init?.workspace.denied_domains ?? [])]);
+  const blockedDomains = init?.workspace.blocked_domains ?? [];
+  let newDomain = $state('');
+  let defaultsBusy = $state(false);
+
+  const activeDomains = $derived(egressMode === 'deny' ? denyDomains : allowDomains);
+  const setActive = (list: string[]) =>
+    egressMode === 'deny' ? (denyDomains = list) : (allowDomains = list);
+  function addDomain(host: string) {
+    const h = host.trim();
+    if (h && !activeDomains.includes(h)) setActive([...activeDomains, h]);
+  }
+  function addNewDomain() {
+    for (const h of newDomain.split(/[\s,]+/)) addDomain(h); // allow comma/space paste
+    newDomain = '';
+  }
+  const removeDomain = (host: string) => setActive(activeDomains.filter((d) => d !== host));
+  async function addDefaults() {
+    defaultsBusy = true;
+    try {
+      const { domains } = await api.egressDefaults();
+      const merged = [...allowDomains];
+      for (const d of domains) if (!merged.includes(d)) merged.push(d);
+      allowDomains = merged;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      defaultsBusy = false;
+    }
+  }
+
   let codeServerExtensions = $state((init?.workspace.code_server_extensions ?? []).join(', '));
+  // code-server UI defaults (applied as VS Code user settings at editor open —
+  // no rebuild). Theme names are the built-in VS Code themes; a themed
+  // extension can be added to the extensions list above and named here.
+  const editorThemes = [
+    'Default Dark Modern',
+    'Default Light Modern',
+    'Default Dark+',
+    'Default Light+',
+    'Default High Contrast',
+    'Monokai',
+    'Monokai Dimmed',
+    'Solarized Dark',
+    'Solarized Light',
+    'Quiet Light',
+    'Abyss',
+    'Kimbie Dark',
+    'Red',
+    'Tomorrow Night Blue'
+  ];
+  let editorTheme = $state(init?.workspace.editor?.theme ?? '');
+  let editorFontSize = $state(init?.workspace.editor?.font_size ?? 0);
+  let editorTabSize = $state(init?.workspace.editor?.tab_size ?? 0);
+  let editorFormatOnSave = $state(init?.workspace.editor?.format_on_save ?? false);
+  let editorWordWrap = $state(init?.workspace.editor?.word_wrap ?? false);
   // Flows are user-defined — no built-in fallback exists.
   let defaultFlow = $state(init?.default_flow ?? flowNames[0] ?? '');
 
@@ -121,14 +181,21 @@
         },
         commands,
         workspace: {
-          extra_domains: extraDomains
-            .split(',')
-            .map((d) => d.trim())
-            .filter(Boolean),
+          egress_mode: egressMode,
+          extra_domains: allowDomains,
+          denied_domains: denyDomains,
+          blocked_domains: blockedDomains,
           code_server_extensions: codeServerExtensions
             .split(/[\s,]+/)
             .map((e) => e.trim())
-            .filter(Boolean)
+            .filter(Boolean),
+          editor: {
+            theme: editorTheme,
+            font_size: Number(editorFontSize) || 0,
+            tab_size: Number(editorTabSize) || 0,
+            format_on_save: editorFormatOnSave,
+            word_wrap: editorWordWrap
+          }
         },
         default_flow: defaultFlow
       };
@@ -243,11 +310,83 @@
 
   <div class="card">
     <h2>4 · Workspace</h2>
-    <p class="muted small" style="margin:0 0 8px">The workspace is the repo's own <span class="mono">.devcontainer</span> — apothecary injects the firewall and harness as features.</p>
-    <label for="p-domains">Extra egress domains <span class="muted">— comma-separated; adapters contribute theirs automatically</span></label>
-    <input id="p-domains" bind:value={extraDomains} class="mono" placeholder="proxy.golang.org, registry.npmjs.org" />
+    <p class="muted small" style="margin:0 0 8px">The workspace is the repo's own <span class="mono">.devcontainer</span> — apothecary routes all its egress through the per-project firewall gateway.</p>
+
+    <span class="lbl">Egress firewall</span>
+    <div class="fw-mode" role="radiogroup" aria-label="egress mode">
+      <label class="check"><input type="radio" bind:group={egressMode} value="allow" /> Allowlist <span class="muted small">— deny all, permit only the domains below</span></label>
+      <label class="check"><input type="radio" bind:group={egressMode} value="deny" /> Denylist <span class="muted small">— allow all, block only the domains below</span></label>
+    </div>
+
+    <div class="fw-head">
+      <span>{egressMode === 'deny' ? 'Blocked domains' : 'Allowed domains'} <span class="muted small">({activeDomains.length})</span></span>
+      {#if egressMode === 'allow'}
+        <button type="button" onclick={addDefaults} disabled={defaultsBusy}>
+          {defaultsBusy ? 'Loading…' : '+ Add sensible defaults'}
+        </button>
+      {/if}
+    </div>
+    <div class="fw-scroll">
+      <table class="fw-table">
+        <tbody>
+          {#each activeDomains as d (d)}
+            <tr>
+              <td class="mono">{d}</td>
+              <td class="fw-x"><button type="button" class="danger" onclick={() => removeDomain(d)} aria-label={`remove ${d}`}>×</button></td>
+            </tr>
+          {:else}
+            <tr><td class="muted small" colspan="2">
+              {egressMode === 'deny'
+                ? 'No domains blocked.'
+                : 'No extra domains — the derived allowlist (repo host + harness/forge) still applies.'}
+            </td></tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <input
+        class="mono"
+        style="flex:1"
+        bind:value={newDomain}
+        placeholder="api.example.com or *.example.com"
+        aria-label="add domain"
+        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addNewDomain(); } }}
+      />
+      <button type="button" onclick={addNewDomain} disabled={!newDomain.trim()}>+ add</button>
+    </div>
+    <p class="muted small" style="margin:6px 0 4px">Adapters (forge + harness) contribute their required domains automatically. "Sensible defaults" are common registry / OS-mirror / dev-tool hosts most builds need — added as editable rows you can curate.</p>
     <label for="p-extensions">code-server extensions <span class="muted">— VS Code extension ids, pre-installed in the browser editor (union with the repo's devcontainer customizations; from Open VSX)</span></label>
     <input id="p-extensions" bind:value={codeServerExtensions} class="mono" placeholder="golang.go, ms-python.python" />
+
+    <label for="p-theme">editor defaults <span class="muted">— code-server UI settings, applied when the browser editor opens (no rebuild)</span></label>
+    <div class="editor-defaults">
+      <label class="ed-field">
+        <span>Color theme</span>
+        <select id="p-theme" bind:value={editorTheme}>
+          <option value="">code-server default</option>
+          {#each editorThemes as t (t)}
+            <option value={t}>{t}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="ed-field">
+        <span>Font size</span>
+        <input type="number" min="0" max="40" bind:value={editorFontSize} placeholder="default" />
+      </label>
+      <label class="ed-field">
+        <span>Tab size</span>
+        <input type="number" min="0" max="16" bind:value={editorTabSize} placeholder="default" />
+      </label>
+      <label class="ed-check">
+        <input type="checkbox" bind:checked={editorFormatOnSave} />
+        <span>Format on save</span>
+      </label>
+      <label class="ed-check">
+        <input type="checkbox" bind:checked={editorWordWrap} />
+        <span>Word wrap</span>
+      </label>
+    </div>
   </div>
 
   {#if error}<div class="error">{error}</div>{/if}
@@ -277,5 +416,101 @@
   .harness-extras .check input {
     width: auto;
     margin: 0;
+  }
+
+  /* code-server editor defaults */
+  .editor-defaults {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px 16px;
+    margin: 4px 0 8px;
+  }
+  .editor-defaults .ed-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 13px;
+    font-weight: normal;
+    margin: 0;
+  }
+  .editor-defaults .ed-field input,
+  .editor-defaults .ed-field select {
+    width: auto;
+    margin: 0;
+  }
+  .editor-defaults .ed-field input[type='number'] {
+    width: 6em;
+  }
+  .editor-defaults .ed-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: normal;
+    margin: 0;
+  }
+  .editor-defaults .ed-check input {
+    width: auto;
+    margin: 0;
+  }
+
+  /* Egress firewall table */
+  .lbl {
+    display: block;
+    font-weight: 600;
+    font-size: 13px;
+    margin: 12px 0 4px;
+  }
+  .fw-mode {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    margin-bottom: 10px;
+  }
+  .fw-mode .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: normal;
+    margin: 0;
+  }
+  .fw-mode .check input {
+    width: auto;
+    margin: 0;
+  }
+  .fw-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .fw-scroll {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+    border-radius: 6px;
+  }
+  .fw-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .fw-table td {
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.15));
+  }
+  .fw-table tr:last-child td {
+    border-bottom: none;
+  }
+  .fw-x {
+    width: 1%;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .fw-x .danger {
+    padding: 0 8px;
+    line-height: 1.6;
   }
 </style>

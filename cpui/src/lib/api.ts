@@ -12,6 +12,7 @@ export interface RunView {
   ticket_id?: string; // parent ticket (a ticket owns many runs)
   run_goal?: string; // extra direction for THIS attempt (additive to the ticket's goal)
   branch?: string;
+  source_branch?: string; // branch this run forked off from (origin/<source_branch>)
   mr_url?: string;
   env_id?: string;
   // Reconciled live container status. 'unknown' = the provisioner couldn't
@@ -88,7 +89,26 @@ export interface Project {
   harness_ids: string[];
   repo: { url: string; locator: string; default_branch: string; agents_md_path: string };
   commands: Record<string, string>;
-  workspace: { extra_domains?: string[]; code_server_extensions?: string[] };
+  workspace: {
+    extra_domains?: string[];
+    code_server_extensions?: string[];
+    // code-server UI defaults, applied as VS Code user settings when the
+    // browser editor opens (no image rebuild — unlike the extensions above).
+    editor?: {
+      theme?: string;
+      font_size?: number;
+      tab_size?: number;
+      format_on_save?: boolean;
+      word_wrap?: boolean;
+    };
+    // Egress gateway posture. 'deny' = allow-all + denied_domains; anything
+    // else (incl. empty) = deny-all + the derived allowlist ∪ extra_domains.
+    egress_mode?: string;
+    denied_domains?: string[];
+    // Force-deny override that wins in BOTH modes (managed live from the run
+    // page); carried through the form untouched.
+    blocked_domains?: string[];
+  };
   default_flow: string;
   created_at: string;
   updated_at: string;
@@ -100,12 +120,14 @@ export interface Project {
 export interface RunInput {
   flow?: string;
   goal?: string;
+  source_branch?: string; // branch this run forks off from; empty = project default
   artifact_ids?: string[];
 }
 
 const runInputBody = (o?: RunInput) => ({
   ...(o?.flow ? { flow: o.flow } : {}),
   ...(o?.goal ? { goal: o.goal } : {}),
+  ...(o?.source_branch ? { source_branch: o.source_branch } : {}),
   ...(o?.artifact_ids?.length ? { artifact_ids: o.artifact_ids } : {})
 });
 
@@ -339,6 +361,10 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status}`);
     return res.text();
   },
+  // Compiled-in "sensible defaults" allowlist (registries, OS mirrors, dev-tool
+  // CDNs). Offered by the project form's "Add sensible defaults" button — no
+  // longer force-seeded into every project.
+  egressDefaults: () => req<{ domains: string[] }>(`/api/egress-defaults`),
   // Hosts the egress proxy blocked for this run (M18) — the visible
   // diagnosis when a model/tool can't reach its endpoint.
   egressDenials: (id: string) => req<EgressDenial[]>(`/api/runs/${id}/egress-denials`),
@@ -346,6 +372,14 @@ export const api = {
   // it to the project's extra domains.
   egressAllow: (id: string, host: string) =>
     post(`/api/runs/${id}/egress-allow`, { host }) as Promise<{ allowed: string; persisted: boolean }>,
+  // Live-toggle a host's egress rule: allow=true permits it, allow=false
+  // force-blocks it (overrides base allowlist defaults). Persisted to the project.
+  egressRule: (id: string, host: string, allow: boolean) =>
+    post(`/api/runs/${id}/egress-rule`, { host, allow }) as Promise<{
+      host: string;
+      allow: boolean;
+      persisted: boolean;
+    }>,
   // Full egress audit trail for this run: every host reached/blocked, with
   // counts, bytes and timestamps. Served live from the gateway (durable store
   // as fallback). Filterable by verdict (allow|deny) and host substring.

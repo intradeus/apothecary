@@ -55,6 +55,32 @@ func TestWritePolicyAndAllow(t *testing.T) {
 	}
 }
 
+func TestSetRuleToggles(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, nil, nil)
+	_ = m.WritePolicy("p", policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}})
+
+	// Block a base-allowed host → goes to BlockedDomains (wins), dropped from Domains.
+	if err := m.SetRule("p", "github.com", false); err != nil {
+		t.Fatal(err)
+	}
+	var f policyfile.File
+	_ = policyfile.Read(m.policyPath("p"), &f)
+	if !contains(f.BlockedDomains, "github.com") || contains(f.Domains, "github.com") {
+		t.Fatalf("block: blocked=%v domains=%v", f.BlockedDomains, f.Domains)
+	}
+	// Allow it back → lifts the block, adds to the allowlist. Fresh var: Unmarshal
+	// doesn't clear fields absent from the JSON (blocked_domains is now omitted).
+	if err := m.SetRule("p", "github.com", true); err != nil {
+		t.Fatal(err)
+	}
+	var g policyfile.File
+	_ = policyfile.Read(m.policyPath("p"), &g)
+	if contains(g.BlockedDomains, "github.com") || !contains(g.Domains, "github.com") {
+		t.Fatalf("allow: blocked=%v domains=%v", g.BlockedDomains, g.Domains)
+	}
+}
+
 func TestAuditReadsFile(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, nil)

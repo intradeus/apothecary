@@ -236,9 +236,17 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		EgressDomains:        egressDomains(p, egressContribs...),
 		EgressMode:           p.Workspace.EgressMode,
 		EgressDenylist:       p.Workspace.DeniedDomains,
+		EgressBlocked:        p.Workspace.BlockedDomains,
 		EgressAllowedCIDRs:   p.Workspace.EgressAllowedCIDRs,
 		EgressAllowedPorts:   p.Workspace.EgressAllowedPorts,
 		CodeServerExtensions: p.Workspace.CodeServerExtensions,
+		EditorSettings: ports.EditorSettings{
+			Theme:        p.Workspace.Editor.Theme,
+			FontSize:     p.Workspace.Editor.FontSize,
+			TabSize:      p.Workspace.Editor.TabSize,
+			FormatOnSave: p.Workspace.Editor.FormatOnSave,
+			WordWrap:     p.Workspace.Editor.WordWrap,
+		},
 		HarnessKind:          defaultKind,
 		HarnessKinds:         kindList,
 		HarnessBinary:        harness.Binary(),
@@ -368,8 +376,6 @@ func (r *Resolver) Close() {
 	r.cache = map[string]*provEntry{}
 }
 
-// egressDomains derives the firewall allowlist (DESIGN2 §8.4): repo host ∪
-// adapter contributions ∪ project extras, deduped and sorted.
 // shellLines converts a harness's Dockerfile InstallLayer into plain shell.
 // The kinds layer speaks Dockerfile because the §8 image build is its usual
 // consumer; a provisioner that installs the harness IN the workspace (a
@@ -410,46 +416,16 @@ func requiredTools(cmds []string) []string {
 	return out
 }
 
-// baseEgressDefaults are seeded into every allow-mode allowlist. The egress
-// gateway now filters the DinD sandbox's INNER daemon AND the devcontainer BUILD
-// (image pulls, apt/npm/pip, and apothecary's own injected harness + code-server
-// features) — none of which the old design filtered (compose ran with no
-// firewall; the in-container firewall came up only AFTER the build). Without a
-// broad base, a normal build fails at `apt-get`/`npm install`. These are
-// read-only package/registry mirrors (low exfil value); tighten per project via
-// deny mode or by curating the allowlist.
-var baseEgressDefaults = []string{
-	// Container registries (inner image pulls: postgres, redis, …).
-	"registry-1.docker.io", "*.docker.io", "auth.docker.io",
-	"production.cloudflare.docker.com", "*.docker.com",
-	"ghcr.io", "*.githubusercontent.com",
-	"gcr.io", "*.gcr.io", "*.pkg.dev",
-	"quay.io", "*.quay.io",
-	"public.ecr.aws", "*.amazonaws.com",
-	"mcr.microsoft.com", "*.data.mcr.microsoft.com", "packages.microsoft.com",
-	// OS package mirrors (devcontainer base-image apt/apk during the build).
-	"deb.debian.org", "security.debian.org", "ftp.debian.org",
-	"archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com", "*.ubuntu.com",
-	"deb.nodesource.com", "dl-cdn.alpinelinux.org", "*.alpinelinux.org",
-	"*.fedoraproject.org", "download.fedoraproject.org",
-	// Language + tool registries (harness/setup installs).
-	"registry.npmjs.org", "*.npmjs.org", "registry.yarnpkg.com", "nodejs.org",
-	"pypi.org", "files.pythonhosted.org",
-	"proxy.golang.org", "sum.golang.org", "storage.googleapis.com",
-	"static.crates.io", "index.crates.io", "*.crates.io", "*.rubygems.org", "rubygems.org",
-	// Dev-tool CDNs (apothecary's injected code-server feature + VS Code extensions).
-	"code-server.dev", "open-vsx.org", "*.open-vsx.org",
-	"openvsx.eclipsecontent.org", "*.eclipsecontent.org",
-	"marketplace.visualstudio.com", "*.gallerycdn.vsassets.io", "*.vscode-unpkg.net",
-}
-
+// egressDomains derives the allow-mode allowlist WITHOUT any convenience
+// defaults: repo host ∪ adapter/harness contributions (functionally required to
+// operate) ∪ the project's own ExtraDomains. The broad registry/OS-mirror list
+// is no longer force-seeded here — it is offered as opt-in "sensible defaults"
+// (builtin.EgressDefaults) that a project copies into ExtraDomains via the form,
+// where the operator can see and curate every line.
 func egressDomains(p confstore.Project, contributions ...[]string) []string {
 	set := map[string]bool{}
 	if u, err := url.Parse(p.Repo.URL); err == nil && u.Hostname() != "" {
 		set[u.Hostname()] = true
-	}
-	for _, d := range baseEgressDefaults {
-		set[d] = true
 	}
 	for _, list := range contributions {
 		for _, d := range list {

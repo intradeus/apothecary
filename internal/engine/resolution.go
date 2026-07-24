@@ -43,11 +43,15 @@ type Resolution struct {
 	// raw external egress in allow mode.
 	EgressMode         string
 	EgressDenylist     []string
+	EgressBlocked      []string
 	EgressAllowedCIDRs []string
 	EgressAllowedPorts []int
 	// CodeServerExtensions are project-declared VS Code extension ids baked
 	// into the workspace's code-server (§ code-server integration).
 	CodeServerExtensions []string
+	// EditorSettings are the project's code-server UI defaults (theme + common
+	// prefs), applied to the browser editor at OpenEditor time (no rebuild).
+	EditorSettings ports.EditorSettings
 	// HarnessKind is a deterministic FALLBACK harness kind (the first
 	// available in the project's set) — NOT a project-chosen default. The
 	// real default is the flow's defaults.harness, applied per stage; this

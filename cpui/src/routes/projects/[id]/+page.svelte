@@ -159,7 +159,15 @@
           <tr><td class="muted">Provisioner</td><td>{integrations.find((i) => i.id === project!.provisioner_id)?.name ?? project.provisioner_id}</td></tr>
           <tr><td class="muted">Harnesses</td><td>{(project.harness_ids ?? []).map((id) => integrations.find((i) => i.id === id)?.name ?? id).join(', ') || '—'}</td></tr>
           <tr><td class="muted">Default flow</td><td class="mono">{project.default_flow}</td></tr>
-          <tr><td class="muted">Extra domains</td><td class="mono">{(project.workspace.extra_domains ?? []).join(', ') || '—'}</td></tr>
+          <tr><td class="muted">Egress firewall</td><td>{project.workspace.egress_mode === 'deny' ? 'Denylist (allow all except)' : 'Allowlist (deny all except)'}</td></tr>
+          {#if project.workspace.egress_mode === 'deny'}
+            <tr><td class="muted">Blocked domains</td><td class="mono">{(project.workspace.denied_domains ?? []).join(', ') || '—'}</td></tr>
+          {:else}
+            <tr><td class="muted">Allowed domains</td><td class="mono">{(project.workspace.extra_domains ?? []).join(', ') || '—'}</td></tr>
+          {/if}
+          {#if (project.workspace.blocked_domains ?? []).length}
+            <tr><td class="muted">Force-blocked</td><td class="mono">{(project.workspace.blocked_domains ?? []).join(', ')}</td></tr>
+          {/if}
         </tbody>
       </table>
     </div>

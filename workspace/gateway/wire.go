@@ -19,11 +19,12 @@ const (
 )
 
 type File struct {
-	Mode         Mode     `json:"mode"`
-	Domains      []string `json:"domains"`
-	DeniedCIDRs  []string `json:"denied_cidrs,omitempty"`
-	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
-	AllowedPorts []int    `json:"allowed_ports,omitempty"`
+	Mode           Mode     `json:"mode"`
+	Domains        []string `json:"domains"`
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
+	DeniedCIDRs    []string `json:"denied_cidrs,omitempty"`
+	AllowedCIDRs   []string `json:"allowed_cidrs,omitempty"`
+	AllowedPorts   []int    `json:"allowed_ports,omitempty"`
 }
 
 func (f File) normMode() Mode {

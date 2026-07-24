@@ -17,6 +17,7 @@
   let editing = $state(false);
 
   let flow = $state(''); // per-run flow; empty = project default
+  let sourceBranch = $state(''); // branch to fork this run off from; empty = project default
   let runGoal = $state(''); // direction for THIS attempt (additive to the ticket goal)
   let runFiles = $state<File[]>([]);
   let starting = $state(false);
@@ -49,6 +50,7 @@
       const { run_id } = await api.startTicketRun(ticketId, {
         flow: flow.trim() || undefined,
         goal: runGoal.trim() || undefined,
+        source_branch: sourceBranch.trim() || undefined,
         artifact_ids: artifactIds
       });
       await goto(`/runs/${run_id}`);
@@ -99,6 +101,10 @@
         <div style="flex:1">
           <label for="flow">Flow <span class="muted">— empty = project default{project ? ` (${project.default_flow})` : ''}</span></label>
           <input id="flow" bind:value={flow} placeholder={project?.default_flow ?? 'default'} class="mono" />
+        </div>
+        <div style="flex:1">
+          <label for="source-branch">Source branch <span class="muted">— branch off from; empty = project default{project ? ` (${project.repo.default_branch})` : ''}</span></label>
+          <input id="source-branch" bind:value={sourceBranch} placeholder={project?.repo.default_branch ?? 'main'} class="mono" />
         </div>
         <button class="primary" onclick={startRun} disabled={starting}>
           {starting ? 'Starting…' : '▶ Start run'}

@@ -49,6 +49,34 @@ func TestVerdictDenyMode(t *testing.T) {
 	}
 }
 
+func TestForceBlockOverride(t *testing.T) {
+	ip := net.ParseIP("140.82.121.4")
+	// Allow mode: a base-allowed host is force-blocked by the override.
+	pa := newPolicy(File{Mode: ModeAllow, Domains: []string{"github.com", "*.githubusercontent.com"},
+		BlockedDomains: []string{"github.com", "*.evil.net"}})
+	if pa.verdict("github.com", ip) {
+		t.Error("blocked host must be denied even though it's on the allowlist")
+	}
+	if pa.verdict("x.evil.net", ip) {
+		t.Error("blocked wildcard must be denied")
+	}
+	if !pa.verdict("raw.githubusercontent.com", ip) {
+		t.Error("a non-blocked allowlisted host stays allowed")
+	}
+	// No-SNI to a resolved blocked name is denied.
+	if pa.verdictNoSNI([]string{"github.com"}, ip) {
+		t.Error("no-SNI to a blocked resolved name must be denied")
+	}
+	// Deny mode: block override wins there too (allow-all minus blocks).
+	pd := newPolicy(File{Mode: ModeDeny, Domains: []string{"ads.com"}, BlockedDomains: []string{"tracker.com"}})
+	if pd.verdict("tracker.com", ip) {
+		t.Error("deny mode: force-blocked host must be denied")
+	}
+	if !pd.verdict("github.com", ip) {
+		t.Error("deny mode: a non-denied, non-blocked host stays allowed")
+	}
+}
+
 func TestAllowIPLiteral(t *testing.T) {
 	// The user clicked "allow" on a bare-IP denial → the IP is in Domains.
 	p := newPolicy(File{Mode: ModeAllow, Domains: []string{"github.com", "104.16.6.34"}})

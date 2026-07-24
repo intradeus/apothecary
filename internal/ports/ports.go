@@ -71,6 +71,9 @@ type EnvSpec struct {
 	EgressMode string
 	// EgressDenylist is the blocked-host list used in "deny" mode.
 	EgressDenylist []string
+	// EgressBlocked is the force-DENY override (wins in both modes) — the run
+	// page's live "block domain" toggle, persisted per project.
+	EgressBlocked []string
 	// EgressAllowedCIDRs/EgressAllowedPorts are the "allow" mode escape hatch for
 	// legitimate raw (non-HTTP/TLS) external egress that the default backstop
 	// would otherwise drop (e.g. an external managed database).
@@ -274,6 +277,9 @@ type EgressAuditor interface {
 type EgressController interface {
 	EgressDenials(ctx context.Context, env EnvID) []EgressDenial
 	AllowEgress(ctx context.Context, env EnvID, host string) error
+	// SetEgressRule live-toggles a host's rule: allow=true permits it, allow=false
+	// force-blocks it (overrides base allowlist defaults). Project-wide, no restart.
+	SetEgressRule(ctx context.Context, env EnvID, host string, allow bool) error
 }
 
 // PortConn is one exposed workspace port as the engine consumes it: a
@@ -309,13 +315,36 @@ type WorkspacePortExposer interface {
 // (avoids the engine 8080 / egress-proxy 8079 loopback ports the bridge uses).
 const CodeServerPort = 8471
 
+// EditorSettings are neutral, editor-agnostic UI preferences applied to the
+// in-workspace editor when it starts — written as the editor's user settings,
+// so changing them needs NO image rebuild (unlike CodeServerExtensions, which
+// are baked at build time). The adapter maps these to its editor's native
+// config (code-server → VS Code settings.json keys); a future editor adapter
+// maps the same neutral fields to its own. Zero value ⇒ leave the editor's own
+// defaults untouched.
+type EditorSettings struct {
+	// Theme is the color theme name (code-server: workbench.colorTheme); must be
+	// a built-in theme or one carried by an installed extension.
+	Theme string
+	// FontSize / TabSize apply only when > 0.
+	FontSize int
+	TabSize  int
+	// FormatOnSave / WordWrap toggle the matching editor prefs when true.
+	FormatOnSave bool
+	WordWrap     bool
+}
+
+// IsZero reports that no setting is set, so callers may skip applying them.
+func (s EditorSettings) IsZero() bool { return s == EditorSettings{} }
+
 // EditorStarter is an OPTIONAL EnvProvisioner capability: start an in-workspace
 // code-server (VS Code in the browser) listening on the given loopback port, so
 // the engine can expose it (the "Open editor" path). Idempotent — a no-op when
 // code-server is already listening; returns when the port accepts connections.
 // The binary is installed by the injected code-server devcontainer feature.
+// settings are the project's editor UI defaults, (re)applied on each start.
 type EditorStarter interface {
-	StartEditor(ctx context.Context, env EnvID, port int) error
+	StartEditor(ctx context.Context, env EnvID, port int, settings EditorSettings) error
 }
 
 // WorkspaceRebuilder is an OPTIONAL EnvProvisioner capability: recreate the

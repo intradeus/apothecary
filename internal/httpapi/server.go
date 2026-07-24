@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"apothecary/internal/artifacts"
+	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
@@ -71,8 +72,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/events", s.streamEvents)
 	mux.HandleFunc("GET /api/runs/{id}/logs/{stage}", s.getLog)
 	mux.HandleFunc("GET /api/runs/{id}/workspace-log", s.getWorkspaceLog)
+	mux.HandleFunc("GET /api/egress-defaults", s.getEgressDefaults)
 	mux.HandleFunc("GET /api/runs/{id}/egress-denials", s.getEgressDenials)
 	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
+	mux.HandleFunc("POST /api/runs/{id}/egress-rule", s.postEgressRule)
 	mux.HandleFunc("GET /api/runs/{id}/egress-audit", s.getRunEgressAudit)
 	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
 	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
@@ -408,14 +411,15 @@ func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {
 // restart-after-failure is when a human most wants to give direction.
 func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Flow        string   `json:"flow"`
-		Goal        string   `json:"goal"`
-		ArtifactIDs []string `json:"artifact_ids"`
+		Flow         string   `json:"flow"`
+		Goal         string   `json:"goal"`
+		SourceBranch string   `json:"source_branch"`
+		ArtifactIDs  []string `json:"artifact_ids"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
 	newID, err := s.Engine.RestartRun(r.Context(), r.PathValue("id"), engine.RunInput{
-		Flow: body.Flow, Goal: body.Goal, ArtifactIDs: body.ArtifactIDs,
+		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, ArtifactIDs: body.ArtifactIDs,
 	})
 	if err != nil {
 		msg := err.Error()
@@ -557,6 +561,14 @@ func (s *Server) getWorkspaceLog(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// getEgressDefaults serves the compiled-in "sensible defaults" allowlist the
+// project form offers via its "Add sensible defaults" button. Static, no auth —
+// it's the same list baked into the binary. The form copies what the operator
+// keeps into the project's extra_domains (they are no longer force-seeded).
+func (s *Server) getEgressDefaults(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string][]string{"domains": builtin.EgressDefaults()})
+}
+
 // getEgressDenials lists hosts the per-project gateway blocked for this run:
 // the visible diagnosis for "the firewall ate my model provider". Empty list
 // when the run has no gateway or nothing was blocked.
@@ -670,6 +682,61 @@ func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"allowed": host, "persisted": persisted})
 }
 
+// postEgressRule live-toggles a host's egress rule for a run (allow or force-
+// block) via the gateway, and persists the change to the project (allow →
+// extra_domains, block → blocked_domains) so future runs inherit it.
+func (s *Server) postEgressRule(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Host  string `json:"host"`
+		Allow bool   `json:"allow"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	host := strings.ToLower(strings.TrimSpace(body.Host))
+	if !validEgressHost(host) {
+		writeErr(w, http.StatusBadRequest, "host must be a bare hostname or *.wildcard (no scheme/port/path)")
+		return
+	}
+	runID := r.PathValue("id")
+
+	if err := s.Engine.SetEgressRule(r.Context(), runID, host, body.Allow); err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, engine.ErrEgressOff) {
+			status = http.StatusServiceUnavailable
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+
+	// Persist to the project: keep the two lists mutually exclusive so future
+	// runs inherit the same effective rule (best-effort — the live change won).
+	persisted := false
+	if s.Conf != nil {
+		if evs, err := s.Store.Events(r.Context(), runID, 0); err == nil && len(evs) > 0 {
+			if pid := run.Reduce(evs).ProjectID; pid != "" {
+				if p, err := s.Conf.GetProject(r.Context(), pid); err == nil {
+					if body.Allow {
+						p.Workspace.BlockedDomains = removeStr(p.Workspace.BlockedDomains, host)
+						if !containsStr(p.Workspace.ExtraDomains, host) {
+							p.Workspace.ExtraDomains = append(p.Workspace.ExtraDomains, host)
+						}
+					} else {
+						p.Workspace.ExtraDomains = removeStr(p.Workspace.ExtraDomains, host)
+						if !containsStr(p.Workspace.BlockedDomains, host) {
+							p.Workspace.BlockedDomains = append(p.Workspace.BlockedDomains, host)
+						}
+					}
+					if _, err := s.Conf.UpdateProject(r.Context(), pid, p); err == nil {
+						persisted = true
+					}
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"host": host, "allow": body.Allow, "persisted": persisted})
+}
+
 // postExposePort publishes a workspace port and returns its browser URL
 // (the run-page "open the app" path). Idempotent per (run, port).
 func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
@@ -781,6 +848,16 @@ func containsStr(ss []string, v string) bool {
 		}
 	}
 	return false
+}
+
+func removeStr(ss []string, v string) []string {
+	out := ss[:0:0]
+	for _, s := range ss {
+		if s != v {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (s *Server) getLog(w http.ResponseWriter, r *http.Request) {

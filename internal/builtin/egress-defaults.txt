@@ -1,0 +1,77 @@
+# Sensible egress-allowlist defaults, offered (not enforced) per project.
+#
+# The egress gateway filters the DinD sandbox's inner daemon AND the
+# devcontainer BUILD (image pulls, apt/npm/pip, plus apothecary's own injected
+# harness + code-server tooling). A normal build needs most of these; a project
+# that doesn't can drop the lines it doesn't use. These are read-only
+# package/registry mirrors (low exfil value).
+#
+# Lines starting with # and blank lines are ignored. One host per line;
+# `*.suffix` wildcards are honored by the gateway.
+
+# Container registries (inner image pulls: postgres, redis, …).
+registry-1.docker.io
+*.docker.io
+auth.docker.io
+production.cloudflare.docker.com
+*.docker.com
+ghcr.io
+*.githubusercontent.com
+gcr.io
+*.gcr.io
+*.pkg.dev
+quay.io
+*.quay.io
+public.ecr.aws
+*.amazonaws.com
+mcr.microsoft.com
+*.data.mcr.microsoft.com
+packages.microsoft.com
+
+# OS package mirrors (devcontainer base-image apt/apk during the build).
+deb.debian.org
+security.debian.org
+ftp.debian.org
+archive.ubuntu.com
+security.ubuntu.com
+ports.ubuntu.com
+*.ubuntu.com
+deb.nodesource.com
+dl-cdn.alpinelinux.org
+*.alpinelinux.org
+*.fedoraproject.org
+download.fedoraproject.org
+
+# Language + tool registries (harness/setup installs).
+registry.npmjs.org
+*.npmjs.org
+registry.yarnpkg.com
+nodejs.org
+pypi.org
+files.pythonhosted.org
+proxy.golang.org
+sum.golang.org
+storage.googleapis.com
+static.crates.io
+index.crates.io
+*.crates.io
+*.rubygems.org
+rubygems.org
+
+# GitHub — apothecary's OWN injected tooling (code-server, harnesses) pulls
+# from GitHub releases REGARDLESS of the project's forge, so these are useful
+# even for a GitLab-hosted repo.
+github.com
+api.github.com
+codeload.github.com
+objects.githubusercontent.com
+
+# Dev-tool CDNs (apothecary's injected code-server feature + VS Code extensions).
+code-server.dev
+open-vsx.org
+*.open-vsx.org
+openvsx.eclipsecontent.org
+*.eclipsecontent.org
+marketplace.visualstudio.com
+*.gallerycdn.vsassets.io
+*.vscode-unpkg.net

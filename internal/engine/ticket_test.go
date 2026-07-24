@@ -54,6 +54,49 @@ func TestTicketedRunGeneratesBaseFromTitle(t *testing.T) {
 	}
 }
 
+// A run's source branch (the base it forks off from) is per-run: an empty one
+// defaults to the project's default branch, an explicit one is kept verbatim,
+// and a restart carries the original run's source branch forward.
+func TestRunSourceBranch(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	ctx := context.Background()
+
+	// Empty ⇒ project default (testProject's repo default_branch is "main").
+	def, err := h.e.CreateRun(ctx, Ticket{TicketID: "tk-s1", Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := h.view(t, def); v.SourceBranch != "main" {
+		t.Errorf("default source_branch = %q, want main", v.SourceBranch)
+	}
+
+	// Explicit source branch is kept.
+	exp, err := h.e.CreateRun(ctx,
+		Ticket{TicketID: "tk-s2", Title: "T", SourceBranch: "develop"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := h.view(t, exp); v.SourceBranch != "develop" {
+		t.Errorf("explicit source_branch = %q, want develop", v.SourceBranch)
+	}
+
+	// Restart carries the original source branch forward.
+	h.e.Wait(exp)
+	newID, err := h.e.RestartRun(ctx, exp, RunInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := h.view(t, newID); v.SourceBranch != "develop" {
+		t.Errorf("restart source_branch = %q, want develop", v.SourceBranch)
+	}
+
+	// An invalid source branch is rejected.
+	if _, err := h.e.CreateRun(ctx,
+		Ticket{TicketID: "tk-s3", Title: "T", SourceBranch: "bad branch"}, "loop", testProject); err == nil {
+		t.Error("expected invalid source branch to be rejected")
+	}
+}
+
 // Restart of a ticketed run is a fresh attempt under the SAME ticket: same
 // base, same ticket id, a NEW tail (so the two attempts never collide).
 func TestRestartTicketedRunKeepsBaseNewTail(t *testing.T) {

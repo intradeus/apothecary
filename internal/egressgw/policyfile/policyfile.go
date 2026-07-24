@@ -31,6 +31,10 @@ type File struct {
 	// Domains is the allow-list (ModeAllow) or deny-list (ModeDeny): exact hosts
 	// or "*.suffix" wildcards, matched against TLS SNI / HTTP Host.
 	Domains []string `json:"domains"`
+	// BlockedDomains is a force-DENY override that wins in BOTH modes — it lets a
+	// user block a host that a base default would otherwise allow (the live
+	// "block this domain" toggle). Exact or "*.suffix".
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
 	// DeniedCIDRs (ModeDeny) blocks non-HTTP/TLS egress to these IP ranges.
 	DeniedCIDRs []string `json:"denied_cidrs,omitempty"`
 	// AllowedCIDRs/AllowedPorts (ModeAllow) are the escape hatch for legitimate

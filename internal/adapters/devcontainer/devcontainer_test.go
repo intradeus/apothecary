@@ -738,7 +738,7 @@ func TestStartEditor(t *testing.T) {
 			{code: 0},          // shim probe → already up
 		}}
 		a := newTestAdapter(t, r)
-		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort); err != nil {
+		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{}); err != nil {
 			t.Fatal(err)
 		}
 		for _, c := range r.calls {
@@ -755,7 +755,7 @@ func TestStartEditor(t *testing.T) {
 			{code: 0},          // probe --wait → came up
 		}}
 		a := newTestAdapter(t, r)
-		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort); err != nil {
+		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{}); err != nil {
 			t.Fatal(err)
 		}
 		var start *call

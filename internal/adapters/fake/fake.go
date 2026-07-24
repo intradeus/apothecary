@@ -48,9 +48,11 @@ type EnvProvisioner struct {
 	ExecCalls []ExecCall
 	Destroyed []ports.EnvID
 
-	// Allowed records AllowEgress calls per env; Denied seeds EgressDenials
-	// (ports.EgressController) for the run-page egress endpoint tests.
+	// Allowed records AllowEgress calls per env; Rules records SetEgressRule
+	// calls ("host=allow|deny"); Denied seeds EgressDenials — for the run-page
+	// egress endpoint tests (ports.EgressController).
 	Allowed map[ports.EnvID][]string
+	Rules   map[ports.EnvID][]string
 	Denied  map[ports.EnvID][]ports.EgressDenial
 }
 
@@ -202,6 +204,21 @@ func (p *EnvProvisioner) AllowEgress(_ context.Context, id ports.EnvID, host str
 		p.Allowed = map[ports.EnvID][]string{}
 	}
 	p.Allowed[id] = append(p.Allowed[id], host)
+	return nil
+}
+
+// Rules records SetEgressRule calls per env as "host=allow|deny".
+func (p *EnvProvisioner) SetEgressRule(_ context.Context, id ports.EnvID, host string, allow bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Rules == nil {
+		p.Rules = map[ports.EnvID][]string{}
+	}
+	verb := "deny"
+	if allow {
+		verb = "allow"
+	}
+	p.Rules[id] = append(p.Rules[id], host+"="+verb)
 	return nil
 }
 

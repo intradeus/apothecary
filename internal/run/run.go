@@ -47,8 +47,9 @@ type View struct {
 	FlowName          string   `json:"flow_name"`
 	FlowHash          string   `json:"flow_hash"`
 	CurrentStage      string   `json:"current_stage,omitempty"`
-	Branch            string   `json:"branch,omitempty"`      // the run's actual git branch (from RunCreated)
-	BranchBase        string   `json:"branch_base,omitempty"` // branch stem before the per-run suffix
+	Branch            string   `json:"branch,omitempty"`        // the run's actual git branch (from RunCreated)
+	BranchBase        string   `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
+	SourceBranch      string   `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
 	MRURL             string   `json:"mr_url,omitempty"`
 	EnvID             string   `json:"env_id,omitempty"`
 	// EnvStatus is the reconciled LIVE container status (running/starting/
@@ -90,6 +91,7 @@ func Apply(v *View, e *event.Event) {
 		v.FlowHash = p.FlowHash
 		v.Branch = p.Branch
 		v.BranchBase = p.BranchBase
+		v.SourceBranch = p.SourceBranch
 		v.CreatedAt = e.TS
 	case *event.EnvRequested:
 		v.State = Provisioning

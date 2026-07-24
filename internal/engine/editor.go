@@ -53,7 +53,7 @@ func (e *Engine) OpenEditor(ctx context.Context, runID string) (string, error) {
 
 	// Start code-server (no-op if already listening), then expose it exactly
 	// like a discovered app port.
-	if err := starter.StartEditor(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort); err != nil {
+	if err := starter.StartEditor(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort, res.EditorSettings); err != nil {
 		return "", err
 	}
 	pc, err := exposer.ExposePort(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort)

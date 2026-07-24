@@ -41,6 +41,11 @@ type Ticket struct {
 	// override ("" = the default apothecary/<run-id>-<title-slug>). Names git
 	// check-ref-format would refuse are rejected.
 	Branch string
+	// SourceBranch is the branch this run forks off from (the base of
+	// `git switch -c <branch> origin/<SourceBranch>`). Per-run; "" defaults to
+	// the project's default branch. Names git check-ref-format would refuse are
+	// rejected.
+	SourceBranch string
 	// RunGoal is extra direction for THIS attempt, additive to Goal (which
 	// stays the enduring spec). Rendered as its own prompt section.
 	RunGoal string
@@ -57,9 +62,12 @@ type Ticket struct {
 // ticket or restarting one: a flow override plus this attempt's direction and
 // attachments.
 type RunInput struct {
-	Flow        string // "" = the ticket/original run's flow
-	Goal        string // extra direction for this attempt
-	ArtifactIDs []string
+	Flow string // "" = the ticket/original run's flow
+	Goal string // extra direction for this attempt
+	// SourceBranch overrides the branch the restarted run forks off from;
+	// "" reuses the original run's source branch.
+	SourceBranch string
+	ArtifactIDs  []string
 }
 
 // Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
@@ -520,6 +528,18 @@ func (e *Engine) AllowEgress(ctx context.Context, runID, host string) error {
 	return ctrl.AllowEgress(ctx, env, host)
 }
 
+// SetEgressRule live-toggles a host's egress rule for a run (allow or force-deny),
+// project-wide via the gateway, no restart. Returns ErrEgressOff when the run has
+// no gateway. Persistence to the project is the caller's job.
+func (e *Engine) SetEgressRule(ctx context.Context, runID, host string, allow bool) error {
+	ctrl, env, release, err := e.egressCtrl(ctx, runID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return ctrl.SetEgressRule(ctx, env, host, allow)
+}
+
 // auditRows converts a run's provisioner audit records into durable rows tagged
 // with the project + engine run id. Empty when the provisioner has no auditor.
 // Uses envNameForRun so it works DURING provisioning too (EnvID not yet set).
@@ -671,6 +691,14 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	} else if err := CheckBranch(branch); err != nil {
 		return "", fmt.Errorf("branch %q: %v", branch, err)
 	}
+	// SourceBranch is the base this run forks off from; empty falls back to the
+	// project's default branch (itself "main" by default).
+	sourceBranch := strings.TrimSpace(t.SourceBranch)
+	if sourceBranch == "" {
+		sourceBranch = res.RepoRef.DefaultBranch
+	} else if err := CheckBranch(sourceBranch); err != nil {
+		return "", fmt.Errorf("source branch %q: %v", sourceBranch, err)
+	}
 	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
 		TicketTitle:       t.Title,
 		TicketGoal:        t.Goal,
@@ -680,6 +708,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 		RepoURL:           res.RepoRef.URL,
 		Branch:            branch,
 		BranchBase:        base,
+		SourceBranch:      sourceBranch,
 		ProjectID:         projectID,
 		TicketID:          t.TicketID,
 		TicketArtifactIDs: t.TicketArtifactIDs,
@@ -818,10 +847,16 @@ func (e *Engine) RestartRun(ctx context.Context, runID string, in RunInput) (str
 	if flowName == "" {
 		flowName = v.FlowName
 	}
+	// A restart reuses the original run's source branch unless overridden.
+	sourceBranch := v.SourceBranch
+	if in.SourceBranch != "" {
+		sourceBranch = in.SourceBranch
+	}
 	if v.TicketID != "" {
 		return e.CreateRun(ctx, Ticket{
 			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
-			RunGoal: in.Goal, ArtifactIDs: in.ArtifactIDs,
+			SourceBranch: sourceBranch,
+			RunGoal:      in.Goal, ArtifactIDs: in.ArtifactIDs,
 			// The ticket's own attachments carry over to every attempt.
 			TicketArtifactIDs: v.TicketArtifactIDs,
 		}, flowName, v.ProjectID)
@@ -832,7 +867,8 @@ func (e *Engine) RestartRun(ctx context.Context, runID string, in RunInput) (str
 	}
 	return e.CreateRun(ctx, Ticket{
 		Title: v.TicketTitle, Goal: v.TicketGoal, Branch: branch,
-		RunGoal: in.Goal, ArtifactIDs: in.ArtifactIDs,
+		SourceBranch: sourceBranch,
+		RunGoal:      in.Goal, ArtifactIDs: in.ArtifactIDs,
 	}, flowName, v.ProjectID)
 }
 

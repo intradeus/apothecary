@@ -291,10 +291,14 @@ func (m *Manager) Denials(project, run string) []policyfile.Denial {
 	return out
 }
 
-// Allow adds (ModeAllow) or removes (ModeDeny) a host from the project policy —
-// live, project-wide, no restart. This is the fast path behind the
-// POST /runs/{id}/egress-allow "add to egress" action.
-func (m *Manager) Allow(project, host string) error {
+// Allow is the "add to egress" fast path (SetRule with allow=true).
+func (m *Manager) Allow(project, host string) error { return m.SetRule(project, host, true) }
+
+// SetRule live-toggles a host's egress rule, project-wide, no restart. allow=true
+// permits it (clears any force-block, and for allow-mode adds it to the allowlist
+// / for deny-mode drops it from the denylist); allow=false force-blocks it via
+// the BlockedDomains override, which wins in either mode.
+func (m *Manager) SetRule(project, host string, allow bool) error {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
 		return fmt.Errorf("empty host")
@@ -309,12 +313,18 @@ func (m *Manager) Allow(project, host string) error {
 		}
 		f = policyfile.File{Mode: policyfile.ModeAllow}
 	}
-	if f.NormMode() == policyfile.ModeDeny {
-		f.Domains = remove(f.Domains, host) // stop denying it
-	} else {
-		if !contains(f.Domains, host) {
-			f.Domains = append(f.Domains, host) // unblock it
+	if allow {
+		f.BlockedDomains = remove(f.BlockedDomains, host) // lift any block
+		if f.NormMode() == policyfile.ModeDeny {
+			f.Domains = remove(f.Domains, host) // stop denying it
+		} else if !contains(f.Domains, host) {
+			f.Domains = append(f.Domains, host) // add to the allowlist
 		}
+	} else {
+		if !contains(f.BlockedDomains, host) {
+			f.BlockedDomains = append(f.BlockedDomains, host) // force-deny (wins)
+		}
+		f.Domains = remove(f.Domains, host) // drop any explicit allow of it
 	}
 	return policyfile.WriteAtomic(m.policyPath(project), f)
 }

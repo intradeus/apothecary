@@ -996,6 +996,7 @@ func (x *exec) ensureEnv() error {
 		EgressDomains:        x.res.EgressDomains,
 		EgressMode:           x.res.EgressMode,
 		EgressDenylist:       x.res.EgressDenylist,
+		EgressBlocked:        x.res.EgressBlocked,
 		EgressAllowedCIDRs:   x.res.EgressAllowedCIDRs,
 		EgressAllowedPorts:   x.res.EgressAllowedPorts,
 		CodeServerExtensions: x.res.CodeServerExtensions,
@@ -1100,22 +1101,22 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 func (x *exec) bootstrap(id ports.EnvID) error {
 	res := x.res
 	err := RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
-		RunID:         x.rs.runID,
-		Token:         x.e.RunToken(x.rs.runID),
-		EngineURL:     x.e.cfg.EngineURL,
-		RepoURL:       res.RepoRef.URL,
-		DefaultBranch: res.RepoRef.DefaultBranch,
-		Branch:        x.rs.branch,
-		AgentsMDPath:  res.AgentsMDPath,
-		ProviderEnv:   res.ProviderEnv,
-		GitUser:       res.GitUser,
-		GitPass:       res.GitPass,
-		GitName:       res.GitName,
-		GitEmail:      res.GitEmail,
-		SeedAuth:      res.SeedAuth,
-		Prepare:       res.Prepare,
-		Setup:         res.Commands["setup"], // optional in v2: "" skips step 6
-		Timeout:       x.rs.fl.Defaults.Timeout,
+		RunID:        x.rs.runID,
+		Token:        x.e.RunToken(x.rs.runID),
+		EngineURL:    x.e.cfg.EngineURL,
+		RepoURL:      res.RepoRef.URL,
+		SourceBranch: sourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
+		Branch:       x.rs.branch,
+		AgentsMDPath: res.AgentsMDPath,
+		ProviderEnv:  res.ProviderEnv,
+		GitUser:      res.GitUser,
+		GitPass:      res.GitPass,
+		GitName:      res.GitName,
+		GitEmail:     res.GitEmail,
+		SeedAuth:     res.SeedAuth,
+		Prepare:      res.Prepare,
+		Setup:        res.Commands["setup"], // optional in v2: "" skips step 6
+		Timeout:      x.rs.fl.Defaults.Timeout,
 	})
 	if err != nil {
 		if x.ctx.Err() != nil {

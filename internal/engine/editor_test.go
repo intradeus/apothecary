@@ -22,7 +22,7 @@ type editorEnvp struct {
 	startErr error
 }
 
-func (e *editorEnvp) StartEditor(_ context.Context, _ ports.EnvID, _ int) error {
+func (e *editorEnvp) StartEditor(_ context.Context, _ ports.EnvID, _ int, _ ports.EditorSettings) error {
 	atomic.AddInt32(&e.starts, 1)
 	return e.startErr
 }

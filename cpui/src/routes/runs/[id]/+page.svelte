@@ -92,11 +92,13 @@
   let now = $state(Date.now());
   let liveTail = $state<string | null>(null);
   let denials = $state<EgressDenial[]>([]);
-  let allowing = $state<Record<string, boolean>>({});
+  let dismissedDenials = $state<Set<string>>(new Set());
+  const newDenials = $derived(denials.filter((d) => !dismissedDenials.has(d.host)));
   let audit = $state<EgressAuditRow[]>([]);
   let showAudit = $state(false);
   let auditVerdict = $state(''); // '' | 'allow' | 'deny'
   let auditHost = $state('');
+  let toggling = $state<Record<string, boolean>>({});
   let showTail = $state(true);
   let tailEl = $state<HTMLPreElement | null>(null);
   const currentStage = $derived.by(() => {
@@ -184,17 +186,24 @@
     }
   }
 
-  async function allowEgress(host: string) {
-    allowing[host] = true;
+  // Dismiss the new-denial banner without changing the rule (stays denied).
+  function dismissDenials() {
+    dismissedDenials = new Set(denials.map((d) => d.host));
+  }
+
+  // Live-toggle a host's rule (allow ⇄ block). Persists to the project.
+  async function toggleRule(host: string, allow: boolean) {
+    toggling[host] = true;
     error = '';
     try {
-      await api.egressAllow(runId, host);
-      denials = await api.egressDenials(runId); // host clears from the list
-      if (showAudit) await refreshAudit();
+      await api.egressRule(runId, host, allow);
+      // Optimistically reflect the new rule on this host's rows so the toggle flips.
+      audit = audit.map((r) => (r.host === host ? { ...r, verdict: allow ? 'allow' : 'deny' } : r));
+      denials = await api.egressDenials(runId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
-      allowing[host] = false;
+      toggling[host] = false;
     }
   }
 
@@ -385,6 +394,7 @@
     {#if run.ticket_id}<a href={`/tickets/${run.ticket_id}`} title="This run's ticket">ticket ↗</a>{/if}
     <span>flow {run.flow_name}</span>
     {#if run.branch}<span title="Git branch for this run">branch <span class="mono">{run.branch}</span></span>{/if}
+    {#if run.source_branch}<span title="Branch this run forked off from">from <span class="mono">{run.source_branch}</span></span>{/if}
     {#if run.env_id}<span title="Workspace / container name">workspace <span class="mono">{run.env_id}</span></span>{/if}
     {#if totals.turns > 0}<span>{fmtCost(totals.cost)} · {totals.turns} turns</span>{/if}
     {#each links as l (l.kind + (l.url || l.command))}
@@ -514,24 +524,23 @@
         </div>
         <button onclick={() => (showTail = !showTail)}>{showTail ? 'Hide output' : 'Live output'}</button>
       </div>
-      {#if denials.length > 0}
-        <div class="denials">
-          <strong>⚠ egress blocked</strong> — the workspace tried to reach hosts not in this run's
-          allowlist. Add them to the project's <em>extra domains</em> and restart:
-          <ul>
-            {#each denials as d (d.host)}
-              <li>
-                <span class="mono">{d.host}</span> <span class="muted small">×{d.count}</span>
-                <button class="small" disabled={allowing[d.host]} onclick={() => allowEgress(d.host)}>
-                  {allowing[d.host] ? 'allowing…' : "Add to project's allowlist"}
-                </button>
-              </li>
-            {/each}
-          </ul>
-          <p class="muted small" style="margin:6px 0 0">
-            Adds the host to the project's allowlist (every future run inherits it) and unblocks the
-            running agent instantly — no restart.
-          </p>
+      {#if newDenials.length > 0}
+        <div class="deny-banner">
+          <span
+            >⚠ egress blocked{newDenials.length > 1 ? ` ×${newDenials.length}` : ''}:
+            <span class="mono">{newDenials.slice(0, 3).map((d) => d.host).join(', ')}</span
+            >{newDenials.length > 3 ? ` +${newDenials.length - 3} more` : ''}</span>
+          <span class="deny-banner-actions">
+            <button
+              class="linklike"
+              onclick={() => {
+                showAudit = true;
+                auditVerdict = 'deny';
+                refreshAudit();
+              }}>review &amp; allow</button>
+            <button class="linklike" title="Dismiss (leave blocked)" onclick={dismissDenials}
+              >✕</button>
+          </span>
         </div>
       {/if}
       <div class="audit">
@@ -558,13 +567,21 @@
             <div class="audit-scroll">
               <table class="audit-table mono small">
                 <thead>
-                  <tr><th>host</th><th>verdict</th><th>proto</th><th class="num">×</th><th class="num">out</th><th class="num">in</th><th>last</th></tr>
+                  <tr><th>host</th><th>rule</th><th>proto</th><th class="num">×</th><th class="num">out</th><th class="num">in</th><th>last</th></tr>
                 </thead>
                 <tbody>
                   {#each audit as r (r.host + ':' + r.port + ':' + r.verdict)}
                     <tr>
                       <td>{r.host}{r.port && r.port !== 443 ? `:${r.port}` : ''}</td>
-                      <td><span class="verdict {r.verdict}">{r.verdict}</span></td>
+                      <td>
+                        <button
+                          class="verdict {r.verdict}"
+                          disabled={toggling[r.host]}
+                          title={r.verdict === 'allow' ? 'Click to block this host' : 'Click to allow this host'}
+                          onclick={() => toggleRule(r.host, r.verdict !== 'allow')}>
+                          {toggling[r.host] ? '…' : r.verdict === 'allow' ? 'allowed' : 'blocked'}
+                        </button>
+                      </td>
                       <td class="muted">{r.proto}</td>
                       <td class="num">{r.count}</td>
                       <td class="num">{fmtBytes(r.bytes_out)}</td>
@@ -574,6 +591,10 @@
                   {/each}
                 </tbody>
               </table>
+              <p class="muted small" style="margin:6px 0 0">
+                Click a rule to allow/block that host live (persists to the project; no restart).
+                Rows show past traffic — a new rule takes effect on the next connection.
+              </p>
             </div>
           {/if}
         {/if}
@@ -642,18 +663,6 @@
   .linklike:hover { text-decoration: underline; border: none; }
   .working .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--green, #4caf7d); margin-right:8px; animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.25; } }
-  .denials {
-    margin-top: 10px;
-    padding: 8px 12px;
-    border: 1px solid var(--amber, #e0af68);
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--amber, #e0af68) 8%, transparent);
-    font-size: 13px;
-  }
-  .denials ul {
-    margin: 6px 0 0;
-    padding-left: 18px;
-  }
   .tail { max-height:280px; overflow-y:auto; white-space:pre-wrap; margin:10px 0 0; border:1px solid var(--border, #333); border-radius:6px; padding:8px; }
   .audit { margin-top: 10px; }
   .audit-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
@@ -663,7 +672,16 @@
   .audit-table th, .audit-table td { text-align:left; padding:3px 8px; border-bottom:1px solid var(--border, #2a2a2a); white-space:nowrap; }
   .audit-table thead th { position:sticky; top:0; background: var(--bg, #1a1a1a); color: var(--muted, #888); font-weight:normal; }
   .audit-table td.num, .audit-table th.num { text-align:right; }
-  .verdict { padding:0 6px; border-radius:4px; font-size:11px; }
+  .verdict { padding:1px 7px; border-radius:4px; font-size:11px; border:1px solid transparent; cursor:pointer; font:inherit; }
+  .verdict:hover:not(:disabled) { border-color: currentColor; }
+  .verdict:disabled { cursor: default; opacity: 0.6; }
   .verdict.allow { color: var(--green, #4caf7d); background: color-mix(in srgb, var(--green, #4caf7d) 12%, transparent); }
   .verdict.deny  { color: var(--amber, #e0af68); background: color-mix(in srgb, var(--amber, #e0af68) 14%, transparent); }
+  .deny-banner {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    margin-top:10px; padding:5px 10px; font-size:12px;
+    border:1px solid var(--amber, #e0af68); border-radius:6px;
+    background: color-mix(in srgb, var(--amber, #e0af68) 8%, transparent);
+  }
+  .deny-banner-actions { display:flex; gap:10px; align-items:center; white-space:nowrap; }
 </style>

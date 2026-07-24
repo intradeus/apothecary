@@ -1,7 +1,9 @@
-// Package builtin holds the compiled-in defaults: the "default" flow and
-// the agent library it references. They are embedded in the binary, so a
-// completely empty database still resolves a working configuration — no
-// seeding step, no drift, nothing to delete by accident.
+// Package builtin holds the compiled-in defaults: the "default" flow, the
+// agent library it references, and the suggested egress-allowlist defaults
+// (EgressDefaults). They are embedded in the binary, so a completely empty
+// database still resolves a working configuration — no seeding step, no drift,
+// nothing to delete by accident. Note the egress list is OFFERED, not enforced:
+// a project opts in via the form, unlike flows/agents which back a resolve.
 //
 // Layering contract (shadowing): the database always wins. A user-saved
 // flow or a project-authored agent with the same name overrides the

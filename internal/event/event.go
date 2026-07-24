@@ -82,6 +82,11 @@ type RunCreated struct {
 	FlowHash    string `json:"flow_hash"`
 	RepoURL     string `json:"repo_url"`
 	Branch      string `json:"branch"`
+	// SourceBranch is the branch this run forks off from — the base of the
+	// `git switch -c <Branch> origin/<SourceBranch>` at bootstrap. Per-run
+	// (each attempt can start from a different source); empty on pre-source
+	// runs, where bootstrap falls back to the project's default branch.
+	SourceBranch string `json:"source_branch,omitempty"`
 	// ProjectID scopes the run to its project (DESIGN2 §6.3); absent in
 	// pre-v2 events, projected as "".
 	ProjectID string `json:"project_id,omitempty"`

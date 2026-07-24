@@ -73,6 +73,10 @@ type WorkspaceConfig struct {
 	EgressMode string `json:"egress_mode,omitempty"`
 	// DeniedDomains is the blocked-host list used in "deny" mode.
 	DeniedDomains []string `json:"denied_domains,omitempty"`
+	// BlockedDomains is a force-DENY override that wins in BOTH modes — the
+	// persisted backing for the run page's live "block this domain" toggle, so
+	// future runs inherit the block.
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
 	// EgressAllowedCIDRs/EgressAllowedPorts are the "allow" mode escape hatch for
 	// legitimate raw (non-HTTP/TLS) external egress the default backstop drops.
 	EgressAllowedCIDRs []string `json:"egress_allowed_cidrs,omitempty"`
@@ -82,6 +86,24 @@ type WorkspaceConfig struct {
 	// own customizations.vscode.extensions). Baked into the image, so they are
 	// not reinstalled every run.
 	CodeServerExtensions []string `json:"code_server_extensions,omitempty"`
+	// Editor holds the workspace's code-server UI defaults (color theme + common
+	// editor prefs). Unlike the extensions above, these are applied as VS Code
+	// user settings when the browser editor is opened — so changing them needs
+	// no image rebuild.
+	Editor EditorConfig `json:"editor,omitzero"`
+}
+
+// EditorConfig is the per-project code-server UI defaults (§ code-server
+// integration). Neutral, curated fields the devcontainer adapter maps to VS
+// Code user settings; applied at editor-start, so changing them needs no
+// rebuild. Kept separate from CodeServerExtensions, which must install at
+// build time.
+type EditorConfig struct {
+	Theme        string `json:"theme,omitempty"`          // workbench.colorTheme
+	FontSize     int    `json:"font_size,omitempty"`      // editor.fontSize
+	TabSize      int    `json:"tab_size,omitempty"`       // editor.tabSize
+	FormatOnSave bool   `json:"format_on_save,omitempty"` // editor.formatOnSave
+	WordWrap     bool   `json:"word_wrap,omitempty"`      // editor.wordWrap ("on")
 }
 
 // Project picks one integration per port and adds repo/commands/workspace

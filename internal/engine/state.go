@@ -23,11 +23,12 @@ const (
 // is reconstructed from events (§2: counters and budgets are never stored
 // separately), so a kill -9 at any point is recoverable by replay.
 type runState struct {
-	runID  string
-	view   run.View
-	fl     *flow.Flow
-	branch string
-	envID  ports.EnvID
+	runID        string
+	view         run.View
+	fl           *flow.Flow
+	branch       string
+	sourceBranch string // branch this run forks off from (origin/<sourceBranch>)
+	envID        ports.EnvID
 
 	pos int
 	ph  phase
@@ -93,6 +94,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		switch p := ev.Payload.(type) {
 		case *event.RunCreated:
 			rs.branch = p.Branch
+			rs.sourceBranch = p.SourceBranch
 		case *event.EnvReady:
 			rs.envID = ports.EnvID(p.EnvID)
 			rs.links = p.Links

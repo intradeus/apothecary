@@ -31,15 +31,30 @@ tasks:
       - '{{.LOCAL_COMPOSE}} logs -f apothecaryd'
 
   local:down:
-    desc: Stop the local stack (data kept)
+    desc: Stop the local stack + sweep engine-managed docker objects (data kept)
     cmds:
+      # Compose down first (stops apothecaryd so it can't recreate anything)...
       - '{{.LOCAL_COMPOSE}} down'
+      # ...then sweep the objects the ENGINE creates on the host daemon (per-run
+      # DinD sandboxes, per-project egress gateways, apo-egress-* networks and
+      # sandbox volumes) — compose doesn't know about them, so they'd leak.
+      - task: local:sweep-managed
+
+  # Remove every apothecary-engine-managed docker object (all carry the
+  # apothecary=true label). Safe to run anytime; ignores "nothing to remove".
+  local:sweep-managed:
+    desc: Remove leaked engine-managed docker objects (sandboxes, gateways, nets, volumes)
+    cmds:
+      - docker ps -aq --filter label=apothecary=true | xargs -r docker rm -f
+      - docker network ls -q --filter label=apothecary=true | xargs -r docker network rm
+      - docker volume ls -q --filter label=apothecary=true | xargs -r docker volume rm -f
 
   local:destroy:
-    desc: Stop the local stack AND delete its volumes (fresh DB next start)
+    desc: Stop the local stack, delete its volumes AND sweep engine-managed objects
     prompt: This wipes the local stack's database and runs dir. Continue?
     cmds:
       - '{{.LOCAL_COMPOSE}} down -v'
+      - task: local:sweep-managed
 
   # --- go-run dev mode (fake kinds, no docker build) -------------------------
   dev:
