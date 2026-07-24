@@ -27,6 +27,7 @@ import (
 	"time"
 
 	matrixadapter "apothecary/internal/adapters/matrix"
+	slackadapter "apothecary/internal/adapters/slack"
 	"apothecary/internal/artifacts"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
@@ -176,6 +177,7 @@ func cmdServe(args []string) error {
 
 	chreg := channels.NewRegistry()
 	chreg.Register("matrix", matrixadapter.Factory)
+	chreg.Register("slack", slackadapter.Factory)
 	chreg.Persist(store)
 	rows, err := store.LoadChannels(ctx)
 	if err != nil {

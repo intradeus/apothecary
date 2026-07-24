@@ -985,7 +985,8 @@ func maskChannel(e *channels.Entry) map[string]any {
 	for k, v := range e.Config {
 		lk := strings.ToLower(k)
 		secret := strings.Contains(lk, "token") || strings.Contains(lk, "secret") ||
-			strings.Contains(lk, "password") || strings.Contains(lk, "key")
+			strings.Contains(lk, "password") || strings.Contains(lk, "key") ||
+			strings.Contains(lk, "webhook") // e.g. Slack webhook_url embeds its secret
 		if str, ok := v.(string); ok && secret {
 			cfg[k] = secrets.Mask(str)
 		} else {
