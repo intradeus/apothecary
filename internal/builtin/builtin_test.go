@@ -3,10 +3,47 @@ package builtin
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 )
+
+// TestDefaultFlowBindingsClean is the wiring invariant this feature exists
+// for: the default flow's stage bindings satisfy the built-in agents' declared
+// I/O contract with zero errors AND zero warnings. If a builtin agent's decls
+// and the default flow's bindings ever drift apart, this fails.
+func TestDefaultFlowBindingsClean(t *testing.T) {
+	specs := map[string]*agentspec.Spec{}
+	for _, sp := range Agents() {
+		specs[sp.Name] = sp
+	}
+	errs, warns := flow.ValidateBindings(Flow(DefaultFlowName), specs)
+	for _, e := range errs {
+		t.Errorf("binding error: %s", e.Error())
+	}
+	for _, w := range warns {
+		t.Errorf("binding warning: %s", w)
+	}
+}
+
+// TestBuiltinPromptsBindingNeutral guards the rewording: a builtin agent that
+// declares the reserved feedback input must not still reference the old
+// literal "PREVIOUS ATTEMPT FEEDBACK" header, which no longer renders for it.
+func TestBuiltinPromptsBindingNeutral(t *testing.T) {
+	for _, sp := range Agents() {
+		declaresFeedback := false
+		for _, in := range sp.Inputs {
+			if in.Name == agentspec.InputFeedback {
+				declaresFeedback = true
+			}
+		}
+		if declaresFeedback && strings.Contains(sp.Prompt, "PREVIOUS ATTEMPT FEEDBACK") {
+			t.Errorf("agent %q declares feedback but its prompt still names the legacy header", sp.Name)
+		}
+	}
+}
 
 // TestDefaultsParse locks the compiled-in defaults: the binary must never
 // ship a default that fails to parse (load panics on the first accessor).

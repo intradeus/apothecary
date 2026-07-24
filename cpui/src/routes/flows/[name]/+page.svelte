@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ago, type FlowRow, type FlowVersion } from '$lib/api';
+  import { api, ago, type Agent, type FlowRow, type FlowVersion } from '$lib/api';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
   import { ABORT, autoLayout, docToYaml, DONE, START, edgeOf, setEdge, setEntry, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
@@ -27,7 +27,10 @@
   let versions = $state<FlowVersion[]>([]);
   let error = $state('');
   let busy = $state(false);
-  let validation = $state<{ ok: boolean; detail: string } | null>(null);
+  let validation = $state<{ ok: boolean; detail: string; warnings?: string[] } | null>(null);
+  // Built-in agent library (project-independent), for the inspector's binding
+  // fields. Best-effort — decl hints simply stay off if this fails.
+  let agents = $state<Agent[]>([]);
 
   // Flows are portable, project-independent data: the editor takes NOTHING
   // from any project. Agent / harness / model / run_ref are free text here
@@ -44,6 +47,7 @@
       if (r.ok && r.doc) {
         doc = r.doc;
         layout = flow.layout?.nodes ?? autoLayout(doc);
+        if (r.warnings?.length) validation = { ok: true, detail: 'valid', warnings: r.warnings };
         rev++;
       } else {
         tab = 'yaml';
@@ -51,6 +55,11 @@
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    }
+    try {
+      agents = await api.allAgents();
+    } catch {
+      /* binding hints stay off */
     }
   };
   onMount(load);
@@ -151,7 +160,7 @@
     try {
       const r = await api.validateFlow(currentYAML());
       validation = r.ok
-        ? { ok: true, detail: `valid — ${r.stages} stages, hash ${r.hash?.slice(0, 12)}` }
+        ? { ok: true, detail: `valid — ${r.stages} stages, hash ${r.hash?.slice(0, 12)}`, warnings: r.warnings }
         : { ok: false, detail: (r.errors ?? []).join('\n') };
     } catch (e) {
       validation = { ok: false, detail: e instanceof Error ? e.message : String(e) };
@@ -172,7 +181,7 @@
         rev++;
       }
       graphDirty = false;
-      validation = { ok: true, detail: 'saved' };
+      validation = { ok: true, detail: 'saved', warnings: r.warnings };
       versions = await api.flowVersions(flow.name);
     } catch (e) {
       validation = { ok: false, detail: e instanceof Error ? e.message : String(e) };
@@ -297,7 +306,7 @@
               }}>✕ close</button
             >
           </div>
-          <FlowInspector {doc} {selection} onchange={markChanged} onselect={select} />
+          <FlowInspector {doc} {selection} {agents} onchange={markChanged} onselect={select} />
         </div>
       {/if}
     </div>
@@ -309,6 +318,14 @@
   {#if validation}
     <div class="card" style="margin-top:10px; border-color:{validation.ok ? 'var(--green)' : 'var(--red)'}">
       <pre style="margin:0; white-space:pre-wrap" class="small {validation.ok ? '' : 'error'}">{validation.detail}</pre>
+      {#if validation.warnings?.length}
+        <div class="warn-block small">
+          <strong>Binding warnings</strong> <span class="muted">— advisory; the flow still saves and runs</span>
+          <ul style="margin:4px 0 0">
+            {#each validation.warnings as w (w)}<li>{w}</li>{/each}
+          </ul>
+        </div>
+      {/if}
     </div>
   {/if}
   {#if dirty}<div class="muted small" style="margin-top:6px">Unsaved changes — runs keep using the last saved version.</div>{/if}
@@ -379,5 +396,11 @@
   .inspector-float :global(.inspector) {
     border-radius: 0 0 8px 8px;
     margin: 0;
+  }
+  .warn-block {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border, #333);
+    color: var(--warn, #d0a040);
   }
 </style>

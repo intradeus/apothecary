@@ -128,6 +128,7 @@
   let editorTabSize = $state(init?.workspace.editor?.tab_size ?? 0);
   let editorFormatOnSave = $state(init?.workspace.editor?.format_on_save ?? false);
   let editorWordWrap = $state(init?.workspace.editor?.word_wrap ?? false);
+  let editorTrustWorkspace = $state(init?.workspace.editor?.trust_workspace ?? false);
   // Flows are user-defined — no built-in fallback exists.
   let defaultFlow = $state(init?.default_flow ?? flowNames[0] ?? '');
 
@@ -194,7 +195,8 @@
             font_size: Number(editorFontSize) || 0,
             tab_size: Number(editorTabSize) || 0,
             format_on_save: editorFormatOnSave,
-            word_wrap: editorWordWrap
+            word_wrap: editorWordWrap,
+            trust_workspace: editorTrustWorkspace
           }
         },
         default_flow: defaultFlow
@@ -385,6 +387,10 @@
       <label class="ed-check">
         <input type="checkbox" bind:checked={editorWordWrap} />
         <span>Word wrap</span>
+      </label>
+      <label class="ed-check" title="Disables VS Code's Workspace Trust prompts (@tag:workspaceTrust) so the sandbox opens as trusted with no dialogs.">
+        <input type="checkbox" bind:checked={editorTrustWorkspace} />
+        <span>Trust workspace</span>
       </label>
     </div>
   </div>

@@ -17,14 +17,16 @@ import (
 // Agent is one per-project agent definition (DESIGN3 §1): the DB-backed
 // successor of the target repo's .apothecary/agents/<name>.yaml.
 type Agent struct {
-	ProjectID   string    `json:"project_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	ReadOnly    bool      `json:"read_only"`
-	AllowBash   bool      `json:"allow_bash"`
-	Prompt      string    `json:"prompt"`
-	Hash        string    `json:"hash"` // current content version
-	UpdatedAt   time.Time `json:"updated_at"`
+	ProjectID   string                 `json:"project_id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	ReadOnly    bool                   `json:"read_only"`
+	AllowBash   bool                   `json:"allow_bash"`
+	Prompt      string                 `json:"prompt"`
+	Inputs      []agentspec.InputDecl  `json:"inputs,omitempty"`
+	Outputs     []agentspec.OutputDecl `json:"outputs,omitempty"`
+	Hash        string                 `json:"hash"` // current content version
+	UpdatedAt   time.Time              `json:"updated_at"`
 }
 
 // AgentVersion is one immutable content-addressed version. project_id is
@@ -43,17 +45,33 @@ func (a Agent) Spec() *agentspec.Spec {
 	return &agentspec.Spec{
 		Name: a.Name, Description: a.Description,
 		ReadOnly: a.ReadOnly, AllowBash: a.AllowBash, Prompt: a.Prompt,
+		Inputs: a.Inputs, Outputs: a.Outputs,
+	}
+}
+
+// AgentFromSpec is the inverse of Spec: it builds a library Agent from a
+// harness-agnostic spec (used for built-in rows and resolver flattening) so
+// every construction site computes the same hash from the same fields.
+func AgentFromSpec(sp *agentspec.Spec) Agent {
+	return Agent{
+		Name: sp.Name, Description: sp.Description,
+		ReadOnly: sp.ReadOnly, AllowBash: sp.AllowBash, Prompt: sp.Prompt,
+		Inputs: sp.Inputs, Outputs: sp.Outputs,
 	}
 }
 
 // agentContent is the canonical hashed/stored shape (stable field order via
-// struct tags — json.Marshal emits fields in declaration order).
+// struct tags — json.Marshal emits fields in declaration order). Inputs and
+// Outputs are omitempty so agents predating the I/O contract keep their hash
+// (a nil/empty slice marshals away entirely).
 type agentContent struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	ReadOnly    bool   `json:"read_only"`
-	AllowBash   bool   `json:"allow_bash"`
-	Prompt      string `json:"prompt"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	ReadOnly    bool                   `json:"read_only"`
+	AllowBash   bool                   `json:"allow_bash"`
+	Prompt      string                 `json:"prompt"`
+	Inputs      []agentspec.InputDecl  `json:"inputs,omitempty"`
+	Outputs     []agentspec.OutputDecl `json:"outputs,omitempty"`
 }
 
 // AgentHash is the content address: sha256[:16] of the canonical JSON.
@@ -61,6 +79,7 @@ func AgentHash(a Agent) string {
 	data, _ := json.Marshal(agentContent{
 		Name: a.Name, Description: a.Description,
 		ReadOnly: a.ReadOnly, AllowBash: a.AllowBash, Prompt: a.Prompt,
+		Inputs: a.Inputs, Outputs: a.Outputs,
 	})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])[:16]
@@ -73,6 +92,9 @@ func (s *Service) SaveAgent(ctx context.Context, a Agent) (Agent, error) {
 	}
 	if strings.TrimSpace(a.Prompt) == "" {
 		return Agent{}, invalidf("agent %s: prompt is required", a.Name)
+	}
+	if err := agentspec.ValidateIO(a.Inputs, a.Outputs); err != nil {
+		return Agent{}, invalidf("agent %s: %v", a.Name, err)
 	}
 	if _, err := s.db.GetProject(ctx, a.ProjectID); err != nil {
 		return Agent{}, fmt.Errorf("agent %s: project %s: %w", a.Name, a.ProjectID, err)
@@ -197,6 +219,7 @@ func AgentVersionRow(a Agent, at time.Time) AgentVersion {
 	data, _ := json.Marshal(agentContent{
 		Name: a.Name, Description: a.Description,
 		ReadOnly: a.ReadOnly, AllowBash: a.AllowBash, Prompt: a.Prompt,
+		Inputs: a.Inputs, Outputs: a.Outputs,
 	})
 	return AgentVersion{Hash: a.Hash, Name: a.Name, Spec: data, CreatedAt: at}
 }

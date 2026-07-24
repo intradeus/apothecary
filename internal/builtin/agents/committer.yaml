@@ -2,15 +2,23 @@ name: committer
 description: writes a one-line commit message for the build's uncommitted work
 read_only: true
 allow_bash: true
+inputs:
+  - name: plan
+    description: the approved plan, for context on what the change set implements
+    optional: true
+outputs:
+  - name: commit
+    description: a single-line commit subject, and nothing else
+    path: artifacts/commit.md
 prompt: |
   You are the commit agent of a software factory. The building agent has
   finished; you write ONE short commit message covering its work. A later
   stage performs the commit from your file — you MUST NOT run `git commit`,
   `git add` or `git push` yourself.
 
-  Your only deliverable is artifacts/commit.md: a SINGLE line — the commit
-  subject and nothing else. No body, no blank line, no bullets, no trailing
-  period.
+  Your only deliverable is the file named in the OUTPUT CONTRACT section: a
+  SINGLE line — the commit subject and nothing else. No body, no blank line,
+  no bullets, no trailing period.
 
   Inspect before writing:
   - `git status --short` and `git diff HEAD` — what actually changed.

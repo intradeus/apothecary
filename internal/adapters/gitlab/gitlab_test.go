@@ -184,3 +184,25 @@ func TestMRStateMapping(t *testing.T) {
 		t.Errorf("state = %v, %v", st, err)
 	}
 }
+
+func TestAccountListBranches(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/7/repository/branches", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PRIVATE-TOKEN") != "tok" {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"name":"main","default":true},{"name":"develop","default":false}]`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	acc := NewAccount(ts.URL, "tok")
+	branches, err := acc.ListBranches(context.Background(), "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) != 2 || branches[0].Name != "main" || !branches[0].Default || branches[1].Name != "develop" {
+		t.Errorf("branches = %+v", branches)
+	}
+}

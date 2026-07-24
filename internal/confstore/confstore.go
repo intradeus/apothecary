@@ -104,6 +104,9 @@ type EditorConfig struct {
 	TabSize      int    `json:"tab_size,omitempty"`       // editor.tabSize
 	FormatOnSave bool   `json:"format_on_save,omitempty"` // editor.formatOnSave
 	WordWrap     bool   `json:"word_wrap,omitempty"`      // editor.wordWrap ("on")
+	// TrustWorkspace disables VS Code's Workspace Trust prompts (the
+	// @tag:workspaceTrust settings) so the ephemeral sandbox opens as trusted.
+	TrustWorkspace bool `json:"trust_workspace,omitempty"`
 }
 
 // Project picks one integration per port and adds repo/commands/workspace

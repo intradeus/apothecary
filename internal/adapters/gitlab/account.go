@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -62,6 +63,38 @@ func (ac *Account) ListRepos(ctx context.Context) ([]Repo, error) {
 				Locator:       strconv.Itoa(r.ID),
 				DefaultBranch: r.DefaultBranch,
 			})
+		}
+		if len(rows) < 100 {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
+
+// Branch is one branch of a project (source-branch picker source).
+type Branch struct {
+	Name    string
+	Default bool
+}
+
+// ListBranches returns a project's branches (GET
+// /projects/:id/repository/branches), paginated to exhaustion. locator is the
+// numeric project id (RepoRef.Locator).
+func (ac *Account) ListBranches(ctx context.Context, locator string) ([]Branch, error) {
+	pid := url.PathEscape(locator)
+	var out []Branch
+	for page := 1; page > 0 && page < 100; {
+		var rows []struct {
+			Name    string `json:"name"`
+			Default bool   `json:"default"`
+		}
+		p := fmt.Sprintf("/projects/%s/repository/branches?per_page=100&page=%d", pid, page)
+		if _, err := ac.a.api(ctx, http.MethodGet, p, nil, &rows); err != nil {
+			return nil, err
+		}
+		for _, b := range rows {
+			out = append(out, Branch{Name: b.Name, Default: b.Default})
 		}
 		if len(rows) < 100 {
 			break

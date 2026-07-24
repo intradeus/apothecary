@@ -73,6 +73,13 @@ export interface RepoInfo {
   default_branch: string;
 }
 
+// One branch a run can fork off from (source-branch picker); default marks the
+// repo's default branch so the picker can pre-select it.
+export interface BranchInfo {
+  name: string;
+  default: boolean;
+}
+
 // ModelInfo.id is the exact `provider/model` string flows use.
 export interface ModelInfo {
   id: string;
@@ -100,6 +107,8 @@ export interface Project {
       tab_size?: number;
       format_on_save?: boolean;
       word_wrap?: boolean;
+      // Disable VS Code Workspace Trust prompts (@tag:workspaceTrust).
+      trust_workspace?: boolean;
     };
     // Egress gateway posture. 'deny' = allow-all + denied_domains; anything
     // else (incl. empty) = deny-all + the derived allowlist ∪ extra_domains.
@@ -144,6 +153,16 @@ export interface Ticket {
   updated_at: string;
 }
 
+// One declared input (files/$CHANGED the agent expects) or output (files it
+// must produce) in an agent's I/O contract (DESIGN4 §1). Inputs carry
+// `optional`; outputs carry a default `path`.
+export interface AgentIODecl {
+  name: string;
+  description?: string;
+  optional?: boolean;
+  path?: string;
+}
+
 // Agent library (DESIGN3 §1): per-project, versioned, copiable.
 export interface Agent {
   project_id: string;
@@ -152,6 +171,8 @@ export interface Agent {
   read_only: boolean;
   allow_bash: boolean;
   prompt: string;
+  inputs?: AgentIODecl[];
+  outputs?: AgentIODecl[];
   hash: string;
   updated_at: string;
   // Served from the binary's defaults (not authored in this project);
@@ -162,7 +183,15 @@ export interface Agent {
 export interface AgentVersion {
   hash: string;
   name: string;
-  spec: { name: string; description: string; read_only: boolean; allow_bash: boolean; prompt: string };
+  spec: {
+    name: string;
+    description: string;
+    read_only: boolean;
+    allow_bash: boolean;
+    prompt: string;
+    inputs?: AgentIODecl[];
+    outputs?: AgentIODecl[];
+  };
   created_at: string;
 }
 
@@ -460,6 +489,8 @@ export const api = {
 
   projects: () => req<Project[]>('/api/projects'),
   project: (id: string) => req<Project>(`/api/projects/${id}`),
+  // Branches of the project's repo (source-branch picker), via its forge.
+  projectBranches: (id: string) => req<BranchInfo[]>(`/api/projects/${id}/branches`),
   createProject: (body: Omit<Project, 'id' | 'created_at' | 'updated_at'>) =>
     post('/api/projects', body) as Promise<Project>,
   updateProject: (id: string, body: Omit<Project, 'id' | 'created_at' | 'updated_at'>) =>
@@ -473,8 +504,22 @@ export const api = {
 
   // agent library (DESIGN3 §1)
   agents: (projectId: string) => req<Agent[]>(`/api/projects/${projectId}/agents`),
-  putAgent: (projectId: string, name: string, body: { description: string; read_only: boolean; allow_bash: boolean; prompt: string }) =>
-    put(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, body) as Promise<Agent>,
+  // Project-independent merged library for the flow editor (builtins overlaid
+  // with a project's authored agents when projectId is given).
+  allAgents: (projectId?: string) =>
+    req<Agent[]>(`/api/agents${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`),
+  putAgent: (
+    projectId: string,
+    name: string,
+    body: {
+      description: string;
+      read_only: boolean;
+      allow_bash: boolean;
+      prompt: string;
+      inputs?: AgentIODecl[];
+      outputs?: AgentIODecl[];
+    }
+  ) => put(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, body) as Promise<Agent>,
   deleteAgent: (projectId: string, name: string) =>
     req<void>(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   agentVersions: (projectId: string, name: string) =>
@@ -488,10 +533,11 @@ export const api = {
   saveFlow: (name: string, yaml: string, layout?: FlowLayout) =>
     put(`/api/flows/${encodeURIComponent(name)}`, { yaml, ...(layout ? { layout } : {}) }) as Promise<FlowRow>,
   deleteFlow: (name: string) => req<void>(`/api/flows/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  validateFlow: (yaml: string) =>
-    post('/api/flows/validate', { yaml }) as Promise<{
+  validateFlow: (yaml: string, projectId?: string) =>
+    post('/api/flows/validate', { yaml, ...(projectId ? { project_id: projectId } : {}) }) as Promise<{
       ok: boolean;
       errors?: string[];
+      warnings?: string[];
       name?: string;
       hash?: string;
       stages?: number;

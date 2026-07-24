@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/projects/{id}", s.getProject)
 		mux.HandleFunc("PUT /api/projects/{id}", s.updateProject)
 		mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
+		mux.HandleFunc("GET /api/projects/{id}/branches", s.listProjectBranches)
 		// Tickets: a ticket owns many runs. Create/list/get/update/delete the
 		// ticket; POST .../runs starts an attempt (flow chosen per run).
 		mux.HandleFunc("GET /api/tickets", s.listTickets)
@@ -146,6 +147,9 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("DELETE /api/flows/{name}", s.deleteFlow)
 		mux.HandleFunc("GET /api/flows/{name}/versions", s.listFlowVersions)
 		mux.HandleFunc("GET /api/flow-versions/{hash}", s.getFlowVersion)
+		// Project-independent agent library for the flow editor (?project=<id>
+		// overlays that project's authored agents on the built-ins).
+		mux.HandleFunc("GET /api/agents", s.listAllAgents)
 		mux.HandleFunc("GET /api/settings", s.getSettings)
 		mux.HandleFunc("PUT /api/settings", s.putSettings)
 	}

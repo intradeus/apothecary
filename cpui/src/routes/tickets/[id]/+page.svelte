@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, stateColors, ago, type Project, type RunView, type Ticket } from '$lib/api';
+  import { api, stateColors, ago, type BranchInfo, type Project, type RunView, type Ticket } from '$lib/api';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import TicketForm from '$lib/TicketForm.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
@@ -17,7 +17,9 @@
   let editing = $state(false);
 
   let flow = $state(''); // per-run flow; empty = project default
-  let sourceBranch = $state(''); // branch to fork this run off from; empty = project default
+  let sourceBranch = $state(''); // branch to fork this run off from; '' until branches load
+  let branches = $state<BranchInfo[]>([]);
+  let branchesErr = $state(''); // forge unreachable ⇒ fall back to project default
   let runGoal = $state(''); // direction for THIS attempt (additive to the ticket goal)
   let runFiles = $state<File[]>([]);
   let starting = $state(false);
@@ -28,9 +30,24 @@
     try {
       [ticket, runs] = await Promise.all([api.ticket(ticketId), api.runs({ ticket: ticketId })]);
       loaded = true;
+      loadBranches();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       loaded = true;
+    }
+  };
+
+  // Fetch the repo's branches for the source-branch picker; pre-select the
+  // default branch. On failure we hide the picker and let the run start on the
+  // project default (source_branch left empty).
+  const loadBranches = async () => {
+    if (!ticket) return;
+    try {
+      branches = await api.projectBranches(ticket.project_id);
+      const def = branches.find((b) => b.default) ?? branches[0];
+      if (def && !sourceBranch) sourceBranch = def.name;
+    } catch (e) {
+      branchesErr = e instanceof Error ? e.message : String(e);
     }
   };
 
@@ -103,8 +120,18 @@
           <input id="flow" bind:value={flow} placeholder={project?.default_flow ?? 'default'} class="mono" />
         </div>
         <div style="flex:1">
-          <label for="source-branch">Source branch <span class="muted">— branch off from; empty = project default{project ? ` (${project.repo.default_branch})` : ''}</span></label>
-          <input id="source-branch" bind:value={sourceBranch} placeholder={project?.repo.default_branch ?? 'main'} class="mono" />
+          <label for="source-branch">Source branch <span class="muted">— branch this run forks off from</span></label>
+          {#if branches.length}
+            <select id="source-branch" bind:value={sourceBranch} class="mono">
+              {#each branches as b (b.name)}
+                <option value={b.name}>{b.name}{b.default ? ' (default)' : ''}</option>
+              {/each}
+            </select>
+          {:else}
+            <input id="source-branch" class="mono" disabled
+              placeholder={branchesErr ? 'branches unavailable — using project default' : 'loading branches…'}
+              value={project?.repo.default_branch ?? ''} />
+          {/if}
         </div>
         <button class="primary" onclick={startRun} disabled={starting}>
           {starting ? 'Starting…' : '▶ Start run'}

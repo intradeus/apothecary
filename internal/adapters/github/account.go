@@ -67,3 +67,39 @@ func (ac *Account) ListRepos(ctx context.Context) ([]Repo, error) {
 	}
 	return out, nil
 }
+
+// Branch is one branch of a repo (source-branch picker source).
+type Branch struct {
+	Name    string
+	Default bool
+}
+
+// ListBranches returns a repo's branches (GET /repos/:owner/:repo/branches),
+// paginated to exhaustion. locator is "owner/repo". A prior repo GET supplies
+// the default branch (the branches endpoint doesn't flag it).
+func (ac *Account) ListBranches(ctx context.Context, locator string) ([]Branch, error) {
+	var repo struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if _, err := ac.a.api(ctx, http.MethodGet, "/repos/"+locator, nil, &repo); err != nil {
+		return nil, err
+	}
+	var out []Branch
+	for page := 1; page > 0 && page < 100; {
+		var rows []struct {
+			Name string `json:"name"`
+		}
+		p := fmt.Sprintf("/repos/%s/branches?per_page=100&page=%d", locator, page)
+		if _, err := ac.a.api(ctx, http.MethodGet, p, nil, &rows); err != nil {
+			return nil, err
+		}
+		for _, b := range rows {
+			out = append(out, Branch{Name: b.Name, Default: b.Name == repo.DefaultBranch})
+		}
+		if len(rows) < 100 {
+			break
+		}
+		page++
+	}
+	return out, nil
+}

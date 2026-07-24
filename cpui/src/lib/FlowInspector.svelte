@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Selection } from '$lib/FlowGraph.svelte';
+  import type { Agent } from '$lib/api';
   import {
     ABORT,
     DONE,
@@ -10,6 +11,8 @@
     pruneEdgeTarget,
     setEdge,
     freshStage,
+    isMapInputs,
+    isMapOutputs,
     type DocEdge,
     type EdgeKind,
     type FlowDoc,
@@ -18,22 +21,79 @@
 
   // Flows are portable, project-independent data: this editor takes NOTHING
   // from any project. Agent / harness / model / run_ref are free text and are
-  // validated against the project only at run creation (preflight).
+  // validated against the project only at run creation (preflight). `agents`
+  // is an OPTIONAL hint list (built-ins ∪ a project's authored agents) used
+  // only to render binding fields from declared I/O — never a constraint.
   let {
     doc,
     selection,
     onchange,
-    onselect
+    onselect,
+    agents = []
   }: {
     doc: FlowDoc;
     selection: Selection;
     onchange: () => void;
     onselect: (sel: Selection) => void;
+    agents?: Agent[];
   } = $props();
 
   const stage = $derived(
     selection?.kind === 'stage' ? doc.stages.find((s) => s.id === selection.id) : undefined
   );
+
+  // The declared I/O of the selected stage's agent, when known. feedback is
+  // excluded from bindable inputs — it is filled by edge feed:, not a stage.
+  const agentDecl = $derived(
+    stage?.type === 'agent' ? agents.find((a) => a.name === stage.agent) : undefined
+  );
+  const declInputs = $derived((agentDecl?.inputs ?? []).filter((d) => d.name !== 'feedback'));
+  const hasFeedbackDecl = $derived((agentDecl?.inputs ?? []).some((d) => d.name === 'feedback'));
+  const declOutputs = $derived(agentDecl?.outputs ?? []);
+
+  // Named input binding: read one decl's bound value; write rebuilds the map
+  // in decl order so bindings never reorder (which would churn the flow hash).
+  function inputValue(s: NonNullable<typeof stage>, name: string): string {
+    return isMapInputs(s.input) ? (s.input[name] ?? '') : '';
+  }
+  function setInputValue(s: NonNullable<typeof stage>, name: string, value: string) {
+    const cur = isMapInputs(s.input) ? s.input : {};
+    const rec: Record<string, string> = {};
+    for (const d of declInputs) {
+      const v = d.name === name ? value : cur[d.name];
+      if (v) rec[d.name] = v;
+    }
+    s.input = Object.keys(rec).length ? rec : undefined;
+    onchange();
+  }
+  // Map legacy positional list entries onto declared inputs (best effort; the
+  // user reviews the result) when converting a grandfathered stage.
+  function convertInputsToNamed(s: NonNullable<typeof stage>) {
+    const arr = Array.isArray(s.input) ? s.input.filter((v) => v !== 'ticket') : [];
+    const rec: Record<string, string> = {};
+    arr.forEach((v, i) => {
+      if (declInputs[i]) rec[declInputs[i].name] = v;
+    });
+    s.input = Object.keys(rec).length ? rec : undefined;
+    onchange();
+  }
+
+  // Named output rebind: value is the effective path (override or decl
+  // default); only genuine overrides (≠ default) are written.
+  function outputValue(s: NonNullable<typeof stage>, name: string, defPath: string): string {
+    if (isMapOutputs(s.output)) return s.output[name] ?? defPath;
+    return defPath;
+  }
+  function setOutputValue(s: NonNullable<typeof stage>, name: string, value: string) {
+    const cur = isMapOutputs(s.output) ? s.output : {};
+    const rec: Record<string, string> = {};
+    for (const d of declOutputs) {
+      const v = d.name === name ? value : (cur[d.name] ?? '');
+      if (v && v !== d.path) rec[d.name] = v;
+    }
+    s.output = Object.keys(rec).length ? rec : undefined;
+    onchange();
+  }
   const edgeSel = $derived(
     selection?.kind === 'edge'
       ? { stage: doc.stages.find((s) => s.id === selection.stage), kind: selection.edge as EdgeKind }
@@ -144,7 +204,10 @@
 
     {#if s.type === 'agent'}
       <label for="st-agent">Agent <span class="muted">— an agent name in the project running this flow</span></label>
-      <input id="st-agent" bind:value={s.agent} oninput={onchange} placeholder="builder" />
+      <input id="st-agent" list="agent-names" bind:value={s.agent} oninput={onchange} placeholder="builder" />
+      <datalist id="agent-names">
+        {#each agents as a (a.name)}<option value={a.name}></option>{/each}
+      </datalist>
       <label for="st-harness">Harness <span class="muted">— override the flow default; empty = {doc.defaults.harness || 'flow default'}</span></label>
       <input id="st-harness" bind:value={s.harness} oninput={onchange} placeholder={doc.defaults.harness || 'opencode'} />
       <label for="st-model">Model <span class="muted">— override the flow default; empty = {doc.defaults.model || 'flow default'}</span></label>
@@ -167,21 +230,99 @@
           <input id="st-timeout" bind:value={s.timeout} oninput={onchange} placeholder="30m" />
         </div>
       </div>
-      <label for="st-input">Input <span class="muted">— comma-separated: ticket, artifact path, $CHANGED</span></label>
-      <input
-        id="st-input"
-        value={(s.input ?? []).join(', ')}
-        oninput={(e) => {
-          const v = e.currentTarget.value
-            .split(',')
-            .map((x) => x.trim())
-            .filter(Boolean);
-          s.input = v.length ? v : undefined;
-          onchange();
-        }}
-      />
-      <label for="st-output">Output artifact</label>
-      <input id="st-output" bind:value={s.output} oninput={onchange} placeholder="artifacts/plan.md" />
+      {#if declInputs.length > 0 && Array.isArray(s.input) && s.input.length > 0}
+        <div class="row spread">
+          <div class="fieldhdr">Input <span class="muted">— legacy list form</span></div>
+          <button type="button" onclick={() => convertInputsToNamed(s)}>Use named bindings</button>
+        </div>
+        <input
+          value={s.input.join(', ')}
+          oninput={(e) => {
+            const v = e.currentTarget.value.split(',').map((x) => x.trim()).filter(Boolean);
+            s.input = v.length ? v : undefined;
+            onchange();
+          }}
+        />
+      {:else if declInputs.length > 0}
+        <div class="fieldhdr" style="margin-bottom:2px">Inputs <span class="muted">— bind each declared input to a path or $CHANGED</span></div>
+        {#each declInputs as d (d.name)}
+          {@const val = inputValue(s, d.name)}
+          {@const isChanged = val === '$CHANGED'}
+          <div class="io-bind">
+            <div class="small">
+              <span class="mono">{d.name}</span>
+              {#if d.optional}<span class="muted">optional</span>{:else}<span class="req">required</span>{/if}
+              {#if d.description}<span class="muted">— {d.description}</span>{/if}
+            </div>
+            <div class="row" style="gap:6px; align-items:center">
+              <input
+                style="flex:1"
+                placeholder="artifacts/plan.md"
+                value={isChanged ? '' : val}
+                disabled={isChanged}
+                oninput={(e) => setInputValue(s, d.name, e.currentTarget.value.trim())}
+              />
+              <label class="row small" style="margin:0; gap:4px; flex:0 0 auto">
+                <input
+                  type="checkbox"
+                  style="width:auto"
+                  checked={isChanged}
+                  onchange={(e) => setInputValue(s, d.name, e.currentTarget.checked ? '$CHANGED' : '')}
+                />
+                $CHANGED
+              </label>
+            </div>
+          </div>
+        {/each}
+        {#if hasFeedbackDecl}
+          <p class="muted small" style="margin:4px 0 0">
+            Also declares <span class="mono">feedback</span>, filled automatically by an edge's <span class="mono">feed:</span>.
+          </p>
+        {/if}
+      {:else}
+        <label for="st-input">Input <span class="muted">— comma-separated: ticket, artifact path, $CHANGED</span></label>
+        <input
+          id="st-input"
+          value={Array.isArray(s.input) ? s.input.join(', ') : ''}
+          oninput={(e) => {
+            const v = e.currentTarget.value.split(',').map((x) => x.trim()).filter(Boolean);
+            s.input = v.length ? v : undefined;
+            onchange();
+          }}
+        />
+      {/if}
+
+      {#if declOutputs.length > 0 && typeof s.output === 'string' && s.output}
+        <div class="row spread">
+          <div class="fieldhdr">Output <span class="muted">— legacy single path</span></div>
+          <button type="button" onclick={() => { s.output = undefined; onchange(); }}>Use declared outputs</button>
+        </div>
+        <input
+          value={s.output}
+          oninput={(e) => { s.output = e.currentTarget.value || undefined; onchange(); }}
+          placeholder="artifacts/plan.md"
+        />
+      {:else if declOutputs.length > 0}
+        <div class="fieldhdr" style="margin-bottom:2px">Outputs <span class="muted">— declared defaults; edit a path only to override</span></div>
+        {#each declOutputs as d (d.name)}
+          <div class="io-bind">
+            <div class="small"><span class="mono">{d.name}</span>{#if d.description}<span class="muted"> — {d.description}</span>{/if}</div>
+            <input
+              value={outputValue(s, d.name, d.path ?? '')}
+              placeholder={d.path}
+              oninput={(e) => setOutputValue(s, d.name, e.currentTarget.value.trim())}
+            />
+          </div>
+        {/each}
+      {:else}
+        <label for="st-output">Output artifact</label>
+        <input
+          id="st-output"
+          value={typeof s.output === 'string' ? s.output : ''}
+          oninput={(e) => { s.output = e.currentTarget.value || undefined; onchange(); }}
+          placeholder="artifacts/plan.md"
+        />
+      {/if}
       <label class="row small" style="gap:6px; margin-top:6px">
         <input
           type="checkbox"
@@ -409,5 +550,19 @@
     border-left: 2px solid var(--border, #444);
     padding-left: 10px;
     margin-top: 10px;
+  }
+  .io-bind {
+    margin-top: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--border, #333);
+    border-radius: 5px;
+  }
+  .req {
+    color: var(--warn, #d08040);
+  }
+  .fieldhdr {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 10px 0 4px;
   }
 </style>

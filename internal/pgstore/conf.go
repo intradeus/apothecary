@@ -514,12 +514,26 @@ func (s *Store) PutSetting(ctx context.Context, key, value string) error {
 
 // --- agents (DESIGN3 §1) ----------------------------------------------------
 
-const agentCols = `project_id, name, description, read_only, allow_bash, prompt, hash, updated_at`
+const agentCols = `project_id, name, description, read_only, allow_bash, prompt, inputs, outputs, hash, updated_at`
 
 func scanAgent(row pgx.Row) (confstore.Agent, error) {
 	var a confstore.Agent
-	err := row.Scan(&a.ProjectID, &a.Name, &a.Description, &a.ReadOnly, &a.AllowBash, &a.Prompt, &a.Hash, &a.UpdatedAt)
-	return a, err
+	var inputs, outputs []byte
+	if err := row.Scan(&a.ProjectID, &a.Name, &a.Description, &a.ReadOnly, &a.AllowBash, &a.Prompt,
+		&inputs, &outputs, &a.Hash, &a.UpdatedAt); err != nil {
+		return a, err
+	}
+	if len(inputs) > 0 {
+		if err := json.Unmarshal(inputs, &a.Inputs); err != nil {
+			return a, err
+		}
+	}
+	if len(outputs) > 0 {
+		if err := json.Unmarshal(outputs, &a.Outputs); err != nil {
+			return a, err
+		}
+	}
+	return a, nil
 }
 
 func (s *Store) UpsertAgent(ctx context.Context, a confstore.Agent) error {
@@ -528,11 +542,19 @@ func (s *Store) UpsertAgent(ctx context.Context, a confstore.Agent) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	inputs, err := json.Marshal(a.Inputs)
+	if err != nil {
+		return err
+	}
+	outputs, err := json.Marshal(a.Outputs)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO agents (`+agentCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		INSERT INTO agents (`+agentCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (project_id, name) DO UPDATE SET
-			description=$3, read_only=$4, allow_bash=$5, prompt=$6, hash=$7, updated_at=$8`,
-		a.ProjectID, a.Name, a.Description, a.ReadOnly, a.AllowBash, a.Prompt, a.Hash, a.UpdatedAt); err != nil {
+			description=$3, read_only=$4, allow_bash=$5, prompt=$6, inputs=$7, outputs=$8, hash=$9, updated_at=$10`,
+		a.ProjectID, a.Name, a.Description, a.ReadOnly, a.AllowBash, a.Prompt, inputs, outputs, a.Hash, a.UpdatedAt); err != nil {
 		if isFK(err) {
 			return fmt.Errorf("agent %s: project %s: %w", a.Name, a.ProjectID, confstore.ErrNotFound)
 		}

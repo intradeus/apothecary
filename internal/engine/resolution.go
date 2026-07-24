@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
@@ -99,6 +100,12 @@ type Resolution struct {
 	// events record the hash so analytics correlate outcome with prompt
 	// version.
 	AgentHashes map[string]string
+	// AgentSpecs maps agent name -> resolved spec (the project's authored
+	// overlay on the built-in library). Prompt assembly reads the input/output
+	// decls from it and preflight validates stage bindings against it. nil (or
+	// a missing entry) disables all decl-driven behavior — bare test fixtures
+	// keep rendering the legacy prompt shape.
+	AgentSpecs map[string]*agentspec.Spec
 	// Release decrements the resolver's provisioner refcount (§6.1 adapter
 	// cache); nil is fine.
 	Release func()
@@ -108,6 +115,16 @@ func (r *Resolution) release() {
 	if r != nil && r.Release != nil {
 		r.Release()
 	}
+}
+
+// agentSpec returns the resolved spec for an agent name, or nil when specs
+// aren't populated (fakes) or the agent isn't in the library. Callers must be
+// nil-safe: a nil spec means "no decls", i.e. legacy prompt behavior.
+func (r *Resolution) agentSpec(name string) *agentspec.Spec {
+	if r == nil || r.AgentSpecs == nil {
+		return nil
+	}
+	return r.AgentSpecs[name]
 }
 
 // runnerFor returns the runner for a stage's pinned harness kind, falling

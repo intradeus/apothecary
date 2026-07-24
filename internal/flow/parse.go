@@ -1,8 +1,10 @@
 package flow
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"apothecary/internal/agentspec"
 )
 
 // Error is a flow validation error pointing at a line in the source file.
@@ -63,26 +67,26 @@ type DocBudget struct {
 }
 
 type DocStage struct {
-	ID           string   `yaml:"id" json:"id"`
-	Type         string   `yaml:"type" json:"type"`
-	Agent        string   `yaml:"agent" json:"agent,omitempty"`
-	Model        string   `yaml:"model" json:"model,omitempty"`
-	Harness      string   `yaml:"harness" json:"harness,omitempty"`
-	MaxTurns     *int     `yaml:"max_turns" json:"max_turns,omitempty"`
-	Timeout      string   `yaml:"timeout" json:"timeout,omitempty"`
-	Input        []string `yaml:"input" json:"input,omitempty"`
-	Output       string   `yaml:"output" json:"output,omitempty"`
-	Verdict      bool     `yaml:"verdict" json:"verdict,omitempty"`
-	Run          string   `yaml:"run" json:"run,omitempty"`
-	RunRef       string   `yaml:"run_ref" json:"run_ref,omitempty"`
-	Ping         string   `yaml:"ping" json:"ping,omitempty"`
-	Payload      string   `yaml:"payload" json:"payload,omitempty"`
-	AutoComplete string   `yaml:"auto_complete" json:"auto_complete,omitempty"`
-	Body         string   `yaml:"body" json:"body,omitempty"`
-	OnSuccess    string   `yaml:"on_success" json:"on_success,omitempty"`
-	OnFail       *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
-	OnReject     *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
-	OnTimeout    *DocEdge `yaml:"on_timeout" json:"on_timeout,omitempty"`
+	ID           string      `yaml:"id" json:"id"`
+	Type         string      `yaml:"type" json:"type"`
+	Agent        string      `yaml:"agent" json:"agent,omitempty"`
+	Model        string      `yaml:"model" json:"model,omitempty"`
+	Harness      string      `yaml:"harness" json:"harness,omitempty"`
+	MaxTurns     *int        `yaml:"max_turns" json:"max_turns,omitempty"`
+	Timeout      string      `yaml:"timeout" json:"timeout,omitempty"`
+	Input        *DocInputs  `yaml:"input" json:"input,omitempty"`
+	Output       *DocOutputs `yaml:"output" json:"output,omitempty"`
+	Verdict      bool        `yaml:"verdict" json:"verdict,omitempty"`
+	Run          string      `yaml:"run" json:"run,omitempty"`
+	RunRef       string      `yaml:"run_ref" json:"run_ref,omitempty"`
+	Ping         string      `yaml:"ping" json:"ping,omitempty"`
+	Payload      string      `yaml:"payload" json:"payload,omitempty"`
+	AutoComplete string      `yaml:"auto_complete" json:"auto_complete,omitempty"`
+	Body         string      `yaml:"body" json:"body,omitempty"`
+	OnSuccess    string      `yaml:"on_success" json:"on_success,omitempty"`
+	OnFail       *DocEdge    `yaml:"on_fail" json:"on_fail,omitempty"`
+	OnReject     *DocEdge    `yaml:"on_reject" json:"on_reject,omitempty"`
+	OnTimeout    *DocEdge    `yaml:"on_timeout" json:"on_timeout,omitempty"`
 }
 
 // edges maps the declared edge kinds to their raw fields. Adding a kind
@@ -161,6 +165,201 @@ func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
 		return nil
 	}
 	return fmt.Errorf("line %d: edge must be a mapping or %q", n.Line, TerminalAbort)
+}
+
+// IOPair is one named binding in a stage's map-form input/output. Line is
+// retained for error reporting; it is not part of the JSON document shape.
+type IOPair struct {
+	Name  string
+	Value string
+	Line  int
+}
+
+// DocInputs is a stage's input binding in the document model: either the
+// legacy ordered list (ticket | $CHANGED | artifact path) or the named map
+// form ({name: path|$CHANGED}). Mapped records which form was written so an
+// empty map is distinguishable from an empty list. Pairs preserves document
+// order — prompts and editor round-trips must stay deterministic.
+type DocInputs struct {
+	Mapped bool
+	List   []string
+	Pairs  []IOPair
+}
+
+// DocOutputs is a stage's output binding: either the legacy single path or
+// the named map form ({decl-name: path}) that rebinds declared output paths.
+type DocOutputs struct {
+	Mapped bool
+	Str    string
+	Pairs  []IOPair
+}
+
+// UnmarshalYAML accepts the legacy list or the {name: path} mapping. A custom
+// unmarshaler bypasses the decoder's KnownFields strictness, so duplicate
+// keys and non-scalar values are rejected by hand (as DocEdge does).
+func (d *DocInputs) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.SequenceNode:
+		return n.Decode(&d.List)
+	case yaml.MappingNode:
+		d.Mapped = true
+		pairs, err := decodeYAMLPairs(n, "input")
+		if err != nil {
+			return err
+		}
+		d.Pairs = pairs
+		return nil
+	case yaml.ScalarNode:
+		if n.Tag == "!!null" { // `input:` with no value — treat as absent
+			return nil
+		}
+	}
+	return fmt.Errorf("line %d: input must be a list or a {name: path} mapping", n.Line)
+}
+
+// UnmarshalYAML accepts the legacy single path or a {decl-name: path} mapping.
+func (d *DocOutputs) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		if n.Tag == "!!null" {
+			return nil
+		}
+		return n.Decode(&d.Str)
+	case yaml.MappingNode:
+		d.Mapped = true
+		pairs, err := decodeYAMLPairs(n, "output")
+		if err != nil {
+			return err
+		}
+		d.Pairs = pairs
+		return nil
+	}
+	return fmt.Errorf("line %d: output must be a path or a {name: path} mapping", n.Line)
+}
+
+// decodeYAMLPairs reads an ordered mapping node into IOPairs, rejecting
+// duplicate keys and non-scalar values. kind names the field in errors.
+func decodeYAMLPairs(n *yaml.Node, kind string) ([]IOPair, error) {
+	seen := map[string]bool{}
+	var pairs []IOPair
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		if v.Kind != yaml.ScalarNode {
+			return nil, fmt.Errorf("line %d: %s %q: value must be a path or %s", v.Line, kind, k.Value, InputChanged)
+		}
+		if seen[k.Value] {
+			return nil, fmt.Errorf("line %d: %s %q bound twice", k.Line, kind, k.Value)
+		}
+		seen[k.Value] = true
+		pairs = append(pairs, IOPair{Name: k.Value, Value: v.Value, Line: k.Line})
+	}
+	return pairs, nil
+}
+
+// MarshalJSON emits the list form as a JSON array and the map form as a JSON
+// object built in pair order — encoding/json sorts map keys, which would
+// reorder bindings and churn the flow hash on every editor round-trip.
+func (d DocInputs) MarshalJSON() ([]byte, error) {
+	if !d.Mapped {
+		return json.Marshal(d.List)
+	}
+	return marshalOrderedPairs(d.Pairs)
+}
+
+// MarshalJSON emits the single path as a JSON string, or the map form as an
+// ordered JSON object.
+func (d DocOutputs) MarshalJSON() ([]byte, error) {
+	if !d.Mapped {
+		return json.Marshal(d.Str)
+	}
+	return marshalOrderedPairs(d.Pairs)
+}
+
+// UnmarshalJSON accepts the array/object (inputs) or string/object (outputs)
+// shapes. Defensive: the server does not decode Doc from JSON today, but a
+// symmetric codec keeps round-trip tests and any future caller honest.
+func (d *DocInputs) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	switch trimmed[0] {
+	case '[':
+		return json.Unmarshal(trimmed, &d.List)
+	case '{':
+		d.Mapped = true
+		pairs, err := unmarshalOrderedPairs(trimmed)
+		d.Pairs = pairs
+		return err
+	}
+	return fmt.Errorf("input must be a JSON array or object")
+}
+
+func (d *DocOutputs) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	if trimmed[0] == '{' {
+		d.Mapped = true
+		pairs, err := unmarshalOrderedPairs(trimmed)
+		d.Pairs = pairs
+		return err
+	}
+	return json.Unmarshal(trimmed, &d.Str)
+}
+
+// marshalOrderedPairs writes IOPairs as a JSON object preserving order.
+func marshalOrderedPairs(pairs []IOPair) ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, p := range pairs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		key, err := json.Marshal(p.Name)
+		if err != nil {
+			return nil, err
+		}
+		val, err := json.Marshal(p.Value)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(key)
+		b.WriteByte(':')
+		b.Write(val)
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
+// unmarshalOrderedPairs walks a JSON object token stream into ordered IOPairs.
+func unmarshalOrderedPairs(data []byte) ([]IOPair, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, fmt.Errorf("expected a JSON object")
+	}
+	var pairs []IOPair
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return nil, fmt.Errorf("expected a string key")
+		}
+		var val string
+		if err := dec.Decode(&val); err != nil {
+			return nil, err
+		}
+		pairs = append(pairs, IOPair{Name: key, Value: val})
+	}
+	return pairs, nil
 }
 
 // Load reads, parses and validates a flow file, setting Flow.Hash.
@@ -421,7 +620,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"max_turns", raw.MaxTurns != nil, []StageType{StageAgent}},
 		{"timeout", raw.Timeout != "", []StageType{StageAgent}},
 		{"input", raw.Input != nil, []StageType{StageAgent}},
-		{"output", raw.Output != "", []StageType{StageAgent}},
+		{"output", raw.Output != nil, []StageType{StageAgent}},
 		{"verdict", raw.Verdict, []StageType{StageAgent}},
 		{"run", raw.Run != "", []StageType{StageCommand}},
 		{"run_ref", raw.RunRef != "", []StageType{StageCommand}},
@@ -476,16 +675,54 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			}
 			s.Timeout = t
 		}
-		for _, in := range raw.Input {
-			if in != InputTicket && in != InputChanged && !validArtifactPath(in) {
-				return fail("input entry %q must be %q, %q or a relative artifact path", in, InputTicket, InputChanged)
+		// input: legacy list (ticket | $CHANGED | path) or named map form
+		// {name: path|$CHANGED}. Named bindings validate against the agent's
+		// declared inputs later (ValidateBindings); here only the shape.
+		if in := raw.Input; in != nil {
+			if in.Mapped {
+				for _, pr := range in.Pairs {
+					if !agentspec.ValidName(pr.Name) {
+						return fail("input %q must match [a-z0-9][a-z0-9._-]* (lowercase slug)", pr.Name)
+					}
+					if pr.Name == agentspec.InputFeedback {
+						return fail("input %q is filled by edge feedback (feed:), not bound in a stage", agentspec.InputFeedback)
+					}
+					if pr.Value == InputTicket {
+						return fail("input %q: the ticket is always the TASK section; remove this binding", pr.Name)
+					}
+					if pr.Value != InputChanged && !validArtifactPath(pr.Value) {
+						return fail("input %q: value %q must be %q or a relative artifact path", pr.Name, pr.Value, InputChanged)
+					}
+					s.Inputs = append(s.Inputs, IOBinding{Name: pr.Name, Value: pr.Value})
+				}
+			} else {
+				for _, v := range in.List {
+					if v != InputTicket && v != InputChanged && !validArtifactPath(v) {
+						return fail("input entry %q must be %q, %q or a relative artifact path", v, InputTicket, InputChanged)
+					}
+					s.Inputs = append(s.Inputs, IOBinding{Value: v})
+				}
 			}
 		}
-		s.Input = raw.Input
-		if raw.Output != "" && !validArtifactPath(raw.Output) {
-			return fail("output %q must be a relative artifact path", raw.Output)
+		// output: legacy single path or named map {decl-name: path} rebinds.
+		if out := raw.Output; out != nil {
+			if out.Mapped {
+				for _, pr := range out.Pairs {
+					if !agentspec.ValidName(pr.Name) {
+						return fail("output %q must match [a-z0-9][a-z0-9._-]* (lowercase slug)", pr.Name)
+					}
+					if !validArtifactPath(pr.Value) {
+						return fail("output %q: path %q must be a relative artifact path", pr.Name, pr.Value)
+					}
+					s.Outputs = append(s.Outputs, IOBinding{Name: pr.Name, Value: pr.Value})
+				}
+			} else if out.Str != "" {
+				if !validArtifactPath(out.Str) {
+					return fail("output %q must be a relative artifact path", out.Str)
+				}
+				s.Outputs = append(s.Outputs, IOBinding{Value: out.Str})
+			}
 		}
-		s.Output = raw.Output
 
 	case StageCommand:
 		if (raw.Run != "") == (raw.RunRef != "") {

@@ -11,8 +11,9 @@ budget: { max_cost_usd: 10.0, max_total_turns: 300 }
 # rejections are unlimited too (each rejection IS a human decision). Timeouts fall
 # back to on_fail unless a stage declares on_timeout.
 stages:
-  - { id: plan,       type: agent, agent: planner, input: [ticket],
-      output: artifacts/plan.md, max_turns: 25,
+  # Agent stages bind their agents' declared inputs by name; unbound outputs
+  # take the agent's declared default path (planner → artifacts/plan.md).
+  - { id: plan,       type: agent, agent: planner, max_turns: 25,
       on_success: plan_gate,
       on_fail: { to: plan, max: 2, feed: output, then: { to: debug_plan, max: -1 } } }
   - { id: debug_plan, type: human_gate, ping: manual_debug, payload: workspace,
@@ -21,14 +22,13 @@ stages:
   - { id: plan_gate,  type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
       on_success: build,
       on_reject: { to: plan, max: -1, feed: feedback } }
-  - { id: build,      type: agent, agent: builder, input: [ticket, artifacts/plan.md], max_turns: 80,
+  - { id: build,      type: agent, agent: builder, input: { plan: artifacts/plan.md }, max_turns: 80,
       on_success: commit_msg,
       on_fail: { to: build, max: 2, feed: output, then: { to: debug_build, max: -1 } } }
   - { id: debug_build, type: human_gate, ping: manual_debug, payload: workspace,
       on_success: build,
       on_reject: abort }
-  - { id: commit_msg, type: agent, agent: committer, input: [ticket, artifacts/plan.md],
-      output: artifacts/commit.md, max_turns: 10,
+  - { id: commit_msg, type: agent, agent: committer, input: { plan: artifacts/plan.md }, max_turns: 10,
       on_success: commit,
       on_fail: { to: commit_msg, max: 1, feed: output, then: { to: debug_commit_msg, max: -1 } } }
   - { id: debug_commit_msg, type: human_gate, ping: manual_debug, payload: workspace,
@@ -51,15 +51,14 @@ stages:
       on_success: test,
       on_reject: abort }
   - { id: review,     type: agent, agent: reviewer, model: opencode-go/glm-5.1,
-      input: [ticket, artifacts/plan.md, $CHANGED], verdict: true, max_turns: 30,
+      input: { plan: artifacts/plan.md, changes: $CHANGED }, verdict: true, max_turns: 30,
       on_success: redact,
       on_reject: { to: build, max: 3, feed: comments },
       on_fail: { to: review, max: 1, feed: output, then: { to: debug_review, max: -1 } } }
   - { id: debug_review, type: human_gate, ping: manual_debug, payload: workspace,
       on_success: review,
       on_reject: abort }
-  - { id: redact,     type: agent, agent: redactor, input: [ticket, $CHANGED],
-      output: artifacts/mr.md, max_turns: 15,
+  - { id: redact,     type: agent, agent: redactor, input: { changes: $CHANGED }, max_turns: 15,
       on_success: push,
       on_fail: { to: redact, max: 1, feed: output, then: { to: debug_redact, max: -1 } } }
   - { id: debug_redact, type: human_gate, ping: manual_debug, payload: workspace,

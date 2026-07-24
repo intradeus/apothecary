@@ -176,3 +176,36 @@ func TestAccount(t *testing.T) {
 		t.Errorf("repos = %+v, %v", repos, err)
 	}
 }
+
+func TestAccountListBranches(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/acme/greeter", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+	})
+	mux.HandleFunc("GET /repos/acme/greeter/branches", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"name":"develop"},{"name":"main"}]`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	acc := NewAccount(ts.URL, "tok")
+	branches, err := acc.ListBranches(context.Background(), "acme/greeter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) != 2 {
+		t.Fatalf("branches = %+v", branches)
+	}
+	// Default flag is derived from the repo GET, not branch order.
+	got := map[string]bool{}
+	for _, b := range branches {
+		got[b.Name] = b.Default
+	}
+	if !got["main"] || got["develop"] {
+		t.Errorf("default flags wrong: %+v", branches)
+	}
+}

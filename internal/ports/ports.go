@@ -332,6 +332,11 @@ type EditorSettings struct {
 	// FormatOnSave / WordWrap toggle the matching editor prefs when true.
 	FormatOnSave bool
 	WordWrap     bool
+	// TrustWorkspace, when true, disables VS Code's Workspace Trust feature
+	// (the @tag:workspaceTrust settings) so the editor never prompts to trust
+	// the folder — the workspace is an ephemeral sandbox where the agent already
+	// runs arbitrary code, so the prompts are pure friction.
+	TrustWorkspace bool
 }
 
 // IsZero reports that no setting is set, so callers may skip applying them.

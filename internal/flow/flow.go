@@ -110,6 +110,19 @@ type Edge struct {
 	Then *Edge // fallback link once this one is exhausted; nil = abandon
 }
 
+// IOBinding is one resolved input or output binding on an agent stage. A
+// binding with Name == "" is a legacy positional entry — for input: the
+// literal ticket | $CHANGED | an artifact path; for output: the single path
+// the agent MUST produce. A binding with Name != "" is a named binding
+// against one of the agent's declared inputs/outputs (agentspec.Spec):
+// input Value is an artifact path or $CHANGED; output Value is the (possibly
+// rebound) artifact path. A stage's Inputs (or Outputs) are all one form:
+// either every entry is unnamed (legacy) or every entry is named (map form).
+type IOBinding struct {
+	Name  string
+	Value string
+}
+
 // Stage is one validated flow stage. Model, Harness, MaxTurns and Timeout are
 // resolved: for agent stages they carry the effective value (stage override or
 // flow default); for other types they are zero.
@@ -123,9 +136,9 @@ type Stage struct {
 	Harness  string
 	MaxTurns int
 	Timeout  time.Duration
-	Input    []string // ordered: ticket | artifact path | $CHANGED
-	Output   string   // artifact the agent MUST produce; "" = none
-	Verdict  bool     // agent MUST write artifacts/verdict.json; REJECT triggers OnReject
+	Inputs   []IOBinding // ordered; legacy positional or named map bindings
+	Outputs  []IOBinding // legacy single output or named-decl rebinds
+	Verdict  bool        // agent MUST write artifacts/verdict.json; REJECT triggers OnReject
 
 	// command
 	Run    string // literal bash

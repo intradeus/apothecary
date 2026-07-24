@@ -434,6 +434,15 @@ func codeServerSettingsJSON(s ports.EditorSettings) []byte {
 	if s.WordWrap {
 		m["editor.wordWrap"] = "on"
 	}
+	if s.TrustWorkspace {
+		// The @tag:workspaceTrust set: disable the feature outright and silence
+		// every prompt/banner so the sandbox opens as trusted with no dialogs.
+		m["security.workspace.trust.enabled"] = false
+		m["security.workspace.trust.startupPrompt"] = "never"
+		m["security.workspace.trust.banner"] = "never"
+		m["security.workspace.trust.emptyWindow"] = true
+		m["security.workspace.trust.untrustedFiles"] = "open"
+	}
 	if len(m) == 0 {
 		return nil
 	}

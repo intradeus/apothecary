@@ -37,6 +37,9 @@ func (fakeAccount) Test(context.Context) error { return nil }
 func (fakeAccount) ListRepos(context.Context) ([]RepoInfo, error) {
 	return []RepoInfo{{Name: "dev/fake-repo", URL: "https://forge.local/dev/fake-repo.git", Locator: "1", DefaultBranch: "main"}}, nil
 }
+func (fakeAccount) ListBranches(context.Context, string) ([]BranchInfo, error) {
+	return []BranchInfo{{Name: "main", Default: true}, {Name: "develop"}}, nil
+}
 func (fakeAccount) GitCredential() (string, string) { return "", "" }
 func (fakeAccount) GitIdentity() (string, string)   { return "", "" }
 func (fakeAccount) EgressDomains() []string         { return nil }
@@ -80,7 +83,7 @@ func (FakeHarness) New(_ Config, envp ports.EnvProvisioner) (Harness, error) {
 		case <-ctx.Done():
 			return ports.AgentResult{}, ctx.Err()
 		}
-		if path, ok := declaredOutput(call.In.Prompt); ok {
+		for _, path := range declaredOutputs(call.In.Prompt) {
 			content := fmt.Sprintf("# Dev stub: %s\n\nWritten by the dev-mode agent %q.\n", path, call.Spec.Agent)
 			if err := envp.WriteFile(ctx, call.Env, path, []byte(content), 0o644); err != nil {
 				return ports.AgentResult{}, err
@@ -124,16 +127,25 @@ func (h *fakeHarness) Models(context.Context) ([]ModelInfo, error) {
 	}, nil
 }
 
-// declaredOutput extracts the artifact path from the §3.2 contract line
-// "Before finishing you MUST write <path> (relative to repo root)."
-func declaredOutput(prompt string) (string, bool) {
-	_, rest, ok := strings.Cut(prompt, "you MUST write ")
+// declaredOutputs extracts the artifact paths an agent must write, parsed from
+// the "# OUTPUT CONTRACT" bullet list (DESIGN4 §1). Each bullet is "- <path>"
+// optionally followed by " — <name>: <desc>". Empty when the stage declares no
+// file outputs (e.g. a verdict-only contract).
+func declaredOutputs(prompt string) []string {
+	_, rest, ok := strings.Cut(prompt, "you MUST write these files (relative to repo root):\n")
 	if !ok {
-		return "", false
+		return nil
 	}
-	path, _, ok := strings.Cut(rest, " (relative to repo root)")
-	if !ok || strings.ContainsAny(path, " \n") {
-		return "", false
+	var paths []string
+	for line := range strings.SplitSeq(rest, "\n") {
+		if !strings.HasPrefix(line, "- ") {
+			break // the bullet list ends at the first non-bullet line
+		}
+		// The path is the first whitespace-delimited token after "- ".
+		path, _, _ := strings.Cut(strings.TrimPrefix(line, "- "), " ")
+		if path != "" {
+			paths = append(paths, path)
+		}
 	}
-	return path, true
+	return paths
 }

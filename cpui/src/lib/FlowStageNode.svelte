@@ -1,10 +1,25 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from '@xyflow/svelte';
-  import type { DocStage } from '$lib/flowdoc';
+  import { isMapInputs, isMapOutputs, type DocStage } from '$lib/flowdoc';
 
   let { data, selected }: NodeProps = $props();
   const stage = $derived(data.stage as DocStage);
   const entry = $derived(Boolean(data.entry));
+
+  // Compact I/O summary for agent stages (paths are the rendezvous, so we show
+  // them; there are no graph ports for bindings — a port implies a rewireable
+  // edge, and input/output binding is by path, not by edge).
+  const ioSummary = $derived.by(() => {
+    if (stage.type !== 'agent') return '';
+    const parts: string[] = [];
+    const inp = stage.input;
+    if (isMapInputs(inp) && Object.keys(inp).length) parts.push('in: ' + Object.keys(inp).join(', '));
+    else if (Array.isArray(inp) && inp.length) parts.push('in: ' + inp.join(', '));
+    const out = stage.output;
+    if (isMapOutputs(out) && Object.keys(out).length) parts.push('out: ' + Object.values(out).join(', '));
+    else if (typeof out === 'string' && out) parts.push('out: ' + out);
+    return parts.join(' · ');
+  });
 
   const typeColors: Record<string, string> = {
     agent: '#7aa2f7',
@@ -30,6 +45,7 @@
     {#if entry}<span class="entry">entry</span>{/if}
   </div>
   <div class="meta">{stage.type} · {detail}</div>
+  {#if ioSummary}<div class="io mono">{ioSummary}</div>{/if}
   <Handle id="success" type="source" position={Position.Right} style="background:#4caf7d" />
   {#if stage.type === 'agent' || stage.type === 'command'}
     <Handle id="on_fail" type="source" position={Position.Bottom} style="left:25%; background:#e06c75" />
@@ -71,5 +87,14 @@
     font-size: 11px;
     opacity: 0.7;
     margin-top: 2px;
+  }
+  .io {
+    font-size: 10px;
+    opacity: 0.6;
+    margin-top: 2px;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 )
@@ -23,11 +24,12 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		fmt.Fprintf(&b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.view.RunGoal)
 	}
 
-	for _, in := range st.Input {
-		switch in {
-		case flow.InputTicket:
+	spec := x.res.agentSpec(st.Agent)
+	for _, in := range st.Inputs {
+		switch {
+		case in.Name == "" && in.Value == flow.InputTicket:
 			// already the TASK section
-		case flow.InputChanged:
+		case in.Value == flow.InputChanged:
 			stat := "(no diff available)"
 			res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
 				Script:  fmt.Sprintf("git diff --stat origin/%s...HEAD", x.res.RepoRef.DefaultBranch),
@@ -37,13 +39,21 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			if err == nil && res.ExitCode == 0 {
 				stat = res.Output
 			}
-			fmt.Fprintf(&b, "# CHANGED FILES\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", stat)
+			if in.Name == "" {
+				fmt.Fprintf(&b, "# CHANGED FILES\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", stat)
+			} else {
+				fmt.Fprintf(&b, "# INPUT: %s%s\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", in.Name, inputDesc(spec, in.Name), stat)
+			}
 		default:
 			content := "(artifact missing)"
-			if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, in); err == nil {
+			if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, in.Value); err == nil {
 				content = tail(string(data), 16<<10)
 			}
-			fmt.Fprintf(&b, "# ARTIFACT: %s\n%s\n", in, content)
+			if in.Name == "" {
+				fmt.Fprintf(&b, "# ARTIFACT: %s\n%s\n", in.Value, content)
+			} else {
+				fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), in.Value, content)
+			}
 		}
 	}
 
@@ -53,7 +63,14 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		if feed == "" {
 			feed = "(feedback unavailable)"
 		}
-		fmt.Fprintf(&b, "# PREVIOUS ATTEMPT FEEDBACK (iteration %d of %d)\n%s\n", iter, maxAttempts, tail(feed, 8<<10))
+		// When the agent declares the reserved feedback input, the retry
+		// content flows into a named INPUT section (described); otherwise the
+		// generic header, unchanged for legacy agents.
+		if fb := feedbackDecl(spec); fb != nil {
+			fmt.Fprintf(&b, "# INPUT: %s%s (iteration %d of %d)\n%s\n", fb.Name, declDesc(fb.Description), iter, maxAttempts, tail(feed, 8<<10))
+		} else {
+			fmt.Fprintf(&b, "# PREVIOUS ATTEMPT FEEDBACK (iteration %d of %d)\n%s\n", iter, maxAttempts, tail(feed, 8<<10))
+		}
 	}
 
 	if goals := x.goalArtifacts(); len(goals) > 0 {
@@ -63,10 +80,18 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 	}
 
-	if st.Output != "" || st.Verdict {
+	outs := flow.EffectiveOutputs(st, spec)
+	if len(outs) > 0 || st.Verdict {
 		b.WriteString("# OUTPUT CONTRACT\n")
-		if st.Output != "" {
-			fmt.Fprintf(&b, "Before finishing you MUST write %s (relative to repo root).\n", st.Output)
+		if len(outs) > 0 {
+			b.WriteString("Before finishing you MUST write these files (relative to repo root):\n")
+			for _, o := range outs {
+				if o.Name == "" {
+					fmt.Fprintf(&b, "- %s\n", o.Value)
+				} else {
+					fmt.Fprintf(&b, "- %s — %s%s\n", o.Value, o.Name, outputDesc(spec, o.Name))
+				}
+			}
 		}
 		if st.Verdict {
 			b.WriteString(`Before finishing you MUST use your file-writing tool to create the file artifacts/verdict.json containing exactly` + "\n" +
@@ -75,6 +100,57 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 	}
 	return b.String()
+}
+
+// inputDesc renders " — <description>" for a declared input, or "" when the
+// agent has no spec or no matching/empty description. Keeps INPUT headers
+// self-describing without hard-failing on drift.
+func inputDesc(spec *agentspec.Spec, name string) string {
+	if spec == nil {
+		return ""
+	}
+	for _, d := range spec.Inputs {
+		if d.Name == name {
+			return declDesc(d.Description)
+		}
+	}
+	return ""
+}
+
+// outputDesc renders ": <description>" for a declared output, or "".
+func outputDesc(spec *agentspec.Spec, name string) string {
+	if spec == nil {
+		return ""
+	}
+	for _, d := range spec.Outputs {
+		if d.Name == name {
+			if d.Description == "" {
+				return ""
+			}
+			return ": " + d.Description
+		}
+	}
+	return ""
+}
+
+// feedbackDecl returns the agent's reserved feedback input decl, or nil.
+func feedbackDecl(spec *agentspec.Spec) *agentspec.InputDecl {
+	if spec == nil {
+		return nil
+	}
+	for i := range spec.Inputs {
+		if spec.Inputs[i].Name == agentspec.InputFeedback {
+			return &spec.Inputs[i]
+		}
+	}
+	return nil
+}
+
+func declDesc(desc string) string {
+	if desc == "" {
+		return ""
+	}
+	return " — " + desc
 }
 
 // parseVerdict enforces the §3/§5.3 verdict contract:

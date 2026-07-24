@@ -193,10 +193,13 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	specs := make([]*agentspec.Spec, 0, len(agents))
 	agentNames := make([]string, 0, len(agents))
 	agentHashes := make(map[string]string, len(agents))
+	agentSpecs := make(map[string]*agentspec.Spec, len(agents))
 	for _, a := range agents {
-		specs = append(specs, a.Spec())
+		sp := a.Spec()
+		specs = append(specs, sp)
 		agentNames = append(agentNames, a.Name)
 		agentHashes[a.Name] = a.Hash
+		agentSpecs[a.Name] = sp
 	}
 	// Built-in fallback (internal/builtin): names the project hasn't
 	// authored resolve to the compiled-in defaults, so a fresh project runs
@@ -212,10 +215,8 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		}
 		specs = append(specs, sp)
 		agentNames = append(agentNames, sp.Name)
-		agentHashes[sp.Name] = confstore.AgentHash(confstore.Agent{
-			Name: sp.Name, Description: sp.Description,
-			ReadOnly: sp.ReadOnly, AllowBash: sp.AllowBash, Prompt: sp.Prompt,
-		})
+		agentHashes[sp.Name] = confstore.AgentHash(confstore.AgentFromSpec(sp))
+		agentSpecs[sp.Name] = sp
 	}
 
 	gitUser, gitPass := account.GitCredential()
@@ -241,21 +242,22 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		EgressAllowedPorts:   p.Workspace.EgressAllowedPorts,
 		CodeServerExtensions: p.Workspace.CodeServerExtensions,
 		EditorSettings: ports.EditorSettings{
-			Theme:        p.Workspace.Editor.Theme,
-			FontSize:     p.Workspace.Editor.FontSize,
-			TabSize:      p.Workspace.Editor.TabSize,
-			FormatOnSave: p.Workspace.Editor.FormatOnSave,
-			WordWrap:     p.Workspace.Editor.WordWrap,
+			Theme:          p.Workspace.Editor.Theme,
+			FontSize:       p.Workspace.Editor.FontSize,
+			TabSize:        p.Workspace.Editor.TabSize,
+			FormatOnSave:   p.Workspace.Editor.FormatOnSave,
+			WordWrap:       p.Workspace.Editor.WordWrap,
+			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
-		HarnessKind:          defaultKind,
-		HarnessKinds:         kindList,
-		HarnessBinary:        harness.Binary(),
-		HarnessBinaries:      harnessBinaries,
-		HarnessInstall:       harnessInstall,
-		Envp:                 prov,
-		Runner:               harness,
-		Runners:              runners,
-		Forge:                forge,
+		HarnessKind:     defaultKind,
+		HarnessKinds:    kindList,
+		HarnessBinary:   harness.Binary(),
+		HarnessBinaries: harnessBinaries,
+		HarnessInstall:  harnessInstall,
+		Envp:            prov,
+		Runner:          harness,
+		Runners:         runners,
+		Forge:           forge,
 		// Seed and prepare EVERY harness in the set: a stage may run on any of
 		// them, so all their auth + native configs must be in the workspace.
 		SeedAuth: func(ctx context.Context, env ports.EnvID) error {
@@ -276,6 +278,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		},
 		AgentNames:  agentNames,
 		AgentHashes: agentHashes,
+		AgentSpecs:  agentSpecs,
 		Release:     release,
 	}
 	ok = true
@@ -514,6 +517,26 @@ func (r *Resolver) ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, 
 		return nil, err
 	}
 	return acc.ListRepos(ctx)
+}
+
+// ListBranches serves the source-branch picker for a project: the branches of
+// the project's own repo, fetched through its forge integration. Project-
+// scoped (not integration-scoped) so the caller needs only the project id —
+// the forge id and repo locator are resolved here.
+func (r *Resolver) ListBranches(ctx context.Context, projectID string) ([]kinds.BranchInfo, error) {
+	p, err := r.conf.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	in, fk, err := r.forgeKind(ctx, p.ForgeID)
+	if err != nil {
+		return nil, err
+	}
+	acc, err := fk.Account(kindConfig(in))
+	if err != nil {
+		return nil, err
+	}
+	return acc.ListBranches(ctx, p.Repo.Locator)
 }
 
 // ListModels serves the flow editor's model browser for a harness

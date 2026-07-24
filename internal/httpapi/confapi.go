@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
@@ -46,10 +47,8 @@ func builtinAgentRow(projectID, name string) (confstore.Agent, bool) {
 	if sp == nil {
 		return confstore.Agent{}, false
 	}
-	a := confstore.Agent{
-		ProjectID: projectID, Name: sp.Name, Description: sp.Description,
-		ReadOnly: sp.ReadOnly, AllowBash: sp.AllowBash, Prompt: sp.Prompt,
-	}
+	a := confstore.AgentFromSpec(sp)
+	a.ProjectID = projectID
 	a.Hash = confstore.AgentHash(a)
 	return a, true
 }
@@ -63,6 +62,9 @@ type IntegrationOps interface {
 	TestIntegration(ctx context.Context, id string) error
 	ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error)
 	ListModels(ctx context.Context, id string) ([]kinds.ModelInfo, error)
+	// ListBranches lists the branches of a PROJECT's repo (source-branch
+	// picker) — project-scoped, so it resolves the forge + locator itself.
+	ListBranches(ctx context.Context, projectID string) ([]kinds.BranchInfo, error)
 }
 
 // confErr maps confstore errors to statuses: not found 404, conflicts and
@@ -205,6 +207,22 @@ func (s *Server) listIntegrationRepos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, repos)
 }
 
+func (s *Server) listProjectBranches(w http.ResponseWriter, r *http.Request) {
+	if s.Ops == nil {
+		writeErr(w, http.StatusServiceUnavailable, "branch listing is not wired")
+		return
+	}
+	branches, err := s.Ops.ListBranches(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	if branches == nil {
+		branches = []kinds.BranchInfo{}
+	}
+	writeJSON(w, http.StatusOK, branches)
+}
+
 func (s *Server) listIntegrationModels(w http.ResponseWriter, r *http.Request) {
 	if s.Ops == nil {
 		writeErr(w, http.StatusServiceUnavailable, "model listing is not wired")
@@ -342,10 +360,12 @@ func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
 // --- agents (DESIGN3 §1) ----------------------------------------------------
 
 type agentBody struct {
-	Description string `json:"description"`
-	ReadOnly    bool   `json:"read_only"`
-	AllowBash   bool   `json:"allow_bash"`
-	Prompt      string `json:"prompt"`
+	Description string                 `json:"description"`
+	ReadOnly    bool                   `json:"read_only"`
+	AllowBash   bool                   `json:"allow_bash"`
+	Prompt      string                 `json:"prompt"`
+	Inputs      []agentspec.InputDecl  `json:"inputs"`
+	Outputs     []agentspec.OutputDecl `json:"outputs"`
 }
 
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
@@ -355,10 +375,43 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	rows, err := s.Conf.ListAgents(r.Context(), r.PathValue("id"))
+	out, err := s.mergedAgents(r.Context(), r.PathValue("id"))
 	if err != nil {
 		confErr(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// listAllAgents serves the merged built-in ∪ project agent library for the
+// (project-independent) flow editor, which needs agent decls to render
+// binding fields. project="" returns just the built-ins.
+func (s *Server) listAllAgents(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("project")
+	if projectID != "" {
+		if _, err := s.Conf.GetProject(r.Context(), projectID); err != nil {
+			confErr(w, err)
+			return
+		}
+	}
+	out, err := s.mergedAgents(r.Context(), projectID)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// mergedAgents returns the project's authored agents plus every built-in the
+// project hasn't overridden, sorted by name. projectID "" yields just the
+// built-ins (the flow editor's project-independent view).
+func (s *Server) mergedAgents(ctx context.Context, projectID string) ([]agentResp, error) {
+	var rows []confstore.Agent
+	if projectID != "" {
+		var err error
+		if rows, err = s.Conf.ListAgents(ctx, projectID); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]agentResp, 0, len(rows)+len(builtin.Agents()))
 	authored := map[string]bool{}
@@ -370,11 +423,11 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		if authored[sp.Name] {
 			continue
 		}
-		a, _ := builtinAgentRow(r.PathValue("id"), sp.Name)
+		a, _ := builtinAgentRow(projectID, sp.Name)
 		out = append(out, agentResp{Agent: a, Builtin: true})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 func (s *Server) putAgent(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +439,7 @@ func (s *Server) putAgent(w http.ResponseWriter, r *http.Request) {
 		ProjectID: r.PathValue("id"), Name: r.PathValue("name"),
 		Description: body.Description, ReadOnly: body.ReadOnly,
 		AllowBash: body.AllowBash, Prompt: body.Prompt,
+		Inputs: body.Inputs, Outputs: body.Outputs,
 	})
 	if err != nil {
 		confErr(w, err)
@@ -551,10 +605,14 @@ func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 // validateFlow runs the parser without saving — line-precise errors travel
-// verbatim (§7).
+// verbatim (§7). An optional project_id lets it also check stage bindings
+// against that project's agent decls (DESIGN4 §1); those findings are
+// advisory (warnings, never ok:false) because flows are project-independent
+// and the enforcing check runs at run creation.
 func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		YAML string `json:"yaml"`
+		YAML      string `json:"yaml"`
+		ProjectID string `json:"project_id"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -570,9 +628,35 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "errors": []string{err.Error()}})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "name": f.Name, "hash": f.Hash, "stages": len(f.Stages), "doc": doc,
-	})
+	resp := map[string]any{"ok": true, "name": f.Name, "hash": f.Hash, "stages": len(f.Stages), "doc": doc}
+	errs, warns := flow.ValidateBindings(f, s.flowBindingSpecs(r.Context(), body.ProjectID))
+	warnings := make([]string, 0, len(errs)+len(warns))
+	for _, e := range errs {
+		warnings = append(warnings, "error: "+e.Error())
+	}
+	warnings = append(warnings, warns...)
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// flowBindingSpecs is the agent view a flow's bindings are validated against:
+// the built-in library overlaid with the project's authored agents (project
+// wins). projectID "" (or an unknown project) yields just the built-ins.
+func (s *Server) flowBindingSpecs(ctx context.Context, projectID string) map[string]*agentspec.Spec {
+	specs := map[string]*agentspec.Spec{}
+	for _, sp := range builtin.Agents() {
+		specs[sp.Name] = sp
+	}
+	if projectID != "" {
+		if rows, err := s.Conf.ListAgents(ctx, projectID); err == nil {
+			for _, a := range rows {
+				specs[a.Name] = a.Spec()
+			}
+		}
+	}
+	return specs
 }
 
 func (s *Server) listFlowVersions(w http.ResponseWriter, r *http.Request) {

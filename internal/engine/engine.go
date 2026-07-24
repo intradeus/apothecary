@@ -1014,6 +1014,15 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 			return fmt.Errorf("preflight: stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
 		}
 	}
+	// Agent I/O contract (DESIGN4 §1): stage bindings must satisfy the
+	// referenced agents' declared inputs/outputs. This is the enforcing site
+	// (run creation), with the full project agent set; /api/flows/validate is
+	// the advisory one. Warnings don't block a run.
+	if errs, warns := flow.ValidateBindings(fl, res.AgentSpecs); len(errs) > 0 {
+		return fmt.Errorf("preflight: %v", errs[0])
+	} else if len(warns) > 0 {
+		e.log.Warn("flow binding warnings", "flow", fl.Name, "count", len(warns), "first", warns[0])
+	}
 	return nil
 }
 

@@ -55,6 +55,18 @@ func (a *githubAccount) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	return out, nil
 }
 
+func (a *githubAccount) ListBranches(ctx context.Context, locator string) ([]BranchInfo, error) {
+	branches, err := a.acc.ListBranches(ctx, locator)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BranchInfo, 0, len(branches))
+	for _, b := range branches {
+		out = append(out, BranchInfo{Name: b.Name, Default: b.Default})
+	}
+	return out, nil
+}
+
 // GitCredential: GitHub's PAT-over-HTTPS convention (§12).
 func (a *githubAccount) GitCredential() (string, string) {
 	if a.token == "" {

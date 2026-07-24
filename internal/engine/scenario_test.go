@@ -12,6 +12,7 @@ import (
 	"slices"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -271,6 +272,119 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 		if !strings.Contains(builderPrompt, want) {
 			t.Errorf("builder prompt missing %q:\n%s", want, builderPrompt)
 		}
+	}
+}
+
+// TestDeclaredInputAndFeedbackRendering proves the decl-driven prompt shape
+// (DESIGN4 §1): a map-form input renders "# INPUT: <name> — <desc> (file:…)",
+// the agent's declared feedback input renames the retry section, and a decl
+// default output is enforced even though the plan stage names no `output:`.
+func TestDeclaredInputAndFeedbackRendering(t *testing.T) {
+	doc := `name: declfb
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan,  type: agent, agent: planner, on_success: build }
+  - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md }, on_success: test }
+  - { id: test,  type: command, run_ref: verify, on_success: done,
+      on_fail: { to: build, max: 3, feed: output } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	// Decls make the rendering decl-driven; without this the harness stays on
+	// the legacy prompt shape (the rest of the suite is that regression).
+	h.res.AgentSpecs = map[string]*agentspec.Spec{
+		"planner": {Name: "planner", Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Path: "artifacts/plan.md"}}},
+		"builder": {Name: "builder", Inputs: []agentspec.InputDecl{
+			{Name: "plan", Description: "the approved implementation plan to execute"},
+			{Name: "feedback", Description: "reviewer comments or failing output from the previous attempt", Optional: true},
+		}},
+	}
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/plan.md", "## Plan\nsteps")
+			return ports.AgentResult{}, nil
+		},
+		"builder": func(fake.RunCall) (ports.AgentResult, error) { return ports.AgentResult{}, nil },
+	})
+	// verify fails the first time (feeds "BOOM" into build), then passes.
+	verifyRuns := 0
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "make lint") {
+			verifyRuns++
+			if verifyRuns == 1 {
+				return ports.ExecResult{ExitCode: 1, Output: "BOOM"}, nil
+			}
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "declfb", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+
+	var builds []string
+	for _, c := range h.runner.RunCalls {
+		if c.Spec.Agent == "builder" {
+			builds = append(builds, c.In.Prompt)
+		}
+	}
+	if len(builds) != 2 {
+		t.Fatalf("builder ran %d times, want 2", len(builds))
+	}
+	// First pass: named input section, no feedback yet.
+	if !strings.Contains(builds[0], "# INPUT: plan — the approved implementation plan to execute (file: artifacts/plan.md)") {
+		t.Errorf("build[0] missing named INPUT section:\n%s", builds[0])
+	}
+	if strings.Contains(builds[0], "# INPUT: feedback") || strings.Contains(builds[0], "PREVIOUS ATTEMPT FEEDBACK") {
+		t.Errorf("build[0] should carry no feedback:\n%s", builds[0])
+	}
+	// Second pass: the declared feedback slot replaces the generic header.
+	if !strings.Contains(builds[1], "# INPUT: feedback — reviewer comments or failing output from the previous attempt (iteration 2 of 4)") {
+		t.Errorf("build[1] missing feedback INPUT section:\n%s", builds[1])
+	}
+	if !strings.Contains(builds[1], "BOOM") {
+		t.Errorf("build[1] missing fed output:\n%s", builds[1])
+	}
+	if strings.Contains(builds[1], "PREVIOUS ATTEMPT FEEDBACK") {
+		t.Errorf("build[1] should use the named feedback header, not the generic one:\n%s", builds[1])
+	}
+}
+
+// TestDeclDefaultOutputEnforced proves a declared output's default path is a
+// MUST-write contract even when the stage names no `output:` — the agent that
+// fails to produce it is failed on the output contract.
+func TestDeclDefaultOutputEnforced(t *testing.T) {
+	doc := `name: declout
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan, type: agent, agent: planner }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.res.AgentSpecs = map[string]*agentspec.Spec{
+		"planner": {Name: "planner", Outputs: []agentspec.OutputDecl{{Name: "plan", Path: "artifacts/plan.md"}}},
+	}
+	// planner never writes the declared default output.
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"planner": func(fake.RunCall) (ports.AgentResult, error) { return ports.AgentResult{}, nil },
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "declout", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned (decl-default output unmet)", v.State)
+	}
+	sf, ok := findPayload[*event.StageFailed](h.events(t, runID))
+	if !ok || sf.Reason != event.ReasonOutputContract {
+		t.Errorf("failure = %+v, want output_contract", sf)
+	}
+	if !strings.Contains(sf.Error, "artifacts/plan.md") {
+		t.Errorf("failure should name the missing path: %q", sf.Error)
 	}
 }
 

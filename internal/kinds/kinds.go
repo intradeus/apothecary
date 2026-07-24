@@ -81,11 +81,22 @@ type ModelInfo struct {
 	Name string `json:"name"`
 }
 
+// BranchInfo is one branch a run can fork off from (the source-branch picker).
+// Default marks the repo's default branch so the UI can pre-select it.
+type BranchInfo struct {
+	Name    string `json:"name"`
+	Default bool   `json:"default"`
+}
+
 // ForgeAccount is the account-level forge client: token probe, repo
 // browsing, git credentials and egress contribution.
 type ForgeAccount interface {
 	Test(ctx context.Context) error
 	ListRepos(ctx context.Context) ([]RepoInfo, error)
+	// ListBranches returns the branches of the repo named by locator (the
+	// forge-kind identifier from RepoInfo.Locator), for the source-branch
+	// picker. Newest-activity first where the forge supports it.
+	ListBranches(ctx context.Context, locator string) ([]BranchInfo, error)
 	// GitCredential is the (user, password) pair for the §11 step 3
 	// credential-store entry; empty user+pass = public repos only.
 	GitCredential() (user, pass string)

@@ -425,11 +425,22 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		return x.takeEdge(st, flow.EdgeFail, tail(res.r.Output, 8<<10))
 	}
 
-	// Output contract (§3): declared artifact must exist.
-	if st.Output != "" {
-		if _, err := x.res.Envp.ReadFile(x.ctx, rs.envID, st.Output); err != nil {
+	// Output contract (§3): every effective output (decl defaults overlaid
+	// with stage rebinds) must exist. All missing paths are reported in one
+	// failure so a human sees the whole gap, not the first file only.
+	if outs := flow.EffectiveOutputs(st, x.res.agentSpec(st.Agent)); len(outs) > 0 {
+		var missing []string
+		for _, o := range outs {
+			if o.Value == "" {
+				continue
+			}
+			if _, err := x.res.Envp.ReadFile(x.ctx, rs.envID, o.Value); err != nil {
+				missing = append(missing, o.Value)
+			}
+		}
+		if len(missing) > 0 {
 			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
-				Error: fmt.Sprintf("declared output %s not readable: %v", st.Output, err)}); aerr != nil {
+				Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
 				return aerr
 			}
 			return x.takeEdge(st, flow.EdgeFail, "")

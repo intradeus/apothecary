@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type Agent, type AgentVersion, type Project } from '$lib/api';
+  import { api, type Agent, type AgentIODecl, type AgentVersion, type Project } from '$lib/api';
   import { onMount } from 'svelte';
 
   let { project }: { project: Project } = $props();
@@ -20,6 +20,18 @@
   let fReadOnly = $state(false);
   let fAllowBash = $state(false);
   let fPrompt = $state('');
+  let fInputs = $state<AgentIODecl[]>([]);
+  let fOutputs = $state<AgentIODecl[]>([]);
+
+  // A one-line binding summary for the list row (in: plan, feedback? · out: plan→artifacts/plan.md).
+  function ioSummary(a: Agent): string {
+    const parts: string[] = [];
+    if (a.inputs?.length)
+      parts.push('in: ' + a.inputs.map((d) => d.name + (d.optional ? '?' : '')).join(', '));
+    if (a.outputs?.length)
+      parts.push('out: ' + a.outputs.map((d) => `${d.name}→${d.path ?? ''}`).join(', '));
+    return parts.join(' · ');
+  }
 
   const refresh = async () => {
     try {
@@ -44,20 +56,37 @@
     fReadOnly = a?.read_only ?? false;
     fAllowBash = a?.allow_bash ?? false;
     fPrompt = a?.prompt ?? '';
+    // Deep-copy so row edits don't mutate the loaded agent in place.
+    fInputs = (a?.inputs ?? []).map((d) => ({ ...d }));
+    fOutputs = (a?.outputs ?? []).map((d) => ({ ...d }));
     notice = '';
     error = '';
   }
+
+  const addInput = () => (fInputs = [...fInputs, { name: '', description: '', optional: false }]);
+  const addOutput = () => (fOutputs = [...fOutputs, { name: '', description: '', path: '' }]);
+  const removeInput = (i: number) => (fInputs = fInputs.filter((_, j) => j !== i));
+  const removeOutput = (i: number) => (fOutputs = fOutputs.filter((_, j) => j !== i));
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
     busy = true;
     error = '';
     try {
+      // Drop blank rows; keep declaration order.
+      const inputs = fInputs
+        .filter((d) => d.name.trim())
+        .map((d) => ({ name: d.name.trim(), description: d.description?.trim() || undefined, optional: d.optional || undefined }));
+      const outputs = fOutputs
+        .filter((d) => d.name.trim())
+        .map((d) => ({ name: d.name.trim(), description: d.description?.trim() || undefined, path: d.path?.trim() ?? '' }));
       await api.putAgent(project.id, fName.trim(), {
         description: fDescription,
         read_only: fReadOnly,
         allow_bash: fAllowBash,
-        prompt: fPrompt
+        prompt: fPrompt,
+        inputs,
+        outputs
       });
       editingName = null;
       await refresh();
@@ -144,6 +173,7 @@
           {#if a.allow_bash}· bash{/if}
           · <span class="mono">{a.hash}</span>
         </span>
+        {#if ioSummary(a)}<div class="muted small mono">{ioSummary(a)}</div>{/if}
       </div>
       <div class="row">
         {#if !a.builtin}
@@ -190,6 +220,34 @@
           <input type="checkbox" bind:checked={fAllowBash} style="width:auto" /> allow bash
         </label>
       </div>
+      <div class="io-decls">
+        <div class="row spread">
+          <div class="fieldhdr">Inputs <span class="muted small">— files/$CHANGED a flow stage binds by name</span></div>
+          <button type="button" onclick={addInput}>Add input</button>
+        </div>
+        {#each fInputs as inp, i (i)}
+          <div class="row io-row">
+            <input class="mono" bind:value={inp.name} placeholder="plan" style="flex:0 0 120px" />
+            <input bind:value={inp.description} placeholder="what this input is" style="flex:1" />
+            <label class="row small" style="margin:0; gap:4px; flex:0 0 auto">
+              <input type="checkbox" bind:checked={inp.optional} style="width:auto" /> optional
+            </label>
+            <button type="button" class="danger" onclick={() => removeInput(i)}>✕</button>
+          </div>
+        {/each}
+        <div class="row spread" style="margin-top:8px">
+          <div class="fieldhdr">Outputs <span class="muted small">— files this agent must write; declaring one makes every stage enforce it</span></div>
+          <button type="button" onclick={addOutput}>Add output</button>
+        </div>
+        {#each fOutputs as out, i (i)}
+          <div class="row io-row">
+            <input class="mono" bind:value={out.name} placeholder="plan" style="flex:0 0 120px" />
+            <input bind:value={out.description} placeholder="what this output is" style="flex:1" />
+            <input class="mono" bind:value={out.path} placeholder="artifacts/plan.md" style="flex:0 0 180px" />
+            <button type="button" class="danger" onclick={() => removeOutput(i)}>✕</button>
+          </div>
+        {/each}
+      </div>
       <label for="ag-prompt">Prompt</label>
       <textarea id="ag-prompt" bind:value={fPrompt} rows="14" required placeholder="You are the building agent…"></textarea>
       <div class="row" style="margin-top:10px">
@@ -199,3 +257,24 @@
     </form>
   {/if}
 </div>
+
+<style>
+  .io-decls {
+    margin: 10px 0;
+    padding: 10px;
+    border: 1px solid var(--border, #333);
+    border-radius: 6px;
+  }
+  .io-row {
+    gap: 6px;
+    margin-top: 6px;
+    align-items: center;
+  }
+  .io-row input {
+    margin: 0;
+  }
+  .fieldhdr {
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>

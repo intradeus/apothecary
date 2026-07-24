@@ -59,6 +59,18 @@ func (a *gitlabAccount) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	return out, nil
 }
 
+func (a *gitlabAccount) ListBranches(ctx context.Context, locator string) ([]BranchInfo, error) {
+	branches, err := a.acc.ListBranches(ctx, locator)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BranchInfo, 0, len(branches))
+	for _, b := range branches {
+		out = append(out, BranchInfo{Name: b.Name, Default: b.Default})
+	}
+	return out, nil
+}
+
 // GitCredential: GitLab accepts any non-empty user with a PAT password;
 // "oauth2" is the v1 convention (§11 step 3).
 func (a *gitlabAccount) GitCredential() (string, string) {

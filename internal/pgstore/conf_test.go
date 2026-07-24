@@ -7,9 +7,61 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 )
+
+// TestAgentDeclColumnsRoundtrip pins that the inputs/outputs jsonb columns
+// (migration 0016) survive an upsert/read cycle intact.
+func TestAgentDeclColumnsRoundtrip(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	if err := s.UpsertFlow(ctx, confstore.FlowRow{Name: "f", YAML: "a", Hash: "h", UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertIntegration(ctx, confstore.StoredIntegration{ID: "i", Port: "forge", Kind: "fake", Name: "f", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertProject(ctx, confstore.Project{
+		ID: "p", Name: "web", ForgeID: "i", ProvisionerID: "i", HarnessIDs: []string{"i"},
+		Repo:        confstore.RepoConfig{URL: "https://x/p.git", Locator: "1", DefaultBranch: "main"},
+		DefaultFlow: "f", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := confstore.Agent{
+		ProjectID: "p", Name: "builder", Prompt: "build",
+		Inputs:    []agentspec.InputDecl{{Name: "plan", Description: "the plan"}, {Name: "feedback", Optional: true}},
+		Outputs:   []agentspec.OutputDecl{{Name: "patch", Path: "artifacts/patch.md"}},
+		UpdatedAt: now,
+	}
+	a.Hash = confstore.AgentHash(a)
+	if err := s.UpsertAgent(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetAgent(ctx, "p", "builder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Inputs) != 2 || got.Inputs[0].Name != "plan" || !got.Inputs[1].Optional ||
+		len(got.Outputs) != 1 || got.Outputs[0].Path != "artifacts/patch.md" {
+		t.Fatalf("decl columns did not round-trip: %+v", got)
+	}
+	// A decl-less agent reads back with empty (not garbage) decls.
+	b := confstore.Agent{ProjectID: "p", Name: "plain", Prompt: "x", UpdatedAt: now}
+	b.Hash = confstore.AgentHash(b)
+	if err := s.UpsertAgent(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := s.GetAgent(ctx, "p", "plain")
+	if err != nil || len(plain.Inputs) != 0 || len(plain.Outputs) != 0 {
+		t.Fatalf("decl-less agent = %+v, %v", plain, err)
+	}
+}
 
 // openConf reuses the gated open() and clears the config-plane tables
 // (projects before integrations: FK).

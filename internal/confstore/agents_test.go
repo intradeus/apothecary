@@ -2,10 +2,40 @@ package confstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+
+	"apothecary/internal/agentspec"
 )
+
+// TestAgentHashStability pins the canonical JSON of a decl-less agent to its
+// exact byte string: this is what every pre-existing agent's content hash is
+// derived from, so if the new inputs/outputs fields ever stop being omitempty
+// this fails and warns that every stored hash just churned.
+func TestAgentHashStability(t *testing.T) {
+	data, err := json.Marshal(agentContent{
+		Name: "planner", Description: "", ReadOnly: false, AllowBash: false, Prompt: "p",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"name":"planner","description":"","read_only":false,"allow_bash":false,"prompt":"p"}`
+	if string(data) != want {
+		t.Errorf("canonical JSON drifted (hashes would churn):\n got %s\nwant %s", data, want)
+	}
+	// Adding decls MUST change the hash (different content, honestly versioned).
+	bare := AgentHash(Agent{Name: "planner", Prompt: "p"})
+	withDecl := AgentHash(Agent{Name: "planner", Prompt: "p", Inputs: []agentspec.InputDecl{{Name: "plan"}}})
+	if bare == withDecl {
+		t.Error("declaring an input must change the content hash")
+	}
+	// A decl-less agent's hash is unchanged by the new fields being present.
+	if AgentHash(Agent{Name: "planner", Prompt: "p", Inputs: nil, Outputs: nil}) != bare {
+		t.Error("nil decls must not affect the hash")
+	}
+}
 
 // seedAgentEnv builds a service over Mem with two projects and a default
 // flow referencing agents planner+scribe on project A (scribe is NOT a
@@ -88,6 +118,40 @@ func TestAgentSaveHashAndVersions(t *testing.T) {
 	}
 	if _, err := svc.SaveAgent(ctx, Agent{ProjectID: "nope", Name: "ok", Prompt: "x"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing project err = %v", err)
+	}
+}
+
+func TestAgentDeclsRoundTripAndValidation(t *testing.T) {
+	svc, pa, _ := seedAgentEnv(t)
+	ctx := context.Background()
+
+	in := Agent{
+		ProjectID: pa.ID, Name: "builder", Prompt: "build it",
+		Inputs:  []agentspec.InputDecl{{Name: "plan", Description: "the plan"}, {Name: "feedback", Optional: true}},
+		Outputs: []agentspec.OutputDecl{{Name: "patch", Path: "artifacts/patch.md"}},
+	}
+	saved, err := svc.SaveAgent(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetAgent(ctx, pa.ID, "builder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Inputs) != 2 || got.Inputs[0].Name != "plan" || !got.Inputs[1].Optional ||
+		len(got.Outputs) != 1 || got.Outputs[0].Path != "artifacts/patch.md" {
+		t.Errorf("decls did not round-trip: %+v", got)
+	}
+	// The version row carries the decls too.
+	v, err := svc.AgentVersion(ctx, saved.Hash)
+	if err != nil || !strings.Contains(string(v.Spec), `"patch"`) {
+		t.Errorf("version spec = %s, %v", v.Spec, err)
+	}
+	// Invalid decls are rejected at save (feedback must be optional).
+	bad := Agent{ProjectID: pa.ID, Name: "bad", Prompt: "p",
+		Inputs: []agentspec.InputDecl{{Name: "feedback"}}}
+	if _, err := svc.SaveAgent(ctx, bad); !errors.Is(err, ErrInvalid) {
+		t.Errorf("invalid decl err = %v, want ErrInvalid", err)
 	}
 }
 

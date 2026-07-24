@@ -42,6 +42,19 @@ export function edgeKindsFor(type: StageKind): EdgeKind[] {
   return out;
 }
 
+// A stage's input binding is either the legacy ordered list (ticket |
+// $CHANGED | artifact path) or the named map form ({decl-name: path|$CHANGED}).
+// Output is either the legacy single path or a {decl-name: path} rebind map.
+// Object insertion order is preserved on the wire (the Go side emits ordered
+// JSON), so bindings never reorder across a round-trip.
+export type StageInputs = string[] | Record<string, string>;
+export type StageOutputs = string | Record<string, string>;
+
+export const isMapInputs = (i?: StageInputs): i is Record<string, string> =>
+  !!i && !Array.isArray(i);
+export const isMapOutputs = (o?: StageOutputs): o is Record<string, string> =>
+  !!o && typeof o !== 'string';
+
 export interface DocStage {
   id: string;
   type: StageKind;
@@ -50,8 +63,8 @@ export interface DocStage {
   harness?: string;
   max_turns?: number;
   timeout?: string;
-  input?: string[];
-  output?: string;
+  input?: StageInputs;
+  output?: StageOutputs;
   verdict?: boolean;
   run?: string;
   run_ref?: string;
@@ -158,8 +171,13 @@ export function docToYaml(doc: FlowDoc): string {
     if (s.harness) o.harness = s.harness;
     if (s.max_turns != null) o.max_turns = s.max_turns;
     if (s.timeout) o.timeout = s.timeout;
-    if (s.input?.length) o.input = s.input;
-    if (s.output) o.output = s.output;
+    // input/output are unions: a non-empty list OR a non-empty map. Guarding
+    // on `.length` alone would silently drop the map form (objects have no
+    // length), losing every named binding on save.
+    if (s.input && (Array.isArray(s.input) ? s.input.length : Object.keys(s.input).length))
+      o.input = s.input;
+    if (s.output && (typeof s.output === 'string' ? s.output : Object.keys(s.output).length))
+      o.output = s.output;
     if (s.verdict) o.verdict = true;
     if (s.run) o.run = s.run;
     if (s.run_ref) o.run_ref = s.run_ref;

@@ -472,3 +472,77 @@ func TestAgentLibraryRoutes(t *testing.T) {
 	}
 
 }
+
+// TestAgentDeclsAndFlowWarnings covers the I/O contract surfaces (DESIGN4 §1):
+// PUT/GET pass decls through, built-in rows carry their decls, GET /api/agents
+// serves the project-independent library, and /api/flows/validate reports
+// binding problems as advisory warnings (never blocking the save).
+func TestAgentDeclsAndFlowWarnings(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+
+	// PUT an authored agent carrying decls; GET it back and confirm round-trip.
+	resp, data := x.do(t, "PUT", "/api/projects/"+projectID+"/agents/custom", map[string]any{
+		"prompt": "do it",
+		"inputs": []map[string]any{
+			{"name": "plan", "description": "the plan"},
+			{"name": "feedback", "optional": true},
+		},
+		"outputs": []map[string]any{{"name": "out", "path": "artifacts/out.md"}},
+	}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("put custom = %d: %s", resp.StatusCode, data)
+	}
+	var got confstore.Agent
+	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/custom", nil, nil)
+	_ = json.Unmarshal(data, &got)
+	if len(got.Inputs) != 2 || got.Inputs[0].Name != "plan" || !got.Inputs[1].Optional ||
+		len(got.Outputs) != 1 || got.Outputs[0].Path != "artifacts/out.md" {
+		t.Fatalf("decls did not round-trip: %+v", got)
+	}
+
+	// Invalid decls are refused (feedback must be optional).
+	resp, _ = x.do(t, "PUT", "/api/projects/"+projectID+"/agents/bad", map[string]any{
+		"prompt": "p", "inputs": []map[string]any{{"name": "feedback"}},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid decl PUT = %d, want 400", resp.StatusCode)
+	}
+
+	// GET /api/agents (project-independent) serves built-ins with their decls.
+	resp, data = x.do(t, "GET", "/api/agents", nil, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("list agents = %d: %s", resp.StatusCode, data)
+	}
+	var lib []confstore.Agent
+	_ = json.Unmarshal(data, &lib)
+	var builder *confstore.Agent
+	for i := range lib {
+		if lib[i].Name == "builder" {
+			builder = &lib[i]
+		}
+	}
+	if builder == nil || len(builder.Inputs) == 0 || builder.Inputs[0].Name != "plan" {
+		t.Fatalf("built-in builder decls missing: %+v", builder)
+	}
+
+	// validate a flow that binds an undeclared input to a built-in agent:
+	// ok stays true (save is never blocked), the problem surfaces as a warning.
+	badFlow := `name: w
+defaults: { harness: fake, model: a/b }
+stages:
+  - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }
+`
+	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{"yaml": badFlow}, nil)
+	var vr struct {
+		OK       bool     `json:"ok"`
+		Warnings []string `json:"warnings"`
+	}
+	_ = json.Unmarshal(data, &vr)
+	if resp.StatusCode != 200 || !vr.OK {
+		t.Fatalf("validate = %d ok=%v: %s", resp.StatusCode, vr.OK, data)
+	}
+	if !strings.Contains(strings.Join(vr.Warnings, " "), "not declared by agent") {
+		t.Errorf("warnings = %v, want an undeclared-input warning", vr.Warnings)
+	}
+}

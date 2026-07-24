@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -73,8 +74,8 @@ func TestCanonicalV1(t *testing.T) {
 	if plan.Model != "anthropic/claude-sonnet-4-6" || plan.MaxTurns != 25 || plan.Timeout != 30*time.Minute {
 		t.Errorf("plan defaults not resolved: %+v", plan)
 	}
-	if plan.Output != "artifacts/plan.md" {
-		t.Errorf("plan.Output = %q", plan.Output)
+	if len(plan.Outputs) != 1 || plan.Outputs[0].Name != "" || plan.Outputs[0].Value != "artifacts/plan.md" {
+		t.Errorf("plan.Outputs = %+v", plan.Outputs)
 	}
 
 	review := f.Stage("review")
@@ -154,6 +155,110 @@ func TestLiveV1FlowParses(t *testing.T) {
 			t.Errorf("stage %s: rescue gate %s resumes %q, must resume the escalating stage %q",
 				s.ID, tgt.ID, tgt.OnSuccess, s.ID)
 		}
+	}
+}
+
+func TestStageMapFormBindings(t *testing.T) {
+	doc := header + `stages:
+  - { id: build, type: agent, agent: builder,
+      input: { plan: artifacts/plan.md, changes: $CHANGED },
+      output: { patch: artifacts/patch.md }, on_success: done }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := f.Stage("build")
+	if len(s.Inputs) != 2 ||
+		s.Inputs[0] != (IOBinding{Name: "plan", Value: "artifacts/plan.md"}) ||
+		s.Inputs[1] != (IOBinding{Name: "changes", Value: InputChanged}) {
+		t.Errorf("inputs = %+v", s.Inputs)
+	}
+	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Name: "patch", Value: "artifacts/patch.md"}) {
+		t.Errorf("outputs = %+v", s.Outputs)
+	}
+}
+
+func TestLegacyListBindings(t *testing.T) {
+	doc := header + `stages:
+  - { id: build, type: agent, agent: builder, input: [ticket, artifacts/plan.md, $CHANGED],
+      output: artifacts/out.md, on_success: done }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := f.Stage("build")
+	// Legacy entries carry no Name (Name == "").
+	want := []IOBinding{{Value: "ticket"}, {Value: "artifacts/plan.md"}, {Value: InputChanged}}
+	if len(s.Inputs) != 3 {
+		t.Fatalf("inputs = %+v", s.Inputs)
+	}
+	for i, w := range want {
+		if s.Inputs[i] != w {
+			t.Errorf("input[%d] = %+v, want %+v", i, s.Inputs[i], w)
+		}
+	}
+	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Value: "artifacts/out.md"}) {
+		t.Errorf("outputs = %+v", s.Outputs)
+	}
+}
+
+func TestMapFormErrors(t *testing.T) {
+	mk := func(binding string) string {
+		return header + "stages:\n  - { id: a, type: agent, agent: x, " + binding + ", on_success: done }\n"
+	}
+	cases := []struct{ name, doc, want string }{
+		{"dup key", mk("input: { plan: a.md, plan: b.md }"), "bound twice"},
+		{"feedback key", mk("input: { feedback: a.md }"), "filled by edge feedback"},
+		{"ticket value", mk("input: { plan: ticket }"), "always the TASK section"},
+		{"bad input path", mk("input: { plan: /abs }"), "artifact path"},
+		{"non-scalar value", mk("input: { plan: [a, b] }"), "must be a path"},
+		{"bad output path", mk("output: { p: /abs }"), "artifact path"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want mention of %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestDocInputsJSONOrder pins that the map form marshals to JSON in pair order,
+// not sorted: reordering would churn the flow hash on every editor round-trip.
+func TestDocInputsJSONOrder(t *testing.T) {
+	d := DocInputs{Mapped: true, Pairs: []IOPair{{Name: "z", Value: "1"}, {Name: "a", Value: "2"}, {Name: "m", Value: "3"}}}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"z":"1","a":"2","m":"3"}` {
+		t.Errorf("json = %s, want pair order z,a,m", b)
+	}
+	// List form marshals as an array.
+	l, _ := json.Marshal(DocInputs{List: []string{"ticket", "$CHANGED"}})
+	if string(l) != `["ticket","$CHANGED"]` {
+		t.Errorf("list json = %s", l)
+	}
+}
+
+// TestParseDocMapRoundTrip parses a map-form flow to the editor Doc and back to
+// JSON, asserting the binding object survives with its keys in order.
+func TestParseDocMapRoundTrip(t *testing.T) {
+	doc := header + `stages:
+  - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md, changes: $CHANGED }, on_success: done }
+`
+	d, err := ParseDoc("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"input":{"plan":"artifacts/plan.md","changes":"$CHANGED"}`) {
+		t.Errorf("round-trip lost ordered map input: %s", b)
 	}
 }
 
