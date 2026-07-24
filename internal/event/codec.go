@@ -30,6 +30,10 @@ var registry = map[Type]func() Payload{
 	TypeRunPaused:       func() Payload { return &RunPaused{} },
 	TypeRunUnpaused:     func() Payload { return &RunUnpaused{} },
 	TypeEnvDestroyed:    func() Payload { return &EnvDestroyed{} },
+
+	TypeEnvRebuildStarted:   func() Payload { return &EnvRebuildStarted{} },
+	TypeEnvRebuildCompleted: func() Payload { return &EnvRebuildCompleted{} },
+	TypeEnvRebuildFailed:    func() Payload { return &EnvRebuildFailed{} },
 }
 
 // UnmarshalPayload decodes a payload of the given type.

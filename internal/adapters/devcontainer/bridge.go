@@ -183,6 +183,12 @@ func (a *Adapter) relayTarget(ctx context.Context, name, cid string, port int) s
 		candidates = append(candidates, svc)
 	}
 	if len(candidates) == 0 {
+		// No service DECLARES this port. It may still be a runtime listener a
+		// sibling scan discovered (an undeclared db, a service that binds a
+		// port it never exposed in its image) — route there if we saw it.
+		if svc := a.scannedSibling(ports.EnvID(name), port); svc != "" {
+			return svc
+		}
 		return loopback
 	}
 	// Deterministic on ties, and loud about it — silently guessing between two
@@ -193,6 +199,104 @@ func (a *Adapter) relayTarget(ctx context.Context, name, cid string, port int) s
 			"port", port, "services", candidates, "chosen", candidates[0])
 	}
 	return candidates[0]
+}
+
+// scannedSibling returns the compose service a prior ScanSiblingPorts saw
+// listening on port, or "" — the expose-routing supplement for undeclared
+// sibling ports.
+func (a *Adapter) scannedSibling(env ports.EnvID, port int) string {
+	a.sibPortsMu.Lock()
+	defer a.sibPortsMu.Unlock()
+	return a.sibPorts[env][port]
+}
+
+// ScanSiblingPorts (ports.SiblingPortScanner) discovers listeners inside the
+// run's compose SIBLING containers — a database or cache the in-workspace
+// scanner cannot see. Only wildcard binds (0.0.0.0/::) are reported: a
+// loopback-only listener in a sibling is unreachable across containers, so
+// listing it would only offer an expose that connection-refuses. Results also
+// prime the expose-routing cache (see scannedSibling). Best-effort per
+// sibling: no shell, no cat, or no procfs just yields nothing.
+func (a *Adapter) ScanSiblingPorts(ctx context.Context, env ports.EnvID) []ports.ObservedPort {
+	name := string(env)
+	cid, err := a.containerID(ctx, name)
+	if err != nil {
+		return nil
+	}
+	project := a.inspectField(ctx, name, cid, `{{index .Config.Labels "com.docker.compose.project"}}`)
+	if project == "" {
+		return nil // not a compose devcontainer: no siblings
+	}
+	out, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"ps", "-q", "--filter", "label=com.docker.compose.project=" + project}, nil, nil)
+	if err != nil || code != 0 {
+		return nil
+	}
+	exclude := map[int]bool{}
+	for _, p := range a.bridgeSocks() {
+		exclude[p] = true
+	}
+	var observed []ports.ObservedPort
+	routes := map[int]string{}
+	for _, sib := range strings.Fields(string(out)) {
+		if strings.HasPrefix(cid, sib) || strings.HasPrefix(sib, cid) {
+			continue // the workspace container itself — scanned in-container
+		}
+		svc := a.inspectField(ctx, name, sib, `{{index .Config.Labels "com.docker.compose.service"}}`)
+		if svc == "" {
+			continue
+		}
+		tables, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+			[]string{"exec", sib, "sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"}, nil, nil)
+		if err != nil || code != 0 {
+			continue // scratch image, no shell, exec disabled — skip silently
+		}
+		for _, port := range parseWildcardListeners(string(tables)) {
+			if port < 9 || exclude[port] {
+				continue
+			}
+			if _, seen := routes[port]; seen {
+				continue // first sibling wins the port (deterministic via ps order)
+			}
+			routes[port] = svc
+			observed = append(observed, ports.ObservedPort{Port: port, Service: svc})
+		}
+	}
+	a.sibPortsMu.Lock()
+	a.sibPorts[env] = routes
+	a.sibPortsMu.Unlock()
+	sort.Slice(observed, func(i, j int) bool { return observed[i].Port < observed[j].Port })
+	return observed
+}
+
+// parseWildcardListeners returns the ports of LISTEN (st=0A) rows whose local
+// address is a wildcard bind (0.0.0.0 or ::) in a /proc/net/tcp{,6} table —
+// the sibling listeners actually reachable from another container.
+func parseWildcardListeners(table string) []int {
+	var out []int
+	seen := map[int]bool{}
+	lines := strings.Split(table, "\n")
+	for _, line := range lines {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[3] != "0A" {
+			continue
+		}
+		hexIP, hexPort, ok := strings.Cut(f[1], ":")
+		if !ok {
+			continue
+		}
+		// Wildcard only: all-zero v4 (8 chars) or v6 (32 chars).
+		if hexIP != strings.Repeat("0", len(hexIP)) || (len(hexIP) != 8 && len(hexIP) != 32) {
+			continue
+		}
+		port, err := strconv.ParseInt(hexPort, 16, 32)
+		if err != nil || port < 1 || port > 65535 || seen[int(port)] {
+			continue
+		}
+		seen[int(port)] = true
+		out = append(out, int(port))
+	}
+	return out
 }
 
 // inspectField returns one `docker inspect --format` value from the run's
@@ -212,7 +316,9 @@ func (a *Adapter) inspectField(ctx context.Context, name, ref, format string) st
 }
 
 // startRelay launches the mounted static shim's relay detached inside the
-// container — no runtime dependency on anything in the workspace image.
+// container — no runtime dependency on anything in the workspace image. It
+// also starts the port-discovery scanner alongside it (same shim binary,
+// same detached-exec model, same reattach-driven respawn).
 func (a *Adapter) startRelay(ctx context.Context, name string) error {
 	cid, err := a.containerID(ctx, name)
 	if err != nil {
@@ -226,7 +332,26 @@ func (a *Adapter) startRelay(ctx context.Context, name string) error {
 	if code != 0 {
 		return fmt.Errorf("start relay in %s: exit %d: %s", name, code, tail(string(stderr), 512))
 	}
+	a.startPortScan(ctx, name, cid)
 	return nil
+}
+
+// startPortScan launches the shim's listening-port discovery loop detached.
+// Best-effort and auxiliary: a failure is logged, never fatal to provision.
+// The scanner's own singleton guard makes a re-run (reattach after an engine
+// restart where the container survived) a quiet no-op. The bridge's own
+// forward-relay ports are excluded so they never show up as "discovered".
+func (a *Adapter) startPortScan(ctx context.Context, name, cid string) {
+	var excl []string
+	for _, port := range a.bridgeSocks() {
+		excl = append(excl, strconv.Itoa(port))
+	}
+	args := []string{"exec", "-d", cid, "/opt/apothecary/shim", "portscan", "--exclude", strings.Join(excl, ",")}
+	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin, args, nil, nil)
+	if err != nil || code != 0 {
+		slog.Warn("devcontainer: port discovery scanner did not start",
+			"env", name, "exit", code, "err", err, "stderr", tail(string(stderr), 256))
+	}
 }
 
 // --- ports.WorkspacePortExposer ---------------------------------------------

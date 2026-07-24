@@ -155,6 +155,12 @@ type Adapter struct {
 	// from the on-disk marker after an engine restart.
 	fwMu       sync.Mutex
 	firewalled map[ports.EnvID]bool
+
+	// sibPortsMu guards the last sibling-port scan per env (port -> compose
+	// service). Populated by ScanSiblingPorts and consulted by relayTarget so
+	// an EXPOSE of an undeclared sibling port routes to the right service.
+	sibPortsMu sync.Mutex
+	sibPorts   map[ports.EnvID]map[int]string
 }
 
 // CmdRunner executes one CLI invocation (devcontainer, docker or git);
@@ -187,6 +193,7 @@ func New(cfg Config) *Adapter {
 		listen:     net.Listen,
 		bridges:    map[ports.EnvID][]net.Listener{},
 		firewalled: map[ports.EnvID]bool{},
+		sibPorts:   map[ports.EnvID]map[int]string{},
 	}
 }
 
@@ -361,6 +368,15 @@ type upResult struct {
 // on every later one (crash recovery), re-running the repo's lifecycle
 // hooks exactly as the devcontainer spec prescribes.
 func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvID, error) {
+	return a.provision(ctx, spec, false, nil)
+}
+
+// provision is the shared create-or-recreate core behind Provision and
+// Rebuild. removeExisting adds `--remove-existing-container` so the CLI
+// `docker rm -f`s any container matching the id-labels first (a from-scratch
+// recreate — the Rebuild path). tee, when non-nil, receives the `up` build
+// output live (Rebuild streams it into exec.log so the run page shows it).
+func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExisting bool, tee io.Writer) (ports.EnvID, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.ProvisionTimeout)
 	defer cancel()
 	// The engine supplies a human-friendly, slug-of-branch name (unique per
@@ -408,6 +424,12 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 	}
 	if spec.Project != "" {
 		args = append(args, "--id-label", projectLabel+"="+spec.Project)
+	}
+	if removeExisting {
+		// Force a from-scratch recreate: the CLI removes any container matching
+		// the id-labels before (re)creating. The bind-mounted checkout (with
+		// agent commits) is untouched; only the container is rebuilt.
+		args = append(args, "--remove-existing-container")
 	}
 	// Repos without a devcontainer run the §8 pipeline image via a generated
 	// fallback config (which carries iptables + init-firewall.sh AND the
@@ -465,7 +487,7 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 	// build aborts with "additional privileges requested". Disabling the
 	// filesystem entitlement check restores the pre-0.17 behavior. Scoped to
 	// this call so it never affects the other docker/git subprocesses.
-	stdout, stderr, code, err := a.runInner(ctx, name, a.cfg.DevcontainerBin, args, nil, nil, "BUILDX_BAKE_ENTITLEMENTS_FS=0")
+	stdout, stderr, code, err := a.runInner(ctx, name, a.cfg.DevcontainerBin, args, nil, tee, "BUILDX_BAKE_ENTITLEMENTS_FS=0")
 	if err != nil {
 		return "", err
 	}
@@ -1002,7 +1024,14 @@ func (a *Adapter) Status(ctx context.Context, env ports.EnvID) (ports.EnvStatus,
 // daemon gates the WORKSPACE on the inner daemon. A run with no sandbox is a
 // legacy (pre-DinD) env — it keeps the original host-label query — or absent.
 func (a *Adapter) status(ctx context.Context, name string) (ports.EnvStatus, error) {
-	switch a.sandboxState(ctx, name) {
+	sbx, err := a.sandboxState(ctx, name)
+	if err != nil {
+		// Host daemon didn't answer — return the error so the reconciler
+		// records EnvUnknown and recovery WAITS, rather than reading "" as
+		// absent and re-provisioning a live env from scratch.
+		return "", err
+	}
+	switch sbx {
 	case "":
 		// No sandbox. Pre-DinD envs (no inner socket) resolve on the host
 		// daemon as before; a DinD env whose sandbox is gone is absent.
@@ -1305,8 +1334,38 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
+// Rebuild (ports.WorkspaceRebuilder) recreates the workspace container in
+// place, keeping the engine-side checkout (agent commits survive — it's a
+// bind mount that Destroy never touches). Non-compose: `up
+// --remove-existing-container` recreates the single container while keeping
+// the inner daemon + image cache warm. Compose: the only total recreate is a
+// DinD sandbox teardown + fresh provision (the flag's single-container scope
+// can't cleanly recreate a multi-service project). Build output streams into
+// exec.log so the run page's workspace-log poll shows it live.
+func (a *Adapter) Rebuild(ctx context.Context, spec ports.EnvSpec) error {
+	name := spec.Name
+	if name == "" {
+		name = WorkspaceName(spec.RunID)
+	}
+	tee := a.openExecLog(ports.EnvID(name), ports.Command{Script: "# devcontainer rebuild"})
+	if tee != nil {
+		defer tee.Close()
+	}
+	src := a.srcDir(name)
+	if hasRepoConfig(src) && a.isCompose(ctx, src) {
+		if err := a.Destroy(ctx, ports.EnvID(name)); err != nil {
+			return fmt.Errorf("rebuild %s: teardown: %w", name, err)
+		}
+		_, err := a.provision(ctx, spec, false, tee)
+		return err
+	}
+	_, err := a.provision(ctx, spec, true, tee)
+	return err
+}
+
 var _ ports.EnvProvisioner = (*Adapter)(nil)
 var _ ports.WorkspaceReattacher = (*Adapter)(nil)
 var _ ports.ExecLogTailer = (*Adapter)(nil)
 var _ ports.EgressReporter = (*Adapter)(nil)
 var _ ports.WorkspacePortExposer = (*Adapter)(nil)
+var _ ports.WorkspaceRebuilder = (*Adapter)(nil)

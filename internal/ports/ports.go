@@ -239,6 +239,37 @@ type WorkspacePortExposer interface {
 	AppPorts(ctx context.Context, env EnvID) []int
 }
 
+// WorkspaceRebuilder is an OPTIONAL EnvProvisioner capability: recreate the
+// environment's container(s) IN PLACE, keeping the run and the engine-side
+// checkout (agent commits survive). Distinct from a fresh Provision (same
+// env identity) and from the engine's re-run/resume actions. The engine
+// re-runs bootstrap afterwards (the fresh container has no /apothecary state).
+type WorkspaceRebuilder interface {
+	Rebuild(ctx context.Context, spec EnvSpec) error
+}
+
+// ObservedPort is a listening TCP port discovered at runtime inside an
+// environment (as opposed to declared in devcontainer.json). Process is a
+// best-effort name; Service names the compose sibling that serves it (empty
+// for ports on the workspace container itself).
+type ObservedPort struct {
+	Port    int    `json:"port"`
+	Process string `json:"process,omitempty"`
+	Service string `json:"service,omitempty"`
+}
+
+// SiblingPortScanner is an OPTIONAL EnvProvisioner capability: discover
+// listening ports in the environment's SIBLING containers (compose
+// services), which the in-workspace scanner cannot see (separate network +
+// pid namespaces). The workspace's own ports are discovered in-container and
+// reported directly to the engine; this covers the rest. Implementations
+// also prime their expose routing so a discovered sibling port can be
+// reached by ExposePort. Best-effort; empty is normal (non-compose, or a
+// sibling image without a shell/procfs).
+type SiblingPortScanner interface {
+	ScanSiblingPorts(ctx context.Context, env EnvID) []ObservedPort
+}
+
 // ExecLogTailer is an OPTIONAL EnvProvisioner capability: a live tail of
 // an environment's combined exec output (bootstrap, commands, agent
 // invocations) for run-page feedback. How output is captured is the

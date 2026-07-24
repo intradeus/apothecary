@@ -85,6 +85,13 @@ type Config struct {
 	// RunsDir receives stage logs (<run>/<stage>-<iter>.log, §12/§13);
 	// empty disables log files.
 	RunsDir string
+
+	// PortDiscoveryAutoExpose, when set, auto-exposes newly discovered
+	// listening ports (up to PortDiscoveryMaxAuto per run) instead of only
+	// listing them for click-to-expose. Default off (list-only).
+	PortDiscoveryAutoExpose bool
+	// PortDiscoveryMaxAuto caps auto-exposures per run; default 5.
+	PortDiscoveryMaxAuto int
 }
 
 // Limits are the §14 caps: runs beyond MaxConcurrentRuns queue in pending
@@ -104,6 +111,9 @@ func (c *Config) withDefaults() Config {
 	}
 	if out.MRPollInterval == 0 {
 		out.MRPollInterval = 60 * time.Second
+	}
+	if out.PortDiscoveryMaxAuto == 0 {
+		out.PortDiscoveryMaxAuto = 5
 	}
 	return out
 }
@@ -154,6 +164,72 @@ type Engine struct {
 	// to the env_id-based liveness guess.
 	envStatusMu sync.Mutex
 	envStatus   map[string]ports.EnvStatus
+
+	// observed is the per-run set of listening ports discovered at runtime
+	// (the in-workspace shim scanner + engine-side sibling scans), surfaced on
+	// the run page with click-to-expose. Memory-only and TTL-aged, like
+	// envStatus: a discovered listener is external state, not a run-authored
+	// transition, so it never enters the event log. Empty/stale means "no
+	// live scanner" — the read path returns nothing rather than a stale lie.
+	observedMu sync.Mutex
+	observed   map[string]*observedRun
+
+	// ops is the per-run in-flight workspace-operation gate (keyed by run id).
+	// It serializes provision/rebuild/destroy on one env — the reaper,
+	// reconciler and user actions otherwise race on the same workspace — and
+	// surfaces the transitional badge (rebuilding/destroying) that wins over
+	// the 30s docker-observed status. A CLAIM, not a held mutex: opMu is taken
+	// only for O(1) map ops, NEVER across a Provision/Destroy/Rebuild/Status
+	// call and NEVER nested with mu or envStatusMu. Memory-only like envStatus:
+	// a crash mid-op leaves no stuck state (re-appears as unreconciled).
+	opMu sync.Mutex
+	ops  map[string]*envOp
+}
+
+// envOp is a run's in-flight (or recently-failed) workspace operation.
+type envOp struct {
+	kind   string    // "provisioning" | "rebuilding" | "destroying"
+	failed bool      // op ended in error; the entry lingers as the "error" badge
+	at     time.Time // claim/failure time (failed-badge TTL sweep + diagnostics)
+}
+
+// envOpErrorTTL bounds how long a failed op shows the "error" badge before it
+// ages out (mirrors observedTTL — a permanent error badge would be the exact
+// stale-lie the reconciler comment warns against).
+const envOpErrorTTL = 60 * time.Second
+
+// ErrEnvOpInFlight refuses a workspace op when another is already running on
+// the same run's env.
+var ErrEnvOpInFlight = errors.New("another workspace operation is in progress")
+
+// beginEnvOp claims the per-run workspace-op slot. It refuses with
+// ErrEnvOpInFlight when a non-failed op is already in flight; a lingering
+// FAILED entry does not block (a retry overwrites it). The returned release
+// records the terminal outcome — success clears the slot, failure leaves the
+// "error" badge for envOpErrorTTL — and is idempotent (sync.Once), so a
+// double release (e.g. defer + explicit) is harmless. Callers MUST pair it
+// with an immediately-following `defer rel(err)` on a named error return.
+func (e *Engine) beginEnvOp(runID, kind string) (func(error), error) {
+	e.opMu.Lock()
+	if op := e.ops[runID]; op != nil && !op.failed {
+		e.opMu.Unlock()
+		return nil, fmt.Errorf("run %s: %w", runID, ErrEnvOpInFlight)
+	}
+	e.ops[runID] = &envOp{kind: kind, at: e.clock()}
+	e.opMu.Unlock()
+
+	var once sync.Once
+	return func(opErr error) {
+		once.Do(func() {
+			e.opMu.Lock()
+			defer e.opMu.Unlock()
+			if opErr != nil {
+				e.ops[runID] = &envOp{kind: kind, failed: true, at: e.clock()}
+			} else {
+				delete(e.ops, runID)
+			}
+		})
+	}, nil
 }
 
 type runHandle struct {
@@ -280,8 +356,10 @@ func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
 		handles:   map[string]*runHandle{},
 		pings:     map[string]*Ping{},
 		tokens:    map[string]string{},
+		ops:       map[string]*envOp{},
 		envchecks: map[string]*envCheckState{},
 		envStatus: map[string]ports.EnvStatus{},
+		observed:  map[string]*observedRun{},
 	}
 }
 
@@ -686,10 +764,22 @@ func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
 // destroyEnv resolves the run's project to reach its provisioner (§6.1:
 // no global envp anymore). Pre-v2 runs with no project cannot be destroyed
 // through the engine — their envs outlived the config that owned them.
-func (e *Engine) destroyEnv(ctx context.Context, v run.View) error {
+func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
+	// Claim the op-gate first: this is the single choke point for env
+	// destruction (Archive + the reaper both funnel here), so the claim
+	// serializes destroy against a concurrent rebuild and against each other.
+	// A rebuild in flight refuses the destroy (reaper skips this pass, Archive
+	// surfaces the error) rather than yanking ports/containers mid-rebuild.
+	rel, err := e.beginEnvOp(v.RunID, "destroying")
+	if err != nil {
+		return err
+	}
+	defer func() { rel(derr) }()
+
 	if e.portRelay != nil {
 		e.portRelay.CloseRun(v.RunID) // exposures die with the env
 	}
+	e.forgetObserved(v.RunID) // discovered-port snapshot dies with the env
 	if v.ProjectID == "" {
 		return fmt.Errorf("run %s has no project (pre-v2); destroy its environment manually", v.RunID)
 	}
@@ -1288,6 +1378,17 @@ func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
 		return err
 	}
 	next := map[string]ports.EnvStatus{}
+	// Runs with an op in flight (rebuild/destroy) are skipped: their docker
+	// state is churning and the EnvBadges overlay already covers the badge, so
+	// probing would only manufacture a spurious EnvUnknown mid-op.
+	e.opMu.Lock()
+	inflight := make(map[string]bool, len(e.ops))
+	for id, op := range e.ops {
+		if !op.failed {
+			inflight[id] = true
+		}
+	}
+	e.opMu.Unlock()
 	// Resolutions are cached per project within the pass — many runs share
 	// one project, and Resolve is not free.
 	resolved := map[string]*Resolution{}
@@ -1297,6 +1398,9 @@ func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
 		}
 	}()
 	for _, id := range ids {
+		if inflight[id] {
+			continue
+		}
 		evs, err := e.store.Events(ctx, id, 0)
 		if err != nil {
 			return err
@@ -1339,6 +1443,40 @@ func (e *Engine) EnvStatuses() map[string]ports.EnvStatus {
 	defer e.envStatusMu.Unlock()
 	out := make(map[string]ports.EnvStatus, len(e.envStatus))
 	maps.Copy(out, e.envStatus)
+	return out
+}
+
+// EnvBadges returns the per-run workspace badge string: the reconciled docker
+// status, OVERRIDDEN by any in-flight op ("rebuilding"/"destroying"/
+// "provisioning") or a recently-failed op ("error"). The op overlay wins so a
+// transient action shows immediately without touching the 30s reconciler map
+// or the event log. Locks are taken SEQUENTIALLY (opMu, released, then
+// envStatusMu via EnvStatuses) — never nested.
+func (e *Engine) EnvBadges() map[string]string {
+	now := e.clock()
+	e.opMu.Lock()
+	ops := make(map[string]*envOp, len(e.ops))
+	for id, op := range e.ops {
+		if op.failed && now.Sub(op.at) > envOpErrorTTL {
+			delete(e.ops, id) // lazy TTL sweep, like observedTTL
+			continue
+		}
+		ops[id] = op
+	}
+	e.opMu.Unlock()
+
+	st := e.EnvStatuses() // takes envStatusMu — sequential, not nested with opMu
+	out := make(map[string]string, len(st)+len(ops))
+	for id, s := range st {
+		out[id] = string(s)
+	}
+	for id, op := range ops {
+		if op.failed {
+			out[id] = "error"
+		} else {
+			out[id] = op.kind
+		}
+	}
 	return out
 }
 

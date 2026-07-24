@@ -18,6 +18,11 @@ import (
 
 var errStageTimeout = errors.New("stage timeout")
 
+// recoveryReprobeDelay is how long ensureEnv waits before re-probing a
+// non-running env on recovery, so a container mid-restart isn't misread as
+// gone and needlessly re-provisioned. A var so tests can compress it.
+var recoveryReprobeDelay = 2 * time.Second
+
 // resumeReply is what Resume sends when re-entering a crashed agent stage
 // with a previously recorded session (§2 crash recovery).
 const resumeReply = "The apothecary engine restarted while this stage was in flight. " +
@@ -919,13 +924,25 @@ func (x *exec) ensureEnv() error {
 	}
 	if rs.envID != "" {
 		status, err := x.res.Envp.Status(x.ctx, rs.envID)
+		// A container caught mid-restart reads Starting/Stopped for a moment;
+		// re-probe once after a short pause before deciding to re-provision, so
+		// a transient blip doesn't nuke a workspace that's just coming back up.
+		// EnvAbsent is skipped — a genuinely gone container won't reappear.
+		if err == nil && status != ports.EnvRunning && status != ports.EnvAbsent {
+			select {
+			case <-time.After(recoveryReprobeDelay):
+			case <-x.ctx.Done():
+				return context.Cause(x.ctx)
+			}
+			status, err = x.res.Envp.Status(x.ctx, rs.envID)
+		}
 		if err != nil {
 			if x.ctx.Err() != nil {
 				return context.Cause(x.ctx)
 			}
-			// Transient (Coder unreachable, etc.): re-provisioning a healthy
-			// env and re-running bootstrap on top of it would be worse than
-			// waiting for the next boot.
+			// Transient (host daemon blip, Coder unreachable): re-provisioning a
+			// healthy env and re-running bootstrap on top of it would be worse
+			// than waiting for the next boot.
 			return fmt.Errorf("recovery: env status: %w", err)
 		}
 		if status == ports.EnvRunning {

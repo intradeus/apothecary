@@ -21,7 +21,12 @@
   } = $props();
 
   const status = $derived.by(() => {
-    if (state === 'provisioning') return 'provisioning';
+    // In-flight op overlays win over both axes — a rebuild/destroy is
+    // happening right now regardless of the last-reconciled docker state.
+    if (envStatus === 'rebuilding') return 'rebuilding';
+    if (envStatus === 'destroying') return 'destroying';
+    if (envStatus === 'error') return 'error';
+    if (state === 'provisioning' || envStatus === 'provisioning') return 'provisioning';
     if (!envId) return 'none';
     switch (envStatus) {
       case 'running':
@@ -48,9 +53,17 @@
   <span class="chip ws-live" title={`Workspace live${envId ? ` (${envId})` : ''}`}>
     <span class="dot"></span>{#if !compact}workspace live{/if}
   </span>
-{:else if status === 'provisioning' || status === 'starting'}
-  <span class="chip ws-prov" title={status === 'starting' ? 'Workspace container starting…' : 'Provisioning the workspace…'}>
-    <span class="dot"></span>{#if !compact}{status === 'starting' ? 'starting…' : 'provisioning…'}{/if}
+{:else if status === 'provisioning' || status === 'starting' || status === 'rebuilding'}
+  <span class="chip ws-prov" title={status === 'starting' ? 'Workspace container starting…' : status === 'rebuilding' ? 'Rebuilding the workspace container…' : 'Provisioning the workspace…'}>
+    <span class="dot"></span>{#if !compact}{status === 'starting' ? 'starting…' : status === 'rebuilding' ? 'rebuilding…' : 'provisioning…'}{/if}
+  </span>
+{:else if status === 'destroying'}
+  <span class="chip ws-destroying" title={`Destroying the workspace${envId ? ` (${envId})` : ''}…`}>
+    <span class="dot"></span>{#if !compact}destroying…{/if}
+  </span>
+{:else if status === 'error'}
+  <span class="chip ws-error" title={`Last workspace operation failed${envId ? ` (${envId})` : ''} — try Rebuild again`}>
+    <span class="dot"></span>{#if !compact}workspace error{/if}
   </span>
 {:else if status === 'stopped'}
   <span class="chip ws-stopped" title={`Workspace stopped${envId ? ` (${envId})` : ''} — container is not running`}>
@@ -90,6 +103,25 @@
   }
   .ws-stopped .dot {
     background: var(--amber);
+  }
+  /* Destroying: amber pulse — a transient teardown, distinct from stopped. */
+  .ws-destroying {
+    color: var(--amber);
+    border-color: var(--amber);
+    background: color-mix(in srgb, var(--amber) 14%, transparent);
+  }
+  .ws-destroying .dot {
+    background: var(--amber);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  /* Error: a failed rebuild/provision — red danger pill (ages out on TTL). */
+  .ws-error {
+    color: var(--red);
+    border-color: var(--red);
+    background: color-mix(in srgb, var(--red) 14%, transparent);
+  }
+  .ws-error .dot {
+    background: var(--red);
   }
   /* Unknown: muted pill with a HOLLOW dot — deliberately unlike "live" so a
      stale/unreachable workspace never reads as green. */

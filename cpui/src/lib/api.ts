@@ -17,7 +17,18 @@ export interface RunView {
   // Reconciled live container status. 'unknown' = the provisioner couldn't
   // be reached (expired session, deleted project). Field absent = not yet
   // reconciled; the badge falls back to env_id.
-  env_status?: 'running' | 'starting' | 'stopped' | 'absent' | 'unknown';
+  // The reconciled docker status, or an in-flight-op overlay
+  // (provisioning/rebuilding/destroying) / recently-failed op (error).
+  env_status?:
+    | 'running'
+    | 'starting'
+    | 'stopped'
+    | 'absent'
+    | 'unknown'
+    | 'provisioning'
+    | 'rebuilding'
+    | 'destroying'
+    | 'error';
   created_at: string;
   updated_at: string;
 }
@@ -300,6 +311,10 @@ export const api = {
   restart: (id: string, opts?: RunInput) =>
     post(`/api/runs/${id}/restart`, runInputBody(opts)) as Promise<{ run_id: string }>,
   resume: (id: string) => post(`/api/runs/${id}/resume`),
+  // Recreate the workspace container in place (keeps the run + commits,
+  // re-runs bootstrap). Blocks until done; the run page shows progress via
+  // the workspace-log tail and the rebuilding badge.
+  rebuild: (id: string) => post(`/api/runs/${id}/rebuild`),
   log: async (id: string, stage: string, n = 65536): Promise<string> => {
     const res = await fetch(`/api/runs/${id}/logs/${stage}?n=${n}`);
     if (!res.ok) throw new Error(`${res.status}`);
@@ -321,8 +336,14 @@ export const api = {
   egressAllow: (id: string, host: string) =>
     post(`/api/runs/${id}/egress-allow`, { host }) as Promise<{ allowed: string; persisted: boolean }>,
   // Live workspace-port exposures (engine-process-scoped; the registry,
-  // not the env_ready event, is authoritative after restarts).
-  runPorts: (id: string) => req<{ ports: { port: number; url: string }[] }>(`/api/runs/${id}/ports`),
+  // not the env_ready event, is authoritative after restarts), plus
+  // runtime-discovered listeners not yet exposed (observed) for
+  // click-to-expose. service names the compose sibling a port belongs to.
+  runPorts: (id: string) =>
+    req<{
+      ports: { port: number; url: string }[];
+      observed?: { port: number; process?: string; service?: string }[];
+    }>(`/api/runs/${id}/ports`),
   // Publish a workspace port and get its browser URL (idempotent per port).
   exposePort: (id: string, port: number) =>
     post(`/api/runs/${id}/expose-port`, { port }) as Promise<{ port: number; url: string }>,

@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
 	"apothecary/internal/portrelay"
+	"apothecary/internal/ports"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 )
@@ -75,12 +76,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
 	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
 	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
+	mux.HandleFunc("POST /api/runs/{id}/observed-ports", s.postObservedPorts)
 	mux.HandleFunc("POST /api/runs/{id}/abort", s.postAbort)
 	mux.HandleFunc("POST /api/runs/{id}/pause", s.postPause)
 	mux.HandleFunc("POST /api/runs/{id}/play", s.postPlay)
 	mux.HandleFunc("POST /api/runs/{id}/archive", s.postArchive)
 	mux.HandleFunc("POST /api/runs/{id}/restart", s.postRestart)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.postResume)
+	mux.HandleFunc("POST /api/runs/{id}/rebuild", s.postRebuild)
 	mux.HandleFunc("POST /api/runs/{id}/pings", s.postPing)
 	mux.HandleFunc("GET /api/runs/{id}/pings/{pid}", s.repollPing)
 	mux.HandleFunc("POST /api/pings/{pid}/answer", s.answerPing)
@@ -290,10 +293,11 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	project := r.URL.Query().Get("project")
 	ticket := r.URL.Query().Get("ticket")
-	// One snapshot of the reconciler's live-status map for the whole list —
-	// the workspace badge reads env_status to tell a live env from a stopped
-	// one (env_id alone can't, see run.View.EnvStatus).
-	envStatus := s.Engine.EnvStatuses()
+	// One snapshot of the reconciler's live-status map (overlaid with any
+	// in-flight op) for the whole list — the workspace badge reads env_status
+	// to tell a live env from a stopped one, and to show rebuilding/destroying/
+	// error transitions (env_id alone can't, see run.View.EnvStatus).
+	envStatus := s.Engine.EnvBadges()
 	views := make([]run.View, 0, len(ids))
 	for _, id := range ids {
 		evs, err := s.Store.Events(r.Context(), id, 0)
@@ -311,10 +315,10 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		if ticket != "" && v.TicketID != ticket {
 			continue
 		}
-		if v.EnvID != "" {
-			if st, ok := envStatus[v.RunID]; ok {
-				v.EnvStatus = string(st)
-			}
+		// Overlay may carry a provisioning/error op before env_id exists, so
+		// don't gate on EnvID here.
+		if st, ok := envStatus[v.RunID]; ok {
+			v.EnvStatus = st
 		}
 		views = append(views, v)
 	}
@@ -332,10 +336,8 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		last = last[len(last)-100:]
 	}
 	v := run.Reduce(evs)
-	if v.EnvID != "" {
-		if st, ok := s.Engine.EnvStatuses()[v.RunID]; ok {
-			v.EnvStatus = string(st)
-		}
+	if st, ok := s.Engine.EnvBadges()[v.RunID]; ok {
+		v.EnvStatus = st
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"run": v, "events": last})
 }
@@ -441,6 +443,28 @@ func (s *Server) postResume(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "still active"), strings.Contains(msg, "can be resumed"):
+			status = http.StatusConflict
+		}
+		writeErr(w, status, msg)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// postRebuild recreates the run's workspace container in place (keeps the run
+// + its commits, re-runs bootstrap). Blocks until done — the run page shows
+// progress via the workspace-log tail and the rebuilding badge.
+func (s *Server) postRebuild(w http.ResponseWriter, r *http.Request) {
+	err := s.Engine.RebuildEnv(r.Context(), r.PathValue("id"))
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusBadRequest
+		switch {
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		case errors.Is(err, engine.ErrEnvOpInFlight), errors.Is(err, engine.ErrRunActive),
+			strings.Contains(msg, "does not support"), strings.Contains(msg, "no workspace"),
+			strings.Contains(msg, "no project"):
 			status = http.StatusConflict
 		}
 		writeErr(w, status, msg)
@@ -637,14 +661,63 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"port": body.Port, "url": url})
 }
 
-// getRunPorts lists the run's LIVE exposures — the registry, not events,
-// is authoritative (exposures are engine-process-scoped).
-func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
-	ports := s.Engine.RunPorts(r.PathValue("id"))
-	if ports == nil {
-		ports = []portrelay.Exposure{}
+// postObservedPorts receives the in-workspace shim scanner's listener
+// snapshot (run-token auth, like the ping endpoints — which also restricts
+// it to live runs). 204 on accept.
+func (s *Server) postObservedPorts(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	if !s.authPing(w, r, runID) {
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ports": ports})
+	var body struct {
+		Ports []ports.ObservedPort `json:"ports"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if len(body.Ports) > 128 {
+		writeErr(w, http.StatusBadRequest, "too many ports (max 128)")
+		return
+	}
+	clean := make([]ports.ObservedPort, 0, len(body.Ports))
+	for _, p := range body.Ports {
+		if p.Port < 1 || p.Port > 65535 {
+			continue
+		}
+		p.Process, p.Service = truncate(p.Process, 64), truncate(p.Service, 64)
+		clean = append(clean, p)
+	}
+	s.Engine.ReportObservedPorts(runID, clean)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// getRunPorts lists the run's LIVE exposures plus not-yet-exposed discovered
+// listeners — the registry, not events, is authoritative (exposures are
+// engine-process-scoped).
+func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	exposed := s.Engine.RunPorts(id)
+	if exposed == nil {
+		exposed = []portrelay.Exposure{}
+	}
+	live := map[int]bool{}
+	for _, e := range exposed {
+		live[e.Port] = true
+	}
+	observed := []ports.ObservedPort{}
+	for _, p := range s.Engine.ObservedPorts(id) {
+		if !live[p.Port] { // an exposed port graduates out of the discovered list
+			observed = append(observed, p)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ports": exposed, "observed": observed})
 }
 
 func containsStr(ss []string, v string) bool {

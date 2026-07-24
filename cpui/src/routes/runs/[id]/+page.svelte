@@ -23,6 +23,9 @@
   // stale when the engine restarts, so live exposures replace any 'app'
   // links the event carried.
   let livePorts = $state<{ port: number; url: string }[]>([]);
+  // Runtime-discovered listeners not yet exposed (the shim's in-workspace
+  // scan + engine-side compose-sibling scan): one-click exposes them.
+  let observedPorts = $state<{ port: number; process?: string; service?: string }[]>([]);
   const links = $derived.by(() => {
     const fromEvent =
       (events.findLast((e) => e.type === 'env_ready')?.payload.links as
@@ -124,7 +127,9 @@
           requestAnimationFrame(() => tailEl && (tailEl.scrollTop = tailEl.scrollHeight));
         }
         denials = await api.egressDenials(runId);
-        livePorts = (await api.runPorts(runId)).ports;
+        const pr = await api.runPorts(runId);
+        livePorts = pr.ports;
+        observedPorts = pr.observed ?? [];
       } catch {
         /* transient; keep last tail */
       }
@@ -186,21 +191,27 @@
   // resulting link joins the row via the livePorts poll.
   let exposeInput = $state('');
   let exposing = $state(false);
-  async function exposePort() {
-    const port = parseInt(exposeInput, 10);
+  async function doExpose(port: number) {
     if (!port || port < 1 || port > 65535) return;
     exposing = true;
     error = '';
     try {
       const res = await api.exposePort(runId, port);
-      livePorts = (await api.runPorts(runId)).ports;
-      exposeInput = '';
+      const pr = await api.runPorts(runId);
+      livePorts = pr.ports;
+      observedPorts = pr.observed ?? []; // the now-exposed port drops off
       window.open(res.url, '_blank');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
       exposing = false;
     }
+  }
+  async function exposePort() {
+    const port = parseInt(exposeInput, 10);
+    if (!port || port < 1 || port > 65535) return;
+    await doExpose(port);
+    exposeInput = '';
   }
 
   let resuming = $state(false);
@@ -215,6 +226,23 @@
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       resuming = false;
+    }
+  }
+
+  // Rebuild recreates the container in place; the request blocks for the whole
+  // build + bootstrap, so a dedicated flag drives the button's busy state. The
+  // rebuilding badge + workspace-log tail show live progress meanwhile.
+  let rebuilding = $state(false);
+  async function rebuild() {
+    rebuilding = true;
+    error = '';
+    try {
+      await api.rebuild(runId);
+      await refreshRun();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      rebuilding = false;
     }
   }
 
@@ -317,6 +345,16 @@
       {/if}
     {/each}
     {#if run.mr_url}<a href={run.mr_url} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
+    {#each observedPorts as p (p.port)}
+      <button
+        class="linklike"
+        disabled={exposing}
+        onclick={() => doExpose(p.port)}
+        title={`Detected listener${p.service ? ` in service ${p.service}` : p.process ? ` (${p.process})` : ''} — expose and open`}
+      >
+        :{p.port}{p.service ? ` ${p.service}` : p.process ? ` ${p.process}` : ''} ↗
+      </button>
+    {/each}
     {#if !terminal && run.env_id}
       <span class="row" style="gap:4px" title="Publish a port the app inside the workspace listens on — opens it on an engine-host URL (per-run dynamic port, safe across concurrent runs)">
         <input
@@ -355,6 +393,12 @@
         title="Start over as a fresh run: same ticket and project — new workspace, new branch. You can add direction for the new attempt.">
         {showRestart ? 'Cancel restart' : 'Restart'}
       </button>
+      {#if run.env_id}
+        <button onclick={rebuild} disabled={rebuilding}
+          title="Recreate this run's container in place — keeps the run and its commits, re-runs setup (e.g. to apply devcontainer.json changes). Same run, same branch.">
+          {rebuilding ? 'Rebuilding…' : 'Rebuild workspace'}
+        </button>
+      {/if}
       {#if run.state !== 'archived'}
         <button onclick={() => act(() => api.archive(runId))}>Archive</button>
       {/if}

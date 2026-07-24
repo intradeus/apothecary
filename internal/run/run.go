@@ -138,5 +138,10 @@ func Apply(v *View, e *event.Event) {
 		}
 	case *event.EnvDestroyed:
 		v.EnvID = ""
+	case *event.EnvRebuildStarted, *event.EnvRebuildCompleted, *event.EnvRebuildFailed:
+		// Rebuild recreates the container in place — orthogonal to lifecycle,
+		// so State and EnvID are untouched (a completed run stays completed).
+		// The UpdatedAt bump above IS wanted: it resets the reaper's
+		// destroy-completed window so a just-rebuilt env isn't reaped at once.
 	}
 }

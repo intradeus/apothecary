@@ -31,6 +31,11 @@ const (
 	TypeRunPaused       Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
 	TypeRunUnpaused     Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
 	TypeEnvDestroyed    Type = "env_destroyed"
+	// Rebuild recreates a run's container in place (keeps the run + checkout);
+	// orthogonal to the run's lifecycle State — these never change it.
+	TypeEnvRebuildStarted   Type = "env_rebuild_started"
+	TypeEnvRebuildCompleted Type = "env_rebuild_completed"
+	TypeEnvRebuildFailed    Type = "env_rebuild_failed"
 )
 
 // Payload is implemented by every event payload struct.
@@ -260,6 +265,19 @@ type EnvDestroyed struct {
 	EnvID string `json:"env_id"`
 }
 
+type EnvRebuildStarted struct {
+	EnvID string `json:"env_id"`
+}
+
+type EnvRebuildCompleted struct {
+	EnvID string `json:"env_id"`
+}
+
+type EnvRebuildFailed struct {
+	EnvID string `json:"env_id"`
+	Error string `json:"error"`
+}
+
 func (*RunCreated) EventType() Type      { return TypeRunCreated }
 func (*EnvRequested) EventType() Type    { return TypeEnvRequested }
 func (*ImageBuilt) EventType() Type      { return TypeImageBuilt }
@@ -281,3 +299,7 @@ func (*RunResumed) EventType() Type      { return TypeRunResumed }
 func (*RunPaused) EventType() Type       { return TypeRunPaused }
 func (*RunUnpaused) EventType() Type     { return TypeRunUnpaused }
 func (*EnvDestroyed) EventType() Type    { return TypeEnvDestroyed }
+
+func (*EnvRebuildStarted) EventType() Type   { return TypeEnvRebuildStarted }
+func (*EnvRebuildCompleted) EventType() Type { return TypeEnvRebuildCompleted }
+func (*EnvRebuildFailed) EventType() Type    { return TypeEnvRebuildFailed }

@@ -286,6 +286,25 @@ func TestTicketEntityFlow(t *testing.T) {
 	}
 }
 
+func TestPostRebuild(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+
+	// Unknown run → 404.
+	resp, _ := x.do(t, "POST", "/api/runs/nope/rebuild", nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown run rebuild = %d, want 404", resp.StatusCode)
+	}
+
+	// A completed run whose provisioner doesn't support rebuild → 409. (The
+	// fake envp has no Rebuild; the 202 happy path is engine-tested.)
+	runID := x.createTicket(t, "T")
+	x.e.Wait(runID)
+	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/rebuild", nil, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("unsupported rebuild = %d (%s), want 409", resp.StatusCode, data)
+	}
+}
+
 func TestTicketRunsAndDetail(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	runID := x.createTicket(t, "Add search")
@@ -526,6 +545,59 @@ func TestPingAuthRequired(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("hdr %v: status = %d, want 401", hdr, resp.StatusCode)
 		}
+	}
+}
+
+func TestObservedPortsEndpoint(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	block := make(chan struct{})
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		<-block
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	runID := x.createTicket(t, "T")
+	defer close(block)
+
+	// Run-token auth, like the ping endpoints.
+	for _, hdr := range []map[string]string{nil, {"Authorization": "Bearer wrong"}} {
+		resp, _ := x.do(t, "POST", "/api/runs/"+runID+"/observed-ports",
+			map[string]any{"ports": []map[string]any{{"port": 3000}}}, hdr)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("hdr %v: status = %d, want 401", hdr, resp.StatusCode)
+		}
+	}
+
+	tok := map[string]string{"Authorization": "Bearer " + x.e.RunToken(runID)}
+	resp, _ := x.do(t, "POST", "/api/runs/"+runID+"/observed-ports",
+		map[string]any{"ports": []map[string]any{{"port": 3000, "process": "node"}, {"port": 0}}}, tok)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("report status = %d, want 204", resp.StatusCode)
+	}
+
+	// The discovered (but unexposed) port surfaces in the ports listing; the
+	// out-of-range :0 was dropped.
+	_, body := x.do(t, "GET", "/api/runs/"+runID+"/ports", nil, nil)
+	var got struct {
+		Observed []struct {
+			Port    int    `json:"port"`
+			Process string `json:"process"`
+		} `json:"observed"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("bad body %s: %v", body, err)
+	}
+	if len(got.Observed) != 1 || got.Observed[0].Port != 3000 || got.Observed[0].Process != "node" {
+		t.Errorf("observed = %+v, want one {3000 node}", got.Observed)
+	}
+
+	// Oversize list is refused.
+	big := make([]map[string]any, 129)
+	for i := range big {
+		big[i] = map[string]any{"port": 1000 + i}
+	}
+	resp, _ = x.do(t, "POST", "/api/runs/"+runID+"/observed-ports", map[string]any{"ports": big}, tok)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("oversize status = %d, want 400", resp.StatusCode)
 	}
 }
 

@@ -37,6 +37,10 @@ type Boot struct {
 	// "text/*" wildcards). APOTHECARY_ARTIFACT_MIME_ALLOW (comma-separated),
 	// default DefaultArtifactMimeAllow.
 	ArtifactMimeAllow []string
+	// PortAutoExpose auto-exposes runtime-discovered listening ports instead
+	// of only listing them for click-to-expose. APOTHECARY_PORT_AUTOEXPOSE
+	// ("on" enables); default off.
+	PortAutoExpose bool
 }
 
 // DefaultEgressProxyPort is the proxy's loopback port when unspecified.
@@ -93,6 +97,7 @@ func FromEnv() (*Boot, error) {
 			b.ArtifactMimeAllow = list
 		}
 	}
+	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"
 	if b.PostgresDSN == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")
 	}

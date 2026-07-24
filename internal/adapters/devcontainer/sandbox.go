@@ -46,17 +46,23 @@ func (a *Adapter) sandboxIDs(ctx context.Context, name string) ([]string, error)
 }
 
 // sandboxState is the host-daemon state of the run's sandbox container
-// ("running"/"created"/"exited"/…), or "" when there is no sandbox (a legacy
-// pre-DinD env, or a fully-destroyed run).
-func (a *Adapter) sandboxState(ctx context.Context, name string) string {
+// ("running"/"created"/"exited"/…), or "" when the daemon answered and there
+// is no sandbox (a legacy pre-DinD env, or a fully-destroyed run). A host
+// docker failure returns an ERROR — NOT "" — so a transient daemon blip is
+// reported as EnvUnknown upstream instead of masquerading as "absent", which
+// used to trigger a nuke-and-reprovision of a perfectly live workspace.
+func (a *Adapter) sandboxState(ctx context.Context, name string) (string, error) {
 	out, _, code, err := a.hostRun(ctx, []string{"ps", "-a",
 		"--filter", "label=" + label(name), "--filter", "label=" + sandboxLabel + "=true",
 		"--format", "{{.State}}"})
-	if err != nil || code != 0 {
-		return ""
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("docker ps sandbox %s: exit %d", name, code)
 	}
 	state, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
-	return state
+	return state, nil
 }
 
 // ensureSandbox creates (or restarts) the run's nested-daemon container and

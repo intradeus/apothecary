@@ -10,15 +10,23 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// writeRunEnv points the shim at url with the given token.
+// writeRunEnv points the shim at url with the given token. It replaces the
+// file atomically (temp + rename): tests rotate the token from a goroutine
+// while readRunEnv reads concurrently, and a plain truncate-then-write would
+// let the reader catch an empty/partial file.
 func writeTestEnv(t *testing.T, url, token string) {
 	t.Helper()
 	content := "APOTHECARY_RUN_ID=run1\nAPOTHECARY_RUN_TOKEN=" + token + "\nAPOTHECARY_ENGINE_URL=" + url + "\n"
-	if err := os.WriteFile(runEnvPath, []byte(content), 0o600); err != nil {
+	tmp := runEnvPath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, runEnvPath); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -108,10 +116,12 @@ func TestAskHumanAnswerRendering(t *testing.T) {
 
 func TestAskHumanRereadsEnvOn401(t *testing.T) {
 	fastProtocol(t)
-	rotated := false
+	// rotated is written by the httptest handler goroutine and read by the
+	// test body — atomic so the two don't race on the bare bool.
+	var rotated atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer fresh" {
-			rotated = true
+			rotated.Store(true)
 			w.WriteHeader(401)
 			return
 		}
@@ -119,13 +129,20 @@ func TestAskHumanRereadsEnvOn401(t *testing.T) {
 	}))
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "stale")
+	// The token rotates from a goroutine mid-poll. Join it before returning:
+	// otherwise its access to the runEnvPath global races fastProtocol's
+	// cleanup restoring that global (file-based sync is not a happens-before
+	// edge the race detector tracks).
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		time.Sleep(5 * time.Millisecond)
 		writeTestEnv(t, srv.URL, "fresh")
 	}()
 	got, err := askHuman(askArgs{Type: "blocker", Question: "q"})
-	if err != nil || got != "ok" || !rotated {
-		t.Fatalf("got=%q err=%v rotated=%v", got, err, rotated)
+	<-done
+	if err != nil || got != "ok" || !rotated.Load() {
+		t.Fatalf("got=%q err=%v rotated=%v", got, err, rotated.Load())
 	}
 }
 
@@ -159,14 +176,23 @@ func TestServeMCPFraming(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"nope"}`,
 	}, "\n") + "\n"
 	serveMCP(strings.NewReader(in))
+	// tools/call replies from its own goroutine (send() holds stdoutMu while
+	// writing mcpOut), so every read of the shared buffer must take the same
+	// lock — otherwise it races the in-flight write.
+	readOut := func() string {
+		stdoutMu.Lock()
+		defer stdoutMu.Unlock()
+		return out.String()
+	}
 	// tools/call replies async; wait briefly for the 4th reply.
 	deadline := time.Now().Add(2 * time.Second)
-	for strings.Count(out.String(), "\n") < 4 && time.Now().Before(deadline) {
+	for strings.Count(readOut(), "\n") < 4 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
+	final := readOut()
 	byID := map[string]map[string]any{}
-	sc := bufio.NewScanner(strings.NewReader(out.String()))
+	sc := bufio.NewScanner(strings.NewReader(final))
 	for sc.Scan() {
 		var msg map[string]any
 		if err := json.Unmarshal(sc.Bytes(), &msg); err != nil {
@@ -175,7 +201,7 @@ func TestServeMCPFraming(t *testing.T) {
 		byID[string(mustJSON(msg["id"]))] = msg
 	}
 	if len(byID) != 4 {
-		t.Fatalf("replies = %d: %s", len(byID), out.String())
+		t.Fatalf("replies = %d: %s", len(byID), final)
 	}
 	init := byID["1"]["result"].(map[string]any)
 	if init["protocolVersion"] != "2025-01-01" {

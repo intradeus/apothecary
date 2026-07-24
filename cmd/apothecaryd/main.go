@@ -223,8 +223,9 @@ func cmdServe(args []string) error {
 	defer resolver.Close()
 
 	ecfg := engine.Config{
-		EngineURL: engineURL(boot.Listen),
-		RunsDir:   boot.RunsDir,
+		EngineURL:               engineURL(boot.Listen),
+		RunsDir:                 boot.RunsDir,
+		PortDiscoveryAutoExpose: boot.PortAutoExpose,
 	}
 	// Flows resolve DB-first with the compiled-in defaults underneath
 	// (internal/builtin): an empty database still runs the "default" flow.

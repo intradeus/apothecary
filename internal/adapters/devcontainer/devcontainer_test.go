@@ -161,6 +161,7 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 			{code: 0},          // docker exec root-init
 			{stdout: "cid1\n"}, // docker ps -q (relay)
 			{code: 0},          // docker exec -d relay
+			{code: 0},          // docker exec -d portscan
 			{code: 0},          // ready/relay probe
 		})...)}
 	a := newTestAdapter(t, r)
@@ -244,6 +245,7 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 			{code: 0},          // docker exec root-init
 			{stdout: "cid1\n"}, // docker ps -q (relay)
 			{code: 0},          // docker exec -d relay
+			{code: 0},          // docker exec -d portscan
 			{code: 0},          // ready/relay probe
 			{code: 0},          // docker rename
 		})...)}
@@ -294,6 +296,7 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 		{code: 0},          // root-init
 		{stdout: "cid1\n"}, // docker ps -q (relay)
 		{code: 0},          // docker exec -d relay
+		{code: 0},          // docker exec -d portscan
 		{code: 0},          // ready/relay probe
 	})}
 	a := newTestAdapter(t, r)
@@ -426,6 +429,7 @@ func TestRepoDevcontainerCombinesFirewallAndHarness(t *testing.T) {
 		{code: 0},          // root-init
 		{stdout: "cid1\n"}, // docker ps -q (relay)
 		{code: 0},          // docker exec -d relay
+		{code: 0},          // docker exec -d portscan
 		{code: 0},          // ready/relay/firewall probe
 	})}
 	a := newTestAdapter(t, r)
@@ -487,6 +491,7 @@ func TestFallbackConfigFirewallExtendsOverride(t *testing.T) {
 			{code: 0},          // root-init
 			{stdout: "cid1\n"}, // docker ps -q (relay)
 			{code: 0},          // docker exec -d relay
+			{code: 0},          // docker exec -d portscan
 			{code: 0},          // ready/relay/firewall probe
 		})...)}
 	a := newTestAdapter(t, r)
@@ -537,6 +542,7 @@ func TestRepoConfigInjectsFirewallFeature(t *testing.T) {
 		{code: 0},          // root-init
 		{stdout: "cid1\n"}, // docker ps -q (relay)
 		{code: 0},          // docker exec -d relay
+		{code: 0},          // docker exec -d portscan
 		{code: 0},          // ready/relay/firewall probe
 	})}
 	a := newTestAdapter(t, r)
@@ -589,6 +595,7 @@ func TestComposeConfigStaysOpen(t *testing.T) {
 		{code: 0},          // root-init
 		{stdout: "cid1\n"}, // docker ps -q (relay)
 		{code: 0},          // docker exec -d relay
+		{code: 0},          // docker exec -d portscan
 		{code: 0},          // ready probe (no firewall done-file)
 	})}
 	a := newTestAdapter(t, r)
@@ -629,6 +636,7 @@ func TestFirewallOffSkipsInjection(t *testing.T) {
 		{code: 0},          // root-init
 		{stdout: "cid1\n"}, // relay ps
 		{code: 0},          // relay exec
+		{code: 0},          // docker exec -d portscan
 		{code: 0},          // ready probe
 	})}
 	a := newTestAdapter(t, r) // FirewallOff: true
@@ -799,6 +807,72 @@ func TestStatusMapping(t *testing.T) {
 			}
 			if got != c.want {
 				t.Errorf("got %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+// Non-compose Rebuild recreates the single container: the up argv carries
+// --remove-existing-container, and the build output is teed into exec.log so
+// the run page's workspace-log poll shows it.
+func TestRebuildNonComposeRemovesContainer(t *testing.T) {
+	r := &scriptRunner{responses: append(
+		[]response{{code: 0}}, // ensureSrc git clone
+		sandboxResp([]response{
+			{code: 0},          // loadPipelineImage: inspect present
+			{stdout: upOK},     // devcontainer up (teed into exec.log)
+			{code: 0},          // root-init
+			{stdout: "cid1\n"}, // docker ps -q (relay)
+			{code: 0},          // docker exec -d relay
+			{code: 0},          // docker exec -d portscan
+			{code: 0},          // ready probe
+		})...)}
+	a := newTestAdapter(t, r)
+	armSandbox(t, a, "apothecary-run1")
+	// No .devcontainer on disk → non-compose (pipeline-image) path.
+	err := a.Rebuild(context.Background(), ports.EnvSpec{
+		RunID: "run1", Name: "apothecary-run1",
+		RepoURL: "https://g.local/r.git", Image: "apothecary/ws:abc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := find(t, r.calls, "devcontainer", "up")
+	if !strings.Contains(strings.Join(up.args, " "), "--remove-existing-container") {
+		t.Errorf("rebuild up must force recreate: %v", up.args)
+	}
+	// The up output was teed into exec.log (proves the streaming wiring).
+	log, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "exec.log"))
+	if err != nil || !strings.Contains(string(log), "success") {
+		t.Errorf("up output not teed to exec.log: %q (%v)", log, err)
+	}
+}
+
+// A host-daemon failure on the sandbox probe must surface as an ERROR — not a
+// silent "" that maps to EnvAbsent — so recovery waits instead of nuking a
+// live workspace (the recovery-disaster fix).
+func TestStatusHostDaemonErrorPropagates(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		resp []response
+	}{
+		// a.run retries an exec error 3× before giving up, so exhaust them.
+		{"exec error", []response{
+			{err: errors.New("cannot connect to docker daemon")},
+			{err: errors.New("cannot connect to docker daemon")},
+			{err: errors.New("cannot connect to docker daemon")},
+		}},
+		{"nonzero exit", []response{{code: 1, stderr: "daemon not running"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := newTestAdapter(t, &scriptRunner{responses: c.resp})
+			armSandbox(t, a, "apothecary-run1")
+			st, err := a.Status(context.Background(), "apothecary-run1")
+			if err == nil {
+				t.Fatalf("want error, got status %q", st)
+			}
+			if st == ports.EnvAbsent {
+				t.Error("a daemon blip must not read as EnvAbsent")
 			}
 		})
 	}
@@ -1166,6 +1240,90 @@ func TestExposePortStartsReverseRelayAndDials(t *testing.T) {
 		t.Errorf("dialed payload = %q", got)
 	}
 	_ = pc.Close()
+}
+
+// startRelay also launches the port-discovery scanner alongside the relay,
+// excluding the bridge's own forward ports, and a scanner that fails to start
+// must not fail the relay (discovery is auxiliary).
+func TestStartRelayAlsoStartsPortScan(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: "cid1\n"},                     // docker ps -q (relay)
+		{code: 0},                              // docker exec -d relay
+		{code: 1, stderr: "no such container"}, // docker exec -d portscan FAILS
+	}}
+	a := newTestAdapter(t, r)
+	a.cfg.EnginePort = 8080
+	if err := a.startRelay(context.Background(), "apothecary-run1"); err != nil {
+		t.Fatalf("startRelay must not fail when the scanner does not start: %v", err)
+	}
+	var scan *call
+	for i := range r.calls {
+		if strings.Contains(strings.Join(r.calls[i].args, " "), "portscan") {
+			scan = &r.calls[i]
+		}
+	}
+	if scan == nil {
+		t.Fatal("no portscan exec issued")
+	}
+	joined := strings.Join(scan.args, " ")
+	for _, want := range []string{"-d cid1 /opt/apothecary/shim portscan", "--exclude", "8080"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("portscan args missing %q: %v", want, scan.args)
+		}
+	}
+}
+
+func TestParseWildcardListeners(t *testing.T) {
+	table := "sl local rem st\n" +
+		" 0: 00000000:1538 00000000:0000 0A 0 0 0 0 0 1\n" + // 0.0.0.0:5432 wildcard LISTEN
+		" 1: 0100007F:1F90 00000000:0000 0A 0 0 0 0 0 2\n" + // 127.0.0.1:8080 loopback — NOT reachable cross-container
+		" 2: 00000000:0050 0100007F:C001 01 0 0 0 0 0 3\n" + // established — skip
+		" 3: 00000000000000000000000000000000:0BB8 x:0 0A 0 0 0 0 0 4\n" // :::3000 v6 wildcard
+	got := parseWildcardListeners(table)
+	slices.Sort(got)
+	if !slices.Equal(got, []int{3000, 5432}) {
+		t.Errorf("wildcard listeners = %v, want [3000 5432] (loopback + established excluded)", got)
+	}
+}
+
+// ScanSiblingPorts discovers listeners in compose SIBLING containers, tags
+// them with the service name, primes the expose-routing cache, and degrades
+// silently for a sibling whose exec fails.
+func TestScanSiblingPorts(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: "cid1\n"},             // containerID: ps -q (workspace)
+		{stdout: "projA"},              // compose project label
+		{stdout: "cid1\ncid2\ncid3\n"}, // ps -q for the project
+		{stdout: "db"},                 // cid2 service label
+		{stdout: "h\n 0: 00000000:1538 0:0 0A 0 0 0 0 0 1\n"}, // cid2 /proc/net/tcp: 5432
+		{stdout: "cache"},           // cid3 service label
+		{code: 1, stderr: "no cat"}, // cid3 exec FAILS → skipped silently
+	}}
+	a := newTestAdapter(t, r)
+	got := a.ScanSiblingPorts(context.Background(), "apothecary-run1")
+	if len(got) != 1 || got[0].Port != 5432 || got[0].Service != "db" {
+		t.Fatalf("sibling ports = %+v, want one {5432 db}", got)
+	}
+	// The scan primed the routing cache: an undeclared sibling port now
+	// resolves to its service instead of loopback.
+	if svc := a.scannedSibling("apothecary-run1", 5432); svc != "db" {
+		t.Errorf("scannedSibling(5432) = %q, want db", svc)
+	}
+}
+
+// After a sibling scan, relayTarget routes an UNDECLARED port (no image
+// ExposedPorts entry) to the scanned service rather than connection-refusing
+// on loopback.
+func TestRelayTargetPrefersScannedSibling(t *testing.T) {
+	a := newTestAdapter(t, &scriptRunner{responses: []response{
+		{stdout: "projA"},        // compose project label
+		{stdout: "cid1\ncid2\n"}, // ps -q for the project
+		{stdout: `db {}`},        // cid2 declares NO ports
+	}})
+	a.sibPorts["ws1"] = map[int]string{6379: "cache"} // prior scan
+	if got := a.relayTarget(context.Background(), "ws1", "cid1", 6379); got != "cache" {
+		t.Errorf("relayTarget(6379) = %q, want cache (from scan cache)", got)
+	}
 }
 
 func TestBridgePumpsBytesOverUnixSocket(t *testing.T) {

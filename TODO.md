@@ -11,3 +11,5 @@
 - 18) Add option to branch from something else than the main branch
 - 19) DinD sandbox follow-ups: (a) sandbox-boundary egress firewall (default-deny the whole sandbox incl. compose side services — closes the "compose ⇒ firewall off" hole; see 16); (b) shared pull-through registry mirror + `--registry-mirror` on the inner dockerd to warm image pulls across runs (also replaces the per-run save|load for the pipeline image); (c) sysbox runtime to drop `--privileged`; (d) sandbox resource caps (`--memory`/`--cpus`) as project workspace config.
 - 20) Delete the coder adapter — devcontainer+DinD is the path forward; coder is unmaintained.
+- 21) Agents must specify their inputs and outputs to auto fill-in the ouputs feeding in the flows.
+- 22) Code server (vs-code server) integration
