@@ -4,8 +4,8 @@
 // the "run whatever the repo defines" provisioner — the CLI discovers
 // .devcontainer/devcontainer.json (or .devcontainer.json) in the checkout
 // and builds/runs exactly that (image, Dockerfile or compose, features,
-// lifecycle hooks); repos without one fall back to a generated config
-// around the §8 pipeline image.
+// lifecycle hooks). A repo without one is unsupported — there is no
+// apothecary-built fallback image.
 //
 // The model inverts the coder/§11 clone order: the workspace definition
 // lives in the repo, so the adapter materializes an engine-side checkout
@@ -42,9 +42,7 @@
 // containers by an injected devcontainer feature (workspace/feature/) that
 // contributes capAdd NET_ADMIN + a container-start entrypoint running the
 // shared init-firewall.sh, driven per run by /opt/apothecary/firewall.env.
-// Repos with no devcontainer use the §8 pipeline image, which carries the
-// firewall natively (capAdd + a blocking postStartCommand). Two cases stay
-// egress-open (reported truthfully via ports.EgressReporter, envcheck
+// Two cases stay egress-open (reported truthfully via ports.EgressReporter, envcheck
 // skips the firewall invariants): COMPOSE devcontainers, whose primary
 // service legitimately reaches sibling services by name that a default-
 // deny firewall would break; and the explicit per-project firewall=off
@@ -67,6 +65,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -463,7 +462,7 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	// build time (egress open), started lazily on demand. Extensions = the
 	// repo devcontainer's own customizations.vscode.extensions ∪ the project
 	// list, baked into the image (cached per list).
-	if err := a.materializeCodeServerFeature(ctx, name, src, spec.CodeServerExtensions); err != nil {
+	if err := a.materializeCodeServerFeature(name, src, spec.CodeServerExtensions); err != nil {
 		return "", err
 	}
 	features["./apothecary-codeserver"] = map[string]any{}
@@ -758,7 +757,7 @@ const codeServerExtDir = "/usr/local/share/apothecary-code-server/extensions"
 // extensions the feature pre-installs are the UNION of the repo devcontainer's
 // own customizations.vscode.extensions and the project list — sorted+deduped
 // into a generated `extensions` file, so an unchanged list is a build-cache hit.
-func (a *Adapter) materializeCodeServerFeature(ctx context.Context, name, src string, projectExts []string) error {
+func (a *Adapter) materializeCodeServerFeature(name, src string, projectExts []string) error {
 	dir := filepath.Join(src, ".devcontainer", "apothecary-codeserver")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -781,7 +780,7 @@ func (a *Adapter) materializeCodeServerFeature(ctx context.Context, name, src st
 	}
 
 	set := map[string]bool{}
-	for _, e := range append(a.repoExtensions(ctx, src), projectExts...) {
+	for _, e := range append(repoExtensions(src), projectExts...) {
 		if e = strings.TrimSpace(e); e != "" {
 			set[e] = true
 		}
@@ -801,33 +800,80 @@ func (a *Adapter) materializeCodeServerFeature(ctx context.Context, name, src st
 	return gitExclude(src, ".devcontainer/apothecary-codeserver/")
 }
 
-// repoExtensions reads customizations.vscode.extensions from the merged
-// devcontainer configuration (best-effort; empty on any miss).
-func (a *Adapter) repoExtensions(ctx context.Context, src string) []string {
-	stdout, _, code, err := a.run(ctx, a.cfg.DevcontainerBin,
-		[]string{"read-configuration", "--workspace-folder", src, "--include-merged-configuration", "--log-format", "json"}, nil, nil)
-	if err != nil || code != 0 {
-		return nil
-	}
-	var rc struct {
-		MergedConfiguration map[string]any `json:"mergedConfiguration"`
-	}
-	lines := strings.Split(strings.TrimSpace(string(stdout)), "\n")
-	if len(lines) == 0 || json.Unmarshal([]byte(lines[len(lines)-1]), &rc) != nil {
-		return nil
-	}
-	// customizations.vscode.extensions is []string.
-	cust, _ := rc.MergedConfiguration["customizations"].(map[string]any)
-	vscode, _ := cust["vscode"].(map[string]any)
-	raw, _ := vscode["extensions"].([]any)
-	var out []string
-	for _, v := range raw {
-		if s, ok := v.(string); ok {
-			out = append(out, s)
+// repoExtensions reads customizations.vscode.extensions straight from the
+// repo's devcontainer.json (the author's declared list — not extensions other
+// features pull in). Reads the raw file (no CLI call) so it never disturbs the
+// provision command sequence; devcontainer.json is JSONC, so comments +
+// trailing commas are stripped first. Best-effort: empty on any miss.
+func repoExtensions(src string) []string {
+	for _, p := range []string{
+		filepath.Join(src, ".devcontainer", "devcontainer.json"),
+		filepath.Join(src, ".devcontainer.json"),
+	} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var rc struct {
+			Customizations struct {
+				VSCode struct {
+					Extensions []string `json:"extensions"`
+				} `json:"vscode"`
+			} `json:"customizations"`
+		}
+		if json.Unmarshal(stripJSONC(data), &rc) == nil {
+			return rc.Customizations.VSCode.Extensions
 		}
 	}
-	return out
+	return nil
 }
+
+// stripJSONC turns JSONC into JSON stdlib encoding/json accepts: it removes
+// // line and /* */ block comments (respecting string literals) and trailing
+// commas before } or ]. Enough for devcontainer.json.
+func stripJSONC(data []byte) []byte {
+	var out []byte
+	inStr, esc := false, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inStr {
+			out = append(out, c)
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inStr = true
+			out = append(out, c)
+		case c == '/' && i+1 < len(data) && data[i+1] == '/':
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			if i < len(data) {
+				out = append(out, '\n')
+			}
+		case c == '/' && i+1 < len(data) && data[i+1] == '*':
+			i += 2
+			for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+				i++
+			}
+			i++ // land on '/', loop's i++ steps past it
+		default:
+			out = append(out, c)
+		}
+	}
+	// Trailing commas: ,<ws>} or ,<ws>] → drop the comma.
+	return trailingCommaRE.ReplaceAll(out, []byte("$1"))
+}
+
+var trailingCommaRE = regexp.MustCompile(`,(\s*[}\]])`)
 
 // gitExclude appends an entry to .git/info/exclude (idempotent) so the
 // injected feature is invisible to `git status` and uncommittable.

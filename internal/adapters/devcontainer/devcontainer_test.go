@@ -3,6 +3,7 @@ package devcontainer
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -310,13 +311,15 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{filepath.Join(src, ".git"), filepath.Join(src, ".devcontainer", "devcontainer.json")} {
-		if err := os.WriteFile(f, []byte("{}"), 0o644); err != nil {
+	// .git is a real dir (the always-injected code-server feature appends to
+	// .git/info/exclude; its presence also makes ensureSrc skip cloning).
+	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git", "info")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
 		t.Fatal(err)
@@ -496,8 +499,8 @@ func TestRepoConfigInjectsFirewallFeature(t *testing.T) {
 	}
 	up := find(t, r.calls, "devcontainer", "up")
 	joined := strings.Join(up.args, " ")
-	if !strings.Contains(joined, `--additional-features {"./apothecary-firewall":{}}`) {
-		t.Errorf("feature not injected: %v", up.args)
+	if !strings.Contains(joined, "--additional-features") || !strings.Contains(joined, `"./apothecary-firewall":{}`) {
+		t.Errorf("firewall feature not injected: %v", up.args)
 	}
 	// Feature materialized into the checkout, git-excluded, with the shared
 	// init-firewall.sh alongside.
@@ -532,19 +535,23 @@ func TestComposeConfigStaysOpen(t *testing.T) {
 	a.cfg.FirewallOff = false
 	armSandbox(t, a, "apothecary-run1")
 	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{filepath.Join(src, ".git"), filepath.Join(src, ".devcontainer", "devcontainer.json")} {
-		if err := os.WriteFile(f, []byte("{}"), 0o644); err != nil {
+	// .git is a real dir (the always-injected code-server feature appends to
+	// .git/info/exclude; its presence also makes ensureSrc skip cloning).
+	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git", "info")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
 		t.Fatal(err)
 	}
 	up := find(t, r.calls, "devcontainer", "up")
-	if strings.Contains(strings.Join(up.args, " "), "--additional-features") {
+	// code-server is always injected, but a compose config must NOT get the
+	// firewall feature.
+	if strings.Contains(strings.Join(up.args, " "), "apothecary-firewall") {
 		t.Errorf("compose config must NOT be firewalled: %v", up.args)
 	}
 	// Reported open, and the fact survives an adapter restart via the marker.
@@ -572,13 +579,15 @@ func TestFirewallOffSkipsInjection(t *testing.T) {
 	a := newTestAdapter(t, r) // FirewallOff: true
 	armSandbox(t, a, "apothecary-run1")
 	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{filepath.Join(src, ".git"), filepath.Join(src, ".devcontainer", "devcontainer.json")} {
-		if err := os.WriteFile(f, []byte("{}"), 0o644); err != nil {
+	// .git is a real dir (the always-injected code-server feature appends to
+	// .git/info/exclude; its presence also makes ensureSrc skip cloning).
+	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git", "info")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
 		t.Fatal(err)
@@ -587,8 +596,10 @@ func TestFirewallOffSkipsInjection(t *testing.T) {
 		if c.bin == "devcontainer" && len(c.args) > 0 && c.args[0] == "read-configuration" {
 			t.Error("firewall off must not probe for compose")
 		}
-		if strings.Contains(strings.Join(c.args, " "), "--additional-features") {
-			t.Error("firewall off must not inject the feature")
+		// code-server is always injected; the firewall + harness features must
+		// not be when firewall is off with no harness.
+		if strings.Contains(strings.Join(c.args, " "), "apothecary-firewall") {
+			t.Error("firewall off must not inject the firewall feature")
 		}
 	}
 	open, _ := a.EgressOpen(context.Background(), "apothecary-run1")
@@ -777,6 +788,112 @@ func TestRebuildNonComposeRemovesContainer(t *testing.T) {
 	log, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "exec.log"))
 	if err != nil || !strings.Contains(string(log), "success") {
 		t.Errorf("up output not teed to exec.log: %q (%v)", log, err)
+	}
+}
+
+// code-server is ALWAYS injected as a feature, and its generated `extensions`
+// file is the dedup union of the repo's devcontainer.json customizations and
+// the project list.
+func TestCodeServerFeatureInjectedWithExtensions(t *testing.T) {
+	r := &scriptRunner{responses: append(
+		[]response{{code: 0}}, // clone
+		sandboxResp([]response{
+			{stdout: upOK}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0}, {code: 0},
+		})...)}
+	a := newTestAdapter(t, r)
+	armSandbox(t, a, "apothecary-run1")
+	// Repo devcontainer declares an extension (JSONC with a comment + trailing
+	// comma); the project adds one, with an overlap to dedup.
+	dc := filepath.Join(a.srcDir("apothecary-run1"), ".devcontainer")
+	if err := os.MkdirAll(dc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dc, "devcontainer.json"), []byte(
+		`{ "image": "debian", // repo config
+  "customizations": { "vscode": { "extensions": ["golang.go", "ms-python.python",] } } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "run1", RepoURL: "https://g.local/r.git",
+		CodeServerExtensions: []string{"ms-python.python", "esbenp.prettier-vscode"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	up := find(t, r.calls, "devcontainer", "up")
+	if !strings.Contains(strings.Join(up.args, " "), `"./apothecary-codeserver":{}`) {
+		t.Errorf("code-server feature must always be injected: %v", up.args)
+	}
+	exts, err := os.ReadFile(filepath.Join(dc, "apothecary-codeserver", "extensions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(string(exts))
+	slices.Sort(got)
+	want := []string{"esbenp.prettier-vscode", "golang.go", "ms-python.python"}
+	if !slices.Equal(got, want) {
+		t.Errorf("extensions = %v, want %v (repo ∪ project, deduped)", got, want)
+	}
+}
+
+// StartEditor is a no-op when code-server already listens, else it starts it
+// detached and waits for the listener.
+func TestStartEditor(t *testing.T) {
+	t.Run("already listening → no start", func(t *testing.T) {
+		r := &scriptRunner{responses: []response{
+			{stdout: "cid1\n"}, // containerID
+			{code: 0},          // shim probe → already up
+		}}
+		a := newTestAdapter(t, r)
+		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range r.calls {
+			if strings.Contains(strings.Join(c.args, " "), "code-server") {
+				t.Errorf("must not start code-server when already listening: %v", c.args)
+			}
+		}
+	})
+	t.Run("not listening → start + wait", func(t *testing.T) {
+		r := &scriptRunner{responses: []response{
+			{stdout: "cid1\n"}, // containerID
+			{code: 1},          // probe → not up
+			{code: 0},          // exec -d code-server
+			{code: 0},          // probe --wait → came up
+		}}
+		a := newTestAdapter(t, r)
+		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort); err != nil {
+			t.Fatal(err)
+		}
+		var start *call
+		for i := range r.calls {
+			if strings.Contains(strings.Join(r.calls[i].args, " "), "code-server") {
+				start = &r.calls[i]
+			}
+		}
+		if start == nil {
+			t.Fatal("code-server never started")
+		}
+		joined := strings.Join(start.args, " ")
+		for _, want := range []string{"exec -d cid1", "code-server", "--bind-addr 127.0.0.1:8471", "--extensions-dir " + codeServerExtDir} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("start args missing %q: %v", want, start.args)
+			}
+		}
+	})
+}
+
+func TestStripJSONC(t *testing.T) {
+	in := `{
+  // a comment with a // and a "quote"
+  "a": "http://x//y", /* block */
+  "b": [1, 2,],
+}`
+	var got map[string]any
+	if err := json.Unmarshal(stripJSONC([]byte(in)), &got); err != nil {
+		t.Fatalf("stripped JSONC did not parse: %v\n%s", err, stripJSONC([]byte(in)))
+	}
+	if got["a"] != "http://x//y" { // // inside a string must be preserved
+		t.Errorf("string with // corrupted: %q", got["a"])
 	}
 }
 

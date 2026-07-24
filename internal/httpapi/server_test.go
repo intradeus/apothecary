@@ -305,6 +305,19 @@ func TestPostRebuild(t *testing.T) {
 	}
 }
 
+func TestPostOpenEditor(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	// The bare test engine has no port relay, so OpenEditor short-circuits to
+	// ErrPortsOff → 503. This asserts the route + error mapping are wired; the
+	// 200 / idempotent / unsupported behavior is engine-tested (editor_test).
+	runID := x.createTicket(t, "T")
+	x.e.Wait(runID)
+	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/open-editor", nil, nil)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("open-editor (no relay) = %d (%s), want 503", resp.StatusCode, data)
+	}
+}
+
 func TestTicketRunsAndDetail(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	runID := x.createTicket(t, "Add search")
