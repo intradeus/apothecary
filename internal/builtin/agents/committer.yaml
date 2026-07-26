@@ -6,6 +6,9 @@ inputs:
   - name: plan
     description: the approved plan, for context on what the change set implements
     optional: true
+  - name: failure
+    description: what the previous attempt printed when it failed
+    optional: true
 outputs:
   - name: commit
     description: a single-line commit subject, and nothing else

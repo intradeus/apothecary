@@ -1,21 +1,20 @@
 # Reference configuration artifacts
 
-Ready-to-load configuration for a standard plan-gated pipeline — the
-UI-era successor of the v1 built-in flow.
+Ready-to-load configuration for a standard plan-gated pipeline. The flow
+language itself is specified in `docs/flow-language.md`.
 
-- `flows/v1.yaml` — the 9-stage flow in the explicit-edge format
-  (`on_success` on every stage, `done` terminal). Paste into a new flow
-  in the UI, or `PUT /api/flows/v1`. Validate anytime:
-  `task validate -- artifacts/flows/v1.yaml`.
-- `agents/*.md` — one file per agent the flow references (planner,
-  builder, committer, reviewer, redactor): frontmatter = the Agents
-  panel's fields, body = the prompt.
+- `flows/v2.yaml` — the reference flow in the expanded form the graph
+  editor emits (`on_success` on every stage, rescue gates last, one key
+  per line). Paste into a new flow in the UI, or `PUT /api/flows/reference`.
+  Validate anytime: `task validate -- artifacts/flows/v2.yaml`.
 
-`examples/agents/*.yaml` holds the same specs in the neutral agentspec
-format; if you edit prompts here, mirror them there — these are
-hand-maintained copies, not generated.
+The agents it references (planner, builder, committer, reviewer,
+redactor) are **compiled into the binary** and already present in every
+project's Agents panel — saving one under the same name creates your
+editable override. Their source of truth is
+`internal/builtin/agents/*.yaml`; there are deliberately no copies of
+them in this directory, because a copy is only ever a drift risk.
 
-Before running the flow on a project: create the five agents on the
-project's Agents panel (paste from `agents/*.md`), set a `verify` command
-on the project, and check the review stage's `openai/gpt-5` pin is
-routable by your harness auth (or change/remove it).
+Before running the flow on a project: set a `verify` command on the
+project, and check the review stage's model pin is routable by your
+harness auth (or change/remove it).

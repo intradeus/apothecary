@@ -27,16 +27,25 @@ func specMap(specs ...*agentspec.Spec) map[string]*agentspec.Spec {
 func TestValidateBindings(t *testing.T) {
 	builderPlan := &agentspec.Spec{Name: "builder", Inputs: []agentspec.InputDecl{{Name: "plan"}}}
 	builderTwo := &agentspec.Spec{Name: "builder", Inputs: []agentspec.InputDecl{{Name: "plan"}, {Name: "changes"}}}
+	builderOpt := &agentspec.Spec{Name: "builder", Inputs: []agentspec.InputDecl{
+		{Name: "plan"}, {Name: "rejection", Optional: true}, {Name: "notes", Optional: true}}}
+	// A spec that declares its rejection slot REQUIRED — which cannot work,
+	// since nothing fills it on the first attempt.
+	builderFeed := &agentspec.Spec{Name: "builder", Inputs: []agentspec.InputDecl{{Name: "rejection"}}}
 	plannerOut := &agentspec.Spec{Name: "planner", Outputs: []agentspec.OutputDecl{{Name: "plan", Path: "artifacts/plan.md"}}}
 	noDecls := &agentspec.Spec{Name: "builder"}
-	twoOut := &agentspec.Spec{Name: "red", Outputs: []agentspec.OutputDecl{{Name: "a", Path: "a.md"}, {Name: "b", Path: "b.md"}}}
+	twoOut := &agentspec.Spec{Name: "red", Outputs: []agentspec.OutputDecl{{Name: "a", Path: "artifacts/a.md"}, {Name: "b", Path: "artifacts/b.md"}}}
+	reviewerV := &agentspec.Spec{Name: "reviewer",
+		Inputs:  []agentspec.InputDecl{{Name: "plan"}},
+		Outputs: []agentspec.OutputDecl{{Name: "verdict", Type: agentspec.OutputTypeVerdict, Path: "artifacts/verdict.json"}}}
+	reviewerNoV := &agentspec.Spec{Name: "reviewer", Inputs: []agentspec.InputDecl{{Name: "plan"}}}
 
 	tests := []struct {
 		name       string
 		stages     string
 		specs      map[string]*agentspec.Spec
-		wantErr    string // substring; "" = none
-		wantWarn   string // substring; "" = none
+		wantErr    string // substring; "" = expect none
+		wantWarn   string // substring
 		noWarnings bool   // assert zero warnings
 	}{
 		{
@@ -52,46 +61,109 @@ func TestValidateBindings(t *testing.T) {
 			wantErr: `required input "plan"`,
 		},
 		{
-			name:     "map input zero-decl agent warns",
-			stages:   "  - { id: b, type: agent, agent: builder, input: { x: a.md }, on_success: done }\n",
-			specs:    specMap(noDecls),
-			wantWarn: "declares no inputs",
+			name:    "no input at all still misses the required one",
+			stages:  "  - { id: b, type: agent, agent: builder, on_success: done }\n",
+			specs:   specMap(builderPlan),
+			wantErr: `required input "plan"`,
 		},
 		{
-			name:     "legacy list + required decl warns only",
-			stages:   "  - { id: b, type: agent, agent: builder, input: [ticket], on_success: done }\n",
-			specs:    specMap(builderPlan),
-			wantWarn: "no named bindings",
+			// An agent with no contract cannot answer for a named binding.
+			name:    "binding against a contract-less agent",
+			stages:  "  - { id: b, type: agent, agent: builder, input: { x: a.md }, on_success: done }\n",
+			specs:   specMap(noDecls),
+			wantErr: "not declared by agent",
 		},
 		{
-			name:    "legacy single output but >1 decls",
-			stages:  "  - { id: r, type: agent, agent: red, output: only.md, on_success: done }\n",
-			specs:   specMap(twoOut),
-			wantErr: "ambiguous",
-		},
-		{
-			name:     "map output zero-decl warns",
-			stages:   "  - { id: b, type: agent, agent: builder, output: { x: a.md }, on_success: done }\n",
-			specs:    specMap(noDecls),
-			wantWarn: "declares no outputs",
+			// optional inputs may be skipped.
+			name:       "optional inputs need no binding",
+			stages:     "  - { id: b, type: agent, agent: builder, input: { plan: artifacts/plan.md }, on_success: done }\n",
+			specs:      specMap(builderOpt, plannerOut),
+			noWarnings: false, // the plan path has no producer in this one-stage flow
 		},
 		{
 			name:    "unknown output key",
-			stages:  "  - { id: r, type: agent, agent: red, output: { ghost: x.md }, on_success: done }\n",
+			stages:  "  - { id: r, type: agent, agent: red, output: { ghost: artifacts/x.md }, on_success: done }\n",
 			specs:   specMap(twoOut),
 			wantErr: "not declared by agent",
 		},
 		{
-			name:     "rendezvous: unproduced artifact input warns",
-			stages:   "  - { id: b, type: agent, agent: builder, input: { plan: artifacts/ghost.md }, on_success: done }\n",
-			specs:    specMap(builderPlan),
-			wantWarn: "no agent stage produces",
+			name:    "output path bound twice",
+			stages:  "  - { id: r, type: agent, agent: red, output: { a: artifacts/same.md, b: artifacts/same.md }, on_success: done }\n",
+			specs:   specMap(twoOut),
+			wantErr: "bound more than once",
 		},
 		{
-			name: "clean: producer + consumer",
-			stages: "  - { id: plan,  type: agent, agent: planner, on_success: build }\n" +
-				"  - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md }, on_success: done }\n",
-			specs:      specMap(plannerOut, builderPlan),
+			name:       "a command's free binding names are not checked",
+			stages:     "  - { id: c, type: command, run: x, input: { whatever_i_like: docs/x.md }, on_success: done }\n",
+			specs:      specMap(),
+			noWarnings: true,
+		},
+		{
+			name:     "rendezvous: unproduced agent input warns",
+			stages:   "  - { id: b, type: agent, agent: builder, input: { plan: artifacts/ghost.md }, on_success: done }\n",
+			specs:    specMap(builderPlan),
+			wantWarn: "no stage produces",
+		},
+		{
+			name:     "rendezvous: unproduced command input warns",
+			stages:   "  - { id: c, type: command, run: x, input: { ghost: artifacts/ghost.md }, on_success: done }\n",
+			specs:    specMap(),
+			wantWarn: "binds \"artifacts/ghost.md\"",
+		},
+		{
+			name:     "rendezvous: unproduced gate input warns",
+			stages:   "  - { id: g, type: human_gate, input: { ghost: artifacts/ghost.md }, on_success: done }\n",
+			specs:    specMap(),
+			wantWarn: "binds \"artifacts/ghost.md\"",
+		},
+		{
+			name:     "rendezvous: unproduced action input warns",
+			stages:   "  - { id: m, type: action, action: create_mr, input: { body: artifacts/ghost.md }, on_success: done }\n",
+			specs:    specMap(),
+			wantWarn: "no stage produces",
+		},
+		{
+			// A repo file the flow never produces is legitimate input.
+			name:       "rendezvous ignores non-artifact paths",
+			stages:     "  - { id: c, type: command, run: x, input: { spec: docs/spec.md }, on_success: done }\n",
+			specs:      specMap(),
+			noWarnings: true,
+		},
+		{
+			// A command's declared output satisfies a downstream consumer.
+			name: "command output produces for a consumer",
+			stages: "  - { id: gen, type: command, run: g, output: { data: artifacts/data.json }, on_success: c }\n" +
+				"  - { id: c,   type: command, run: x, input: { data: artifacts/data.json }, on_success: done }\n",
+			specs:      specMap(),
+			noWarnings: true,
+		},
+		{
+			name:     "on_reject without a verdict output warns",
+			stages:   "  - { id: r, type: agent, agent: reviewer, input: { plan: artifacts/plan.md }, on_reject: { to: r, max: 1 }, on_success: done }\n",
+			specs:    specMap(reviewerNoV),
+			wantWarn: "on_reject will never fire",
+		},
+		{
+			// $DECISION is empty on the first attempt, so its decl must be optional.
+			name:    "feed sentinel bound to a required input",
+			stages:  "  - { id: b, type: agent, agent: builder, input: { rejection: $DECISION }, on_success: done }\n",
+			specs:   specMap(builderFeed),
+			wantErr: "empty on the first attempt",
+		},
+		{
+			// Nothing can ever fill it: no rejecting edge targets this stage.
+			name:     "feed sentinel with no edge to fill it",
+			stages:   "  - { id: b, type: agent, agent: builder, input: { plan: artifacts/plan.md, rejection: $DECISION }, on_success: done }\n",
+			specs:    specMap(builderOpt, plannerOut),
+			wantWarn: "nothing will ever fill it",
+		},
+		{
+			name: "clean: producer, consumer and a reachable rejection",
+			stages: "  - { id: plan,   type: agent, agent: planner, on_success: build }\n" +
+				"  - { id: build,  type: agent, agent: builder, input: { plan: artifacts/plan.md, rejection: $DECISION }, on_success: review }\n" +
+				"  - { id: review, type: agent, agent: reviewer, input: { plan: artifacts/plan.md }, on_success: done,\n" +
+				"      on_reject: { to: build, max: 2 } }\n",
+			specs:      specMap(plannerOut, builderOpt, reviewerV),
 			noWarnings: true,
 		},
 	}
@@ -118,6 +190,16 @@ func TestValidateBindings(t *testing.T) {
 	}
 }
 
+// TestValidateBindingsUnknownAgentSkipped: an agent the caller's view does not
+// know is preflight's error, not this pass's — it must not guess.
+func TestValidateBindingsUnknownAgentSkipped(t *testing.T) {
+	f := mustFlow(t, "  - { id: b, type: agent, agent: ghost, input: { x: artifacts/a.md }, on_success: done }\n")
+	errs, _ := ValidateBindings(f, specMap())
+	if len(errs) != 0 {
+		t.Errorf("errors = %s, want none for an unknown agent", joinErrs(errs))
+	}
+}
+
 func joinErrs(errs []*Error) string {
 	parts := make([]string, len(errs))
 	for i, e := range errs {
@@ -139,14 +221,7 @@ func TestEffectiveOutputs(t *testing.T) {
 	})
 	t.Run("decl default when no stage output", func(t *testing.T) {
 		got := EffectiveOutputs(&Stage{}, oneOut)
-		if len(got) != 1 || got[0].Value != "artifacts/plan.md" {
-			t.Errorf("got %+v", got)
-		}
-	})
-	t.Run("legacy single rebinds sole decl", func(t *testing.T) {
-		st := &Stage{Outputs: []IOBinding{{Value: "custom/plan.md"}}}
-		got := EffectiveOutputs(st, oneOut)
-		if len(got) != 1 || got[0].Name != "plan" || got[0].Value != "custom/plan.md" {
+		if len(got) != 1 || got[0].Name != "plan" || got[0].Value != "artifacts/plan.md" {
 			t.Errorf("got %+v", got)
 		}
 	})
@@ -157,15 +232,35 @@ func TestEffectiveOutputs(t *testing.T) {
 			t.Errorf("got %+v", got)
 		}
 	})
-	t.Run("legacy single with >1 decls is degenerate but enforced", func(t *testing.T) {
-		st := &Stage{Outputs: []IOBinding{{Value: "extra.md"}}}
+	t.Run("binding matching no decl still gets enforced", func(t *testing.T) {
+		// Degenerate (ValidateBindings errors on it), but the engine must not
+		// silently drop a file the document demanded.
+		st := &Stage{Outputs: []IOBinding{{Name: "ghost", Value: "extra.md"}}}
 		got := EffectiveOutputs(st, twoOut)
-		// two decl defaults + the standalone legacy path.
-		if len(got) != 3 {
-			t.Fatalf("got %+v", got)
-		}
-		if got[2].Value != "extra.md" {
-			t.Errorf("legacy path missing: %+v", got)
+		if len(got) != 3 || got[2].Value != "extra.md" {
+			t.Errorf("got %+v", got)
 		}
 	})
+}
+
+// TestVerdictPath: one resolution for prompt assembly, the post-run read and
+// crash recovery — including when the stage rebinds the path.
+func TestVerdictPath(t *testing.T) {
+	spec := &agentspec.Spec{Name: "reviewer", Outputs: []agentspec.OutputDecl{
+		{Name: "notes", Path: "artifacts/notes.md"},
+		{Name: "verdict", Type: agentspec.OutputTypeVerdict, Path: "artifacts/verdict.json"},
+	}}
+	if got := VerdictPath(&Stage{}, spec); got != "artifacts/verdict.json" {
+		t.Errorf("default = %q", got)
+	}
+	st := &Stage{Outputs: []IOBinding{{Name: "verdict", Value: "artifacts/review/v.json"}}}
+	if got := VerdictPath(st, spec); got != "artifacts/review/v.json" {
+		t.Errorf("rebound = %q", got)
+	}
+	if got := VerdictPath(&Stage{}, &agentspec.Spec{Name: "builder"}); got != "" {
+		t.Errorf("no verdict output = %q, want empty", got)
+	}
+	if got := VerdictPath(&Stage{}, nil); got != "" {
+		t.Errorf("nil spec = %q, want empty", got)
+	}
 }

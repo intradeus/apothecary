@@ -1,9 +1,18 @@
 // Package flow defines the versioned flow document: its schema, parser and
-// validator (DESIGN.md §3). Flows are loaded at run creation; the run stores
-// the flow name plus the SHA-256 hash of the raw file.
+// validator — the flow language, specified in docs/flow-language.md and cited
+// as FLOWLANG §n. Flows are loaded at run creation; the run stores the flow
+// name plus the SHA-256 hash of the raw file.
 package flow
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// CurrentVersion is the grammar this build speaks. Every document declares
+// its version, so a future break gets a clean refusal ("this build speaks
+// version 2") instead of mis-parsing an unfamiliar shape.
+const CurrentVersion = 2
 
 type StageType string
 
@@ -11,46 +20,51 @@ const (
 	StageAgent     StageType = "agent"
 	StageCommand   StageType = "command"
 	StageHumanGate StageType = "human_gate"
-	StageForgeMR   StageType = "forge_mr"
-)
-
-// Feed selects what content an edge carries back to its target stage.
-type Feed string
-
-const (
-	FeedOutput   Feed = "output"   // last 8 KB of command output
-	FeedComments Feed = "comments" // verdict comments
-	FeedFeedback Feed = "feedback" // human text
-)
-
-// PingType for human gates. The full ping taxonomy (clarification, blocker,
-// permission) belongs to ask_human; gates may only raise these three.
-type PingType string
-
-const (
-	PingPlanApproval PingType = "plan_approval"
-	PingFinalReview  PingType = "final_review"
-	// PingManualDebug parks the run so a human can open the workspace
-	// (terminal/IDE links) and inspect it. approve = continue on_success,
-	// reject = follow on_reject (typically abort), feedback feeds along.
-	PingManualDebug PingType = "manual_debug"
+	// StageAction invokes one of apothecary's built-in integrations
+	// (actionspec): create the merge request, and whatever follows.
+	StageAction StageType = "action"
+	// StageWait blocks until an external signal fires (signalspec).
+	StageWait StageType = "wait"
 )
 
 const (
 	HarnessOpencode = "opencode"
 
-	AutoCompleteMRMerged = "mr_merged"
-
-	// InputTicket and InputChanged are the two non-path input entries.
-	InputTicket  = "ticket"
-	InputChanged = "$CHANGED"
-
-	// PayloadMRURL and PayloadWorkspace are the two non-path human_gate
-	// payloads: the run's MR link and the workspace's access link
-	// (terminal/IDE — resolved from env_ready at gate time).
-	PayloadMRURL     = "mr_url"
-	PayloadWorkspace = "workspace"
+	// Sentinels are the engine-provided input values (FLOWLANG §4). The rule
+	// is lexical: a $NAME input is resolved by the engine at stage time,
+	// anything else is a repo-relative artifact path. Adding one costs a
+	// const here plus one resolution case in the engine.
+	SentinelChanged   = "$CHANGED"   // git diff --stat of the branch vs its base
+	SentinelMRURL     = "$MR_URL"    // the run's merge-request link (create_mr's output)
+	SentinelWorkspace = "$WORKSPACE" // the workspace's access link (terminal/IDE)
+	// SentinelDecision and SentinelFailure carry what the edge that re-entered
+	// this stage brought with it: a rejection's rationale (verdict comments or
+	// a human's gate feedback) and a failing stage's output tail. They are
+	// bound like any other input, so the retry channel is declared rather than
+	// arriving invisibly — and an agent can tell "you were rejected" apart
+	// from "the tests broke". Empty on a stage's first attempt, so a binding
+	// to one must be an optional input.
+	SentinelDecision = "$DECISION"
+	SentinelFailure  = "$FAILURE"
 )
+
+// FeedSentinel is which sentinel an edge kind's carried content fills. It is
+// derived, not declared: on_reject can only carry a decision, on_fail and
+// on_timeout can only carry the failure's output — so an edge says where to go
+// and the target says where the content lands, each exactly once.
+func FeedSentinel(edgeKind string) string {
+	if edgeKind == EdgeReject {
+		return SentinelDecision
+	}
+	return SentinelFailure
+}
+
+// IsFeedSentinel reports whether v is one of the edge-carried values.
+func IsFeedSentinel(v string) bool { return v == SentinelDecision || v == SentinelFailure }
+
+// IsSentinel reports whether v is an engine-provided value rather than a
+// repo-relative artifact path.
+func IsSentinel(v string) bool { return strings.HasPrefix(v, "$") }
 
 type Defaults struct {
 	Timeout  time.Duration // per-stage wall clock; suspended while a ping is pending
@@ -101,23 +115,23 @@ const UnlimitedMax = -1
 // link carries its own cumulative max; when a link is exhausted the NEXT
 // failure falls through to Then (retry-then-escalate chains). An exhausted
 // chain abandons the run. To may be TerminalAbort: taking that link stops
-// the run deliberately (max/feed/then don't apply — there is no target
-// stage to bound or feed).
+// the run deliberately (max/then don't apply — there is no target stage).
+//
+// An edge does not say what it carries: the content it brings is always
+// available to its target as $DECISION or $FAILURE (FeedSentinel), and the
+// target decides whether to bind it.
 type Edge struct {
 	To   string
 	Max  int   // >= 1, or UnlimitedMax on human_gate targets
-	Feed Feed  // empty = nothing fed
 	Then *Edge // fallback link once this one is exhausted; nil = abandon
 }
 
-// IOBinding is one resolved input or output binding on an agent stage. A
-// binding with Name == "" is a legacy positional entry — for input: the
-// literal ticket | $CHANGED | an artifact path; for output: the single path
-// the agent MUST produce. A binding with Name != "" is a named binding
-// against one of the agent's declared inputs/outputs (agentspec.Spec):
-// input Value is an artifact path or $CHANGED; output Value is the (possibly
-// rebound) artifact path. A stage's Inputs (or Outputs) are all one form:
-// either every entry is unnamed (legacy) or every entry is named (map form).
+// IOBinding is one input or output binding on a stage (FLOWLANG §4). Every
+// stage type uses the same form — a name and a value — so there is one thing to
+// learn and one thing to render. The value is a repo-relative artifact path or
+// a sentinel; the name is checked against a contract where one exists (an
+// agent's declared I/O, an action's signature) and is otherwise a free label
+// that documents the file's role.
 type IOBinding struct {
 	Name  string
 	Value string
@@ -129,6 +143,9 @@ type IOBinding struct {
 type Stage struct {
 	ID   string
 	Type StageType
+	// Description is an optional human note on what this stage is for.
+	// Documentation only — it reaches no prompt and no decision.
+	Description string
 
 	// agent
 	Agent    string
@@ -136,21 +153,41 @@ type Stage struct {
 	Harness  string
 	MaxTurns int
 	Timeout  time.Duration
-	Inputs   []IOBinding // ordered; legacy positional or named map bindings
-	Outputs  []IOBinding // legacy single output or named-decl rebinds
-	Verdict  bool        // agent MUST write artifacts/verdict.json; REJECT triggers OnReject
+
+	// Inputs and Outputs are the stage's declared consumption and production
+	// (agent, command and action stages). Every path here is visible to the
+	// validator, the editor's dataflow view and — for inputs the engine can
+	// check — enforced before or after the stage runs.
+	Inputs  []IOBinding
+	Outputs []IOBinding
 
 	// command
 	Run    string // literal bash
 	RunRef string // key into project.commands
 
 	// human_gate
-	Ping         PingType
-	Payload      string // artifact path or mr_url
-	AutoComplete string // "" or mr_merged
+	//
+	// Question is the free text the human is asked; empty falls back to the
+	// stage id. Gates are one machine — approve follows OnSuccess, reject
+	// follows the on_reject edge — so intent lives in this text rather than in
+	// an enum the engine would have to interpret. What the human is shown is
+	// the stage's single Inputs entry.
+	Question string
+	// AutoApprove and AutoReject are signalspec slugs that answer this gate on
+	// the human's behalf when they fire: "they merged it instead of clicking
+	// approve", "they closed it, which is a no". A gate is a decision point
+	// whose default answerer is a human; these name the other things that may
+	// supply the same two answers. The human can still answer at any time —
+	// whichever lands first wins, which is why these live on the gate rather
+	// than being separate wait stages (the engine runs one stage at a time).
+	AutoApprove string
+	AutoReject  string
 
-	// forge_mr
-	Body string // artifact path used as MR description
+	// action
+	Action string // a slug registered in actionspec
+
+	// wait
+	WaitFor string // a slug registered in signalspec
 
 	// OnSuccess is the explicit success target: a stage id or TerminalDone.
 	// Parse always fills it (YAML sugar: absent = next stage in document
@@ -163,6 +200,16 @@ type Stage struct {
 
 	// Line is the stage's line in the source YAML, for error reporting.
 	Line int
+}
+
+// Input returns the stage's named binding for name, or nil.
+func (s *Stage) Input(name string) *IOBinding {
+	for i := range s.Inputs {
+		if s.Inputs[i].Name == name {
+			return &s.Inputs[i]
+		}
+	}
+	return nil
 }
 
 // Edge returns the stage's edge of the given kind, or nil.

@@ -330,7 +330,7 @@ type Forge struct {
 	MissingFiles map[string]bool
 	// CreateErr fails CreateDraftMR when set.
 	CreateErr error
-	// MRStateErr fails MRState when set (auto_complete poll failure paths).
+	// MRStateErr fails MRState when set (signal poll failure paths).
 	MRStateErr error
 
 	MRs    []*MR
@@ -382,7 +382,7 @@ func (f *Forge) SetMRStateErr(err error) {
 }
 
 // SetMRState transitions an MR (test control, e.g. simulating a merge for
-// auto_complete polling).
+// signal polling).
 func (f *Forge) SetMRState(iid int, s ports.MRState) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

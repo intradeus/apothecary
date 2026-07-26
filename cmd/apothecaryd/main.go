@@ -353,16 +353,18 @@ func cmdServe(args []string) error {
 // final gate — enough to exercise every stage type against the fakes.
 // Dev-mode only; production flows are user-defined in the UI.
 const devFlowYAML = `name: dev
+version: 2
 description: dev-mode sandbox flow (fake adapters)
-defaults: { model: anthropic/claude-sonnet-4-6 }
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: plan,       type: agent, agent: planner, input: [ticket], output: artifacts/plan.md }
-  - { id: plan_gate,  type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
-      on_reject: { to: plan, max: 3, feed: feedback } }
-  - { id: build,      type: agent, agent: builder, input: [ticket, artifacts/plan.md] }
-  - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
-  - { id: mr,         type: forge_mr, body: artifacts/plan.md }
-  - { id: final_gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged }
+  - { id: plan,       type: agent, agent: planner }
+  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+      on_reject: { to: plan, max: 3 } }
+  - { id: build,      type: agent, agent: builder, input: { plan: artifacts/plan.md } }
+  - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
+  - { id: mr,         type: action, action: create_mr, input: { body: artifacts/plan.md } }
+  - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
+      auto_approve: mr_merged }
 `
 
 // seedDevProject creates a dev flow, fake integrations and a "dev" project

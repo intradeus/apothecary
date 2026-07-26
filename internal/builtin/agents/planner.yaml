@@ -3,8 +3,11 @@ description: explores the repository and writes the implementation plan
 read_only: true
 allow_bash: false
 inputs:
-  - name: feedback
-    description: plan-approval feedback from a previous attempt to address
+  - name: rejection
+    description: why the last plan was rejected — the reviewer's or human's words
+    optional: true
+  - name: failure
+    description: what the previous attempt printed when it failed
     optional: true
 outputs:
   - name: plan
@@ -30,7 +33,8 @@ prompt: |
 
   Keep the plan proportionate to the ticket: small tickets get small plans.
   Do not include code in the plan — describe intent, not diffs. If your
-  prompt carries feedback from a previous attempt, address every point in it.
+  prompt carries a rejection or a failure from a previous attempt, address
+  every point in it.
   If the ticket is ambiguous in a way that changes the design, use the
   ask_human tool (type=clarification) BEFORE writing the plan rather than
   guessing.

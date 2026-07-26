@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"apothecary/internal/actionspec"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
@@ -21,15 +23,16 @@ import (
 // v1FlowDoc is this suite's user-created flow (the product ships none):
 // gated build ending in an MR — enough to drive both human gates.
 const v1FlowDoc = `name: v1
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: plan,       type: agent, agent: planner, input: [ticket], output: artifacts/plan.md }
-  - { id: plan_gate,  type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
-      on_reject: { to: plan, max: 3, feed: feedback } }
-  - { id: build,      type: agent, agent: builder, input: [ticket, artifacts/plan.md] }
-  - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
-  - { id: mr,         type: forge_mr, body: artifacts/plan.md }
-  - { id: final_gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged }
+  - { id: plan,       type: agent, agent: planner }
+  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+      on_reject: { to: plan, max: 3 } }
+  - { id: build,      type: agent, agent: builder, input: { plan: artifacts/plan.md } }
+  - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
+  - { id: mr,         type: action, action: create_mr, input: { body: artifacts/plan.md } }
+  - { id: final_gate, type: human_gate, question: "Merge when ready.", input: { mr: $MR_URL }, auto_approve: mr_merged }
 `
 
 // confEnv is the full config-plane stack over Mem + fake kinds: the same
@@ -71,8 +74,9 @@ func newConfEnv(t *testing.T) *confEnv {
 	return &confEnv{env: &env{e: e, store: store, srv: srv, ts: ts}, conf: conf, resolver: resolver}
 }
 
-// waitPingType polls the inbox for a pending ping of the given type.
-func (x *confEnv) waitPingType(t *testing.T, ptype string) string {
+// waitPingType polls the inbox for a pending ping of the given type, skipping
+// any ids already handled.
+func (x *confEnv) waitPingType(t *testing.T, ptype string, except ...string) string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -83,7 +87,7 @@ func (x *confEnv) waitPingType(t *testing.T, ptype string) string {
 		}
 		_ = json.Unmarshal(data, &pings)
 		for _, p := range pings {
-			if p.Type == ptype {
+			if p.Type == ptype && !slices.Contains(except, p.PingID) {
 				return p.PingID
 			}
 		}
@@ -148,12 +152,25 @@ func (x *confEnv) wizard(t *testing.T) string {
 	_ = json.Unmarshal(data, &p)
 
 	// Agent library (DESIGN3 §1): the v1 flow's agents must exist on the
-	// project — agents live in the DB, not the target repo.
+	// project — agents live in the DB, not the target repo. Each declares the
+	// I/O contract the flow binds; an authored agent shadows the built-in of
+	// the same name, decls included, so omitting them here would (rightly)
+	// fail the flow's bindings at run creation.
+	decls := map[string]map[string]any{
+		"planner": {"outputs": []map[string]any{{"name": "plan", "path": "artifacts/plan.md"}}},
+		"builder": {"inputs": []map[string]any{{"name": "plan"}}},
+		"reviewer": {"inputs": []map[string]any{{"name": "plan"}},
+			"outputs": []map[string]any{{"name": "verdict", "type": "verdict", "path": "artifacts/verdict.json"}}},
+	}
 	for _, name := range []string{"planner", "builder", "reviewer"} {
-		resp, data := x.do(t, "PUT", "/api/projects/"+p.ID+"/agents/"+name, map[string]any{
+		body := map[string]any{
 			"description": name + " agent", "read_only": name != "builder",
 			"allow_bash": name == "builder", "prompt": "You are the " + name + ".",
-		}, nil)
+		}
+		for k, v := range decls[name] {
+			body[k] = v
+		}
+		resp, data := x.do(t, "PUT", "/api/projects/"+p.ID+"/agents/"+name, body, nil)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("create agent %s = %d: %s", name, resp.StatusCode, data)
 		}
@@ -230,7 +247,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// Flow validate: line-precise errors verbatim.
 	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{
-		"yaml": "name: bad\ndefaults: { harness: fake, model: nope }\nstages: []\n",
+		"yaml": "name: bad\nversion: 2\ndefaults: { harness: fake, model: nope }\nstages: []\n",
 	}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "provider/model") {
 		t.Fatalf("validate = %d: %s", resp.StatusCode, data)
@@ -276,12 +293,15 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 	runID := x.runOnProject(t, projectID, "Add search")
 
 	// The seeded v1 flow parks at its two human gates — answer them over
-	// the API like the CPUI would.
-	for _, gate := range []string{"plan_approval", "final_review"} {
-		p := x.waitPingType(t, gate)
+	// the API like the CPUI would. Gates are one kind now, so they are told
+	// apart by the ping already answered, not by type.
+	var answered []string
+	for range 2 {
+		p := x.waitPingType(t, engine.PingGate, answered...)
+		answered = append(answered, p)
 		resp, data := x.do(t, "POST", "/api/pings/"+p+"/answer", map[string]string{"answer": "approve"}, nil)
 		if resp.StatusCode != 200 {
-			t.Fatalf("answer %s = %d: %s", gate, resp.StatusCode, data)
+			t.Fatalf("answer %s = %d: %s", p, resp.StatusCode, data)
 		}
 	}
 	x.e.Wait(runID)
@@ -342,7 +362,7 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 
 	// Saving under the built-in name creates the editable override.
-	override := "name: default\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	override := "name: default\nversion: 2\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
 	resp, data = x.do(t, "PUT", "/api/flows/default", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
@@ -501,9 +521,9 @@ func TestAgentDeclsAndFlowWarnings(t *testing.T) {
 		t.Fatalf("decls did not round-trip: %+v", got)
 	}
 
-	// Invalid decls are refused (feedback must be optional).
+	// Invalid decls are refused (an output path must stay inside the repo).
 	resp, _ = x.do(t, "PUT", "/api/projects/"+projectID+"/agents/bad", map[string]any{
-		"prompt": "p", "inputs": []map[string]any{{"name": "feedback"}},
+		"prompt": "p", "outputs": []map[string]any{{"name": "out", "path": "../escape.md"}},
 	}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid decl PUT = %d, want 400", resp.StatusCode)
@@ -529,6 +549,7 @@ func TestAgentDeclsAndFlowWarnings(t *testing.T) {
 	// validate a flow that binds an undeclared input to a built-in agent:
 	// ok stays true (save is never blocked), the problem surfaces as a warning.
 	badFlow := `name: w
+version: 2
 defaults: { harness: fake, model: a/b }
 stages:
   - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }
@@ -544,5 +565,80 @@ stages:
 	}
 	if !strings.Contains(strings.Join(vr.Warnings, " "), "not declared by agent") {
 		t.Errorf("warnings = %v, want an undeclared-input warning", vr.Warnings)
+	}
+
+	// A verdict-typed output round-trips, and it is what makes a stage's
+	// on_reject reachable — without one the editor gets a warning.
+	resp, _ = x.do(t, "PUT", "/api/projects/"+projectID+"/agents/judge", map[string]any{
+		"prompt": "p", "read_only": true,
+		"outputs": []map[string]any{{"name": "verdict", "type": "verdict", "path": "artifacts/verdict.json"}},
+	}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verdict-output PUT = %d", resp.StatusCode)
+	}
+	var judge confstore.Agent
+	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/judge", nil, nil)
+	_ = json.Unmarshal(data, &judge)
+	if len(judge.Outputs) != 1 || judge.Outputs[0].Type != "verdict" {
+		t.Fatalf("verdict output did not round-trip: %+v", judge.Outputs)
+	}
+	// A second agent with no contract at all, for the negative case.
+	if resp, _ := x.do(t, "PUT", "/api/projects/"+projectID+"/agents/plain", map[string]any{
+		"prompt": "p", "read_only": true,
+	}, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("plain agent PUT = %d", resp.StatusCode)
+	}
+	rejectFlow := `name: r
+version: 2
+defaults: { harness: fake, model: a/b }
+stages:
+  - { id: b, type: agent, agent: builder, input: { plan: artifacts/plan.md }, on_success: j }
+  - { id: j, type: agent, agent: %s, on_success: done, on_reject: { to: b, max: 1 } }
+`
+	// Bound to the verdict-declaring agent: no warning about the edge.
+	resp, data = x.do(t, "POST", "/api/flows/validate",
+		map[string]string{"yaml": fmt.Sprintf(rejectFlow, "judge"), "project_id": projectID}, nil)
+	vr.Warnings = nil
+	_ = json.Unmarshal(data, &vr)
+	if resp.StatusCode != 200 || strings.Contains(strings.Join(vr.Warnings, " "), "on_reject will never fire") {
+		t.Errorf("verdict agent should not warn: %v", vr.Warnings)
+	}
+	// Bound to an agent without one: the dead edge is called out.
+	resp, data = x.do(t, "POST", "/api/flows/validate",
+		map[string]string{"yaml": fmt.Sprintf(rejectFlow, "plain"), "project_id": projectID}, nil)
+	vr.Warnings = nil
+	_ = json.Unmarshal(data, &vr)
+	if resp.StatusCode != 200 || !strings.Contains(strings.Join(vr.Warnings, " "), "on_reject will never fire") {
+		t.Errorf("warnings = %v, want a dead-on_reject warning", vr.Warnings)
+	}
+}
+
+// TestActionRegistryRoute: the flow editor's action picker is served from the
+// compiled-in registry, with the signature it renders binding rows from.
+func TestActionRegistryRoute(t *testing.T) {
+	x := newConfEnv(t)
+	resp, data := x.do(t, "GET", "/api/actions", nil, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("actions = %d: %s", resp.StatusCode, data)
+	}
+	var acts []actionspec.Action
+	if err := json.Unmarshal(data, &acts); err != nil {
+		t.Fatal(err)
+	}
+	var mr *actionspec.Action
+	for i := range acts {
+		if acts[i].Slug == actionspec.CreateMR {
+			mr = &acts[i]
+		}
+	}
+	if mr == nil {
+		t.Fatalf("no %s in %+v", actionspec.CreateMR, acts)
+	}
+	if mr.Title == "" || mr.Requires != actionspec.RequiresForge || len(mr.Inputs) != 1 ||
+		mr.Inputs[0].Name != "body" || !mr.Inputs[0].Required {
+		t.Errorf("create_mr = %+v", mr)
+	}
+	if len(mr.Outputs) != 1 || mr.Outputs[0].Sentinel != "$MR_URL" {
+		t.Errorf("create_mr outputs = %+v", mr.Outputs)
 	}
 }

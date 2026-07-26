@@ -2,9 +2,12 @@
 // the same request/response UI (PingCard) from two sources: the durable Ping
 // projection (inbox) and the ping_raised event payload (run page).
 
-// Gate pings (plan_approval / final_review / manual_debug) take
-// approve|reject; everything else is a free-text or closed-options question.
-export const GATE_TYPES = ['plan_approval', 'final_review', 'manual_debug'];
+// A gate ping takes approve|reject; everything else (ask_human) is a
+// free-text or closed-options question. Every human_gate stage raises the one
+// 'gate' type — what it is asking lives in its question text, and what it
+// hands you lives in its payload (an artifact to review, or a link).
+export const GATE_TYPE = 'gate';
+export const isGatePing = (type: string) => type === GATE_TYPE;
 
 // PingLike is the subset PingCard needs. The api Ping type satisfies it; the
 // run page maps its event payload onto it. Missing status ⇒ pending.

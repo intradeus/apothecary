@@ -74,7 +74,8 @@ type RunInput struct {
 // configuration lives in Resolutions, policy limits in the SettingsSource.
 type Config struct {
 	EngineURL string // reachable from workspaces; default http://127.0.0.1:8080 (reverse tunnel)
-	// MRPollInterval is the auto_complete poll cadence (§3: 60s).
+	// MRPollInterval is the signal poll cadence, shared by wait stages and a
+	// gate's auto_answer (§3: 60s).
 	MRPollInterval time.Duration
 	// RunsDir receives stage logs (<run>/<stage>-<iter>.log, §12/§13);
 	// empty disables log files.
@@ -1013,6 +1014,21 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
 			return fmt.Errorf("preflight: stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
 		}
+		// Actions and signals resolve like agents and run_refs: the flow names
+		// one, the project must have the integration it needs.
+		if st.Type == flow.StageAction {
+			if err := res.actionAvailable(st); err != nil {
+				return fmt.Errorf("preflight: stage %q: %w", st.ID, err)
+			}
+		}
+		for _, slug := range []string{st.WaitFor, st.AutoApprove, st.AutoReject} {
+			if slug == "" {
+				continue
+			}
+			if err := res.signalAvailable(slug); err != nil {
+				return fmt.Errorf("preflight: stage %q: %w", st.ID, err)
+			}
+		}
 	}
 	// Agent I/O contract (DESIGN4 §1): stage bindings must satisfy the
 	// referenced agents' declared inputs/outputs. This is the enforcing site
@@ -1756,6 +1772,19 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 		}
 		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
 			return fmt.Errorf("stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
+		}
+		if st.Type == flow.StageAction {
+			if err := res.actionAvailable(st); err != nil {
+				return fmt.Errorf("stage %q: %w", st.ID, err)
+			}
+		}
+		for _, slug := range []string{st.WaitFor, st.AutoApprove, st.AutoReject} {
+			if slug == "" {
+				continue
+			}
+			if err := res.signalAvailable(slug); err != nil {
+				return fmt.Errorf("stage %q: %w", st.ID, err)
+			}
 		}
 	}
 	return nil

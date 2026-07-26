@@ -22,6 +22,7 @@ func newSvc(t *testing.T) (*Service, *Mem) {
 }
 
 const testFlowDoc = `name: v1
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
@@ -272,7 +273,7 @@ func TestFlowNameIsImmutableID(t *testing.T) {
 		t.Errorf("name mismatch err = %v", err)
 	}
 	// Line-precise parser errors surface verbatim.
-	_, err := svc.SaveFlow(ctx, "v1", "name: v1\ndefaults: { harness: fake, model: nope }\nstages: []\n", nil)
+	_, err := svc.SaveFlow(ctx, "v1", "name: v1\nversion: 2\ndefaults: { harness: fake, model: nope }\nstages: []\n", nil)
 	if err == nil || !strings.Contains(err.Error(), "provider/model") {
 		t.Errorf("parser err = %v", err)
 	}

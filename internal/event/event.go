@@ -55,11 +55,17 @@ type Event struct {
 
 // StageFailed reasons (§6).
 const (
-	ReasonExitNonzero    = "exit_nonzero"
-	ReasonTimeout        = "timeout"
-	ReasonHarnessError   = "harness_error"
+	ReasonExitNonzero  = "exit_nonzero"
+	ReasonTimeout      = "timeout"
+	ReasonHarnessError = "harness_error"
+	// ReasonOutputContract: the stage exited fine but did not write what it
+	// declared it produces.
 	ReasonOutputContract = "output_contract"
-	ReasonInfra          = "infra"
+	// ReasonInputMissing: a path the stage declared it consumes was not there
+	// when the stage started. Distinct from output_contract because the fault
+	// is upstream wiring, not this stage's work.
+	ReasonInputMissing = "input_missing"
+	ReasonInfra        = "infra"
 )
 
 type Link struct {
@@ -179,9 +185,20 @@ type EdgeTaken struct {
 	Feed string `json:"feed,omitempty"`
 }
 
+// Ping types. PingGate is every human_gate stage: gates are one machine
+// (approve / reject-with-feedback), so what a gate is asking lives in its
+// free-text question, not in a type the engine has to interpret. The rest are
+// raised by agents through ask_human.
+const (
+	PingGate          = "gate"
+	PingClarification = "clarification"
+	PingBlocker       = "blocker"
+	PingPermission    = "permission"
+)
+
 type PingRaised struct {
 	PingID     string `json:"ping_id"`
-	Type       string `json:"type"` // plan_approval|final_review|clarification|blocker|permission
+	Type       string `json:"type"` // gate|clarification|blocker|permission
 	Question   string `json:"question"`
 	Context    string `json:"context,omitempty"` // §9 pings.context; persisted so recovery keeps it
 	PayloadRef string `json:"payload_ref,omitempty"`

@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 
+	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/signalspec"
 )
 
 // Resolution is everything a run needs from its project's configuration
@@ -125,6 +128,50 @@ func (r *Resolution) agentSpec(name string) *agentspec.Spec {
 		return nil
 	}
 	return r.AgentSpecs[name]
+}
+
+// actionAvailable reports whether this project can run the stage's action:
+// the registry says which integration port the action needs, and the
+// resolution says whether the project configured one. Checked at run creation
+// (like agent names and run_refs) rather than at parse time, because flows are
+// portable data and integrations are per-project.
+func (r *Resolution) actionAvailable(st *flow.Stage) error {
+	act := actionspec.Get(st.Action)
+	if act == nil {
+		return fmt.Errorf("action %q is not registered in this build", st.Action)
+	}
+	switch act.Requires {
+	case "":
+		return nil
+	case actionspec.RequiresForge:
+		if r.Forge == nil {
+			return fmt.Errorf("action %q needs a forge integration, which this project has not configured", act.Slug)
+		}
+	default:
+		return fmt.Errorf("action %q requires %q, which this build cannot verify", act.Slug, act.Requires)
+	}
+	return nil
+}
+
+// signalAvailable reports whether this project can observe the signal a stage
+// waits for (or a gate auto-answers on): the registry says which integration
+// port it needs, the resolution says whether the project configured one.
+func (r *Resolution) signalAvailable(slug string) error {
+	sig := signalspec.Get(slug)
+	if sig == nil {
+		return fmt.Errorf("signal %q is not registered in this build", slug)
+	}
+	switch sig.Requires {
+	case "":
+		return nil
+	case signalspec.RequiresForge:
+		if r.Forge == nil {
+			return fmt.Errorf("signal %q needs a forge integration, which this project has not configured", sig.Slug)
+		}
+	default:
+		return fmt.Errorf("signal %q requires %q, which this build cannot verify", sig.Slug, sig.Requires)
+	}
+	return nil
 }
 
 // runnerFor returns the runner for a stage's pinned harness kind, falling

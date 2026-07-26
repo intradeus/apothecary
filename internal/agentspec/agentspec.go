@@ -34,23 +34,50 @@ type Spec struct {
 type InputDecl struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description,omitempty"`
-	// Optional inputs need not be bound by a stage. The reserved input named
-	// InputFeedback (filled by edge feed:, never stage-bound) MUST be optional.
+	// Optional inputs need not be bound by a stage. An input a flow binds to
+	// $DECISION or $FAILURE must be optional: those are empty on a stage's
+	// first attempt (the flow validator enforces it, since only the flow knows
+	// what a stage bound).
 	Optional bool `yaml:"optional" json:"optional,omitempty"`
 }
 
 // OutputDecl is one file the agent must produce. Path is the default location;
-// a stage may rebind it.
+// a stage may rebind it. Type gives the file a contract beyond "it exists"
+// (FLOWLANG §4): the empty type is an opaque file; OutputTypeVerdict is the
+// APPROVE/REJECT decision the engine parses and routes on.
 type OutputDecl struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description,omitempty"`
 	Path        string `yaml:"path" json:"path"`
+	// Type is omitempty on purpose: adding it left every existing agent's
+	// content hash untouched (confstore.AgentHash marshals this struct).
+	Type string `yaml:"type" json:"type,omitempty"`
 }
 
-// InputFeedback is the reserved input name filled by edge feed: content (the
-// "PREVIOUS ATTEMPT FEEDBACK" channel). It is never bound in a stage input
-// map; declaring it only renames/describes the retry prompt section.
-const InputFeedback = "feedback"
+// Output types. OutputTypeFile (the empty default) is an opaque artifact:
+// the engine only checks it exists. OutputTypeVerdict is the structured
+// decision {"verdict":"APPROVE"|"REJECT","comments":[...]} — the engine
+// parses it and routes REJECT down the stage's on_reject edge. A spec may
+// declare at most one verdict output; the flow stage needs no flag for it.
+const (
+	OutputTypeFile    = ""
+	OutputTypeVerdict = "verdict"
+)
+
+// VerdictOutput returns the spec's verdict-typed output, or nil when the
+// agent renders no decision. Its presence is what makes a stage's on_reject
+// edge reachable (there is no stage-level verdict flag).
+func (s *Spec) VerdictOutput() *OutputDecl {
+	if s == nil {
+		return nil
+	}
+	for i := range s.Outputs {
+		if s.Outputs[i].Type == OutputTypeVerdict {
+			return &s.Outputs[i]
+		}
+	}
+	return nil
+}
 
 // descMax bounds a decl description so N inputs cannot bloat every prompt.
 const descMax = 500
@@ -102,12 +129,10 @@ func ValidateIO(inputs []InputDecl, outputs []OutputDecl) error {
 		if len(in.Description) > descMax {
 			return fmt.Errorf("input %q: description exceeds %d characters", in.Name, descMax)
 		}
-		if in.Name == InputFeedback && !in.Optional {
-			return fmt.Errorf("input %q is filled by edge feedback and must be optional", InputFeedback)
-		}
 	}
 	seenOut := make(map[string]bool, len(outputs))
 	seenPath := make(map[string]bool, len(outputs))
+	verdicts := 0
 	for _, out := range outputs {
 		if !validSlug(out.Name) {
 			return fmt.Errorf("output name must match [a-z0-9][a-z0-9._-]* (lowercase slug), got %q", out.Name)
@@ -116,6 +141,16 @@ func ValidateIO(inputs []InputDecl, outputs []OutputDecl) error {
 			return fmt.Errorf("output %q declared twice", out.Name)
 		}
 		seenOut[out.Name] = true
+		switch out.Type {
+		case OutputTypeFile:
+		case OutputTypeVerdict:
+			verdicts++
+			if verdicts > 1 {
+				return fmt.Errorf("output %q: an agent may declare at most one %s output", out.Name, OutputTypeVerdict)
+			}
+		default:
+			return fmt.Errorf("output %q: unknown type %q (%q or %q)", out.Name, out.Type, OutputTypeFile, OutputTypeVerdict)
+		}
 		if len(out.Description) > descMax {
 			return fmt.Errorf("output %q: description exceeds %d characters", out.Name, descMax)
 		}

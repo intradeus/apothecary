@@ -25,10 +25,11 @@ import (
 )
 
 const loopFlowDoc = `name: loop
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
-  - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
+  - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
 `
 
 // testProject is the id served by the test resolver (DESIGN2 §6.1).
@@ -419,6 +420,7 @@ func TestSSEReplayAndLive(t *testing.T) {
 // → 204 + X-Ping-ID (hold expired) → GET re-poll → 200 with the answer.
 func TestShimProtocol(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: ping
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
@@ -739,11 +741,12 @@ func TestLogsEndpoint(t *testing.T) {
 // for URL payloads, 404 for unknown pings.
 func TestPingArtifact(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: plan, type: agent, agent: planner, output: artifacts/plan.md }
-  - { id: gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
-      on_reject: { to: plan, max: 2, feed: feedback } }
+  - { id: plan, type: agent, agent: planner }
+  - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+      on_reject: { to: plan, max: 2 } }
 `)
 	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		if err := x.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# Plan\n\n## Steps\ndo things\n"), 0o644); err != nil {
@@ -799,11 +802,12 @@ stages:
 // stay queryable with both sides of the exchange and their stage.
 func TestPingHistory(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: plan, type: agent, agent: planner, output: artifacts/plan.md }
-  - { id: gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
-      on_reject: { to: plan, max: 2, feed: feedback } }
+  - { id: plan, type: agent, agent: planner }
+  - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+      on_reject: { to: plan, max: 2 } }
 `)
 	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		_ = x.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# P\n"), 0o644)

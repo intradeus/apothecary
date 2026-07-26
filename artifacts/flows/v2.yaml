@@ -1,5 +1,12 @@
-name: default
-description: "built-in default: plan-gated build with cross-vendor adversarial review and manual-debug rescue"
+name: reference
+version: 2
+# The fully-expanded reference flow: what the graph editor emits — one key per
+# line, an explicit on_success on every stage (never the "next in document
+# order" sugar), and rescue gates hoisted after the success chain. Its job is
+# schema coverage: abort terminals, then-chains, on_timeout, unlimited links,
+# a gate whose rejection loops back into the build (which binds $DECISION for
+# it), and signals answering a gate both ways.
+description: expanded-form reference flow (editor output shape)
 defaults:
   timeout: 30m
   harness: opencode
@@ -14,37 +21,35 @@ stages:
     agent: planner
     max_turns: 25
     input:
-      - ticket
-    output: artifacts/plan.md
+      rejection: $DECISION
+      failure: $FAILURE
     on_success: plan_gate
     on_fail:
       to: plan
       max: 2
-      feed: output
       then:
         to: debug_plan
         max: -1
   - id: plan_gate
     type: human_gate
-    ping: plan_approval
-    payload: artifacts/plan.md
+    question: Approve this implementation plan?
+    input: { plan: artifacts/plan.md }
     on_success: build
     on_reject:
       to: plan
       max: -1
-      feed: feedback
   - id: build
     type: agent
     agent: builder
     max_turns: 80
     input:
-      - ticket
-      - artifacts/plan.md
+      plan: artifacts/plan.md
+      rejection: $DECISION
+      failure: $FAILURE
     on_success: commit_msg
     on_fail:
       to: build
       max: 2
-      feed: output
       then:
         to: debug_build
         max: -1
@@ -53,20 +58,20 @@ stages:
     agent: committer
     max_turns: 10
     input:
-      - ticket
-      - artifacts/plan.md
-    output: artifacts/commit.md
+      plan: artifacts/plan.md
+      failure: $FAILURE
     on_success: commit
     on_fail:
       to: commit_msg
       max: 1
-      feed: output
       then:
         to: debug_commit_msg
         max: -1
   - id: commit
     type: command
     run: git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi
+    input:
+      message: artifacts/commit.md
     on_success: test
     on_fail:
       to: debug_commit
@@ -78,7 +83,6 @@ stages:
     on_fail:
       to: build
       max: 5
-      feed: output
       then:
         to: debug_test
         max: -1
@@ -88,42 +92,36 @@ stages:
       then:
         to: build
         max: 2
-        feed: output
   - id: review
     type: agent
     agent: reviewer
     model: opencode-go/glm-5.1
     max_turns: 30
     input:
-      - ticket
-      - artifacts/plan.md
-      - $CHANGED
-    verdict: true
+      plan: artifacts/plan.md
+      changes: $CHANGED
+      failure: $FAILURE
     on_success: redact
     on_fail:
       to: review
       max: 1
-      feed: output
       then:
         to: debug_review
         max: -1
     on_reject:
       to: build
       max: 3
-      feed: comments
   - id: redact
     type: agent
     agent: redactor
     max_turns: 15
     input:
-      - ticket
-      - $CHANGED
-    output: artifacts/mr.md
+      changes: $CHANGED
+      failure: $FAILURE
     on_success: push
     on_fail:
       to: redact
       max: 1
-      feed: output
       then:
         to: debug_redact
         max: -1
@@ -138,64 +136,66 @@ stages:
         to: debug_push
         max: -1
   - id: mr
-    type: forge_mr
-    body: artifacts/mr.md
+    type: action
+    action: create_mr
+    input:
+      body: artifacts/mr.md
     on_success: final_gate
   - id: final_gate
     type: human_gate
-    ping: final_review
-    payload: mr_url
-    auto_complete: mr_merged
+    question: Review the merge request and merge when satisfied.
+    input: { mr: $MR_URL }
+    auto_approve: mr_merged
+    auto_reject: mr_closed
     on_success: done
     on_reject:
       to: build
       max: -1
-      feed: feedback
   - id: debug_plan
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: Planning failed repeatedly — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: plan
     on_reject: abort
   - id: debug_build
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: The build failed repeatedly — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: build
     on_reject: abort
   - id: debug_commit_msg
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: Writing the commit message failed — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: commit_msg
     on_reject: abort
   - id: debug_commit
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: The commit failed — fix it in the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: commit
     on_reject: abort
   - id: debug_test
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: The tests keep failing — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: test
     on_reject: abort
   - id: debug_review
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: The review stage itself failed — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: review
     on_reject: abort
   - id: debug_redact
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: Writing the merge request description failed — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: redact
     on_reject: abort
   - id: debug_push
     type: human_gate
-    ping: manual_debug
-    payload: workspace
+    question: The push failed — fix it in the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
     on_success: push
     on_reject: abort

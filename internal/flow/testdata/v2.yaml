@@ -1,0 +1,50 @@
+name: v2
+version: 2
+description: canonical v2 flow — agent/command/gate/action stages, every sentinel, output rebinding
+# The flow owns its default harness + model (DESIGN2 §6.3); a stage may
+# override either. A project running this flow must have a harness of the
+# named kind (checked at run creation), keeping the flow portable data.
+defaults: { timeout: 30m, harness: fake, model: anthropic/claude-sonnet-4-6, max_turns: 50 }
+budget: { max_cost_usd: 10.0, max_total_turns: 300 }
+stages:
+  # No output: the planner's contract already says where its plan goes.
+  - { id: plan,       type: agent, agent: planner, max_turns: 25,
+      description: write the implementation plan,
+      input: { rejection: $DECISION, failure: $FAILURE },
+      on_fail: { to: plan, max: 2 } }
+  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { plan: artifacts/plan.md },
+      on_reject: { to: plan, max: 3 } }
+  # The retry channel is declared like any other input: an edge says where to
+  # go, the stage it lands on says where the content goes.
+  - { id: build,      type: agent, agent: builder, max_turns: 80,
+      input: { plan: artifacts/plan.md, rejection: $DECISION, failure: $FAILURE } }
+  # Rebinding a declared output's path.
+  - { id: commit_msg, type: agent, agent: committer, input: { plan: artifacts/plan.md },
+      output: { commit: artifacts/commit-subject.md }, max_turns: 10 }
+  # A command declares the paths it reads and writes: a precondition before it
+  # runs, a contract after.
+  - { id: commit,     type: command, input: { message: artifacts/commit-subject.md },
+      run: "git add -A && git commit -F artifacts/commit-subject.md" }
+  - { id: test,       type: command, run_ref: verify,
+      on_fail: { to: build, max: 5 },
+      on_timeout: { to: test, max: 1, then: { to: build, max: 2 } } }
+  # The reviewer's verdict output is what makes on_reject reachable; rebinding
+  # its path proves the engine never hardcodes artifacts/verdict.json.
+  - { id: review,     type: agent, agent: reviewer, model: openai/gpt-5, max_turns: 30,
+      input: { plan: artifacts/plan.md, changes: $CHANGED },
+      output: { verdict: artifacts/review/verdict.json },
+      on_reject: { to: build, max: 3 } }
+  - { id: redact,     type: agent, agent: redactor, input: { changes: $CHANGED }, max_turns: 15 }
+  - { id: push,       type: command, run: "git push -u origin HEAD", on_success: mr,
+      on_fail: { to: push, max: 1, then: { to: debug_push, max: -1 } } }
+  - { id: debug_push, type: human_gate, question: "Push failed — fix it, then approve.", input: { workspace: $WORKSPACE },
+      on_success: push,
+      on_reject: abort }
+  - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  # A gate the forge can answer either way — and an explicit on_reject, because
+  # a rejection with nowhere to go abandons the run. (`type: wait` is covered by
+  # TestWaitStage and the engine's wait scenarios; putting one here would make
+  # this fixture's end-to-end walk wait on a signal that must not fire.)
+  - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
+      auto_approve: mr_merged, auto_reject: mr_closed,
+      on_reject: abort }

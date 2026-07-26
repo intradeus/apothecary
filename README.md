@@ -42,7 +42,9 @@ exactly two touchpoints — plan approval and final review.
   `auth.json`.
 - A target repository containing `AGENTS.md` (the repo's conventions).
   Agents themselves are defined **per project in the UI** (v3 agent
-  library) — `artifacts/agents/` has ready-to-paste reference prompts.
+  library) — five defaults (planner, builder, committer, reviewer,
+  redactor) ship compiled into the binary and appear in every project;
+  saving one under the same name creates your editable override.
 
 ## Install
 

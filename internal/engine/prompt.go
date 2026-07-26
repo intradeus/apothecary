@@ -10,9 +10,10 @@ import (
 	"apothecary/internal/ports"
 )
 
-// assemblePrompt builds the agent prompt exactly per the §3.2 template. The
-// ticket always forms the TASK section; a literal `ticket` input entry adds
-// nothing extra. $CHANGED is a stat + file list, never the full diff.
+// assemblePrompt builds the agent prompt per the §3.2 template. The ticket
+// always forms the TASK section. Each of the stage's bound inputs renders as a
+// named, described INPUT section (FLOWLANG §4); $CHANGED is a stat + file list,
+// never the full diff.
 func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	rs := x.rs
 	var b strings.Builder
@@ -26,10 +27,18 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 
 	spec := x.res.agentSpec(st.Agent)
 	for _, in := range st.Inputs {
-		switch {
-		case in.Name == "" && in.Value == flow.InputTicket:
-			// already the TASK section
-		case in.Value == flow.InputChanged:
+		if flow.IsFeedSentinel(in.Value) {
+			// The content of the edge that re-entered this stage. Only one of
+			// $DECISION / $FAILURE can be filled at a time (the edge kind
+			// decides which), and neither on a first attempt.
+			if in.Value != rs.feedSentinel || rs.feed == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "# INPUT: %s%s (%s)\n%s\n",
+				in.Name, inputDesc(spec, in.Name), attemptOf(iter, rs.feedAttempts), tail(rs.feed, 8<<10))
+			continue
+		}
+		if in.Value == flow.SentinelChanged {
 			stat := "(no diff available)"
 			res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
 				Script:  fmt.Sprintf("git diff --stat origin/%s...HEAD", x.res.RepoRef.DefaultBranch),
@@ -39,38 +48,14 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			if err == nil && res.ExitCode == 0 {
 				stat = res.Output
 			}
-			if in.Name == "" {
-				fmt.Fprintf(&b, "# CHANGED FILES\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", stat)
-			} else {
-				fmt.Fprintf(&b, "# INPUT: %s%s\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", in.Name, inputDesc(spec, in.Name), stat)
-			}
-		default:
-			content := "(artifact missing)"
-			if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, in.Value); err == nil {
-				content = tail(string(data), 16<<10)
-			}
-			if in.Name == "" {
-				fmt.Fprintf(&b, "# ARTIFACT: %s\n%s\n", in.Value, content)
-			} else {
-				fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), in.Value, content)
-			}
+			fmt.Fprintf(&b, "# INPUT: %s%s\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", in.Name, inputDesc(spec, in.Name), stat)
+			continue
 		}
-	}
-
-	if iter > 1 {
-		maxAttempts := max(rs.feedAttempts, iter)
-		feed := rs.feed
-		if feed == "" {
-			feed = "(feedback unavailable)"
+		content := "(artifact missing)"
+		if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, in.Value); err == nil {
+			content = tail(string(data), 16<<10)
 		}
-		// When the agent declares the reserved feedback input, the retry
-		// content flows into a named INPUT section (described); otherwise the
-		// generic header, unchanged for legacy agents.
-		if fb := feedbackDecl(spec); fb != nil {
-			fmt.Fprintf(&b, "# INPUT: %s%s (iteration %d of %d)\n%s\n", fb.Name, declDesc(fb.Description), iter, maxAttempts, tail(feed, 8<<10))
-		} else {
-			fmt.Fprintf(&b, "# PREVIOUS ATTEMPT FEEDBACK (iteration %d of %d)\n%s\n", iter, maxAttempts, tail(feed, 8<<10))
-		}
+		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), in.Value, content)
 	}
 
 	if goals := x.goalArtifacts(); len(goals) > 0 {
@@ -81,25 +66,33 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	}
 
 	outs := flow.EffectiveOutputs(st, spec)
-	if len(outs) > 0 || st.Verdict {
+	if len(outs) > 0 {
 		b.WriteString("# OUTPUT CONTRACT\n")
-		if len(outs) > 0 {
-			b.WriteString("Before finishing you MUST write these files (relative to repo root):\n")
-			for _, o := range outs {
-				if o.Name == "" {
-					fmt.Fprintf(&b, "- %s\n", o.Value)
-				} else {
-					fmt.Fprintf(&b, "- %s — %s%s\n", o.Value, o.Name, outputDesc(spec, o.Name))
-				}
+		b.WriteString("Before finishing you MUST write these files (relative to repo root):\n")
+		for _, o := range outs {
+			if o.Name == "" {
+				fmt.Fprintf(&b, "- %s\n", o.Value)
+			} else {
+				fmt.Fprintf(&b, "- %s — %s%s\n", o.Value, o.Name, outputDesc(spec, o.Name))
 			}
 		}
-		if st.Verdict {
-			b.WriteString(`Before finishing you MUST use your file-writing tool to create the file artifacts/verdict.json containing exactly` + "\n" +
-				`{"verdict":"APPROVE"|"REJECT","comments":["..."]} — comments required when REJECT.` + "\n" +
-				`Printing the JSON in your reply does NOT satisfy this contract; the file itself must exist on disk.` + "\n")
+		// A verdict output is a file like any other, plus a shape contract.
+		if vpath := flow.VerdictPath(st, spec); vpath != "" {
+			fmt.Fprintf(&b, "%s must contain exactly {\"verdict\":\"APPROVE\"|\"REJECT\",\"comments\":[\"...\"]} — comments required when REJECT.\n", vpath)
+			b.WriteString("Printing the JSON in your reply does NOT satisfy this contract; the file itself must exist on disk.\n")
 		}
 	}
 	return b.String()
+}
+
+// attemptOf renders the retry counter for a feed section. An unlimited link
+// (max -1) records no total, and claiming "attempt 2 of 2" there would tell an
+// agent this is its last chance when the loop is bounded only by human patience.
+func attemptOf(iter, total int) string {
+	if total <= 0 || total < iter {
+		return fmt.Sprintf("attempt %d", iter)
+	}
+	return fmt.Sprintf("attempt %d of %d", iter, total)
 }
 
 // inputDesc renders " — <description>" for a declared input, or "" when the
@@ -131,19 +124,6 @@ func outputDesc(spec *agentspec.Spec, name string) string {
 		}
 	}
 	return ""
-}
-
-// feedbackDecl returns the agent's reserved feedback input decl, or nil.
-func feedbackDecl(spec *agentspec.Spec) *agentspec.InputDecl {
-	if spec == nil {
-		return nil
-	}
-	for i := range spec.Inputs {
-		if spec.Inputs[i].Name == agentspec.InputFeedback {
-			return &spec.Inputs[i]
-		}
-	}
-	return nil
 }
 
 func declDesc(desc string) string {

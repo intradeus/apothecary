@@ -2,7 +2,7 @@
   import { ago, api } from '$lib/api';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import { mdToHtml } from '$lib/planreview';
-  import { GATE_TYPES, type PingLike } from '$lib/ping';
+  import { isGatePing, type PingLike } from '$lib/ping';
 
   let {
     ping,
@@ -32,13 +32,11 @@
       uploading = false;
     }
   }
-  const isGate = $derived(GATE_TYPES.includes(ping.type));
+  const isGate = $derived(isGatePing(ping.type));
   const isPending = $derived((ping.status ?? 'pending') === 'pending');
   const options = $derived(ping.options ?? []);
-  // manual_debug is "go look at the workspace": approve = fixed/continue,
-  // reject = give up (routes on_reject — typically abort).
-  const approveLabel = $derived(ping.type === 'manual_debug' ? 'Resolved — continue' : 'Approve');
-  const rejectLabel = $derived(ping.type === 'manual_debug' ? 'Give up (reject)' : 'Reject with feedback');
+  // Gate verbs are plain: what this particular gate means — re-run a stage,
+  // merge, give up — is said in its question, which the flow author wrote.
 </script>
 
 <div class="md" style="margin:8px 0">{@html mdToHtml(ping.question)}</div>
@@ -65,10 +63,10 @@
 {:else}
   <AttachFiles bind:files label="Attach files to your answer" />
   {#if isGate}
-    <textarea bind:value={note} placeholder={ping.type === 'manual_debug' ? 'What you found / changed (required when giving up)' : 'Feedback (required when rejecting)'}></textarea>
+    <textarea bind:value={note} placeholder="Feedback (required when rejecting)"></textarea>
     <div class="row" style="margin-top:10px">
-      <button class="approve" disabled={busy || uploading} onclick={() => submit('approve')}>{approveLabel}</button>
-      <button class="reject" disabled={busy || uploading || !note.trim()} onclick={() => submit('reject')}>{rejectLabel}</button>
+      <button class="approve" disabled={busy || uploading} onclick={() => submit('approve')}>Approve</button>
+      <button class="reject" disabled={busy || uploading || !note.trim()} onclick={() => submit('reject')}>Reject with feedback</button>
     </div>
   {:else if options.length}
     <textarea bind:value={note} placeholder="Optional note — or your own answer if none of the options fit"></textarea>

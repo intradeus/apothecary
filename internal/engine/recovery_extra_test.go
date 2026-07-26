@@ -97,7 +97,7 @@ func TestCrashAfterEdgeKeepsFeed(t *testing.T) {
 	}
 	found := false
 	for _, c := range h.runner.RunCalls {
-		if strings.Contains(c.In.Prompt, "FAIL: x") && strings.Contains(c.In.Prompt, "(iteration 2 of 6)") {
+		if strings.Contains(c.In.Prompt, "FAIL: x") && strings.Contains(c.In.Prompt, "(attempt 2 of 6)") {
 			found = true
 		}
 	}

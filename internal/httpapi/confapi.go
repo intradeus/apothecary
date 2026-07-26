@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
@@ -16,6 +17,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
 	"apothecary/internal/secrets"
+	"apothecary/internal/signalspec"
 )
 
 // flowResp / agentResp decorate store rows with the built-in layering
@@ -400,6 +402,18 @@ func (s *Server) listAllAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// listActions serves the compiled-in action registry: the slugs an `action`
+// stage may name, with the signature the editor renders binding rows from.
+func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, actionspec.Registry())
+}
+
+// listSignals serves the compiled-in signal registry: what a wait stage may
+// block on and what a gate may be auto-answered by.
+func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, signalspec.Registry())
 }
 
 // mergedAgents returns the project's authored agents plus every built-in the

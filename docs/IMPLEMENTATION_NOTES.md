@@ -68,10 +68,11 @@ boring choice, recorded here). Newest at the bottom.
 - **Recovery re-execution rules**: crash after `stage_failed` but before the
   edge decision → the failure is **routed directly** (no re-execution, no
   duplicate attempt events) using the output tail persisted in
-  `stage_failed.error`; `forge_mr` stages instead re-enter their executor,
-  which is idempotent via the recorded `mr_created`. Crash after
-  `stage_completed` but before routing → route only; verdict stages re-read
-  `artifacts/verdict.json` and do not re-append `verdict_received`.
+  `stage_failed.error`; `action` stages instead re-enter their executor,
+  which must be idempotent (create_mr via the recorded `mr_created`). Crash
+  after `stage_completed` but before routing → route only; a stage whose agent
+  declares a verdict output re-reads it at its bound path and does not
+  re-append `verdict_received`.
 - **Edge feed content IS persisted**: `edge_taken` carries a `feed` key
   (≤8 KB tail; extension over the §6 catalog) and `stage_failed.error`
   carries the command output tail for `exit_nonzero` — recovery never loses
@@ -648,7 +649,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
   chatgpt.com — no openrouter, per-harness derivation); image assertions:
   codex 0.144.6 present + opencode ABSENT in the codex image, and the
   reverse in the Go/opencode image. **Pending Lu's tokens**: the real
-  draft-PR run on a GitHub repo (auto_complete ≤90 s) and a live codex
+  draft-PR run on a GitHub repo (auto_answer ≤90 s) and a live codex
   plan→build with usage + kill-resume — the credential-bearing halves of
   the §17 criteria.
 
@@ -858,7 +859,7 @@ registry, and flows are edited as a graph. As designed, with these notes:
 - Validation: success graph must be acyclic and reach `done` (a
   success-only cycle through command stages would burn no budget and loop
   forever); every stage must be reachable from the entry; `done` is a
-  reserved id; auto_complete gates must have `on_success: done` (was
+  reserved id; auto_complete gates had to end the run (was
   "last stage").
 - Engine: `advance()` follows the edge instead of pos++; `takeEdge` looks
   the edge up by kind (call sites just name the kind). Replay untouched —
@@ -986,7 +987,7 @@ Agents-panel button, `POST /api/projects/{id}/agents/import-repo`,
 `Forge.ListDir`/`ReadFile` port methods added solely for it (gitlab,
 github, fake adapters). `agentspec.Parse` stays (name-rule + spec
 parsing). Reference agent prompts now live in `artifacts/agents/*.md`
-(+ `artifacts/flows/v1.yaml`, the explicit-edge reference flow), with the
+(+ `artifacts/flows/v2.yaml`, the expanded-form reference flow), with the
 neutral YAML specs in `examples/agents/`.
 
 ## Live run feedback (working card + workspace log tail)
@@ -1139,7 +1140,7 @@ also rewrites proxy.env (current port + creds) via a shared
 encodeEnvFile. This also fixes ask_human across restarts (same dead-tunnel
 cause). Fake provisioner doesn't implement Reattach (no tunnel) — no-op.
 
-## Flow control: abort terminal, on_timeout, then-chains, pause/play, manual_debug
+## Flow control: abort terminal, on_timeout, then-chains, pause/play, rescue gates
 
 Five additions making every way a run ends or loops an explicit, visible
 part of the flow document (extends DESIGN3 §2.1's registry as designed):
@@ -1177,16 +1178,16 @@ part of the flow document (extends DESIGN3 §2.1's registry as designed):
   queued runs): dequeue under the lock, append run_failed directly.
   stageAgent gained the same ctx-cancellation guard stageCommand had, so
   a cancel racing the harness result is never misread as harness_error.
-- **`manual_debug` human gate** + `payload: workspace`: parks the run
+- **Rescue human gate** + `input: {workspace: $WORKSPACE}`: parks the run
   and hands the human the workspace link (terminal > ide > first, from
   env_ready; runState.links now also set on the live provision path).
   approve = continue on_success, reject = on_reject (typically abort),
   feedback feeds along. Counted as a WANTED ping (gatePingType).
 
-The shipped example (artifacts/flows/v1.yaml) exercises all of it:
-test on_fail → build ×5 then debug (manual_debug, workspace) → abort on
+The shipped example (artifacts/flows/v2.yaml) exercises all of it:
+test on_fail → build ×5 then debug (a gate showing $WORKSPACE) → abort on
 reject; on_timeout self-retry then build; final_gate on_reject: abort.
-Locked by flow.TestLiveV1FlowParses.
+Locked by flow.TestReferenceFlowParses.
 
 ## Compiled-in defaults (internal/builtin): flow "default" + agent library
 

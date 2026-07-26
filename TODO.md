@@ -1,13 +1,10 @@
-- 3) merge conflicts ? 
+- 3) merge conflicts / rebase ? PR comments fixes ?
 - 4) `channels` fold into `integrations`.
 - 5) db migration + migration table checks and simplify
 - 6) openapi + client gen for frontend.
 - 7) redo everything in DDD
-- 13) Abstract "forge MR" behind an 'Action' type (so 4 types : agent, cli_command, human_gate and action). Actions being all 'hard coded' actions provided by apothecary.
 - 14) Allow user to specify a harness agent too, as well as the apo's project's agents (ex: opencode has its own builder and planner agents)
-- 15) Import PR comments and choose which to fix/how
-- 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now. Check the statuses of coder for inspiration.
-- 18) Add option to branch from something else than the main branch
-- 19) DinD sandbox follow-ups: (b) shared pull-through registry mirror + `--registry-mirror` on the inner dockerd to warm image pulls across runs (also replaces the per-run save|load for the pipeline image; the per-project gateway is the natural home for it); (c) sysbox runtime to drop `--privileged`; (d) sandbox resource caps (`--memory`/`--cpus`) as project workspace config; (e) gateway keep-warm (skip refcount reap) once the shared cache lands; (g) credential brokering at the gateway (inject tokens so secrets never enter the workspace).
-- 21) Agents must specify their inputs and outputs to auto fill-in the ouputs feeding in the flows.
+- 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now - we have an event store so we could replay ? Check the statuses of coder for inspiration.
+- 19) DinD sandbox follow-ups: (b) shared pull-through registry mirror + `--registry-mirror` on the inner dockerd to warm image pulls across runs (also replaces the per-run save|load for the pipeline image; the per-project gateway is the natural home for it); (c) sysbox runtime to drop `--privileged`; (d) sandbox resource caps (`--memory`/`--cpus`) as project workspace config; (e) gateway keep-warm (skip refcount reap) once the shared cache lands; (g) credential brokering at the gateway (inject tokens so secrets never enter the workspace). (h) if possible (my idea so unsure ?) to get rid of the relay/reverse tunnel and instead let the firewall container that ?
 - 23) new run on observability
+- 24) resource graphs (cpu, ram, memory used by the dind container)

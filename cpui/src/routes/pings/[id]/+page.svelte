@@ -20,7 +20,7 @@
 
 {#if ping}
   <div class="row spread" style="margin-bottom:12px">
-    <h1 style="margin:0">{ping.type === 'plan_approval' ? 'Plan review' : 'Review'}</h1>
+    <h1 style="margin:0">Review</h1>
     <span class="muted small">
       {#if ping.stage_id}<span class="mono">{ping.stage_id}</span> · {/if}
       {ago(ping.raised_at)} · <a href={`/runs/${ping.run_id}`}>view run</a> · <a href="/inbox">inbox</a>

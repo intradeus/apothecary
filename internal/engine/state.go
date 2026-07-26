@@ -37,17 +37,20 @@ type runState struct {
 	edgeCounts map[string]int             // "from|kind|depth" -> times that chain link was taken
 	sessions   map[string]ports.SessionID // stage id -> last recorded harness session
 
-	// links are the workspace access links from env_ready, kept for
-	// human_gate payload: workspace (manual_debug's SSH/terminal hand-off).
+	// links are the workspace access links from env_ready, kept for a
+	// human_gate whose input is $WORKSPACE (the terminal/IDE hand-off).
 	links []event.Link
 
 	cost     float64
 	turns    int
 	unwanted int
 
-	// feed carries edge feedback into the next stage entry (§3.2); persisted
-	// in edge_taken, so replay restores it losslessly.
+	// feed carries the content of the edge that re-entered the current stage
+	// (§3.2); persisted in edge_taken, so replay restores it losslessly.
+	// feedSentinel is which input value it fills ($DECISION or $FAILURE),
+	// derived from the edge kind — the target binds one of them or neither.
 	feed         string
+	feedSentinel string
 	feedAttempts int // total allowed attempts, for the "(iteration n of m)" line
 
 	// lastFailure is the open stage_failed when the crash hit before its
@@ -72,10 +75,11 @@ func chainKey(from, kind string, depth int) string {
 	return fmt.Sprintf("%s|%s|%d", from, kind, depth)
 }
 
-func gatePingType(t string) bool {
-	return t == string(flow.PingPlanApproval) || t == string(flow.PingFinalReview) ||
-		t == string(flow.PingManualDebug)
-}
+// PingGate is re-exported for the engine's callers (the HTTP layer and tests);
+// the vocabulary itself belongs to the event catalog.
+const PingGate = event.PingGate
+
+func gatePingType(t string) bool { return t == PingGate }
 
 // replay folds a run's event history into runState. fl may be nil when the
 // flow is unknown; callers must check.
@@ -132,6 +136,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			}
 			rs.ph = phStart
 			rs.feed = p.Feed
+			rs.feedSentinel = flow.FeedSentinel(p.Edge)
 			rs.feedAttempts = p.Max + 1
 		case *event.PingRaised:
 			raised[p.PingID] = p
@@ -161,6 +166,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.done = false
 			rs.ph = phStart
 			rs.feed = ""
+			rs.feedSentinel = ""
 			rs.feedAttempts = 0
 			rs.lastFailure = nil
 			rs.gateAnswer = nil
@@ -176,10 +182,12 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 	return rs
 }
 
-// openGatePing returns the still-open gate ping for the given type, if any.
-func (rs *runState) openGatePing(t flow.PingType) *event.PingRaised {
+// openGatePing returns the still-open gate ping raised by the given stage, if
+// any. Keyed by stage, not by kind: a flow may have many gates, and only the
+// one this stage raised may be re-armed on recovery.
+func (rs *runState) openGatePing(stageID string) *event.PingRaised {
 	for _, p := range rs.openPings {
-		if p.Type == string(t) {
+		if p.StageID == stageID && gatePingType(p.Type) {
 			return p
 		}
 	}

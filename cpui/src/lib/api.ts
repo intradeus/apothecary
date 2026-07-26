@@ -154,13 +154,55 @@ export interface Ticket {
 }
 
 // One declared input (files/$CHANGED the agent expects) or output (files it
-// must produce) in an agent's I/O contract (DESIGN4 §1). Inputs carry
-// `optional`; outputs carry a default `path`.
+// must produce) in an agent's I/O contract (FLOWLANG §4). Inputs carry
+// `optional`; outputs carry a default `path` and, optionally, a `type` that
+// gives the file a contract beyond "it exists" — 'verdict' is the
+// APPROVE/REJECT decision the engine parses and routes on_reject from.
 export interface AgentIODecl {
   name: string;
   description?: string;
   optional?: boolean;
   path?: string;
+  type?: '' | 'verdict';
+}
+
+// One input or output in a built-in action's signature (GET /api/actions). A
+// 'file' carries an artifact path; a 'value' is engine-held and consumed by
+// later stages through its $SENTINEL.
+export interface ActionIOSig {
+  name: string;
+  description?: string;
+  kind: 'file' | 'value';
+  required?: boolean;
+  default_path?: string;
+  sentinel?: string;
+}
+
+// One entry in the compiled-in signal registry: what a `wait` stage may block
+// on, and what a gate's auto_answer may name.
+export interface SignalSpec {
+  slug: string;
+  title: string;
+  description?: string;
+  /** Integration port the project must have configured (e.g. 'forge'). */
+  requires?: string;
+  /** A run fact the signal depends on ('merge_request'), so a flow cannot
+   *  wait on something that can never happen. */
+  needs?: string;
+}
+
+// One entry in the compiled-in action registry: what an `action` stage may
+// name. Not project data — the flow parser validates the slug directly.
+export interface ActionSpec {
+  slug: string;
+  title: string;
+  description?: string;
+  /** Integration port the project must have configured (e.g. 'forge'). */
+  requires?: string;
+  /** At most one stage per flow may use this action. */
+  single?: boolean;
+  inputs?: ActionIOSig[];
+  outputs?: ActionIOSig[];
 }
 
 // Agent library (DESIGN3 §1): per-project, versioned, copiable.
@@ -280,7 +322,10 @@ export interface EventEnvelope {
 export interface Ping {
   ping_id: string;
   run_id: string;
-  type: 'plan_approval' | 'final_review' | 'clarification' | 'blocker' | 'permission';
+  // 'gate' is every human_gate stage (one machine: approve / reject with
+  // feedback — what it asks lives in its question). The rest come from
+  // ask_human, raised by agents.
+  type: 'gate' | 'clarification' | 'blocker' | 'permission';
   stage_id?: string;
   question: string;
   context?: string;
@@ -520,6 +565,8 @@ export const api = {
       outputs?: AgentIODecl[];
     }
   ) => put(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, body) as Promise<Agent>,
+  actions: () => req<ActionSpec[]>('/api/actions'),
+  signals: () => req<SignalSpec[]>('/api/signals'),
   deleteAgent: (projectId: string, name: string) =>
     req<void>(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   agentVersions: (projectId: string, name: string) =>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ago, type Agent, type FlowRow, type FlowVersion } from '$lib/api';
+  import { api, ago, type ActionSpec, type Agent, type FlowRow, type FlowVersion, type SignalSpec } from '$lib/api';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
   import { ABORT, autoLayout, docToYaml, DONE, START, edgeOf, setEdge, setEntry, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
@@ -31,6 +31,11 @@
   // Built-in agent library (project-independent), for the inspector's binding
   // fields. Best-effort — decl hints simply stay off if this fails.
   let agents = $state<Agent[]>([]);
+  // The compiled-in action registry: what an `action` stage may name, and the
+  // signature the inspector and the dataflow layer bind against.
+  let actions = $state<ActionSpec[]>([]);
+  // The signal registry: what a wait stage blocks on, or a gate auto-answers on.
+  let signals = $state<SignalSpec[]>([]);
 
   // Flows are portable, project-independent data: the editor takes NOTHING
   // from any project. Agent / harness / model / run_ref are free text here
@@ -56,8 +61,10 @@
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
+    // Contracts for the binding fields and the dataflow view. Best-effort:
+    // without them the graph still renders explicit bindings.
     try {
-      agents = await api.allAgents();
+      [agents, actions, signals] = await Promise.all([api.allAgents(), api.actions(), api.signals()]);
     } catch {
       /* binding hints stay off */
     }
@@ -120,10 +127,10 @@
       const existing = edgeOf(s, kind);
       if (target === ABORT) {
         // Dragging onto the abort terminal replaces the chain's first link
-        // with the immediate stop (no max/feed; nothing runs after abort).
+        // with the immediate stop (no max; nothing runs after abort).
         setEdge(s, kind, { to: ABORT });
       } else {
-        setEdge(s, kind, { to: target, max: existing?.max ?? 3, feed: existing?.feed, then: existing?.then });
+        setEdge(s, kind, { to: target, max: existing?.max ?? 3, then: existing?.then });
       }
     }
     markChanged();
@@ -291,6 +298,8 @@
         }}
         {onmove}
         {onlink}
+        {agents}
+        {actions}
       />
       {#if panelOpen}
         <div class="inspector-float">
@@ -306,7 +315,7 @@
               }}>✕ close</button
             >
           </div>
-          <FlowInspector {doc} {selection} {agents} onchange={markChanged} onselect={select} />
+          <FlowInspector {doc} {selection} {agents} {actions} {signals} onchange={markChanged} onselect={select} />
         </div>
       {/if}
     </div>

@@ -7,6 +7,16 @@ inputs:
     description: the approved plan to check the change set against
   - name: changes
     description: the set of changed files in this branch to review
+  - name: failure
+    description: what the previous attempt printed when it failed
+    optional: true
+outputs:
+  # A verdict-typed output is what makes a stage's on_reject edge reachable:
+  # REJECT routes the run back down it, carrying these comments as feedback.
+  - name: verdict
+    type: verdict
+    description: APPROVE or REJECT, with actionable comments naming file, problem and resolution
+    path: artifacts/verdict.json
 prompt: |
   You are the adversarial reviewer of a software factory. Your job is to
   find reasons to REJECT — approve only when you have genuinely tried and
@@ -22,8 +32,9 @@ prompt: |
      bash, and hunt for unhandled edge cases, racy constructs, and tests
      that assert too little.
 
-  You may run tests and linters, but you never modify files — your only
-  deliverable is the verdict. Comments must be actionable: name the file,
+  You may run tests and linters, but you never modify repo files — your only
+  deliverable is the verdict file named in the OUTPUT CONTRACT section.
+  Comments must be actionable: name the file,
   the problem, and what would resolve it. Style nits without substance are
   not grounds for rejection; missing tests, plan deviations, and broken
   invariants are.

@@ -100,6 +100,13 @@ Top-level fields:
 | `budget.max_total_turns` | int | no (300) | same, in turns (covers harnesses that report no cost) |
 | `stages` | list | yes | ordered; execution starts at first entry and proceeds in list order unless an edge redirects |
 
+> **Superseded.** The flow language has since been reworked and versioned;
+> `docs/flow-language.md` is the normative reference (cited in code as
+> `FLOWLANG §n`). What follows records the original v1 schema: `forge_mr`
+> became a generic `action` stage, the `verdict` flag became a typed agent
+> output, gate `ping`/`payload` became `question`/`input`, and every stage's
+> reads and writes are now declared. Kept for the reasoning, not the syntax.
+
 Per-stage fields:
 
 | field | applies to | req | meaning |

@@ -29,7 +29,7 @@ func TestReduceFullLifecycle(t *testing.T) {
 		{&event.EnvReady{EnvID: "env-1"}, Running},
 		{&event.StageStarted{StageID: "plan", Iteration: 1}, Running},
 		{&event.StageCompleted{StageID: "plan"}, Running},
-		{&event.PingRaised{PingID: "p1", Type: "plan_approval"}, WaitingOnHuman},
+		{&event.PingRaised{PingID: "p1", Type: event.PingGate}, WaitingOnHuman},
 		{&event.PingAnswered{PingID: "p1", Answer: "approve"}, Running},
 		{&event.StageStarted{StageID: "build", Iteration: 1}, Running},
 		{&event.MRCreated{MRURL: "https://gitlab.local/mr/1", MRIID: 1}, Running},

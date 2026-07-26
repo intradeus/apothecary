@@ -163,9 +163,12 @@ type Usage struct {
 	CostUSD      float64
 }
 
+// AgentResult is what a harness reports about one agent invocation. Note what
+// is absent: a verdict. A verdict is a declared output file (FLOWLANG §4), and
+// the engine reads it from the path the flow bound — one source of truth, so a
+// harness cannot report APPROVE over a file that says REJECT.
 type AgentResult struct {
 	Session   SessionID
-	Verdict   *Verdict // parsed artifacts/verdict.json, when the stage demands one
 	Output    string
 	TurnsUsed int
 	Usage     Usage

@@ -44,9 +44,10 @@ func seedAgentEnv(t *testing.T) (*Service, Project, Project) {
 	t.Helper()
 	svc, _ := newSvc(t)
 	flowYAML := `name: f
+version: 2
 defaults: { harness: fake, model: fake/fast-1 }
 stages:
-  - { id: plan,  type: agent, agent: planner, output: artifacts/plan.md }
+  - { id: plan,  type: agent, agent: planner }
   - { id: build, type: agent, agent: scribe }
 `
 	if _, err := svc.SaveFlow(context.Background(), "f", flowYAML, nil); err != nil {
@@ -147,9 +148,9 @@ func TestAgentDeclsRoundTripAndValidation(t *testing.T) {
 	if err != nil || !strings.Contains(string(v.Spec), `"patch"`) {
 		t.Errorf("version spec = %s, %v", v.Spec, err)
 	}
-	// Invalid decls are rejected at save (feedback must be optional).
+	// Invalid decls are rejected at save (an output needs a safe path).
 	bad := Agent{ProjectID: pa.ID, Name: "bad", Prompt: "p",
-		Inputs: []agentspec.InputDecl{{Name: "feedback"}}}
+		Outputs: []agentspec.OutputDecl{{Name: "out", Path: "../escape.md"}}}
 	if _, err := svc.SaveAgent(ctx, bad); !errors.Is(err, ErrInvalid) {
 		t.Errorf("invalid decl err = %v, want ErrInvalid", err)
 	}

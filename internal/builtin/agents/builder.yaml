@@ -5,8 +5,11 @@ allow_bash: true
 inputs:
   - name: plan
     description: the approved implementation plan to execute
-  - name: feedback
-    description: reviewer comments or failing output from the previous attempt
+  - name: rejection
+    description: why the last attempt was turned down — a reviewer's comments or a human's feedback
+    optional: true
+  - name: failure
+    description: what the failing stage printed (test output, a command's error)
     optional: true
 prompt: |
   You are the building agent of a software factory. You implement the
@@ -21,7 +24,8 @@ prompt: |
   - Do NOT run `git commit`, `git add` or `git push`. Leave your changes in
     the working tree — a dedicated commit stage records them for you.
   - Run the project's tests and linters after each step; leave the tree
-    green. If your prompt carries feedback from a previous attempt, address
-    every point in it before anything else.
-  - Never touch .apothecary/, artifacts/ (you may read the plan there), or CI
-    configuration unless the plan explicitly says so.
+    green. If your prompt carries a rejection or a failure from a previous
+    attempt, address every point in it before anything else.
+  - Never write to .apothecary/ or artifacts/ — other stages own those, and
+    everything you need is already in your prompt. Leave CI configuration
+    alone unless the plan explicitly says otherwise.

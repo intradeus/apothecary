@@ -5,7 +5,21 @@
   import FlowDoneNode from '$lib/FlowDoneNode.svelte';
   import FlowAbortNode from '$lib/FlowAbortNode.svelte';
   import FlowStartNode from '$lib/FlowStartNode.svelte';
-  import { ABORT, DONE, START, EDGE_KINDS, chainLinks, effectiveSuccess, edgeOf, type FlowDoc } from '$lib/flowdoc';
+  import {
+    ABORT,
+    DONE,
+    START,
+    EDGE_KINDS,
+    chainLinks,
+    deriveDataLinks,
+    effectiveSuccess,
+    edgeOf,
+    feedDots,
+    feedSentinelFor,
+    type ActionContract,
+    type AgentContract,
+    type FlowDoc
+  } from '$lib/flowdoc';
 
   export type Selection = { kind: 'stage'; id: string } | { kind: 'edge'; stage: string; edge: string } | null;
 
@@ -15,7 +29,9 @@
     rev,
     onselect,
     onmove,
-    onlink
+    onlink,
+    agents = [],
+    actions = []
   }: {
     doc: FlowDoc;
     layout: Record<string, { x: number; y: number }>;
@@ -23,6 +39,10 @@
     onselect: (sel: Selection) => void;
     onmove: (id: string, x: number, y: number) => void;
     onlink: (source: string, handle: string, target: string) => void;
+    // Contracts the dataflow layer reads: which inputs/outputs a stage's agent
+    // or action declares. Optional — without them only explicit bindings show.
+    agents?: AgentContract[];
+    actions?: ActionContract[];
   } = $props();
 
   const nodeTypes = { stage: FlowStageNode, done: FlowDoneNode, abort: FlowAbortNode, start: FlowStartNode };
@@ -41,7 +61,7 @@
       id: s.id,
       type: 'stage',
       position: layout[s.id] ?? { x: i * 240, y: 0 },
-      data: { stage: s, entry: i === 0 }
+      data: { stage: s, entry: i === 0, agents, actions }
     }));
     // The entry marker: its edge points at stages[0]; dragging that edge
     // onto another stage makes it the entry (moves it to document front).
@@ -69,6 +89,25 @@
       });
     }
     const es: Edge[] = [];
+    const fed = feedDots(doc);
+    // Dataflow, derived from the artifact paths stages read and write: drawn
+    // behind the control edges, never selectable, never draggable. The YAML's
+    // paths ARE the wiring; this only shows what they already say.
+    for (const l of deriveDataLinks(doc, agents, actions)) {
+      es.push({
+        id: `data|${l.source}|${l.target}|${l.value}`,
+        source: l.source,
+        sourceHandle: l.sourceHandle,
+        target: l.target,
+        targetHandle: l.targetHandle,
+        type: 'step',
+        selectable: false,
+        focusable: false,
+        deletable: false,
+        zIndex: -1,
+        style: 'stroke:#565f89; stroke-dasharray:2 3; stroke-width:1; opacity:0.6'
+      });
+    }
     if (doc.stages.length) {
       es.push({
         id: 'entry|__start',
@@ -92,16 +131,20 @@
         // One rendered edge per chain link; deeper links are the "then"
         // fallbacks and label their position in the chain.
         chainLinks(edgeOf(s, kind)).forEach((link, depth) => {
+          // The edge lands on the exact dot that receives its content, when the
+          // target bound one: the picture shows where the rationale goes.
+          const dot = fed.get(`${link.to}|${feedSentinelFor(kind)}`);
           es.push({
             id: `${kind}|${s.id}|${depth}`,
             source: s.id,
             sourceHandle: kind,
             target: link.to === ABORT ? '__abort' : link.to,
+            targetHandle: dot ? `in:${dot}` : undefined,
             type: 'step',
             label:
               link.to === ABORT
                 ? `${kind}${depth > 0 ? ` then#${depth}` : ''}`
-                : `${kind}${depth > 0 ? ` then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}${link.feed ? ` (${link.feed})` : ''}`,
+                : `${kind}${depth > 0 ? ` then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
             animated: true,
             style: edgeStyles[kind] + (depth > 0 ? '; opacity:0.65' : '')
           });
@@ -118,6 +161,11 @@
 
   function handleConnect(conn: Connection) {
     if (!conn.source || !conn.target) return;
+    // Dataflow dots are not rewireable: an artifact path is what connects two
+    // stages, so a drag from one must not be read as a control-flow rewire
+    // (setEdge's fallthrough would silently overwrite on_timeout).
+    const h = conn.sourceHandle ?? '';
+    if (h.startsWith('in:') || h.startsWith('out:')) return;
     const target = conn.target === '__done' ? DONE : conn.target === '__abort' ? ABORT : conn.target;
     if (conn.source === '__start') {
       onlink(START, 'entry', target); // re-point the entry
@@ -145,6 +193,12 @@
     onnodeclick={({ node }) => onselect(node.id.startsWith('__') ? null : { kind: 'stage', id: node.id })}
     onedgeclick={({ edge }) => {
       const [kind, stage] = edge.id.split('|');
+      // A data edge has nothing of its own to edit — select its producer, which
+      // is where the path it carries is written.
+      if (kind === 'data') {
+        onselect({ kind: 'stage', id: stage });
+        return;
+      }
       if (kind === 'entry') {
         onselect(doc.stages.length ? { kind: 'stage', id: doc.stages[0].id } : null);
         return;

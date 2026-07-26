@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/signalspec"
 )
 
 var errStageTimeout = errors.New("stage timeout")
@@ -80,9 +82,17 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	fl, err := e.flows.Get(bg, view.FlowName)
 	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
-		if errors.Is(err, flow.ErrNotFound) {
+		var perr *flow.Error
+		switch {
+		case errors.Is(err, flow.ErrNotFound):
 			_ = x.append(&event.RunFailed{Reason: fmt.Sprintf("flow %q not found", view.FlowName)})
-		} else {
+		case errors.As(err, &perr):
+			// The stored flow no longer parses (edited into invalid YAML, or
+			// written against an older grammar). Retrying can never fix that,
+			// and leaving the run non-terminal spins it through recovery on
+			// every boot: fail honestly with the parse error a human can act on.
+			_ = x.append(&event.RunFailed{Reason: fmt.Sprintf("flow %q no longer parses: %v", view.FlowName, err)})
+		default:
 			// Transient source error (DB blip): leave the run non-terminal
 			// so the next boot recovers it.
 			e.log.Error("run loop: flow load failed; run left non-terminal for recovery", "run", runID, "err", err)
@@ -138,16 +148,17 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		var err error
 		if rs.ph == phAfterComplete {
 			err = x.routeAfterComplete(st)
-		} else if rs.ph == phAfterFail && st.Type != flow.StageForgeMR {
+		} else if rs.ph == phAfterFail && st.Type != flow.StageAction {
 			err = x.routeAfterFail(st)
 		} else {
 			// Ensure the workspace lazily, right before a stage that uses it —
-			// and NEVER for a human_gate. Ensuring it up front blocked a run
-			// parked at a gate whose workspace had been reaped: recovery tried
-			// to re-provision it before re-arming the gate, so answers were
+			// and NEVER for a stage that only parks on something outside the
+			// run (a gate or a wait). Ensuring it up front blocked a run parked
+			// at a gate whose workspace had been reaped: recovery tried to
+			// re-provision it before re-arming the gate, so answers were
 			// silently buffered and dropped (found live: rejecting a final_gate
 			// returned {"status":"answered"} but nothing happened).
-			if st.Type != flow.StageHumanGate && !x.envEnsured {
+			if st.Type != flow.StageHumanGate && st.Type != flow.StageWait && !x.envEnsured {
 				if eerr := x.ensureEnv(); eerr != nil {
 					x.exit(eerr)
 					return
@@ -164,8 +175,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				err = x.stageCommand(st)
 			case flow.StageHumanGate:
 				err = x.stageGate(st)
-			case flow.StageForgeMR:
-				err = x.stageForgeMR(st)
+			case flow.StageAction:
+				err = x.stageAction(st)
+			case flow.StageWait:
+				err = x.stageWait(st)
 			}
 		}
 		if err != nil {
@@ -216,6 +229,7 @@ func (x *exec) advance(st *flow.Stage) {
 	}
 	x.rs.ph = phStart
 	x.rs.feed = ""
+	x.rs.feedSentinel = ""
 	x.rs.feedAttempts = 0
 }
 
@@ -250,7 +264,17 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
 	edge := st.Edge(kind)
 	if edge == nil {
-		return x.abandon(st.ID, "", fmt.Sprintf("stage %s: unrecoverable failure with no %s", st.ID, kind))
+		// A rejection is a decision, not a breakage: saying "unrecoverable
+		// failure" about a human (or a signal) deliberately saying no would
+		// misreport the run's history.
+		reason := fmt.Sprintf("stage %s: unrecoverable failure with no %s", st.ID, kind)
+		if kind == flow.EdgeReject {
+			reason = fmt.Sprintf("stage %s was rejected and declares no %s", st.ID, kind)
+			if strings.TrimSpace(feedContent) != "" {
+				reason += ": " + tail(strings.TrimSpace(feedContent), 2<<10)
+			}
+		}
+		return x.abandon(st.ID, "", reason)
 	}
 	depth := 0
 	for e := edge; e != nil; e, depth = e.Then, depth+1 {
@@ -266,12 +290,11 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		if e.Max != flow.UnlimitedMax && count > e.Max {
 			continue // this link is exhausted; fall through to then
 		}
-		feed := ""
-		if e.Feed != "" {
-			feed = tail(feedContent, 8<<10)
-		}
-		// Feed is persisted in the event so a crash between edge_taken and
-		// the next stage_started loses nothing.
+		// The content always rides along; whether the target renders it is the
+		// target's decision (it binds $DECISION or $FAILURE, or it does not).
+		// Persisted in the event so a crash between edge_taken and the next
+		// stage_started loses nothing.
+		feed := tail(feedContent, 8<<10)
 		if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Count: count, Max: e.Max, Depth: depth, Feed: feed}); err != nil {
 			return err
 		}
@@ -279,6 +302,9 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		rs.pos = rs.fl.Index(e.To)
 		rs.ph = phStart
 		rs.feed = feed
+		// Which sentinel the content fills follows from the edge kind, so
+		// replay derives it from the persisted event rather than storing it.
+		rs.feedSentinel = flow.FeedSentinel(kind)
 		rs.feedAttempts = e.Max + 1
 		return nil
 	}
@@ -325,8 +351,10 @@ func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
 
 // routeAfterFail handles recovery when the crash hit between a stage_failed
 // and its edge decision: the failure (with its persisted output tail) is
-// routed directly, without re-executing the stage. forge_mr stages instead
-// re-enter their executor, which is idempotent via the recorded MR.
+// routed directly, without re-executing the stage. action stages instead
+// re-enter their executor, which must be idempotent (create_mr via the
+// recorded mr_created) — a half-finished side effect on a real service cannot
+// be replayed away.
 func (x *exec) routeAfterFail(st *flow.Stage) error {
 	feed := ""
 	kind := flow.EdgeFail
@@ -341,7 +369,7 @@ func (x *exec) routeAfterFail(st *flow.Stage) error {
 // routeAfterComplete handles recovery when the crash hit between a
 // stage_completed and its routing: no re-execution, only the decision.
 func (x *exec) routeAfterComplete(st *flow.Stage) error {
-	if st.Type == flow.StageAgent && st.Verdict {
+	if st.Type == flow.StageAgent && x.verdictPath(st) != "" {
 		v, err := x.readVerdict(st)
 		if err != nil {
 			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); err != nil {
@@ -428,37 +456,25 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	// Output contract (§3): every effective output (decl defaults overlaid
 	// with stage rebinds) must exist. All missing paths are reported in one
 	// failure so a human sees the whole gap, not the first file only.
-	if outs := flow.EffectiveOutputs(st, x.res.agentSpec(st.Agent)); len(outs) > 0 {
-		var missing []string
-		for _, o := range outs {
-			if o.Value == "" {
-				continue
-			}
-			if _, err := x.res.Envp.ReadFile(x.ctx, rs.envID, o.Value); err != nil {
-				missing = append(missing, o.Value)
-			}
+	if missing := x.missingPaths(flow.EffectiveOutputs(st, x.res.agentSpec(st.Agent))); len(missing) > 0 {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
+			Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
+			return aerr
 		}
-		if len(missing) > 0 {
-			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
-				Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
+		return x.takeEdge(st, flow.EdgeFail, "")
+	}
+	// A verdict-typed output had its existence checked with every other output
+	// above, so this read can now only fail on shape — one report per cause.
+	var verdict *ports.Verdict
+	if x.verdictPath(st) != "" {
+		v, err := x.readVerdict(st)
+		if err != nil {
+			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); aerr != nil {
 				return aerr
 			}
 			return x.takeEdge(st, flow.EdgeFail, "")
 		}
-	}
-	var verdict *ports.Verdict
-	if st.Verdict {
-		verdict = res.r.Verdict
-		if verdict == nil {
-			v, err := x.readVerdict(st)
-			if err != nil {
-				if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); aerr != nil {
-					return aerr
-				}
-				return x.takeEdge(st, flow.EdgeFail, "")
-			}
-			verdict = v
-		}
+		verdict = v
 	}
 
 	completed := &event.StageCompleted{
@@ -656,6 +672,17 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	rs.ph = phIn
 	started := x.e.clock()
 
+	// Declared inputs are a precondition (FLOWLANG §4): a script whose input
+	// is missing usually fails in a confusing way (or worse, succeeds having
+	// done nothing). Checking first names the real problem — upstream wiring.
+	if missing := x.missingPaths(st.Inputs); len(missing) > 0 {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
+			Error: fmt.Sprintf("declared input(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, "")
+	}
+
 	timeout := rs.fl.Defaults.Timeout
 	cctx, cancel := context.WithTimeout(x.ctx, timeout)
 	res, err := x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: "repo", Timeout: timeout})
@@ -686,11 +713,35 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		}
 		return x.takeEdge(st, flow.EdgeFail, tail(res.Output, 8<<10))
 	}
+	// A command that exits 0 without writing what it declared has not done its
+	// job — the same contract agent stages carry.
+	if missing := x.missingPaths(st.Outputs); len(missing) > 0 {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
+			Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, tail(res.Output, 8<<10))
+	}
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
 	x.advance(st)
 	return nil
+}
+
+// missingPaths returns the bindings' paths that cannot be read in the
+// workspace, in declaration order. Sentinels are engine-provided, never files.
+func (x *exec) missingPaths(bindings []flow.IOBinding) []string {
+	var missing []string
+	for _, b := range bindings {
+		if b.Value == "" || flow.IsSentinel(b.Value) {
+			continue
+		}
+		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, b.Value); err != nil {
+			missing = append(missing, b.Value)
+		}
+	}
+	return missing
 }
 
 // --- human gates ------------------------------------------------------------
@@ -707,7 +758,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 
 	var p *Ping
 	if rs.ph == phIn {
-		if op := rs.openGatePing(st.Ping); op != nil {
+		if op := rs.openGatePing(st.ID); op != nil {
 			x.e.mu.Lock()
 			p = x.e.pings[op.PingID]
 			x.e.mu.Unlock()
@@ -721,18 +772,15 @@ func (x *exec) stageGate(st *flow.Stage) error {
 			return err
 		}
 		rs.ph = phIn
-		payloadRef := st.Payload
-		switch payloadRef {
-		case flow.PayloadMRURL:
-			payloadRef = rs.view.MRURL
-		case flow.PayloadWorkspace:
-			// manual_debug hand-off: point the human at the workspace
-			// (terminal beats IDE beats whatever else env_ready recorded).
-			payloadRef = workspaceLink(rs.links)
+		// The gate's input: an artifact to review, or a sentinel the engine
+		// resolves to a link. "payload" is the runtime/event name for it.
+		payloadRef := ""
+		if len(st.Inputs) > 0 {
+			payloadRef = x.resolveGateInput(st.Inputs[0].Value)
 		}
 		p = &Ping{
-			ID: x.e.newID(), RunID: rs.runID, Type: string(st.Ping),
-			Question:   fmt.Sprintf("%s: %s", st.Ping, rs.view.TicketTitle),
+			ID: x.e.newID(), RunID: rs.runID, Type: PingGate,
+			Question:   gateQuestion(st, rs.view.TicketTitle),
 			PayloadRef: payloadRef, StageID: st.ID, RaisedAt: x.e.clock(),
 			gate: true, done: make(chan struct{}),
 		}
@@ -748,59 +796,64 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		})
 	}
 
-	// auto_complete polling (§3). pollMR reports merged=true once the forge
-	// says so (ping bookkeeping included); a hard error is an append
-	// failure or run cancellation. Repeated forge failures raise ONE
-	// blocker notification — polling that fails silently forever reads as
-	// "auto_complete is broken" from the outside, which is worse than the
-	// failure itself (the gate always keeps accepting manual approve/reject).
-	pollFails := 0
-	pollMR := func() (bool, error) {
-		state, serr := x.res.Forge.MRState(x.ctx, *rs.mr)
-		if serr != nil {
-			if x.ctx.Err() != nil {
-				return false, context.Cause(x.ctx)
+	// auto_approve / auto_reject (§6): a signal answers the gate on the human's
+	// behalf — "they merged it instead of clicking approve", "they closed it,
+	// which is a no". The gate keeps accepting a manual answer the whole time;
+	// whichever lands first wins, which is why this lives on the gate rather
+	// than in a separate wait stage (the engine runs one stage at a time).
+	type autoAnswer struct {
+		slug   string
+		answer string
+		poll   func() (bool, error)
+	}
+	var autos []autoAnswer
+	for _, a := range []autoAnswer{{slug: st.AutoApprove, answer: "approve"}, {slug: st.AutoReject, answer: "reject"}} {
+		if poll := x.signalPoller(st, a.slug); poll != nil {
+			a.poll = poll
+			autos = append(autos, a)
+		}
+	}
+	// answerFromSignal polls each armed signal and, on the first that fired,
+	// records the answer it supplies exactly as an operator's would.
+	answerFromSignal := func() (*PingAnswer, error) {
+		for _, a := range autos {
+			fired, err := a.poll()
+			if err != nil {
+				return nil, err
 			}
-			pollFails++
-			x.e.log.Warn("auto_complete poll failed", "run", rs.runID, "attempt", pollFails, "err", serr)
-			if pollFails == autoCompleteFailNotify {
-				x.e.notify(x.bg, ports.Notification{
-					RunID: rs.runID, Type: "blocker",
-					Title: fmt.Sprintf("auto_complete cannot read the MR state (%d failed polls): %s", pollFails, rs.view.TicketTitle),
-					Body:  serr.Error() + " — merge detection is blind until this recovers; the gate still accepts approve/reject.",
-				})
+			if !fired {
+				continue
 			}
-			return false, nil
-		}
-		pollFails = 0
-		if state != ports.MRMerged {
-			return false, nil
-		}
-		x.e.mu.Lock()
-		already := p.answered
-		if !already {
-			p.answered = true
-			p.answer = &PingAnswer{Answer: "approve", Feedback: "auto: MR merged"}
-		}
-		x.e.mu.Unlock()
-		if !already {
-			if err := x.append(&event.PingAnswered{PingID: p.ID, Answer: "approve", Feedback: "auto: MR merged"}); err != nil {
-				return false, err
+			ans := PingAnswer{Answer: a.answer, Feedback: "auto: " + a.slug}
+			x.e.mu.Lock()
+			already := p.answered
+			if !already {
+				p.answered = true
+				p.answer = &ans
 			}
-			close(p.done)
+			x.e.mu.Unlock()
+			if !already {
+				if err := x.append(&event.PingAnswered{PingID: p.ID, Answer: ans.Answer, Feedback: ans.Feedback}); err != nil {
+					return nil, err
+				}
+				close(p.done)
+			}
+			return &ans, nil
 		}
-		return true, nil
+		return nil, nil
 	}
 
 	var pollC <-chan time.Time
-	if st.AutoComplete == flow.AutoCompleteMRMerged && rs.mr != nil {
-		// Poll once immediately: an MR merged while the engine was down (or
-		// before the gate armed) completes the run NOW, not one interval
-		// later — recovery re-entry lands here too.
-		if merged, err := pollMR(); err != nil {
+	if len(autos) > 0 {
+		// Poll once immediately: a signal that fired while the engine was down
+		// (or before the gate armed) answers NOW, not one interval later —
+		// recovery re-entry lands here too.
+		ans, err := answerFromSignal()
+		if err != nil {
 			return err
-		} else if merged {
-			return x.routeGate(st, PingAnswer{Answer: "approve"}, started)
+		}
+		if ans != nil {
+			return x.routeGate(st, *ans, started)
 		}
 		t := time.NewTicker(x.e.cfg.MRPollInterval)
 		defer t.Stop()
@@ -819,12 +872,12 @@ func (x *exec) stageGate(st *flow.Stage) error {
 				return x.routeGate(st, ans, started)
 			}
 		case <-pollC:
-			merged, err := pollMR()
+			ans, err := answerFromSignal()
 			if err != nil {
 				return err
 			}
-			if merged {
-				return x.routeGate(st, PingAnswer{Answer: "approve"}, started)
+			if ans != nil {
+				return x.routeGate(st, *ans, started)
 			}
 		case <-x.ctx.Done():
 			return context.Cause(x.ctx)
@@ -832,9 +885,70 @@ func (x *exec) stageGate(st *flow.Stage) error {
 	}
 }
 
-// autoCompleteFailNotify is the consecutive-failure count at which the
-// auto_complete poll raises a blocker notification (once per streak).
-const autoCompleteFailNotify = 3
+// resolveGateInput turns a gate's bound input into what the human is handed: a
+// link for a sentinel, the path itself for an artifact to review.
+func (x *exec) resolveGateInput(v string) string {
+	switch v {
+	case flow.SentinelMRURL:
+		return x.rs.view.MRURL
+	case flow.SentinelWorkspace:
+		// Workspace hand-off: point the human at the running environment
+		// (terminal beats IDE beats whatever else env_ready recorded).
+		return workspaceLink(x.rs.links)
+	}
+	return v
+}
+
+// signalPoller returns a poll function for a signalspec slug, or nil when the
+// slug is empty or the signal cannot fire for this run yet (no MR to watch).
+// A poll reports whether the signal has fired; a hard error is an append
+// failure or run cancellation. Repeated integration failures raise ONE blocker
+// notification per streak — polling that fails silently forever reads as
+// "this is broken" from the outside, which is worse than the failure itself.
+func (x *exec) signalPoller(st *flow.Stage, slug string) func() (bool, error) {
+	if slug == "" {
+		return nil
+	}
+	rs := x.rs
+	// The MR signals are the same poll against different outcomes.
+	var want ports.MRState
+	switch slug {
+	case signalspec.MRMerged:
+		want = ports.MRMerged
+	case signalspec.MRClosed:
+		want = ports.MRClosed
+	default:
+		return nil
+	}
+	if rs.mr == nil {
+		return nil // nothing to watch: no MR has been opened
+	}
+	fails := 0
+	return func() (bool, error) {
+		state, serr := x.res.Forge.MRState(x.ctx, *rs.mr)
+		if serr != nil {
+			if x.ctx.Err() != nil {
+				return false, context.Cause(x.ctx)
+			}
+			fails++
+			x.e.log.Warn("signal poll failed", "run", rs.runID, "signal", slug, "attempt", fails, "err", serr)
+			if fails == signalFailNotify {
+				x.e.notify(x.bg, ports.Notification{
+					RunID: rs.runID, Type: event.PingBlocker,
+					Title: fmt.Sprintf("cannot read %s (%d failed polls): %s", slug, fails, rs.view.TicketTitle),
+					Body:  serr.Error() + " — detection is blind until this recovers.",
+				})
+			}
+			return false, nil
+		}
+		fails = 0
+		return state == want, nil
+	}
+}
+
+// signalFailNotify is the consecutive-failure count at which a signal poll
+// raises a blocker notification (once per streak).
+const signalFailNotify = 3
 
 func (x *exec) routeGate(st *flow.Stage, ans PingAnswer, started time.Time) error {
 	if ans.Answer == "approve" {
@@ -847,9 +961,13 @@ func (x *exec) routeGate(st *flow.Stage, ans PingAnswer, started time.Time) erro
 	return x.takeEdge(st, flow.EdgeReject, ans.Feedback)
 }
 
-// --- forge_mr stages --------------------------------------------------------
+// --- action stages ----------------------------------------------------------
 
-func (x *exec) stageForgeMR(st *flow.Stage) error {
+// stageAction dispatches to the executor for the stage's registered action
+// (actionspec). Executors must be idempotent: an action stage always re-enters
+// its executor on recovery (the routeAfterFail shortcut skips it), because a
+// half-finished side effect on a real service cannot be replayed away.
+func (x *exec) stageAction(st *flow.Stage) error {
 	rs := x.rs
 	if rs.ph != phIn {
 		iter := rs.iters[st.ID] + 1
@@ -861,36 +979,163 @@ func (x *exec) stageForgeMR(st *flow.Stage) error {
 	}
 	started := x.e.clock()
 
-	if rs.mr == nil { // recovery guard: never create the MR twice
-		body, err := x.res.Envp.ReadFile(x.ctx, rs.envID, st.Body)
-		if err != nil {
-			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
-				Error: fmt.Sprintf("MR body %s not readable: %v", st.Body, err)}); aerr != nil {
-				return aerr
-			}
-			return x.abandon(st.ID, "", fmt.Sprintf("MR body artifact %s missing", st.Body))
-		}
-		title := mrTitle(string(body), rs.view.TicketTitle)
-		ref, err := x.res.Forge.CreateDraftMR(x.ctx, x.res.RepoRef, rs.branch, title, string(body))
-		if err != nil {
-			if x.ctx.Err() != nil {
-				return context.Cause(x.ctx)
-			}
-			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra, Error: err.Error()}); aerr != nil {
-				return aerr
-			}
-			return x.fail("forge MR creation failed: " + err.Error())
-		}
-		rs.mr = &ref
-		if err := x.append(&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: rs.branch}); err != nil {
+	switch st.Action {
+	case actionspec.CreateMR:
+		if err := x.actionCreateMR(st); err != nil || rs.done {
 			return err
 		}
+	default:
+		// Unreachable: the parser validates the slug against the registry.
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,
+			Error: fmt.Sprintf("action %q has no executor in this build", st.Action)}); aerr != nil {
+			return aerr
+		}
+		return x.fail(fmt.Sprintf("stage %s: action %q has no executor", st.ID, st.Action))
 	}
+
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
 	x.advance(st)
 	return nil
+}
+
+// actionCreateMR opens the run's draft merge request. Idempotent via rs.mr,
+// rehydrated from the mr_created event on replay: re-entering after a crash
+// never opens a second MR.
+func (x *exec) actionCreateMR(st *flow.Stage) error {
+	rs := x.rs
+	if rs.mr != nil {
+		return nil
+	}
+	bodyPath := ""
+	if in := st.Input("body"); in != nil {
+		bodyPath = in.Value
+	}
+	body, err := x.res.Envp.ReadFile(x.ctx, rs.envID, bodyPath)
+	if err != nil {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
+			Error: fmt.Sprintf("MR body %s not readable: %v", bodyPath, err)}); aerr != nil {
+			return aerr
+		}
+		return x.abandon(st.ID, "", fmt.Sprintf("MR body artifact %s missing", bodyPath))
+	}
+	title := mrTitle(string(body), rs.view.TicketTitle)
+	ref, err := x.res.Forge.CreateDraftMR(x.ctx, x.res.RepoRef, rs.branch, title, string(body))
+	if err != nil {
+		if x.ctx.Err() != nil {
+			return context.Cause(x.ctx)
+		}
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra, Error: err.Error()}); aerr != nil {
+			return aerr
+		}
+		return x.fail("forge MR creation failed: " + err.Error())
+	}
+	rs.mr = &ref
+	// mr_created is what makes the $MR_URL sentinel and auto_complete polling
+	// work downstream, and what makes this action idempotent.
+	return x.append(&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: rs.branch})
+}
+
+// --- wait stages ------------------------------------------------------------
+
+// stageWait blocks until an external signal fires (FLOWLANG §3). Like a gate it
+// parks the run on something outside it, so with no timeout it waits
+// indefinitely; a stage timeout bounds it and routes on_timeout (else on_fail).
+// Re-entry on recovery simply re-polls: waiting is idempotent.
+func (x *exec) stageWait(st *flow.Stage) error {
+	rs := x.rs
+	if rs.ph != phIn {
+		iter := rs.iters[st.ID] + 1
+		rs.iters[st.ID] = iter
+		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
+			return err
+		}
+		rs.ph = phIn
+	}
+	started := x.e.clock()
+
+	poll := x.signalPoller(st, st.WaitFor)
+	if poll == nil {
+		// The signal can never fire for this run — waiting forever would look
+		// like a hang, so say what is missing instead.
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
+			Error: fmt.Sprintf("cannot wait for %s: %s", st.WaitFor, waitPrereq(st.WaitFor))}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, "")
+	}
+	if fired, err := poll(); err != nil {
+		return err
+	} else if fired {
+		return x.completeWait(st, started)
+	}
+
+	var deadline <-chan time.Time
+	if st.Timeout > 0 {
+		t := time.NewTimer(st.Timeout)
+		defer t.Stop()
+		deadline = t.C
+	}
+	ticker := time.NewTicker(x.e.cfg.MRPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			fired, err := poll()
+			if err != nil {
+				return err
+			}
+			if fired {
+				return x.completeWait(st, started)
+			}
+		case <-deadline:
+			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout,
+				Error: fmt.Sprintf("%s did not fire within %s", st.WaitFor, st.Timeout)}); aerr != nil {
+				return aerr
+			}
+			return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), "")
+		case <-x.ctx.Done():
+			return context.Cause(x.ctx)
+		}
+	}
+}
+
+func (x *exec) completeWait(st *flow.Stage, started time.Time) error {
+	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
+		return err
+	}
+	x.advance(st)
+	return nil
+}
+
+// waitPrereq explains what a run must have done before a signal can fire.
+func waitPrereq(slug string) string {
+	if sig := signalspec.Get(slug); sig != nil && sig.Needs == signalspec.NeedsMR {
+		return "this run has opened no merge request (an action: create_mr stage must run first)"
+	}
+	return "its prerequisite has not happened in this run"
+}
+
+// gateQuestion is what the human is asked: the stage's question when it has
+// one, else a plain fallback naming the stage. The ticket title rides along so
+// a notification identifies the run.
+func gateQuestion(st *flow.Stage, ticketTitle string) string {
+	q := st.Question
+	if q == "" {
+		q = fmt.Sprintf("Gate: %s", st.ID)
+	}
+	if ticketTitle == "" {
+		return q
+	}
+	return fmt.Sprintf("%s — %s", q, ticketTitle)
+}
+
+// verdictPath is where this stage's verdict must be written, or "" when its
+// agent renders none. Single source for prompt assembly, the post-run read and
+// crash recovery.
+func (x *exec) verdictPath(st *flow.Stage) string {
+	return flow.VerdictPath(st, x.res.agentSpec(st.Agent))
 }
 
 // workspaceLink picks the link a debugging human wants first: the web
@@ -1141,12 +1386,17 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 	return nil
 }
 
-// readVerdict reads and parses artifacts/verdict.json (§5.3 contract).
+// readVerdict reads and parses the stage's verdict output (§5.3 contract) at
+// the path its agent declares — rebindable per stage, so never hardcoded.
 func (x *exec) readVerdict(st *flow.Stage) (*ports.Verdict, error) {
-	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, "artifacts/verdict.json")
+	path := x.verdictPath(st)
+	if path == "" {
+		return nil, fmt.Errorf("stage %s: agent %q declares no verdict output", st.ID, st.Agent)
+	}
+	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("stage %s: artifacts/verdict.json missing", st.ID)
+			return nil, fmt.Errorf("stage %s: %s missing", st.ID, path)
 		}
 		return nil, err
 	}

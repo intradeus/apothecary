@@ -4,7 +4,10 @@ read_only: true
 allow_bash: true
 inputs:
   - name: changes
-    description: the set of changed files to describe for the reviewer
+    description: the set of changed files to describe for whoever reads the merge request
+  - name: failure
+    description: what the previous attempt printed when it failed
+    optional: true
 outputs:
   - name: mr
     description: the merge request description; first line a "# <title>" heading

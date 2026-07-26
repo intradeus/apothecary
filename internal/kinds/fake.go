@@ -83,15 +83,21 @@ func (FakeHarness) New(_ Config, envp ports.EnvProvisioner) (Harness, error) {
 		case <-ctx.Done():
 			return ports.AgentResult{}, ctx.Err()
 		}
+		// A verdict output has a shape contract, so it needs real JSON rather
+		// than the stub markdown every other declared file gets.
+		verdict := declaredVerdict(call.In.Prompt)
 		for _, path := range declaredOutputs(call.In.Prompt) {
+			if path == verdict {
+				continue
+			}
 			content := fmt.Sprintf("# Dev stub: %s\n\nWritten by the dev-mode agent %q.\n", path, call.Spec.Agent)
 			if err := envp.WriteFile(ctx, call.Env, path, []byte(content), 0o644); err != nil {
 				return ports.AgentResult{}, err
 			}
 		}
-		if strings.Contains(call.In.Prompt, "artifacts/verdict.json") {
+		if verdict != "" {
 			v := []byte(`{"verdict":"APPROVE","comments":[]}`)
-			if err := envp.WriteFile(ctx, call.Env, "artifacts/verdict.json", v, 0o644); err != nil {
+			if err := envp.WriteFile(ctx, call.Env, verdict, v, 0o644); err != nil {
 				return ports.AgentResult{}, err
 			}
 		}
@@ -127,10 +133,26 @@ func (h *fakeHarness) Models(context.Context) ([]ModelInfo, error) {
 	}, nil
 }
 
+// declaredVerdict extracts the verdict output's path from the OUTPUT CONTRACT
+// (FLOWLANG §4), which names it rather than hardcoding one — so a stage that
+// rebinds the path still gets a valid verdict from the dev fake. "" when the
+// stage's agent declares no verdict.
+func declaredVerdict(prompt string) string {
+	before, _, ok := strings.Cut(prompt, ` must contain exactly {"verdict"`)
+	if !ok {
+		return ""
+	}
+	// The path is the last token before the sentence.
+	if i := strings.LastIndexAny(before, " \n"); i >= 0 {
+		return before[i+1:]
+	}
+	return before
+}
+
 // declaredOutputs extracts the artifact paths an agent must write, parsed from
-// the "# OUTPUT CONTRACT" bullet list (DESIGN4 §1). Each bullet is "- <path>"
+// the "# OUTPUT CONTRACT" bullet list (FLOWLANG §4). Each bullet is "- <path>"
 // optionally followed by " — <name>: <desc>". Empty when the stage declares no
-// file outputs (e.g. a verdict-only contract).
+// file outputs.
 func declaredOutputs(prompt string) []string {
 	_, rest, ok := strings.Cut(prompt, "you MUST write these files (relative to repo root):\n")
 	if !ok {

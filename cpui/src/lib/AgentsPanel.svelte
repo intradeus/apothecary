@@ -29,7 +29,10 @@
     if (a.inputs?.length)
       parts.push('in: ' + a.inputs.map((d) => d.name + (d.optional ? '?' : '')).join(', '));
     if (a.outputs?.length)
-      parts.push('out: ' + a.outputs.map((d) => `${d.name}→${d.path ?? ''}`).join(', '));
+      parts.push(
+        'out: ' +
+          a.outputs.map((d) => `${d.name}${d.type === 'verdict' ? '*' : ''}→${d.path ?? ''}`).join(', ')
+      );
     return parts.join(' · ');
   }
 
@@ -79,7 +82,12 @@
         .map((d) => ({ name: d.name.trim(), description: d.description?.trim() || undefined, optional: d.optional || undefined }));
       const outputs = fOutputs
         .filter((d) => d.name.trim())
-        .map((d) => ({ name: d.name.trim(), description: d.description?.trim() || undefined, path: d.path?.trim() ?? '' }));
+        .map((d) => ({
+          name: d.name.trim(),
+          description: d.description?.trim() || undefined,
+          path: d.path?.trim() ?? '',
+          type: d.type || undefined
+        }));
       await api.putAgent(project.id, fName.trim(), {
         description: fDescription,
         read_only: fReadOnly,
@@ -241,12 +249,32 @@
         </div>
         {#each fOutputs as out, i (i)}
           <div class="row io-row">
-            <input class="mono" bind:value={out.name} placeholder="plan" style="flex:0 0 120px" />
+            <input class="mono" bind:value={out.name} placeholder="plan" style="flex:0 0 110px" />
             <input bind:value={out.description} placeholder="what this output is" style="flex:1" />
-            <input class="mono" bind:value={out.path} placeholder="artifacts/plan.md" style="flex:0 0 180px" />
+            <select
+              value={out.type ?? ''}
+              style="flex:0 0 110px"
+              onchange={(e) => {
+                const t = e.currentTarget.value as '' | 'verdict';
+                out.type = t || undefined;
+                // A verdict has a conventional home; offer it rather than
+                // making every reviewer author remember the path.
+                if (t === 'verdict' && !out.path) out.path = 'artifacts/verdict.json';
+              }}
+            >
+              <option value="">file</option>
+              <option value="verdict">verdict</option>
+            </select>
+            <input class="mono" bind:value={out.path} placeholder="artifacts/plan.md" style="flex:0 0 170px" />
             <button type="button" class="danger" onclick={() => removeOutput(i)}>✕</button>
           </div>
         {/each}
+        <p class="muted small" style="margin:4px 0 0">
+          A <span class="mono">verdict</span> output holds
+          <span class="mono">{'{"verdict":"APPROVE"|"REJECT","comments":[…]}'}</span>: the engine parses
+          it and a REJECT follows the stage's <span class="mono">on_reject</span> edge, carrying the
+          comments as feedback. Without one, a stage's <span class="mono">on_reject</span> can never fire.
+        </p>
       </div>
       <label for="ag-prompt">Prompt</label>
       <textarea id="ag-prompt" bind:value={fPrompt} rows="14" required placeholder="You are the building agent…"></textarea>

@@ -72,7 +72,6 @@ func TestValidateIO(t *testing.T) {
 		{"ok", []InputDecl{{Name: "plan"}, {Name: "feedback", Optional: true}}, []OutputDecl{{Name: "p", Path: "artifacts/p.md"}}, ""},
 		{"dup input", []InputDecl{{Name: "plan"}, {Name: "plan"}}, nil, "declared twice"},
 		{"bad input name", []InputDecl{{Name: "Plan"}}, nil, "lowercase slug"},
-		{"feedback not optional", []InputDecl{{Name: "feedback"}}, nil, "must be optional"},
 		{"long input desc", []InputDecl{{Name: "plan", Description: long}}, nil, "exceeds"},
 		{"dup output name", nil, []OutputDecl{{Name: "p", Path: "a"}, {Name: "p", Path: "b"}}, "declared twice"},
 		{"bad output path abs", nil, []OutputDecl{{Name: "p", Path: "/etc/x"}}, "artifact path"},
@@ -89,6 +88,44 @@ func TestValidateIO(t *testing.T) {
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want mention of %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerdictOutputDecl: a verdict output is what makes a flow stage's
+// on_reject reachable, so the spec must model exactly one of them.
+func TestVerdictOutputDecl(t *testing.T) {
+	spec, err := Parse("reviewer", []byte(`name: reviewer
+prompt: review it
+outputs:
+  - { name: notes, path: artifacts/notes.md }
+  - { name: verdict, type: verdict, path: artifacts/verdict.json, description: APPROVE or REJECT }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := spec.VerdictOutput()
+	if v == nil || v.Name != "verdict" || v.Path != "artifacts/verdict.json" {
+		t.Fatalf("VerdictOutput = %+v", v)
+	}
+	// An agent that renders no decision says so by having none.
+	plain := &Spec{Name: "builder", Outputs: []OutputDecl{{Name: "notes", Path: "n.md"}}}
+	if plain.VerdictOutput() != nil {
+		t.Error("a file output must not read as a verdict")
+	}
+	if (*Spec)(nil).VerdictOutput() != nil {
+		t.Error("nil spec must be safe")
+	}
+
+	cases := []struct{ name, yaml, want string }{
+		{"unknown type", "name: x\nprompt: p\noutputs: [{name: o, type: mood, path: o.md}]\n", "unknown type"},
+		{"two verdicts", "name: x\nprompt: p\noutputs: [{name: a, type: verdict, path: a.json}, {name: b, type: verdict, path: b.json}]\n", "at most one verdict"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse("x", []byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want mention of %q", err, tc.want)
 			}
 		})

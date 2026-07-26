@@ -75,13 +75,13 @@ func TestAgentRunnerScripting(t *testing.T) {
 
 	r.RunFunc = func(_ context.Context, call RunCall) (ports.AgentResult, error) {
 		return ports.AgentResult{
-			Verdict:   &ports.Verdict{Approve: false, Comments: []string{"nit"}},
+			Output:    "reviewed",
 			TurnsUsed: 5,
 			Usage:     ports.Usage{CostUSD: 0.25},
 		}, nil
 	}
 	res, _ = r.Run(ctx, "env-1", ports.AgentSpec{Agent: "reviewer"}, ports.AgentInput{})
-	if res.Verdict == nil || res.Verdict.Approve || res.Session == "" {
+	if res.Output != "reviewed" || res.TurnsUsed != 5 || res.Session == "" {
 		t.Errorf("scripted run = %+v", res)
 	}
 

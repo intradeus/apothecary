@@ -41,6 +41,38 @@ type varSettings struct{ L Limits }
 
 func (v *varSettings) Limits(context.Context) (Limits, error) { return v.L, nil }
 
+// testAgentSpecs is the scenario suite's agent library: the same contracts the
+// built-ins carry (FLOWLANG §4), so test flows bind inputs by name and get
+// their output paths from the agent rather than the stage. Every input is
+// optional so a scenario can use a bare `agent: builder` stage when the
+// binding is not what it is testing — and `rejection`/`failure` (the
+// edge-carried values) must be optional anyway.
+func testAgentSpecs() map[string]*agentspec.Spec {
+	opt := func(names ...string) []agentspec.InputDecl {
+		var in []agentspec.InputDecl
+		for _, n := range names {
+			in = append(in, agentspec.InputDecl{Name: n, Description: n + " for the stage", Optional: true})
+		}
+		return in
+	}
+	return map[string]*agentspec.Spec{
+		"planner": {Name: "planner", Inputs: opt("rejection", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the implementation plan", Path: "artifacts/plan.md"}}},
+		"builder": {Name: "builder", Inputs: opt("plan", "rejection", "failure")},
+		"committer": {Name: "committer", Inputs: opt("plan", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "commit", Description: "the commit subject", Path: "artifacts/commit.md"}}},
+		"reviewer": {Name: "reviewer", Inputs: opt("plan", "changes", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "verdict", Type: agentspec.OutputTypeVerdict,
+				Description: "APPROVE or REJECT with comments", Path: "artifacts/verdict.json"}}},
+		"redactor": {Name: "redactor", Inputs: opt("changes", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "mr", Description: "the merge request description", Path: "artifacts/mr.md"}}},
+		// fallback and sleeper deliberately have no contract: stages using them
+		// declare nothing and nothing is enforced.
+		"fallback": {Name: "fallback"},
+		"sleeper":  {Name: "sleeper"},
+	}
+}
+
 func mustFlow(t *testing.T, doc string) *flow.Flow {
 	t.Helper()
 	f, err := flow.Parse("test.yaml", []byte(doc))
@@ -52,16 +84,23 @@ func mustFlow(t *testing.T, doc string) *flow.Flow {
 
 func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 	t.Helper()
+	fm := flow.MapSource{}
+	for _, f := range flows {
+		fm[f.Name] = f
+	}
+	return newHarnessSource(t, fm, flows...)
+}
+
+// newHarnessSource is newHarness over a caller-supplied flow.Source, for tests
+// about what happens when the source itself misbehaves.
+func newHarnessSource(t *testing.T, src flow.Source, flows ...*flow.Flow) *harness {
+	t.Helper()
 	h := &harness{
 		store:  event.NewMemStore(),
 		envp:   fake.NewEnvProvisioner(),
 		runner: &fake.AgentRunner{},
 		forge:  &fake.Forge{},
 		ch:     &fake.Channel{},
-	}
-	fm := flow.MapSource{}
-	for _, f := range flows {
-		fm[f.Name] = f
 	}
 	h.res = &Resolution{
 		ProjectID:    testProject,
@@ -73,8 +112,9 @@ func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 		ProviderEnv:  map[string]string{"ANTHROPIC_API_KEY": "sk-test"},
 		// The project's agent library (DESIGN3 §1): superset of every agent
 		// the test flows reference.
-		AgentNames:  []string{"builder", "fallback", "planner", "redactor", "reviewer", "sleeper"},
+		AgentNames:  []string{"builder", "committer", "fallback", "planner", "redactor", "reviewer", "sleeper"},
 		AgentHashes: map[string]string{"builder": "hash-builder", "planner": "hash-planner"},
+		AgentSpecs:  testAgentSpecs(),
 		HarnessKind: "fake",
 		Envp:        h.envp,
 		Runner:      h.runner,
@@ -82,7 +122,7 @@ func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 	}
 	h.settings = &varSettings{L: Limits{}.withDefaults()}
 	cfg := Config{MRPollInterval: 5 * time.Millisecond}
-	h.e = New(cfg, h.store, StaticResolver{R: h.res}, fm, h.settings, []ports.NotificationChannel{h.ch})
+	h.e = New(cfg, h.store, StaticResolver{R: h.res}, src, h.settings, []ports.NotificationChannel{h.ch})
 	t.Cleanup(h.e.Shutdown)
 	return h
 }
@@ -170,17 +210,20 @@ func (h *harness) agentScript(fns map[string]func(call fake.RunCall) (ports.Agen
 	}
 }
 
+// loopFlowDoc: the classic retry loop. The builder binds $FAILURE, so a test
+// failure comes back as a named input rather than arriving invisibly.
 const loopFlowDoc = `name: loop
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: build, type: agent, agent: builder }
-  - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5, feed: output } }
+  - { id: build, type: agent, agent: builder, input: { failure: $FAILURE } }
+  - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
 `
 
 // --- scenarios --------------------------------------------------------------
 
-func TestHappyPathFullV1Flow(t *testing.T) {
-	v1, err := flow.Load("../flow/testdata/v1.yaml")
+func TestHappyPathFullV2Flow(t *testing.T) {
+	v1, err := flow.Load("../flow/testdata/v2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +236,16 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 		"builder": func(c fake.RunCall) (ports.AgentResult, error) {
 			return ports.AgentResult{TurnsUsed: 20, Usage: ports.Usage{CostUSD: 0.50}}, nil
 		},
+		"committer": func(c fake.RunCall) (ports.AgentResult, error) {
+			// The stage rebinds the committer's declared output path.
+			h.writeFile(t, c.Env, "artifacts/commit-subject.md", "feat: add login form")
+			return ports.AgentResult{TurnsUsed: 2, Usage: ports.Usage{CostUSD: 0.02}}, nil
+		},
 		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
-			return ports.AgentResult{Verdict: &ports.Verdict{Approve: true}, TurnsUsed: 8, Usage: ports.Usage{CostUSD: 0.20}}, nil
+			// The verdict is an output like any other: the file must exist at
+			// the path the stage bound it to, not at a hardcoded one.
+			h.writeFile(t, c.Env, "artifacts/review/verdict.json", `{"verdict":"APPROVE","comments":[]}`)
+			return ports.AgentResult{TurnsUsed: 8, Usage: ports.Usage{CostUSD: 0.20}}, nil
 		},
 		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Add login form\n\nSummary of changes")
@@ -202,13 +253,13 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login", Goal: "Users must log in"}, "v1", testProject)
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login", Goal: "Users must log in"}, "v2", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// plan_gate: approve.
-	p := h.waitPing(t, "plan_approval")
+	p := h.waitPing(t, PingGate)
 	if p.PayloadRef != "artifacts/plan.md" {
 		t.Errorf("plan gate payload = %q", p.PayloadRef)
 	}
@@ -216,8 +267,9 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// final_gate: auto-completes when the MR merges.
-	fp := h.waitPing(t, "final_review")
+	// final_gate: auto-completes when the MR merges. Gates are one kind now,
+	// so the already-answered one is excluded by id rather than by type.
+	fp := h.waitPing(t, PingGate, p.ID)
 	if !strings.HasPrefix(fp.PayloadRef, "https://gitlab.local/mr/") {
 		t.Errorf("final gate payload = %q, want MR URL", fp.PayloadRef)
 	}
@@ -230,8 +282,8 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 	}
 	evs := h.events(t, runID)
 
-	if got := countType(evs, event.TypeStageStarted); got != 9 {
-		t.Errorf("stage_started count = %d, want 9", got)
+	if got := countType(evs, event.TypeStageStarted); got != 11 {
+		t.Errorf("stage_started count = %d, want 11", got)
 	}
 	rc, ok := findPayload[*event.RunCompleted](evs)
 	if !ok {
@@ -240,11 +292,11 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 	if rc.UnwantedPings != 0 {
 		t.Errorf("unwanted_pings = %d, want 0", rc.UnwantedPings)
 	}
-	if rc.TotalTurns != 36 {
-		t.Errorf("total_turns = %d, want 36", rc.TotalTurns)
+	if rc.TotalTurns != 38 {
+		t.Errorf("total_turns = %d, want 38", rc.TotalTurns)
 	}
-	if rc.TotalCostUSD < 0.84 || rc.TotalCostUSD > 0.86 {
-		t.Errorf("total_cost = %v, want 0.85", rc.TotalCostUSD)
+	if rc.TotalCostUSD < 0.86 || rc.TotalCostUSD > 0.88 {
+		t.Errorf("total_cost = %v, want 0.87", rc.TotalCostUSD)
 	}
 
 	if len(h.forge.MRs) != 1 {
@@ -268,7 +320,7 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 			builderPrompt = c.In.Prompt
 		}
 	}
-	for _, want := range []string{"# TASK\nAdd login", "Users must log in", "# ARTIFACT: artifacts/plan.md", "## Plan"} {
+	for _, want := range []string{"# TASK\nAdd login", "Users must log in", "# INPUT: plan", "(file: artifacts/plan.md)", "## Plan"} {
 		if !strings.Contains(builderPrompt, want) {
 			t.Errorf("builder prompt missing %q:\n%s", want, builderPrompt)
 		}
@@ -281,21 +333,23 @@ func TestHappyPathFullV1Flow(t *testing.T) {
 // default output is enforced even though the plan stage names no `output:`.
 func TestDeclaredInputAndFeedbackRendering(t *testing.T) {
 	doc := `name: declfb
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan,  type: agent, agent: planner, on_success: build }
-  - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md }, on_success: test }
+  - { id: build, type: agent, agent: builder, on_success: test,
+      input: { plan: artifacts/plan.md, what_broke: $FAILURE } }
   - { id: test,  type: command, run_ref: verify, on_success: done,
-      on_fail: { to: build, max: 3, feed: output } }
+      on_fail: { to: build, max: 3 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	// Decls make the rendering decl-driven; without this the harness stays on
-	// the legacy prompt shape (the rest of the suite is that regression).
+	// The agent names and describes its own retry slot — there is no reserved
+	// name, so "what_broke" is as valid as anything else.
 	h.res.AgentSpecs = map[string]*agentspec.Spec{
 		"planner": {Name: "planner", Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Path: "artifacts/plan.md"}}},
 		"builder": {Name: "builder", Inputs: []agentspec.InputDecl{
 			{Name: "plan", Description: "the approved implementation plan to execute"},
-			{Name: "feedback", Description: "reviewer comments or failing output from the previous attempt", Optional: true},
+			{Name: "what_broke", Description: "what the failing stage printed", Optional: true},
 		}},
 	}
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -335,21 +389,22 @@ stages:
 	if len(builds) != 2 {
 		t.Fatalf("builder ran %d times, want 2", len(builds))
 	}
-	// First pass: named input section, no feedback yet.
+	// First pass: named input section, nothing fed yet — the $FAILURE binding
+	// renders nothing at all rather than an empty section.
 	if !strings.Contains(builds[0], "# INPUT: plan — the approved implementation plan to execute (file: artifacts/plan.md)") {
 		t.Errorf("build[0] missing named INPUT section:\n%s", builds[0])
 	}
-	if strings.Contains(builds[0], "# INPUT: feedback") || strings.Contains(builds[0], "PREVIOUS ATTEMPT FEEDBACK") {
-		t.Errorf("build[0] should carry no feedback:\n%s", builds[0])
+	if strings.Contains(builds[0], "# INPUT: what_broke") {
+		t.Errorf("build[0] should carry no failure:\n%s", builds[0])
 	}
-	// Second pass: the declared feedback slot replaces the generic header.
-	if !strings.Contains(builds[1], "# INPUT: feedback — reviewer comments or failing output from the previous attempt (iteration 2 of 4)") {
-		t.Errorf("build[1] missing feedback INPUT section:\n%s", builds[1])
+	// Second pass: the failure lands in the slot the agent named for it.
+	if !strings.Contains(builds[1], "# INPUT: what_broke — what the failing stage printed (attempt 2 of 4)") {
+		t.Errorf("build[1] missing the failure INPUT section:\n%s", builds[1])
 	}
 	if !strings.Contains(builds[1], "BOOM") {
 		t.Errorf("build[1] missing fed output:\n%s", builds[1])
 	}
-	if strings.Contains(builds[1], "PREVIOUS ATTEMPT FEEDBACK") {
+	if strings.Contains(builds[1], "PREVIOUS ATTEMPT FEEDBACK") { //nolint:staticcheck // retired header must never reappear
 		t.Errorf("build[1] should use the named feedback header, not the generic one:\n%s", builds[1])
 	}
 }
@@ -359,6 +414,7 @@ stages:
 // fails to produce it is failed on the output contract.
 func TestDeclDefaultOutputEnforced(t *testing.T) {
 	doc := `name: declout
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan, type: agent, agent: planner }
@@ -422,12 +478,14 @@ func TestTestFailBuildLoopThenPass(t *testing.T) {
 	if len(builds) != 3 {
 		t.Fatalf("builder ran %d times, want 3", len(builds))
 	}
-	if strings.Contains(builds[0], "PREVIOUS ATTEMPT FEEDBACK") {
-		t.Error("first attempt must not carry feedback")
+	if strings.Contains(builds[0], "# INPUT: failure") {
+		t.Error("first attempt must not carry a failure")
 	}
 	for i, iter := range []int{2, 3} {
 		p := builds[i+1]
-		want := fmt.Sprintf("# PREVIOUS ATTEMPT FEEDBACK (iteration %d of 6)", iter)
+		// The builder declares the reserved feedback input, so the retry
+		// content lands in a named, described INPUT section.
+		want := fmt.Sprintf("# INPUT: failure — failure for the stage (attempt %d of 6)", iter)
 		if !strings.Contains(p, want) || !strings.Contains(p, "FAIL: TestLogin") {
 			t.Errorf("attempt %d prompt missing %q + command output:\n%s", iter, want, p)
 		}
@@ -436,22 +494,27 @@ func TestTestFailBuildLoopThenPass(t *testing.T) {
 
 func TestReviewRejectLoopThenApprove(t *testing.T) {
 	doc := `name: rev
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: build,  type: agent, agent: builder }
-  - { id: review, type: agent, agent: reviewer, verdict: true,
-      on_reject: { to: build, max: 3, feed: comments } }
+  - { id: build,  type: agent, agent: builder, input: { rejection: $DECISION } }
+  - { id: review, type: agent, agent: reviewer,
+      on_reject: { to: build, max: 3 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	reviews := 0
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
 		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
 			reviews++
+			// The verdict is the declared output file, at the path the agent's
+			// contract names — not something the harness reports out of band.
 			if reviews == 1 {
-				return ports.AgentResult{Verdict: &ports.Verdict{Approve: false,
-					Comments: []string{"repository leaks into domain layer", "missing test for empty cart"}}}, nil
+				h.writeFile(t, c.Env, "artifacts/verdict.json",
+					`{"verdict":"REJECT","comments":["repository leaks into domain layer","missing test for empty cart"]}`)
+				return ports.AgentResult{}, nil
 			}
-			return ports.AgentResult{Verdict: &ports.Verdict{Approve: true}}, nil
+			h.writeFile(t, c.Env, "artifacts/verdict.json", `{"verdict":"APPROVE","comments":[]}`)
+			return ports.AgentResult{}, nil
 		},
 	})
 
@@ -477,7 +540,7 @@ stages:
 
 	second := h.runner.RunCalls[2].In.Prompt // build1, review1, build2, review2
 	if !strings.Contains(second, "repository leaks into domain layer") ||
-		!strings.Contains(second, "(iteration 2 of 4)") {
+		!strings.Contains(second, "# INPUT: rejection") || !strings.Contains(second, "(attempt 2 of 4)") {
 		t.Errorf("rebuild prompt missing review comments:\n%s", second)
 	}
 }
@@ -515,6 +578,7 @@ func TestEdgeExhaustionAbandons(t *testing.T) {
 
 func TestPingMidBuildAnswered(t *testing.T) {
 	doc := `name: ping
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
@@ -577,11 +641,12 @@ stages:
 // AnswerPing "succeeded" while the ping stayed pending forever.
 func TestRecoveryAtGateSkipsEnv(t *testing.T) {
 	doc := `name: gated
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: plan,      type: agent, agent: planner, output: artifacts/plan.md, on_success: plan_gate }
-  - { id: plan_gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md, on_success: done,
-      on_reject: { to: plan, max: 3, feed: feedback } }
+  - { id: plan,      type: agent, agent: planner, on_success: plan_gate }
+  - { id: plan_gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md }, on_success: done,
+      on_reject: { to: plan, max: 3 } }
 `
 	fl := mustFlow(t, doc)
 	h := newHarness(t, fl)
@@ -599,7 +664,7 @@ stages:
 		&event.StageStarted{StageID: "plan", Iteration: 1},
 		&event.StageCompleted{StageID: "plan", TurnsUsed: 1},
 		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
-		&event.PingRaised{PingID: "ping-gate", Type: "plan_approval", Question: "plan_approval: T", StageID: "plan_gate", PayloadRef: "artifacts/plan.md"},
+		&event.PingRaised{PingID: "ping-gate", Type: PingGate, Question: "plan_approval: T", StageID: "plan_gate", PayloadRef: "artifacts/plan.md"},
 	} {
 		if _, err := h.store.Append(ctx, "r-gate", p); err != nil {
 			t.Fatal(err)
@@ -616,7 +681,7 @@ stages:
 
 	// The gate re-arms and the answer is actually processed (not buffered and
 	// dropped) — the run completes on approve.
-	p := h.waitPing(t, "plan_approval")
+	p := h.waitPing(t, PingGate)
 	if p.ID != "ping-gate" {
 		t.Fatalf("re-armed ping id = %q, want ping-gate", p.ID)
 	}
@@ -636,11 +701,12 @@ stages:
 
 func TestPlanGateRejectWithFeedback(t *testing.T) {
 	doc := `name: gated
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: plan,      type: agent, agent: planner, output: artifacts/plan.md }
-  - { id: plan_gate, type: human_gate, ping: plan_approval, payload: artifacts/plan.md,
-      on_reject: { to: plan, max: 3, feed: feedback } }
+  - { id: plan,      type: agent, agent: planner, input: { rejection: $DECISION } }
+  - { id: plan_gate, type: human_gate, question: "Approve the plan?", input: { plan: artifacts/plan.md },
+      on_reject: { to: plan, max: 3 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -655,11 +721,11 @@ stages:
 		t.Fatal(err)
 	}
 
-	p1 := h.waitPing(t, "plan_approval")
+	p1 := h.waitPing(t, PingGate)
 	if err := h.e.AnswerPing(p1.ID, PingAnswer{Answer: "reject", Feedback: "add a rollback step and cover the migration with tests"}); err != nil {
 		t.Fatal(err)
 	}
-	p2 := h.waitPing(t, "plan_approval", p1.ID) // re-raised after replanning
+	p2 := h.waitPing(t, PingGate, p1.ID) // re-raised after replanning
 	if err := h.e.AnswerPing(p2.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
 	}
@@ -672,7 +738,10 @@ stages:
 		t.Fatalf("planner ran %d times, want 2", len(h.runner.RunCalls))
 	}
 	rerun := h.runner.RunCalls[1].In.Prompt
-	if !strings.Contains(rerun, "add a rollback step") || !strings.Contains(rerun, "(iteration 2 of 4)") {
+	// A human's rejection is a $DECISION like a reviewer's: same slot, same
+	// shape — the planner cannot tell (and need not care) which it was.
+	if !strings.Contains(rerun, "add a rollback step") ||
+		!strings.Contains(rerun, "# INPUT: rejection") || !strings.Contains(rerun, "(attempt 2 of 4)") {
 		t.Errorf("replan prompt missing human feedback:\n%s", rerun)
 	}
 	// Gate rejection must not count as an unwanted ping.
@@ -684,11 +753,12 @@ stages:
 
 func TestBudgetExceededAbandons(t *testing.T) {
 	doc := `name: pricey
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 budget: { max_cost_usd: 1.0 }
 stages:
   - { id: build, type: agent, agent: builder }
-  - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 10, feed: output } }
+  - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 10 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
@@ -818,6 +888,7 @@ func TestCrashRecoveryWithoutSessionReRuns(t *testing.T) {
 
 func TestStageTimeoutTakesOnFail(t *testing.T) {
 	doc := `name: slow
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: a, type: agent, agent: sleeper, timeout: 30ms, on_fail: { to: b, max: 1 } }
@@ -854,6 +925,7 @@ stages:
 
 func TestAbortMarksRunFailed(t *testing.T) {
 	doc := `name: hang
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: a, type: agent, agent: sleeper }
@@ -892,10 +964,11 @@ stages:
 // poll interval so a ticker tick can never be the reason it worked.
 func TestAutoCompleteMergedWhileEngineDown(t *testing.T) {
 	doc := `name: ac
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: mr,   type: forge_mr, body: artifacts/mr.md, on_success: gate }
-  - { id: gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged, on_success: done }
+  - { id: mr,   type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
+  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: $MR_URL }, auto_approve: mr_merged, on_success: done }
 `
 	fl := mustFlow(t, doc)
 	h := newHarness(t, fl)
@@ -918,7 +991,7 @@ stages:
 		&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: "apothecary/r-ac"},
 		&event.StageCompleted{StageID: "mr"},
 		&event.StageStarted{StageID: "gate", Iteration: 1},
-		&event.PingRaised{PingID: "ping-ac", Type: "final_review", Question: "final_review: T", PayloadRef: ref.URL, StageID: "gate"},
+		&event.PingRaised{PingID: "ping-ac", Type: PingGate, Question: "final_review: T", PayloadRef: ref.URL, StageID: "gate"},
 	} {
 		if _, err := h.store.Append(ctx, "r-ac", p); err != nil {
 			t.Fatal(err)
@@ -935,7 +1008,7 @@ stages:
 	}
 	evs := h.events(t, "r-ac")
 	pa, ok := findPayload[*event.PingAnswered](evs)
-	if !ok || pa.Answer != "approve" || pa.Feedback != "auto: MR merged" {
+	if !ok || pa.Answer != "approve" || pa.Feedback != "auto: mr_merged" {
 		t.Errorf("ping_answered = %+v, want the auto-approve", pa)
 	}
 	if n := countType(evs, event.TypePingRaised); n != 1 {
@@ -948,11 +1021,12 @@ stages:
 // gate keeps working — completing automatically once the forge recovers.
 func TestAutoCompletePollFailureNotifies(t *testing.T) {
 	doc := `name: acf
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: prep, type: agent, agent: builder }
-  - { id: mr,   type: forge_mr, body: artifacts/mr.md }
-  - { id: gate, type: human_gate, ping: final_review, payload: mr_url, auto_complete: mr_merged }
+  - { id: mr,   type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: $MR_URL }, auto_approve: mr_merged }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -967,14 +1041,14 @@ stages:
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.waitPing(t, "final_review")
+	h.waitPing(t, PingGate)
 
 	// The 3rd consecutive failed poll raises a blocker; further failures
 	// in the same streak stay quiet.
 	blockers := func() int {
 		n := 0
 		for _, s := range h.ch.Sent() {
-			if strings.Contains(s.Title, "auto_complete") {
+			if strings.Contains(s.Title, "cannot read mr_merged") {
 				n++
 			}
 		}
@@ -985,11 +1059,11 @@ stages:
 		time.Sleep(2 * time.Millisecond)
 	}
 	if got := blockers(); got != 1 {
-		t.Fatalf("auto_complete blockers = %d, want 1", got)
+		t.Fatalf("auto_answer blockers = %d, want 1", got)
 	}
 	time.Sleep(50 * time.Millisecond) // many more failed polls at 5ms cadence
 	if got := blockers(); got != 1 {
-		t.Errorf("auto_complete blockers after streak = %d, want still 1 (no spam)", got)
+		t.Errorf("auto_answer blockers after streak = %d, want still 1 (no spam)", got)
 	}
 
 	// Forge recovers and the MR is merged: the run completes on its own.
@@ -1001,17 +1075,18 @@ stages:
 	}
 }
 
-// TestUnlimitedRescueLoop: a max -1 link to a manual_debug gate never
+// TestUnlimitedRescueLoop: a max -1 link to a rescue gate never
 // exhausts — the human keeps rescuing as long as they approve, and ends
 // the run by rejecting. Each firing is human-gated, so "unlimited" is
 // bounded by human attention, not a runaway loop.
 func TestUnlimitedRescueLoop(t *testing.T) {
 	doc := `name: unl
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: work,   type: command, run_ref: verify, on_success: done,
       on_fail: { to: rescue, max: -1 } }
-  - { id: rescue, type: human_gate, ping: manual_debug, payload: workspace,
+  - { id: rescue, type: human_gate, question: "Inspect the workspace.", input: { workspace: $WORKSPACE },
       on_success: work, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -1029,13 +1104,13 @@ stages:
 	// Three rescue rounds (well past any finite default), then give up.
 	var seen []string
 	for range 3 {
-		p := h.waitPing(t, "manual_debug", seen...)
+		p := h.waitPing(t, PingGate, seen...)
 		seen = append(seen, p.ID)
 		if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	p := h.waitPing(t, "manual_debug", seen...)
+	p := h.waitPing(t, PingGate, seen...)
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "reject", Feedback: "unfixable"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1069,17 +1144,18 @@ stages:
 // feedback in the reason, not on an "unrecoverable failure" message.
 func TestAbortEdgeStopsRunDeliberately(t *testing.T) {
 	doc := `name: ab
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
-  - { id: gate,  type: human_gate, ping: final_review, on_reject: abort }
+  - { id: gate,  type: human_gate, question: "Merge when ready.", on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ab", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := h.waitPing(t, "final_review")
+	p := h.waitPing(t, PingGate)
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "reject", Feedback: "we pivoted; not needed"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1102,6 +1178,7 @@ stages:
 // timeouts there, not through on_fail.
 func TestTimeoutEdgeRoutesSeparately(t *testing.T) {
 	doc := `name: tmo
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: a, type: agent, agent: sleeper, timeout: 30ms,
@@ -1138,11 +1215,12 @@ stages:
 // budget in the reason.
 func TestThenChainRetryThenEscalate(t *testing.T) {
 	doc := `name: chain
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify,
-      on_fail: { to: test, max: 2, then: { to: build, max: 1, feed: output } } }
+      on_fail: { to: test, max: 2, then: { to: build, max: 1 } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	verifies := 0
@@ -1177,8 +1255,9 @@ stages:
 		edges[2].To != "build" || edges[2].Depth != 1 || edges[2].Count != 1 {
 		t.Errorf("edges = %+v", edges)
 	}
-	// Link 0 declares no feed; the escalation link feeds the output.
-	if edges[0].Feed != "" || !strings.Contains(edges[2].Feed, "FAIL: flaky") {
+	// Every link carries the failing output — an edge no longer decides
+	// whether to; its target does, by binding $FAILURE or not.
+	if !strings.Contains(edges[0].Feed, "FAIL: flaky") || !strings.Contains(edges[2].Feed, "FAIL: flaky") {
 		t.Errorf("feeds = %q / %q", edges[0].Feed, edges[2].Feed)
 	}
 	if verifies != 4 { // initial + 2 retries + 1 after the escalation build
@@ -1195,6 +1274,7 @@ stages:
 // run (no live goroutine) also works.
 func TestPausePlayMidAgent(t *testing.T) {
 	doc := `name: pp
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
@@ -1271,17 +1351,18 @@ stages:
 	}
 }
 
-// TestManualDebugGate: the SSH-and-inspect stop. A failing test escalates
-// to a manual_debug gate whose payload is the workspace link; approve
-// re-enters the flow, and the gate counts as a WANTED ping.
+// TestManualDebugGate: the inspect-and-fix stop. A failing test escalates to a
+// gate whose input is $WORKSPACE, so the human gets the terminal/IDE link;
+// approve re-enters the flow, and the gate counts as a WANTED ping.
 func TestManualDebugGate(t *testing.T) {
 	doc := `name: dbg
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_success: done,
       on_fail: { to: build, max: 1, then: { to: debug, max: 1 } } }
-  - { id: debug, type: human_gate, ping: manual_debug, payload: workspace,
+  - { id: debug, type: human_gate, question: "Inspect the workspace.", input: { workspace: $WORKSPACE },
       on_success: test, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -1300,7 +1381,7 @@ stages:
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := h.waitPing(t, "manual_debug")
+	p := h.waitPing(t, PingGate)
 	if !strings.HasSuffix(p.PayloadRef, "/terminal") {
 		t.Errorf("payload = %q, want the workspace terminal link", p.PayloadRef)
 	}
@@ -1323,7 +1404,7 @@ stages:
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2 := h.waitPing(t, "manual_debug", p.ID)
+	p2 := h.waitPing(t, PingGate, p.ID)
 	if err := h.e.AnswerPing(p2.ID, PingAnswer{Answer: "reject", Feedback: "cannot reproduce"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1425,6 +1506,7 @@ func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
 	// A flow pinning a foreign harness is refused at preflight (DESIGN2
 	// §6.3), naming stage and kinds.
 	h4 := newHarness(t, mustFlow(t, `name: pinned
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder, harness: codex }
@@ -1483,9 +1565,10 @@ func TestSetupIsOptional(t *testing.T) {
 
 func TestOutputContractViolationFailsStage(t *testing.T) {
 	doc := `name: contract
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: plan, type: agent, agent: planner, output: artifacts/plan.md }
+  - { id: plan, type: agent, agent: planner }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	// Planner never writes the declared artifact.
@@ -1509,6 +1592,7 @@ stages:
 // is only reachable via on_fail and itself completes the run early.
 func TestExplicitSuccessRouting(t *testing.T) {
 	branchDoc := `name: branch
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: probe,   type: command, run: probe.sh, on_success: finish, on_fail: { to: repair, max: 1 } }
@@ -1571,6 +1655,7 @@ stages:
 // and is recorded verbatim in ping_answered.
 func TestOptionPing(t *testing.T) {
 	doc := `name: ping
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
@@ -1690,6 +1775,7 @@ stages:
 func TestResumeRerunsFailedStage(t *testing.T) {
 	// A single command stage with no on_fail: it abandons on failure.
 	doc := `name: r
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: push, type: command, run: "push.sh" }
@@ -1747,6 +1833,7 @@ stages:
 // then hands them to the per-project gateway). No engine-side proxy or proxy.env.
 func TestEgressPolicyReachesProvisioner(t *testing.T) {
 	doc := `name: p
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
@@ -1772,5 +1859,590 @@ stages:
 	// No proxy.env is written anymore.
 	if _, ok := env.Files["/apothecary/proxy.env"]; ok {
 		t.Errorf("proxy.env should no longer be written")
+	}
+}
+
+// --- v2 grammar mechanics ---------------------------------------------------
+
+// TestCommandDeclaredInputPrecondition: a command's declared input is checked
+// before the script runs, so a missing upstream artifact is reported as
+// upstream wiring rather than as a confusing script failure.
+func TestCommandDeclaredInputPrecondition(t *testing.T) {
+	doc := `name: cmdio
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: commit, type: command, run: "git commit -F artifacts/commit.md",
+      input: { f0: artifacts/commit.md }, on_success: done,
+      on_fail: { to: rescue, max: -1 } }
+  - { id: rescue, type: human_gate, question: "Fix it.", input: { workspace: $WORKSPACE },
+      on_success: commit, on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	var ran bool
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "git commit") {
+			ran = true
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "cmdio", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The precondition fails, so the run parks at the rescue gate.
+	p := h.waitPing(t, PingGate)
+	if ran {
+		t.Error("the script ran despite its declared input being absent")
+	}
+	sf, ok := findPayload[*event.StageFailed](h.events(t, runID))
+	if !ok || sf.Reason != event.ReasonInputMissing {
+		t.Fatalf("stage_failed = %+v, want reason %q", sf, event.ReasonInputMissing)
+	}
+	if !strings.Contains(sf.Error, "artifacts/commit.md") {
+		t.Errorf("failure does not name the missing path: %q", sf.Error)
+	}
+
+	// Supply the artifact by hand (what a human at the gate would do) and
+	// approve: the same stage re-runs and now passes its precondition.
+	h.writeFile(t, "env-1", "artifacts/commit.md", "feat: x")
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	if !ran {
+		t.Error("the script never ran after its input appeared")
+	}
+}
+
+// TestCommandDeclaredOutputEnforced: exiting 0 without writing what it declared
+// is not success — the same contract agent stages carry.
+func TestCommandDeclaredOutputEnforced(t *testing.T) {
+	doc := `name: cmdout
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: gen, type: command, run: "generate", output: { report: artifacts/report.txt } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "cmdout", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned (no on_fail)", v.State)
+	}
+	sf, _ := findPayload[*event.StageFailed](h.events(t, runID))
+	if sf.Reason != event.ReasonOutputContract || !strings.Contains(sf.Error, "artifacts/report.txt") {
+		t.Errorf("stage_failed = %+v", sf)
+	}
+}
+
+// TestVerdictOutputRebound: the engine reads the verdict from the path the
+// stage bound, never a hardcoded artifacts/verdict.json — and a REJECT there
+// still routes the on_reject edge with its comments.
+func TestVerdictOutputRebound(t *testing.T) {
+	doc := `name: vrebind
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build,  type: agent, agent: builder, input: { rejection: $DECISION } }
+  - { id: review, type: agent, agent: reviewer,
+      output: { verdict: artifacts/review/verdict.json },
+      on_reject: { to: build, max: 2 } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	reviews := 0
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
+			reviews++
+			body := `{"verdict":"APPROVE","comments":[]}`
+			if reviews == 1 {
+				body = `{"verdict":"REJECT","comments":["rebound verdict was read"]}`
+			}
+			h.writeFile(t, c.Env, "artifacts/review/verdict.json", body)
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "vrebind", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	// The prompt names the bound path, not the default.
+	for _, c := range h.runner.RunCalls {
+		if c.Spec.Agent != "reviewer" {
+			continue
+		}
+		if !strings.Contains(c.In.Prompt, "artifacts/review/verdict.json") {
+			t.Errorf("reviewer prompt does not name the bound verdict path:\n%s", c.In.Prompt)
+		}
+		if strings.Contains(c.In.Prompt, "you MUST write these files") &&
+			strings.Contains(c.In.Prompt, "- artifacts/verdict.json") {
+			t.Error("prompt still demands the default verdict path")
+		}
+	}
+	// The rejection fed its comments back into the rebuild.
+	rebuild := h.runner.RunCalls[2].In.Prompt // build1, review1, build2
+	if !strings.Contains(rebuild, "rebound verdict was read") {
+		t.Errorf("rebuild prompt missing the fed comments:\n%s", rebuild)
+	}
+}
+
+// TestVerdictOutputMissingIsOneFailure: a missing verdict file is caught by the
+// ordinary output-contract check, so the run reports it once — not once for the
+// missing file and again for the unparsable verdict.
+func TestVerdictOutputMissingIsOneFailure(t *testing.T) {
+	doc := `name: vmiss
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: review, type: agent, agent: reviewer }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "vmiss", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	evs := h.events(t, runID)
+	if got := countType(evs, event.TypeStageFailed); got != 1 {
+		t.Errorf("stage_failed count = %d, want 1", got)
+	}
+	sf, _ := findPayload[*event.StageFailed](evs)
+	if sf.Reason != event.ReasonOutputContract || !strings.Contains(sf.Error, "artifacts/verdict.json") {
+		t.Errorf("stage_failed = %+v", sf)
+	}
+}
+
+// TestCreateMRAction: forge_mr's replacement carries the same behaviour —
+// title from the body's heading, one mr_created event, and the $MR_URL
+// sentinel resolving for a later gate.
+func TestCreateMRAction(t *testing.T) {
+	doc := `name: act
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: redact, type: agent, agent: redactor }
+  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: gate,   type: human_gate, question: "Merge?", input: { mr: $MR_URL }, on_success: done, on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/mr.md", "# Add the login form\n\nSummary")
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "act", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := h.waitPing(t, PingGate)
+	if !strings.HasPrefix(p.PayloadRef, "https://gitlab.local/mr/") {
+		t.Errorf("gate payload = %q, want the $MR_URL link", p.PayloadRef)
+	}
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	if len(h.forge.MRs) != 1 || h.forge.MRs[0].Title != "Add the login form" {
+		t.Errorf("MRs = %+v", h.forge.MRs)
+	}
+	if got := countType(h.events(t, runID), event.TypeMRCreated); got != 1 {
+		t.Errorf("mr_created count = %d, want 1", got)
+	}
+}
+
+// TestCreateMRActionMissingBody: the action reports the fault as upstream
+// wiring (its declared input is absent), not as its own output contract.
+func TestCreateMRActionMissingBody(t *testing.T) {
+	doc := `name: actmiss
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "actmiss", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned", v.State)
+	}
+	sf, _ := findPayload[*event.StageFailed](h.events(t, runID))
+	if sf.Reason != event.ReasonInputMissing {
+		t.Errorf("reason = %q, want %q", sf.Reason, event.ReasonInputMissing)
+	}
+	if len(h.forge.MRs) != 0 {
+		t.Errorf("an MR was opened without a body: %+v", h.forge.MRs)
+	}
+}
+
+// TestUnparseableFlowFailsRunTerminally: a stored flow that no longer parses
+// can never be fixed by retrying, and leaving the run non-terminal spun it
+// through recovery on every boot. It must fail with the parse error.
+func TestUnparseableFlowFailsRunTerminally(t *testing.T) {
+	fl := mustFlow(t, loopFlowDoc)
+	fm := flow.MapSource{fl.Name: fl}
+	h := newHarnessSource(t, brokenSource{name: fl.Name, inner: fm}, fl)
+
+	// A non-terminal run whose flow the source can no longer read.
+	ctx := context.Background()
+	for _, p := range []event.Payload{
+		&event.RunCreated{TicketTitle: "T", FlowName: fl.Name, ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
+		&event.EnvRequested{},
+		&event.EnvReady{EnvID: "env-1"},
+		&event.StageStarted{StageID: "build", Iteration: 1},
+	} {
+		if _, err := h.store.Append(ctx, "r-brk", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.e.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-brk")
+
+	v := h.view(t, "r-brk")
+	if v.State != run.Failed {
+		t.Fatalf("state = %s, want failed (events: %v)", v.State, eventTypes(h.events(t, "r-brk")))
+	}
+	rf, ok := findPayload[*event.RunFailed](h.events(t, "r-brk"))
+	if !ok || !strings.Contains(rf.Reason, "no longer parses") {
+		t.Errorf("run_failed = %+v, want the parse error", rf)
+	}
+}
+
+// brokenSource stands in for a stored flow whose YAML no longer parses: the
+// source returns a *flow.Error, not ErrNotFound.
+type brokenSource struct {
+	name  string
+	inner flow.MapSource
+}
+
+func (b brokenSource) Get(ctx context.Context, name string) (*flow.Flow, error) {
+	if name == b.name {
+		return nil, &flow.Error{File: name, Line: 4, Msg: `stage "build": "verdict" is retired`}
+	}
+	return b.inner.Get(ctx, name)
+}
+
+// TestWaitStageBlocksUntilSignal: a wait stage parks the run on an external
+// condition and needs no workspace to do it — the same shape as a gate, minus
+// the human.
+func TestWaitStageBlocksUntilSignal(t *testing.T) {
+	doc := `name: waitflow
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: redact, type: agent, agent: redactor, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
+  - { id: merged, type: wait, for: mr_merged, on_success: done }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it\n\nSummary")
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waitflow", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run reaches the wait stage and stays there: no ping, not finished.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if h.view(t, runID).CurrentStage == "merged" {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if v := h.view(t, runID); v.CurrentStage != "merged" || v.State.Terminal() {
+		t.Fatalf("run is %s at %q, want waiting at merged", v.State, v.CurrentStage)
+	}
+	if len(h.e.PendingPings()) != 0 {
+		t.Error("a wait stage must not ask a human anything")
+	}
+
+	// The signal fires; the stage completes and the run finishes.
+	h.forge.SetMRState(1, ports.MRMerged)
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+}
+
+// TestWaitStageTimeout: a wait is unbounded unless the stage says otherwise,
+// and a bounded one routes its on_timeout edge.
+func TestWaitStageTimeout(t *testing.T) {
+	doc := `name: waittimeout
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: redact, type: agent, agent: redactor, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
+  - { id: merged, type: wait, for: mr_merged, timeout: 20ms, on_success: done,
+      on_timeout: { to: nudge, max: 1 } }
+  - { id: nudge,  type: human_gate, question: "It never merged — chase it?", on_success: done,
+      on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waittimeout", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The signal never fires, so the timeout routes to the gate.
+	p := h.waitPing(t, PingGate)
+	sf, ok := findPayload[*event.StageFailed](h.events(t, runID))
+	if !ok || sf.Reason != event.ReasonTimeout || !strings.Contains(sf.Error, "mr_merged") {
+		t.Errorf("stage_failed = %+v, want a timeout naming the signal", sf)
+	}
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s", v.State)
+	}
+}
+
+// TestWaitForImpossibleSignalFails: waiting on something that can never happen
+// in this run is a failure with a reason, not a hang.
+func TestWaitForImpossibleSignalFails(t *testing.T) {
+	doc := `name: waitnomr
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: merged, type: wait, for: mr_merged }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waitnomr", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned (no on_fail)", v.State)
+	}
+	sf, _ := findPayload[*event.StageFailed](h.events(t, runID))
+	if sf.Reason != event.ReasonInputMissing || !strings.Contains(sf.Error, "merge request") {
+		t.Errorf("stage_failed = %+v, want a missing-prerequisite reason", sf)
+	}
+}
+
+// TestFeedSentinelsAreDistinct: a rejection and a failure reach the same stage
+// through different, named inputs — an agent can tell "you were turned down"
+// apart from "it broke", which one undifferentiated blob could not express.
+func TestFeedSentinelsAreDistinct(t *testing.T) {
+	doc := `name: twofeeds
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build,  type: agent, agent: builder, on_success: test,
+      input: { rejection: $DECISION, failure: $FAILURE } }
+  - { id: test,   type: command, run_ref: verify, on_success: review,
+      on_fail: { to: build, max: 3 } }
+  - { id: review, type: agent, agent: reviewer, on_success: done,
+      on_reject: { to: build, max: 3 } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	verifies, reviews := 0, 0
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "make lint") {
+			verifies++
+			if verifies == 1 {
+				return ports.ExecResult{ExitCode: 1, Output: "TESTS BLEW UP"}, nil
+			}
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
+			reviews++
+			body := `{"verdict":"APPROVE","comments":[]}`
+			if reviews == 1 {
+				body = `{"verdict":"REJECT","comments":["LAYERING IS WRONG"]}`
+			}
+			h.writeFile(t, c.Env, "artifacts/verdict.json", body)
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "twofeeds", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	var builds []string
+	for _, c := range h.runner.RunCalls {
+		if c.Spec.Agent == "builder" {
+			builds = append(builds, c.In.Prompt)
+		}
+	}
+	if len(builds) != 3 {
+		t.Fatalf("builder ran %d times, want 3 (initial, after test fail, after reject)", len(builds))
+	}
+	// Attempt 1: neither slot renders — a first attempt has nothing fed.
+	if strings.Contains(builds[0], "# INPUT: failure") || strings.Contains(builds[0], "# INPUT: rejection") {
+		t.Errorf("build[0] should carry neither feed:\n%s", builds[0])
+	}
+	// Attempt 2 came from a test failure: only the failure slot fills.
+	if !strings.Contains(builds[1], "# INPUT: failure") || !strings.Contains(builds[1], "TESTS BLEW UP") {
+		t.Errorf("build[1] missing the failure:\n%s", builds[1])
+	}
+	if strings.Contains(builds[1], "# INPUT: rejection") {
+		t.Errorf("build[1] must not render a rejection it never got:\n%s", builds[1])
+	}
+	// Attempt 3 came from a REJECT verdict: only the rejection slot fills.
+	if !strings.Contains(builds[2], "# INPUT: rejection") || !strings.Contains(builds[2], "LAYERING IS WRONG") {
+		t.Errorf("build[2] missing the rejection:\n%s", builds[2])
+	}
+	if strings.Contains(builds[2], "# INPUT: failure") {
+		t.Errorf("build[2] must not render a stale failure:\n%s", builds[2])
+	}
+}
+
+// TestGateAutoRejectOnClosedMR: the forge can answer a gate either way. Closing
+// the MR unmerged is a "no" — before auto_reject the run sat at the gate forever
+// waiting for someone to come and click reject in apothecary.
+func TestGateAutoRejectOnClosedMR(t *testing.T) {
+	doc := `name: settle
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: redact, type: agent, agent: redactor, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
+  - { id: gate,   type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
+      auto_approve: mr_merged, auto_reject: mr_closed,
+      on_success: done, on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "settle", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.waitPing(t, PingGate)
+	h.forge.SetMRState(1, ports.MRClosed)
+	h.e.Wait(runID)
+
+	// Rejected, so on_reject: abort stops the run.
+	if v := h.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned, events: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	pa, ok := findPayload[*event.PingAnswered](h.events(t, runID))
+	if !ok || pa.Answer != "reject" || !strings.Contains(pa.Feedback, "mr_closed") {
+		t.Errorf("ping_answered = %+v, want a reject naming the signal", pa)
+	}
+}
+
+// TestGateAutoApproveStillWinsARace: a human answering is never locked out by
+// an armed signal — the gate takes whichever arrives first.
+func TestGateAutoApproveStillWinsARace(t *testing.T) {
+	doc := `name: race
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: redact, type: agent, agent: redactor, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
+  - { id: gate,   type: human_gate, question: "Merge?", input: { mr: $MR_URL },
+      auto_approve: mr_merged, auto_reject: mr_closed,
+      on_success: done, on_reject: abort }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "race", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The MR stays open; the human approves in apothecary instead.
+	p := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s, want completed", v.State)
+	}
+	pa, _ := findPayload[*event.PingAnswered](h.events(t, runID))
+	if strings.Contains(pa.Feedback, "auto:") {
+		t.Errorf("the human's answer was overwritten by a signal: %+v", pa)
+	}
+}
+
+// TestUnlimitedRetryDoesNotClaimALastAttempt: on an unlimited link (max -1)
+// there is no total, and saying "attempt 2 of 2" would tell an agent this is its
+// last chance when the loop is bounded only by human patience.
+func TestUnlimitedRetryDoesNotClaimALastAttempt(t *testing.T) {
+	doc := `name: unlim
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan, type: agent, agent: planner, input: { rejection: $DECISION }, on_success: gate }
+  - { id: gate, type: human_gate, question: "Approve?", input: { plan: artifacts/plan.md },
+      on_success: done,
+      on_reject: { to: plan, max: -1 } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+			h.writeFile(t, c.Env, "artifacts/plan.md", "plan")
+			return ports.AgentResult{}, nil
+		},
+	})
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "unlim", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1 := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(p1.ID, PingAnswer{Answer: "reject", Feedback: "narrow it down"}); err != nil {
+		t.Fatal(err)
+	}
+	p2 := h.waitPing(t, PingGate, p1.ID)
+	if err := h.e.AnswerPing(p2.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s", v.State)
+	}
+	replan := h.runner.RunCalls[1].In.Prompt
+	if !strings.Contains(replan, "(attempt 2)") {
+		t.Errorf("replan prompt should carry a bare attempt number:\n%s", replan)
+	}
+	if strings.Contains(replan, "attempt 2 of") {
+		t.Errorf("an unlimited loop must not claim a total:\n%s", replan)
 	}
 }

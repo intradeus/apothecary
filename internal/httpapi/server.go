@@ -150,6 +150,11 @@ func (s *Server) Handler() http.Handler {
 		// Project-independent agent library for the flow editor (?project=<id>
 		// overlays that project's authored agents on the built-ins).
 		mux.HandleFunc("GET /api/agents", s.listAllAgents)
+		// The action registry an `action` stage may name (compiled in, not
+		// project data), for the flow editor's action picker.
+		mux.HandleFunc("GET /api/actions", s.listActions)
+		// The signal registry a `wait` stage or a gate's auto_answer may name.
+		mux.HandleFunc("GET /api/signals", s.listSignals)
 		mux.HandleFunc("GET /api/settings", s.getSettings)
 		mux.HandleFunc("PUT /api/settings", s.putSettings)
 	}

@@ -5,7 +5,7 @@
   import PingCard from '$lib/PingCard.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
-  import { GATE_TYPES, type PingLike } from '$lib/ping';
+  import { isGatePing, type PingLike } from '$lib/ping';
   import { onMount } from 'svelte';
 
   const runId = page.params.id ?? '';
@@ -615,7 +615,7 @@
   {#if pendingPingView}
     {#key pendingPingView.ping_id}
       <div class="card" style="border-color:var(--amber)">
-        <div class="pingtype {GATE_TYPES.includes(pendingPingView.type) ? 'wanted' : 'unwanted'}">{pendingPingView.type}</div>
+        <div class="pingtype {isGatePing(pendingPingView.type) ? 'wanted' : 'unwanted'}">{pendingPingView.type}</div>
         {#if pendingCount > 1}
           <div class="small" style="color:var(--amber);opacity:0.85;margin:6px 0 2px">
             answer this first — {pendingCount - 1} earlier ping{pendingCount - 1 > 1 ? 's' : ''} queued for this run

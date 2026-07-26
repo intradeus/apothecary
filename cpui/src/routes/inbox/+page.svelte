@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, ago, type Ping } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
-  import { GATE_TYPES } from '$lib/ping';
+  import { isGatePing } from '$lib/ping';
   import { onMount } from 'svelte';
 
   let pings = $state<Ping[]>([]);
@@ -73,7 +73,7 @@
        (PingCard's draft note must not carry over to the next ping) -->
   <div class="card">
     <div class="row spread">
-      <span class="pingtype {GATE_TYPES.includes(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
+      <span class="pingtype {isGatePing(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
       <span class="muted small">
         {#if p.stage_id}<span class="mono">{p.stage_id}</span> · {/if}
         {ago(p.raised_at)} · <a href={`/runs/${p.run_id}`}>view run</a>

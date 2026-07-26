@@ -10,6 +10,7 @@ import (
 
 // header is a minimal valid preamble; tests append stages to it.
 const header = `name: t
+version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 `
 
@@ -37,21 +38,19 @@ func wantErr(t *testing.T, doc, substr string, line int) {
 	}
 }
 
-func TestCanonicalV1(t *testing.T) {
-	// The DESIGN §3.1 document survives only as a test fixture — the
-	// product ships no built-in flows (user-defined, post-M8).
-	f, err := Load("testdata/v1.yaml")
+// TestCanonicalV2 locks the fixture that exercises every v2 construct: all
+// four stage types, all three binding forms, both sentinels, output rebinding.
+func TestCanonicalV2(t *testing.T) {
+	f, err := Load("testdata/v2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Name != "v1" {
+	if f.Name != "v2" {
 		t.Errorf("name = %q", f.Name)
 	}
 	if len(f.Hash) != 64 {
 		t.Errorf("hash = %q, want 64 hex chars", f.Hash)
 	}
-	// harness is deliberately unpinned in the canonical flow (DESIGN2 §6.3):
-	// empty resolves to the project's harness kind at run creation.
 	if f.Defaults.Timeout != 30*time.Minute || f.Defaults.MaxTurns != 50 ||
 		f.Defaults.Harness != "fake" || f.Defaults.Model != "anthropic/claude-sonnet-4-6" {
 		t.Errorf("defaults = %+v", f.Defaults)
@@ -60,7 +59,8 @@ func TestCanonicalV1(t *testing.T) {
 		t.Errorf("budget = %+v", f.Budget)
 	}
 
-	ids := []string{"plan", "plan_gate", "build", "test", "review", "redact", "push", "mr", "final_gate"}
+	ids := []string{"plan", "plan_gate", "build", "commit_msg", "commit", "test", "review",
+		"redact", "push", "debug_push", "mr", "final_gate"}
 	if len(f.Stages) != len(ids) {
 		t.Fatalf("got %d stages, want %d", len(f.Stages), len(ids))
 	}
@@ -74,39 +74,77 @@ func TestCanonicalV1(t *testing.T) {
 	if plan.Model != "anthropic/claude-sonnet-4-6" || plan.MaxTurns != 25 || plan.Timeout != 30*time.Minute {
 		t.Errorf("plan defaults not resolved: %+v", plan)
 	}
-	if len(plan.Outputs) != 1 || plan.Outputs[0].Name != "" || plan.Outputs[0].Value != "artifacts/plan.md" {
-		t.Errorf("plan.Outputs = %+v", plan.Outputs)
+	// No output on the stage: the planner's contract carries the path.
+	if len(plan.Outputs) != 0 || plan.Description != "write the implementation plan" {
+		t.Errorf("plan = %+v", plan)
+	}
+
+	// An agent stage binds inputs by name and may rebind a declared output.
+	cm := f.Stage("commit_msg")
+	if len(cm.Inputs) != 1 || cm.Inputs[0] != (IOBinding{Name: "plan", Value: "artifacts/plan.md"}) {
+		t.Errorf("commit_msg.Inputs = %+v", cm.Inputs)
+	}
+	if len(cm.Outputs) != 1 || cm.Outputs[0] != (IOBinding{Name: "commit", Value: "artifacts/commit-subject.md"}) {
+		t.Errorf("commit_msg.Outputs = %+v", cm.Outputs)
+	}
+
+	// A command names its files too — the label documents each one's role.
+	commit := f.Stage("commit")
+	if len(commit.Inputs) != 1 || commit.Inputs[0] != (IOBinding{Name: "message", Value: "artifacts/commit-subject.md"}) {
+		t.Errorf("commit.Inputs = %+v", commit.Inputs)
 	}
 
 	review := f.Stage("review")
 	if review.Model != "openai/gpt-5" {
 		t.Errorf("review model override = %q", review.Model)
 	}
-	if !review.Verdict || review.Edge(EdgeReject) == nil || review.Edge(EdgeReject).To != "build" ||
-		review.Edge(EdgeReject).Max != 3 || review.Edge(EdgeReject).Feed != FeedComments {
-		t.Errorf("review verdict/edge = %+v %+v", review.Verdict, review.Edge(EdgeReject))
+	// on_reject needs no stage flag: the agent's verdict output makes it fire,
+	// and it declares nothing about what it carries.
+	if review.Edge(EdgeReject) == nil || review.Edge(EdgeReject).To != "build" || review.Edge(EdgeReject).Max != 3 {
+		t.Errorf("review.on_reject = %+v", review.Edge(EdgeReject))
+	}
+	if len(review.Inputs) != 2 || review.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelChanged}) {
+		t.Errorf("review.Inputs = %+v", review.Inputs)
 	}
 
 	test := f.Stage("test")
 	if test.RunRef != "verify" || test.Edge(EdgeFail) == nil || test.Edge(EdgeFail).To != "build" ||
-		test.Edge(EdgeFail).Max != 5 || test.Edge(EdgeFail).Feed != FeedOutput {
+		test.Edge(EdgeFail).Max != 5 {
 		t.Errorf("test stage = %+v", test)
+	}
+	// The build stage binds both edge-carried values, so a rejection and a
+	// failure land in different, named places.
+	build := f.Stage("build")
+	if build.Input("rejection") == nil || build.Input("rejection").Value != SentinelDecision ||
+		build.Input("failure") == nil || build.Input("failure").Value != SentinelFailure {
+		t.Errorf("build.Inputs = %+v", build.Inputs)
+	}
+
+	mr := f.Stage("mr")
+	if mr.Type != StageAction || mr.Action != "create_mr" ||
+		len(mr.Inputs) != 1 || mr.Inputs[0] != (IOBinding{Name: "body", Value: "artifacts/mr.md"}) {
+		t.Errorf("mr = %+v", mr)
 	}
 
 	gate := f.Stage("final_gate")
-	if gate.Ping != PingFinalReview || gate.Payload != "mr_url" || gate.AutoComplete != "mr_merged" {
+	if len(gate.Inputs) != 1 || gate.Inputs[0].Value != SentinelMRURL ||
+		gate.AutoApprove != "mr_merged" || gate.Question == "" {
 		t.Errorf("final_gate = %+v", gate)
 	}
+	if dbg := f.Stage("debug_push"); len(dbg.Inputs) != 1 || dbg.Inputs[0].Value != SentinelWorkspace {
+		t.Errorf("debug_push.Inputs = %+v, want %s", dbg.Inputs, SentinelWorkspace)
+	}
 
-	if f.Index("plan") != 0 || f.Index("final_gate") != 8 || f.Index("nope") != -1 {
+	if f.Index("plan") != 0 || f.Index("final_gate") != len(ids)-1 || f.Index("nope") != -1 {
 		t.Error("Index misbehaves")
 	}
 }
 
-// TestLiveV1FlowParses locks the repo's shipped example flow to the schema:
-// it exercises abort terminals, on_timeout, then-chains and manual_debug.
-func TestLiveV1FlowParses(t *testing.T) {
-	f, err := Load("../../artifacts/flows/v1.yaml")
+// TestReferenceFlowParses locks the repo's shipped expanded-form example (what
+// the graph editor emits): abort terminals, on_timeout, then-chains, unlimited
+// links and workspace rescue gates.
+func TestReferenceFlowParses(t *testing.T) {
+	f, err := Load("../../artifacts/flows/v2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,21 +156,20 @@ func TestLiveV1FlowParses(t *testing.T) {
 		t.Errorf("test.on_timeout = %+v, want self-retry", test.Edge(EdgeTimeout))
 	}
 	dbg := f.Stage("debug_test")
-	if dbg.Ping != PingManualDebug || dbg.Payload != PayloadWorkspace || dbg.Edge(EdgeReject).To != TerminalAbort {
+	if len(dbg.Inputs) != 1 || dbg.Inputs[0].Value != SentinelWorkspace || dbg.Edge(EdgeReject).To != TerminalAbort {
 		t.Errorf("debug_test gate = %+v", dbg)
 	}
-	// Approval gates (plan_gate, review, final_gate) reject into a feedback
-	// loop — rejecting the final MR review sends the agent back to build to
-	// address comments, not abort. The manual_debug rescue gates (asserted
-	// above via debug_test) are the ones that terminate at abort.
-	if fg := f.Stage("final_gate").Edge(EdgeReject); fg == nil || fg.To != "build" || fg.Feed != FeedFeedback {
-		t.Errorf("final_gate.on_reject = %+v, want feedback loop to build", f.Stage("final_gate").Edge(EdgeReject))
+	// Approval gates reject into a feedback loop — rejecting the final MR
+	// review sends the run back to build to address comments, not abort. The
+	// workspace rescue gates (asserted above via debug_test) end at abort.
+	if fg := f.Stage("final_gate").Edge(EdgeReject); fg == nil || fg.To != "build" {
+		t.Errorf("final_gate.on_reject = %+v, want a loop back to build", f.Stage("final_gate").Edge(EdgeReject))
 	}
 
 	// The flow's failure philosophy: every agent/command stage declares
-	// on_fail, every on_fail chain ends at a manual_debug rescue gate, and
-	// that gate resumes the stage that escalated to it — the success chain
-	// replays from the failure point, never skipping stages.
+	// on_fail, every on_fail chain ends at a workspace rescue gate, and that
+	// gate resumes the stage that escalated to it — the success chain replays
+	// from the failure point, never skipping stages.
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		if s.Type != StageAgent && s.Type != StageCommand {
@@ -147,8 +184,8 @@ func TestLiveV1FlowParses(t *testing.T) {
 			e = e.Then
 		}
 		tgt := f.Stage(e.To)
-		if tgt == nil || tgt.Ping != PingManualDebug {
-			t.Errorf("stage %s: on_fail chain ends at %q, want a manual_debug gate", s.ID, e.To)
+		if tgt == nil || tgt.Type != StageHumanGate || tgt.Input("workspace") == nil {
+			t.Errorf("stage %s: on_fail chain ends at %q, want a workspace rescue gate", s.ID, e.To)
 			continue
 		}
 		if tgt.OnSuccess != s.ID {
@@ -171,7 +208,7 @@ func TestStageMapFormBindings(t *testing.T) {
 	s := f.Stage("build")
 	if len(s.Inputs) != 2 ||
 		s.Inputs[0] != (IOBinding{Name: "plan", Value: "artifacts/plan.md"}) ||
-		s.Inputs[1] != (IOBinding{Name: "changes", Value: InputChanged}) {
+		s.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelChanged}) {
 		t.Errorf("inputs = %+v", s.Inputs)
 	}
 	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Name: "patch", Value: "artifacts/patch.md"}) {
@@ -179,19 +216,22 @@ func TestStageMapFormBindings(t *testing.T) {
 	}
 }
 
-func TestLegacyListBindings(t *testing.T) {
+// TestCommandBindings: a command binds like everything else. It has no contract
+// to check the names against, so they are free labels — which is the point:
+// they say what each file is for.
+func TestCommandBindings(t *testing.T) {
 	doc := header + `stages:
-  - { id: build, type: agent, agent: builder, input: [ticket, artifacts/plan.md, $CHANGED],
-      output: artifacts/out.md, on_success: done }
+  - { id: verify, type: command, run: "make check",
+      input: { plan: artifacts/plan.md, spec: docs/spec.md },
+      output: { report: artifacts/report.txt }, on_success: done }
 `
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := f.Stage("build")
-	// Legacy entries carry no Name (Name == "").
-	want := []IOBinding{{Value: "ticket"}, {Value: "artifacts/plan.md"}, {Value: InputChanged}}
-	if len(s.Inputs) != 3 {
+	s := f.Stage("verify")
+	want := []IOBinding{{Name: "plan", Value: "artifacts/plan.md"}, {Name: "spec", Value: "docs/spec.md"}}
+	if len(s.Inputs) != len(want) {
 		t.Fatalf("inputs = %+v", s.Inputs)
 	}
 	for i, w := range want {
@@ -199,22 +239,40 @@ func TestLegacyListBindings(t *testing.T) {
 			t.Errorf("input[%d] = %+v, want %+v", i, s.Inputs[i], w)
 		}
 	}
-	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Value: "artifacts/out.md"}) {
+	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Name: "report", Value: "artifacts/report.txt"}) {
 		t.Errorf("outputs = %+v", s.Outputs)
 	}
 }
 
-func TestMapFormErrors(t *testing.T) {
-	mk := func(binding string) string {
+func TestBindingShapeErrors(t *testing.T) {
+	agent := func(binding string) string {
 		return header + "stages:\n  - { id: a, type: agent, agent: x, " + binding + ", on_success: done }\n"
 	}
 	cases := []struct{ name, doc, want string }{
-		{"dup key", mk("input: { plan: a.md, plan: b.md }"), "bound twice"},
-		{"feedback key", mk("input: { feedback: a.md }"), "filled by edge feedback"},
-		{"ticket value", mk("input: { plan: ticket }"), "always the TASK section"},
-		{"bad input path", mk("input: { plan: /abs }"), "artifact path"},
-		{"non-scalar value", mk("input: { plan: [a, b] }"), "must be a path"},
-		{"bad output path", mk("output: { p: /abs }"), "artifact path"},
+		{"dup key", agent("input: { plan: a.md, plan: b.md }"), "bound twice"},
+		{"ticket value", agent("input: { plan: ticket }"), "always the TASK section"},
+		{"bad input path", agent("input: { plan: /abs }"), "artifact path"},
+		{"non-scalar value", agent("input: { plan: [a, b] }"), "value must be a path"},
+		{"bad output path", agent("output: { p: /abs }"), "artifact path"},
+		{"bad binding name", agent("input: { Bad Name: a.md }"), "lowercase slug"},
+		// One form everywhere: a bare value or a list is a shape error whose
+		// message says what to do instead.
+		{"agent list input", agent("input: [artifacts/plan.md]"), "name each entry"},
+		{"agent scalar output", agent("output: artifacts/out.md"), "name what"},
+		{"command list input", header + "stages:\n  - { id: c, type: command, run: x, input: [a.md] }\n",
+			"name each entry"},
+		{"command sentinel input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $CHANGED } }\n",
+			"must be a relative artifact path"},
+		{"gate scalar input", header + "stages:\n  - { id: g, type: human_gate, input: artifacts/a.md }\n",
+			"name what"},
+		{"gate two inputs", header + "stages:\n  - { id: g, type: human_gate, input: { a: x.md, b: y.md } }\n",
+			"shows one thing"},
+		{"gate bad sentinel", header + "stages:\n  - { id: g, type: human_gate, input: { x: $NOPE } }\n",
+			"must be a relative artifact path"},
+		// Sentinels are scoped: a link is for a human, prompt content is not.
+		{"agent gets a link", agent("input: { mr: $MR_URL }"), "is a link for a human_gate"},
+		{"gate gets prompt content", header + "stages:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n",
+			"not something to show a human"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,21 +283,72 @@ func TestMapFormErrors(t *testing.T) {
 	}
 }
 
-// TestDocInputsJSONOrder pins that the map form marshals to JSON in pair order,
-// not sorted: reordering would churn the flow hash on every editor round-trip.
-func TestDocInputsJSONOrder(t *testing.T) {
-	d := DocInputs{Mapped: true, Pairs: []IOPair{{Name: "z", Value: "1"}, {Name: "a", Value: "2"}, {Name: "m", Value: "3"}}}
+// TestRetiredSpellings: every v1 spelling answers with the v2 upgrade rather
+// than a bare "unknown field", so an old document tells you how to fix itself.
+func TestRetiredSpellings(t *testing.T) {
+	cases := []struct{ name, doc, want string }{
+		{"verdict", header + "stages:\n  - { id: a, type: agent, agent: x, verdict: true }\n",
+			"declare a verdict-typed output on the agent"},
+		{"ping", header + "stages:\n  - { id: g, type: human_gate, ping: plan_approval }\n",
+			`say what you are asking in "question"`},
+		{"payload", header + "stages:\n  - { id: g, type: human_gate, payload: artifacts/plan.md }\n",
+			`renamed "input"`},
+		{"body", header + "stages:\n  - { id: m, type: action, action: create_mr, body: artifacts/mr.md }\n",
+			"with input: {body: <path>}"},
+		{"forge_mr type", header + "stages:\n  - { id: m, type: forge_mr }\n",
+			"use type: action, action: create_mr"},
+		{"feed", header + "stages:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
+			"bind $DECISION"},
+		{"auto_complete", header + "stages:\n  - { id: g, type: human_gate, auto_complete: mr_merged }\n",
+			`use "auto_approve"`},
+		{"bare mr_url", header + "stages:\n  - { id: g, type: human_gate, input: { mr: mr_url } }\n",
+			"use $MR_URL"},
+		{"bare workspace", header + "stages:\n  - { id: g, type: human_gate, input: { w: workspace } }\n",
+			"use $WORKSPACE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want mention of %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestVersionRequired: a document states its grammar, so an unfamiliar one is
+// refused rather than half-understood.
+func TestVersionRequired(t *testing.T) {
+	stages := "stages:\n  - { id: s, type: command, run: x }\n"
+	noVersion := "name: t\ndefaults: { harness: fake, model: a/b }\n" + stages
+	if _, err := Parse("t.yaml", []byte(noVersion)); err == nil || !strings.Contains(err.Error(), "version is required") {
+		t.Errorf("missing version: err = %v", err)
+	}
+	future := "name: t\nversion: 99\ndefaults: { harness: fake, model: a/b }\n" + stages
+	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 2") {
+		t.Errorf("future version: err = %v", err)
+	}
+}
+
+// TestDocIOJSONForms pins the three document forms' JSON shapes. The map form
+// must marshal in pair order, not sorted: reordering would churn the flow hash
+// on every editor round-trip.
+func TestDocIOJSONForms(t *testing.T) {
+	d := DocIO{Pairs: []IOPair{{Name: "z", Value: "1"}, {Name: "a", Value: "2"}, {Name: "m", Value: "3"}}}
 	b, err := json.Marshal(d)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Pair order, not sorted: reordering would churn the flow hash on every
+	// editor round-trip.
 	if string(b) != `{"z":"1","a":"2","m":"3"}` {
 		t.Errorf("json = %s, want pair order z,a,m", b)
 	}
-	// List form marshals as an array.
-	l, _ := json.Marshal(DocInputs{List: []string{"ticket", "$CHANGED"}})
-	if string(l) != `["ticket","$CHANGED"]` {
-		t.Errorf("list json = %s", l)
+	var got DocIO
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := json.Marshal(got); string(out) != string(b) {
+		t.Errorf("round-trip %s -> %s", b, out)
 	}
 }
 
@@ -282,7 +391,7 @@ func TestUnknownFieldRejectedWithLine(t *testing.T) {
 bogus_field: 1
 `
 	fe := parseErr(t, doc)
-	if !strings.Contains(fe.Error(), "bogus_field") || !strings.Contains(fe.Error(), "line 5") {
+	if !strings.Contains(fe.Error(), "bogus_field") || !strings.Contains(fe.Error(), "line 6") {
 		t.Errorf("unknown-field error not line-precise: %s", fe.Error())
 	}
 }
@@ -294,101 +403,103 @@ func TestValidationErrors(t *testing.T) {
 		substr string
 		line   int
 	}{
-		{"missing name", "defaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing name", "version: 2\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"flow name is required", 0},
-		{"missing harness", "name: t\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
-			"defaults.harness is required", 2},
-		{"missing model", "name: t\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing harness", "name: t\nversion: 2\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+			"defaults.harness is required", 3},
+		{"missing model", "name: t\nversion: 2\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"defaults.model is required", 0},
-		{"bad model format", "name: t\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
-			"provider/model", 2},
-		{"bad timeout", "name: t\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
-			"invalid duration", 2},
+		{"bad model format", "name: t\nversion: 2\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
+			"provider/model", 3},
+		{"bad timeout", "name: t\nversion: 2\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
+			"invalid duration", 3},
 		{"no stages", header, "at least one stage", 0},
 		{"duplicate id", header + "stages:\n  - { id: s, type: command, run: x }\n  - { id: s, type: command, run: y }\n",
-			"duplicate id", 5},
+			"duplicate id", 6},
 		{"non-slug id", header + "stages:\n  - { id: Bad_ID, type: command, run: x }\n",
-			"not a slug", 4},
+			"not a slug", 5},
 		{"missing type", header + "stages:\n  - { id: s, run: x }\n",
-			"type is required", 4},
+			"type is required", 5},
 		{"unknown type", header + "stages:\n  - { id: s, type: robot }\n",
-			`unknown type "robot"`, 4},
+			`unknown type "robot"`, 5},
 		{"model on command", header + "stages:\n  - { id: s, type: command, run: x, model: a/b }\n",
-			`field "model" does not apply to type command`, 4},
+			`field "model" does not apply to type command`, 5},
 		{"run and run_ref", header + "stages:\n  - { id: s, type: command, run: x, run_ref: y }\n",
-			"exactly one of run / run_ref", 4},
+			"exactly one of run / run_ref", 5},
 		{"neither run nor run_ref", header + "stages:\n  - { id: s, type: command }\n",
-			"exactly one of run / run_ref", 4},
+			"exactly one of run / run_ref", 5},
 		{"agent missing", header + "stages:\n  - { id: s, type: agent }\n",
-			"agent is required", 4},
-		{"bad input entry", header + "stages:\n  - { id: s, type: agent, agent: a, input: [/etc/passwd] }\n",
-			"input entry", 4},
-		{"dotdot output", header + "stages:\n  - { id: s, type: agent, agent: a, output: ../out.md }\n",
-			"relative artifact path", 4},
-		{"missing ping", header + "stages:\n  - { id: s, type: human_gate }\n",
-			"ping is required", 4},
-		{"unknown ping", header + "stages:\n  - { id: s, type: human_gate, ping: nudge }\n",
-			`unknown ping "nudge"`, 4},
-		{"unknown auto_complete", header + "stages:\n  - { id: s, type: human_gate, ping: final_review, auto_complete: ci_green }\n",
-			"unknown auto_complete", 4},
-		{"forge_mr missing body", header + "stages:\n  - { id: s, type: forge_mr }\n",
-			"body is required", 4},
+			"agent is required", 5},
+		{"bad input path", header + "stages:\n  - { id: s, type: command, run: x, input: { p: /etc/passwd } }\n",
+			"must be a relative artifact path", 5},
+		{"dotdot output", header + "stages:\n  - { id: s, type: command, run: x, output: { o: ../out.md } }\n",
+			"relative artifact path", 5},
+		{"unknown auto_approve", header + "stages:\n  - { id: s, type: human_gate, auto_approve: ci_green }\n",
+			"unknown auto_approve signal", 5},
+		{"action missing action", header + "stages:\n  - { id: s, type: action }\n",
+			"action is required", 5},
+		{"unknown action", header + "stages:\n  - { id: s, type: action, action: send_carrier_pigeon }\n",
+			`unknown action "send_carrier_pigeon"`, 5},
+		{"action missing required input", header + "stages:\n  - { id: s, type: action, action: create_mr }\n",
+			`requires input "body"`, 5},
+		{"action unknown input", header + "stages:\n  - { id: s, type: action, action: create_mr, input: { body: a.md, subject: b.md } }\n",
+			`input "subject" is not an input of action`, 5},
+		{"output on action", header + "stages:\n  - { id: s, type: action, action: create_mr, input: { body: a.md }, output: { x: x.md } }\n",
+			`field "output" does not apply to type action`, 5},
 		{"edge target missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: ghost, max: 2 } }\n",
-			`on_fail target "ghost" does not exist`, 4},
+			`on_fail target "ghost" does not exist`, 5},
 		{"edge max missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s } }\n",
-			"max is required", 4},
+			"max is required", 5},
 		{"edge max zero", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 0 } }\n",
-			"max must be >= 1", 4},
-		{"bad feed pairing", header + "stages:\n  - { id: a, type: agent, agent: x }\n  - { id: g, type: human_gate, ping: plan_approval, on_reject: { to: a, max: 1, feed: output } }\n",
-			`feed "output" is not valid`, 5},
-		{"on_reject without verdict", header + "stages:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1 } }\n",
-			"requires verdict: true", 4},
-		{"on_fail on human_gate", header + "stages:\n  - { id: g, type: human_gate, ping: plan_approval, on_fail: { to: g, max: 1 } }\n",
-			`field "on_fail" does not apply`, 4},
-		{"two forge_mr", header + "stages:\n  - { id: a, type: forge_mr, body: artifacts/mr.md }\n  - { id: b, type: forge_mr, body: artifacts/mr.md }\n",
-			"at most one forge_mr", 5},
-		{"auto_complete not last", header + "stages:\n  - { id: g, type: human_gate, ping: final_review, auto_complete: mr_merged }\n  - { id: s, type: command, run: x }\n",
-			"must complete the run", 4},
+			"max must be >= 1", 5},
+
+		{"on_fail on human_gate", header + "stages:\n  - { id: g, type: human_gate, on_fail: { to: g, max: 1 } }\n",
+			`field "on_fail" does not apply`, 5},
+		{"two create_mr actions", header + "stages:\n  - { id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+			`at most one "create_mr" action`, 6},
+
 		{"reserved done id", header + "stages:\n  - { id: done, type: command, run: x }\n",
-			"reserved", 4},
+			"reserved", 5},
 		{"reserved abort id", header + "stages:\n  - { id: abort, type: command, run: x }\n",
-			"reserved", 4},
+			"reserved", 5},
 		{"reserved start id", header + "stages:\n  - { id: start, type: command, run: x }\n",
-			"reserved", 4},
+			"reserved", 5},
 		{"edge to done", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: done, max: 1 } }\n",
-			"only on_success may complete the run", 4},
+			"only on_success may complete the run", 5},
 		{"abort edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, max: 2 } }\n",
-			"max does not apply", 4},
-		{"abort edge with feed", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, feed: output } }\n",
-			"feed does not apply", 4},
+			"max does not apply", 5},
+
 		{"abort edge with then", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, then: { to: s, max: 1 } } }\n",
-			"then does not apply", 4},
+			"then does not apply", 5},
 		{"on_success abort", header + "stages:\n  - { id: s, type: command, run: x, on_success: abort }\n",
-			`on_success target "abort" does not exist`, 4},
-		{"on_timeout on gate", header + "stages:\n  - { id: g, type: human_gate, ping: plan_approval, on_timeout: { to: g, max: 1 } }\n",
-			`field "on_timeout" does not apply`, 4},
+			`on_success target "abort" does not exist`, 5},
+		{"on_timeout on gate", header + "stages:\n  - { id: g, type: human_gate, on_timeout: { to: g, max: 1 } }\n",
+			`field "on_timeout" does not apply`, 5},
 		{"then target missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: ghost, max: 1 } } }\n",
-			`on_fail target "ghost" does not exist`, 4},
+			`on_fail target "ghost" does not exist`, 5},
 		{"then max missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: s } } }\n",
-			"then #1", 4},
-		{"then bad feed", header + "stages:\n  - { id: a, type: agent, agent: x, verdict: true, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
-			`feed "output" is not valid`, 4},
+			"then #1", 5},
+		{"feed on a then link", header + "stages:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
+			"is retired: bind $DECISION", 5},
 		{"unknown edge field", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
 			"bogus", 0},
 		{"unlimited without a gate on the link", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -1 } }\n",
-			"requires a human_gate", 4},
+			"requires a human_gate", 5},
 		{"max below -1", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -2 } }\n",
-			"max must be >= 1", 4},
-		{"then after unlimited", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: g, max: -1, then: { to: s, max: 1 } } }\n  - { id: g, type: human_gate, ping: plan_approval, on_success: done }\n",
-			"unreachable", 4},
+			"max must be >= 1", 5},
+		{"then after unlimited", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: g, max: -1, then: { to: s, max: 1 } } }\n  - { id: g, type: human_gate, on_success: done }\n",
+			"unreachable", 5},
+		// A wait stage cannot be rejected: there is no human to reject it.
+		{"on_reject on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, on_reject: { to: w, max: 1 } }\n",
+			`field "on_reject" does not apply`, 5},
 		{"on_success bad target", header + "stages:\n  - { id: a, type: command, run: x, on_success: nope }\n",
-			`on_success target "nope" does not exist`, 4},
+			`on_success target "nope" does not exist`, 5},
 		{"success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: b }\n  - { id: b, type: command, run: x, on_success: a }\n",
-			"success cycle", 4},
+			"success cycle", 5},
 		{"self success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: a }\n",
-			"success cycle", 4},
+			"success cycle", 5},
 		{"unreachable stage", header + "stages:\n  - { id: a, type: command, run: x, on_success: done }\n  - { id: b, type: command, run: x, on_success: done }\n",
-			`stage "b" is unreachable`, 5},
+			`stage "b" is unreachable`, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -397,24 +508,84 @@ func TestValidationErrors(t *testing.T) {
 	}
 }
 
-func TestPingTypesOnGates(t *testing.T) {
-	doc := header + "stages:\n  - { id: g, type: human_gate, ping: plan_approval }\n"
-	f, err := Parse("t.yaml", []byte(doc))
+// TestGateInputForms: a gate takes one input — an artifact to review or a
+// sentinel the engine resolves to a link — and says what it is asking in free
+// text. There is no gate kind: what it shows IS what kind it is.
+func TestGateInputForms(t *testing.T) {
+	cases := []struct{ name, value string }{
+		{"artifact", "artifacts/plan.md"},
+		{"workspace", SentinelWorkspace},
+		{"mr url", SentinelMRURL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := header + "stages:\n  - { id: g, type: human_gate, question: \"Ready?\", input: { shown: " + tc.value + " } }\n"
+			f, err := Parse("t.yaml", []byte(doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			g := f.Stages[0]
+			if len(g.Inputs) != 1 || g.Inputs[0] != (IOBinding{Name: "shown", Value: tc.value}) {
+				t.Errorf("Inputs = %+v, want shown -> %q", g.Inputs, tc.value)
+			}
+			if g.Question != "Ready?" {
+				t.Errorf("Question = %q", g.Question)
+			}
+		})
+	}
+	// Both are optional: a gate with neither still parses (it asks about the
+	// run itself, and the engine falls back to naming the stage).
+	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: g, type: human_gate }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Stages[0].Ping != PingPlanApproval {
-		t.Errorf("ping = %q", f.Stages[0].Ping)
+	if len(f.Stages[0].Inputs) != 0 || f.Stages[0].Question != "" {
+		t.Errorf("bare gate = %+v", f.Stages[0])
 	}
+}
 
-	// manual_debug gate with the workspace payload (SSH-and-inspect stop).
-	doc = header + "stages:\n  - { id: g, type: human_gate, ping: manual_debug, payload: workspace }\n"
-	f, err = Parse("t.yaml", []byte(doc))
+// TestWaitStage: blocking on an external signal, and the errors that keep a
+// flow from waiting on something that cannot happen.
+func TestWaitStage(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(header+`stages:
+  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
+  - { id: merged, type: wait, for: mr_merged, timeout: 24h, on_success: done,
+      on_timeout: { to: merged, max: 2 } }
+`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Stages[0].Ping != PingManualDebug || f.Stages[0].Payload != PayloadWorkspace {
-		t.Errorf("manual_debug gate = %+v", f.Stages[0])
+	w := f.Stage("merged")
+	if w.Type != StageWait || w.WaitFor != "mr_merged" || w.Timeout != 24*time.Hour {
+		t.Errorf("wait stage = %+v", w)
+	}
+	// A gate may be auto-answered by the same registry.
+	g, err := Parse("t.yaml", []byte(header+`stages:
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
+  - { id: gate, type: human_gate, question: "Merge?", input: { mr: $MR_URL },
+      auto_approve: mr_merged, on_success: done }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Stage("gate").AutoApprove != "mr_merged" {
+		t.Errorf("auto_approve = %q", g.Stage("gate").AutoApprove)
+	}
+	for _, tc := range []struct{ name, doc, want string }{
+		{"missing for", header + "stages:\n  - { id: w, type: wait }\n", "for is required"},
+		{"unknown signal", header + "stages:\n  - { id: w, type: wait, for: pigs_fly }\n", `unknown signal "pigs_fly"`},
+		{"unknown auto_approve", header + "stages:\n  - { id: g, type: human_gate, auto_approve: pigs_fly }\n",
+			"unknown auto_approve signal"},
+		{"for on a gate", header + "stages:\n  - { id: g, type: human_gate, for: mr_merged }\n",
+			`field "for" does not apply`},
+		{"auto_approve on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, auto_approve: mr_merged }\n",
+			`field "auto_approve" does not apply`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want mention of %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -424,9 +595,9 @@ func TestAbortAndThenChains(t *testing.T) {
 	doc := header + `stages:
   - { id: build, type: agent, agent: b }
   - { id: test,  type: command, run: t,
-      on_fail: { to: test, max: 2, feed: output, then: { to: build, max: 3, feed: output } },
+      on_fail: { to: test, max: 2, then: { to: build, max: 3 } },
       on_timeout: { to: test, max: 1, then: abort } }
-  - { id: gate,  type: human_gate, ping: final_review, on_reject: abort }
+  - { id: gate,  type: human_gate, on_reject: abort }
 `
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
@@ -434,7 +605,7 @@ func TestAbortAndThenChains(t *testing.T) {
 	}
 	test := f.Stage("test")
 	fe := test.Edge(EdgeFail)
-	if fe == nil || fe.To != "test" || fe.Max != 2 || fe.Feed != FeedOutput {
+	if fe == nil || fe.To != "test" || fe.Max != 2 {
 		t.Fatalf("on_fail link 0 = %+v", fe)
 	}
 	if fe.Then == nil || fe.Then.To != "build" || fe.Then.Max != 3 || fe.Then.Then != nil {
@@ -453,7 +624,7 @@ func TestAbortAndThenChains(t *testing.T) {
 	unl := header + `stages:
   - { id: work,   type: command, run: w, on_success: done,
       on_fail: { to: rescue, max: -1 } }
-  - { id: rescue, type: human_gate, ping: manual_debug, payload: workspace,
+  - { id: rescue, type: human_gate, input: { workspace: $WORKSPACE },
       on_success: work, on_reject: abort }
 `
 	uf, err := Parse("t.yaml", []byte(unl))
@@ -468,8 +639,8 @@ func TestAbortAndThenChains(t *testing.T) {
 	// only fires when a human rejects it), regardless of the target type.
 	gsrc := header + `stages:
   - { id: work, type: agent, agent: a, on_success: gate }
-  - { id: gate, type: human_gate, ping: plan_approval, on_success: done,
-      on_reject: { to: work, max: -1, feed: feedback } }
+  - { id: gate, type: human_gate, on_success: done,
+      on_reject: { to: work, max: -1 } }
 `
 	gf, err := Parse("t.yaml", []byte(gsrc))
 	if err != nil {

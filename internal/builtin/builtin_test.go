@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 )
@@ -28,19 +29,42 @@ func TestDefaultFlowBindingsClean(t *testing.T) {
 	}
 }
 
-// TestBuiltinPromptsBindingNeutral guards the rewording: a builtin agent that
-// declares the reserved feedback input must not still reference the old
-// literal "PREVIOUS ATTEMPT FEEDBACK" header, which no longer renders for it.
+// TestShippedFlowsBindCleanly: the flows this repo ships as references bind the
+// built-in agents' contracts with zero errors AND zero warnings — the same check
+// preflight runs at run creation. They are what a human copies to start from, so
+// a stale one teaches the wrong grammar. (The built-in default is covered above;
+// these are the two on disk.)
+func TestShippedFlowsBindCleanly(t *testing.T) {
+	specs := map[string]*agentspec.Spec{}
+	for _, sp := range Agents() {
+		specs[sp.Name] = sp
+	}
+	for _, path := range []string{"../../artifacts/flows/v2.yaml", "../flow/testdata/v2.yaml"} {
+		t.Run(path, func(t *testing.T) {
+			f, err := flow.Load(path)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			errs, warns := flow.ValidateBindings(f, specs)
+			for _, e := range errs {
+				t.Errorf("binding error: %s", e.Error())
+			}
+			for _, w := range warns {
+				t.Errorf("binding warning: %s", w)
+			}
+		})
+	}
+}
+
+// TestBuiltinPromptsBindingNeutral guards the rewording: a prompt must not name
+// a header the engine no longer renders, nor an artifact path the flow is free
+// to rebind. What a stage is given is described in its INPUT sections.
 func TestBuiltinPromptsBindingNeutral(t *testing.T) {
 	for _, sp := range Agents() {
-		declaresFeedback := false
-		for _, in := range sp.Inputs {
-			if in.Name == agentspec.InputFeedback {
-				declaresFeedback = true
+		for _, stale := range []string{"PREVIOUS ATTEMPT FEEDBACK", "# ARTIFACT:", "artifacts/plan.md", "artifacts/verdict.json"} {
+			if strings.Contains(sp.Prompt, stale) {
+				t.Errorf("agent %q prompt names %q, which the flow controls — describe the input instead", sp.Name, stale)
 			}
-		}
-		if declaresFeedback && strings.Contains(sp.Prompt, "PREVIOUS ATTEMPT FEEDBACK") {
-			t.Errorf("agent %q declares feedback but its prompt still names the legacy header", sp.Name)
 		}
 	}
 }
@@ -59,7 +83,7 @@ func TestDefaultsParse(t *testing.T) {
 // TestDefaultFlowPhilosophy: every agent referenced by the default flow is
 // a built-in agent (a fresh install must resolve the whole flow), every
 // agent/command stage declares on_fail, every on_fail chain ends at a
-// manual_debug rescue gate, and that gate resumes the stage that escalated
+// workspace rescue gate, and that gate resumes the stage that escalated
 // to it — the success chain replays from the failure point, never skipping
 // stages.
 func TestDefaultFlowPhilosophy(t *testing.T) {
@@ -81,8 +105,10 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 			e = e.Then
 		}
 		tgt := f.Stage(e.To)
-		if tgt == nil || tgt.Ping != flow.PingManualDebug {
-			t.Errorf("stage %s: on_fail chain ends at %q, want a manual_debug gate", s.ID, e.To)
+		// A rescue gate is one that hands the human the workspace: the kind of
+		// gate is now what it shows, not an enum.
+		if tgt == nil || tgt.Type != flow.StageHumanGate || !showsWorkspace(tgt) {
+			t.Errorf("stage %s: on_fail chain ends at %q, want a gate showing %s", s.ID, e.To, flow.SentinelWorkspace)
 			continue
 		}
 		if tgt.OnSuccess != s.ID {
@@ -92,6 +118,59 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	}
 	if f.Stage("final_gate").Edge(flow.EdgeReject).To != flow.TerminalAbort {
 		t.Error("final_gate.on_reject must be abort")
+	}
+	// Every human_gate says what it is asking: a gate with no question would
+	// park the run on an unexplained decision.
+	for i := range f.Stages {
+		if s := &f.Stages[i]; s.Type == flow.StageHumanGate && s.Question == "" {
+			t.Errorf("gate %s has no question", s.ID)
+		}
+	}
+	// The MR is an action, and the reviewer's verdict is what makes the review
+	// stage's on_reject reachable.
+	if mr := f.Stage("mr"); mr.Type != flow.StageAction || mr.Action != actionspec.CreateMR {
+		t.Errorf("mr stage = %s/%s, want action/%s", mr.Type, mr.Action, actionspec.CreateMR)
+	}
+	if Agent("reviewer").VerdictOutput() == nil {
+		t.Error("the reviewer must declare a verdict output, or review.on_reject can never fire")
+	}
+}
+
+// showsWorkspace reports whether a gate hands the human the workspace links.
+func showsWorkspace(st *flow.Stage) bool {
+	for _, in := range st.Inputs {
+		if in.Value == flow.SentinelWorkspace {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDefaultFlowRetryChannelDeclared: every stage an on_fail or on_reject
+// edge loops back to must bind the matching sentinel, or the retry would run
+// blind — the agent would repeat itself with no idea why it was sent back.
+func TestDefaultFlowRetryChannelDeclared(t *testing.T) {
+	f := Flow(DefaultFlowName)
+	for i := range f.Stages {
+		for kind, e := range f.Stages[i].Edges {
+			for link := e; link != nil; link = link.Then {
+				tgt := f.Stage(link.To)
+				if tgt == nil || tgt.Type != flow.StageAgent {
+					continue // gates and commands cannot read feedback
+				}
+				want := flow.FeedSentinel(kind)
+				bound := false
+				for _, in := range tgt.Inputs {
+					if in.Value == want {
+						bound = true
+					}
+				}
+				if !bound {
+					t.Errorf("stage %s: %s loops back to agent stage %s, which binds no %s",
+						f.Stages[i].ID, kind, tgt.ID, want)
+				}
+			}
+		}
 	}
 }
 
@@ -109,7 +188,7 @@ func TestFlowSourceLayering(t *testing.T) {
 		t.Fatalf("Get(nope) err = %v, want ErrNotFound", err)
 	}
 	// A DB row with the same name shadows the built-in.
-	shadow, err := flow.Parse("default", []byte("name: default\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
+	shadow, err := flow.Parse("default", []byte("name: default\nversion: 2\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

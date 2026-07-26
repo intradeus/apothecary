@@ -10,6 +10,7 @@
     type PlanBlock,
     type ReviewComment
   } from '$lib/planreview';
+  import { isGatePing } from '$lib/ping';
   import { onMount } from 'svelte';
 
   let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
@@ -17,7 +18,7 @@
   // Gates answer approve/reject; ask_human artifact reviews (PLAN4 M16)
   // answer with the composed review text — or a declared option with the
   // review as its note.
-  const isGate = $derived(['plan_approval', 'final_review'].includes(ping.type));
+  const isGate = $derived(isGatePing(ping.type));
 
   let blocks = $state<PlanBlock[]>([]);
   let path = $state('');
