@@ -25,8 +25,17 @@ import (
 )
 
 const loopFlowDoc = `name: loop
-version: 2
+version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: planner
+    prompt: plan the work
+    outputs:
+      - { name: plan, path: artifacts/plan.md }
+  - name: builder
+    prompt: build the thing
+    inputs:
+      - { name: plan, optional: true }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
@@ -85,7 +94,6 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  "loop",
 		Commands:     map[string]string{"setup": "./setup.sh", "verify": "make lint && make test"},
-		AgentNames:   []string{"builder", "fallback", "planner", "reviewer", "sleeper"},
 		HarnessKind:  "fake",
 		Envp:         x.envp,
 		Runner:       x.runner,
@@ -420,8 +428,17 @@ func TestSSEReplayAndLive(t *testing.T) {
 // → 204 + X-Ping-ID (hold expired) → GET re-poll → 200 with the answer.
 func TestShimProtocol(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: ping
-version: 2
+version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: planner
+    prompt: plan the work
+    outputs:
+      - { name: plan, path: artifacts/plan.md }
+  - name: builder
+    prompt: build the thing
+    inputs:
+      - { name: plan, optional: true }
 stages:
   - { id: build, type: agent, agent: builder }
 `)
@@ -666,8 +683,10 @@ func TestAbortAndArchiveAndCapacity(t *testing.T) {
 		t.Fatalf("abort = %d", resp.StatusCode)
 	}
 	x.e.Wait(id3)
+	// An aborted run is ABANDONED: a person stopping the work is a decision,
+	// not an engine fault (PLAN5 M24).
 	_, data = x.do(t, "GET", "/api/runs/"+id3, nil, nil)
-	if !strings.Contains(string(data), `"state":"failed"`) {
+	if !strings.Contains(string(data), `"state":"abandoned"`) {
 		t.Errorf("aborted run detail: %s", data)
 	}
 
@@ -741,8 +760,17 @@ func TestLogsEndpoint(t *testing.T) {
 // for URL payloads, 404 for unknown pings.
 func TestPingArtifact(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
-version: 2
+version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: planner
+    prompt: plan the work
+    outputs:
+      - { name: plan, path: artifacts/plan.md }
+  - name: builder
+    prompt: build the thing
+    inputs:
+      - { name: plan, optional: true }
 stages:
   - { id: plan, type: agent, agent: planner }
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
@@ -802,8 +830,17 @@ stages:
 // stay queryable with both sides of the exchange and their stage.
 func TestPingHistory(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
-version: 2
+version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: planner
+    prompt: plan the work
+    outputs:
+      - { name: plan, path: artifacts/plan.md }
+  - name: builder
+    prompt: build the thing
+    inputs:
+      - { name: plan, optional: true }
 stages:
   - { id: plan, type: agent, agent: planner }
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },

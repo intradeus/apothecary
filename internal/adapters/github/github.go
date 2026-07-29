@@ -183,6 +183,20 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 	return ports.MRRef{IID: pr.Number, URL: pr.HTMLURL}, nil
 }
 
+// FindMR implements the port's reconciliation lookup: the open PR whose head
+// is this branch.
+func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch string) (ports.MRRef, bool, error) {
+	base := repo.DefaultBranch
+	if base == "" {
+		base = "main"
+	}
+	ref, err := a.findOpenPR(ctx, branch, base)
+	if err != nil {
+		return ports.MRRef{}, false, err
+	}
+	return ref, ref.IID != 0, nil
+}
+
 // findOpenPR returns the open PR from branch onto base, or a zero MRRef if
 // none is found. The head filter is scoped to the bound repo's owner.
 func (a *Adapter) findOpenPR(ctx context.Context, branch, base string) (ports.MRRef, error) {

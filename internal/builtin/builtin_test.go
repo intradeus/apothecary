@@ -7,49 +7,33 @@ import (
 	"testing"
 
 	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 )
 
 // TestDefaultFlowBindingsClean is the wiring invariant this feature exists
-// for: the default flow's stage bindings satisfy the built-in agents' declared
-// I/O contract with zero errors AND zero warnings. If a builtin agent's decls
-// and the default flow's bindings ever drift apart, this fails.
+// for: the default flow's stage bindings satisfy its agents' declared I/O
+// contract with zero warnings. Contract VIOLATIONS are parse errors since v3
+// (the agents are in the document), so reaching this test at all proves the
+// errors are clean; what is left to assert is that nothing merely suspicious
+// survives either.
 func TestDefaultFlowBindingsClean(t *testing.T) {
-	specs := map[string]*agentspec.Spec{}
-	for _, sp := range Agents() {
-		specs[sp.Name] = sp
-	}
-	errs, warns := flow.ValidateBindings(Flow(DefaultFlowName), specs)
-	for _, e := range errs {
-		t.Errorf("binding error: %s", e.Error())
-	}
-	for _, w := range warns {
+	for _, w := range Flow(DefaultFlowName).Warnings {
 		t.Errorf("binding warning: %s", w)
 	}
 }
 
-// TestShippedFlowsBindCleanly: the flows this repo ships as references bind the
-// built-in agents' contracts with zero errors AND zero warnings — the same check
-// preflight runs at run creation. They are what a human copies to start from, so
-// a stale one teaches the wrong grammar. (The built-in default is covered above;
-// these are the two on disk.)
+// TestShippedFlowsBindCleanly: the flows this repo ships as references parse
+// and bind their own agents' contracts with zero warnings. They are what a
+// human copies to start from, so a stale one teaches the wrong grammar.
+// (The built-in default is covered above; these are the two on disk.)
 func TestShippedFlowsBindCleanly(t *testing.T) {
-	specs := map[string]*agentspec.Spec{}
-	for _, sp := range Agents() {
-		specs[sp.Name] = sp
-	}
-	for _, path := range []string{"../../artifacts/flows/v2.yaml", "../flow/testdata/v2.yaml"} {
+	for _, path := range []string{"../../artifacts/flows/v3.yaml", "../flow/testdata/v3.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			f, err := flow.Load(path)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			errs, warns := flow.ValidateBindings(f, specs)
-			for _, e := range errs {
-				t.Errorf("binding error: %s", e.Error())
-			}
-			for _, w := range warns {
+			for _, w := range f.Warnings {
 				t.Errorf("binding warning: %s", w)
 			}
 		})
@@ -60,7 +44,7 @@ func TestShippedFlowsBindCleanly(t *testing.T) {
 // a header the engine no longer renders, nor an artifact path the flow is free
 // to rebind. What a stage is given is described in its INPUT sections.
 func TestBuiltinPromptsBindingNeutral(t *testing.T) {
-	for _, sp := range Agents() {
+	for _, sp := range Flow(DefaultFlowName).Agents {
 		for _, stale := range []string{"PREVIOUS ATTEMPT FEEDBACK", "# ARTIFACT:", "artifacts/plan.md", "artifacts/verdict.json"} {
 			if strings.Contains(sp.Prompt, stale) {
 				t.Errorf("agent %q prompt names %q, which the flow controls — describe the input instead", sp.Name, stale)
@@ -72,11 +56,12 @@ func TestBuiltinPromptsBindingNeutral(t *testing.T) {
 // TestDefaultsParse locks the compiled-in defaults: the binary must never
 // ship a default that fails to parse (load panics on the first accessor).
 func TestDefaultsParse(t *testing.T) {
-	if Flow(DefaultFlowName) == nil {
+	f := Flow(DefaultFlowName)
+	if f == nil {
 		t.Fatalf("no built-in flow named %q", DefaultFlowName)
 	}
-	if len(Agents()) == 0 {
-		t.Fatal("no built-in agents")
+	if len(f.Agents) == 0 {
+		t.Fatal("the default flow declares no agents")
 	}
 }
 
@@ -90,8 +75,8 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	f := Flow(DefaultFlowName)
 	for i := range f.Stages {
 		s := &f.Stages[i]
-		if s.Type == flow.StageAgent && Agent(s.Agent) == nil {
-			t.Errorf("stage %s references agent %q, which is not built in", s.ID, s.Agent)
+		if s.Type == flow.StageAgent && f.Agent(s.Agent) == nil {
+			t.Errorf("stage %s references agent %q, which the flow does not declare", s.ID, s.Agent)
 		}
 		if s.Type != flow.StageAgent && s.Type != flow.StageCommand {
 			continue
@@ -131,7 +116,7 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	if mr := f.Stage("mr"); mr.Type != flow.StageAction || mr.Action != actionspec.CreateMR {
 		t.Errorf("mr stage = %s/%s, want action/%s", mr.Type, mr.Action, actionspec.CreateMR)
 	}
-	if Agent("reviewer").VerdictOutput() == nil {
+	if f.Agent("reviewer").VerdictOutput() == nil {
 		t.Error("the reviewer must declare a verdict output, or review.on_reject can never fire")
 	}
 }
@@ -188,7 +173,7 @@ func TestFlowSourceLayering(t *testing.T) {
 		t.Fatalf("Get(nope) err = %v, want ErrNotFound", err)
 	}
 	// A DB row with the same name shadows the built-in.
-	shadow, err := flow.Parse("default", []byte("name: default\nversion: 2\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
+	shadow, err := flow.Parse("default", []byte("name: default\nversion: 3\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

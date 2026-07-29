@@ -45,6 +45,9 @@ type exec struct {
 	// invocation, so it is done lazily before the first stage that needs the
 	// workspace — never for a human_gate.
 	envEnsured bool
+	// redact scrubs engine-injected secrets out of everything that leaves the
+	// workspace (PLAN5 M21). Built once per loop from the resolution.
+	redact *redactor
 }
 
 func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
@@ -78,8 +81,9 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 	defer res.release()
 	x.res = res
+	x.redact = newRedactor(res, e.RunToken(runID))
 
-	fl, err := e.flows.Get(bg, view.FlowName)
+	fl, err := e.pinnedFlow(bg, view.FlowName, view.FlowHash)
 	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
 		var perr *flow.Error
@@ -100,8 +104,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		return
 	}
 	if fl.Hash != view.FlowHash {
-		e.log.Warn("flow file changed since run creation; continuing with current version",
-			"run", runID, "flow", fl.Name)
+		// Only reachable when the pinned version is gone from the store
+		// (pruned, or a pre-pinning run): pinnedFlow already logged it.
+		e.log.Warn("running a flow version other than the one pinned at run creation",
+			"run", runID, "flow", fl.Name, "pinned", view.FlowHash, "using", fl.Hash)
 	}
 	rs := replay(evs, fl)
 	x.rs = rs
@@ -195,7 +201,9 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 func (x *exec) exit(cause error) {
 	switch {
 	case errors.Is(cause, errAborted):
-		_ = x.append(&event.RunFailed{Reason: "aborted"})
+		// A deliberate stop is abandonment, not failure (PLAN5 M24) — the
+		// same terminal the flow's own `abort` edge reaches.
+		_ = x.append(&event.RunAbandoned{StalledAt: x.rs.view.CurrentStage, Reason: "aborted by user"})
 	case errors.Is(cause, errPaused):
 		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage})
 	case errors.Is(cause, errShutdown), cause == nil:
@@ -207,7 +215,26 @@ func (x *exec) exit(cause error) {
 
 // append writes events through the single-writer goroutine, keeps the
 // in-memory view current, and feeds the telemetry sink (§7).
+//
+// Every payload passes through the redactor first: this is the one place
+// workspace output becomes durable (and reaches prompts, gates and the API),
+// so scrubbing here covers every producer at once rather than trusting each
+// call site to remember (PLAN5 M21).
 func (x *exec) append(ps ...event.Payload) error {
+	for _, p := range ps {
+		switch v := p.(type) {
+		case *event.StageFailed:
+			v.Error = x.redact.scrub(v.Error)
+		case *event.EdgeTaken:
+			v.Feed = x.redact.scrub(v.Feed)
+		case *event.EnvFailed:
+			v.Error = x.redact.scrub(v.Error)
+		case *event.RunAbandoned:
+			v.Reason = x.redact.scrub(v.Reason)
+		case *event.RunFailed:
+			v.Reason = x.redact.scrub(v.Reason)
+		}
+	}
 	evs, err := x.e.store.Append(x.bg, x.rs.runID, ps...)
 	if err != nil {
 		return fmt.Errorf("append: %w", err)
@@ -262,6 +289,9 @@ func (x *exec) fail(reason string) error {
 // or an exhausted chain abandons it (§2, §3).
 func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
+	// The feed becomes an abandon reason and rs.feed (which an agent reads as
+	// $FAILURE/$DECISION), neither of which passes through append's scrub.
+	feedContent = x.redact.scrub(feedContent)
 	edge := st.Edge(kind)
 	if edge == nil {
 		// A rejection is a decision, not a breakage: saying "unrecoverable
@@ -400,9 +430,12 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		iter++
 		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter, Harness: st.Harness, Model: st.Model,
-			Agent: st.Agent, AgentHash: x.res.AgentHashes[st.Agent]}); err != nil {
+			Agent: st.Agent, AgentHash: x.rs.fl.AgentHash(st.Agent)}); err != nil {
 			return err
 		}
+		// A fresh attempt starts from a clean slate, so the output contract
+		// below cannot be satisfied by an earlier attempt's file (M18).
+		x.clearOutputs(flow.EffectiveOutputs(st, rs.fl.Agent(st.Agent)))
 	}
 	rs.ph = phIn
 	started := x.e.clock()
@@ -432,6 +465,10 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		return err // cancelled: caller inspects cause
 	}
 	x.writeStageLog(st.ID, iter, res.r.Output)
+	x.publishLog(st.ID, iter, res.r.Output)
+	// Capture whatever this attempt produced BEFORE routing: a failed
+	// attempt's partial outputs are the interesting ones (M27).
+	x.publishOutputs(st, iter, flow.EffectiveOutputs(st, rs.fl.Agent(st.Agent)))
 	if timedOut {
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); err != nil {
 			return err
@@ -456,7 +493,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	// Output contract (§3): every effective output (decl defaults overlaid
 	// with stage rebinds) must exist. All missing paths are reported in one
 	// failure so a human sees the whole gap, not the first file only.
-	if missing := x.missingPaths(flow.EffectiveOutputs(st, x.res.agentSpec(st.Agent))); len(missing) > 0 {
+	if missing := x.missingPaths(flow.EffectiveOutputs(st, x.rs.fl.Agent(st.Agent))); len(missing) > 0 {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
 			Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
 			return aerr
@@ -469,7 +506,9 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if x.verdictPath(st) != "" {
 		v, err := x.readVerdict(st)
 		if err != nil {
-			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); aerr != nil {
+			// The file exists (checked above) but does not hold what its type
+			// promises — a different fault from "never wrote it" (M18).
+			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: err.Error()}); aerr != nil {
 				return aerr
 			}
 			return x.takeEdge(st, flow.EdgeFail, "")
@@ -662,7 +701,8 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			return x.fail(fmt.Sprintf("stage %s: run_ref %q no longer exists in project.commands", st.ID, st.RunRef))
 		}
 	}
-	if rs.ph != phIn { // §2: on recovery, open command stages re-execute without a new attempt
+	fresh := rs.ph != phIn
+	if fresh { // §2: on recovery, open command stages re-execute without a new attempt
 		iter := rs.iters[st.ID] + 1
 		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
@@ -683,7 +723,19 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		return x.takeEdge(st, flow.EdgeFail, "")
 	}
 
-	timeout := rs.fl.Defaults.Timeout
+	// A fresh attempt starts from a clean slate, so the output check below
+	// cannot pass on an earlier attempt's file (M18). After the input check:
+	// the two never overlap in practice, and inputs must survive regardless.
+	if fresh {
+		x.clearOutputs(st.Outputs)
+	}
+
+	// A command stage may bound its own wall clock; unset inherits the flow
+	// default (FLOWLANG §2, PLAN5 M23).
+	timeout := st.Timeout
+	if timeout == 0 {
+		timeout = rs.fl.Defaults.Timeout
+	}
 	cctx, cancel := context.WithTimeout(x.ctx, timeout)
 	res, err := x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: "repo", Timeout: timeout})
 	cancel()
@@ -703,6 +755,8 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		return x.fail("infrastructure error: " + err.Error())
 	}
 	x.writeStageLog(st.ID, rs.iters[st.ID], res.Output)
+	x.publishLog(st.ID, rs.iters[st.ID], res.Output)
+	x.publishOutputs(st, rs.iters[st.ID], st.Outputs)
 	if res.ExitCode != 0 {
 		code := res.ExitCode
 		// The output tail rides in the event so recovery can route the
@@ -742,6 +796,37 @@ func (x *exec) missingPaths(bindings []flow.IOBinding) []string {
 		}
 	}
 	return missing
+}
+
+// clearOutputs deletes a stage's declared outputs before a FRESH attempt
+// (PLAN5 M18). Without it the post-stage existence check passes on a file an
+// EARLIER attempt wrote: attempt 2 could "succeed" without producing
+// anything, and a stale verdict could route the run. Deleting first makes
+// the existing check a freshness check — whatever exists afterwards was
+// written by the attempt that just ran.
+//
+// Never called on crash-recovery re-entry: a resumed harness session
+// continues mid-work, and its partial outputs must survive.
+func (x *exec) clearOutputs(bindings []flow.IOBinding) {
+	var paths []string
+	for _, b := range bindings {
+		if b.Value == "" || flow.IsSentinel(b.Value) {
+			continue
+		}
+		paths = append(paths, shellQuote(b.Value))
+	}
+	if len(paths) == 0 {
+		return
+	}
+	// Best-effort: a workspace that cannot delete is not a stage failure —
+	// the output contract still has the final say.
+	if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{
+		Script:  "rm -f -- " + strings.Join(paths, " "),
+		Dir:     "repo",
+		Timeout: time.Minute,
+	}); err != nil {
+		x.e.log.Warn("clearing declared outputs failed", "run", x.rs.runID, "err", err)
+	}
 }
 
 // --- human gates ------------------------------------------------------------
@@ -1003,10 +1088,22 @@ func (x *exec) stageAction(st *flow.Stage) error {
 // actionCreateMR opens the run's draft merge request. Idempotent via rs.mr,
 // rehydrated from the mr_created event on replay: re-entering after a crash
 // never opens a second MR.
+//
+// The narrow window the event alone cannot cover is a crash BETWEEN the forge
+// call returning and mr_created being appended — the MR exists, the run has
+// no record of it, and re-running would open a duplicate. The action_started
+// intent marker makes that window visible, and reconcileMR closes it by
+// asking the forge what the run's branch already has (PLAN5 M20).
 func (x *exec) actionCreateMR(st *flow.Stage) error {
 	rs := x.rs
 	if rs.mr != nil {
 		return nil
+	}
+	if rs.actionPending[st.ID] {
+		done, err := x.reconcileMR(st)
+		if err != nil || done {
+			return err
+		}
 	}
 	bodyPath := ""
 	if in := st.Input("body"); in != nil {
@@ -1021,6 +1118,13 @@ func (x *exec) actionCreateMR(st *flow.Stage) error {
 		return x.abandon(st.ID, "", fmt.Sprintf("MR body artifact %s missing", bodyPath))
 	}
 	title := mrTitle(string(body), rs.view.TicketTitle)
+	// Record the intent BEFORE the effect: if the process dies past this
+	// point the next boot knows an MR may exist and reconciles instead of
+	// creating a second one.
+	if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
+		return err
+	}
+	rs.actionPending[st.ID] = true
 	ref, err := x.res.Forge.CreateDraftMR(x.ctx, x.res.RepoRef, rs.branch, title, string(body))
 	if err != nil {
 		if x.ctx.Err() != nil {
@@ -1032,9 +1136,43 @@ func (x *exec) actionCreateMR(st *flow.Stage) error {
 		return x.fail("forge MR creation failed: " + err.Error())
 	}
 	rs.mr = &ref
+	delete(rs.actionPending, st.ID)
 	// mr_created is what makes the $MR_URL sentinel and auto_complete polling
 	// work downstream, and what makes this action idempotent.
 	return x.append(&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: rs.branch})
+}
+
+// reconcileMR asks the forge whether the effect this run intended already
+// landed, after a crash in the record-the-effect window. The run's branch is
+// unique per run (factory/<run-id>-…), so it IS the idempotency key — no
+// token needs storing. Reports done=true when an existing MR was adopted.
+//
+// A reconciliation that cannot reach the forge is NOT treated as "no MR":
+// creating a duplicate is worse than failing the stage, which a human can
+// retry once the forge answers again.
+func (x *exec) reconcileMR(st *flow.Stage) (bool, error) {
+	rs := x.rs
+	ref, found, err := x.res.Forge.FindMR(x.ctx, x.res.RepoRef, rs.branch)
+	if err != nil {
+		if x.ctx.Err() != nil {
+			return false, context.Cause(x.ctx)
+		}
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,
+			Error: fmt.Sprintf("cannot tell whether the merge request was already created: %v", err)}); aerr != nil {
+			return false, aerr
+		}
+		return true, x.fail("merge request reconciliation failed: " + err.Error())
+	}
+	if !found {
+		// The crash landed before the forge saw anything: create normally.
+		delete(rs.actionPending, st.ID)
+		return false, nil
+	}
+	x.e.log.Info("adopted an existing merge request after an interrupted create",
+		"run", rs.runID, "stage", st.ID, "mr", ref.URL)
+	rs.mr = &ref
+	delete(rs.actionPending, st.ID)
+	return true, x.append(&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: rs.branch})
 }
 
 // --- wait stages ------------------------------------------------------------
@@ -1135,7 +1273,7 @@ func gateQuestion(st *flow.Stage, ticketTitle string) string {
 // agent renders none. Single source for prompt assembly, the post-run read and
 // crash recovery.
 func (x *exec) verdictPath(st *flow.Stage) string {
-	return flow.VerdictPath(st, x.res.agentSpec(st.Agent))
+	return flow.VerdictPath(st, x.rs.fl.Agent(st.Agent))
 }
 
 // workspaceLink picks the link a debugging human wants first: the web
@@ -1371,6 +1509,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		GitEmail:     res.GitEmail,
 		SeedAuth:     res.SeedAuth,
 		Prepare:      res.Prepare,
+		Agents:       x.rs.fl.AgentSpecs(),
 		Setup:        res.Commands["setup"], // optional in v2: "" skips step 6
 		Timeout:      x.rs.fl.Defaults.Timeout,
 	})
@@ -1423,7 +1562,9 @@ func (x *exec) writeStageLog(stageID string, iter int, output string) {
 		return
 	}
 	path := filepath.Join(dir, fmt.Sprintf("%s-%d.log", stageID, iter))
-	if err := os.WriteFile(path, []byte(output), 0o644); err != nil {
+	// The log outlives the workspace and is served to humans, so it gets the
+	// same scrub as the event stream (M21).
+	if err := os.WriteFile(path, []byte(x.redact.scrub(output)), 0o644); err != nil {
 		x.e.log.Warn("stage log write", "run", x.rs.runID, "err", err)
 	}
 }

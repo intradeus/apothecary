@@ -25,7 +25,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		fmt.Fprintf(&b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.view.RunGoal)
 	}
 
-	spec := x.res.agentSpec(st.Agent)
+	spec := rs.fl.Agent(st.Agent)
 	for _, in := range st.Inputs {
 		if flow.IsFeedSentinel(in.Value) {
 			// The content of the edge that re-entered this stage. Only one of
@@ -40,8 +40,16 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 		if in.Value == flow.SentinelChanged {
 			stat := "(no diff available)"
+			// Diff against the branch this run actually forked from, not the
+			// project default — a run started off a feature branch would
+			// otherwise be diffed against the wrong base and report every
+			// change the two branches differ by (PLAN5 M23).
+			base := sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch)
 			res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
-				Script:  fmt.Sprintf("git diff --stat origin/%s...HEAD", x.res.RepoRef.DefaultBranch),
+				// --name-status, not --stat: the sentinel is the changed-FILE
+				// list (FLOWLANG §4) and the agent reads the files itself, so
+				// churn counts are noise that crowds the prompt.
+				Script:  fmt.Sprintf("git diff --name-status origin/%s...HEAD", base),
 				Dir:     "repo",
 				Timeout: rs.fl.Defaults.Timeout,
 			})

@@ -7,12 +7,19 @@ package flow
 import (
 	"strings"
 	"time"
+
+	"apothecary/internal/agentspec"
 )
 
 // CurrentVersion is the grammar this build speaks. Every document declares
 // its version, so a future break gets a clean refusal ("this build speaks
-// version 2") instead of mis-parsing an unfamiliar shape.
-const CurrentVersion = 2
+// version 3") instead of mis-parsing an unfamiliar shape.
+//
+// v3 (PLAN5 M26) moved agents INTO the flow: a document now carries the
+// definitions of every agent it runs, so a flow is self-contained and its
+// contracts are checked at parse time rather than against a per-project
+// library the parser cannot see.
+const CurrentVersion = 3
 
 type StageType string
 
@@ -220,10 +227,56 @@ type Flow struct {
 	Description string
 	Defaults    Defaults
 	Budget      Budget
-	Stages      []Stage
+	// Agents are the agent definitions this flow runs, in document order
+	// (FLOWLANG §1, v3). The flow is the single source: every agent stage's
+	// Agent names one of these, so contracts are parse-time facts and the
+	// run pins prompts along with the rest of the document.
+	Agents []agentspec.Spec
+	Stages []Stage
 
 	// Hash is the SHA-256 (hex) of the raw flow file.
 	Hash string
+
+	// Warnings are advisory findings from parsing: legal constructs that look
+	// like mistakes (a path no stage produces, a sentinel no edge can fill).
+	// Never block a save or a run — everything that breaks is a parse error
+	// now that agents live in the document.
+	Warnings []string
+}
+
+// Agent returns the flow's definition of name, or nil.
+func (f *Flow) Agent(name string) *agentspec.Spec {
+	if f == nil {
+		return nil
+	}
+	for i := range f.Agents {
+		if f.Agents[i].Name == name {
+			return &f.Agents[i]
+		}
+	}
+	return nil
+}
+
+// AgentHash is the content address of the flow's agent, or "" when it
+// declares no such agent. Recorded on every stage_started.
+func (f *Flow) AgentHash(name string) string {
+	if sp := f.Agent(name); sp != nil {
+		return agentspec.Hash(sp)
+	}
+	return ""
+}
+
+// AgentSpecs lists every agent the flow declares, for the harness adapters
+// that must materialize them in the workspace (Harness.Prepare).
+func (f *Flow) AgentSpecs() []*agentspec.Spec {
+	if f == nil {
+		return nil
+	}
+	out := make([]*agentspec.Spec, 0, len(f.Agents))
+	for i := range f.Agents {
+		out = append(out, &f.Agents[i])
+	}
+	return out
 }
 
 // Stage returns the stage with the given id, or nil.

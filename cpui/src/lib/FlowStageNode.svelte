@@ -23,7 +23,7 @@
   const outputs = $derived(stageOutputs(stage, agents, actions));
 
   // xyflow caches handle geometry per node id, and a node's id is stable while
-  // its dots come and go (bindings change, the agent library arrives async).
+  // its dots come and go (bindings change as the document is edited).
   // Telling it to re-measure is what keeps the data edges attached.
   const updateNodeInternals = useUpdateNodeInternals();
   const dotSignature = $derived(

@@ -2,10 +2,13 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"apothecary/internal/adapters/fake"
 	"apothecary/internal/artifacts"
+	"apothecary/internal/event"
 	"apothecary/internal/ports"
 )
 
@@ -17,6 +20,16 @@ type fakeArtifacts struct {
 
 func (f *fakeArtifacts) Associate(context.Context, []string, string, string, string) error {
 	return nil
+}
+func (f *fakeArtifacts) Capture(_ context.Context, m artifacts.Meta, data []byte) (artifacts.Meta, error) {
+	m.ID = fmt.Sprintf("cap%d", len(f.metas)+1)
+	m.Size = int64(len(data))
+	f.metas = append(f.metas, m)
+	if f.blobs == nil {
+		f.blobs = map[string][]byte{}
+	}
+	f.blobs[m.ID] = append([]byte(nil), data...)
+	return m, nil
 }
 func (f *fakeArtifacts) ForRun(context.Context, string) ([]artifacts.Meta, error) {
 	// Ticket-scoped artifacts are owned by the ticket (run_id empty), so the
@@ -84,5 +97,92 @@ func TestGoalArtifactsDeliveredAndPrompted(t *testing.T) {
 	data, err := h.envp.ReadFile(context.Background(), ports.EnvID(env), wantPath)
 	if err != nil || string(data) != "%PDF-1.4" {
 		t.Errorf("artifact not delivered into workspace: %q, %v", data, err)
+	}
+}
+
+// TestAttemptSnapshotsSurviveRetries is the point of M27: attempt 1's output
+// stays inspectable after attempt 2 overwrites the file. Before, a retry left
+// nothing behind — the workspace holds one version per path and the event
+// store kept only 8 KB tails, so "the plan the human rejected" was gone.
+func TestAttemptSnapshotsSurviveRetries(t *testing.T) {
+	doc := `name: snap
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: plan, type: agent, agent: planner, input: { failure: $FAILURE }, on_success: check }
+  - { id: check, type: command, run: verify, on_success: done,
+      on_fail: { to: plan, max: 1 } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	fa := &fakeArtifacts{}
+	h.e.SetArtifacts(fa)
+
+	attempt := 0
+	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
+		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+			attempt++
+			h.writeFile(t, c.Env, "artifacts/plan.md", fmt.Sprintf("plan revision %d", attempt))
+			return ports.AgentResult{}, nil
+		},
+	})
+	// The check fails once, so the planner runs twice and rewrites the file.
+	checks := 0
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if !strings.Contains(cmd.Script, "verify") {
+			return ports.ExecResult{}, nil
+		}
+		checks++
+		if checks == 1 {
+			return ports.ExecResult{ExitCode: 1, Output: "boom"}, nil
+		}
+		return ports.ExecResult{}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "snap", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	// Both revisions are captured, attributed to their attempt.
+	want := map[int]string{1: "plan revision 1", 2: "plan revision 2"}
+	found := map[int]string{}
+	for _, m := range fa.metas {
+		if m.StageID == "plan" && m.Scope == artifacts.ScopeStageOutput {
+			found[m.Iteration] = string(fa.blobs[m.ID])
+			if m.OutputName != "plan" {
+				t.Errorf("snapshot output name = %q, want %q", m.OutputName, "plan")
+			}
+		}
+	}
+	for iter, body := range want {
+		if found[iter] != body {
+			t.Errorf("attempt %d snapshot = %q, want %q", iter, found[iter], body)
+		}
+	}
+
+	// The failing command's whole log is captured too, not just its tail.
+	var log string
+	for _, m := range fa.metas {
+		if m.StageID == "check" && m.Scope == artifacts.ScopeStageLog {
+			log = string(fa.blobs[m.ID])
+		}
+	}
+	if !strings.Contains(log, "boom") {
+		t.Errorf("check log = %q, want the command's output", log)
+	}
+
+	// Every snapshot is linked from the timeline by reference, never by value.
+	published := 0
+	for _, ev := range h.events(t, runID) {
+		if p, ok := ev.Payload.(*event.ArtifactPublished); ok {
+			published++
+			if p.ArtifactID == "" {
+				t.Errorf("artifact_published carries no artifact id: %+v", p)
+			}
+		}
+	}
+	if published < 3 { // 2 plan outputs + at least one log
+		t.Errorf("artifact_published count = %d, want the outputs and logs of every attempt", published)
 	}
 }

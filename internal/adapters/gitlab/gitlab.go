@@ -182,6 +182,20 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 	return ports.MRRef{IID: mr.IID, URL: mr.WebURL}, nil
 }
 
+// FindMR implements the port's reconciliation lookup: the open MR for this
+// source branch, onto the repo's default target.
+func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch string) (ports.MRRef, bool, error) {
+	target := repo.DefaultBranch
+	if target == "" {
+		target = "main"
+	}
+	ref, err := a.findOpenMR(ctx, branch, target)
+	if err != nil {
+		return ports.MRRef{}, false, err
+	}
+	return ref, ref.IID != 0, nil
+}
+
 // findOpenMR returns the open MR from branch onto target, or a zero MRRef if
 // none is found.
 func (a *Adapter) findOpenMR(ctx context.Context, branch, target string) (ports.MRRef, error) {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 )
 
@@ -41,6 +42,10 @@ type EnvCheckOptions struct {
 	EnginePort int    // tunnel probe target (workspace-local loopback)
 	Keep       bool   // keep the workspace for inspection
 	Timeout    time.Duration
+	// Agents are the agent definitions to materialize during the bootstrap
+	// step, taken from the project's default flow (FLOWLANG §1, v3 — agents
+	// belong to a flow, not a project). Empty simply generates no configs.
+	Agents []*agentspec.Spec
 }
 
 // RunEnvCheck provisions, bootstraps and verifies one throwaway
@@ -112,6 +117,7 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		GitName:      res.GitName,
 		GitEmail:     res.GitEmail,
 		Prepare:      res.Prepare,
+		Agents:       opts.Agents,
 		Setup:        res.Commands["setup"],
 		Timeout:      10 * time.Minute,
 	}), "clone + seed auth + prepare + setup")
@@ -223,6 +229,14 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	if err != nil {
 		return "", err
 	}
+	// Agents ride the project's default flow (FLOWLANG §1, v3), so the probe
+	// generates the same harness configs a real run would. A flow that no
+	// longer resolves is not this check's business — it probes the
+	// environment, so fall through with no agents rather than refusing.
+	var agents []*agentspec.Spec
+	if fl, ferr := e.flows.Get(ctx, res.DefaultFlow); ferr == nil {
+		agents = fl.AgentSpecs()
+	}
 	id := e.newID()
 	st := &envCheckState{snap: CheckRun{
 		ID: id, ProjectID: projectID, Status: "running", Keep: keep, StartedAt: e.clock(),
@@ -260,7 +274,7 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	go func() {
 		defer res.release()
 		failed := RunEnvCheck(context.Background(), res, checkRunID,
-			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep},
+			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep, Agents: agents},
 			func(s CheckStep) {
 				e.mu.Lock()
 				st.snap.Steps = append(st.snap.Steps, s)

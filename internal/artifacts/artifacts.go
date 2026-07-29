@@ -37,7 +37,20 @@ const (
 	// otherwise only ever reach the first run.
 	ScopeTicketGoal = "ticket_goal"
 	ScopePingAnswer = "ping_answer"
+	// ScopeStageOutput / ScopeStageLog are per-attempt snapshots (PLAN5 M27):
+	// what a stage attempt actually produced, and what it printed. Unlike the
+	// scopes above these are engine-captured rather than human-uploaded, and
+	// they deliberately OUTLIVE the run — they are the audit trail, so the
+	// archive sweep leaves them alone.
+	ScopeStageOutput = "stage_output"
+	ScopeStageLog    = "stage_log"
 )
+
+// IsStageScope reports whether a scope is an engine-captured attempt
+// snapshot rather than a human upload.
+func IsStageScope(scope string) bool {
+	return scope == ScopeStageOutput || scope == ScopeStageLog
+}
 
 var (
 	ErrTooLarge = errors.New("artifact exceeds the size limit")
@@ -56,12 +69,19 @@ type Meta struct {
 	Size      int64
 	SHA256    string
 	CreatedAt time.Time
+	// StageID/Iteration/OutputName attribute a stage-scoped snapshot to the
+	// attempt that produced it (PLAN5 M27). OutputName is the declared
+	// output's ROLE ("plan", "verdict") — empty for a stage log.
+	StageID    string
+	Iteration  int
+	OutputName string
 }
 
 // DB is the metadata persistence the Store needs (a port; *pgstore.Store
 // implements it). Kept in Meta terms so the store is testable with a fake.
 type DB interface {
 	InsertArtifact(ctx context.Context, m Meta) error
+	ArtifactsForStage(ctx context.Context, runID string) ([]Meta, error)
 	AssociateArtifacts(ctx context.Context, ids []string, runID, pingID, scope string) error
 	ArtifactsForRun(ctx context.Context, runID string) ([]Meta, error)
 	ArtifactsForPing(ctx context.Context, pingID, scope string) ([]Meta, error)
@@ -160,6 +180,55 @@ func (s *Store) Associate(ctx context.Context, ids []string, runID, pingID, scop
 	return s.db.AssociateArtifacts(ctx, ids, runID, pingID, scope)
 }
 
+// Capture stores an engine-produced attempt snapshot: a declared output's
+// bytes or a stage's log (PLAN5 M27). Unlike Save it takes the bytes
+// directly, skips the MIME allowlist (the engine, not a browser upload,
+// decides what is captured) and lands attached rather than orphaned.
+//
+// Oversized content is TAIL-truncated with a marker rather than dropped: for
+// an audit trail a truncated artifact beats a missing one.
+func (s *Store) Capture(ctx context.Context, m Meta, data []byte) (Meta, error) {
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return Meta{}, err
+	}
+	if int64(len(data)) > s.max {
+		const marker = "\n[... truncated: this artifact exceeded the capture limit ...]\n"
+		keep := s.max - int64(len(marker))
+		if keep < 0 {
+			keep = 0
+		}
+		data = append([]byte(marker), data[int64(len(data))-keep:]...)
+	}
+	id := newID()
+	if err := os.MkdirAll(filepath.Join(s.dir, id[:2]), 0o755); err != nil {
+		return Meta{}, err
+	}
+	sum := sha256.Sum256(data)
+	m.ID = id
+	m.Size = int64(len(data))
+	m.SHA256 = hex.EncodeToString(sum[:])
+	if m.Filename == "" {
+		m.Filename = "file"
+	}
+	m.Filename = SafeName(m.Filename)
+	if m.Mime == "" {
+		m.Mime = detectMimeBytes(data, m.Filename)
+	}
+	if err := os.WriteFile(s.blobPath(id), data, 0o600); err != nil {
+		return Meta{}, err
+	}
+	if err := s.db.InsertArtifact(ctx, m); err != nil {
+		os.Remove(s.blobPath(id))
+		return Meta{}, err
+	}
+	return m, nil
+}
+
+// ForStage lists a run's per-attempt snapshots, oldest first.
+func (s *Store) ForStage(ctx context.Context, runID string) ([]Meta, error) {
+	return s.db.ArtifactsForStage(ctx, runID)
+}
+
 // Meta returns one artifact's metadata by id (no bytes). Used to resolve a
 // ticket's attachments, which are owned by the ticket rather than any run and
 // so can't be found through ForRun.
@@ -173,6 +242,17 @@ func (s *Store) ForRun(ctx context.Context, runID string) ([]Meta, error) {
 
 func (s *Store) ForPing(ctx context.Context, pingID, scope string) ([]Meta, error) {
 	return s.db.ArtifactsForPing(ctx, pingID, scope)
+}
+
+// detectMimeBytes classifies captured content without a temp file.
+func detectMimeBytes(data []byte, filename string) string {
+	if ext := filepath.Ext(filename); ext != "" {
+		if ct := mime.TypeByExtension(ext); ct != "" {
+			return strings.TrimSpace(strings.Split(ct, ";")[0])
+		}
+	}
+	n := min(len(data), 512)
+	return strings.TrimSpace(strings.Split(http.DetectContentType(data[:n]), ";")[0])
 }
 
 // DeleteForRun removes a run's artifact rows and their blobs (run archive).

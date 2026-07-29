@@ -124,6 +124,11 @@ func Apply(v *View, e *event.Event) {
 		// persisted (abandoned/failed runs are never reaped).
 		v.State = Running
 		v.CurrentStage = p.StageID
+		// "Try again" re-pins the run to the flow version resume saw, so an
+		// edit made to fix the failure actually takes effect (PLAN5 M19).
+		if p.FlowHash != "" {
+			v.FlowHash = p.FlowHash
+		}
 	case *event.RunPaused:
 		v.State = Paused
 		if p.StageID != "" {

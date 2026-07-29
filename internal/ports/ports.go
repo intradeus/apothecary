@@ -400,6 +400,12 @@ type Forge interface {
 	CheckAccess(ctx context.Context, repo RepoRef) error
 	FileExists(ctx context.Context, repo RepoRef, path string) (bool, error)
 	CreateDraftMR(ctx context.Context, repo RepoRef, branch, title, body string) (MRRef, error)
+	// FindMR locates an already-open merge request for the run's branch.
+	// The engine reconciles with it after a crash between creating an MR on
+	// the forge and recording it (PLAN5 M20): the branch is unique per run,
+	// so it is a natural idempotency key and needs no stored token. ok=false
+	// means "no such MR", which is distinct from an error.
+	FindMR(ctx context.Context, repo RepoRef, branch string) (ref MRRef, ok bool, err error)
 	MRState(ctx context.Context, mr MRRef) (MRState, error)
 }
 

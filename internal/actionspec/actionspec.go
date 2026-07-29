@@ -65,9 +65,13 @@ type Action struct {
 	// a flow using this action to start; empty = no integration needed.
 	Requires string `json:"requires,omitempty"`
 	// Single caps the action at one stage per flow (a run has one MR).
-	Single  bool        `json:"single,omitempty"`
-	Inputs  []InputSig  `json:"inputs,omitempty"`
-	Outputs []OutputSig `json:"outputs,omitempty"`
+	Single bool `json:"single,omitempty"`
+	// Provides names the run fact this action establishes, mirroring a
+	// signal's Needs (signalspec): the validator pairs them to catch a wait
+	// whose prerequisite no path creates.
+	Provides string      `json:"provides,omitempty"`
+	Inputs   []InputSig  `json:"inputs,omitempty"`
+	Outputs  []OutputSig `json:"outputs,omitempty"`
 }
 
 // Action slugs and the port kinds they require.
@@ -75,6 +79,10 @@ const (
 	CreateMR = "create_mr"
 
 	RequiresForge = "forge"
+
+	// ProvidesMR pairs with signalspec.NeedsMR: create_mr is what makes an
+	// mr_merged / mr_closed wait reachable.
+	ProvidesMR = "merge_request"
 )
 
 var registry = []Action{{
@@ -83,6 +91,7 @@ var registry = []Action{{
 	Description: "Opens a draft merge request for the run's branch. The body artifact's first `# ` heading becomes the title (the ticket title when it has none).",
 	Requires:    RequiresForge,
 	Single:      true,
+	Provides:    ProvidesMR,
 	Inputs: []InputSig{{
 		Name:        "body",
 		Description: "markdown description of the change; its first heading is the MR title",

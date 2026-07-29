@@ -153,18 +153,6 @@ export interface Ticket {
   updated_at: string;
 }
 
-// One declared input (files/$CHANGED the agent expects) or output (files it
-// must produce) in an agent's I/O contract (FLOWLANG §4). Inputs carry
-// `optional`; outputs carry a default `path` and, optionally, a `type` that
-// gives the file a contract beyond "it exists" — 'verdict' is the
-// APPROVE/REJECT decision the engine parses and routes on_reject from.
-export interface AgentIODecl {
-  name: string;
-  description?: string;
-  optional?: boolean;
-  path?: string;
-  type?: '' | 'verdict';
-}
 
 // One input or output in a built-in action's signature (GET /api/actions). A
 // 'file' carries an artifact path; a 'value' is engine-held and consumed by
@@ -205,37 +193,7 @@ export interface ActionSpec {
   outputs?: ActionIOSig[];
 }
 
-// Agent library (DESIGN3 §1): per-project, versioned, copiable.
-export interface Agent {
-  project_id: string;
-  name: string;
-  description: string;
-  read_only: boolean;
-  allow_bash: boolean;
-  prompt: string;
-  inputs?: AgentIODecl[];
-  outputs?: AgentIODecl[];
-  hash: string;
-  updated_at: string;
-  // Served from the binary's defaults (not authored in this project);
-  // saving under the same name creates the project's own copy.
-  builtin?: boolean;
-}
 
-export interface AgentVersion {
-  hash: string;
-  name: string;
-  spec: {
-    name: string;
-    description: string;
-    read_only: boolean;
-    allow_bash: boolean;
-    prompt: string;
-    inputs?: AgentIODecl[];
-    outputs?: AgentIODecl[];
-  };
-  created_at: string;
-}
 
 export interface FlowLayout {
   nodes: Record<string, { x: number; y: number }>;
@@ -547,32 +505,10 @@ export const api = {
     post(`/api/projects/${projectId}/envcheck`, { keep }) as Promise<{ check_id: string }>,
   envCheck: (checkId: string) => req<CheckRun>(`/api/envchecks/${checkId}`),
 
-  // agent library (DESIGN3 §1)
-  agents: (projectId: string) => req<Agent[]>(`/api/projects/${projectId}/agents`),
-  // Project-independent merged library for the flow editor (builtins overlaid
-  // with a project's authored agents when projectId is given).
-  allAgents: (projectId?: string) =>
-    req<Agent[]>(`/api/agents${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`),
-  putAgent: (
-    projectId: string,
-    name: string,
-    body: {
-      description: string;
-      read_only: boolean;
-      allow_bash: boolean;
-      prompt: string;
-      inputs?: AgentIODecl[];
-      outputs?: AgentIODecl[];
-    }
-  ) => put(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, body) as Promise<Agent>,
+  // Agents are declared IN the flow since v3 (FLOWLANG §1) — the editor
+  // reads them from the document, so there is no library endpoint.
   actions: () => req<ActionSpec[]>('/api/actions'),
   signals: () => req<SignalSpec[]>('/api/signals'),
-  deleteAgent: (projectId: string, name: string) =>
-    req<void>(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  agentVersions: (projectId: string, name: string) =>
-    req<AgentVersion[]>(`/api/projects/${projectId}/agents/${encodeURIComponent(name)}/versions`),
-  copyAgents: (projectId: string, fromProjectId: string, names?: string[]) =>
-    post(`/api/projects/${projectId}/agents/copy`, { from_project_id: fromProjectId, ...(names?.length ? { names } : {}) }) as Promise<{ copied: Agent[] }>,
   flows: () => req<FlowRow[]>('/api/flows'),
   flow: (name: string) => req<FlowRow>(`/api/flows/${encodeURIComponent(name)}`),
   createFlow: (name: string, yaml: string, layout?: FlowLayout) =>

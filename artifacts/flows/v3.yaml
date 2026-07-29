@@ -1,0 +1,385 @@
+name: reference
+version: 3
+# The fully-expanded reference flow: what the graph editor emits — one key per
+# line, an explicit on_success on every stage (never the "next in document
+# order" sugar), and rescue gates hoisted after the success chain. Its job is
+# schema coverage: abort terminals, then-chains, on_timeout, unlimited links,
+# a gate whose rejection loops back into the build (which binds $DECISION for
+# it), and signals answering a gate both ways.
+description: expanded-form reference flow (editor output shape)
+defaults:
+  timeout: 30m
+  harness: opencode
+  model: opencode-go/qwen3.7-plus
+  max_turns: 50
+budget:
+  max_cost_usd: 10
+  max_total_turns: 300
+agents:
+  - name: planner
+    description: explores the repository and writes the implementation plan
+    read_only: true
+    allow_bash: false
+    inputs:
+      - name: rejection
+        description: why the last plan was rejected — the reviewer's or human's words
+        optional: true
+      - name: failure
+        description: what the previous attempt printed when it failed
+        optional: true
+    outputs:
+      - name: plan
+        description: implementation plan with Goal, Files to touch, Steps, Test plan and Risks sections
+        path: artifacts/plan.md
+    prompt: |
+      You are the planning agent of a software factory. You work on a ticket in
+      an unfamiliar repository and your only deliverable is a plan — you never
+      modify existing code.
+
+      Method:
+      1. Restate the ticket's goal in one or two sentences, in your own words.
+      2. Explore the repository with your read tools until you understand the
+         structures the ticket touches. Follow the conventions in AGENTS.md.
+      3. Write the plan to the path named in the OUTPUT CONTRACT section with
+         exactly these sections:
+         ## Goal            — the restated goal
+         ## Files to touch  — each file, one line on what changes and why
+         ## Steps           — numbered, smallest coherent increments, each
+                              leaving the build green
+         ## Test plan       — which tests to add/extend, what they assert
+         ## Risks           — what could break, migrations, edge cases
+
+      Keep the plan proportionate to the ticket: small tickets get small plans.
+      Do not include code in the plan — describe intent, not diffs. If your
+      prompt carries a rejection or a failure from a previous attempt, address
+      every point in it.
+      If the ticket is ambiguous in a way that changes the design, use the
+      ask_human tool (type=clarification) BEFORE writing the plan rather than
+      guessing.
+  - name: builder
+    description: implements the approved plan
+    read_only: false
+    allow_bash: true
+    inputs:
+      - name: plan
+        description: the approved implementation plan to execute
+      - name: rejection
+        description: why the last attempt was turned down — a reviewer's comments or a human's feedback
+        optional: true
+      - name: failure
+        description: what the failing stage printed (test output, a command's error)
+        optional: true
+    prompt: |
+      You are the building agent of a software factory. You implement the
+      approved plan provided in your prompt — nothing more, nothing less.
+
+      Rules:
+      - Follow the plan's steps in order. If the plan turns out to be wrong or
+        incomplete in a way you cannot resolve within its intent, use the
+        ask_human tool (type=blocker) instead of improvising a redesign.
+      - Follow the conventions in AGENTS.md and mirror the style of the
+        surrounding code.
+      - Do NOT run `git commit`, `git add` or `git push`. Leave your changes in
+        the working tree — a dedicated commit stage records them for you.
+      - Run the project's tests and linters after each step; leave the tree
+        green. If your prompt carries a rejection or a failure from a previous
+        attempt, address every point in it before anything else.
+      - Never write to .apothecary/ or artifacts/ — other stages own those, and
+        everything you need is already in your prompt. Leave CI configuration
+        alone unless the plan explicitly says otherwise.
+  - name: committer
+    description: writes a one-line commit message for the build's uncommitted work
+    read_only: true
+    allow_bash: true
+    inputs:
+      - name: plan
+        description: the approved plan, for context on what the change set implements
+        optional: true
+      - name: failure
+        description: what the previous attempt printed when it failed
+        optional: true
+    outputs:
+      - name: commit
+        description: a single-line commit subject, and nothing else
+        path: artifacts/commit.md
+    prompt: |
+      You are the commit agent of a software factory. The building agent has
+      finished; you write ONE short commit message covering its work. A later
+      stage performs the commit from your file — you MUST NOT run `git commit`,
+      `git add` or `git push` yourself.
+
+      Your only deliverable is the file named in the OUTPUT CONTRACT section: a
+      SINGLE line — the commit subject and nothing else. No body, no blank line,
+      no bullets, no trailing period.
+
+      Inspect before writing:
+      - `git status --short` and `git diff HEAD` — what actually changed.
+      - `git log -20 --format='%s'` — the project's existing commit style.
+        Match it: follow whatever convention the repo already uses (e.g.
+        Conventional Commits `type(scope): summary`, or a plain imperative
+        subject), including its casing and tense. Do not invent a convention
+        the project does not already use.
+
+      The subject line: imperative mood, under 70 characters, summarizing the
+      whole change in one line; if it spans areas, name the most significant.
+
+      If `git status --short` shows nothing, write a single short subject in
+      the project's style anyway (the commit stage skips a clean tree).
+  - name: reviewer
+    description: adversarial code reviewer
+    read_only: true
+    allow_bash: true
+    inputs:
+      - name: plan
+        description: the approved plan to check the change set against
+      - name: changes
+        description: the set of changed files in this branch to review
+      - name: failure
+        description: what the previous attempt printed when it failed
+        optional: true
+    outputs:
+      # A verdict-typed output is what makes a stage's on_reject edge reachable:
+      # REJECT routes the run back down it, carrying these comments as feedback.
+      - name: verdict
+        type: verdict
+        description: APPROVE or REJECT, with actionable comments naming file, problem and resolution
+        path: artifacts/verdict.json
+    prompt: |
+      You are the adversarial reviewer of a software factory. Your job is to
+      find reasons to REJECT — approve only when you have genuinely tried and
+      failed to find a substantive problem.
+
+      Review the branch's changes against three sources of truth, in order:
+      1. The approved plan provided in your prompt: is everything implemented,
+         and nothing beyond it?
+      2. AGENTS.md conventions and the project's DDD/SOLID standards: layer
+         boundaries respected, dependencies point inward, single responsibility,
+         no vendor types leaking across interfaces.
+      3. Correctness: read the changed code, run the test suite yourself via
+         bash, and hunt for unhandled edge cases, racy constructs, and tests
+         that assert too little.
+
+      You may run tests and linters, but you never modify repo files — your only
+      deliverable is the verdict file named in the OUTPUT CONTRACT section.
+      Comments must be actionable: name the file,
+      the problem, and what would resolve it. Style nits without substance are
+      not grounds for rejection; missing tests, plan deviations, and broken
+      invariants are.
+  - name: redactor
+    description: writes the merge request description
+    read_only: true
+    allow_bash: true
+    inputs:
+      - name: changes
+        description: the set of changed files to describe for whoever reads the merge request
+      - name: failure
+        description: what the previous attempt printed when it failed
+        optional: true
+    outputs:
+      - name: mr
+        description: the merge request description; first line a "# <title>" heading
+        path: artifacts/mr.md
+    prompt: |
+      You are the redaction agent of a software factory. The work is done and
+      reviewed; you write the merge request description that a human will read
+      before merging. Your only deliverable is the file named in the OUTPUT
+      CONTRACT section.
+
+      Structure (the first line MUST be a `# <MR title>` heading, imperative
+      mood, under 70 characters):
+      # <title>
+      ## Summary        — what changed and why, 2-4 sentences, plain language
+      ## Changes        — bullet list grouped by area, referencing key files
+      ## Test evidence  — which tests cover the change and their result; run
+                          the suite via bash and quote the relevant tail
+      ## Review notes   — anything the reviewer flagged and how it was
+                          addressed; anything the human should double-check
+
+      Read the diff and the plan; do not speculate about intent you cannot see
+      in the repository. Never modify any repo file — your only output is the
+      file named in the OUTPUT CONTRACT.
+
+stages:
+  - id: plan
+    type: agent
+    agent: planner
+    max_turns: 25
+    input:
+      rejection: $DECISION
+      failure: $FAILURE
+    on_success: plan_gate
+    on_fail:
+      to: plan
+      max: 2
+      then:
+        to: debug_plan
+        max: -1
+  - id: plan_gate
+    type: human_gate
+    question: Approve this implementation plan?
+    input: { plan: artifacts/plan.md }
+    on_success: build
+    on_reject:
+      to: plan
+      max: -1
+  - id: build
+    type: agent
+    agent: builder
+    max_turns: 80
+    input:
+      plan: artifacts/plan.md
+      rejection: $DECISION
+      failure: $FAILURE
+    on_success: commit_msg
+    on_fail:
+      to: build
+      max: 2
+      then:
+        to: debug_build
+        max: -1
+  - id: commit_msg
+    type: agent
+    agent: committer
+    max_turns: 10
+    input:
+      plan: artifacts/plan.md
+      failure: $FAILURE
+    on_success: commit
+    on_fail:
+      to: commit_msg
+      max: 1
+      then:
+        to: debug_commit_msg
+        max: -1
+  - id: commit
+    type: command
+    run: git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi
+    input:
+      message: artifacts/commit.md
+    on_success: test
+    on_fail:
+      to: debug_commit
+      max: -1
+  - id: test
+    type: command
+    run_ref: verify
+    on_success: review
+    on_fail:
+      to: build
+      max: 5
+      then:
+        to: debug_test
+        max: -1
+    on_timeout:
+      to: test
+      max: 1
+      then:
+        to: build
+        max: 2
+  - id: review
+    type: agent
+    agent: reviewer
+    model: opencode-go/glm-5.1
+    max_turns: 30
+    input:
+      plan: artifacts/plan.md
+      changes: $CHANGED
+      failure: $FAILURE
+    on_success: redact
+    on_fail:
+      to: review
+      max: 1
+      then:
+        to: debug_review
+        max: -1
+    on_reject:
+      to: build
+      max: 3
+  - id: redact
+    type: agent
+    agent: redactor
+    max_turns: 15
+    input:
+      changes: $CHANGED
+      failure: $FAILURE
+    on_success: push
+    on_fail:
+      to: redact
+      max: 1
+      then:
+        to: debug_redact
+        max: -1
+  - id: push
+    type: command
+    run: git push -u origin HEAD
+    on_success: mr
+    on_fail:
+      to: push
+      max: 1
+      then:
+        to: debug_push
+        max: -1
+  - id: mr
+    type: action
+    action: create_mr
+    input:
+      body: artifacts/mr.md
+    on_success: final_gate
+  - id: final_gate
+    type: human_gate
+    question: Review the merge request and merge when satisfied.
+    input: { mr: $MR_URL }
+    auto_approve: mr_merged
+    auto_reject: mr_closed
+    on_success: done
+    on_reject:
+      to: build
+      max: -1
+  - id: debug_plan
+    type: human_gate
+    question: Planning failed repeatedly — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: plan
+    on_reject: abort
+  - id: debug_build
+    type: human_gate
+    question: The build failed repeatedly — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: build
+    on_reject: abort
+  - id: debug_commit_msg
+    type: human_gate
+    question: Writing the commit message failed — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: commit_msg
+    on_reject: abort
+  - id: debug_commit
+    type: human_gate
+    question: The commit failed — fix it in the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: commit
+    on_reject: abort
+  - id: debug_test
+    type: human_gate
+    question: The tests keep failing — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: test
+    on_reject: abort
+  - id: debug_review
+    type: human_gate
+    question: The review stage itself failed — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: review
+    on_reject: abort
+  - id: debug_redact
+    type: human_gate
+    question: Writing the merge request description failed — inspect the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: redact
+    on_reject: abort
+  - id: debug_push
+    type: human_gate
+    question: The push failed — fix it in the workspace, then approve to retry.
+    input: { workspace: $WORKSPACE }
+    on_success: push
+    on_reject: abort

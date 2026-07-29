@@ -8,18 +8,28 @@ This document is the normative reference. Code cites it as `FLOWLANG §n`.
 
 Three rules shape everything below:
 
-1. **Everything a stage consumes or produces is declared, in one form.** No
-   stage quietly reads a file another stage happened to leave behind, and
-   nothing arrives invisibly — not even the feedback from a failed attempt.
-   Every binding is `name: value`, whatever the stage type. The document is the
-   whole dataflow, which is why the graph editor can draw it.
+1. **Every artifact interface is declared, in one form.** No stage quietly
+   reads a file another stage happened to leave behind, and no *artifact*
+   arrives invisibly — not even the feedback from a failed attempt. Every
+   binding is `name: value`, whatever the stage type, which is why the graph
+   editor can draw the dataflow.
+
+   What this rule does *not* claim: that a stage touches nothing else. Agent
+   and command stages share one workspace — a checkout with a working tree, an
+   index and a history — and that medium is ambient, not declared. A `commit`
+   stage reads the whole tree by nature; `test` reads the repository; `push`
+   writes a remote. Declaring `input: {message: artifacts/commit.md}` says what
+   the *artifact interface* is, and is honest about being only that. The
+   workspace is shared because the engine advances one stage at a time; when
+   parallel stages arrive (§10) the effects become worth declaring, and they
+   will be.
 2. **Values are strict, types are extensible.** Every field takes a closed set
    of values, so a typo is a parse error rather than a surprise at 3am. New
    stage types, actions, signals, sentinels and edge kinds are added by
    extending a registry, not by loosening the grammar.
 3. **Each fact is stated once, where it belongs.** An edge says where the run
    goes; the stage it lands on says what to do with what arrived. An agent
-   declares what it needs; the flow says where to find it.
+   declares what it needs; the stage that runs it says where to find it.
 
 ---
 
@@ -27,7 +37,7 @@ Three rules shape everything below:
 
 ```yaml
 name: default              # required, slug: the flow's permanent id
-version: 2                 # required int: the grammar this document is written in
+version: 3                 # required int: the grammar this document is written in
 description: "..."         # optional
 defaults:                  # per-stage defaults; agent stages may override each
   timeout: 30m             #   wall clock per stage (suspended while a ping waits)
@@ -37,24 +47,101 @@ defaults:                  # per-stage defaults; agent stages may override each
 budget:                    # run-wide ceilings; exceeding either abandons the run
   max_cost_usd: 10.0
   max_total_turns: 300
+agents: [...]              # the agents this flow runs — definitions, not references
 stages: [...]              # required, at least one
 ```
 
 `version` is required and must equal the version this build speaks (currently
-**2**). A document from a future grammar is refused with a clear message instead
+**3**). A document from a future grammar is refused with a clear message instead
 of being half-understood. That is the entire purpose of the field: it is the
 seam a breaking change hangs off.
 
-**Determinism.** A flow's identity is the SHA-256 of its raw bytes, so a run
-pins exactly the text it started with. The graph editor re-emits a canonical
-form — stages in success order, an explicit `on_success` on every stage, no
-comments — and `docToYaml ∘ parse` is a fixed point, so opening and saving an
-already-canonical flow produces no change.
+### Agents live in the flow
+
+A flow **defines** every agent it runs. There is no separate library to
+resolve against:
+
+```yaml
+agents:
+  - name: reviewer                      # slug, unique in the document
+    description: adversarial code reviewer
+    read_only: true                     # deny the harness's edit/write tools
+    allow_bash: true
+    inputs:
+      - name: plan
+        description: the approved plan to check the change set against
+      - name: failure
+        description: what the previous attempt printed when it failed
+        optional: true                  # so a stage may bind $FAILURE to it
+    outputs:
+      - name: verdict
+        type: verdict                   # "" (a plain file) | verdict
+        path: artifacts/verdict.json    # default; a stage may rebind it
+        description: APPROVE or REJECT with actionable comments
+    prompt: |
+      You are the adversarial reviewer of a software factory...
+```
+
+Three things follow, and they are the point:
+
+- **The contracts are parse-time facts.** Binding an input the agent does not
+  declare, leaving a required one unbound, or putting `on_reject` on an agent
+  that renders no verdict are all **errors that refuse the document** — not
+  advice from a second pass that needed a project to run. A flow is
+  reviewable, and wrong flows are unsavable, on its own.
+- **A flow is self-contained.** One file states the whole behaviour: what runs,
+  what each agent is told, what it reads and writes, and how the run moves
+  between them. Copy the file, get the factory.
+- **Prompts are pinned with everything else.** A run executes the document it
+  started with (below), so editing a prompt never changes a run already in
+  flight.
+
+The cost, accepted deliberately: two flows wanting the same agent copy it, and
+a project can no longer override an agent for a flow it runs. What stays
+per-project is the genuinely per-project: `commands` (`run_ref`), integrations,
+and the repo's own `AGENTS.md`.
+
+**Determinism and pinning.** A flow's identity is the SHA-256 of its raw bytes.
+A run records that hash at creation and **executes that exact version for its
+whole life** — recovery after a restart re-reads the same pinned document, so
+a flow edited mid-run (including a prompt inside it) cannot change a run
+already going. The one deliberate exception is **"try again"** (`run_resumed`):
+resume is the human-initiated repair moment, so it re-pins the run to the
+flow's current version — fix a prompt or a binding, then resume. Pause/play and
+crash recovery never re-pin.
+
+Project-side dependencies are resolved live and audited per attempt instead:
+`run_ref`s and integrations are looked up when used, and every attempt records
+`stage_started.agent_hash`, the content address of the exact agent definition
+that produced it.
+
+The graph editor re-emits a canonical form — agents before stages, stages in
+success order, an explicit `on_success` on every stage, no comments — and
+`docToYaml ∘ parse` is a fixed point, so opening and saving an already-canonical
+flow produces no change.
 
 **Where flows live.** Flows are global and project-independent: the same flow
-runs against any project. Agent names, harness kinds, `run_ref`s and action
-integrations are therefore *free text* at parse time and validated against a
-specific project when a run is created (§7).
+runs against any project. Harness kinds, `run_ref`s and action integrations are
+*free text* at parse time and validated against a specific project when a run
+is created (§6).
+
+### Run context
+
+A run supplies these without any declaration; they are the ambient facts every
+flow is written against, and no binding names them:
+
+| context | what it is |
+|---|---|
+| the ticket | title + goal — always the prompt's `# TASK` section |
+| the run goal | extra direction for *this* attempt, its own prompt section |
+| the repository | the project's repo, cloned into the workspace |
+| the branch | `factory/<run-id>-<slug>`, forked from the run's source branch |
+| the workspace | one checkout shared by every agent and command stage |
+| run identity | run id and its bearer token, for the ask_human channel |
+
+A flow declares none of it because none of it varies per stage. `$CHANGED`,
+`$WORKSPACE` and `$MR_URL` (§4) are how a stage reaches into this context
+explicitly, and those *are* declared.
 
 ---
 
@@ -68,8 +155,8 @@ specific project when a run is created (§7).
 
 | type | what it does | key fields |
 |---|---|---|
-| `agent` | runs an agent from the project's library | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout` |
-| `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output` |
+| `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout` |
+| `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout` |
 | `human_gate` | parks the run on a human decision | `question`, `input`, `auto_approve`, `auto_reject` |
 | `action` | invokes a built-in apothecary integration | `action`, `input` |
 | `wait` | blocks until an external signal fires | `for`, `timeout` |
@@ -82,7 +169,7 @@ command, `question` on an agent, and so on).
 ```yaml
 - id: build
   type: agent
-  agent: builder                        # a name in the project's agent library
+  agent: builder                        # a name in this flow's agents block
   input:
     plan: artifacts/plan.md             # bind the agent's declared inputs
     rejection: $DECISION                # ...including what an edge brings back
@@ -93,9 +180,10 @@ command, `question` on an agent, and so on).
   timeout: 45m
 ```
 
-The agent's own definition — its **contract** — declares what it reads and
-writes (§4). The stage binds that contract; it cannot invent inputs or outputs
-the agent does not declare.
+The agent's definition in this document's `agents:` block — its **contract** —
+declares what it reads and writes (§1, §4). The stage binds that contract; it
+cannot invent inputs or outputs the agent does not declare, and the parser
+refuses the document if it tries.
 
 ### command
 
@@ -105,6 +193,7 @@ the agent does not declare.
   run: "git add -A && git commit -F artifacts/commit.md"   # ...or run_ref: verify
   input: { message: artifacts/commit.md }   # read before the script runs; missing ⇒ input_missing
   output: { report: artifacts/report.txt }  # must exist when the script exits 0
+  timeout: 20m                              # optional; absent = defaults.timeout
 ```
 
 Exactly one of `run` (literal bash) or `run_ref` (a key in the project's
@@ -132,7 +221,7 @@ it hands over is its `input` (one binding today). Both are optional; a gate with
 no question is labelled by its stage id.
 
 **Answered automatically.** A gate is a decision point whose *default* answerer
-is a human. `auto_approve` and `auto_reject` name signals (§ wait) that may
+is a human. `auto_approve` and `auto_reject` name signals (§2 wait) that may
 supply the same two answers:
 
 ```yaml
@@ -159,7 +248,7 @@ combinator: the field has to say *which* answer it supplies, because approve and
 reject route to entirely different places. And a symmetric-looking
 `any_of: [mr_merged, human_approve]` would hide a real asymmetry — a signal is
 one bit, while only a human can reject *with reasons*. Naming the two outcomes
-keeps that visible. See §9 for why general AND/OR gates are not the answer.
+keeps that visible. See §10 for why general AND/OR gates are not the answer.
 
 ### action
 
@@ -178,9 +267,19 @@ immediately. Registry (`GET /api/actions`):
 |---|---|---|---|---|
 | `create_mr` | `forge` | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per flow; the body's first `# ` heading becomes the MR title |
 
-Actions carry no edges in this version: a failure is terminal. Adding an action
-is one registry entry, one executor, and (if it needs an integration) a
-`requires` string that run creation asserts.
+Actions carry no *failure* edges in this version: `on_success` routes normally,
+and a failure is terminal. Adding an action is one registry entry, one
+executor, and (if it needs an integration) a `requires` string that run
+creation asserts.
+
+**Side effects and interruption.** An action's effect lands outside the run, so
+the engine records an `action_started` intent event *before* the call. If the
+process dies between the effect landing and its completion event, recovery sees
+that intent alone and **reconciles** rather than re-running: `create_mr` asks
+the forge what the run's branch already has (the branch is unique per run, so
+it is the idempotency key) and adopts an existing merge request instead of
+opening a second one. A reconciliation that cannot reach the forge fails the
+stage rather than guessing — a duplicate MR is worse than a retry.
 
 ### wait
 
@@ -211,7 +310,22 @@ hanging forever on something that cannot happen.
 
 Three related concepts, kept distinct: an **action** does something now, a
 **wait** blocks until something happens, and a *trigger* — starting a run from
-an outside event — is deliberately not in this version (§9).
+an outside event — is deliberately not in this version (§10).
+
+### Timeouts
+
+One field, `timeout`, whose meaning follows the stage type:
+
+| type | what `timeout` bounds | absent means |
+|---|---|---|
+| `agent` | execution wall clock, suspended while an ask_human ping is open (§9) | `defaults.timeout` (30m) |
+| `command` | execution wall clock | `defaults.timeout` |
+| `wait` | how long to block on the signal | wait indefinitely |
+| `human_gate` | — (the field does not apply) | bounded by human attention |
+| `action` | — (the field does not apply) | bounded by its client |
+
+A gate and an action take no timeout on purpose: a gate parks on a person, who
+is the bound, and an action is a single call that either returns or fails.
 
 **Signals are state predicates, not events.** Each is re-checked by polling
 current state (`is the MR merged?`), never consumed as a one-shot notification.
@@ -247,6 +361,19 @@ bound it (a failing command costs no turns and no dollars).
 link is exhausted the *next* failure falls through to its `then` — retry, then
 escalate. An exhausted chain with no `then` abandons the run.
 
+**What `max` counts.** A counter belongs to one *link* — the triple
+(source stage, edge kind, position in the `then` chain) — and counts how many
+times that link has been taken **over the whole run**. It does not reset when
+the source stage later succeeds: `max` bounds total spend on a loop, which is
+what makes it a budget rather than a per-visit allowance. Counters are
+persisted in the `edge_taken` events, so they survive a restart exactly, and
+pause/play leaves them untouched. **"Try again"** (`run_resumed`) is the only
+thing that clears them: a human deciding to retry a dead run restores every
+stage's budget from the resume point.
+
+There is deliberately no backoff: every agent/command loop must carry a finite
+`max` or a human gate on the link, so no edge can spin unbounded.
+
 | kind | raised when | allowed on | carries |
 |---|---|---|---|
 | `on_fail` | the stage failed | agent, command, wait | `$FAILURE` |
@@ -262,8 +389,20 @@ it. That is the single declaration: *where it goes* lives with the stage that
 reads it, next to everything else that stage reads.
 
 **Terminals.** `done` completes the run (only `on_success` may reach it).
-`abort` deliberately stops it, projected as abandoned; an abort link takes no
-`max`, `feed` or `then`. Stage ids may not shadow `done`, `abort` or `start`.
+`abort` deliberately stops it; an abort link takes no `max`, `feed` or `then`.
+Stage ids may not shadow `done`, `abort` or `start`.
+
+A run ends in one of three states, and the distinction is reporting, not
+capability (`resume` accepts the last two):
+
+| state | reached by |
+|---|---|
+| `completed` | `on_success` reached `done` |
+| `abandoned` | a deliberate stop — the flow's `abort` terminal, a person pressing abort — or an exhausted retry chain / spent budget |
+| `failed` | the engine's own fault: infrastructure, an unresolvable project, a flow that no longer parses |
+
+Aborting is abandonment, not failure: a person saying "stop" is a decision, and
+reporting it as a breakage would misstate the run's history.
 
 **`max: -1`** (unlimited) requires a `human_gate` on the link — as its source
 (the link only fires when a human rejects) or its target (each firing parks on a
@@ -305,9 +444,9 @@ artifact path (no leading `/`, no `.` or `..` segments).
 
 | sentinel | is | bindable on |
 |---|---|---|
-| `$CHANGED` | `git diff --stat` of the branch against its base — the changed-file list, never the full diff | agent input |
+| `$CHANGED` | `git diff --name-status` of the branch against **the branch this run forked from** — the changed-file list, never the full diff | agent input |
 | `$DECISION` | why the last attempt was turned down: a verdict's comments, or a human's gate feedback | agent input |
-| `$FAILURE` | what the failing stage printed (last 8 KB) | agent input |
+| `$FAILURE` | what the failing stage printed: the last 8 KB, with every secret the engine injected replaced by `[redacted:<kind>]` | agent input |
 | `$MR_URL` | the run's merge request link, produced by `create_mr` | gate input |
 | `$WORKSPACE` | the workspace's access link (terminal, else IDE) | gate input |
 
@@ -353,38 +492,31 @@ order of importance:
 
 ### Agent contracts
 
-An agent declares its own I/O; the flow binds it. This is what stops prompts and
-flows from drifting apart:
-
-```yaml
-name: reviewer
-inputs:
-  - name: plan
-    description: the approved plan to check the change set against
-  - name: changes
-    description: the set of changed files to review
-  - name: failure                   # a flow may bind this to $FAILURE
-    description: what the previous attempt printed when it failed
-    optional: true                  # so it must be optional
-outputs:
-  - name: verdict
-    type: verdict                   # "" (a plain file) | verdict
-    path: artifacts/verdict.json    # default; a stage may rebind it
-    description: APPROVE or REJECT with actionable comments
-```
+An agent declares its own I/O in the flow's `agents:` block (§1); a stage binds
+it. Because both halves are in one document, they cannot drift: a binding that
+violates a contract is a parse error.
 
 The prompt an agent receives is assembled, never templated: a `# TASK` section
 from the ticket, one `# INPUT: <name> — <description> (file: <path>)` section
 per bound input, and an `# OUTPUT CONTRACT` listing every file it must write.
-Declared outputs are enforced after the stage: missing files fail it with
-`output_contract`, naming all of them at once.
+
+**Declared outputs must be written by the attempt that succeeds.** Before every
+fresh attempt the engine deletes the stage's declared outputs, so the check
+after it cannot be satisfied by a file an earlier attempt left behind — a
+retry that "succeeds" without producing anything fails with `output_contract`,
+naming every missing file at once. (Crash recovery re-entering a live stage
+does *not* delete: a resumed harness session is mid-work and its partial
+outputs must survive.)
 
 **A `verdict` output** holds `{"verdict":"APPROVE"|"REJECT","comments":[…]}`
 (comments required on REJECT). It is a file like any other — its existence is
 enforced with the rest — plus a shape the engine parses: a REJECT follows the
-stage's `on_reject` edge, carrying the comments as `decision`. Declaring one is
-what makes that edge reachable; a stage needs no flag of its own. An agent may
-declare at most one.
+stage's `on_reject` edge, carrying the comments as `decision`. A file that
+exists but does not hold that shape fails the stage with `output_invalid`,
+which is a different fault from never writing it. Declaring a verdict output is
+what makes `on_reject` reachable; a stage needs no flag of its own, and an
+agent may declare at most one — a stage whose agent declares none cannot carry
+an `on_reject` edge at all (a parse error).
 
 ### What the editor draws
 
@@ -409,7 +541,8 @@ A stage failure records a reason, then follows an edge:
 | `timeout` | the stage exceeded its timeout |
 | `harness_error` | the harness itself failed |
 | `input_missing` | a path the stage declared it consumes was not there — upstream wiring, not this stage's work |
-| `output_contract` | the stage finished without writing what it declared |
+| `output_contract` | the stage finished without writing what it declared (its outputs are cleared before each fresh attempt, so a stale file cannot satisfy it) |
+| `output_invalid` | a declared output exists but does not hold what its type promises — a malformed verdict |
 | `infra` | provisioning, forge or other infrastructure failure |
 
 The recommended shape, and the one the built-in default flow uses: every agent
@@ -420,32 +553,72 @@ escalated — the success chain replays from there, so no stage is skipped.
 Rescue gates are unlimited (`max: -1`): the human decides when to stop, and
 rejecting one aborts the run.
 
+Budget exhaustion and cancellation are **run-level** outcomes, not stage
+failures: exceeding `budget` abandons the run, and abort/pause act on the run
+as a whole (§3).
+
+**Every attempt leaves a record.** As each attempt ends — succeeded or failed —
+the engine captures its declared outputs and its full log into the artifact
+store and links them to the run's timeline with `artifact_published` events.
+The events carry references, never bytes, so they stay replay-cheap while the
+content can be any size. Two consequences worth relying on: attempt 1's plan
+stays readable after attempt 2 overwrites the file, and the 8 KB tails in
+`stage_failed` / `$FAILURE` are a *preview* — the whole log is one link away.
+Snapshots outlive the run they describe (archiving keeps them) and are scrubbed
+of engine-injected secrets on the way in.
+
 ---
 
 ## §6 Validation
 
-Three levels, deliberately separated by what each one can know:
+Two levels, separated by what each one can know. (There were three until
+agents moved into the document; the middle one — contract checking that needed
+a project's agent library — became parse errors.)
 
-**Parse errors** (structure) — refuse the document. Unknown fields and values,
-fields that do not apply to a stage's type, unknown action slugs, unbound
-required action inputs, malformed edges, success cycles, unreachable stages,
-`max: -1` without a gate on the link. A flow cannot be saved with any of these.
+**Parse errors** (the document) — refuse it. Unknown fields and values, fields
+that do not apply to a stage's type, unknown action slugs, unbound required
+action inputs, malformed edges, success cycles, unreachable stages, `max: -1`
+without a gate on the link — and every **contract** violation: an agent a stage
+names but the flow does not declare, an input the agent does not declare, a
+required input left unbound, a non-optional input bound to `$DECISION`/
+`$FAILURE`, an output rebind of something undeclared, `on_reject` on an agent
+with no verdict output. A flow cannot be saved with any of these.
 
-**Binding warnings** (contracts) — advisory, surfaced by
-`POST /api/flows/validate` (optionally with a `project_id` to overlay that
-project's agents on the built-ins). These need agent definitions, which are
-per-project data a global flow parser cannot see: an input bound to a path no
-stage produces, an `on_reject` on an agent that declares no verdict output, a
-binding against an agent with no contract. Warnings never block a save.
+**Warnings** — advisory, returned alongside a successful parse by
+`POST /api/flows/validate` and never blocking anything. These are legal
+constructs that look like mistakes: a path no stage produces, a path produced
+on only *some* of the routes that reach its consumer, a feed sentinel no edge
+can fill, a `wait` on a signal whose prerequisite isn't opened on every route
+reaching it.
 
 **Preflight errors** (this project) — refuse to *create a run*. Checked with the
-project's real configuration: the agents named exist in its library, `run_ref`s
-exist in its commands, a pinned harness is in its set, an action's required
-integration is configured, and every stage binding satisfies its agent's
-contract.
+project's real configuration: `run_ref`s exist in its commands, a pinned
+harness is in its set, an action's required integration is configured, the repo
+has a devcontainer and an `AGENTS.md`.
 
 A flow whose stored text no longer parses fails its runs terminally with the
 parse error — retrying cannot fix a grammar problem.
+
+### Document rules
+
+Normative, and enforced by the parser:
+
+- YAML 1.2 through a strict decoder: **unknown fields are rejected**, and so
+  are **duplicate keys** (including inside the hand-written edge and binding
+  unmarshalers).
+- **No anchors or aliases** (`&name` / `*name`) anywhere. They are legal YAML
+  but would not survive the editor's canonical re-emission, and they hide a
+  stage's real shape from a reader.
+- **One document per file**: anything after a `---` separator is refused rather
+  than silently ignored.
+- Limits: 1 MiB per document, 128 stages, 64 agents, `then` chains at most 8
+  links deep.
+- **Paths** are repo-root-relative POSIX paths: no leading `/`, no `.` or `..`
+  segment, no leading `$` (that space belongs to sentinels). Beyond the
+  lexical rule, the engine resolves symlinks before reading or writing an
+  artifact and refuses anything landing outside the checkout — so an
+  agent-authored `artifacts/plan.md -> /apothecary/run.env` cannot smuggle the
+  run token into a prompt.
 
 ---
 
@@ -466,7 +639,9 @@ bare "unknown field":
 | a reserved `feedback` input | any name, bound to `$DECISION` or `$FAILURE` |
 | `mr_url` / `workspace` | `$MR_URL` / `$WORKSPACE` |
 | `input: [a, b]` or `input: path` | `input: {name: a, other: b}` — name every entry |
-| `input: [ticket, …]` on an agent | drop it — the ticket is always the task |
+| `input: [ticket, …]` on an agent | drop it — the ticket is always the task (§1 run context) |
+| `version: 2` with agents in the project library | define them in the flow's `agents:` block and set `version: 3` |
+| a project-level agent library (`/api/projects/{id}/agents`) | the `agents:` block of each flow that runs them |
 
 ---
 
@@ -478,9 +653,38 @@ adversarial review and per-stage rescue. Full text:
 
 ```yaml
 name: default
-version: 2
+version: 3
 defaults: { timeout: 30m, harness: opencode, model: opencode-go/qwen3.5-plus, max_turns: 50 }
 budget: { max_cost_usd: 10.0, max_total_turns: 300 }
+
+# The agents this flow runs, abridged to two. Their contracts are what the
+# stages below bind, and what the parser checks those bindings against.
+agents:
+  - name: planner
+    description: explores the repository and writes the implementation plan
+    read_only: true
+    inputs:
+      - { name: rejection, optional: true, description: "why the last plan was rejected" }
+      - { name: failure,   optional: true, description: "what the previous attempt printed" }
+    outputs:
+      - { name: plan, path: artifacts/plan.md, description: "the implementation plan" }
+    prompt: |
+      You are the planning agent of a software factory...
+  - name: reviewer
+    description: adversarial code reviewer
+    read_only: true
+    allow_bash: true
+    inputs:
+      - { name: plan,    description: "the approved plan to check the change set against" }
+      - { name: changes, description: "the set of changed files to review" }
+      - { name: failure, optional: true, description: "what the previous attempt printed" }
+    outputs:
+      # A verdict output is what makes review.on_reject below legal at all.
+      - { name: verdict, type: verdict, path: artifacts/verdict.json,
+          description: "APPROVE or REJECT with actionable comments" }
+    prompt: |
+      You are the adversarial reviewer of a software factory...
+
 stages:
   # No output binding: the planner's contract says its plan goes to
   # artifacts/plan.md. It binds both retry values, so being sent back — by a
@@ -536,7 +740,47 @@ stages:
       on_success: done, on_reject: abort }
 ```
 
-## §9 Extending the language
+## §9 Agent-side interactions (ask_human)
+
+A stage's agent can stop and ask. This is not a stage type and needs no
+grammar — it is a property of every agent stage, and it is worth stating
+because it changes how a stage behaves in flight.
+
+The agent calls `ask_human{type, question, context?, options?, artifact?}`
+through an MCP tool in its workspace. The engine, not the harness, owns the
+exchange:
+
+- **The request is an event.** `ping_raised` records the type
+  (`clarification` | `blocker` | `permission`), the question, any attached
+  workspace files, the declared answer options, and the stage in flight; the
+  answer is `ping_answered`. Both are durable, so an interrupted run re-arms
+  its open questions on recovery and a late answer still lands.
+- **The stage keeps running; its clock does not.** The agent process stays
+  alive waiting for its tool call to return, and the stage's `timeout` is
+  **suspended** for as long as any ping is open — a question a human takes an
+  hour to answer cannot time the stage out. The run projects as
+  `waiting_on_human`.
+- **`options` make the answer closed.** When the agent declares them, the
+  answer must be one of them (or the reserved `other`, whose free text rides
+  in the feedback) — the agent asked a closed question so it can branch
+  deterministically.
+- **Answers can carry files**, delivered into the workspace under
+  `.apothecary/artifacts/`, kept separate from the agent's own `artifacts/`.
+- If the engine is unreachable for more than 10 minutes the tool returns an
+  error string and the agent proceeds — a broken control plane stalls the work
+  but never wedges it forever.
+
+A gate (§2) and an ask_human ping are the same machinery pointed the other way:
+a gate is the *flow* stopping to ask at a declared point, a ping is the *agent*
+stopping to ask at a point only it can know. Both are pings in the event
+stream and the same inbox.
+
+The retired `ping:` field on a gate (§7) named a fixed set of gate kinds; that
+enum is gone, but the interaction it was named after is very much alive.
+
+---
+
+## §10 Extending the language
 
 Additive, no grammar break:
 
@@ -547,13 +791,14 @@ Additive, no grammar break:
   gate's `auto_approve`/`auto_reject` pick it up for free.
 - **A sentinel** — one constant plus one resolution case. The `$NAME` rule
   already tells authors it is engine-provided.
-- **An output type** — like `verdict`: a value on `OutputDecl.type` plus the
+- **An output type** — like `verdict`: a value on an output's `type` plus the
   engine behaviour it implies.
 - **An edge kind** — one `DocStage` field, one row in the edge registry, one
   raise site. Parsing, validation, routing and the `edge_taken` event
   generalize.
 - **A grammar break** — bump `CurrentVersion`. Every document states its
-  version, so old text is refused with a message rather than mis-read.
+  version, so old text is refused with a message rather than mis-read (v3 did
+  exactly this when agents moved into the flow).
 
 Deliberately *not* in this version, each a real change rather than a patch:
 
@@ -574,7 +819,7 @@ A gate answered by a signal *is* an OR, so a general `all_of:` / `any_of:` looks
 like the natural generalization. It is not, for three separate reasons:
 
 - **AND already exists.** Signals are state predicates, so sequential `wait`
-  stages compose as AND in any order (§ wait). An `all_of:` would be a second
+  stages compose as AND in any order (§2 wait). An `all_of:` would be a second
   way to write something the language already expresses.
 - **OR over conditions is narrow; OR over stages is the parallelism rework.**
   First-one-wins across two polls is cheap. First-one-wins across two stages

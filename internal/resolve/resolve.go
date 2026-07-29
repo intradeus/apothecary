@@ -20,7 +20,6 @@ import (
 	"sync"
 
 	"apothecary/internal/agentspec"
-	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/kinds"
@@ -183,42 +182,6 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	}
 	harness := byKind[defaultKind] // default: Runner, HarnessBinary, provider.env base
 
-	// Agent library (DESIGN3 §1): the project's full agent set rides the
-	// resolution — Prepare writes them all, preflight checks flow
-	// references against the names, stage events record the hashes.
-	agents, err := r.conf.ListAgents(ctx, p.ID)
-	if err != nil {
-		return nil, fmt.Errorf("agents for project %s: %w", p.Name, err)
-	}
-	specs := make([]*agentspec.Spec, 0, len(agents))
-	agentNames := make([]string, 0, len(agents))
-	agentHashes := make(map[string]string, len(agents))
-	agentSpecs := make(map[string]*agentspec.Spec, len(agents))
-	for _, a := range agents {
-		sp := a.Spec()
-		specs = append(specs, sp)
-		agentNames = append(agentNames, a.Name)
-		agentHashes[a.Name] = a.Hash
-		agentSpecs[a.Name] = sp
-	}
-	// Built-in fallback (internal/builtin): names the project hasn't
-	// authored resolve to the compiled-in defaults, so a fresh project runs
-	// the default flow with zero authored agents. Authoring an agent with a
-	// built-in's name shadows it (the loop above already added it).
-	authored := make(map[string]bool, len(agents))
-	for _, a := range agents {
-		authored[a.Name] = true
-	}
-	for _, sp := range builtin.Agents() {
-		if authored[sp.Name] {
-			continue
-		}
-		specs = append(specs, sp)
-		agentNames = append(agentNames, sp.Name)
-		agentHashes[sp.Name] = confstore.AgentHash(confstore.AgentFromSpec(sp))
-		agentSpecs[sp.Name] = sp
-	}
-
 	gitUser, gitPass := account.GitCredential()
 	gitName, gitEmail := account.GitIdentity()
 
@@ -268,7 +231,9 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			}
 			return nil
 		},
-		Prepare: func(ctx context.Context, env ports.EnvID) error {
+		// The agents come from the RUN's flow (FLOWLANG §1, v3), so they are
+		// an argument here rather than something the project resolves.
+		Prepare: func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
 			for _, k := range kindList {
 				if err := byKind[k].Prepare(ctx, env, specs); err != nil {
 					return fmt.Errorf("prepare %s config: %w", k, err)
@@ -276,10 +241,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			}
 			return nil
 		},
-		AgentNames:  agentNames,
-		AgentHashes: agentHashes,
-		AgentSpecs:  agentSpecs,
-		Release:     release,
+		Release: release,
 	}
 	ok = true
 	return res, nil

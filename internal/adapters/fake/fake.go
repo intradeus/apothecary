@@ -332,6 +332,8 @@ type Forge struct {
 	CreateErr error
 	// MRStateErr fails MRState when set (signal poll failure paths).
 	MRStateErr error
+	// FindErr fails FindMR when set (reconciliation failure paths).
+	FindErr error
 
 	MRs    []*MR
 	nextID int
@@ -357,6 +359,22 @@ func (f *Forge) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, tit
 	ref := ports.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
 	f.MRs = append(f.MRs, &MR{Ref: ref, Repo: repo, Branch: branch, Title: title, Body: body, State: ports.MROpen})
 	return ref, nil
+}
+
+// FindMR reports the open MR for a branch, as the reconciliation path needs
+// after a crash between creating one and recording it.
+func (f *Forge) FindMR(_ context.Context, _ ports.RepoRef, branch string) (ports.MRRef, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.FindErr != nil {
+		return ports.MRRef{}, false, f.FindErr
+	}
+	for _, mr := range f.MRs {
+		if mr.Branch == branch && mr.State == ports.MROpen {
+			return mr.Ref, true, nil
+		}
+	}
+	return ports.MRRef{}, false, nil
 }
 
 func (f *Forge) MRState(_ context.Context, mr ports.MRRef) (ports.MRState, error) {

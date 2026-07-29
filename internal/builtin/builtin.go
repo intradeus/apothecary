@@ -1,15 +1,18 @@
-// Package builtin holds the compiled-in defaults: the "default" flow, the
-// agent library it references, and the suggested egress-allowlist defaults
-// (EgressDefaults). They are embedded in the binary, so a completely empty
-// database still resolves a working configuration — no seeding step, no drift,
-// nothing to delete by accident. Note the egress list is OFFERED, not enforced:
-// a project opts in via the form, unlike flows/agents which back a resolve.
+// Package builtin holds the compiled-in defaults: the "default" flow and the
+// suggested egress-allowlist defaults (EgressDefaults). They are embedded in
+// the binary, so a completely empty database still resolves a working
+// configuration — no seeding step, no drift, nothing to delete by accident.
+// Note the egress list is OFFERED, not enforced: a project opts in via the
+// form, unlike flows which back a resolve.
 //
-// Layering contract (shadowing): the database always wins. A user-saved
-// flow or a project-authored agent with the same name overrides the
-// built-in through the ordinary save paths (copy-on-write); deleting the
-// override falls back to the built-in ("reset to default"). Nothing here
-// is ever written to the database.
+// Since FLOWLANG v3 (PLAN5 M26) the default flow carries its own agents, so
+// there is no separate built-in agent library: everything the factory runs
+// out of the box lives in flows/default.yaml.
+//
+// Layering contract (shadowing): the database always wins. A user-saved flow
+// with the same name overrides the built-in through the ordinary save path
+// (copy-on-write); deleting the override falls back to the built-in ("reset
+// to default"). Nothing here is ever written to the database.
 //
 // This package may import only flow and agentspec — stores and the engine
 // import it, never the other way around.
@@ -25,25 +28,19 @@ import (
 	"strings"
 	"sync"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 )
 
 //go:embed flows/*.yaml
 var flowFS embed.FS
 
-//go:embed agents/*.yaml
-var agentFS embed.FS
-
 // DefaultFlowName is the flow every fresh install can run out of the box;
 // projects created without a default_flow fall back to it.
 const DefaultFlowName = "default"
 
 type registry struct {
-	flows      map[string]*flow.Flow
-	flowYAML   map[string]string
-	agents     map[string]*agentspec.Spec
-	agentOrder []string
+	flows    map[string]*flow.Flow
+	flowYAML map[string]string
 }
 
 // load parses the embedded documents once. The content is compiled in and
@@ -53,7 +50,6 @@ var load = sync.OnceValue(func() *registry {
 	r := &registry{
 		flows:    map[string]*flow.Flow{},
 		flowYAML: map[string]string{},
-		agents:   map[string]*agentspec.Spec{},
 	}
 	fentries, err := flowFS.ReadDir("flows")
 	if err != nil {
@@ -74,24 +70,6 @@ var load = sync.OnceValue(func() *registry {
 		r.flows[f.Name] = f
 		r.flowYAML[f.Name] = string(data)
 	}
-	aentries, err := agentFS.ReadDir("agents")
-	if err != nil {
-		panic(fmt.Sprintf("builtin: reading embedded agents: %v", err))
-	}
-	for _, e := range aentries {
-		data, err := agentFS.ReadFile("agents/" + e.Name())
-		if err != nil {
-			panic(fmt.Sprintf("builtin: %v", err))
-		}
-		stem := strings.TrimSuffix(e.Name(), path.Ext(e.Name()))
-		sp, err := agentspec.Parse(stem, data)
-		if err != nil {
-			panic(fmt.Sprintf("builtin: embedded agent %s does not parse: %v", e.Name(), err))
-		}
-		r.agents[sp.Name] = sp
-		r.agentOrder = append(r.agentOrder, sp.Name)
-	}
-	sort.Strings(r.agentOrder)
 	return r
 })
 
@@ -115,19 +93,6 @@ func FlowNames() []string {
 	return names
 }
 
-// Agent returns the built-in agent spec, or nil.
-func Agent(name string) *agentspec.Spec { return load().agents[name] }
-
-// Agents lists the built-in agent specs, sorted by name.
-func Agents() []*agentspec.Spec {
-	r := load()
-	out := make([]*agentspec.Spec, 0, len(r.agentOrder))
-	for _, n := range r.agentOrder {
-		out = append(out, r.agents[n])
-	}
-	return out
-}
-
 // FlowSource layers the built-ins under another source: the database wins,
 // missing names fall back to the compiled-in defaults. Wrap the store's
 // source with this everywhere the engine resolves flows.
@@ -143,4 +108,23 @@ func (s layeredSource) Get(ctx context.Context, name string) (*flow.Flow, error)
 		}
 	}
 	return f, err
+}
+
+// GetVersion layers the built-in under the store's version history: a run
+// pinned to a built-in's hash keeps resolving after a restart, since the
+// compiled-in document was never written to the database (flow.PinnedSource).
+func (s layeredSource) GetVersion(ctx context.Context, name, hash string) (*flow.Flow, error) {
+	if ps, ok := s.next.(flow.PinnedSource); ok {
+		f, err := ps.GetVersion(ctx, name, hash)
+		if err == nil {
+			return f, nil
+		}
+		if !errors.Is(err, flow.ErrNotFound) {
+			return nil, err
+		}
+	}
+	if b := Flow(name); b != nil && b.Hash == hash {
+		return b, nil
+	}
+	return nil, fmt.Errorf("flow %q version %s: %w", name, hash, flow.ErrNotFound)
 }

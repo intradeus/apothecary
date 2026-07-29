@@ -120,6 +120,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 		GitEmail:     res.GitEmail,
 		SeedAuth:     res.SeedAuth,
 		Prepare:      res.Prepare,
+		Agents:       fl.AgentSpecs(),
 		Setup:        res.Commands["setup"],
 		Timeout:      fl.Defaults.Timeout,
 	}); berr != nil {

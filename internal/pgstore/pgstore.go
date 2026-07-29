@@ -510,12 +510,14 @@ func (s *Store) LoadExposedPorts(ctx context.Context) (map[string]map[int]int, e
 
 // --- artifacts (human-attached files: metadata; bytes live on disk) --------
 
-// InsertArtifact records a freshly-uploaded (orphan) artifact.
+// InsertArtifact records an artifact: a freshly-uploaded orphan, or an
+// engine-captured attempt snapshot that arrives already attached (M27).
 func (s *Store) InsertArtifact(ctx context.Context, m artifacts.Meta) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO artifacts (id, scope, filename, mime, size, sha256)
-		 VALUES ($1,$2,$3,$4,$5,$6)`,
-		m.ID, m.Scope, m.Filename, m.Mime, m.Size, m.SHA256)
+		`INSERT INTO artifacts (id, run_id, ping_id, scope, filename, mime, size, sha256, stage_id, iteration, output_name)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		m.ID, m.RunID, m.PingID, m.Scope, m.Filename, m.Mime, m.Size, m.SHA256,
+		m.StageID, m.Iteration, m.OutputName)
 	return err
 }
 
@@ -533,21 +535,33 @@ func (s *Store) AssociateArtifacts(ctx context.Context, ids []string, runID, pin
 	return err
 }
 
+// ArtifactsForRun lists the run's HUMAN attachments. Stage snapshots are
+// excluded: they are the audit trail, not something to re-deliver into a
+// workspace (M27).
 func (s *Store) ArtifactsForRun(ctx context.Context, runID string) ([]artifacts.Meta, error) {
 	return s.scanArtifacts(ctx, `
-		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at
-		FROM artifacts WHERE run_id=$1 ORDER BY created_at`, runID)
+		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
+		FROM artifacts WHERE run_id=$1 AND scope NOT IN ('stage_output','stage_log')
+		ORDER BY created_at`, runID)
+}
+
+// ArtifactsForStage lists a run's per-attempt snapshots in attempt order.
+func (s *Store) ArtifactsForStage(ctx context.Context, runID string) ([]artifacts.Meta, error) {
+	return s.scanArtifacts(ctx, `
+		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
+		FROM artifacts WHERE run_id=$1 AND scope IN ('stage_output','stage_log')
+		ORDER BY stage_id, iteration, created_at`, runID)
 }
 
 func (s *Store) ArtifactsForPing(ctx context.Context, pingID, scope string) ([]artifacts.Meta, error) {
 	return s.scanArtifacts(ctx, `
-		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at
+		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
 		FROM artifacts WHERE ping_id=$1 AND scope=$2 ORDER BY created_at`, pingID, scope)
 }
 
 func (s *Store) GetArtifact(ctx context.Context, id string) (artifacts.Meta, error) {
 	rows, err := s.scanArtifacts(ctx, `
-		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at
+		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
 		FROM artifacts WHERE id=$1`, id)
 	if err != nil {
 		return artifacts.Meta{}, err
@@ -560,8 +574,12 @@ func (s *Store) GetArtifact(ctx context.Context, id string) (artifacts.Meta, err
 
 // DeleteArtifactsForRun removes a run's artifact rows, returning the deleted
 // ids so the caller can unlink the blobs.
+// Stage snapshots are deliberately kept: archiving a run reclaims its
+// workspace and uploads, but the audit trail is the point of M27 — it must
+// outlive the run it describes.
 func (s *Store) DeleteArtifactsForRun(ctx context.Context, runID string) ([]string, error) {
-	return s.scanArtifactIDs(ctx, `DELETE FROM artifacts WHERE run_id=$1 RETURNING id`, runID)
+	return s.scanArtifactIDs(ctx,
+		`DELETE FROM artifacts WHERE run_id=$1 AND scope NOT IN ('stage_output','stage_log') RETURNING id`, runID)
 }
 
 // OrphanArtifactIDsBefore returns never-attached uploads older than cutoff.
@@ -589,7 +607,8 @@ func (s *Store) scanArtifacts(ctx context.Context, q string, args ...any) ([]art
 	for rows.Next() {
 		var m artifacts.Meta
 		if err := rows.Scan(&m.ID, &m.RunID, &m.PingID, &m.Scope, &m.Filename,
-			&m.Mime, &m.Size, &m.SHA256, &m.CreatedAt); err != nil {
+			&m.Mime, &m.Size, &m.SHA256, &m.CreatedAt,
+			&m.StageID, &m.Iteration, &m.OutputName); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

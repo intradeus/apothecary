@@ -22,15 +22,28 @@ const (
 	TypePingRaised      Type = "ping_raised"
 	TypePingAnswered    Type = "ping_answered"
 	TypeVerdictReceived Type = "verdict_received"
-	TypeMRCreated       Type = "mr_created"
-	TypeRunCompleted    Type = "run_completed"
-	TypeRunAbandoned    Type = "run_abandoned"
-	TypeRunFailed       Type = "run_failed"
-	TypeRunArchived     Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
-	TypeRunResumed      Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
-	TypeRunPaused       Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
-	TypeRunUnpaused     Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
-	TypeEnvDestroyed    Type = "env_destroyed"
+	// TypeActionStarted records the INTENT to perform an action's external
+	// side effect, appended before the call (PLAN5 M20). A crash between the
+	// effect landing on the forge and its completion event leaves this on its
+	// own — which is exactly the signal recovery needs to reconcile rather
+	// than blindly re-run and duplicate.
+	TypeActionStarted Type = "action_started"
+	// TypeArtifactPublished links a durable snapshot of what one attempt
+	// produced (a declared output, or the attempt's full log) to the run's
+	// timeline (PLAN5 M27). It carries the REFERENCE, never the bytes:
+	// events stay replay-cheap while the content they point at can be any
+	// size — which is what makes "the plan the human rejected at attempt 1"
+	// answerable after the workspace is long gone.
+	TypeArtifactPublished Type = "artifact_published"
+	TypeMRCreated         Type = "mr_created"
+	TypeRunCompleted      Type = "run_completed"
+	TypeRunAbandoned      Type = "run_abandoned"
+	TypeRunFailed         Type = "run_failed"
+	TypeRunArchived       Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
+	TypeRunResumed        Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
+	TypeRunPaused         Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
+	TypeRunUnpaused       Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
+	TypeEnvDestroyed      Type = "env_destroyed"
 	// Rebuild recreates a run's container in place (keeps the run + checkout);
 	// orthogonal to the run's lifecycle State — these never change it.
 	TypeEnvRebuildStarted   Type = "env_rebuild_started"
@@ -59,8 +72,14 @@ const (
 	ReasonTimeout      = "timeout"
 	ReasonHarnessError = "harness_error"
 	// ReasonOutputContract: the stage exited fine but did not write what it
-	// declared it produces.
+	// declared it produces. Since PLAN5 M18 the engine deletes a stage's
+	// declared outputs before each fresh attempt, so this also catches "an
+	// earlier attempt wrote it, this one did not".
 	ReasonOutputContract = "output_contract"
+	// ReasonOutputInvalid: the stage wrote a declared output, but its content
+	// does not hold what its type promises (a malformed verdict). Distinct
+	// from output_contract, which means the file is not there at all.
+	ReasonOutputInvalid = "output_invalid"
 	// ReasonInputMissing: a path the stage declared it consumes was not there
 	// when the stage started. Distinct from output_contract because the fault
 	// is upstream wiring, not this stage's work.
@@ -231,6 +250,26 @@ type VerdictReceived struct {
 	NComments int    `json:"n_comments"`
 }
 
+// ArtifactPublished records one captured attempt snapshot. Scope is
+// artifacts.ScopeStageOutput (a declared output, named by Name) or
+// ScopeStageLog (what the attempt printed, Name empty).
+type ArtifactPublished struct {
+	StageID    string `json:"stage_id"`
+	Iteration  int    `json:"iteration"`
+	Scope      string `json:"scope"`
+	Name       string `json:"name,omitempty"`
+	Path       string `json:"path,omitempty"`
+	ArtifactID string `json:"artifact_id"`
+	SHA256     string `json:"sha256,omitempty"`
+	Size       int64  `json:"size,omitempty"`
+}
+
+// ActionStarted is the pre-effect intent marker for an action stage.
+type ActionStarted struct {
+	StageID string `json:"stage_id"`
+	Action  string `json:"action"`
+}
+
 type MRCreated struct {
 	MRURL  string `json:"mr_url"`
 	MRIID  int    `json:"mr_iid"`
@@ -262,6 +301,11 @@ type RunArchived struct{}
 // immutable — this is a forward event, not a rewind.
 type RunResumed struct {
 	StageID string `json:"stage_id"`
+	// FlowHash re-pins the run to the flow's CURRENT version (PLAN5 M19).
+	// Runs execute the document they started with, so "try again" is the one
+	// sanctioned moment to pick up an edit — fix a prompt or a binding, then
+	// resume. Empty on pre-repin events, which keep their original pin.
+	FlowHash string `json:"flow_hash,omitempty"`
 }
 
 // RunPaused parks a run: the loop goroutine exits cleanly (a controlled
@@ -312,15 +356,18 @@ func (*EdgeTaken) EventType() Type       { return TypeEdgeTaken }
 func (*PingRaised) EventType() Type      { return TypePingRaised }
 func (*PingAnswered) EventType() Type    { return TypePingAnswered }
 func (*VerdictReceived) EventType() Type { return TypeVerdictReceived }
-func (*MRCreated) EventType() Type       { return TypeMRCreated }
-func (*RunCompleted) EventType() Type    { return TypeRunCompleted }
-func (*RunAbandoned) EventType() Type    { return TypeRunAbandoned }
-func (*RunFailed) EventType() Type       { return TypeRunFailed }
-func (*RunArchived) EventType() Type     { return TypeRunArchived }
-func (*RunResumed) EventType() Type      { return TypeRunResumed }
-func (*RunPaused) EventType() Type       { return TypeRunPaused }
-func (*RunUnpaused) EventType() Type     { return TypeRunUnpaused }
-func (*EnvDestroyed) EventType() Type    { return TypeEnvDestroyed }
+func (*ActionStarted) EventType() Type   { return TypeActionStarted }
+
+func (*ArtifactPublished) EventType() Type { return TypeArtifactPublished }
+func (*MRCreated) EventType() Type         { return TypeMRCreated }
+func (*RunCompleted) EventType() Type      { return TypeRunCompleted }
+func (*RunAbandoned) EventType() Type      { return TypeRunAbandoned }
+func (*RunFailed) EventType() Type         { return TypeRunFailed }
+func (*RunArchived) EventType() Type       { return TypeRunArchived }
+func (*RunResumed) EventType() Type        { return TypeRunResumed }
+func (*RunPaused) EventType() Type         { return TypeRunPaused }
+func (*RunUnpaused) EventType() Type       { return TypeRunUnpaused }
+func (*EnvDestroyed) EventType() Type      { return TypeEnvDestroyed }
 
 func (*EnvRebuildStarted) EventType() Type   { return TypeEnvRebuildStarted }
 func (*EnvRebuildCompleted) EventType() Type { return TypeEnvRebuildCompleted }

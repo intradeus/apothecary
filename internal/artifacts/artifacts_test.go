@@ -19,6 +19,15 @@ func (d *fakeDB) InsertArtifact(_ context.Context, m Meta) error {
 	d.rows[m.ID] = m
 	return nil
 }
+func (d *fakeDB) ArtifactsForStage(_ context.Context, runID string) ([]Meta, error) {
+	var out []Meta
+	for _, m := range d.rows {
+		if m.RunID == runID && IsStageScope(m.Scope) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
 func (d *fakeDB) AssociateArtifacts(_ context.Context, ids []string, runID, pingID, scope string) error {
 	for _, id := range ids {
 		if m, ok := d.rows[id]; ok && m.Scope == ScopeOrphan {

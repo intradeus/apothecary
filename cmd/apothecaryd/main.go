@@ -353,9 +353,27 @@ func cmdServe(args []string) error {
 // final gate — enough to exercise every stage type against the fakes.
 // Dev-mode only; production flows are user-defined in the UI.
 const devFlowYAML = `name: dev
-version: 2
+version: 3
 description: dev-mode sandbox flow (fake adapters)
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: planner
+    description: plans the work
+    read_only: true
+    prompt: |
+      You are the planning agent of the dev sandbox. Write a short plan.
+    outputs:
+      - name: plan
+        description: the plan
+        path: artifacts/plan.md
+  - name: builder
+    description: implements the plan
+    allow_bash: true
+    prompt: |
+      You are the building agent of the dev sandbox. Implement the plan.
+    inputs:
+      - name: plan
+        description: the plan to implement
 stages:
   - { id: plan,       type: agent, agent: planner }
   - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
@@ -421,19 +439,9 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if err != nil {
 		return err
 	}
-	// Agent library (DESIGN3 §1): the dev flow's agents, seeded so tickets
-	// pass preflight immediately.
-	for _, a := range []confstore.Agent{
-		{Name: "planner", Description: "plans the work", ReadOnly: true,
-			Prompt: "You are the planning agent of the dev sandbox. Write a short plan."},
-		{Name: "builder", Description: "implements the plan", AllowBash: true,
-			Prompt: "You are the building agent of the dev sandbox. Implement the plan."},
-	} {
-		a.ProjectID = p.ID
-		if _, err := conf.SaveAgent(ctx, a); err != nil {
-			return fmt.Errorf("dev agent %s: %w", a.Name, err)
-		}
-	}
+	// The dev flow carries its own agents (FLOWLANG §1, v3) — nothing to
+	// seed beyond the flow itself.
+	_ = p
 	return nil
 }
 

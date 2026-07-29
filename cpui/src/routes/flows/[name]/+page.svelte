@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ago, type ActionSpec, type Agent, type FlowRow, type FlowVersion, type SignalSpec } from '$lib/api';
+  import { api, ago, type ActionSpec, type FlowRow, type FlowVersion, type SignalSpec } from '$lib/api';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
   import { ABORT, autoLayout, docToYaml, DONE, START, edgeOf, setEdge, setEntry, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
@@ -28,9 +28,8 @@
   let error = $state('');
   let busy = $state(false);
   let validation = $state<{ ok: boolean; detail: string; warnings?: string[] } | null>(null);
-  // Built-in agent library (project-independent), for the inspector's binding
+  // Agents come from the document itself (FLOWLANG §1, v3), for the inspector's binding
   // fields. Best-effort — decl hints simply stay off if this fails.
-  let agents = $state<Agent[]>([]);
   // The compiled-in action registry: what an `action` stage may name, and the
   // signature the inspector and the dataflow layer bind against.
   let actions = $state<ActionSpec[]>([]);
@@ -64,7 +63,7 @@
     // Contracts for the binding fields and the dataflow view. Best-effort:
     // without them the graph still renders explicit bindings.
     try {
-      [agents, actions, signals] = await Promise.all([api.allAgents(), api.actions(), api.signals()]);
+      [actions, signals] = await Promise.all([api.actions(), api.signals()]);
     } catch {
       /* binding hints stay off */
     }
@@ -298,7 +297,7 @@
         }}
         {onmove}
         {onlink}
-        {agents}
+        agents={doc?.agents ?? []}
         {actions}
       />
       {#if panelOpen}
@@ -315,7 +314,7 @@
               }}>✕ close</button
             >
           </div>
-          <FlowInspector {doc} {selection} {agents} {actions} {signals} onchange={markChanged} onselect={select} />
+          <FlowInspector {doc} {selection} agents={doc?.agents ?? []} {actions} {signals} onchange={markChanged} onselect={select} />
         </div>
       {/if}
     </div>

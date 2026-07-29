@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 )
 
@@ -46,8 +47,10 @@ type BootstrapSpec struct {
 	GitEmail string
 
 	// Prepare, when set, runs after the clone (§11 step 4): harness config
-	// generation from the project's agent library (DESIGN3 §1).
-	Prepare func(ctx context.Context, env ports.EnvID) error
+	// generation for Agents (FLOWLANG §1, v3 — the flow carries them).
+	Prepare func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
+	// Agents are the flow's agent definitions, materialized by Prepare.
+	Agents []*agentspec.Spec
 
 	// Setup is project.commands.setup (§11 step 6) — OPTIONAL in v2:
 	// empty means the step is skipped.
@@ -128,7 +131,7 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	}
 
 	if spec.Prepare != nil {
-		if err := spec.Prepare(ctx, id); err != nil {
+		if err := spec.Prepare(ctx, id, spec.Agents); err != nil {
 			return fmt.Errorf("bootstrap harness-config: %w", err)
 		}
 	}

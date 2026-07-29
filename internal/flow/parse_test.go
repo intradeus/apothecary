@@ -10,8 +10,26 @@ import (
 
 // header is a minimal valid preamble; tests append stages to it.
 const header = `name: t
-version: 2
+version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+`
+
+// commonAgents is the agents block the stage-shape tests splice in: since v3
+// a document declares the agents its stages name (FLOWLANG §1), and most
+// parse tests are about stage syntax rather than contracts — so the
+// contracts here are permissive on purpose.
+const commonAgents = `agents:
+  - name: builder
+    prompt: build the thing
+    inputs:
+      - { name: plan, optional: true }
+      - { name: changes, optional: true }
+      - { name: rejection, optional: true }
+      - { name: failure, optional: true }
+    outputs:
+      - { name: patch, path: artifacts/patch.md }
+  - name: b
+    prompt: do b
 `
 
 func parseErr(t *testing.T, doc string) *Error {
@@ -40,8 +58,8 @@ func wantErr(t *testing.T, doc, substr string, line int) {
 
 // TestCanonicalV2 locks the fixture that exercises every v2 construct: all
 // four stage types, all three binding forms, both sentinels, output rebinding.
-func TestCanonicalV2(t *testing.T) {
-	f, err := Load("testdata/v2.yaml")
+func TestCanonicalV3(t *testing.T) {
+	f, err := Load("testdata/v3.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +162,7 @@ func TestCanonicalV2(t *testing.T) {
 // the graph editor emits): abort terminals, on_timeout, then-chains, unlimited
 // links and workspace rescue gates.
 func TestReferenceFlowParses(t *testing.T) {
-	f, err := Load("../../artifacts/flows/v2.yaml")
+	f, err := Load("../../artifacts/flows/v3.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +214,7 @@ func TestReferenceFlowParses(t *testing.T) {
 }
 
 func TestStageMapFormBindings(t *testing.T) {
-	doc := header + `stages:
+	doc := header + commonAgents + `stages:
   - { id: build, type: agent, agent: builder,
       input: { plan: artifacts/plan.md, changes: $CHANGED },
       output: { patch: artifacts/patch.md }, on_success: done }
@@ -324,7 +342,7 @@ func TestVersionRequired(t *testing.T) {
 		t.Errorf("missing version: err = %v", err)
 	}
 	future := "name: t\nversion: 99\ndefaults: { harness: fake, model: a/b }\n" + stages
-	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 2") {
+	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 3") {
 		t.Errorf("future version: err = %v", err)
 	}
 }
@@ -355,7 +373,7 @@ func TestDocIOJSONForms(t *testing.T) {
 // TestParseDocMapRoundTrip parses a map-form flow to the editor Doc and back to
 // JSON, asserting the binding object survives with its keys in order.
 func TestParseDocMapRoundTrip(t *testing.T) {
-	doc := header + `stages:
+	doc := header + commonAgents + `stages:
   - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md, changes: $CHANGED }, on_success: done }
 `
 	d, err := ParseDoc("t.yaml", []byte(doc))
@@ -405,13 +423,13 @@ func TestValidationErrors(t *testing.T) {
 	}{
 		{"missing name", "version: 2\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"flow name is required", 0},
-		{"missing harness", "name: t\nversion: 2\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing harness", "name: t\nversion: 3\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"defaults.harness is required", 3},
-		{"missing model", "name: t\nversion: 2\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing model", "name: t\nversion: 3\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"defaults.model is required", 0},
-		{"bad model format", "name: t\nversion: 2\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad model format", "name: t\nversion: 3\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"provider/model", 3},
-		{"bad timeout", "name: t\nversion: 2\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad timeout", "name: t\nversion: 3\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"invalid duration", 3},
 		{"no stages", header, "at least one stage", 0},
 		{"duplicate id", header + "stages:\n  - { id: s, type: command, run: x }\n  - { id: s, type: command, run: y }\n",
@@ -592,7 +610,7 @@ func TestWaitStage(t *testing.T) {
 // TestAbortAndThenChains covers the abort terminal (map + scalar sugar) and
 // retry-then-escalate chains.
 func TestAbortAndThenChains(t *testing.T) {
-	doc := header + `stages:
+	doc := header + commonAgents + `stages:
   - { id: build, type: agent, agent: b }
   - { id: test,  type: command, run: t,
       on_fail: { to: test, max: 2, then: { to: build, max: 3 } },
@@ -637,7 +655,7 @@ func TestAbortAndThenChains(t *testing.T) {
 
 	// Unlimited is also legal when the SOURCE is a human_gate (the link
 	// only fires when a human rejects it), regardless of the target type.
-	gsrc := header + `stages:
+	gsrc := header + "agents:\n  - { name: a, prompt: do a }\n" + `stages:
   - { id: work, type: agent, agent: a, on_success: gate }
   - { id: gate, type: human_gate, on_success: done,
       on_reject: { to: work, max: -1 } }
@@ -688,5 +706,58 @@ func TestExplicitSuccessGraph(t *testing.T) {
 	}
 	if f.Stages[0].Edge(EdgeFail) == nil || f.Stages[0].Edge(EdgeFail).To != "b" {
 		t.Errorf("edges = %+v", f.Stages[0].Edges)
+	}
+}
+
+// TestYAMLHardening covers the structural rules a flow document must obey
+// (FLOWLANG §6, PLAN5 M22). Each of these is legal YAML that would either
+// break the editor's canonical round-trip or hide structure from a reader.
+func TestYAMLHardening(t *testing.T) {
+	stages := "stages:\n  - { id: s, type: command, run: x }\n"
+	cases := []struct{ name, doc, substr string }{
+		{
+			name:   "anchors are refused",
+			doc:    header + "agents:\n  - &base { name: a, prompt: p }\n" + stages,
+			substr: "anchors",
+		},
+		{
+			name:   "aliases are refused",
+			doc:    header + commonAgents + "stages:\n  - &s { id: a, type: command, run: x, on_success: done }\n",
+			substr: "anchors",
+		},
+		{
+			name:   "a second document is refused",
+			doc:    header + stages + "---\nname: other\nversion: 3\n",
+			substr: "one document",
+		},
+		{
+			name: "duplicate edge keys are refused",
+			doc: header + "stages:\n  - { id: s, type: command, run: x, " +
+				"on_fail: { to: s, max: 1, to: s } }\n",
+			substr: `"to" set twice`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse("t.yaml", []byte(tc.doc))
+			if err == nil {
+				t.Fatalf("parsed cleanly, want an error mentioning %q", tc.substr)
+			}
+			if !strings.Contains(err.Error(), tc.substr) {
+				t.Errorf("error = %q, want mention of %q", err, tc.substr)
+			}
+		})
+	}
+}
+
+// A then-chain deeper than the cap is refused rather than recursed into.
+func TestThenChainDepthCapped(t *testing.T) {
+	edge := "{ to: s, max: 1 }"
+	for range maxChainDepth + 2 {
+		edge = "{ to: s, max: 1, then: " + edge + " }"
+	}
+	_, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x, on_fail: "+edge+" }\n"))
+	if err == nil || !strings.Contains(err.Error(), "then chain is deeper") {
+		t.Errorf("err = %v, want a chain-depth refusal", err)
 	}
 }

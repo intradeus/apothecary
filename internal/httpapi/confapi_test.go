@@ -23,8 +23,17 @@ import (
 // v1FlowDoc is this suite's user-created flow (the product ships none):
 // gated build ending in an MR — enough to drive both human gates.
 const v1FlowDoc = `name: v1
-version: 2
+version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: planner
+    prompt: plan the work
+    outputs:
+      - { name: plan, path: artifacts/plan.md }
+  - name: builder
+    prompt: build the thing
+    inputs:
+      - { name: plan, optional: true }
 stages:
   - { id: plan,       type: agent, agent: planner }
   - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
@@ -151,30 +160,8 @@ func (x *confEnv) wizard(t *testing.T) string {
 	}
 	_ = json.Unmarshal(data, &p)
 
-	// Agent library (DESIGN3 §1): the v1 flow's agents must exist on the
-	// project — agents live in the DB, not the target repo. Each declares the
-	// I/O contract the flow binds; an authored agent shadows the built-in of
-	// the same name, decls included, so omitting them here would (rightly)
-	// fail the flow's bindings at run creation.
-	decls := map[string]map[string]any{
-		"planner": {"outputs": []map[string]any{{"name": "plan", "path": "artifacts/plan.md"}}},
-		"builder": {"inputs": []map[string]any{{"name": "plan"}}},
-		"reviewer": {"inputs": []map[string]any{{"name": "plan"}},
-			"outputs": []map[string]any{{"name": "verdict", "type": "verdict", "path": "artifacts/verdict.json"}}},
-	}
-	for _, name := range []string{"planner", "builder", "reviewer"} {
-		body := map[string]any{
-			"description": name + " agent", "read_only": name != "builder",
-			"allow_bash": name == "builder", "prompt": "You are the " + name + ".",
-		}
-		for k, v := range decls[name] {
-			body[k] = v
-		}
-		resp, data := x.do(t, "PUT", "/api/projects/"+p.ID+"/agents/"+name, body, nil)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("create agent %s = %d: %s", name, resp.StatusCode, data)
-		}
-	}
+	// No agents to seed: since v3 they live in the flow the project runs
+	// (FLOWLANG §1), so a project is just its integrations and repo.
 	return p.ID
 }
 
@@ -247,7 +234,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// Flow validate: line-precise errors verbatim.
 	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{
-		"yaml": "name: bad\nversion: 2\ndefaults: { harness: fake, model: nope }\nstages: []\n",
+		"yaml": "name: bad\nversion: 3\ndefaults: { harness: fake, model: nope }\nstages: []\n",
 	}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "provider/model") {
 		t.Fatalf("validate = %d: %s", resp.StatusCode, data)
@@ -362,7 +349,7 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 
 	// Saving under the built-in name creates the editable override.
-	override := "name: default\nversion: 2\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	override := "name: default\nversion: 3\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
 	resp, data = x.do(t, "PUT", "/api/flows/default", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
@@ -389,227 +376,70 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 }
 
-// TestAgentLibraryRoutes covers the DESIGN3 §1 API surface: CRUD +
-// versions + delete guard + cross-project copy + repo import.
-func TestAgentLibraryRoutes(t *testing.T) {
+
+
+// TestFlowValidateReportsErrorsHonestly: since v3 a flow carries its agents,
+// so a binding that violates a contract is a parse ERROR — ok:false with the
+// reason in `errors`. Advisory findings stay in `warnings` with ok:true.
+// (PLAN5 M24: this endpoint used to report contract errors as warnings with
+// ok:true, which read to the editor as advice rather than breakage.)
+func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 	x := newConfEnv(t)
-	projectID := x.wizard(t)
 
-	// List: the wizard seeded planner/builder/reviewer; the compiled-in
-	// defaults fill the rest of the library (committer, redactor) flagged
-	// builtin — authored names shadow their built-in counterparts.
-	resp, data := x.do(t, "GET", "/api/projects/"+projectID+"/agents", nil, nil)
-	var agents []struct {
-		confstore.Agent
-		Builtin bool `json:"builtin"`
-	}
-	_ = json.Unmarshal(data, &agents)
-	authored, builtins := 0, 0
-	for _, a := range agents {
-		if a.Builtin {
-			builtins++
-		} else {
-			authored++
-		}
-	}
-	if resp.StatusCode != 200 || authored != 3 || builtins != 2 {
-		t.Fatalf("list = %d (authored %d, builtin %d): %s", resp.StatusCode, authored, builtins, data)
-	}
-
-	// Update bumps the hash and accumulates a version.
-	var before confstore.Agent
-	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/planner", nil, nil)
-	_ = json.Unmarshal(data, &before)
-	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/agents/planner", map[string]any{
-		"description": "plans harder", "read_only": true, "prompt": "You are the planner, v2.",
-	}, nil)
-	var after confstore.Agent
-	_ = json.Unmarshal(data, &after)
-	if resp.StatusCode != 200 || after.Hash == before.Hash {
-		t.Fatalf("update = %d, hash %s -> %s", resp.StatusCode, before.Hash, after.Hash)
-	}
-	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/planner/versions", nil, nil)
-	var versions []confstore.AgentVersion
-	_ = json.Unmarshal(data, &versions)
-	if len(versions) != 2 {
-		t.Fatalf("versions = %d, want 2: %s", len(versions), data)
-	}
-	resp, data = x.do(t, "GET", "/api/agent-versions/"+before.Hash, nil, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), before.Hash) {
-		t.Fatalf("agent-version = %d: %s", resp.StatusCode, data)
-	}
-
-	// Delete: planner is referenced by the default flow but shadows a
-	// built-in, so deleting the override is allowed (reset to default —
-	// the flow keeps resolving through the fallback). The referenced-and-
-	// unshadowed refusal is covered in confstore's delete-guard test.
-	resp, data = x.do(t, "DELETE", "/api/projects/"+projectID+"/agents/planner", nil, nil)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("builtin-shadow delete = %d: %s", resp.StatusCode, data)
-	}
-	// Restore the authored planner (the copy section below copies it).
-	x.do(t, "PUT", "/api/projects/"+projectID+"/agents/planner", map[string]any{
-		"description": "planner agent", "read_only": true, "prompt": "You are the planner, v2.",
-	}, nil)
-	x.do(t, "PUT", "/api/projects/"+projectID+"/agents/spare", map[string]any{"prompt": "spare"}, nil)
-	resp, _ = x.do(t, "DELETE", "/api/projects/"+projectID+"/agents/spare", nil, nil)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("spare delete = %d", resp.StatusCode)
-	}
-
-	// Copy into a second project; collision refuses.
-	var p2 struct {
-		ID string `json:"id"`
-	}
-	var intgs []confstore.Integration
-	_, data = x.do(t, "GET", "/api/integrations", nil, nil)
-	_ = json.Unmarshal(data, &intgs)
-	ids := map[string]string{}
-	for _, in := range intgs {
-		ids[in.Port] = in.ID
-	}
-	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
-		"name": "web2", "forge_id": ids["forge"], "provisioner_id": ids["provisioner"],
-		"harness_ids": []any{ids["harness"]},
-		"repo":        map[string]string{"url": "https://forge.local/dev/fake-repo.git", "locator": "1", "default_branch": "main"},
-		"workspace":   map[string]any{"template": "dev"}, "default_flow": "v1",
-	}, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("web2 = %d: %s", resp.StatusCode, data)
-	}
-	_ = json.Unmarshal(data, &p2)
-	resp, data = x.do(t, "POST", "/api/projects/"+p2.ID+"/agents/copy", map[string]any{
-		"from_project_id": projectID, "names": []string{"planner", "builder"},
-	}, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), "planner") {
-		t.Fatalf("copy = %d: %s", resp.StatusCode, data)
-	}
-	resp, _ = x.do(t, "POST", "/api/projects/"+p2.ID+"/agents/copy", map[string]any{
-		"from_project_id": projectID, "names": []string{"planner"},
-	}, nil)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("copy collision = %d", resp.StatusCode)
-	}
-
-}
-
-// TestAgentDeclsAndFlowWarnings covers the I/O contract surfaces (DESIGN4 §1):
-// PUT/GET pass decls through, built-in rows carry their decls, GET /api/agents
-// serves the project-independent library, and /api/flows/validate reports
-// binding problems as advisory warnings (never blocking the save).
-func TestAgentDeclsAndFlowWarnings(t *testing.T) {
-	x := newConfEnv(t)
-	projectID := x.wizard(t)
-
-	// PUT an authored agent carrying decls; GET it back and confirm round-trip.
-	resp, data := x.do(t, "PUT", "/api/projects/"+projectID+"/agents/custom", map[string]any{
-		"prompt": "do it",
-		"inputs": []map[string]any{
-			{"name": "plan", "description": "the plan"},
-			{"name": "feedback", "optional": true},
-		},
-		"outputs": []map[string]any{{"name": "out", "path": "artifacts/out.md"}},
-	}, nil)
-	if resp.StatusCode != 200 {
-		t.Fatalf("put custom = %d: %s", resp.StatusCode, data)
-	}
-	var got confstore.Agent
-	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/custom", nil, nil)
-	_ = json.Unmarshal(data, &got)
-	if len(got.Inputs) != 2 || got.Inputs[0].Name != "plan" || !got.Inputs[1].Optional ||
-		len(got.Outputs) != 1 || got.Outputs[0].Path != "artifacts/out.md" {
-		t.Fatalf("decls did not round-trip: %+v", got)
-	}
-
-	// Invalid decls are refused (an output path must stay inside the repo).
-	resp, _ = x.do(t, "PUT", "/api/projects/"+projectID+"/agents/bad", map[string]any{
-		"prompt": "p", "outputs": []map[string]any{{"name": "out", "path": "../escape.md"}},
-	}, nil)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("invalid decl PUT = %d, want 400", resp.StatusCode)
-	}
-
-	// GET /api/agents (project-independent) serves built-ins with their decls.
-	resp, data = x.do(t, "GET", "/api/agents", nil, nil)
-	if resp.StatusCode != 200 {
-		t.Fatalf("list agents = %d: %s", resp.StatusCode, data)
-	}
-	var lib []confstore.Agent
-	_ = json.Unmarshal(data, &lib)
-	var builder *confstore.Agent
-	for i := range lib {
-		if lib[i].Name == "builder" {
-			builder = &lib[i]
-		}
-	}
-	if builder == nil || len(builder.Inputs) == 0 || builder.Inputs[0].Name != "plan" {
-		t.Fatalf("built-in builder decls missing: %+v", builder)
-	}
-
-	// validate a flow that binds an undeclared input to a built-in agent:
-	// ok stays true (save is never blocked), the problem surfaces as a warning.
-	badFlow := `name: w
-version: 2
-defaults: { harness: fake, model: a/b }
-stages:
-  - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }
+	const agents = `agents:
+  - name: builder
+    prompt: build it
+    inputs:
+      - { name: plan }
+  - name: plain
+    prompt: plain
 `
-	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{"yaml": badFlow}, nil)
-	var vr struct {
+	post := func(yaml string) (int, struct {
 		OK       bool     `json:"ok"`
+		Errors   []string `json:"errors"`
 		Warnings []string `json:"warnings"`
-	}
-	_ = json.Unmarshal(data, &vr)
-	if resp.StatusCode != 200 || !vr.OK {
-		t.Fatalf("validate = %d ok=%v: %s", resp.StatusCode, vr.OK, data)
-	}
-	if !strings.Contains(strings.Join(vr.Warnings, " "), "not declared by agent") {
-		t.Errorf("warnings = %v, want an undeclared-input warning", vr.Warnings)
+	}) {
+		var vr struct {
+			OK       bool     `json:"ok"`
+			Errors   []string `json:"errors"`
+			Warnings []string `json:"warnings"`
+		}
+		resp, data := x.do(t, "POST", "/api/flows/validate", map[string]string{"yaml": yaml}, nil)
+		_ = json.Unmarshal(data, &vr)
+		return resp.StatusCode, vr
 	}
 
-	// A verdict-typed output round-trips, and it is what makes a stage's
-	// on_reject reachable — without one the editor gets a warning.
-	resp, _ = x.do(t, "PUT", "/api/projects/"+projectID+"/agents/judge", map[string]any{
-		"prompt": "p", "read_only": true,
-		"outputs": []map[string]any{{"name": "verdict", "type": "verdict", "path": "artifacts/verdict.json"}},
-	}, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("verdict-output PUT = %d", resp.StatusCode)
+	// Binding an input the agent does not declare: refused, not advised.
+	code, vr := post("name: w\nversion: 3\ndefaults: { harness: fake, model: a/b }\n" + agents +
+		"stages:\n  - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }\n")
+	if code != 200 || vr.OK {
+		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
-	var judge confstore.Agent
-	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/agents/judge", nil, nil)
-	_ = json.Unmarshal(data, &judge)
-	if len(judge.Outputs) != 1 || judge.Outputs[0].Type != "verdict" {
-		t.Fatalf("verdict output did not round-trip: %+v", judge.Outputs)
+	if !strings.Contains(strings.Join(vr.Errors, " "), "not declared by agent") {
+		t.Errorf("errors = %v, want an undeclared-input error", vr.Errors)
 	}
-	// A second agent with no contract at all, for the negative case.
-	if resp, _ := x.do(t, "PUT", "/api/projects/"+projectID+"/agents/plain", map[string]any{
-		"prompt": "p", "read_only": true,
-	}, nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("plain agent PUT = %d", resp.StatusCode)
+
+	// on_reject on an agent that declares no verdict can never fire: also an
+	// error now that the contract is in the document.
+	code, vr = post("name: r\nversion: 3\ndefaults: { harness: fake, model: a/b }\n" + agents +
+		"stages:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/p.md }, on_success: j }\n" +
+		"  - { id: j, type: agent, agent: plain, on_success: done, on_reject: { to: b, max: 1 } }\n")
+	if code != 200 || vr.OK {
+		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
-	rejectFlow := `name: r
-version: 2
-defaults: { harness: fake, model: a/b }
-stages:
-  - { id: b, type: agent, agent: builder, input: { plan: artifacts/plan.md }, on_success: j }
-  - { id: j, type: agent, agent: %s, on_success: done, on_reject: { to: b, max: 1 } }
-`
-	// Bound to the verdict-declaring agent: no warning about the edge.
-	resp, data = x.do(t, "POST", "/api/flows/validate",
-		map[string]string{"yaml": fmt.Sprintf(rejectFlow, "judge"), "project_id": projectID}, nil)
-	vr.Warnings = nil
-	_ = json.Unmarshal(data, &vr)
-	if resp.StatusCode != 200 || strings.Contains(strings.Join(vr.Warnings, " "), "on_reject will never fire") {
-		t.Errorf("verdict agent should not warn: %v", vr.Warnings)
+	if !strings.Contains(strings.Join(vr.Errors, " "), "on_reject can never fire") {
+		t.Errorf("errors = %v, want a dead-on_reject error", vr.Errors)
 	}
-	// Bound to an agent without one: the dead edge is called out.
-	resp, data = x.do(t, "POST", "/api/flows/validate",
-		map[string]string{"yaml": fmt.Sprintf(rejectFlow, "plain"), "project_id": projectID}, nil)
-	vr.Warnings = nil
-	_ = json.Unmarshal(data, &vr)
-	if resp.StatusCode != 200 || !strings.Contains(strings.Join(vr.Warnings, " "), "on_reject will never fire") {
-		t.Errorf("warnings = %v, want a dead-on_reject warning", vr.Warnings)
+
+	// A legal-but-suspicious document still validates, with the finding as a
+	// warning: nothing produces the path the builder reads.
+	code, vr = post("name: ok\nversion: 3\ndefaults: { harness: fake, model: a/b }\n" + agents +
+		"stages:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/nobody.md }, on_success: done }\n")
+	if code != 200 || !vr.OK {
+		t.Fatalf("validate = %d ok=%v, want ok:true", code, vr.OK)
+	}
+	if !strings.Contains(strings.Join(vr.Warnings, " "), "which no stage produces") {
+		t.Errorf("warnings = %v, want an unproduced-path warning", vr.Warnings)
 	}
 }
 

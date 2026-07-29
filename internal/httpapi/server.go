@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/artifacts", s.postArtifacts)
 	mux.HandleFunc("GET /api/artifacts/{id}", s.getArtifact)
 	mux.HandleFunc("GET /api/runs/{id}/artifacts", s.getRunArtifacts)
+	mux.HandleFunc("GET /api/runs/{id}/attempts", s.getRunAttempts)
 	mux.HandleFunc("GET /api/channels", s.listChannels)
 	mux.HandleFunc("POST /api/channels", s.addChannel)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.deleteChannel)
@@ -128,13 +129,6 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("DELETE /api/tickets/{id}", s.deleteTicket)
 		mux.HandleFunc("POST /api/tickets/{id}/runs", s.startTicketRun)
 		// Agent library (DESIGN3 §1): per-project, copiable, versioned.
-		mux.HandleFunc("GET /api/projects/{id}/agents", s.listAgents)
-		mux.HandleFunc("PUT /api/projects/{id}/agents/{name}", s.putAgent)
-		mux.HandleFunc("GET /api/projects/{id}/agents/{name}", s.getAgent)
-		mux.HandleFunc("DELETE /api/projects/{id}/agents/{name}", s.deleteAgent)
-		mux.HandleFunc("GET /api/projects/{id}/agents/{name}/versions", s.listAgentVersions)
-		mux.HandleFunc("GET /api/agent-versions/{hash}", s.getAgentVersion)
-		mux.HandleFunc("POST /api/projects/{id}/agents/copy", s.copyAgents)
 		mux.HandleFunc("GET /api/projects/{id}/egress-audit", s.getProjectEgressAudit)
 		mux.HandleFunc("POST /api/projects/{id}/preflight", s.preflightProject)
 		mux.HandleFunc("POST /api/projects/{id}/envcheck", s.startEnvCheck)
@@ -147,9 +141,6 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("DELETE /api/flows/{name}", s.deleteFlow)
 		mux.HandleFunc("GET /api/flows/{name}/versions", s.listFlowVersions)
 		mux.HandleFunc("GET /api/flow-versions/{hash}", s.getFlowVersion)
-		// Project-independent agent library for the flow editor (?project=<id>
-		// overlays that project's authored agents on the built-ins).
-		mux.HandleFunc("GET /api/agents", s.listAllAgents)
 		// The action registry an `action` stage may name (compiled in, not
 		// project data), for the flow editor's action picker.
 		mux.HandleFunc("GET /api/actions", s.listActions)

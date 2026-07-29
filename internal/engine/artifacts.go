@@ -1,11 +1,14 @@
 package engine
 
 import (
+	"fmt"
 	"path"
 	"strings"
 	"time"
 
 	"apothecary/internal/artifacts"
+	"apothecary/internal/event"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 )
 
@@ -164,4 +167,72 @@ func attachedFilesNote(paths []string) string {
 		b.WriteString("- " + p + "\n")
 	}
 	return b.String()
+}
+
+// --- per-attempt snapshots (PLAN5 M27) --------------------------------------
+
+// publishOutputs captures a stage attempt's declared outputs into the blob
+// store and links each one to the run's timeline with an artifact_published
+// event. Called on BOTH outcomes: a failed attempt's partial outputs are
+// exactly what a human wants when working out why it failed.
+//
+// With M18's delete-before-attempt, anything present here was written by the
+// attempt that just ran — so a snapshot can never be polluted by a stale file
+// from an earlier one.
+//
+// Best-effort throughout: an audit trail must never be able to fail a run.
+func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.IOBinding) {
+	if x.e.artifacts == nil {
+		return
+	}
+	for _, b := range bindings {
+		if b.Value == "" || flow.IsSentinel(b.Value) {
+			continue
+		}
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, b.Value)
+		if err != nil {
+			continue // never written: the output contract reports it
+		}
+		x.publish(st.ID, iter, artifacts.ScopeStageOutput, b.Name, b.Value, data)
+	}
+}
+
+// publishLog captures what an attempt printed. Published on success too, not
+// only on failure: a passing attempt's log is part of the record. The 8 KB
+// tails on stage_failed / edge_taken stay what they are — a replay-cheap
+// inline preview and the prompt feed — with the whole log now one link away.
+func (x *exec) publishLog(stageID string, iter int, output string) {
+	if x.e.artifacts == nil || output == "" {
+		return
+	}
+	x.publish(stageID, iter, artifacts.ScopeStageLog, "",
+		fmt.Sprintf("%s-%d.log", stageID, iter), []byte(output))
+}
+
+func (x *exec) publish(stageID string, iter int, scope, name, path string, data []byte) {
+	// Snapshots outlive the workspace and its security boundary, so they get
+	// the same scrub as everything else that leaves it (M21).
+	data = []byte(x.redact.scrub(string(data)))
+	m, err := x.e.artifacts.Capture(x.bg, artifacts.Meta{
+		RunID: x.rs.runID, Scope: scope, Filename: pathBase(path),
+		StageID: stageID, Iteration: iter, OutputName: name,
+	}, data)
+	if err != nil {
+		x.e.log.Warn("capturing attempt artifact", "run", x.rs.runID, "stage", stageID, "err", err)
+		return
+	}
+	if err := x.append(&event.ArtifactPublished{
+		StageID: stageID, Iteration: iter, Scope: scope, Name: name, Path: path,
+		ArtifactID: m.ID, SHA256: m.SHA256, Size: m.Size,
+	}); err != nil {
+		x.e.log.Warn("recording attempt artifact", "run", x.rs.runID, "stage", stageID, "err", err)
+	}
+}
+
+// pathBase is the last path element, for the artifact's display filename.
+func pathBase(p string) string {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Selection } from '$lib/FlowGraph.svelte';
-  import type { ActionSpec, Agent, SignalSpec } from '$lib/api';
+  import type { ActionSpec, SignalSpec } from '$lib/api';
   import {
     ABORT,
     DONE,
@@ -22,6 +22,7 @@
     type DocEdge,
     type DocStage,
     type EdgeKind,
+    type DocAgent,
     type FlowDoc,
     type StageKind
   } from '$lib/flowdoc';
@@ -44,7 +45,7 @@
     selection: Selection;
     onchange: () => void;
     onselect: (sel: Selection) => void;
-    agents?: Agent[];
+    agents?: DocAgent[];
     actions?: ActionSpec[];
     signals?: SignalSpec[];
   } = $props();
@@ -221,7 +222,7 @@
     <div class="muted small">type: <span class="mono">{s.type}</span></div>
 
     {#if s.type === 'agent'}
-      <label for="st-agent">Agent <span class="muted">— an agent name in the project running this flow</span></label>
+      <label for="st-agent">Agent <span class="muted">— a name declared in this flow’s agents block</span></label>
       <input id="st-agent" list="agent-names" bind:value={s.agent} oninput={onchange} placeholder="builder" />
       <datalist id="agent-names">
         {#each agents as a (a.name)}<option value={a.name}></option>{/each}

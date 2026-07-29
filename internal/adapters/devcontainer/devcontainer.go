@@ -1020,13 +1020,38 @@ func resolvePath(path string) string {
 	return `"$HOME"/repo/` + shellQuote(path)
 }
 
+// escapeExit is the exit code the containment guard uses for a repo-relative
+// path that resolves outside the checkout.
+const escapeExit = 45
+
+// containmentGuard emits a shell prelude that refuses a repo-relative path
+// whose RESOLVED location escapes the checkout (PLAN5 M22). The flow parser's
+// path rules are lexical — they stop "../" but not a symlink, and an agent
+// writes into the repo, so `artifacts/plan.md -> /apothecary/run.env` would
+// otherwise hand the run token to a prompt or a gate.
+//
+// Absolute paths are engine-controlled (/apothecary/...) and pass through.
+func containmentGuard(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return ""
+	}
+	p := resolvePath(path)
+	// readlink -f resolves every symlink in the path and does not require the
+	// leaf to exist, so this guards writes as well as reads.
+	return fmt.Sprintf(
+		`__root=$(cd "$HOME"/repo 2>/dev/null && pwd -P) || exit %[1]d; `+
+			`__real=$(readlink -f -- %[2]s) || exit %[1]d; `+
+			`case "$__real" in "$__root"/*) ;; *) exit %[1]d ;; esac; `,
+		escapeExit, p)
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (a *Adapter) ReadFile(ctx context.Context, env ports.EnvID, path string) ([]byte, error) {
 	p := resolvePath(path)
-	script := fmt.Sprintf(`if [ ! -f %s ]; then exit 44; fi; base64 < %s`, p, p)
+	script := containmentGuard(path) + fmt.Sprintf(`if [ ! -f %s ]; then exit 44; fi; base64 < %s`, p, p)
 	stdout, stderr, code, err := a.runInner(ctx, string(env), a.cfg.DevcontainerBin,
 		[]string{"exec", "--id-label", label(string(env)), "bash", "-s"}, []byte(script), nil)
 	if err != nil {
@@ -1034,6 +1059,9 @@ func (a *Adapter) ReadFile(ctx context.Context, env ports.EnvID, path string) ([
 	}
 	if code == 44 {
 		return nil, fmt.Errorf("%s: %w", path, fs.ErrNotExist)
+	}
+	if code == escapeExit {
+		return nil, fmt.Errorf("read %s: resolves outside the repository checkout (symlink escape)", path)
 	}
 	if code != 0 {
 		return nil, fmt.Errorf("read %s: exit %d: %s", path, code, tail(string(stderr), 512))
@@ -1049,12 +1077,16 @@ func (a *Adapter) WriteFile(ctx context.Context, env ports.EnvID, path string, d
 	p := resolvePath(path)
 	// One-line script + payload on the same stdin: bash consumes the first
 	// line, base64 -d consumes the rest.
-	script := fmt.Sprintf(`mkdir -p "$(dirname %s)" && base64 -d > %s && chmod %o %s`, p, p, mode.Perm(), p)
+	script := containmentGuard(path) +
+		fmt.Sprintf(`mkdir -p "$(dirname %s)" && base64 -d > %s && chmod %o %s`, p, p, mode.Perm(), p)
 	stdin := script + "\n" + base64.StdEncoding.EncodeToString(data) + "\n"
 	_, stderr, code, err := a.runInner(ctx, string(env), a.cfg.DevcontainerBin,
 		[]string{"exec", "--id-label", label(string(env)), "bash", "-eo", "pipefail", "-s"}, []byte(stdin), nil)
 	if err != nil {
 		return err
+	}
+	if code == escapeExit {
+		return fmt.Errorf("write %s: resolves outside the repository checkout (symlink escape)", path)
 	}
 	if code != 0 {
 		return fmt.Errorf("write %s: exit %d: %s", path, code, tail(string(stderr), 512))

@@ -387,6 +387,9 @@ func (e *Engine) SetPortRelay(m *portrelay.Manager) { e.portRelay = m }
 // no-op). Implemented by *artifacts.Store.
 type ArtifactStore interface {
 	Associate(ctx context.Context, ids []string, runID, pingID, scope string) error
+	// Capture stores an engine-produced attempt snapshot (PLAN5 M27): a
+	// declared output's bytes or a stage log, attached on arrival.
+	Capture(ctx context.Context, m artifacts.Meta, data []byte) (artifacts.Meta, error)
 	ForRun(ctx context.Context, runID string) ([]artifacts.Meta, error)
 	ForPing(ctx context.Context, pingID, scope string) ([]artifacts.Meta, error)
 	// Meta resolves one artifact by id — ticket attachments belong to the
@@ -903,7 +906,20 @@ func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
 	if v.EnvID == "" {
 		return fmt.Errorf("run %s has no workspace to resume into; restart it instead", runID)
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunResumed{StageID: v.CurrentStage}); err != nil {
+	// Re-pin to the flow's current version: resume is human-initiated, so it
+	// is where an edited flow (an edited prompt, a fixed binding) legitimately
+	// reaches a run in flight — unlike crash recovery or play, which must
+	// never change behavior underneath a running stage (PLAN5 M19). A flow
+	// that no longer resolves keeps the old pin rather than blocking the retry.
+	hash := ""
+	if fl, ferr := e.flows.Get(ctx, v.FlowName); ferr == nil {
+		if fl.Stage(v.CurrentStage) == nil {
+			return fmt.Errorf("run %s cannot resume: flow %q no longer has a stage %q — restart it instead",
+				runID, v.FlowName, v.CurrentStage)
+		}
+		hash = fl.Hash
+	}
+	if err := e.appendAndEmit(ctx, runID, &event.RunResumed{StageID: v.CurrentStage, FlowHash: hash}); err != nil {
 		return err
 	}
 	lim := e.limits(ctx)
@@ -992,10 +1008,6 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	} else if !dc {
 		return fmt.Errorf("preflight: repo has no .devcontainer/devcontainer.json — apothecary runs the repo's own devcontainer")
 	}
-	agents := map[string]bool{}
-	for _, n := range res.AgentNames {
-		agents[n] = true
-	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
@@ -1003,11 +1015,8 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 				return fmt.Errorf("preflight: stage %q: run_ref %q not found in project.commands", st.ID, st.RunRef)
 			}
 		}
-		// Agents resolve like run_refs: the flow names them, the project
-		// defines them (DESIGN3 §1).
-		if st.Type == flow.StageAgent && !agents[st.Agent] {
-			return fmt.Errorf("preflight: stage %q: agent %q not found in the project's agent library", st.ID, st.Agent)
-		}
+		// Agents need no preflight: since v3 the flow declares them, so a
+		// stage naming an undeclared agent is a parse error (FLOWLANG §1).
 		// Per-step harness (§6.3): a stage may pin any harness KIND in the
 		// project's set; one outside it is refused here, not at parse time —
 		// flows are portable data.
@@ -1030,14 +1039,10 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 			}
 		}
 	}
-	// Agent I/O contract (DESIGN4 §1): stage bindings must satisfy the
-	// referenced agents' declared inputs/outputs. This is the enforcing site
-	// (run creation), with the full project agent set; /api/flows/validate is
-	// the advisory one. Warnings don't block a run.
-	if errs, warns := flow.ValidateBindings(fl, res.AgentSpecs); len(errs) > 0 {
-		return fmt.Errorf("preflight: %v", errs[0])
-	} else if len(warns) > 0 {
-		e.log.Warn("flow binding warnings", "flow", fl.Name, "count", len(warns), "first", warns[0])
+	// The agent I/O contract is enforced at parse time now that the flow
+	// carries its agents; what is left here is advisory.
+	if len(fl.Warnings) > 0 {
+		e.log.Warn("flow warnings", "flow", fl.Name, "count", len(fl.Warnings), "first", fl.Warnings[0])
 	}
 	return nil
 }
@@ -1120,11 +1125,17 @@ func (e *Engine) startLocked(runID string) {
 	go e.runLoop(ctx, runID, h)
 }
 
-// Abort cancels the run context, kills any in-flight exec and marks the run
-// failed with reason "aborted" (§2). The environment is kept. Runs without
-// a live goroutine (paused, or still queued pending) are aborted directly:
-// they are dequeued and the terminal event is appended here — safe, no
-// writer goroutine exists.
+// Abort cancels the run context, kills any in-flight exec and ABANDONS the
+// run (§2). The environment is kept. Runs without a live goroutine (paused,
+// or still queued pending) are aborted directly: they are dequeued and the
+// terminal event is appended here — safe, no writer goroutine exists.
+//
+// Abandoned rather than failed (PLAN5 M24): `failed` is reserved for the
+// engine's own faults — infrastructure, an unresolvable project, a flow that
+// no longer parses. A person deliberately stopping a run is a decision, and
+// reporting it as a failure both misstates the history and makes the two
+// spellings of "abort" (this verb and the flow's `abort` terminal) land in
+// opposite states. Resumability is unchanged: ResumeRun accepts both.
 func (e *Engine) Abort(runID string) error {
 	e.mu.Lock()
 	h, ok := e.handles[runID]
@@ -1152,7 +1163,8 @@ func (e *Engine) Abort(runID string) error {
 	if v.State.Terminal() {
 		return fmt.Errorf("run %s is already %s: %w", runID, v.State, ErrRunNotActive)
 	}
-	return e.appendAndEmit(ctx, runID, &event.RunFailed{Reason: "aborted"})
+	return e.appendAndEmit(ctx, runID, &event.RunAbandoned{
+		StalledAt: v.CurrentStage, Reason: "aborted by user"})
 }
 
 // Pause parks an active run: its goroutine exits cleanly (a controlled
@@ -1756,19 +1768,12 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 }
 
 func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
-	agents := map[string]bool{}
-	for _, n := range res.AgentNames {
-		agents[n] = true
-	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
 			if _, ok := res.Commands[st.RunRef]; !ok {
 				return fmt.Errorf("stage %q: run_ref %q not found in project.commands", st.ID, st.RunRef)
 			}
-		}
-		if st.Type == flow.StageAgent && !agents[st.Agent] {
-			return fmt.Errorf("stage %q: agent %q not found in the project's agent library", st.ID, st.Agent)
 		}
 		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
 			return fmt.Errorf("stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())

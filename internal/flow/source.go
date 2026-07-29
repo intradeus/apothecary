@@ -10,12 +10,24 @@ import (
 // from transient source errors (DB blips — the run stays recoverable).
 var ErrNotFound = errors.New("flow not found")
 
-// Source resolves flow names at run creation and recovery (DESIGN2 §7):
-// DB-backed in production (confstore), MapSource in tests. Current-version
-// semantics are unchanged from v1's map — recovery uses the current
-// document and warns on hash drift.
+// Source resolves flow names at run creation (DESIGN2 §7): DB-backed in
+// production (confstore), MapSource in tests. Get returns the CURRENT
+// document for a name — what a new run pins itself to.
 type Source interface {
 	Get(ctx context.Context, name string) (*Flow, error)
+}
+
+// PinnedSource resolves the exact document a run started with, by content
+// hash. A run records its flow's hash at creation, so every later stage —
+// and every recovery — executes the text the run began with rather than
+// whatever the name resolves to now (PLAN5 M19). Since v3 the document
+// carries its agents, so this pins the prompts too.
+//
+// Optional: a Source that does not implement it (MapSource in tests) simply
+// keeps the by-name behavior. ErrNotFound means "that version is gone" and
+// the caller falls back to the current document.
+type PinnedSource interface {
+	GetVersion(ctx context.Context, name, hash string) (*Flow, error)
 }
 
 // MapSource is the in-memory Source used by tests and `apothecaryd validate`.
@@ -25,6 +37,16 @@ func (m MapSource) Get(_ context.Context, name string) (*Flow, error) {
 	f, ok := m[name]
 	if !ok {
 		return nil, fmt.Errorf("flow %q: %w", name, ErrNotFound)
+	}
+	return f, nil
+}
+
+// GetVersion serves the mapped document when its hash matches; a map holds
+// one version per name, so anything else is genuinely absent.
+func (m MapSource) GetVersion(_ context.Context, name, hash string) (*Flow, error) {
+	f, ok := m[name]
+	if !ok || f.Hash != hash {
+		return nil, fmt.Errorf("flow %q version %s: %w", name, hash, ErrNotFound)
 	}
 	return f, nil
 }

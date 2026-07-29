@@ -33,9 +33,13 @@ type runState struct {
 	pos int
 	ph  phase
 
-	iters      map[string]int             // stage id -> times started
-	edgeCounts map[string]int             // "from|kind|depth" -> times that chain link was taken
-	sessions   map[string]ports.SessionID // stage id -> last recorded harness session
+	iters      map[string]int // stage id -> times started
+	edgeCounts map[string]int // "from|kind|depth" -> times that chain link was taken
+	// actionPending marks action stages whose intent was recorded but whose
+	// effect was never confirmed (PLAN5 M20) — the crash window between a
+	// forge call returning and its event being appended.
+	actionPending map[string]bool
+	sessions      map[string]ports.SessionID // stage id -> last recorded harness session
 
 	// links are the workspace access links from env_ready, kept for a
 	// human_gate whose input is $WORKSPACE (the terminal/IDE hand-off).
@@ -85,10 +89,11 @@ func gatePingType(t string) bool { return t == PingGate }
 // flow is unknown; callers must check.
 func replay(evs []event.Event, fl *flow.Flow) *runState {
 	rs := &runState{
-		fl:         fl,
-		iters:      map[string]int{},
-		edgeCounts: map[string]int{},
-		sessions:   map[string]ports.SessionID{},
+		fl:            fl,
+		iters:         map[string]int{},
+		edgeCounts:    map[string]int{},
+		actionPending: map[string]bool{},
+		sessions:      map[string]ports.SessionID{},
 	}
 	raised := map[string]*event.PingRaised{}
 	for i := range evs {
@@ -154,8 +159,17 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			if r, ok := raised[p.PingID]; ok && gatePingType(r.Type) && rs.ph == phIn {
 				rs.gateAnswer = p
 			}
+		case *event.ActionStarted:
+			// Intent recorded, effect not yet confirmed. Cleared by the
+			// action's completion event below; anything still set after
+			// replay means a crash landed in that window, so the executor
+			// must reconcile with the forge instead of re-running blind.
+			rs.actionPending[p.StageID] = true
 		case *event.MRCreated:
 			rs.mr = &ports.MRRef{IID: p.MRIID, URL: p.MRURL}
+			for id := range rs.actionPending {
+				delete(rs.actionPending, id)
+			}
 		case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
 			rs.done = true
 		case *event.RunResumed:

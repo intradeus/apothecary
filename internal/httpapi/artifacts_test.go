@@ -25,6 +25,15 @@ func (d *memArtifactDB) InsertArtifact(_ context.Context, m artifacts.Meta) erro
 
 // AssociateArtifacts mirrors the SQL: only `orphan` rows are claimed, so a
 // second Associate for an already-attached id is a no-op.
+func (d *memArtifactDB) ArtifactsForStage(_ context.Context, runID string) ([]artifacts.Meta, error) {
+	var out []artifacts.Meta
+	for _, m := range d.rows {
+		if m.RunID == runID && artifacts.IsStageScope(m.Scope) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
 func (d *memArtifactDB) AssociateArtifacts(_ context.Context, ids []string, runID, pingID, scope string) error {
 	for _, id := range ids {
 		m, ok := d.rows[id]

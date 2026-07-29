@@ -1,19 +1,51 @@
 package flow
 
 import (
+	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"apothecary/internal/agentspec"
 )
 
 func mustFlow(t *testing.T, stages string) *Flow {
 	t.Helper()
-	f, err := Parse("t.yaml", []byte(header+"stages:\n"+stages))
+	f, err := parseWith(stages, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	return f
+}
+
+// parseWith renders specs as the document's v3 agents block and parses it.
+// Contracts are parse-time facts now, so a violated one comes back as the
+// error rather than a second pass's finding.
+func parseWith(stages string, specs map[string]*agentspec.Spec) (*Flow, error) {
+	doc := header
+	if len(specs) > 0 {
+		names := make([]string, 0, len(specs))
+		for n := range specs {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		list := make([]agentspec.Spec, 0, len(names))
+		for _, n := range names {
+			sp := *specs[n]
+			sp.Name = n
+			if sp.Prompt == "" {
+				sp.Prompt = "do the " + n + " work"
+			}
+			list = append(list, sp)
+		}
+		y, err := yaml.Marshal(map[string]any{"agents": list})
+		if err != nil {
+			return nil, err
+		}
+		doc += string(y)
+	}
+	return Parse("t.yaml", []byte(doc+"stages:\n"+stages))
 }
 
 func specMap(specs ...*agentspec.Spec) map[string]*agentspec.Spec {
@@ -138,10 +170,12 @@ func TestValidateBindings(t *testing.T) {
 			noWarnings: true,
 		},
 		{
-			name:     "on_reject without a verdict output warns",
-			stages:   "  - { id: r, type: agent, agent: reviewer, input: { plan: artifacts/plan.md }, on_reject: { to: r, max: 1 }, on_success: done }\n",
-			specs:    specMap(reviewerNoV),
-			wantWarn: "on_reject will never fire",
+			// The agent is in the document, so "this edge can never fire" is
+			// decidable at parse time — an error, not a suspicion (PLAN5 M26).
+			name:    "on_reject without a verdict output is refused",
+			stages:  "  - { id: r, type: agent, agent: reviewer, input: { plan: artifacts/plan.md }, on_reject: { to: r, max: 1 }, on_success: done }\n",
+			specs:   specMap(reviewerNoV),
+			wantErr: "on_reject can never fire",
 		},
 		{
 			// $DECISION is empty on the first attempt, so its decl must be optional.
@@ -169,18 +203,21 @@ func TestValidateBindings(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			f := mustFlow(t, tc.stages)
-			errs, warns := ValidateBindings(f, tc.specs)
-			joinE := joinErrs(errs)
-			if tc.wantErr == "" {
-				if len(errs) != 0 {
-					t.Errorf("unexpected errors: %s", joinE)
+			f, err := parseWith(tc.stages, tc.specs)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("parsed cleanly, want error mentioning %q", tc.wantErr)
 				}
-			} else if !strings.Contains(joinE, tc.wantErr) {
-				t.Errorf("errors = %q, want mention of %q", joinE, tc.wantErr)
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error = %q, want mention of %q", err, tc.wantErr)
+				}
+				return
 			}
-			joinW := strings.Join(warns, " | ")
-			if tc.noWarnings && len(warns) != 0 {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			joinW := strings.Join(f.Warnings, " | ")
+			if tc.noWarnings && len(f.Warnings) != 0 {
 				t.Errorf("unexpected warnings: %s", joinW)
 			}
 			if tc.wantWarn != "" && !strings.Contains(joinW, tc.wantWarn) {
@@ -190,22 +227,14 @@ func TestValidateBindings(t *testing.T) {
 	}
 }
 
-// TestValidateBindingsUnknownAgentSkipped: an agent the caller's view does not
-// know is preflight's error, not this pass's — it must not guess.
-func TestValidateBindingsUnknownAgentSkipped(t *testing.T) {
-	f := mustFlow(t, "  - { id: b, type: agent, agent: ghost, input: { x: artifacts/a.md }, on_success: done }\n")
-	errs, _ := ValidateBindings(f, specMap())
-	if len(errs) != 0 {
-		t.Errorf("errors = %s, want none for an unknown agent", joinErrs(errs))
+// TestUndeclaredAgentRefused: a stage naming an agent the flow does not
+// declare is a parse error since v3 — the document is the whole contract, so
+// there is nothing left to defer to a later, project-aware pass.
+func TestUndeclaredAgentRefused(t *testing.T) {
+	_, err := parseWith("  - { id: b, type: agent, agent: ghost, input: { x: artifacts/a.md }, on_success: done }\n", nil)
+	if err == nil || !strings.Contains(err.Error(), `agent "ghost" is not declared in this flow`) {
+		t.Errorf("err = %v, want an undeclared-agent refusal", err)
 	}
-}
-
-func joinErrs(errs []*Error) string {
-	parts := make([]string, len(errs))
-	for i, e := range errs {
-		parts[i] = e.Error()
-	}
-	return strings.Join(parts, " | ")
 }
 
 func TestEffectiveOutputs(t *testing.T) {

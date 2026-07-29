@@ -115,6 +115,31 @@ func (s *Server) getRunArtifacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"goal": goal, "answers": answers})
 }
 
+// getRunAttempts serves the run's per-attempt snapshots (PLAN5 M27): what
+// each stage attempt produced and printed, grouped by stage and iteration, so
+// a finished run's timeline can render "plan (attempt 1) → [plan.md] · [log]"
+// long after the workspace is gone. Bytes come from the ordinary artifact
+// route; this lists the references.
+func (s *Server) getRunAttempts(w http.ResponseWriter, r *http.Request) {
+	out := []map[string]any{}
+	if s.Artifacts != nil {
+		metas, err := s.Artifacts.ForStage(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, m := range metas {
+			out = append(out, map[string]any{
+				"id": m.ID, "stage_id": m.StageID, "iteration": m.Iteration,
+				"scope": m.Scope, "name": m.OutputName, "filename": m.Filename,
+				"mime": m.Mime, "size": m.Size, "sha256": m.SHA256,
+				"created_at": m.CreatedAt,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"attempts": out})
+}
+
 // getPingArtifacts serves a ping's AGENT-attached workspace files (multi
 // ask_human). With ?path=<ref> it streams that one file (validated against
 // the ping's refs); without, it lists them. The primary reviewed doc keeps

@@ -1,11 +1,15 @@
 // Package agentspec models the neutral, harness-agnostic agent
-// definitions (DESIGN.md §5.1). Since v3 they live in the per-project agent
-// library (DESIGN3 §1); Parse remains for the one-time repo import of the
-// retired .apothecary/agents/*.yaml contract. Each harness adapter
-// translates specs into its native config (§5.2).
+// definitions (DESIGN.md §5.1). Since FLOWLANG v3 an agent is declared
+// INSIDE the flow document that runs it (PLAN5 M26): this package owns the
+// schema, its validation and its content hash, and internal/flow embeds
+// Spec directly as the shape of a flow's `agents:` entries. Each harness
+// adapter translates specs into its native config (§5.2).
 package agentspec
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -13,14 +17,14 @@ import (
 )
 
 type Spec struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description,omitempty"`
 	// ReadOnly denies the harness's edit/write/patch tools. Honesty note
 	// (§5.1): with AllowBash true the agent can still mutate files through
 	// shell — accepted v1 residual for the reviewer.
-	ReadOnly  bool   `yaml:"read_only"`
-	AllowBash bool   `yaml:"allow_bash"`
-	Prompt    string `yaml:"prompt"`
+	ReadOnly  bool   `yaml:"read_only" json:"read_only,omitempty"`
+	AllowBash bool   `yaml:"allow_bash" json:"allow_bash,omitempty"`
+	Prompt    string `yaml:"prompt" json:"prompt"`
 	// Inputs/Outputs are the agent's declared I/O contract (DESIGN4 §1). A
 	// flow stage binds each declared input to a workspace path (or $CHANGED)
 	// and may rebind output paths; prompt assembly renders named, described
@@ -83,7 +87,9 @@ func (s *Spec) VerdictOutput() *OutputDecl {
 const descMax = 500
 
 // Parse decodes one spec; stem is the filename without extension and MUST
-// equal the name field (§5.1: name = filename stem).
+// equal the name field (§5.1: name = filename stem). Retained for the
+// one-time import of a repo's .apothecary/agents/*.yaml; flows carry their
+// agents inline and validate them with Validate.
 func Parse(stem string, data []byte) (*Spec, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
@@ -97,19 +103,52 @@ func Parse(stem string, data []byte) (*Spec, error) {
 	if s.Name != stem {
 		return nil, fmt.Errorf("agent spec %s: name %q must equal the filename stem", stem, s.Name)
 	}
-	// The name becomes workspace file paths and CLI arguments (role files,
-	// --agent): keep it a strict slug so repo-controlled filenames can never
-	// carry shell- or path-meaningful characters.
-	if !validSlug(s.Name) {
-		return nil, fmt.Errorf("agent spec %s: name must match [a-z0-9][a-z0-9._-]* (lowercase slug)", stem)
-	}
-	if strings.TrimSpace(s.Prompt) == "" {
-		return nil, fmt.Errorf("agent spec %s: prompt is required", stem)
-	}
-	if err := ValidateIO(s.Inputs, s.Outputs); err != nil {
+	if err := Validate(&s); err != nil {
 		return nil, fmt.Errorf("agent spec %s: %w", stem, err)
 	}
 	return &s, nil
+}
+
+// Validate checks a spec independent of where it was authored: the name is a
+// strict slug (it becomes workspace file paths and CLI arguments, so
+// repo-controlled text can never carry shell- or path-meaningful
+// characters), the prompt is present, and the I/O contract holds. The single
+// gate for flow-inline agents (FLOWLANG §1) and the retired file importer.
+func Validate(s *Spec) error {
+	if !validSlug(s.Name) {
+		return fmt.Errorf("name must match [a-z0-9][a-z0-9._-]* (lowercase slug), got %q", s.Name)
+	}
+	if strings.TrimSpace(s.Prompt) == "" {
+		return fmt.Errorf("prompt is required")
+	}
+	return ValidateIO(s.Inputs, s.Outputs)
+}
+
+// content is the canonical hashed shape: a stable field order (json.Marshal
+// emits declaration order) so the same definition always addresses the same
+// content. Inputs/Outputs are omitempty so a spec with no declared I/O
+// hashes identically to one whose slices are nil.
+type content struct {
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	ReadOnly    bool         `json:"read_only"`
+	AllowBash   bool         `json:"allow_bash"`
+	Prompt      string       `json:"prompt"`
+	Inputs      []InputDecl  `json:"inputs,omitempty"`
+	Outputs     []OutputDecl `json:"outputs,omitempty"`
+}
+
+// Hash is an agent's content address: sha256[:16] of the canonical JSON.
+// Recorded per attempt in stage_started.agent_hash, so outcome analytics
+// join to the exact prompt version that produced them (DESIGN3 §1).
+func Hash(s *Spec) string {
+	data, _ := json.Marshal(content{
+		Name: s.Name, Description: s.Description,
+		ReadOnly: s.ReadOnly, AllowBash: s.AllowBash, Prompt: s.Prompt,
+		Inputs: s.Inputs, Outputs: s.Outputs,
+	})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // ValidateIO checks a spec's declared inputs and outputs: names are unique

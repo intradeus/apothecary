@@ -19,7 +19,7 @@ export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait';
 
 // CURRENT_VERSION is the grammar this build writes; every document declares
 // it, so a future break is a refusal rather than a mis-parse (FLOWLANG §1).
-export const CURRENT_VERSION = 2;
+export const CURRENT_VERSION = 3;
 
 // An edge is a chain: when a link's max is exhausted the next failure
 // falls through to `then` (retry-then-escalate). A link with to: abort
@@ -112,13 +112,48 @@ export interface DocStage {
   on_timeout?: DocEdge;
 }
 
+// One declared input of an agent: what the stage binds by name.
+export interface DocAgentInput {
+  name: string;
+  description?: string;
+  optional?: boolean;
+}
+
+// One declared output: a file the agent must write. `type: verdict` is the
+// structured APPROVE/REJECT the engine routes on_reject from.
+export interface DocAgentOutput {
+  name: string;
+  description?: string;
+  path: string;
+  type?: string;
+}
+
+// An agent definition carried BY the flow (FLOWLANG §1, v3): the document is
+// the single source, so contracts are checked at parse time and prompts are
+// pinned with the rest of the flow.
+export interface DocAgent {
+  name: string;
+  description?: string;
+  read_only?: boolean;
+  allow_bash?: boolean;
+  prompt: string;
+  inputs?: DocAgentInput[];
+  outputs?: DocAgentOutput[];
+}
+
 export interface FlowDoc {
   name: string;
   version?: number;
   description?: string;
   defaults: { timeout?: string; harness?: string; model: string; max_turns?: number };
   budget: { max_cost_usd?: number; max_total_turns?: number };
+  agents?: DocAgent[];
   stages: DocStage[];
+}
+
+/** The flow's definition of an agent by name, or undefined. */
+export function agentOf(doc: FlowDoc, name: string): DocAgent | undefined {
+  return doc.agents?.find((a) => a.name === name);
 }
 
 // effectiveSuccess resolves the YAML sugar for display: explicit target, or
@@ -199,6 +234,37 @@ export function docToYaml(doc: FlowDoc): string {
   if (doc.budget?.max_cost_usd != null) budget.max_cost_usd = doc.budget.max_cost_usd;
   if (doc.budget?.max_total_turns != null) budget.max_total_turns = doc.budget.max_total_turns;
   if (Object.keys(budget).length > 0) obj.budget = budget;
+  // Agents before stages: a reader meets the contracts before the wiring
+  // that binds them. Order within the list is the author's.
+  if (doc.agents?.length) {
+    obj.agents = doc.agents.map((a) => {
+      const o: Record<string, unknown> = { name: a.name };
+      if (a.description) o.description = a.description;
+      if (a.read_only) o.read_only = a.read_only;
+      if (a.allow_bash) o.allow_bash = a.allow_bash;
+      if (a.inputs?.length) {
+        o.inputs = a.inputs.map((i) => {
+          const io: Record<string, unknown> = { name: i.name };
+          if (i.description) io.description = i.description;
+          if (i.optional) io.optional = i.optional;
+          return io;
+        });
+      }
+      if (a.outputs?.length) {
+        o.outputs = a.outputs.map((out) => {
+          const oo: Record<string, unknown> = { name: out.name };
+          if (out.description) oo.description = out.description;
+          oo.path = out.path;
+          if (out.type) oo.type = out.type;
+          return oo;
+        });
+      }
+      // Prompt last: it is the long block, so the structural fields stay
+      // readable at the top of each entry.
+      o.prompt = a.prompt;
+      return o;
+    });
+  }
   obj.stages = ordered.map((s) => {
     const o: Record<string, unknown> = { id: s.id, type: s.type };
     if (s.description) o.description = s.description;

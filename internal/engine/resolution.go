@@ -92,23 +92,11 @@ type Resolution struct {
 	// SeedAuth writes harness-native auth material at bootstrap step 2;
 	// nil = nothing to seed.
 	SeedAuth func(ctx context.Context, env ports.EnvID) error
-	// Prepare generates harness-native config at bootstrap step 4 — the
-	// resolver closes over the project's agent library specs (DESIGN3 §1);
+	// Prepare generates harness-native config at bootstrap step 4 from the
+	// agents the RUN's flow declares (FLOWLANG §1, v3) — the caller passes
+	// them, because agents are a property of the flow and not of the project.
 	// nil = nothing to generate (fakes).
-	Prepare func(ctx context.Context, env ports.EnvID) error
-	// AgentNames lists the project's agent library entries (preflight:
-	// every agent stage must reference one).
-	AgentNames []string
-	// AgentHashes maps agent name -> current content version; stage_started
-	// events record the hash so analytics correlate outcome with prompt
-	// version.
-	AgentHashes map[string]string
-	// AgentSpecs maps agent name -> resolved spec (the project's authored
-	// overlay on the built-in library). Prompt assembly reads the input/output
-	// decls from it and preflight validates stage bindings against it. nil (or
-	// a missing entry) disables all decl-driven behavior — bare test fixtures
-	// keep rendering the legacy prompt shape.
-	AgentSpecs map[string]*agentspec.Spec
+	Prepare func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
 	// Release decrements the resolver's provisioner refcount (§6.1 adapter
 	// cache); nil is fine.
 	Release func()
@@ -118,16 +106,6 @@ func (r *Resolution) release() {
 	if r != nil && r.Release != nil {
 		r.Release()
 	}
-}
-
-// agentSpec returns the resolved spec for an agent name, or nil when specs
-// aren't populated (fakes) or the agent isn't in the library. Callers must be
-// nil-safe: a nil spec means "no decls", i.e. legacy prompt behavior.
-func (r *Resolution) agentSpec(name string) *agentspec.Spec {
-	if r == nil || r.AgentSpecs == nil {
-		return nil
-	}
-	return r.AgentSpecs[name]
 }
 
 // actionAvailable reports whether this project can run the stage's action:
@@ -221,6 +199,32 @@ type Resolver interface {
 // failed terminally. Any other resolver error is treated as transient —
 // the run stays non-terminal and recovery retries next boot.
 var ErrUnresolvable = errors.New("run configuration unresolvable")
+
+// pinnedFlow loads the exact document a run started with (PLAN5 M19). A run
+// records its flow's content hash at creation, and since v3 the document
+// carries its agents — so pinning by hash means an edit to a flow (or to a
+// prompt inside it) never changes a run already in flight. Recovery after a
+// restart re-reads the same pinned version.
+//
+// Falls back to the current document by name when the pinned version cannot
+// be resolved: runs created before pinning carry no usable hash, and a
+// pruned version should not strand a live run.
+func (e *Engine) pinnedFlow(ctx context.Context, name, hash string) (*flow.Flow, error) {
+	ps, ok := e.flows.(flow.PinnedSource)
+	if !ok || hash == "" {
+		return e.flows.Get(ctx, name)
+	}
+	f, err := ps.GetVersion(ctx, name, hash)
+	if err == nil {
+		return f, nil
+	}
+	if !errors.Is(err, flow.ErrNotFound) {
+		return nil, err
+	}
+	e.log.Warn("pinned flow version is gone; falling back to the current document",
+		"flow", name, "pinned", hash)
+	return e.flows.Get(ctx, name)
+}
 
 // resolveForRun resolves a run's project, mapping the pre-v2 no-project
 // case to ErrUnresolvable (terminal, honest — the run can never proceed).

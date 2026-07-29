@@ -5,11 +5,14 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"slices"
+
+	"gopkg.in/yaml.v3"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
@@ -24,6 +27,7 @@ const testProject = "prj-test"
 
 type harness struct {
 	e      *Engine
+	flows  flow.MapSource
 	store  *event.MemStore
 	envp   *fake.EnvProvisioner
 	runner *fake.AgentRunner
@@ -75,11 +79,52 @@ func testAgentSpecs() map[string]*agentspec.Spec {
 
 func mustFlow(t *testing.T, doc string) *flow.Flow {
 	t.Helper()
-	f, err := flow.Parse("test.yaml", []byte(doc))
+	return mustFlowWith(t, doc, testAgentSpecs())
+}
+
+// mustFlowWith parses a scenario document after splicing in the agent
+// definitions it runs. Since FLOWLANG v3 a flow carries its agents, but a
+// scenario is almost never about the contracts — so the suite injects its
+// standard library here and each document keeps declaring only stages. A
+// document that brings its own `agents:` block is left alone.
+func mustFlowWith(t *testing.T, doc string, specs map[string]*agentspec.Spec) *flow.Flow {
+	t.Helper()
+	f, err := flow.Parse("test.yaml", []byte(withAgents(doc, specs)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return f
+}
+
+// withAgents renders specs as a v3 `agents:` block ahead of `stages:`.
+func withAgents(doc string, specs map[string]*agentspec.Spec) string {
+	doc = strings.Replace(doc, "version: 2", "version: 3", 1)
+	if strings.Contains(doc, "\nagents:") {
+		return doc
+	}
+	names := make([]string, 0, len(specs))
+	for n := range specs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	list := make([]agentspec.Spec, 0, len(names))
+	for _, n := range names {
+		sp := *specs[n]
+		sp.Name = n
+		if sp.Prompt == "" {
+			sp.Prompt = "You are the " + n + " of the test factory."
+		}
+		list = append(list, sp)
+	}
+	y, err := yaml.Marshal(map[string]any{"agents": list})
+	if err != nil {
+		panic(err)
+	}
+	i := strings.Index(doc, "stages:")
+	if i < 0 {
+		return doc
+	}
+	return doc[:i] + string(y) + doc[i:]
 }
 
 func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
@@ -88,7 +133,20 @@ func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 	for _, f := range flows {
 		fm[f.Name] = f
 	}
-	return newHarnessSource(t, fm, flows...)
+	h := newHarnessSource(t, fm, flows...)
+	h.flows = fm
+	return h
+}
+
+// flowOf returns a flow the harness serves, for assertions about what the
+// document itself declares (agent hashes, contracts).
+func (h *harness) flowOf(t *testing.T, name string) *flow.Flow {
+	t.Helper()
+	f, ok := h.flows[name]
+	if !ok {
+		t.Fatalf("harness serves no flow %q", name)
+	}
+	return f
 }
 
 // newHarnessSource is newHarness over a caller-supplied flow.Source, for tests
@@ -110,11 +168,6 @@ func newHarnessSource(t *testing.T, src flow.Source, flows ...*flow.Flow) *harne
 		DefaultFlow:  flows[0].Name,
 		Commands:     map[string]string{"setup": "./scripts/setup.sh", "verify": "make lint && make test"},
 		ProviderEnv:  map[string]string{"ANTHROPIC_API_KEY": "sk-test"},
-		// The project's agent library (DESIGN3 §1): superset of every agent
-		// the test flows reference.
-		AgentNames:  []string{"builder", "committer", "fallback", "planner", "redactor", "reviewer", "sleeper"},
-		AgentHashes: map[string]string{"builder": "hash-builder", "planner": "hash-planner"},
-		AgentSpecs:  testAgentSpecs(),
 		HarnessKind: "fake",
 		Envp:        h.envp,
 		Runner:      h.runner,
@@ -222,8 +275,8 @@ stages:
 
 // --- scenarios --------------------------------------------------------------
 
-func TestHappyPathFullV2Flow(t *testing.T) {
-	v1, err := flow.Load("../flow/testdata/v2.yaml")
+func TestHappyPathFullV3Flow(t *testing.T) {
+	v1, err := flow.Load("../flow/testdata/v3.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,16 +395,15 @@ stages:
   - { id: test,  type: command, run_ref: verify, on_success: done,
       on_fail: { to: build, max: 3 } }
 `
-	h := newHarness(t, mustFlow(t, doc))
 	// The agent names and describes its own retry slot — there is no reserved
 	// name, so "what_broke" is as valid as anything else.
-	h.res.AgentSpecs = map[string]*agentspec.Spec{
-		"planner": {Name: "planner", Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Path: "artifacts/plan.md"}}},
-		"builder": {Name: "builder", Inputs: []agentspec.InputDecl{
+	h := newHarness(t, mustFlowWith(t, doc, map[string]*agentspec.Spec{
+		"planner": {Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Path: "artifacts/plan.md"}}},
+		"builder": {Inputs: []agentspec.InputDecl{
 			{Name: "plan", Description: "the approved implementation plan to execute"},
 			{Name: "what_broke", Description: "what the failing stage printed", Optional: true},
 		}},
-	}
+	}))
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
 		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/plan.md", "## Plan\nsteps")
@@ -419,10 +471,9 @@ defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan, type: agent, agent: planner }
 `
-	h := newHarness(t, mustFlow(t, doc))
-	h.res.AgentSpecs = map[string]*agentspec.Spec{
-		"planner": {Name: "planner", Outputs: []agentspec.OutputDecl{{Name: "plan", Path: "artifacts/plan.md"}}},
-	}
+	h := newHarness(t, mustFlowWith(t, doc, map[string]*agentspec.Spec{
+		"planner": {Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Path: "artifacts/plan.md"}}},
+	}))
 	// planner never writes the declared default output.
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
 		"planner": func(fake.RunCall) (ports.AgentResult, error) { return ports.AgentResult{}, nil },
@@ -923,7 +974,7 @@ stages:
 	}
 }
 
-func TestAbortMarksRunFailed(t *testing.T) {
+func TestAbortAbandonsRun(t *testing.T) {
 	doc := `name: hang
 version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
@@ -948,13 +999,16 @@ stages:
 	}
 	h.e.Wait(runID)
 
+	// A deliberate stop is ABANDONED, not failed (PLAN5 M24): `failed` is
+	// reserved for the engine's own faults, so a human saying "stop" is not
+	// reported as something breaking.
 	v := h.view(t, runID)
-	if v.State != run.Failed {
-		t.Fatalf("state = %s", v.State)
+	if v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned", v.State)
 	}
-	rf, _ := findPayload[*event.RunFailed](h.events(t, runID))
-	if rf.Reason != "aborted" {
-		t.Errorf("reason = %q", rf.Reason)
+	ra, ok := findPayload[*event.RunAbandoned](h.events(t, runID))
+	if !ok || ra.Reason != "aborted by user" {
+		t.Errorf("run_abandoned = %+v, want reason %q", ra, "aborted by user")
 	}
 }
 
@@ -1476,8 +1530,10 @@ func TestStageStartedCarriesAgentHash(t *testing.T) {
 	for _, ev := range h.events(t, runID) {
 		if ss, ok := ev.Payload.(*event.StageStarted); ok && ss.StageID == "build" {
 			found = true
-			if ss.Agent != "builder" || ss.AgentHash != "hash-builder" {
-				t.Errorf("stage_started agent = %q hash = %q", ss.Agent, ss.AgentHash)
+			// The hash is the agent's content address, computed from the
+			// definition the flow carries (FLOWLANG §1, v3).
+			if want := h.flowOf(t, "loop").AgentHash("builder"); ss.Agent != "builder" || ss.AgentHash != want {
+				t.Errorf("stage_started agent = %q hash = %q, want builder/%s", ss.Agent, ss.AgentHash, want)
 			}
 		}
 	}
@@ -1487,18 +1543,18 @@ func TestStageStartedCarriesAgentHash(t *testing.T) {
 }
 
 func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
-	// v3: agents live in the project library, not the repo — a flow naming
-	// an agent the project lacks is refused by name.
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.res.AgentNames = []string{"planner"} // flow needs builder too
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
-	if err == nil || !strings.Contains(err.Error(), `agent "builder" not found in the project's agent library`) {
-		t.Errorf("err = %v, want missing-agent refusal", err)
+	// v3: agents live in the FLOW, so a stage naming an undeclared one never
+	// reaches preflight — it is refused at parse time, by name.
+	_, perr := flow.Parse("t.yaml", []byte(withAgents(loopFlowDoc, map[string]*agentspec.Spec{
+		"planner": {}, // the flow needs builder too
+	})))
+	if perr == nil || !strings.Contains(perr.Error(), `agent "builder" is not declared in this flow`) {
+		t.Errorf("err = %v, want undeclared-agent parse error", perr)
 	}
 
 	h2 := newHarness(t, mustFlow(t, loopFlowDoc))
 	delete(h2.res.Commands, "verify")
-	_, err = h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	_, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err == nil || !strings.Contains(err.Error(), `run_ref "verify"`) {
 		t.Errorf("err = %v, want mention of run_ref verify", err)
 	}
@@ -1517,7 +1573,7 @@ stages:
 	}
 
 	// No events may exist after refusals.
-	for _, hh := range []*harness{h, h2, h4} {
+	for _, hh := range []*harness{h2, h4} {
 		ids, _ := hh.store.RunIDs(context.Background())
 		if len(ids) != 0 {
 			t.Errorf("refused runs left events: %v", ids)
@@ -2444,5 +2500,95 @@ stages:
 	}
 	if strings.Contains(replan, "attempt 2 of") {
 		t.Errorf("an unlimited loop must not claim a total:\n%s", replan)
+	}
+}
+
+// TestCreateMRReconcilesAfterCrashInRecordWindow covers the crash window the
+// mr_created event alone cannot close (PLAN5 M20): the forge call returned,
+// the process died before the event was appended. Recovery must ADOPT the
+// merge request that already exists on the run's branch, not open a second
+// one — the branch is unique per run, so it is the idempotency key.
+func TestCreateMRReconcilesAfterCrashInRecordWindow(t *testing.T) {
+	doc := `name: rec
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }
+`
+	fl := mustFlow(t, doc)
+	h := newHarness(t, fl)
+	ctx := context.Background()
+
+	// The MR the interrupted attempt already opened on the forge.
+	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-rec", "T", "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// History stops at the intent marker: action_started with no mr_created.
+	for _, p := range []event.Payload{
+		&event.RunCreated{TicketTitle: "T", FlowName: "rec", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-rec"},
+		&event.EnvRequested{},
+		&event.EnvReady{EnvID: "env-rec"},
+		&event.StageStarted{StageID: "mr", Iteration: 1},
+		&event.ActionStarted{StageID: "mr", Action: "create_mr"},
+	} {
+		if _, err := h.store.Append(ctx, "r-rec", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := h.e.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-rec")
+
+	// Exactly one MR on the forge, and the run adopted it.
+	if len(h.forge.MRs) != 1 {
+		t.Errorf("forge holds %d merge requests, want 1 — recovery opened a duplicate", len(h.forge.MRs))
+	}
+	if got := countType(h.events(t, "r-rec"), event.TypeMRCreated); got != 1 {
+		t.Errorf("mr_created count = %d, want 1", got)
+	}
+	if v := h.view(t, "r-rec"); v.MRURL != ref.URL {
+		t.Errorf("run MR = %q, want the existing %q", v.MRURL, ref.URL)
+	}
+}
+
+// A reconciliation that cannot reach the forge must NOT fall through to
+// creating one: a duplicate MR is worse than a stage a human can retry.
+func TestCreateMRReconcileFailureDoesNotDuplicate(t *testing.T) {
+	doc := `name: recerr
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }
+`
+	fl := mustFlow(t, doc)
+	h := newHarness(t, fl)
+	h.forge.FindErr = fmt.Errorf("forge unreachable")
+	ctx := context.Background()
+
+	for _, p := range []event.Payload{
+		&event.RunCreated{TicketTitle: "T", FlowName: "recerr", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-recerr"},
+		&event.EnvRequested{},
+		&event.EnvReady{EnvID: "env-recerr"},
+		&event.StageStarted{StageID: "mr", Iteration: 1},
+		&event.ActionStarted{StageID: "mr", Action: "create_mr"},
+	} {
+		if _, err := h.store.Append(ctx, "r-recerr", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.e.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-recerr")
+
+	if len(h.forge.MRs) != 0 {
+		t.Errorf("created %d merge requests despite an unreadable forge", len(h.forge.MRs))
+	}
+	if v := h.view(t, "r-recerr"); v.State != run.Failed {
+		t.Errorf("state = %s, want failed", v.State)
 	}
 }

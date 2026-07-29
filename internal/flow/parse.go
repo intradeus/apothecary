@@ -56,7 +56,12 @@ type Doc struct {
 	Description string      `yaml:"description" json:"description,omitempty"`
 	Defaults    DocDefaults `yaml:"defaults" json:"defaults"`
 	Budget      DocBudget   `yaml:"budget" json:"budget"`
-	Stages      []DocStage  `yaml:"stages" json:"stages"`
+	// Agents are the agent definitions the flow runs (FLOWLANG §1, v3). A
+	// list rather than a mapping so the shape is exactly agentspec.Spec —
+	// the same schema the retired library files spoke, with document order
+	// preserved for free.
+	Agents []agentspec.Spec `yaml:"agents" json:"agents,omitempty"`
+	Stages []DocStage       `yaml:"stages" json:"stages"`
 }
 
 type DocDefaults struct {
@@ -173,8 +178,15 @@ func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
 	case yaml.ScalarNode:
 		return n.Decode(&e.To)
 	case yaml.MappingNode:
+		seen := map[string]bool{}
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k, v := n.Content[i], n.Content[i+1]
+			// A custom unmarshaler bypasses yaml.v3's duplicate-key check, so
+			// `{to: a, to: b}` would silently keep the last value.
+			if seen[k.Value] {
+				return fmt.Errorf("line %d: %q set twice", k.Line, k.Value)
+			}
+			seen[k.Value] = true
 			var err error
 			switch k.Value {
 			case "to":
@@ -336,9 +348,24 @@ func Load(path string) (*Flow, error) {
 	return Parse(filepath.Base(path), data)
 }
 
+// Structural limits (FLOWLANG §6, PLAN5 M22). A flow is a hand-written
+// control-flow document, so these sit far above anything sane and exist to
+// bound what a malicious or generated file can cost the parser and the
+// editor rather than to constrain authors.
+const (
+	maxDocBytes   = 1 << 20 // 1 MiB, matching the HTTP body cap
+	maxStages     = 128
+	maxAgents     = 64
+	maxChainDepth = 8
+)
+
 // Parse parses and validates a flow document. filename is used in errors only.
 func Parse(filename string, data []byte) (*Flow, error) {
 	p := &parser{file: filename}
+
+	if len(data) > maxDocBytes {
+		return nil, p.errf(1, "flow document is %d bytes; the limit is %d", len(data), maxDocBytes)
+	}
 
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -351,9 +378,27 @@ func Parse(filename string, data []byte) (*Flow, error) {
 	if err := dec.Decode(&raw); err != nil {
 		return nil, p.wrapYAML(err)
 	}
+	// A second document would be silently ignored, so a flow split by `---`
+	// would run as only its first half.
+	var extra Doc
+	if err := dec.Decode(&extra); err == nil {
+		return nil, p.errf(1, "a flow file holds one document; everything after the first %q separator would be ignored", "---")
+	}
 
 	if len(doc.Content) > 0 {
 		p.root = doc.Content[0]
+		// Anchors and aliases would let one document expand into another on
+		// re-emission, breaking the canonical round-trip the editor relies on
+		// and hiding structure from a reader.
+		if err := p.rejectAliases(p.root); err != nil {
+			return nil, err
+		}
+	}
+	if len(raw.Stages) > maxStages {
+		return nil, p.errf(p.keyLine("stages"), "flow declares %d stages; the limit is %d", len(raw.Stages), maxStages)
+	}
+	if len(raw.Agents) > maxAgents {
+		return nil, p.errf(p.keyLine("agents"), "flow declares %d agents; the limit is %d", len(raw.Agents), maxAgents)
 	}
 
 	f, err := p.build(&raw)
@@ -400,6 +445,28 @@ func (p *parser) wrapYAML(err error) error {
 	return &Error{File: p.file, Msg: msg}
 }
 
+// rejectAliases refuses YAML anchors/aliases and merge keys anywhere in the
+// document (FLOWLANG §6). They are legal YAML but hostile here: the graph
+// editor re-emits a canonical form, so an aliased document would not survive
+// a round-trip unchanged, and a reader cannot see a stage's real shape.
+func (p *parser) rejectAliases(n *yaml.Node) error {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == yaml.AliasNode {
+		return p.errf(n.Line, "YAML aliases (*name) are not allowed — write the value out")
+	}
+	if n.Anchor != "" {
+		return p.errf(n.Line, "YAML anchors (&%s) are not allowed — write the value out", n.Anchor)
+	}
+	for _, c := range n.Content {
+		if err := p.rejectAliases(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // keyLine returns the line of a top-level key, or 0.
 func (p *parser) keyLine(key string) int {
 	if p.root == nil || p.root.Kind != yaml.MappingNode {
@@ -414,12 +481,15 @@ func (p *parser) keyLine(key string) int {
 }
 
 // stageLine returns the line of the i-th stage node, or 0.
-func (p *parser) stageLine(i int) int {
+func (p *parser) stageLine(i int) int { return p.seqLine("stages", i) }
+
+// seqLine returns the line of the i-th element of a top-level sequence, or 0.
+func (p *parser) seqLine(key string, i int) int {
 	if p.root == nil || p.root.Kind != yaml.MappingNode {
 		return 0
 	}
 	for k := 0; k+1 < len(p.root.Content); k += 2 {
-		if p.root.Content[k].Value == "stages" {
+		if p.root.Content[k].Value == key {
 			seq := p.root.Content[k+1]
 			if seq.Kind == yaml.SequenceNode && i < len(seq.Content) {
 				return seq.Content[i].Line
@@ -444,6 +514,11 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	case CurrentVersion:
 	case 0:
 		return nil, p.errf(1, "version is required (this build speaks version %d)", CurrentVersion)
+	case 2:
+		// The v2→v3 break: agents moved from the per-project library into
+		// the document. Answer with the upgrade, not a bare version refusal.
+		return nil, p.errf(p.keyLine("version"), "flow version 2 is retired: agents now live in the flow — add an %q block defining every agent the stages name (name, prompt, inputs, outputs), then set version: %d",
+			"agents", CurrentVersion)
 	default:
 		return nil, p.errf(p.keyLine("version"), "unsupported flow version %d (this build speaks version %d)", raw.Version, CurrentVersion)
 	}
@@ -453,6 +528,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		return nil, err
 	}
 	if f.Budget, err = p.buildBudget(&raw.Budget); err != nil {
+		return nil, err
+	}
+	if f.Agents, err = p.buildAgents(raw.Agents); err != nil {
 		return nil, err
 	}
 
@@ -485,7 +563,18 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		}
 	}
 
-	return f, p.validateFlow(f, ids)
+	if err := p.validateFlow(f, ids); err != nil {
+		return nil, err
+	}
+	// Contracts are checked here rather than in a second, project-aware pass:
+	// v3 flows carry their agents, so a binding that violates one is a parse
+	// error like any other (PLAN5 M26).
+	warns, err := p.validateContracts(f)
+	if err != nil {
+		return nil, err
+	}
+	f.Warnings = warns
+	return f, nil
 }
 
 func (p *parser) buildDefaults(raw *DocDefaults) (Defaults, error) {
@@ -544,6 +633,32 @@ func (p *parser) buildBudget(raw *DocBudget) (Budget, error) {
 		b.MaxTotalTurns = *raw.MaxTotalTurns
 	}
 	return b, nil
+}
+
+// buildAgents validates the document's agent definitions (FLOWLANG §1, v3).
+// Since the flow now carries them, every contract check that used to need a
+// per-project library is a parse-time fact.
+func (p *parser) buildAgents(raw []agentspec.Spec) ([]agentspec.Spec, error) {
+	line := p.keyLine("agents")
+	seen := map[string]int{}
+	for i := range raw {
+		sp := &raw[i]
+		at := p.seqLine("agents", i)
+		if at == 0 {
+			at = line
+		}
+		if sp.Name == "" {
+			return nil, p.errf(at, "agent #%d: name is required", i+1)
+		}
+		if err := agentspec.Validate(sp); err != nil {
+			return nil, p.errf(at, "agent %q: %v", sp.Name, err)
+		}
+		if prev, dup := seen[sp.Name]; dup {
+			return nil, p.errf(at, "agent %q: declared twice (first at line %d)", sp.Name, prev)
+		}
+		seen[sp.Name] = at
+	}
+	return raw, nil
 }
 
 func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) {
@@ -627,7 +742,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	switch st {
 	case StageAgent:
 		if raw.Agent == "" {
-			return fail("agent is required (resolves to .apothecary/agents/<name>.yaml)")
+			return fail("agent is required (a name in the flow's agents block)")
 		}
 		if !slugRe.MatchString(raw.Agent) {
 			return fail("agent %q is not a slug", raw.Agent)
@@ -659,9 +774,10 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			}
 			s.Timeout = t
 		}
-		// input/output: bindings against the agent's declared contract. The
-		// names are checked against the real decls by ValidateBindings (it needs
-		// the project's agent library); here only the values.
+		// input/output: bindings against the agent's declared contract. Only
+		// the VALUES are checked here; the names are checked against the
+		// flow's own agent decls in validateContracts, once every agent has
+		// been built.
 		var berr error
 		if s.Inputs, berr = bindings(raw.Input, "input", agentInputValue); berr != nil {
 			return fail("%s", berr)
@@ -678,6 +794,13 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			return fail("run_ref %q is not a slug (key into project.commands)", raw.RunRef)
 		}
 		s.Run, s.RunRef = raw.Run, raw.RunRef
+		if raw.Timeout != "" {
+			t, err := time.ParseDuration(raw.Timeout)
+			if err != nil || t <= 0 {
+				return fail("invalid timeout %q", raw.Timeout)
+			}
+			s.Timeout = t
+		}
 		// input/output: the paths the script reads and writes. A command has no
 		// contract, so the names are free labels — they document what each file
 		// is for. Declaring them makes the dataflow visible and lets the engine
@@ -778,8 +901,8 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	}
 	// Note: an agent stage's on_reject needs no stage-level flag. Whether the
 	// agent renders a verdict is a property of its contract (a verdict-typed
-	// output), which is per-project data the parser cannot see — flows stay
-	// portable. ValidateBindings warns when the edge can never fire.
+	// output), which the document itself now declares — validateContracts
+	// refuses the edge when the agent can never produce one.
 	return s, nil
 }
 
@@ -866,6 +989,9 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 	}
 	fail := func(format string, args ...any) (*Edge, error) {
 		return nil, p.errf(line, "stage %q: %s: %s", s.ID, at, fmt.Sprintf(format, args...))
+	}
+	if depth > maxChainDepth {
+		return fail("then chain is deeper than %d links", maxChainDepth)
 	}
 	if raw.Feed != "" {
 		// An edge no longer says what it carries: its kind decides that, and
