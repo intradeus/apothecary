@@ -277,6 +277,20 @@ export interface EgressPolicy {
   blocked_domains: string[];
 }
 
+// One point-in-time reading of the run's workspace resource usage (the whole
+// DinD sandbox: inner dockerd + workspace + compose siblings). Sampled ~10s
+// by the engine; net counters are cumulative, so rates come from deltas.
+export interface ResourceSample {
+  at: string;
+  cpu_perc: number; // % of one core; ceiling is cpus×100
+  cpus: number; // host logical cores (the % denominator); 0 = unknown
+  mem_used: number; // bytes
+  mem_limit: number; // bytes (host total when uncapped)
+  net_rx: number; // cumulative bytes received
+  net_tx: number; // cumulative bytes sent
+  pids: number;
+}
+
 export interface EventEnvelope {
   run_id: string;
   seq: number;
@@ -447,6 +461,10 @@ export const api = {
       ports: { port: number; url: string }[];
       observed?: { port: number; process?: string; service?: string }[];
     }>(`/api/runs/${id}/ports`),
+  // Rolling window of the workspace's resource samples (run-page graphs).
+  // Empty when nothing was sampled yet (no env, unsupported provisioner,
+  // or an engine restart).
+  runResources: (id: string) => req<{ samples: ResourceSample[] }>(`/api/runs/${id}/resources`),
   // Publish a workspace port and get its browser URL (idempotent per port).
   exposePort: (id: string, port: number) =>
     post(`/api/runs/${id}/expose-port`, { port }) as Promise<{ port: number; url: string }>,

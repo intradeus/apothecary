@@ -1,8 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type RunView } from '$lib/api';
+  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type ResourceSample, type RunView } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
+  import ResourceGraphs from '$lib/ResourceGraphs.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import { isGatePing, type PingLike } from '$lib/ping';
@@ -105,6 +106,21 @@
   let toggling = $state<Record<string, boolean>>({});
   let showTail = $state(true);
   let tailEl = $state<HTMLPreElement | null>(null);
+  // Workspace resource graphs (cpu/ram/net), from the engine's ~10s sampler.
+  // Fetched only while the section is open, like the egress audit.
+  let showResources = $state(false);
+  let resources = $state<ResourceSample[]>([]);
+  async function toggleResources() {
+    showResources = !showResources;
+    if (showResources) await refreshResources();
+  }
+  async function refreshResources() {
+    try {
+      resources = (await api.runResources(runId)).samples;
+    } catch {
+      /* transient */
+    }
+  }
   const currentStage = $derived.by(() => {
     const started = events.findLast((e) => e.type === 'stage_started');
     if (!started) return null;
@@ -143,6 +159,7 @@
         }
         denials = await api.egressDenials(runId);
         if (showAudit) await refreshAudit();
+        if (showResources) await refreshResources();
         const pr = await api.runPorts(runId);
         livePorts = pr.ports;
         observedPorts = pr.observed ?? [];
@@ -646,6 +663,14 @@
               </p>
             </div>
           {/if}
+        {/if}
+      </div>
+      <div class="audit">
+        <button class="linklike" onclick={toggleResources}>
+          {showResources ? '▾' : '▸'} Resources
+        </button>
+        {#if showResources}
+          <ResourceGraphs samples={resources} />
         {/if}
       </div>
       {#if showTail}

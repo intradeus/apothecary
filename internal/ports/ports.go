@@ -399,6 +399,32 @@ type SiblingPortScanner interface {
 	ScanSiblingPorts(ctx context.Context, env EnvID) []ObservedPort
 }
 
+// ResourceSample is one point-in-time reading of an environment's resource
+// usage — for the devcontainer adapter, the whole DinD sandbox (inner dockerd
+// + workspace + compose siblings), which is exactly "what this run costs the
+// host". At is stamped by the caller (the engine's clock), not the adapter.
+// Net counters are cumulative since container start; the UI derives rates
+// from deltas.
+type ResourceSample struct {
+	At       time.Time `json:"at"`
+	CPUPerc  float64   `json:"cpu_perc"`  // % of one core; ceiling is CPUs×100
+	CPUs     int       `json:"cpus"`      // host logical cores (the % denominator); 0 = unknown
+	MemUsed  int64     `json:"mem_used"`  // bytes
+	MemLimit int64     `json:"mem_limit"` // bytes (host total when uncapped)
+	NetRx    int64     `json:"net_rx"`    // cumulative bytes received
+	NetTx    int64     `json:"net_tx"`    // cumulative bytes sent
+	PIDs     int       `json:"pids"`
+}
+
+// ResourceSampler is an OPTIONAL EnvProvisioner capability: one resource
+// reading of a live environment (the run-page cpu/ram graphs). Samples
+// are external state like EnvStatus — the engine keeps a rolling in-memory
+// window, never the event log. An error means "no sample" (a gap in the
+// series), which callers must prefer over carrying a stale value forward.
+type ResourceSampler interface {
+	SampleResources(ctx context.Context, env EnvID) (ResourceSample, error)
+}
+
 // ExecLogTailer is an OPTIONAL EnvProvisioner capability: a live tail of
 // an environment's combined exec output (bootstrap, commands, agent
 // invocations) for run-page feedback. How output is captured is the

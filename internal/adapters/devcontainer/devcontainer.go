@@ -157,6 +157,11 @@ type Adapter struct {
 	// an EXPOSE of an undeclared sibling port routes to the right service.
 	sibPortsMu sync.Mutex
 	sibPorts   map[ports.EnvID]map[int]string
+
+	// cpusMu guards the cached host CPU count (see hostCPUs — the docker
+	// stats CPUPerc denominator, fetched once per adapter lifetime).
+	cpusMu sync.Mutex
+	cpus   int
 }
 
 // CmdRunner executes one CLI invocation (devcontainer, docker or git);

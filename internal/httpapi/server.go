@@ -79,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/egress-audit", s.getRunEgressAudit)
 	mux.HandleFunc("GET /api/runs/{id}/egress-policy", s.getRunEgressPolicy)
 	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
+	mux.HandleFunc("GET /api/runs/{id}/resources", s.getRunResources)
 	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
 	mux.HandleFunc("POST /api/runs/{id}/observed-ports", s.postObservedPorts)
 	mux.HandleFunc("POST /api/runs/{id}/open-editor", s.postOpenEditor)
@@ -866,6 +867,18 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ports": exposed, "observed": observed})
+}
+
+// getRunResources serves the run's rolling window of resource samples
+// (cpu/mem/net) for the run-page graphs — engine memory, like ports:
+// the sampler, not events, is authoritative. Empty when nothing was sampled
+// yet (no env, a provisioner without the capability, or an engine restart).
+func (s *Server) getRunResources(w http.ResponseWriter, r *http.Request) {
+	samples := s.Engine.RunResources(r.PathValue("id"))
+	if samples == nil {
+		samples = []ports.ResourceSample{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"samples": samples})
 }
 
 func containsStr(ss []string, v string) bool {

@@ -304,6 +304,28 @@ func cmdServe(args []string) error {
 		}
 	}()
 
+	// Resource sampler: one docker-stats reading of every active run's sandbox
+	// per pass, feeding the run-page cpu/ram graphs. Same honesty rule as
+	// the reconciler: a failed sample is a gap in the series, never a
+	// carried-forward value.
+	go func() {
+		if err := e.SampleResourcesOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
+			log.Error("resource sample pass failed", "err", err)
+		}
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if err := e.SampleResourcesOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
+					log.Error("resource sample pass failed", "err", err)
+				}
+			case <-reaperCtx.Done():
+				return
+			}
+		}
+	}()
+
 	// Egress audit ingest: persist each ACTIVE run's audit trail (from its
 	// per-project gateway) into the DB near-live, so the trail is durable BEFORE
 	// the UI reads it (the single audit path: gateway file → engine → DB → UI).
