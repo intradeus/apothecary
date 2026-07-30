@@ -291,6 +291,21 @@ func (m *Manager) Denials(project, run string) []policyfile.Denial {
 	return out
 }
 
+// Policy returns the project's current policy file — what the gateway is
+// enforcing (within its ~1s reload poll). A missing file reads as the
+// default deny-all allowlist, matching WritePolicy's default.
+func (m *Manager) Policy(project string) (policyfile.File, error) {
+	var f policyfile.File
+	if err := policyfile.Read(m.policyPath(project), &f); err != nil {
+		if os.IsNotExist(err) {
+			return policyfile.File{Mode: policyfile.ModeAllow}, nil
+		}
+		return policyfile.File{}, err
+	}
+	f.Mode = f.NormMode()
+	return f, nil
+}
+
 // Allow is the "add to egress" fast path (SetRule with allow=true).
 func (m *Manager) Allow(project, host string) error { return m.SetRule(project, host, true) }
 

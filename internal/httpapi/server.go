@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
 	mux.HandleFunc("POST /api/runs/{id}/egress-rule", s.postEgressRule)
 	mux.HandleFunc("GET /api/runs/{id}/egress-audit", s.getRunEgressAudit)
+	mux.HandleFunc("GET /api/runs/{id}/egress-policy", s.getRunEgressPolicy)
 	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
 	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
 	mux.HandleFunc("POST /api/runs/{id}/observed-ports", s.postObservedPorts)
@@ -578,6 +579,32 @@ func (s *Server) getEgressDenials(w http.ResponseWriter, r *http.Request) {
 		dens = []ports.EgressDenial{}
 	}
 	writeJSON(w, http.StatusOK, dens)
+}
+
+// getRunEgressPolicy serves the egress policy the gateway enforces for a run
+// right now — the "current rule" side of the firewall UI. The audit rows only
+// carry historical verdicts, so the rule toggles render from this instead.
+func (s *Server) getRunEgressPolicy(w http.ResponseWriter, r *http.Request) {
+	pol, err := s.Engine.RunEgressPolicy(r.Context(), r.PathValue("id"))
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, engine.ErrEgressOff) {
+			status = http.StatusServiceUnavailable
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	if pol.Domains == nil {
+		pol.Domains = []string{}
+	}
+	if pol.BlockedDomains == nil {
+		pol.BlockedDomains = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":            pol.Mode,
+		"domains":         pol.Domains,
+		"blocked_domains": pol.BlockedDomains,
+	})
 }
 
 // getRunEgressAudit serves the durable egress audit trail for a run — every

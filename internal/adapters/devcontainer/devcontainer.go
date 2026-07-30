@@ -1369,6 +1369,24 @@ func (a *Adapter) SetEgressRule(_ context.Context, env ports.EnvID, host string,
 	return a.gw.SetRule(a.projectFor(string(env)), host, allow)
 }
 
+// EgressPolicy (ports.EgressController) reads back the project policy the
+// gateway is enforcing right now — the "current rule" side of the run page's
+// firewall UI.
+func (a *Adapter) EgressPolicy(_ context.Context, env ports.EnvID) (ports.EgressPolicy, error) {
+	if a.gw == nil {
+		return ports.EgressPolicy{}, fmt.Errorf("egress gateway is off for this provisioner")
+	}
+	f, err := a.gw.Policy(a.projectFor(string(env)))
+	if err != nil {
+		return ports.EgressPolicy{}, err
+	}
+	return ports.EgressPolicy{
+		Mode:           string(f.NormMode()),
+		Domains:        f.Domains,
+		BlockedDomains: f.BlockedDomains,
+	}, nil
+}
+
 // Close stops every engine-side bridge listener (engine shutdown;
 // workspaces keep running and Reattach rebuilds bridges on the next boot).
 func (a *Adapter) Close() {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"strings"
 	"sync"
 
 	"apothecary/internal/agentspec"
@@ -220,6 +221,50 @@ func (p *EnvProvisioner) SetEgressRule(_ context.Context, id ports.EnvID, host s
 	}
 	p.Rules[id] = append(p.Rules[id], host+"="+verb)
 	return nil
+}
+
+// EgressPolicy derives the effective policy from the recorded calls, the way
+// the real gateway folds them into its policy file: allow-mode, Allowed seeds
+// the allowlist, then Rules replay in order (allow → unblock + allowlist,
+// deny → block + drop from the allowlist).
+func (p *EnvProvisioner) EgressPolicy(_ context.Context, id ports.EnvID) (ports.EgressPolicy, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pol := ports.EgressPolicy{Mode: "allow", Domains: append([]string(nil), p.Allowed[id]...)}
+	for _, r := range p.Rules[id] {
+		host, verb, _ := strings.Cut(r, "=")
+		if verb == "allow" {
+			pol.BlockedDomains = withoutStr(pol.BlockedDomains, host)
+			if !containsStr(pol.Domains, host) {
+				pol.Domains = append(pol.Domains, host)
+			}
+		} else {
+			pol.Domains = withoutStr(pol.Domains, host)
+			if !containsStr(pol.BlockedDomains, host) {
+				pol.BlockedDomains = append(pol.BlockedDomains, host)
+			}
+		}
+	}
+	return pol, nil
+}
+
+func containsStr(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func withoutStr(xs []string, x string) []string {
+	out := xs[:0:0]
+	for _, v := range xs {
+		if v != x {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 var _ ports.EgressController = (*EnvProvisioner)(nil)

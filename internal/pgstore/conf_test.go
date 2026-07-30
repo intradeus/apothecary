@@ -7,9 +7,42 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 )
+
+// A project may reference a BUILT-IN flow — compiled into the binary, no
+// flows row. This is the case the 0004 FK wrongly rejected: the service
+// layer validates default_flow against the DB-then-builtins layering, and
+// the store must accept the same set. A name that resolves nowhere still
+// bounces with ErrInvalid.
+func TestProjectDefaultFlowBuiltin(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	in := confstore.StoredIntegration{
+		ID: "int1", Port: "forge", Kind: "gitlab", Name: "gl",
+		Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.UpsertIntegration(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	p := confstore.Project{
+		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatalf("builtin default_flow upsert = %v", err)
+	}
+	if gp, err := s.GetProject(ctx, "prj1"); err != nil || gp.DefaultFlow != builtin.DefaultFlowName {
+		t.Fatalf("roundtrip = %+v, %v", gp, err)
+	}
+	p.DefaultFlow = "nope"
+	if err := s.UpsertProject(ctx, p); !errors.Is(err, confstore.ErrInvalid) {
+		t.Fatalf("missing flow upsert = %v, want ErrInvalid", err)
+	}
+}
 
 
 // openConf reuses the gated open() and clears the config-plane tables
@@ -51,8 +84,8 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		t.Fatalf("dup err = %v", err)
 	}
 
-	// The default_flow FK (migration 0004) requires the flow to exist before
-	// the project that references it.
+	// UpsertProject's guard requires default_flow to resolve (a flows row or
+	// a built-in name); "v1" is no built-in, so the row must exist first.
 	if err := s.UpsertFlow(ctx, confstore.FlowRow{Name: "v1", YAML: "a", Hash: "h1", UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}

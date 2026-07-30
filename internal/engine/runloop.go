@@ -1399,6 +1399,10 @@ func (x *exec) ensureEnv() error {
 		GitUser: x.res.GitUser,
 		GitPass: x.res.GitPass,
 	}
+	// Whatever provisioning + bootstrap print is captured on every exit past
+	// this point — ready, env_failed, abort mid-build — so the log survives
+	// the workspace itself (see publishProvisionLog).
+	defer x.publishProvisionLog(spec.Name)
 	id, err := x.res.Envp.Provision(x.ctx, spec)
 	if err != nil {
 		if x.ctx.Err() != nil {

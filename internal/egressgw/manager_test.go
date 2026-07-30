@@ -81,6 +81,35 @@ func TestSetRuleToggles(t *testing.T) {
 	}
 }
 
+// Policy reads back what the gateway enforces — the run page renders each
+// host's CURRENT rule from it (audit rows only carry historical verdicts).
+func TestPolicyReadsBack(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, nil, nil)
+
+	// No file yet: the default deny-all allowlist, never an error.
+	f, err := m.Policy("p")
+	if err != nil || f.Mode != policyfile.ModeAllow || len(f.Domains) != 0 {
+		t.Fatalf("empty policy = %+v, %v", f, err)
+	}
+
+	_ = m.WritePolicy("p", policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}})
+	if err := m.SetRule("p", "github.com", false); err != nil {
+		t.Fatal(err)
+	}
+	f, err = m.Policy("p")
+	if err != nil || !contains(f.BlockedDomains, "github.com") || contains(f.Domains, "github.com") {
+		t.Fatalf("after block: %+v, %v", f, err)
+	}
+	if err := m.SetRule("p", "github.com", true); err != nil {
+		t.Fatal(err)
+	}
+	f, err = m.Policy("p")
+	if err != nil || contains(f.BlockedDomains, "github.com") || !contains(f.Domains, "github.com") {
+		t.Fatalf("after allow: %+v, %v", f, err)
+	}
+}
+
 func TestAuditReadsFile(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, nil)

@@ -1,7 +1,7 @@
 name: default
 version: 3
 description: "built-in default: plan-gated build with cross-vendor adversarial review and manual-debug rescue"
-defaults: { timeout: 30m, harness: opencode, model: opencode-go/qwen3.5-plus, max_turns: 50 }
+defaults: { timeout: 30m, harness: opencode, model: opencode-go/qwen3.7-plus, max_turns: 50 }
 budget: { max_cost_usd: 10.0, max_total_turns: 300 }
 # Failure philosophy: every agent/command stage first retries itself with its
 # error fed back, then escalates to its OWN rescue gate — a human opens the

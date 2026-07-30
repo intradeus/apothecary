@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 )
 
@@ -147,24 +148,38 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
+	// The SELECT gate is the atomic replacement for the 0004 FK, made
+	// builtin-aware: built-in flows are compiled into the binary, never rows,
+	// so a plain FK rejected them. When it yields no row (the flow vanished
+	// between the service-layer validation and this write, and isn't a
+	// built-in) nothing is inserted, no conflict fires, and RowsAffected
+	// reads 0.
+	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO projects (id, name, forge_id, provisioner_id,
 		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+		WHERE EXISTS (SELECT 1 FROM flows WHERE name=$8) OR $8 = ANY($12)
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, forge_id=$3, provisioner_id=$4,
 			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11`,
 		p.ID, p.Name, p.ForgeID, p.ProvisionerID,
-		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt, harnesses)
+		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt, harnesses,
+		builtin.FlowNames())
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
 	}
 	if isFK(err) {
-		// FK backstop (0004): the referenced flow (or integration) vanished
+		// FK backstop: a referenced integration (forge/provisioner) vanished
 		// between the service-layer validation and this write.
 		return fmt.Errorf("project %s references a missing flow or integration: %w", p.Name, confstore.ErrInvalid)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("project %s references a missing flow or integration: %w", p.Name, confstore.ErrInvalid)
+	}
+	return nil
 }
 
 func scanProject(row pgx.Row) (confstore.Project, error) {
@@ -441,16 +456,28 @@ func (s *Store) DeleteFlow(ctx context.Context, name string) error {
 	if len(refs) > 0 {
 		return fmt.Errorf("flow %s is referenced by %s: %w", name, strings.Join(refs, ", "), confstore.ErrReferenced)
 	}
-	tag, err := s.pool.Exec(ctx, `DELETE FROM flows WHERE name=$1`, name)
-	if isFK(err) {
-		// FK backstop (0004): a project grabbed the flow between the
-		// referrer check above and this delete.
-		return fmt.Errorf("flow %s is still referenced: %w", name, confstore.ErrReferenced)
-	}
+	// The guarded DELETE is the atomic replacement for the 0004 FK backstop:
+	// it only fires while no project references the name (the scans above are
+	// for the informative error, not the protection).
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM flows WHERE name=$1
+		  AND NOT EXISTS (SELECT 1 FROM projects WHERE default_flow=$1)
+		  AND NOT EXISTS (SELECT 1 FROM runs WHERE flow_name=$1
+		                  AND state IN ('pending','provisioning','running','waiting_on_human'))`, name)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := s.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM flows WHERE name=$1)`, name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			// A project or run grabbed the flow between the referrer scan
+			// above and the delete.
+			return fmt.Errorf("flow %s is still referenced: %w", name, confstore.ErrReferenced)
+		}
 		return fmt.Errorf("flow %s: %w", name, confstore.ErrNotFound)
 	}
 	return nil // versions stay: immutable forever (§7)

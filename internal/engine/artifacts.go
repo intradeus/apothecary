@@ -209,6 +209,44 @@ func (x *exec) publishLog(stageID string, iter int, output string) {
 		fmt.Sprintf("%s-%d.log", stageID, iter), []byte(output))
 }
 
+// provisionLogStage is the pseudo-stage id the provisioning log is filed
+// under — the artifact's StageID, the runs-dir log filename and the
+// /logs/{stage} path all use it. The leading underscore keeps it outside the
+// flow grammar's stage-id slug (ids must start with a letter), so it can
+// never collide with a real stage's logs.
+const provisionLogStage = "_provision"
+
+// provisionLogTail bounds how much of the workspace exec log one capture
+// reads; Capture tail-truncates further to the store's own limit.
+const provisionLogTail = 1 << 20
+
+// publishProvisionLog persists the workspace exec log as it stands when
+// provisioning ends: the clone + container build + bootstrap output that
+// otherwise lives only in the adapter's exec.log and dies with the workspace
+// (Destroy removes the run folder). Deferred from ensureEnv on every exit
+// path past its Provision call — env_ready, env_failed and an abort mid-build
+// all leave the same durable record a stage attempt gets (runs-dir file +
+// stage_log artifact). envName is the deterministic workspace name, which is
+// the exec-log key even when Provision itself failed (rs.envID still empty).
+func (x *exec) publishProvisionLog(envName string) {
+	tailer, ok := x.res.Envp.(ports.ExecLogTailer)
+	if !ok {
+		return
+	}
+	env := x.rs.envID
+	if env == "" {
+		env = ports.EnvID(envName)
+	}
+	out, err := tailer.TailExecLog(x.bg, env, provisionLogTail)
+	if err != nil || len(out) == 0 {
+		return
+	}
+	iter := x.rs.iters[provisionLogStage] + 1
+	x.rs.iters[provisionLogStage] = iter
+	x.writeStageLog(provisionLogStage, iter, string(out))
+	x.publishLog(provisionLogStage, iter, string(out))
+}
+
 func (x *exec) publish(stageID string, iter int, scope, name, path string, data []byte) {
 	// Snapshots outlive the workspace and its security boundary, so they get
 	// the same scrub as everything else that leaves it (M21).

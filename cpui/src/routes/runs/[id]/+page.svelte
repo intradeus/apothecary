@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EgressAuditRow, type EventEnvelope, type RunView } from '$lib/api';
+  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type RunView } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
@@ -95,6 +95,10 @@
   let dismissedDenials = $state<Set<string>>(new Set());
   const newDenials = $derived(denials.filter((d) => !dismissedDenials.has(d.host)));
   let audit = $state<EgressAuditRow[]>([]);
+  // The firewall policy in force right now — the rule toggles render from it.
+  // null until fetched (or when the run has no live gateway), in which case
+  // the rule column falls back to the row's historical verdict.
+  let policy = $state<EgressPolicy | null>(null);
   let showAudit = $state(false);
   let auditVerdict = $state(''); // '' | 'allow' | 'deny'
   let auditHost = $state('');
@@ -191,14 +195,36 @@
     dismissedDenials = new Set(denials.map((d) => d.host));
   }
 
-  // Live-toggle a host's rule (allow ⇄ block). Persists to the project.
+  // matchesList mirrors the gateway's hostMatches: exact entry, or a
+  // "*.suffix" wildcard matched by suffix (never the bare apex itself).
+  function matchesList(host: string, list: string[]): boolean {
+    const h = host.toLowerCase();
+    return list.some((d) => {
+      const e = d.toLowerCase();
+      return e.startsWith('*.') ? h.endsWith(e.slice(1)) : h === e;
+    });
+  }
+
+  // The CURRENT rule for a host, mirroring the gateway's verdict(): a
+  // force-block wins in both modes, then mode + list membership decide.
+  // null while the policy is unknown (not yet fetched / no gateway).
+  function ruleFor(host: string): 'allow' | 'deny' | null {
+    if (!policy) return null;
+    if (matchesList(host, policy.blocked_domains)) return 'deny';
+    const m = matchesList(host, policy.domains);
+    if (policy.mode === 'deny') return m ? 'deny' : 'allow';
+    return m ? 'allow' : 'deny';
+  }
+
+  // Live-toggle a host's rule (allow ⇄ block). Persists to the project. The
+  // audit rows are history and deliberately untouched — the rule column
+  // re-renders from the refreshed policy.
   async function toggleRule(host: string, allow: boolean) {
     toggling[host] = true;
     error = '';
     try {
       await api.egressRule(runId, host, allow);
-      // Optimistically reflect the new rule on this host's rows so the toggle flips.
-      audit = audit.map((r) => (r.host === host ? { ...r, verdict: allow ? 'allow' : 'deny' } : r));
+      policy = await api.egressPolicy(runId);
       denials = await api.egressDenials(runId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -213,6 +239,7 @@
         verdict: auditVerdict || undefined,
         host: auditHost.trim() || undefined
       });
+      policy = await api.egressPolicy(runId);
     } catch {
       /* transient */
     }
@@ -347,13 +374,29 @@
     }
   }
 
+  // The provisioning log (clone + container build + bootstrap) is filed under
+  // a pseudo-stage id the flow grammar can't produce (stage ids must start
+  // with a letter) — served by the same /logs/{stage} endpoint.
+  const PROVISION_STAGE = '_provision';
+  // Show the provisioning log on the env rows once it exists: env_ready /
+  // env_failed always (the engine captures it right before appending them);
+  // env_requested only for a run that ended with neither (aborted mid-build —
+  // that row is then the only place to hang the log on).
+  const envConcluded = $derived(events.some((e) => e.type === 'env_ready' || e.type === 'env_failed'));
+  function hasLog(e: EventEnvelope, stage?: string): boolean {
+    if (!stage) return false;
+    if (e.type === 'stage_completed' || e.type === 'stage_failed') return true;
+    if (e.type === 'env_ready' || e.type === 'env_failed') return true;
+    return e.type === 'env_requested' && terminal && !envConcluded;
+  }
+
   function describe(e: EventEnvelope): { text: string; cls: string; stage?: string } {
     const p = e.payload;
     switch (e.type) {
       case 'run_created': return { text: `run created — “${p.ticket_title}” (flow ${p.flow_name})`, cls: 'info' };
-      case 'env_requested': return { text: 'provisioning workspace…', cls: '' };
-      case 'env_ready': return { text: `workspace ready (${p.env_id})`, cls: 'ok' };
-      case 'env_failed': return { text: `environment failed: ${p.error}`, cls: 'bad' };
+      case 'env_requested': return { text: 'provisioning workspace…', cls: '', stage: PROVISION_STAGE };
+      case 'env_ready': return { text: `workspace ready (${p.env_id})`, cls: 'ok', stage: PROVISION_STAGE };
+      case 'env_failed': return { text: `environment failed: ${p.error}`, cls: 'bad', stage: PROVISION_STAGE };
       case 'stage_started': return { text: `${p.stage_id} started (attempt ${p.iteration})${p.model ? ` · ${p.model}` : ''}`, cls: 'info', stage: p.stage_id as string };
       case 'stage_completed': {
         const u = p.usage as { cost_usd?: number } | undefined;
@@ -567,19 +610,25 @@
             <div class="audit-scroll">
               <table class="audit-table mono small">
                 <thead>
-                  <tr><th>host</th><th>rule</th><th>proto</th><th class="num">×</th><th class="num">out</th><th class="num">in</th><th>last</th></tr>
+                  <tr><th>host</th><th>seen</th><th>rule now</th><th>proto</th><th class="num">×</th><th class="num">out</th><th class="num">in</th><th>last</th></tr>
                 </thead>
                 <tbody>
                   {#each audit as r (r.host + ':' + r.port + ':' + r.verdict)}
+                    {@const rule = ruleFor(r.host) ?? r.verdict}
                     <tr>
                       <td>{r.host}{r.port && r.port !== 443 ? `:${r.port}` : ''}</td>
                       <td>
+                        <span class="verdict hist {r.verdict}" title="What happened to this traffic when it occurred — history, never changed by rule edits">
+                          {r.verdict === 'allow' ? 'allowed' : 'blocked'}
+                        </span>
+                      </td>
+                      <td>
                         <button
-                          class="verdict {r.verdict}"
+                          class="verdict {rule}"
                           disabled={toggling[r.host]}
-                          title={r.verdict === 'allow' ? 'Click to block this host' : 'Click to allow this host'}
-                          onclick={() => toggleRule(r.host, r.verdict !== 'allow')}>
-                          {toggling[r.host] ? '…' : r.verdict === 'allow' ? 'allowed' : 'blocked'}
+                          title={rule === 'allow' ? 'The firewall allows this host now — click to block it' : 'The firewall blocks this host now — click to allow it'}
+                          onclick={() => toggleRule(r.host, rule !== 'allow')}>
+                          {toggling[r.host] ? '…' : rule === 'allow' ? 'allowed' : 'blocked'}
                         </button>
                       </td>
                       <td class="muted">{r.proto}</td>
@@ -592,8 +641,8 @@
                 </tbody>
               </table>
               <p class="muted small" style="margin:6px 0 0">
-                Click a rule to allow/block that host live (persists to the project; no restart).
-                Rows show past traffic — a new rule takes effect on the next connection.
+                “seen” is what happened to past traffic; “rule now” is what the firewall does today —
+                click it to allow/block the host live (applies in ~1s, persists to the project).
               </p>
             </div>
           {/if}
@@ -636,11 +685,11 @@
         <div class="tl-item {d.cls}">
           <span class="muted mono small">{fmtTime(e.ts)}</span>
           {d.text}
-          {#if d.stage && (e.type === 'stage_completed' || e.type === 'stage_failed')}
+          {#if hasLog(e, d.stage)}
             <button class="small" style="padding:1px 8px;margin-left:6px" onclick={() => showLog(d.stage!)}>log</button>
           {/if}
         </div>
-        {#if logStage && d.stage === logStage && (e.type === 'stage_completed' || e.type === 'stage_failed')}
+        {#if logStage && d.stage === logStage && hasLog(e, d.stage)}
           <pre class="log">{logText}</pre>
         {/if}
       {/each}
@@ -677,6 +726,8 @@
   .verdict:disabled { cursor: default; opacity: 0.6; }
   .verdict.allow { color: var(--green, #4caf7d); background: color-mix(in srgb, var(--green, #4caf7d) 12%, transparent); }
   .verdict.deny  { color: var(--amber, #e0af68); background: color-mix(in srgb, var(--amber, #e0af68) 14%, transparent); }
+  .verdict.hist { cursor: default; opacity: 0.75; background: transparent; }
+  .verdict.hist:hover { border-color: transparent; }
   .deny-banner {
     display:flex; align-items:center; justify-content:space-between; gap:10px;
     margin-top:10px; padding:5px 10px; font-size:12px;

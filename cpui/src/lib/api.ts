@@ -269,6 +269,14 @@ export interface EgressAuditRow {
   last_seen: string;
 }
 
+// The firewall policy the gateway enforces right now — what a host's CURRENT
+// rule is computed from (audit rows only carry historical verdicts).
+export interface EgressPolicy {
+  mode: 'allow' | 'deny';
+  domains: string[];
+  blocked_domains: string[];
+}
+
 export interface EventEnvelope {
   run_id: string;
   seq: number;
@@ -400,6 +408,13 @@ export const api = {
   // Hosts the egress proxy blocked for this run (M18) — the visible
   // diagnosis when a model/tool can't reach its endpoint.
   egressDenials: (id: string) => req<EgressDenial[]>(`/api/runs/${id}/egress-denials`),
+  // The CURRENT egress policy for this run (mode + lists) — the rule toggles
+  // render from it; null when the run has no live gateway.
+  egressPolicy: async (id: string): Promise<EgressPolicy | null> => {
+    const res = await fetch(`/api/runs/${id}/egress-policy`);
+    if (!res.ok) return null;
+    return res.json();
+  },
   // Allow a host on this run's egress instantly (no restart) and persist
   // it to the project's extra domains.
   egressAllow: (id: string, host: string) =>

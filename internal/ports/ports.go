@@ -270,6 +270,16 @@ type EgressAuditor interface {
 	EgressAudit(ctx context.Context, env EnvID) []EgressAuditRecord
 }
 
+// EgressPolicy is the firewall policy the gateway enforces RIGHT NOW (read
+// back from the hot-reloaded policy file). The UI renders a host's current
+// rule from it — as opposed to the audit trail, whose verdicts are records
+// of past traffic and never change when the rule does.
+type EgressPolicy struct {
+	Mode           string   // "allow" (deny-all + allowlist) or "deny" (allow-all + denylist)
+	Domains        []string // allowlist (mode=allow) or denylist (mode=deny); exact or "*.suffix"
+	BlockedDomains []string // force-deny overrides; win in both modes
+}
+
 // EgressController is an OPTIONAL EnvProvisioner capability: inspect and live-
 // edit a run's egress policy, backed by the per-project egress gateway
 // (internal/egressgw). AllowEgress is the "add to egress" fast path — it rewrites
@@ -283,6 +293,9 @@ type EgressController interface {
 	// SetEgressRule live-toggles a host's rule: allow=true permits it, allow=false
 	// force-blocks it (overrides base allowlist defaults). Project-wide, no restart.
 	SetEgressRule(ctx context.Context, env EnvID, host string, allow bool) error
+	// EgressPolicy reads back the policy currently enforced for the env's
+	// project — the source of truth for "what happens to this host now".
+	EgressPolicy(ctx context.Context, env EnvID) (EgressPolicy, error)
 }
 
 // PortConn is one exposed workspace port as the engine consumes it: a

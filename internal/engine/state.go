@@ -112,6 +112,14 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			if p.EnvID != "" {
 				rs.envID = ports.EnvID(p.EnvID)
 			}
+		case *event.ArtifactPublished:
+			// Keeps pseudo-stage counters monotonic across restarts: the
+			// provisioning log has no stage_started to replay its iteration
+			// from. A real stage's snapshots never exceed its started count,
+			// so this is a no-op for them.
+			if p.Iteration > rs.iters[p.StageID] {
+				rs.iters[p.StageID] = p.Iteration
+			}
 		case *event.StageStarted:
 			if fl != nil {
 				rs.pos = fl.Index(p.StageID)

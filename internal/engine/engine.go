@@ -544,6 +544,19 @@ func (e *Engine) SetEgressRule(ctx context.Context, runID, host string, allow bo
 	return ctrl.SetEgressRule(ctx, env, host, allow)
 }
 
+// RunEgressPolicy returns the egress policy the gateway enforces for a run
+// RIGHT NOW — the run page renders each host's current rule from it (the
+// audit trail only records past verdicts, which never change when the rule
+// does). Returns ErrEgressOff when the run has no live gateway.
+func (e *Engine) RunEgressPolicy(ctx context.Context, runID string) (ports.EgressPolicy, error) {
+	ctrl, env, release, err := e.egressCtrl(ctx, runID)
+	if err != nil {
+		return ports.EgressPolicy{}, err
+	}
+	defer release()
+	return ctrl.EgressPolicy(ctx, env)
+}
+
 // auditRows converts a run's provisioner audit records into durable rows tagged
 // with the project + engine run id. Empty when the provisioner has no auditor.
 // Uses envNameForRun so it works DURING provisioning too (EnvID not yet set).

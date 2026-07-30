@@ -100,6 +100,66 @@ func TestGoalArtifactsDeliveredAndPrompted(t *testing.T) {
 	}
 }
 
+// The provisioning window of the workspace exec log (clone + build +
+// bootstrap) is captured as a stage_log artifact under the pseudo-stage id —
+// it used to live only in the adapter's exec.log and die with the workspace.
+func TestProvisionLogPublished(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	fa := &fakeArtifacts{}
+	h.e.SetArtifacts(fa)
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	var log string
+	for _, m := range fa.metas {
+		if m.StageID == provisionLogStage && m.Scope == artifacts.ScopeStageLog {
+			if m.Iteration != 1 {
+				t.Errorf("provision log iteration = %d, want 1", m.Iteration)
+			}
+			log = string(fa.blobs[m.ID])
+		}
+	}
+	if !strings.Contains(log, "git clone") {
+		t.Errorf("provision log = %q, want the bootstrap transcript", log)
+	}
+}
+
+// A bootstrap failure ends the run with env_failed — exactly when a human
+// needs the provisioning log, and exactly when it used to vanish with the
+// workspace. The capture must happen on that exit path too.
+func TestProvisionLogPublishedOnBootstrapFailure(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	fa := &fakeArtifacts{}
+	h.e.SetArtifacts(fa)
+
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "git clone") {
+			return ports.ExecResult{ExitCode: 1, Output: "fatal: repository not found"}, nil
+		}
+		return ports.ExecResult{}, nil
+	}
+
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	var log string
+	for _, m := range fa.metas {
+		if m.StageID == provisionLogStage && m.Scope == artifacts.ScopeStageLog {
+			log = string(fa.blobs[m.ID])
+		}
+	}
+	if !strings.Contains(log, "git clone") {
+		t.Errorf("provision log after bootstrap failure = %q, want the transcript", log)
+	}
+}
+
 // TestAttemptSnapshotsSurviveRetries is the point of M27: attempt 1's output
 // stays inspectable after attempt 2 overwrites the file. Before, a retry left
 // nothing behind — the workspace holds one version per path and the event
