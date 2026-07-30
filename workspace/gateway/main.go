@@ -48,6 +48,10 @@ func main() {
 	flag.IntVar(&g.listenPort, "listen-port", 9040, "transparent filter listen port")
 	flag.BoolVar(&g.logConns, "log-conns", true, "log every connection verdict (run/dst/host/allow|deny)")
 	flag.BoolVar(&g.logDNS, "log-dns", true, "log DNS resolutions (run/name/ips)")
+	// The pull-through registry cache is opt-in: no config path, no child (the
+	// filtering gateway must work identically without it).
+	var mirrorConfig string
+	flag.StringVar(&mirrorConfig, "mirror-config", "", "path to the registry mirror config.yml (empty = no image mirror)")
 	flag.Parse()
 	g.audit = newAuditor(auditPath)
 
@@ -69,6 +73,10 @@ func main() {
 
 	g.serveDNS(g.dnsUpstream)
 	go g.watch()
+	if mirrorConfig != "" {
+		log.Printf("gateway: image mirror on :5000 (config %s)", mirrorConfig)
+		go superviseRegistry(mirrorConfig)
+	}
 
 	ln, err := net.Listen("tcp", ":"+itoa(g.listenPort))
 	if err != nil {

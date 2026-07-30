@@ -162,9 +162,16 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 	)
 	// Inner containers resolve external names through the gateway too, so their
 	// DNS queries arrive where egress is filtered (compose service-name lookups
-	// stay local to the embedded 127.0.0.11 resolver — unaffected).
+	// stay local to the embedded 127.0.0.11 resolver — unaffected). The gateway
+	// also hosts the project's pull-through Docker Hub cache, so pulls warm each
+	// other across the project's runs instead of every run cold-pulling into its
+	// own /var/lib/docker volume; plain HTTP on an --internal network, hence
+	// insecure-registry. A down mirror is not a failure mode: dockerd falls back
+	// to upstream on its own.
 	if gwIP != "" {
-		args = append(args, "--dns", gwIP)
+		args = append(args, "--dns", gwIP,
+			"--registry-mirror=http://"+gwIP+":5000",
+			"--insecure-registry="+gwIP+":5000")
 	}
 	if _, stderr, code, err := a.hostRun(ctx, args); err != nil {
 		return err

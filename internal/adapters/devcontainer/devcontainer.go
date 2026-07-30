@@ -1206,8 +1206,9 @@ func (a *Adapter) Destroy(ctx context.Context, env ports.EnvID) error {
 			}
 		}
 	}
-	// Tear down this run's egress network and reap the project gateway if it was
-	// the project's last run (reads the project marker before RemoveAll).
+	// Tear down this run's egress network (reads the project marker before
+	// RemoveAll). The project gateway itself stays up — it keeps the warm image
+	// cache for the project's next run.
 	if a.gw != nil {
 		_ = a.gw.DestroyRunEgress(ctx, a.projectFor(name), name)
 	}

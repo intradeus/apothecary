@@ -920,6 +920,42 @@ func TestProvisionCreatesSandbox(t *testing.T) {
 	if envHas(run, "DOCKER_HOST") {
 		t.Errorf("sandbox lifecycle must NOT carry the inner DOCKER_HOST: %v", run.env)
 	}
+	// This adapter has no gateway (newTestAdapter passes no GatewayImage), so
+	// there is no mirror to point the inner daemon at.
+	if strings.Contains(joined, "--registry-mirror") {
+		t.Errorf("gatewayless sandbox must not get mirror flags: %v", run.args)
+	}
+}
+
+// With a gateway the inner daemon is pointed at the project's pull-through
+// cache on the gateway, over plain HTTP inside the run's --internal network.
+func TestCreateSandboxWiresGatewayMirror(t *testing.T) {
+	r := &scriptRunner{}
+	a := newTestAdapter(t, r)
+	const name = "apothecary-run1"
+	if err := a.createSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, "172.20.0.2"); err != nil {
+		t.Fatal(err)
+	}
+	run := find(t, r.calls, "docker", "run")
+	joined := strings.Join(run.args, " ")
+	for _, want := range []string{
+		"--network " + egressNet(name),
+		"--dns 172.20.0.2",
+		"--registry-mirror=http://172.20.0.2:5000",
+		"--insecure-registry=172.20.0.2:5000",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("sandbox run missing %q: %v", want, run.args)
+		}
+	}
+	// The mirror flags are dockerd's, so they must follow the image + dockerd.
+	dockerd := strings.Index(joined, "dockerd --host=")
+	if mirror := strings.Index(joined, "--registry-mirror"); dockerd < 0 || mirror < dockerd {
+		t.Errorf("mirror flags must be dockerd args, not docker run args: %v", run.args)
+	}
+	if envHas(run, "DOCKER_HOST") {
+		t.Errorf("sandbox lifecycle must NOT carry the inner DOCKER_HOST: %v", run.env)
+	}
 }
 
 // Every workspace/inner call targets the inner daemon; the `up` call also keeps

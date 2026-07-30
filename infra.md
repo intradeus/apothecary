@@ -8,16 +8,18 @@ flowchart TB
         pg[("Postgres<br/>events · confstore · egress_audit")]
         dockerd["Host docker daemon"]
         subgraph MOUNTS["RunsDir bind-mounts (files, no TCP)"]
-            gwdir["gw/&lt;project&gt;/<br/>egress-policy.json · routes.json<br/>egress-denials.json · egress-audit.json"]
+            gwdir["gw/&lt;project&gt;/<br/>egress-policy.json · routes.json<br/>egress-denials.json · egress-audit.json<br/>registry-config.yml"]
             shimdir["&lt;run&gt;/shim/<br/>engine.sock"]
         end
+        cachevol[("apo-gw-&lt;project&gt;-cache<br/>image blobs · never reaped")]
     end
 
-    subgraph GW["apo-gw-&lt;project&gt;  (ONE per project, multi-homed, NET_ADMIN)"]
+    subgraph GW["apo-gw-&lt;project&gt;  (ONE per project, multi-homed, NET_ADMIN,<br/>--restart unless-stopped · kept warm, never reaped)"]
         direction TB
         nft["nft REDIRECT :80/:443 → filter<br/>peek TLS SNI / HTTP Host (no MITM)"]
         dns["DNS :53 forwarder (+ IP↔host snoop)"]
         watch["policy mtime-watcher (hot-reload)"]
+        mirror["registry :5000 (supervised child)<br/>pull-through Docker Hub cache"]
     end
 
     net(["apo-egress-&lt;run&gt;<br/>--internal net · sandbox's ONLY NIC"])
@@ -25,7 +27,7 @@ flowchart TB
     subgraph SB["DinD sandbox  apo-&lt;branch&gt;-&lt;tail&gt;  (--privileged docker:dind)"]
         direction TB
         relay["shim relay<br/>127.0.0.1:engine → engine.sock"]
-        innerd["inner dockerd --dns gwIP"]
+        innerd["inner dockerd --dns gwIP<br/>--registry-mirror http://gwIP:5000"]
         subgraph DC["repo .devcontainer (workspace container)"]
             agent["agent + harness (opencode/codex)<br/>AGENTS.md · provider.env · run.env"]
             askh["shim ask-human (MCP stdio)"]
@@ -69,5 +71,10 @@ flowchart TB
     nft -->|"deny → RST + record"| internet
     dns -->|"forward :53"| internet
     net -->|"--dns gwIP"| dns
+
+    %% image mirror: warm cache shared by all of a project's runs
+    innerd -->|"docker.io pulls (plain HTTP, east-west)"| mirror
+    mirror <--> cachevol
+    mirror -.->|"cache miss → registry-1.docker.io<br/>gateway-originated: NOT SNI-filtered"| internet
 
 ```

@@ -97,6 +97,15 @@ func (m *Manager) routesPath(project string) string {
 func (m *Manager) auditPath(project string) string {
 	return filepath.Join(m.gwDir(project), "egress-audit.json")
 }
+func (m *Manager) mirrorConfigPath(project string) string {
+	return filepath.Join(m.gwDir(project), "registry-config.yml")
+}
+
+// cacheVolume backs the gateway's pull-through image cache. A named volume (not
+// gwDir) because it is the one piece of gateway state worth keeping when the
+// container is recreated for an image upgrade — and it must NOT be swept with
+// the rest of the folder.
+func (m *Manager) cacheVolume(project string) string { return m.gwName(project) + "-cache" }
 
 // --- docker helper --------------------------------------------------------
 
@@ -124,6 +133,11 @@ func (m *Manager) EnsureRunEgress(ctx context.Context, project, run string, f po
 	// Policy is per-project; write it (idempotent) so the gateway has a policy
 	// the moment it starts.
 	if err := m.WritePolicy(project, f); err != nil {
+		return "", err
+	}
+	// Same for the image-mirror config: present before the container starts, and
+	// re-checked every pass so an engine upgrade that changes it propagates.
+	if err := m.writeMirrorConfig(project); err != nil {
 		return "", err
 	}
 
@@ -171,25 +185,65 @@ func (m *Manager) ensureNetwork(ctx context.Context, project, run string) error 
 	return nil
 }
 
+// ensureGateway brings the project's gateway up, creating it when absent and
+// RECREATING it when it runs a stale image. The recreate path exists because
+// gateways are no longer reaped when a project's last run goes away (they are
+// kept warm for their image cache), so nothing else would ever pick up a new
+// gateway build. Only the image tag is compared: argv changes here do not
+// trigger a recreate on their own — they always ride a gateway-source or
+// Dockerfile change, which bumps the content-addressed tag.
 func (m *Manager) ensureGateway(ctx context.Context, project string) error {
-	// Already present? start it (no-op if running) and return.
-	ids, err := m.docker(ctx, "ps", "-aq", "--filter", "name=^"+m.gwName(project)+"$")
-	if err != nil {
-		return err
-	}
-	if ids != "" {
-		_, err := m.docker(ctx, "start", m.gwName(project))
-		return err
-	}
+	// Resolved on EVERY path (unlike before, when the warm path skipped it): the
+	// tag is the upgrade signal, and a cache hit is just one image inspect.
 	img, err := m.ensureImage(ctx)
 	if err != nil {
 		return fmt.Errorf("egressgw: build gateway image: %w", err)
 	}
+	ids, err := m.docker(ctx, "ps", "-aq", "--filter", "name=^"+m.gwName(project)+"$")
+	if err != nil {
+		return err
+	}
+	// netIPs carries the gateway's per-run addresses across a recreate.
+	var netIPs map[string]string
+	if ids != "" {
+		cur, _ := m.docker(ctx, "inspect", m.gwName(project), "--format", "{{.Config.Image}}")
+		if cur == img {
+			_, err := m.docker(ctx, "start", m.gwName(project)) // no-op when running
+			return err
+		}
+		// Stale image. A `rm -f` would sever egress for every attached run, so
+		// upgrade only while the project is idle; a busy project keeps its old
+		// gateway until its runs are done.
+		if running, err := m.docker(ctx, "ps", "-q",
+			"--filter", "label=apothecary.project="+project,
+			"--filter", "label=apothecary.sandbox=true"); err == nil && running != "" {
+			_, err := m.docker(ctx, "start", m.gwName(project))
+			return err
+		}
+		// Stopped sandboxes baked --dns/--registry-mirror at their gwIP and
+		// cannot be re-flagged by `docker start`, so the new gateway must land
+		// on the same addresses.
+		netIPs = m.gatewayNetIPs(ctx, project)
+		if _, err := m.docker(ctx, "rm", "-f", m.gwName(project)); err != nil {
+			return err
+		}
+	}
+	// The image cache survives everything (idempotent create; never reaped).
+	if _, err := m.docker(ctx, "volume", "create",
+		"--label", "apothecary=true",
+		"--label", "apothecary.project="+project,
+		m.cacheVolume(project)); err != nil && !strings.Contains(err.Error(), "already exists") {
+		return err
+	}
 	dir := m.gwDir(project)
-	_, err = m.docker(ctx, "run", "-d", "--name", m.gwName(project),
+	if _, err = m.docker(ctx, "run", "-d", "--name", m.gwName(project),
 		"--label", "apothecary=true",
 		"--label", "apothecary.project="+project,
 		"--label", "apothecary.egressgw=true",
+		// Kept warm across host/daemon restarts: nothing reaps a gateway now, and
+		// a stopped one would leave its runs with no egress until the next
+		// provision. A fresh netns also means stale nft rules are impossible.
+		"--restart", "unless-stopped",
 		"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW",
 		"--network", "bridge",
 		"--sysctl", "net.ipv4.ip_forward=1",
@@ -197,6 +251,7 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 		"--sysctl", "net.ipv4.conf.default.rp_filter=0",
 		"--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
 		"-v", dir+":"+dir,
+		"-v", m.cacheVolume(project)+":/var/lib/registry",
 		img,
 		"--policy", m.policyPath(project),
 		"--denials", m.denialsPath(project),
@@ -204,8 +259,72 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 		"--audit", m.auditPath(project),
 		"--listen-port", "9040",
 		"--dns-upstream", "1.1.1.1:53",
-	)
-	return err
+		"--mirror-config", m.mirrorConfigPath(project),
+	); err != nil {
+		return err
+	}
+	// Re-attach the runs the replaced gateway served, at their old addresses.
+	for netName, ip := range netIPs {
+		if _, err := m.docker(ctx, "network", "connect", "--ip", ip, netName, m.gwName(project)); err != nil {
+			// Not fatal: the run being provisioned right now gets its own
+			// connect next, and a reused sandbox at worst loses DNS until it is
+			// recreated — but it must be visible when it happens.
+			return fmt.Errorf("egressgw: gateway upgraded but %s could not be re-attached at %s (its sandbox needs a rebuild): %w", netName, ip, err)
+		}
+	}
+	return nil
+}
+
+// gatewayNetIPs maps the gateway's run networks to its address on each, so an
+// upgrade can restore them. Best-effort: nil when the inspect fails.
+func (m *Manager) gatewayNetIPs(ctx context.Context, project string) map[string]string {
+	out, err := m.docker(ctx, "inspect", m.gwName(project), "--format",
+		`{{range $n, $v := .NetworkSettings.Networks}}{{$n}} {{$v.IPAddress}}{{"\n"}}{{end}}`)
+	if err != nil {
+		return nil
+	}
+	ips := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		name, ip, ok := strings.Cut(strings.TrimSpace(line), " ")
+		// Only run networks: the bridge uplink is re-created by docker run.
+		if ok && ip != "" && strings.HasPrefix(name, "apo-egress-") {
+			ips[name] = ip
+		}
+	}
+	return ips
+}
+
+// registryConfig configures the gateway's pull-through Docker Hub cache
+// (workspace/gateway/registry.go supervises `registry serve` with it).
+// proxy.remoteurl is what makes it a read-through mirror rather than a
+// registry; delete.enabled lets the proxy scheduler's TTL actually evict.
+const registryConfig = `version: 0.1
+log:
+  level: warn
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :5000
+  secret: apothecary-mirror
+proxy:
+  remoteurl: https://registry-1.docker.io
+`
+
+// writeMirrorConfig materializes the mirror config in gwDir, ONLY when the
+// content differs: the gateway restarts its registry child on any mtime bump
+// (the registry has no config hot-reload), so a blind rewrite on every
+// provision would restart it needlessly.
+func (m *Manager) writeMirrorConfig(project string) error {
+	path := m.mirrorConfigPath(project)
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == registryConfig {
+		return nil
+	}
+	return os.WriteFile(path, []byte(registryConfig), 0o644)
 }
 
 // recordRoute updates routes.json with this run's subnet so the gateway can
@@ -225,8 +344,12 @@ func (m *Manager) recordRoute(ctx context.Context, project, run string) error {
 	return policyfile.WriteAtomic(m.routesPath(project), r)
 }
 
-// DestroyRunEgress disconnects and removes this run's network, drops it from the
-// route map, and reaps the project gateway if it was the last run.
+// DestroyRunEgress disconnects and removes this run's network and drops it from
+// the route map. The GATEWAY ITSELF IS KEPT: it holds the project's warm image
+// cache, and rebuilding that on the next run is far more expensive than an idle
+// alpine container (it also has --restart unless-stopped, so it survives daemon
+// restarts). Nothing reaps it automatically; `docker rm -f apo-gw-<project>` is
+// the manual escape hatch, and the next provision recreates it.
 func (m *Manager) DestroyRunEgress(ctx context.Context, project, run string) error {
 	pm := m.projectMu(project)
 	pm.Lock()
@@ -241,14 +364,6 @@ func (m *Manager) DestroyRunEgress(ctx context.Context, project, run string) err
 		_ = policyfile.WriteAtomic(m.routesPath(project), r)
 	}
 
-	// Refcount: reap the gateway when the project has no more sandboxes.
-	left, err := m.docker(ctx, "ps", "-aq",
-		"--filter", "label=apothecary.project="+project,
-		"--filter", "label=apothecary.sandbox=true")
-	if err == nil && left == "" {
-		_, _ = m.docker(ctx, "rm", "-f", m.gwName(project))
-		_ = os.RemoveAll(m.gwDir(project))
-	}
 	return nil
 }
 

@@ -203,3 +203,23 @@ and secrets injected as files at bootstrap — never through provisioner
 parameters. Integration secrets are secretbox-encrypted at rest under
 `APOTHECARY_MASTER_KEY` and never leave the engine unmasked. Residual risks
 and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
+
+**One deliberate carve-out:** the gateway also hosts the project's
+pull-through Docker Hub cache on `:5000`, and each run's inner dockerd pulls
+through it (`--registry-mirror`). Those upstream fetches originate in the
+gateway itself, so they are *not* subject to the hostname policy — a project
+whose policy denies `registry-1.docker.io` can still pull public Hub images
+via the mirror. Everything the workspace itself dials is filtered as before.
+
+## Image cache
+
+Each project's gateway keeps a warm image cache so the project's runs stop
+cold-pulling the same base images. It lives in the `apo-gw-<project>-cache`
+volume and is never reaped; the gateway container is likewise kept warm
+(`--restart unless-stopped`) instead of being torn down with the project's
+last run. To reclaim the space, or to force a rebuild of the gateway:
+
+```sh
+docker rm -f apo-gw-<project>            # next run recreates it
+docker volume rm apo-gw-<project>-cache  # disposable: pure cache
+```
