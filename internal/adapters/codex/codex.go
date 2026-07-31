@@ -82,6 +82,13 @@ args = ["ask-human"]
 	return nil
 }
 
+// AuthFilePath is where SeedAuthJSON puts the credential, exposed so the
+// engine can remove it when a run ends (the workspace outlives the run for
+// inspection; the ChatGPT-login tokens should not).
+func (a *Adapter) AuthFilePath(ctx context.Context, env ports.EnvID) string {
+	return path.Join(a.codexHome(ctx, env), "auth.json")
+}
+
 // SeedAuthJSON writes codex's auth.json (ChatGPT-login artifact) into
 // $CODEX_HOME; API-key auth rides OPENAI_API_KEY via provider.env instead.
 func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte) error {

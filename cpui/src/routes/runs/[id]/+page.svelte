@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, stateColors, fmtTime, fmtCost, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type ResourceSample, type RunView } from '$lib/api';
+  import { api, stateColors, fmtTime, fmtCost, type ArtifactMeta, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type ResourceSample, type RunView, type StageArtifact } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
   import ResourceGraphs from '$lib/ResourceGraphs.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
@@ -139,6 +139,72 @@
     return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
   });
 
+  // --- artifacts ------------------------------------------------------------
+  // Everything this run put on the record: the engine's per-attempt snapshots
+  // (each stage's declared outputs + its log, published on success AND
+  // failure) and the human's own attachments. Snapshots outlive the run, so
+  // this list stays complete long after the workspace is destroyed.
+  let stageArtifacts = $state<StageArtifact[]>([]);
+  let goalArtifacts = $state<ArtifactMeta[]>([]);
+  let answerArtifacts = $state<Record<string, ArtifactMeta[]>>({});
+  let artifactKind = $state<'' | 'stage_output' | 'stage_log' | 'human'>('');
+  let showArtifacts = $state(true);
+
+  interface ArtifactRow {
+    id: string;
+    filename: string;
+    kind: '' | 'stage_output' | 'stage_log' | 'human';
+    badge: string; // what it is: the declared output's role, a log, an upload
+    where: string; // the attempt (or the human moment) that produced it
+    href?: string; // where `where` points, when it points anywhere
+    size: number;
+    at: string;
+  }
+
+  const artifactTotal = $derived(
+    stageArtifacts.length +
+      goalArtifacts.length +
+      Object.values(answerArtifacts).reduce((n, ms) => n + ms.length, 0)
+  );
+
+  const artifactRows = $derived.by<ArtifactRow[]>(() => {
+    const rows: ArtifactRow[] = stageArtifacts.map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      kind: a.scope,
+      badge: a.scope === 'stage_log' ? 'log' : `output${a.name ? ` · ${a.name}` : ''}`,
+      where: `${a.stage_id} · attempt ${a.iteration}`,
+      size: a.size,
+      at: a.created_at
+    }));
+    const human = (m: ArtifactMeta, where: string, href?: string): ArtifactRow => ({
+      id: m.id,
+      filename: m.filename,
+      kind: 'human',
+      badge: 'you attached',
+      where,
+      href,
+      size: m.size,
+      at: m.created_at ?? ''
+    });
+    for (const m of goalArtifacts) rows.push(human(m, 'the run goal'));
+    for (const [pingId, ms] of Object.entries(answerArtifacts))
+      for (const m of ms) rows.push(human(m, 'a ping answer', `/pings/${pingId}`));
+    rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    return artifactKind ? rows.filter((r) => r.kind === artifactKind) : rows;
+  });
+
+  async function refreshArtifacts() {
+    try {
+      stageArtifacts = (await api.runAttempts(runId)).attempts;
+      const a = await api.runArtifacts(runId);
+      goalArtifacts = a.goal;
+      answerArtifacts = a.answers;
+    } catch {
+      /* transient — keep what we have */
+    }
+  }
+
   const refreshRun = async () => {
     try {
       run = (await api.run(runId)).run;
@@ -168,10 +234,14 @@
       }
     }, 2500);
     refreshRun();
+    refreshArtifacts();
     const stop = api.events(runId, 0, (ev) => {
       events = [...events, ev];
       // State-changing events refresh the header chip.
       if (ev.type.startsWith('run_') || ev.type.startsWith('ping_') || ev.type.startsWith('env_')) refreshRun();
+      // A publish (or an answered ping, which may carry attachments) adds a
+      // row: the event carries the reference, the list carries the metadata.
+      if (ev.type === 'artifact_published' || ev.type === 'ping_answered') refreshArtifacts();
     });
     return () => {
       clearInterval(tick);
@@ -407,9 +477,18 @@
     return e.type === 'env_requested' && terminal && !envConcluded;
   }
 
-  function describe(e: EventEnvelope): { text: string; cls: string; stage?: string } {
+  function describe(e: EventEnvelope): { text: string; cls: string; stage?: string; artifact?: string } {
     const p = e.payload;
     switch (e.type) {
+      case 'artifact_published': {
+        const what = p.scope === 'stage_log' ? 'log' : `output ${p.name || ''}`.trim();
+        const where = p.path ? ` — ${p.path}` : '';
+        return {
+          text: `📄 ${p.stage_id} (attempt ${p.iteration}) published ${what}${where}`,
+          cls: '',
+          artifact: p.artifact_id as string
+        };
+      }
       case 'run_created': return { text: `run created — “${p.ticket_title}” (flow ${p.flow_name})`, cls: 'info' };
       case 'env_requested': return { text: 'provisioning workspace…', cls: '', stage: PROVISION_STAGE };
       case 'env_ready': return { text: `workspace ready (${p.env_id})`, cls: 'ok', stage: PROVISION_STAGE };
@@ -703,6 +782,63 @@
   {#if error}<div class="error">{error}</div>{/if}
 
   <div class="card">
+    <div class="row spread">
+      <h2 style="margin:0">
+        <button class="linklike" onclick={() => (showArtifacts = !showArtifacts)}>
+          {showArtifacts ? '▾' : '▸'} Artifacts{artifactTotal ? ` (${artifactTotal})` : ''}
+        </button>
+      </h2>
+      {#if showArtifacts && artifactTotal > 0}
+        <select bind:value={artifactKind} class="small" style="width:auto">
+          <option value="">everything</option>
+          <option value="stage_output">stage outputs</option>
+          <option value="stage_log">stage logs</option>
+          <option value="human">your attachments</option>
+        </select>
+      {/if}
+    </div>
+    {#if showArtifacts}
+      {#if artifactRows.length === 0}
+        <p class="muted small" style="margin:8px 0 0">
+          {artifactTotal === 0
+            ? 'Nothing published yet — each stage attempt files its declared outputs and its log here as it finishes, whether it passed or failed.'
+            : 'No artifact of that kind.'}
+        </p>
+      {:else}
+        <div class="audit-scroll" style="margin-top:8px">
+          <table class="audit-table mono small">
+            <thead>
+              <tr><th>name</th><th>kind</th><th>from</th><th class="num">size</th><th>published</th><th></th></tr>
+            </thead>
+            <tbody>
+              {#each artifactRows as a (a.id)}
+                <tr>
+                  <td>
+                    <a href={api.artifactUrl(a.id)} target="_blank" rel="noreferrer">{a.filename}</a>
+                  </td>
+                  <td class="muted">{a.badge}</td>
+                  <td class="muted">
+                    {#if a.href}<a href={a.href}>{a.where}</a>{:else}{a.where}{/if}
+                  </td>
+                  <td class="num">{fmtBytes(a.size)}</td>
+                  <td class="muted">{a.at ? fmtTime(a.at) : '—'}</td>
+                  <td>
+                    <a href={api.artifactUrl(a.id, true)} title="Download {a.filename}">↓</a>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small" style="margin:6px 0 0">
+          Snapshots are kept after the workspace is destroyed — this stays readable for a finished
+          run.
+        </p>
+      {/if}
+    {/if}
+  </div>
+
+  <div class="card">
     <h2>Timeline</h2>
     <div class="timeline">
       {#each events as e (e.seq)}
@@ -712,6 +848,9 @@
           {d.text}
           {#if hasLog(e, d.stage)}
             <button class="small" style="padding:1px 8px;margin-left:6px" onclick={() => showLog(d.stage!)}>log</button>
+          {/if}
+          {#if d.artifact}
+            <a class="small" style="margin-left:6px" href={api.artifactUrl(d.artifact)} target="_blank" rel="noreferrer">open ↗</a>
           {/if}
         </div>
         {#if logStage && d.stage === logStage && hasLog(e, d.stage)}

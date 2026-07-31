@@ -173,6 +173,29 @@ type Harness interface {
 	Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
 }
 
+// SecretHolder is an OPTIONAL Harness capability: the literal credential
+// values it puts into a workspace by any route the engine's own injection
+// bookkeeping doesn't already cover — i.e. everything except EnvVars, which
+// the engine writes itself and already tracks. Today that means the
+// harness-native auth blobs (auth.json), whose contents would otherwise be
+// invisible to the redactor and could surface verbatim in a stage log.
+//
+// Returning a value here does NOT put it anywhere; it only declares "the
+// engine caused this string to exist in the workspace", which is exactly the
+// redactor's contract (see internal/engine/redact.go).
+type SecretHolder interface {
+	SecretValues() []string
+}
+
+// AuthLocator is an OPTIONAL Harness capability: where in the workspace its
+// SeedAuth material lands. The engine deletes those files when a run reaches a
+// terminal state — the workspace is deliberately kept for inspection, and a
+// dead run has no business still holding live model credentials. Paths are
+// resolved per env because they hang off the workspace user's home.
+type AuthLocator interface {
+	AuthFiles(ctx context.Context, env ports.EnvID) []string
+}
+
 type HarnessKind interface {
 	Descriptor() Descriptor
 	New(cfg Config, envp ports.EnvProvisioner) (Harness, error)

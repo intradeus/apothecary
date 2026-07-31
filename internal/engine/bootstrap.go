@@ -58,16 +58,13 @@ type BootstrapSpec struct {
 	Timeout time.Duration
 }
 
-// RunBootstrap executes the ordered §11 steps against a ready environment.
-// Errors carry the step name and the output tail — the caller decides what
-// they mean (the engine: env_failed).
-func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
-	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
-		spec.RunID, spec.Token, spec.EngineURL)
-	if err := envp.WriteFile(ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600); err != nil {
-		return fmt.Errorf("write run.env: %w", err)
-	}
-
+// WriteWorkspaceSecrets writes the credential material bootstrap step 2 owns:
+// provider.env, the harnesses' native auth, and the git credential-store file.
+// Split out of RunBootstrap because these are the files the engine WIPES when a
+// run reaches a terminal state (ScrubWorkspaceSecrets) and must put back when a
+// resumed run re-enters the same workspace — seeding and re-seeding have to
+// stay one implementation or they drift.
+func WriteWorkspaceSecrets(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
 	keys := make([]string, 0, len(spec.ProviderEnv))
 	for k := range spec.ProviderEnv {
 		keys = append(keys, k)
@@ -83,15 +80,11 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	if err := envp.WriteFile(ctx, id, "/apothecary/provider.env", []byte(providers.String()), 0o600); err != nil {
 		return fmt.Errorf("write provider.env: %w", err)
 	}
-
 	if spec.SeedAuth != nil {
 		if err := spec.SeedAuth(ctx, id); err != nil {
 			return fmt.Errorf("seed harness auth: %w", err)
 		}
 	}
-
-	type step struct{ name, dir, script string }
-	var steps []step
 	if spec.GitPass != "" {
 		cred, err := credentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
 		if err != nil {
@@ -100,6 +93,30 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		if err := envp.WriteFile(ctx, id, "/apothecary/git-credentials", []byte(cred+"\n"), 0o600); err != nil {
 			return fmt.Errorf("write git-credentials: %w", err)
 		}
+	}
+	return nil
+}
+
+// RunBootstrap executes the ordered §11 steps against a ready environment.
+// Errors carry the step name and the output tail — the caller decides what
+// they mean (the engine: env_failed).
+func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
+	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
+		spec.RunID, spec.Token, spec.EngineURL)
+	if err := envp.WriteFile(ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600); err != nil {
+		return fmt.Errorf("write run.env: %w", err)
+	}
+
+	if err := WriteWorkspaceSecrets(ctx, envp, id, spec); err != nil {
+		return err
+	}
+
+	type step struct{ name, dir, script string }
+	var steps []step
+	if spec.GitPass != "" {
+		// The helper POINTER lives in ~/.gitconfig, which survives as long as
+		// the container does — only the credential FILE is re-written when a
+		// resumed run needs its secrets back.
 		steps = append(steps, step{"git-credential-helper", "",
 			`git config --global credential.helper "store --file=/apothecary/git-credentials"`})
 	}

@@ -99,6 +99,13 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 	return nil
 }
 
+// AuthFilePath is where SeedAuthJSON puts the credential, exposed so the
+// engine can remove it when a run ends (the workspace outlives the run for
+// inspection; the model keys should not).
+func (a *Adapter) AuthFilePath(ctx context.Context, env ports.EnvID) string {
+	return a.authFile(ctx, env)
+}
+
 // SeedAuthJSON writes opencode's auth.json (DESIGN2 §4 Harness.SeedAuth,
 // bootstrap step 2). The caller (the opencode kind) composes the content
 // from the harness's stored auth_json secret and provider integrations;

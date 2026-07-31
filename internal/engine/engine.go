@@ -1187,8 +1187,17 @@ func (e *Engine) Abort(runID string) error {
 	if v.State.Terminal() {
 		return fmt.Errorf("run %s is already %s: %w", runID, v.State, ErrRunNotActive)
 	}
-	return e.appendAndEmit(ctx, runID, &event.RunAbandoned{
-		StalledAt: v.CurrentStage, Reason: "aborted by user"})
+	if err := e.appendAndEmit(ctx, runID, &event.RunAbandoned{
+		StalledAt: v.CurrentStage, Reason: "aborted by user"}); err != nil {
+		return err
+	}
+	// Aborting an INACTIVE run (queued, or parked by pause) never enters the
+	// run loop, so its terminal scrub has to happen here. A paused run has a
+	// live workspace full of credentials, which is exactly the case that
+	// matters.
+	v.State = run.Abandoned
+	e.ScrubWorkspaceSecrets(ctx, v)
+	return nil
 }
 
 // Pause parks an active run: its goroutine exits cleanly (a controlled

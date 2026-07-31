@@ -3,7 +3,7 @@
 - 5) db migration + migration table checks and simplify
 - 6) openapi + client gen for frontend.
 - 7) redo everything in DDD
-- 14) Allow user to specify a harness agent too, as well as the apo's project's agents (ex: opencode has its own builder and planner agents)
 - 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now - we have an event store so we could replay ? Check the statuses of coder for inspiration.
-- 19) DinD sandbox follow-ups: (c) sysbox runtime to drop `--privileged`; (g) credential brokering at the gateway (inject tokens so secrets never enter the workspace).
+- 19) DinD sandbox follow-ups: (c) sysbox runtime to drop `--privileged`;
 - 23) new run on observability (full flow data + resource stats)
+- 24) Workspace provisionning improvements - cache the devcontainer generated image ? And regen only when needed ? Unsure if its possible. Goal : reduce provisionning time. Not critical.

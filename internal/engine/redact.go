@@ -1,6 +1,9 @@
 package engine
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // redactor scrubs the secrets the engine itself injected into a workspace out
 // of anything that leaves it: a failing stage's output tail, the retry feed an
@@ -41,6 +44,14 @@ func newRedactor(res *Resolution, tokens ...string) *redactor {
 		for k, v := range res.ProviderEnv {
 			r.add(v, strings.ToLower(k))
 		}
+		for _, s := range res.HarnessSecrets {
+			// The blob itself (something cats auth.json) AND every string
+			// inside it: what actually leaks is the key, not the wrapper.
+			r.add(s, "harness-auth")
+			for _, leaf := range jsonLeaves(s) {
+				r.add(leaf, "harness-auth")
+			}
+		}
 	}
 	for _, t := range tokens {
 		r.add(t, "run-token")
@@ -53,6 +64,41 @@ func newRedactor(res *Resolution, tokens ...string) *redactor {
 		}
 	}
 	return r
+}
+
+// jsonLeaves returns every string value nested anywhere in a JSON document.
+// A harness's auth.json is a vendor-shaped envelope — {"openrouter":{"type":
+// "api","key":"sk-or-…"}} — and the credential is a leaf, so scrubbing only
+// the whole blob would miss the one string a tool is actually likely to echo.
+// Non-JSON input yields nothing (the blob is still redacted whole).
+//
+// Every long-enough leaf is treated as sensitive, including incidental ones
+// like a base URL: over-redacting inside a secrets file is the right default,
+// and minSecretLen already drops the noise ("api", "type").
+func jsonLeaves(doc string) []string {
+	var v any
+	if err := json.Unmarshal([]byte(doc), &v); err != nil {
+		return nil
+	}
+	var out []string
+	var walk func(any)
+	walk = func(n any) {
+		switch t := n.(type) {
+		case string:
+			out = append(out, t)
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			// Keys are field names, not secrets; only values recurse.
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	walk(v)
+	return out
 }
 
 func (r *redactor) add(secret, label string) {

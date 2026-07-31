@@ -324,6 +324,26 @@ export interface ArtifactMeta {
   filename: string;
   mime: string;
   size: number;
+  // Absent on the upload response (a fresh orphan), present when listing a
+  // run's attachments.
+  scope?: string;
+  created_at?: string;
+}
+
+// A per-attempt snapshot (PLAN5 M27): what one stage attempt produced (a
+// declared output) or printed (its log). Engine-captured, and it outlives the
+// run — the audit trail stays answerable after the workspace is gone.
+export interface StageArtifact {
+  id: string;
+  stage_id: string;
+  iteration: number;
+  scope: 'stage_output' | 'stage_log';
+  name: string; // the declared output's role ('plan', 'verdict'); '' for a log
+  filename: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  created_at: string;
 }
 
 export interface ChannelEntry {
@@ -493,11 +513,14 @@ export const api = {
     // No JSON.stringify / Content-Type: the browser sets the multipart boundary.
     return req<ArtifactMeta[]>('/api/artifacts', { method: 'POST', body: fd });
   },
-  artifactUrl: (id: string) => `/api/artifacts/${id}`,
+  artifactUrl: (id: string, download = false) =>
+    `/api/artifacts/${id}${download ? '?download=1' : ''}`,
   runArtifacts: (id: string) =>
     req<{ goal: ArtifactMeta[]; answers: Record<string, ArtifactMeta[]> }>(
       `/api/runs/${id}/artifacts`
     ),
+  // Every per-attempt snapshot the run published (stage outputs + logs).
+  runAttempts: (id: string) => req<{ attempts: StageArtifact[] }>(`/api/runs/${id}/attempts`),
   channels: () => req<ChannelEntry[]>('/api/channels'),
   addChannel: (kind: string, config: Record<string, string>) =>
     post('/api/channels', { kind, ...config }) as Promise<ChannelEntry>,

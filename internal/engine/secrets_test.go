@@ -1,0 +1,186 @@
+package engine
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/event"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
+)
+
+// seedFakeAuth stands in for a harness's SeedAuth: an auth.json somewhere under
+// the workspace user's home, which only the harness knows the path of.
+const fakeAuthPath = "/home/vscode/.local/share/opencode/auth.json"
+
+func withHarnessAuth(h *harness) {
+	// A forge credential, so the git-credentials assertions are about a file
+	// bootstrap actually writes (the base harness configures no git auth).
+	h.res.GitUser, h.res.GitPass = "oauth2", "glpat-SECRETVALUE"
+	h.res.SeedAuth = func(ctx context.Context, env ports.EnvID) error {
+		return h.envp.WriteFile(ctx, env, fakeAuthPath, []byte(`{"k":"sk-secret"}`), 0o600)
+	}
+	h.res.AuthFiles = func(context.Context, ports.EnvID) []string {
+		return []string{fakeAuthPath}
+	}
+}
+
+// files a run's workspace holds, for the assertions below.
+func workspaceHas(t *testing.T, h *harness, env ports.EnvID, path string) bool {
+	t.Helper()
+	e := h.envp.Env(env)
+	if e == nil {
+		t.Fatalf("no fake env %s", env)
+	}
+	_, ok := e.Files[path]
+	return ok
+}
+
+// A workspace outlives its run (kept for inspection, reaped much later), so a
+// finished run must not leave live credentials sitting in it.
+func TestTerminalRunScrubsWorkspaceCredentials(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	withHarnessAuth(h)
+	ctx := context.Background()
+
+	// Watch the workspace while it works, so "absent at the end" can't pass
+	// just because the file was never written.
+	seenDuringWork := map[string]bool{}
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		for path := range env.Files {
+			seenDuringWork[path] = true
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+
+	runID, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	for _, path := range []string{"/apothecary/provider.env", "/apothecary/git-credentials", fakeAuthPath} {
+		if !seenDuringWork[path] {
+			t.Fatalf("setup: %s was never in the workspace, so its absence proves nothing", path)
+		}
+	}
+	v := h.view(t, runID)
+	if v.State != run.Completed {
+		t.Fatalf("state = %s, want completed", v.State)
+	}
+	env := ports.EnvID(v.EnvID)
+	for _, path := range []string{"/apothecary/provider.env", "/apothecary/git-credentials", fakeAuthPath} {
+		if workspaceHas(t, h, env, path) {
+			t.Errorf("%s still in the workspace of a finished run", path)
+		}
+	}
+	// Only the credentials go: the workspace stays inspectable, and the
+	// run-scoped token is not a standing credential.
+	if !workspaceHas(t, h, env, "/apothecary/run.env") {
+		t.Error("run.env was scrubbed; it is the run-scoped token and identifies the workspace")
+	}
+	if len(h.envp.Destroyed) != 0 {
+		t.Errorf("scrub destroyed the workspace: %v", h.envp.Destroyed)
+	}
+}
+
+// "Try again" re-enters the scrubbed workspace, so the credentials must come
+// back — otherwise the retry runs with no model auth and no git token. The
+// assertion is what the workspace HAD WHILE WORKING, not its end state: the
+// resumed run scrubs again when it finishes.
+func TestResumeReseedsScrubbedCredentials(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	withHarnessAuth(h)
+	ctx := context.Background()
+
+	// Probe the workspace at the moment a stage runs in it. `rm -f` is handled
+	// inside the fake and never reaches this hook, so the scrub can't trip it.
+	var credsPresentDuringWork bool
+	failVerify := true
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if _, ok := env.Files["/apothecary/provider.env"]; ok {
+			credsPresentDuringWork = true
+		}
+		if failVerify && strings.Contains(cmd.Script, "make lint") {
+			return ports.ExecResult{ExitCode: 1, Output: "FAIL"}, nil
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+
+	// First attempt: the retry edge exhausts and the run ends resumable.
+	runID, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	v := h.view(t, runID)
+	if v.State != run.Abandoned && v.State != run.Failed {
+		t.Fatalf("setup: state = %s, want a resumable terminal state", v.State)
+	}
+	env := ports.EnvID(v.EnvID)
+	for _, path := range []string{"/apothecary/provider.env", fakeAuthPath} {
+		if workspaceHas(t, h, env, path) {
+			t.Fatalf("setup: %s was not scrubbed when the run ended", path)
+		}
+	}
+
+	// Retry, this time letting it pass.
+	credsPresentDuringWork = false
+	failVerify = false
+	if err := h.e.ResumeRun(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	if !credsPresentDuringWork {
+		t.Error("the resumed run worked in a workspace with no credentials — re-seed did not happen")
+	}
+	if got := h.view(t, runID); got.State != run.Completed {
+		t.Errorf("resumed run state = %s, want completed", got.State)
+	}
+	// And the retry cleans up after itself just like the first attempt.
+	if workspaceHas(t, h, env, "/apothecary/provider.env") {
+		t.Error("credentials left behind after the resumed run finished")
+	}
+}
+
+// Aborting a PAUSED run never enters the run loop, and a paused workspace is
+// full of live credentials — the case the loop's scrub cannot cover.
+func TestAbortInactiveRunScrubsCredentials(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	withHarnessAuth(h)
+	ctx := context.Background()
+
+	// A run with a live workspace and no goroutine: append the events directly,
+	// which is what a paused/queued run looks like to Abort.
+	envID, err := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-paused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.res.SeedAuth(ctx, envID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.envp.WriteFile(ctx, envID, "/apothecary/provider.env", []byte("K=v"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []event.Payload{
+		&event.RunCreated{TicketTitle: "paused", FlowName: "loop", ProjectID: testProject},
+		&event.EnvRequested{}, &event.EnvReady{EnvID: string(envID)},
+		&event.RunPaused{StageID: "build"},
+	} {
+		if _, err := h.store.Append(ctx, "r-paused", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := h.e.Abort("r-paused"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/apothecary/provider.env", fakeAuthPath} {
+		if workspaceHas(t, h, envID, path) {
+			t.Errorf("%s survived the abort of a paused run", path)
+		}
+	}
+}

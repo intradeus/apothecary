@@ -88,6 +88,16 @@ func (h *codexHarness) EnvVars() map[string]string {
 	return map[string]string{"OPENAI_API_KEY": h.apiKey}
 }
 
+// AuthFiles (kinds.AuthLocator): auth.json, removed when the run ends. The
+// API key needs no entry — it lives in provider.env, which the engine owns.
+func (h *codexHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {
+	return []string{h.adapter.AuthFilePath(ctx, env)}
+}
+
+// SecretValues (kinds.SecretHolder): the ChatGPT-login auth.json. The API key
+// needs no mention — it rides EnvVars, which the redactor already covers.
+func (h *codexHarness) SecretValues() []string { return []string{h.authJSON} }
+
 func (h *codexHarness) SeedAuth(ctx context.Context, env ports.EnvID) error {
 	if h.authJSON == "" {
 		return nil

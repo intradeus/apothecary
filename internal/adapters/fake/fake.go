@@ -106,6 +106,17 @@ func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Comma
 	fn := p.ExecFunc
 	e.execLog = append(e.execLog, []byte("--- [dir="+cmd.Dir+"]\n"+cmd.Script+"\n")...)
 	p.mu.Unlock()
+	// `rm -f` really removes from the env's Files, so a test about deleting
+	// something (the engine's terminal credential scrub) can assert the file is
+	// gone rather than that a string was sent. Everything else stays a no-op.
+	if paths, ok := parseRemove(cmd.Script); ok {
+		p.mu.Lock()
+		for _, path := range paths {
+			delete(e.Files, path)
+		}
+		p.mu.Unlock()
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
 	if fn == nil {
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
@@ -116,6 +127,21 @@ func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Comma
 		p.mu.Unlock()
 	}
 	return res, err
+}
+
+// parseRemove recognizes a bare `rm -f a b c` script and returns its operands
+// with any shell quoting stripped. Anything more complex is not a remove as far
+// as the fake is concerned.
+func parseRemove(script string) ([]string, bool) {
+	fields := strings.Fields(strings.TrimSpace(script))
+	if len(fields) < 3 || fields[0] != "rm" || fields[1] != "-f" {
+		return nil, false
+	}
+	out := make([]string, 0, len(fields)-2)
+	for _, f := range fields[2:] {
+		out = append(out, strings.ReplaceAll(strings.Trim(f, "'"), `'\''`, "'"))
+	}
+	return out, true
 }
 
 // TailExecLog implements the optional ports.ExecLogTailer capability.

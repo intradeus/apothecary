@@ -312,6 +312,16 @@ func sortModels(out []ModelInfo) {
 // rides provider.env.
 func (h *opencodeHarness) EnvVars() map[string]string { return nil }
 
+// AuthFiles (kinds.AuthLocator): auth.json, removed when the run ends.
+func (h *opencodeHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {
+	return []string{h.adapter.AuthFilePath(ctx, env)}
+}
+
+// SecretValues (kinds.SecretHolder): auth.json is opencode's ONLY credential
+// artifact and never passes through provider.env, so the redactor learns about
+// its model keys from here or not at all.
+func (h *opencodeHarness) SecretValues() []string { return []string{h.authJSON} }
+
 // SeedAuth writes the stored auth_json — THE model-auth artifact
 // (harness-owned auth) — into the workspace at bootstrap step 2.
 func (h *opencodeHarness) SeedAuth(ctx context.Context, env ports.EnvID) error {

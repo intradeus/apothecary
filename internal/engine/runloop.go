@@ -61,6 +61,15 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 	view := run.Reduce(evs)
 	x := &exec{e: e, h: h, ctx: ctx, bg: bg}
+	// Whichever way the loop ends, a run that ended for good gives up its
+	// credentials — one place, so completion, abandonment, failure, abort and
+	// a failed env are all covered (see secrets.go). bg, not ctx: an abort has
+	// already cancelled ctx by the time we get here.
+	defer func() {
+		if x.rs != nil && x.rs.view.State.Terminal() {
+			e.ScrubWorkspaceSecrets(bg, x.rs.view)
+		}
+	}()
 
 	// Resolve the project's configuration. Unresolvable (project deleted,
 	// pre-v2 run without one) is terminal and honest; anything else is
@@ -1354,6 +1363,14 @@ func (x *exec) ensureEnv() error {
 			if err := x.writeRunEnv(rs.envID); err != nil {
 				x.e.log.Warn("refreshing run.env on recovery failed", "run", rs.runID, "err", err)
 			}
+			// Re-seed the credentials. A resumed run re-enters a workspace the
+			// terminal scrub emptied (secrets.go), so without this "try again"
+			// would run with no model auth and no git token. Idempotent, so the
+			// paths that never scrubbed (play, crash recovery) just rewrite the
+			// same bytes.
+			if err := x.reseedSecrets(rs.envID); err != nil {
+				return fmt.Errorf("recovery: re-seed workspace credentials: %w", err)
+			}
 			// Exposures also died with the previous process; re-create them
 			// (fresh ports — the live registry, not the old env_ready event,
 			// is what the UI trusts).
@@ -1494,6 +1511,22 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
 		x.rs.runID, x.e.RunToken(x.rs.runID), x.e.cfg.EngineURL)
 	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600)
+}
+
+// reseedSecrets restores the credential files in a workspace the loop is
+// re-entering, undoing the terminal scrub (secrets.go) for a resumed run. It
+// writes exactly what bootstrap step 2 writes — same function, so the two can
+// never drift — and touches nothing else: the checkout, the branch and the
+// agent's commits are already there.
+func (x *exec) reseedSecrets(id ports.EnvID) error {
+	res := x.res
+	return WriteWorkspaceSecrets(x.ctx, res.Envp, id, BootstrapSpec{
+		RepoURL:     res.RepoRef.URL,
+		ProviderEnv: res.ProviderEnv,
+		GitUser:     res.GitUser,
+		GitPass:     res.GitPass,
+		SeedAuth:    res.SeedAuth,
+	})
 }
 
 func (x *exec) bootstrap(id ports.EnvID) error {

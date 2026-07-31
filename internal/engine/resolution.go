@@ -39,6 +39,11 @@ type Resolution struct {
 	// ProviderEnv is the merged env-var map of the project's provider
 	// integrations, written to /apothecary/provider.env at bootstrap step 2.
 	ProviderEnv map[string]string
+	// HarnessSecrets are credential values the harnesses seed into the
+	// workspace outside provider.env (their native auth.json blobs). Collected
+	// for ONE purpose — feeding the redactor, which can only scrub what the
+	// engine knows it injected — never written anywhere from here.
+	HarnessSecrets []string
 	// EgressDomains is the derived egress allowlist (allow mode): repo host ∪
 	// harness/forge contributions ∪ registry defaults ∪ project extras.
 	EgressDomains []string
@@ -89,6 +94,10 @@ type Resolution struct {
 	Runners map[string]ports.AgentRunner
 	Forge   ports.Forge
 
+	// AuthFiles lists where the harnesses' auth material lives in a workspace,
+	// so the engine can delete it when the run ends (kinds.AuthLocator). nil
+	// when no configured harness reports any.
+	AuthFiles func(ctx context.Context, env ports.EnvID) []string
 	// SeedAuth writes harness-native auth material at bootstrap step 2;
 	// nil = nothing to seed.
 	SeedAuth func(ctx context.Context, env ports.EnvID) error

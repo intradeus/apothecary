@@ -103,7 +103,10 @@ func (s *Server) getRunArtifacts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, m := range metas {
-			item := map[string]any{"id": m.ID, "filename": m.Filename, "mime": m.Mime, "size": m.Size}
+			item := map[string]any{
+				"id": m.ID, "filename": m.Filename, "mime": m.Mime, "size": m.Size,
+				"scope": m.Scope, "created_at": m.CreatedAt,
+			}
 			switch m.Scope {
 			case artifacts.ScopeGoal:
 				goal = append(goal, item)

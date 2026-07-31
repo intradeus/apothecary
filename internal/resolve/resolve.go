@@ -159,6 +159,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	defaultKind := firstKind
 	runners := make(map[string]ports.AgentRunner, len(byKind))
 	providerEnv := map[string]string{}
+	var harnessSecrets []string
 	var harnessBinaries []string
 	var harnessInstall []ports.HarnessInstall
 	egressContribs := [][]string{account.EgressDomains()}
@@ -177,6 +178,11 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		egressContribs = append(egressContribs, h.EgressDomains())
 		for ek, ev := range h.EnvVars() {
 			providerEnv[ek] = ev
+		}
+		// Auth material that never passes through provider.env, so the
+		// redactor can scrub it (kinds.SecretHolder).
+		if sh, ok := h.(kinds.SecretHolder); ok {
+			harnessSecrets = append(harnessSecrets, sh.SecretValues()...)
 		}
 		harnessBinaries = append(harnessBinaries, h.Binary())
 	}
@@ -197,6 +203,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		GitName:              gitName,
 		GitEmail:             gitEmail,
 		ProviderEnv:          providerEnv, // union of every harness's own auth env
+		HarnessSecrets:       harnessSecrets,
 		EgressDomains:        egressDomains(p, egressContribs...),
 		EgressMode:           p.Workspace.EgressMode,
 		EgressDenylist:       p.Workspace.DeniedDomains,
@@ -230,6 +237,17 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 				}
 			}
 			return nil
+		},
+		// The mirror image of SeedAuth: every harness that can say where its
+		// auth lands, so the engine can wipe it when the run ends.
+		AuthFiles: func(ctx context.Context, env ports.EnvID) []string {
+			var out []string
+			for _, k := range kindList {
+				if loc, ok := byKind[k].(kinds.AuthLocator); ok {
+					out = append(out, loc.AuthFiles(ctx, env)...)
+				}
+			}
+			return out
 		},
 		// The agents come from the RUN's flow (FLOWLANG §1, v3), so they are
 		// an argument here rather than something the project resolves.
