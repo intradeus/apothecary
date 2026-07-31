@@ -4,10 +4,14 @@
 // Postgres side-table (the DB port, implemented by pgstore) — durable state,
 // not an event, mirroring channels / run_exposed_ports.
 //
-// Agent→human (ask_human) attachments are NOT stored here: the agent already
-// wrote those files into its workspace, so they are referenced by
-// repo-relative path and read back live. This package only handles bytes the
-// human uploads and the engine must inject into a workspace.
+// Everything the event log REFERENCES lives here, in both directions:
+// human→agent uploads (goal, ticket, ping answers), engine-captured attempt
+// snapshots (stage outputs and logs), and agent→human ping attachments, which
+// are snapshotted when the ping is raised. That last one used to be the
+// exception — referenced by repo-relative path and read back live — which made
+// the log point at state that dies with the workspace, and made a re-opened
+// ping show the file's current content rather than what the human reviewed.
+// A ping's refs are still the names; the bytes behind them are ours.
 package artifacts
 
 import (
@@ -37,6 +41,14 @@ const (
 	// otherwise only ever reach the first run.
 	ScopeTicketGoal = "ticket_goal"
 	ScopePingAnswer = "ping_answer"
+	// ScopePingPayload is the AGENT→human side of a ping: a snapshot, taken
+	// when the ping is raised, of each workspace file the agent attached.
+	// Before it existed those files were referenced by repo-relative path and
+	// read back live, which made the event log point at state that dies with
+	// the workspace — and made a re-opened ping show the file's CURRENT
+	// content rather than what the human actually reviewed. Like the stage
+	// scopes below it is engine-captured and outlives the run.
+	ScopePingPayload = "ping_payload"
 	// ScopeStageOutput / ScopeStageLog are per-attempt snapshots (PLAN5 M27):
 	// what a stage attempt actually produced, and what it printed. Unlike the
 	// scopes above these are engine-captured rather than human-uploaded, and
@@ -50,6 +62,14 @@ const (
 // snapshot rather than a human upload.
 func IsStageScope(scope string) bool {
 	return scope == ScopeStageOutput || scope == ScopeStageLog
+}
+
+// IsAuditScope reports whether a scope is part of the durable record of what
+// a run did and what a human was shown — engine-captured, and deliberately
+// outliving the run (the archive sweep leaves these alone). Human uploads are
+// the opposite: they are the run's inputs and go when the run is archived.
+func IsAuditScope(scope string) bool {
+	return IsStageScope(scope) || scope == ScopePingPayload
 }
 
 var (

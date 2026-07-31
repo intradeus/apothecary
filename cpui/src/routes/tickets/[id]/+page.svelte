@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { api, stateColors, ago, type BranchInfo, type Project, type RunView, type Ticket } from '$lib/api';
+  import { api, stateColors, ago, type ArtifactMeta, type BranchInfo, type Project, type RunView, type Ticket } from '$lib/api';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import TicketForm from '$lib/TicketForm.svelte';
+  import ArtifactList from '$lib/ArtifactList.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -26,11 +27,25 @@
 
   const project = $derived(projects.find((p) => p.id === ticket?.project_id));
 
+  // The ticket's attachments — hand-uploaded or copied from a tracker. They
+  // are delivered into the workspace of EVERY run of this ticket, so they
+  // belong on the ticket page, not on a run's.
+  let attachments = $state<ArtifactMeta[]>([]);
+
+  const loadAttachments = async () => {
+    try {
+      attachments = await api.ticketArtifacts(ticketId);
+    } catch {
+      attachments = [];
+    }
+  };
+
   const load = async () => {
     try {
       [ticket, runs] = await Promise.all([api.ticket(ticketId), api.runs({ ticket: ticketId })]);
       loaded = true;
       loadBranches();
+      loadAttachments();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       loaded = true;
@@ -99,14 +114,34 @@
   </div>
   <div class="row small muted" style="margin-bottom:16px; gap:12px">
     <a href={`/?project=${ticket.project_id}`}>{project?.name ?? ticket.project_id.slice(-6)} ↗</a>
+    {#if ticket.source_key}
+      <!-- Provenance: a copy taken once. Nothing here is written back. -->
+      {#if ticket.source_url}
+        <a href={ticket.source_url} target="_blank" rel="noreferrer">
+          {ticket.source_kind ?? 'source'} {ticket.source_key} ↗
+        </a>
+      {:else}
+        <span>{ticket.source_kind ?? 'source'} <span class="mono">{ticket.source_key}</span></span>
+      {/if}
+    {/if}
     {#if ticket.base_branch}<span>base branch <span class="mono">{ticket.base_branch}</span></span>{/if}
     <span>{ago(ticket.created_at)}</span>
   </div>
 
   {#if editing}
-    <TicketForm {projects} existing={ticket} onsaved={(t) => { ticket = t; editing = false; }} />
+    <TicketForm {projects} existing={ticket} onsaved={(t) => { ticket = t; editing = false; loadAttachments(); }} />
   {:else}
     {#if ticket.goal}<div class="card" style="white-space:pre-wrap">{ticket.goal}</div>{/if}
+
+    {#if attachments.length}
+      <div class="card">
+        <div class="row spread" style="margin-bottom:8px">
+          <strong>Attachments ({attachments.length})</strong>
+          <span class="small muted">delivered into every run's workspace under .apothecary/artifacts/</span>
+        </div>
+        <ArtifactList items={attachments} />
+      </div>
+    {/if}
 
     <div class="card">
       <h2 style="margin:0 0 10px">Start a run</h2>

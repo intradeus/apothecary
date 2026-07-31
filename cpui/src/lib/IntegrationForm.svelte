@@ -33,6 +33,24 @@
 
   const isMultiline = (n: string) => n.endsWith('_json');
 
+  // Descriptor help is plain text (it comes from the Go kind), but the URLs in
+  // it are the whole point — "go here to make a token" is useless if you have
+  // to copy it by hand. Split into text/link parts and render anchors.
+  type Part = { text: string; href?: string };
+  function linkify(s: string): Part[] {
+    const parts: Part[] = [];
+    const re = /https?:\/\/[^\s<>()]+[^\s<>().,;:]/g;
+    let last = 0;
+    for (const m of s.matchAll(re)) {
+      const i = m.index ?? 0;
+      if (i > last) parts.push({ text: s.slice(last, i) });
+      parts.push({ text: m[0], href: m[0] });
+      last = i + m[0].length;
+    }
+    if (last < s.length) parts.push({ text: s.slice(last) });
+    return parts;
+  }
+
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     busy = true;
@@ -68,6 +86,18 @@
 </script>
 
 <form onsubmit={submit}>
+  {#if descriptor.help}
+    <details class="help" open={!existing}>
+      <summary>How to set this up</summary>
+      <div class="helptext">
+        {#each linkify(descriptor.help) as p, i (i)}
+          {#if p.href}
+            <a href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
+          {:else}{p.text}{/if}
+        {/each}
+      </div>
+    </details>
+  {/if}
   <label for="if-name">Name</label>
   <input id="if-name" bind:value={name} required />
   {#each fields as f (f.name)}
@@ -104,6 +134,15 @@
         required={f.required && !f.default}
       />
     {/if}
+    {#if f.help}
+      <div class="fieldhelp small muted">
+        {#each linkify(f.help) as p, i (i)}
+          {#if p.href}
+            <a href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
+          {:else}{p.text}{/if}
+        {/each}
+      </div>
+    {/if}
   {/each}
   {#if error}<div class="error">{error}</div>{/if}
   <div class="row" style="margin-top:14px">
@@ -113,3 +152,26 @@
     {#if oncancel}<button type="button" onclick={oncancel}>Cancel</button>{/if}
   </div>
 </form>
+
+<style>
+  .help {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+  .help summary {
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .helptext {
+    white-space: pre-wrap;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-top: 8px;
+    color: var(--muted);
+  }
+  .fieldhelp {
+    margin: -4px 0 6px;
+  }
+</style>

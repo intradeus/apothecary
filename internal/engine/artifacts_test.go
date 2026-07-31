@@ -246,3 +246,84 @@ stages:
 		t.Errorf("artifact_published count = %d, want the outputs and logs of every attempt", published)
 	}
 }
+
+// A ping's attachments are snapshotted when the ping is RAISED, which is what
+// makes the event log's payload_refs mean anything later: before this, they
+// were repo-relative paths read live out of the workspace, so an answered
+// ping stopped being answerable the moment the workspace was reaped — and
+// re-opening one showed the file's CURRENT content, not what was reviewed.
+func TestPingAttachmentsAreSnapshotted(t *testing.T) {
+	doc := `name: ping
+version: 2
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+stages:
+  - { id: build, type: agent, agent: builder }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	fa := &fakeArtifacts{}
+	h.e.SetArtifacts(fa)
+
+	runIDCh := make(chan string, 1)
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		id := <-runIDCh
+		h.writeFile(t, call.Env, "artifacts/dbs.md", "as reviewed")
+		p, err := h.e.RaisePing(id, "clarification", "which db?", "", nil, []string{"artifacts/dbs.md"})
+		if err != nil {
+			return ports.AgentResult{}, err
+		}
+		if _, ok := p.Await(context.Background()); !ok {
+			return ports.AgentResult{}, fmt.Errorf("ping was not answered")
+		}
+		// The agent keeps working and rewrites the very file the human was
+		// shown. The record must not follow it.
+		h.writeFile(t, call.Env, "artifacts/dbs.md", "rewritten afterwards")
+		return ports.AgentResult{TurnsUsed: 1}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDCh <- runID
+
+	p := h.waitPing(t, "clarification")
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	// Captured under the ping, named by the ref it was taken from.
+	var snap *artifacts.Meta
+	for i, m := range fa.metas {
+		if m.Scope == artifacts.ScopePingPayload && m.PingID == p.ID {
+			snap = &fa.metas[i]
+		}
+	}
+	if snap == nil {
+		t.Fatal("no ping_payload snapshot was captured")
+	}
+	if snap.OutputName != "artifacts/dbs.md" || snap.Filename != "dbs.md" {
+		t.Errorf("snapshot = %+v, want it named by its ref", *snap)
+	}
+
+	// Read back through the API path: the snapshot wins over the live file,
+	// so it still says what the human approved.
+	data, err := h.e.PingArtifactAt(context.Background(), p.ID, "artifacts/dbs.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "as reviewed" {
+		t.Errorf("read back %q, want the content as reviewed", data)
+	}
+
+	// And it survives the workspace: destroying the env leaves the record intact.
+	if err := h.envp.Destroy(context.Background(), ports.EnvID(h.view(t, runID).EnvID)); err != nil {
+		t.Fatal(err)
+	}
+	data, err = h.e.PingArtifactAt(context.Background(), p.ID, "artifacts/dbs.md")
+	if err != nil {
+		t.Fatalf("attachment unreadable after the workspace is gone: %v", err)
+	}
+	if string(data) != "as reviewed" {
+		t.Errorf("post-destroy read = %q", data)
+	}
+}

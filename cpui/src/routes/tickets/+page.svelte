@@ -32,6 +32,7 @@
     <div>
       <strong>{t.title}</strong>
       <div class="small muted">
+        {#if t.source_key}<span class="chip mono">{t.source_key}</span>{/if}
         {projectName(t.project_id)}
         {#if t.base_branch}· <span class="mono">{t.base_branch}</span>{/if}
         · {ago(t.created_at)}

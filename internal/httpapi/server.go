@@ -29,6 +29,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
+	"apothecary/internal/tickets"
 )
 
 type Server struct {
@@ -43,6 +44,9 @@ type Server struct {
 	Kinds *kinds.Registry
 	// Ops runs integration tests / repo listing (the resolver); nil = 503.
 	Ops IntegrationOps
+	// Sources resolves ticketsource integrations for the ticket factory (the
+	// resolver again); nil = importing is off and the routes say so.
+	Sources tickets.Sources
 	// Pings serves the durable request/response projection (PLAN4 M15);
 	// nil falls back to the engine's in-memory pending registry.
 	Pings PingStore
@@ -116,6 +120,10 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/integrations/{id}/test", s.testIntegration)
 		mux.HandleFunc("GET /api/integrations/{id}/repos", s.listIntegrationRepos)
 		mux.HandleFunc("GET /api/integrations/{id}/models", s.listIntegrationModels)
+		// Ticket sources (Jira): browse the tracker to import from. Read-only —
+		// there is no write route back to the tracker, by design.
+		mux.HandleFunc("GET /api/integrations/{id}/tickets", s.searchSourceTickets)
+		mux.HandleFunc("GET /api/integrations/{id}/tickets/{key}", s.getSourceTicket)
 		mux.HandleFunc("GET /api/projects", s.listProjects)
 		mux.HandleFunc("POST /api/projects", s.createProject)
 		mux.HandleFunc("GET /api/projects/{id}", s.getProject)
@@ -129,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/tickets/{id}", s.getTicket)
 		mux.HandleFunc("PUT /api/tickets/{id}", s.updateTicket)
 		mux.HandleFunc("DELETE /api/tickets/{id}", s.deleteTicket)
+		mux.HandleFunc("GET /api/tickets/{id}/artifacts", s.getTicketArtifacts)
 		mux.HandleFunc("POST /api/tickets/{id}/runs", s.startTicketRun)
 		// Agent library (DESIGN3 §1): per-project, copiable, versioned.
 		mux.HandleFunc("GET /api/projects/{id}/egress-audit", s.getProjectEgressAudit)

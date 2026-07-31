@@ -21,6 +21,7 @@ func RegisterFakes(r *Registry) {
 	r.RegisterForge(FakeForge{})
 	r.RegisterProvisioner(FakeProvisioner{})
 	r.RegisterHarness(FakeHarness{})
+	r.RegisterTicketSource(FakeTicketSource{})
 }
 
 // --- forge ------------------------------------------------------------------
@@ -66,6 +67,45 @@ func (fakeProvisioner) Close()                     {}
 func (FakeProvisioner) New(Config, ProvisionerDeps) (Provisioner, error) {
 	return fakeProvisioner{fake.NewEnvProvisioner()}, nil
 }
+
+// --- ticket source ----------------------------------------------------------
+
+type FakeTicketSource struct{}
+
+func (FakeTicketSource) Descriptor() Descriptor {
+	return Descriptor{Port: "ticketsource", Kind: "fake", Label: "Fake tracker (dev)"}
+}
+
+// New serves a tiny fixed corpus so the import flow (search → pick → copy,
+// attachments included) is exercisable in -dev with no Jira.
+func (FakeTicketSource) New(Config) (ports.TicketSource, error) {
+	return &fake.TicketSource{
+		Tickets: []ports.SourceTicket{
+			{
+				Key: "DEV-1", Title: "Add a Farewell function",
+				Body:   "The greeter only says hello.\n\n- [ ] add `Farewell(name string) string`\n- [ ] cover it in the tests",
+				URL:    "https://tracker.local/browse/DEV-1",
+				Status: "To Do", Type: "Story", Assignee: "Dev User",
+				Updated: time.Now().Add(-2 * time.Hour),
+				Attachments: []ports.SourceAttachment{
+					{ID: "att-1", Filename: "spec.md", Mime: "text/markdown", Size: 42, URL: "https://tracker.local/att/1"},
+				},
+			},
+			{
+				Key: "DEV-2", Title: "Flaky test in the router suite",
+				Body:   "`TestRoutes/redirect` fails about one run in five on CI.",
+				URL:    "https://tracker.local/browse/DEV-2",
+				Status: "In Progress", Type: "Bug", Assignee: "Dev User",
+				Updated: time.Now().Add(-30 * time.Minute),
+			},
+		},
+		Blobs: map[string][]byte{
+			"att-1": []byte("# Farewell\n\nMirror Greet: `Farewell(name) => \"Goodbye, <name>!\"`.\n"),
+		},
+	}, nil
+}
+
+var _ TicketSourceKind = FakeTicketSource{}
 
 // --- harness ----------------------------------------------------------------
 

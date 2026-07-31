@@ -6,11 +6,12 @@
   // Harness-owned auth: the harness's auth_json carries model credentials,
   // so "Model providers" is off the paved road (the provider port remains
   // usable via the API for advanced setups).
-  const portOrder: Port[] = ['forge', 'provisioner', 'harness'];
+  const portOrder: Port[] = ['forge', 'provisioner', 'harness', 'ticketsource'];
   const portTitles: Partial<Record<Port, string>> = {
     forge: 'Forge (code hosting)',
     provisioner: 'Provisioner (workspaces)',
-    harness: 'Harness (coding agent & model auth)'
+    harness: 'Harness (coding agent & model auth)',
+    ticketsource: 'Ticket source (import work from a tracker)'
   };
 
   let descriptors = $state<KindDescriptor[]>([]);

@@ -12,14 +12,23 @@ import (
 // ticket's BaseBranch. Flow is deliberately NOT here — it's a per-run choice
 // made when a run is started.
 type Ticket struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
-	Title       string    `json:"title"`
-	Goal        string    `json:"goal"`
-	BaseBranch  string    `json:"base_branch"`  // "" = generated per run from the title
-	ArtifactIDs []string  `json:"artifact_ids"` // goal attachments, delivered into each run's workspace
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string   `json:"id"`
+	ProjectID   string   `json:"project_id"`
+	Title       string   `json:"title"`
+	Goal        string   `json:"goal"`
+	BaseBranch  string   `json:"base_branch"`  // "" = generated per run from the title
+	ArtifactIDs []string `json:"artifact_ids"` // goal attachments, delivered into each run's workspace
+	// Source* record where an imported ticket came from (empty for one typed
+	// in by hand). They are provenance, not a live link: the copy is taken
+	// once and edits here never travel back to the tracker, so a ticket keeps
+	// working after the integration is deleted — which is why SourceKind is
+	// stored next to the id rather than looked up through it.
+	SourceID   string    `json:"source_id,omitempty"`   // ticketsource integration
+	SourceKind string    `json:"source_kind,omitempty"` // "jira"
+	SourceKey  string    `json:"source_key,omitempty"`  // "PROJ-123"
+	SourceURL  string    `json:"source_url,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // CreateTicket validates and inserts a ticket. Branch-format validation is the
@@ -47,6 +56,10 @@ func (s *Service) UpdateTicket(ctx context.Context, id string, upd Ticket) (Tick
 	}
 	upd.ID = cur.ID
 	upd.CreatedAt = cur.CreatedAt
+	// Provenance is immutable: an edit form that doesn't know about the source
+	// fields must not silently erase where the ticket came from.
+	upd.SourceID, upd.SourceKind = cur.SourceID, cur.SourceKind
+	upd.SourceKey, upd.SourceURL = cur.SourceKey, cur.SourceURL
 	if err := s.validateTicket(ctx, &upd); err != nil {
 		return Ticket{}, err
 	}

@@ -574,12 +574,13 @@ func (s *Store) GetArtifact(ctx context.Context, id string) (artifacts.Meta, err
 
 // DeleteArtifactsForRun removes a run's artifact rows, returning the deleted
 // ids so the caller can unlink the blobs.
-// Stage snapshots are deliberately kept: archiving a run reclaims its
+// Audit-scoped rows are deliberately kept: archiving a run reclaims its
 // workspace and uploads, but the audit trail is the point of M27 — it must
-// outlive the run it describes.
+// outlive the run it describes. That covers stage snapshots and the ping
+// payloads a human was shown when they approved something.
 func (s *Store) DeleteArtifactsForRun(ctx context.Context, runID string) ([]string, error) {
 	return s.scanArtifactIDs(ctx,
-		`DELETE FROM artifacts WHERE run_id=$1 AND scope NOT IN ('stage_output','stage_log') RETURNING id`, runID)
+		`DELETE FROM artifacts WHERE run_id=$1 AND scope NOT IN ('stage_output','stage_log','ping_payload') RETURNING id`, runID)
 }
 
 // OrphanArtifactIDsBefore returns never-attached uploads older than cutoff.

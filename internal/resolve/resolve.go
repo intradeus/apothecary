@@ -474,6 +474,16 @@ func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
 			return err
 		}
 		return h.Test(ctx)
+	case confstore.PortTicketSource:
+		tk, err := r.reg.TicketSource(in.Kind)
+		if err != nil {
+			return err
+		}
+		src, err := tk.New(kindConfig(in))
+		if err != nil {
+			return err
+		}
+		return src.Test(ctx)
 	}
 	return fmt.Errorf("integration %s: unknown port %q", id, in.Port)
 }
@@ -517,6 +527,40 @@ func (r *Resolver) ListBranches(ctx context.Context, projectID string) ([]kinds.
 		return nil, err
 	}
 	return acc.ListBranches(ctx, p.Repo.Locator)
+}
+
+// TicketSource constructs the ticket-tracker adapter for a ticketsource
+// integration (the ticket factory's import path). Unlike the ports a project
+// binds, this one is addressed directly by integration id: the tracker is
+// picked per import, not per project.
+func (r *Resolver) TicketSource(ctx context.Context, id string) (ports.TicketSource, error) {
+	in, tk, err := r.ticketSourceKind(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return tk.New(kindConfig(in))
+}
+
+// TicketSourceKind names an integration's vendor ("jira") for the provenance
+// stamped on an imported ticket.
+func (r *Resolver) TicketSourceKind(ctx context.Context, id string) (string, error) {
+	in, _, err := r.ticketSourceKind(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return in.Kind, nil
+}
+
+func (r *Resolver) ticketSourceKind(ctx context.Context, id string) (confstore.Integration, kinds.TicketSourceKind, error) {
+	in, err := r.integration(ctx, id, confstore.PortTicketSource)
+	if err != nil {
+		return confstore.Integration{}, nil, err
+	}
+	tk, err := r.reg.TicketSource(in.Kind)
+	if err != nil {
+		return confstore.Integration{}, nil, unresolvable(err)
+	}
+	return in, tk, nil
 }
 
 // ListModels serves the flow editor's model browser for a harness

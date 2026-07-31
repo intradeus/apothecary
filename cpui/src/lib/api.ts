@@ -37,7 +37,9 @@ export interface RunView {
 // --- config plane (DESIGN2 §10) ---------------------------------------------
 
 // Model auth is harness-owned (post-M8 amendment) — no provider port.
-export type Port = 'forge' | 'provisioner' | 'harness';
+// 'ticketsource' is the read-only tracker tickets are imported from (Jira);
+// unlike the others it is not referenced by a project — it's picked per import.
+export type Port = 'forge' | 'provisioner' | 'harness' | 'ticketsource';
 
 export interface KindField {
   name: string;
@@ -46,12 +48,16 @@ export interface KindField {
   default?: string;
   secret: boolean;
   required: boolean;
+  /** One-line hint under the input; bare URLs are linkified by the form. */
+  help?: string;
 }
 
 export interface KindDescriptor {
   port: Port;
   kind: string;
   label: string;
+  /** Setup prose shown above the form (where to get the credential, etc.). */
+  help?: string;
   fields: KindField[] | null;
 }
 
@@ -149,8 +155,31 @@ export interface Ticket {
   goal: string;
   base_branch: string; // stem; each run gets base_branch + a per-run suffix
   artifact_ids: string[];
+  // Provenance of an imported ticket (absent when typed in by hand). A record
+  // of the copy, not a live link: nothing is written back to the tracker.
+  source_id?: string;
+  source_kind?: string; // 'jira'
+  source_key?: string; // 'PROJ-123'
+  source_url?: string;
+  // What an import could not carry over (a skipped attachment); create-time
+  // only, never stored.
+  warnings?: string[];
   created_at: string;
   updated_at: string;
+}
+
+// One issue in an external tracker, as the import picker shows it. Search
+// results carry no attachments — the single-issue fetch is authoritative.
+export interface SourceTicket {
+  key: string;
+  title: string;
+  body?: string;
+  url?: string;
+  status?: string;
+  type?: string;
+  assignee?: string;
+  updated?: string;
+  attachments?: { filename: string; mime?: string; size?: number }[];
 }
 
 
@@ -390,18 +419,25 @@ export const api = {
   tickets: (project?: string) =>
     req<Ticket[]>(`/api/tickets${project ? `?project=${encodeURIComponent(project)}` : ''}`),
   ticket: (id: string) => req<Ticket>(`/api/tickets/${id}`),
+  // source_id + source_key turn a create into an IMPORT: the tracker supplies
+  // title, goal and attachments, and anything sent alongside overrides them.
   createTicket: (body: {
     title: string;
     goal: string;
     project_id: string;
     branch?: string;
     artifact_ids?: string[];
+    source_id?: string;
+    source_key?: string;
   }) => post('/api/tickets', body) as Promise<Ticket>,
   updateTicket: (
     id: string,
     body: { title: string; goal: string; project_id: string; branch?: string; artifact_ids?: string[] }
   ) => put(`/api/tickets/${id}`, body) as Promise<Ticket>,
   deleteTicket: (id: string) => req<void>(`/api/tickets/${id}`, { method: 'DELETE' }),
+  // A ticket's attachments (hand-uploaded or copied from the tracker). Shared
+  // by every run of the ticket, so they hang off the ticket, not a run.
+  ticketArtifacts: (id: string) => req<ArtifactMeta[]>(`/api/tickets/${id}/artifacts`),
   // Per-attempt input: a flow override plus this run's own direction and
   // attachments (additive to the ticket's — they never modify the ticket).
   startTicketRun: (id: string, opts?: RunInput) =>
@@ -544,6 +580,15 @@ export const api = {
   testIntegration: (id: string) =>
     post(`/api/integrations/${id}/test`) as Promise<{ ok: boolean; error?: string }>,
   repos: (integrationId: string) => req<RepoInfo[]>(`/api/integrations/${integrationId}/repos`),
+  // Browse a ticket source (Jira) to import from. An empty query means the
+  // tracker's own default ("assigned to me and unresolved" for Jira); a
+  // "jql:" prefix passes raw JQL through.
+  sourceTickets: (integrationId: string, q = '', limit = 25) =>
+    req<SourceTicket[]>(
+      `/api/integrations/${integrationId}/tickets?q=${encodeURIComponent(q)}&limit=${limit}`
+    ),
+  sourceTicket: (integrationId: string, key: string) =>
+    req<SourceTicket>(`/api/integrations/${integrationId}/tickets/${encodeURIComponent(key)}`),
   models: (integrationId: string) => req<ModelInfo[]>(`/api/integrations/${integrationId}/models`),
 
   projects: () => req<Project[]>('/api/projects'),
@@ -627,6 +672,13 @@ export const stateColors: Record<RunView['state'], string> = {
 
 export function fmtTime(ts: string): string {
   return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
+}
+
+export function fmtBytes(n?: number): string {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} kB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function fmtCost(v: unknown): string {

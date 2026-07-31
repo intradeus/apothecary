@@ -1,0 +1,107 @@
+package kinds
+
+import (
+	jiraadapter "apothecary/internal/adapters/jira"
+	"apothecary/internal/ports"
+)
+
+// Jira is the ticketsource/jira kind: the tracker tickets are imported FROM.
+// Read-only by construction (the port has no write surface) — apothecary
+// copies the issue in and never transitions it back.
+type Jira struct{}
+
+// jiraHelp is the whole "what do I paste here" answer, shown above the form.
+// Jira comes in two deployments with different credentials, and picking the
+// wrong one fails with an unhelpful 401, so both recipes are spelled out —
+// including the exact token scopes, since Atlassian's scoped-token page offers
+// dozens and every extra one is access apothecary provably never uses.
+const jiraHelp = `Read-only: apothecary copies an issue's summary, description and attachments into a ticket. It never comments, transitions, or writes anything back.
+
+Which Jira is this?
+• Cloud — Atlassian hosts it, your site is <something>.atlassian.net. Credential: account email + API token. API version 3.
+• Data Center / Server — self-hosted on your own domain. Credential: personal access token with the email left EMPTY. API version 2.
+
+What the New Ticket search box accepts:
+• 2624 — a bare number, resolved the way Jira's own quick search does: tried as <PROJECT>-2624 against the project(s) named in the search filter below, or against the account's most recently active projects when no filter is set.
+• PROJ-2624 (also "proj 2624" / "PROJ_2624") — looked up as that exact issue.
+• any other words — a text search over summary, description and comments.
+• jql:… — the rest is passed to Jira as raw JQL, e.g. jql:status = "In Review" AND assignee = currentUser()
+
+EXACTLY what this integration calls (all reads, nothing else exists in the code):
+1. GET /rest/api/3/myself — the Test button only; proves the credential authenticates.
+2. POST /rest/api/3/search/jql (older sites: GET /rest/api/3/search) — the search box on the New Ticket form.
+3. GET /rest/api/3/issue/{KEY}?fields=summary,description,status,issuetype,assignee,updated,attachment — the preview and the import.
+4. GET the attachment content URL returned by (3) — copies the files.
+
+CLOUD — create the API token:
+1. Sign in as the account whose issues you want to see, then open https://id.atlassian.com/manage-profile/security/api-tokens
+2. Use "Create API token" — the plain, UNSCOPED one. Atlassian accepts it on your own site URL, which is what this integration calls.
+   A token created with "Create API token with scopes" is only accepted on Atlassian's api.atlassian.com gateway; against https://<site>.atlassian.net it comes back 401 "Client must be authenticated to access this resource". If that is the 401 you are looking at, swap it for an unscoped token.
+   An unscoped token is not a wider grant than the human holds: it inherits that account's permissions exactly (see the Browse Projects note below), and this integration only ever issues the four reads listed above.
+3. If you do use a scoped token (against the gateway), select READ scopes only —
+   • Classic scopes: read:jira-user (call 1) and read:jira-work (calls 2-4). Those two are exactly enough.
+   • Granular scopes (if the picker shows those instead), one line per thing this integration actually reads:
+       read:user:jira          — call 1 (/myself, the Test button) and the assignee name in search results
+       read:issue-details:jira, read:issue:jira, read:issue-meta:jira — the issue itself: summary, description, updated
+       read:field:jira, read:status:jira, read:issue-type:jira        — the named fields requested in calls 2-3
+       read:project:jira       — resolving keys and any "project = …" search filter
+       read:attachment:jira    — call 4
+     Atlassian also lists read:avatar:jira and read:group:jira on these endpoints because the RESPONSES carry avatar URLs and group memberships — this integration never reads either field, so start without them. If your site enforces the full documented list, the refused call names the missing scope and apothecary prints that message verbatim; add exactly what it names.
+   Never select write:, manage: or delete: anything — apothecary has no code path that writes, so a write scope only widens the blast radius of a leaked token.
+4. Label it (e.g. apothecary), set an expiry, Create, and copy it — it is shown once. Paste it below with that account's email address. Revoke it on the same page.
+Scopes cap the token; they do not grant anything. The account itself still needs the Jira "Browse Projects" permission on every project you want to import from, and the token can never see more than the human can.
+Atlassian's granular list per endpoint is long and moves; if a call is refused, Jira names the missing scope in its error and apothecary shows that message verbatim.
+
+DATA CENTER / SERVER — create the personal access token:
+1. Profile menu → Profile → Personal Access Tokens → "Create token".
+2. Label it, set an expiry, Create, copy it.
+3. Paste it into "API token" and leave "Account email" EMPTY (that is what switches the adapter to bearer auth).
+Data Center PATs have NO scope picker — a PAT carries the full permissions of the account that made it. To get least privilege there, mint it from a service account that only has "Browse Projects" on the relevant projects.
+(If your admin disabled PATs, a username + password in the email/token fields works too — that path is plain basic auth.)
+
+Then press Test: it runs call 1 and reports whether the credential authenticates.`
+
+func (Jira) Descriptor() Descriptor {
+	return Descriptor{
+		Port: "ticketsource", Kind: "jira", Label: "Jira",
+		Help: jiraHelp,
+		Fields: []Field{
+			{
+				Name: "base_url", Label: "Site URL", Required: true,
+				Placeholder: "https://acme.atlassian.net",
+				Help:        "The site root, not an API path — no /rest/api and no trailing /browse/….",
+			},
+			{
+				Name: "email", Label: "Account email", Placeholder: "you@acme.com",
+				Help: "Jira Cloud only. Leave empty for a Data Center personal access token.",
+			},
+			{
+				Name: "api_token", Label: "API token", Secret: true, Required: true,
+				Help: "Cloud: https://id.atlassian.com/manage-profile/security/api-tokens — scopes read:jira-user + read:jira-work (nothing else). Data Center: Profile → Personal Access Tokens (no scopes; it inherits the account's permissions).",
+			},
+			{
+				// Named "search filter" rather than "scope": on Atlassian, scope
+				// means the token's permissions, and one word for two things
+				// sends people to the wrong page.
+				Name: "jql", Label: "Search filter (JQL, optional)", Placeholder: "project = PROJ",
+				Help: "ANDed into every search, so the picker only ever shows issues you care about. Not a permission — it narrows what you see, it cannot widen it. Naming a project here also makes a bare-number search (\"2624\") resolve in one request.",
+			},
+			{
+				Name: "api_version", Label: "API version", Default: "3",
+				Help: "3 for Cloud, 2 for Data Center / Server.",
+			},
+		},
+	}
+}
+
+func (Jira) New(cfg Config) (ports.TicketSource, error) {
+	return jiraadapter.New(jiraadapter.Config{
+		BaseURL:    cfg.Str("base_url", ""),
+		Email:      cfg.Str("email", ""),
+		Token:      cfg.Secrets["api_token"],
+		JQL:        cfg.Str("jql", ""),
+		APIVersion: cfg.Str("api_version", "3"),
+	}), nil
+}
+
+var _ TicketSourceKind = Jira{}

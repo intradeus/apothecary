@@ -5,26 +5,52 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
-	"apothecary/internal/artifacts"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/ports"
+	"apothecary/internal/tickets"
 )
 
 // ticketBody is the create/update DTO. Branch is the ticket's BASE branch;
 // each run derives its own actual branch (base + per-run tail).
+//
+// SourceID+SourceKey turn a create into an IMPORT: the tracker supplies title,
+// goal and attachments, and anything sent here overrides them (the operator
+// may have edited the prefilled form). They are create-only — provenance never
+// changes on update.
 type ticketBody struct {
 	ProjectID   string   `json:"project_id"`
 	Title       string   `json:"title"`
 	Goal        string   `json:"goal"`
 	Branch      string   `json:"branch"`
 	ArtifactIDs []string `json:"artifact_ids"`
+	SourceID    string   `json:"source_id"`
+	SourceKey   string   `json:"source_key"`
 }
 
 func (b ticketBody) toTicket() confstore.Ticket {
 	return confstore.Ticket{
 		ProjectID: b.ProjectID, Title: b.Title, Goal: b.Goal,
 		BaseBranch: b.Branch, ArtifactIDs: b.ArtifactIDs,
+	}
+}
+
+// ticketResp is a ticket plus anything the import could not carry over — a
+// skipped attachment is a fact the operator must see, and silence would read
+// as "everything came across".
+type ticketResp struct {
+	confstore.Ticket
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// tickets builds the ticket factory from the server's collaborators: the one
+// path a ticket is created through, hand-written or imported.
+func (s *Server) tickets() *tickets.Factory {
+	return &tickets.Factory{
+		Conf: s.Conf, Artifacts: s.Artifacts, Sources: s.Sources, Log: s.Log,
 	}
 }
 
@@ -50,6 +76,9 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// createTicket creates a ticket from scratch or, with {source_id, source_key},
+// imports one from a tracker (title/goal/attachments copied over). Both go
+// through the same factory, so the resulting ticket is the same kind of thing.
 func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 	var body ticketBody
 	if !readJSON(w, r, &body) {
@@ -61,27 +90,149 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	t, err := s.Conf.CreateTicket(r.Context(), body.toTicket())
+	if body.SourceID != "" || body.SourceKey != "" {
+		s.importTicket(w, r, body)
+		return
+	}
+	t, err := s.tickets().Create(r.Context(), body.toTicket())
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	s.claimTicketArtifacts(r, t)
-	writeJSON(w, http.StatusCreated, t)
+	writeJSON(w, http.StatusCreated, ticketResp{Ticket: t})
 }
 
-// claimTicketArtifacts binds the ticket's uploads to the TICKET (not a run):
-// it moves them out of `orphan` so the artifact GC can't sweep them, and
-// leaves run_id empty so every run of the ticket can be handed the same
-// files. Already-claimed ids are a no-op (Associate only touches orphans),
-// so it is safe to re-send the full list on update.
-func (s *Server) claimTicketArtifacts(r *http.Request, t confstore.Ticket) {
-	if s.Artifacts == nil || len(t.ArtifactIDs) == 0 {
+func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticketBody) {
+	if body.SourceID == "" || body.SourceKey == "" {
+		writeErr(w, http.StatusBadRequest, "importing a ticket needs both source_id and source_key")
 		return
 	}
-	if err := s.Artifacts.Associate(r.Context(), t.ArtifactIDs, "", "", artifacts.ScopeTicketGoal); err != nil {
-		s.Log.Warn("associate ticket artifacts", "ticket", t.ID, "err", err)
+	t, warnings, err := s.tickets().CreateFromSource(r.Context(), body.SourceID, body.SourceKey, body.toTicket())
+	switch {
+	case errors.Is(err, tickets.ErrNoSources):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, tickets.ErrDuplicate):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, confstore.ErrNotFound), errors.Is(err, confstore.ErrInvalid),
+		errors.Is(err, engine.ErrUnresolvable):
+		confErr(w, err)
+	case err != nil:
+		// The tracker itself failed (unreachable, bad credentials, no such
+		// issue) — an upstream problem, not a bad request.
+		writeErr(w, http.StatusBadGateway, err.Error())
+	default:
+		writeJSON(w, http.StatusCreated, ticketResp{Ticket: t, Warnings: warnings})
 	}
+}
+
+// --- ticket sources (import picker) -----------------------------------------
+
+// sourceTicketJSON is one tracker issue as the picker renders it. Attachments
+// are counted rather than listed in search results (the tracker's list
+// endpoint doesn't carry them); the single-issue route has the real list.
+type sourceTicketJSON struct {
+	Key         string                 `json:"key"`
+	Title       string                 `json:"title"`
+	Body        string                 `json:"body,omitempty"`
+	URL         string                 `json:"url,omitempty"`
+	Status      string                 `json:"status,omitempty"`
+	Type        string                 `json:"type,omitempty"`
+	Assignee    string                 `json:"assignee,omitempty"`
+	Updated     string                 `json:"updated,omitempty"`
+	Attachments []sourceAttachmentJSON `json:"attachments,omitempty"`
+}
+
+type sourceAttachmentJSON struct {
+	Filename string `json:"filename"`
+	Mime     string `json:"mime,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+}
+
+func toSourceTicketJSON(t ports.SourceTicket) sourceTicketJSON {
+	out := sourceTicketJSON{
+		Key: t.Key, Title: t.Title, Body: t.Body, URL: t.URL,
+		Status: t.Status, Type: t.Type, Assignee: t.Assignee,
+	}
+	if !t.Updated.IsZero() {
+		out.Updated = t.Updated.UTC().Format(time.RFC3339)
+	}
+	for _, a := range t.Attachments {
+		out.Attachments = append(out.Attachments, sourceAttachmentJSON{
+			Filename: a.Filename, Mime: a.Mime, Size: a.Size,
+		})
+	}
+	return out
+}
+
+// searchSourceTickets serves the picker: GET /api/integrations/{id}/tickets?q=
+func (s *Server) searchSourceTickets(w http.ResponseWriter, r *http.Request) {
+	limit := 25
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
+		limit = n
+	}
+	found, err := s.tickets().Search(r.Context(), r.PathValue("id"), r.URL.Query().Get("q"), limit)
+	if err != nil {
+		sourceErr(w, err)
+		return
+	}
+	out := make([]sourceTicketJSON, 0, len(found))
+	for _, t := range found {
+		out = append(out, toSourceTicketJSON(t))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// getSourceTicket previews one issue (with its attachment list) so the ticket
+// form can prefill and say what an import will copy.
+func (s *Server) getSourceTicket(w http.ResponseWriter, r *http.Request) {
+	t, err := s.tickets().Fetch(r.Context(), r.PathValue("id"), r.PathValue("key"))
+	if err != nil {
+		sourceErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toSourceTicketJSON(t))
+}
+
+// sourceErr separates "this deployment can't do that" and "you asked for
+// something that isn't there" from "the tracker answered badly" (502) — the
+// last is the tracker's fault and says so.
+func sourceErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, tickets.ErrNoSources):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, confstore.ErrNotFound), errors.Is(err, confstore.ErrInvalid),
+		errors.Is(err, engine.ErrUnresolvable):
+		confErr(w, err)
+	default:
+		writeErr(w, http.StatusBadGateway, err.Error())
+	}
+}
+
+// getTicketArtifacts lists a ticket's attachments (uploaded by hand or copied
+// from the tracker) so both the ticket page and the edit form can show what is
+// actually attached. Metadata only — bytes come from the ordinary artifact
+// route. Ids whose row has vanished are skipped rather than failing the list.
+func (s *Server) getTicketArtifacts(w http.ResponseWriter, r *http.Request) {
+	t, err := s.Conf.GetTicket(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	out := []map[string]any{}
+	if s.Artifacts != nil {
+		for _, id := range t.ArtifactIDs {
+			m, err := s.Artifacts.Meta(r.Context(), id)
+			if err != nil {
+				s.Log.Warn("ticket artifact missing", "ticket", t.ID, "artifact", id, "err", err)
+				continue
+			}
+			out = append(out, map[string]any{
+				"id": m.ID, "filename": m.Filename, "mime": m.Mime,
+				"size": m.Size, "scope": m.Scope, "created_at": m.CreatedAt,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) getTicket(w http.ResponseWriter, r *http.Request) {
@@ -104,13 +255,14 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	t, err := s.Conf.UpdateTicket(r.Context(), r.PathValue("id"), body.toTicket())
+	// The factory claims any newly-attached uploads; provenance (source_*) is
+	// preserved by the store, so an edit never disowns an imported ticket.
+	t, err := s.tickets().Update(r.Context(), r.PathValue("id"), body.toTicket())
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	s.claimTicketArtifacts(r, t) // claims any newly-attached uploads
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(w, http.StatusOK, ticketResp{Ticket: t})
 }
 
 func (s *Server) deleteTicket(w http.ResponseWriter, r *http.Request) {

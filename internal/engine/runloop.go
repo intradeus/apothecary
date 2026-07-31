@@ -611,6 +611,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				close(req.ack)
 				return agentRes{}, false, err
 			}
+			// Snapshot the attached files as they are RIGHT NOW: the agent
+			// resumes the moment this ping is answered, and the record must
+			// keep what the human was actually shown.
+			x.publishPingPayload(req.p, st.ID)
 			x.rs.unwanted++
 			x.e.notify(x.bg, ports.Notification{
 				RunID: x.rs.runID, PingID: req.p.ID, Type: req.p.Type,
@@ -884,6 +888,9 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, PayloadRef: p.PayloadRef, StageID: st.ID}); err != nil {
 			return err
 		}
+		// The plan a human approves is the single most important document in
+		// the run — snapshot it as reviewed, not as the workspace has it later.
+		x.publishPingPayload(p, st.ID)
 		x.e.notify(x.bg, ports.Notification{
 			RunID: rs.runID, PingID: p.ID, Type: p.Type,
 			Title: p.Question, Body: p.PayloadRef,

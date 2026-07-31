@@ -131,6 +131,7 @@ func registry(dev bool) *kinds.Registry {
 	reg.RegisterProvisioner(kinds.Devcontainer{})
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
+	reg.RegisterTicketSource(kinds.Jira{})
 	if dev {
 		kinds.RegisterFakes(reg)
 	}
@@ -245,7 +246,8 @@ func cmdServe(args []string) error {
 	api.Conf = conf
 	api.Kinds = reg
 	api.Ops = resolver
-	api.Pings = store // durable request/response projection (PLAN4 M15)
+	api.Sources = resolver // ticket sources for the import factory (Jira)
+	api.Pings = store      // durable request/response projection (PLAN4 M15)
 	api.Artifacts = artStore
 	api.CPUIDir = boot.CPUIDir
 	if boot.CPUIDir != "" {
@@ -444,6 +446,10 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	}
 	harnessID, err := mk(confstore.PortHarness, "dev-harness")
 	if err != nil {
+		return err
+	}
+	// A fake tracker so the "import a ticket" flow is exercisable in -dev.
+	if _, err := mk(confstore.PortTicketSource, "dev-tracker"); err != nil {
 		return err
 	}
 	p, err := conf.CreateProject(ctx, confstore.Project{

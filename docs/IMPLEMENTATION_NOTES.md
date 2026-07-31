@@ -1470,3 +1470,100 @@ the inner dockerd's NAT on subnets that collide across runs and that the
 gateway has no route to, which is precisely why `ExposePort` runs the relay
 *inside* the workspace container. And `firewall: off` runs have no gateway at
 all, so the unix path would have to be kept as a fallback regardless.
+
+## Ticket sources: import from Jira (new port `ticketsource`)
+
+A ticket can now be **copied from an external tracker** instead of typed in.
+The shape is the usual one — port (`ports.TicketSource`), adapter
+(`internal/adapters/jira`), kind (`kinds.Jira`, registered under the new
+`ticketsource` port) — plus a **ticket factory** (`internal/tickets`) that
+both creation paths go through, so an imported ticket is indistinguishable
+downstream from a hand-written one.
+
+Decisions worth recording:
+
+- **The port is read-only.** It has `Test/Search/Fetch/OpenAttachment` and no
+  write surface: apothecary never transitions an issue, comments on it, or
+  syncs back. The import is a *copy taken once* — title, body and attachment
+  bytes land in apothecary's own storage, and `tickets.source_{id,kind,key,url}`
+  record where they came from. `source_kind` is stored next to `source_id`
+  (and there is no FK) precisely so a ticket survives deleting the
+  integration.
+- **Not a project reference.** Unlike forge/provisioner/harness, a ticket
+  source is picked *per import* on the ticket form, never bound to a project.
+  A tracker outage can therefore only fail an import — it can never stall a
+  run, and `confstore.validateProject` gained nothing.
+- **Attachments go through the ordinary artifact store** (`Save`, so the MIME
+  allowlist and size cap apply), landing as `ticket_goal` scope — the same
+  thing an upload becomes, hence delivered into every run of the ticket. A
+  file that is too large or disallowed is *skipped with a named warning*
+  rather than failing the import; the create response carries `warnings[]`
+  and the form makes the operator acknowledge them before navigating on.
+- **Duplicate imports are refused** (409 naming the existing ticket): two
+  tickets tracking one issue diverge silently, and it is nearly always a
+  mis-click.
+- **Jira's two shapes are absorbed in the adapter.** Descriptions arrive as
+  ADF (JSON node tree) on API v3 and as wiki markup on v2 — `adf.go` renders
+  both to markdown so nothing past the adapter sees vendor markup, degrading
+  unknown node types to their children rather than dropping them. Search tries
+  Cloud's current `POST /search/jql` and falls back to the classic
+  `GET /search` on 404/410/405 (Data Center, older Cloud). Auth is Basic
+  email+token, or Bearer when the email is left empty (DC PAT).
+- **Attachment URLs are re-checked against the configured site** before the
+  credential is attached: the download URL comes from the tracker's own
+  response, and a tracker must not be able to aim an authenticated engine
+  request at a host of its choosing.
+- Free text becomes JQL in one place (`Client.JQL`): an issue key looks the
+  issue up, a `jql:` prefix passes through verbatim, empty means "assigned to
+  me and unresolved", anything else is a text search — all ANDed with the
+  integration's optional scope filter.
+
+`serve -dev` seeds a fake tracker (`kinds.FakeTicketSource`, two issues and an
+attachment) so the whole flow is exercisable with no Jira.
+- **Setup prose is descriptor data, not UI copy.** `kinds.Descriptor.Help` and
+  `kinds.Field.Help` were added so a kind can carry its own "where do I get
+  this credential" instructions; `IntegrationForm` renders the descriptor help
+  in a `<details>` (open when adding) and linkifies bare URLs. The Jira help
+  names the *exact* least-privilege token scopes — classic `read:jira-user` +
+  `read:jira-work`, or the granular equivalents — precisely because
+  Atlassian's scoped-token picker offers dozens and the four calls this
+  adapter makes (`/myself`, `/search/jql`, `/issue/{key}`, attachment content)
+  are all reads. Data Center PATs have no scope picker at all (they inherit
+  the account), which is worth saying out loud rather than letting an
+  operator hunt for it. The JQL field is labelled "search filter", not
+  "scope", so the word only ever means the token's permissions.
+
+## Ping attachments are snapshotted, not read live
+
+`ask_human`'s attachments (and a gate's reviewed document) were the one thing
+the event log referenced without owning: `payload_refs` held repo-relative
+paths and `PingArtifactAt` read them out of the live workspace. Two bugs fell
+out of that, and they are the reason this changed:
+
+- **The reference outlived the referent.** Once the workspace was reaped (or
+  the run archived) an answered ping's attachment was simply gone, so the
+  inbox could no longer show what a decision had been made about — in a system
+  whose stated premise is that events are the source of truth.
+- **It answered the wrong question.** The agent resumes the moment a ping is
+  answered and often rewrites the very file it asked about, so re-opening the
+  ping showed the file's CURRENT content rather than what the human approved.
+  The audit trail lied, quietly.
+
+Now `publishPingPayload` captures each non-URL ref at raise time through the
+existing snapshot path (redacted, `Capture`d, an `artifact_published` event) as
+scope `ping_payload`, keyed by ping id with the ref verbatim in `OutputName` —
+which is what the read path matches on, since two refs can share a basename. No
+schema change: the artifacts table already carries `ping_id` + `scope`.
+
+Reads prefer the snapshot and need no live ping — the rows are keyed by ping
+id, so an answered ping stays readable after the engine's in-memory registry
+drops it, which is precisely the case that used to 404. The live workspace read
+remains as the fallback for pings raised before this and for a capture that
+failed. `ping_payload` joins the stage scopes in surviving `DeleteForRun`
+(`artifacts.IsAuditScope`): what a human was shown when they approved something
+is audit trail, not run input.
+
+Naming, while we were here: "attachment" is the human/inbound file,
+"snapshot" the engine-captured one. `GET /api/pings/{pid}/artifacts` still
+addresses by ref (the ping's own name for it) and now marks which entries are
+`durable`, with the artifact id for a direct link.

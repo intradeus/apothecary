@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"strings"
@@ -245,6 +246,94 @@ func (x *exec) publishProvisionLog(envName string) {
 	x.rs.iters[provisionLogStage] = iter
 	x.writeStageLog(provisionLogStage, iter, string(out))
 	x.publishLog(provisionLogStage, iter, string(out))
+}
+
+// publishPingPayload snapshots the workspace files an agent attached to a
+// ping, at the moment the ping is raised.
+//
+// Two things this buys, both of which the old read-it-live path got wrong: the
+// attachment survives the workspace (an answered ping stays answerable after
+// the reaper), and it is pinned to WHAT THE HUMAN WAS SHOWN — the agent keeps
+// working, and a file it rewrites afterwards must not retroactively change the
+// document a decision was recorded against.
+//
+// Best-effort, like every other capture: a ping must be raisable even if the
+// snapshot fails, so a missing file only means the reader falls back to the
+// live workspace.
+func (x *exec) publishPingPayload(p *Ping, stageID string) {
+	if x.e.artifacts == nil || x.rs.envID == "" {
+		return
+	}
+	for _, ref := range p.refs() {
+		if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+			continue // a URL payload (mr_url), not a file
+		}
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, ref)
+		if err != nil {
+			x.e.log.Warn("snapshotting ping attachment", "run", x.rs.runID, "ping", p.ID, "ref", ref, "err", err)
+			continue
+		}
+		data = []byte(x.redact.scrub(string(data)))
+		m, err := x.e.artifacts.Capture(x.bg, artifacts.Meta{
+			RunID: x.rs.runID, PingID: p.ID, Scope: artifacts.ScopePingPayload,
+			Filename: pathBase(ref), StageID: stageID,
+			// OutputName carries the ref VERBATIM: it is how the ping names
+			// this attachment, and what the read path matches on (two refs can
+			// share a basename).
+			OutputName: ref,
+		}, data)
+		if err != nil {
+			x.e.log.Warn("capturing ping attachment", "run", x.rs.runID, "ping", p.ID, "ref", ref, "err", err)
+			continue
+		}
+		if err := x.append(&event.ArtifactPublished{
+			StageID: stageID, Scope: artifacts.ScopePingPayload, Name: ref, Path: ref,
+			ArtifactID: m.ID, SHA256: m.SHA256, Size: m.Size,
+		}); err != nil {
+			x.e.log.Warn("recording ping attachment", "run", x.rs.runID, "ping", p.ID, "err", err)
+		}
+	}
+}
+
+// pingSnapshot returns the bytes captured for one of a ping's attachments,
+// matched on the ref the ping names it by (OutputName). ok=false means there
+// is no snapshot — an old ping, or a capture that failed — and the caller
+// falls back to reading the live workspace.
+func (e *Engine) pingSnapshot(ctx context.Context, pingID, ref string) ([]byte, bool) {
+	if e.artifacts == nil {
+		return nil, false
+	}
+	metas, err := e.artifacts.ForPing(ctx, pingID, artifacts.ScopePingPayload)
+	if err != nil {
+		e.log.Warn("reading ping snapshots", "ping", pingID, "err", err)
+		return nil, false
+	}
+	for _, m := range metas {
+		if m.OutputName != ref {
+			continue
+		}
+		data, _, err := e.artifacts.Bytes(ctx, m.ID)
+		if err != nil {
+			e.log.Warn("reading ping snapshot bytes", "ping", pingID, "artifact", m.ID, "err", err)
+			return nil, false
+		}
+		return data, true
+	}
+	return nil, false
+}
+
+// PingSnapshots lists the durable snapshots of a ping's attachments (id + the
+// ref each was taken from), for the API's attachment list.
+func (e *Engine) PingSnapshots(ctx context.Context, pingID string) []artifacts.Meta {
+	if e.artifacts == nil {
+		return nil
+	}
+	metas, err := e.artifacts.ForPing(ctx, pingID, artifacts.ScopePingPayload)
+	if err != nil {
+		e.log.Warn("listing ping snapshots", "ping", pingID, "err", err)
+		return nil
+	}
+	return metas
 }
 
 func (x *exec) publish(stageID string, iter int, scope, name, path string, data []byte) {

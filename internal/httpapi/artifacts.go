@@ -164,12 +164,25 @@ func (s *Server) getPingArtifacts(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Which of the refs have a durable snapshot (taken when the ping was
+	// raised). Everything is still addressed by ref — the snapshot is an
+	// implementation detail of reading it — but the list says which files
+	// survive the workspace, and carries the artifact id for a direct link.
+	snaps := map[string]string{}
+	for _, m := range s.Engine.PingSnapshots(r.Context(), pid) {
+		snaps[m.OutputName] = m.ID
+	}
 	files := []map[string]any{}
 	for _, ref := range s.Engine.PingRefs(pid) {
 		if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 			continue // a URL payload (mr_url), not a file
 		}
-		files = append(files, map[string]any{"path": ref, "mime": mimeByExt(ref)})
+		item := map[string]any{"path": ref, "mime": mimeByExt(ref)}
+		if id, ok := snaps[ref]; ok {
+			item["artifact_id"] = id
+			item["durable"] = true
+		}
+		files = append(files, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": files})
 }

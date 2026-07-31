@@ -5,8 +5,10 @@
 package fake
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"strings"
 	"sync"
@@ -506,10 +508,78 @@ func (c *Channel) Sent() []ports.Notification {
 	return append([]ports.Notification(nil), c.sent...)
 }
 
+// --- TicketSource -----------------------------------------------------------
+
+// TicketSource is an in-memory tracker: Tickets is the whole corpus, searched
+// by a case-insensitive substring of key/title/body. Attachment bytes come
+// from Blobs, keyed by attachment id.
+type TicketSource struct {
+	mu      sync.Mutex
+	Tickets []ports.SourceTicket
+	Blobs   map[string][]byte
+	Err     error // returned by every method when set
+}
+
+func (s *TicketSource) Test(context.Context) error { return s.Err }
+
+func (s *TicketSource) Search(_ context.Context, query string, limit int) ([]ports.SourceTicket, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 25
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	var out []ports.SourceTicket
+	for _, t := range s.Tickets {
+		hay := strings.ToLower(t.Key + " " + t.Title + " " + t.Body)
+		if q == "" || strings.Contains(hay, q) {
+			// Search results carry no attachments (Fetch is authoritative),
+			// mirroring what a real tracker's list endpoint returns.
+			t.Attachments = nil
+			out = append(out, t)
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *TicketSource) Fetch(_ context.Context, key string) (ports.SourceTicket, error) {
+	if s.Err != nil {
+		return ports.SourceTicket{}, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.Tickets {
+		if strings.EqualFold(t.Key, key) {
+			return t, nil
+		}
+	}
+	return ports.SourceTicket{}, fmt.Errorf("fake: no ticket %q", key)
+}
+
+func (s *TicketSource) OpenAttachment(_ context.Context, a ports.SourceAttachment) (io.ReadCloser, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, ok := s.Blobs[a.ID]
+	if !ok {
+		return nil, fmt.Errorf("fake: no blob for attachment %q", a.ID)
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
 // Compile-time port conformance.
 var (
 	_ ports.EnvProvisioner      = (*EnvProvisioner)(nil)
 	_ ports.AgentRunner         = (*AgentRunner)(nil)
 	_ ports.Forge               = (*Forge)(nil)
 	_ ports.NotificationChannel = (*Channel)(nil)
+	_ ports.TicketSource        = (*TicketSource)(nil)
 )

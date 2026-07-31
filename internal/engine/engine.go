@@ -707,7 +707,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	branch := base
 	if t.TicketID != "" {
 		if base == "" {
-			base = "apothecary/" + slug(t.Title, 24)
+			base = "apothecary/" + slug(t.Title, maxBranchSlug)
 		}
 		branch = base + "-" + runIDTail(runID)
 		if err := CheckBranch(branch); err != nil {
@@ -715,7 +715,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 		}
 	} else if branch == "" {
 		base = ""
-		branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), slug(t.Title, 24))
+		branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), slug(t.Title, maxBranchSlug))
 	} else if err := CheckBranch(branch); err != nil {
 		return "", fmt.Errorf("branch %q: %v", branch, err)
 	}
@@ -1453,6 +1453,16 @@ func (e *Engine) PingArtifact(ctx context.Context, pingID string) (path string, 
 	p := e.pings[pingID]
 	e.mu.Unlock()
 	if p == nil {
+		// No live ping: the run has ended and the registry dropped it. The
+		// snapshots still answer — the primary is the first attachment, which
+		// is the order they were captured in.
+		if snaps := e.PingSnapshots(ctx, pingID); len(snaps) > 0 {
+			data, _, err := e.artifacts.Bytes(ctx, snaps[0].ID)
+			if err != nil {
+				return "", nil, err
+			}
+			return snaps[0].OutputName, data, nil
+		}
 		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
 	}
 	ref := p.PayloadRef
@@ -1461,6 +1471,13 @@ func (e *Engine) PingArtifact(ctx context.Context, pingID string) (path string, 
 		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrNoArtifact)
 	case strings.HasPrefix(ref, "http://"), strings.HasPrefix(ref, "https://"):
 		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrArtifactIsURL)
+	}
+	// The snapshot taken when the ping was raised is authoritative: it is what
+	// the human was shown, and it survives the workspace. The live read below
+	// remains for pings raised before snapshots existed (and for a capture
+	// that failed).
+	if data, ok := e.pingSnapshot(ctx, pingID, ref); ok {
+		return ref, data, nil
 	}
 	evs, err := e.store.Events(ctx, p.RunID, 0)
 	if err != nil {
@@ -1502,6 +1519,14 @@ func (e *Engine) PingRefs(pingID string) []string {
 // PingArtifact (which tails a doc for review), it returns the file whole so
 // images survive.
 func (e *Engine) PingArtifactAt(ctx context.Context, pingID, ref string) ([]byte, error) {
+	// The snapshot taken when the ping was raised comes first, and it needs no
+	// live ping: the rows are keyed by ping id and matched on the ref they were
+	// captured from, so an answered ping stays readable after the run ends and
+	// its in-memory registration is gone. It is also the CORRECT answer — the
+	// agent may have rewritten the file since the human reviewed it.
+	if data, ok := e.pingSnapshot(ctx, pingID, ref); ok {
+		return data, nil
+	}
 	p := e.GetPing(pingID)
 	if p == nil {
 		return nil, fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
@@ -1958,6 +1983,13 @@ func slug(s string, maxLen int) string {
 	}
 	return strings.TrimRight(b.String(), "-")
 }
+
+// maxBranchSlug bounds a branch derived from a ticket title. It is NOT a
+// readability cap — a branch name may be as long as the title needs — only a
+// filesystem backstop: a loose ref is a file, so a path component over 255
+// bytes is unwritable on ext4/APFS. The container name has its own, much
+// tighter budget and is truncated separately (workspaceName).
+const maxBranchSlug = 200
 
 // runIDTail is the 2-char per-run suffix: the last 2 chars of the lowercased
 // run id. Shared by the branch name (base + "-" + tail) and the workspace

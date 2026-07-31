@@ -56,13 +56,19 @@ type Field struct {
 	Default     string `json:"default,omitempty"`
 	Secret      bool   `json:"secret"`
 	Required    bool   `json:"required"`
+	// Help is a one-line hint rendered under the input. Plain text; bare URLs
+	// in it are linkified by the form.
+	Help string `json:"help,omitempty"`
 }
 
-// Descriptor identifies a kind and its form schema.
+// Descriptor identifies a kind and its form schema. Help is prose shown above
+// the form — where to get the credential, which flavor of the vendor this is —
+// so the operator never has to leave the page to find out what to paste.
 type Descriptor struct {
 	Port   string  `json:"port"`
 	Kind   string  `json:"kind"`
 	Label  string  `json:"label"`
+	Help   string  `json:"help,omitempty"`
 	Fields []Field `json:"fields"`
 }
 
@@ -201,25 +207,38 @@ type HarnessKind interface {
 	New(cfg Config, envp ports.EnvProvisioner) (Harness, error)
 }
 
+// TicketSourceKind constructs the read-only ticket-tracker port (Jira). It
+// takes no engine deps: a ticket source is a config-plane vendor — the ticket
+// factory reads from it at import time and nothing in a run ever touches it.
+type TicketSourceKind interface {
+	Descriptor() Descriptor
+	New(cfg Config) (ports.TicketSource, error)
+}
+
 // --- registry ---------------------------------------------------------------
 
 type Registry struct {
-	forges       map[string]ForgeKind
-	provisioners map[string]ProvisionerKind
-	harnesses    map[string]HarnessKind
+	forges        map[string]ForgeKind
+	provisioners  map[string]ProvisionerKind
+	harnesses     map[string]HarnessKind
+	ticketSources map[string]TicketSourceKind
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		forges:       map[string]ForgeKind{},
-		provisioners: map[string]ProvisionerKind{},
-		harnesses:    map[string]HarnessKind{},
+		forges:        map[string]ForgeKind{},
+		provisioners:  map[string]ProvisionerKind{},
+		harnesses:     map[string]HarnessKind{},
+		ticketSources: map[string]TicketSourceKind{},
 	}
 }
 
 func (r *Registry) RegisterForge(k ForgeKind)             { r.forges[k.Descriptor().Kind] = k }
 func (r *Registry) RegisterProvisioner(k ProvisionerKind) { r.provisioners[k.Descriptor().Kind] = k }
 func (r *Registry) RegisterHarness(k HarnessKind)         { r.harnesses[k.Descriptor().Kind] = k }
+func (r *Registry) RegisterTicketSource(k TicketSourceKind) {
+	r.ticketSources[k.Descriptor().Kind] = k
+}
 
 func (r *Registry) Forge(kind string) (ForgeKind, error) {
 	k, ok := r.forges[kind]
@@ -245,6 +264,14 @@ func (r *Registry) Harness(kind string) (HarnessKind, error) {
 	return k, nil
 }
 
+func (r *Registry) TicketSource(kind string) (TicketSourceKind, error) {
+	k, ok := r.ticketSources[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown ticket source kind %q", kind)
+	}
+	return k, nil
+}
+
 // Valid reports whether (port, kind) is registered — wired into
 // confstore.Service.KindValid.
 func (r *Registry) Valid(port, kind string) bool {
@@ -257,6 +284,9 @@ func (r *Registry) Valid(port, kind string) bool {
 		return ok
 	case "harness":
 		_, ok := r.harnesses[kind]
+		return ok
+	case "ticketsource":
+		_, ok := r.ticketSources[kind]
 		return ok
 	}
 	return false
@@ -272,6 +302,9 @@ func (r *Registry) Descriptors() []Descriptor {
 		out = append(out, k.Descriptor())
 	}
 	for _, k := range r.harnesses {
+		out = append(out, k.Descriptor())
+	}
+	for _, k := range r.ticketSources {
 		out = append(out, k.Descriptor())
 	}
 	sort.Slice(out, func(i, j int) bool {

@@ -19,9 +19,14 @@ const (
 	PortForge       = "forge"
 	PortProvisioner = "provisioner"
 	PortHarness     = "harness"
+	// PortTicketSource is the read-only issue tracker tickets are imported
+	// FROM (Jira). Unlike the other three it is NOT referenced by a project:
+	// it is picked per import, on the ticket form, so a tracker outage can
+	// never block a project's runs.
+	PortTicketSource = "ticketsource"
 )
 
-var ValidPorts = []string{PortForge, PortProvisioner, PortHarness}
+var ValidPorts = []string{PortForge, PortProvisioner, PortHarness, PortTicketSource}
 
 var (
 	ErrNotFound = errors.New("not found")

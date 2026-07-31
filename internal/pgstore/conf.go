@@ -278,13 +278,15 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 
 // --- tickets ----------------------------------------------------------------
 
-const ticketCols = `id, project_id, title, goal, base_branch, artifact_ids, created_at, updated_at`
+const ticketCols = `id, project_id, title, goal, base_branch, artifact_ids, ` +
+	`source_id, source_kind, source_key, source_url, created_at, updated_at`
 
 func scanTicket(row pgx.Row) (confstore.Ticket, error) {
 	var t confstore.Ticket
 	var artifacts []byte
 	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Goal, &t.BaseBranch,
-		&artifacts, &t.CreatedAt, &t.UpdatedAt)
+		&artifacts, &t.SourceID, &t.SourceKind, &t.SourceKey, &t.SourceURL,
+		&t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return t, err
 	}
@@ -306,11 +308,14 @@ func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
 		return err
 	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO tickets (id, project_id, title, goal, base_branch, artifact_ids, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		INSERT INTO tickets (id, project_id, title, goal, base_branch, artifact_ids,
+			source_id, source_kind, source_key, source_url, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (id) DO UPDATE SET
-			project_id=$2, title=$3, goal=$4, base_branch=$5, artifact_ids=$6, updated_at=$8`,
-		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch, artifacts, t.CreatedAt, t.UpdatedAt)
+			project_id=$2, title=$3, goal=$4, base_branch=$5, artifact_ids=$6,
+			source_id=$7, source_kind=$8, source_key=$9, source_url=$10, updated_at=$12`,
+		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch, artifacts,
+		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.CreatedAt, t.UpdatedAt)
 	if isFK(err) {
 		// FK backstop: the referenced project vanished between service-layer
 		// validation and this write.

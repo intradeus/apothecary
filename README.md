@@ -94,6 +94,71 @@ automatically. Database migrations apply at boot.
      > one can then be revoked with `coder tokens remove <name>`.
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
      credentials) or codex (API key and/or ChatGPT `auth.json`).
+   - *Ticket source* (optional): Jira. Lets you create a ticket **from** a
+     Jira issue — search the tracker on the New Ticket form, pick an issue,
+     and its summary, description and attachments are copied in. Read-only:
+     nothing is ever written back, and the copy is taken once (edit the
+     apothecary ticket freely afterwards).
+
+     > **Which Jira?** *Cloud* is the Atlassian-hosted one, at
+     > `<site>.atlassian.net` — credential is an **account email + API
+     > token**, API version **3**. *Data Center* (and the retired *Server*)
+     > is self-hosted on your own domain — credential is a **personal access
+     > token** with the email field left **empty**, API version **2**. Both
+     > are the same form; the email field is what selects between basic and
+     > bearer auth.
+     >
+     > *Cloud token:* sign in as the account whose issues you want to see →
+     > <https://id.atlassian.com/manage-profile/security/api-tokens> →
+     > **Create API token** — the plain, **unscoped** one. (A token made with
+     > *Create API token with scopes* is only accepted on Atlassian's
+     > `api.atlassian.com` gateway; against your `<site>.atlassian.net` URL it
+     > returns `401 Client must be authenticated to access this resource`.)
+     > An unscoped token is no wider than the human: it inherits that
+     > account's permissions, and this integration only ever issues the four
+     > reads listed below. If you do scope one (for the gateway), the read
+     > scopes are `read:jira-user` and `read:jira-work` — those two are
+     > exactly enough. If your site's picker shows granular scopes instead, the set
+     > that matches what this integration reads is `read:user:jira`
+     > (`/myself` + the assignee name), `read:issue-details:jira`,
+     > `read:issue:jira`, `read:issue-meta:jira` (the issue), `read:field:jira`,
+     > `read:status:jira`, `read:issue-type:jira` (the requested fields),
+     > `read:project:jira` (key resolution + `project = …` filters) and
+     > `read:attachment:jira` (the files). Atlassian also documents
+     > `read:avatar:jira` and `read:group:jira` on those endpoints because the
+     > *responses* carry avatar URLs and group memberships — nothing here
+     > reads either, so start without them and add only what a refused call
+     > names (Jira's message is surfaced verbatim). Never grant `write:`,
+     > `manage:` or `delete:` — no code path here writes. Label + expiry →
+     > copy it (shown once) and paste it with that account's email. Revoke on
+     > the same page.
+     >
+     > *Data Center token:* profile menu → **Profile → Personal Access
+     > Tokens** → **Create token** → label + expiry → copy. Paste into *API
+     > token*, leave *Account email* empty. DC PATs have **no scope picker** —
+     > the token carries the full permissions of the account that minted it,
+     > so use a service account for least privilege. (If your admin disabled
+     > PATs, a username + password in the email/token fields works too —
+     > that path is plain basic auth.)
+     >
+     > Scopes only cap a token; they grant nothing. Either way the account
+     > needs Jira's **Browse Projects** permission on the projects you import
+     > from, and the token can never see more than that human can. The four
+     > calls this integration makes, and nothing else:
+     > `GET /myself` (the Test button), `POST /search/jql` (the picker's
+     > search, falling back to `GET /search` on older sites),
+     > `GET /issue/{KEY}?fields=…,attachment` (preview + import), and a `GET`
+     > of each attachment's content URL.
+     >
+     > Optionally set a **JQL search filter** (`project = PROJ`); it is ANDed
+     > into every search so the picker only shows issues you care about — it
+     > narrows what you see and cannot widen it. Then **Test**.
+     >
+     > The New Ticket search box takes a **bare number** (`2624` — resolved as
+     > `<PROJECT>-2624` against the filter's project, or against your most
+     > recently active projects when no filter is set), a **key**
+     > (`PROJ-2624`, also `proj 2624`), free **words** (text search), or
+     > `jql:…` for raw JQL.
 2. **Flows** — create one (a starter skeleton is offered; the editor
    validates with line-precise errors, and the *Available models* panel
    lists the exact `provider/model` strings your harness can route).
@@ -107,7 +172,8 @@ automatically. Database migrations apply at boot.
    image, egress gateway (a non-allowlisted host is blocked; each derived
    domain reachable), harness binary, ask-human shim, engine tunnel — with
    named pass/fail steps.
-5. **File a ticket** on the Runs page. Answer the plan gate in the Inbox;
+5. **File a ticket** on the Tickets page — by hand, or imported from a
+   configured ticket source. Answer the plan gate in the Inbox;
    merge the draft MR/PR at the end (the run completes itself when you
    merge).
 
