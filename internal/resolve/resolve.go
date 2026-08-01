@@ -32,7 +32,10 @@ type Resolver struct {
 	reg        *kinds.Registry
 	runsDir    string
 	enginePort int
-	builder    *wsimage.Builder
+	// sandboxRuntime is deployment-wide (APOTHECARY_SANDBOX_RUNTIME), not
+	// per-integration: it names a runtime the HOST daemon must have.
+	sandboxRuntime string
+	builder        *wsimage.Builder
 
 	mu    sync.Mutex
 	cache map[string]*provEntry // provisioner integration id -> entry
@@ -48,14 +51,16 @@ type provEntry struct {
 
 // New builds the resolver. The builder exists solely to compile + cache the
 // static in-workspace shim (wsimage.EnsureShim → ProvisionerDeps.ShimBin).
-func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int) *Resolver {
+// sandboxRuntime is APOTHECARY_SANDBOX_RUNTIME (empty ⇒ privileged sandbox).
+func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, sandboxRuntime string) *Resolver {
 	return &Resolver{
-		conf:       conf,
-		reg:        reg,
-		runsDir:    runsDir,
-		enginePort: enginePort,
-		builder:    wsimage.New(runsDir),
-		cache:      map[string]*provEntry{},
+		conf:           conf,
+		reg:            reg,
+		runsDir:        runsDir,
+		enginePort:     enginePort,
+		sandboxRuntime: sandboxRuntime,
+		builder:        wsimage.New(runsDir),
+		cache:          map[string]*provEntry{},
 	}
 }
 
@@ -322,10 +327,11 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provision
 	}
 	if e == nil {
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
-			RunsDir:      r.runsDir,
-			EnginePort:   r.enginePort,
-			ShimBin:      r.builder.EnsureShim,
-			GatewayImage: r.builder.EnsureGatewayImage,
+			RunsDir:        r.runsDir,
+			EnginePort:     r.enginePort,
+			ShimBin:        r.builder.EnsureShim,
+			GatewayImage:   r.builder.EnsureGatewayImage,
+			SandboxRuntime: r.sandboxRuntime,
 		})
 		if err != nil {
 			return nil, nil, unresolvable(fmt.Errorf("provisioner %s: %v", in.Name, err))
@@ -458,6 +464,7 @@ func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
 			RunsDir: r.runsDir, EnginePort: r.enginePort,
 			ShimBin: r.builder.EnsureShim, GatewayImage: r.builder.EnsureGatewayImage,
+			SandboxRuntime: r.sandboxRuntime,
 		})
 		if err != nil {
 			return err

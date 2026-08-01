@@ -130,6 +130,15 @@ type Config struct {
 	// — and Destroy is total (the whole inner daemon dies). Override for a
 	// mirror or a pinned digest.
 	DinDImage string
+	// SandboxRuntime is the OCI runtime the per-run sandbox is created with
+	// (APOTHECARY_SANDBOX_RUNTIME). Empty (default) = the daemon's default
+	// runtime plus --privileged, which is what a nested dockerd needs under
+	// plain runc — and which makes sandbox root equivalent to host root.
+	// "sysbox-runc" (sysbox installed on the HOST) runs the sandbox
+	// unprivileged in a user namespace instead, so a compromised run reaches
+	// neither the host, nor its docker socket, nor any other run's state.
+	// Verified against the daemon once before first use.
+	SandboxRuntime string
 }
 
 type Adapter struct {
@@ -157,6 +166,12 @@ type Adapter struct {
 	// an EXPOSE of an undeclared sibling port routes to the right service.
 	sibPortsMu sync.Mutex
 	sibPorts   map[ports.EnvID]map[int]string
+
+	// runtimeMu guards runtimeOK, the "cfg.SandboxRuntime is registered with
+	// the daemon" check. Only SUCCESS is cached: a transient docker failure
+	// must not wedge the provisioner for the process's lifetime.
+	runtimeMu sync.Mutex
+	runtimeOK bool
 
 	// cpusMu guards the cached host CPU count (see hostCPUs — the docker
 	// stats CPUPerc denominator, fetched once per adapter lifetime).
@@ -1477,7 +1492,9 @@ func (a *Adapter) Test(ctx context.Context) error {
 	if code != 0 {
 		return fmt.Errorf("docker daemon unreachable: %s", tail(string(stderr), 512))
 	}
-	return nil
+	// An opted-in sandbox runtime is a host capability, so the "Test" button
+	// is the right place to find out it isn't installed — not the first run.
+	return a.ensureRuntime(ctx)
 }
 
 func tail(s string, n int) string {

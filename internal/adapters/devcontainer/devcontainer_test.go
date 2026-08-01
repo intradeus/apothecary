@@ -927,6 +927,82 @@ func TestProvisionCreatesSandbox(t *testing.T) {
 	}
 }
 
+// Opting into a user-namespace runtime (APOTHECARY_SANDBOX_RUNTIME) swaps
+// --privileged for --runtime: the two are mutually exclusive (sysbox rejects
+// privileged containers), and keeping the flag would defeat the point.
+func TestSandboxRuntimeReplacesPrivileged(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: `{"runc":{},"sysbox-runc":{}}`}, // docker info: runtime present
+		{stdout: ""},                             // sandboxIDs: none yet
+		{code: 0},                                // volume create
+		{stdout: "sbx1\n"},                       // docker run
+		{stdout: "29.6.2"},                       // readiness probe
+	}}
+	a := newTestAdapter(t, r)
+	a.cfg.SandboxRuntime = "sysbox-runc"
+	const name = "apothecary-run1"
+	armSandbox(t, a, name)
+	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	run := find(t, r.calls, "docker", "run")
+	joined := strings.Join(run.args, " ")
+	if !strings.Contains(joined, "--runtime sysbox-runc") {
+		t.Errorf("sandbox run missing the configured runtime: %v", run.args)
+	}
+	if strings.Contains(joined, "--privileged") {
+		t.Errorf("an unprivileged runtime must NOT also get --privileged: %v", run.args)
+	}
+	// The labels/mounts/dockerd tail are unchanged by the runtime swap.
+	for _, want := range []string{
+		"--label apothecary.sandbox=true",
+		"-v apothecary-run1-docker:/var/lib/docker",
+		"docker:29-dind dockerd --host=unix://" + a.sockPath(name),
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("sandbox run missing %q: %v", want, run.args)
+		}
+	}
+}
+
+// A runtime the daemon doesn't have fails BEFORE anything is created, naming
+// the deployment variable — not minutes later with docker's bare "Unknown
+// runtime specified".
+func TestSandboxRuntimeMissingFailsEarly(t *testing.T) {
+	r := &scriptRunner{responses: []response{{stdout: `{"runc":{},"nvidia":{}}`}}}
+	a := newTestAdapter(t, r)
+	a.cfg.SandboxRuntime = "sysbox-runc"
+	err := a.ensureSandbox(context.Background(), "apothecary-run1", ports.EnvSpec{}, "")
+	if err == nil {
+		t.Fatal("expected a runtime-not-installed error")
+	}
+	for _, want := range []string{"APOTHECARY_SANDBOX_RUNTIME=sysbox-runc", "nvidia, runc"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+	for _, c := range r.calls {
+		if len(c.args) > 0 && c.args[0] == "run" {
+			t.Errorf("nothing must be created when the runtime is missing: %v", c.args)
+		}
+	}
+}
+
+// The default (unset) deployment is byte-identical to before: privileged
+// sandbox, and no docker info probe at all.
+func TestSandboxRuntimeUnsetKeepsPrivileged(t *testing.T) {
+	_, r := provisionRepoDinD(t, repoUpTail)
+	run := find(t, r.calls, "docker", "run")
+	if !strings.Contains(strings.Join(run.args, " "), "--privileged") {
+		t.Errorf("default sandbox must stay privileged: %v", run.args)
+	}
+	for _, c := range r.calls {
+		if len(c.args) > 0 && c.args[0] == "info" {
+			t.Errorf("no runtime probe when APOTHECARY_SANDBOX_RUNTIME is unset: %v", c.args)
+		}
+	}
+}
+
 // With a gateway the inner daemon is pointed at the project's pull-through
 // cache on the gateway, over plain HTTP inside the run's --internal network.
 func TestCreateSandboxWiresGatewayMirror(t *testing.T) {

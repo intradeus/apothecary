@@ -1,9 +1,12 @@
 package devcontainer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,6 +72,53 @@ func (a *Adapter) sandboxState(ctx context.Context, name string) (string, error)
 // the sandbox joins it as its ONLY NIC so all egress must traverse the gateway.
 func egressNet(name string) string { return "apo-egress-" + name }
 
+// ensureRuntime verifies the configured sandbox runtime is actually
+// registered with the host daemon, once per adapter (successes only — a
+// transient docker failure must stay retryable). Without it a typo'd or
+// uninstalled APOTHECARY_SANDBOX_RUNTIME surfaces minutes into a run as
+// docker's bare "Unknown runtime specified", with nothing pointing at the
+// deployment variable that caused it.
+func (a *Adapter) ensureRuntime(ctx context.Context) error {
+	if a.cfg.SandboxRuntime == "" {
+		return nil
+	}
+	a.runtimeMu.Lock()
+	defer a.runtimeMu.Unlock()
+	if a.runtimeOK {
+		return nil
+	}
+	if err := a.checkRuntime(ctx); err != nil {
+		return err
+	}
+	a.runtimeOK = true
+	return nil
+}
+
+func (a *Adapter) checkRuntime(ctx context.Context) error {
+	rt := a.cfg.SandboxRuntime
+	out, stderr, code, err := a.hostRun(ctx, []string{"info", "--format", "{{json .Runtimes}}"})
+	if err != nil {
+		return fmt.Errorf("checking sandbox runtime %q: docker info: %w", rt, err)
+	}
+	if code != 0 {
+		return fmt.Errorf("checking sandbox runtime %q: docker info: exit %d: %s", rt, code, tail(string(stderr), 256))
+	}
+	var runtimes map[string]json.RawMessage
+	if err := json.Unmarshal(bytes.TrimSpace(out), &runtimes); err != nil {
+		return fmt.Errorf("checking sandbox runtime %q: parsing docker info runtimes: %w", rt, err)
+	}
+	if _, ok := runtimes[rt]; ok {
+		return nil
+	}
+	have := make([]string, 0, len(runtimes))
+	for k := range runtimes {
+		have = append(have, k)
+	}
+	sort.Strings(have)
+	return fmt.Errorf("APOTHECARY_SANDBOX_RUNTIME=%s: the docker daemon has no runtime by that name (it has: %s) — install it on the HOST (sysbox: https://github.com/nestybox/sysbox/blob/master/docs/user-guide/install.md), or unset the variable to fall back to a --privileged sandbox",
+		rt, strings.Join(have, ", "))
+}
+
 // ensureSandbox creates (or restarts) the run's nested-daemon container and
 // blocks until the inner daemon answers on its unix socket. All docker calls
 // here target the HOST daemon (hostRun), never the inner one. When gwIP is set
@@ -88,6 +138,10 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.Env
 		if len(sock) > 104 { // unix sun_path is 108 incl. NUL; keep margin
 			return fmt.Errorf("devcontainer DinD: inner socket path %q is too long (%d bytes; unix limit ~108) — shorten RunsDir", sock, len(sock))
 		}
+	}
+
+	if err := a.ensureRuntime(ctx); err != nil {
+		return err
 	}
 
 	ids, err := a.sandboxIDs(ctx, name)
@@ -137,11 +191,24 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 		return fmt.Errorf("docker volume create %s: exit %d: %s", a.sandboxVolume(name), code, tail(string(stderr), 512))
 	}
 
-	args := []string{"run", "-d", "--privileged", "--name", name,
-		"--label", managedLabel + "=true",
-		"--label", label(name),
-		"--label", sandboxLabel + "=true",
+	// A nested dockerd has to mount overlayfs, manage cgroups and program
+	// netfilter. Under the default runtime that means --privileged, which
+	// hands the sandbox the host kernel: all devices, unmasked /proc + /sys,
+	// no seccomp — sandbox root IS host root. A user-namespace runtime
+	// (sysbox-runc) provides the same abilities inside a userns, so the flag
+	// comes off and the two are mutually exclusive — sysbox rejects
+	// --privileged outright.
+	args := []string{"run", "-d", "--name", name}
+	if a.cfg.SandboxRuntime != "" {
+		args = append(args, "--runtime", a.cfg.SandboxRuntime)
+	} else {
+		args = append(args, "--privileged")
 	}
+	args = append(args,
+		"--label", managedLabel+"=true",
+		"--label", label(name),
+		"--label", sandboxLabel+"=true",
+	)
 	if spec.Project != "" {
 		args = append(args, "--label", projectLabel+"="+spec.Project)
 	}

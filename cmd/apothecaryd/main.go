@@ -194,7 +194,7 @@ func cmdServe(args []string) error {
 
 	// Egress filtering now lives in the per-project gateway the devcontainer
 	// provisioner brings up (internal/egressgw) — no engine-side proxy.
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort)
+	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
 	defer resolver.Close()
 
 	ecfg := engine.Config{

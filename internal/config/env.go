@@ -31,6 +31,17 @@ type Boot struct {
 	// of only listing them for click-to-expose. APOTHECARY_PORT_AUTOEXPOSE
 	// ("on" enables); default off.
 	PortAutoExpose bool
+	// SandboxRuntime is the OCI runtime each run's Docker-in-Docker sandbox is
+	// created with. APOTHECARY_SANDBOX_RUNTIME; default "" = the daemon's
+	// default runtime, which needs `--privileged` to host a nested dockerd —
+	// so sandbox root is host root. Set it to "sysbox-runc" (sysbox installed
+	// on the HOST) and the sandbox runs unprivileged in a user namespace
+	// instead, containing a compromised run to its own workspace.
+	//
+	// Opt-in, not auto-detected: which isolation a run got must be a property
+	// of the deployment you can read off one line, not of whatever happened to
+	// be installed on the machine.
+	SandboxRuntime string
 }
 
 // DefaultEgressProxyPort is the proxy's loopback port when unspecified.
@@ -76,6 +87,7 @@ func FromEnv() (*Boot, error) {
 		}
 	}
 	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"
+	b.SandboxRuntime = strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_RUNTIME"))
 	if b.PostgresDSN == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")
 	}

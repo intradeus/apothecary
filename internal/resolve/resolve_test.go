@@ -82,7 +82,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(svc, reg, "", 8080), svc, p, made, closed
+	return New(svc, reg, "", 8080, ""), svc, p, made, closed
 }
 
 // altHarnessKind is a second harness kind for per-step-harness tests: it
@@ -164,7 +164,7 @@ func TestResolveMultiHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := New(svc, reg, "", 8080).Resolve(ctx, p.ID)
+	res, err := New(svc, reg, "", 8080, "").Resolve(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

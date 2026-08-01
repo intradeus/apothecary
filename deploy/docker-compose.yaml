@@ -39,6 +39,12 @@ services:
       APOTHECARY_POSTGRES_DSN: postgres://apothecary:${APOTHECARY_PG_PASSWORD}@127.0.0.1:15432/apothecary
       APOTHECARY_MASTER_KEY: ${APOTHECARY_MASTER_KEY:?run `apothecaryd keygen` and set APOTHECARY_MASTER_KEY in deploy/.env}
       APOTHECARY_LISTEN: 127.0.0.1:8080
+      # Opt-in hardening: with sysbox installed on the HOST, set this to
+      # sysbox-runc in deploy/.env and each run's DinD sandbox drops
+      # --privileged for a user namespace — a compromised run then can't reach
+      # the host, its docker socket, or any other run. Empty = today's
+      # privileged sandbox. Linux-only (see deploy/env.example).
+      APOTHECARY_SANDBOX_RUNTIME: ${APOTHECARY_SANDBOX_RUNTIME:-}
     volumes:
       # Workspace image builds (§8) go through the host's docker daemon —
       # the same one Coder's docker provider uses. This makes the engine

@@ -32,6 +32,9 @@ func (Devcontainer) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		GatewayImage:    deps.GatewayImage,
 		GatewayOff:      cfg.Str("firewall", "on") == "off",
 		DinDImage:       cfg.Str("dind_image", ""), // "" ⇒ adapter default
+		// Deployment-wide, not a form field: it names a runtime the HOST
+		// daemon must have installed (APOTHECARY_SANDBOX_RUNTIME).
+		SandboxRuntime: deps.SandboxRuntime,
 	}), nil
 }
 

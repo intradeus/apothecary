@@ -24,12 +24,12 @@ exactly two touchpoints — plan approval and final review.
 
 - A Linux host with **Docker** (the reference deployment uses host
   networking and the docker socket). The devcontainer provisioner runs each
-  run's workspace inside its own **Docker-in-Docker sandbox** (a `--privileged`
+  run's workspace inside its own **Docker-in-Docker sandbox** (a
   `docker:dind` container), so repo compose files run verbatim with no
-  cross-run collisions and teardown is total; `--privileged` is required
-  (rootless/sysbox is a future option). Its `RunsDir` must be a **persistent
-  path, not under `/tmp`** (dind masks `/tmp`) — the default
-  `/var/lib/apothecary/runs` is fine.
+  cross-run collisions and teardown is total. By default that sandbox is
+  `--privileged` — see [Unprivileged sandboxes](#unprivileged-sandboxes-optional)
+  to drop that. Its `RunsDir` must be a **persistent path, not under `/tmp`**
+  (dind masks `/tmp`) — the default `/var/lib/apothecary/runs` is fine.
 - A **[Coder](https://coder.com) deployment** the host can reach (a local
   `docker compose` Coder works fine) and a **long-lived API token** for it
   (see [Configure](#configure-all-in-the-ui) — a `coder login` session token
@@ -269,6 +269,40 @@ and secrets injected as files at bootstrap — never through provisioner
 parameters. Integration secrets are secretbox-encrypted at rest under
 `APOTHECARY_MASTER_KEY` and never leave the engine unmasked. Residual risks
 and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
+
+### Unprivileged sandboxes (optional)
+
+By default the per-run sandbox is `--privileged`, because a nested dockerd
+needs to mount overlayfs, manage cgroups and program netfilter. That means
+**root in a sandbox is root on the host** — so a hostile repo (a
+`devcontainer.json` with `"runArgs": ["--privileged"]`, or a compose service
+with `privileged: true`, both of which run verbatim by design) or an escape
+from the workspace container reaches every other run's checkout, the host
+docker socket, and `APOTHECARY_MASTER_KEY` — i.e. every integration secret
+you have configured.
+
+Install [sysbox](https://github.com/nestybox/sysbox/blob/master/docs/user-guide/install.md)
+on the host and set one variable in `deploy/.env`:
+
+```sh
+APOTHECARY_SANDBOX_RUNTIME=sysbox-runc
+```
+
+The sandbox is then created with `--runtime=sysbox-runc` and **no**
+`--privileged`: root inside it is an unprivileged uid on the host, `/proc` and
+`/sys` are virtualized, and the only bind mount is the run's own folder. A
+compromised run is confined to what that run already legitimately holds. Boot
+and the provisioner's **Test** button fail with a precise error if the daemon
+has no such runtime, so a typo can't silently degrade to privileged.
+
+Caveats: **Linux only** (sysbox installs systemd units on the host, so it can't
+go into Docker Desktop's VM on macOS/Windows — leave the variable unset there;
+Docker Desktop Business subscribers get the same technology via Enhanced
+Container Isolation instead). Official packages cover Ubuntu/Debian, with
+Fedora/Rocky/Alma/CentOS/Amazon Linux listed as compatible and other distros
+building from source. Kernel ≥5.12. Sysbox's own guidance is to prefer a
+purpose-built image over `docker:dind`, so verify your `dind_image` under
+sysbox before relying on it.
 
 **One deliberate carve-out:** the gateway also hosts the project's
 pull-through Docker Hub cache on `:5000`, and each run's inner dockerd pulls

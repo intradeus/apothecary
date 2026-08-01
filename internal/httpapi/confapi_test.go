@@ -65,7 +65,7 @@ func newConfEnv(t *testing.T) *confEnv {
 	if _, err := conf.SaveFlow(t.Context(), "v1", v1FlowDoc, nil); err != nil {
 		t.Fatal(err)
 	}
-	resolver := resolve.New(conf, reg, "", 8080)
+	resolver := resolve.New(conf, reg, "", 8080, "")
 	t.Cleanup(resolver.Close)
 
 	store := event.NewMemStore()

@@ -140,6 +140,9 @@ type ProvisionerDeps struct {
 	// gateway image (wsimage.EnsureGatewayImage); the devcontainer provisioner
 	// runs one gateway container per project to filter all workspace egress.
 	GatewayImage func(ctx context.Context) (string, error)
+	// SandboxRuntime is the OCI runtime for the per-run DinD sandbox
+	// (APOTHECARY_SANDBOX_RUNTIME). Empty ⇒ the daemon default + --privileged.
+	SandboxRuntime string
 }
 
 type ProvisionerKind interface {
