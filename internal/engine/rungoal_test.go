@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/artifacts"
 	"apothecary/internal/ports"
 )
 
@@ -58,23 +57,26 @@ func TestNoRunGoalOmitsDirectionSection(t *testing.T) {
 	}
 }
 
-// A TICKET's attachments reach EVERY run of that ticket — the bug being fixed
-// (the artifacts table binds one run_id, so they used to reach only the first).
-func TestTicketArtifactsReachEveryRun(t *testing.T) {
+// A TICKET's attachments reach EVERY run of that ticket — the bug being
+// fixed (the old table bound one run_id, so they used to reach only the
+// first run; ownership is structural now).
+func TestTicketAttachmentsReachEveryRun(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.e.SetArtifacts(&fakeArtifacts{
-		metas: []artifacts.Meta{{
-			ID: "tttt1111cccc", Scope: artifacts.ScopeTicketGoal,
-			Filename: "design.md", Mime: "text/markdown",
-		}},
-		blobs: map[string][]byte{"tttt1111cccc": []byte("# Design")},
-	})
-	wantPath := ".apothecary/artifacts/goal/tttt1111/design.md"
+	att, snaps, _ := newFiles(t)
+	h.e.SetFiles(att, snaps)
+	up, err := att.Save(context.Background(), "design.md", "text/markdown", strings.NewReader("# Design"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := att.ClaimForTicket(context.Background(), []string{up.ID}, "tk-shared"); err != nil {
+		t.Fatal(err)
+	}
+	wantPath := ".apothecary/attachments/goal/" + up.ID[:8] + "/design.md"
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		runID, err := h.e.CreateRun(context.Background(), Ticket{
 			TicketID: "tk-shared", Title: "T", Goal: "g",
-			TicketArtifactIDs: []string{"tttt1111cccc"},
+			TicketAttachmentIDs: []string{up.ID},
 		}, "loop", testProject)
 		if err != nil {
 			t.Fatal(err)

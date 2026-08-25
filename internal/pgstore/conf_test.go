@@ -44,7 +44,6 @@ func TestProjectDefaultFlowBuiltin(t *testing.T) {
 	}
 }
 
-
 // openConf reuses the gated open() and clears the config-plane tables
 // (projects before integrations: FK).
 func openConf(t *testing.T) *Store {

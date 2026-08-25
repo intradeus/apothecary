@@ -12,12 +12,11 @@ import (
 // ticket's BaseBranch. Flow is deliberately NOT here — it's a per-run choice
 // made when a run is started.
 type Ticket struct {
-	ID          string   `json:"id"`
-	ProjectID   string   `json:"project_id"`
-	Title       string   `json:"title"`
-	Goal        string   `json:"goal"`
-	BaseBranch  string   `json:"base_branch"`  // "" = generated per run from the title
-	ArtifactIDs []string `json:"artifact_ids"` // goal attachments, delivered into each run's workspace
+	ID         string `json:"id"`
+	ProjectID  string `json:"project_id"`
+	Title      string `json:"title"`
+	Goal       string `json:"goal"`
+	BaseBranch string `json:"base_branch"` // "" = generated per run from the title
 	// Source* record where an imported ticket came from (empty for one typed
 	// in by hand). They are provenance, not a live link: the copy is taken
 	// once and edits here never travel back to the tracker, so a ticket keeps
@@ -96,8 +95,5 @@ func (s *Service) validateTicket(ctx context.Context, t *Ticket) error {
 	}
 	t.Title = strings.TrimSpace(t.Title)
 	t.BaseBranch = strings.TrimSpace(t.BaseBranch)
-	if t.ArtifactIDs == nil {
-		t.ArtifactIDs = []string{}
-	}
 	return nil
 }

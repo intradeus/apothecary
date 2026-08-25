@@ -39,7 +39,6 @@ func builtinFlowRow(name string) (confstore.FlowRow, bool) {
 	return confstore.FlowRow{Name: name, YAML: y, Hash: builtin.Flow(name).Hash}, true
 }
 
-
 // Config-plane routes (DESIGN2 §10). Secrets are write-only: requests carry
 // plaintext values, responses only masks (§3).
 
@@ -355,8 +354,6 @@ type agentBody struct {
 	Outputs     []agentspec.OutputDecl `json:"outputs"`
 }
 
-
-
 // listActions serves the compiled-in action registry: the slugs an `action`
 // stage may name, with the signature the editor renders binding rows from.
 func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
@@ -368,13 +365,6 @@ func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, signalspec.Registry())
 }
-
-
-
-
-
-
-
 
 // --- flows ------------------------------------------------------------------
 
@@ -509,7 +499,6 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
-
 
 func (s *Server) listFlowVersions(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Conf.FlowVersions(r.Context(), r.PathValue("name"))

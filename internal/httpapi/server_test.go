@@ -732,6 +732,7 @@ func TestChannelsCRUD(t *testing.T) {
 func TestLogsEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	x := newEnv(t, engine.Config{RunsDir: dir})
+	newFilesFor(t, x, 1<<20, []string{"text/*"}) // logs serve from snapshots (DESIGN-FILES §5.4)
 	x.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			return ports.ExecResult{ExitCode: 0, Output: "=== RUN TestAll\n--- PASS: all 42 tests"}, nil
@@ -755,9 +756,9 @@ func TestLogsEndpoint(t *testing.T) {
 	}
 }
 
-// TestPingArtifact serves a gate's payload artifact from the live
-// workspace (DESIGN3 §3.1): 200 with content for artifact payloads, 409
-// for URL payloads, 404 for unknown pings.
+// TestPingArtifact serves a gate's reviewed document from its raise-time
+// snapshot: 200 with content for file payloads, 404 for unknown pings. The
+// content comes from the record, not the live workspace (DESIGN-FILES §5.2).
 func TestPingArtifact(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
 version: 3
@@ -776,6 +777,7 @@ stages:
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
       on_reject: { to: plan, max: 2 } }
 `)
+	newFilesFor(t, x, 1<<20, []string{"text/*"})
 	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		if err := x.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# Plan\n\n## Steps\ndo things\n"), 0o644); err != nil {
 			return ports.AgentResult{}, err
@@ -801,28 +803,35 @@ stages:
 		t.Fatal("no gate ping appeared")
 	}
 
-	resp, data := x.do(t, "GET", "/api/pings/"+pid+"/artifact", nil, nil)
+	// The files list is the review workbench's ONE fetch: primary first,
+	// each captured ref carrying its snapshot id.
+	resp, data := x.do(t, "GET", "/api/pings/"+pid+"/files", nil, nil)
 	if resp.StatusCode != 200 {
-		t.Fatalf("artifact = %d: %s", resp.StatusCode, data)
+		t.Fatalf("files list = %d: %s", resp.StatusCode, data)
 	}
-	var art struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+	var files struct {
+		Files []struct {
+			Path       string `json:"path"`
+			SnapshotID string `json:"snapshot_id"`
+			Captured   bool   `json:"captured"`
+		} `json:"files"`
+		Link string `json:"link"`
 	}
-	_ = json.Unmarshal(data, &art)
-	if art.Path != "artifacts/plan.md" || !strings.Contains(art.Content, "## Steps") {
-		t.Errorf("artifact = %+v", art)
+	_ = json.Unmarshal(data, &files)
+	if len(files.Files) != 1 || files.Files[0].Path != "artifacts/plan.md" ||
+		!files.Files[0].Captured || files.Files[0].SnapshotID == "" || files.Link != "" {
+		t.Fatalf("files = %s", data)
 	}
 
-	resp, _ = x.do(t, "GET", "/api/pings/nope/artifact", nil, nil)
+	// The reviewed document's content comes from its raise-time snapshot.
+	resp, body := x.do(t, "GET", "/api/snapshots/"+files.Files[0].SnapshotID, nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "## Steps") {
+		t.Errorf("snapshot bytes = %d %q", resp.StatusCode, body)
+	}
+
+	resp, _ = x.do(t, "GET", "/api/pings/nope/files", nil, nil)
 	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("unknown ping artifact = %d, want 404", resp.StatusCode)
-	}
-
-	// URL payloads 409 — simulate by mutating the ping's payload via a new
-	// gate is heavy; instead verify through the engine sentinel directly.
-	if _, _, err := x.e.PingArtifact(context.Background(), pid); err != nil {
-		t.Errorf("engine artifact err = %v", err)
+		t.Errorf("unknown ping files = %d, want 404", resp.StatusCode)
 	}
 }
 

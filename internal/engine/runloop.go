@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -139,7 +137,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		if _, ok := e.pings[op.PingID]; !ok {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
-				Context: op.Context, PayloadRef: op.PayloadRef, PayloadRefs: op.PayloadRefs, StageID: op.StageID,
+				Context: op.Context, Files: op.Files, Link: op.Link, StageID: op.StageID,
 				Options:  op.Options,
 				RaisedAt: e.clock(),
 				gate:     gatePingType(op.Type), done: make(chan struct{}),
@@ -473,7 +471,6 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if err != nil {
 		return err // cancelled: caller inspects cause
 	}
-	x.writeStageLog(st.ID, iter, res.r.Output)
 	x.publishLog(st.ID, iter, res.r.Output)
 	// Capture whatever this attempt produced BEFORE routing: a failed
 	// attempt's partial outputs are the interesting ones (M27).
@@ -607,14 +604,14 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			x.e.mu.Unlock()
 			if err := x.append(&event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
 				Question: req.p.Question, Context: req.p.Context,
-				PayloadRef: req.p.PayloadRef, PayloadRefs: req.p.PayloadRefs, StageID: st.ID, Options: req.p.Options}); err != nil {
+				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Options: req.p.Options}); err != nil {
 				close(req.ack)
 				return agentRes{}, false, err
 			}
 			// Snapshot the attached files as they are RIGHT NOW: the agent
 			// resumes the moment this ping is answered, and the record must
 			// keep what the human was actually shown.
-			x.publishPingPayload(req.p, st.ID)
+			x.publishPingFiles(req.p, st.ID)
 			x.rs.unwanted++
 			x.e.notify(x.bg, ports.Notification{
 				RunID: x.rs.runID, PingID: req.p.ID, Type: req.p.Type,
@@ -676,7 +673,8 @@ func (x *exec) processAnswer(ar answerReq) (bool, error) {
 		// in answer and the optional note in feedback.
 		answer, feedback = "text", ar.ans.Answer
 	}
-	if err := x.append(&event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback}); err != nil {
+	if err := x.append(&event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback,
+		AttachmentIDs: ar.ans.AttachmentIDs}); err != nil {
 		// Roll the in-memory claim back so a retried answer can succeed
 		// after recovery (the event log has no ping_answered).
 		x.e.mu.Lock()
@@ -767,7 +765,6 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		}
 		return x.fail("infrastructure error: " + err.Error())
 	}
-	x.writeStageLog(st.ID, rs.iters[st.ID], res.Output)
 	x.publishLog(st.ID, rs.iters[st.ID], res.Output)
 	x.publishOutputs(st, rs.iters[st.ID], st.Outputs)
 	if res.ExitCode != 0 {
@@ -870,30 +867,37 @@ func (x *exec) stageGate(st *flow.Stage) error {
 			return err
 		}
 		rs.ph = phIn
-		// The gate's input: an artifact to review, or a sentinel the engine
-		// resolves to a link. "payload" is the runtime/event name for it.
-		payloadRef := ""
+		// The gate's input: an artifact to review (a File) or a sentinel the
+		// engine resolves to a Link. TYPED HERE, at sentinel resolution — this
+		// is the one place that knows which is which, so nothing downstream
+		// ever sniffs a string for "http" (DESIGN-FILES §4).
+		var files []string
+		var link string
 		if len(st.Inputs) > 0 {
-			payloadRef = x.resolveGateInput(st.Inputs[0].Value)
+			if v := st.Inputs[0].Value; flow.IsSentinel(v) {
+				link = x.resolveGateInput(v)
+			} else {
+				files = []string{v}
+			}
 		}
 		p = &Ping{
 			ID: x.e.newID(), RunID: rs.runID, Type: PingGate,
-			Question:   gateQuestion(st, rs.view.TicketTitle),
-			PayloadRef: payloadRef, StageID: st.ID, RaisedAt: x.e.clock(),
+			Question: gateQuestion(st, rs.view.TicketTitle),
+			Files:    files, Link: link, StageID: st.ID, RaisedAt: x.e.clock(),
 			gate: true, done: make(chan struct{}),
 		}
 		x.e.mu.Lock()
 		x.e.pings[p.ID] = p
 		x.e.mu.Unlock()
-		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, PayloadRef: p.PayloadRef, StageID: st.ID}); err != nil {
+		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Files: p.Files, Link: p.Link, StageID: st.ID}); err != nil {
 			return err
 		}
 		// The plan a human approves is the single most important document in
 		// the run — snapshot it as reviewed, not as the workspace has it later.
-		x.publishPingPayload(p, st.ID)
+		x.publishPingFiles(p, st.ID)
 		x.e.notify(x.bg, ports.Notification{
 			RunID: rs.runID, PingID: p.ID, Type: p.Type,
-			Title: p.Question, Body: p.PayloadRef,
+			Title: p.Question, Body: p.Primary(),
 		})
 	}
 
@@ -1384,7 +1388,7 @@ func (x *exec) ensureEnv() error {
 			x.autoExpose(rs.envID)
 			// Re-materialize goal + answer artifacts into the recovered
 			// workspace (idempotent; the associations are durable).
-			x.deliverRunArtifacts()
+			x.deliverRunAttachments()
 			return nil
 		}
 		x.e.log.Warn("environment not running on recovery; re-provisioning", "run", rs.runID, "env", rs.envID, "status", status)
@@ -1450,7 +1454,7 @@ func (x *exec) ensureEnv() error {
 	}
 	// After bootstrap (repo cloned, .apothecary/ git-excluded): deliver the
 	// human's goal + answer artifacts into the workspace for the agent.
-	x.deliverRunArtifacts()
+	x.deliverRunAttachments()
 	links, err := x.res.Envp.Links(x.ctx, id)
 	if err != nil {
 		x.e.log.Warn("links unavailable", "run", rs.runID, "err", err)
@@ -1591,24 +1595,4 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
-}
-
-// writeStageLog persists a stage attempt's output under runs_dir
-// (<run>/<stage>-<iter>.log, §12/§13). Best-effort: failures are logged,
-// never fail the run. No-op when RunsDir is unset.
-func (x *exec) writeStageLog(stageID string, iter int, output string) {
-	if x.e.cfg.RunsDir == "" {
-		return
-	}
-	dir := filepath.Join(x.e.cfg.RunsDir, x.rs.runID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		x.e.log.Warn("stage log dir", "run", x.rs.runID, "err", err)
-		return
-	}
-	path := filepath.Join(dir, fmt.Sprintf("%s-%d.log", stageID, iter))
-	// The log outlives the workspace and is served to humans, so it gets the
-	// same scrub as the event stream (M21).
-	if err := os.WriteFile(path, []byte(x.redact.scrub(output)), 0o644); err != nil {
-		x.e.log.Warn("stage log write", "run", x.rs.runID, "err", err)
-	}
 }

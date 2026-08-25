@@ -66,10 +66,10 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), in.Value, content)
 	}
 
-	if goals := x.goalArtifacts(); len(goals) > 0 {
+	if goals := x.goalAttachments(); len(goals) > 0 {
 		b.WriteString("# ATTACHED FILES\nThe human attached these files to the task; read them with your tools:\n")
-		for _, m := range goals {
-			fmt.Fprintf(&b, "- %s (%s, %s)\n", x.artifactPath(m), m.Filename, m.Mime)
+		for _, a := range goals {
+			fmt.Fprintf(&b, "- %s (%s, %s)\n", attachmentPath(a), a.Filename, a.Mime)
 		}
 	}
 

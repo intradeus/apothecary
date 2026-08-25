@@ -19,14 +19,20 @@ type Boot struct {
 	RunsDir      string // APOTHECARY_RUNS_DIR, default /var/lib/apothecary/runs
 	CPUIDir      string // APOTHECARY_CPUI_DIR, default "" (API only)
 	OtelEndpoint string // APOTHECARY_OTEL_ENDPOINT, default "" (disabled)
-	// ArtifactMaxBytes caps each uploaded artifact (documents/images
-	// attached to a goal or ping answer). APOTHECARY_ARTIFACT_MAX_BYTES,
-	// default 25 MiB.
-	ArtifactMaxBytes int64
-	// ArtifactMimeAllow is the MIME allowlist for uploads (exact types or
-	// "text/*" wildcards). APOTHECARY_ARTIFACT_MIME_ALLOW (comma-separated),
-	// default DefaultArtifactMimeAllow.
-	ArtifactMimeAllow []string
+	// UploadMaxBytes caps each uploaded attachment (documents/images given to
+	// a ticket, run goal or ping answer). APOTHECARY_UPLOAD_MAX_BYTES,
+	// default 25 MiB. (APOTHECARY_ARTIFACT_MAX_BYTES is read as a legacy
+	// alias.)
+	UploadMaxBytes int64
+	// UploadMimeAllow is the MIME allowlist for uploads (exact types or
+	// "text/*" wildcards). APOTHECARY_UPLOAD_MIME_ALLOW (comma-separated),
+	// default DefaultUploadMimeAllow. (APOTHECARY_ARTIFACT_MIME_ALLOW is a
+	// legacy alias.)
+	UploadMimeAllow []string
+	// SnapshotMaxBytes is the tail-truncation cap for engine captures (stage
+	// outputs, logs, ping files). APOTHECARY_SNAPSHOT_MAX_BYTES; defaults to
+	// UploadMaxBytes.
+	SnapshotMaxBytes int64
 	// PortAutoExpose auto-exposes runtime-discovered listening ports instead
 	// of only listing them for click-to-expose. APOTHECARY_PORT_AUTOEXPOSE
 	// ("on" enables); default off.
@@ -47,12 +53,12 @@ type Boot struct {
 // DefaultEgressProxyPort is the proxy's loopback port when unspecified.
 const DefaultEgressProxyPort = 8079
 
-// DefaultArtifactMaxBytes caps an uploaded artifact when unset (25 MiB).
-const DefaultArtifactMaxBytes = 25 << 20
+// DefaultUploadMaxBytes caps an uploaded attachment when unset (25 MiB).
+const DefaultUploadMaxBytes = 25 << 20
 
-// DefaultArtifactMimeAllow is the upload MIME allowlist: text (covers
+// DefaultUploadMimeAllow is the upload MIME allowlist: text (covers
 // markdown/csv/plain via the wildcard), common images, PDF, JSON, MS Office.
-var DefaultArtifactMimeAllow = []string{
+var DefaultUploadMimeAllow = []string{
 	"text/*",
 	"image/png", "image/jpeg", "image/gif", "image/webp",
 	"application/pdf", "application/json",
@@ -74,16 +80,26 @@ func FromEnv() (*Boot, error) {
 		CPUIDir:      os.Getenv("APOTHECARY_CPUI_DIR"),
 		OtelEndpoint: os.Getenv("APOTHECARY_OTEL_ENDPOINT"),
 	}
-	b.ArtifactMaxBytes = DefaultArtifactMaxBytes
-	if raw := os.Getenv("APOTHECARY_ARTIFACT_MAX_BYTES"); raw != "" {
-		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
-			b.ArtifactMaxBytes = n
+	b.UploadMaxBytes = DefaultUploadMaxBytes
+	for _, key := range []string{"APOTHECARY_ARTIFACT_MAX_BYTES", "APOTHECARY_UPLOAD_MAX_BYTES"} {
+		if raw := os.Getenv(key); raw != "" {
+			if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
+				b.UploadMaxBytes = n
+			}
 		}
 	}
-	b.ArtifactMimeAllow = DefaultArtifactMimeAllow
-	if raw := os.Getenv("APOTHECARY_ARTIFACT_MIME_ALLOW"); raw != "" {
-		if list := splitComma(raw); len(list) > 0 {
-			b.ArtifactMimeAllow = list
+	b.UploadMimeAllow = DefaultUploadMimeAllow
+	for _, key := range []string{"APOTHECARY_ARTIFACT_MIME_ALLOW", "APOTHECARY_UPLOAD_MIME_ALLOW"} {
+		if raw := os.Getenv(key); raw != "" {
+			if list := splitComma(raw); len(list) > 0 {
+				b.UploadMimeAllow = list
+			}
+		}
+	}
+	b.SnapshotMaxBytes = b.UploadMaxBytes
+	if raw := os.Getenv("APOTHECARY_SNAPSHOT_MAX_BYTES"); raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
+			b.SnapshotMaxBytes = n
 		}
 	}
 	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"

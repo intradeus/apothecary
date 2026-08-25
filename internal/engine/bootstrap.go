@@ -192,7 +192,7 @@ func agentConfigScript(agentsMDPath string) string {
 	// artifacts (goal + ping answers) delivered by the engine. Both are
 	// git-excluded so `git add -A` never stages them; kept SEPARATE so a
 	// builder that cleans artifacts/ can't delete the human's inputs.
-	script := "mkdir -p artifacts .apothecary/artifacts" +
+	script := "mkdir -p artifacts .apothecary/attachments" +
 		" && { grep -qx artifacts/ .git/info/exclude 2>/dev/null || echo artifacts/ >> .git/info/exclude; }" +
 		" && { grep -qx .apothecary/ .git/info/exclude 2>/dev/null || echo .apothecary/ >> .git/info/exclude; }"
 	if agentsMDPath != "AGENTS.md" {

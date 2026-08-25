@@ -376,8 +376,6 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 }
 
-
-
 // TestFlowValidateReportsErrorsHonestly: since v3 a flow carries its agents,
 // so a binding that violates a contract is a parse ERROR — ok:false with the
 // reason in `errors`. Advisory findings stay in `warnings` with ok:true.

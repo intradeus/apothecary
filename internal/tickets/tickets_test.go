@@ -5,53 +5,15 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/artifacts"
 	"apothecary/internal/confstore"
+	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
 	"apothecary/internal/secrets"
 )
 
 const testProject = "prj-1"
-
-// --- test fixtures ----------------------------------------------------------
-
-// artDB is an in-memory artifacts.DB (only what the factory exercises).
-type artDB struct{ rows map[string]artifacts.Meta }
-
-func (d *artDB) InsertArtifact(_ context.Context, m artifacts.Meta) error {
-	d.rows[m.ID] = m
-	return nil
-}
-func (d *artDB) AssociateArtifacts(_ context.Context, ids []string, runID, pingID, scope string) error {
-	for _, id := range ids {
-		if m, ok := d.rows[id]; ok && m.Scope == artifacts.ScopeOrphan {
-			m.RunID, m.PingID, m.Scope = runID, pingID, scope
-			d.rows[id] = m
-		}
-	}
-	return nil
-}
-func (d *artDB) GetArtifact(_ context.Context, id string) (artifacts.Meta, error) {
-	if m, ok := d.rows[id]; ok {
-		return m, nil
-	}
-	return artifacts.Meta{}, artifacts.ErrNotFound
-}
-func (d *artDB) ArtifactsForStage(context.Context, string) ([]artifacts.Meta, error) {
-	return nil, nil
-}
-func (d *artDB) ArtifactsForRun(context.Context, string) ([]artifacts.Meta, error) { return nil, nil }
-func (d *artDB) ArtifactsForPing(context.Context, string, string) ([]artifacts.Meta, error) {
-	return nil, nil
-}
-func (d *artDB) DeleteArtifactsForRun(context.Context, string) ([]string, error) { return nil, nil }
-func (d *artDB) OrphanArtifactIDsBefore(context.Context, time.Time) ([]string, error) {
-	return nil, nil
-}
-func (d *artDB) DeleteArtifacts(context.Context, []string) error { return nil }
 
 // stubSources serves one ticket source under any id.
 type stubSources struct {
@@ -67,7 +29,7 @@ func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 	return s.kind, s.err
 }
 
-func newFactory(t *testing.T, src ports.TicketSource) (*Factory, *artDB) {
+func newFactory(t *testing.T, src ports.TicketSource) (*Factory, *filestore.Attachments) {
 	t.Helper()
 	mem := confstore.NewMem()
 	if err := mem.UpsertProject(context.Background(), confstore.Project{ID: testProject, Name: "p"}); err != nil {
@@ -77,15 +39,16 @@ func newFactory(t *testing.T, src ports.TicketSource) (*Factory, *artDB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := &artDB{rows: map[string]artifacts.Meta{}}
+	att := filestore.NewAttachments(filestore.NewMem(), filestore.NewBlobs(t.TempDir()),
+		1<<20, []string{"text/*", "image/png"})
 	f := &Factory{
-		Conf:      confstore.New(mem, key),
-		Artifacts: artifacts.New(db, t.TempDir(), 1<<20, []string{"text/*", "image/png"}),
+		Conf:        confstore.New(mem, key),
+		Attachments: att,
 	}
 	if src != nil {
 		f.Sources = stubSources{src: src, kind: "faketracker"}
 	}
-	return f, db
+	return f, att
 }
 
 func devSource() *fake.TicketSource {
@@ -102,16 +65,25 @@ func devSource() *fake.TicketSource {
 	}
 }
 
+func ticketAttachments(t *testing.T, att *filestore.Attachments, ticketID string) []filestore.Attachment {
+	t.Helper()
+	out, err := att.ForTicket(context.Background(), ticketID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // --- tests ------------------------------------------------------------------
 
 // The import copies title, body, provenance AND the attachment bytes, and the
-// resulting ticket is claimed for the ticket (shared by every run) exactly
-// like a hand-attached upload.
+// resulting files are claimed by the ticket (shared by every run) exactly
+// like hand-attached uploads.
 func TestCreateFromSourceCopiesEverything(t *testing.T) {
-	f, db := newFactory(t, devSource())
+	f, att := newFactory(t, devSource())
 
 	tk, warnings, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
-		confstore.Ticket{ProjectID: testProject})
+		confstore.Ticket{ProjectID: testProject}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,15 +97,16 @@ func TestCreateFromSourceCopiesEverything(t *testing.T) {
 		tk.SourceURL != "https://tracker.test/browse/PROJ-7" {
 		t.Errorf("provenance = %+v", tk)
 	}
-	if len(tk.ArtifactIDs) != 1 {
-		t.Fatalf("artifact_ids = %v, want the imported attachment", tk.ArtifactIDs)
+	atts := ticketAttachments(t, att, tk.ID)
+	if len(atts) != 1 || atts[0].Filename != "spec.md" || atts[0].RunID != "" {
+		t.Fatalf("attachments = %+v, want spec.md claimed for the ticket", atts)
 	}
-	got := db.rows[tk.ArtifactIDs[0]]
-	if got.Filename != "spec.md" || got.Scope != artifacts.ScopeTicketGoal || got.RunID != "" {
-		t.Errorf("imported artifact = %+v, want spec.md claimed for the ticket", got)
+	if atts[0].Size != 5 {
+		t.Errorf("imported %d bytes, want the attachment's 5", atts[0].Size)
 	}
-	if got.Size != 5 {
-		t.Errorf("imported %d bytes, want the attachment's 5", got.Size)
+	data, _, err := att.Bytes(context.Background(), atts[0].ID)
+	if err != nil || string(data) != "hello" {
+		t.Errorf("imported bytes = %q (%v)", data, err)
 	}
 }
 
@@ -145,7 +118,7 @@ func TestCreateFromSourceRespectsOverrides(t *testing.T) {
 	tk, _, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7", confstore.Ticket{
 		ProjectID: testProject, Title: "My own title", Goal: "my own goal",
 		BaseBranch: "feat/proj-7-farewell",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,12 +135,12 @@ func TestCreateFromSourceRespectsOverrides(t *testing.T) {
 func TestCreateFromSourceRefusesDuplicate(t *testing.T) {
 	f, _ := newFactory(t, devSource())
 	first, _, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
-		confstore.Ticket{ProjectID: testProject})
+		confstore.Ticket{ProjectID: testProject}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
-		confstore.Ticket{ProjectID: testProject})
+		confstore.Ticket{ProjectID: testProject}, nil)
 	if !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("second import err = %v, want ErrDuplicate", err)
 	}
@@ -176,22 +149,22 @@ func TestCreateFromSourceRefusesDuplicate(t *testing.T) {
 	}
 }
 
-// One unusable attachment must not sink the whole import: it is skipped, named
-// in the warnings, and everything else still lands.
+// One unusable attachment must not sink the whole import: it is skipped,
+// named in the warnings, and everything else still lands.
 func TestCreateFromSourceWarnsOnSkippedAttachment(t *testing.T) {
 	src := devSource()
 	src.Tickets[0].Attachments = append(src.Tickets[0].Attachments,
 		ports.SourceAttachment{ID: "a2", Filename: "archive.zip", Mime: "application/zip", Size: 3})
 	src.Blobs["a2"] = []byte("zip")
-	f, _ := newFactory(t, src)
+	f, att := newFactory(t, src)
 
 	tk, warnings, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
-		confstore.Ticket{ProjectID: testProject})
+		confstore.Ticket{ProjectID: testProject}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tk.ArtifactIDs) != 1 {
-		t.Errorf("artifact_ids = %v, want only the allowed file", tk.ArtifactIDs)
+	if atts := ticketAttachments(t, att, tk.ID); len(atts) != 1 {
+		t.Errorf("attachments = %+v, want only the allowed file", atts)
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "archive.zip") {
 		t.Fatalf("warnings = %v, want one naming archive.zip", warnings)
@@ -202,7 +175,7 @@ func TestCreateFromSourceWarnsOnSkippedAttachment(t *testing.T) {
 func TestImportWithoutSourcesIsHonest(t *testing.T) {
 	f, _ := newFactory(t, nil)
 	_, _, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
-		confstore.Ticket{ProjectID: testProject})
+		confstore.Ticket{ProjectID: testProject}, nil)
 	if !errors.Is(err, ErrNoSources) {
 		t.Fatalf("err = %v, want ErrNoSources", err)
 	}
@@ -214,19 +187,22 @@ func TestImportWithoutSourcesIsHonest(t *testing.T) {
 // The hand-written path stays exactly what it was: validated, stored, uploads
 // claimed for the ticket.
 func TestCreateRaw(t *testing.T) {
-	f, db := newFactory(t, nil)
-	db.rows["up1"] = artifacts.Meta{ID: "up1", Scope: artifacts.ScopeOrphan, Filename: "design.md"}
+	f, att := newFactory(t, nil)
+	up, err := att.Save(context.Background(), "design.md", "text/markdown", strings.NewReader("# d"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tk, err := f.Create(context.Background(), confstore.Ticket{
-		ProjectID: testProject, Title: "T", Goal: "g", ArtifactIDs: []string{"up1"},
-	})
+		ProjectID: testProject, Title: "T", Goal: "g",
+	}, []string{up.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tk.SourceKey != "" || tk.SourceID != "" {
 		t.Errorf("hand-written ticket carries provenance: %+v", tk)
 	}
-	if got := db.rows["up1"]; got.Scope != artifacts.ScopeTicketGoal || got.RunID != "" {
+	if got, _ := att.Get(context.Background(), up.ID); got.TicketID != tk.ID || got.RunID != "" {
 		t.Errorf("upload = %+v, want claimed for the ticket", got)
 	}
 }
@@ -236,17 +212,40 @@ func TestCreateRaw(t *testing.T) {
 func TestUpdateKeepsProvenance(t *testing.T) {
 	f, _ := newFactory(t, devSource())
 	tk, _, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
-		confstore.Ticket{ProjectID: testProject})
+		confstore.Ticket{ProjectID: testProject}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	upd, err := f.Update(context.Background(), tk.ID, confstore.Ticket{
 		ProjectID: testProject, Title: "renamed", Goal: "g",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if upd.SourceKey != "PROJ-7" || upd.SourceURL == "" || upd.SourceKind != "faketracker" {
 		t.Errorf("provenance after edit = %+v", upd)
+	}
+}
+
+// Delete removes the ticket AND its attachment rows — the old leak.
+func TestDeleteReclaimsAttachments(t *testing.T) {
+	f, att := newFactory(t, devSource())
+	tk, _, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
+		confstore.Ticket{ProjectID: testProject}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	atts := ticketAttachments(t, att, tk.ID)
+	if len(atts) != 1 {
+		t.Fatalf("setup: attachments = %+v", atts)
+	}
+	if err := f.Delete(context.Background(), tk.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Conf.GetTicket(context.Background(), tk.ID); err == nil {
+		t.Error("ticket row survived delete")
+	}
+	if _, err := att.Get(context.Background(), atts[0].ID); !errors.Is(err, filestore.ErrNotFound) {
+		t.Errorf("attachment row survived ticket delete: %v", err)
 	}
 }

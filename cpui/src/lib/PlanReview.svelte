@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type Ping } from '$lib/api';
+  import { api, type Ping, type PingFile } from '$lib/api';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import {
     byPosition,
@@ -31,7 +31,7 @@
   let comments = $state<ReviewComment[]>([]);
   let busy = $state(false);
   let files = $state<File[]>([]); // the human's answer attachments
-  let extraFiles = $state<{ path: string; mime: string }[]>([]); // agent-attached extras
+  let extraFiles = $state<PingFile[]>([]); // agent-attached extras, beyond the primary doc
 
   // The composer pops up where a selection was released. It is deliberately
   // sticky: only Add/Save or Close dismiss it — clicking away (to scroll, to
@@ -56,21 +56,28 @@
 
   onMount(async () => {
     comments = loadDraft(ping.ping_id);
+    // ONE fetch: the ping's files, primary first, each with its raise-time
+    // snapshot. The reviewed document's content comes from the snapshot —
+    // what you approve is what was captured, not what the workspace holds
+    // by the time you look (DESIGN-FILES §9).
     try {
-      const art = await api.pingArtifact(ping.ping_id);
-      path = art.path;
-      blocks = planBlocks(art.content);
+      const { files: fs } = await api.pingFiles(ping.ping_id);
+      const primary = fs[0];
+      if (!primary) {
+        error = 'this ping has no attached files';
+      } else if (!primary.captured || !primary.snapshot_id) {
+        error = `${primary.path} was not captured when the ping was raised`;
+      } else {
+        path = primary.path;
+        const res = await fetch(api.snapshotUrl(primary.snapshot_id));
+        if (!res.ok) throw new Error(`document unavailable (${res.status})`);
+        blocks = planBlocks(await res.text());
+      }
+      extraFiles = fs.slice(1);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
-    }
-    // Extra agent-attached files (multi ask_human), beyond the primary doc.
-    try {
-      const { files: fs } = await api.pingArtifacts(ping.ping_id);
-      extraFiles = fs.filter((f) => f.path !== path);
-    } catch {
-      /* none */
     }
   });
 
@@ -297,7 +304,7 @@
       // Per-comment attachments ride along with the review-level ones — all
       // land in the workspace, and the feedback prompt names them per comment.
       const all = [...comments.flatMap((c) => c.files ?? []), ...files];
-      const ids = all.length ? (await api.uploadArtifacts(all)).map((a) => a.id) : undefined;
+      const ids = all.length ? (await api.uploadAttachments(all)).map((a) => a.id) : undefined;
       await api.answerPing(ping.ping_id, answer, text, ids);
       clearDraft(ping.ping_id);
       onanswered();
@@ -338,15 +345,18 @@
     <div class="card plan" style="flex:2; min-width:0" bind:this={planEl}>
       <div class="muted small mono" style="margin-bottom:8px">{path}</div>
       {#if extraFiles.length}
-        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px">
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; align-items:center">
+          <span class="small muted">From the agent:</span>
           {#each extraFiles as f (f.path)}
-            {#if f.mime.startsWith('image/')}
-              <a href={api.pingArtifactFileUrl(ping.ping_id, f.path)} target="_blank" rel="noreferrer" title={f.path}>
-                <img src={api.pingArtifactFileUrl(ping.ping_id, f.path)} alt={f.path}
+            {#if !f.captured || !f.snapshot_id}
+              <span class="small mono muted" title="this file was not captured when the ping was raised">📎 {f.path} (not captured)</span>
+            {:else if f.mime?.startsWith('image/')}
+              <a href={api.snapshotUrl(f.snapshot_id)} target="_blank" rel="noreferrer" title={f.path}>
+                <img src={api.snapshotUrl(f.snapshot_id)} alt={f.path}
                   style="max-height:80px; border-radius:4px; border:1px solid var(--border,#444)" />
               </a>
             {:else}
-              <a class="small mono" href={api.pingArtifactFileUrl(ping.ping_id, f.path)} target="_blank" rel="noreferrer">📎 {f.path}</a>
+              <a class="small mono" href={api.snapshotUrl(f.snapshot_id)} target="_blank" rel="noreferrer">📎 {f.path}</a>
             {/if}
           {/each}
         </div>

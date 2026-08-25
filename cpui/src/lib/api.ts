@@ -136,14 +136,14 @@ export interface RunInput {
   flow?: string;
   goal?: string;
   source_branch?: string; // branch this run forks off from; empty = project default
-  artifact_ids?: string[];
+  attachment_ids?: string[];
 }
 
 const runInputBody = (o?: RunInput) => ({
   ...(o?.flow ? { flow: o.flow } : {}),
   ...(o?.goal ? { goal: o.goal } : {}),
   ...(o?.source_branch ? { source_branch: o.source_branch } : {}),
-  ...(o?.artifact_ids?.length ? { artifact_ids: o.artifact_ids } : {})
+  ...(o?.attachment_ids?.length ? { attachment_ids: o.attachment_ids } : {})
 });
 
 // A ticket is a unit of work that owns many runs (each run is one attempt).
@@ -154,7 +154,7 @@ export interface Ticket {
   title: string;
   goal: string;
   base_branch: string; // stem; each run gets base_branch + a per-run suffix
-  artifact_ids: string[];
+  attachment_ids: string[];
   // Provenance of an imported ticket (absent when typed in by hand). A record
   // of the copy, not a live link: nothing is written back to the tracker.
   source_id?: string;
@@ -253,6 +253,11 @@ export interface Settings {
   max_environments: number;
   destroy_completed_after: string;
   destroy_abandoned: string;
+  // Storage & retention (DESIGN-FILES §6): how long never-claimed uploads
+  // survive, and whether/when snapshot CONTENT expires ('never' or a
+  // duration — records keep name/sha/size either way).
+  orphan_uploads_after: string;
+  snapshots_after: string;
 }
 
 export interface PreflightStep {
@@ -338,8 +343,13 @@ export interface Ping {
   stage_id?: string;
   question: string;
   context?: string;
+  // files = attached workspace paths (first is the primary reviewed doc);
+  // link = a resolved URL payload (a gate's mr_url/workspace sentinel).
+  // payload_ref = the derived primary (link, else files[0]).
+  files?: string[];
+  link?: string;
   payload_ref?: string;
-  payload_refs?: string[]; // full ask_human attachment set (agent→human multi)
+  answer_attachment_ids?: string[];
   options?: string[];
   status: 'pending' | 'answered';
   answer?: string;
@@ -348,31 +358,58 @@ export interface Ping {
   answered_at?: string;
 }
 
-export interface ArtifactMeta {
+// An attachment: a file a human gave the factory (upload or tracker import).
+// Ownership is structural — exactly one of ticket_id / run_id set after the
+// claim (ping_id rides run_id for answer files); none = unclaimed.
+export interface Attachment {
   id: string;
-  filename: string;
-  mime: string;
-  size: number;
-  // Absent on the upload response (a fresh orphan), present when listing a
-  // run's attachments.
-  scope?: string;
-  created_at?: string;
-}
-
-// A per-attempt snapshot (PLAN5 M27): what one stage attempt produced (a
-// declared output) or printed (its log). Engine-captured, and it outlives the
-// run — the audit trail stays answerable after the workspace is gone.
-export interface StageArtifact {
-  id: string;
-  stage_id: string;
-  iteration: number;
-  scope: 'stage_output' | 'stage_log';
-  name: string; // the declared output's role ('plan', 'verdict'); '' for a log
+  ticket_id?: string;
+  run_id?: string;
+  ping_id?: string;
   filename: string;
   mime: string;
   size: number;
   sha256: string;
   created_at: string;
+}
+
+// A snapshot: an engine-captured, immutable record of workspace content — a
+// stage attempt's declared output, its log, or a ping file (what the human
+// was shown). Outlives the run; content may expire under retention while the
+// record remains.
+export interface Snapshot {
+  id: string;
+  run_id: string;
+  kind: 'output' | 'log' | 'ping_file';
+  stage_id: string;
+  iteration?: number;
+  ping_id?: string;
+  name?: string; // output role ('plan', 'verdict')
+  path?: string; // workspace path captured
+  filename: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  truncated?: boolean;
+  created_at: string;
+}
+
+// One of a ping's attached files: the declared ref joined with its raise-time
+// snapshot. captured:false = the capture failed — visible, never silently
+// substituted with live workspace content.
+export interface PingFile {
+  path: string;
+  mime?: string;
+  size?: number;
+  snapshot_id?: string;
+  captured: boolean;
+}
+
+// The upload policy, mirrored client-side so a bad pick fails inline.
+export interface UploadLimits {
+  max_bytes: number;
+  max_files: number;
+  mime_allow: string[];
 }
 
 export interface ChannelEntry {
@@ -426,18 +463,19 @@ export const api = {
     goal: string;
     project_id: string;
     branch?: string;
-    artifact_ids?: string[];
+    attachment_ids?: string[];
     source_id?: string;
     source_key?: string;
   }) => post('/api/tickets', body) as Promise<Ticket>,
   updateTicket: (
     id: string,
-    body: { title: string; goal: string; project_id: string; branch?: string; artifact_ids?: string[] }
+    body: { title: string; goal: string; project_id: string; branch?: string; attachment_ids?: string[] }
   ) => put(`/api/tickets/${id}`, body) as Promise<Ticket>,
   deleteTicket: (id: string) => req<void>(`/api/tickets/${id}`, { method: 'DELETE' }),
   // A ticket's attachments (hand-uploaded or copied from the tracker). Shared
   // by every run of the ticket, so they hang off the ticket, not a run.
-  ticketArtifacts: (id: string) => req<ArtifactMeta[]>(`/api/tickets/${id}/artifacts`),
+  ticketAttachments: async (id: string): Promise<Attachment[]> =>
+    (await req<{ attachments: Attachment[] }>(`/api/tickets/${id}/attachments`)).attachments,
   // Per-attempt input: a flow override plus this run's own direction and
   // attachments (additive to the ticket's — they never modify the ticket).
   startTicketRun: (id: string, opts?: RunInput) =>
@@ -528,35 +566,33 @@ export const api = {
   pings: (status: 'pending' | 'answered' | 'all', limit = 100) =>
     req<Ping[]>(`/api/pings?status=${status}&limit=${limit}`),
   ping: (pingId: string) => req<Ping>(`/api/pings/${pingId}`),
-  pingArtifact: (pingId: string) =>
-    req<{ path: string; content: string }>(`/api/pings/${pingId}/artifact`),
-  // Agent-attached workspace files for a ping (multi ask_human): list them,
-  // plus a per-file URL to stream one (image thumbnail / download).
-  pingArtifacts: (pingId: string) =>
-    req<{ files: { path: string; mime: string }[] }>(`/api/pings/${pingId}/artifacts`),
-  pingArtifactFileUrl: (pingId: string, path: string) =>
-    `/api/pings/${pingId}/artifacts?path=${encodeURIComponent(path)}`,
-  answerPing: (pingId: string, answer: string, feedback?: string, artifactIds?: string[]) =>
+  // A ping's attached files: declared refs joined with their raise-time
+  // snapshots, primary first. What the review workbench renders.
+  pingFiles: (pingId: string) =>
+    req<{ files: PingFile[]; link?: string }>(`/api/pings/${pingId}/files`),
+  answerPing: (pingId: string, answer: string, feedback?: string, attachmentIds?: string[]) =>
     post(`/api/pings/${pingId}/answer`, {
       answer,
       ...(feedback ? { feedback } : {}),
-      ...(artifactIds?.length ? { artifact_ids: artifactIds } : {})
+      ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {})
     }),
-  // Human-uploaded artifacts (documents/images) for goals + ping answers.
-  uploadArtifacts: (files: File[]): Promise<ArtifactMeta[]> => {
+  // Human uploads (documents/images) for tickets, run goals + ping answers.
+  uploadAttachments: async (files: File[]): Promise<Attachment[]> => {
     const fd = new FormData();
     for (const f of files) fd.append('files', f);
     // No JSON.stringify / Content-Type: the browser sets the multipart boundary.
-    return req<ArtifactMeta[]>('/api/artifacts', { method: 'POST', body: fd });
+    return (await req<{ attachments: Attachment[] }>('/api/attachments', { method: 'POST', body: fd }))
+      .attachments;
   },
-  artifactUrl: (id: string, download = false) =>
-    `/api/artifacts/${id}${download ? '?download=1' : ''}`,
-  runArtifacts: (id: string) =>
-    req<{ goal: ArtifactMeta[]; answers: Record<string, ArtifactMeta[]> }>(
-      `/api/runs/${id}/artifacts`
-    ),
-  // Every per-attempt snapshot the run published (stage outputs + logs).
-  runAttempts: (id: string) => req<{ attempts: StageArtifact[] }>(`/api/runs/${id}/attempts`),
+  attachmentLimits: () => req<UploadLimits>('/api/attachments/limits'),
+  attachmentUrl: (id: string, download = false) =>
+    `/api/attachments/${id}${download ? '?download=1' : ''}`,
+  snapshotUrl: (id: string, download = false) =>
+    `/api/snapshots/${id}${download ? '?download=1' : ''}`,
+  // The run page's one fetch: the run's attachments (goal + answers) and its
+  // snapshots (outputs + logs; ping files render on their ping).
+  runFiles: (id: string) =>
+    req<{ attachments: Attachment[]; snapshots: Snapshot[] }>(`/api/runs/${id}/files`),
   channels: () => req<ChannelEntry[]>('/api/channels'),
   addChannel: (kind: string, config: Record<string, string>) =>
     post('/api/channels', { kind, ...config }) as Promise<ChannelEntry>,

@@ -27,7 +27,7 @@ func TestDefaultFlowBindingsClean(t *testing.T) {
 // human copies to start from, so a stale one teaches the wrong grammar.
 // (The built-in default is covered above; these are the two on disk.)
 func TestShippedFlowsBindCleanly(t *testing.T) {
-	for _, path := range []string{"../../artifacts/flows/v3.yaml", "../flow/testdata/v3.yaml"} {
+	for _, path := range []string{"../../examples/flows/v3.yaml", "../flow/testdata/v3.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			f, err := flow.Load(path)
 			if err != nil {

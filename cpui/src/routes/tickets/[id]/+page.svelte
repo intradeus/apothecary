@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { api, stateColors, ago, type ArtifactMeta, type BranchInfo, type Project, type RunView, type Ticket } from '$lib/api';
+  import { api, stateColors, ago, type Attachment, type BranchInfo, type Project, type RunView, type Ticket } from '$lib/api';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import TicketForm from '$lib/TicketForm.svelte';
-  import ArtifactList from '$lib/ArtifactList.svelte';
+  import FileChips from '$lib/FileChips.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -30,11 +30,11 @@
   // The ticket's attachments — hand-uploaded or copied from a tracker. They
   // are delivered into the workspace of EVERY run of this ticket, so they
   // belong on the ticket page, not on a run's.
-  let attachments = $state<ArtifactMeta[]>([]);
+  let attachments = $state<Attachment[]>([]);
 
   const loadAttachments = async () => {
     try {
-      attachments = await api.ticketArtifacts(ticketId);
+      attachments = await api.ticketAttachments(ticketId);
     } catch {
       attachments = [];
     }
@@ -77,13 +77,13 @@
     starting = true;
     error = '';
     try {
-      let artifactIds: string[] | undefined;
-      if (runFiles.length) artifactIds = (await api.uploadArtifacts(runFiles)).map((a) => a.id);
+      let attachmentIds: string[] | undefined;
+      if (runFiles.length) attachmentIds = (await api.uploadAttachments(runFiles)).map((a) => a.id);
       const { run_id } = await api.startTicketRun(ticketId, {
         flow: flow.trim() || undefined,
         goal: runGoal.trim() || undefined,
         source_branch: sourceBranch.trim() || undefined,
-        artifact_ids: artifactIds
+        attachment_ids: attachmentIds
       });
       await goto(`/runs/${run_id}`);
     } catch (e) {
@@ -137,9 +137,9 @@
       <div class="card">
         <div class="row spread" style="margin-bottom:8px">
           <strong>Attachments ({attachments.length})</strong>
-          <span class="small muted">delivered into every run's workspace under .apothecary/artifacts/</span>
+          <span class="small muted">delivered into every run's workspace under .apothecary/attachments/</span>
         </div>
-        <ArtifactList items={attachments} />
+        <FileChips items={attachments.map((a) => ({ ...a, kind: 'attachment' as const }))} />
       </div>
     {/if}
 

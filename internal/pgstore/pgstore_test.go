@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/artifacts"
+	"apothecary/internal/builtin"
+	"apothecary/internal/confstore"
 	"apothecary/internal/event"
+	"apothecary/internal/filestore"
 	"apothecary/internal/run"
 )
 
@@ -27,7 +29,7 @@ func open(t *testing.T) *Store {
 	}
 	t.Cleanup(s.Close)
 	if _, err := s.pool.Exec(context.Background(),
-		`TRUNCATE events, runs, pings, channels, run_exposed_ports, artifacts`); err != nil {
+		`TRUNCATE events, runs, pings, channels, run_exposed_ports, attachments, snapshots, tickets CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -177,12 +179,17 @@ func TestRebuildProjections(t *testing.T) {
 		if _, err := s.Append(ctx, id,
 			&event.RunCreated{TicketTitle: id},
 			&event.PingRaised{PingID: "p-" + id, Type: "blocker", Question: "q"},
+			&event.SnapshotCaptured{StageID: "build", Iteration: 1, Kind: "log",
+				SnapshotID: "sn-" + id, Filename: "build-1.log", Mime: "text/plain",
+				SHA256: "ee55", Size: 9},
 		); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Corrupt the projections, then rebuild from events.
-	if _, err := s.pool.Exec(ctx, `TRUNCATE runs, pings`); err != nil {
+	// Corrupt the projections, then rebuild from events. Snapshots are a
+	// projection too (DESIGN-FILES §3.3): the rows come back from the log,
+	// re-pointing at the untouched blobs by sha.
+	if _, err := s.pool.Exec(ctx, `TRUNCATE runs, pings, snapshots`); err != nil {
 		t.Fatal(err)
 	}
 	n, err := s.RebuildProjections(ctx)
@@ -196,6 +203,10 @@ func TestRebuildProjections(t *testing.T) {
 	pending, _ := s.ListPings(ctx, "pending", 0)
 	if len(views) != 3 || len(pending) != 3 {
 		t.Errorf("after rebuild: %d views, %d pings", len(views), len(pending))
+	}
+	snaps, _ := s.SnapshotsForRun(ctx, "r0")
+	if len(snaps) != 1 || snaps[0].ID != "sn-r0" || snaps[0].Kind != filestore.KindLog {
+		t.Errorf("snapshots after rebuild = %+v, want the captured log back", snaps)
 	}
 }
 
@@ -222,53 +233,136 @@ func TestChannelsCRUD(t *testing.T) {
 	}
 }
 
-func TestArtifactsCRUD(t *testing.T) {
+// mustSeedProjectAndTicket satisfies the tickets FK chain for attachment
+// claims (attachments.ticket_id REFERENCES tickets).
+func mustSeedProjectAndTicket(t *testing.T, s *Store, ticketID string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.UpsertIntegration(ctx, confstore.StoredIntegration{
+		ID: "fint1", Port: "forge", Kind: "gitlab", Name: "gl-files",
+		Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertProject(ctx, confstore.Project{
+		ID: "fprj1", Name: "files-prj", ForgeID: "fint1", ProvisionerID: "fint1",
+		HarnessIDs: []string{"fint1"}, DefaultFlow: builtin.DefaultFlowName,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTicket(ctx, confstore.Ticket{
+		ID: ticketID, ProjectID: "fprj1", Title: "T", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAttachmentsCRUD(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	mk := func(id string) artifacts.Meta {
-		return artifacts.Meta{ID: id, Scope: artifacts.ScopeOrphan, Filename: id + ".txt", Mime: "text/plain", Size: 3, SHA256: "abc"}
+	// The FK backstop needs a real ticket row for ticket claims.
+	mustSeedProjectAndTicket(t, s, "tick1")
+
+	mk := func(id string) filestore.Attachment {
+		return filestore.Attachment{ID: id, Filename: id + ".txt", Mime: "text/plain",
+			Size: 3, SHA256: "ab12", CreatedAt: time.Now().UTC()}
 	}
-	for _, id := range []string{"a1", "a2", "a3"} {
-		if err := s.InsertArtifact(ctx, mk(id)); err != nil {
+	for _, id := range []string{"a1", "a2", "a3", "a4"} {
+		if err := s.InsertAttachment(ctx, mk(id)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.AssociateArtifacts(ctx, []string{"a1"}, "run1", "", artifacts.ScopeGoal); err != nil {
+	if err := s.ClaimAttachments(ctx, []string{"a1"}, "", "run1", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AssociateArtifacts(ctx, []string{"a2"}, "run1", "ping1", artifacts.ScopePingAnswer); err != nil {
+	if err := s.ClaimAttachments(ctx, []string{"a2"}, "", "run1", "ping1"); err != nil {
 		t.Fatal(err)
 	}
-	// Only orphans are claimed: re-homing a1 to another run is a silent no-op.
-	if err := s.AssociateArtifacts(ctx, []string{"a1"}, "run2", "", artifacts.ScopeGoal); err != nil {
+	if err := s.ClaimAttachments(ctx, []string{"a4"}, "tick1", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if forRun, _ := s.ArtifactsForRun(ctx, "run1"); len(forRun) != 2 {
+	// Claims are one-shot: re-homing a1 to another run is a silent no-op.
+	if err := s.ClaimAttachments(ctx, []string{"a1"}, "", "run2", ""); err != nil {
+		t.Fatal(err)
+	}
+	if forRun, _ := s.AttachmentsForRun(ctx, "run1"); len(forRun) != 2 {
 		t.Errorf("ForRun(run1) = %d, want 2", len(forRun))
 	}
-	if forRun, _ := s.ArtifactsForRun(ctx, "run2"); len(forRun) != 0 {
+	if forRun, _ := s.AttachmentsForRun(ctx, "run2"); len(forRun) != 0 {
 		t.Errorf("a1 was wrongly re-homed to run2: %d", len(forRun))
 	}
-	forPing, _ := s.ArtifactsForPing(ctx, "ping1", artifacts.ScopePingAnswer)
-	if len(forPing) != 1 || forPing[0].ID != "a2" {
+	if forPing, _ := s.AttachmentsForPing(ctx, "ping1"); len(forPing) != 1 || forPing[0].ID != "a2" {
 		t.Errorf("ForPing = %+v", forPing)
 	}
-	if got, err := s.GetArtifact(ctx, "a1"); err != nil || got.RunID != "run1" || got.Scope != artifacts.ScopeGoal {
-		t.Errorf("GetArtifact(a1) = %+v, %v", got, err)
+	if forTick, _ := s.AttachmentsForTicket(ctx, "tick1"); len(forTick) != 1 || forTick[0].ID != "a4" {
+		t.Errorf("ForTicket = %+v", forTick)
 	}
-	if _, err := s.GetArtifact(ctx, "nope"); err != artifacts.ErrNotFound {
-		t.Errorf("GetArtifact(nope) err = %v, want ErrNotFound", err)
+	if got, err := s.GetAttachment(ctx, "a1"); err != nil || got.RunID != "run1" || got.TicketID != "" {
+		t.Errorf("GetAttachment(a1) = %+v, %v", got, err)
 	}
-	// a3 is still an orphan.
-	if orphans, _ := s.OrphanArtifactIDsBefore(ctx, time.Now().Add(time.Hour)); len(orphans) != 1 || orphans[0] != "a3" {
-		t.Errorf("orphans = %v, want [a3]", orphans)
+	if _, err := s.GetAttachment(ctx, "nope"); !errors.Is(err, filestore.ErrNotFound) {
+		t.Errorf("GetAttachment(nope) err = %v, want ErrNotFound", err)
 	}
-	// DeleteArtifactsForRun returns the ids (for blob cleanup) and drops them.
-	if del, _ := s.DeleteArtifactsForRun(ctx, "run1"); len(del) != 2 {
-		t.Errorf("deleted = %v, want 2", del)
+	// a3 is still unclaimed.
+	if orphans, _ := s.UnclaimedAttachmentIDsBefore(ctx, time.Now().Add(time.Hour)); len(orphans) != 1 || orphans[0] != "a3" {
+		t.Errorf("unclaimed = %v, want [a3]", orphans)
 	}
-	if forRun, _ := s.ArtifactsForRun(ctx, "run1"); len(forRun) != 0 {
-		t.Errorf("run1 artifacts survived delete: %d", len(forRun))
+	// Live sha set covers every row (blob sweep mark set).
+	if live, _ := s.LiveBlobSHAs(ctx, time.Time{}); !live["ab12"] {
+		t.Errorf("live shas = %v", live)
+	}
+	if err := s.DeleteAttachmentsForRun(ctx, "run1"); err != nil {
+		t.Fatal(err)
+	}
+	if forRun, _ := s.AttachmentsForRun(ctx, "run1"); len(forRun) != 0 {
+		t.Errorf("run1 attachments survived delete: %d", len(forRun))
+	}
+	// The ticket-delete leak fix at the SQL layer.
+	if err := s.DeleteAttachmentsForTicket(ctx, "tick1"); err != nil {
+		t.Fatal(err)
+	}
+	if forTick, _ := s.AttachmentsForTicket(ctx, "tick1"); len(forTick) != 0 {
+		t.Errorf("ticket attachments survived delete: %d", len(forTick))
+	}
+}
+
+func TestSnapshotsCRUDAndProjection(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	sn := filestore.Snapshot{
+		ID: "sn1", RunID: "run1", Kind: filestore.KindOutput, StageID: "plan",
+		Iteration: 1, Name: "plan", Path: "artifacts/plan.md",
+		Filename: "plan.md", Mime: "text/markdown", Size: 6, SHA256: "cd34",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.InsertSnapshot(ctx, sn); err != nil {
+		t.Fatal(err)
+	}
+	// The CHECKs refuse incoherent attributions at the schema.
+	bad := sn
+	bad.ID, bad.Kind = "sn-bad", filestore.KindLog // a log with name+path
+	if err := s.InsertSnapshot(ctx, bad); err == nil {
+		t.Error("schema accepted a log with an output role")
+	}
+	pf := filestore.Snapshot{
+		ID: "sn2", RunID: "run1", Kind: filestore.KindPingFile, StageID: "plan",
+		PingID: "ping1", Path: "artifacts/plan.md", Filename: "plan.md",
+		Mime: "text/markdown", Size: 6, SHA256: "cd34", CreatedAt: time.Now().UTC(),
+	}
+	if err := s.InsertSnapshot(ctx, pf); err != nil {
+		t.Fatal(err)
+	}
+	if forRun, _ := s.SnapshotsForRun(ctx, "run1"); len(forRun) != 2 {
+		t.Errorf("ForRun = %d, want 2", len(forRun))
+	}
+	if forPing, _ := s.SnapshotsForPing(ctx, "ping1"); len(forPing) != 1 || forPing[0].ID != "sn2" {
+		t.Errorf("ForPing = %+v", forPing)
+	}
+	// Retention cutoff drops old snapshot shas from the mark set.
+	if live, _ := s.LiveBlobSHAs(ctx, time.Now().Add(time.Hour)); live["cd34"] {
+		t.Errorf("expired snapshot sha still live: %v", live)
 	}
 }
 

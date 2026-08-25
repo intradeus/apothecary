@@ -10,6 +10,7 @@ import (
 
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
 	"apothecary/internal/tickets"
 )
@@ -22,19 +23,19 @@ import (
 // may have edited the prefilled form). They are create-only — provenance never
 // changes on update.
 type ticketBody struct {
-	ProjectID   string   `json:"project_id"`
-	Title       string   `json:"title"`
-	Goal        string   `json:"goal"`
-	Branch      string   `json:"branch"`
-	ArtifactIDs []string `json:"artifact_ids"`
-	SourceID    string   `json:"source_id"`
-	SourceKey   string   `json:"source_key"`
+	ProjectID     string   `json:"project_id"`
+	Title         string   `json:"title"`
+	Goal          string   `json:"goal"`
+	Branch        string   `json:"branch"`
+	AttachmentIDs []string `json:"attachment_ids"`
+	SourceID      string   `json:"source_id"`
+	SourceKey     string   `json:"source_key"`
 }
 
 func (b ticketBody) toTicket() confstore.Ticket {
 	return confstore.Ticket{
 		ProjectID: b.ProjectID, Title: b.Title, Goal: b.Goal,
-		BaseBranch: b.Branch, ArtifactIDs: b.ArtifactIDs,
+		BaseBranch: b.Branch,
 	}
 }
 
@@ -43,14 +44,35 @@ func (b ticketBody) toTicket() confstore.Ticket {
 // as "everything came across".
 type ticketResp struct {
 	confstore.Ticket
-	Warnings []string `json:"warnings,omitempty"`
+	// AttachmentIDs are the ticket's claimed attachments (rows, not a stored
+	// column), for the edit form's re-send semantics.
+	AttachmentIDs []string `json:"attachment_ids"`
+	Warnings      []string `json:"warnings,omitempty"`
+}
+
+// ticketAttachmentIDs lists the ids claimed by a ticket (for responses and
+// run starts). Empty slice, never nil.
+func (s *Server) ticketAttachmentIDs(r *http.Request, ticketID string) []string {
+	ids := []string{}
+	if s.Attachments == nil {
+		return ids
+	}
+	atts, err := s.Attachments.ForTicket(r.Context(), ticketID)
+	if err != nil {
+		s.Log.Warn("ticket attachments", "ticket", ticketID, "err", err)
+		return ids
+	}
+	for _, a := range atts {
+		ids = append(ids, a.ID)
+	}
+	return ids
 }
 
 // tickets builds the ticket factory from the server's collaborators: the one
 // path a ticket is created through, hand-written or imported.
 func (s *Server) tickets() *tickets.Factory {
 	return &tickets.Factory{
-		Conf: s.Conf, Artifacts: s.Artifacts, Sources: s.Sources, Log: s.Log,
+		Conf: s.Conf, Attachments: s.Attachments, Sources: s.Sources, Log: s.Log,
 	}
 }
 
@@ -94,12 +116,12 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		s.importTicket(w, r, body)
 		return
 	}
-	t, err := s.tickets().Create(r.Context(), body.toTicket())
+	t, err := s.tickets().Create(r.Context(), body.toTicket(), body.AttachmentIDs)
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, ticketResp{Ticket: t})
+	writeJSON(w, http.StatusCreated, ticketResp{Ticket: t, AttachmentIDs: s.ticketAttachmentIDs(r, t.ID)})
 }
 
 func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticketBody) {
@@ -107,7 +129,7 @@ func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticke
 		writeErr(w, http.StatusBadRequest, "importing a ticket needs both source_id and source_key")
 		return
 	}
-	t, warnings, err := s.tickets().CreateFromSource(r.Context(), body.SourceID, body.SourceKey, body.toTicket())
+	t, warnings, err := s.tickets().CreateFromSource(r.Context(), body.SourceID, body.SourceKey, body.toTicket(), body.AttachmentIDs)
 	switch {
 	case errors.Is(err, tickets.ErrNoSources):
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
@@ -121,7 +143,8 @@ func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticke
 		// issue) — an upstream problem, not a bad request.
 		writeErr(w, http.StatusBadGateway, err.Error())
 	default:
-		writeJSON(w, http.StatusCreated, ticketResp{Ticket: t, Warnings: warnings})
+		writeJSON(w, http.StatusCreated, ticketResp{Ticket: t,
+			AttachmentIDs: s.ticketAttachmentIDs(r, t.ID), Warnings: warnings})
 	}
 }
 
@@ -209,30 +232,25 @@ func sourceErr(w http.ResponseWriter, err error) {
 }
 
 // getTicketArtifacts lists a ticket's attachments (uploaded by hand or copied
-// from the tracker) so both the ticket page and the edit form can show what is
-// actually attached. Metadata only — bytes come from the ordinary artifact
-// route. Ids whose row has vanished are skipped rather than failing the list.
-func (s *Server) getTicketArtifacts(w http.ResponseWriter, r *http.Request) {
+// from the tracker) so both the ticket page and the edit form can show what
+// is actually attached. Metadata only — bytes come from the byte route. The
+// rows ARE the link now (attachments.ticket_id), so this is one query.
+func (s *Server) getTicketAttachments(w http.ResponseWriter, r *http.Request) {
 	t, err := s.Conf.GetTicket(r.Context(), r.PathValue("id"))
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	out := []map[string]any{}
-	if s.Artifacts != nil {
-		for _, id := range t.ArtifactIDs {
-			m, err := s.Artifacts.Meta(r.Context(), id)
-			if err != nil {
-				s.Log.Warn("ticket artifact missing", "ticket", t.ID, "artifact", id, "err", err)
-				continue
-			}
-			out = append(out, map[string]any{
-				"id": m.ID, "filename": m.Filename, "mime": m.Mime,
-				"size": m.Size, "scope": m.Scope, "created_at": m.CreatedAt,
-			})
+	out := []filestore.Attachment{}
+	if s.Attachments != nil {
+		atts, err := s.Attachments.ForTicket(r.Context(), t.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		out = append(out, atts...)
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, map[string]any{"attachments": out})
 }
 
 func (s *Server) getTicket(w http.ResponseWriter, r *http.Request) {
@@ -241,7 +259,7 @@ func (s *Server) getTicket(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(w, http.StatusOK, ticketResp{Ticket: t, AttachmentIDs: s.ticketAttachmentIDs(r, t.ID)})
 }
 
 func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
@@ -257,16 +275,18 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	// The factory claims any newly-attached uploads; provenance (source_*) is
 	// preserved by the store, so an edit never disowns an imported ticket.
-	t, err := s.tickets().Update(r.Context(), r.PathValue("id"), body.toTicket())
+	t, err := s.tickets().Update(r.Context(), r.PathValue("id"), body.toTicket(), body.AttachmentIDs)
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ticketResp{Ticket: t})
+	writeJSON(w, http.StatusOK, ticketResp{Ticket: t, AttachmentIDs: s.ticketAttachmentIDs(r, t.ID)})
 }
 
+// deleteTicket routes through the factory so the ticket's attachments go
+// with it — the fix for the old leak (DESIGN-FILES §12 #3).
 func (s *Server) deleteTicket(w http.ResponseWriter, r *http.Request) {
-	if err := s.Conf.DeleteTicket(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.tickets().Delete(r.Context(), r.PathValue("id")); err != nil {
 		confErr(w, err)
 		return
 	}
@@ -286,10 +306,10 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Body is optional (empty ⇒ project default flow, no direction).
 	var body struct {
-		Flow         string   `json:"flow"`
-		Goal         string   `json:"goal"`
-		SourceBranch string   `json:"source_branch"`
-		ArtifactIDs  []string `json:"artifact_ids"`
+		Flow          string   `json:"flow"`
+		Goal          string   `json:"goal"`
+		SourceBranch  string   `json:"source_branch"`
+		AttachmentIDs []string `json:"attachment_ids"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
@@ -301,9 +321,9 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		SourceBranch: body.SourceBranch,
 		RunGoal:      body.Goal,
 		// This attempt's own uploads bind to the run; the ticket's are shared
-		// by every run and only snapshotted here.
-		ArtifactIDs:       body.ArtifactIDs,
-		TicketArtifactIDs: t.ArtifactIDs,
+		// by every run and only pinned here (run_created).
+		AttachmentIDs:       body.AttachmentIDs,
+		TicketAttachmentIDs: s.ticketAttachmentIDs(r, t.ID),
 	}, body.Flow, t.ProjectID)
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):

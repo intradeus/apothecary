@@ -26,12 +26,12 @@ import (
 
 	matrixadapter "apothecary/internal/adapters/matrix"
 	slackadapter "apothecary/internal/adapters/slack"
-	"apothecary/internal/artifacts"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
 	"apothecary/internal/httpapi"
 	"apothecary/internal/kinds"
@@ -234,8 +234,13 @@ func cmdServe(args []string) error {
 	}
 	e.SetPortRelay(portRelay)
 
-	artStore := artifacts.New(store, boot.RunsDir, boot.ArtifactMaxBytes, boot.ArtifactMimeAllow)
-	e.SetArtifacts(artStore)
+	// File stores (DESIGN-FILES): one content-addressed blob store, two typed
+	// stores over it — attachments (upload policy) and snapshots (capture
+	// policy, its rows a projection of snapshot_captured).
+	blobs := filestore.NewBlobs(boot.RunsDir)
+	attachments := filestore.NewAttachments(store, blobs, boot.UploadMaxBytes, boot.UploadMimeAllow)
+	snapshots := filestore.NewSnapshots(store, blobs, boot.SnapshotMaxBytes)
+	e.SetFiles(attachments, snapshots)
 	e.SetEgressAudit(store) // durable egress audit trail (pgstore)
 
 	if err := e.Recover(ctx); err != nil {
@@ -248,7 +253,8 @@ func cmdServe(args []string) error {
 	api.Ops = resolver
 	api.Sources = resolver // ticket sources for the import factory (Jira)
 	api.Pings = store      // durable request/response projection (PLAN4 M15)
-	api.Artifacts = artStore
+	api.Attachments = attachments
+	api.Snapshots = snapshots
 	api.CPUIDir = boot.CPUIDir
 	if boot.CPUIDir != "" {
 		log.Info("serving CPUI", "dir", boot.CPUIDir)
@@ -271,11 +277,29 @@ func cmdServe(args []string) error {
 				if err := e.ReapOnce(reaperCtx, set.CompletedWindow()); err != nil {
 					log.Error("reaper pass failed", "err", err)
 				}
-				// Sweep uploads that were never attached to a ticket/answer.
-				if n, err := artStore.GCOrphans(reaperCtx, 24*time.Hour); err != nil {
-					log.Error("reaper: artifact GC failed", "err", err)
+				// Uploads never claimed by a ticket/run/answer age out
+				// (retention.orphan_uploads_after; rows only — bytes go in
+				// the blob sweep below).
+				if n, err := attachments.GCOrphans(reaperCtx, set.OrphanWindow()); err != nil {
+					log.Error("reaper: upload GC failed", "err", err)
 				} else if n > 0 {
-					log.Info("reaper: swept orphan artifacts", "count", n)
+					log.Info("reaper: swept unclaimed uploads", "count", n)
+				}
+				// Blob sweep: delete bytes no live row references. The mark
+				// set honors snapshot content retention — rows older than
+				// retention.snapshots_after stop pinning their blobs while
+				// the rows/events keep the record (DESIGN-FILES §6).
+				keepAfter := time.Time{}
+				if window, ok := set.SnapshotWindow(); ok {
+					keepAfter = time.Now().Add(-window)
+				}
+				live, err := store.LiveBlobSHAs(reaperCtx, keepAfter)
+				if err != nil {
+					log.Error("reaper: live blob set failed", "err", err)
+				} else if n, err := blobs.Sweep(live); err != nil {
+					log.Error("reaper: blob sweep failed", "err", err)
+				} else if n > 0 {
+					log.Info("reaper: swept unreferenced blobs", "count", n)
 				}
 			case <-reaperCtx.Done():
 				return

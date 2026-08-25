@@ -28,22 +28,23 @@ const (
 	// own — which is exactly the signal recovery needs to reconcile rather
 	// than blindly re-run and duplicate.
 	TypeActionStarted Type = "action_started"
-	// TypeArtifactPublished links a durable snapshot of what one attempt
-	// produced (a declared output, or the attempt's full log) to the run's
-	// timeline (PLAN5 M27). It carries the REFERENCE, never the bytes:
-	// events stay replay-cheap while the content they point at can be any
-	// size — which is what makes "the plan the human rejected at attempt 1"
-	// answerable after the workspace is long gone.
-	TypeArtifactPublished Type = "artifact_published"
-	TypeMRCreated         Type = "mr_created"
-	TypeRunCompleted      Type = "run_completed"
-	TypeRunAbandoned      Type = "run_abandoned"
-	TypeRunFailed         Type = "run_failed"
-	TypeRunArchived       Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
-	TypeRunResumed        Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
-	TypeRunPaused         Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
-	TypeRunUnpaused       Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
-	TypeEnvDestroyed      Type = "env_destroyed"
+	// TypeSnapshotCaptured links one engine-captured snapshot — a stage
+	// attempt's declared output, its log, or a ping file (what the agent
+	// showed the human) — to the run's timeline (DESIGN-FILES §4). It is the
+	// AUTHORITY the snapshots table is projected from, and it carries the
+	// REFERENCE, never the bytes: events stay replay-cheap while the content
+	// they point at can be any size — which is what makes "the plan the human
+	// rejected at attempt 1" answerable after the workspace is long gone.
+	TypeSnapshotCaptured Type = "snapshot_captured"
+	TypeMRCreated        Type = "mr_created"
+	TypeRunCompleted     Type = "run_completed"
+	TypeRunAbandoned     Type = "run_abandoned"
+	TypeRunFailed        Type = "run_failed"
+	TypeRunArchived      Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
+	TypeRunResumed       Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
+	TypeRunPaused        Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
+	TypeRunUnpaused      Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
+	TypeEnvDestroyed     Type = "env_destroyed"
 	// Rebuild recreates a run's container in place (keeps the run + checkout);
 	// orthogonal to the run's lifecycle State — these never change it.
 	TypeEnvRebuildStarted   Type = "env_rebuild_started"
@@ -126,17 +127,17 @@ type RunCreated struct {
 	// router — use the existing middleware"), rendered as its own prompt
 	// section. Additive: it never replaces the ticket's goal.
 	RunGoal string `json:"run_goal,omitempty"`
-	// TicketArtifactIDs snapshots the parent ticket's attachments at run
+	// TicketAttachmentIDs snapshots the parent ticket's attachments at run
 	// start, and pins which ones this attempt saw even if the ticket changes
 	// later.
 	//
 	// There is deliberately NO run-side equivalent: the run's OWN attachments
-	// are linked in the artifacts table (run_id=<run>, scope=goal) and found
-	// via ForRun, so listing their ids here would be duplicate state that can
-	// drift. A TICKET's attachments are owned by the ticket (run_id empty,
-	// scope=ticket_goal) so they can reach EVERY run — which is exactly why
-	// ForRun cannot see them, and why their ids must ride on the event.
-	TicketArtifactIDs []string `json:"ticket_artifact_ids,omitempty"`
+	// are rows claimed for this run (attachments.run_id) and found via
+	// ForRun, so listing their ids here would be duplicate state that can
+	// drift. A TICKET's attachments are owned by the ticket (ticket_id set)
+	// so they can reach EVERY run — which is exactly why ForRun cannot see
+	// them, and why their ids must ride on the event.
+	TicketAttachmentIDs []string `json:"ticket_attachment_ids,omitempty"`
 }
 
 type EnvRequested struct{}
@@ -216,16 +217,17 @@ const (
 )
 
 type PingRaised struct {
-	PingID     string `json:"ping_id"`
-	Type       string `json:"type"` // gate|clarification|blocker|permission
-	Question   string `json:"question"`
-	Context    string `json:"context,omitempty"` // §9 pings.context; persisted so recovery keeps it
-	PayloadRef string `json:"payload_ref,omitempty"`
-	// PayloadRefs is the FULL set of workspace files the agent attached
-	// (ask_human multi-artifact). PayloadRef stays the PRIMARY ref (first, or
-	// a URL like mr_url) for back-compat and the review-vs-link decision;
-	// PayloadRefs is nil on pre-multi pings.
-	PayloadRefs []string `json:"payload_refs,omitempty"`
+	PingID   string `json:"ping_id"`
+	Type     string `json:"type"` // gate|clarification|blocker|permission
+	Question string `json:"question"`
+	Context  string `json:"context,omitempty"` // §9 pings.context; persisted so recovery keeps it
+	// Files are the workspace files attached to the ping (repo-relative
+	// paths; the first is the primary reviewed document). Link is a resolved
+	// URL payload (a gate's $MR_URL/$WORKSPACE sentinel). TYPED at the
+	// source (DESIGN-FILES §4): a value is a file or a link by field, never
+	// by sniffing the string for "http".
+	Files []string `json:"files,omitempty"`
+	Link  string   `json:"link,omitempty"`
 	// StageID is the flow stage in flight when the ping was raised
 	// (PLAN4 M15): the attribution key joining reviews to stages and,
 	// via stage_started.agent_hash, to prompt versions.
@@ -242,6 +244,10 @@ type PingAnswered struct {
 	PingID   string `json:"ping_id"`
 	Answer   string `json:"answer"` // approve|reject|text
 	Feedback string `json:"feedback,omitempty"`
+	// AttachmentIDs are the files the human attached to this answer — the
+	// association is a replayable fact of the run, not just a side-table
+	// write (DESIGN-FILES §4).
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 type VerdictReceived struct {
@@ -250,18 +256,23 @@ type VerdictReceived struct {
 	NComments int    `json:"n_comments"`
 }
 
-// ArtifactPublished records one captured attempt snapshot. Scope is
-// artifacts.ScopeStageOutput (a declared output, named by Name) or
-// ScopeStageLog (what the attempt printed, Name empty).
-type ArtifactPublished struct {
+// SnapshotCaptured records one engine capture. Kind is a
+// filestore.SnapshotKind value (output|log|ping_file); the per-kind fields
+// mirror the snapshots projection exactly — the event carries everything a
+// rebuild needs to reconstruct the row, minus the bytes.
+type SnapshotCaptured struct {
 	StageID    string `json:"stage_id"`
-	Iteration  int    `json:"iteration"`
-	Scope      string `json:"scope"`
-	Name       string `json:"name,omitempty"`
-	Path       string `json:"path,omitempty"`
-	ArtifactID string `json:"artifact_id"`
+	Iteration  int    `json:"iteration,omitempty"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name,omitempty"`    // output role ('plan'); outputs only
+	Path       string `json:"path,omitempty"`    // workspace path; outputs + ping files
+	PingID     string `json:"ping_id,omitempty"` // ping files only
+	SnapshotID string `json:"snapshot_id"`
+	Filename   string `json:"filename,omitempty"`
+	Mime       string `json:"mime,omitempty"`
 	SHA256     string `json:"sha256,omitempty"`
 	Size       int64  `json:"size,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
 }
 
 // ActionStarted is the pre-effect intent marker for an action stage.
@@ -358,16 +369,16 @@ func (*PingAnswered) EventType() Type    { return TypePingAnswered }
 func (*VerdictReceived) EventType() Type { return TypeVerdictReceived }
 func (*ActionStarted) EventType() Type   { return TypeActionStarted }
 
-func (*ArtifactPublished) EventType() Type { return TypeArtifactPublished }
-func (*MRCreated) EventType() Type         { return TypeMRCreated }
-func (*RunCompleted) EventType() Type      { return TypeRunCompleted }
-func (*RunAbandoned) EventType() Type      { return TypeRunAbandoned }
-func (*RunFailed) EventType() Type         { return TypeRunFailed }
-func (*RunArchived) EventType() Type       { return TypeRunArchived }
-func (*RunResumed) EventType() Type        { return TypeRunResumed }
-func (*RunPaused) EventType() Type         { return TypeRunPaused }
-func (*RunUnpaused) EventType() Type       { return TypeRunUnpaused }
-func (*EnvDestroyed) EventType() Type      { return TypeEnvDestroyed }
+func (*SnapshotCaptured) EventType() Type { return TypeSnapshotCaptured }
+func (*MRCreated) EventType() Type        { return TypeMRCreated }
+func (*RunCompleted) EventType() Type     { return TypeRunCompleted }
+func (*RunAbandoned) EventType() Type     { return TypeRunAbandoned }
+func (*RunFailed) EventType() Type        { return TypeRunFailed }
+func (*RunArchived) EventType() Type      { return TypeRunArchived }
+func (*RunResumed) EventType() Type       { return TypeRunResumed }
+func (*RunPaused) EventType() Type        { return TypeRunPaused }
+func (*RunUnpaused) EventType() Type      { return TypeRunUnpaused }
+func (*EnvDestroyed) EventType() Type     { return TypeEnvDestroyed }
 
 func (*EnvRebuildStarted) EventType() Type   { return TypeEnvRebuildStarted }
 func (*EnvRebuildCompleted) EventType() Type { return TypeEnvRebuildCompleted }

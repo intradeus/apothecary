@@ -558,14 +558,22 @@ failures: exceeding `budget` abandons the run, and abort/pause act on the run
 as a whole (§3).
 
 **Every attempt leaves a record.** As each attempt ends — succeeded or failed —
-the engine captures its declared outputs and its full log into the artifact
-store and links them to the run's timeline with `artifact_published` events.
-The events carry references, never bytes, so they stay replay-cheap while the
-content can be any size. Two consequences worth relying on: attempt 1's plan
-stays readable after attempt 2 overwrites the file, and the 8 KB tails in
+the engine captures its declared outputs and its full log as **snapshots** and
+links them to the run's timeline with `snapshot_captured` events. The events
+carry references, never bytes, so they stay replay-cheap while the content can
+be any size. Two consequences worth relying on: attempt 1's plan stays
+readable after attempt 2 overwrites the file, and the 8 KB tails in
 `stage_failed` / `$FAILURE` are a *preview* — the whole log is one link away.
-Snapshots outlive the run they describe (archiving keeps them) and are scrubbed
-of engine-injected secrets on the way in.
+Snapshots outlive the run they describe (archiving keeps them) and are
+scrubbed of engine-injected secrets on the way in.
+
+> **Terminology** (DESIGN-FILES): an **artifact** is this document's word — a
+> declared file interface at a repo-relative path, living in the workspace. An
+> **attachment** is a file a human gave the factory (delivered under
+> `.apothecary/attachments/`). A **snapshot** is the engine-captured, immutable
+> copy of workspace content in the control plane's record. The three never
+> share storage: artifacts die with the workspace, attachments and snapshots
+> outlive it.
 
 ---
 
@@ -765,7 +773,7 @@ exchange:
   in the feedback) — the agent asked a closed question so it can branch
   deterministically.
 - **Answers can carry files**, delivered into the workspace under
-  `.apothecary/artifacts/`, kept separate from the agent's own `artifacts/`.
+  `.apothecary/attachments/`, kept separate from the agent's own `artifacts/`.
 - If the engine is unreachable for more than 10 minutes the tool returns an
   error string and the agent proceeds — a broken control plane stalls the work
   but never wedges it forever.

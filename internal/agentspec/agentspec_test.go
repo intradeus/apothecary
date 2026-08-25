@@ -5,62 +5,6 @@ import (
 	"testing"
 )
 
-func TestParseReviewer(t *testing.T) {
-	doc := `name: reviewer
-description: adversarial code reviewer
-read_only: true
-allow_bash: true
-prompt: |
-  You are an adversarial code reviewer for this repository.
-`
-	s, err := Parse("reviewer", []byte(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !s.ReadOnly || !s.AllowBash || s.Description == "" || !strings.Contains(s.Prompt, "adversarial") {
-		t.Errorf("spec = %+v", s)
-	}
-}
-
-func TestParseErrors(t *testing.T) {
-	cases := []struct{ name, stem, doc, want string }{
-		{"stem mismatch", "builder", "name: planner\nprompt: p\n", "filename stem"},
-		{"missing name", "x", "prompt: p\n", "name is required"},
-		{"missing prompt", "x", "name: x\n", "prompt is required"},
-		{"unknown field", "x", "name: x\nprompt: p\ntools: [bash]\n", "tools"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := Parse(tc.stem, []byte(tc.doc))
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("err = %v, want mention of %q", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestParseWithDecls(t *testing.T) {
-	doc := `name: builder
-prompt: |
-  build it
-inputs:
-  - { name: plan, description: the plan }
-  - { name: feedback, optional: true }
-outputs:
-  - { name: patch, description: the change, path: artifacts/patch.md }
-`
-	s, err := Parse("builder", []byte(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(s.Inputs) != 2 || s.Inputs[0].Name != "plan" || !s.Inputs[1].Optional {
-		t.Errorf("inputs = %+v", s.Inputs)
-	}
-	if len(s.Outputs) != 1 || s.Outputs[0].Path != "artifacts/patch.md" {
-		t.Errorf("outputs = %+v", s.Outputs)
-	}
-}
-
 func TestValidateIO(t *testing.T) {
 	long := strings.Repeat("x", descMax+1)
 	cases := []struct {
@@ -97,13 +41,14 @@ func TestValidateIO(t *testing.T) {
 // TestVerdictOutputDecl: a verdict output is what makes a flow stage's
 // on_reject reachable, so the spec must model exactly one of them.
 func TestVerdictOutputDecl(t *testing.T) {
-	spec, err := Parse("reviewer", []byte(`name: reviewer
-prompt: review it
-outputs:
-  - { name: notes, path: artifacts/notes.md }
-  - { name: verdict, type: verdict, path: artifacts/verdict.json, description: APPROVE or REJECT }
-`))
-	if err != nil {
+	spec := &Spec{
+		Name: "reviewer", Prompt: "review it",
+		Outputs: []OutputDecl{
+			{Name: "notes", Path: "artifacts/notes.md"},
+			{Name: "verdict", Type: OutputTypeVerdict, Path: "artifacts/verdict.json", Description: "APPROVE or REJECT"},
+		},
+	}
+	if err := Validate(spec); err != nil {
 		t.Fatal(err)
 	}
 	v := spec.VerdictOutput()
@@ -119,13 +64,21 @@ outputs:
 		t.Error("nil spec must be safe")
 	}
 
-	cases := []struct{ name, yaml, want string }{
-		{"unknown type", "name: x\nprompt: p\noutputs: [{name: o, type: mood, path: o.md}]\n", "unknown type"},
-		{"two verdicts", "name: x\nprompt: p\noutputs: [{name: a, type: verdict, path: a.json}, {name: b, type: verdict, path: b.json}]\n", "at most one verdict"},
+	cases := []struct {
+		name    string
+		outputs []OutputDecl
+		want    string
+	}{
+		{"unknown type", []OutputDecl{{Name: "o", Type: "mood", Path: "o.md"}}, "unknown type"},
+		{"two verdicts", []OutputDecl{
+			{Name: "a", Type: OutputTypeVerdict, Path: "a.json"},
+			{Name: "b", Type: OutputTypeVerdict, Path: "b.json"},
+		}, "at most one verdict"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := Parse("x", []byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			spec := &Spec{Name: "x", Prompt: "p", Outputs: tc.outputs}
+			if err := Validate(spec); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want mention of %q", err, tc.want)
 			}
 		})

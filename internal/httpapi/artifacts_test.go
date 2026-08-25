@@ -2,68 +2,30 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"testing"
-	"time"
 
-	"apothecary/internal/artifacts"
 	"apothecary/internal/engine"
+	"apothecary/internal/filestore"
 )
 
-// memArtifactDB is a minimal artifacts.DB for the upload handler test.
-type memArtifactDB struct{ rows map[string]artifacts.Meta }
-
-func (d *memArtifactDB) InsertArtifact(_ context.Context, m artifacts.Meta) error {
-	d.rows[m.ID] = m
-	return nil
+// newFilesFor wires real filestore stores (over the in-package Mem) into a
+// test server + engine — upload/claim side and capture/delivery side.
+func newFilesFor(t *testing.T, x *env, maxBytes int64, allow []string) (*filestore.Attachments, *filestore.Snapshots, *filestore.Mem) {
+	t.Helper()
+	mem := filestore.NewMem()
+	blobs := filestore.NewBlobs(t.TempDir())
+	att := filestore.NewAttachments(mem, blobs, maxBytes, allow)
+	snaps := filestore.NewSnapshots(mem, blobs, maxBytes)
+	x.srv.Attachments = att
+	x.srv.Snapshots = snaps
+	x.e.SetFiles(att, snaps)
+	return att, snaps, mem
 }
-
-// AssociateArtifacts mirrors the SQL: only `orphan` rows are claimed, so a
-// second Associate for an already-attached id is a no-op.
-func (d *memArtifactDB) ArtifactsForStage(_ context.Context, runID string) ([]artifacts.Meta, error) {
-	var out []artifacts.Meta
-	for _, m := range d.rows {
-		if m.RunID == runID && artifacts.IsStageScope(m.Scope) {
-			out = append(out, m)
-		}
-	}
-	return out, nil
-}
-func (d *memArtifactDB) AssociateArtifacts(_ context.Context, ids []string, runID, pingID, scope string) error {
-	for _, id := range ids {
-		m, ok := d.rows[id]
-		if !ok || m.Scope != artifacts.ScopeOrphan {
-			continue
-		}
-		m.RunID, m.PingID, m.Scope = runID, pingID, scope
-		d.rows[id] = m
-	}
-	return nil
-}
-func (d *memArtifactDB) ArtifactsForRun(context.Context, string) ([]artifacts.Meta, error) {
-	return nil, nil
-}
-func (d *memArtifactDB) ArtifactsForPing(context.Context, string, string) ([]artifacts.Meta, error) {
-	return nil, nil
-}
-func (d *memArtifactDB) GetArtifact(_ context.Context, id string) (artifacts.Meta, error) {
-	if m, ok := d.rows[id]; ok {
-		return m, nil
-	}
-	return artifacts.Meta{}, artifacts.ErrNotFound
-}
-func (d *memArtifactDB) DeleteArtifactsForRun(context.Context, string) ([]string, error) {
-	return nil, nil
-}
-func (d *memArtifactDB) OrphanArtifactIDsBefore(context.Context, time.Time) ([]string, error) {
-	return nil, nil
-}
-func (d *memArtifactDB) DeleteArtifacts(context.Context, []string) error { return nil }
 
 func multipartBody(name, ctype string, data []byte) (*bytes.Buffer, string) {
 	var buf bytes.Buffer
@@ -79,11 +41,11 @@ func multipartBody(name, ctype string, data []byte) (*bytes.Buffer, string) {
 
 func TestPostArtifacts(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	x.srv.Artifacts = artifacts.New(&memArtifactDB{rows: map[string]artifacts.Meta{}}, t.TempDir(), 32, []string{"text/*"})
+	newFilesFor(t, x, 32, []string{"text/*"})
 
 	upload := func(name, ctype string, data []byte) (*http.Response, []byte) {
 		body, ct := multipartBody(name, ctype, data)
-		res, err := http.Post(x.ts.URL+"/api/artifacts", ct, body)
+		res, err := http.Post(x.ts.URL+"/api/attachments", ct, body)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,9 +59,11 @@ func TestPostArtifacts(t *testing.T) {
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d: %s", res.StatusCode, data)
 	}
-	var metas []map[string]any
-	_ = json.Unmarshal(data, &metas)
-	if len(metas) != 1 || metas[0]["filename"] != "notes.txt" {
+	var out struct {
+		Attachments []map[string]any `json:"attachments"`
+	}
+	_ = json.Unmarshal(data, &out)
+	if len(out.Attachments) != 1 || out.Attachments[0]["filename"] != "notes.txt" {
 		t.Errorf("response = %s", data)
 	}
 
@@ -110,5 +74,17 @@ func TestPostArtifacts(t *testing.T) {
 	// Over the 32-byte cap → 413.
 	if res, _ = upload("big.txt", "text/plain", bytes.Repeat([]byte("x"), 40)); res.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized status = %d", res.StatusCode)
+	}
+
+	// The stored bytes stream back from the byte route, verified.
+	id := out.Attachments[0]["id"].(string)
+	got, err := http.Get(x.ts.URL + "/api/attachments/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(got.Body)
+	got.Body.Close()
+	if got.StatusCode != http.StatusOK || string(body) != "hello" {
+		t.Errorf("byte route = %d %q", got.StatusCode, body)
 	}
 }

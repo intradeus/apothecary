@@ -18,12 +18,12 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/artifacts"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
+	"apothecary/internal/filestore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
@@ -50,9 +50,11 @@ type Server struct {
 	// Pings serves the durable request/response projection (PLAN4 M15);
 	// nil falls back to the engine's in-memory pending registry.
 	Pings PingStore
-	// Artifacts is the human-attached-file store (goal + ping answers); nil
-	// disables uploads (POST /api/artifacts → 503) and delivery.
-	Artifacts *artifacts.Store
+	// Attachments/Snapshots are the file stores (DESIGN-FILES): human uploads
+	// and the engine-captured record. nil disables the respective routes
+	// (uploads → 503, lists → empty).
+	Attachments *filestore.Attachments
+	Snapshots   *filestore.Snapshots
 	// CPUIDir, when set, is served at / with an SPA fallback to index.html
 	// (the built SvelteKit bundle; the CPUI talks only to this API).
 	CPUIDir string
@@ -99,12 +101,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pings/{pid}/answer", s.answerPing)
 	mux.HandleFunc("GET /api/pings", s.listPings)
 	mux.HandleFunc("GET /api/pings/{pid}", s.getStoredPing)
-	mux.HandleFunc("GET /api/pings/{pid}/artifact", s.pingArtifact)
-	mux.HandleFunc("GET /api/pings/{pid}/artifacts", s.getPingArtifacts)
-	mux.HandleFunc("POST /api/artifacts", s.postArtifacts)
-	mux.HandleFunc("GET /api/artifacts/{id}", s.getArtifact)
-	mux.HandleFunc("GET /api/runs/{id}/artifacts", s.getRunArtifacts)
-	mux.HandleFunc("GET /api/runs/{id}/attempts", s.getRunAttempts)
+	mux.HandleFunc("GET /api/pings/{pid}/files", s.getPingFiles)
+	mux.HandleFunc("POST /api/attachments", s.postAttachments)
+	mux.HandleFunc("GET /api/attachments/limits", s.getAttachmentLimits)
+	mux.HandleFunc("GET /api/attachments/{id}", s.getAttachment)
+	mux.HandleFunc("GET /api/snapshots/{id}", s.getSnapshot)
+	mux.HandleFunc("GET /api/runs/{id}/files", s.getRunFiles)
 	mux.HandleFunc("GET /api/channels", s.listChannels)
 	mux.HandleFunc("POST /api/channels", s.addChannel)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.deleteChannel)
@@ -137,7 +139,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/tickets/{id}", s.getTicket)
 		mux.HandleFunc("PUT /api/tickets/{id}", s.updateTicket)
 		mux.HandleFunc("DELETE /api/tickets/{id}", s.deleteTicket)
-		mux.HandleFunc("GET /api/tickets/{id}/artifacts", s.getTicketArtifacts)
+		mux.HandleFunc("GET /api/tickets/{id}/attachments", s.getTicketAttachments)
 		mux.HandleFunc("POST /api/tickets/{id}/runs", s.startTicketRun)
 		// Agent library (DESIGN3 §1): per-project, copiable, versioned.
 		mux.HandleFunc("GET /api/projects/{id}/egress-audit", s.getProjectEgressAudit)
@@ -285,6 +287,8 @@ type pingJSON struct {
 	StageID    string    `json:"stage_id,omitempty"`
 	Question   string    `json:"question"`
 	Context    string    `json:"context,omitempty"`
+	Files      []string  `json:"files,omitempty"`
+	Link       string    `json:"link,omitempty"`
 	PayloadRef string    `json:"payload_ref,omitempty"`
 	Options    []string  `json:"options,omitempty"`
 	Status     string    `json:"status"`
@@ -294,7 +298,8 @@ type pingJSON struct {
 func toPingJSON(p *engine.Ping) pingJSON {
 	return pingJSON{
 		PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID, Question: p.Question,
-		Context: p.Context, PayloadRef: p.PayloadRef, Options: p.Options, Status: "pending", RaisedAt: p.RaisedAt,
+		Context: p.Context, Files: p.Files, Link: p.Link, PayloadRef: p.Primary(),
+		Options: p.Options, Status: "pending", RaisedAt: p.RaisedAt,
 	}
 }
 
@@ -418,19 +423,19 @@ func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {
 // postRestart starts a terminal run over as a fresh run; 201 carries the
 // new run id. 409 when the run is active/non-terminal, 404 when unknown,
 // 400 when the re-preflight refuses (config drifted since the original).
-// The optional body {flow, goal, artifact_ids} steers THIS attempt —
+// The optional body {flow, goal, attachment_ids} steers THIS attempt —
 // restart-after-failure is when a human most wants to give direction.
 func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Flow         string   `json:"flow"`
-		Goal         string   `json:"goal"`
-		SourceBranch string   `json:"source_branch"`
-		ArtifactIDs  []string `json:"artifact_ids"`
+		Flow          string   `json:"flow"`
+		Goal          string   `json:"goal"`
+		SourceBranch  string   `json:"source_branch"`
+		AttachmentIDs []string `json:"attachment_ids"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
 	newID, err := s.Engine.RestartRun(r.Context(), r.PathValue("id"), engine.RunInput{
-		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, ArtifactIDs: body.ArtifactIDs,
+		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
 	})
 	if err != nil {
 		msg := err.Error()
@@ -910,40 +915,36 @@ func removeStr(ss []string, v string) []string {
 }
 
 func (s *Server) getLog(w http.ResponseWriter, r *http.Request) {
+	// The log SNAPSHOT is the log (DESIGN-FILES §5.4): the runs-dir per-stage
+	// files are retired; this serves the latest attempt's captured log. The
+	// live tail during a running stage stays on the workspace-log route.
 	id, stage := r.PathValue("id"), r.PathValue("stage")
-	if s.RunsDir == "" {
+	if s.Snapshots == nil {
 		writeErr(w, http.StatusNotFound, "log storage is not configured")
 		return
 	}
-	dir := filepath.Join(s.RunsDir, id)
-	entries, err := os.ReadDir(dir)
+	snaps, err := s.Snapshots.ForRun(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "no logs for run "+id)
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Serve the highest iteration for the stage.
-	best, bestIter := "", -1
-	for _, e := range entries {
-		name := e.Name()
-		rest, ok := strings.CutPrefix(name, stage+"-")
-		if !ok {
+	var best *filestore.Snapshot
+	for i := range snaps {
+		sn := &snaps[i]
+		if sn.Kind != filestore.KindLog || sn.StageID != stage {
 			continue
 		}
-		numStr, ok := strings.CutSuffix(rest, ".log")
-		if !ok {
-			continue
-		}
-		if n, err := strconv.Atoi(numStr); err == nil && n > bestIter {
-			bestIter, best = n, name
+		if best == nil || sn.Iteration > best.Iteration {
+			best = sn
 		}
 	}
-	if best == "" {
+	if best == nil {
 		writeErr(w, http.StatusNotFound, fmt.Sprintf("no log for stage %s", stage))
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(dir, best))
+	data, _, err := s.Snapshots.Bytes(r.Context(), best.ID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeErr(w, http.StatusGone, "this log's content is no longer stored")
 		return
 	}
 	n := 64 << 10
@@ -956,6 +957,7 @@ func (s *Server) getLog(w http.ResponseWriter, r *http.Request) {
 		data = data[len(data)-n:]
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(data)
 }
 
@@ -1026,26 +1028,28 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 
 func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Answer      string   `json:"answer"`
-		Feedback    string   `json:"feedback"`
-		ArtifactIDs []string `json:"artifact_ids"` // uploaded files attached to the answer
+		Answer        string   `json:"answer"`
+		Feedback      string   `json:"feedback"`
+		AttachmentIDs []string `json:"attachment_ids"` // uploaded files attached to the answer
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
 	pid := r.PathValue("pid")
 	// Claim the uploaded files for this ping BEFORE AnswerPing enqueues the
-	// answer, so processAnswer's delivery (which queries by ping_id) finds them.
-	if s.Artifacts != nil && len(body.ArtifactIDs) > 0 {
-		runID := ""
+	// answer, so processAnswer's delivery (which queries by ping_id) finds
+	// them. The run id comes from the live registry (an answerable ping is
+	// always live), and the ids also ride on the answer so ping_answered
+	// records the association as a replayable fact.
+	if s.Attachments != nil && len(body.AttachmentIDs) > 0 {
 		if p := s.Engine.GetPing(pid); p != nil {
-			runID = p.RunID
-		}
-		if err := s.Artifacts.Associate(r.Context(), body.ArtifactIDs, runID, pid, artifacts.ScopePingAnswer); err != nil {
-			s.Log.Warn("associate answer artifacts", "ping", pid, "err", err)
+			if err := s.Attachments.ClaimForRun(r.Context(), body.AttachmentIDs, p.RunID, pid); err != nil {
+				s.Log.Warn("claim answer attachments", "ping", pid, "err", err)
+			}
 		}
 	}
-	err := s.Engine.AnswerPing(pid, engine.PingAnswer{Answer: body.Answer, Feedback: body.Feedback})
+	err := s.Engine.AnswerPing(pid, engine.PingAnswer{Answer: body.Answer, Feedback: body.Feedback,
+		AttachmentIDs: body.AttachmentIDs})
 	switch {
 	case errors.Is(err, engine.ErrPingNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())
@@ -1114,25 +1118,6 @@ func (s *Server) getStoredPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
-}
-
-// pingArtifact serves a gate's payload artifact from the live workspace
-// (DESIGN3 §3.1) so the plan review workbench renders it in place. 409 for
-// URL payloads (the UI keeps the link-out).
-func (s *Server) pingArtifact(w http.ResponseWriter, r *http.Request) {
-	path, content, err := s.Engine.PingArtifact(r.Context(), r.PathValue("pid"))
-	switch {
-	case err == nil:
-		writeJSON(w, http.StatusOK, map[string]string{"path": path, "content": string(content)})
-	case errors.Is(err, engine.ErrPingNotFound):
-		writeErr(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, engine.ErrArtifactIsURL):
-		writeErr(w, http.StatusConflict, err.Error())
-	case errors.Is(err, engine.ErrNoArtifact):
-		writeErr(w, http.StatusGone, err.Error())
-	default:
-		writeErr(w, http.StatusBadGateway, "artifact read failed: "+err.Error())
-	}
 }
 
 // --- channels ---------------------------------------------------------------

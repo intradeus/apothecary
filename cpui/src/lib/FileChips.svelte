@@ -1,27 +1,37 @@
 <script lang="ts">
-  // Stored attachments (a ticket's, a run's) as clickable chips: image
-  // thumbnails render inline, everything else gets a file glyph. Each chip
-  // links to the artifact route, which serves the bytes with their real
-  // content type.
-  import { api, fmtBytes, type ArtifactMeta } from '$lib/api';
+  // Stored files as clickable chips: image thumbnails inline, a glyph
+  // otherwise. kind picks the byte route — attachments (human-given) vs
+  // snapshots (engine-captured record).
+  import { api, fmtBytes } from '$lib/api';
 
-  let { items, label = '' }: { items: ArtifactMeta[]; label?: string } = $props();
+  export interface FileChip {
+    id: string;
+    filename: string;
+    mime?: string;
+    size?: number;
+    kind: 'attachment' | 'snapshot';
+  }
+
+  let { items, label = '' }: { items: FileChip[]; label?: string } = $props();
+
+  const url = (f: FileChip) =>
+    f.kind === 'snapshot' ? api.snapshotUrl(f.id) : api.attachmentUrl(f.id);
 </script>
 
 {#if items.length}
   <div class="files">
     {#if label}<div class="small muted">{label}</div>{/if}
     <div class="chips">
-      {#each items as a (a.id)}
-        <a class="file" href={api.artifactUrl(a.id)} target="_blank" rel="noreferrer"
-           title={`${a.filename} — ${a.mime ?? ''} ${fmtBytes(a.size)}`}>
-          {#if a.mime?.startsWith('image/')}
-            <img src={api.artifactUrl(a.id)} alt={a.filename} />
+      {#each items as f (f.kind + f.id)}
+        <a class="file" href={url(f)} target="_blank" rel="noreferrer"
+           title={`${f.filename} — ${f.mime ?? ''} ${fmtBytes(f.size)}`}>
+          {#if f.mime?.startsWith('image/')}
+            <img src={url(f)} alt={f.filename} />
           {:else}
             <span class="ico">📄</span>
           {/if}
-          <span class="name">{a.filename}</span>
-          <span class="size muted">{fmtBytes(a.size)}</span>
+          <span class="name">{f.filename}</span>
+          <span class="size muted">{fmtBytes(f.size)}</span>
         </a>
       {/each}
     </div>

@@ -182,7 +182,6 @@ type DB interface {
 	GetFlowVersion(ctx Ctx, hash string) (FlowVersion, error)
 	ListFlowVersions(ctx Ctx, name string) ([]FlowVersion, error)
 
-
 	GetSettings(ctx Ctx) (map[string]string, error) // key -> raw JSON value
 	PutSetting(ctx Ctx, key, value string) error
 }

@@ -1,8 +1,9 @@
 // Package tickets is the ticket factory: the one place a ticket comes into
-// existence, whether it is typed in by hand or copied from an external tracker
-// (Jira). Both paths end at the same confstore write and the same attachment
-// claim, so an imported ticket is indistinguishable downstream from a
-// hand-written one — runs, flows and workspaces know nothing about Jira.
+// existence or leaves it, whether typed in by hand or copied from an external
+// tracker (Jira). Both creation paths end at the same confstore write and the
+// same attachment claim, so an imported ticket is indistinguishable
+// downstream from a hand-written one — runs, flows and workspaces know
+// nothing about Jira.
 //
 // The import is a COPY, taken once: title, body and attachment bytes are
 // pulled into apothecary's own storage. Nothing re-reads the issue later and
@@ -18,8 +19,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"apothecary/internal/artifacts"
 	"apothecary/internal/confstore"
+	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
 )
 
@@ -42,10 +43,10 @@ var ErrNoSources = errors.New("no ticket sources are configured")
 var ErrDuplicate = errors.New("already imported")
 
 type Factory struct {
-	Conf      *confstore.Service
-	Artifacts *artifacts.Store
-	Sources   Sources
-	Log       *slog.Logger
+	Conf        *confstore.Service
+	Attachments *filestore.Attachments
+	Sources     Sources
+	Log         *slog.Logger
 }
 
 func (f *Factory) log() *slog.Logger {
@@ -57,23 +58,37 @@ func (f *Factory) log() *slog.Logger {
 
 // Create writes a ticket exactly as given (the hand-written path) and claims
 // its uploads for the TICKET rather than any run.
-func (f *Factory) Create(ctx context.Context, in confstore.Ticket) (confstore.Ticket, error) {
+func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
 	t, err := f.Conf.CreateTicket(ctx, in)
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t)
+	f.claim(ctx, t.ID, attachmentIDs)
 	return t, nil
 }
 
-// Update saves an edit and claims any newly-attached uploads.
-func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket) (confstore.Ticket, error) {
+// Update saves an edit and claims any newly-attached uploads (already-claimed
+// ids are a no-op, so re-sending the full list is safe).
+func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
 	t, err := f.Conf.UpdateTicket(ctx, id, upd)
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t)
+	f.claim(ctx, t.ID, attachmentIDs)
 	return t, nil
+}
+
+// Delete removes the ticket AND its attachment rows — the fix for the old
+// leak, where DeleteTicket dropped the row and left the files immortal
+// (DESIGN-FILES §12 #3). The blob sweep reclaims the bytes once nothing
+// references them; runs that pinned these ids at start keep working (F8).
+func (f *Factory) Delete(ctx context.Context, id string) error {
+	if f.Attachments != nil {
+		if err := f.Attachments.DeleteForTicket(ctx, id); err != nil {
+			return fmt.Errorf("ticket %s attachments: %w", id, err)
+		}
+	}
+	return f.Conf.DeleteTicket(ctx, id)
 }
 
 // CreateFromSource copies an external issue into a ticket. Fields set on
@@ -81,9 +96,9 @@ func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket) (
 // form); everything else — and every attachment — comes from the source.
 //
 // Attachments are best-effort: one that is too large or of a type the
-// artifact store refuses is skipped and named in the returned warnings, since
+// upload policy refuses is skipped and named in the returned warnings, since
 // losing one screenshot is no reason to lose the whole import.
-func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in confstore.Ticket) (confstore.Ticket, []string, error) {
+func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, []string, error) {
 	src, kind, err := f.source(ctx, sourceID)
 	if err != nil {
 		return confstore.Ticket{}, nil, err
@@ -110,16 +125,12 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 	t.SourceKey, t.SourceURL = remote.Key, remote.URL
 
 	imported, warnings := f.importAttachments(ctx, src, remote)
-	t.ArtifactIDs = append(append([]string{}, in.ArtifactIDs...), imported...)
 
 	created, err := f.Conf.CreateTicket(ctx, t)
 	if err != nil {
 		return confstore.Ticket{}, nil, err
 	}
-	f.claim(ctx, created)
-	// "The attachments didn't come across" has three very different causes —
-	// the tracker reported none, they were skipped, or they landed and the UI
-	// didn't show them. One line settles which.
+	f.claim(ctx, created.ID, append(append([]string{}, attachmentIDs...), imported...))
 	f.log().Info("imported ticket from source",
 		"ticket", created.ID, "key", remote.Key, "kind", kind,
 		"attachments_reported", len(remote.Attachments),
@@ -183,22 +194,22 @@ func (f *Factory) checkDuplicate(ctx context.Context, projectID, key string) err
 	return nil
 }
 
-// importAttachments pulls each of the source's files through the artifact
-// store, returning the ids that landed and a warning per file that did not.
+// importAttachments pulls each of the source's files through the upload
+// policy, returning the ids that landed and a warning per file that did not.
 func (f *Factory) importAttachments(ctx context.Context, src ports.TicketSource, remote ports.SourceTicket) ([]string, []string) {
 	if len(remote.Attachments) == 0 {
 		return nil, nil
 	}
-	if f.Artifacts == nil {
-		return nil, []string{fmt.Sprintf("%d attachment(s) skipped: this server has no artifact store configured", len(remote.Attachments))}
+	if f.Attachments == nil {
+		return nil, []string{fmt.Sprintf("%d attachment(s) skipped: this server has no file store configured", len(remote.Attachments))}
 	}
 	var ids, warnings []string
 	for _, a := range remote.Attachments {
 		id, err := f.importOne(ctx, src, a)
 		switch {
-		case errors.Is(err, artifacts.ErrTooLarge):
-			warnings = append(warnings, fmt.Sprintf("%s: too large for this server's artifact limit — attach it by hand if you need it", a.Filename))
-		case errors.Is(err, artifacts.ErrMimeType):
+		case errors.Is(err, filestore.ErrTooLarge):
+			warnings = append(warnings, fmt.Sprintf("%s: too large for this server's upload limit — attach it by hand if you need it", a.Filename))
+		case errors.Is(err, filestore.ErrMimeType):
 			warnings = append(warnings, fmt.Sprintf("%s: file type %q is not on the upload allowlist", a.Filename, a.Mime))
 		case err != nil:
 			warnings = append(warnings, fmt.Sprintf("%s: %v", a.Filename, err))
@@ -216,22 +227,21 @@ func (f *Factory) importOne(ctx context.Context, src ports.TicketSource, a ports
 		return "", err
 	}
 	defer rc.Close()
-	m, err := f.Artifacts.Save(ctx, a.Filename, a.Mime, io.Reader(rc))
+	att, err := f.Attachments.Save(ctx, a.Filename, a.Mime, io.Reader(rc))
 	if err != nil {
 		return "", err
 	}
-	return m.ID, nil
+	return att.ID, nil
 }
 
-// claim binds the ticket's uploads to the TICKET (scope ticket_goal, no run
-// id): out of `orphan` so the GC can't sweep them, and shared by every run of
-// the ticket. Already-claimed ids are a no-op, so re-sending the full list on
-// update is safe.
-func (f *Factory) claim(ctx context.Context, t confstore.Ticket) {
-	if f.Artifacts == nil || len(t.ArtifactIDs) == 0 {
+// claim binds uploads to the TICKET: shared by every run of it, out of the
+// unclaimed state so the GC can't sweep them. One-shot per attachment, so
+// re-sending a full list on update is safe.
+func (f *Factory) claim(ctx context.Context, ticketID string, ids []string) {
+	if f.Attachments == nil || len(ids) == 0 {
 		return
 	}
-	if err := f.Artifacts.Associate(ctx, t.ArtifactIDs, "", "", artifacts.ScopeTicketGoal); err != nil {
-		f.log().Warn("associate ticket artifacts", "ticket", t.ID, "err", err)
+	if err := f.Attachments.ClaimForTicket(ctx, ids, ticketID); err != nil {
+		f.log().Warn("claim ticket attachments", "ticket", ticketID, "err", err)
 	}
 }

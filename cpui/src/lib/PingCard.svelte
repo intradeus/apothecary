@@ -22,12 +22,18 @@
   let note = $state('');
   let files = $state<File[]>([]);
   let uploading = $state(false);
-  // Upload any attached files first, then hand the answer up.
+  let uploadErr = $state('');
+  // Upload any attached files first, then hand the answer up. A failed
+  // upload SURFACES and keeps the draft — it used to be swallowed, leaving
+  // the card idle with the answer silently unsent.
   async function submit(answer: string) {
     uploading = true;
+    uploadErr = '';
     try {
-      const ids = files.length ? (await api.uploadArtifacts(files)).map((a) => a.id) : undefined;
+      const ids = files.length ? (await api.uploadAttachments(files)).map((a) => a.id) : undefined;
       onanswer(answer, note, ids);
+    } catch (e) {
+      uploadErr = e instanceof Error ? e.message : String(e);
     } finally {
       uploading = false;
     }
@@ -42,11 +48,13 @@
 <div class="md" style="margin:8px 0">{@html mdToHtml(ping.question)}</div>
 {#if ping.context}<div class="md muted small">{@html mdToHtml(ping.context)}</div>{/if}
 
-{#if ping.payload_ref}
+{#if ping.link}
+  <!-- Typed at the source (DESIGN-FILES §4): a link payload links out… -->
+  <p class="mono small"><a href={ping.link} target="_blank" rel="noreferrer">{ping.link} ↗</a></p>
+{:else if ping.payload_ref}
+  <!-- …and a file payload opens the review workbench. -->
   <p class="mono small">
-    {#if ping.payload_ref.startsWith('http')}
-      <a href={ping.payload_ref} target="_blank" rel="noreferrer">{ping.payload_ref} ↗</a>
-    {:else if isPending}
+    {#if isPending}
       {ping.payload_ref} — <a href={`/pings/${ping.ping_id}`}>review &amp; comment →</a>
     {:else}{ping.payload_ref}{/if}
   </p>
@@ -62,6 +70,7 @@
   </div>
 {:else}
   <AttachFiles bind:files label="Attach files to your answer" />
+  {#if uploadErr}<div class="error small">upload failed: {uploadErr}</div>{/if}
   {#if isGate}
     <textarea bind:value={note} placeholder="Feedback (required when rejecting)"></textarea>
     <div class="row" style="margin-top:10px">

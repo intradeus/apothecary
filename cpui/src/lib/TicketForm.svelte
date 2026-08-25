@@ -9,13 +9,13 @@
   import {
     api,
     fmtBytes,
-    type ArtifactMeta,
+    type Attachment,
     type Integration,
     type Project,
     type SourceTicket,
     type Ticket
   } from '$lib/api';
-  import ArtifactList from '$lib/ArtifactList.svelte';
+  import FileChips from '$lib/FileChips.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import { onMount } from 'svelte';
 
@@ -48,13 +48,13 @@
 
   // Already-attached files, shown when editing so the list isn't invisible
   // state the form silently round-trips.
-  let attached = $state<ArtifactMeta[]>([]);
+  let attached = $state<Attachment[]>([]);
 
   onMount(async () => {
     if (init) {
       // Provenance is immutable, so editing never re-imports — but it should
       // still show what the ticket carries.
-      api.ticketArtifacts(init.id).then((a) => (attached = a)).catch(() => {});
+      api.ticketAttachments(init.id).then((a) => (attached = a)).catch(() => {});
       return;
     }
     try {
@@ -138,17 +138,17 @@
     error = '';
     warnings = [];
     try {
-      let artifactIds = init?.artifact_ids ?? [];
+      let attachmentIds = init?.attachment_ids ?? [];
       if (files.length) {
-        const uploaded = (await api.uploadArtifacts(files)).map((a) => a.id);
-        artifactIds = [...artifactIds, ...uploaded];
+        const uploaded = (await api.uploadAttachments(files)).map((a) => a.id);
+        attachmentIds = [...attachmentIds, ...uploaded];
       }
       const body = {
         title: title.trim(),
         goal: goal.trim(),
         project_id: projectId,
         branch: branch.trim() || undefined,
-        artifact_ids: artifactIds,
+        attachment_ids: attachmentIds,
         ...(picked ? { source_id: sourceId, source_key: picked.key } : {})
       };
       const t = init
@@ -258,7 +258,10 @@
   <textarea id="t-goal" bind:value={goal} required
     placeholder="What should the factory build, and what does done look like?"></textarea>
   {#if attached.length}
-    <ArtifactList items={attached} label="Already attached — delivered into every run's workspace" />
+    <FileChips
+      items={attached.map((a) => ({ ...a, kind: 'attachment' as const }))}
+      label="Already attached — delivered into every run's workspace"
+    />
   {/if}
   <AttachFiles bind:files label="Attach documents / images for the agent to read" />
   <label for="t-branch">Base branch <span class="muted">— prefilled from the title; each run appends a short unique suffix</span></label>

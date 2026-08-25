@@ -162,7 +162,7 @@ func TestCanonicalV3(t *testing.T) {
 // the graph editor emits): abort terminals, on_timeout, then-chains, unlimited
 // links and workspace rescue gates.
 func TestReferenceFlowParses(t *testing.T) {
-	f, err := Load("../../artifacts/flows/v3.yaml")
+	f, err := Load("../../examples/flows/v3.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ package pgstore
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -22,7 +23,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"apothecary/internal/artifacts"
 	"apothecary/internal/event"
 	"apothecary/internal/run"
 )
@@ -213,21 +213,42 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 			if len(p.Options) > 0 {
 				opts, _ = json.Marshal(p.Options)
 			}
-			var refs []byte
-			if len(p.PayloadRefs) > 0 {
-				refs, _ = json.Marshal(p.PayloadRefs)
+			var files []byte
+			if len(p.Files) > 0 {
+				files, _ = json.Marshal(p.Files)
 			}
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO pings (ping_id, run_id, type, question, context, payload_ref, payload_refs, stage_id, options, status, raised_at)
+				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, options, status, raised_at)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)
 				ON CONFLICT (ping_id) DO NOTHING`,
-				p.PingID, runID, p.Type, p.Question, p.Context, p.PayloadRef, refs, p.StageID, opts, evs[i].TS); err != nil {
+				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, opts, evs[i].TS); err != nil {
 				return err
 			}
 		case *event.PingAnswered:
+			var ids []byte
+			if len(p.AttachmentIDs) > 0 {
+				ids, _ = json.Marshal(p.AttachmentIDs)
+			}
 			if _, err := tx.Exec(ctx, `
-				UPDATE pings SET status='answered', answer=$2, feedback=$3, answered_at=$4 WHERE ping_id=$1`,
-				p.PingID, p.Answer, p.Feedback, evs[i].TS); err != nil {
+				UPDATE pings SET status='answered', answer=$2, feedback=$3, answer_attachment_ids=$4, answered_at=$5 WHERE ping_id=$1`,
+				p.PingID, p.Answer, p.Feedback, ids, evs[i].TS); err != nil {
+				return err
+			}
+		case *event.SnapshotCaptured:
+			// The snapshots table is a PROJECTION of this event (DESIGN-FILES
+			// §3.3). On the live path the row already exists — Capture inserts
+			// it in the same logical operation and this no-ops on the id — so
+			// this case is what makes rebuild-projections able to reconstruct
+			// the table from the log alone (a row whose event never landed
+			// disappears on rebuild, which is the correct reading of a crash
+			// between capture and append).
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO snapshots (id, run_id, kind, stage_id, iteration, ping_id, name, path, filename, mime, size, sha256, truncated, created_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+				ON CONFLICT (id) DO NOTHING`,
+				p.SnapshotID, runID, p.Kind, p.StageID, p.Iteration,
+				nullStr(p.PingID), nullStr(p.Name), nullStr(p.Path),
+				p.Filename, p.Mime, p.Size, p.SHA256, p.Truncated, evs[i].TS); err != nil {
 				return err
 			}
 		case *event.RunAbandoned, *event.RunFailed, *event.RunArchived, *event.RunCompleted:
@@ -370,8 +391,10 @@ func (s *Store) unsubscribe(runID string, sb *sub) {
 
 // --- projections rebuild (§6: apothecaryd rebuild-projections) -----------------
 
-// RebuildProjections truncates the runs and pings tables and replays every
-// run's events through the same projection code the append path uses.
+// RebuildProjections truncates the runs, pings and snapshots tables and
+// replays every run's events through the same projection code the append
+// path uses. Snapshot BLOBS are untouched — rebuilt rows re-point at them by
+// sha (DESIGN-FILES §3.3).
 func (s *Store) RebuildProjections(ctx context.Context) (int, error) {
 	ids, err := s.RunIDs(ctx)
 	if err != nil {
@@ -382,7 +405,7 @@ func (s *Store) RebuildProjections(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `TRUNCATE runs, pings`); err != nil {
+	if _, err := tx.Exec(ctx, `TRUNCATE runs, pings, snapshots`); err != nil {
 		return 0, err
 	}
 	for _, id := range ids {
@@ -508,132 +531,6 @@ func (s *Store) LoadExposedPorts(ctx context.Context) (map[string]map[int]int, e
 	return out, rows.Err()
 }
 
-// --- artifacts (human-attached files: metadata; bytes live on disk) --------
-
-// InsertArtifact records an artifact: a freshly-uploaded orphan, or an
-// engine-captured attempt snapshot that arrives already attached (M27).
-func (s *Store) InsertArtifact(ctx context.Context, m artifacts.Meta) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO artifacts (id, run_id, ping_id, scope, filename, mime, size, sha256, stage_id, iteration, output_name)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		m.ID, m.RunID, m.PingID, m.Scope, m.Filename, m.Mime, m.Size, m.SHA256,
-		m.StageID, m.Iteration, m.OutputName)
-	return err
-}
-
-// AssociateArtifacts claims orphan artifacts for a run/ping/scope. Only rows
-// still in scope='orphan' are claimed, so a replayed or forged id can never
-// re-home another run's file (or steal one already attached).
-func (s *Store) AssociateArtifacts(ctx context.Context, ids []string, runID, pingID, scope string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	_, err := s.pool.Exec(ctx,
-		`UPDATE artifacts SET run_id=$1, ping_id=$2, scope=$3
-		 WHERE id = ANY($4) AND scope='orphan'`,
-		runID, pingID, scope, ids)
-	return err
-}
-
-// ArtifactsForRun lists the run's HUMAN attachments. Stage snapshots are
-// excluded: they are the audit trail, not something to re-deliver into a
-// workspace (M27).
-func (s *Store) ArtifactsForRun(ctx context.Context, runID string) ([]artifacts.Meta, error) {
-	return s.scanArtifacts(ctx, `
-		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
-		FROM artifacts WHERE run_id=$1 AND scope NOT IN ('stage_output','stage_log')
-		ORDER BY created_at`, runID)
-}
-
-// ArtifactsForStage lists a run's per-attempt snapshots in attempt order.
-func (s *Store) ArtifactsForStage(ctx context.Context, runID string) ([]artifacts.Meta, error) {
-	return s.scanArtifacts(ctx, `
-		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
-		FROM artifacts WHERE run_id=$1 AND scope IN ('stage_output','stage_log')
-		ORDER BY stage_id, iteration, created_at`, runID)
-}
-
-func (s *Store) ArtifactsForPing(ctx context.Context, pingID, scope string) ([]artifacts.Meta, error) {
-	return s.scanArtifacts(ctx, `
-		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
-		FROM artifacts WHERE ping_id=$1 AND scope=$2 ORDER BY created_at`, pingID, scope)
-}
-
-func (s *Store) GetArtifact(ctx context.Context, id string) (artifacts.Meta, error) {
-	rows, err := s.scanArtifacts(ctx, `
-		SELECT id, run_id, ping_id, scope, filename, mime, size, sha256, created_at, stage_id, iteration, output_name
-		FROM artifacts WHERE id=$1`, id)
-	if err != nil {
-		return artifacts.Meta{}, err
-	}
-	if len(rows) == 0 {
-		return artifacts.Meta{}, artifacts.ErrNotFound
-	}
-	return rows[0], nil
-}
-
-// DeleteArtifactsForRun removes a run's artifact rows, returning the deleted
-// ids so the caller can unlink the blobs.
-// Audit-scoped rows are deliberately kept: archiving a run reclaims its
-// workspace and uploads, but the audit trail is the point of M27 — it must
-// outlive the run it describes. That covers stage snapshots and the ping
-// payloads a human was shown when they approved something.
-func (s *Store) DeleteArtifactsForRun(ctx context.Context, runID string) ([]string, error) {
-	return s.scanArtifactIDs(ctx,
-		`DELETE FROM artifacts WHERE run_id=$1 AND scope NOT IN ('stage_output','stage_log','ping_payload') RETURNING id`, runID)
-}
-
-// OrphanArtifactIDsBefore returns never-attached uploads older than cutoff.
-func (s *Store) OrphanArtifactIDsBefore(ctx context.Context, cutoff time.Time) ([]string, error) {
-	return s.scanArtifactIDs(ctx,
-		`SELECT id FROM artifacts WHERE scope='orphan' AND created_at < $1`, cutoff)
-}
-
-// DeleteArtifacts removes rows by id (blobs unlinked by the caller).
-func (s *Store) DeleteArtifacts(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	_, err := s.pool.Exec(ctx, `DELETE FROM artifacts WHERE id = ANY($1)`, ids)
-	return err
-}
-
-func (s *Store) scanArtifacts(ctx context.Context, q string, args ...any) ([]artifacts.Meta, error) {
-	rows, err := s.pool.Query(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []artifacts.Meta
-	for rows.Next() {
-		var m artifacts.Meta
-		if err := rows.Scan(&m.ID, &m.RunID, &m.PingID, &m.Scope, &m.Filename,
-			&m.Mime, &m.Size, &m.SHA256, &m.CreatedAt,
-			&m.StageID, &m.Iteration, &m.OutputName); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) scanArtifactIDs(ctx context.Context, q string, args ...any) ([]string, error) {
-	rows, err := s.pool.Query(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
 // ListPings reads the pings projection (PLAN4 M15): the durable
 // request/response surface. status filters pending|answered; "" or "all"
 // returns both. Newest first, capped by limit.
@@ -641,8 +538,8 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q := `SELECT ping_id, run_id, type, stage_id, question, context, payload_ref, payload_refs,
-	             options, status, answer, feedback, raised_at, answered_at
+	q := `SELECT ping_id, run_id, type, stage_id, question, context, files, link,
+	             options, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
 	      FROM pings`
 	args := []any{}
 	if status != "" && status != "all" {
@@ -669,8 +566,8 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 // GetPing reads one projected request/response pair by id.
 func (s *Store) GetPing(ctx context.Context, id string) (run.PingView, error) {
 	v, err := scanPing(s.pool.QueryRow(ctx, `
-		SELECT ping_id, run_id, type, stage_id, question, context, payload_ref, payload_refs,
-		       options, status, answer, feedback, raised_at, answered_at
+		SELECT ping_id, run_id, type, stage_id, question, context, files, link,
+		       options, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
 		FROM pings WHERE ping_id=$1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.PingView{}, fmt.Errorf("ping %s: %w", id, ErrPingNotFound)
@@ -683,16 +580,22 @@ var ErrPingNotFound = errors.New("ping not found")
 
 func scanPing(row pgx.Row) (run.PingView, error) {
 	var v run.PingView
-	var opts, refs []byte
+	var opts, files, ansIDs []byte
+	var link sql.NullString
 	err := row.Scan(&v.PingID, &v.RunID, &v.Type, &v.StageID, &v.Question, &v.Context,
-		&v.PayloadRef, &refs, &opts, &v.Status, &v.Answer, &v.Feedback, &v.RaisedAt, &v.AnsweredAt)
+		&files, &link, &opts, &v.Status, &v.Answer, &v.Feedback, &ansIDs, &v.RaisedAt, &v.AnsweredAt)
 	if err == nil {
 		if len(opts) > 0 {
 			_ = json.Unmarshal(opts, &v.Options)
 		}
-		if len(refs) > 0 {
-			_ = json.Unmarshal(refs, &v.PayloadRefs)
+		if len(files) > 0 {
+			_ = json.Unmarshal(files, &v.Files)
 		}
+		if len(ansIDs) > 0 {
+			_ = json.Unmarshal(ansIDs, &v.AnswerAttachmentIDs)
+		}
+		v.Link = link.String
+		v.PayloadRef = run.Primary(v.Files, v.Link)
 	}
 	return v, err
 }

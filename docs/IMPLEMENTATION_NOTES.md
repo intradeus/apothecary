@@ -1567,3 +1567,112 @@ Naming, while we were here: "attachment" is the human/inbound file,
 "snapshot" the engine-captured one. `GET /api/pings/{pid}/artifacts` still
 addresses by ref (the ping's own name for it) and now marks which entries are
 `durable`, with the artifact id for a direct link.
+
+## DESIGN-FILES authored — the artifact system redesign (design only)
+
+`docs/DESIGN-FILES.md` is the target architecture for the file subsystem:
+"artifact" retreats to the flow language; storage splits into **attachments**
+(human input; ownership structural — ticket/run/answer columns with CHECKs)
+and **snapshots** (engine-captured record; CHECK'd kind output|log|ping_file)
+over a **content-addressed blob store** (sha256 identity, dedup, verify-on-
+read, mark-and-sweep GC, no refcounts). Events become the sole authority for
+run-scoped facts (`snapshot_captured` gains the ping id today's event lacks;
+the snapshots table becomes a rebuildable projection). Ten verified
+conflations dissolve by construction — including the ticket-attachment blob
+leak, snapshot re-delivery into workspaces, finished runs listing zero ping
+files, and inline-served workspace-authored HTML (trust-class headers).
+**Nothing is implemented yet** — four shippable phases are specified in §15;
+current code is unchanged.
+
+## Opt-in unprivileged DinD sandbox (TODO 19 c)
+
+`APOTHECARY_SANDBOX_RUNTIME` (deployment env, §1) names the OCI runtime each
+run's DinD sandbox is created with. Unset — the default — is byte-identical to
+before: `docker run --privileged docker:29-dind`. Set to `sysbox-runc` (sysbox
+installed on the **host**) and `createSandbox` emits `--runtime` *instead of*
+`--privileged`; the two are mutually exclusive, since sysbox rejects privileged
+containers and keeping the flag would defeat the point.
+
+What it changes, concretely: `--privileged` gives the sandbox all host devices,
+unmasked `/proc`+`/sys` and no seccomp, so sandbox root **is** host root — and
+the paths there are ordinary, not exotic: a repo's `devcontainer.json`
+`runArgs` or a compose `privileged: true` run verbatim by design (see the
+`--id-label` comment in devcontainer.go), and `Rebuild` re-provisions from the
+checkout the agent has been writing to all run. From host root everything
+follows: every other run's folder under `RunsDir`, the mounted host docker
+socket, and `APOTHECARY_MASTER_KEY` out of `docker inspect` — i.e. every
+integration secret. Under a user-namespace runtime the same compromise yields
+root in a userns mapped to an unprivileged host uid, with only that run's own
+folder bind-mounted: the blast radius becomes what the run already legitimately
+holds. Egress is unaffected either way — enforcement was always outside the
+sandbox.
+
+**Opt-in, never auto-detected.** Auto-detection would make a run's isolation a
+property of whatever happened to be installed on the machine; one env var makes
+it readable off the deployment. The cost is that a typo would otherwise surface
+minutes into a provision as docker's bare "Unknown runtime specified", so the
+adapter probes `docker info --format '{{json .Runtimes}}'` before creating
+anything and fails with the variable name plus the runtimes the daemon actually
+has. Only success is cached (`runtimeOK`) — a transient docker blip must not
+wedge the provisioner for the process lifetime. `Test()` runs the same probe,
+so the integration's Test button is where a missing host install shows up.
+
+**Limits (researched, not assumed):** sysbox is Linux-only — it installs
+systemd units on the host, so it cannot go into Docker Desktop's VM; macOS and
+Windows keep the privileged sandbox (Docker Desktop *Business* gets the same
+technology transparently via Enhanced Container Isolation, which is not
+something we can drive). Official packages are Ubuntu/Debian, with
+Fedora/Rocky/Alma/CentOS/Amazon Linux listed compatible and everything else
+building from source; kernel ≥5.12. Sysbox's own docs steer away from
+`docker:dind` images (breakages at dind 20.10.7 and 27.4.0; v0.7.0 added
+openat2 trapping so newer runc works inside), so `docker:29-dind` under sysbox
+is the one thing left to verify live before this could ever become the default.
+
+## DESIGN-FILES implemented — attachments + snapshots replace "artifacts"
+
+All four phases of `docs/DESIGN-FILES.md` are in:
+
+- **filestore + schema (0021/0022):** `internal/filestore` (content-addressed
+  blobs under `<RunsDir>/blobs/<sha[:2]>/<sha>`; `Attachments` = upload
+  policy, `Snapshots` = capture policy, `Mem` = the one shared test DB);
+  `attachments` + `snapshots` tables with structural ownership / CHECK'd
+  kinds; `internal/artifacts` and the `artifacts` table are gone, as are
+  `tickets.artifact_ids` and `pings.payload_ref(s)` (now typed `files`+`link`
+  columns). Blob deletion happens ONLY in the mark-and-sweep (never-unlink
+  rule; 1h mtime grace closes the write race), with the live set from
+  `pgstore.LiveBlobSHAs` honoring snapshot content retention.
+- **Backend swap:** engine holds two narrow ports (`AttachmentStore`,
+  `SnapshotStore` — the engine only WRITES snapshots; the ping-read trio and
+  the live-workspace fallback are deleted, reads live in httpapi against the
+  concrete stores). `engine/artifacts.go` split into `deliver.go` (0444
+  read-only delivery, delete-then-write on re-delivery) and `capture.go`
+  (ONE capture funnel; scrub is a required argument). Events:
+  `artifact_published` → `snapshot_captured` (gains ping_id/mime/truncated/
+  filename — everything a rebuild needs), `ping_raised` carries typed
+  files/link (the five HasPrefix("http") sites are gone), `ping_answered`
+  carries attachment_ids, `run_created.ticket_attachment_ids`. The snapshots
+  table is a PROJECTION: projectTx folds snapshot_captured idempotently and
+  rebuild-projections TRUNCATEs + re-folds it (blobs untouched).
+- **API v2 + UI:** `/api/attachments` (+`/limits`), `/api/attachments/{id}`,
+  `/api/snapshots/{id}` (ONE streaming serve helper: verified reads, nosniff,
+  no-script CSP, active types forced to download — closes the inline-HTML
+  hole), `/api/runs/{id}/files`, `/api/pings/{pid}/files` (server-side join;
+  finished runs answer from the projection), `/api/tickets/{id}/attachments`;
+  `attachment_ids` in every body. Stage logs serve from log snapshots — the
+  runs-dir `<stage>-<iter>.log` files and `writeStageLog` are retired. UI:
+  run-page "Files" panel over one fetch, FileChips replaces ArtifactList,
+  AttachFiles mirrors the upload limits inline, PlanReview single-fetch with
+  "not captured" visibility, answered pings render the reviewed doc from its
+  snapshot, Settings gains the Storage & retention group
+  (`retention.orphan_uploads_after`, `retention.snapshots_after`).
+- **Vocabulary:** delivery dir is `.apothecary/attachments/`; repo-root
+  reference dir moved to `examples/flows/`; flow-language.md §5 gained the
+  terminology note (artifact = flow word only) and `snapshot_captured`;
+  the retired `agentspec.Parse` importer and the stale `.apothecary/agents`
+  comment are gone. Env knobs: `APOTHECARY_UPLOAD_MAX_BYTES` /
+  `APOTHECARY_UPLOAD_MIME_ALLOW` (legacy ARTIFACT_* names still read) +
+  `APOTHECARY_SNAPSHOT_MAX_BYTES`.
+
+Old events do not replay (stated cost in the design; dev DBs are
+disposable — `rebuild-projections` after upgrading rebuilds what the new
+codec can read).

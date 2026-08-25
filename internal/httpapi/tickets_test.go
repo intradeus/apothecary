@@ -9,47 +9,53 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/artifacts"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
 
-// A ticket's attachments must be CLAIMED for the ticket (scope=ticket_goal,
-// no run_id): that takes them out of `orphan` so the artifact GC can't sweep
-// them, and leaves them shareable by every run of the ticket.
-func TestTicketArtifactsClaimedAndShared(t *testing.T) {
+// A ticket's uploads must be CLAIMED for the ticket (ticket_id set, no
+// run_id): out of the unclaimed state so the GC can't sweep them, and
+// shareable by every run of the ticket.
+func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	db := &memArtifactDB{rows: map[string]artifacts.Meta{
-		"tick0001": {ID: "tick0001", Scope: artifacts.ScopeOrphan, Filename: "design.md"},
-		"runn0001": {ID: "runn0001", Scope: artifacts.ScopeOrphan, Filename: "trace.log"},
-	}}
-	store := artifacts.New(db, t.TempDir(), 1<<20, []string{"text/*"})
-	x.srv.Artifacts = store // upload/claim side
-	x.e.SetArtifacts(store) // run-association + delivery side
+	att, _, _ := newFilesFor(t, x, 1<<20, []string{"text/*"})
+	ctx := context.Background()
+	tickUp, err := att.Save(ctx, "design.md", "text/markdown", strings.NewReader("# D"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runUp, err := att.Save(ctx, "trace.log", "text/plain", strings.NewReader("t"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a ticket carrying the shared attachment.
 	resp, data := x.do(t, "POST", "/api/tickets", map[string]any{
 		"title": "T", "goal": "g", "project_id": testProject,
-		"artifact_ids": []string{"tick0001"},
+		"attachment_ids": []string{tickUp.ID},
 	}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create ticket = %d: %s", resp.StatusCode, data)
 	}
 	var tk struct {
-		ID string `json:"id"`
+		ID            string   `json:"id"`
+		AttachmentIDs []string `json:"attachment_ids"`
 	}
 	_ = json.Unmarshal(data, &tk)
+	if len(tk.AttachmentIDs) != 1 || tk.AttachmentIDs[0] != tickUp.ID {
+		t.Fatalf("ticket response attachment_ids = %v", tk.AttachmentIDs)
+	}
 
-	// Claimed for the ticket: GC-safe (not orphan) and not bound to a run.
-	if got := db.rows["tick0001"]; got.Scope != artifacts.ScopeTicketGoal || got.RunID != "" {
-		t.Fatalf("ticket artifact = %+v, want scope=ticket_goal with empty run_id", got)
+	// Claimed for the ticket: not unclaimed, not bound to a run.
+	if got, _ := att.Get(ctx, tickUp.ID); got.TicketID != tk.ID || got.RunID != "" {
+		t.Fatalf("ticket attachment = %+v, want claimed by the ticket", got)
 	}
 
 	// Start a run with its OWN direction + attachment.
 	resp, data = x.do(t, "POST", "/api/tickets/"+tk.ID+"/runs", map[string]any{
 		"flow": "loop", "goal": "avoid the cache",
-		"artifact_ids": []string{"runn0001"},
+		"attachment_ids": []string{runUp.ID},
 	}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("start run = %d: %s", resp.StatusCode, data)
@@ -60,11 +66,11 @@ func TestTicketArtifactsClaimedAndShared(t *testing.T) {
 	_ = json.Unmarshal(data, &out)
 
 	// The run's own attachment binds to the run; the ticket's stays shared.
-	if got := db.rows["runn0001"]; got.Scope != artifacts.ScopeGoal || got.RunID != out.RunID {
-		t.Errorf("run artifact = %+v, want scope=goal bound to %s", got, out.RunID)
+	if got, _ := att.Get(ctx, runUp.ID); got.RunID != out.RunID || got.TicketID != "" {
+		t.Errorf("run attachment = %+v, want claimed by run %s", got, out.RunID)
 	}
-	if got := db.rows["tick0001"]; got.RunID != "" {
-		t.Errorf("ticket artifact was hijacked by a run: %+v", got)
+	if got, _ := att.Get(ctx, tickUp.ID); got.RunID != "" {
+		t.Errorf("ticket attachment was hijacked by a run: %+v", got)
 	}
 
 	// The direction is recorded on the run.
@@ -87,14 +93,22 @@ func TestTicketArtifactsClaimedAndShared(t *testing.T) {
 		RunID string `json:"run_id"`
 	}
 	_ = json.Unmarshal(data, &second)
-	if got := db.rows["tick0001"]; got.Scope != artifacts.ScopeTicketGoal || got.RunID != "" {
-		t.Errorf("ticket artifact after 2nd run = %+v, want still shared", got)
+	if got, _ := att.Get(ctx, tickUp.ID); got.TicketID != tk.ID || got.RunID != "" {
+		t.Errorf("ticket attachment after 2nd run = %+v, want still shared", got)
 	}
-	// Both runs keep writing artifacts under the t.TempDir() the store was
-	// built on; leaving them in flight races the directory's removal
-	// ("TempDir RemoveAll cleanup: directory not empty").
+	// Both runs keep writing files under the t.TempDir() the store was built
+	// on; leaving them in flight races the directory's removal.
 	x.e.Wait(out.RunID)
 	x.e.Wait(second.RunID)
+
+	// Deleting the ticket removes its attachment rows — the leak fix.
+	resp, data = x.do(t, "DELETE", "/api/tickets/"+tk.ID, nil, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete ticket = %d: %s", resp.StatusCode, data)
+	}
+	if got, err := att.Get(ctx, tickUp.ID); err == nil {
+		t.Errorf("ticket attachment survived ticket delete: %+v", got)
+	}
 }
 
 // --- ticket sources ---------------------------------------------------------
@@ -115,9 +129,7 @@ func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 // hand-uploaded file.
 func TestImportTicketFromSource(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	db := &memArtifactDB{rows: map[string]artifacts.Meta{}}
-	store := artifacts.New(db, t.TempDir(), 1<<20, []string{"text/*"})
-	x.srv.Artifacts = store
+	att, _, _ := newFilesFor(t, x, 1<<20, []string{"text/*"})
 	x.srv.Sources = stubSources{src: &fake.TicketSource{
 		Tickets: []ports.SourceTicket{{
 			Key: "PROJ-7", Title: "Add a Farewell function",
@@ -163,14 +175,14 @@ func TestImportTicketFromSource(t *testing.T) {
 		t.Fatalf("import = %d: %s", resp.StatusCode, data)
 	}
 	var tk struct {
-		ID          string   `json:"id"`
-		Title       string   `json:"title"`
-		Goal        string   `json:"goal"`
-		SourceKey   string   `json:"source_key"`
-		SourceKind  string   `json:"source_kind"`
-		SourceURL   string   `json:"source_url"`
-		ArtifactIDs []string `json:"artifact_ids"`
-		Warnings    []string `json:"warnings"`
+		ID            string   `json:"id"`
+		Title         string   `json:"title"`
+		Goal          string   `json:"goal"`
+		SourceKey     string   `json:"source_key"`
+		SourceKind    string   `json:"source_kind"`
+		SourceURL     string   `json:"source_url"`
+		AttachmentIDs []string `json:"attachment_ids"`
+		Warnings      []string `json:"warnings"`
 	}
 	if err := json.Unmarshal(data, &tk); err != nil {
 		t.Fatal(err)
@@ -184,29 +196,35 @@ func TestImportTicketFromSource(t *testing.T) {
 	if len(tk.Warnings) != 0 {
 		t.Errorf("warnings = %v, want none", tk.Warnings)
 	}
-	if len(tk.ArtifactIDs) != 1 {
-		t.Fatalf("artifact_ids = %v", tk.ArtifactIDs)
+	if len(tk.AttachmentIDs) != 1 {
+		t.Fatalf("attachment_ids = %v", tk.AttachmentIDs)
 	}
-	if got := db.rows[tk.ArtifactIDs[0]]; got.Filename != "spec.md" ||
-		got.Scope != artifacts.ScopeTicketGoal || got.RunID != "" {
-		t.Errorf("imported artifact = %+v, want spec.md claimed for the ticket", got)
+	if got, err := att.Get(context.Background(), tk.AttachmentIDs[0]); err != nil ||
+		got.Filename != "spec.md" || got.TicketID != tk.ID || got.RunID != "" {
+		t.Errorf("imported attachment = %+v (%v), want spec.md claimed for the ticket", got, err)
 	}
 
 	// The ticket lists its own attachments (what both the ticket page and the
 	// edit form render) — bytes stay on the ordinary artifact route.
-	resp, data = x.do(t, "GET", "/api/tickets/"+tk.ID+"/artifacts", nil, nil)
+	resp, data = x.do(t, "GET", "/api/tickets/"+tk.ID+"/attachments", nil, nil)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("ticket artifacts = %d: %s", resp.StatusCode, data)
+		t.Fatalf("ticket attachments = %d: %s", resp.StatusCode, data)
 	}
-	var listed []struct {
-		ID, Filename, Mime, Scope string
-		Size                      int64
+	var listed struct {
+		Attachments []struct {
+			ID, Filename, Mime, TicketID string `json:"-"`
+		} `json:"attachments"`
 	}
-	if err := json.Unmarshal(data, &listed); err != nil {
+	var envl struct {
+		Attachments []map[string]any `json:"attachments"`
+	}
+	_ = listed
+	if err := json.Unmarshal(data, &envl); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0].Filename != "spec.md" || listed[0].Scope != artifacts.ScopeTicketGoal {
-		t.Fatalf("ticket artifacts = %s", data)
+	if len(envl.Attachments) != 1 || envl.Attachments[0]["filename"] != "spec.md" ||
+		envl.Attachments[0]["ticket_id"] != tk.ID {
+		t.Fatalf("ticket attachments = %s", data)
 	}
 
 	// A second import of the same issue is refused, naming the existing one.

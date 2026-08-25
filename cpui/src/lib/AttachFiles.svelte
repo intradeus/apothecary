@@ -1,11 +1,25 @@
 <script lang="ts">
   // A file picker with removable chips + image thumbnails. The parent owns
   // the selected files (bindable) and uploads them on submit via
-  // api.uploadArtifacts. Documents/images attached here reach the agent.
+  // api.uploadAttachments. Documents/images attached here reach the agent.
+  //
+  // The server's upload policy is mirrored client-side (fetched once): a pick
+  // that would be rejected — too big, too many, off the MIME allowlist — is
+  // refused INLINE with the reason, instead of after a failed round trip.
+  import { api, fmtBytes, type UploadLimits } from '$lib/api';
+
   let { files = $bindable([]), label = 'Attach files' }: { files?: File[]; label?: string } =
     $props();
 
   let inputEl = $state<HTMLInputElement | null>(null);
+  let rejected = $state('');
+
+  // One fetch per session, shared by every picker instance.
+  let limits = $state<UploadLimits | null>(null);
+  $effect(() => {
+    limitsOnce().then((l) => (limits = l));
+  });
+
   const urls = new Map<File, string>();
   function preview(f: File): string {
     let u = urls.get(f);
@@ -16,17 +30,54 @@
     return u;
   }
 
+  function allowed(l: UploadLimits, mime: string): boolean {
+    const m = mime.toLowerCase().split(';')[0].trim();
+    if (!m) return true; // unknown here — let the server sniff it
+    return l.mime_allow.some((a) =>
+      a.endsWith('/*') ? m.startsWith(a.slice(0, -1)) : m === a.toLowerCase()
+    );
+  }
+
   function onPick(e: Event) {
     const picked = (e.target as HTMLInputElement).files;
-    if (picked) files = [...files, ...Array.from(picked)];
+    rejected = '';
+    if (picked) {
+      const add: File[] = [];
+      const refuse: string[] = [];
+      for (const f of Array.from(picked)) {
+        if (limits && f.size > limits.max_bytes) {
+          refuse.push(`${f.name}: over the ${fmtBytes(limits.max_bytes)} limit`);
+        } else if (limits && !allowed(limits, f.type)) {
+          refuse.push(`${f.name}: type ${f.type || 'unknown'} is not allowed`);
+        } else if (limits && files.length + add.length >= limits.max_files) {
+          refuse.push(`${f.name}: at most ${limits.max_files} files`);
+        } else {
+          add.push(f);
+        }
+      }
+      files = [...files, ...add];
+      if (refuse.length) rejected = refuse.join(' · ');
+    }
     if (inputEl) inputEl.value = ''; // allow re-picking the same file
   }
   const remove = (i: number) => (files = files.filter((_, j) => j !== i));
 </script>
 
+<script lang="ts" module>
+  import { api as apiMod, type UploadLimits as UL } from '$lib/api';
+  let limitsPromise: Promise<UL | null> | null = null;
+  function limitsOnce(): Promise<UL | null> {
+    if (!limitsPromise) {
+      limitsPromise = apiMod.attachmentLimits().catch(() => null);
+    }
+    return limitsPromise;
+  }
+</script>
+
 <div class="attach">
   <button type="button" class="small" onclick={() => inputEl?.click()}>📎 {label}</button>
   <input bind:this={inputEl} type="file" multiple hidden onchange={onPick} />
+  {#if rejected}<div class="error small">{rejected}</div>{/if}
   {#if files.length}
     <div class="chips">
       {#each files as f, i (i)}

@@ -139,8 +139,9 @@ type EnvProvisioner interface {
 type SessionID string
 
 // AgentSpec is what a harness needs to invoke one agent stage. The agent
-// name resolves inside the workspace (harness-native config generated at
-// bootstrap from .apothecary/agents/, §5.2).
+// name resolves inside the workspace: harness-native config is generated at
+// bootstrap from the flow document's own agent declarations (FLOWLANG v3 —
+// a flow carries its agents; there is no repo-side agents directory).
 type AgentSpec struct {
 	Agent    string
 	Harness  string

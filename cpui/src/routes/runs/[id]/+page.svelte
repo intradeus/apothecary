@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, stateColors, fmtTime, fmtCost, type ArtifactMeta, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type ResourceSample, type RunView, type StageArtifact } from '$lib/api';
+  import { api, stateColors, fmtTime, fmtCost, type Attachment, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type ResourceSample, type RunView, type Snapshot } from '$lib/api';
   import PingCard from '$lib/PingCard.svelte';
   import ResourceGraphs from '$lib/ResourceGraphs.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
@@ -139,21 +139,21 @@
     return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
   });
 
-  // --- artifacts ------------------------------------------------------------
-  // Everything this run put on the record: the engine's per-attempt snapshots
-  // (each stage's declared outputs + its log, published on success AND
-  // failure) and the human's own attachments. Snapshots outlive the run, so
-  // this list stays complete long after the workspace is destroyed.
-  let stageArtifacts = $state<StageArtifact[]>([]);
-  let goalArtifacts = $state<ArtifactMeta[]>([]);
-  let answerArtifacts = $state<Record<string, ArtifactMeta[]>>({});
-  let artifactKind = $state<'' | 'stage_output' | 'stage_log' | 'human'>('');
-  let showArtifacts = $state(true);
+  // --- files ----------------------------------------------------------------
+  // Everything this run put on the record: the engine's snapshots (each stage
+  // attempt's declared outputs + its log, captured on success AND failure)
+  // and the human's attachments. Snapshots outlive the run, so this list
+  // stays complete long after the workspace is destroyed.
+  let snapshots = $state<Snapshot[]>([]);
+  let attachments = $state<Attachment[]>([]);
+  let fileKind = $state<'' | 'output' | 'log' | 'attachment'>('');
+  let showFiles = $state(true);
 
-  interface ArtifactRow {
+  interface FileRow {
     id: string;
     filename: string;
-    kind: '' | 'stage_output' | 'stage_log' | 'human';
+    kind: '' | 'output' | 'log' | 'attachment';
+    snapshot: boolean; // which byte route serves it
     badge: string; // what it is: the declared output's role, a log, an upload
     where: string; // the attempt (or the human moment) that produced it
     href?: string; // where `where` points, when it points anywhere
@@ -161,45 +161,41 @@
     at: string;
   }
 
-  const artifactTotal = $derived(
-    stageArtifacts.length +
-      goalArtifacts.length +
-      Object.values(answerArtifacts).reduce((n, ms) => n + ms.length, 0)
-  );
+  const fileTotal = $derived(snapshots.length + attachments.length);
 
-  const artifactRows = $derived.by<ArtifactRow[]>(() => {
-    const rows: ArtifactRow[] = stageArtifacts.map((a) => ({
-      id: a.id,
-      filename: a.filename,
-      kind: a.scope,
-      badge: a.scope === 'stage_log' ? 'log' : `output${a.name ? ` · ${a.name}` : ''}`,
-      where: `${a.stage_id} · attempt ${a.iteration}`,
-      size: a.size,
-      at: a.created_at
+  const fileRows = $derived.by<FileRow[]>(() => {
+    const rows: FileRow[] = snapshots.map((sn) => ({
+      id: sn.id,
+      filename: sn.filename,
+      kind: sn.kind === 'log' ? 'log' : 'output',
+      snapshot: true,
+      badge: sn.kind === 'log' ? 'log' : `output${sn.name ? ` · ${sn.name}` : ''}`,
+      where: `${sn.stage_id} · attempt ${sn.iteration ?? 0}`,
+      size: sn.size,
+      at: sn.created_at
     }));
-    const human = (m: ArtifactMeta, where: string, href?: string): ArtifactRow => ({
-      id: m.id,
-      filename: m.filename,
-      kind: 'human',
-      badge: 'you attached',
-      where,
-      href,
-      size: m.size,
-      at: m.created_at ?? ''
-    });
-    for (const m of goalArtifacts) rows.push(human(m, 'the run goal'));
-    for (const [pingId, ms] of Object.entries(answerArtifacts))
-      for (const m of ms) rows.push(human(m, 'a ping answer', `/pings/${pingId}`));
+    for (const a of attachments) {
+      rows.push({
+        id: a.id,
+        filename: a.filename,
+        kind: 'attachment',
+        snapshot: false,
+        badge: 'you attached',
+        where: a.ping_id ? 'a ping answer' : 'the run goal',
+        href: a.ping_id ? `/pings/${a.ping_id}` : undefined,
+        size: a.size,
+        at: a.created_at
+      });
+    }
     rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-    return artifactKind ? rows.filter((r) => r.kind === artifactKind) : rows;
+    return fileKind ? rows.filter((r) => r.kind === fileKind) : rows;
   });
 
-  async function refreshArtifacts() {
+  async function refreshFiles() {
     try {
-      stageArtifacts = (await api.runAttempts(runId)).attempts;
-      const a = await api.runArtifacts(runId);
-      goalArtifacts = a.goal;
-      answerArtifacts = a.answers;
+      const f = await api.runFiles(runId);
+      snapshots = f.snapshots;
+      attachments = f.attachments;
     } catch {
       /* transient — keep what we have */
     }
@@ -234,14 +230,14 @@
       }
     }, 2500);
     refreshRun();
-    refreshArtifacts();
+    refreshFiles();
     const stop = api.events(runId, 0, (ev) => {
       events = [...events, ev];
       // State-changing events refresh the header chip.
       if (ev.type.startsWith('run_') || ev.type.startsWith('ping_') || ev.type.startsWith('env_')) refreshRun();
-      // A publish (or an answered ping, which may carry attachments) adds a
+      // A capture (or an answered ping, which may carry attachments) adds a
       // row: the event carries the reference, the list carries the metadata.
-      if (ev.type === 'artifact_published' || ev.type === 'ping_answered') refreshArtifacts();
+      if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered') refreshFiles();
     });
     return () => {
       clearInterval(tick);
@@ -250,12 +246,12 @@
     };
   });
 
-  async function answer(ans: string, note?: string, artifactIds?: string[]) {
+  async function answer(ans: string, note?: string, attachmentIds?: string[]) {
     if (!pendingPing) return;
     answering = true;
     error = '';
     try {
-      await api.answerPing(pendingPing.payload.ping_id as string, ans, note?.trim() || undefined, artifactIds);
+      await api.answerPing(pendingPing.payload.ping_id as string, ans, note?.trim() || undefined, attachmentIds);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -433,12 +429,12 @@
     error = '';
     restarting = true;
     try {
-      let artifactIds: string[] | undefined;
-      if (restartFiles.length) artifactIds = (await api.uploadArtifacts(restartFiles)).map((a) => a.id);
+      let attachmentIds: string[] | undefined;
+      if (restartFiles.length) attachmentIds = (await api.uploadAttachments(restartFiles)).map((a) => a.id);
       const { run_id } = await api.restart(runId, {
         flow: restartFlow.trim() || undefined,
         goal: restartGoal.trim() || undefined,
-        artifact_ids: artifactIds
+        attachment_ids: attachmentIds
       });
       await goto(`/runs/${run_id}`);
       // Full reload semantics: this page keys its state off the route param
@@ -477,16 +473,19 @@
     return e.type === 'env_requested' && terminal && !envConcluded;
   }
 
-  function describe(e: EventEnvelope): { text: string; cls: string; stage?: string; artifact?: string } {
+  function describe(e: EventEnvelope): { text: string; cls: string; stage?: string; snapshot?: string } {
     const p = e.payload;
     switch (e.type) {
-      case 'artifact_published': {
-        const what = p.scope === 'stage_log' ? 'log' : `output ${p.name || ''}`.trim();
+      case 'snapshot_captured': {
+        if (p.kind === 'ping_file') {
+          return { text: `📄 captured ${p.path} for a ping (as shown to you)`, cls: '', snapshot: p.snapshot_id as string };
+        }
+        const what = p.kind === 'log' ? 'log' : `output ${p.name || ''}`.trim();
         const where = p.path ? ` — ${p.path}` : '';
         return {
-          text: `📄 ${p.stage_id} (attempt ${p.iteration}) published ${what}${where}`,
+          text: `📄 ${p.stage_id} (attempt ${p.iteration ?? 0}) captured ${what}${where}`,
           cls: '',
-          artifact: p.artifact_id as string
+          snapshot: p.snapshot_id as string
         };
       }
       case 'run_created': return { text: `run created — “${p.ticket_title}” (flow ${p.flow_name})`, cls: 'info' };
@@ -784,46 +783,48 @@
   <div class="card">
     <div class="row spread">
       <h2 style="margin:0">
-        <button class="linklike" onclick={() => (showArtifacts = !showArtifacts)}>
-          {showArtifacts ? '▾' : '▸'} Artifacts{artifactTotal ? ` (${artifactTotal})` : ''}
+        <button class="linklike" onclick={() => (showFiles = !showFiles)}>
+          {showFiles ? '▾' : '▸'} Files{fileTotal ? ` (${fileTotal})` : ''}
         </button>
       </h2>
-      {#if showArtifacts && artifactTotal > 0}
-        <select bind:value={artifactKind} class="small" style="width:auto">
+      {#if showFiles && fileTotal > 0}
+        <select bind:value={fileKind} class="small" style="width:auto">
           <option value="">everything</option>
-          <option value="stage_output">stage outputs</option>
-          <option value="stage_log">stage logs</option>
-          <option value="human">your attachments</option>
+          <option value="output">outputs</option>
+          <option value="log">logs</option>
+          <option value="attachment">your attachments</option>
         </select>
       {/if}
     </div>
-    {#if showArtifacts}
-      {#if artifactRows.length === 0}
+    {#if showFiles}
+      {#if fileRows.length === 0}
         <p class="muted small" style="margin:8px 0 0">
-          {artifactTotal === 0
-            ? 'Nothing published yet — each stage attempt files its declared outputs and its log here as it finishes, whether it passed or failed.'
-            : 'No artifact of that kind.'}
+          {fileTotal === 0
+            ? 'Nothing on the record yet — each stage attempt files its declared outputs and its log here as it finishes, whether it passed or failed.'
+            : 'No files of that kind.'}
         </p>
       {:else}
         <div class="audit-scroll" style="margin-top:8px">
           <table class="audit-table mono small">
             <thead>
-              <tr><th>name</th><th>kind</th><th>from</th><th class="num">size</th><th>published</th><th></th></tr>
+              <tr><th>name</th><th>kind</th><th>from</th><th class="num">size</th><th>captured</th><th></th></tr>
             </thead>
             <tbody>
-              {#each artifactRows as a (a.id)}
+              {#each fileRows as f (f.id)}
+                {@const url = f.snapshot ? api.snapshotUrl(f.id) : api.attachmentUrl(f.id)}
+                {@const dl = f.snapshot ? api.snapshotUrl(f.id, true) : api.attachmentUrl(f.id, true)}
                 <tr>
                   <td>
-                    <a href={api.artifactUrl(a.id)} target="_blank" rel="noreferrer">{a.filename}</a>
+                    <a href={url} target="_blank" rel="noreferrer">{f.filename}</a>
                   </td>
-                  <td class="muted">{a.badge}</td>
+                  <td class="muted">{f.badge}</td>
                   <td class="muted">
-                    {#if a.href}<a href={a.href}>{a.where}</a>{:else}{a.where}{/if}
+                    {#if f.href}<a href={f.href}>{f.where}</a>{:else}{f.where}{/if}
                   </td>
-                  <td class="num">{fmtBytes(a.size)}</td>
-                  <td class="muted">{a.at ? fmtTime(a.at) : '—'}</td>
+                  <td class="num">{fmtBytes(f.size)}</td>
+                  <td class="muted">{f.at ? fmtTime(f.at) : '—'}</td>
                   <td>
-                    <a href={api.artifactUrl(a.id, true)} title="Download {a.filename}">↓</a>
+                    <a href={dl} title="Download {f.filename}">↓</a>
                   </td>
                 </tr>
               {/each}
@@ -849,8 +850,8 @@
           {#if hasLog(e, d.stage)}
             <button class="small" style="padding:1px 8px;margin-left:6px" onclick={() => showLog(d.stage!)}>log</button>
           {/if}
-          {#if d.artifact}
-            <a class="small" style="margin-left:6px" href={api.artifactUrl(d.artifact)} target="_blank" rel="noreferrer">open ↗</a>
+          {#if d.snapshot}
+            <a class="small" style="margin-left:6px" href={api.snapshotUrl(d.snapshot)} target="_blank" rel="noreferrer">open ↗</a>
           {/if}
         </div>
         {#if logStage && d.stage === logStage && hasLog(e, d.stage)}

@@ -12,8 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 type Spec struct {
@@ -85,29 +83,6 @@ func (s *Spec) VerdictOutput() *OutputDecl {
 
 // descMax bounds a decl description so N inputs cannot bloat every prompt.
 const descMax = 500
-
-// Parse decodes one spec; stem is the filename without extension and MUST
-// equal the name field (§5.1: name = filename stem). Retained for the
-// one-time import of a repo's .apothecary/agents/*.yaml; flows carry their
-// agents inline and validate them with Validate.
-func Parse(stem string, data []byte) (*Spec, error) {
-	dec := yaml.NewDecoder(strings.NewReader(string(data)))
-	dec.KnownFields(true)
-	var s Spec
-	if err := dec.Decode(&s); err != nil {
-		return nil, fmt.Errorf("agent spec %s: %w", stem, err)
-	}
-	if s.Name == "" {
-		return nil, fmt.Errorf("agent spec %s: name is required", stem)
-	}
-	if s.Name != stem {
-		return nil, fmt.Errorf("agent spec %s: name %q must equal the filename stem", stem, s.Name)
-	}
-	if err := Validate(&s); err != nil {
-		return nil, fmt.Errorf("agent spec %s: %w", stem, err)
-	}
-	return &s, nil
-}
 
 // Validate checks a spec independent of where it was authored: the name is a
 // strict slug (it becomes workspace file paths and CLI arguments, so

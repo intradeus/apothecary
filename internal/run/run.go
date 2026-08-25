@@ -41,17 +41,17 @@ type View struct {
 	TicketGoal  string `json:"-"` // not a read-model column; carried for prompt assembly on recovery
 	// RunGoal is this attempt's extra direction (additive to TicketGoal).
 	RunGoal string `json:"run_goal,omitempty"`
-	// TicketArtifactIDs are the parent ticket's attachments, snapshotted at
+	// TicketAttachmentIDs are the parent ticket's attachments, snapshotted at
 	// run start; carried for prompt assembly + delivery (not a column).
-	TicketArtifactIDs []string `json:"-"`
-	FlowName          string   `json:"flow_name"`
-	FlowHash          string   `json:"flow_hash"`
-	CurrentStage      string   `json:"current_stage,omitempty"`
-	Branch            string   `json:"branch,omitempty"`        // the run's actual git branch (from RunCreated)
-	BranchBase        string   `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
-	SourceBranch      string   `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
-	MRURL             string   `json:"mr_url,omitempty"`
-	EnvID             string   `json:"env_id,omitempty"`
+	TicketAttachmentIDs []string `json:"-"`
+	FlowName            string   `json:"flow_name"`
+	FlowHash            string   `json:"flow_hash"`
+	CurrentStage        string   `json:"current_stage,omitempty"`
+	Branch              string   `json:"branch,omitempty"`        // the run's actual git branch (from RunCreated)
+	BranchBase          string   `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
+	SourceBranch        string   `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
+	MRURL               string   `json:"mr_url,omitempty"`
+	EnvID               string   `json:"env_id,omitempty"`
 	// EnvStatus is the reconciled LIVE container status (running/starting/
 	// stopped/absent) — NOT a projected column and never set by Apply. The
 	// read path fills it from the engine's reconciler so the workspace badge
@@ -86,7 +86,7 @@ func Apply(v *View, e *event.Event) {
 		v.TicketTitle = p.TicketTitle
 		v.TicketGoal = p.TicketGoal
 		v.RunGoal = p.RunGoal
-		v.TicketArtifactIDs = p.TicketArtifactIDs
+		v.TicketAttachmentIDs = p.TicketAttachmentIDs
 		v.FlowName = p.FlowName
 		v.FlowHash = p.FlowHash
 		v.Branch = p.Branch

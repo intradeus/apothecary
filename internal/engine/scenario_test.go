@@ -168,10 +168,10 @@ func newHarnessSource(t *testing.T, src flow.Source, flows ...*flow.Flow) *harne
 		DefaultFlow:  flows[0].Name,
 		Commands:     map[string]string{"setup": "./scripts/setup.sh", "verify": "make lint && make test"},
 		ProviderEnv:  map[string]string{"ANTHROPIC_API_KEY": "sk-test"},
-		HarnessKind: "fake",
-		Envp:        h.envp,
-		Runner:      h.runner,
-		Forge:       h.forge,
+		HarnessKind:  "fake",
+		Envp:         h.envp,
+		Runner:       h.runner,
+		Forge:        h.forge,
 	}
 	h.settings = &varSettings{L: Limits{}.withDefaults()}
 	cfg := Config{MRPollInterval: 5 * time.Millisecond}
@@ -313,8 +313,8 @@ func TestHappyPathFullV3Flow(t *testing.T) {
 
 	// plan_gate: approve.
 	p := h.waitPing(t, PingGate)
-	if p.PayloadRef != "artifacts/plan.md" {
-		t.Errorf("plan gate payload = %q", p.PayloadRef)
+	if len(p.Files) != 1 || p.Files[0] != "artifacts/plan.md" || p.Link != "" {
+		t.Errorf("plan gate payload = files %v link %q", p.Files, p.Link)
 	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -323,8 +323,8 @@ func TestHappyPathFullV3Flow(t *testing.T) {
 	// final_gate: auto-completes when the MR merges. Gates are one kind now,
 	// so the already-answered one is excluded by id rather than by type.
 	fp := h.waitPing(t, PingGate, p.ID)
-	if !strings.HasPrefix(fp.PayloadRef, "https://gitlab.local/mr/") {
-		t.Errorf("final gate payload = %q, want MR URL", fp.PayloadRef)
+	if !strings.HasPrefix(fp.Link, "https://gitlab.local/mr/") || len(fp.Files) != 0 {
+		t.Errorf("final gate payload = link %q files %v, want MR URL link", fp.Link, fp.Files)
 	}
 	h.forge.SetMRState(1, ports.MRMerged)
 	h.e.Wait(runID)
@@ -715,7 +715,7 @@ stages:
 		&event.StageStarted{StageID: "plan", Iteration: 1},
 		&event.StageCompleted{StageID: "plan", TurnsUsed: 1},
 		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
-		&event.PingRaised{PingID: "ping-gate", Type: PingGate, Question: "plan_approval: T", StageID: "plan_gate", PayloadRef: "artifacts/plan.md"},
+		&event.PingRaised{PingID: "ping-gate", Type: PingGate, Question: "plan_approval: T", StageID: "plan_gate", Files: []string{"artifacts/plan.md"}},
 	} {
 		if _, err := h.store.Append(ctx, "r-gate", p); err != nil {
 			t.Fatal(err)
@@ -1045,7 +1045,7 @@ stages:
 		&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: "apothecary/r-ac"},
 		&event.StageCompleted{StageID: "mr"},
 		&event.StageStarted{StageID: "gate", Iteration: 1},
-		&event.PingRaised{PingID: "ping-ac", Type: PingGate, Question: "final_review: T", PayloadRef: ref.URL, StageID: "gate"},
+		&event.PingRaised{PingID: "ping-ac", Type: PingGate, Question: "final_review: T", Link: ref.URL, StageID: "gate"},
 	} {
 		if _, err := h.store.Append(ctx, "r-ac", p); err != nil {
 			t.Fatal(err)
@@ -1436,8 +1436,8 @@ stages:
 		t.Fatal(err)
 	}
 	p := h.waitPing(t, PingGate)
-	if !strings.HasSuffix(p.PayloadRef, "/terminal") {
-		t.Errorf("payload = %q, want the workspace terminal link", p.PayloadRef)
+	if !strings.HasSuffix(p.Link, "/terminal") {
+		t.Errorf("payload = %q, want the workspace terminal link", p.Link)
 	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve", Feedback: "fixed a stale lockfile"}); err != nil {
 		t.Fatal(err)
@@ -1739,8 +1739,8 @@ stages:
 	if len(p.Options) != 2 || p.Options[0] != "postgres" || p.Options[1] != "sqlite" { // deduped
 		t.Errorf("options = %v", p.Options)
 	}
-	if p.PayloadRef != "artifacts/dbs.md" {
-		t.Errorf("payload_ref = %q", p.PayloadRef)
+	if len(p.Files) != 1 || p.Files[0] != "artifacts/dbs.md" {
+		t.Errorf("ping files = %v", p.Files)
 	}
 	// Free text refused for a closed question — the error offers the
 	// hardcoded escape hatch alongside the declared options.
@@ -2102,8 +2102,8 @@ stages:
 		t.Fatal(err)
 	}
 	p := h.waitPing(t, PingGate)
-	if !strings.HasPrefix(p.PayloadRef, "https://gitlab.local/mr/") {
-		t.Errorf("gate payload = %q, want the $MR_URL link", p.PayloadRef)
+	if !strings.HasPrefix(p.Link, "https://gitlab.local/mr/") {
+		t.Errorf("gate payload = %q, want the $MR_URL link", p.Link)
 	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)

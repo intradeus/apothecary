@@ -278,43 +278,26 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 
 // --- tickets ----------------------------------------------------------------
 
-const ticketCols = `id, project_id, title, goal, base_branch, artifact_ids, ` +
+const ticketCols = `id, project_id, title, goal, base_branch, ` +
 	`source_id, source_kind, source_key, source_url, created_at, updated_at`
 
 func scanTicket(row pgx.Row) (confstore.Ticket, error) {
 	var t confstore.Ticket
-	var artifacts []byte
 	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Goal, &t.BaseBranch,
-		&artifacts, &t.SourceID, &t.SourceKind, &t.SourceKey, &t.SourceURL,
+		&t.SourceID, &t.SourceKind, &t.SourceKey, &t.SourceURL,
 		&t.CreatedAt, &t.UpdatedAt)
-	if err != nil {
-		return t, err
-	}
-	if len(artifacts) > 0 {
-		if err := json.Unmarshal(artifacts, &t.ArtifactIDs); err != nil {
-			return t, err
-		}
-	}
-	return t, nil
+	return t, err
 }
 
 func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
-	ids := t.ArtifactIDs
-	if ids == nil {
-		ids = []string{}
-	}
-	artifacts, err := json.Marshal(ids)
-	if err != nil {
-		return err
-	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO tickets (id, project_id, title, goal, base_branch, artifact_ids,
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO tickets (id, project_id, title, goal, base_branch,
 			source_id, source_kind, source_key, source_url, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (id) DO UPDATE SET
-			project_id=$2, title=$3, goal=$4, base_branch=$5, artifact_ids=$6,
-			source_id=$7, source_kind=$8, source_key=$9, source_url=$10, updated_at=$12`,
-		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch, artifacts,
+			project_id=$2, title=$3, goal=$4, base_branch=$5,
+			source_id=$6, source_kind=$7, source_key=$8, source_url=$9, updated_at=$11`,
+		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch,
 		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.CreatedAt, t.UpdatedAt)
 	if isFK(err) {
 		// FK backstop: the referenced project vanished between service-layer
@@ -547,12 +530,5 @@ func (s *Store) PutSetting(ctx context.Context, key, value string) error {
 // --- agents (DESIGN3 §1) ----------------------------------------------------
 
 const agentCols = `project_id, name, description, read_only, allow_bash, prompt, inputs, outputs, hash, updated_at`
-
-
-
-
-
-
-
 
 var _ confstore.DB = (*Store)(nil)

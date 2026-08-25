@@ -18,8 +18,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"apothecary/internal/artifacts"
 	"apothecary/internal/event"
+	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
@@ -49,13 +49,13 @@ type Ticket struct {
 	// RunGoal is extra direction for THIS attempt, additive to Goal (which
 	// stays the enduring spec). Rendered as its own prompt section.
 	RunGoal string
-	// ArtifactIDs are uploaded artifacts (POST /api/artifacts) attached to
-	// THIS RUN: associated with the run and delivered into its workspace.
-	ArtifactIDs []string
-	// TicketArtifactIDs are the parent ticket's attachments — owned by the
+	// AttachmentIDs are uploaded files attached to THIS RUN: claimed for the
+	// run and delivered into its workspace.
+	AttachmentIDs []string
+	// TicketAttachmentIDs are the parent ticket's attachments — owned by the
 	// ticket, delivered to every run of it. Snapshotted onto run_created;
 	// NOT associated to this run.
-	TicketArtifactIDs []string
+	TicketAttachmentIDs []string
 }
 
 // RunInput is the optional per-attempt input when starting a run from a
@@ -66,8 +66,8 @@ type RunInput struct {
 	Goal string // extra direction for this attempt
 	// SourceBranch overrides the branch the restarted run forks off from;
 	// "" reuses the original run's source branch.
-	SourceBranch string
-	ArtifactIDs  []string
+	SourceBranch  string
+	AttachmentIDs []string
 }
 
 // Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
@@ -136,7 +136,8 @@ type Engine struct {
 	log         *slog.Logger
 	sink        EventSink
 	portRelay   *portrelay.Manager
-	artifacts   ArtifactStore
+	attachments AttachmentStore
+	snapshots   SnapshotStore
 	egressAudit EgressAuditStore
 
 	mu      sync.Mutex
@@ -247,16 +248,19 @@ type runHandle struct {
 // Ping is an open (or answered) human interaction. Gate pings are raised by
 // the engine at human_gate stages; agent pings arrive via RaisePing (§10).
 type Ping struct {
-	ID          string
-	RunID       string
-	Type        string // plan_approval|final_review|clarification|blocker|permission
-	Question    string
-	Context     string
-	PayloadRef  string   // primary attachment (first, or a URL like mr_url)
-	PayloadRefs []string // full ask_human attachment set (agent→human multi)
-	StageID     string   // flow stage in flight when raised (PLAN4 M15)
-	Options     []string // agent-declared answer choices (PLAN4 M16)
-	RaisedAt    time.Time
+	ID       string
+	RunID    string
+	Type     string // plan_approval|final_review|clarification|blocker|permission
+	Question string
+	Context  string
+	// Files are the attached workspace paths (first = the primary reviewed
+	// document); Link is a resolved URL payload (a gate's mr_url/workspace
+	// sentinel). Typed at the source — never sniffed apart (DESIGN-FILES §4).
+	Files    []string
+	Link     string
+	StageID  string   // flow stage in flight when raised (PLAN4 M15)
+	Options  []string // agent-declared answer choices (PLAN4 M16)
+	RaisedAt time.Time
 
 	gate           bool
 	answered       bool        // guarded by Engine.mu
@@ -265,16 +269,16 @@ type Ping struct {
 	done           chan struct{}
 }
 
-// refs returns the ping's effective attachment refs: the full PayloadRefs
-// list, or the single PayloadRef for pre-multi pings.
-func (p *Ping) refs() []string {
-	if len(p.PayloadRefs) > 0 {
-		return p.PayloadRefs
+// Primary is the ping's primary payload for notifications and legacy JSON:
+// the link, or the first attached file.
+func (p *Ping) Primary() string {
+	if p.Link != "" {
+		return p.Link
 	}
-	if p.PayloadRef != "" {
-		return []string{p.PayloadRef}
+	if len(p.Files) > 0 {
+		return p.Files[0]
 	}
-	return nil
+	return ""
 }
 
 // DeliveredArtifacts are the workspace paths the human's answer attachments
@@ -291,6 +295,10 @@ const PingAnswerOther = "other"
 type PingAnswer struct {
 	Answer   string // approve|reject for gates, free text for agent pings
 	Feedback string
+	// AttachmentIDs are the answer's attached files (claimed for the ping by
+	// the API before the answer is submitted); recorded on ping_answered so
+	// the association is a replayable fact.
+	AttachmentIDs []string
 }
 
 // Await blocks until the ping is answered or ctx expires. It is safe to call
@@ -393,25 +401,36 @@ func (e *Engine) SetSink(s EventSink) { e.sink = s }
 // nil = port exposure off.
 func (e *Engine) SetPortRelay(m *portrelay.Manager) { e.portRelay = m }
 
-// ArtifactStore persists and delivers human-attached files (goal + ping
-// answers). nil = artifacts off (uploads rejected at the API, delivery a
-// no-op). Implemented by *artifacts.Store.
-type ArtifactStore interface {
-	Associate(ctx context.Context, ids []string, runID, pingID, scope string) error
-	// Capture stores an engine-produced attempt snapshot (PLAN5 M27): a
-	// declared output's bytes or a stage log, attached on arrival.
-	Capture(ctx context.Context, m artifacts.Meta, data []byte) (artifacts.Meta, error)
-	ForRun(ctx context.Context, runID string) ([]artifacts.Meta, error)
-	ForPing(ctx context.Context, pingID, scope string) ([]artifacts.Meta, error)
-	// Meta resolves one artifact by id — ticket attachments belong to the
-	// ticket, not the run, so ForRun cannot find them.
-	Meta(ctx context.Context, id string) (artifacts.Meta, error)
-	Bytes(ctx context.Context, id string) ([]byte, artifacts.Meta, error)
+// AttachmentStore is the engine's delivery+claims port over human-given
+// files (DESIGN-FILES §5.2). nil = attachments off (delivery a no-op).
+// Implemented by *filestore.Attachments.
+type AttachmentStore interface {
+	// ClaimForRun binds still-unclaimed uploads to a run (goal files) or,
+	// with a pingID, to an answer within that run. One-shot per attachment.
+	ClaimForRun(ctx context.Context, ids []string, runID, pingID string) error
+	// Get resolves one attachment by id — ticket attachments belong to the
+	// ticket, not the run, so ForRun cannot find them; the ids ride on
+	// run_created.
+	Get(ctx context.Context, id string) (filestore.Attachment, error)
+	Bytes(ctx context.Context, id string) ([]byte, filestore.Attachment, error)
+	ForRun(ctx context.Context, runID string) ([]filestore.Attachment, error)
+	ForPing(ctx context.Context, pingID string) ([]filestore.Attachment, error)
 	DeleteForRun(ctx context.Context, runID string) error
 }
 
-// SetArtifacts installs the artifact store; call before Recover. nil disables.
-func (e *Engine) SetArtifacts(a ArtifactStore) { e.artifacts = a }
+// SnapshotStore is the engine's capture port: the engine only ever WRITES
+// snapshots — reads live in the API against the concrete store. Implemented
+// by *filestore.Snapshots.
+type SnapshotStore interface {
+	Capture(ctx context.Context, s filestore.Snapshot, scrub func(string) string, data []byte) (filestore.Snapshot, error)
+}
+
+// SetFiles installs the file stores; call before Recover. nil disables the
+// respective half (delivery no-ops / captures skipped).
+func (e *Engine) SetFiles(a AttachmentStore, s SnapshotStore) {
+	e.attachments = a
+	e.snapshots = s
+}
 
 // EgressAuditStore persists and queries the durable egress audit trail (what
 // each workspace reached / was blocked from). nil = audit off. Implemented by
@@ -728,24 +747,24 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 		return "", fmt.Errorf("source branch %q: %v", sourceBranch, err)
 	}
 	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
-		TicketTitle:       t.Title,
-		TicketGoal:        t.Goal,
-		RunGoal:           t.RunGoal,
-		FlowName:          fl.Name,
-		FlowHash:          fl.Hash,
-		RepoURL:           res.RepoRef.URL,
-		Branch:            branch,
-		BranchBase:        base,
-		SourceBranch:      sourceBranch,
-		ProjectID:         projectID,
-		TicketID:          t.TicketID,
-		TicketArtifactIDs: t.TicketArtifactIDs,
+		TicketTitle:         t.Title,
+		TicketGoal:          t.Goal,
+		RunGoal:             t.RunGoal,
+		FlowName:            fl.Name,
+		FlowHash:            fl.Hash,
+		RepoURL:             res.RepoRef.URL,
+		Branch:              branch,
+		BranchBase:          base,
+		SourceBranch:        sourceBranch,
+		ProjectID:           projectID,
+		TicketID:            t.TicketID,
+		TicketAttachmentIDs: t.TicketAttachmentIDs,
 	}); err != nil {
 		return "", err
 	}
-	if e.artifacts != nil && len(t.ArtifactIDs) > 0 {
-		if err := e.artifacts.Associate(ctx, t.ArtifactIDs, runID, "", artifacts.ScopeGoal); err != nil {
-			e.log.Warn("associate goal artifacts", "run", runID, "err", err)
+	if e.attachments != nil && len(t.AttachmentIDs) > 0 {
+		if err := e.attachments.ClaimForRun(ctx, t.AttachmentIDs, runID, ""); err != nil {
+			e.log.Warn("claim goal attachments", "run", runID, "err", err)
 		}
 	}
 	lim := e.limits(ctx)
@@ -830,9 +849,9 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 			return err
 		}
 	}
-	if e.artifacts != nil {
-		if err := e.artifacts.DeleteForRun(ctx, runID); err != nil {
-			e.log.Warn("archive: artifact cleanup failed", "run", runID, "err", err)
+	if e.attachments != nil {
+		if err := e.attachments.DeleteForRun(ctx, runID); err != nil {
+			e.log.Warn("archive: attachment cleanup failed", "run", runID, "err", err)
 		}
 	}
 	return nil
@@ -884,9 +903,9 @@ func (e *Engine) RestartRun(ctx context.Context, runID string, in RunInput) (str
 		return e.CreateRun(ctx, Ticket{
 			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
 			SourceBranch: sourceBranch,
-			RunGoal:      in.Goal, ArtifactIDs: in.ArtifactIDs,
+			RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
 			// The ticket's own attachments carry over to every attempt.
-			TicketArtifactIDs: v.TicketArtifactIDs,
+			TicketAttachmentIDs: v.TicketAttachmentIDs,
 		}, flowName, v.ProjectID)
 	}
 	branch := v.Branch
@@ -896,7 +915,7 @@ func (e *Engine) RestartRun(ctx context.Context, runID string, in RunInput) (str
 	return e.CreateRun(ctx, Ticket{
 		Title: v.TicketTitle, Goal: v.TicketGoal, Branch: branch,
 		SourceBranch: sourceBranch,
-		RunGoal:      in.Goal, ArtifactIDs: in.ArtifactIDs,
+		RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
 	}, flowName, v.ProjectID)
 }
 
@@ -1340,10 +1359,6 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string, options, art
 	if len(refs) > 8 {
 		return nil, fmt.Errorf("ask_human: at most 8 artifacts (got %d)", len(refs))
 	}
-	var primary string
-	if len(refs) > 0 {
-		primary = refs[0]
-	}
 	e.mu.Lock()
 	h, ok := e.handles[runID]
 	if !ok {
@@ -1352,7 +1367,7 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string, options, art
 	}
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Options: opts, PayloadRef: primary, PayloadRefs: refs,
+		Options: opts, Files: refs,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
@@ -1442,115 +1457,6 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 	case <-timeout.C:
 		return fmt.Errorf("run %s is busy; the answer was not accepted — try again", p.RunID)
 	}
-}
-
-// PingArtifact reads a gate ping's payload artifact out of the (still
-// alive) workspace so the CPUI can render it for review (DESIGN3 §3.1).
-// The path comes from the flow document, never from the request. Content
-// is capped at 1 MiB (tail beyond — the end of a plan beats the start).
-func (e *Engine) PingArtifact(ctx context.Context, pingID string) (path string, content []byte, err error) {
-	e.mu.Lock()
-	p := e.pings[pingID]
-	e.mu.Unlock()
-	if p == nil {
-		// No live ping: the run has ended and the registry dropped it. The
-		// snapshots still answer — the primary is the first attachment, which
-		// is the order they were captured in.
-		if snaps := e.PingSnapshots(ctx, pingID); len(snaps) > 0 {
-			data, _, err := e.artifacts.Bytes(ctx, snaps[0].ID)
-			if err != nil {
-				return "", nil, err
-			}
-			return snaps[0].OutputName, data, nil
-		}
-		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
-	}
-	ref := p.PayloadRef
-	switch {
-	case ref == "":
-		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrNoArtifact)
-	case strings.HasPrefix(ref, "http://"), strings.HasPrefix(ref, "https://"):
-		return "", nil, fmt.Errorf("ping %s: %w", pingID, ErrArtifactIsURL)
-	}
-	// The snapshot taken when the ping was raised is authoritative: it is what
-	// the human was shown, and it survives the workspace. The live read below
-	// remains for pings raised before snapshots existed (and for a capture
-	// that failed).
-	if data, ok := e.pingSnapshot(ctx, pingID, ref); ok {
-		return ref, data, nil
-	}
-	evs, err := e.store.Events(ctx, p.RunID, 0)
-	if err != nil {
-		return "", nil, err
-	}
-	v := run.Reduce(evs)
-	if v.EnvID == "" {
-		return "", nil, fmt.Errorf("run %s has no environment: %w", p.RunID, ErrNoArtifact)
-	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
-	if err != nil {
-		return "", nil, err
-	}
-	defer res.release()
-	data, err := res.Envp.ReadFile(ctx, ports.EnvID(v.EnvID), ref)
-	if err != nil {
-		return "", nil, fmt.Errorf("reading %s: %w", ref, err)
-	}
-	const maxLen = 1 << 20
-	if len(data) > maxLen {
-		data = data[len(data)-maxLen:]
-	}
-	return ref, data, nil
-}
-
-// PingRefs lists a ping's attachment refs (workspace paths / URLs), primary
-// first — the agent→human multi-artifact set for the review UI.
-func (e *Engine) PingRefs(pingID string) []string {
-	p := e.GetPing(pingID)
-	if p == nil {
-		return nil
-	}
-	return p.refs()
-}
-
-// PingArtifactAt reads ONE of a ping's attached workspace files (agent→human
-// multi-artifact) for the UI to render or download. ref MUST be one of the
-// ping's attachments — this guards against arbitrary workspace reads. Unlike
-// PingArtifact (which tails a doc for review), it returns the file whole so
-// images survive.
-func (e *Engine) PingArtifactAt(ctx context.Context, pingID, ref string) ([]byte, error) {
-	// The snapshot taken when the ping was raised comes first, and it needs no
-	// live ping: the rows are keyed by ping id and matched on the ref they were
-	// captured from, so an answered ping stays readable after the run ends and
-	// its in-memory registration is gone. It is also the CORRECT answer — the
-	// agent may have rewritten the file since the human reviewed it.
-	if data, ok := e.pingSnapshot(ctx, pingID, ref); ok {
-		return data, nil
-	}
-	p := e.GetPing(pingID)
-	if p == nil {
-		return nil, fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
-	}
-	if !slices.Contains(p.refs(), ref) {
-		return nil, fmt.Errorf("ping %s: %q is not an attachment", pingID, ref)
-	}
-	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
-		return nil, fmt.Errorf("ping %s: %w", pingID, ErrArtifactIsURL)
-	}
-	evs, err := e.store.Events(ctx, p.RunID, 0)
-	if err != nil {
-		return nil, err
-	}
-	v := run.Reduce(evs)
-	if v.EnvID == "" {
-		return nil, fmt.Errorf("run %s has no environment: %w", p.RunID, ErrNoArtifact)
-	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	defer res.release()
-	return res.Envp.ReadFile(ctx, ports.EnvID(v.EnvID), ref)
 }
 
 // WorkspaceLogTail serves the live tail of a run's workspace exec output

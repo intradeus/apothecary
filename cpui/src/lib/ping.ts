@@ -16,6 +16,10 @@ export interface PingLike {
   type: string;
   question: string;
   context?: string;
+  // Typed payload (DESIGN-FILES §4): files = attached workspace paths,
+  // link = a resolved URL; payload_ref = the derived primary for display.
+  files?: string[];
+  link?: string;
   payload_ref?: string;
   options?: string[];
   status?: string; // pending | answered | withdrawn

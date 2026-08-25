@@ -131,7 +131,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 	// Re-deliver artifacts + re-expose ports into the fresh container, reusing
 	// the run-loop helpers via a minimal exec (these append no events).
 	x := &exec{e: e, rs: &runState{runID: runID, view: v, fl: fl, envID: id}, res: res, ctx: ctx, bg: ctx}
-	x.deliverRunArtifacts()
+	x.deliverRunAttachments()
 	x.autoExpose(id)
 
 	// One targeted probe so the badge returns to live immediately instead of
