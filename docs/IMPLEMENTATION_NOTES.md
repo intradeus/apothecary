@@ -1673,6 +1673,12 @@ All four phases of `docs/DESIGN-FILES.md` are in:
   `APOTHECARY_UPLOAD_MIME_ALLOW` (legacy ARTIFACT_* names still read) +
   `APOTHECARY_SNAPSHOT_MAX_BYTES`.
 
-Old events do not replay (stated cost in the design; dev DBs are
-disposable — `rebuild-projections` after upgrading rebuilds what the new
-codec can read).
+Old events decode as inert history: an event type the binary does not know
+(`artifact_published`, or anything a future rename retires) comes back as
+`event.Unknown` — every projection's type switch falls through it, SSE replay
+serves the raw payload verbatim, and recovery / `rebuild-projections` work
+across the cutover instead of bricking the boot on the first pre-cutover run
+(the original strict decode did exactly that). Old runs simply render without
+file lists (0022 dropped their rows); purging the dev DB remains the clean
+option, never a requirement. A known type with a garbage payload still errors
+loudly — that is corruption, not version skew.

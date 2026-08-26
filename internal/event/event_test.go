@@ -144,8 +144,40 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
+// The contract deliberately changed here (DESIGN-FILES follow-up): an unknown
+// type used to error, which meant one retired event type bricked recovery and
+// rebuild-projections for every database that contained it.
 func TestUnmarshalPayloadUnknownType(t *testing.T) {
-	if _, err := UnmarshalPayload("nope", []byte(`{}`)); err == nil {
-		t.Fatal("expected error for unknown event type")
+	p, err := UnmarshalPayload("nope", []byte(`{}`))
+	if err != nil {
+		t.Fatalf("unknown event type must decode as inert history, got: %v", err)
+	}
+	if _, ok := p.(*Unknown); !ok {
+		t.Fatalf("payload = %#v, want *Unknown", p)
+	}
+}
+
+// A retired event type (artifact_published) or one from a newer binary must
+// decode as inert history, not brick recovery/rebuild: the log is append-only
+// and outlives any codec. The raw payload round-trips verbatim so SSE replay
+// shows old events untouched.
+func TestUnknownEventTypeDecodesInert(t *testing.T) {
+	raw := []byte(`{"stage_id":"plan","iteration":1,"scope":"stage_output","artifact_id":"cap1"}`)
+	p, err := UnmarshalPayload("artifact_published", raw)
+	if err != nil {
+		t.Fatalf("retired type errored: %v", err)
+	}
+	u, ok := p.(*Unknown)
+	if !ok || u.EventType() != "artifact_published" {
+		t.Fatalf("payload = %#v, want *Unknown", p)
+	}
+	out, err := json.Marshal(p)
+	if err != nil || string(out) != string(raw) {
+		t.Errorf("re-marshal = %s (%v), want the original payload verbatim", out, err)
+	}
+	// A KNOWN type with a garbage payload still errors loudly — that is
+	// corruption, not version skew.
+	if _, err := UnmarshalPayload(TypeRunCreated, []byte(`{`)); err == nil {
+		t.Error("corrupt known payload decoded without error")
 	}
 }

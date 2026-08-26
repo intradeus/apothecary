@@ -38,11 +38,31 @@ var registry = map[Type]func() Payload{
 	TypeEnvRebuildFailed:    func() Payload { return &EnvRebuildFailed{} },
 }
 
-// UnmarshalPayload decodes a payload of the given type.
+// Unknown is the decode result for an event type this binary does not
+// recognize — a retired type (e.g. the pre-DESIGN-FILES "artifact_published")
+// or one written by a newer version. The log is append-only and outlives any
+// codec, so replay must treat these as INERT HISTORY: every projection's type
+// switch falls through them, and recovery/rebuild keep working instead of
+// bricking the boot on the first old run. Raw passes the original payload
+// through verbatim (MarshalJSON), so SSE replay shows the event untouched.
+type Unknown struct {
+	UnknownType Type
+	Raw         json.RawMessage
+}
+
+func (u *Unknown) EventType() Type              { return u.UnknownType }
+func (u *Unknown) MarshalJSON() ([]byte, error) { return u.Raw, nil }
+
+// UnmarshalPayload decodes a payload of the given type. An unregistered type
+// is NOT an error — it decodes as *Unknown (see above). A registered type
+// whose payload fails to decode still errors loudly: that is corruption, not
+// version skew.
 func UnmarshalPayload(t Type, data []byte) (Payload, error) {
 	mk, ok := registry[t]
 	if !ok {
-		return nil, fmt.Errorf("unknown event type %q", t)
+		raw := make(json.RawMessage, len(data))
+		copy(raw, data)
+		return &Unknown{UnknownType: t, Raw: raw}, nil
 	}
 	p := mk()
 	if err := json.Unmarshal(data, p); err != nil {
