@@ -547,8 +547,16 @@
       case 'run_completed': return { text: `run completed — ${fmtCost(p.total_cost_usd)} · ${p.total_turns} turns · ${p.unwanted_pings} unwanted pings`, cls: 'ok' };
       case 'run_abandoned': return { text: `abandoned at ${p.stalled_at}: ${p.reason}`, cls: 'bad' };
       case 'run_failed': return { text: `run failed: ${p.reason}`, cls: 'bad' };
-      case 'run_paused': return { text: `⏸ paused${p.stage_id ? ` at ${p.stage_id}` : ''}`, cls: '' };
-      case 'run_unpaused': return { text: '▶ resumed (play)', cls: 'info' };
+      case 'run_paused':
+        // Parked by the engine on a human is not the same as paused by one:
+        // the first releases the slot and comes back on its own.
+        return p.reason === 'waiting_on_human'
+          ? { text: `⏸ parked at ${p.stage_id} — waiting for you (the run released its slot)`, cls: '' }
+          : { text: `⏸ paused${p.stage_id ? ` at ${p.stage_id}` : ''}`, cls: '' };
+      case 'run_unpaused':
+        return p.reason === 'answered'
+          ? { text: '▶ picked back up — your answer landed', cls: 'info' }
+          : { text: '▶ resumed (play)', cls: 'info' };
       case 'run_archived': return { text: 'archived', cls: '' };
       case 'env_destroyed': return { text: 'workspace destroyed', cls: '' };
       default: return { text: e.type, cls: '' };

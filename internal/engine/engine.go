@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -138,6 +139,11 @@ type Engine struct {
 	portRelay   *portrelay.Manager
 	attachments AttachmentStore
 	snapshots   SnapshotStore
+	pingIndex   PingLookup
+	// wakeMu serializes the dormant answer path: two humans answering the
+	// two questions of one parked run must not both decide they were the
+	// last, append, and wake it twice.
+	wakeMu      sync.Mutex
 	egressAudit EgressAuditStore
 
 	mu      sync.Mutex
@@ -267,7 +273,24 @@ type Ping struct {
 	answer         *PingAnswer // set before done closes; read only after <-done
 	deliveredPaths []string    // workspace paths of the answer's attachments; set before done closes
 	done           chan struct{}
+	// handedBack: the ask_human tool call ended without an answer, so the
+	// agent was told to stop and wait (§10 grace hold). It matters later —
+	// an answer arriving after that point was NEVER seen by the agent,
+	// however fast it lands, so the stage must pause and deliver it on
+	// resume rather than treat the question as closed. Written by the HTTP
+	// hold, read by the run loop: atomic, not mutex-guarded, because the
+	// writer holds no engine lock.
+	handedBack atomic.Bool
 }
+
+// HandOff records how a ping's tool call ended: delivered=false when the
+// grace hold expired and the agent was handed back its turn, true when the
+// answer went back in-band and the agent has it. Called by the ping HTTP hold.
+func (p *Ping) HandOff(delivered bool) { p.handedBack.Store(!delivered) }
+
+// HandedBack reports whether the agent was given its turn back without an
+// answer — i.e. whether an answer arriving now is news to it.
+func (p *Ping) HandedBack() bool { return p.handedBack.Load() }
 
 // Primary is the ping's primary payload for notifications and legacy JSON:
 // the link, or the first attached file.
@@ -332,23 +355,30 @@ func ComposeAnswer(p *Ping) string {
 	if !ok {
 		return ""
 	}
+	return composeAnswerText(ans.Answer, ans.Feedback, p.DeliveredArtifacts())
+}
+
+// composeAnswerText is the renderer proper. It takes the two answer fields
+// rather than a Ping because the resume path reads them off a ping_answered
+// EVENT — the run had no loop when the human answered, so there is no live
+// ping to ask. Both forms map onto the same cases: the event stores a
+// free-text agent answer as answer:"text" with the words in feedback, and the
+// live path's raw answer falls through to the default.
+func composeAnswerText(answer, feedback string, delivered []string) string {
 	var text string
 	switch {
-	case ans.Answer == "text":
-		// Free-text answers may arrive either as the text itself or as
-		// answer:"text" with the words in feedback (§6); both are the same
-		// thing to the agent.
-		text = ans.Feedback
-	case ans.Answer == PingAnswerOther:
+	case answer == "text":
+		text = feedback
+	case answer == PingAnswerOther:
 		// The human rejected every offered option and the note IS the answer:
 		// spell that out so it cannot be misread as a chosen option.
-		text = "other — none of the offered options fit; the human answered: " + ans.Feedback
-	case ans.Feedback != "":
-		text = ans.Answer + "\n(note: " + ans.Feedback + ")"
+		text = "other — none of the offered options fit; the human answered: " + feedback
+	case feedback != "":
+		text = answer + "\n(note: " + feedback + ")"
 	default:
-		text = ans.Answer
+		text = answer
 	}
-	return text + attachedFilesNote(p.DeliveredArtifacts())
+	return text + attachedFilesNote(delivered)
 }
 
 type raiseReq struct {
@@ -356,15 +386,43 @@ type raiseReq struct {
 	ack chan struct{}
 }
 
+// answerReq hands one answer to the run's loop. ack is how the loop says what
+// it did with it: nil (recorded), or an error the caller must act on. Without
+// it an answer could be dropped into the buffered channel of a loop that is
+// already exiting and the human would be told it landed — which is the
+// failure mode this whole path exists to remove, one level down.
 type answerReq struct {
 	p   *Ping
 	ans PingAnswer
+	ack chan error // buffered 1
 }
+
+// answerSettle bounds how long AnswerPing keeps trying across a run's
+// live/dormant transition before telling the human to retry.
+const (
+	answerSettle     = 5 * time.Second
+	answerSettleStep = 50 * time.Millisecond
+)
 
 var (
 	errAborted  = errors.New("run aborted")
 	errPaused   = errors.New("run paused")
 	errShutdown = errors.New("engine shutting down")
+	// errWaitingOnHuman parks a run that has nothing left to do but wait for
+	// an answer. Not a failure and not the pause button: the loop exits, the
+	// concurrency slot goes back to the pool, and the answer itself brings
+	// the run back (Engine.AnswerPing's dormant path). Everything needed to
+	// re-enter is already in the log — that is what makes giving up the
+	// goroutine safe rather than clever.
+	errWaitingOnHuman = errors.New("run waiting on a human")
+	// errNoLoop is internal: the run's loop went away between the handle
+	// lookup and the answer reaching it, so the caller retries as dormant.
+	errNoLoop = errors.New("run loop gone")
+	// errRunBusy is internal: the run is mid-transition — a loop is starting,
+	// or one is exiting into dormancy — and neither path owns the answer yet.
+	// Retried within answerSettle rather than shown to a human, who would
+	// only be told to click the same button again.
+	errRunBusy = errors.New("run busy")
 
 	// Sentinel errors for API status mapping.
 	ErrRunNotActive = errors.New("run is not active")
@@ -452,6 +510,64 @@ type AttachmentStore interface {
 // by *filestore.Snapshots.
 type SnapshotStore interface {
 	Capture(ctx context.Context, s filestore.Snapshot, scrub func(string) string, data []byte) (filestore.Snapshot, error)
+}
+
+// PingLookup reads the DURABLE ping projection. The engine needs it because a
+// run parked on a human has no loop and no registry entry, yet its question
+// must still be listable and answerable: the log is the only thing that knows
+// about it. nil falls back to folding the event store, which is correct but
+// scans (pgstore's SQL view is the real implementation).
+type PingLookup interface {
+	GetPing(ctx context.Context, id string) (run.PingView, error)
+	ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error)
+}
+
+// SetPingLookup installs the durable ping projection; call before Recover.
+func (e *Engine) SetPingLookup(l PingLookup) { e.pingIndex = l }
+
+// pingViews lists projected pings of a status, from the index when one is
+// wired and by folding the log when not.
+func (e *Engine) pingViews(ctx context.Context, status string) []run.PingView {
+	if e.pingIndex != nil {
+		vs, err := e.pingIndex.ListPings(ctx, status, 500)
+		if err != nil {
+			e.log.Warn("ping projection list failed", "err", err)
+			return nil
+		}
+		return vs
+	}
+	ids, err := e.store.RunIDs(ctx)
+	if err != nil {
+		e.log.Warn("ping fold: listing runs", "err", err)
+		return nil
+	}
+	var out []run.PingView
+	for _, id := range ids {
+		evs, err := e.store.Events(ctx, id, 0)
+		if err != nil {
+			continue
+		}
+		for _, v := range run.ReducePings(evs) {
+			if v.Status == status {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// pingView resolves one projected ping by id.
+func (e *Engine) pingView(ctx context.Context, id string) (run.PingView, bool) {
+	if e.pingIndex != nil {
+		v, err := e.pingIndex.GetPing(ctx, id)
+		return v, err == nil && v.PingID != ""
+	}
+	for _, v := range e.pingViews(ctx, "pending") {
+		if v.PingID == id {
+			return v, true
+		}
+	}
+	return run.PingView{}, false
 }
 
 // SetFiles installs the file stores; call before Recover. nil disables the
@@ -1148,9 +1264,15 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if v.State.Terminal() {
 			continue
 		}
-		if v.State == run.Paused {
-			// The user parked it; only play (run_unpaused) re-admits it.
-			continue
+		if v.Dormant {
+			// Parked: either the user pressed pause (only play re-admits it)
+			// or the run is waiting on a human. A waiting run whose answers
+			// have all landed IS owed a loop, though — that is the crash
+			// window between recording an answer and re-queuing the run, and
+			// skipping it here would park the run forever.
+			if v.State == run.Paused || !answersAllIn(evs) {
+				continue
+			}
 		}
 		if v.State == run.Pending {
 			pending = append(pending, pend{id, v.CreatedAt})
@@ -1257,11 +1379,28 @@ func (e *Engine) Pause(runID string) error {
 	e.mu.Lock()
 	h, ok := e.handles[runID]
 	e.mu.Unlock()
-	if !ok {
+	if ok {
+		h.cancel(errPaused)
+		return nil
+	}
+	// No loop: a run parked on a human is still pausable, and pausing it is
+	// meaningful — it says "do not pick this up when the answer lands". The
+	// answer is still recorded; the run just will not wake on it.
+	ctx := context.Background()
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return err
+	}
+	v := run.Reduce(evs)
+	if !v.Dormant || v.State.Terminal() {
 		return fmt.Errorf("run %s: %w (only running runs can be paused)", runID, ErrRunNotActive)
 	}
-	h.cancel(errPaused)
-	return nil
+	if v.State == run.Paused {
+		return fmt.Errorf("run %s: %w (already paused)", runID, ErrRunNotActive)
+	}
+	e.wakeMu.Lock()
+	defer e.wakeMu.Unlock()
+	return e.appendAndEmit(ctx, runID, &event.RunPaused{StageID: v.CurrentStage, Reason: event.PauseUser})
 }
 
 // Play restarts a paused run through the normal scheduling queue; the loop
@@ -1284,6 +1423,12 @@ func (e *Engine) Play(ctx context.Context, runID string) error {
 	}
 	v := run.Reduce(evs)
 	if v.State != run.Paused {
+		if v.Dormant {
+			// Parked on a human, not by one. Playing it would re-enter the
+			// stage and park again on the same unanswered question; the thing
+			// that moves it is the answer.
+			return fmt.Errorf("run %s is waiting for an answer, not paused — answering it resumes the run", runID)
+		}
 		return fmt.Errorf("run %s is %s; only paused runs can be played", runID, v.State)
 	}
 	// A paused gate re-arms without a fresh ping_raised, so the event must
@@ -1295,7 +1440,7 @@ func (e *Engine) Play(ctx context.Context, runID string) error {
 			break
 		}
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunUnpaused{Waiting: waiting}); err != nil {
+	if err := e.appendAndEmit(ctx, runID, &event.RunUnpaused{Waiting: waiting, Reason: event.UnpausePlay}); err != nil {
 		return err
 	}
 	lim := e.limits(ctx)
@@ -1324,6 +1469,19 @@ func (e *Engine) Shutdown() {
 
 // Wait blocks until the run is neither active nor queued (test/CLI
 // convenience).
+// active reports whether a run currently holds a loop goroutine (and with it a
+// concurrency slot). Exported to tests only through the package boundary; the
+// distinction it names — running vs parked — is the point of dormancy.
+func (e *Engine) active(runID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.handles[runID]
+	if ok {
+		return true
+	}
+	return slices.Contains(e.queue, runID)
+}
+
 func (e *Engine) Wait(runID string) {
 	for {
 		e.mu.Lock()
@@ -1443,11 +1601,71 @@ func (e *Engine) GetPing(id string) *Ping {
 // AnswerPing records a human answer. Gate pings accept approve|reject;
 // agent pings accept free text.
 func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
+	ctx := context.Background()
+	// A ping is answered either by the loop that is holding it or, when the
+	// run is parked on it, against the log. The only thing between those two
+	// worlds is a transition — a loop starting, or exiting into dormancy —
+	// and a human who clicked answer inside that window deserves it to work,
+	// not to be told the run is busy.
+	deadline := e.clock().Add(answerSettle)
+	for attempt := 0; ; attempt++ {
+		err := e.answerLive(pingID, ans)
+		if !errors.Is(err, errNoLoop) {
+			return err
+		}
+		err = e.answerDormant(ctx, pingID, ans)
+		if !errors.Is(err, errRunBusy) {
+			return err
+		}
+		if e.clock().After(deadline) {
+			return fmt.Errorf("run is busy; the answer was not accepted — try again")
+		}
+		time.Sleep(answerSettleStep)
+	}
+}
+
+// validateAnswer enforces the answer contract: gates take approve|reject, an
+// option ping takes one of its options or the "other" escape hatch with the
+// human's actual answer in the note. One implementation, because the live and
+// dormant paths must not be able to disagree about what a valid answer is.
+func validateAnswer(gate bool, options []string, ans PingAnswer) error {
+	if gate && ans.Answer != "approve" && ans.Answer != "reject" {
+		return fmt.Errorf("gate ping requires answer approve|reject")
+	}
+	if len(options) > 0 && !slices.Contains(options, ans.Answer) {
+		// The agent asked a closed question (PLAN4 M16): determinism is the
+		// point — the note field carries anything beyond the choice.
+		if ans.Answer != PingAnswerOther {
+			return fmt.Errorf("answer must be one of: %s | %s (with your answer in the note)",
+				strings.Join(options, " | "), PingAnswerOther)
+		}
+		if strings.TrimSpace(ans.Feedback) == "" {
+			return fmt.Errorf("answer %q needs the note to carry your actual answer", PingAnswerOther)
+		}
+	}
+	return nil
+}
+
+// recordedAnswer is how an answer is written to the log. Free-text agent
+// answers are recorded as answer:"text" with the words in feedback (§6);
+// gates and option pings keep the choice in answer. Shared for the same
+// reason as validateAnswer: two writers, one shape.
+func recordedAnswer(gate bool, options []string, ans PingAnswer) (string, string) {
+	if !gate && len(options) == 0 {
+		return "text", ans.Answer
+	}
+	return ans.Answer, ans.Feedback
+}
+
+// answerLive hands the answer to the run's loop and waits to hear that it
+// landed. Returns errNoLoop when there is no loop to hand it to (or it went
+// away mid-flight), which is the caller's cue to take the dormant path.
+func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	e.mu.Lock()
-	p, ok := e.pings[pingID]
-	if !ok {
+	p, known := e.pings[pingID]
+	if !known {
 		e.mu.Unlock()
-		return fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
+		return errNoLoop
 	}
 	if p.answered {
 		e.mu.Unlock()
@@ -1456,36 +1674,136 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 	h, active := e.handles[p.RunID]
 	e.mu.Unlock()
 	if !active {
-		return fmt.Errorf("run %s: %w", p.RunID, ErrRunNotActive)
+		return errNoLoop
 	}
-	if p.gate && ans.Answer != "approve" && ans.Answer != "reject" {
-		return fmt.Errorf("gate ping %s requires answer approve|reject", pingID)
-	}
-	if len(p.Options) > 0 && !slices.Contains(p.Options, ans.Answer) {
-		// The agent asked a closed question (PLAN4 M16): determinism is the
-		// point — the note field carries anything beyond the choice. "other"
-		// is the hardcoded escape hatch; its note IS the human's answer.
-		if ans.Answer != PingAnswerOther {
-			return fmt.Errorf("ping %s requires one of: %s | %s (with your answer in the note)",
-				pingID, strings.Join(p.Options, " | "), PingAnswerOther)
-		}
-		if strings.TrimSpace(ans.Feedback) == "" {
-			return fmt.Errorf("ping %s: answer %q needs the note to carry your actual answer", pingID, PingAnswerOther)
-		}
+	if err := validateAnswer(p.gate, p.Options, ans); err != nil {
+		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	// The answers channel is drained only in agent stages and gates. Don't
 	// report success for an answer nobody will ever process, and don't wedge
 	// the HTTP handler if the buffer is full.
+	ack := make(chan error, 1)
 	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
 	select {
-	case h.answers <- answerReq{p: p, ans: ans}:
-		return nil
+	case h.answers <- answerReq{p: p, ans: ans, ack: ack}:
 	case <-h.done:
-		return fmt.Errorf("run %s: %w", p.RunID, ErrRunNotActive)
+		return errNoLoop
 	case <-timeout.C:
 		return fmt.Errorf("run %s is busy; the answer was not accepted — try again", p.RunID)
 	}
+	// Wait for the loop to say what it did with it. An ack that is already
+	// there wins over a closed done: the loop can record the answer and exit
+	// in the same breath (that is exactly what a stage pausing on it does).
+	select {
+	case err := <-ack:
+		return err
+	case <-h.done:
+		select {
+		case err := <-ack:
+			return err
+		default:
+			return errNoLoop
+		}
+	case <-timeout.C:
+		return fmt.Errorf("run %s is busy; the answer was not accepted — try again", p.RunID)
+	}
+}
+
+// answerDormant records an answer for a run with no loop and wakes it.
+//
+// This is the one place outside a run's own goroutine that appends to its log,
+// and it is safe for the same reason the loop's monopoly is: a dormant run has
+// no writer, and nothing can start one behind our back — Recover skips parked
+// runs, Play refuses a run that is merely waiting, and the only path that
+// re-queues one is this function, serialized by wakeMu.
+func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswer) error {
+	e.wakeMu.Lock()
+	defer e.wakeMu.Unlock()
+
+	v, ok := e.pingView(ctx, pingID)
+	if !ok {
+		return fmt.Errorf("ping %s: %w", pingID, ErrPingNotFound)
+	}
+	switch v.Status {
+	case "answered":
+		return fmt.Errorf("ping %s: %w", pingID, ErrPingAnswered)
+	case "withdrawn":
+		// The run ended without it; the projection already says so.
+		return fmt.Errorf("run %s: %w", v.RunID, ErrRunNotActive)
+	}
+	gate := gatePingType(v.Type)
+	if err := validateAnswer(gate, v.Options, ans); err != nil {
+		return fmt.Errorf("ping %s: %w", pingID, err)
+	}
+
+	e.mu.Lock()
+	_, active := e.handles[v.RunID]
+	e.mu.Unlock()
+	if active {
+		// A loop appeared between the live path giving up and here. It owns
+		// the log; refusing beats writing behind it.
+		return fmt.Errorf("run %s: %w", v.RunID, errRunBusy)
+	}
+
+	evs, err := e.store.Events(ctx, v.RunID, 0)
+	if err != nil {
+		return err
+	}
+	view := run.Reduce(evs)
+	if view.State.Terminal() {
+		return fmt.Errorf("run %s: %w", v.RunID, ErrRunNotActive)
+	}
+	if !view.Dormant {
+		// Non-terminal, no loop, not parked: the run is mid-admission and a
+		// loop is owed to it. Its own goroutine will take the answer.
+		return fmt.Errorf("run %s: %w", v.RunID, errRunBusy)
+	}
+
+	answer, feedback := recordedAnswer(gate, v.Options, ans)
+	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: answer,
+		Feedback: feedback, AttachmentIDs: ans.AttachmentIDs}}
+	// Wake only when this was the last thing the run was waiting for, and only
+	// if a human has not deliberately parked it: an agent may have asked two
+	// questions, and pause means pause.
+	wake := view.State != run.Paused && lastPendingPing(evs, pingID)
+	if wake {
+		payloads = append(payloads, &event.RunUnpaused{Reason: event.UnpauseAnswered})
+	}
+	if err := e.appendAndEmit(ctx, v.RunID, payloads...); err != nil {
+		return err
+	}
+	if !wake {
+		return nil
+	}
+	lim := e.limits(ctx)
+	e.mu.Lock()
+	e.queue = append(e.queue, v.RunID)
+	e.scheduleLocked(lim)
+	e.mu.Unlock()
+	return nil
+}
+
+// answersAllIn reports whether a parked run has every question it was waiting
+// on answered — the signal that it has work to do and is owed a loop.
+func answersAllIn(evs []event.Event) bool {
+	for _, v := range run.ReducePings(evs) {
+		if v.Status == "pending" {
+			return false
+		}
+	}
+	return true
+}
+
+// lastPendingPing reports whether pingID is the only question of its run still
+// open — i.e. whether answering it leaves the run with work to do.
+func lastPendingPing(evs []event.Event, pingID string) bool {
+	for _, v := range run.ReducePings(evs) {
+		if v.Status == "pending" && v.PingID != pingID {
+			return false
+		}
+	}
+	return true
 }
 
 // WorkspaceLogTail serves the live tail of a run's workspace exec output
@@ -1520,12 +1838,28 @@ func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]b
 // projection exists).
 func (e *Engine) PendingPings() []*Ping {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	live := map[string]bool{}
 	var out []*Ping
 	for _, p := range e.pings {
 		if !p.answered {
+			live[p.ID] = true
 			out = append(out, p)
 		}
+	}
+	e.mu.Unlock()
+	// A run parked on a human has no loop and therefore no registry entries,
+	// but its question is precisely the one somebody has to see. Fold the
+	// durable projection in for those — pending means answerable, and this
+	// list would otherwise hide exactly the pings that are waiting longest.
+	for _, v := range e.pingViews(context.Background(), "pending") {
+		if live[v.PingID] {
+			continue
+		}
+		out = append(out, &Ping{
+			ID: v.PingID, RunID: v.RunID, Type: v.Type, Question: v.Question,
+			Context: v.Context, Files: v.Files, Link: v.Link, StageID: v.StageID,
+			Options: v.Options, RaisedAt: v.RaisedAt, gate: gatePingType(v.Type),
+		})
 	}
 	return out
 }
@@ -1789,6 +2123,20 @@ func (e *Engine) finish(runID string, h *runHandle) {
 	lim := e.limits(context.Background())
 	e.mu.Lock()
 	delete(e.handles, runID)
+	// Answers that arrived as the loop was leaving: nobody will read them, so
+	// tell their senders rather than let the buffer swallow them. errNoLoop
+	// sends the caller down the dormant path, which is where the run now is.
+	for {
+		select {
+		case ar := <-h.answers:
+			if ar.ack != nil {
+				ar.ack <- errNoLoop
+			}
+			continue
+		default:
+		}
+		break
+	}
 	// Prune this run's pings: an open ping of a dead run is a permanently
 	// unanswerable inbox entry (recovery re-registers open pings from the
 	// event log), and answered ones are only read while the run lives.

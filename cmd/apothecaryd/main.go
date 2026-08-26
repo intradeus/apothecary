@@ -242,6 +242,11 @@ func cmdServe(args []string) error {
 	snapshots := filestore.NewSnapshots(store, blobs, boot.SnapshotMaxBytes)
 	e.SetFiles(attachments, snapshots)
 	e.SetEgressAudit(store) // durable egress audit trail (pgstore)
+	// The durable ping projection. A run parked on a human has no loop and no
+	// in-memory ping, so this is what makes its question listable and
+	// answerable — the SQL view, rather than the engine folding every run's
+	// log to find one row.
+	e.SetPingLookup(store)
 
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)

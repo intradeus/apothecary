@@ -212,7 +212,12 @@ func (x *exec) exit(cause error) {
 		// same terminal the flow's own `abort` edge reaches.
 		_ = x.append(&event.RunAbandoned{StalledAt: x.rs.view.CurrentStage, Reason: "aborted by user"})
 	case errors.Is(cause, errPaused):
-		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage})
+		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage, Reason: event.PauseUser})
+	case errors.Is(cause, errWaitingOnHuman):
+		// Parked on a human, not stopped by one: the run keeps reading
+		// waiting_on_human, gives its concurrency slot back, and comes alive
+		// again when the answer lands (Engine.AnswerPing).
+		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage, Reason: event.PauseWaiting})
 	case errors.Is(cause, errShutdown), cause == nil:
 	default:
 		x.e.log.Error("run loop error; run left non-terminal for recovery",
@@ -459,6 +464,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			Agent: st.Agent, AgentHash: x.rs.fl.AgentHash(st.Agent)}); err != nil {
 			return err
 		}
+		delete(rs.pausedAsks, st.ID) // a fresh attempt is parked on nothing
 		// A fresh attempt starts from a clean slate, so the output contract
 		// below cannot be satisfied by an earlier attempt's file (M18).
 		x.clearOutputs(flow.EffectiveOutputs(st, rs.fl.Agent(st.Agent)))
@@ -477,17 +483,24 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	// engine. Each pass through the loop is one invocation; iter does not move,
 	// the timeout budget carries across, and each invocation banks its own
 	// spend as it ends.
-	pending := x.pendingAsk(st) // questions a crash left open mid-attempt
+	// On re-entry, the questions this attempt parked on — with whatever the
+	// log already knows about them. The run had no loop while it waited, so
+	// an answer given in that window exists only as an event; the live ping
+	// registry never saw it.
+	asks := x.pausedAsks(st)
 	reply := ""
-	if reenter && len(pending) == 0 {
+	if reenter && len(asks) == 0 {
 		reply = resumeReply
 	}
 	budget := st.Timeout
 	var inv invocation
 	for {
-		if len(pending) > 0 {
-			if err := x.awaitAnswers(pending); err != nil {
-				return err // cancelled: caller inspects cause
+		if len(asks) > 0 {
+			if unanswered(asks) {
+				// Still nothing to do but wait. Park the run and give the
+				// slot back rather than hold a goroutine, a workspace and a
+				// scheduling slot against a human's attention span.
+				return errWaitingOnHuman
 			}
 			if _, ok := rs.sessions[st.ID]; !ok {
 				// An answer with nowhere to go. Re-running the agent from
@@ -504,21 +517,22 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// notice is a prompt, and a model is free to ignore it — the
 			// pause does not depend on obedience, but an artifact written
 			// from a guess does need saying out loud, by name.
-			reply = answerReply(pending, x.writtenOutputs(st))
+			reply = x.answerReply(asks, x.writtenOutputs(st))
 		}
 		session, haveSession := rs.sessions[st.ID]
 		resuming := reply != "" && haveSession
 		if resuming {
 			reason := event.ResumeAnswered
-			if len(pending) == 0 {
+			if len(asks) == 0 {
 				reason = event.ResumeRestart
 			}
 			if err := x.append(&event.StageResumed{StageID: st.ID, Iteration: iter, Reason: reason,
-				PingIDs: pingIDs(pending), SessionID: string(session)}); err != nil {
+				PingIDs: askIDs(asks), SessionID: string(session)}); err != nil {
 				return err
 			}
+			delete(rs.pausedAsks, st.ID) // consumed
 		}
-		pending = nil
+		asks = nil
 
 		runCtx, cancelRun := context.WithCancelCause(x.ctx)
 		resCh := make(chan agentRes, 1)
@@ -565,11 +579,17 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		rs.cost += inv.res.r.Usage.CostUSD
 		rs.turns += inv.res.r.TurnsUsed
 		// A question-per-turn loop would otherwise never meet a budget check:
-		// the stage timeout is suspended while a ping is open, by design.
+		// nothing else bounds an attempt that keeps asking.
 		if stop, err := x.checkBudget(st); stop || err != nil {
 			return err
 		}
-		pending, reply = inv.open, ""
+		// Whether this parks or resumes immediately is one question — is
+		// anything still unanswered? — and the top of the loop already asks
+		// it. An answer that landed while the agent was ending its turn (the
+		// hold expired, the human was a second late) resumes right here
+		// instead of parking a run that has nothing to wait for.
+		rs.pausedAsks[st.ID] = pingIDs(inv.open)
+		asks, reply = x.pausedAsks(st), ""
 	}
 	res := inv.res
 	x.publishLog(st.ID, iter, res.r.Output)
@@ -720,12 +740,17 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			x.e.mu.Lock()
 			req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
 			x.e.mu.Unlock()
-			if err := x.append(&event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
+			raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
 				Question: req.p.Question, Context: req.p.Context,
-				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Options: req.p.Options}); err != nil {
+				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Options: req.p.Options}
+			if err := x.append(raised); err != nil {
 				close(req.ack)
 				return invocation{}, err
 			}
+			// Keep the working state a mirror of what replay would build, so
+			// a resume reads the same whether the answer arrived in this
+			// process or was found in the log after a restart.
+			x.rs.raisedPings[raised.PingID] = raised
 			// Snapshot the attached files as they are RIGHT NOW: the agent
 			// resumes the moment this ping is answered, and the record must
 			// keep what the human was actually shown.
@@ -746,7 +771,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			if err != nil {
 				return invocation{}, err
 			}
-			if handled && !ar.p.gate {
+			// An answer the agent never saw does not close the question: once
+			// the tool call handed the turn back, the only way in is a resume,
+			// so the ping stays open and the attempt pauses on it below.
+			if handled && !ar.p.gate && !ar.p.handedBack.Load() {
 				open = dropPing(open, ar.p)
 				if len(open) == 0 {
 					resume()
@@ -771,46 +799,52 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	}
 }
 
-// awaitAnswers holds the attempt until every question it paused on is
-// answered. No timer of any kind: the whole point of pausing is that a human
-// takes as long as a human takes, and the stage timeout is suspended for
-// exactly this. Answers to other runs' pings are serviced as they arrive.
-func (x *exec) awaitAnswers(pending []*Ping) error {
-	for {
-		left := pending[:0:0]
-		for _, p := range pending {
-			if _, done := p.Answered(); !done {
-				left = append(left, p)
-			}
-		}
-		if len(left) == 0 {
-			return nil
-		}
-		select {
-		case ar := <-x.h.answers:
-			if _, err := x.processAnswer(ar); err != nil {
-				return err
-			}
-		case <-x.ctx.Done():
-			return context.Cause(x.ctx)
-		}
-	}
+// ask is one question a paused attempt is waiting on. A parked run has no
+// loop, so by the time one exists again the answer may live only in the log —
+// which is why this is built from replay state and not from the in-memory ping
+// registry, whose entries were pruned when the loop exited.
+type ask struct {
+	id       string
+	question string
+	answer   *event.PingAnswered // nil while still open
 }
 
-// pendingAsk re-collects the agent questions an attempt was already waiting on
-// — the recovery path: replay reopened them and the loop re-registered them as
-// live pings, so a restart resumes the wait instead of restarting the agent.
-func (x *exec) pendingAsk(st *flow.Stage) []*Ping {
-	var out []*Ping
-	x.e.mu.Lock()
-	defer x.e.mu.Unlock()
-	for _, op := range x.rs.openAgentPings() {
-		if op.StageID != st.ID {
-			continue
+// pausedAsks re-collects the questions this stage parked on (stage_paused),
+// with whatever answers the log has since recorded.
+func (x *exec) pausedAsks(st *flow.Stage) []ask {
+	ids := x.rs.pausedAsks[st.ID]
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]ask, 0, len(ids))
+	for _, id := range ids {
+		a := ask{id: id, answer: x.rs.answeredPings[id]}
+		if r := x.rs.raisedPings[id]; r != nil {
+			a.question = r.Question
 		}
-		if p := x.e.pings[op.PingID]; p != nil {
-			out = append(out, p)
+		out = append(out, a)
+	}
+	return out
+}
+
+// unanswered reports whether any question is still open — i.e. whether there
+// is still nothing for the agent to do.
+func unanswered(asks []ask) bool {
+	for _, a := range asks {
+		if a.answer == nil {
+			return true
 		}
+	}
+	return false
+}
+
+func askIDs(asks []ask) []string {
+	if len(asks) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(asks))
+	for _, a := range asks {
+		out = append(out, a.id)
 	}
 	return out
 }
@@ -837,7 +871,24 @@ func pingIDs(ps []*Ping) []string {
 
 // processAnswer appends ping_answered and delivers the answer to whoever is
 // waiting on the ping. Returns false if the ping was already answered.
-func (x *exec) processAnswer(ar answerReq) (bool, error) {
+//
+// Every path acks: the caller is blocked waiting to hear whether its answer
+// was recorded, and silence would leave a human believing an answer landed
+// that nothing ever read.
+func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
+	defer func() {
+		if ar.ack == nil {
+			return
+		}
+		switch {
+		case err != nil:
+			ar.ack <- err
+		case !handled:
+			ar.ack <- fmt.Errorf("ping %s: %w", ar.p.ID, ErrPingAnswered)
+		default:
+			ar.ack <- nil
+		}
+	}()
 	x.e.mu.Lock()
 	if ar.p.answered {
 		x.e.mu.Unlock()
@@ -855,8 +906,9 @@ func (x *exec) processAnswer(ar answerReq) (bool, error) {
 		// in answer and the optional note in feedback.
 		answer, feedback = "text", ar.ans.Answer
 	}
-	if err := x.append(&event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback,
-		AttachmentIDs: ar.ans.AttachmentIDs}); err != nil {
+	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback,
+		AttachmentIDs: ar.ans.AttachmentIDs}
+	if err := x.append(recorded); err != nil {
 		// Roll the in-memory claim back so a retried answer can succeed
 		// after recovery (the event log has no ping_answered).
 		x.e.mu.Lock()
@@ -865,6 +917,7 @@ func (x *exec) processAnswer(ar answerReq) (bool, error) {
 		x.e.mu.Unlock()
 		return false, err
 	}
+	x.rs.answeredPings[recorded.PingID] = recorded
 	// Deliver any files the human attached to this answer into the workspace,
 	// recording their paths so the ask_human tool-return (agent pings) and the
 	// gate feed (gate pings) can point the agent at them.
@@ -1144,6 +1197,19 @@ func (x *exec) stageGate(st *flow.Stage) error {
 			return &ans, nil
 		}
 		return nil, nil
+	}
+
+	if len(autos) == 0 {
+		// Nothing to poll and nothing to run: a gate with no signal armed is
+		// pure waiting, so park the run and give the slot back. The ping is
+		// answerable from the durable projection while the loop is gone, and
+		// replay routes the answer on re-entry (rs.gateAnswer, above) — the
+		// path crash recovery has always taken.
+		//
+		// Signal-armed gates below are the exception that keeps this honest:
+		// auto_approve/auto_reject poll an external service on a ticker, so
+		// they need a live loop and stay resident.
+		return errWaitingOnHuman
 	}
 
 	var pollC <-chan time.Time

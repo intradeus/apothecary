@@ -69,6 +69,17 @@ type runState struct {
 	// before the routing was recorded; the gate re-entry routes directly.
 	gateAnswer *event.PingAnswered
 
+	// raisedPings / answeredPings are every ping's two halves, kept for the
+	// re-entry that rebuilds a paused attempt's resume message. A run parked
+	// on a question is answered while it has NO loop, so by the time one
+	// exists again the answer is only a fact in the log — the live registry
+	// never saw it.
+	raisedPings   map[string]*event.PingRaised
+	answeredPings map[string]*event.PingAnswered
+	// pausedAsks is the ping set a stage last parked on (stage_paused), by
+	// stage id: what re-entry has to collect answers for before resuming.
+	pausedAsks map[string][]string
+
 	done bool
 }
 
@@ -94,6 +105,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		edgeCounts:    map[string]int{},
 		actionPending: map[string]bool{},
 		sessions:      map[string]ports.SessionID{},
+		raisedPings:   map[string]*event.PingRaised{},
+		answeredPings: map[string]*event.PingAnswered{},
+		pausedAsks:    map[string][]string{},
 	}
 	raised := map[string]*event.PingRaised{}
 	for i := range evs {
@@ -130,6 +144,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			}
 			rs.gateAnswer = nil
 			rs.lastFailure = nil
+			delete(rs.pausedAsks, p.StageID)
 		case *event.StageCompleted:
 			rs.ph = phAfterComplete
 			if p.SessionID != "" {
@@ -143,6 +158,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.ph = phAfterFail
 			rs.lastFailure = p
 		case *event.StagePaused:
+			rs.pausedAsks[p.StageID] = p.PingIDs
 			// The attempt is parked, not finished: ph stays phIn so recovery
 			// re-enters this stage. The session it recorded is what the
 			// re-entry resumes — without it a restart would have to start the
@@ -158,6 +174,10 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			}
 			rs.turns += p.TurnsUsed
 		case *event.StageResumed:
+			// The pause it answers is consumed: leaving it set would make a
+			// LATER attempt of the same stage re-enter as if it were still
+			// parked on those long-answered questions.
+			delete(rs.pausedAsks, p.StageID)
 			// Bookkeeping only — the pause already set everything the
 			// re-entry needs, and the invocation this event opens reports its
 			// own spend when it ends (stage_paused again, or stage_completed).
@@ -173,11 +193,13 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.feedAttempts = p.Max + 1
 		case *event.PingRaised:
 			raised[p.PingID] = p
+			rs.raisedPings[p.PingID] = p
 			rs.openPings = append(rs.openPings, p)
 			if !gatePingType(p.Type) {
 				rs.unwanted++
 			}
 		case *event.PingAnswered:
+			rs.answeredPings[p.PingID] = p
 			for j, op := range rs.openPings {
 				if op.PingID == p.PingID {
 					rs.openPings = append(rs.openPings[:j], rs.openPings[j+1:]...)

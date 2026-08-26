@@ -375,9 +375,23 @@ type RunResumed struct {
 // crash) and the run stays non-terminal but is NOT recovered on boot.
 // StageID is the stage in flight when pause hit, informational only —
 // replay keeps the stage events' own record of where to re-enter.
+//
+// Reason says WHO parked it, which decides both what the run reads as and
+// what wakes it. PauseUser is the pause button: the run reads paused, and
+// only play moves it. PauseWaiting is the engine parking a run that has
+// nothing left to do but wait for a human — it reads waiting_on_human, since
+// a run waiting for YOU is not a run someone pressed pause on, and the answer
+// itself wakes it. Empty means user: every pause predating this field was one.
 type RunPaused struct {
 	StageID string `json:"stage_id,omitempty"`
+	Reason  string `json:"reason,omitempty"` // user|waiting_on_human
 }
+
+// RunPaused reasons.
+const (
+	PauseUser    = "user"
+	PauseWaiting = "waiting_on_human"
+)
 
 // RunUnpaused (play) restarts a paused run's loop; it re-enters mid-stage
 // exactly like crash recovery (recorded harness sessions resume, commands
@@ -388,7 +402,17 @@ type RunPaused struct {
 // needs it to land back on waiting_on_human instead of running.
 type RunUnpaused struct {
 	Waiting bool `json:"waiting,omitempty"`
+	// Reason says what woke it: a human pressing play, or the answer a parked
+	// run was waiting for arriving. Empty means play — every unpause before
+	// this field was one.
+	Reason string `json:"reason,omitempty"` // play|answered
 }
+
+// RunUnpaused reasons.
+const (
+	UnpausePlay     = "play"
+	UnpauseAnswered = "answered"
+)
 
 type EnvDestroyed struct {
 	EnvID string `json:"env_id"`

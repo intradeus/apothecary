@@ -1032,6 +1032,9 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 	ctx, cancel := context.WithTimeout(r.Context(), hold)
 	defer cancel()
 	if ans, ok := p.Await(ctx); ok {
+		// The agent gets the answer in-band: as far as it is concerned the
+		// question is closed, so the stage need not pause on it.
+		p.HandOff(true)
 		writeJSON(w, http.StatusOK, map[string]any{
 			// text is the composed answer, rendered by the engine so the tool
 			// return and a resumed stage's message say the same thing; answer
@@ -1042,6 +1045,11 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 		})
 		return
 	}
+	// The turn goes back to the agent without an answer. From here on, any
+	// answer — however fast — is one the agent has NOT seen, so its stage must
+	// pause on the question and deliver it on resume rather than let the
+	// invocation close as if it had been answered.
+	p.HandOff(false)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1055,14 +1063,25 @@ func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pid := r.PathValue("pid")
-	// Claim the uploaded files for this ping BEFORE AnswerPing enqueues the
-	// answer, so processAnswer's delivery (which queries by ping_id) finds
-	// them. The run id comes from the live registry (an answerable ping is
-	// always live), and the ids also ride on the answer so ping_answered
-	// records the association as a replayable fact.
+	// Claim the uploaded files for this ping BEFORE AnswerPing records the
+	// answer, so delivery (which queries by ping_id) finds them. The run id
+	// comes from the live registry when a loop is holding the ping, and from
+	// the durable projection when the run is parked on it — a parked run has
+	// no registry entry, and its answers are the ones most likely to carry
+	// attachments (the human had time to gather them). The ids also ride on
+	// the answer, so ping_answered records the association as a replayable
+	// fact.
 	if s.Attachments != nil && len(body.AttachmentIDs) > 0 {
+		runID := ""
 		if p := s.Engine.GetPing(pid); p != nil {
-			if err := s.Attachments.ClaimForRun(r.Context(), body.AttachmentIDs, p.RunID, pid); err != nil {
+			runID = p.RunID
+		} else if s.Pings != nil {
+			if v, err := s.Pings.GetPing(r.Context(), pid); err == nil {
+				runID = v.RunID
+			}
+		}
+		if runID != "" {
+			if err := s.Attachments.ClaimForRun(r.Context(), body.AttachmentIDs, runID, pid); err != nil {
 				s.Log.Warn("claim answer attachments", "ping", pid, "err", err)
 			}
 		}

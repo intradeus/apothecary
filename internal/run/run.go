@@ -57,7 +57,16 @@ type View struct {
 	// read path fills it from the engine's reconciler so the workspace badge
 	// can tell a live env from one stopped/removed out-of-band; empty means
 	// "not reconciled" and the UI falls back to the env_id liveness guess.
-	EnvStatus string    `json:"env_status,omitempty"`
+	EnvStatus string `json:"env_status,omitempty"`
+	// Dormant: the run has no loop goroutine and none is owed to it until
+	// something wakes it (play, or the answer it is waiting for). NOT a
+	// projected column — recovery, pause/play and the answer path all derive
+	// it by folding events, and nothing outside the engine needs it.
+	//
+	// Orthogonal to State on purpose: a run parked on a human reads
+	// waiting_on_human AND is dormant, which is what lets the engine free its
+	// concurrency slot without the UI claiming someone paused it.
+	Dormant   bool      `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -108,7 +117,13 @@ func Apply(v *View, e *event.Event) {
 	case *event.PingRaised:
 		v.State = WaitingOnHuman
 	case *event.PingAnswered:
-		v.State = Running
+		// An answer puts a run back to work — unless it has no loop to put
+		// back: a parked run keeps waiting until something wakes it, and a
+		// run a human paused keeps its pause. Claiming "running" for either
+		// would be the projection inventing activity that is not happening.
+		if !v.Dormant {
+			v.State = Running
+		}
 	case *event.MRCreated:
 		v.MRURL = p.MRURL
 	case *event.RunCompleted:
@@ -136,7 +151,13 @@ func Apply(v *View, e *event.Event) {
 		// would only fight them: a pause recorded after its answer already
 		// landed would drag a running run back to waiting.
 	case *event.RunPaused:
-		v.State = Paused
+		// Both flavours park the loop; only the user's reads as paused. The
+		// engine's own parking leaves the state the ping events set
+		// (waiting_on_human) — see event.RunPaused.
+		v.Dormant = true
+		if p.Reason != event.PauseWaiting {
+			v.State = Paused
+		}
 		if p.StageID != "" {
 			v.CurrentStage = p.StageID
 		}
@@ -144,6 +165,7 @@ func Apply(v *View, e *event.Event) {
 		// Play: the loop restarts and re-enters where the stage events left
 		// off (crash-recovery path). A re-armed gate raises no new ping, so
 		// the event itself says whether the run is back to waiting.
+		v.Dormant = false
 		if p.Waiting {
 			v.State = WaitingOnHuman
 		} else {

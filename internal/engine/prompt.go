@@ -13,13 +13,21 @@ import (
 // answerReply is what a paused stage resumes its agent with: the questions it
 // stopped on, now answered. It reuses the prompt's own section grammar because
 // that is what the agent was trained on in its first message — the task, the
-// inputs and the output contract are all still in this session\'s context, so
-// this message carries the new fact and nothing else.
-func answerReply(pending []*Ping, written []string) string {
+// inputs and the output contract are all still in this session's context, so
+// this message carries the new facts and nothing else.
+func (x *exec) answerReply(asks []ask, written []string) string {
 	var b strings.Builder
 	b.WriteString("# ANSWER FROM THE HUMAN\n")
-	for _, p := range pending {
-		fmt.Fprintf(&b, "\nYou asked: %s\nThey answered: %s\n", p.Question, ComposeAnswer(p))
+	for _, a := range asks {
+		text := "(no answer recorded)"
+		if a.answer != nil {
+			// Attachments are (re-)delivered here rather than trusted to have
+			// survived: the workspace may have been rebuilt since the question
+			// was asked, and a path in the prompt that resolves to nothing is
+			// worse than no path at all.
+			text = composeAnswerText(a.answer.Answer, a.answer.Feedback, x.pingAnswerPaths(a.id))
+		}
+		fmt.Fprintf(&b, "\nYou asked: %s\nThey answered: %s\n", a.question, text)
 	}
 	b.WriteString("\nContinue the work from where you stopped. Everything else you were " +
 		"given — the task, your inputs and the OUTPUT CONTRACT — still stands.\n")

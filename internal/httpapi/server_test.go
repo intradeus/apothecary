@@ -1111,3 +1111,56 @@ func TestHoldForClampsGraceHold(t *testing.T) {
 		}
 	}
 }
+
+// A ping whose grace hold expired has handed the agent back its turn. Any
+// answer after that is one the agent never saw, and the engine has to know
+// that — otherwise the stage closes a question the agent is still waiting on.
+func TestPingHoldRecordsWhetherTheAgentGotTheAnswer(t *testing.T) {
+	x := newEnv(t, engine.Config{}, `name: hold
+version: 3
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: builder
+    prompt: build the thing
+stages:
+  - { id: build, type: agent, agent: builder }
+`)
+	x.srv.HoldTimeout = 5 * time.Millisecond
+
+	runIDCh := make(chan string, 1)
+	held := make(chan *engine.Ping, 1)
+	x.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+		runID := <-runIDCh
+		p, err := x.e.RaisePing(runID, "clarification", "which db?", "", nil, nil)
+		if err != nil {
+			return ports.AgentResult{}, err
+		}
+		req, err := http.NewRequest("GET", x.ts.URL+"/api/runs/"+runID+"/pings/"+p.ID, nil)
+		if err != nil {
+			return ports.AgentResult{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+x.e.RunToken(runID))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return ports.AgentResult{}, err
+		}
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			return ports.AgentResult{}, fmt.Errorf("hold = %d, want 204", resp.StatusCode)
+		}
+		held <- p
+		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+	}
+
+	runID := x.createTicketFlow(t, "T", "hold")
+	runIDCh <- runID
+	select {
+	case p := <-held:
+		if !p.HandedBack() {
+			t.Error("a 204 hands the turn back; the ping must say so")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hold never expired")
+	}
+}
