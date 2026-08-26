@@ -963,10 +963,15 @@ func (s *Server) getLog(w http.ResponseWriter, r *http.Request) {
 
 // --- pings ------------------------------------------------------------------
 
-// postPing is the ask_human shim entry (§10): raise, then hold up to
-// HoldTimeout for the answer; 200 with the answer, else 204 (the shim
-// re-polls with the ping id from the X-Ping-ID header — the 204 has no body,
-// so the id travels in the header on both responses).
+// postPing is the ask_human shim entry (§10): raise, then hold for the answer;
+// 200 with the answer, else 204 (the ping id travels in the X-Ping-ID header,
+// since the 204 has no body).
+//
+// The hold is a GRACE PERIOD, not the wait: hold_ms lets the shim ask for a
+// window short enough to stay well inside any harness's tool-call timeout, so
+// an answer that is already waiting costs the agent nothing, and a slower one
+// turns the tool call into "stop and wait" — the engine then holds the real
+// wait, untimed, and resumes the stage (see engine.stageAgent).
 func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("id")
 	if !s.authPing(w, r, runID) {
@@ -979,6 +984,7 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 		Options   []string `json:"options"`   // PLAN4 M16: closed answer set
 		Artifact  string   `json:"artifact"`  // legacy single workspace file to review
 		Artifacts []string `json:"artifacts"` // multi workspace files to review
+		HoldMS    int      `json:"hold_ms"`   // requested grace hold; clamped to HoldTimeout
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -996,7 +1002,16 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.holdForAnswer(w, r, p)
+	s.holdForAnswer(w, r, p, s.holdFor(body.HoldMS))
+}
+
+// holdFor clamps a requested grace hold to the server's own limit. A missing
+// or nonsensical value keeps the historical behaviour (hold the maximum).
+func (s *Server) holdFor(ms int) time.Duration {
+	if ms <= 0 {
+		return s.HoldTimeout
+	}
+	return min(time.Duration(ms)*time.Millisecond, s.HoldTimeout)
 }
 
 func (s *Server) repollPing(w http.ResponseWriter, r *http.Request) {
@@ -1009,16 +1024,20 @@ func (s *Server) repollPing(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "ping not found")
 		return
 	}
-	s.holdForAnswer(w, r, p)
+	s.holdForAnswer(w, r, p, s.holdFor(0))
 }
 
-func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine.Ping) {
+func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine.Ping, hold time.Duration) {
 	w.Header().Set("X-Ping-ID", p.ID)
-	ctx, cancel := context.WithTimeout(r.Context(), s.HoldTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), hold)
 	defer cancel()
 	if ans, ok := p.Await(ctx); ok {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ping_id": p.ID, "answer": ans.Answer, "feedback": ans.Feedback,
+			// text is the composed answer, rendered by the engine so the tool
+			// return and a resumed stage's message say the same thing; answer
+			// and feedback stay as the raw fields behind it.
+			"ping_id": p.ID, "text": engine.ComposeAnswer(p),
+			"answer": ans.Answer, "feedback": ans.Feedback,
 			"artifacts": p.DeliveredArtifacts(), // workspace paths of the human's answer files
 		})
 		return

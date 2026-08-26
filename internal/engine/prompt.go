@@ -10,6 +10,35 @@ import (
 	"apothecary/internal/ports"
 )
 
+// answerReply is what a paused stage resumes its agent with: the questions it
+// stopped on, now answered. It reuses the prompt's own section grammar because
+// that is what the agent was trained on in its first message — the task, the
+// inputs and the output contract are all still in this session\'s context, so
+// this message carries the new fact and nothing else.
+func answerReply(pending []*Ping, written []string) string {
+	var b strings.Builder
+	b.WriteString("# ANSWER FROM THE HUMAN\n")
+	for _, p := range pending {
+		fmt.Fprintf(&b, "\nYou asked: %s\nThey answered: %s\n", p.Question, ComposeAnswer(p))
+	}
+	b.WriteString("\nContinue the work from where you stopped. Everything else you were " +
+		"given — the task, your inputs and the OUTPUT CONTRACT — still stands.\n")
+	if len(written) > 0 {
+		// It carried on and produced these without waiting, which means they
+		// rest on its own guess at the answer above. Naming them is the whole
+		// point: "revise if needed" is easy to skim past, a list of files it
+		// has to re-read is not.
+		b.WriteString("\nYou already wrote the following before this answer reached you, so " +
+			"they were written without it:\n")
+		for _, w := range written {
+			fmt.Fprintf(&b, "- %s\n", w)
+		}
+		b.WriteString("Re-read each one and rewrite whatever the answer changes. Do not leave " +
+			"a file standing on an assumption the human has now corrected.\n")
+	}
+	return b.String()
+}
+
 // assemblePrompt builds the agent prompt per the §3.2 template. The ticket
 // always forms the TASK section. Each of the stage's bound inputs renders as a
 // named, described INPUT section (FLOWLANG §4); $CHANGED is a stat + file list,

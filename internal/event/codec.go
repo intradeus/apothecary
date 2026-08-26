@@ -17,6 +17,8 @@ var registry = map[Type]func() Payload{
 	TypeStageStarted:     func() Payload { return &StageStarted{} },
 	TypeStageCompleted:   func() Payload { return &StageCompleted{} },
 	TypeStageFailed:      func() Payload { return &StageFailed{} },
+	TypeStagePaused:      func() Payload { return &StagePaused{} },
+	TypeStageResumed:     func() Payload { return &StageResumed{} },
 	TypeEdgeTaken:        func() Payload { return &EdgeTaken{} },
 	TypePingRaised:       func() Payload { return &PingRaised{} },
 	TypePingAnswered:     func() Payload { return &PingAnswered{} },

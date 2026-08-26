@@ -505,9 +505,15 @@ stages:
 			}
 			var out struct {
 				Answer string `json:"answer"`
+				Text   string `json:"text"`
 			}
 			if err := json.Unmarshal(data, &out); err != nil {
 				return fail("re-poll body: %v", err)
+			}
+			// text is the engine-composed answer the shim hands the agent
+			// verbatim; a free-text answer composes to itself.
+			if out.Text != out.Answer {
+				return fail("composed text = %q, answer = %q", out.Text, out.Answer)
 			}
 			gotAnswer <- out.Answer
 			return ports.AgentResult{TurnsUsed: 1}, nil
@@ -1084,5 +1090,24 @@ func TestEgressAllow(t *testing.T) {
 	resp, _ = x.do(t, "POST", "/api/runs/"+out+"/egress-allow", map[string]string{"host": "http://x/y"}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad host = %d, want 400", resp.StatusCode)
+	}
+}
+
+// The shim asks for a SHORT grace hold so the tool call ends well inside any
+// harness's timeout; the server clamps it to its own limit either way.
+func TestHoldForClampsGraceHold(t *testing.T) {
+	s := &Server{HoldTimeout: 55 * time.Second}
+	for _, c := range []struct {
+		ms   int
+		want time.Duration
+	}{
+		{0, 55 * time.Second},     // unset: hold the maximum (pre-hold_ms shims)
+		{-1, 55 * time.Second},    // nonsense: same
+		{20000, 20 * time.Second}, // the shim's grace hold
+		{90000, 55 * time.Second}, // never longer than the server allows
+	} {
+		if got := s.holdFor(c.ms); got != c.want {
+			t.Errorf("holdFor(%d) = %s, want %s", c.ms, got, c.want)
+		}
 	}
 }

@@ -322,6 +322,35 @@ func (p *Ping) Answered() (PingAnswer, bool) {
 	}
 }
 
+// ComposeAnswer renders a ping's answer the way the agent that asked it should
+// read it. ONE renderer for both delivery paths — the ask_human tool return
+// (the shim prints this text verbatim) and the resume message of a stage that
+// paused on the question — so what the agent is told never depends on which
+// path the answer happened to take.
+func ComposeAnswer(p *Ping) string {
+	ans, ok := p.Answered()
+	if !ok {
+		return ""
+	}
+	var text string
+	switch {
+	case ans.Answer == "text":
+		// Free-text answers may arrive either as the text itself or as
+		// answer:"text" with the words in feedback (§6); both are the same
+		// thing to the agent.
+		text = ans.Feedback
+	case ans.Answer == PingAnswerOther:
+		// The human rejected every offered option and the note IS the answer:
+		// spell that out so it cannot be misread as a chosen option.
+		text = "other — none of the offered options fit; the human answered: " + ans.Feedback
+	case ans.Feedback != "":
+		text = ans.Answer + "\n(note: " + ans.Feedback + ")"
+	default:
+		text = ans.Answer
+	}
+	return text + attachedFilesNote(p.DeliveredArtifacts())
+}
+
 type raiseReq struct {
 	p   *Ping
 	ack chan struct{}

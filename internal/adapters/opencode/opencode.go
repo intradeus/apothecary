@@ -25,6 +25,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 	"apothecary/internal/wshome"
+	"time"
 )
 
 // Config is reserved for adapter-level knobs; auth material arrives per
@@ -39,6 +40,11 @@ type Adapter struct {
 func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
 	return &Adapter{envp: envp, cfg: cfg}
 }
+
+// mcpTimeout bounds one ask_human call from opencode's side. Comfortably
+// above the shim's grace hold, nowhere near "as long as a human takes" —
+// that wait lives in the engine (see engine.stageAgent).
+const mcpTimeout = 2 * time.Minute
 
 const (
 	promptPath = "/apothecary/prompt.txt"
@@ -85,6 +91,13 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 				"type":    "local",
 				"command": []string{"/opt/apothecary/shim", "ask-human"},
 				"enabled": true,
+				// opencode kills an MCP tool call at 60 s by default and hands
+				// the model the timeout as an error, which reads to it as
+				// permission to guess. The shim never holds a call that long
+				// any more (it posts the question and gives the turn back),
+				// so this is only a floor under the grace hold — but it costs
+				// one line and removes the sharpest edge.
+				"timeout": mcpTimeout.Milliseconds(),
 			},
 		},
 	}

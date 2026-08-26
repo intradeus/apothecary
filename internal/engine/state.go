@@ -142,6 +142,26 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.StageFailed:
 			rs.ph = phAfterFail
 			rs.lastFailure = p
+		case *event.StagePaused:
+			// The attempt is parked, not finished: ph stays phIn so recovery
+			// re-enters this stage. The session it recorded is what the
+			// re-entry resumes — without it a restart would have to start the
+			// agent over and lose everything it had done before the question.
+			// Cost and turns are banked here because the invocation that just
+			// ended really did spend them.
+			rs.ph = phIn
+			if p.SessionID != "" {
+				rs.sessions[p.StageID] = ports.SessionID(p.SessionID)
+			}
+			if p.Usage != nil {
+				rs.cost += p.Usage.CostUSD
+			}
+			rs.turns += p.TurnsUsed
+		case *event.StageResumed:
+			// Bookkeeping only — the pause already set everything the
+			// re-entry needs, and the invocation this event opens reports its
+			// own spend when it ends (stage_paused again, or stage_completed).
+			rs.ph = phIn
 		case *event.EdgeTaken:
 			rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
 			if fl != nil {

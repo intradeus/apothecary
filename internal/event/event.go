@@ -10,14 +10,25 @@ import (
 type Type string
 
 const (
-	TypeRunCreated      Type = "run_created"
-	TypeEnvRequested    Type = "env_requested"
-	TypeImageBuilt      Type = "image_built" // DESIGN2 §6.3: pipeline ran between env_requested and env_ready
-	TypeEnvReady        Type = "env_ready"
-	TypeEnvFailed       Type = "env_failed"
-	TypeStageStarted    Type = "stage_started"
-	TypeStageCompleted  Type = "stage_completed"
-	TypeStageFailed     Type = "stage_failed"
+	TypeRunCreated     Type = "run_created"
+	TypeEnvRequested   Type = "env_requested"
+	TypeImageBuilt     Type = "image_built" // DESIGN2 §6.3: pipeline ran between env_requested and env_ready
+	TypeEnvReady       Type = "env_ready"
+	TypeEnvFailed      Type = "env_failed"
+	TypeStageStarted   Type = "stage_started"
+	TypeStageCompleted Type = "stage_completed"
+	TypeStageFailed    Type = "stage_failed"
+	// TypeStagePaused / TypeStageResumed bracket an attempt that stopped
+	// mid-flight and picked up again LATER IN THE SAME ATTEMPT: the iteration
+	// does not advance, no stage_completed/stage_failed sits between them, and
+	// everything the harness had already done still stands. Today's producer
+	// is an agent that ended its turn on an unanswered ask_human — the engine
+	// owns that wait, because a human is not something a harness's tool-call
+	// timer can be asked to outlast. The pair is deliberately generic though:
+	// any future "park this stage, continue it later" gets these two events
+	// with its own Reason.
+	TypeStagePaused     Type = "stage_paused"
+	TypeStageResumed    Type = "stage_resumed"
 	TypeEdgeTaken       Type = "edge_taken"
 	TypePingRaised      Type = "ping_raised"
 	TypePingAnswered    Type = "ping_answered"
@@ -86,6 +97,19 @@ const (
 	// is upstream wiring, not this stage's work.
 	ReasonInputMissing = "input_missing"
 	ReasonInfra        = "infra"
+)
+
+// StagePaused / StageResumed reasons.
+const (
+	// PauseAskHuman: the agent ended its turn with an unanswered ask_human.
+	// The attempt waits, untimed, until every open ping is answered.
+	PauseAskHuman = "ask_human"
+	// ResumeAnswered: the questions that paused the attempt came back
+	// answered and are being delivered into the harness session.
+	ResumeAnswered = "answered"
+	// ResumeRestart: the engine restarted while the attempt was in flight and
+	// re-entered its session (recovery, not a human's doing).
+	ResumeRestart = "engine_restart"
 )
 
 type Link struct {
@@ -187,6 +211,34 @@ type StageFailed struct {
 	Reason   string `json:"reason"` // exit_nonzero|timeout|harness_error|output_contract|infra
 	ExitCode *int   `json:"exit_code,omitempty"`
 	Error    string `json:"error,omitempty"`
+}
+
+// StagePaused records an attempt parking mid-flight: the harness invocation
+// returned, but the attempt is NOT over. TurnsUsed/Usage carry what that
+// invocation spent — a paused attempt's cost is real even if the run never
+// resumes — and SessionID is what the resume re-enters, persisted HERE so a
+// pause survives an engine restart (a held-open pipe never could).
+type StagePaused struct {
+	StageID   string `json:"stage_id"`
+	Iteration int    `json:"iteration,omitempty"`
+	Reason    string `json:"reason"` // ask_human
+	// PingIDs are the open questions the attempt is waiting on: what has to
+	// be answered before a stage_resumed can follow.
+	PingIDs   []string `json:"ping_ids,omitempty"`
+	TurnsUsed int      `json:"turns_used,omitempty"`
+	Usage     *Usage   `json:"usage,omitempty"`
+	SessionID string   `json:"session_id,omitempty"`
+}
+
+// StageResumed is the other half: the same stage and the same iteration
+// picking up where StagePaused left it. PingIDs name the answers being
+// delivered to the agent.
+type StageResumed struct {
+	StageID   string   `json:"stage_id"`
+	Iteration int      `json:"iteration,omitempty"`
+	Reason    string   `json:"reason"` // answered|engine_restart
+	PingIDs   []string `json:"ping_ids,omitempty"`
+	SessionID string   `json:"session_id,omitempty"`
 }
 
 type EdgeTaken struct {
@@ -363,6 +415,8 @@ func (*EnvFailed) EventType() Type       { return TypeEnvFailed }
 func (*StageStarted) EventType() Type    { return TypeStageStarted }
 func (*StageCompleted) EventType() Type  { return TypeStageCompleted }
 func (*StageFailed) EventType() Type     { return TypeStageFailed }
+func (*StagePaused) EventType() Type     { return TypeStagePaused }
+func (*StageResumed) EventType() Type    { return TypeStageResumed }
 func (*EdgeTaken) EventType() Type       { return TypeEdgeTaken }
 func (*PingRaised) EventType() Type      { return TypePingRaised }
 func (*PingAnswered) EventType() Type    { return TypePingAnswered }

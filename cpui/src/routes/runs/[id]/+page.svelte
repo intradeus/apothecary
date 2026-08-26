@@ -77,7 +77,9 @@
   const totals = $derived.by(() => {
     let cost = 0, turns = 0;
     for (const e of events) {
-      if (e.type === 'stage_completed') {
+      // A stage that paused on a question banks what it spent up to there;
+      // the run's total is every leg, not just the ones that completed.
+      if (e.type === 'stage_completed' || e.type === 'stage_paused') {
         const u = e.payload.usage as { cost_usd?: number } | undefined;
         cost += u?.cost_usd ?? 0;
         turns += (e.payload.turns_used as number | undefined) ?? 0;
@@ -124,16 +126,33 @@
   const currentStage = $derived.by(() => {
     const started = events.findLast((e) => e.type === 'stage_started');
     if (!started) return null;
-    // A completion/failure for that stage after it means nothing is running.
+    // A completion/failure for that stage after it means nothing is running —
+    // and so does a pause, until the matching resume starts it working again.
     const idx = events.lastIndexOf(started);
-    const doneAfter = events
+    const last = events
       .slice(idx + 1)
-      .some((e) => (e.type === 'stage_completed' || e.type === 'stage_failed') && e.payload.stage_id === started.payload.stage_id);
-    return doneAfter ? null : started;
+      .findLast(
+        (e) =>
+          ['stage_completed', 'stage_failed', 'stage_paused', 'stage_resumed'].includes(e.type) &&
+          e.payload.stage_id === started.payload.stage_id
+      );
+    if (!last || last.type === 'stage_resumed') return started;
+    return null;
+  });
+  // Where the elapsed clock starts: a stage that paused on a question and
+  // resumed is working again as of the resume, not as of the stage start —
+  // the human's thinking time is not the agent's runtime.
+  const workingSince = $derived.by(() => {
+    if (!currentStage) return null;
+    const idx = events.lastIndexOf(currentStage);
+    const resumed = events
+      .slice(idx + 1)
+      .findLast((e) => e.type === 'stage_resumed' && e.payload.stage_id === currentStage.payload.stage_id);
+    return (resumed ?? currentStage).ts;
   });
   const elapsed = $derived.by(() => {
-    if (!currentStage) return '';
-    const ms = now - new Date(currentStage.ts).getTime();
+    if (!workingSince) return '';
+    const ms = now - new Date(workingSince).getTime();
     if (ms < 0) return '0s';
     const s = Math.floor(ms / 1000);
     return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
@@ -468,7 +487,7 @@
   const envConcluded = $derived(events.some((e) => e.type === 'env_ready' || e.type === 'env_failed'));
   function hasLog(e: EventEnvelope, stage?: string): boolean {
     if (!stage) return false;
-    if (e.type === 'stage_completed' || e.type === 'stage_failed') return true;
+    if (e.type === 'stage_completed' || e.type === 'stage_failed' || e.type === 'stage_paused') return true;
     if (e.type === 'env_ready' || e.type === 'env_failed') return true;
     return e.type === 'env_requested' && terminal && !envConcluded;
   }
@@ -502,6 +521,23 @@
         ].filter(Boolean).join(' · ');
         return { text: `${p.stage_id} completed (${bits})`, cls: 'ok', stage: p.stage_id as string };
       }
+      case 'stage_paused': {
+        const u = p.usage as { cost_usd?: number } | undefined;
+        const spent = [p.turns_used ? `${p.turns_used} turns` : '', u?.cost_usd ? fmtCost(u.cost_usd) : '']
+          .filter(Boolean).join(' · ');
+        const why = p.reason === 'ask_human' ? 'waiting on its own question' : String(p.reason ?? '');
+        return {
+          text: `⏸ ${p.stage_id} paused — ${why}${spent ? ` (${spent} so far)` : ''}`,
+          cls: 'warn',
+          stage: p.stage_id as string
+        };
+      }
+      case 'stage_resumed':
+        return {
+          text: `▶ ${p.stage_id} resumed — ${p.reason === 'engine_restart' ? 'engine restarted, picking the session back up' : 'the answer landed'}`,
+          cls: 'info',
+          stage: p.stage_id as string
+        };
       case 'stage_failed': return { text: `${p.stage_id} failed: ${p.reason}${p.error ? ` — ${String(p.error).slice(0, 200)}` : ''}`, cls: 'bad', stage: p.stage_id as string };
       case 'edge_taken': return { text: `↩ ${p.edge}${p.depth ? ` (then #${p.depth})` : ''} ${p.from} → ${p.to} (${p.count}/${p.max === -1 ? '∞' : p.max})`, cls: 'warn' };
       case 'ping_raised': return { text: `ping [${p.type}]: ${p.question}`, cls: 'warn' };

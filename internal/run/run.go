@@ -129,6 +129,12 @@ func Apply(v *View, e *event.Event) {
 		if p.FlowHash != "" {
 			v.FlowHash = p.FlowHash
 		}
+	case *event.StagePaused, *event.StageResumed:
+		// An attempt parking on an open question and picking up again. State
+		// is driven by the ping events that bracket it (ping_raised →
+		// waiting_on_human, ping_answered → running), so touching it here
+		// would only fight them: a pause recorded after its answer already
+		// landed would drag a running run back to waiting.
 	case *event.RunPaused:
 		v.State = Paused
 		if p.StageID != "" {

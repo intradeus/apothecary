@@ -41,38 +41,31 @@ func fastProtocol(t *testing.T) {
 	})
 }
 
-func TestAskHumanPostPollAnswer(t *testing.T) {
+func TestAskHumanAnsweredInBand(t *testing.T) {
 	fastProtocol(t)
 	var posts, gets int
 	var mu sync.Mutex
+	var holdMS int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		if r.Header.Get("Authorization") != "Bearer tok1" {
-			w.WriteHeader(401)
-			return
-		}
 		switch {
 		case r.Method == "POST":
 			posts++
 			var body struct {
 				Type, Question string
 				Options        []string
+				HoldMS         int64 `json:"hold_ms"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body.Type != "clarification" || body.Question != "which db?" || len(body.Options) != 2 {
 				t.Errorf("ping body = %+v", body)
 			}
+			holdMS = body.HoldMS
 			w.Header().Set("X-Ping-Id", "p1")
-			w.WriteHeader(204)
-		case strings.HasSuffix(r.URL.Path, "/pings/p1"):
-			gets++
-			if gets < 3 {
-				w.WriteHeader(204)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"answer": "postgres", "feedback": "use v16"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"text": "postgres\n(note: use v16)"})
 		default:
+			gets++
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(500)
 		}
@@ -84,11 +77,48 @@ func TestAskHumanPostPollAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A human who is already there answers inside the grace hold, and the
+	// agent never loses its turn over it.
 	if got != "postgres\n(note: use v16)" {
 		t.Errorf("answer = %q", got)
 	}
-	if posts != 1 || gets < 3 {
+	if posts != 1 || gets != 0 {
 		t.Errorf("posts=%d gets=%d", posts, gets)
+	}
+	if holdMS != graceHold.Milliseconds() {
+		t.Errorf("hold_ms = %d, want %d", holdMS, graceHold.Milliseconds())
+	}
+}
+
+// The whole point of the redesign: an unanswered question hands the turn back
+// instead of blocking until the harness kills the call and the model guesses.
+func TestAskHumanUnansweredEndsTurn(t *testing.T) {
+	fastProtocol(t)
+	var calls int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		w.Header().Set("X-Ping-Id", "p9")
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	writeTestEnv(t, srv.URL, "t")
+
+	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"posted to the human (id p9)", "END YOUR TURN NOW", "next message"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice %q missing %q", got, want)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1 (no polling loop)", calls)
 	}
 }
 
