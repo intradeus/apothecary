@@ -117,6 +117,7 @@ tasks:
     dir: cpui
     cmds:
       - npx --yes @hey-api/openapi-ts
+      - npx prettier --write src/lib/api/generated
 
   api:check:
     desc: 'Fail if the spec is stale or the generated client leaked past the ACL'
@@ -155,9 +156,10 @@ tasks:
       - npm run check
 
   fmt:
-    desc: gofmt the tree
+    desc: gofmt the Go tree, prettier the frontend
     cmds:
       - gofmt -w ./cmd ./internal ./workspace 2>/dev/null || gofmt -w .
+      - cd cpui && npm run format
 
   verify:
     desc: 'The full pre-commit gate: gofmt, vet, go tests, API contract, svelte-check, UI build'

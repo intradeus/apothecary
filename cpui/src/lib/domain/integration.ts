@@ -7,47 +7,47 @@
 export type Port = 'forge' | 'provisioner' | 'harness' | 'ticketsource';
 
 export interface Integration {
-  id: string;
-  port: Port;
-  kind: string;
-  name: string;
-  config: Record<string, unknown>;
-  /** Masks only — secret values never round-trip. */
-  secrets: Record<string, string>;
-  createdAt: string;
-  updatedAt: string;
+	id: string;
+	port: Port;
+	kind: string;
+	name: string;
+	config: Record<string, unknown>;
+	/** Masks only — secret values never round-trip. */
+	secrets: Record<string, string>;
+	createdAt: string;
+	updatedAt: string;
 }
 
 export interface IntegrationDraft {
-  port: Port;
-  kind: string;
-  name: string;
-  config: Record<string, unknown>;
-  secrets: Record<string, string>;
+	port: Port;
+	kind: string;
+	name: string;
+	config: Record<string, unknown>;
+	secrets: Record<string, string>;
 }
 
 export interface KindField {
-  name: string;
-  label: string;
-  placeholder?: string;
-  default?: string;
-  secret: boolean;
-  required: boolean;
-  /** One-line hint under the input; bare URLs are linkified by the form. */
-  help?: string;
+	name: string;
+	label: string;
+	placeholder?: string;
+	default?: string;
+	secret: boolean;
+	required: boolean;
+	/** One-line hint under the input; bare URLs are linkified by the form. */
+	help?: string;
 }
 
 export interface KindDescriptor {
-  port: Port;
-  kind: string;
-  label: string;
-  /** Setup prose shown above the form (where to get the credential, etc.). */
-  help?: string;
-  fields: KindField[];
+	port: Port;
+	kind: string;
+	label: string;
+	/** Setup prose shown above the form (where to get the credential, etc.). */
+	help?: string;
+	fields: KindField[];
 }
 
 export interface ChannelEntry {
-  id: string;
-  kind: string;
-  config: Record<string, unknown>;
+	id: string;
+	kind: string;
+	config: Record<string, unknown>;
 }

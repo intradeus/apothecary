@@ -13,18 +13,18 @@ export const isGatePing = (type: string) => type === GATE_TYPE;
 // domain Ping satisfies it as-is, and the run page maps its raw ping_raised
 // event payload onto it. Missing status ⇒ pending.
 export interface PingLike {
-  id: string;
-  type: string;
-  question: string;
-  context?: string;
-  // Typed payload (DESIGN-FILES §4): files = attached workspace paths,
-  // link = a resolved URL; primaryRef = the derived primary for display.
-  files?: string[];
-  link?: string;
-  primaryRef?: string;
-  options?: string[];
-  status?: string; // pending | answered | withdrawn
-  answer?: string;
-  feedback?: string;
-  answeredAt?: string;
+	id: string;
+	type: string;
+	question: string;
+	context?: string;
+	// Typed payload (DESIGN-FILES §4): files = attached workspace paths,
+	// link = a resolved URL; primaryRef = the derived primary for display.
+	files?: string[];
+	link?: string;
+	primaryRef?: string;
+	options?: string[];
+	status?: string; // pending | answered | withdrawn
+	answer?: string;
+	feedback?: string;
+	answeredAt?: string;
 }

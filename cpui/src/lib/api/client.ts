@@ -14,39 +14,39 @@ client.setConfig({ baseUrl: '' });
  *  raw exchange. Declared structurally rather than imported, so the ACL does
  *  not take a type dependency on the generated client's internals. */
 type SdkResult<T> = ({ data: T; error: undefined } | { data: undefined; error: unknown }) & {
-  request?: Request;
-  response?: Response;
+	request?: Request;
+	response?: Response;
 };
 
 /** Pull the engine's error message out of whatever the failure carried. */
 function messageOf(error: unknown, response?: Response): string {
-  if (error && typeof error === 'object' && 'error' in error) {
-    const msg = (error as { error?: unknown }).error;
-    if (typeof msg === 'string' && msg) return msg;
-  }
-  if (typeof error === 'string' && error) return error;
-  if (response) return `${response.status} ${response.statusText}`.trim();
-  return 'the engine could not be reached';
+	if (error && typeof error === 'object' && 'error' in error) {
+		const msg = (error as { error?: unknown }).error;
+		if (typeof msg === 'string' && msg) return msg;
+	}
+	if (typeof error === 'string' && error) return error;
+	if (response) return `${response.status} ${response.statusText}`.trim();
+	return 'the engine could not be reached';
 }
 
 /** Resolve a call to its body, or throw the engine's message. */
 export async function unwrap<T>(call: Promise<SdkResult<T>>): Promise<T> {
-  const { data, error, response } = await call;
-  if (error !== undefined || !response?.ok) throw new Error(messageOf(error, response));
-  return data as T;
+	const { data, error, response } = await call;
+	if (error !== undefined || !response?.ok) throw new Error(messageOf(error, response));
+	return data as T;
 }
 
 /** Resolve a call that returns nothing (202/204). */
 export async function unwrapVoid(call: Promise<SdkResult<unknown>>): Promise<void> {
-  const { error, response } = await call;
-  if (error !== undefined || !response?.ok) throw new Error(messageOf(error, response));
+	const { error, response } = await call;
+	if (error !== undefined || !response?.ok) throw new Error(messageOf(error, response));
 }
 
 /** Resolve a call whose failure is a legitimate "not available here" answer
  *  rather than an error to show: a run with no gateway, a provisioner without
  *  log tailing. */
 export async function unwrapOptional<T>(call: Promise<SdkResult<T>>): Promise<T | null> {
-  const { data, error, response } = await call;
-  if (error !== undefined || !response?.ok) return null;
-  return (data ?? null) as T | null;
+	const { data, error, response } = await call;
+	if (error !== undefined || !response?.ok) return null;
+	return (data ?? null) as T | null;
 }

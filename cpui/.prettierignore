@@ -1,6 +1,3 @@
-# generated API client — churn against openapi-ts output
-src/lib/api/generated/
-
 node_modules/
 .svelte-kit/
 build/

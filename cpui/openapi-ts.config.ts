@@ -6,15 +6,15 @@
 import { defineConfig } from '@hey-api/openapi-ts';
 
 export default defineConfig({
-  input: '../api/openapi.yaml',
-  output: {
-    path: 'src/lib/api/generated',
-    format: false,
-    lint: false
-  },
-  plugins: [
-    '@hey-api/typescript',
-    { name: '@hey-api/sdk', asClass: false },
-    { name: '@hey-api/client-fetch', bundle: true }
-  ]
+	input: '../api/openapi.yaml',
+	output: {
+		path: 'src/lib/api/generated',
+		format: false,
+		lint: false
+	},
+	plugins: [
+		'@hey-api/typescript',
+		{ name: '@hey-api/sdk', asClass: false },
+		{ name: '@hey-api/client-fetch', bundle: true }
+	]
 });
