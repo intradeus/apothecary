@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Integration, type Project } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Integration, Project } from '$lib/domain';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
@@ -10,7 +11,7 @@
 
   onMount(async () => {
     try {
-      [projects, integrations] = await Promise.all([api.projects(), api.integrations()]);
+      [projects, integrations] = await Promise.all([api.projects.list(), api.integrations.list()]);
       loaded = true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -33,8 +34,8 @@
       <strong>{p.name}</strong>
       <div class="mono small muted">{p.repo.url}</div>
       <div class="small muted">
-        forge: {intName(p.forge_id)} · workspaces: {intName(p.provisioner_id)} · harnesses:
-        {(p.harness_ids ?? []).map(intName).join(', ') || '—'} · flow: {p.default_flow}
+        forge: {intName(p.forgeId)} · workspaces: {intName(p.provisionerId)} · harnesses:
+        {(p.harnessIds ?? []).map(intName).join(', ') || '—'} · flow: {p.defaultFlow}
       </div>
     </div>
     <span class="muted">→</span>

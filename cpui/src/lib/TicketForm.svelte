@@ -6,15 +6,9 @@
   // search it, and the chosen issue prefills this form. The copy is taken on
   // submit — title/goal are whatever the fields say by then, and the issue's
   // attachments come across as ticket attachments.
-  import {
-    api,
-    fmtBytes,
-    type Attachment,
-    type Integration,
-    type Project,
-    type SourceTicket,
-    type Ticket
-  } from '$lib/api';
+  import { api } from '$lib/api';
+  import { fmtBytes } from '$lib/format';
+  import type { Attachment, Integration, Project, SourceTicket, Ticket } from '$lib/domain';
   import FileChips from '$lib/FileChips.svelte';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import { onMount } from 'svelte';
@@ -31,10 +25,10 @@
 
   const init = $state.snapshot(existing) as Ticket | null;
 
-  let projectId = $state(init?.project_id ?? projects[projects.length - 1]?.id ?? '');
+  let projectId = $state(init?.projectId ?? projects[projects.length - 1]?.id ?? '');
   let title = $state(init?.title ?? '');
   let goal = $state(init?.goal ?? '');
-  let branch = $state(init?.base_branch ?? '');
+  let branch = $state(init?.baseBranch ?? '');
   let files = $state<File[]>([]);
 
   // --- import from a tracker (create only) ---
@@ -54,11 +48,11 @@
     if (init) {
       // Provenance is immutable, so editing never re-imports — but it should
       // still show what the ticket carries.
-      api.ticketAttachments(init.id).then((a) => (attached = a)).catch(() => {});
+      api.tickets.attachments(init.id).then((a) => (attached = a)).catch(() => {});
       return;
     }
     try {
-      sources = (await api.integrations()).filter((i) => i.port === 'ticketsource');
+      sources = (await api.integrations.list()).filter((i) => i.port === 'ticketsource');
     } catch {
       /* no tracker configured is the normal case */
     }
@@ -69,7 +63,7 @@
     searching = true;
     searchErr = '';
     try {
-      results = await api.sourceTickets(sourceId, query.trim());
+      results = await api.integrations.sourceTickets(sourceId, query.trim());
     } catch (e) {
       searchErr = e instanceof Error ? e.message : String(e);
       results = [];
@@ -91,7 +85,7 @@
   async function pick(t: SourceTicket) {
     searchErr = '';
     try {
-      picked = await api.sourceTicket(sourceId, t.key);
+      picked = await api.integrations.sourceTicket(sourceId, t.key);
     } catch (e) {
       searchErr = e instanceof Error ? e.message : String(e);
       return;
@@ -138,22 +132,22 @@
     error = '';
     warnings = [];
     try {
-      let attachmentIds = init?.attachment_ids ?? [];
+      let attachmentIds = init?.attachmentIds ?? [];
       if (files.length) {
-        const uploaded = (await api.uploadAttachments(files)).map((a) => a.id);
+        const uploaded = (await api.files.upload(files)).map((a) => a.id);
         attachmentIds = [...attachmentIds, ...uploaded];
       }
       const body = {
         title: title.trim(),
         goal: goal.trim(),
-        project_id: projectId,
+        projectId,
         branch: branch.trim() || undefined,
-        attachment_ids: attachmentIds,
-        ...(picked ? { source_id: sourceId, source_key: picked.key } : {})
+        attachmentIds,
+        ...(picked ? { sourceIntegrationId: sourceId, sourceKey: picked.key } : {})
       };
       const t = init
-        ? await api.updateTicket(init.id, body)
-        : await api.createTicket(body);
+        ? await api.tickets.update(init.id, body)
+        : await api.tickets.create(body);
       if (t.warnings?.length) {
         warnings = t.warnings;
         created = t;

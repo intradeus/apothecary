@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { api, ago, type Ping } from '$lib/api';
+  import { api } from '$lib/api';
+  import { ago } from '$lib/format';
+  import type { Ping } from '$lib/domain';
   import PingCard from '$lib/PingCard.svelte';
   import { isGatePing } from '$lib/ping';
   import { onMount } from 'svelte';
@@ -18,16 +20,16 @@
   const runGroups = $derived.by(() => {
     const byRun = new Map<string, Ping[]>();
     for (const p of pings) {
-      const arr = byRun.get(p.run_id) ?? [];
+      const arr = byRun.get(p.runId) ?? [];
       arr.push(p);
-      byRun.set(p.run_id, arr);
+      byRun.set(p.runId, arr);
     }
     return [...byRun.values()];
   });
 
   const refresh = async () => {
     try {
-      pings = await api.pings(tab);
+      pings = await api.pings.list(tab);
       loaded = true;
     } catch {
       /* retry next tick */
@@ -45,15 +47,15 @@
   });
 
   async function answer(p: Ping, ans: string, note?: string, artifactIds?: string[]) {
-    busy[p.ping_id] = true;
+    busy[p.id] = true;
     error = '';
     try {
-      await api.answerPing(p.ping_id, ans, note?.trim() || undefined, artifactIds);
+      await api.pings.answer(p.id, ans, note?.trim() || undefined, artifactIds);
       await refresh();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
-      busy[p.ping_id] = false;
+      busy[p.id] = false;
     }
   }
 </script>
@@ -75,8 +77,8 @@
     <div class="row spread">
       <span class="pingtype {isGatePing(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
       <span class="muted small">
-        {#if p.stage_id}<span class="mono">{p.stage_id}</span> · {/if}
-        {ago(p.raised_at)} · <a href={`/runs/${p.run_id}`}>view run</a>
+        {#if p.stageId}<span class="mono">{p.stageId}</span> · {/if}
+        {ago(p.raisedAt)} · <a href={`/runs/${p.runId}`}>view run</a>
       </span>
     </div>
     {#if queued > 0}
@@ -84,7 +86,7 @@
         answer this first — {queued} earlier ping{queued > 1 ? 's' : ''} queued for this run
       </div>
     {/if}
-    <PingCard ping={p} busy={busy[p.ping_id] ?? false} onanswer={(a, n, ids) => answer(p, a, n, ids)} />
+    <PingCard ping={p} busy={busy[p.id] ?? false} onanswer={(a, n, ids) => answer(p, a, n, ids)} />
   </div>
 {/snippet}
 
@@ -94,12 +96,12 @@
   </div>
 {:else if tab === 'pending'}
   <!-- one card per run, showing only its latest pending ping -->
-  {#each runGroups as g (g[0].ping_id)}
+  {#each runGroups as g (g[0].id)}
     {@render card(g[0], g.length - 1)}
   {/each}
 {:else}
   <!-- answered history: every ping, flat, newest-first -->
-  {#each pings as p (p.ping_id)}
+  {#each pings as p (p.id)}
     {@render card(p, 0)}
   {/each}
 {/if}

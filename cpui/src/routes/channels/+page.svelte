@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type ChannelEntry } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { ChannelEntry } from '$lib/domain';
   import { onMount } from 'svelte';
 
   let entries = $state<ChannelEntry[]>([]);
@@ -13,7 +14,7 @@
 
   const refresh = async () => {
     try {
-      entries = await api.channels();
+      entries = await api.system.channels();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -26,14 +27,14 @@
     error = '';
     try {
       if (kind === 'matrix') {
-        await api.addChannel('matrix', {
+        await api.system.addChannel('matrix', {
           homeserver: homeserver.trim(),
           access_token: accessToken.trim(),
           room_id: roomId.trim()
         });
         accessToken = roomId = '';
       } else {
-        await api.addChannel('slack', { webhook_url: webhookUrl.trim() });
+        await api.system.addChannel('slack', { webhook_url: webhookUrl.trim() });
         webhookUrl = '';
       }
       await refresh();
@@ -47,7 +48,7 @@
   async function remove(id: string) {
     error = '';
     try {
-      await api.deleteChannel(id);
+      await api.system.removeChannel(id);
       await refresh();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);

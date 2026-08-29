@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { ago, api } from '$lib/api';
+  import { api } from '$lib/api';
+  import { ago } from '$lib/format';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import { mdToHtml } from '$lib/planreview';
   import { isGatePing, type PingLike } from '$lib/ping';
@@ -30,7 +31,7 @@
     uploading = true;
     uploadErr = '';
     try {
-      const ids = files.length ? (await api.uploadAttachments(files)).map((a) => a.id) : undefined;
+      const ids = files.length ? (await api.files.upload(files)).map((a) => a.id) : undefined;
       onanswer(answer, note, ids);
     } catch (e) {
       uploadErr = e instanceof Error ? e.message : String(e);
@@ -51,19 +52,19 @@
 {#if ping.link}
   <!-- Typed at the source (DESIGN-FILES §4): a link payload links out… -->
   <p class="mono small"><a href={ping.link} target="_blank" rel="noreferrer">{ping.link} ↗</a></p>
-{:else if ping.payload_ref}
+{:else if ping.primaryRef}
   <!-- …and a file payload opens the review workbench. -->
   <p class="mono small">
     {#if isPending}
-      {ping.payload_ref} — <a href={`/pings/${ping.ping_id}`}>review &amp; comment →</a>
-    {:else}{ping.payload_ref}{/if}
+      {ping.primaryRef} — <a href={`/pings/${ping.id}`}>review &amp; comment →</a>
+    {:else}{ping.primaryRef}{/if}
   </p>
 {/if}
 
 {#if ping.status === 'answered'}
   <div class="answerbox">
     <div class="small muted">
-      answered {ping.answered_at ? ago(ping.answered_at) : ''} —
+      answered {ping.answeredAt ? ago(ping.answeredAt) : ''} —
       <strong class={ping.answer === 'approve' ? 'ok' : ping.answer === 'reject' ? 'bad' : ''}>{ping.answer}</strong>
     </div>
     {#if ping.feedback}<div class="md small" style="margin-top:4px">{@html mdToHtml(ping.feedback)}</div>{/if}

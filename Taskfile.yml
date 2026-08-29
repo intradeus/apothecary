@@ -95,6 +95,53 @@ tasks:
     cmds:
       - npm run build
 
+  # --- API contract ----------------------------------------------------------
+  # The engine's route table (internal/httpapi/routes.go) is the one place an
+  # endpoint is declared. Everything else is generated from it: the OpenAPI
+  # document, the Swagger UI at /docs, and the CPUI's client. Change a route,
+  # run `task api`, and the compiler shows you what it touched.
+  api:
+    desc: Regenerate the OpenAPI document and the CPUI client from the route table
+    cmds:
+      - task: api:spec
+      - task: api:client
+      - task: api:check
+
+  api:spec:
+    desc: Write api/openapi.yaml from internal/httpapi's route table
+    cmds:
+      - go run ./cmd/openapigen -o api/openapi.yaml
+
+  api:client:
+    desc: Regenerate cpui/src/lib/api/generated from api/openapi.yaml
+    dir: cpui
+    cmds:
+      - npx --yes @hey-api/openapi-ts
+
+  api:check:
+    desc: 'Fail if the spec is stale or the generated client leaked past the ACL'
+    cmds:
+      - go run ./cmd/openapigen -check
+      - node cpui/scripts/check-api-boundary.mjs
+
+  api:docs:
+    desc: Open the Swagger UI of a running engine (task local / task dev first)
+    cmds:
+      - 'echo "Swagger UI: {{.API_URL}}/docs   ·   document: {{.API_URL}}/api/openapi.json"'
+      - '(xdg-open {{.API_URL}}/docs >/dev/null 2>&1 &) || true'
+    vars:
+      API_URL: '{{.API_URL | default "http://127.0.0.1:8080"}}'
+
+  api:swagger-ui:
+    desc: Refresh the vendored Swagger UI assets (internal/httpapi/swaggerui)
+    dir: internal/httpapi/swaggerui
+    cmds:
+      - npm pack swagger-ui-dist --silent
+      - tar xzf swagger-ui-dist-*.tgz
+      - mv package/swagger-ui-bundle.js package/swagger-ui.css package/LICENSE .
+      - rm -rf package swagger-ui-dist-*.tgz
+      - echo "vendored $(du -sh . | cut -f1) of Swagger UI"
+
   # --- testing & verification ------------------------------------------------
   test:
     desc: 'Go tests (args pass through: task test -- ./internal/engine/ -run TestX -v)'
@@ -113,13 +160,14 @@ tasks:
       - gofmt -w ./cmd ./internal ./workspace 2>/dev/null || gofmt -w .
 
   verify:
-    desc: 'The full pre-commit gate: gofmt, vet, go tests, svelte-check, UI build'
+    desc: 'The full pre-commit gate: gofmt, vet, go tests, API contract, svelte-check, UI build'
     cmds:
       - |
         out="$(gofmt -l ./cmd ./internal)"
         if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
       - go vet ./...
       - go test ./...
+      - task: api:check
       - cd cpui && npm run check
       - cd cpui && npm run build
       - echo "verify — all green"

@@ -71,103 +71,6 @@ func New(e *engine.Engine, store event.Store, reg *channels.Registry, runsDir st
 	}
 }
 
-func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/runs", s.listRuns)
-	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
-	mux.HandleFunc("GET /api/runs/{id}/events", s.streamEvents)
-	mux.HandleFunc("GET /api/runs/{id}/logs/{stage}", s.getLog)
-	mux.HandleFunc("GET /api/runs/{id}/workspace-log", s.getWorkspaceLog)
-	mux.HandleFunc("GET /api/egress-defaults", s.getEgressDefaults)
-	mux.HandleFunc("GET /api/runs/{id}/egress-denials", s.getEgressDenials)
-	mux.HandleFunc("POST /api/runs/{id}/egress-allow", s.postEgressAllow)
-	mux.HandleFunc("POST /api/runs/{id}/egress-rule", s.postEgressRule)
-	mux.HandleFunc("GET /api/runs/{id}/egress-audit", s.getRunEgressAudit)
-	mux.HandleFunc("GET /api/runs/{id}/egress-policy", s.getRunEgressPolicy)
-	mux.HandleFunc("GET /api/runs/{id}/ports", s.getRunPorts)
-	mux.HandleFunc("GET /api/runs/{id}/resources", s.getRunResources)
-	mux.HandleFunc("POST /api/runs/{id}/expose-port", s.postExposePort)
-	mux.HandleFunc("POST /api/runs/{id}/observed-ports", s.postObservedPorts)
-	mux.HandleFunc("POST /api/runs/{id}/open-editor", s.postOpenEditor)
-	mux.HandleFunc("POST /api/runs/{id}/abort", s.postAbort)
-	mux.HandleFunc("POST /api/runs/{id}/pause", s.postPause)
-	mux.HandleFunc("POST /api/runs/{id}/play", s.postPlay)
-	mux.HandleFunc("POST /api/runs/{id}/archive", s.postArchive)
-	mux.HandleFunc("POST /api/runs/{id}/restart", s.postRestart)
-	mux.HandleFunc("POST /api/runs/{id}/resume", s.postResume)
-	mux.HandleFunc("POST /api/runs/{id}/rebuild", s.postRebuild)
-	mux.HandleFunc("POST /api/runs/{id}/pings", s.postPing)
-	mux.HandleFunc("GET /api/runs/{id}/pings/{pid}", s.repollPing)
-	mux.HandleFunc("POST /api/pings/{pid}/answer", s.answerPing)
-	mux.HandleFunc("GET /api/pings", s.listPings)
-	mux.HandleFunc("GET /api/pings/{pid}", s.getStoredPing)
-	mux.HandleFunc("GET /api/pings/{pid}/files", s.getPingFiles)
-	mux.HandleFunc("POST /api/attachments", s.postAttachments)
-	mux.HandleFunc("GET /api/attachments/limits", s.getAttachmentLimits)
-	mux.HandleFunc("GET /api/attachments/{id}", s.getAttachment)
-	mux.HandleFunc("GET /api/snapshots/{id}", s.getSnapshot)
-	mux.HandleFunc("GET /api/runs/{id}/files", s.getRunFiles)
-	mux.HandleFunc("GET /api/channels", s.listChannels)
-	mux.HandleFunc("POST /api/channels", s.addChannel)
-	mux.HandleFunc("DELETE /api/channels/{id}", s.deleteChannel)
-	if s.Kinds != nil {
-		mux.HandleFunc("GET /api/kinds", s.listKinds)
-	}
-	if s.Conf != nil { // config plane (DESIGN2 §10)
-		mux.HandleFunc("GET /api/integrations", s.listIntegrations)
-		mux.HandleFunc("POST /api/integrations", s.createIntegration)
-		mux.HandleFunc("GET /api/integrations/{id}", s.getIntegration)
-		mux.HandleFunc("PUT /api/integrations/{id}", s.updateIntegration)
-		mux.HandleFunc("DELETE /api/integrations/{id}", s.deleteIntegration)
-		mux.HandleFunc("POST /api/integrations/{id}/test", s.testIntegration)
-		mux.HandleFunc("GET /api/integrations/{id}/repos", s.listIntegrationRepos)
-		mux.HandleFunc("GET /api/integrations/{id}/models", s.listIntegrationModels)
-		// Ticket sources (Jira): browse the tracker to import from. Read-only —
-		// there is no write route back to the tracker, by design.
-		mux.HandleFunc("GET /api/integrations/{id}/tickets", s.searchSourceTickets)
-		mux.HandleFunc("GET /api/integrations/{id}/tickets/{key}", s.getSourceTicket)
-		mux.HandleFunc("GET /api/projects", s.listProjects)
-		mux.HandleFunc("POST /api/projects", s.createProject)
-		mux.HandleFunc("GET /api/projects/{id}", s.getProject)
-		mux.HandleFunc("PUT /api/projects/{id}", s.updateProject)
-		mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
-		mux.HandleFunc("GET /api/projects/{id}/branches", s.listProjectBranches)
-		// Tickets: a ticket owns many runs. Create/list/get/update/delete the
-		// ticket; POST .../runs starts an attempt (flow chosen per run).
-		mux.HandleFunc("GET /api/tickets", s.listTickets)
-		mux.HandleFunc("POST /api/tickets", s.createTicket)
-		mux.HandleFunc("GET /api/tickets/{id}", s.getTicket)
-		mux.HandleFunc("PUT /api/tickets/{id}", s.updateTicket)
-		mux.HandleFunc("DELETE /api/tickets/{id}", s.deleteTicket)
-		mux.HandleFunc("GET /api/tickets/{id}/attachments", s.getTicketAttachments)
-		mux.HandleFunc("POST /api/tickets/{id}/runs", s.startTicketRun)
-		// Agent library (DESIGN3 §1): per-project, copiable, versioned.
-		mux.HandleFunc("GET /api/projects/{id}/egress-audit", s.getProjectEgressAudit)
-		mux.HandleFunc("POST /api/projects/{id}/preflight", s.preflightProject)
-		mux.HandleFunc("POST /api/projects/{id}/envcheck", s.startEnvCheck)
-		mux.HandleFunc("GET /api/envchecks/{id}", s.getEnvCheck)
-		mux.HandleFunc("GET /api/flows", s.listFlows)
-		mux.HandleFunc("POST /api/flows", s.createFlow)
-		mux.HandleFunc("POST /api/flows/validate", s.validateFlow)
-		mux.HandleFunc("GET /api/flows/{name}", s.getFlow)
-		mux.HandleFunc("PUT /api/flows/{name}", s.putFlow)
-		mux.HandleFunc("DELETE /api/flows/{name}", s.deleteFlow)
-		mux.HandleFunc("GET /api/flows/{name}/versions", s.listFlowVersions)
-		mux.HandleFunc("GET /api/flow-versions/{hash}", s.getFlowVersion)
-		// The action registry an `action` stage may name (compiled in, not
-		// project data), for the flow editor's action picker.
-		mux.HandleFunc("GET /api/actions", s.listActions)
-		// The signal registry a `wait` stage or a gate's auto_answer may name.
-		mux.HandleFunc("GET /api/signals", s.listSignals)
-		mux.HandleFunc("GET /api/settings", s.getSettings)
-		mux.HandleFunc("PUT /api/settings", s.putSettings)
-	}
-	if s.CPUIDir != "" {
-		mux.HandleFunc("GET /", s.serveCPUI)
-	}
-	return mux
-}
-
 // serveCPUI serves the built CPUI bundle with an SPA fallback: files that
 // exist are served as-is, everything else gets index.html so client-side
 // routes deep-link correctly.
@@ -359,7 +262,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	if st, ok := s.Engine.EnvBadges()[v.RunID]; ok {
 		v.EnvStatus = st
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"run": v, "events": last})
+	writeJSON(w, http.StatusOK, RunDetail{Run: v, Events: last})
 }
 
 func (s *Server) postAbort(w http.ResponseWriter, r *http.Request) {
@@ -426,12 +329,7 @@ func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {
 // The optional body {flow, goal, attachment_ids} steers THIS attempt —
 // restart-after-failure is when a human most wants to give direction.
 func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Flow          string   `json:"flow"`
-		Goal          string   `json:"goal"`
-		SourceBranch  string   `json:"source_branch"`
-		AttachmentIDs []string `json:"attachment_ids"`
-	}
+	var body RestartRunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
 	newID, err := s.Engine.RestartRun(r.Context(), r.PathValue("id"), engine.RunInput{
@@ -449,7 +347,7 @@ func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, msg)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"run_id": newID})
+	writeJSON(w, http.StatusCreated, RunRef{RunID: newID})
 }
 
 // postResume re-enters the failed stage of an abandoned/failed run in its
@@ -582,7 +480,7 @@ func (s *Server) getWorkspaceLog(w http.ResponseWriter, r *http.Request) {
 // it's the same list baked into the binary. The form copies what the operator
 // keeps into the project's extra_domains (they are no longer force-seeded).
 func (s *Server) getEgressDefaults(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]string{"domains": builtin.EgressDefaults()})
+	writeJSON(w, http.StatusOK, EgressDefaults{Domains: builtin.EgressDefaults()})
 }
 
 // getEgressDenials lists hosts the per-project gateway blocked for this run:
@@ -615,10 +513,8 @@ func (s *Server) getRunEgressPolicy(w http.ResponseWriter, r *http.Request) {
 	if pol.BlockedDomains == nil {
 		pol.BlockedDomains = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"mode":            pol.Mode,
-		"domains":         pol.Domains,
-		"blocked_domains": pol.BlockedDomains,
+	writeJSON(w, http.StatusOK, EgressPolicy{
+		Mode: pol.Mode, Domains: pol.Domains, BlockedDomains: pol.BlockedDomains,
 	})
 }
 
@@ -679,9 +575,7 @@ func validEgressHost(h string) bool {
 // it to the project's extra_domains (M18 "add to egress" button): the hung
 // agent proceeds instantly, and future runs never hit the wall.
 func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Host string `json:"host"`
-	}
+	var body EgressHostRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -721,17 +615,14 @@ func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"allowed": host, "persisted": persisted})
+	writeJSON(w, http.StatusOK, EgressAllowResult{Allowed: host, Persisted: persisted})
 }
 
 // postEgressRule live-toggles a host's egress rule for a run (allow or force-
 // block) via the gateway, and persists the change to the project (allow →
 // extra_domains, block → blocked_domains) so future runs inherit it.
 func (s *Server) postEgressRule(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Host  string `json:"host"`
-		Allow bool   `json:"allow"`
-	}
+	var body EgressRuleRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -776,15 +667,13 @@ func (s *Server) postEgressRule(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"host": host, "allow": body.Allow, "persisted": persisted})
+	writeJSON(w, http.StatusOK, EgressRuleResult{Host: host, Allow: body.Allow, Persisted: persisted})
 }
 
 // postExposePort publishes a workspace port and returns its browser URL
 // (the run-page "open the app" path). Idempotent per (run, port).
 func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Port int `json:"port"`
-	}
+	var body ExposePortRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -801,7 +690,7 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"port": body.Port, "url": url})
+	writeJSON(w, http.StatusOK, ExposedPort{Port: body.Port, URL: url})
 }
 
 // postOpenEditor lazily starts code-server in the run's workspace and returns
@@ -821,7 +710,7 @@ func (s *Server) postOpenEditor(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"url": url})
+	writeJSON(w, http.StatusOK, EditorURL{URL: url})
 }
 
 // postObservedPorts receives the in-workspace shim scanner's listener
@@ -832,9 +721,7 @@ func (s *Server) postObservedPorts(w http.ResponseWriter, r *http.Request) {
 	if !s.authPing(w, r, runID) {
 		return
 	}
-	var body struct {
-		Ports []ports.ObservedPort `json:"ports"`
-	}
+	var body ObservedPortsRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -880,7 +767,7 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 			observed = append(observed, p)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ports": exposed, "observed": observed})
+	writeJSON(w, http.StatusOK, RunPorts{Ports: exposed, Observed: observed})
 }
 
 // getRunResources serves the run's rolling window of resource samples
@@ -892,7 +779,7 @@ func (s *Server) getRunResources(w http.ResponseWriter, r *http.Request) {
 	if samples == nil {
 		samples = []ports.ResourceSample{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"samples": samples})
+	writeJSON(w, http.StatusOK, RunResources{Samples: samples})
 }
 
 func containsStr(ss []string, v string) bool {
@@ -977,15 +864,7 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 	if !s.authPing(w, r, runID) {
 		return
 	}
-	var body struct {
-		Type      string   `json:"type"`
-		Question  string   `json:"question"`
-		Context   string   `json:"context"`
-		Options   []string `json:"options"`   // PLAN4 M16: closed answer set
-		Artifact  string   `json:"artifact"`  // legacy single workspace file to review
-		Artifacts []string `json:"artifacts"` // multi workspace files to review
-		HoldMS    int      `json:"hold_ms"`   // requested grace hold; clamped to HoldTimeout
-	}
+	var body RaisePingRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -1035,13 +914,13 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 		// The agent gets the answer in-band: as far as it is concerned the
 		// question is closed, so the stage need not pause on it.
 		p.HandOff(true)
-		writeJSON(w, http.StatusOK, map[string]any{
-			// text is the composed answer, rendered by the engine so the tool
-			// return and a resumed stage's message say the same thing; answer
-			// and feedback stay as the raw fields behind it.
-			"ping_id": p.ID, "text": engine.ComposeAnswer(p),
-			"answer": ans.Answer, "feedback": ans.Feedback,
-			"artifacts": p.DeliveredArtifacts(), // workspace paths of the human's answer files
+		// Text is the composed answer, rendered by the engine so the tool
+		// return and a resumed stage's message say the same thing; Answer and
+		// Feedback stay as the raw fields behind it.
+		writeJSON(w, http.StatusOK, PingHold{
+			PingID: p.ID, Text: engine.ComposeAnswer(p),
+			Answer: ans.Answer, Feedback: ans.Feedback,
+			Artifacts: p.DeliveredArtifacts(), // workspace paths of the human's answer files
 		})
 		return
 	}
@@ -1054,11 +933,7 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 }
 
 func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Answer        string   `json:"answer"`
-		Feedback      string   `json:"feedback"`
-		AttachmentIDs []string `json:"attachment_ids"` // uploaded files attached to the answer
-	}
+	var body AnswerPingRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -1098,7 +973,7 @@ func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeErr(w, http.StatusBadRequest, err.Error())
 	default:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "answered"})
+		writeJSON(w, http.StatusOK, AnswerAccepted{Status: "answered"})
 	}
 }
 

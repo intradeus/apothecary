@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Integration, type KindDescriptor, type Port } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Integration, KindDescriptor, Port } from '$lib/domain';
   import IntegrationForm from '$lib/IntegrationForm.svelte';
   import { onMount } from 'svelte';
 
@@ -25,7 +26,7 @@
 
   const refresh = async () => {
     try {
-      [descriptors, integrations] = await Promise.all([api.kinds(), api.integrations()]);
+      [descriptors, integrations] = await Promise.all([api.system.kinds(), api.integrations.list()]);
       loaded = true;
       error = '';
     } catch (e) {
@@ -48,7 +49,7 @@
   async function test(id: string) {
     testResults = { ...testResults, [id]: 'running' };
     try {
-      const r = await api.testIntegration(id);
+      const r = await api.integrations.test(id);
       testResults = { ...testResults, [id]: r };
     } catch (e) {
       testResults = { ...testResults, [id]: { ok: false, error: e instanceof Error ? e.message : String(e) } };
@@ -59,7 +60,7 @@
     if (!confirm(`Delete integration "${i.name}"?`)) return;
     error = '';
     try {
-      await api.deleteIntegration(i.id);
+      await api.integrations.remove(i.id);
       await refresh();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RunView } from '$lib/api';
+  import type { Run } from '$lib/domain';
 
   // Workspace provisioning is a SEPARATE axis from the run's lifecycle state.
   // env_id being set means the event log provisioned an env and hasn't
@@ -14,9 +14,9 @@
     envStatus,
     compact = false,
   }: {
-    state: RunView['state'];
+    state: Run['state'];
     envId?: string;
-    envStatus?: RunView['env_status'];
+    envStatus?: Run['envStatus'];
     compact?: boolean;
   } = $props();
 

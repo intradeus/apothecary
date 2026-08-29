@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { api, ago, type ActionSpec, type FlowRow, type FlowVersion, type SignalSpec } from '$lib/api';
+  import { api } from '$lib/api';
+  import { ago } from '$lib/format';
+  import type { ActionSpec, Flow, FlowVersion, SignalSpec } from '$lib/domain';
   import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
   import FlowInspector from '$lib/FlowInspector.svelte';
   import { ABORT, autoLayout, docToYaml, DONE, START, edgeOf, setEdge, setEntry, type EdgeKind, type FlowDoc } from '$lib/flowdoc';
@@ -7,7 +9,7 @@
   import { page } from '$app/state';
   import { onMount } from 'svelte';
 
-  let flow = $state<FlowRow | null>(null);
+  let flow = $state<Flow | null>(null);
   let yaml = $state('');
   let doc = $state<FlowDoc | null>(null);
   let layout = $state<Record<string, { x: number; y: number }>>({});
@@ -44,10 +46,10 @@
 
   const load = async () => {
     try {
-      flow = await api.flow(page.params.name!);
+      flow = await api.flows.get(page.params.name!);
       yaml = flow.yaml;
-      versions = await api.flowVersions(flow.name);
-      const r = await api.validateFlow(flow.yaml);
+      versions = await api.flows.versions(flow.name);
+      const r = await api.flows.validate(flow.yaml);
       if (r.ok && r.doc) {
         doc = r.doc;
         layout = flow.layout?.nodes ?? autoLayout(doc);
@@ -63,7 +65,7 @@
     // Contracts for the binding fields and the dataflow view. Best-effort:
     // without them the graph still renders explicit bindings.
     try {
-      [actions, signals] = await Promise.all([api.actions(), api.signals()]);
+      [actions, signals] = await Promise.all([api.system.actions(), api.system.signals()]);
     } catch {
       /* binding hints stay off */
     }
@@ -89,7 +91,7 @@
     }
     // yaml -> graph: re-parse through the server (single validation source).
     api
-      .validateFlow(yaml)
+      .flows.validate(yaml)
       .then((r) => {
         if (r.ok && r.doc) {
           doc = r.doc;
@@ -144,7 +146,7 @@
     layoutTimer = setTimeout(async () => {
       if (!flow || dirty) return;
       try {
-        flow = await api.saveFlow(flow.name, flow.yaml, { nodes: layout });
+        flow = await api.flows.save(flow.name, flow.yaml, { nodes: layout });
       } catch {
         /* next explicit save carries it */
       }
@@ -164,7 +166,7 @@
   async function validate() {
     validation = null;
     try {
-      const r = await api.validateFlow(currentYAML());
+      const r = await api.flows.validate(currentYAML());
       validation = r.ok
         ? { ok: true, detail: `valid — ${r.stages} stages, hash ${r.hash?.slice(0, 12)}`, warnings: r.warnings }
         : { ok: false, detail: (r.errors ?? []).join('\n') };
@@ -179,16 +181,16 @@
     error = '';
     try {
       const y = currentYAML();
-      flow = await api.saveFlow(flow.name, y, { nodes: layout });
+      flow = await api.flows.save(flow.name, y, { nodes: layout });
       yaml = flow.yaml;
-      const r = await api.validateFlow(flow.yaml);
+      const r = await api.flows.validate(flow.yaml);
       if (r.ok && r.doc) {
         doc = r.doc;
         rev++;
       }
       graphDirty = false;
       validation = { ok: true, detail: 'saved', warnings: r.warnings };
-      versions = await api.flowVersions(flow.name);
+      versions = await api.flows.versions(flow.name);
     } catch (e) {
       validation = { ok: false, detail: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -212,7 +214,7 @@
     error = '';
     try {
       const y = currentYAML().replace(/^name:[^\n]*$/m, `name: ${name}`);
-      await api.createFlow(name, y, { nodes: layout });
+      await api.flows.create(name, y, { nodes: layout });
       await goto(`/flows/${encodeURIComponent(name)}`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -222,7 +224,7 @@
 
   async function loadVersion(hash: string) {
     try {
-      const v = await api.flowVersion(hash);
+      const v = await api.flows.version(hash);
       yaml = v.yaml; // into the YAML tab; Save makes it current again
       tab = 'yaml';
       graphDirty = false;
@@ -234,12 +236,12 @@
 
   async function remove() {
     if (!flow) return;
-    const msg = flow.shadows_builtin
+    const msg = flow.shadowsBuiltin
       ? `Delete your copy of "${flow.name}" and reset to the built-in default? Versions remain retrievable by hash.`
       : `Delete flow "${flow.name}"? Versions remain retrievable by hash.`;
     if (!confirm(msg)) return;
     try {
-      await api.deleteFlow(flow.name);
+      await api.flows.remove(flow.name);
       await goto('/flows');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -259,7 +261,7 @@
       <button onclick={clone} disabled={busy}>Clone</button>
       <button class="primary" onclick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : 'Save'}</button>
       {#if !flow.builtin}
-        <button class="danger" onclick={remove}>{flow.shadows_builtin ? 'Reset to built-in' : 'Delete'}</button>
+        <button class="danger" onclick={remove}>{flow.shadowsBuiltin ? 'Reset to built-in' : 'Delete'}</button>
       {/if}
     </div>
   </div>
@@ -351,7 +353,7 @@
             <td class="mono">{v.hash.slice(0, 12)}
               {#if v.hash === flow.hash}<span class="chip" style="margin-left:8px">current</span>{/if}
             </td>
-            <td class="muted small">{ago(v.created_at)}</td>
+            <td class="muted small">{ago(v.createdAt)}</td>
             <td style="text-align:right">
               <button onclick={() => loadVersion(v.hash)}>Load into editor</button>
             </td>

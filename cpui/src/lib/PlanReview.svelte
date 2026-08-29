@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Ping, type PingFile } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Ping, PingFile } from '$lib/domain';
   import AttachFiles from '$lib/AttachFiles.svelte';
   import {
     byPosition,
@@ -55,21 +56,21 @@
   const blockEls: HTMLElement[] = [];
 
   onMount(async () => {
-    comments = loadDraft(ping.ping_id);
+    comments = loadDraft(ping.id);
     // ONE fetch: the ping's files, primary first, each with its raise-time
     // snapshot. The reviewed document's content comes from the snapshot —
     // what you approve is what was captured, not what the workspace holds
     // by the time you look (DESIGN-FILES §9).
     try {
-      const { files: fs } = await api.pingFiles(ping.ping_id);
+      const { files: fs } = await api.pings.payload(ping.id);
       const primary = fs[0];
       if (!primary) {
         error = 'this ping has no attached files';
-      } else if (!primary.captured || !primary.snapshot_id) {
+      } else if (!primary.captured || !primary.snapshotId) {
         error = `${primary.path} was not captured when the ping was raised`;
       } else {
         path = primary.path;
-        const res = await fetch(api.snapshotUrl(primary.snapshot_id));
+        const res = await fetch(api.files.snapshotUrl(primary.snapshotId));
         if (!res.ok) throw new Error(`document unavailable (${res.status})`);
         blocks = planBlocks(await res.text());
       }
@@ -242,7 +243,7 @@
     if (composer.editing !== null) comments[composer.editing] = c;
     else comments.push(c);
     comments.sort(byPosition);
-    saveDraft(ping.ping_id, comments);
+    saveDraft(ping.id, comments);
     closeComposer();
   }
 
@@ -271,7 +272,7 @@
 
   function removeComment(i: number) {
     comments.splice(i, 1);
-    saveDraft(ping.ping_id, comments);
+    saveDraft(ping.id, comments);
     if (hovered === i) hovered = null;
     if (composer?.editing === i) closeComposer();
     else if (composer && composer.editing !== null && composer.editing > i) composer.editing -= 1;
@@ -304,9 +305,9 @@
       // Per-comment attachments ride along with the review-level ones — all
       // land in the workspace, and the feedback prompt names them per comment.
       const all = [...comments.flatMap((c) => c.files ?? []), ...files];
-      const ids = all.length ? (await api.uploadAttachments(all)).map((a) => a.id) : undefined;
-      await api.answerPing(ping.ping_id, answer, text, ids);
-      clearDraft(ping.ping_id);
+      const ids = all.length ? (await api.files.upload(all)).map((a) => a.id) : undefined;
+      await api.pings.answer(ping.id, answer, text, ids);
+      clearDraft(ping.id);
       onanswered();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -339,7 +340,7 @@
 {#if error}<div class="error">{error}</div>{/if}
 
 {#if loading}
-  <div class="empty">Loading {ping.payload_ref}…</div>
+  <div class="empty">Loading {ping.primaryRef}…</div>
 {:else if blocks.length > 0}
   <div class="review row" style="align-items:flex-start; gap:14px">
     <div class="card plan" style="flex:2; min-width:0" bind:this={planEl}>
@@ -348,15 +349,15 @@
         <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; align-items:center">
           <span class="small muted">From the agent:</span>
           {#each extraFiles as f (f.path)}
-            {#if !f.captured || !f.snapshot_id}
+            {#if !f.captured || !f.snapshotId}
               <span class="small mono muted" title="this file was not captured when the ping was raised">📎 {f.path} (not captured)</span>
             {:else if f.mime?.startsWith('image/')}
-              <a href={api.snapshotUrl(f.snapshot_id)} target="_blank" rel="noreferrer" title={f.path}>
-                <img src={api.snapshotUrl(f.snapshot_id)} alt={f.path}
+              <a href={api.files.snapshotUrl(f.snapshotId)} target="_blank" rel="noreferrer" title={f.path}>
+                <img src={api.files.snapshotUrl(f.snapshotId)} alt={f.path}
                   style="max-height:80px; border-radius:4px; border:1px solid var(--border,#444)" />
               </a>
             {:else}
-              <a class="small mono" href={api.snapshotUrl(f.snapshot_id)} target="_blank" rel="noreferrer">📎 {f.path}</a>
+              <a class="small mono" href={api.files.snapshotUrl(f.snapshotId)} target="_blank" rel="noreferrer">📎 {f.path}</a>
             {/if}
           {/each}
         </div>

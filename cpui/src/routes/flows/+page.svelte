@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { api, type FlowRow } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Flow } from '$lib/domain';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { CURRENT_VERSION } from '$lib/flowdoc';
-  import { ago } from '$lib/api';
+  import { ago } from '$lib/format';
 
-  let flows = $state<FlowRow[]>([]);
+  let flows = $state<Flow[]>([]);
   let loaded = $state(false);
   let error = $state('');
   let showNew = $state(false);
@@ -29,7 +30,7 @@ stages:
 
   onMount(async () => {
     try {
-      flows = await api.flows();
+      flows = await api.flows.list();
       loaded = true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -42,7 +43,7 @@ stages:
     error = '';
     try {
       const name = newName.trim();
-      await api.createFlow(name, template(name));
+      await api.flows.create(name, template(name));
       await goto(`/flows/${encodeURIComponent(name)}`);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -76,8 +77,8 @@ stages:
     <div>
       <strong class="mono">{f.name}</strong>
       {#if f.builtin}<span class="chip" title="Ships with the binary — saving in the editor creates your editable copy">built-in</span>{/if}
-      {#if f.shadows_builtin}<span class="chip" title="Your copy overrides the built-in of the same name; deleting it resets to the default">overrides built-in</span>{/if}
-      <div class="small muted">hash {f.hash.slice(0, 12)}{f.builtin ? ' · from the binary' : ` · updated ${ago(f.updated_at)}`}</div>
+      {#if f.shadowsBuiltin}<span class="chip" title="Your copy overrides the built-in of the same name; deleting it resets to the default">overrides built-in</span>{/if}
+      <div class="small muted">hash {f.hash.slice(0, 12)}{f.builtin ? ' · from the binary' : ` · updated ${ago(f.updatedAt)}`}</div>
     </div>
     <span class="muted">→</span>
   </a>

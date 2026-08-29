@@ -80,7 +80,7 @@ func (s *Server) postAttachments(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "no files in upload")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"attachments": out})
+	writeJSON(w, http.StatusCreated, Uploaded{Attachments: out})
 }
 
 // getAttachmentLimits mirrors the upload policy to the browser, so a bad pick
@@ -190,7 +190,7 @@ func (s *Server) getRunFiles(w http.ResponseWriter, r *http.Request) {
 			snapshots = append(snapshots, sn)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"attachments": attachments, "snapshots": snapshots})
+	writeJSON(w, http.StatusOK, RunFiles{Attachments: attachments, Snapshots: snapshots})
 }
 
 // pingView resolves one ping from the durable projection (finished runs
@@ -234,18 +234,16 @@ func (s *Server) getPingFiles(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	files := []map[string]any{}
+	files := []PingFile{}
 	for _, ref := range view.Files {
-		item := map[string]any{"path": ref, "captured": false}
+		item := PingFile{Path: ref, Mime: mimeByExt(ref)}
 		if sn, ok := snaps[ref]; ok {
-			item["captured"] = true
-			item["snapshot_id"] = sn.ID
-			item["mime"] = sn.Mime
-			item["size"] = sn.Size
-		} else {
-			item["mime"] = mimeByExt(ref)
+			item.Captured = true
+			item.SnapshotID = sn.ID
+			item.Mime = sn.Mime
+			item.Size = sn.Size
 		}
 		files = append(files, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files, "link": view.Link})
+	writeJSON(w, http.StatusOK, PingFiles{Files: files, Link: view.Link})
 }

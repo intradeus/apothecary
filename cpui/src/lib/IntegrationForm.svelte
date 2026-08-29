@@ -2,7 +2,8 @@
   // Generic integration form rendered from the kind's Descriptor fields
   // (DESIGN2 §4/§11): adding a backend kind needs no frontend change.
   // Secrets are write-only: on edit, an empty secret input means "keep".
-  import { api, type Integration, type KindDescriptor } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Integration, KindDescriptor } from '$lib/domain';
 
   let {
     descriptor,
@@ -68,8 +69,8 @@
         if (v.trim() !== '') secrets[k] = v;
       }
       const saved = existing
-        ? await api.updateIntegration(existing.id, { name: name.trim(), config, secrets })
-        : await api.createIntegration({
+        ? await api.integrations.update(existing.id, { name: name.trim(), config, secrets })
+        : await api.integrations.create({
             port: descriptor.port,
             kind: descriptor.kind,
             name: name.trim(),

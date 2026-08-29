@@ -6,7 +6,9 @@
   // The server's upload policy is mirrored client-side (fetched once): a pick
   // that would be rejected — too big, too many, off the MIME allowlist — is
   // refused INLINE with the reason, instead of after a failed round trip.
-  import { api, fmtBytes, type UploadLimits } from '$lib/api';
+  import { api } from '$lib/api';
+  import { fmtBytes } from '$lib/format';
+  import type { UploadLimits } from '$lib/domain';
 
   let { files = $bindable([]), label = 'Attach files' }: { files?: File[]; label?: string } =
     $props();
@@ -33,7 +35,7 @@
   function allowed(l: UploadLimits, mime: string): boolean {
     const m = mime.toLowerCase().split(';')[0].trim();
     if (!m) return true; // unknown here — let the server sniff it
-    return l.mime_allow.some((a) =>
+    return l.mimeAllow.some((a) =>
       a.endsWith('/*') ? m.startsWith(a.slice(0, -1)) : m === a.toLowerCase()
     );
   }
@@ -45,12 +47,12 @@
       const add: File[] = [];
       const refuse: string[] = [];
       for (const f of Array.from(picked)) {
-        if (limits && f.size > limits.max_bytes) {
-          refuse.push(`${f.name}: over the ${fmtBytes(limits.max_bytes)} limit`);
+        if (limits && f.size > limits.maxBytes) {
+          refuse.push(`${f.name}: over the ${fmtBytes(limits.maxBytes)} limit`);
         } else if (limits && !allowed(limits, f.type)) {
           refuse.push(`${f.name}: type ${f.type || 'unknown'} is not allowed`);
-        } else if (limits && files.length + add.length >= limits.max_files) {
-          refuse.push(`${f.name}: at most ${limits.max_files} files`);
+        } else if (limits && files.length + add.length >= limits.maxFiles) {
+          refuse.push(`${f.name}: at most ${limits.maxFiles} files`);
         } else {
           add.push(f);
         }
@@ -64,11 +66,12 @@
 </script>
 
 <script lang="ts" module>
-  import { api as apiMod, type UploadLimits as UL } from '$lib/api';
+  import { api as apiMod } from '$lib/api';
+  import type { UploadLimits as UL } from '$lib/domain';
   let limitsPromise: Promise<UL | null> | null = null;
   function limitsOnce(): Promise<UL | null> {
     if (!limitsPromise) {
-      limitsPromise = apiMod.attachmentLimits().catch(() => null);
+      limitsPromise = apiMod.files.limits().catch(() => null);
     }
     return limitsPromise;
   }

@@ -9,21 +9,22 @@
 export const GATE_TYPE = 'gate';
 export const isGatePing = (type: string) => type === GATE_TYPE;
 
-// PingLike is the subset PingCard needs. The api Ping type satisfies it; the
-// run page maps its event payload onto it. Missing status ⇒ pending.
+// PingLike is the subset PingCard needs, in the frontend's own vocabulary: a
+// domain Ping satisfies it as-is, and the run page maps its raw ping_raised
+// event payload onto it. Missing status ⇒ pending.
 export interface PingLike {
-  ping_id: string;
+  id: string;
   type: string;
   question: string;
   context?: string;
   // Typed payload (DESIGN-FILES §4): files = attached workspace paths,
-  // link = a resolved URL; payload_ref = the derived primary for display.
+  // link = a resolved URL; primaryRef = the derived primary for display.
   files?: string[];
   link?: string;
-  payload_ref?: string;
+  primaryRef?: string;
   options?: string[];
   status?: string; // pending | answered | withdrawn
   answer?: string;
   feedback?: string;
-  answered_at?: string;
+  answeredAt?: string;
 }

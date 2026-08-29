@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ResourceSample } from '$lib/api';
+  import type { ResourceSample } from '$lib/domain';
 
   // Sparkline charts of the run's workspace resource usage (CPU / memory /
   // network) from the engine's ~10s sample window. Hand-rolled SVG: the
@@ -72,11 +72,11 @@
   const fmtRate = (v: number) => `${fmtBytes(v)}/s`;
 
   const charts: Chart[] = $derived.by(() => {
-    const cpu = samples.map((s) => s.cpu_perc);
-    const mem = samples.map((s) => s.mem_used);
-    const rx = rates(samples.map((s) => s.net_rx));
-    const tx = rates(samples.map((s) => s.net_tx));
-    const memLimit = samples.at(-1)?.mem_limit || 0;
+    const cpu = samples.map((s) => s.cpuPerc);
+    const mem = samples.map((s) => s.memUsed);
+    const rx = rates(samples.map((s) => s.netRx));
+    const tx = rates(samples.map((s) => s.netTx));
+    const memLimit = samples.at(-1)?.memLimit || 0;
     const cpus = samples.at(-1)?.cpus || 0;
     // Docker reports % of ONE core (ceiling = cpus×100); shown as % of the
     // whole machine when the core count is known, raw per-core % otherwise.

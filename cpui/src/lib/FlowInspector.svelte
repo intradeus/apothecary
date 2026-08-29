@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Selection } from '$lib/FlowGraph.svelte';
-  import type { ActionSpec, SignalSpec } from '$lib/api';
+  import type { ActionSpec, SignalSpec } from '$lib/domain';
   import {
     ABORT,
     DONE,
@@ -435,7 +435,7 @@
           // Prefill the new action's file inputs with their conventional paths.
           const sig = actions.find((a) => a.slug === s.action);
           const rec: Record<string, string> = {};
-          for (const d of sig?.inputs ?? []) if (d.default_path) rec[d.name] = d.default_path;
+          for (const d of sig?.inputs ?? []) if (d.defaultPath) rec[d.name] = d.defaultPath;
           s.input = Object.keys(rec).length ? rec : undefined;
           onchange();
         }}
@@ -459,7 +459,7 @@
             </div>
             <input
               value={bindingValue(s, 'input', d.name)}
-              placeholder={d.default_path ?? ''}
+              placeholder={d.defaultPath ?? ''}
               oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
             />
           </div>

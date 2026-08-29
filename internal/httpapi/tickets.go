@@ -250,7 +250,7 @@ func (s *Server) getTicketAttachments(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, atts...)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"attachments": out})
+	writeJSON(w, http.StatusOK, AttachmentList{Attachments: out})
 }
 
 func (s *Server) getTicket(w http.ResponseWriter, r *http.Request) {
@@ -305,12 +305,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Body is optional (empty ⇒ project default flow, no direction).
-	var body struct {
-		Flow          string   `json:"flow"`
-		Goal          string   `json:"goal"`
-		SourceBranch  string   `json:"source_branch"`
-		AttachmentIDs []string `json:"attachment_ids"`
-	}
+	var body StartRunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
 	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{
@@ -331,6 +326,6 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeErr(w, http.StatusBadRequest, err.Error())
 	default:
-		writeJSON(w, http.StatusCreated, map[string]string{"run_id": runID})
+		writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
 	}
 }

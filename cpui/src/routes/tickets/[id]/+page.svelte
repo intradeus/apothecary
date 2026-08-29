@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { api, stateColors, ago, type Attachment, type BranchInfo, type Project, type RunView, type Ticket } from '$lib/api';
+  import { api } from '$lib/api';
+  import { stateColors, ago } from '$lib/format';
+  import type { Attachment, Branch, Project, Run, Ticket } from '$lib/domain';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import TicketForm from '$lib/TicketForm.svelte';
   import FileChips from '$lib/FileChips.svelte';
@@ -12,20 +14,20 @@
 
   let ticket = $state<Ticket | null>(null);
   let projects = $state<Project[]>([]);
-  let runs = $state<RunView[]>([]);
+  let runs = $state<Run[]>([]);
   let loaded = $state(false);
   let error = $state('');
   let editing = $state(false);
 
   let flow = $state(''); // per-run flow; empty = project default
   let sourceBranch = $state(''); // branch to fork this run off from; '' until branches load
-  let branches = $state<BranchInfo[]>([]);
+  let branches = $state<Branch[]>([]);
   let branchesErr = $state(''); // forge unreachable ⇒ fall back to project default
   let runGoal = $state(''); // direction for THIS attempt (additive to the ticket goal)
   let runFiles = $state<File[]>([]);
   let starting = $state(false);
 
-  const project = $derived(projects.find((p) => p.id === ticket?.project_id));
+  const project = $derived(projects.find((p) => p.id === ticket?.projectId));
 
   // The ticket's attachments — hand-uploaded or copied from a tracker. They
   // are delivered into the workspace of EVERY run of this ticket, so they
@@ -34,7 +36,7 @@
 
   const loadAttachments = async () => {
     try {
-      attachments = await api.ticketAttachments(ticketId);
+      attachments = await api.tickets.attachments(ticketId);
     } catch {
       attachments = [];
     }
@@ -42,7 +44,7 @@
 
   const load = async () => {
     try {
-      [ticket, runs] = await Promise.all([api.ticket(ticketId), api.runs({ ticket: ticketId })]);
+      [ticket, runs] = await Promise.all([api.tickets.get(ticketId), api.runs.list({ ticket: ticketId })]);
       loaded = true;
       loadBranches();
       loadAttachments();
@@ -58,8 +60,8 @@
   const loadBranches = async () => {
     if (!ticket) return;
     try {
-      branches = await api.projectBranches(ticket.project_id);
-      const def = branches.find((b) => b.default) ?? branches[0];
+      branches = await api.projects.branches(ticket.projectId);
+      const def = branches.find((b) => b.isDefault) ?? branches[0];
       if (def && !sourceBranch) sourceBranch = def.name;
     } catch (e) {
       branchesErr = e instanceof Error ? e.message : String(e);
@@ -67,9 +69,9 @@
   };
 
   onMount(() => {
-    api.projects().then((ps) => (projects = ps)).catch(() => {});
+    api.projects.list().then((ps) => (projects = ps)).catch(() => {});
     load();
-    const t = setInterval(() => api.runs({ ticket: ticketId }).then((r) => (runs = r)).catch(() => {}), 4000);
+    const t = setInterval(() => api.runs.list({ ticket: ticketId }).then((r) => (runs = r)).catch(() => {}), 4000);
     return () => clearInterval(t);
   });
 
@@ -78,14 +80,14 @@
     error = '';
     try {
       let attachmentIds: string[] | undefined;
-      if (runFiles.length) attachmentIds = (await api.uploadAttachments(runFiles)).map((a) => a.id);
-      const { run_id } = await api.startTicketRun(ticketId, {
+      if (runFiles.length) attachmentIds = (await api.files.upload(runFiles)).map((a) => a.id);
+      const runId = await api.tickets.startRun(ticketId, {
         flow: flow.trim() || undefined,
         goal: runGoal.trim() || undefined,
-        source_branch: sourceBranch.trim() || undefined,
-        attachment_ids: attachmentIds
+        sourceBranch: sourceBranch.trim() || undefined,
+        attachmentIds
       });
-      await goto(`/runs/${run_id}`);
+      await goto(`/runs/${runId}`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -96,7 +98,7 @@
   async function del() {
     if (!confirm('Delete this ticket? Its runs keep their history.')) return;
     try {
-      await api.deleteTicket(ticketId);
+      await api.tickets.remove(ticketId);
       await goto('/tickets');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -113,19 +115,19 @@
     </div>
   </div>
   <div class="row small muted" style="margin-bottom:16px; gap:12px">
-    <a href={`/?project=${ticket.project_id}`}>{project?.name ?? ticket.project_id.slice(-6)} ↗</a>
-    {#if ticket.source_key}
+    <a href={`/?project=${ticket.projectId}`}>{project?.name ?? ticket.projectId.slice(-6)} ↗</a>
+    {#if ticket.source?.key}
       <!-- Provenance: a copy taken once. Nothing here is written back. -->
-      {#if ticket.source_url}
-        <a href={ticket.source_url} target="_blank" rel="noreferrer">
-          {ticket.source_kind ?? 'source'} {ticket.source_key} ↗
+      {#if ticket.source?.url}
+        <a href={ticket.source?.url} target="_blank" rel="noreferrer">
+          {ticket.source?.kind ?? 'source'} {ticket.source?.key} ↗
         </a>
       {:else}
-        <span>{ticket.source_kind ?? 'source'} <span class="mono">{ticket.source_key}</span></span>
+        <span>{ticket.source?.kind ?? 'source'} <span class="mono">{ticket.source?.key}</span></span>
       {/if}
     {/if}
-    {#if ticket.base_branch}<span>base branch <span class="mono">{ticket.base_branch}</span></span>{/if}
-    <span>{ago(ticket.created_at)}</span>
+    {#if ticket.baseBranch}<span>base branch <span class="mono">{ticket.baseBranch}</span></span>{/if}
+    <span>{ago(ticket.createdAt)}</span>
   </div>
 
   {#if editing}
@@ -151,21 +153,21 @@
       <AttachFiles bind:files={runFiles} label="Attach files for this run only" />
       <div class="row" style="gap:8px; align-items:flex-end; margin-top:10px">
         <div style="flex:1">
-          <label for="flow">Flow <span class="muted">— empty = project default{project ? ` (${project.default_flow})` : ''}</span></label>
-          <input id="flow" bind:value={flow} placeholder={project?.default_flow ?? 'default'} class="mono" />
+          <label for="flow">Flow <span class="muted">— empty = project default{project ? ` (${project.defaultFlow})` : ''}</span></label>
+          <input id="flow" bind:value={flow} placeholder={project?.defaultFlow ?? 'default'} class="mono" />
         </div>
         <div style="flex:1">
           <label for="source-branch">Source branch <span class="muted">— branch this run forks off from</span></label>
           {#if branches.length}
             <select id="source-branch" bind:value={sourceBranch} class="mono">
               {#each branches as b (b.name)}
-                <option value={b.name}>{b.name}{b.default ? ' (default)' : ''}</option>
+                <option value={b.name}>{b.name}{b.isDefault ? ' (default)' : ''}</option>
               {/each}
             </select>
           {:else}
             <input id="source-branch" class="mono" disabled
               placeholder={branchesErr ? 'branches unavailable — using project default' : 'loading branches…'}
-              value={project?.repo.default_branch ?? ''} />
+              value={project?.repo.defaultBranch ?? ''} />
           {/if}
         </div>
         <button class="primary" onclick={startRun} disabled={starting}>
@@ -187,14 +189,14 @@
           <tr><th>Run</th><th>State</th><th>Workspace</th><th>Branch</th><th>Flow</th><th>Updated</th></tr>
         </thead>
         <tbody>
-          {#each runs as r (r.run_id)}
-            <tr class="click" onclick={() => goto(`/runs/${r.run_id}`)}>
-              <td class="mono small">{r.run_id}</td>
+          {#each runs as r (r.id)}
+            <tr class="click" onclick={() => goto(`/runs/${r.id}`)}>
+              <td class="mono small">{r.id}</td>
               <td><span class="chip"><span class="dot" style="background:{stateColors[r.state]}"></span>{r.state}</span></td>
-              <td><WorkspaceBadge state={r.state} envId={r.env_id} envStatus={r.env_status} compact /></td>
+              <td><WorkspaceBadge state={r.state} envId={r.envId} envStatus={r.envStatus} compact /></td>
               <td class="mono small">{r.branch ?? ''}</td>
-              <td class="mono">{r.flow_name}</td>
-              <td class="muted small">{ago(r.updated_at)}</td>
+              <td class="mono">{r.flowName}</td>
+              <td class="muted small">{ago(r.updatedAt)}</td>
             </tr>
           {/each}
         </tbody>

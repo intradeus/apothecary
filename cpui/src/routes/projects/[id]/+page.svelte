@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type CheckRun, type FlowRow, type Integration, type PreflightStep, type Project } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { EnvCheck, Flow, Integration, PreflightStep, Project } from '$lib/domain';
   import ProjectForm from '$lib/ProjectForm.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -7,11 +8,11 @@
 
   let project = $state<Project | null>(null);
   let integrations = $state<Integration[]>([]);
-  let flows = $state<FlowRow[]>([]);
+  let flows = $state<Flow[]>([]);
   let error = $state('');
   let editing = $state(false);
   let preflight = $state<{ ok: boolean; steps: PreflightStep[] } | 'running' | null>(null);
-  let check = $state<CheckRun | null>(null);
+  let check = $state<EnvCheck | null>(null);
   let checkKeep = $state(false);
   let checkError = $state('');
   let checkTimer: ReturnType<typeof setInterval> | undefined;
@@ -19,12 +20,12 @@
   async function startEnvCheck() {
     checkError = '';
     try {
-      const { check_id } = await api.startEnvCheck(project!.id, checkKeep);
-      check = await api.envCheck(check_id);
+      const checkId = await api.projects.startEnvCheck(project!.id, checkKeep);
+      check = await api.projects.envCheck(checkId);
       clearInterval(checkTimer);
       checkTimer = setInterval(async () => {
         try {
-          check = await api.envCheck(check_id);
+          check = await api.projects.envCheck(checkId);
           if (check.status !== 'running') clearInterval(checkTimer);
         } catch {
           /* keep polling */
@@ -39,9 +40,9 @@
   const load = async () => {
     try {
       [project, integrations, flows] = await Promise.all([
-        api.project(page.params.id!),
-        api.integrations(),
-        api.flows()
+        api.projects.get(page.params.id!),
+        api.integrations.list(),
+        api.flows.list()
       ]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -52,7 +53,7 @@
   async function runPreflight() {
     preflight = 'running';
     try {
-      preflight = await api.preflight(project!.id);
+      preflight = await api.projects.preflight(project!.id);
     } catch (e) {
       preflight = { ok: false, steps: [{ id: 'request', ok: false, error: e instanceof Error ? e.message : String(e) }] };
     }
@@ -63,7 +64,7 @@
     if (!confirm(`Delete project "${project.name}"? All its runs must be archived first.`)) return;
     error = '';
     try {
-      await api.deleteProject(project.id);
+      await api.projects.remove(project.id);
       await goto('/projects');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -146,25 +147,25 @@
       <h2>Repository</h2>
       <div class="mono small">{project.repo.url}</div>
       <div class="small muted">
-        locator {project.repo.locator} · branch {project.repo.default_branch} · {project.repo.agents_md_path}
+        locator {project.repo.locator} · branch {project.repo.defaultBranch} · {project.repo.agentsMdPath}
       </div>
     </div>
     <div class="card">
       <h2>Configuration</h2>
       <table>
         <tbody>
-          <tr><td class="muted">Forge</td><td>{integrations.find((i) => i.id === project!.forge_id)?.name ?? project.forge_id}</td></tr>
-          <tr><td class="muted">Provisioner</td><td>{integrations.find((i) => i.id === project!.provisioner_id)?.name ?? project.provisioner_id}</td></tr>
-          <tr><td class="muted">Harnesses</td><td>{(project.harness_ids ?? []).map((id) => integrations.find((i) => i.id === id)?.name ?? id).join(', ') || '—'}</td></tr>
-          <tr><td class="muted">Default flow</td><td class="mono">{project.default_flow}</td></tr>
-          <tr><td class="muted">Egress firewall</td><td>{project.workspace.egress_mode === 'deny' ? 'Denylist (allow all except)' : 'Allowlist (deny all except)'}</td></tr>
-          {#if project.workspace.egress_mode === 'deny'}
-            <tr><td class="muted">Blocked domains</td><td class="mono">{(project.workspace.denied_domains ?? []).join(', ') || '—'}</td></tr>
+          <tr><td class="muted">Forge</td><td>{integrations.find((i) => i.id === project!.forgeId)?.name ?? project.forgeId}</td></tr>
+          <tr><td class="muted">Provisioner</td><td>{integrations.find((i) => i.id === project!.provisionerId)?.name ?? project.provisionerId}</td></tr>
+          <tr><td class="muted">Harnesses</td><td>{(project.harnessIds ?? []).map((id) => integrations.find((i) => i.id === id)?.name ?? id).join(', ') || '—'}</td></tr>
+          <tr><td class="muted">Default flow</td><td class="mono">{project.defaultFlow}</td></tr>
+          <tr><td class="muted">Egress firewall</td><td>{project.workspace.egressMode === 'deny' ? 'Denylist (allow all except)' : 'Allowlist (deny all except)'}</td></tr>
+          {#if project.workspace.egressMode === 'deny'}
+            <tr><td class="muted">Blocked domains</td><td class="mono">{(project.workspace.deniedDomains ?? []).join(', ') || '—'}</td></tr>
           {:else}
-            <tr><td class="muted">Allowed domains</td><td class="mono">{(project.workspace.extra_domains ?? []).join(', ') || '—'}</td></tr>
+            <tr><td class="muted">Allowed domains</td><td class="mono">{(project.workspace.extraDomains ?? []).join(', ') || '—'}</td></tr>
           {/if}
-          {#if (project.workspace.blocked_domains ?? []).length}
-            <tr><td class="muted">Force-blocked</td><td class="mono">{(project.workspace.blocked_domains ?? []).join(', ')}</td></tr>
+          {#if (project.workspace.blockedDomains ?? []).length}
+            <tr><td class="muted">Force-blocked</td><td class="mono">{(project.workspace.blockedDomains ?? []).join(', ')}</td></tr>
           {/if}
         </tbody>
       </table>

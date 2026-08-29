@@ -1,7 +1,8 @@
 <script lang="ts">
   // Project wizard/editor (DESIGN2 §11): connect forge → pick repo →
   // commands → adapter picks → workspace → default flow.
-  import { api, type FlowRow, type Integration, type Project, type RepoInfo } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Flow, Integration, Project, ProjectDraft, Repo } from '$lib/domain';
   
   let {
     integrations,
@@ -10,7 +11,7 @@
     onsaved
   }: {
     integrations: Integration[];
-    flows: FlowRow[];
+    flows: Flow[];
     existing?: Project | null;
     onsaved: (p: Project) => void;
   } = $props();
@@ -26,14 +27,14 @@
   const flowNames = flows.map((f) => f.name);
 
   let name = $state(init?.name ?? '');
-  let forgeId = $state(init?.forge_id ?? forges[0]?.id ?? '');
-  let provisionerId = $state(init?.provisioner_id ?? provisioners[0]?.id ?? '');
+  let forgeId = $state(init?.forgeId ?? forges[0]?.id ?? '');
+  let provisionerId = $state(init?.provisionerId ?? provisioners[0]?.id ?? '');
   // The project's SET of available harness integrations — no default. The
   // FLOW names the harness kind (defaults.harness / a stage override); the
   // project just needs an integration of that kind (for auth + image layers).
   // At most one per kind so kind→integration is unambiguous.
   let harnessIds = $state<string[]>(
-    init?.harness_ids?.length ? [...init.harness_ids] : harnesses[0] ? [harnesses[0].id] : []
+    init?.harnessIds?.length ? [...init.harnessIds] : harnesses[0] ? [harnesses[0].id] : []
   );
   // A kind is taken if a DIFFERENT checked harness already covers it.
   const kindTaken = (h: Integration) =>
@@ -53,8 +54,8 @@
 
   let repoURL = $state(init?.repo.url ?? '');
   let locator = $state(init?.repo.locator ?? '');
-  let defaultBranch = $state(init?.repo.default_branch ?? 'main');
-  let agentsMD = $state(init?.repo.agents_md_path ?? 'AGENTS.md');
+  let defaultBranch = $state(init?.repo.defaultBranch ?? 'main');
+  let agentsMD = $state(init?.repo.agentsMdPath ?? 'AGENTS.md');
 
   // commands as editable key/value rows; setup stays optional but prominent.
   let commandRows = $state<{ key: string; value: string }[]>(
@@ -70,10 +71,10 @@
   // block these); the domains table binds to whichever list the mode selects.
   // Both are kept so flipping the mode never loses the other list. blocked_domains
   // is the live force-block managed from the run page — carried through untouched.
-  let egressMode = $state<'allow' | 'deny'>(init?.workspace.egress_mode === 'deny' ? 'deny' : 'allow');
-  let allowDomains = $state<string[]>([...(init?.workspace.extra_domains ?? [])]);
-  let denyDomains = $state<string[]>([...(init?.workspace.denied_domains ?? [])]);
-  const blockedDomains = init?.workspace.blocked_domains ?? [];
+  let egressMode = $state<'allow' | 'deny'>(init?.workspace.egressMode === 'deny' ? 'deny' : 'allow');
+  let allowDomains = $state<string[]>([...(init?.workspace.extraDomains ?? [])]);
+  let denyDomains = $state<string[]>([...(init?.workspace.deniedDomains ?? [])]);
+  const blockedDomains = init?.workspace.blockedDomains ?? [];
   let newDomain = $state('');
   let defaultsBusy = $state(false);
 
@@ -92,7 +93,7 @@
   async function addDefaults() {
     defaultsBusy = true;
     try {
-      const { domains } = await api.egressDefaults();
+      const domains = await api.egress.defaults();
       const merged = [...allowDomains];
       for (const d of domains) if (!merged.includes(d)) merged.push(d);
       allowDomains = merged;
@@ -103,7 +104,7 @@
     }
   }
 
-  let codeServerExtensions = $state((init?.workspace.code_server_extensions ?? []).join(', '));
+  let codeServerExtensions = $state((init?.workspace.codeServerExtensions ?? []).join(', '));
   // code-server UI defaults (applied as VS Code user settings at editor open —
   // no rebuild). Theme names are the built-in VS Code themes; a themed
   // extension can be added to the extensions list above and named here.
@@ -124,16 +125,16 @@
     'Tomorrow Night Blue'
   ];
   let editorTheme = $state(init?.workspace.editor?.theme ?? '');
-  let editorFontSize = $state(init?.workspace.editor?.font_size ?? 0);
-  let editorTabSize = $state(init?.workspace.editor?.tab_size ?? 0);
-  let editorFormatOnSave = $state(init?.workspace.editor?.format_on_save ?? false);
-  let editorWordWrap = $state(init?.workspace.editor?.word_wrap ?? false);
-  let editorTrustWorkspace = $state(init?.workspace.editor?.trust_workspace ?? false);
+  let editorFontSize = $state(init?.workspace.editor?.fontSize ?? 0);
+  let editorTabSize = $state(init?.workspace.editor?.tabSize ?? 0);
+  let editorFormatOnSave = $state(init?.workspace.editor?.formatOnSave ?? false);
+  let editorWordWrap = $state(init?.workspace.editor?.wordWrap ?? false);
+  let editorTrustWorkspace = $state(init?.workspace.editor?.trustWorkspace ?? false);
   // Flows are user-defined — no built-in fallback exists.
-  let defaultFlow = $state(init?.default_flow ?? flowNames[0] ?? '');
+  let defaultFlow = $state(init?.defaultFlow ?? flowNames[0] ?? '');
 
   // Repo picker.
-  let repos = $state<RepoInfo[] | null>(null);
+  let repos = $state<Repo[] | null>(null);
   let loadingRepos = $state(false);
   let repoError = $state('');
   let busy = $state(false);
@@ -144,7 +145,7 @@
     repoError = '';
     repos = null;
     try {
-      repos = await api.repos(forgeId);
+      repos = await api.integrations.repos(forgeId);
     } catch (e) {
       repoError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -152,10 +153,10 @@
     }
   }
 
-  function pickRepo(r: RepoInfo) {
+  function pickRepo(r: Repo) {
     repoURL = r.url;
     locator = r.locator;
-    if (r.default_branch) defaultBranch = r.default_branch;
+    if (r.defaultBranch) defaultBranch = r.defaultBranch;
     if (!name) name = r.name.split('/').pop() ?? r.name;
     repos = null;
   }
@@ -169,39 +170,43 @@
       for (const row of commandRows) {
         if (row.key.trim() && row.value.trim()) commands[row.key.trim()] = row.value;
       }
-      const body = {
+      const body: ProjectDraft = {
         name: name.trim(),
-        forge_id: forgeId,
-        provisioner_id: provisionerId,
-        harness_ids: harnessSet(),
+        forgeId,
+        provisionerId,
+        harnessIds: harnessSet(),
         repo: {
           url: repoURL.trim(),
           locator: locator.trim(),
-          default_branch: defaultBranch.trim(),
-          agents_md_path: agentsMD.trim()
+          defaultBranch: defaultBranch.trim(),
+          agentsMdPath: agentsMD.trim()
         },
         commands,
         workspace: {
-          egress_mode: egressMode,
-          extra_domains: allowDomains,
-          denied_domains: denyDomains,
-          blocked_domains: blockedDomains,
-          code_server_extensions: codeServerExtensions
+          egressMode,
+          extraDomains: allowDomains,
+          deniedDomains: denyDomains,
+          blockedDomains,
+          // Not edited here, but a save replaces the whole policy: carry the
+          // raw-egress escape hatch through untouched.
+          allowedCidrs: existing?.workspace.allowedCidrs ?? [],
+          allowedPorts: existing?.workspace.allowedPorts ?? [],
+          codeServerExtensions: codeServerExtensions
             .split(/[\s,]+/)
             .map((e) => e.trim())
             .filter(Boolean),
           editor: {
             theme: editorTheme,
-            font_size: Number(editorFontSize) || 0,
-            tab_size: Number(editorTabSize) || 0,
-            format_on_save: editorFormatOnSave,
-            word_wrap: editorWordWrap,
-            trust_workspace: editorTrustWorkspace
+            fontSize: Number(editorFontSize) || 0,
+            tabSize: Number(editorTabSize) || 0,
+            formatOnSave: editorFormatOnSave,
+            wordWrap: editorWordWrap,
+            trustWorkspace: editorTrustWorkspace
           }
         },
-        default_flow: defaultFlow
+        defaultFlow
       };
-      const saved = existing ? await api.updateProject(existing.id, body) : await api.createProject(body);
+      const saved = existing ? await api.projects.update(existing.id, body) : await api.projects.create(body);
       onsaved(saved);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -235,7 +240,7 @@
             {#each repos as r (r.locator)}
               <tr class="click" onclick={() => pickRepo(r)}>
                 <td>{r.name}</td>
-                <td class="mono muted small">{r.default_branch}</td>
+                <td class="mono muted small">{r.defaultBranch}</td>
               </tr>
             {:else}
               <tr><td class="muted">No repositories visible to this token.</td></tr>

@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { api, stateColors, stateTab, ago, type Project, type RunView, type RunTab } from '$lib/api';
+  import { api } from '$lib/api';
+  import { stateColors, stateTab, ago, type RunTab } from '$lib/format';
+  import type { Project, Run } from '$lib/domain';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
 
-  let runs = $state<RunView[]>([]);
+  let runs = $state<Run[]>([]);
   let projects = $state<Project[]>([]);
   let loaded = $state(false);
 
@@ -14,7 +16,7 @@
 
   const refresh = async () => {
     try {
-      runs = await api.runs(projectFilter ? { project: projectFilter } : undefined);
+      runs = await api.runs.list(projectFilter ? { project: projectFilter } : undefined);
       loaded = true;
     } catch {
       /* keep last */
@@ -24,7 +26,7 @@
   onMount(() => {
     refresh();
     api
-      .projects()
+      .projects.list()
       .then((ps) => (projects = ps))
       .catch(() => {});
     const t = setInterval(refresh, 4000);
@@ -74,20 +76,20 @@
         <tr><th>Ticket</th><th>State</th><th>Workspace</th><th>Stage</th><th>Project</th><th>Flow</th><th>MR</th><th>Updated</th></tr>
       </thead>
       <tbody>
-        {#each shownRuns as r (r.run_id)}
-          <tr class="click" onclick={() => goto(`/runs/${r.run_id}`)}>
-            <td>{r.ticket_title}<div class="mono muted">{r.run_id}</div></td>
+        {#each shownRuns as r (r.id)}
+          <tr class="click" onclick={() => goto(`/runs/${r.id}`)}>
+            <td>{r.title}<div class="mono muted">{r.id}</div></td>
             <td>
               <span class="chip"><span class="dot" style="background:{stateColors[r.state]}"></span>{r.state}</span>
             </td>
-            <td><WorkspaceBadge state={r.state} envId={r.env_id} envStatus={r.env_status} /></td>
-            <td class="mono">{r.current_stage ?? ''}</td>
-            <td class="small">{projectName(r.project_id) ?? (r.project_id ? r.project_id.slice(-6) : '—')}</td>
-            <td class="mono">{r.flow_name}</td>
+            <td><WorkspaceBadge state={r.state} envId={r.envId} envStatus={r.envStatus} /></td>
+            <td class="mono">{r.currentStage ?? ''}</td>
+            <td class="small">{projectName(r.projectId) ?? (r.projectId ? r.projectId.slice(-6) : '—')}</td>
+            <td class="mono">{r.flowName}</td>
             <td>
-              {#if r.mr_url}<a href={r.mr_url} target="_blank" rel="noreferrer" onclick={(e) => e.stopPropagation()}>MR ↗</a>{/if}
+              {#if r.mrUrl}<a href={r.mrUrl} target="_blank" rel="noreferrer" onclick={(e) => e.stopPropagation()}>MR ↗</a>{/if}
             </td>
-            <td class="muted small">{ago(r.updated_at)}</td>
+            <td class="muted small">{ago(r.updatedAt)}</td>
           </tr>
         {/each}
       </tbody>

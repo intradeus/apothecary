@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Project } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Project } from '$lib/domain';
   import TicketForm from '$lib/TicketForm.svelte';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
@@ -9,7 +10,7 @@
 
   onMount(async () => {
     try {
-      projects = await api.projects();
+      projects = await api.projects.list();
     } finally {
       loaded = true;
     }

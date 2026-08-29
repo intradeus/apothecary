@@ -10,7 +10,7 @@
   onMount(() => {
     const poll = async () => {
       try {
-        pendingCount = (await api.pendingPings()).length;
+        pendingCount = (await api.pings.pending()).length;
       } catch {
         /* engine unreachable; badge just goes stale */
       }

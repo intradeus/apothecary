@@ -1,7 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, stateColors, fmtTime, fmtCost, type Attachment, type EgressDenial, type EgressAuditRow, type EgressPolicy, type EventEnvelope, type ResourceSample, type RunView, type Snapshot } from '$lib/api';
+  import { api } from '$lib/api';
+  import { stateColors, fmtTime, fmtCost } from '$lib/format';
+  import type { Attachment, EgressDenial, EgressAuditRow, EgressPolicy, RunEvent, ResourceSample, Run, Snapshot } from '$lib/domain';
   import PingCard from '$lib/PingCard.svelte';
   import ResourceGraphs from '$lib/ResourceGraphs.svelte';
   import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
@@ -11,8 +13,8 @@
 
   const runId = page.params.id ?? '';
 
-  let run = $state<RunView | null>(null);
-  let events = $state<EventEnvelope[]>([]);
+  let run = $state<Run | null>(null);
+  let events = $state<RunEvent[]>([]);
   let logStage = $state('');
   let logText = $state('');
   let error = $state('');
@@ -65,11 +67,11 @@
   const pendingPingView = $derived<PingLike | null>(
     pendingPing
       ? {
-          ping_id: pendingPing.payload.ping_id as string,
+          id: pendingPing.payload.ping_id as string,
           type: pendingPing.payload.type as string,
           question: pendingPing.payload.question as string,
           context: pendingPing.payload.context as string | undefined,
-          payload_ref: pendingPing.payload.payload_ref as string | undefined,
+          primaryRef: pendingPing.payload.payload_ref as string | undefined,
           options: pendingPing.payload.options as string[] | undefined
         }
       : null
@@ -103,7 +105,7 @@
   // the rule column falls back to the row's historical verdict.
   let policy = $state<EgressPolicy | null>(null);
   let showAudit = $state(false);
-  let auditVerdict = $state(''); // '' | 'allow' | 'deny'
+  let auditVerdict = $state<'' | 'allow' | 'deny'>('');
   let auditHost = $state('');
   let toggling = $state<Record<string, boolean>>({});
   let showTail = $state(true);
@@ -118,7 +120,7 @@
   }
   async function refreshResources() {
     try {
-      resources = (await api.runResources(runId)).samples;
+      resources = await api.runs.resources(runId);
     } catch {
       /* transient */
     }
@@ -189,9 +191,9 @@
       kind: sn.kind === 'log' ? 'log' : 'output',
       snapshot: true,
       badge: sn.kind === 'log' ? 'log' : `output${sn.name ? ` · ${sn.name}` : ''}`,
-      where: `${sn.stage_id} · attempt ${sn.iteration ?? 0}`,
+      where: `${sn.stageId} · attempt ${sn.iteration ?? 0}`,
       size: sn.size,
-      at: sn.created_at
+      at: sn.createdAt
     }));
     for (const a of attachments) {
       rows.push({
@@ -200,10 +202,10 @@
         kind: 'attachment',
         snapshot: false,
         badge: 'you attached',
-        where: a.ping_id ? 'a ping answer' : 'the run goal',
-        href: a.ping_id ? `/pings/${a.ping_id}` : undefined,
+        where: a.pingId ? 'a ping answer' : 'the run goal',
+        href: a.pingId ? `/pings/${a.pingId}` : undefined,
         size: a.size,
-        at: a.created_at
+        at: a.createdAt
       });
     }
     rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
@@ -212,7 +214,7 @@
 
   async function refreshFiles() {
     try {
-      const f = await api.runFiles(runId);
+      const f = await api.runs.files(runId);
       snapshots = f.snapshots;
       attachments = f.attachments;
     } catch {
@@ -222,7 +224,7 @@
 
   const refreshRun = async () => {
     try {
-      run = (await api.run(runId)).run;
+      run = (await api.runs.get(runId)).run;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -233,24 +235,24 @@
     const poll = setInterval(async () => {
       if (terminal || document.hidden) return;
       try {
-        const t = await api.workspaceLog(runId);
+        const t = await api.runs.workspaceLog(runId);
         liveTail = t;
         if (t !== null && showTail && tailEl) {
           requestAnimationFrame(() => tailEl && (tailEl.scrollTop = tailEl.scrollHeight));
         }
-        denials = await api.egressDenials(runId);
+        denials = await api.egress.denials(runId);
         if (showAudit) await refreshAudit();
         if (showResources) await refreshResources();
-        const pr = await api.runPorts(runId);
-        livePorts = pr.ports;
-        observedPorts = pr.observed ?? [];
+        const pr = await api.runs.ports(runId);
+        livePorts = pr.exposed;
+        observedPorts = pr.observed;
       } catch {
         /* transient; keep last tail */
       }
     }, 2500);
     refreshRun();
     refreshFiles();
-    const stop = api.events(runId, 0, (ev) => {
+    const stop = api.runs.events(runId, 0, (ev) => {
       events = [...events, ev];
       // State-changing events refresh the header chip.
       if (ev.type.startsWith('run_') || ev.type.startsWith('ping_') || ev.type.startsWith('env_')) refreshRun();
@@ -270,7 +272,7 @@
     answering = true;
     error = '';
     try {
-      await api.answerPing(pendingPing.payload.ping_id as string, ans, note?.trim() || undefined, attachmentIds);
+      await api.pings.answer(pendingPing.payload.ping_id as string, ans, note?.trim() || undefined, attachmentIds);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -286,7 +288,7 @@
     logStage = stage;
     logText = 'loading…';
     try {
-      logText = await api.log(runId, stage);
+      logText = await api.runs.stageLog(runId, stage);
     } catch (e) {
       logText = `no log: ${e instanceof Error ? e.message : e}`;
     }
@@ -312,7 +314,7 @@
   // null while the policy is unknown (not yet fetched / no gateway).
   function ruleFor(host: string): 'allow' | 'deny' | null {
     if (!policy) return null;
-    if (matchesList(host, policy.blocked_domains)) return 'deny';
+    if (matchesList(host, policy.blockedDomains)) return 'deny';
     const m = matchesList(host, policy.domains);
     if (policy.mode === 'deny') return m ? 'deny' : 'allow';
     return m ? 'allow' : 'deny';
@@ -325,9 +327,9 @@
     toggling[host] = true;
     error = '';
     try {
-      await api.egressRule(runId, host, allow);
-      policy = await api.egressPolicy(runId);
-      denials = await api.egressDenials(runId);
+      await api.egress.setRule(runId, host, allow);
+      policy = await api.egress.policy(runId);
+      denials = await api.egress.denials(runId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -337,11 +339,11 @@
 
   async function refreshAudit() {
     try {
-      audit = await api.egressAudit(runId, {
+      audit = await api.egress.runAudit(runId, {
         verdict: auditVerdict || undefined,
         host: auditHost.trim() || undefined
       });
-      policy = await api.egressPolicy(runId);
+      policy = await api.egress.policy(runId);
     } catch {
       /* transient */
     }
@@ -370,10 +372,10 @@
     exposing = true;
     error = '';
     try {
-      const res = await api.exposePort(runId, port);
-      const pr = await api.runPorts(runId);
-      livePorts = pr.ports;
-      observedPorts = pr.observed ?? []; // the now-exposed port drops off
+      const res = await api.runs.exposePort(runId, port);
+      const pr = await api.runs.ports(runId);
+      livePorts = pr.exposed;
+      observedPorts = pr.observed; // the now-exposed port drops off
       window.open(res.url, '_blank');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -393,7 +395,7 @@
     resuming = true;
     error = '';
     try {
-      await api.resume(runId);
+      await api.runs.resume(runId);
       // Same run, now continuing — hard reload so the live streams re-init
       // (this page keys off the route param captured at mount).
       location.reload();
@@ -411,7 +413,7 @@
     rebuilding = true;
     error = '';
     try {
-      await api.rebuild(runId);
+      await api.runs.rebuild(runId);
       await refreshRun();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -427,7 +429,7 @@
     opening = true;
     error = '';
     try {
-      const { url } = await api.openEditor(runId);
+      const url = await api.runs.openEditor(runId);
       window.open(url, '_blank');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -449,13 +451,13 @@
     restarting = true;
     try {
       let attachmentIds: string[] | undefined;
-      if (restartFiles.length) attachmentIds = (await api.uploadAttachments(restartFiles)).map((a) => a.id);
-      const { run_id } = await api.restart(runId, {
+      if (restartFiles.length) attachmentIds = (await api.files.upload(restartFiles)).map((a) => a.id);
+      const newRunId = await api.runs.restart(runId, {
         flow: restartFlow.trim() || undefined,
         goal: restartGoal.trim() || undefined,
-        attachment_ids: attachmentIds
+        attachmentIds
       });
-      await goto(`/runs/${run_id}`);
+      await goto(`/runs/${newRunId}`);
       // Full reload semantics: this page keys its state off the route param
       // captured at mount, so navigate hard to re-init streams.
       location.reload();
@@ -485,14 +487,14 @@
   // env_requested only for a run that ended with neither (aborted mid-build —
   // that row is then the only place to hang the log on).
   const envConcluded = $derived(events.some((e) => e.type === 'env_ready' || e.type === 'env_failed'));
-  function hasLog(e: EventEnvelope, stage?: string): boolean {
+  function hasLog(e: RunEvent, stage?: string): boolean {
     if (!stage) return false;
     if (e.type === 'stage_completed' || e.type === 'stage_failed' || e.type === 'stage_paused') return true;
     if (e.type === 'env_ready' || e.type === 'env_failed') return true;
     return e.type === 'env_requested' && terminal && !envConcluded;
   }
 
-  function describe(e: EventEnvelope): { text: string; cls: string; stage?: string; snapshot?: string } {
+  function describe(e: RunEvent): { text: string; cls: string; stage?: string; snapshot?: string } {
     const p = e.payload;
     switch (e.type) {
       case 'snapshot_captured': {
@@ -567,17 +569,17 @@
 
 {#if run}
   <div class="row spread" style="margin-bottom:6px">
-    <h1 style="margin:0">{run.ticket_title}</h1>
+    <h1 style="margin:0">{run.title}</h1>
     <span class="chip"><span class="dot" style="background:{stateColors[run.state]}"></span>{run.state}</span>
-    <WorkspaceBadge state={run.state} envId={run.env_id} envStatus={run.env_status} />
+    <WorkspaceBadge state={run.state} envId={run.envId} envStatus={run.envStatus} />
   </div>
   <div class="row small muted" style="margin-bottom:16px">
-    <span class="mono">{run.run_id}</span>
-    {#if run.ticket_id}<a href={`/tickets/${run.ticket_id}`} title="This run's ticket">ticket ↗</a>{/if}
-    <span>flow {run.flow_name}</span>
+    <span class="mono">{run.id}</span>
+    {#if run.ticketId}<a href={`/tickets/${run.ticketId}`} title="This run's ticket">ticket ↗</a>{/if}
+    <span>flow {run.flowName}</span>
     {#if run.branch}<span title="Git branch for this run">branch <span class="mono">{run.branch}</span></span>{/if}
-    {#if run.source_branch}<span title="Branch this run forked off from">from <span class="mono">{run.source_branch}</span></span>{/if}
-    {#if run.env_id}<span title="Workspace / container name">workspace <span class="mono">{run.env_id}</span></span>{/if}
+    {#if run.sourceBranch}<span title="Branch this run forked off from">from <span class="mono">{run.sourceBranch}</span></span>{/if}
+    {#if run.envId}<span title="Workspace / container name">workspace <span class="mono">{run.envId}</span></span>{/if}
     {#if totals.turns > 0}<span>{fmtCost(totals.cost)} · {totals.turns} turns</span>{/if}
     {#each links as l (l.kind + (l.url || l.command))}
       {#if l.url}
@@ -588,8 +590,8 @@
         </button>
       {/if}
     {/each}
-    {#if run.mr_url}<a href={run.mr_url} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
-    {#if run.env_id}
+    {#if run.mrUrl}<a href={run.mrUrl} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
+    {#if run.envId}
       <button class="linklike" onclick={openEditor} disabled={opening}
         title="Open VS Code (code-server) in the browser on this workspace — the repo at $HOME/repo, the agent's commits, an in-container terminal.">
         {opening ? 'opening editor…' : 'Open editor ↗'}
@@ -605,7 +607,7 @@
         :{p.port}{p.service ? ` ${p.service}` : p.process ? ` ${p.process}` : ''} ↗
       </button>
     {/each}
-    {#if !terminal && run.env_id}
+    {#if !terminal && run.envId}
       <span class="row" style="gap:4px" title="Publish a port the app inside the workspace listens on — opens it on an engine-host URL (per-run dynamic port, safe across concurrent runs)">
         <input
           class="mono small"
@@ -621,36 +623,36 @@
     {/if}
     {#if !terminal}
       {#if run.state === 'paused'}
-        <button class="primary" onclick={() => act(() => api.play(runId))}
+        <button class="primary" onclick={() => act(() => api.runs.play(runId))}
           title="Continue where it left off — the in-flight stage re-enters (agent sessions resume); retry budgets are untouched">
           ▶ Play
         </button>
       {:else if run.state !== 'pending'}
-        <button onclick={() => act(() => api.pause(runId))}
+        <button onclick={() => act(() => api.runs.pause(runId))}
           title="Park the run: the current attempt is stopped, the workspace stays up for inspection, and nothing moves until Play">
           ⏸ Pause
         </button>
       {/if}
-      <button class="danger" onclick={() => act(() => api.abort(runId))}>Abort</button>
+      <button class="danger" onclick={() => act(() => api.runs.abort(runId))}>Abort</button>
     {:else}
       {#if run.state === 'abandoned' || run.state === 'failed'}
         <button class="primary" onclick={resume} disabled={resuming}
           title="Re-run the failed stage in the same workspace — keeps the plan, build and commits; only retries what failed">
-          {resuming ? 'Resuming…' : `Try again${run.current_stage ? ` (${run.current_stage})` : ''}`}
+          {resuming ? 'Resuming…' : `Try again${run.currentStage ? ` (${run.currentStage})` : ''}`}
         </button>
       {/if}
       <button onclick={() => (showRestart = !showRestart)}
         title="Start over as a fresh run: same ticket and project — new workspace, new branch. You can add direction for the new attempt.">
         {showRestart ? 'Cancel restart' : 'Restart'}
       </button>
-      {#if run.env_id}
+      {#if run.envId}
         <button onclick={rebuild} disabled={rebuilding}
           title="Recreate this run's container in place — keeps the run and its commits, re-runs setup (e.g. to apply devcontainer.json changes). Same run, same branch.">
           {rebuilding ? 'Rebuilding…' : 'Rebuild workspace'}
         </button>
       {/if}
       {#if run.state !== 'archived'}
-        <button onclick={() => act(() => api.archive(runId))}>Archive</button>
+        <button onclick={() => act(() => api.runs.archive(runId))}>Archive</button>
       {/if}
     {/if}
   </div>
@@ -664,8 +666,8 @@
       <AttachFiles bind:files={restartFiles} label="Attach files for the new run" />
       <div class="row" style="gap:8px; align-items:flex-end; margin-top:10px">
         <div style="flex:1">
-          <label for="rs-flow">Flow <span class="muted">— empty = same as this run ({run.flow_name})</span></label>
-          <input id="rs-flow" bind:value={restartFlow} placeholder={run.flow_name} class="mono" />
+          <label for="rs-flow">Flow <span class="muted">— empty = same as this run ({run.flowName})</span></label>
+          <input id="rs-flow" bind:value={restartFlow} placeholder={run.flowName} class="mono" />
         </div>
         <button class="primary" onclick={restart} disabled={restarting}>
           {restarting ? 'Restarting…' : '↻ Restart'}
@@ -674,10 +676,10 @@
     </div>
   {/if}
 
-  {#if run.run_goal}
+  {#if run.goal}
     <div class="card" style="border-color:var(--blue)">
       <strong class="small">Direction for this run</strong>
-      <div style="white-space:pre-wrap; margin-top:4px">{run.run_goal}</div>
+      <div style="white-space:pre-wrap; margin-top:4px">{run.goal}</div>
     </div>
   {/if}
 
@@ -685,7 +687,7 @@
     <div class="card" style="border-color:var(--muted)">
       <strong>⏸ Paused</strong>
       <span class="muted small">
-        — workspace kept for inspection{run.current_stage ? `; will re-enter “${run.current_stage}”` : ''}.
+        — workspace kept for inspection{run.currentStage ? `; will re-enter “${run.currentStage}”` : ''}.
         Play continues, Abort ends the run.
       </span>
     </div>
@@ -772,9 +774,9 @@
                       </td>
                       <td class="muted">{r.proto}</td>
                       <td class="num">{r.count}</td>
-                      <td class="num">{fmtBytes(r.bytes_out)}</td>
-                      <td class="num">{fmtBytes(r.bytes_in)}</td>
-                      <td class="muted">{fmtTime(r.last_seen)}</td>
+                      <td class="num">{fmtBytes(r.bytesOut)}</td>
+                      <td class="num">{fmtBytes(r.bytesIn)}</td>
+                      <td class="muted">{fmtTime(r.lastSeen)}</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -809,7 +811,7 @@
   {/if}
 
   {#if pendingPingView}
-    {#key pendingPingView.ping_id}
+    {#key pendingPingView.id}
       <div class="card" style="border-color:var(--amber)">
         <div class="pingtype {isGatePing(pendingPingView.type) ? 'wanted' : 'unwanted'}">{pendingPingView.type}</div>
         {#if pendingCount > 1}
@@ -855,8 +857,8 @@
             </thead>
             <tbody>
               {#each fileRows as f (f.id)}
-                {@const url = f.snapshot ? api.snapshotUrl(f.id) : api.attachmentUrl(f.id)}
-                {@const dl = f.snapshot ? api.snapshotUrl(f.id, true) : api.attachmentUrl(f.id, true)}
+                {@const url = f.snapshot ? api.files.snapshotUrl(f.id) : api.files.attachmentUrl(f.id)}
+                {@const dl = f.snapshot ? api.files.snapshotUrl(f.id, true) : api.files.attachmentUrl(f.id, true)}
                 <tr>
                   <td>
                     <a href={url} target="_blank" rel="noreferrer">{f.filename}</a>
@@ -895,7 +897,7 @@
             <button class="small" style="padding:1px 8px;margin-left:6px" onclick={() => showLog(d.stage!)}>log</button>
           {/if}
           {#if d.snapshot}
-            <a class="small" style="margin-left:6px" href={api.snapshotUrl(d.snapshot)} target="_blank" rel="noreferrer">open ↗</a>
+            <a class="small" style="margin-left:6px" href={api.files.snapshotUrl(d.snapshot)} target="_blank" rel="noreferrer">open ↗</a>
           {/if}
         </div>
         {#if logStage && d.stage === logStage && hasLog(e, d.stage)}

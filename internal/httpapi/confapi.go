@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -110,13 +109,7 @@ func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createIntegration(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Port    string            `json:"port"`
-		Kind    string            `json:"kind"`
-		Name    string            `json:"name"`
-		Config  map[string]any    `json:"config"`
-		Secrets map[string]string `json:"secrets"`
-	}
+	var body IntegrationRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -141,11 +134,8 @@ func (s *Server) getIntegration(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateIntegration(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name    string            `json:"name"`
-		Config  map[string]any    `json:"config"`
-		Secrets map[string]string `json:"secrets"` // §3 merge: present replaces, "" deletes, absent keeps
-	}
+	// §3 secret merge: a present key replaces, "" deletes, an absent key keeps.
+	var body IntegrationUpdate
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -171,10 +161,10 @@ func (s *Server) testIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Ops.TestIntegration(r.Context(), r.PathValue("id")); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, TestResult{Error: err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, TestResult{OK: true})
 }
 
 func (s *Server) listIntegrationRepos(w http.ResponseWriter, r *http.Request) {
@@ -309,16 +299,14 @@ func (s *Server) preflightProject(w http.ResponseWriter, r *http.Request) {
 	for _, st := range steps {
 		ok = ok && st.OK
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "steps": steps})
+	writeJSON(w, http.StatusOK, PreflightResult{OK: ok, Steps: steps})
 }
 
 // startEnvCheck launches the §9 compliance gate for a project: provisions a
 // throwaway workspace and verifies the derived contract. 202 + check id;
 // the UI polls GET /api/envchecks/{id}.
 func (s *Server) startEnvCheck(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Keep bool `json:"keep"`
-	}
+	var body EnvCheckRequest
 	if r.ContentLength > 0 && !readJSON(w, r, &body) {
 		return
 	}
@@ -331,7 +319,7 @@ func (s *Server) startEnvCheck(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"check_id": id})
+	writeJSON(w, http.StatusAccepted, EnvCheckRef{CheckID: id})
 }
 
 func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
@@ -392,11 +380,7 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name   string          `json:"name"`
-		YAML   string          `json:"yaml"`
-		Layout json.RawMessage `json:"layout"`
-	}
+	var body CreateFlowRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -432,10 +416,7 @@ func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		YAML   string          `json:"yaml"`
-		Layout json.RawMessage `json:"layout"`
-	}
+	var body UpdateFlowRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
@@ -473,31 +454,26 @@ func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
 // document, `warnings` are advisory only (PLAN5 M24 — this endpoint used to
 // report binding errors as warnings with ok:true, which read as advice).
 func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		YAML string `json:"yaml"`
-	}
+	var body ValidateFlowRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
 	f, err := flow.Parse("flow", []byte(body.YAML))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "errors": []string{err.Error()}})
+		writeJSON(w, http.StatusOK, FlowValidation{Errors: []string{err.Error()}})
 		return
 	}
 	// doc is the raw schema shape the graph editor edits (DESIGN3 §2.3).
 	doc, err := flow.ParseDoc("flow", []byte(body.YAML))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "errors": []string{err.Error()}})
+		writeJSON(w, http.StatusOK, FlowValidation{Errors: []string{err.Error()}})
 		return
 	}
-	resp := map[string]any{
-		"ok": true, "name": f.Name, "hash": f.Hash,
-		"stages": len(f.Stages), "agents": len(f.Agents), "doc": doc,
-	}
-	if len(f.Warnings) > 0 {
-		resp["warnings"] = f.Warnings
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, FlowValidation{
+		OK: true, Name: f.Name, Hash: f.Hash,
+		Stages: len(f.Stages), Agents: len(f.Agents), Doc: doc,
+		Warnings: f.Warnings,
+	})
 }
 
 func (s *Server) listFlowVersions(w http.ResponseWriter, r *http.Request) {

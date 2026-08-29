@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { api, ago, type Project, type Ticket } from '$lib/api';
+  import { api } from '$lib/api';
+  import { ago } from '$lib/format';
+  import type { Project, Ticket } from '$lib/domain';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
@@ -10,7 +12,7 @@
 
   onMount(async () => {
     try {
-      [tickets, projects] = await Promise.all([api.tickets(), api.projects()]);
+      [tickets, projects] = await Promise.all([api.tickets.list(), api.projects.list()]);
       loaded = true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -32,10 +34,10 @@
     <div>
       <strong>{t.title}</strong>
       <div class="small muted">
-        {#if t.source_key}<span class="chip mono">{t.source_key}</span>{/if}
-        {projectName(t.project_id)}
-        {#if t.base_branch}· <span class="mono">{t.base_branch}</span>{/if}
-        · {ago(t.created_at)}
+        {#if t.source?.key}<span class="chip mono">{t.source?.key}</span>{/if}
+        {projectName(t.projectId)}
+        {#if t.baseBranch}· <span class="mono">{t.baseBranch}</span>{/if}
+        · {ago(t.createdAt)}
       </div>
     </div>
     <span class="muted">→</span>

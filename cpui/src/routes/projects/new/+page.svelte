@@ -1,17 +1,18 @@
 <script lang="ts">
-  import { api, type FlowRow, type Integration } from '$lib/api';
+  import { api } from '$lib/api';
+  import type { Flow, Integration } from '$lib/domain';
   import ProjectForm from '$lib/ProjectForm.svelte';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
   let integrations = $state<Integration[]>([]);
-  let flows = $state<FlowRow[]>([]);
+  let flows = $state<Flow[]>([]);
   let loaded = $state(false);
   let error = $state('');
 
   onMount(async () => {
     try {
-      [integrations, flows] = await Promise.all([api.integrations(), api.flows()]);
+      [integrations, flows] = await Promise.all([api.integrations.list(), api.flows.list()]);
       loaded = true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);

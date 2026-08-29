@@ -2,7 +2,8 @@
   // Stored files as clickable chips: image thumbnails inline, a glyph
   // otherwise. kind picks the byte route — attachments (human-given) vs
   // snapshots (engine-captured record).
-  import { api, fmtBytes } from '$lib/api';
+  import { api } from '$lib/api';
+  import { fmtBytes } from '$lib/format';
 
   export interface FileChip {
     id: string;
@@ -15,7 +16,7 @@
   let { items, label = '' }: { items: FileChip[]; label?: string } = $props();
 
   const url = (f: FileChip) =>
-    f.kind === 'snapshot' ? api.snapshotUrl(f.id) : api.attachmentUrl(f.id);
+    f.kind === 'snapshot' ? api.files.snapshotUrl(f.id) : api.files.attachmentUrl(f.id);
 </script>
 
 {#if items.length}
