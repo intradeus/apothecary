@@ -250,6 +250,14 @@ type PreflightResult struct {
 	Steps []engine.PreflightStep `json:"steps"`
 }
 
+// RebuildRequest recreates a run's workspace container in place. NoCache
+// rebuilds the image from scratch: the build cache is keyed by what the build
+// reads, so a changed Dockerfile already rebuilds itself — this is for what a
+// cache key cannot see, like a floating base tag that moved upstream.
+type RebuildRequest struct {
+	NoCache bool `json:"no_cache,omitempty"`
+}
+
 // BuildCacheInfo is the project's devcontainer build cache: what it holds, and
 // whether the provisioner keeps one at all. It is what makes a second run of a
 // project fast, and the one piece of derived state worth a delete button.

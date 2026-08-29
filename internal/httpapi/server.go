@@ -374,7 +374,12 @@ func (s *Server) postResume(w http.ResponseWriter, r *http.Request) {
 // + its commits, re-runs bootstrap). Blocks until done — the run page shows
 // progress via the workspace-log tail and the rebuilding badge.
 func (s *Server) postRebuild(w http.ResponseWriter, r *http.Request) {
-	err := s.Engine.RebuildEnv(r.Context(), r.PathValue("id"))
+	// The body is optional: a plain rebuild is the common case, and an older
+	// client that sends nothing still gets one.
+	var body RebuildRequest
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
+
+	err := s.Engine.RebuildEnv(r.Context(), r.PathValue("id"), body.NoCache)
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest

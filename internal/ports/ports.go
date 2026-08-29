@@ -53,6 +53,13 @@ type EnvSpec struct {
 	// (`docker ps --filter label=apothecary.project=<name>`). Empty ⇒ the
 	// label is omitted.
 	Project string
+	// NoCache builds the workspace image from scratch, ignoring the project's
+	// build cache. The cache is keyed by what the build actually reads, so a
+	// changed Dockerfile or context file already rebuilds on its own — this is
+	// for the staleness a cache key cannot see: a floating base tag that moved,
+	// an `apt-get update` layer from three months ago. The fresh layers still
+	// REPLACE the cached ones, so one no-cache build fixes the next ten.
+	NoCache bool
 	// HarnessInstall is how to install the project's harnesses INSIDE the
 	// workspace — a repo-authored devcontainer runs the repo's own image,
 	// which knows nothing about opencode/codex, so the harness is injected as

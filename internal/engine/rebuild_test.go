@@ -19,14 +19,16 @@ import (
 // gate so a test can hold a rebuild in flight and observe concurrent ops.
 type rebuilderEnvp struct {
 	*fake.EnvProvisioner
-	calls   int32
-	started chan struct{} // closed the first time Rebuild is entered
-	release chan struct{} // Rebuild blocks until this is closed (nil = no block)
-	err     error
-	once    sync.Once
+	lastSpec ports.EnvSpec
+	calls    int32
+	started  chan struct{} // closed the first time Rebuild is entered
+	release  chan struct{} // Rebuild blocks until this is closed (nil = no block)
+	err      error
+	once     sync.Once
 }
 
 func (r *rebuilderEnvp) Rebuild(ctx context.Context, spec ports.EnvSpec) error {
+	r.lastSpec = spec
 	atomic.AddInt32(&r.calls, 1)
 	if r.started != nil {
 		r.once.Do(func() { close(r.started) })
@@ -70,7 +72,7 @@ func TestRebuildEmitsEventsAndPreservesState(t *testing.T) {
 	before := h.view(t, id)
 	h.res.Envp = &rebuilderEnvp{EnvProvisioner: h.envp}
 
-	if err := h.e.RebuildEnv(context.Background(), id); err != nil {
+	if err := h.e.RebuildEnv(context.Background(), id, false); err != nil {
 		t.Fatalf("RebuildEnv: %v", err)
 	}
 	evs, _ := h.store.Events(context.Background(), id, 0)
@@ -87,7 +89,7 @@ func TestRebuildEmitsEventsAndPreservesState(t *testing.T) {
 func TestRebuildUnsupportedProvisioner(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	id := completedWithEnv(t, h) // h.res.Envp stays the plain fake (no Rebuild)
-	err := h.e.RebuildEnv(context.Background(), id)
+	err := h.e.RebuildEnv(context.Background(), id, false)
 	if err == nil || !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("want unsupported error, got %v", err)
 	}
@@ -115,7 +117,7 @@ func TestRebuildRefusesActiveRun(t *testing.T) {
 	}()
 	h.res.Envp = &rebuilderEnvp{EnvProvisioner: h.envp}
 
-	err := h.e.RebuildEnv(ctx, "r1")
+	err := h.e.RebuildEnv(ctx, "r1", false)
 	if !errors.Is(err, ErrRunActive) {
 		t.Fatalf("want ErrRunActive, got %v", err)
 	}
@@ -128,11 +130,11 @@ func TestRebuildOpGateMutualExclusion(t *testing.T) {
 	h.res.Envp = reb
 
 	done := make(chan error, 1)
-	go func() { done <- h.e.RebuildEnv(context.Background(), id) }()
+	go func() { done <- h.e.RebuildEnv(context.Background(), id, false) }()
 	<-reb.started // first rebuild has claimed the gate and is blocking
 
 	// A second rebuild while the first holds the gate is refused.
-	if err := h.e.RebuildEnv(context.Background(), id); !errors.Is(err, ErrEnvOpInFlight) {
+	if err := h.e.RebuildEnv(context.Background(), id, false); !errors.Is(err, ErrEnvOpInFlight) {
 		t.Fatalf("second rebuild: want ErrEnvOpInFlight, got %v", err)
 	}
 	close(reb.release)
@@ -153,7 +155,7 @@ func TestReaperSkipsRebuildingEnv(t *testing.T) {
 	h.res.Envp = reb
 
 	done := make(chan error, 1)
-	go func() { done <- h.e.RebuildEnv(context.Background(), id) }()
+	go func() { done <- h.e.RebuildEnv(context.Background(), id, false) }()
 	<-reb.started
 
 	// Reaper runs while the rebuild holds the gate — must not destroy.
@@ -194,5 +196,23 @@ func TestEnvBadgesOverlayAndTTL(t *testing.T) {
 	clk = clk.Add(envOpErrorTTL + time.Second)
 	if got := h.e.EnvBadges()["r1"]; got != "stopped" {
 		t.Errorf("badge after TTL = %q, want stopped (fallback)", got)
+	}
+}
+
+// "Rebuild without cache" has to reach the provisioner, and a plain rebuild
+// has to keep the cache: silently throwing it away would cost the full build
+// every time someone recreated a container.
+func TestRebuildPassesNoCacheThrough(t *testing.T) {
+	for _, noCache := range []bool{true, false} {
+		h := newHarness(t, mustFlow(t, loopFlowDoc))
+		id := completedWithEnv(t, h)
+		rb := &rebuilderEnvp{EnvProvisioner: h.envp}
+		h.res.Envp = rb
+		if err := h.e.RebuildEnv(context.Background(), id, noCache); err != nil {
+			t.Fatalf("RebuildEnv(noCache=%v): %v", noCache, err)
+		}
+		if rb.lastSpec.NoCache != noCache {
+			t.Errorf("provisioner saw NoCache=%v, want %v", rb.lastSpec.NoCache, noCache)
+		}
 	}
 }

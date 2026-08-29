@@ -2090,6 +2090,33 @@ recording: the gateway is keyed by project NAME, not id, because that is what
 `Provision` passes it. Passing the id reads as "no cache" — `available:false`
 on a project holding 800MB of cache, which is exactly how it was found.
 
+### Rebuilding without it
+
+A checkbox beside "Rebuild workspace" (`no_cache` on the rebuild endpoint →
+`EnvSpec.NoCache` → `--build-no-cache`). Deliberately manual, and deliberately
+NOT a config-change detector: buildkit's cache key already hashes what the
+build actually reads — the resolved base-image digest, every instruction, every
+context file — so a changed Dockerfile, devcontainer.json or compose build
+config rebuilds itself. A detector of our own would hash what we GUESS it reads,
+which is both weaker (a compose file outside the .devcontainer folder) and
+noisier (a comment edit forcing 77s).
+
+What a cache key genuinely cannot see is time: a floating `FROM node:22` whose
+tag moved, an `apt-get update` layer from three months ago. No config changed,
+so no detector would fire — a human pressing the button is the honest interface.
+
+Two things make the checkbox true rather than decorative: `--no-cache` beats
+`--cache-from` in buildkit (measured in a scratch daemon: 1s warm vs 32s with
+--no-cache against the same populated registry), and the CLI drops its own
+`--cache-from` when the flag is set. `--cache-to` and the push still run, so
+ONE no-cache build repairs the cache for every run after it.
+
+Worth recording next to this: the pull-through mirror's `proxy.ttl` is unset,
+and the distribution default is 168h. For a floating tag that is up to a week
+of staleness BEFORE the build cache is involved at all — buildkit resolves FROM
+against the mirror, and a fresh sandbox has no local image to resolve from.
+Tuning that is a one-line change nobody has made deliberately yet.
+
 ### What it costs on disk
 
 ~800MB per project for the greeter test project, and it is per project by

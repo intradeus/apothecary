@@ -1513,3 +1513,60 @@ func TestProvisionOmitsCacheFlagsWithoutGateway(t *testing.T) {
 		t.Errorf("cache flags without a registry to hold the cache: %v", up.args)
 	}
 }
+
+// "Rebuild without cache" has to actually bypass the cache, not merely skip
+// writing it: the point is a floating base tag that moved upstream, which a
+// cache key cannot see. The CLI drops its own --cache-from when this is set,
+// and --no-cache beats --cache-from in buildkit (verified directly: 1s warm
+// vs 32s with --no-cache against the same populated registry).
+func TestRebuildWithoutCachePassesNoCache(t *testing.T) {
+	r := &scriptRunner{responses: append(
+		[]response{{code: 0}}, // git clone
+		sandboxResp([]response{
+			{stdout: upOK},
+			{code: 0},
+			{stdout: "cid1\n"},
+			{code: 0},
+			{code: 0},
+			{code: 0},
+		})...)}
+	a := newTestAdapter(t, r)
+	armSandbox(t, a, "apothecary-run1")
+	seedDevcontainer(t, a, "apothecary-run1")
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git", NoCache: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	up := find(t, r.calls, "devcontainer", "up")
+	if !strings.Contains(strings.Join(up.args, " "), "--build-no-cache") {
+		t.Errorf("no-cache rebuild did not reach the build: %v", up.args)
+	}
+}
+
+// ...and the default stays cached. A rebuild that silently threw the cache
+// away would cost 77s every time someone recreated a container.
+func TestRebuildKeepsTheCacheByDefault(t *testing.T) {
+	r := &scriptRunner{responses: append(
+		[]response{{code: 0}},
+		sandboxResp([]response{
+			{stdout: upOK},
+			{code: 0},
+			{stdout: "cid1\n"},
+			{code: 0},
+			{code: 0},
+			{code: 0},
+		})...)}
+	a := newTestAdapter(t, r)
+	armSandbox(t, a, "apothecary-run1")
+	seedDevcontainer(t, a, "apothecary-run1")
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	up := find(t, r.calls, "devcontainer", "up")
+	if strings.Contains(strings.Join(up.args, " "), "--build-no-cache") {
+		t.Errorf("a plain rebuild must keep the cache: %v", up.args)
+	}
+}

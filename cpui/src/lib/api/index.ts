@@ -140,8 +140,13 @@ export const runs = {
     (await unwrap(gen.restartRun({ path: { id }, body: runInputBody(opts) }))).run_id,
   /** Recreate the container in place (keeps the checkout and the commits).
    *  Blocks until done; the run page shows progress through the workspace
-   *  log tail and the rebuilding badge. */
-  rebuild: (id: string) => unwrapVoid(gen.rebuildWorkspace({ path: { id } })),
+   *  log tail and the rebuilding badge.
+   *
+   *  noCache rebuilds the image from scratch. The build cache is keyed by what
+   *  the build reads, so a changed Dockerfile already rebuilds itself — this is
+   *  for what a cache key cannot see, like a floating base tag that moved. */
+  rebuild: (id: string, noCache = false) =>
+    unwrapVoid(gen.rebuildWorkspace({ path: { id }, body: { no_cache: noCache } })),
 
   /** Lazily start code-server in the workspace and get its browser URL.
    *  Blocks while code-server boots on first open. */

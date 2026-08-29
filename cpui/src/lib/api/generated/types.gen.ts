@@ -465,6 +465,10 @@ export type RaisePingRequest = {
     type: string;
 };
 
+export type RebuildRequest = {
+    no_cache?: boolean;
+};
+
 export type RepoConfig = {
     agents_md_path: string;
     default_branch: string;
@@ -2971,7 +2975,7 @@ export type GetRunPortsResponses = {
 export type GetRunPortsResponse = GetRunPortsResponses[keyof GetRunPortsResponses];
 
 export type RebuildWorkspaceData = {
-    body?: never;
+    body: RebuildRequest;
     path: {
         id: string;
     };

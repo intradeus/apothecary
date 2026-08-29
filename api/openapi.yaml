@@ -1020,6 +1020,11 @@ components:
         - question
         - type
       type: object
+    RebuildRequest:
+      properties:
+        no_cache:
+          type: boolean
+      type: object
     RepoConfig:
       properties:
         agents_md_path:
@@ -3833,6 +3838,7 @@ paths:
         - workspace
   /api/runs/{id}/rebuild:
     post:
+      description: no_cache rebuilds the image from scratch — for the staleness a cache key cannot see, like a floating base tag that moved.
       operationId: rebuildWorkspace
       parameters:
         - in: path
@@ -3840,6 +3846,12 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebuildRequest'
+        required: true
       responses:
         "202":
           description: Accepted

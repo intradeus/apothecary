@@ -20,7 +20,7 @@ var ErrRunActive = errors.New("run is still active; pause or abort it first")
 // idempotent bootstrap (a fresh container has no /apothecary state). Distinct
 // from restart (a new run) and resume (re-enter a stalled stage). The op-gate
 // serializes it against the reaper/reconciler/destroy; a live run refuses.
-func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
+func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (err error) {
 	// Fail-fast pre-checks BEFORE claiming the gate, so a refused call never
 	// touches op-state. A live loop → refuse (see ErrRunActive).
 	e.mu.Lock()
@@ -77,6 +77,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 	}
 	spec := ports.EnvSpec{
 		RunID:                runID,
+		NoCache:              noCache,
 		RepoURL:              res.RepoRef.URL,
 		Branch:               v.Branch,
 		Name:                 workspaceName(nameBranch, runID),

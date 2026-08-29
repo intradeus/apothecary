@@ -409,11 +409,17 @@
   // build + bootstrap, so a dedicated flag drives the button's busy state. The
   // rebuilding badge + workspace-log tail show live progress meanwhile.
   let rebuilding = $state(false);
+  // Off by default: the build cache is keyed by what the build reads, so a
+  // changed devcontainer.json or Dockerfile already rebuilds itself. This is
+  // for what a cache key cannot see — a floating base tag that moved, an
+  // apt-get layer from months ago — and it costs the full build (~77s on a
+  // small project) to get right.
+  let rebuildNoCache = $state(false);
   async function rebuild() {
     rebuilding = true;
     error = '';
     try {
-      await api.runs.rebuild(runId);
+      await api.runs.rebuild(runId, rebuildNoCache);
       await refreshRun();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -650,6 +656,11 @@
           title="Recreate this run's container in place — keeps the run and its commits, re-runs setup (e.g. to apply devcontainer.json changes). Same run, same branch.">
           {rebuilding ? 'Rebuilding…' : 'Rebuild workspace'}
         </button>
+        <label class="row small muted" style="margin:0; gap:4px"
+          title="Ignore the project's build cache and rebuild every layer. A changed Dockerfile or devcontainer.json already rebuilds on its own — use this when the cache is stale in a way it cannot see, like a base image tag that moved upstream. The fresh layers replace the cached ones.">
+          <input type="checkbox" bind:checked={rebuildNoCache} disabled={rebuilding} style="width:auto" />
+          without cache
+        </label>
       {/if}
       {#if run.state !== 'archived'}
         <button onclick={() => act(() => api.runs.archive(runId))}>Archive</button>

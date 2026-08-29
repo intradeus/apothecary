@@ -510,6 +510,13 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 		}
 		args = append(args, "--additional-features", string(blob))
 	}
+	if spec.NoCache {
+		// The CLI drops every --cache-from of its own accord when this is set,
+		// so the flags below stay harmless — and --cache-to still runs, which
+		// is what makes one no-cache build repair the cache for the next ones.
+		plog("→ rebuilding without the cache (fresh base image and layers)\n")
+		args = append(args, "--build-no-cache")
+	}
 	// The build cache. A run's inner daemon is thrown away with the run, so
 	// without this every run rebuilds the devcontainer image from nothing —
 	// measured at 77s of a 90s provision on a small project. buildkit exports

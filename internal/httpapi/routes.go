@@ -142,7 +142,8 @@ func (s *Server) routes() []Route {
 			Handler: s.postRestart, Body: RestartRunRequest{}, Returns: RunRef{}, Status: http.StatusCreated},
 		{Method: "POST", Path: "/api/runs/{id}/rebuild", ID: "rebuildWorkspace", Tag: tagWorkspace,
 			Summary: "Recreate the run's container in place, keeping the checkout",
-			Handler: s.postRebuild, Status: http.StatusAccepted},
+			Doc:     "no_cache rebuilds the image from scratch — for the staleness a cache key cannot see, like a floating base tag that moved.",
+			Handler: s.postRebuild, Body: RebuildRequest{}, Status: http.StatusAccepted},
 
 		// --- egress ---------------------------------------------------------
 		{Method: "GET", Path: "/api/egress-defaults", ID: "getEgressDefaults", Tag: tagEgress,
