@@ -299,6 +299,29 @@ type EgressController interface {
 	EgressPolicy(ctx context.Context, env EnvID) (EgressPolicy, error)
 }
 
+// BuildCacheInfo is what a project's devcontainer build cache holds right now.
+// Available is false when the provisioner has a cache but cannot be reached
+// for it (no gateway up yet) — distinct from an empty cache, which is a real
+// answer.
+type BuildCacheInfo struct {
+	Available bool  `json:"available"`
+	Bytes     int64 `json:"bytes"`
+}
+
+// BuildCacheController is an OPTIONAL EnvProvisioner capability: report and
+// wipe the project's devcontainer build cache.
+//
+// The cache is per PROJECT and outlives every run, which is the point — a run's
+// daemon is thrown away, so without a cache that outlives it each run rebuilds
+// the image from scratch. It is also the one piece of derived state a human
+// occasionally has to delete: a base image that moved under a floating tag, a
+// feature install that cached a bad layer. Provisioners without one simply
+// don't implement this and the engine says so honestly.
+type BuildCacheController interface {
+	BuildCache(ctx context.Context, project string) (BuildCacheInfo, error)
+	ClearBuildCache(ctx context.Context, project string) error
+}
+
 // PortConn is one exposed workspace port as the engine consumes it: a
 // dialer for per-browser-connection streams plus teardown. The ENGINE owns
 // the handle (provisioner adapter instances are refcount-closed on config

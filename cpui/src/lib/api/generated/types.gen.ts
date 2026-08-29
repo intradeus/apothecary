@@ -46,6 +46,11 @@ export type BranchInfo = {
     name: string;
 };
 
+export type BuildCacheInfo = {
+    available: boolean;
+    bytes: number;
+};
+
 export type ChannelEntry = {
     config: {
         [key: string]: unknown;
@@ -58,6 +63,11 @@ export type CheckStep = {
     detail?: string;
     id: string;
     status: string;
+};
+
+export type CopyFlowRequest = {
+    name?: string;
+    to_project_id: string;
 };
 
 export type CreateFlowRequest = {
@@ -231,6 +241,7 @@ export type Flow = {
     hash?: string;
     layout?: unknown;
     name?: string;
+    project_id?: string;
     shadows_builtin?: boolean;
     updated_at?: string;
     yaml?: string;
@@ -244,14 +255,6 @@ export type FlowDoc = {
     name: string;
     stages: Array<DocStage> | null;
     version: number;
-};
-
-export type FlowRow = {
-    hash: string;
-    layout?: unknown;
-    name: string;
-    updated_at: string;
-    yaml: string;
 };
 
 export type FlowValidation = {
@@ -269,6 +272,7 @@ export type FlowVersion = {
     created_at: string;
     hash: string;
     name: string;
+    project_id: string;
     yaml: string;
 };
 
@@ -957,47 +961,14 @@ export type GetEnvCheckResponses = {
 
 export type GetEnvCheckResponse = GetEnvCheckResponses[keyof GetEnvCheckResponses];
 
-export type GetFlowVersionData = {
-    body?: never;
-    path: {
-        hash: string;
-    };
-    query?: never;
-    url: '/api/flow-versions/{hash}';
-};
-
-export type GetFlowVersionErrors = {
-    /**
-     * error
-     */
-    400: unknown;
-    /**
-     * error
-     */
-    404: unknown;
-    /**
-     * error
-     */
-    503: unknown;
-};
-
-export type GetFlowVersionResponses = {
-    /**
-     * OK
-     */
-    200: FlowVersion;
-};
-
-export type GetFlowVersionResponse = GetFlowVersionResponses[keyof GetFlowVersionResponses];
-
-export type ListFlowsData = {
+export type ListFlowTemplatesData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/flows';
+    url: '/api/flow-templates';
 };
 
-export type ListFlowsErrors = {
+export type ListFlowTemplatesErrors = {
     /**
      * error
      */
@@ -1008,23 +979,23 @@ export type ListFlowsErrors = {
     503: unknown;
 };
 
-export type ListFlowsResponses = {
+export type ListFlowTemplatesResponses = {
     /**
      * OK
      */
     200: Array<Flow> | null;
 };
 
-export type ListFlowsResponse = ListFlowsResponses[keyof ListFlowsResponses];
+export type ListFlowTemplatesResponse = ListFlowTemplatesResponses[keyof ListFlowTemplatesResponses];
 
-export type CreateFlowData = {
-    body: CreateFlowRequest;
+export type ListAllFlowsData = {
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/flows';
 };
 
-export type CreateFlowErrors = {
+export type ListAllFlowsErrors = {
     /**
      * error
      */
@@ -1032,161 +1003,17 @@ export type CreateFlowErrors = {
     /**
      * error
      */
-    409: unknown;
-    /**
-     * error
-     */
     503: unknown;
 };
 
-export type CreateFlowResponses = {
-    /**
-     * Created
-     */
-    201: FlowRow;
-};
-
-export type CreateFlowResponse = CreateFlowResponses[keyof CreateFlowResponses];
-
-export type DeleteFlowData = {
-    body?: never;
-    path: {
-        name: string;
-    };
-    query?: never;
-    url: '/api/flows/{name}';
-};
-
-export type DeleteFlowErrors = {
-    /**
-     * error
-     */
-    400: unknown;
-    /**
-     * error
-     */
-    404: unknown;
-    /**
-     * error
-     */
-    409: unknown;
-    /**
-     * error
-     */
-    503: unknown;
-};
-
-export type DeleteFlowResponses = {
-    /**
-     * No Content
-     */
-    204: void;
-};
-
-export type DeleteFlowResponse = DeleteFlowResponses[keyof DeleteFlowResponses];
-
-export type GetFlowData = {
-    body?: never;
-    path: {
-        name: string;
-    };
-    query?: never;
-    url: '/api/flows/{name}';
-};
-
-export type GetFlowErrors = {
-    /**
-     * error
-     */
-    400: unknown;
-    /**
-     * error
-     */
-    404: unknown;
-    /**
-     * error
-     */
-    503: unknown;
-};
-
-export type GetFlowResponses = {
+export type ListAllFlowsResponses = {
     /**
      * OK
      */
-    200: Flow;
+    200: Array<Flow> | null;
 };
 
-export type GetFlowResponse = GetFlowResponses[keyof GetFlowResponses];
-
-export type UpdateFlowData = {
-    body: UpdateFlowRequest;
-    path: {
-        name: string;
-    };
-    query?: never;
-    url: '/api/flows/{name}';
-};
-
-export type UpdateFlowErrors = {
-    /**
-     * error
-     */
-    400: unknown;
-    /**
-     * error
-     */
-    404: unknown;
-    /**
-     * error
-     */
-    409: unknown;
-    /**
-     * error
-     */
-    503: unknown;
-};
-
-export type UpdateFlowResponses = {
-    /**
-     * OK
-     */
-    200: Flow;
-};
-
-export type UpdateFlowResponse = UpdateFlowResponses[keyof UpdateFlowResponses];
-
-export type ListFlowVersionsData = {
-    body?: never;
-    path: {
-        name: string;
-    };
-    query?: never;
-    url: '/api/flows/{name}/versions';
-};
-
-export type ListFlowVersionsErrors = {
-    /**
-     * error
-     */
-    400: unknown;
-    /**
-     * error
-     */
-    404: unknown;
-    /**
-     * error
-     */
-    503: unknown;
-};
-
-export type ListFlowVersionsResponses = {
-    /**
-     * OK
-     */
-    200: Array<FlowVersion> | null;
-};
-
-export type ListFlowVersionsResponse = ListFlowVersionsResponses[keyof ListFlowVersionsResponses];
+export type ListAllFlowsResponse = ListAllFlowsResponses[keyof ListAllFlowsResponses];
 
 export type ValidateFlowData = {
     body: ValidateFlowRequest;
@@ -1927,6 +1754,76 @@ export type ListProjectBranchesResponses = {
 
 export type ListProjectBranchesResponse = ListProjectBranchesResponses[keyof ListProjectBranchesResponses];
 
+export type ClearBuildCacheData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/build-cache';
+};
+
+export type ClearBuildCacheErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    409: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type ClearBuildCacheResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type ClearBuildCacheResponse = ClearBuildCacheResponses[keyof ClearBuildCacheResponses];
+
+export type GetBuildCacheData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/build-cache';
+};
+
+export type GetBuildCacheErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type GetBuildCacheResponses = {
+    /**
+     * OK
+     */
+    200: BuildCacheInfo;
+};
+
+export type GetBuildCacheResponse = GetBuildCacheResponses[keyof GetBuildCacheResponses];
+
 export type GetProjectEgressAuditData = {
     body?: never;
     path: {
@@ -2009,6 +1906,292 @@ export type StartEnvCheckResponses = {
 };
 
 export type StartEnvCheckResponse = StartEnvCheckResponses[keyof StartEnvCheckResponses];
+
+export type GetFlowVersionData = {
+    body?: never;
+    path: {
+        id: string;
+        hash: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flow-versions/{hash}';
+};
+
+export type GetFlowVersionErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type GetFlowVersionResponses = {
+    /**
+     * OK
+     */
+    200: FlowVersion;
+};
+
+export type GetFlowVersionResponse = GetFlowVersionResponses[keyof GetFlowVersionResponses];
+
+export type ListFlowsData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flows';
+};
+
+export type ListFlowsErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type ListFlowsResponses = {
+    /**
+     * OK
+     */
+    200: Array<Flow> | null;
+};
+
+export type ListFlowsResponse = ListFlowsResponses[keyof ListFlowsResponses];
+
+export type CreateFlowData = {
+    body: CreateFlowRequest;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flows';
+};
+
+export type CreateFlowErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    409: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type CreateFlowResponses = {
+    /**
+     * Created
+     */
+    201: Flow;
+};
+
+export type CreateFlowResponse = CreateFlowResponses[keyof CreateFlowResponses];
+
+export type DeleteFlowData = {
+    body?: never;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flows/{name}';
+};
+
+export type DeleteFlowErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    409: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type DeleteFlowResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteFlowResponse = DeleteFlowResponses[keyof DeleteFlowResponses];
+
+export type GetFlowData = {
+    body?: never;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flows/{name}';
+};
+
+export type GetFlowErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type GetFlowResponses = {
+    /**
+     * OK
+     */
+    200: Flow;
+};
+
+export type GetFlowResponse = GetFlowResponses[keyof GetFlowResponses];
+
+export type UpdateFlowData = {
+    body: UpdateFlowRequest;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flows/{name}';
+};
+
+export type UpdateFlowErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    409: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type UpdateFlowResponses = {
+    /**
+     * OK
+     */
+    200: Flow;
+};
+
+export type UpdateFlowResponse = UpdateFlowResponses[keyof UpdateFlowResponses];
+
+export type CopyFlowData = {
+    body: CopyFlowRequest;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flows/{name}/copy';
+};
+
+export type CopyFlowErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    409: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type CopyFlowResponses = {
+    /**
+     * Created
+     */
+    201: Flow;
+};
+
+export type CopyFlowResponse = CopyFlowResponses[keyof CopyFlowResponses];
+
+export type ListFlowVersionsData = {
+    body?: never;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/projects/{id}/flows/{name}/versions';
+};
+
+export type ListFlowVersionsErrors = {
+    /**
+     * error
+     */
+    400: unknown;
+    /**
+     * error
+     */
+    404: unknown;
+    /**
+     * error
+     */
+    503: unknown;
+};
+
+export type ListFlowVersionsResponses = {
+    /**
+     * OK
+     */
+    200: Array<FlowVersion> | null;
+};
+
+export type ListFlowVersionsResponse = ListFlowVersionsResponses[keyof ListFlowVersionsResponses];
 
 export type PreflightProjectData = {
     body?: never;

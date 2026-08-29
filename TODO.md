@@ -1,7 +1,6 @@
 - 3) merge conflicts / rebase ? PR comments fixes ?
 - 4) `channels` fold into `integrations`.
 - 5) db migration + migration table checks and simplify
-- 6) openapi + client gen for frontend.
 - 7) redo everything in DDD
 - 17) work on run / workspace status machine. Bit clunky now. "restart" could think restart the machine but no its the run, etc. Recovery if server shutsdown seems disastrous right now - we have an event store so we could replay ? Check the statuses of coder for inspiration.
 - 19) DinD sandbox follow-ups: (c) sysbox runtime to drop `--privileged` — SHIPPED opt-in via `APOTHECARY_SANDBOX_RUNTIME`; remaining: verify `docker:29-dind` actually runs under sysbox on a supported host (sysbox steers away from dind images), then decide whether it can ever be the default.

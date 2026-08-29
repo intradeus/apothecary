@@ -30,12 +30,15 @@ type flowResp struct {
 	ShadowsBuiltin bool `json:"shadows_builtin,omitempty"`
 }
 
-func builtinFlowRow(name string) (confstore.FlowRow, bool) {
+// builtinFlowRow presents a compiled-in template as a row. projectID is the
+// project it is being offered TO — the document has no project of its own
+// until that project saves it, and Builtin on the response says which it is.
+func builtinFlowRow(projectID, name string) (confstore.FlowRow, bool) {
 	y, ok := builtin.FlowYAML(name)
 	if !ok {
 		return confstore.FlowRow{}, false
 	}
-	return confstore.FlowRow{Name: name, YAML: y, Hash: builtin.Flow(name).Hash}, true
+	return confstore.FlowRow{ProjectID: projectID, Name: name, YAML: y, Hash: builtin.Flow(name).Hash}, true
 }
 
 // Config-plane routes (DESIGN2 §10). Secrets are write-only: requests carry
@@ -356,8 +359,12 @@ func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 
 // --- flows ------------------------------------------------------------------
 
+// listFlows serves one project's flows, or every project's when no project is
+// addressed (the overview). Built-in templates ride along on a project listing
+// as the names that project could adopt but has not.
 func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Conf.ListFlows(r.Context())
+	projectID := r.PathValue("id")
+	rows, err := s.Conf.ListFlows(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -368,14 +375,34 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 		have[row.Name] = true
 		out = append(out, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
 	}
-	for _, name := range builtin.FlowNames() {
-		if have[name] {
-			continue
+	if projectID != "" {
+		// A built-in is a template until this project saves it, at which
+		// point it becomes the project's own row above.
+		for _, name := range builtin.FlowNames() {
+			if have[name] {
+				continue
+			}
+			row, _ := builtinFlowRow(projectID, name)
+			out = append(out, flowResp{FlowRow: row, Builtin: true})
 		}
-		row, _ := builtinFlowRow(name)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ProjectID != out[j].ProjectID {
+			return out[i].ProjectID < out[j].ProjectID
+		}
+		return out[i].Name < out[j].Name
+	})
+	writeJSON(w, http.StatusOK, out)
+}
+
+// listBuiltinFlows serves the compiled-in templates on their own: the library
+// a project copies from, with no project of their own.
+func (s *Server) listBuiltinFlows(w http.ResponseWriter, r *http.Request) {
+	out := make([]flowResp, 0, len(builtin.FlowNames()))
+	for _, name := range builtin.FlowNames() {
+		row, _ := builtinFlowRow("", name)
 		out = append(out, flowResp{FlowRow: row, Builtin: true})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -384,26 +411,50 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if _, err := s.Conf.GetFlow(r.Context(), body.Name); err == nil {
-		writeErr(w, http.StatusConflict, "flow "+body.Name+" already exists (PUT to update)")
+	projectID := r.PathValue("id")
+	if _, err := s.Conf.GetFlow(r.Context(), projectID, body.Name); err == nil {
+		writeErr(w, http.StatusConflict, "flow "+body.Name+" already exists in this project (PUT to update)")
 		return
 	} else if !errors.Is(err, confstore.ErrNotFound) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	row, err := s.Conf.SaveFlow(r.Context(), body.Name, body.YAML, body.Layout)
+	row, err := s.Conf.SaveFlow(r.Context(), projectID, body.Name, body.YAML, body.Layout)
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, row)
+	writeJSON(w, http.StatusCreated, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
+}
+
+// copyFlow clones a flow into another project — how a good flow spreads now
+// that flows are owned rather than shared. The source may be one of this
+// project's flows or a built-in template it has not adopted yet.
+func (s *Server) copyFlow(w http.ResponseWriter, r *http.Request) {
+	var body CopyFlowRequest
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.ToProjectID == "" {
+		writeErr(w, http.StatusBadRequest, "to_project_id is required")
+		return
+	}
+	row, err := s.Conf.CopyFlow(r.Context(), r.PathValue("id"), r.PathValue("name"),
+		body.ToProjectID, body.Name)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
 }
 
 func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	row, err := s.Conf.GetFlow(r.Context(), name)
+	projectID, name := r.PathValue("id"), r.PathValue("name")
+	row, err := s.Conf.GetFlow(r.Context(), projectID, name)
 	if errors.Is(err, confstore.ErrNotFound) {
-		if brow, ok := builtinFlowRow(name); ok {
+		// Not saved here yet: serve the built-in template this project would
+		// run, marked as such so the editor offers "save to this project".
+		if brow, ok := builtinFlowRow(projectID, name); ok {
 			writeJSON(w, http.StatusOK, flowResp{FlowRow: brow, Builtin: true})
 			return
 		}
@@ -420,7 +471,7 @@ func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	row, err := s.Conf.SaveFlow(r.Context(), r.PathValue("name"), body.YAML, body.Layout)
+	row, err := s.Conf.SaveFlow(r.Context(), r.PathValue("id"), r.PathValue("name"), body.YAML, body.Layout)
 	if err != nil {
 		confErr(w, err)
 		return
@@ -429,12 +480,12 @@ func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if err := s.Conf.DeleteFlow(r.Context(), name); err != nil {
+	projectID, name := r.PathValue("id"), r.PathValue("name")
+	if err := s.Conf.DeleteFlow(r.Context(), projectID, name); err != nil {
 		if errors.Is(err, confstore.ErrNotFound) && builtin.Flow(name) != nil {
-			// Deleting a DB override IS "reset to default"; with no override
-			// there is nothing to delete — built-ins live in the binary.
-			writeErr(w, http.StatusConflict, "flow "+name+" is built-in; there is no override to delete")
+			// Deleting this project's copy IS "reset to the template"; with no
+			// copy there is nothing to delete — built-ins live in the binary.
+			writeErr(w, http.StatusConflict, "flow "+name+" is the built-in template; this project has no copy to delete")
 			return
 		}
 		confErr(w, err)
@@ -443,11 +494,6 @@ func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// validateFlow runs the parser without saving — line-precise errors travel
-// verbatim (§7). An optional project_id lets it also check stage bindings
-// against that project's agent decls (DESIGN4 §1); those findings are
-// advisory (warnings, never ok:false) because flows are project-independent
-// and the enforcing check runs at run creation.
 // validateFlow answers the editor with the document's real verdict. Since v3
 // a flow carries its agents, so every contract violation is a parse error and
 // there is no second, project-aware pass to fold in: `errors` refuse the
@@ -477,7 +523,7 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listFlowVersions(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Conf.FlowVersions(r.Context(), r.PathValue("name"))
+	rows, err := s.Conf.FlowVersions(r.Context(), r.PathValue("id"), r.PathValue("name"))
 	if err != nil {
 		confErr(w, err)
 		return
@@ -489,7 +535,7 @@ func (s *Server) listFlowVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getFlowVersion(w http.ResponseWriter, r *http.Request) {
-	v, err := s.Conf.FlowVersion(r.Context(), r.PathValue("hash"))
+	v, err := s.Conf.FlowVersion(r.Context(), r.PathValue("id"), r.PathValue("hash"))
 	if err != nil {
 		confErr(w, err)
 		return
@@ -524,4 +570,37 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, set)
+}
+
+// --- build cache -------------------------------------------------------------
+
+// getBuildCache reports the project's devcontainer build cache. A provisioner
+// without one answers 503: the UI then says so rather than showing an empty
+// cache that will never fill.
+func (s *Server) getBuildCache(w http.ResponseWriter, r *http.Request) {
+	info, err := s.Engine.BuildCache(r.Context(), r.PathValue("id"))
+	if errors.Is(err, engine.ErrBuildCacheOff) {
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, BuildCacheInfo{Available: info.Available, Bytes: info.Bytes})
+}
+
+// deleteBuildCache empties it. The next build repopulates it, so this is a
+// safe button: the worst case is one slow build.
+func (s *Server) deleteBuildCache(w http.ResponseWriter, r *http.Request) {
+	err := s.Engine.ClearBuildCache(r.Context(), r.PathValue("id"))
+	if errors.Is(err, engine.ErrBuildCacheOff) {
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

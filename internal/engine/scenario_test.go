@@ -2189,11 +2189,11 @@ type brokenSource struct {
 	inner flow.MapSource
 }
 
-func (b brokenSource) Get(ctx context.Context, name string) (*flow.Flow, error) {
+func (b brokenSource) Get(ctx context.Context, projectID, name string) (*flow.Flow, error) {
 	if name == b.name {
 		return nil, &flow.Error{File: name, Line: 4, Msg: `stage "build": "verdict" is retired`}
 	}
-	return b.inner.Get(ctx, name)
+	return b.inner.Get(ctx, projectID, name)
 }
 
 // TestWaitStageBlocksUntilSignal: a wait stage parks the run on an external

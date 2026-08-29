@@ -19,6 +19,7 @@ import type {
   ActionSpec,
   Attachment,
   Branch,
+  BuildCache,
   ChannelEntry,
   EgressAuditRow,
   EgressDenial,
@@ -317,7 +318,19 @@ export const projects = {
     (await unwrap(gen.startEnvCheck({ path: { id }, body: { keep } }))).check_id,
 
   envCheck: async (checkId: string): Promise<EnvCheck> =>
-    map.toEnvCheck(await unwrap(gen.getEnvCheck({ path: { id: checkId } })))
+    map.toEnvCheck(await unwrap(gen.getEnvCheck({ path: { id: checkId } }))),
+
+  /** The devcontainer build cache: what makes a second run of this project
+   *  fast. null when the provisioner keeps none — a different answer from an
+   *  empty one, and the UI says so. */
+  buildCache: async (id: string): Promise<BuildCache | null> => {
+    const w = await unwrapOptional(gen.getBuildCache({ path: { id } }));
+    return w ? map.toBuildCache(w) : null;
+  },
+
+  /** Empty it. The next build repopulates it, so the cost of being wrong is
+   *  one slow build. */
+  clearBuildCache: (id: string) => unwrapVoid(gen.clearBuildCache({ path: { id } }))
 };
 
 // --- integrations ------------------------------------------------------------
@@ -362,30 +375,65 @@ export const integrations = {
 
 // --- flows -------------------------------------------------------------------
 
+// A flow belongs to one project, so every call names it. The two exceptions
+// are honest ones: validate is pure parsing, and templates belong to nobody
+// until a project adopts one.
 export const flows = {
-  list: async (): Promise<Flow[]> => many(await unwrap(gen.listFlows()), map.toFlow),
+  /** Every project's flows — the cross-project overview. */
+  listAll: async (): Promise<Flow[]> => many(await unwrap(gen.listAllFlows()), map.toFlow),
 
-  get: async (name: string): Promise<Flow> =>
-    map.toFlow(await unwrap(gen.getFlow({ path: { name } }))),
+  /** One project's flows, plus the templates it has not adopted. */
+  list: async (projectId: string): Promise<Flow[]> =>
+    many(await unwrap(gen.listFlows({ path: { id: projectId } })), map.toFlow),
 
-  create: async (name: string, yaml: string, layout?: FlowLayout): Promise<Flow> =>
-    map.toFlow(await unwrap(gen.createFlow({ body: { name, yaml, ...(layout ? { layout } : {}) } }))),
+  /** The compiled-in templates, owned by nobody. */
+  templates: async (): Promise<Flow[]> =>
+    many(await unwrap(gen.listFlowTemplates()), map.toFlow),
 
-  save: async (name: string, yaml: string, layout?: FlowLayout): Promise<Flow> =>
+  /** One of a project's flows. Falls back to the built-in template of that
+   *  name (marked builtin) when the project has not saved its own. */
+  get: async (projectId: string, name: string): Promise<Flow> =>
+    map.toFlow(await unwrap(gen.getFlow({ path: { id: projectId, name } }))),
+
+  create: async (projectId: string, name: string, yaml: string, layout?: FlowLayout): Promise<Flow> =>
     map.toFlow(
-      await unwrap(gen.updateFlow({ path: { name }, body: { yaml, ...(layout ? { layout } : {}) } }))
+      await unwrap(
+        gen.createFlow({ path: { id: projectId }, body: { name, yaml, ...(layout ? { layout } : {}) } })
+      )
     ),
 
-  remove: (name: string) => unwrapVoid(gen.deleteFlow({ path: { name } })),
+  /** Saving a template's name for the first time creates this project's copy. */
+  save: async (projectId: string, name: string, yaml: string, layout?: FlowLayout): Promise<Flow> =>
+    map.toFlow(
+      await unwrap(
+        gen.updateFlow({ path: { id: projectId, name }, body: { yaml, ...(layout ? { layout } : {}) } })
+      )
+    ),
 
+  remove: (projectId: string, name: string) =>
+    unwrapVoid(gen.deleteFlow({ path: { id: projectId, name } })),
+
+  /** Clone a flow into another project. The copy is a new document with its
+   *  own history: editing it never reaches back to the original. */
+  copy: async (projectId: string, name: string, toProjectId: string, newName?: string): Promise<Flow> =>
+    map.toFlow(
+      await unwrap(
+        gen.copyFlow({
+          path: { id: projectId, name },
+          body: { to_project_id: toProjectId, ...(newName ? { name: newName } : {}) }
+        })
+      )
+    ),
+
+  /** Project-independent: the parser checks the document itself. */
   validate: async (yaml: string): Promise<FlowValidation> =>
     map.toFlowValidation(await unwrap(gen.validateFlow({ body: { yaml } }))),
 
-  versions: async (name: string): Promise<FlowVersion[]> =>
-    many(await unwrap(gen.listFlowVersions({ path: { name } })), map.toFlowVersion),
+  versions: async (projectId: string, name: string): Promise<FlowVersion[]> =>
+    many(await unwrap(gen.listFlowVersions({ path: { id: projectId, name } })), map.toFlowVersion),
 
-  version: async (hash: string): Promise<FlowVersion> =>
-    map.toFlowVersion(await unwrap(gen.getFlowVersion({ path: { hash } })))
+  version: async (projectId: string, hash: string): Promise<FlowVersion> =>
+    map.toFlowVersion(await unwrap(gen.getFlowVersion({ path: { id: projectId, hash } })))
 };
 
 // --- files -------------------------------------------------------------------

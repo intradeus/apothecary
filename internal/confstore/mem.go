@@ -24,8 +24,9 @@ type Mem struct {
 	// BlockingRuns lists non-archived runs of a project (blocks project
 	// deletion); nil = none.
 	BlockingRuns func(projectID string) []string
-	// FlowPinnedBy lists non-terminal runs pinning a flow name; nil = none.
-	FlowPinnedBy func(flowName string) []string
+	// FlowPinnedBy lists non-terminal runs of a project pinning a flow name;
+	// nil = none.
+	FlowPinnedBy func(projectID, flowName string) []string
 }
 
 func NewMem() *Mem {
@@ -206,55 +207,69 @@ func (m *Mem) DeleteTicket(_ context.Context, id string) error {
 func (m *Mem) UpsertFlow(_ context.Context, row FlowRow) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	key := flowKey(row.ProjectID, row.Name)
 	// nil layout keeps the stored one (DESIGN3 §2.2; parity with pg's
 	// COALESCE) — a YAML-only save must not wipe node positions.
 	if row.Layout == nil {
-		if old, ok := m.flows[row.Name]; ok {
+		if old, ok := m.flows[key]; ok {
 			row.Layout = old.Layout
 		}
 	}
-	m.flows[row.Name] = row
-	if _, ok := m.versions[row.Hash]; !ok {
-		m.versions[row.Hash] = FlowVersion{Hash: row.Hash, Name: row.Name, YAML: row.YAML, CreatedAt: row.UpdatedAt}
+	m.flows[key] = row
+	vkey := flowKey(row.ProjectID, row.Hash)
+	if _, ok := m.versions[vkey]; !ok {
+		m.versions[vkey] = FlowVersion{ProjectID: row.ProjectID, Hash: row.Hash,
+			Name: row.Name, YAML: row.YAML, CreatedAt: row.UpdatedAt}
 	}
 	return nil
 }
 
-func (m *Mem) GetFlow(_ context.Context, name string) (FlowRow, error) {
+func (m *Mem) GetFlow(_ context.Context, projectID, name string) (FlowRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, ok := m.flows[name]
+	r, ok := m.flows[flowKey(projectID, name)]
 	if !ok {
 		return FlowRow{}, notFound("flow", name)
 	}
 	return r, nil
 }
 
-func (m *Mem) ListFlows(_ context.Context) ([]FlowRow, error) {
+// ListFlows returns one project's flows, or every project's when projectID is
+// empty — the cross-project overview the copy action starts from.
+func (m *Mem) ListFlows(_ context.Context, projectID string) ([]FlowRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]FlowRow, 0, len(m.flows))
 	for _, r := range m.flows {
-		out = append(out, r)
+		if projectID == "" || r.ProjectID == projectID {
+			out = append(out, r)
+		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ProjectID != out[j].ProjectID {
+			return out[i].ProjectID < out[j].ProjectID
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
-func (m *Mem) DeleteFlow(_ context.Context, name string) error {
+func (m *Mem) DeleteFlow(_ context.Context, projectID, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.flows[name]; !ok {
+	if _, ok := m.flows[flowKey(projectID, name)]; !ok {
 		return notFound("flow", name)
 	}
+	// Only THIS project's references matter now: another project's default
+	// flow of the same name is a different document.
 	var refs []string
 	for _, p := range m.projects {
-		if p.DefaultFlow == name {
+		if p.ID == projectID && p.DefaultFlow == name {
 			refs = append(refs, "project "+p.Name)
 		}
 	}
 	if m.FlowPinnedBy != nil {
-		for _, r := range m.FlowPinnedBy(name) {
+		for _, r := range m.FlowPinnedBy(projectID, name) {
 			refs = append(refs, "run "+r)
 		}
 	}
@@ -262,32 +277,35 @@ func (m *Mem) DeleteFlow(_ context.Context, name string) error {
 		sort.Strings(refs)
 		return fmt.Errorf("flow %s is referenced by %s: %w", name, strings.Join(refs, ", "), ErrReferenced)
 	}
-	delete(m.flows, name) // versions stay: immutable forever (§7)
+	delete(m.flows, flowKey(projectID, name)) // versions stay: immutable forever (§7)
 	return nil
 }
 
-func (m *Mem) GetFlowVersion(_ context.Context, hash string) (FlowVersion, error) {
+func (m *Mem) GetFlowVersion(_ context.Context, projectID, hash string) (FlowVersion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	v, ok := m.versions[hash]
+	v, ok := m.versions[flowKey(projectID, hash)]
 	if !ok {
 		return FlowVersion{}, notFound("flow version", hash)
 	}
 	return v, nil
 }
 
-func (m *Mem) ListFlowVersions(_ context.Context, name string) ([]FlowVersion, error) {
+func (m *Mem) ListFlowVersions(_ context.Context, projectID, name string) ([]FlowVersion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []FlowVersion
 	for _, v := range m.versions {
-		if v.Name == name {
+		if v.ProjectID == projectID && v.Name == name {
 			out = append(out, v)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
+
+// flowKey scopes a flow (and a version) to its project.
+func flowKey(projectID, name string) string { return projectID + "\x00" + name }
 
 func agentKey(projectID, name string) string { return projectID + "\x00" + name }
 

@@ -451,11 +451,6 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if len(projects) > 0 {
 		return nil // a real config exists; don't pollute it
 	}
-	if _, err := conf.GetFlow(ctx, "dev"); err != nil {
-		if _, err := conf.SaveFlow(ctx, "dev", devFlowYAML, nil); err != nil {
-			return fmt.Errorf("dev flow: %w", err)
-		}
-	}
 	mk := func(port, name string) (string, error) {
 		in, err := conf.CreateIntegration(ctx, confstore.Integration{
 			Port: port, Kind: "fake", Name: name,
@@ -490,15 +485,23 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 			URL: "https://forge.local/dev/fake-repo.git", Locator: "1",
 			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
 		},
-		Commands:    map[string]string{"setup": "true", "verify": "true"},
-		DefaultFlow: "dev",
+		Commands: map[string]string{"setup": "true", "verify": "true"},
+		// The project starts on the built-in template: its own flows cannot
+		// exist before it does, now that a flow belongs to a project.
+		DefaultFlow: builtin.DefaultFlowName,
 	})
 	if err != nil {
 		return err
 	}
-	// The dev flow carries its own agents (FLOWLANG §1, v3) — nothing to
-	// seed beyond the flow itself.
-	_ = p
+	// Now the project exists, its dev flow can. It carries its own agents
+	// (FLOWLANG §1, v3), so there is nothing to seed beyond the document.
+	if _, err := conf.SaveFlow(ctx, p.ID, "dev", devFlowYAML, nil); err != nil {
+		return fmt.Errorf("dev flow: %w", err)
+	}
+	p.DefaultFlow = "dev"
+	if _, err := conf.UpdateProject(ctx, p.ID, p); err != nil {
+		return fmt.Errorf("dev project default flow: %w", err)
+	}
 	return nil
 }
 

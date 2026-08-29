@@ -1,6 +1,7 @@
 package devcontainer
 
 import (
+	"apothecary/internal/egressgw"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -238,7 +239,11 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 	if gwIP != "" {
 		args = append(args, "--dns", gwIP,
 			"--registry-mirror=http://"+gwIP+":5000",
-			"--insecure-registry="+gwIP+":5000")
+			"--insecure-registry="+gwIP+":5000",
+			// ...and the writable twin on :5001, where buildkit exports this
+			// build's cache so the project's next run does not rebuild from
+			// scratch into its own empty daemon.
+			"--insecure-registry="+gwIP+":"+egressgw.BuildCachePort)
 	}
 	if _, stderr, code, err := a.hostRun(ctx, args); err != nil {
 		return err

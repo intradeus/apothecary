@@ -14,6 +14,7 @@ import type {
   ActionSpec,
   Attachment,
   Branch,
+  BuildCache,
   ChannelEntry,
   EgressAuditRow,
   EgressDenial,
@@ -284,6 +285,10 @@ export function toPreflight(w: Wire.PreflightResult): Preflight {
   return { ok: w.ok, steps: list(w.steps).map(toPreflightStep) };
 }
 
+export function toBuildCache(w: Wire.BuildCacheInfo): BuildCache {
+  return { available: w.available, bytes: w.bytes };
+}
+
 export function toEnvCheck(w: Wire.EnvCheck): EnvCheck {
   return {
     id: w.id ?? '',
@@ -356,6 +361,7 @@ export function toUploadLimits(w: Wire.UploadLimits): UploadLimits {
 
 export function toFlow(w: Wire.Flow): Flow {
   return {
+    projectId: w.project_id ?? '',
     name: w.name ?? '',
     yaml: w.yaml ?? '',
     hash: w.hash ?? '',

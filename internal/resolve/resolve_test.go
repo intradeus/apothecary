@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"apothecary/internal/builtin"
 	"context"
 	"errors"
 	"slices"
@@ -60,9 +61,6 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 	svc.KindValid = reg.Valid
 
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
-		t.Fatal(err)
-	}
 	mk := func(port, kind, name string, sec map[string]string) string {
 		in, err := svc.CreateIntegration(ctx, confstore.Integration{Port: port, Kind: kind, Name: name, Secrets: sec})
 		if err != nil {
@@ -77,7 +75,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 		HarnessIDs:    []string{mk(confstore.PortHarness, "fake", "h", nil)},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		Workspace:     confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},
-		DefaultFlow:   "v1",
+		DefaultFlow:   builtin.DefaultFlowName,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -140,9 +138,6 @@ func TestResolveMultiHarness(t *testing.T) {
 	reg.RegisterHarness(altHarnessKind{})
 	svc.KindValid = reg.Valid
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
-		t.Fatal(err)
-	}
 	mk := func(port, kind, name string) string {
 		in, err := svc.CreateIntegration(ctx, confstore.Integration{Port: port, Kind: kind, Name: name})
 		if err != nil {
@@ -159,7 +154,7 @@ func TestResolveMultiHarness(t *testing.T) {
 		HarnessIDs:    []string{def, alt},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		Workspace:     confstore.WorkspaceConfig{},
-		DefaultFlow:   "v1",
+		DefaultFlow:   builtin.DefaultFlowName,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -304,7 +299,7 @@ func TestUnresolvableMapping(t *testing.T) {
 		ProvisionerID: mk(confstore.PortProvisioner, "c2"), HarnessIDs: []string{ghost.ID},
 		Repo:        confstore.RepoConfig{URL: "https://x.example/g/p.git"},
 		Workspace:   confstore.WorkspaceConfig{},
-		DefaultFlow: "v1",
+		DefaultFlow: builtin.DefaultFlowName,
 	})
 	if err != nil {
 		t.Fatal(err)

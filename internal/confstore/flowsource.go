@@ -22,8 +22,8 @@ type flowSource struct {
 	cache map[string]*flow.Flow
 }
 
-func (fs *flowSource) Get(ctx context.Context, name string) (*flow.Flow, error) {
-	row, err := fs.svc.db.GetFlow(ctx, name)
+func (fs *flowSource) Get(ctx context.Context, projectID, name string) (*flow.Flow, error) {
+	row, err := fs.svc.db.GetFlow(ctx, projectID, name)
 	if errors.Is(err, ErrNotFound) {
 		return nil, fmt.Errorf("flow %q: %w", name, flow.ErrNotFound)
 	}
@@ -36,8 +36,8 @@ func (fs *flowSource) Get(ctx context.Context, name string) (*flow.Flow, error) 
 // GetVersion serves the immutable content-addressed version, so a run keeps
 // executing the document it started with however the name is later edited
 // (flow.PinnedSource, PLAN5 M19).
-func (fs *flowSource) GetVersion(ctx context.Context, name, hash string) (*flow.Flow, error) {
-	v, err := fs.svc.db.GetFlowVersion(ctx, hash)
+func (fs *flowSource) GetVersion(ctx context.Context, projectID, name, hash string) (*flow.Flow, error) {
+	v, err := fs.svc.db.GetFlowVersion(ctx, projectID, hash)
 	if errors.Is(err, ErrNotFound) {
 		return nil, fmt.Errorf("flow %q version %s: %w", name, hash, flow.ErrNotFound)
 	}

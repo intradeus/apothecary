@@ -59,7 +59,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string) (err error) {
 	if !ok {
 		return fmt.Errorf("run %s: provisioner does not support rebuild", runID)
 	}
-	fl, err := e.flows.Get(ctx, v.FlowName)
+	fl, err := e.flows.Get(ctx, v.ProjectID, v.FlowName)
 	if err != nil {
 		return fmt.Errorf("run %s: load flow: %w", runID, err)
 	}

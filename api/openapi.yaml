@@ -97,6 +97,17 @@ components:
         - default
         - name
       type: object
+    BuildCacheInfo:
+      properties:
+        available:
+          type: boolean
+        bytes:
+          format: int64
+          type: integer
+      required:
+        - available
+        - bytes
+      type: object
     ChannelEntry:
       properties:
         config:
@@ -123,6 +134,15 @@ components:
       required:
         - id
         - status
+      type: object
+    CopyFlowRequest:
+      properties:
+        name:
+          type: string
+        to_project_id:
+          type: string
+      required:
+        - to_project_id
       type: object
     CreateFlowRequest:
       properties:
@@ -492,6 +512,8 @@ components:
         layout: {}
         name:
           type: string
+        project_id:
+          type: string
         shadows_builtin:
           type: boolean
         updated_at:
@@ -528,24 +550,6 @@ components:
         - stages
         - version
       type: object
-    FlowRow:
-      properties:
-        hash:
-          type: string
-        layout: {}
-        name:
-          type: string
-        updated_at:
-          format: date-time
-          type: string
-        yaml:
-          type: string
-      required:
-        - hash
-        - name
-        - updated_at
-        - yaml
-      type: object
     FlowValidation:
       properties:
         agents:
@@ -580,12 +584,15 @@ components:
           type: string
         name:
           type: string
+        project_id:
+          type: string
         yaml:
           type: string
       required:
         - created_at
         - hash
         - name
+        - project_id
         - yaml
       type: object
     IOPair:
@@ -1804,40 +1811,9 @@ paths:
       summary: Poll a workspace check
       tags:
         - projects
-  /api/flow-versions/{hash}:
+  /api/flow-templates:
     get:
-      operationId: getFlowVersion
-      parameters:
-        - in: path
-          name: hash
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FlowVersion'
-          description: OK
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      summary: One flow version by content hash
-      tags:
-        - flows
-  /api/flows:
-    get:
-      operationId: listFlows
+      operationId: listFlowTemplates
       responses:
         "200":
           content:
@@ -1856,156 +1832,19 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: Every flow, built-ins included
+      summary: The compiled-in flow templates a project can adopt or copy
       tags:
         - flows
-    post:
-      operationId: createFlow
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateFlowRequest'
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FlowRow'
-          description: Created
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "409":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      summary: Create a flow
-      tags:
-        - flows
-  /api/flows/{name}:
-    delete:
-      operationId: deleteFlow
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        "204":
-          description: No Content
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
-        "409":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      summary: Delete a flow
-      tags:
-        - flows
+  /api/flows:
     get:
-      operationId: getFlow
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Flow'
-          description: OK
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      summary: One flow
-      tags:
-        - flows
-    put:
-      operationId: updateFlow
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateFlowRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Flow'
-          description: OK
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
-        "409":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      summary: Replace a flow
-      tags:
-        - flows
-  /api/flows/{name}/versions:
-    get:
-      operationId: listFlowVersions
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
+      operationId: listAllFlows
       responses:
         "200":
           content:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/FlowVersion'
+                  $ref: '#/components/schemas/Flow'
                 nullable: true
                 type: array
           description: OK
@@ -2013,19 +1852,16 @@ paths:
           content:
             application/json: {}
           description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: A flow's version history
+      summary: Every project's flows, for the cross-project overview
       tags:
         - flows
   /api/flows/validate:
     post:
+      description: 'Project-independent: the parser checks the document itself, and a flow carries its own agents.'
       operationId: validateFlow
       requestBody:
         content:
@@ -2748,6 +2584,69 @@ paths:
       summary: Branches of the project's repository
       tags:
         - projects
+  /api/projects/{id}/build-cache:
+    delete:
+      description: 'Safe: the next build repopulates it, so the cost of clearing needlessly is one slow build.'
+      operationId: clearBuildCache
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Empty the project's build cache
+      tags:
+        - projects
+    get:
+      description: The cache is per project and outlives its runs — it is what stops every run rebuilding the image into its own throwaway daemon.
+      operationId: getBuildCache
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildCacheInfo'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: What the project's devcontainer build cache holds
+      tags:
+        - projects
   /api/projects/{id}/egress-audit:
     get:
       operationId: getProjectEgressAudit
@@ -2841,6 +2740,319 @@ paths:
       summary: Prove the project's workspace actually builds (throwaway provision)
       tags:
         - projects
+  /api/projects/{id}/flow-versions/{hash}:
+    get:
+      operationId: getFlowVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: hash
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlowVersion'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: One flow version by content hash
+      tags:
+        - flows
+  /api/projects/{id}/flows:
+    get:
+      operationId: listFlows
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Flow'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: A project's flows, with the templates it has not adopted
+      tags:
+        - flows
+    post:
+      operationId: createFlow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFlowRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flow'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Create a flow in a project
+      tags:
+        - flows
+  /api/projects/{id}/flows/{name}:
+    delete:
+      operationId: deleteFlow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Delete a project's flow (resets to the template, when there is one)
+      tags:
+        - flows
+    get:
+      description: Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.
+      operationId: getFlow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flow'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: One of a project's flows
+      tags:
+        - flows
+    put:
+      description: Saving a built-in template's name for the first time creates this project's own copy of it.
+      operationId: updateFlow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFlowRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flow'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Replace one of a project's flows
+      tags:
+        - flows
+  /api/projects/{id}/flows/{name}/copy:
+    post:
+      operationId: copyFlow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CopyFlowRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flow'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Copy a flow into another project
+      tags:
+        - flows
+  /api/projects/{id}/flows/{name}/versions:
+    get:
+      operationId: listFlowVersions
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/FlowVersion'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: A flow's version history within its project
+      tags:
+        - flows
   /api/projects/{id}/preflight:
     post:
       operationId: preflightProject

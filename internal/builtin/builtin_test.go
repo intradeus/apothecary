@@ -164,12 +164,12 @@ func TestFlowSourceLayering(t *testing.T) {
 	src := FlowSource(db)
 
 	// Empty DB: the built-in resolves.
-	f, err := src.Get(context.Background(), DefaultFlowName)
+	f, err := src.Get(context.Background(), "prj", DefaultFlowName)
 	if err != nil || f.Name != DefaultFlowName {
 		t.Fatalf("Get(default) = %v, %v", f, err)
 	}
 	// Unknown names still miss.
-	if _, err := src.Get(context.Background(), "nope"); !errors.Is(err, flow.ErrNotFound) {
+	if _, err := src.Get(context.Background(), "prj", "nope"); !errors.Is(err, flow.ErrNotFound) {
 		t.Fatalf("Get(nope) err = %v, want ErrNotFound", err)
 	}
 	// A DB row with the same name shadows the built-in.
@@ -178,7 +178,7 @@ func TestFlowSourceLayering(t *testing.T) {
 		t.Fatal(err)
 	}
 	db[DefaultFlowName] = shadow
-	f, err = src.Get(context.Background(), DefaultFlowName)
+	f, err = src.Get(context.Background(), "prj", DefaultFlowName)
 	if err != nil || len(f.Stages) != 1 {
 		t.Fatalf("shadowed Get(default) = %v, %v — the DB must win", f, err)
 	}

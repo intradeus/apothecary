@@ -36,9 +36,6 @@ stages:
 func seedProject(t *testing.T, svc *Service) Project {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
-		t.Fatal(err)
-	}
 	mk := func(port, kind, name string, sec map[string]string) Integration {
 		in, err := svc.CreateIntegration(ctx, Integration{Port: port, Kind: kind, Name: name, Secrets: sec})
 		if err != nil {
@@ -51,11 +48,20 @@ func seedProject(t *testing.T, svc *Service) Project {
 	harness := mk(PortHarness, "opencode", "oc", map[string]string{"auth_json": `{"openrouter":{"type":"api","key":"sk-or-abc"}}`})
 	p, err := svc.CreateProject(ctx, Project{
 		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
-		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
-		Workspace:   WorkspaceConfig{},
-		DefaultFlow: "v1",
+		Repo:      RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
+		Workspace: WorkspaceConfig{},
+		// A project starts on the built-in template: its own flows cannot
+		// exist before it does.
+		DefaultFlow: builtin.DefaultFlowName,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SaveFlow(ctx, p.ID, "v1", testFlowDoc, nil); err != nil {
+		t.Fatal(err)
+	}
+	p.DefaultFlow = "v1"
+	if p, err = svc.UpdateProject(ctx, p.ID, p); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -119,9 +125,6 @@ func TestUpdateIntegrationSecretMerge(t *testing.T) {
 func TestProjectValidation(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
-		t.Fatal(err)
-	}
 	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
 	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "devcontainer", Name: "c"})
 	harness, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
@@ -130,7 +133,7 @@ func TestProjectValidation(t *testing.T) {
 		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{},
-		DefaultFlow: "v1",
+		DefaultFlow: builtin.DefaultFlowName,
 	}
 
 	// An empty default_flow falls back to the compiled-in default
@@ -168,9 +171,6 @@ func TestProjectValidation(t *testing.T) {
 func TestProjectHarnessSet(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "v1", testFlowDoc, nil); err != nil {
-		t.Fatal(err)
-	}
 	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
 	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "devcontainer", Name: "c"})
 	oc, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
@@ -181,7 +181,7 @@ func TestProjectHarnessSet(t *testing.T) {
 		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{oc.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{},
-		DefaultFlow: "v1",
+		DefaultFlow: builtin.DefaultFlowName,
 	}
 
 	// A single-harness set round-trips (no default designation).
@@ -242,7 +242,7 @@ func TestDeleteRules(t *testing.T) {
 	}
 
 	// Flow referenced as default_flow.
-	if err := svc.DeleteFlow(ctx, "v1"); !errors.Is(err, ErrReferenced) {
+	if err := svc.DeleteFlow(ctx, p.ID, "v1"); !errors.Is(err, ErrReferenced) {
 		t.Errorf("delete referenced flow = %v", err)
 	}
 
@@ -253,15 +253,21 @@ func TestDeleteRules(t *testing.T) {
 	}
 	mem.BlockingRuns = nil
 
-	// Orderly teardown works; flow versions survive flow deletion.
-	row, _ := svc.GetFlow(ctx, "v1")
+	// Orderly teardown works; flow versions survive flow deletion. The
+	// project has to stop pointing at the flow first — that reference is
+	// exactly what the guard above refuses to break.
+	row, _ := svc.GetFlow(ctx, p.ID, "v1")
+	p.DefaultFlow = builtin.DefaultFlowName
+	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteFlow(ctx, p.ID, "v1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.DeleteProject(ctx, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.DeleteFlow(ctx, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.FlowVersion(ctx, row.Hash); err != nil {
+	if _, err := svc.FlowVersion(ctx, p.ID, row.Hash); err != nil {
 		t.Errorf("flow versions must be immutable forever: %v", err)
 	}
 	if err := svc.DeleteIntegration(ctx, p.ForgeID); err != nil {
@@ -272,11 +278,12 @@ func TestDeleteRules(t *testing.T) {
 func TestFlowNameIsImmutableID(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	if _, err := svc.SaveFlow(ctx, "other", testFlowDoc, nil); err == nil || !strings.Contains(err.Error(), "immutable") {
+	p := seedProject(t, svc)
+	if _, err := svc.SaveFlow(ctx, p.ID, "other", testFlowDoc, nil); err == nil || !strings.Contains(err.Error(), "immutable") {
 		t.Errorf("name mismatch err = %v", err)
 	}
 	// Line-precise parser errors surface verbatim.
-	_, err := svc.SaveFlow(ctx, "v1", "name: v1\nversion: 3\ndefaults: { harness: fake, model: nope }\nstages: []\n", nil)
+	_, err := svc.SaveFlow(ctx, p.ID, "v1", "name: v1\nversion: 3\ndefaults: { harness: fake, model: nope }\nstages: []\n", nil)
 	if err == nil || !strings.Contains(err.Error(), "provider/model") {
 		t.Errorf("parser err = %v", err)
 	}

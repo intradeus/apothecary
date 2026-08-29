@@ -83,18 +83,23 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		t.Fatalf("dup err = %v", err)
 	}
 
-	// UpsertProject's guard requires default_flow to resolve (a flows row or
-	// a built-in name); "v1" is no built-in, so the row must exist first.
-	if err := s.UpsertFlow(ctx, confstore.FlowRow{Name: "v1", YAML: "a", Hash: "h1", UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	// A flow belongs to a project, so the project comes first — and it starts
+	// on the built-in template, which is the only thing that can resolve
+	// before it has flows of its own.
 	p := confstore.Project{
 		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		Workspace:   confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},
-		DefaultFlow: "v1", CreatedAt: now, UpdatedAt: now,
+		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
 	}
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertFlow(ctx, confstore.FlowRow{ProjectID: p.ID, Name: "v1", YAML: "a", Hash: "h1", UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	p.DefaultFlow = "v1"
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -111,14 +116,14 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	}
 
 	// A second flow version accumulates immutable history.
-	if err := s.UpsertFlow(ctx, confstore.FlowRow{Name: "v1", YAML: "b", Hash: "h2", UpdatedAt: now.Add(time.Second)}); err != nil {
+	if err := s.UpsertFlow(ctx, confstore.FlowRow{ProjectID: p.ID, Name: "v1", YAML: "b", Hash: "h2", UpdatedAt: now.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
-	versions, err := s.ListFlowVersions(ctx, "v1")
+	versions, err := s.ListFlowVersions(ctx, p.ID, "v1")
 	if err != nil || len(versions) != 2 {
 		t.Fatalf("versions = %v, %v", versions, err)
 	}
-	if err := s.DeleteFlow(ctx, "v1"); !errors.Is(err, confstore.ErrReferenced) {
+	if err := s.DeleteFlow(ctx, p.ID, "v1"); !errors.Is(err, confstore.ErrReferenced) {
 		t.Fatalf("default_flow delete = %v", err)
 	}
 
@@ -144,14 +149,28 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	if _, err := s.Append(ctx, "r1", &event.RunArchived{}); err != nil {
 		t.Fatal(err)
 	}
+	// Deleting the FLOW keeps its versions (§7: immutable forever) — the
+	// project has to stop pointing at it first, which is the reference the
+	// guard above refuses to break.
+	p.DefaultFlow = builtin.DefaultFlowName
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteFlow(ctx, p.ID, "v1"); err != nil {
+		t.Fatalf("flow delete = %v", err)
+	}
+	if _, err := s.GetFlowVersion(ctx, p.ID, "h1"); err != nil {
+		t.Errorf("versions must survive flow deletion: %v", err)
+	}
+
+	// Deleting the PROJECT takes its flows and their history with it: a flow
+	// is only meaningful inside the project whose commands it names, and
+	// nothing else can reach it.
 	if err := s.DeleteProject(ctx, "prj1"); err != nil {
 		t.Fatalf("archived-run project delete = %v", err)
 	}
-	if err := s.DeleteFlow(ctx, "v1"); err != nil {
-		t.Fatalf("flow delete after project gone = %v", err)
-	}
-	if _, err := s.GetFlowVersion(ctx, "h1"); err != nil {
-		t.Errorf("versions must survive flow deletion: %v", err)
+	if _, err := s.GetFlowVersion(ctx, p.ID, "h2"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("a deleted project's flow history = %v, want gone", err)
 	}
 }
 

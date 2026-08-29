@@ -34,7 +34,7 @@ func TestRunRegistryReportsRuntime(t *testing.T) {
 	defer func() { registryBin = old }()
 
 	mod, _ := mtime(cfg)
-	ranFor, cfgChanged := runRegistry(cfg, &mod)
+	ranFor, cfgChanged := runRegistry("registry", cfg, &mod)
 	if cfgChanged {
 		t.Error("config did not change; must not report a config restart")
 	}
@@ -68,7 +68,7 @@ func TestRunRegistryRestartsOnConfigChange(t *testing.T) {
 	}()
 	done := make(chan bool, 1)
 	go func() {
-		_, cfgChanged := runRegistry(cfg, &mod)
+		_, cfgChanged := runRegistry("registry", cfg, &mod)
 		done <- cfgChanged
 	}()
 	select {

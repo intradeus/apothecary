@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -100,12 +101,30 @@ func (m *Manager) auditPath(project string) string {
 func (m *Manager) mirrorConfigPath(project string) string {
 	return filepath.Join(m.gwDir(project), "registry-config.yml")
 }
+func (m *Manager) buildCacheConfigPath(project string) string {
+	return filepath.Join(m.gwDir(project), "buildcache-config.yml")
+}
 
 // cacheVolume backs the gateway's pull-through image cache. A named volume (not
 // gwDir) because it is the one piece of gateway state worth keeping when the
 // container is recreated for an image upgrade — and it must NOT be swept with
 // the rest of the folder.
 func (m *Manager) cacheVolume(project string) string { return m.gwName(project) + "-cache" }
+
+// buildCacheVolume backs the writable registry buildkit exports the
+// devcontainer build cache to. Separate from the mirror's volume because they
+// have different lifetimes: the mirror is pure derived data nobody asks about,
+// while THIS one is the thing a human deletes from the UI when a build starts
+// producing something stale.
+func (m *Manager) buildCacheVolume(project string) string { return m.gwName(project) + "-buildcache" }
+
+// buildCacheDir is where the build-cache registry stores blobs inside the
+// gateway container (the volume's mount point).
+const buildCacheDir = "/var/lib/buildcache"
+
+// BuildCachePort is the gateway-local port of the writable build-cache
+// registry — what a run's buildkit pushes to and pulls from.
+const BuildCachePort = "5001"
 
 // --- docker helper --------------------------------------------------------
 
@@ -138,6 +157,9 @@ func (m *Manager) EnsureRunEgress(ctx context.Context, project, run string, f po
 	// Same for the image-mirror config: present before the container starts, and
 	// re-checked every pass so an engine upgrade that changes it propagates.
 	if err := m.writeMirrorConfig(project); err != nil {
+		return "", err
+	}
+	if err := m.writeBuildCacheConfig(project); err != nil {
 		return "", err
 	}
 
@@ -228,12 +250,14 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 			return err
 		}
 	}
-	// The image cache survives everything (idempotent create; never reaped).
-	if _, err := m.docker(ctx, "volume", "create",
-		"--label", "apothecary=true",
-		"--label", "apothecary.project="+project,
-		m.cacheVolume(project)); err != nil && !strings.Contains(err.Error(), "already exists") {
-		return err
+	// Both caches survive everything (idempotent create; never reaped).
+	for _, vol := range []string{m.cacheVolume(project), m.buildCacheVolume(project)} {
+		if _, err := m.docker(ctx, "volume", "create",
+			"--label", "apothecary=true",
+			"--label", "apothecary.project="+project,
+			vol); err != nil && !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
 	}
 	dir := m.gwDir(project)
 	if _, err = m.docker(ctx, "run", "-d", "--name", m.gwName(project),
@@ -252,6 +276,7 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 		"--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
 		"-v", dir+":"+dir,
 		"-v", m.cacheVolume(project)+":/var/lib/registry",
+		"-v", m.buildCacheVolume(project)+":"+buildCacheDir,
 		img,
 		"--policy", m.policyPath(project),
 		"--denials", m.denialsPath(project),
@@ -260,6 +285,7 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 		"--listen-port", "9040",
 		"--dns-upstream", "1.1.1.1:53",
 		"--mirror-config", m.mirrorConfigPath(project),
+		"--buildcache-config", m.buildCacheConfigPath(project),
 	); err != nil {
 		return err
 	}
@@ -314,6 +340,37 @@ http:
 proxy:
   remoteurl: https://registry-1.docker.io
 `
+
+// buildCacheConfig is the WRITABLE registry: no proxy section (a registry in
+// proxy mode refuses pushes, which is exactly what a build cache needs to do),
+// its own storage root, and delete enabled so a wipe can be surgical if it
+// ever needs to be.
+const buildCacheConfig = `version: 0.1
+log:
+  level: warn
+storage:
+  filesystem:
+    rootdirectory: ` + buildCacheDir + `
+  delete:
+    enabled: true
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :` + BuildCachePort + `
+  secret: apothecary-buildcache
+`
+
+// writeBuildCacheConfig materializes the build-cache registry config, on the
+// same only-when-different rule as the mirror: the gateway restarts the child
+// on any mtime bump, and that restart is also how ClearBuildCache makes the
+// registry forget what it had open.
+func (m *Manager) writeBuildCacheConfig(project string) error {
+	path := m.buildCacheConfigPath(project)
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == buildCacheConfig {
+		return nil
+	}
+	return os.WriteFile(path, []byte(buildCacheConfig), 0o644)
+}
 
 // writeMirrorConfig materializes the mirror config in gwDir, ONLY when the
 // content differs: the gateway restarts its registry child on any mtime bump
@@ -476,4 +533,104 @@ func remove(xs []string, x string) []string {
 		}
 	}
 	return out
+}
+
+// --- build cache -------------------------------------------------------------
+
+// BuildCacheRef / BuildCacheImageRef are the two registry references a
+// project's devcontainer build reads, as seen from inside a run's sandbox.
+// gwIP is the gateway's address on THAT run's network.
+//
+// Two, because the devcontainer CLI supports two different mechanisms and the
+// one that works depends on the repository's own devcontainer:
+//
+//	:cache  a buildkit cache manifest (--cache-to/--cache-from, mode=max, so
+//	        intermediate stages too). Only single-container devcontainers get
+//	        it: for a compose devcontainer the CLI refuses --cache-to outright
+//	        ("--cache-to not supported", its words).
+//	:image  the built image itself, pushed after the build. The CLI always
+//	        builds with BUILDKIT_INLINE_CACHE=1 — including in the compose
+//	        override file it generates — so the pushed image carries the cache
+//	        metadata that makes --cache-from restore from it.
+//
+// Both are offered as --cache-from every time; a missing one is a 404 buildkit
+// shrugs at. The host:port half is just how the sandbox reaches the registry —
+// the manifests live under the repository path, so a gateway that comes back
+// on a different address still finds what it wrote yesterday.
+func BuildCacheRef(gwIP, project string) string {
+	return buildCacheRepo(gwIP, project) + ":cache"
+}
+
+func BuildCacheImageRef(gwIP, project string) string {
+	return buildCacheRepo(gwIP, project) + ":image"
+}
+
+func buildCacheRepo(gwIP, project string) string {
+	return gwIP + ":" + BuildCachePort + "/" + repoPath(project) + "/devcontainer"
+}
+
+// repoPath makes a project name safe as a registry repository path component:
+// lowercase alphanumerics plus separators, which is all the distribution spec
+// allows.
+func repoPath(project string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(project) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-._")
+	if out == "" {
+		return "project"
+	}
+	return out
+}
+
+// BuildCacheSize reports how many bytes the project's build cache occupies.
+// Best-effort by design: a gateway that is down has no cache to report, and
+// that is a number (0), not an error the UI has to render.
+func (m *Manager) BuildCacheSize(ctx context.Context, project string) (int64, error) {
+	out, err := m.docker(ctx, "exec", m.gwName(project), "du", "-sk", buildCacheDir)
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return 0, nil
+	}
+	kb, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("egressgw: build cache size %q: %w", out, err)
+	}
+	return kb * 1024, nil
+}
+
+// ClearBuildCache empties the project's build cache: the next build starts
+// from scratch and repopulates it.
+//
+// Empty-then-restart, in that order and both parts required. The registry
+// holds no lock we can take, so the wipe removes the storage under it and the
+// config touch makes the gateway restart the child — which is what stops it
+// serving a manifest whose blobs are gone. A build racing the wipe is covered
+// by ignore-error on the cache export: it loses its cache, it does not fail.
+func (m *Manager) ClearBuildCache(ctx context.Context, project string) error {
+	pm := m.projectMu(project)
+	pm.Lock()
+	defer pm.Unlock()
+
+	if _, err := m.docker(ctx, "exec", m.gwName(project), "sh", "-c",
+		"rm -rf "+buildCacheDir+"/* "+buildCacheDir+"/.[!.]* 2>/dev/null; exit 0"); err != nil {
+		return fmt.Errorf("egressgw: clear build cache: %w", err)
+	}
+	// Touch the config so the gateway's supervisor restarts the registry with
+	// a clean view. Writing the same bytes is enough — it watches mtime.
+	if err := os.WriteFile(m.buildCacheConfigPath(project), []byte(buildCacheConfig), 0o644); err != nil {
+		return fmt.Errorf("egressgw: restart build-cache registry: %w", err)
+	}
+	return nil
 }

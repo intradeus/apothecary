@@ -107,3 +107,11 @@ export interface EnvCheckStep {
   status: 'pass' | 'fail' | 'skip';
   detail?: string;
 }
+
+/** The project's devcontainer build cache: what makes its second run fast.
+ *  available:false means this provisioner keeps no cache of its own — an
+ *  honest "not applicable", not an empty one. */
+export interface BuildCache {
+  available: boolean;
+  bytes: number;
+}

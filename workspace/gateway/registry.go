@@ -1,10 +1,18 @@
 package main
 
-// The gateway container doubles as the project's pull-through Docker Hub cache:
-// a `registry serve` child (the distribution binary, baked into the image)
-// listens on :5000 and every run's inner dockerd points --registry-mirror at
-// it, so one project's runs warm each other's image pulls instead of each
-// cold-pulling into its own per-run /var/lib/docker volume.
+// The gateway container doubles as the project's registry host. It runs up to
+// two `registry serve` children (the distribution binary, baked into the
+// image), and both exist because a run's inner daemon is thrown away with the
+// run:
+//
+//   :5000  pull-through Docker Hub cache — every run's dockerd points
+//          --registry-mirror at it, so one project's runs warm each other's
+//          image pulls instead of each cold-pulling into its own per-run
+//          /var/lib/docker volume.
+//   :5001  writable BUILD CACHE — buildkit exports the devcontainer build's
+//          cache here (--cache-to) and imports it on the next run
+//          (--cache-from). The mirror cannot double as this one: a registry in
+//          proxy mode refuses pushes.
 //
 // Why it lives HERE rather than in a sibling container: the gateway is already
 // per-project, already multi-homed onto every run's --internal network, and its
@@ -38,13 +46,17 @@ const (
 // superviseRegistry runs `registry serve <cfg>` forever: it restarts the child
 // on exit with capped backoff, and restarts it when the config file changes
 // (the distribution registry has no config hot-reload, unlike our policy file).
-// Child output is relayed under a "registry:" prefix so the container's logs
-// stay one stream. Never returns; run it in a goroutine.
-func superviseRegistry(cfgPath string) {
+// The config-change restart is also how the engine wipes the build cache: it
+// empties the storage and touches the config, and the child comes back with a
+// clean slate rather than a view of deleted files.
+//
+// Child output is relayed under the given label so two registries stay
+// distinguishable in one log stream. Never returns; run it in a goroutine.
+func superviseRegistry(label, cfgPath string) {
 	backoff := registryMinBackoff
 	cfgMod, _ := mtime(cfgPath)
 	for {
-		ranFor, cfgChanged := runRegistry(cfgPath, &cfgMod)
+		ranFor, cfgChanged := runRegistry(label, cfgPath, &cfgMod)
 		if cfgChanged {
 			// An operator-driven restart, not a failure: come back immediately
 			// and with a clean slate.
@@ -54,7 +66,7 @@ func superviseRegistry(cfgPath string) {
 		if ranFor > registryHealthy {
 			backoff = registryMinBackoff
 		}
-		log.Printf("registry: restarting in %s", backoff)
+		log.Printf("%s: restarting in %s", label, backoff)
 		time.Sleep(backoff)
 		backoff = nextBackoff(backoff)
 	}
@@ -63,22 +75,22 @@ func superviseRegistry(cfgPath string) {
 // runRegistry starts one child and blocks until it exits or the config file
 // changes under it (in which case the child is stopped). It reports how long
 // the child ran and whether the config changed, and advances cfgMod.
-func runRegistry(cfgPath string, cfgMod *time.Time) (ranFor time.Duration, cfgChanged bool) {
+func runRegistry(label, cfgPath string, cfgMod *time.Time) (ranFor time.Duration, cfgChanged bool) {
 	start := time.Now()
 	cmd := exec.Command(registryBin, "serve", cfgPath)
 	// One merged stream: the registry writes its own logs to stderr, and the
 	// prefix is what distinguishes them in `docker logs apo-gw-<project>`.
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Printf("registry: pipe: %v", err)
+		log.Printf("%s: pipe: %v", label, err)
 		return 0, false
 	}
 	cmd.Stderr = cmd.Stdout
 	if err := cmd.Start(); err != nil {
-		log.Printf("registry: start: %v", err)
+		log.Printf("%s: start: %v", label, err)
 		return 0, false
 	}
-	go relayLines(out)
+	go relayLines(label, out)
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -88,7 +100,7 @@ func runRegistry(cfgPath string, cfgMod *time.Time) (ranFor time.Duration, cfgCh
 	for {
 		select {
 		case err := <-done:
-			log.Printf("registry: exited after %s: %v", time.Since(start).Truncate(time.Second), err)
+			log.Printf("%s: exited after %s: %v", label, time.Since(start).Truncate(time.Second), err)
 			return time.Since(start), false
 		case <-tick.C:
 			mt, ok := mtime(cfgPath)
@@ -96,7 +108,7 @@ func runRegistry(cfgPath string, cfgMod *time.Time) (ranFor time.Duration, cfgCh
 				continue
 			}
 			*cfgMod = mt
-			log.Printf("registry: config changed, restarting child")
+			log.Printf("%s: config changed, restarting child", label)
 			stopChild(cmd, done)
 			return time.Since(start), true
 		}
@@ -116,11 +128,11 @@ func stopChild(cmd *exec.Cmd, done <-chan error) {
 }
 
 // relayLines echoes the child's output under a prefix until the pipe closes.
-func relayLines(r interface{ Read([]byte) (int, error) }) {
+func relayLines(label string, r interface{ Read([]byte) (int, error) }) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 8<<10), 64<<10) // registry logs can be long lines
 	for sc.Scan() {
-		log.Printf("registry: %s", sc.Text())
+		log.Printf("%s: %s", label, sc.Text())
 	}
 }
 

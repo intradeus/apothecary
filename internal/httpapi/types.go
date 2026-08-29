@@ -250,6 +250,14 @@ type PreflightResult struct {
 	Steps []engine.PreflightStep `json:"steps"`
 }
 
+// BuildCacheInfo is the project's devcontainer build cache: what it holds, and
+// whether the provisioner keeps one at all. It is what makes a second run of a
+// project fast, and the one piece of derived state worth a delete button.
+type BuildCacheInfo struct {
+	Available bool  `json:"available"`
+	Bytes     int64 `json:"bytes"`
+}
+
 // EnvCheckRequest starts a throwaway provision to prove a project's workspace
 // config actually builds. Keep leaves the container up for inspection.
 type EnvCheckRequest struct {
@@ -275,6 +283,14 @@ type CreateFlowRequest struct {
 type UpdateFlowRequest struct {
 	YAML   string          `json:"yaml"`
 	Layout json.RawMessage `json:"layout,omitempty"`
+}
+
+// CopyFlowRequest clones a flow into another project. Name renames the copy;
+// empty keeps the source's name. The copy is a new document with its own
+// history — editing it never reaches back to the original.
+type CopyFlowRequest struct {
+	ToProjectID string `json:"to_project_id"`
+	Name        string `json:"name,omitempty"`
 }
 
 // ValidateFlowRequest checks a flow document without saving it.

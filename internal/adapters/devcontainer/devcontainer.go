@@ -510,6 +510,37 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 		}
 		args = append(args, "--additional-features", string(blob))
 	}
+	// The build cache. A run's inner daemon is thrown away with the run, so
+	// without this every run rebuilds the devcontainer image from nothing —
+	// measured at 77s of a 90s provision on a small project. buildkit exports
+	// the cache to the project gateway's writable registry and imports it on
+	// the next run, which turns that into seconds.
+	//
+	// Three things make it safe rather than clever:
+	//   * ignore-error: a wiped, restarting or wedged cache registry must cost
+	//     a cache miss, never a failed build (verified: the export error is
+	//     swallowed and the build exits 0).
+	//   * mode=max: intermediate stages too, which is where devcontainer
+	//     features and the code-server install live.
+	//   * only with a gateway: no gateway, no registry to talk to, so the
+	//     flags are simply absent and the build behaves as it always did.
+	//
+	// Cache EXPORT needs a buildkit driver that supports it; the sandbox's
+	// docker:29-dind runs the containerd image store, which is exactly what
+	// makes the default docker driver able to (docker's own error message
+	// names it as the alternative to switching drivers).
+	if gwIP != "" && spec.Project != "" {
+		cacheRef := egressgw.BuildCacheRef(gwIP, spec.Project)
+		imageRef := egressgw.BuildCacheImageRef(gwIP, spec.Project)
+		args = append(args,
+			// Both sources, every time: whichever exists restores, and a
+			// missing one is a 404 buildkit shrugs at.
+			"--cache-from", "type=registry,ref="+imageRef,
+			"--cache-from", "type=registry,ref="+cacheRef,
+			// Only a single-container devcontainer honors this; a compose one
+			// ignores it, and pushBuildCache below is what covers that case.
+			"--cache-to", "type=registry,ref="+cacheRef+",mode=max,ignore-error=true")
+	}
 	// BUILDX_BAKE_ENTITLEMENTS_FS=0: compose-based devcontainers build via
 	// `docker buildx bake`, which (buildx >=0.17) gates any fs.read outside
 	// the compose dir behind an interactive entitlement prompt. `devcontainer
@@ -541,6 +572,11 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	if err := a.waitReady(ctx, name); err != nil {
 		return "", err
 	}
+	// The other half of the cache. The CLI builds with BUILDKIT_INLINE_CACHE=1,
+	// so the image it just built carries the metadata --cache-from needs — but
+	// only if the image outlives this run's daemon, which is what the push is
+	// for. It is the ONLY export path a compose devcontainer has.
+	a.pushBuildCache(ctx, name, gwIP, spec.Project, res.ContainerID, logW)
 	// Last, once the container is up and wired: give it the human-friendly
 	// docker name. Nothing above depends on the name (all lookups key off the
 	// container ID or the apothecary.env id-label), so it's safe to do last.
@@ -1541,3 +1577,67 @@ var _ ports.EgressAuditor = (*Adapter)(nil)
 var _ ports.WorkspacePortExposer = (*Adapter)(nil)
 var _ ports.WorkspaceRebuilder = (*Adapter)(nil)
 var _ ports.EditorStarter = (*Adapter)(nil)
+
+// --- build cache (ports.BuildCacheController) --------------------------------
+
+// BuildCache reports the size of the project's devcontainer build cache, held
+// by its gateway's writable registry.
+func (a *Adapter) BuildCache(ctx context.Context, project string) (ports.BuildCacheInfo, error) {
+	if a.gw == nil || project == "" {
+		return ports.BuildCacheInfo{}, nil
+	}
+	size, err := a.gw.BuildCacheSize(ctx, project)
+	if err != nil {
+		// No gateway up yet (a project that has never run) is not an error to
+		// show: there is simply nothing cached.
+		return ports.BuildCacheInfo{}, nil
+	}
+	return ports.BuildCacheInfo{Available: true, Bytes: size}, nil
+}
+
+// ClearBuildCache empties it. The next build repopulates it, so the only cost
+// of being wrong is one slow build.
+func (a *Adapter) ClearBuildCache(ctx context.Context, project string) error {
+	if a.gw == nil || project == "" {
+		return fmt.Errorf("build cache: this project has no gateway to hold one")
+	}
+	return a.gw.ClearBuildCache(ctx, project)
+}
+
+// pushBuildCache publishes the freshly built devcontainer image into the
+// project's build-cache registry, so the project's NEXT run restores it
+// instead of rebuilding (measured: 77s of a 90s provision was the build).
+//
+// Best-effort throughout, and deliberately so: every failure here costs a
+// slower next build and nothing else, while failing the provision over it
+// would trade a real workspace for a cache. The push is cheap after the first
+// one — the registry already has every unchanged layer.
+func (a *Adapter) pushBuildCache(ctx context.Context, name, gwIP, project, containerID string, logW io.Writer) {
+	if gwIP == "" || project == "" || containerID == "" {
+		return
+	}
+	plog := func(format string, args ...any) {
+		if logW != nil {
+			fmt.Fprintf(logW, format, args...)
+		}
+	}
+	img, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"inspect", containerID, "--format", "{{.Config.Image}}"}, nil, nil)
+	image := strings.TrimSpace(string(img))
+	if err != nil || code != 0 || image == "" {
+		plog("→ build cache: could not resolve the built image; next build starts cold\n")
+		return
+	}
+	ref := egressgw.BuildCacheImageRef(gwIP, project)
+	if _, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"tag", image, ref}, nil, nil); err != nil || code != 0 {
+		plog("→ build cache: could not tag %s; next build starts cold\n", image)
+		return
+	}
+	plog("→ saving the build cache for this project's next run\n")
+	if _, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"push", ref}, nil, logW); err != nil || code != 0 {
+		plog("→ build cache: push failed (%s); next build starts cold\n",
+			strings.TrimSpace(tail(string(stderr), 200)))
+	}
+}

@@ -1181,3 +1181,52 @@ func typeList(ts []StageType) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// Rename rewrites a document's own `name:` so a copy can carry a new one.
+//
+// A flow names itself and that name is its id, so copying under a different
+// name is a document edit, not a metadata change. The rewrite goes through the
+// YAML node tree rather than a string replacement: comments, key order and
+// formatting survive, and only the top-level name is touched — a stage or an
+// agent called "name" is untouched.
+func Rename(src, newName string) (string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
+		return "", fmt.Errorf("flow document: %v", err)
+	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode && len(root.Content) == 1 {
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return "", fmt.Errorf("flow document: top level must be a mapping")
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "name" {
+			continue
+		}
+		v := root.Content[i+1]
+		v.Value = newName
+		v.Tag = "!!str"
+		v.Style = 0
+		out, err := marshalDoc(&doc)
+		if err != nil {
+			return "", err
+		}
+		return out, nil
+	}
+	return "", fmt.Errorf("flow document has no top-level name")
+}
+
+func marshalDoc(doc *yaml.Node) (string, error) {
+	var b strings.Builder
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}

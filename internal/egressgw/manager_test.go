@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"apothecary/internal/egressgw/policyfile"
 )
@@ -268,14 +269,19 @@ func TestEnsureRunEgressSharesGatewayPerProject(t *testing.T) {
 	for _, want := range []string{
 		"--restart unless-stopped",
 		"-v apo-gw-acme-cache:/var/lib/registry",
+		"-v apo-gw-acme-buildcache:" + buildCacheDir,
 		"--mirror-config " + m.mirrorConfigPath("acme"),
+		"--buildcache-config " + m.buildCacheConfigPath("acme"),
 	} {
 		if !strings.Contains(run, want) {
 			t.Errorf("gateway run args missing %q:\n%s", want, run)
 		}
 	}
-	if n := fd.count("volume", "create"); n != 1 {
-		t.Errorf("cache volume create count = %d, want 1 (idempotent, once)", n)
+	// Two volumes, each created once: the pull-through mirror's and the
+	// writable build cache's. They are separate because only one of them is
+	// something a human ever deletes.
+	if n := fd.count("volume", "create"); n != 2 {
+		t.Errorf("cache volume create count = %d, want 2 (mirror + build cache, each once)", n)
 	}
 	if got := m.mirrorConfigPath("acme"); !strings.Contains(fd.findCall(t, "run -d"), got) {
 		t.Errorf("mirror config path %q not passed to the gateway", got)
@@ -428,5 +434,79 @@ func TestWriteMirrorConfigOnlyOnChange(t *testing.T) {
 	}
 	if string(b) != registryConfig {
 		t.Errorf("stale config not restored:\n%s", b)
+	}
+}
+
+// The build cache is the reason a project's second run is fast: a run's inner
+// daemon is thrown away, so the cache has to live somewhere that outlives it.
+// That somewhere is the gateway's writable registry — separate from the
+// pull-through mirror, which cannot accept pushes at all.
+func TestBuildCacheRegistryIsWritableAndSeparate(t *testing.T) {
+	if strings.Contains(buildCacheConfig, "proxy:") {
+		t.Error("the build-cache registry must NOT be in proxy mode — a proxy refuses pushes")
+	}
+	if !strings.Contains(buildCacheConfig, "addr: :"+BuildCachePort) {
+		t.Errorf("build cache config does not listen on %s:\n%s", BuildCachePort, buildCacheConfig)
+	}
+	if !strings.Contains(buildCacheConfig, "rootdirectory: "+buildCacheDir) {
+		t.Error("the two registries must not share storage")
+	}
+	if !strings.Contains(registryConfig, "proxy:") {
+		t.Error("the mirror must stay a pull-through proxy")
+	}
+}
+
+// The cache reference has to survive a gateway that comes back on a different
+// address: the host:port is only how you reach the registry, the repository
+// path is where the manifest lives.
+func TestBuildCacheRefIsStablePerProject(t *testing.T) {
+	a := BuildCacheRef("172.20.0.2", "Acme Corp/web")
+	b := BuildCacheRef("172.21.0.9", "Acme Corp/web")
+	pathOf := func(ref string) string {
+		_, p, _ := strings.Cut(ref, "/")
+		return p
+	}
+	if pathOf(a) != pathOf(b) {
+		t.Errorf("repository path changed with the gateway address: %q vs %q", a, b)
+	}
+	if strings.ContainsAny(pathOf(a), " /") && !strings.HasPrefix(pathOf(a), "acme-corp-web/") {
+		t.Errorf("repository path is not registry-safe: %q", a)
+	}
+	if got := repoPath("///"); got != "project" {
+		t.Errorf("a name with nothing usable in it = %q, want a fallback", got)
+	}
+}
+
+// Clearing empties the storage AND restarts the registry: a registry left
+// serving manifests whose blobs are gone would hand out cache entries that
+// fail to pull, which is worse than no cache.
+func TestClearBuildCacheWipesThenRestarts(t *testing.T) {
+	dir := t.TempDir()
+	fd := &fakeDocker{}
+	m := NewManager(dir, fd.run, testImageFn)
+	ctx := context.Background()
+	if _, err := m.EnsureRunEgress(ctx, "acme", "run1", policyfile.File{Mode: policyfile.ModeAllow}); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := m.buildCacheConfigPath("acme")
+	before, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The supervisor restarts on an mtime bump, so the wipe must move it.
+	time.Sleep(10 * time.Millisecond)
+	if err := m.ClearBuildCache(ctx, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	wipe := fd.findCall(t, "exec")
+	if !strings.Contains(wipe, buildCacheDir) || !strings.Contains(wipe, "rm -rf") {
+		t.Errorf("wipe call = %q", wipe)
+	}
+	after, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().After(before.ModTime()) {
+		t.Error("the config was not touched, so the registry keeps serving a wiped cache")
 	}
 }

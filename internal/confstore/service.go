@@ -319,7 +319,7 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	if p.DefaultFlow == "" {
 		p.DefaultFlow = builtin.DefaultFlowName
 	}
-	if _, err := s.db.GetFlow(ctx, p.DefaultFlow); errors.Is(err, ErrNotFound) {
+	if _, err := s.db.GetFlow(ctx, p.ID, p.DefaultFlow); errors.Is(err, ErrNotFound) {
 		if builtin.Flow(p.DefaultFlow) == nil {
 			return invalidf("project: default_flow %q: %v", p.DefaultFlow, err)
 		}
@@ -337,7 +337,13 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 // layout is the graph editor's display metadata (DESIGN3 §2.2): nil keeps
 // the stored one (a YAML-tab edit must not wipe node positions), non-nil
 // replaces it; it never influences the hash or versions.
-func (s *Service) SaveFlow(ctx context.Context, name, yamlSrc string, layout json.RawMessage) (FlowRow, error) {
+func (s *Service) SaveFlow(ctx context.Context, projectID, name, yamlSrc string, layout json.RawMessage) (FlowRow, error) {
+	if projectID == "" {
+		return FlowRow{}, invalidf("flow: a project is required (flows belong to one project)")
+	}
+	if _, err := s.db.GetProject(ctx, projectID); err != nil {
+		return FlowRow{}, fmt.Errorf("flow: project %s: %w", projectID, err)
+	}
 	f, err := flow.Parse(name, []byte(yamlSrc))
 	if err != nil {
 		return FlowRow{}, invalidf("%v", err)
@@ -348,35 +354,88 @@ func (s *Service) SaveFlow(ctx context.Context, name, yamlSrc string, layout jso
 	if len(layout) > 0 && !json.Valid(layout) {
 		return FlowRow{}, invalidf("flow %s: layout is not valid JSON", name)
 	}
-	row := FlowRow{Name: name, YAML: yamlSrc, Hash: f.Hash, Layout: layout, UpdatedAt: s.now().UTC()}
+	row := FlowRow{ProjectID: projectID, Name: name, YAML: yamlSrc, Hash: f.Hash,
+		Layout: layout, UpdatedAt: s.now().UTC()}
 	if err := s.db.UpsertFlow(ctx, row); err != nil {
 		return FlowRow{}, err
 	}
 	if len(layout) == 0 {
 		// Reflect the kept layout back to the caller.
-		if cur, err := s.db.GetFlow(ctx, name); err == nil {
+		if cur, err := s.db.GetFlow(ctx, projectID, name); err == nil {
 			row.Layout = cur.Layout
 		}
 	}
 	return row, nil
 }
 
-func (s *Service) GetFlow(ctx context.Context, name string) (FlowRow, error) {
-	return s.db.GetFlow(ctx, name)
+// CopyFlow clones one project's flow into another. This is how a good flow
+// spreads now that flows are owned rather than shared: the copy is a NEW
+// document in the target project, with its own history from this moment —
+// editing it never reaches back, which is the whole point of ownership.
+//
+// The source may be a built-in template (no project row of that name), which
+// is how a project adopts one for editing.
+func (s *Service) CopyFlow(ctx context.Context, fromProject, fromName, toProject, toName string) (FlowRow, error) {
+	if toName == "" {
+		toName = fromName
+	}
+	if fromProject == toProject && fromName == toName {
+		return FlowRow{}, invalidf("flow %q: copying onto itself needs a different name", fromName)
+	}
+	yamlSrc, err := s.flowText(ctx, fromProject, fromName)
+	if err != nil {
+		return FlowRow{}, err
+	}
+	// The document names itself, and the name is its id: a copy under a new
+	// name must say so in the YAML, or the save would refuse it.
+	if toName != fromName {
+		yamlSrc, err = flow.Rename(yamlSrc, toName)
+		if err != nil {
+			return FlowRow{}, invalidf("%v", err)
+		}
+	}
+	if _, err := s.db.GetFlow(ctx, toProject, toName); err == nil {
+		return FlowRow{}, fmt.Errorf("flow %q already exists in the target project: %w", toName, ErrConflict)
+	} else if !errors.Is(err, ErrNotFound) {
+		return FlowRow{}, err
+	}
+	return s.SaveFlow(ctx, toProject, toName, yamlSrc, nil)
 }
 
-func (s *Service) ListFlows(ctx context.Context) ([]FlowRow, error) {
-	return s.db.ListFlows(ctx)
+// flowText reads a flow's YAML from a project, falling back to the built-in
+// template of that name — the same layering the engine resolves through.
+func (s *Service) flowText(ctx context.Context, projectID, name string) (string, error) {
+	row, err := s.db.GetFlow(ctx, projectID, name)
+	if err == nil {
+		return row.YAML, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	if src, ok := builtin.FlowYAML(name); ok {
+		return src, nil
+	}
+	return "", err
 }
 
-func (s *Service) DeleteFlow(ctx context.Context, name string) error {
-	return s.db.DeleteFlow(ctx, name)
+func (s *Service) GetFlow(ctx context.Context, projectID, name string) (FlowRow, error) {
+	return s.db.GetFlow(ctx, projectID, name)
 }
 
-func (s *Service) FlowVersions(ctx context.Context, name string) ([]FlowVersion, error) {
-	return s.db.ListFlowVersions(ctx, name)
+// ListFlows returns one project's flows, or every project's when projectID is
+// empty (the cross-project overview).
+func (s *Service) ListFlows(ctx context.Context, projectID string) ([]FlowRow, error) {
+	return s.db.ListFlows(ctx, projectID)
 }
 
-func (s *Service) FlowVersion(ctx context.Context, hash string) (FlowVersion, error) {
-	return s.db.GetFlowVersion(ctx, hash)
+func (s *Service) DeleteFlow(ctx context.Context, projectID, name string) error {
+	return s.db.DeleteFlow(ctx, projectID, name)
+}
+
+func (s *Service) FlowVersions(ctx context.Context, projectID, name string) ([]FlowVersion, error) {
+	return s.db.ListFlowVersions(ctx, projectID, name)
+}
+
+func (s *Service) FlowVersion(ctx context.Context, projectID, hash string) (FlowVersion, error) {
+	return s.db.GetFlowVersion(ctx, projectID, hash)
 }

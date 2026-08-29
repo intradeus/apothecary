@@ -426,8 +426,10 @@ var (
 
 	// Sentinel errors for API status mapping.
 	ErrRunNotActive = errors.New("run is not active")
-	ErrPingNotFound = errors.New("ping not found")
-	ErrPingAnswered = errors.New("ping already answered")
+	// ErrBuildCacheOff: this provisioner keeps no build cache of its own.
+	ErrBuildCacheOff = errors.New("this provisioner has no build cache")
+	ErrPingNotFound  = errors.New("ping not found")
+	ErrPingAnswered  = errors.New("ping already answered")
 	// ErrArtifactIsURL marks a gate whose payload is a link (mr_url), not a
 	// workspace artifact — the UI keeps the link-out behavior (DESIGN3 §3).
 	ErrArtifactIsURL = errors.New("ping payload is a URL, not an artifact")
@@ -684,6 +686,47 @@ func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressCont
 	return ctrl, ports.EnvID(e.envNameForRun(v, runID)), res.release, nil
 }
 
+// buildCacheCtrl resolves a project to its provisioner's build-cache
+// controller. ErrBuildCacheOff when the provisioner has none — a k8s or remote
+// provisioner may cache elsewhere, or not at all.
+// It returns the project NAME alongside: the gateway that holds the cache is
+// keyed by the name Provision passed it, not by the id.
+func (e *Engine) buildCacheCtrl(ctx context.Context, projectID string) (ports.BuildCacheController, string, func(), error) {
+	res, err := e.resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	ctrl, ok := res.Envp.(ports.BuildCacheController)
+	if !ok {
+		res.release()
+		return nil, "", nil, ErrBuildCacheOff
+	}
+	return ctrl, res.ProjectName, res.release, nil
+}
+
+// BuildCache reports what the project's devcontainer build cache holds. The
+// cache is per project and outlives its runs: it is what stops every run
+// rebuilding the image into its own throwaway daemon.
+func (e *Engine) BuildCache(ctx context.Context, projectID string) (ports.BuildCacheInfo, error) {
+	ctrl, project, release, err := e.buildCacheCtrl(ctx, projectID)
+	if err != nil {
+		return ports.BuildCacheInfo{}, err
+	}
+	defer release()
+	return ctrl.BuildCache(ctx, project)
+}
+
+// ClearBuildCache empties it. Safe by construction — the next build refills it,
+// so the cost of clearing when you did not need to is one slow build.
+func (e *Engine) ClearBuildCache(ctx context.Context, projectID string) error {
+	ctrl, project, release, err := e.buildCacheCtrl(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return ctrl.ClearBuildCache(ctx, project)
+}
+
 // EgressDenials lists a run's gateway-blocked hosts (run page feedback).
 func (e *Engine) EgressDenials(ctx context.Context, runID string) []ports.EgressDenial {
 	ctrl, env, release, err := e.egressCtrl(ctx, runID)
@@ -850,7 +893,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	if flowName == "" {
 		flowName = res.DefaultFlow
 	}
-	fl, err := e.flows.Get(ctx, flowName)
+	fl, err := e.flows.Get(ctx, projectID, flowName)
 	if err != nil {
 		return "", fmt.Errorf("flow %q: %w", flowName, err)
 	}
@@ -1100,7 +1143,7 @@ func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
 	// never change behavior underneath a running stage (PLAN5 M19). A flow
 	// that no longer resolves keeps the old pin rather than blocking the retry.
 	hash := ""
-	if fl, ferr := e.flows.Get(ctx, v.FlowName); ferr == nil {
+	if fl, ferr := e.flows.Get(ctx, v.ProjectID, v.FlowName); ferr == nil {
 		if fl.Stage(v.CurrentStage) == nil {
 			return fmt.Errorf("run %s cannot resume: flow %q no longer has a stage %q — restart it instead",
 				runID, v.FlowName, v.CurrentStage)
@@ -2174,7 +2217,7 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	defer res.release()
 	steps := []PreflightStep{step("resolve", nil)}
 
-	fl, err := e.flows.Get(ctx, res.DefaultFlow)
+	fl, err := e.flows.Get(ctx, res.ProjectID, res.DefaultFlow)
 	steps = append(steps, step("flow:"+res.DefaultFlow, err))
 	steps = append(steps, step("forge_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
 	ok, ferr := res.Forge.FileExists(ctx, res.RepoRef, res.AgentsMDPath)

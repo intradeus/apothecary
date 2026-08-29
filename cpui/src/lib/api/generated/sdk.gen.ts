@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type ServerSentEventsResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbortRunData, AbortRunErrors, AbortRunResponses, AddChannelData, AddChannelErrors, AddChannelResponses, AllowEgressHostData, AllowEgressHostErrors, AllowEgressHostResponses, AnswerPingData, AnswerPingErrors, AnswerPingResponses, ArchiveRunData, ArchiveRunErrors, ArchiveRunResponses, CreateFlowData, CreateFlowErrors, CreateFlowResponses, CreateIntegrationData, CreateIntegrationErrors, CreateIntegrationResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateTicketData, CreateTicketErrors, CreateTicketResponses, DeleteChannelData, DeleteChannelErrors, DeleteChannelResponses, DeleteFlowData, DeleteFlowErrors, DeleteFlowResponses, DeleteIntegrationData, DeleteIntegrationErrors, DeleteIntegrationResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteTicketData, DeleteTicketErrors, DeleteTicketResponses, DownloadAttachmentData, DownloadAttachmentErrors, DownloadAttachmentResponses, DownloadSnapshotData, DownloadSnapshotErrors, DownloadSnapshotResponses, ExposeRunPortData, ExposeRunPortErrors, ExposeRunPortResponses, GetAttachmentLimitsData, GetAttachmentLimitsErrors, GetAttachmentLimitsResponses, GetEgressDefaultsData, GetEgressDefaultsErrors, GetEgressDefaultsResponses, GetEnvCheckData, GetEnvCheckErrors, GetEnvCheckResponses, GetFlowData, GetFlowErrors, GetFlowResponses, GetFlowVersionData, GetFlowVersionErrors, GetFlowVersionResponses, GetIntegrationData, GetIntegrationErrors, GetIntegrationResponses, GetPingData, GetPingErrors, GetPingFilesData, GetPingFilesErrors, GetPingFilesResponses, GetPingResponses, GetProjectData, GetProjectEgressAuditData, GetProjectEgressAuditErrors, GetProjectEgressAuditResponses, GetProjectErrors, GetProjectResponses, GetRunData, GetRunEgressAuditData, GetRunEgressAuditErrors, GetRunEgressAuditResponses, GetRunEgressPolicyData, GetRunEgressPolicyErrors, GetRunEgressPolicyResponses, GetRunErrors, GetRunFilesData, GetRunFilesErrors, GetRunFilesResponses, GetRunPortsData, GetRunPortsErrors, GetRunPortsResponses, GetRunResourcesData, GetRunResourcesErrors, GetRunResourcesResponses, GetRunResponses, GetSettingsData, GetSettingsErrors, GetSettingsResponses, GetSourceTicketData, GetSourceTicketErrors, GetSourceTicketResponses, GetStageLogData, GetStageLogErrors, GetStageLogResponses, GetTicketAttachmentsData, GetTicketAttachmentsErrors, GetTicketAttachmentsResponses, GetTicketData, GetTicketErrors, GetTicketResponses, GetWorkspaceLogData, GetWorkspaceLogErrors, GetWorkspaceLogResponses, ListActionsData, ListActionsErrors, ListActionsResponses, ListChannelsData, ListChannelsErrors, ListChannelsResponses, ListEgressDenialsData, ListEgressDenialsErrors, ListEgressDenialsResponses, ListFlowsData, ListFlowsErrors, ListFlowsResponses, ListFlowVersionsData, ListFlowVersionsErrors, ListFlowVersionsResponses, ListIntegrationModelsData, ListIntegrationModelsErrors, ListIntegrationModelsResponses, ListIntegrationReposData, ListIntegrationReposErrors, ListIntegrationReposResponses, ListIntegrationsData, ListIntegrationsErrors, ListIntegrationsResponses, ListKindsData, ListKindsErrors, ListKindsResponses, ListPingsData, ListPingsErrors, ListPingsResponses, ListProjectBranchesData, ListProjectBranchesErrors, ListProjectBranchesResponses, ListProjectsData, ListProjectsErrors, ListProjectsResponses, ListRunsData, ListRunsErrors, ListRunsResponses, ListSignalsData, ListSignalsErrors, ListSignalsResponses, ListTicketsData, ListTicketsErrors, ListTicketsResponses, OpenEditorData, OpenEditorErrors, OpenEditorResponses, PauseRunData, PauseRunErrors, PauseRunResponses, PlayRunData, PlayRunErrors, PlayRunResponses, PreflightProjectData, PreflightProjectErrors, PreflightProjectResponses, RaisePingData, RaisePingErrors, RaisePingResponses, RebuildWorkspaceData, RebuildWorkspaceErrors, RebuildWorkspaceResponses, RepollPingData, RepollPingErrors, RepollPingResponses, ReportObservedPortsData, ReportObservedPortsErrors, ReportObservedPortsResponses, RestartRunData, RestartRunErrors, RestartRunResponses, ResumeRunData, ResumeRunErrors, ResumeRunResponses, SearchSourceTicketsData, SearchSourceTicketsErrors, SearchSourceTicketsResponses, SetEgressRuleData, SetEgressRuleErrors, SetEgressRuleResponses, StartEnvCheckData, StartEnvCheckErrors, StartEnvCheckResponses, StartTicketRunData, StartTicketRunErrors, StartTicketRunResponses, StreamRunEventsData, StreamRunEventsErrors, StreamRunEventsResponse, StreamRunEventsResponses, TestIntegrationData, TestIntegrationErrors, TestIntegrationResponses, UpdateFlowData, UpdateFlowErrors, UpdateFlowResponses, UpdateIntegrationData, UpdateIntegrationErrors, UpdateIntegrationResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses, UpdateTicketData, UpdateTicketErrors, UpdateTicketResponses, UploadAttachmentsData, UploadAttachmentsErrors, UploadAttachmentsResponses, ValidateFlowData, ValidateFlowErrors, ValidateFlowResponses } from './types.gen';
+import type { AbortRunData, AbortRunErrors, AbortRunResponses, AddChannelData, AddChannelErrors, AddChannelResponses, AllowEgressHostData, AllowEgressHostErrors, AllowEgressHostResponses, AnswerPingData, AnswerPingErrors, AnswerPingResponses, ArchiveRunData, ArchiveRunErrors, ArchiveRunResponses, ClearBuildCacheData, ClearBuildCacheErrors, ClearBuildCacheResponses, CopyFlowData, CopyFlowErrors, CopyFlowResponses, CreateFlowData, CreateFlowErrors, CreateFlowResponses, CreateIntegrationData, CreateIntegrationErrors, CreateIntegrationResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateTicketData, CreateTicketErrors, CreateTicketResponses, DeleteChannelData, DeleteChannelErrors, DeleteChannelResponses, DeleteFlowData, DeleteFlowErrors, DeleteFlowResponses, DeleteIntegrationData, DeleteIntegrationErrors, DeleteIntegrationResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteTicketData, DeleteTicketErrors, DeleteTicketResponses, DownloadAttachmentData, DownloadAttachmentErrors, DownloadAttachmentResponses, DownloadSnapshotData, DownloadSnapshotErrors, DownloadSnapshotResponses, ExposeRunPortData, ExposeRunPortErrors, ExposeRunPortResponses, GetAttachmentLimitsData, GetAttachmentLimitsErrors, GetAttachmentLimitsResponses, GetBuildCacheData, GetBuildCacheErrors, GetBuildCacheResponses, GetEgressDefaultsData, GetEgressDefaultsErrors, GetEgressDefaultsResponses, GetEnvCheckData, GetEnvCheckErrors, GetEnvCheckResponses, GetFlowData, GetFlowErrors, GetFlowResponses, GetFlowVersionData, GetFlowVersionErrors, GetFlowVersionResponses, GetIntegrationData, GetIntegrationErrors, GetIntegrationResponses, GetPingData, GetPingErrors, GetPingFilesData, GetPingFilesErrors, GetPingFilesResponses, GetPingResponses, GetProjectData, GetProjectEgressAuditData, GetProjectEgressAuditErrors, GetProjectEgressAuditResponses, GetProjectErrors, GetProjectResponses, GetRunData, GetRunEgressAuditData, GetRunEgressAuditErrors, GetRunEgressAuditResponses, GetRunEgressPolicyData, GetRunEgressPolicyErrors, GetRunEgressPolicyResponses, GetRunErrors, GetRunFilesData, GetRunFilesErrors, GetRunFilesResponses, GetRunPortsData, GetRunPortsErrors, GetRunPortsResponses, GetRunResourcesData, GetRunResourcesErrors, GetRunResourcesResponses, GetRunResponses, GetSettingsData, GetSettingsErrors, GetSettingsResponses, GetSourceTicketData, GetSourceTicketErrors, GetSourceTicketResponses, GetStageLogData, GetStageLogErrors, GetStageLogResponses, GetTicketAttachmentsData, GetTicketAttachmentsErrors, GetTicketAttachmentsResponses, GetTicketData, GetTicketErrors, GetTicketResponses, GetWorkspaceLogData, GetWorkspaceLogErrors, GetWorkspaceLogResponses, ListActionsData, ListActionsErrors, ListActionsResponses, ListAllFlowsData, ListAllFlowsErrors, ListAllFlowsResponses, ListChannelsData, ListChannelsErrors, ListChannelsResponses, ListEgressDenialsData, ListEgressDenialsErrors, ListEgressDenialsResponses, ListFlowsData, ListFlowsErrors, ListFlowsResponses, ListFlowTemplatesData, ListFlowTemplatesErrors, ListFlowTemplatesResponses, ListFlowVersionsData, ListFlowVersionsErrors, ListFlowVersionsResponses, ListIntegrationModelsData, ListIntegrationModelsErrors, ListIntegrationModelsResponses, ListIntegrationReposData, ListIntegrationReposErrors, ListIntegrationReposResponses, ListIntegrationsData, ListIntegrationsErrors, ListIntegrationsResponses, ListKindsData, ListKindsErrors, ListKindsResponses, ListPingsData, ListPingsErrors, ListPingsResponses, ListProjectBranchesData, ListProjectBranchesErrors, ListProjectBranchesResponses, ListProjectsData, ListProjectsErrors, ListProjectsResponses, ListRunsData, ListRunsErrors, ListRunsResponses, ListSignalsData, ListSignalsErrors, ListSignalsResponses, ListTicketsData, ListTicketsErrors, ListTicketsResponses, OpenEditorData, OpenEditorErrors, OpenEditorResponses, PauseRunData, PauseRunErrors, PauseRunResponses, PlayRunData, PlayRunErrors, PlayRunResponses, PreflightProjectData, PreflightProjectErrors, PreflightProjectResponses, RaisePingData, RaisePingErrors, RaisePingResponses, RebuildWorkspaceData, RebuildWorkspaceErrors, RebuildWorkspaceResponses, RepollPingData, RepollPingErrors, RepollPingResponses, ReportObservedPortsData, ReportObservedPortsErrors, ReportObservedPortsResponses, RestartRunData, RestartRunErrors, RestartRunResponses, ResumeRunData, ResumeRunErrors, ResumeRunResponses, SearchSourceTicketsData, SearchSourceTicketsErrors, SearchSourceTicketsResponses, SetEgressRuleData, SetEgressRuleErrors, SetEgressRuleResponses, StartEnvCheckData, StartEnvCheckErrors, StartEnvCheckResponses, StartTicketRunData, StartTicketRunErrors, StartTicketRunResponses, StreamRunEventsData, StreamRunEventsErrors, StreamRunEventsResponse, StreamRunEventsResponses, TestIntegrationData, TestIntegrationErrors, TestIntegrationResponses, UpdateFlowData, UpdateFlowErrors, UpdateFlowResponses, UpdateIntegrationData, UpdateIntegrationErrors, UpdateIntegrationResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses, UpdateTicketData, UpdateTicketErrors, UpdateTicketResponses, UploadAttachmentsData, UploadAttachmentsErrors, UploadAttachmentsResponses, ValidateFlowData, ValidateFlowErrors, ValidateFlowResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -79,56 +79,19 @@ export const getEgressDefaults = <ThrowOnError extends boolean = false>(options?
 export const getEnvCheck = <ThrowOnError extends boolean = false>(options: Options<GetEnvCheckData, ThrowOnError>): RequestResult<GetEnvCheckResponses, GetEnvCheckErrors, ThrowOnError> => (options.client ?? client).get<GetEnvCheckResponses, GetEnvCheckErrors, ThrowOnError>({ url: '/api/envchecks/{id}', ...options });
 
 /**
- * One flow version by content hash
+ * The compiled-in flow templates a project can adopt or copy
  */
-export const getFlowVersion = <ThrowOnError extends boolean = false>(options: Options<GetFlowVersionData, ThrowOnError>): RequestResult<GetFlowVersionResponses, GetFlowVersionErrors, ThrowOnError> => (options.client ?? client).get<GetFlowVersionResponses, GetFlowVersionErrors, ThrowOnError>({ url: '/api/flow-versions/{hash}', ...options });
+export const listFlowTemplates = <ThrowOnError extends boolean = false>(options?: Options<ListFlowTemplatesData, ThrowOnError>): RequestResult<ListFlowTemplatesResponses, ListFlowTemplatesErrors, ThrowOnError> => (options?.client ?? client).get<ListFlowTemplatesResponses, ListFlowTemplatesErrors, ThrowOnError>({ url: '/api/flow-templates', ...options });
 
 /**
- * Every flow, built-ins included
+ * Every project's flows, for the cross-project overview
  */
-export const listFlows = <ThrowOnError extends boolean = false>(options?: Options<ListFlowsData, ThrowOnError>): RequestResult<ListFlowsResponses, ListFlowsErrors, ThrowOnError> => (options?.client ?? client).get<ListFlowsResponses, ListFlowsErrors, ThrowOnError>({ url: '/api/flows', ...options });
-
-/**
- * Create a flow
- */
-export const createFlow = <ThrowOnError extends boolean = false>(options: Options<CreateFlowData, ThrowOnError>): RequestResult<CreateFlowResponses, CreateFlowErrors, ThrowOnError> => (options.client ?? client).post<CreateFlowResponses, CreateFlowErrors, ThrowOnError>({
-    url: '/api/flows',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Delete a flow
- */
-export const deleteFlow = <ThrowOnError extends boolean = false>(options: Options<DeleteFlowData, ThrowOnError>): RequestResult<DeleteFlowResponses, DeleteFlowErrors, ThrowOnError> => (options.client ?? client).delete<DeleteFlowResponses, DeleteFlowErrors, ThrowOnError>({ url: '/api/flows/{name}', ...options });
-
-/**
- * One flow
- */
-export const getFlow = <ThrowOnError extends boolean = false>(options: Options<GetFlowData, ThrowOnError>): RequestResult<GetFlowResponses, GetFlowErrors, ThrowOnError> => (options.client ?? client).get<GetFlowResponses, GetFlowErrors, ThrowOnError>({ url: '/api/flows/{name}', ...options });
-
-/**
- * Replace a flow
- */
-export const updateFlow = <ThrowOnError extends boolean = false>(options: Options<UpdateFlowData, ThrowOnError>): RequestResult<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError> => (options.client ?? client).put<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError>({
-    url: '/api/flows/{name}',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * A flow's version history
- */
-export const listFlowVersions = <ThrowOnError extends boolean = false>(options: Options<ListFlowVersionsData, ThrowOnError>): RequestResult<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError> => (options.client ?? client).get<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError>({ url: '/api/flows/{name}/versions', ...options });
+export const listAllFlows = <ThrowOnError extends boolean = false>(options?: Options<ListAllFlowsData, ThrowOnError>): RequestResult<ListAllFlowsResponses, ListAllFlowsErrors, ThrowOnError> => (options?.client ?? client).get<ListAllFlowsResponses, ListAllFlowsErrors, ThrowOnError>({ url: '/api/flows', ...options });
 
 /**
  * Validate a flow document without saving it
+ *
+ * Project-independent: the parser checks the document itself, and a flow carries its own agents.
  */
 export const validateFlow = <ThrowOnError extends boolean = false>(options: Options<ValidateFlowData, ThrowOnError>): RequestResult<ValidateFlowResponses, ValidateFlowErrors, ThrowOnError> => (options.client ?? client).post<ValidateFlowResponses, ValidateFlowErrors, ThrowOnError>({
     url: '/api/flows/validate',
@@ -280,6 +243,20 @@ export const updateProject = <ThrowOnError extends boolean = false>(options: Opt
 export const listProjectBranches = <ThrowOnError extends boolean = false>(options: Options<ListProjectBranchesData, ThrowOnError>): RequestResult<ListProjectBranchesResponses, ListProjectBranchesErrors, ThrowOnError> => (options.client ?? client).get<ListProjectBranchesResponses, ListProjectBranchesErrors, ThrowOnError>({ url: '/api/projects/{id}/branches', ...options });
 
 /**
+ * Empty the project's build cache
+ *
+ * Safe: the next build repopulates it, so the cost of clearing needlessly is one slow build.
+ */
+export const clearBuildCache = <ThrowOnError extends boolean = false>(options: Options<ClearBuildCacheData, ThrowOnError>): RequestResult<ClearBuildCacheResponses, ClearBuildCacheErrors, ThrowOnError> => (options.client ?? client).delete<ClearBuildCacheResponses, ClearBuildCacheErrors, ThrowOnError>({ url: '/api/projects/{id}/build-cache', ...options });
+
+/**
+ * What the project's devcontainer build cache holds
+ *
+ * The cache is per project and outlives its runs — it is what stops every run rebuilding the image into its own throwaway daemon.
+ */
+export const getBuildCache = <ThrowOnError extends boolean = false>(options: Options<GetBuildCacheData, ThrowOnError>): RequestResult<GetBuildCacheResponses, GetBuildCacheErrors, ThrowOnError> => (options.client ?? client).get<GetBuildCacheResponses, GetBuildCacheErrors, ThrowOnError>({ url: '/api/projects/{id}/build-cache', ...options });
+
+/**
  * Everything this project's workspaces reached or were blocked from
  */
 export const getProjectEgressAudit = <ThrowOnError extends boolean = false>(options: Options<GetProjectEgressAuditData, ThrowOnError>): RequestResult<GetProjectEgressAuditResponses, GetProjectEgressAuditErrors, ThrowOnError> => (options.client ?? client).get<GetProjectEgressAuditResponses, GetProjectEgressAuditErrors, ThrowOnError>({ url: '/api/projects/{id}/egress-audit', ...options });
@@ -295,6 +272,71 @@ export const startEnvCheck = <ThrowOnError extends boolean = false>(options: Opt
         ...options.headers
     }
 });
+
+/**
+ * One flow version by content hash
+ */
+export const getFlowVersion = <ThrowOnError extends boolean = false>(options: Options<GetFlowVersionData, ThrowOnError>): RequestResult<GetFlowVersionResponses, GetFlowVersionErrors, ThrowOnError> => (options.client ?? client).get<GetFlowVersionResponses, GetFlowVersionErrors, ThrowOnError>({ url: '/api/projects/{id}/flow-versions/{hash}', ...options });
+
+/**
+ * A project's flows, with the templates it has not adopted
+ */
+export const listFlows = <ThrowOnError extends boolean = false>(options: Options<ListFlowsData, ThrowOnError>): RequestResult<ListFlowsResponses, ListFlowsErrors, ThrowOnError> => (options.client ?? client).get<ListFlowsResponses, ListFlowsErrors, ThrowOnError>({ url: '/api/projects/{id}/flows', ...options });
+
+/**
+ * Create a flow in a project
+ */
+export const createFlow = <ThrowOnError extends boolean = false>(options: Options<CreateFlowData, ThrowOnError>): RequestResult<CreateFlowResponses, CreateFlowErrors, ThrowOnError> => (options.client ?? client).post<CreateFlowResponses, CreateFlowErrors, ThrowOnError>({
+    url: '/api/projects/{id}/flows',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete a project's flow (resets to the template, when there is one)
+ */
+export const deleteFlow = <ThrowOnError extends boolean = false>(options: Options<DeleteFlowData, ThrowOnError>): RequestResult<DeleteFlowResponses, DeleteFlowErrors, ThrowOnError> => (options.client ?? client).delete<DeleteFlowResponses, DeleteFlowErrors, ThrowOnError>({ url: '/api/projects/{id}/flows/{name}', ...options });
+
+/**
+ * One of a project's flows
+ *
+ * Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.
+ */
+export const getFlow = <ThrowOnError extends boolean = false>(options: Options<GetFlowData, ThrowOnError>): RequestResult<GetFlowResponses, GetFlowErrors, ThrowOnError> => (options.client ?? client).get<GetFlowResponses, GetFlowErrors, ThrowOnError>({ url: '/api/projects/{id}/flows/{name}', ...options });
+
+/**
+ * Replace one of a project's flows
+ *
+ * Saving a built-in template's name for the first time creates this project's own copy of it.
+ */
+export const updateFlow = <ThrowOnError extends boolean = false>(options: Options<UpdateFlowData, ThrowOnError>): RequestResult<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError> => (options.client ?? client).put<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError>({
+    url: '/api/projects/{id}/flows/{name}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Copy a flow into another project
+ */
+export const copyFlow = <ThrowOnError extends boolean = false>(options: Options<CopyFlowData, ThrowOnError>): RequestResult<CopyFlowResponses, CopyFlowErrors, ThrowOnError> => (options.client ?? client).post<CopyFlowResponses, CopyFlowErrors, ThrowOnError>({
+    url: '/api/projects/{id}/flows/{name}/copy',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * A flow's version history within its project
+ */
+export const listFlowVersions = <ThrowOnError extends boolean = false>(options: Options<ListFlowVersionsData, ThrowOnError>): RequestResult<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError> => (options.client ?? client).get<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError>({ url: '/api/projects/{id}/flows/{name}/versions', ...options });
 
 /**
  * Check a project is ready to run, step by step

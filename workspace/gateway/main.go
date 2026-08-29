@@ -50,8 +50,9 @@ func main() {
 	flag.BoolVar(&g.logDNS, "log-dns", true, "log DNS resolutions (run/name/ips)")
 	// The pull-through registry cache is opt-in: no config path, no child (the
 	// filtering gateway must work identically without it).
-	var mirrorConfig string
+	var mirrorConfig, buildCacheConfig string
 	flag.StringVar(&mirrorConfig, "mirror-config", "", "path to the registry mirror config.yml (empty = no image mirror)")
+	flag.StringVar(&buildCacheConfig, "buildcache-config", "", "path to the build-cache registry config.yml (empty = no build cache)")
 	flag.Parse()
 	g.audit = newAuditor(auditPath)
 
@@ -75,7 +76,14 @@ func main() {
 	go g.watch()
 	if mirrorConfig != "" {
 		log.Printf("gateway: image mirror on :5000 (config %s)", mirrorConfig)
-		go superviseRegistry(mirrorConfig)
+		go superviseRegistry("mirror", mirrorConfig)
+	}
+	// The writable twin: buildkit pushes the devcontainer build cache here and
+	// pulls it back on the project's next run, which is the whole reason a
+	// throwaway per-run daemon does not mean a from-scratch build.
+	if buildCacheConfig != "" {
+		log.Printf("gateway: build cache on :5001 (config %s)", buildCacheConfig)
+		go superviseRegistry("buildcache", buildCacheConfig)
 	}
 
 	ln, err := net.Listen("tcp", ":"+itoa(g.listenPort))

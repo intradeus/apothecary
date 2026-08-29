@@ -234,7 +234,7 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	// longer resolves is not this check's business — it probes the
 	// environment, so fall through with no agents rather than refusing.
 	var agents []*agentspec.Spec
-	if fl, ferr := e.flows.Get(ctx, res.DefaultFlow); ferr == nil {
+	if fl, ferr := e.flows.Get(ctx, res.ProjectID, res.DefaultFlow); ferr == nil {
 		agents = fl.AgentSpecs()
 	}
 	id := e.newID()

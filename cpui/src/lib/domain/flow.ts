@@ -8,15 +8,21 @@ export interface FlowLayout {
 }
 
 export interface Flow {
+  /** The project that owns it. A flow's stages name that project's commands
+   *  and its agents know that repository, so the same name in two projects is
+   *  two different documents. Empty on a built-in template, which belongs to
+   *  no project until one adopts it. */
+  projectId: string;
   name: string;
   yaml: string;
   hash: string;
   layout?: FlowLayout;
   updatedAt: string;
-  /** Served from the binary; saving creates an editable override. */
+  /** A compiled-in template this project has not adopted. Saving it creates
+   *  the project's own copy. */
   builtin: boolean;
-  /** This row overrides a built-in name; deleting it resets to the
-   *  compiled-in default. */
+  /** This project's own copy of a template's name; deleting it resets to the
+   *  template. */
   shadowsBuiltin: boolean;
 }
 

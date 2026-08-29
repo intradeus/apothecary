@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/api';
-  import type { EnvCheck, Flow, Integration, PreflightStep, Project } from '$lib/domain';
+  import type { BuildCache, EnvCheck, Flow, Integration, PreflightStep, Project } from '$lib/domain';
+  import { fmtBytes } from '$lib/format';
   import ProjectForm from '$lib/ProjectForm.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -16,6 +17,33 @@
   let checkKeep = $state(false);
   let checkError = $state('');
   let checkTimer: ReturnType<typeof setInterval> | undefined;
+
+  // The devcontainer build cache: what makes a second run of this project fast
+  // (the first one builds the image, every later one restores it). null while
+  // loading or when this provisioner keeps none.
+  let buildCache = $state<BuildCache | null>(null);
+  let clearingCache = $state(false);
+  let cacheError = $state('');
+
+  async function loadBuildCache() {
+    buildCache = await api.projects.buildCache(page.params.id!);
+  }
+
+  async function clearBuildCache() {
+    if (!confirm('Empty this project\u2019s build cache? The next run rebuilds the devcontainer image from scratch; runs after that are fast again.')) {
+      return;
+    }
+    clearingCache = true;
+    cacheError = '';
+    try {
+      await api.projects.clearBuildCache(page.params.id!);
+      await loadBuildCache();
+    } catch (e) {
+      cacheError = e instanceof Error ? e.message : String(e);
+    } finally {
+      clearingCache = false;
+    }
+  }
 
   async function startEnvCheck() {
     checkError = '';
@@ -42,8 +70,11 @@
       [project, integrations, flows] = await Promise.all([
         api.projects.get(page.params.id!),
         api.integrations.list(),
-        api.flows.list()
+        // This project's own flows, plus the templates it has not adopted:
+        // the default-flow picker offers exactly what a run could use.
+        api.flows.list(page.params.id!)
       ]);
+      await loadBuildCache();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -93,6 +124,24 @@
 
   {#if error}<div class="error">{error}</div>{/if}
   {#if checkError}<div class="error">{checkError}</div>{/if}
+  {#if cacheError}<div class="error">{cacheError}</div>{/if}
+
+  {#if buildCache?.available}
+    <div class="card row spread">
+      <div>
+        <strong>Build cache</strong>
+        <span class="mono">{buildCache.bytes ? fmtBytes(buildCache.bytes) : 'empty'}</span>
+        <div class="small muted">
+          The devcontainer image layers this project&rsquo;s runs reuse. Empty it when a build
+          starts from something stale — a moved base image, a bad layer; the next run rebuilds
+          and refills it.
+        </div>
+      </div>
+      <button onclick={clearBuildCache} disabled={clearingCache || !buildCache.bytes}>
+        {clearingCache ? 'Clearing…' : 'Clear'}
+      </button>
+    </div>
+  {/if}
 
   {#if check}
     <div class="card">

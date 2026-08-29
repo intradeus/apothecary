@@ -100,8 +100,8 @@ func FlowSource(next flow.Source) flow.Source { return layeredSource{next: next}
 
 type layeredSource struct{ next flow.Source }
 
-func (s layeredSource) Get(ctx context.Context, name string) (*flow.Flow, error) {
-	f, err := s.next.Get(ctx, name)
+func (s layeredSource) Get(ctx context.Context, projectID, name string) (*flow.Flow, error) {
+	f, err := s.next.Get(ctx, projectID, name)
 	if errors.Is(err, flow.ErrNotFound) {
 		if b := Flow(name); b != nil {
 			return b, nil
@@ -113,9 +113,9 @@ func (s layeredSource) Get(ctx context.Context, name string) (*flow.Flow, error)
 // GetVersion layers the built-in under the store's version history: a run
 // pinned to a built-in's hash keeps resolving after a restart, since the
 // compiled-in document was never written to the database (flow.PinnedSource).
-func (s layeredSource) GetVersion(ctx context.Context, name, hash string) (*flow.Flow, error) {
+func (s layeredSource) GetVersion(ctx context.Context, projectID, name, hash string) (*flow.Flow, error) {
 	if ps, ok := s.next.(flow.PinnedSource); ok {
-		f, err := ps.GetVersion(ctx, name, hash)
+		f, err := ps.GetVersion(ctx, projectID, name, hash)
 		if err == nil {
 			return f, nil
 		}

@@ -1484,3 +1484,32 @@ func TestCredentialLine(t *testing.T) {
 		t.Errorf("line = %q", line)
 	}
 }
+
+// No gateway, no cache flags. The build cache lives in the project gateway's
+// writable registry, so a provisioner running without one must degrade to the
+// old behaviour rather than pass buildkit a reference to nothing.
+func TestProvisionOmitsCacheFlagsWithoutGateway(t *testing.T) {
+	r := &scriptRunner{responses: append(
+		[]response{{code: 0}}, // git clone
+		sandboxResp([]response{
+			{stdout: upOK},
+			{code: 0},
+			{stdout: "cid1\n"},
+			{code: 0},
+			{code: 0},
+			{code: 0},
+		})...)}
+	a := newTestAdapter(t, r) // no GatewayImage ⇒ a.gw == nil
+	armSandbox(t, a, "apothecary-run1")
+	seedDevcontainer(t, a, "apothecary-run1")
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git", Project: "acme",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	up := find(t, r.calls, "devcontainer", "up")
+	joined := strings.Join(up.args, " ")
+	if strings.Contains(joined, "--cache-to") || strings.Contains(joined, "--cache-from") {
+		t.Errorf("cache flags without a registry to hold the cache: %v", up.args)
+	}
+}

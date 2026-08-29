@@ -12,7 +12,9 @@
 
   onMount(async () => {
     try {
-      [integrations, flows] = await Promise.all([api.integrations.list(), api.flows.list()]);
+      // A project that does not exist yet owns no flows: it starts on a
+      // template and authors or copies its own afterwards.
+      [integrations, flows] = await Promise.all([api.integrations.list(), api.flows.templates()]);
       loaded = true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"apothecary/internal/builtin"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -62,9 +63,6 @@ func newConfEnv(t *testing.T) *confEnv {
 	kinds.RegisterFakes(reg)
 	conf := confstore.New(confstore.NewMem(), key)
 	conf.KindValid = reg.Valid
-	if _, err := conf.SaveFlow(t.Context(), "v1", v1FlowDoc, nil); err != nil {
-		t.Fatal(err)
-	}
 	resolver := resolve.New(conf, reg, "", 8080, "")
 	t.Cleanup(resolver.Close)
 
@@ -148,9 +146,11 @@ func (x *confEnv) wizard(t *testing.T) string {
 		"repo": map[string]string{
 			"url": repos[0].URL, "locator": repos[0].Locator, "default_branch": repos[0].DefaultBranch,
 		},
-		"commands":     map[string]string{"verify": "true"},
-		"workspace":    map[string]any{"template": "dev"},
-		"default_flow": "v1",
+		"commands":  map[string]string{"verify": "true"},
+		"workspace": map[string]any{"template": "dev"},
+		// A project is created on the built-in template: flows belong to a
+		// project, so its own cannot exist before it does.
+		"default_flow": builtin.DefaultFlowName,
 	}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create project = %d: %s", resp.StatusCode, data)
@@ -160,8 +160,22 @@ func (x *confEnv) wizard(t *testing.T) string {
 	}
 	_ = json.Unmarshal(data, &p)
 
-	// No agents to seed: since v3 they live in the flow the project runs
-	// (FLOWLANG §1), so a project is just its integrations and repo.
+	// Now the project can own a flow. No agents to seed: since v3 they live
+	// in the flow itself (FLOWLANG §1).
+	if _, err := x.conf.SaveFlow(t.Context(), p.ID, "v1", v1FlowDoc, nil); err != nil {
+		t.Fatal(err)
+	}
+	resp, data = x.do(t, "GET", "/api/projects/"+p.ID, nil, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("get project = %d: %s", resp.StatusCode, data)
+	}
+	var full map[string]any
+	_ = json.Unmarshal(data, &full)
+	full["default_flow"] = "v1"
+	resp, data = x.do(t, "PUT", "/api/projects/"+p.ID, full, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("point project at its flow = %d: %s", resp.StatusCode, data)
+	}
 	return p.ID
 }
 
@@ -242,19 +256,19 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// Flow versions accumulate content-addressed history.
 	var v1row confstore.FlowRow
-	_, data = x.do(t, "GET", "/api/flows/v1", nil, nil)
+	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/v1", nil, nil)
 	_ = json.Unmarshal(data, &v1row)
-	resp, _ = x.do(t, "PUT", "/api/flows/v1", map[string]string{"yaml": v1row.YAML + "# tweak\n"}, nil)
+	resp, _ = x.do(t, "PUT", "/api/projects/"+projectID+"/flows/v1", map[string]string{"yaml": v1row.YAML + "# tweak\n"}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("flow put = %d", resp.StatusCode)
 	}
-	_, data = x.do(t, "GET", "/api/flows/v1/versions", nil, nil)
+	_, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/v1/versions", nil, nil)
 	var versions []confstore.FlowVersion
 	_ = json.Unmarshal(data, &versions)
 	if len(versions) != 2 {
 		t.Fatalf("versions = %d, want 2", len(versions))
 	}
-	resp, data = x.do(t, "GET", "/api/flow-versions/"+v1row.Hash, nil, nil)
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flow-versions/"+v1row.Hash, nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), v1row.Hash) {
 		t.Fatalf("flow-version = %d: %s", resp.StatusCode, data)
 	}
@@ -264,7 +278,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), "web") {
 		t.Fatalf("referenced delete = %d: %s", resp.StatusCode, data)
 	}
-	resp, _ = x.do(t, "DELETE", "/api/flows/v1", nil, nil)
+	resp, _ = x.do(t, "DELETE", "/api/projects/"+projectID+"/flows/v1", nil, nil)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("default_flow delete = %d, want 409", resp.StatusCode)
 	}
@@ -305,7 +319,7 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 	// Every read endpoint.
 	for _, path := range []string{
 		"/api/kinds", "/api/integrations", "/api/projects", "/api/projects/" + projectID,
-		"/api/flows", "/api/flows/v1", "/api/settings", "/api/runs",
+		"/api/flows", "/api/projects/" + projectID + "/flows/v1", "/api/settings", "/api/runs",
 		"/api/runs/" + runID, "/api/pings?status=pending",
 	} {
 		resp, data := x.do(t, "GET", path, nil, nil)
@@ -337,24 +351,31 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 // write), reset by deleting the override, undeletable themselves.
 func TestBuiltinDefaultsAPI(t *testing.T) {
 	x := newConfEnv(t)
+	projectID := x.wizard(t)
 
-	// Unshadowed: the built-in serves with the flag.
-	resp, data := x.do(t, "GET", "/api/flows/default", nil, nil)
+	// Unadopted: the template serves with the flag, for THIS project.
+	resp, data := x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"builtin":true`) {
 		t.Fatalf("get default = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "GET", "/api/flows", nil, nil)
+	// The project's own listing offers the template it has not adopted; the
+	// cross-project overview lists only what projects actually own.
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"name":"default"`) {
-		t.Fatalf("list = %d: %s", resp.StatusCode, data)
+		t.Fatalf("project list = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", "/api/flow-templates", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"builtin":true`) {
+		t.Fatalf("templates = %d: %s", resp.StatusCode, data)
 	}
 
-	// Saving under the built-in name creates the editable override.
+	// Saving under the template's name creates this project's own copy.
 	override := "name: default\nversion: 3\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
-	resp, data = x.do(t, "PUT", "/api/flows/default", map[string]string{"yaml": override}, nil)
+	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/flows/default", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "GET", "/api/flows/default", nil, nil)
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"shadows_builtin":true`) ||
 		strings.Contains(string(data), `"builtin":true`) {
 		t.Fatalf("shadowed get = %d: %s", resp.StatusCode, data)
@@ -362,15 +383,15 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 
 	// Deleting the override resets to the built-in; deleting again is a
 	// clear refusal, not a silent 404.
-	resp, _ = x.do(t, "DELETE", "/api/flows/default", nil, nil)
+	resp, _ = x.do(t, "DELETE", "/api/projects/"+projectID+"/flows/default", nil, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("override delete = %d", resp.StatusCode)
 	}
-	resp, data = x.do(t, "GET", "/api/flows/default", nil, nil)
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"builtin":true`) {
 		t.Fatalf("post-reset get = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "DELETE", "/api/flows/default", nil, nil)
+	resp, data = x.do(t, "DELETE", "/api/projects/"+projectID+"/flows/default", nil, nil)
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), "built-in") {
 		t.Fatalf("builtin delete = %d: %s", resp.StatusCode, data)
 	}

@@ -13,8 +13,13 @@ var ErrNotFound = errors.New("flow not found")
 // Source resolves flow names at run creation (DESIGN2 §7): DB-backed in
 // production (confstore), MapSource in tests. Get returns the CURRENT
 // document for a name — what a new run pins itself to.
+//
+// A flow is addressed by (project, name), never by name alone: its stages name
+// this project's commands, its agents know this repository. The built-ins are
+// the one global layer, and they are templates — resolved for any project that
+// has no row of its own, and copied into the project the moment it saves one.
 type Source interface {
-	Get(ctx context.Context, name string) (*Flow, error)
+	Get(ctx context.Context, projectID, name string) (*Flow, error)
 }
 
 // PinnedSource resolves the exact document a run started with, by content
@@ -27,13 +32,16 @@ type Source interface {
 // keeps the by-name behavior. ErrNotFound means "that version is gone" and
 // the caller falls back to the current document.
 type PinnedSource interface {
-	GetVersion(ctx context.Context, name, hash string) (*Flow, error)
+	GetVersion(ctx context.Context, projectID, name, hash string) (*Flow, error)
 }
 
-// MapSource is the in-memory Source used by tests and `apothecaryd validate`.
+// MapSource is the in-memory Source used by tests and `apothecaryd validate`:
+// one document per name, shared by every project. Project ownership is a
+// property of the STORE, not of the flow language, so nothing here needs to
+// know which project is asking.
 type MapSource map[string]*Flow
 
-func (m MapSource) Get(_ context.Context, name string) (*Flow, error) {
+func (m MapSource) Get(_ context.Context, _, name string) (*Flow, error) {
 	f, ok := m[name]
 	if !ok {
 		return nil, fmt.Errorf("flow %q: %w", name, ErrNotFound)
@@ -43,7 +51,7 @@ func (m MapSource) Get(_ context.Context, name string) (*Flow, error) {
 
 // GetVersion serves the mapped document when its hash matches; a map holds
 // one version per name, so anything else is genuinely absent.
-func (m MapSource) GetVersion(_ context.Context, name, hash string) (*Flow, error) {
+func (m MapSource) GetVersion(_ context.Context, _, name, hash string) (*Flow, error) {
 	f, ok := m[name]
 	if !ok || f.Hash != hash {
 		return nil, fmt.Errorf("flow %q version %s: %w", name, hash, ErrNotFound)

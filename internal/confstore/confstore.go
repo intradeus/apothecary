@@ -139,7 +139,13 @@ type Project struct {
 // FlowRow is the current version of a stored flow (§7). Layout is the
 // graph editor's node-position metadata (DESIGN3 §2.2) — display-only,
 // excluded from Hash, absent from versions.
+//
+// A flow belongs to ONE project: its stages name that project's commands and
+// its agents know that repository, so (ProjectID, Name) is the identity. The
+// compiled-in built-ins are the exception that proves it — they are templates
+// with no project, resolved for anyone who has not saved their own copy.
 type FlowRow struct {
+	ProjectID string          `json:"project_id"`
 	Name      string          `json:"name"`
 	YAML      string          `json:"yaml"`
 	Hash      string          `json:"hash"`
@@ -147,8 +153,11 @@ type FlowRow struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
-// FlowVersion is one immutable content-addressed version (§7).
+// FlowVersion is one immutable content-addressed version (§7), within one
+// project's history: the same document saved in two projects is two versions
+// with one hash, because they are two histories.
 type FlowVersion struct {
+	ProjectID string    `json:"project_id"`
 	Hash      string    `json:"hash"`
 	Name      string    `json:"name"`
 	YAML      string    `json:"yaml"`
@@ -176,11 +185,14 @@ type DB interface {
 	DeleteTicket(ctx Ctx, id string) error
 
 	UpsertFlow(ctx Ctx, row FlowRow) error // also inserts the immutable version (ON CONFLICT DO NOTHING)
-	GetFlow(ctx Ctx, name string) (FlowRow, error)
-	ListFlows(ctx Ctx) ([]FlowRow, error)
-	DeleteFlow(ctx Ctx, name string) error
-	GetFlowVersion(ctx Ctx, hash string) (FlowVersion, error)
-	ListFlowVersions(ctx Ctx, name string) ([]FlowVersion, error)
+	GetFlow(ctx Ctx, projectID, name string) (FlowRow, error)
+	// ListFlows returns one project's flows, or every project's when
+	// projectID is empty (the cross-project overview, which is also where
+	// copying starts).
+	ListFlows(ctx Ctx, projectID string) ([]FlowRow, error)
+	DeleteFlow(ctx Ctx, projectID, name string) error
+	GetFlowVersion(ctx Ctx, projectID, hash string) (FlowVersion, error)
+	ListFlowVersions(ctx Ctx, projectID, name string) ([]FlowVersion, error)
 
 	GetSettings(ctx Ctx) (map[string]string, error) // key -> raw JSON value
 	PutSetting(ctx Ctx, key, value string) error

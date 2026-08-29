@@ -38,17 +38,22 @@
   // The signal registry: what a wait stage blocks on, or a gate auto-answers on.
   let signals = $state<SignalSpec[]>([]);
 
-  // Flows are portable, project-independent data: the editor takes NOTHING
-  // from any project. Agent / harness / model / run_ref are free text here
-  // and are validated against the project only at run creation (preflight).
+  // The project that owns this flow. A flow's stages name that project's
+  // commands and its agents know that repository, so the editor is always
+  // editing one project's document — never a shared one.
+  const projectId = $derived(page.params.project!);
+
+  // The document itself is still validated on its own terms: agent, harness,
+  // model and run_ref are free text here, checked against the project's
+  // configuration at run creation (preflight).
 
   const dirty = $derived(flow !== null && (graphDirty || yaml !== flow.yaml));
 
   const load = async () => {
     try {
-      flow = await api.flows.get(page.params.name!);
+      flow = await api.flows.get(projectId, page.params.name!);
       yaml = flow.yaml;
-      versions = await api.flows.versions(flow.name);
+      versions = await api.flows.versions(projectId, flow.name);
       const r = await api.flows.validate(flow.yaml);
       if (r.ok && r.doc) {
         doc = r.doc;
@@ -146,7 +151,7 @@
     layoutTimer = setTimeout(async () => {
       if (!flow || dirty) return;
       try {
-        flow = await api.flows.save(flow.name, flow.yaml, { nodes: layout });
+        flow = await api.flows.save(projectId, flow.name, flow.yaml, { nodes: layout });
       } catch {
         /* next explicit save carries it */
       }
@@ -181,7 +186,7 @@
     error = '';
     try {
       const y = currentYAML();
-      flow = await api.flows.save(flow.name, y, { nodes: layout });
+      flow = await api.flows.save(projectId, flow.name, y, { nodes: layout });
       yaml = flow.yaml;
       const r = await api.flows.validate(flow.yaml);
       if (r.ok && r.doc) {
@@ -190,7 +195,7 @@
       }
       graphDirty = false;
       validation = { ok: true, detail: 'saved', warnings: r.warnings };
-      versions = await api.flows.versions(flow.name);
+      versions = await api.flows.versions(projectId, flow.name);
     } catch (e) {
       validation = { ok: false, detail: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -214,8 +219,8 @@
     error = '';
     try {
       const y = currentYAML().replace(/^name:[^\n]*$/m, `name: ${name}`);
-      await api.flows.create(name, y, { nodes: layout });
-      await goto(`/flows/${encodeURIComponent(name)}`);
+      await api.flows.create(projectId, name, y, { nodes: layout });
+      await goto(`/flows/${projectId}/${encodeURIComponent(name)}`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       busy = false;
@@ -224,7 +229,7 @@
 
   async function loadVersion(hash: string) {
     try {
-      const v = await api.flows.version(hash);
+      const v = await api.flows.version(projectId, hash);
       yaml = v.yaml; // into the YAML tab; Save makes it current again
       tab = 'yaml';
       graphDirty = false;
@@ -241,7 +246,7 @@
       : `Delete flow "${flow.name}"? Versions remain retrievable by hash.`;
     if (!confirm(msg)) return;
     try {
-      await api.flows.remove(flow.name);
+      await api.flows.remove(projectId, flow.name);
       await goto('/flows');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);

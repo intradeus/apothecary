@@ -90,7 +90,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	x.res = res
 	x.redact = newRedactor(res, e.RunToken(runID))
 
-	fl, err := e.pinnedFlow(bg, view.FlowName, view.FlowHash)
+	fl, err := e.pinnedFlow(bg, view.ProjectID, view.FlowName, view.FlowHash)
 	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
 		var perr *flow.Error

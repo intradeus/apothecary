@@ -150,7 +150,9 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	}
 	// The SELECT gate is the atomic replacement for the 0004 FK, made
 	// builtin-aware: built-in flows are compiled into the binary, never rows,
-	// so a plain FK rejected them. When it yields no row (the flow vanished
+	// so a plain FK rejected them. The flow must be THIS project's own or a
+	// built-in template — another project's flow of the same name is a
+	// different document. When the gate yields no row (the flow vanished
 	// between the service-layer validation and this write, and isn't a
 	// built-in) nothing is inserted, no conflict fires, and RowsAffected
 	// reads 0.
@@ -158,7 +160,7 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 		INSERT INTO projects (id, name, forge_id, provisioner_id,
 		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses)
 		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
-		WHERE EXISTS (SELECT 1 FROM flows WHERE name=$8) OR $8 = ANY($12)
+		WHERE EXISTS (SELECT 1 FROM flows WHERE project_id=$1 AND name=$8) OR $8 = ANY($12)
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, forge_id=$3, provisioner_id=$4,
 			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11`,
@@ -359,27 +361,28 @@ func (s *Store) UpsertFlow(ctx context.Context, row confstore.FlowRow) error {
 		layout = row.Layout
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO flows (name, yaml, hash, layout, updated_at) VALUES ($1,$2,$3,$4,$5)
-		ON CONFLICT (name) DO UPDATE SET yaml=$2, hash=$3,
-			layout=COALESCE($4, flows.layout), updated_at=$5`,
-		row.Name, row.YAML, row.Hash, layout, row.UpdatedAt); err != nil {
+		INSERT INTO flows (project_id, name, yaml, hash, layout, updated_at) VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (project_id, name) DO UPDATE SET yaml=$3, hash=$4,
+			layout=COALESCE($5, flows.layout), updated_at=$6`,
+		row.ProjectID, row.Name, row.YAML, row.Hash, layout, row.UpdatedAt); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO flow_versions (hash, name, yaml, created_at) VALUES ($1,$2,$3,$4)
-		ON CONFLICT (hash) DO NOTHING`,
-		row.Hash, row.Name, row.YAML, row.UpdatedAt); err != nil {
+		INSERT INTO flow_versions (project_id, hash, name, yaml, created_at) VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (project_id, hash) DO NOTHING`,
+		row.ProjectID, row.Hash, row.Name, row.YAML, row.UpdatedAt); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-func (s *Store) GetFlow(ctx context.Context, name string) (confstore.FlowRow, error) {
+func (s *Store) GetFlow(ctx context.Context, projectID, name string) (confstore.FlowRow, error) {
 	var r confstore.FlowRow
 	var layout []byte
 	err := s.pool.QueryRow(ctx,
-		`SELECT name, yaml, hash, layout, updated_at FROM flows WHERE name=$1`, name).
-		Scan(&r.Name, &r.YAML, &r.Hash, &layout, &r.UpdatedAt)
+		`SELECT project_id, name, yaml, hash, layout, updated_at FROM flows WHERE project_id=$1 AND name=$2`,
+		projectID, name).
+		Scan(&r.ProjectID, &r.Name, &r.YAML, &r.Hash, &layout, &r.UpdatedAt)
 	r.Layout = layout
 	if err == pgx.ErrNoRows {
 		return r, fmt.Errorf("flow %s: %w", name, confstore.ErrNotFound)
@@ -387,8 +390,17 @@ func (s *Store) GetFlow(ctx context.Context, name string) (confstore.FlowRow, er
 	return r, err
 }
 
-func (s *Store) ListFlows(ctx context.Context) ([]confstore.FlowRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT name, yaml, hash, layout, updated_at FROM flows ORDER BY name`)
+// ListFlows returns one project's flows, or every project's when projectID is
+// empty — what the cross-project overview lists, and where copying starts.
+func (s *Store) ListFlows(ctx context.Context, projectID string) ([]confstore.FlowRow, error) {
+	const q = `SELECT project_id, name, yaml, hash, layout, updated_at FROM flows`
+	var rows pgx.Rows
+	var err error
+	if projectID == "" {
+		rows, err = s.pool.Query(ctx, q+` ORDER BY project_id, name`)
+	} else {
+		rows, err = s.pool.Query(ctx, q+` WHERE project_id=$1 ORDER BY name`, projectID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +409,7 @@ func (s *Store) ListFlows(ctx context.Context) ([]confstore.FlowRow, error) {
 	for rows.Next() {
 		var r confstore.FlowRow
 		var layout []byte
-		if err := rows.Scan(&r.Name, &r.YAML, &r.Hash, &layout, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ProjectID, &r.Name, &r.YAML, &r.Hash, &layout, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		r.Layout = layout
@@ -406,9 +418,13 @@ func (s *Store) ListFlows(ctx context.Context) ([]confstore.FlowRow, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) DeleteFlow(ctx context.Context, name string) error {
+// DeleteFlow refuses while THIS project still points at the flow or has a
+// live run pinned to it. Another project's flow of the same name is a
+// different document and never blocks.
+func (s *Store) DeleteFlow(ctx context.Context, projectID, name string) error {
 	var refs []string
-	prows, err := s.pool.Query(ctx, `SELECT name FROM projects WHERE default_flow=$1 ORDER BY name`, name)
+	prows, err := s.pool.Query(ctx,
+		`SELECT name FROM projects WHERE id=$1 AND default_flow=$2 ORDER BY name`, projectID, name)
 	if err != nil {
 		return err
 	}
@@ -425,8 +441,9 @@ func (s *Store) DeleteFlow(ctx context.Context, name string) error {
 	}
 	rrows, err := s.pool.Query(ctx, `
 		SELECT run_id FROM runs
-		WHERE flow_name=$1 AND state IN ('pending','provisioning','running','waiting_on_human')
-		ORDER BY run_id`, name)
+		WHERE project_id=$1 AND flow_name=$2
+		  AND state IN ('pending','provisioning','running','waiting_on_human')
+		ORDER BY run_id`, projectID, name)
 	if err != nil {
 		return err
 	}
@@ -444,47 +461,32 @@ func (s *Store) DeleteFlow(ctx context.Context, name string) error {
 	if len(refs) > 0 {
 		return fmt.Errorf("flow %s is referenced by %s: %w", name, strings.Join(refs, ", "), confstore.ErrReferenced)
 	}
-	// The guarded DELETE is the atomic replacement for the 0004 FK backstop:
-	// it only fires while no project references the name (the scans above are
-	// for the informative error, not the protection).
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM flows WHERE name=$1
-		  AND NOT EXISTS (SELECT 1 FROM projects WHERE default_flow=$1)
-		  AND NOT EXISTS (SELECT 1 FROM runs WHERE flow_name=$1
-		                  AND state IN ('pending','provisioning','running','waiting_on_human'))`, name)
+	tag, err := s.pool.Exec(ctx, `DELETE FROM flows WHERE project_id=$1 AND name=$2`, projectID, name)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		var exists bool
-		if err := s.pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM flows WHERE name=$1)`, name).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			// A project or run grabbed the flow between the referrer scan
-			// above and the delete.
-			return fmt.Errorf("flow %s is still referenced: %w", name, confstore.ErrReferenced)
-		}
 		return fmt.Errorf("flow %s: %w", name, confstore.ErrNotFound)
 	}
 	return nil // versions stay: immutable forever (§7)
 }
 
-func (s *Store) GetFlowVersion(ctx context.Context, hash string) (confstore.FlowVersion, error) {
+func (s *Store) GetFlowVersion(ctx context.Context, projectID, hash string) (confstore.FlowVersion, error) {
 	var v confstore.FlowVersion
 	err := s.pool.QueryRow(ctx,
-		`SELECT hash, name, yaml, created_at FROM flow_versions WHERE hash=$1`, hash).
-		Scan(&v.Hash, &v.Name, &v.YAML, &v.CreatedAt)
+		`SELECT project_id, hash, name, yaml, created_at FROM flow_versions WHERE project_id=$1 AND hash=$2`,
+		projectID, hash).
+		Scan(&v.ProjectID, &v.Hash, &v.Name, &v.YAML, &v.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return v, fmt.Errorf("flow version %s: %w", hash, confstore.ErrNotFound)
 	}
 	return v, err
 }
 
-func (s *Store) ListFlowVersions(ctx context.Context, name string) ([]confstore.FlowVersion, error) {
+func (s *Store) ListFlowVersions(ctx context.Context, projectID, name string) ([]confstore.FlowVersion, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT hash, name, yaml, created_at FROM flow_versions WHERE name=$1 ORDER BY created_at DESC`, name)
+		`SELECT project_id, hash, name, yaml, created_at FROM flow_versions
+		 WHERE project_id=$1 AND name=$2 ORDER BY created_at DESC`, projectID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +494,7 @@ func (s *Store) ListFlowVersions(ctx context.Context, name string) ([]confstore.
 	var out []confstore.FlowVersion
 	for rows.Next() {
 		var v confstore.FlowVersion
-		if err := rows.Scan(&v.Hash, &v.Name, &v.YAML, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ProjectID, &v.Hash, &v.Name, &v.YAML, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

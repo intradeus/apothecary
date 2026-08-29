@@ -218,12 +218,12 @@ var ErrUnresolvable = errors.New("run configuration unresolvable")
 // Falls back to the current document by name when the pinned version cannot
 // be resolved: runs created before pinning carry no usable hash, and a
 // pruned version should not strand a live run.
-func (e *Engine) pinnedFlow(ctx context.Context, name, hash string) (*flow.Flow, error) {
+func (e *Engine) pinnedFlow(ctx context.Context, projectID, name, hash string) (*flow.Flow, error) {
 	ps, ok := e.flows.(flow.PinnedSource)
 	if !ok || hash == "" {
-		return e.flows.Get(ctx, name)
+		return e.flows.Get(ctx, projectID, name)
 	}
-	f, err := ps.GetVersion(ctx, name, hash)
+	f, err := ps.GetVersion(ctx, projectID, name, hash)
 	if err == nil {
 		return f, nil
 	}
@@ -232,7 +232,7 @@ func (e *Engine) pinnedFlow(ctx context.Context, name, hash string) (*flow.Flow,
 	}
 	e.log.Warn("pinned flow version is gone; falling back to the current document",
 		"flow", name, "pinned", hash)
-	return e.flows.Get(ctx, name)
+	return e.flows.Get(ctx, projectID, name)
 }
 
 // resolveForRun resolves a run's project, mapping the pre-v2 no-project
