@@ -32,6 +32,9 @@ import type {
 	CopyFlowData,
 	CopyFlowErrors,
 	CopyFlowResponses,
+	CopyFlowTemplateData,
+	CopyFlowTemplateErrors,
+	CopyFlowTemplateResponses,
 	CreateFlowData,
 	CreateFlowErrors,
 	CreateFlowResponses,
@@ -404,6 +407,23 @@ export const listFlowTemplates = <ThrowOnError extends boolean = false>(
 		ListFlowTemplatesErrors,
 		ThrowOnError
 	>({ url: '/api/flow-templates', ...options });
+
+/**
+ * Copy a compiled-in template into a project
+ *
+ * A template belongs to no project, so it is copied from here rather than from under one. Copying it under its own name adopts it: the project gets its own editable document, which shadows the template from then on.
+ */
+export const copyFlowTemplate = <ThrowOnError extends boolean = false>(
+	options: Options<CopyFlowTemplateData, ThrowOnError>
+): RequestResult<CopyFlowTemplateResponses, CopyFlowTemplateErrors, ThrowOnError> =>
+	(options.client ?? client).post<CopyFlowTemplateResponses, CopyFlowTemplateErrors, ThrowOnError>({
+		url: '/api/flow-templates/{name}/copy',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
 
 /**
  * Every project's flows, for the cross-project overview

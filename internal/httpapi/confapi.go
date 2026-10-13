@@ -448,6 +448,28 @@ func (s *Server) copyFlow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
 }
 
+// copyFlowTemplate adopts a compiled-in template into a project. Templates
+// belong to no project, so they get their own route: addressing one through
+// /api/projects/{id}/flows/{name}/copy would need an empty id, and a path
+// cannot carry one (the mux collapses the empty segment and the request lands
+// on the UI's catch-all as a 405).
+func (s *Server) copyFlowTemplate(w http.ResponseWriter, r *http.Request) {
+	var body CopyFlowRequest
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.ToProjectID == "" {
+		writeErr(w, http.StatusBadRequest, "to_project_id is required")
+		return
+	}
+	row, err := s.Conf.CopyTemplate(r.Context(), r.PathValue("name"), body.ToProjectID, body.Name)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
+}
+
 func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
 	projectID, name := r.PathValue("id"), r.PathValue("name")
 	row, err := s.Conf.GetFlow(r.Context(), projectID, name)

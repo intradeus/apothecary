@@ -997,6 +997,43 @@ export type ListFlowTemplatesResponses = {
 export type ListFlowTemplatesResponse =
 	ListFlowTemplatesResponses[keyof ListFlowTemplatesResponses];
 
+export type CopyFlowTemplateData = {
+	body: CopyFlowRequest;
+	path: {
+		name: string;
+	};
+	query?: never;
+	url: '/api/flow-templates/{name}/copy';
+};
+
+export type CopyFlowTemplateErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CopyFlowTemplateResponses = {
+	/**
+	 * Created
+	 */
+	201: Flow;
+};
+
+export type CopyFlowTemplateResponse = CopyFlowTemplateResponses[keyof CopyFlowTemplateResponses];
+
 export type ListAllFlowsData = {
 	body?: never;
 	path?: never;

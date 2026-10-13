@@ -149,6 +149,47 @@ func TestBuiltinTemplateAdoptedPerProject(t *testing.T) {
 	}
 }
 
+// A template has no source project, so it copies through CopyTemplate: under
+// its own name (adoption) or a new one, into any project, and never "onto
+// itself" — there is no self to copy onto.
+func TestCopyTemplateIntoProject(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	a := seedProject(t, svc)
+	b := seedNamedProject(t, svc, "p2")
+
+	// Adopting under the template's own name is the common case, and the one
+	// CopyFlow would refuse as a copy onto itself.
+	row, err := svc.CopyTemplate(ctx, builtin.DefaultFlowName, a.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, _ := builtin.FlowYAML(builtin.DefaultFlowName)
+	if row.ProjectID != a.ID || row.Name != builtin.DefaultFlowName || row.YAML != tmpl {
+		t.Fatalf("adopted template = %+v, want the template's document under project A", row)
+	}
+	// Adopting twice refuses like any copy onto an existing name.
+	if _, err := svc.CopyTemplate(ctx, builtin.DefaultFlowName, a.ID, ""); !errors.Is(err, ErrConflict) {
+		t.Errorf("second adoption = %v, want ErrConflict", err)
+	}
+	// A rename rewrites the document's own name, into another project.
+	renamed, err := svc.CopyTemplate(ctx, builtin.DefaultFlowName, b.ID, "default-fork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.ProjectID != b.ID || renamed.Name != "default-fork" || !strings.Contains(renamed.YAML, "name: default-fork") {
+		t.Fatalf("renamed template copy = %+v", renamed)
+	}
+	// Project A's adoption is untouched by B's copy.
+	if _, err := svc.GetFlow(ctx, b.ID, builtin.DefaultFlowName); !errors.Is(err, ErrNotFound) {
+		t.Errorf("project B got A's adoption: %v", err)
+	}
+	// Not a template: a clear not-found, not a silent empty document.
+	if _, err := svc.CopyTemplate(ctx, "nope", a.ID, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown template = %v, want ErrNotFound", err)
+	}
+}
+
 // seedNamedProject is seedProject for a second project: the same integrations
 // would collide on (port, name), so it makes its own.
 func seedNamedProject(t *testing.T, svc *Service, name string) Project {

@@ -88,18 +88,6 @@ stages:
 			busy = false;
 		}
 	}
-
-	/** Adopting a template is a copy into the project, which is what makes it
-	 *  editable — the binary's document itself never changes. */
-	async function adopt(t: Flow, projectId: string) {
-		error = '';
-		try {
-			await api.flows.copy('', t.name, projectId, t.name);
-			await goto(`/flows/${projectId}/${encodeURIComponent(t.name)}`);
-		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
-		}
-	}
 </script>
 
 <div class="row spread" style="margin-bottom:16px">

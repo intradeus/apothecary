@@ -293,9 +293,10 @@ type UpdateFlowRequest struct {
 	Layout json.RawMessage `json:"layout,omitempty"`
 }
 
-// CopyFlowRequest clones a flow into another project. Name renames the copy;
-// empty keeps the source's name. The copy is a new document with its own
-// history — editing it never reaches back to the original.
+// CopyFlowRequest clones a flow — one of a project's, or a compiled-in
+// template — into a project. Name renames the copy; empty keeps the source's
+// name. The copy is a new document with its own history — editing it never
+// reaches back to the original.
 type CopyFlowRequest struct {
 	ToProjectID string `json:"to_project_id"`
 	Name        string `json:"name,omitempty"`

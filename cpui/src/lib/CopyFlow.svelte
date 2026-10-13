@@ -50,7 +50,11 @@
 		busy = true;
 		error = '';
 		try {
-			const copied = await api.flows.copy(flow.projectId, flow.name, target, name.trim());
+			// A template belongs to no project, so it copies from its own route
+			// rather than from under a project id it does not have.
+			const copied = flow.builtin
+				? await api.flows.copyTemplate(flow.name, target, name.trim())
+				: await api.flows.copy(flow.projectId, flow.name, target, name.trim());
 			oncopied(copied.projectId, copied.name);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);

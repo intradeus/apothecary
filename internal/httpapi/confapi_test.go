@@ -397,6 +397,43 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 }
 
+// TestCopyFlowTemplateAPI covers the template's own copy route: adoption
+// under its own name, a renamed copy, and the refusals (missing target,
+// unknown template, name already taken).
+func TestCopyFlowTemplateAPI(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+
+	resp, data := x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{"to_project_id": projectID}, nil)
+	if resp.StatusCode != http.StatusCreated || !strings.Contains(string(data), `"shadows_builtin":true`) ||
+		!strings.Contains(string(data), `"project_id":"`+projectID+`"`) {
+		t.Fatalf("adopt = %d: %s", resp.StatusCode, data)
+	}
+	// From here on the project owns it: the listing shows it as its own,
+	// and the template has become this project's shadowed document.
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
+	if resp.StatusCode != 200 || strings.Contains(string(data), `"builtin":true`) {
+		t.Fatalf("adopted get = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{"to_project_id": projectID}, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("second adoption = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{"to_project_id": projectID, "name": "default-fork"}, nil)
+	if resp.StatusCode != http.StatusCreated || !strings.Contains(string(data), `"name":"default-fork"`) ||
+		strings.Contains(string(data), `"shadows_builtin":true`) {
+		t.Fatalf("renamed copy = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("no target = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "POST", "/api/flow-templates/nope/copy", map[string]string{"to_project_id": projectID}, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown template = %d: %s", resp.StatusCode, data)
+	}
+}
+
 // TestFlowValidateReportsErrorsHonestly: since v3 a flow carries its agents,
 // so a binding that violates a contract is a parse ERROR — ok:false with the
 // reason in `errors`. Advisory findings stay in `warnings` with ok:true.

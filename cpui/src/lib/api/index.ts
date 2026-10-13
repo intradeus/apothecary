@@ -447,6 +447,20 @@ export const flows = {
 			)
 		),
 
+	/** Copy a compiled-in template into a project. A template belongs to no
+	 *  project, so it has its own route rather than a project id it does not
+	 *  have; copying it under its own name adopts it (the project gets its own
+	 *  editable document). */
+	copyTemplate: async (name: string, toProjectId: string, newName?: string): Promise<Flow> =>
+		map.toFlow(
+			await unwrap(
+				gen.copyFlowTemplate({
+					path: { name },
+					body: { to_project_id: toProjectId, ...(newName ? { name: newName } : {}) }
+				})
+			)
+		),
+
 	/** Project-independent: the parser checks the document itself. */
 	validate: async (yaml: string): Promise<FlowValidation> =>
 		map.toFlowValidation(await unwrap(gen.validateFlow({ body: { yaml } }))),

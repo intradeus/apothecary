@@ -1840,6 +1840,48 @@ paths:
       summary: The compiled-in flow templates a project can adopt or copy
       tags:
         - flows
+  /api/flow-templates/{name}/copy:
+    post:
+      description: 'A template belongs to no project, so it is copied from here rather than from under one. Copying it under its own name adopts it: the project gets its own editable document, which shadows the template from then on.'
+      operationId: copyFlowTemplate
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CopyFlowRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flow'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Copy a compiled-in template into a project
+      tags:
+        - flows
   /api/flows:
     get:
       operationId: listAllFlows

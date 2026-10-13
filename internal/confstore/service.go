@@ -386,9 +386,31 @@ func (s *Service) CopyFlow(ctx context.Context, fromProject, fromName, toProject
 	if err != nil {
 		return FlowRow{}, err
 	}
-	// The document names itself, and the name is its id: a copy under a new
-	// name must say so in the YAML, or the save would refuse it.
+	return s.saveCopy(ctx, yamlSrc, fromName, toProject, toName)
+}
+
+// CopyTemplate adopts a compiled-in template into a project, optionally under
+// a new name. A template belongs to no project, so unlike CopyFlow there is no
+// source project to address — and no "copy onto itself" to refuse: adopting
+// the template under its own name is exactly what shadows it for that project.
+func (s *Service) CopyTemplate(ctx context.Context, name, toProject, toName string) (FlowRow, error) {
+	if toName == "" {
+		toName = name
+	}
+	yamlSrc, ok := builtin.FlowYAML(name)
+	if !ok {
+		return FlowRow{}, notFound("flow template", name)
+	}
+	return s.saveCopy(ctx, yamlSrc, name, toProject, toName)
+}
+
+// saveCopy lands a document under a new owner. The document names itself, and
+// the name is its id: a copy under a new name must say so in the YAML, or the
+// save would refuse it. Copying onto a name the target already has refuses
+// rather than silently replacing someone else's flow.
+func (s *Service) saveCopy(ctx context.Context, yamlSrc, fromName, toProject, toName string) (FlowRow, error) {
 	if toName != fromName {
+		var err error
 		yamlSrc, err = flow.Rename(yamlSrc, toName)
 		if err != nil {
 			return FlowRow{}, invalidf("%v", err)

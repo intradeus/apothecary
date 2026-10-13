@@ -1956,7 +1956,10 @@ a downgrade:
   clones a flow into another project (optionally renaming it), which is how a
   good flow spreads when it can no longer be shared by reference. The copy is a
   new document with its own history: editing it never reaches back, which is
-  the point of ownership and what the dialog says out loud.
+  the point of ownership and what the dialog says out loud. A template is
+  copied through `POST /api/flow-templates/{name}/copy` instead: it belongs to
+  no project, and a path cannot carry an empty `{id}` — the mux collapses the
+  empty segment and the request lands on the UI's catch-all as a 405.
 
 ### The seam
 
@@ -2010,8 +2013,9 @@ against the real local database, which had two flows and one project.
 
 Flow routes live under their project (`/api/projects/{id}/flows/...`), with two
 that do not belong to one: `/api/flows` (the cross-project overview) and
-`/api/flow-templates` (the compiled-in library). `POST /api/flows/validate`
-stays global because it is pure parsing.
+`/api/flow-templates` (the compiled-in library, whose `{name}/copy` adopts a
+template into a project). `POST /api/flows/validate` stays global because it
+is pure parsing.
 
 The UI keeps its Flows page, grouped by project, with the templates in their own
 section and a copy action on every row — cross-project cloning has one obvious
