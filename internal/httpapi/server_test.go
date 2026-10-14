@@ -1112,11 +1112,12 @@ func TestHoldForClampsGraceHold(t *testing.T) {
 	}
 }
 
-// A ping whose grace hold expired has handed the agent back its turn. Any
-// answer after that is one the agent never saw, and the engine has to know
-// that — otherwise the stage closes a question the agent is still waiting on.
-func TestPingHoldRecordsWhetherTheAgentGotTheAnswer(t *testing.T) {
-	x := newEnv(t, engine.Config{}, `name: hold
+// The ask_human long-poll: an expired hold (204) does NOT hand the turn
+// back — the agent's turn stays live, blocked in the tool call, and the shim
+// polls again. Only the engine parking the run (after the live hold) hands it
+// back, and from then on the poll answers 410 so the call stops waiting.
+func TestPingLongPollStaysLiveUntilTheRunParks(t *testing.T) {
+	x := newEnv(t, engine.Config{AskHumanHold: 150 * time.Millisecond}, `name: hold
 version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
@@ -1128,39 +1129,110 @@ stages:
 	x.srv.HoldTimeout = 5 * time.Millisecond
 
 	runIDCh := make(chan string, 1)
-	held := make(chan *engine.Ping, 1)
-	x.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	statuses := make(chan []int, 1)
+	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
 		runID := <-runIDCh
 		p, err := x.e.RaisePing(runID, "clarification", "which db?", "", nil, nil)
 		if err != nil {
 			return ports.AgentResult{}, err
 		}
-		req, err := http.NewRequest("GET", x.ts.URL+"/api/runs/"+runID+"/pings/"+p.ID, nil)
-		if err != nil {
-			return ports.AgentResult{}, err
+		poll := func() int {
+			req, _ := http.NewRequest("GET", x.ts.URL+"/api/runs/"+runID+"/pings/"+p.ID, nil)
+			req.Header.Set("Authorization", "Bearer "+x.e.RunToken(runID))
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return -1
+			}
+			_, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return resp.StatusCode
 		}
-		req.Header.Set("Authorization", "Bearer "+x.e.RunToken(runID))
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return ports.AgentResult{}, err
+		var seen []int
+		seen = append(seen, poll()) // still open: 204, and the turn is NOT handed back
+		if p.HandedBack() {
+			t.Error("an expired hold handed the turn back")
 		}
-		_, _ = io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNoContent {
-			return ports.AgentResult{}, fmt.Errorf("hold = %d, want 204", resp.StatusCode)
-		}
-		held <- p
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		<-ctx.Done() // the engine parks the run: it cancels this turn
+		seen = append(seen, poll())
+		statuses <- seen
+		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, ctx.Err()
 	}
 
 	runID := x.createTicketFlow(t, "T", "hold")
 	runIDCh <- runID
 	select {
-	case p := <-held:
-		if !p.HandedBack() {
-			t.Error("a 204 hands the turn back; the ping must say so")
+	case seen := <-statuses:
+		if len(seen) != 2 || seen[0] != http.StatusNoContent || seen[1] != http.StatusGone {
+			t.Errorf("poll statuses = %v, want [204 410]", seen)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("the hold never expired")
+		t.Fatal("the run never parked")
+	}
+}
+
+// A message reaches the agent only while an agent invocation is running to
+// take it; otherwise the API says so instead of queueing it into a void.
+func TestSendMessageToTheRunningAgent(t *testing.T) {
+	x := newEnv(t, engine.Config{}, `name: msg
+version: 3
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: builder
+    prompt: build the thing
+stages:
+  - { id: build, type: agent, agent: builder }
+`)
+	got := make(chan string, 1)
+	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		select {
+		case <-call.In.Inbox.Wake():
+		case <-ctx.Done():
+			return ports.AgentResult{}, ctx.Err()
+		}
+		msgs := call.In.Inbox.Take()
+		call.In.Events(ports.AgentEvent{Kind: ports.AgentEvUserMessage, Messages: msgs})
+		got <- msgs[0].Text
+		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+	}
+	runID := x.createTicketFlow(t, "T", "msg")
+	var status int
+	var data []byte
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var resp *http.Response
+		resp, data = x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "use sqlite"}, nil)
+		status = resp.StatusCode
+		if status != http.StatusConflict {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if status != http.StatusAccepted || !strings.Contains(string(data), `"message_id"`) {
+		t.Fatalf("send = %d: %s", status, data)
+	}
+	if text := <-got; text != "use sqlite" {
+		t.Errorf("delivered %q", text)
+	}
+	x.e.Wait(runID)
+	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "too late"}, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("message to a finished run = %d: %s", resp.StatusCode, data)
+	}
+	resp, _ = x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "  "}, nil)
+	if resp.StatusCode != http.StatusConflict && resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("empty message = %d", resp.StatusCode)
+	}
+}
+
+// Without a sidecar-capable provisioner the workspace views say so honestly.
+func TestWorkspaceViewsWithoutASidecar(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	runID := x.createTicketFlow(t, "T", "loop")
+	x.e.Wait(runID)
+	for _, path := range []string{"/workspace/tree", "/workspace/file?path=a", "/workspace/changes", "/workspace/diff?path=a", "/terminal"} {
+		resp, data := x.do(t, "GET", "/api/runs/"+runID+path, nil, nil)
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("%s = %d: %s", path, resp.StatusCode, data)
+		}
 	}
 }

@@ -88,6 +88,12 @@ type Config struct {
 	PortDiscoveryAutoExpose bool
 	// PortDiscoveryMaxAuto caps auto-exposures per run; default 5.
 	PortDiscoveryMaxAuto int
+
+	// AskHumanHold is how long an agent's turn stays live, blocked in
+	// ask_human, before the engine parks the run: it cancels the turn,
+	// gives the concurrency slot back, and resumes the same session with
+	// the answer when it lands. Default 30m.
+	AskHumanHold time.Duration
 }
 
 // Limits are the §14 caps: runs beyond MaxConcurrentRuns queue in pending
@@ -110,6 +116,9 @@ func (c *Config) withDefaults() Config {
 	}
 	if out.PortDiscoveryMaxAuto == 0 {
 		out.PortDiscoveryMaxAuto = 5
+	}
+	if out.AskHumanHold == 0 {
+		out.AskHumanHold = 30 * time.Minute
 	}
 	return out
 }
@@ -149,9 +158,11 @@ type Engine struct {
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
 	handles map[string]*runHandle
-	queue   []string // pending runs waiting for a concurrency slot (§14 FIFO)
-	pings   map[string]*Ping
-	tokens  map[string]string // runID -> per-run bearer token (regenerated each boot, see notes)
+	// live fans out ephemeral agent progress (LiveDelta) to run viewers.
+	live   liveHub
+	queue  []string // pending runs waiting for a concurrency slot (§14 FIFO)
+	pings  map[string]*Ping
+	tokens map[string]string // runID -> per-run bearer token (regenerated each boot, see notes)
 
 	// §9 envcheck jobs: in-memory, last 20 (diagnostics, not history).
 	envchecks     map[string]*envCheckState
@@ -248,7 +259,12 @@ type runHandle struct {
 	cancel  context.CancelCauseFunc
 	mailbox chan raiseReq  // agent-raised pings (ask_human shim path)
 	answers chan answerReq // answers for any of this run's open pings
-	done    chan struct{}
+	// messages carries a human's messages to the running agent. Unbuffered:
+	// a send succeeds only when an agent invocation is there to take it.
+	messages chan msgReq
+	// agentLive is set while an agent invocation runs (messages can land).
+	agentLive atomic.Bool
+	done      chan struct{}
 }
 
 // Ping is an open (or answered) human interaction. Gate pings are raised by
@@ -269,27 +285,29 @@ type Ping struct {
 	RaisedAt time.Time
 
 	gate           bool
+	key            string      // the raiser's idempotency key (RaisePing)
 	answered       bool        // guarded by Engine.mu
 	answer         *PingAnswer // set before done closes; read only after <-done
 	deliveredPaths []string    // workspace paths of the answer's attachments; set before done closes
 	done           chan struct{}
-	// handedBack: the ask_human tool call ended without an answer, so the
-	// agent was told to stop and wait (§10 grace hold). It matters later —
-	// an answer arriving after that point was NEVER seen by the agent,
-	// however fast it lands, so the stage must pause and deliver it on
-	// resume rather than treat the question as closed. Written by the HTTP
-	// hold, read by the run loop: atomic, not mutex-guarded, because the
-	// writer holds no engine lock.
+	// handedBack: the agent's turn ended without the answer — the engine
+	// parked the run after the live hold (Config.AskHumanHold), or the turn
+	// ended on its own. An answer arriving after that point was NEVER seen
+	// by the agent, however fast it lands, so the stage must pause and
+	// deliver it on resume rather than treat the question as closed. The
+	// ask_human long-poll reads it (410: stop waiting). Atomic, not
+	// mutex-guarded: the HTTP side reads it without the engine lock.
 	handedBack atomic.Bool
 }
 
 // HandOff records how a ping's tool call ended: delivered=false when the
-// grace hold expired and the agent was handed back its turn, true when the
-// answer went back in-band and the agent has it. Called by the ping HTTP hold.
+// agent was handed back its turn without the answer, true when the answer
+// went back in-band and the agent has it.
 func (p *Ping) HandOff(delivered bool) { p.handedBack.Store(!delivered) }
 
 // HandedBack reports whether the agent was given its turn back without an
-// answer — i.e. whether an answer arriving now is news to it.
+// answer — the run parked on it — i.e. whether an answer arriving now is
+// news to the agent, delivered by resuming its session.
 func (p *Ping) HandedBack() bool { return p.handedBack.Load() }
 
 // Primary is the ping's primary payload for notifications and legacy JSON:
@@ -1270,6 +1288,17 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 			}
 		}
 	}
+	// Every agent stage's model must be one its harness can reach — checked
+	// now, before a workspace is built, not when the stage opens its session.
+	// A list that cannot be fetched is not a reason to refuse the run.
+	mc := checkModels(ctx, res, fl)
+	if len(mc.missing) > 0 {
+		return fmt.Errorf("preflight: %s", strings.Join(mc.missing, "; "))
+	}
+	if len(mc.unverified) > 0 {
+		e.log.Warn("preflight: could not verify the flow's models", "flow", fl.Name,
+			"harnesses", strings.Join(mc.unverified, "; "))
+	}
 	// The agent I/O contract is enforced at parse time now that the flow
 	// carries its agents; what is left here is advisory.
 	if len(fl.Warnings) > 0 {
@@ -1353,10 +1382,11 @@ func (e *Engine) startLocked(runID string) {
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	h := &runHandle{
-		cancel:  cancel,
-		mailbox: make(chan raiseReq, 8),
-		answers: make(chan answerReq, 8),
-		done:    make(chan struct{}),
+		cancel:   cancel,
+		mailbox:  make(chan raiseReq, 8),
+		answers:  make(chan answerReq, 8),
+		messages: make(chan msgReq),
+		done:     make(chan struct{}),
 	}
 	e.handles[runID] = h
 	go e.runLoop(ctx, runID, h)
@@ -1549,6 +1579,23 @@ func (e *Engine) Wait(runID string) {
 // workbench. The returned Ping's Result channel yields the answer exactly
 // once.
 func (e *Engine) RaisePing(runID, ptype, question, context_ string, options, artifactRefs []string) (*Ping, error) {
+	return e.RaisePingKeyed(runID, "", ptype, question, context_, options, artifactRefs)
+}
+
+// RaisePingKeyed is RaisePing with the raiser's idempotency key: a raise
+// retried with the same key (its response was lost in transit) returns the
+// ping the first one created instead of asking the human twice.
+func (e *Engine) RaisePingKeyed(runID, key, ptype, question, context_ string, options, artifactRefs []string) (*Ping, error) {
+	if key != "" {
+		e.mu.Lock()
+		for _, p := range e.pings {
+			if p.RunID == runID && p.key == key {
+				e.mu.Unlock()
+				return p, nil
+			}
+		}
+		e.mu.Unlock()
+	}
 	switch ptype {
 	case "clarification", "blocker", "permission":
 	default:
@@ -1597,7 +1644,7 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string, options, art
 	}
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Options: opts, Files: refs,
+		Options: opts, Files: refs, key: key,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
@@ -2232,6 +2279,17 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	steps = append(steps, step("devcontainer", dcErr))
 	if fl != nil {
 		steps = append(steps, step("flow_refs", e.preflightFlowRefs(res, fl)))
+		if res.Models != nil {
+			mc := checkModels(ctx, res, fl)
+			var merr error
+			switch {
+			case len(mc.missing) > 0:
+				merr = errors.New(strings.Join(mc.missing, "; "))
+			case len(mc.unverified) > 0:
+				merr = fmt.Errorf("could not list models to check against — %s", strings.Join(mc.unverified, "; "))
+			}
+			steps = append(steps, step("models", merr))
+		}
 	}
 	return steps
 }

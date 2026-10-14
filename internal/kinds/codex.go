@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"apothecary/internal/adapters/acpagent"
 	codexadapter "apothecary/internal/adapters/codex"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 )
 
-// CodexVersion is the pinned harness version (flags + JSONL verified
-// against it, see the adapter's package comment).
+// CodexVersion is the pinned codex CLI (kept in the workspace for humans in
+// the terminal; the agent itself runs through the ACP bridge below).
 const CodexVersion = "0.144.6"
+
+// CodexACPVersion is the pinned ACP bridge (@agentclientprotocol/codex-acp)
+// the engine drives codex through. It bundles its own codex core.
+const CodexACPVersion = "2.2.2"
 
 // Codex is the harness/codex kind (DESIGN2 §13). Harness-owned auth: an
 // OpenAI API key (rides OPENAI_API_KEY via provider.env) and/or a ChatGPT
@@ -24,6 +29,7 @@ func (Codex) Descriptor() Descriptor {
 		Port: "harness", Kind: "codex", Label: "codex",
 		Fields: []Field{
 			{Name: "version", Label: "Version", Default: CodexVersion},
+			{Name: "acp_version", Label: "ACP bridge version (@agentclientprotocol/codex-acp)", Default: CodexACPVersion},
 			{Name: "api_key", Label: "OpenAI API key (either this or auth.json)", Secret: true,
 				Placeholder: "sk-…"},
 			{Name: "auth_json", Label: "auth.json — ChatGPT subscription login, contents of ~/.codex/auth.json (optional)",
@@ -33,27 +39,26 @@ func (Codex) Descriptor() Descriptor {
 }
 
 func (Codex) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
+	adapter := codexadapter.New(envp, codexadapter.Config{})
 	return &codexHarness{
-		adapter:  codexadapter.New(envp, codexadapter.Config{}),
-		version:  cfg.Str("version", CodexVersion),
-		apiKey:   cfg.Secrets["api_key"],
-		authJSON: cfg.Secrets["auth_json"],
+		Runner:     acpagent.New(envp, adapter.Profile()),
+		adapter:    adapter,
+		version:    cfg.Str("version", CodexVersion),
+		acpVersion: cfg.Str("acp_version", CodexACPVersion),
+		apiKey:     cfg.Secrets["api_key"],
+		authJSON:   cfg.Secrets["auth_json"],
 	}, nil
 }
 
+// codexHarness runs as a long-lived ACP agent (codex-acp) in the workspace
+// sidecar; the embedded runner is the AgentRunner, the adapter its config.
 type codexHarness struct {
-	adapter  *codexadapter.Adapter
-	version  string
-	apiKey   string
-	authJSON string
-}
-
-func (h *codexHarness) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
-	return h.adapter.Run(ctx, env, spec, in)
-}
-
-func (h *codexHarness) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, reply string) (ports.AgentResult, error) {
-	return h.adapter.Resume(ctx, env, s, reply)
+	*acpagent.Runner
+	adapter    *codexadapter.Adapter
+	version    string
+	acpVersion string
+	apiKey     string
+	authJSON   string
 }
 
 func (h *codexHarness) Test(_ context.Context) error {
@@ -66,10 +71,11 @@ func (h *codexHarness) Test(_ context.Context) error {
 	return nil
 }
 
-func (h *codexHarness) Binary() string { return "codex" }
+// Binary is what envcheck probes: the bridge is what the engine runs.
+func (h *codexHarness) Binary() string { return "codex-acp" }
 
 func (h *codexHarness) InstallLayer() []string {
-	return []string{fmt.Sprintf("RUN npm install -g @openai/codex@%s", h.version)}
+	return []string{fmt.Sprintf("RUN npm install -g @openai/codex@%s @agentclientprotocol/codex-acp@%s", h.version, h.acpVersion)}
 }
 
 func (h *codexHarness) EgressDomains() []string {

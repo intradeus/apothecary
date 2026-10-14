@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
 	"apothecary/internal/actionspec"
@@ -315,10 +314,6 @@ func (s *Server) startEnvCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.Engine.StartEnvCheck(r.Context(), r.PathValue("id"), body.Keep)
 	if err != nil {
-		if strings.Contains(err.Error(), "already running") {
-			writeErr(w, http.StatusConflict, err.Error())
-			return
-		}
 		confErr(w, err)
 		return
 	}
@@ -332,6 +327,23 @@ func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, snap)
+}
+
+func (s *Server) getLatestEnvCheck(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.Engine.LatestEnvCheck(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no envcheck has run for this project since the engine started")
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
+
+func (s *Server) cancelEnvCheck(w http.ResponseWriter, r *http.Request) {
+	if !s.Engine.CancelEnvCheck(r.PathValue("id")) {
+		writeErr(w, http.StatusNotFound, "envcheck not found (only the last 20 are kept)")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- agents (DESIGN3 §1) ----------------------------------------------------

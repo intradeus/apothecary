@@ -138,7 +138,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
 				Context: op.Context, Files: op.Files, Link: op.Link, StageID: op.StageID,
-				Options:  op.Options,
+				Options: op.Options, key: op.Key,
 				RaisedAt: e.clock(),
 				gate:     gatePingType(op.Type), done: make(chan struct{}),
 			}
@@ -180,6 +180,15 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 					return
 				}
 				x.envEnsured = true
+				// A fresh run: before any stage spends anything, make sure the
+				// agent in the workspace accepts every model the flow pins.
+				if !rs.anyStageStarted() {
+					if missing := x.checkAgentModels(); len(missing) > 0 {
+						_ = x.fail("the flow pins models the workspace's agent does not offer: " +
+							strings.Join(missing, "; "))
+						return
+					}
+				}
 			}
 			switch st.Type {
 			case flow.StageAgent:
@@ -245,6 +254,28 @@ func (x *exec) append(ps ...event.Payload) error {
 			v.Reason = x.redact.scrub(v.Reason)
 		case *event.RunFailed:
 			v.Reason = x.redact.scrub(v.Reason)
+		// The transcript is workspace output verbatim — an agent that cats
+		// .env or echoes a token puts it here first.
+		case *event.AgentPrompted:
+			v.Text = x.redact.scrub(v.Text)
+		case *event.AgentMessage:
+			v.Text = x.redact.scrub(v.Text)
+		case *event.AgentTool:
+			v.Title = x.redact.scrub(v.Title)
+			v.Input = x.redact.scrub(v.Input)
+			v.Output = x.redact.scrub(v.Output)
+			for i := range v.Diffs {
+				v.Diffs[i].OldText = x.redact.scrub(v.Diffs[i].OldText)
+				v.Diffs[i].NewText = x.redact.scrub(v.Diffs[i].NewText)
+			}
+		case *event.AgentPlan:
+			for i := range v.Entries {
+				v.Entries[i].Content = x.redact.scrub(v.Entries[i].Content)
+			}
+		case *event.AgentNotice:
+			v.Text = x.redact.scrub(v.Text)
+		case *event.MessageQueued:
+			v.Text = x.redact.scrub(v.Text)
 		}
 	}
 	evs, err := x.e.store.Append(x.bg, x.rs.runID, ps...)
@@ -443,6 +474,10 @@ const (
 	outcomeTimedOut
 )
 
+// errParked cancels an invocation whose agent has been waiting on a human
+// for longer than the live hold (Config.AskHumanHold).
+var errParked = errors.New("parked: waiting on a human")
+
 // invocation is one harness call inside a stage attempt: what it returned, how
 // it ended, the questions it left open, and what survives of the attempt's
 // timeout budget (suspended while a ping is pending, so it carries forward).
@@ -451,6 +486,74 @@ type invocation struct {
 	outcome agentOutcome
 	open    []*Ping
 	left    time.Duration
+}
+
+// invIO is what flows between a running invocation and the loop: the
+// agent's transcript events, the human's messages, and the transcript they
+// are recorded into.
+type invIO struct {
+	events chan ports.AgentEvent
+	done   chan struct{} // closed when the loop stops listening
+	inbox  *inbox
+	tr     *transcript
+}
+
+func newInvIO(tr *transcript) *invIO {
+	return &invIO{events: make(chan ports.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(), tr: tr}
+}
+
+func (io *invIO) input(prompt string) ports.AgentInput {
+	return ports.AgentInput{
+		Prompt: prompt,
+		Inbox:  io.inbox,
+		// Blocks while the loop is listening (ordering: everything the
+		// runner emitted is queued before its result is), never after.
+		Events: func(ev ports.AgentEvent) {
+			select {
+			case io.events <- ev:
+			case <-io.done:
+			}
+		},
+	}
+}
+
+// drain records whatever events are already queued.
+func (io *invIO) drain() error {
+	for {
+		select {
+		case ev := <-io.events:
+			if err := io.tr.handle(ev); err != nil {
+				return err
+			}
+		default:
+			return nil
+		}
+	}
+}
+
+// invoke runs one harness invocation to its end, servicing pings, messages
+// and the transcript while it runs.
+func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, initialOpen []*Ping, prompt string,
+	call func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error)) (invocation, error) {
+	runCtx, cancelRun := context.WithCancelCause(x.ctx)
+	io := newInvIO(tr)
+	resCh := make(chan agentRes, 1)
+	in := io.input(prompt)
+	go func() {
+		r, err := call(runCtx, in)
+		resCh <- agentRes{r, err}
+	}()
+	x.h.agentLive.Store(true)
+	inv, err := x.awaitAgent(st, resCh, cancelRun, budget, io, initialOpen)
+	x.h.agentLive.Store(false)
+	cancelRun(nil)
+	close(io.done)
+	// Messages the agent never took stay pending (they are queued in the log
+	// and in rs.pendingMsgs) and ride into the next prompt.
+	if ferr := tr.flushAll(); ferr != nil && err == nil {
+		err = ferr
+	}
+	return inv, err
 }
 
 func (x *exec) stageAgent(st *flow.Stage) error {
@@ -474,23 +577,27 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 
 	prompt := x.assemblePrompt(st, iter)
 	runner := x.res.runnerFor(st.Harness) // per-step harness (default when unpinned)
+	tr := x.newTranscript(st.ID, iter)
+	spec := ports.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns}
 
-	// ONE ATTEMPT, SEVERAL HARNESS INVOCATIONS. An agent that hits a question
-	// it cannot answer itself ends its turn on an open ask_human instead of
-	// blocking inside the tool call: no harness holds a tool call open for as
-	// long as a human takes, so the wait belongs HERE, where it is untimed and
-	// — because stage_paused records the session — survives a restart of this
-	// engine. Each pass through the loop is one invocation; iter does not move,
-	// the timeout budget carries across, and each invocation banks its own
-	// spend as it ends.
+	// ONE ATTEMPT, ONE SESSION, SEVERAL INVOCATIONS. The agent runs as a
+	// live session: a question it cannot answer blocks in ask_human while
+	// the human is around, and the human's messages are delivered into the
+	// same session. A question nobody answers within the live hold PARKS the
+	// attempt — the turn is cancelled, the run gives its slot back, and the
+	// session is resumed with the answer when it lands. Each pass through
+	// the loop is one invocation; iter does not move, the timeout budget
+	// carries across, and each invocation banks its own spend as it ends.
+	//
 	// On re-entry, the questions this attempt parked on — with whatever the
 	// log already knows about them. The run had no loop while it waited, so
 	// an answer given in that window exists only as an event; the live ping
 	// registry never saw it.
 	asks := x.pausedAsks(st)
-	reply := ""
-	if reenter && len(asks) == 0 {
-		reply = resumeReply
+	reply, replyKind := "", ""
+	crashed := reenter && len(asks) == 0
+	if crashed {
+		reply, replyKind = resumeReply, event.PromptRestart
 	}
 	budget := st.Timeout
 	var inv invocation
@@ -513,13 +620,56 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				}
 				return x.takeEdge(st, flow.EdgeFail, why)
 			}
-			// What the agent wrote BEFORE the answer arrived. The stop-and-wait
-			// notice is a prompt, and a model is free to ignore it — the
-			// pause does not depend on obedience, but an artifact written
-			// from a guess does need saying out loud, by name.
-			reply = x.answerReply(asks, x.writtenOutputs(st))
+			// What the agent wrote BEFORE the answer arrived: the pause does
+			// not depend on obedience, but an artifact written from a guess
+			// does need saying out loud, by name.
+			reply, replyKind = x.answerReply(asks, x.writtenOutputs(st)), event.PromptAnswer
 		}
 		session, haveSession := rs.sessions[st.ID]
+
+		if crashed && haveSession {
+			crashed = false
+			// The engine restarted mid-attempt. The agent process lives in
+			// the workspace and may have outlived it: follow the turn still
+			// running (or the one that finished while nobody listened)
+			// instead of starting another.
+			if ra, ok := runner.(ports.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
+				if err := x.append(&event.StageResumed{StageID: st.ID, Iteration: iter, Reason: event.ResumeRestart,
+					SessionID: string(session)}); err != nil {
+					return err
+				}
+				var err error
+				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "",
+					func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error) {
+						r, _, err := ra.Reattach(ctx, rs.envID, session, rs.agentCursor[st.ID], in)
+						return r, err
+					})
+				if err != nil {
+					return err
+				}
+				budget = inv.left
+				if inv.outcome != outcomePaused {
+					break
+				}
+				if stop, err := x.pauseAttempt(st, iter, inv); stop || err != nil {
+					return err
+				}
+				asks, reply = x.pausedAsks(st), ""
+				continue
+			}
+			// The turn that was live is gone. Questions it was blocked on
+			// can still be answered — the session is resumed with them, as
+			// for any parked attempt.
+			if live := x.liveAsks(st); len(live) > 0 {
+				if stop, err := x.pauseAttempt(st, iter, invocation{open: live, res: agentRes{r: ports.AgentResult{Session: session}}}); stop || err != nil {
+					return err
+				}
+				asks, reply = x.pausedAsks(st), ""
+				continue
+			}
+		}
+		crashed = false
+
 		resuming := reply != "" && haveSession
 		if resuming {
 			reason := event.ResumeAnswered
@@ -534,23 +684,24 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		asks = nil
 
-		runCtx, cancelRun := context.WithCancelCause(x.ctx)
-		resCh := make(chan agentRes, 1)
-		go func() {
-			var r ports.AgentResult
-			var err error
-			if resuming {
-				r, err = runner.Resume(runCtx, rs.envID, session, reply)
-			} else {
-				r, err = runner.Run(runCtx, rs.envID,
-					ports.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns},
-					ports.AgentInput{Prompt: prompt})
-			}
-			resCh <- agentRes{r, err}
-		}()
-		var err error
-		inv, err = x.awaitAgent(st, resCh, cancelRun, budget)
-		cancelRun(nil)
+		text, kind := prompt, event.PromptStage
+		if resuming {
+			text, kind = reply, replyKind
+		}
+		text, err := x.withPendingMessages(st, iter, text)
+		if err != nil {
+			return err
+		}
+		if err := x.prompted(st.ID, iter, kind, text); err != nil {
+			return err
+		}
+		inv, err = x.invoke(st, budget, tr, nil, text,
+			func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error) {
+				if resuming {
+					return runner.Resume(ctx, rs.envID, session, in)
+				}
+				return runner.Run(ctx, rs.envID, spec, in)
+			})
 		if err != nil {
 			return err // cancelled: caller inspects cause
 		}
@@ -558,37 +709,13 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if inv.outcome != outcomePaused {
 			break
 		}
-		// The agent stopped on its own questions. Bank what this invocation
-		// spent (it is real whether or not the run ever resumes) and record
-		// the session the answer will re-enter. Outputs are NOT published: the
-		// attempt is not over, and a half-written artifact is not this
-		// attempt's result.
-		x.publishLog(st.ID, iter, inv.res.r.Output)
-		paused := &event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseAskHuman,
-			PingIDs: pingIDs(inv.open), TurnsUsed: inv.res.r.TurnsUsed, SessionID: string(inv.res.r.Session)}
-		if inv.res.r.Usage != (ports.Usage{}) {
-			paused.Usage = &event.Usage{InputTokens: inv.res.r.Usage.InputTokens,
-				OutputTokens: inv.res.r.Usage.OutputTokens, CostUSD: inv.res.r.Usage.CostUSD}
-		}
-		if err := x.append(paused); err != nil {
-			return err
-		}
-		if inv.res.r.Session != "" {
-			rs.sessions[st.ID] = inv.res.r.Session
-		}
-		rs.cost += inv.res.r.Usage.CostUSD
-		rs.turns += inv.res.r.TurnsUsed
-		// A question-per-turn loop would otherwise never meet a budget check:
-		// nothing else bounds an attempt that keeps asking.
-		if stop, err := x.checkBudget(st); stop || err != nil {
+		if stop, err := x.pauseAttempt(st, iter, inv); stop || err != nil {
 			return err
 		}
 		// Whether this parks or resumes immediately is one question — is
 		// anything still unanswered? — and the top of the loop already asks
-		// it. An answer that landed while the agent was ending its turn (the
-		// hold expired, the human was a second late) resumes right here
-		// instead of parking a run that has nothing to wait for.
-		rs.pausedAsks[st.ID] = pingIDs(inv.open)
+		// it. An answer that landed while the turn was winding down resumes
+		// right here instead of parking a run that has nothing to wait for.
 		asks, reply = x.pausedAsks(st), ""
 	}
 	res := inv.res
@@ -680,18 +807,98 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	return nil
 }
 
-// awaitAgent waits for one harness invocation while servicing pings. The stage
-// timeout is suspended while any ping is pending (§3 defaults.timeout) and what
-// is left of it carries to the next invocation of the same attempt.
+// pauseAttempt records an invocation that ended with questions open: the
+// attempt is parked on them, not over. It banks what the invocation spent
+// (real whether or not the run ever resumes) and the session the answer will
+// re-enter. Outputs are NOT published: a half-written artifact is not this
+// attempt's result. stop reports that a budget check ended the run.
+func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool, err error) {
+	rs := x.rs
+	for _, p := range inv.open {
+		// Any answer from here on is news to the agent: it arrives by resume.
+		p.handedBack.Store(true)
+	}
+	x.publishLog(st.ID, iter, inv.res.r.Output)
+	paused := &event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseAskHuman,
+		PingIDs: pingIDs(inv.open), TurnsUsed: inv.res.r.TurnsUsed, SessionID: string(inv.res.r.Session)}
+	if inv.res.r.Usage != (ports.Usage{}) {
+		paused.Usage = &event.Usage{InputTokens: inv.res.r.Usage.InputTokens,
+			OutputTokens: inv.res.r.Usage.OutputTokens, CostUSD: inv.res.r.Usage.CostUSD}
+	}
+	if err := x.append(paused); err != nil {
+		return false, err
+	}
+	if inv.res.r.Session != "" {
+		rs.sessions[st.ID] = inv.res.r.Session
+	}
+	rs.cost += inv.res.r.Usage.CostUSD
+	rs.turns += inv.res.r.TurnsUsed
+	// A question-per-turn loop would otherwise never meet a budget check:
+	// nothing else bounds an attempt that keeps asking.
+	if stop, err := x.checkBudget(st); stop || err != nil {
+		return true, err
+	}
+	rs.pausedAsks[st.ID] = pingIDs(inv.open)
+	return false, nil
+}
+
+// liveAsks are this stage's open questions that were being waited on LIVE
+// (raised, unanswered, never parked) — re-registered from the log when the
+// loop started.
+func (x *exec) liveAsks(st *flow.Stage) []*Ping {
+	parked := map[string]bool{}
+	for _, id := range x.rs.pausedAsks[st.ID] {
+		parked[id] = true
+	}
+	var out []*Ping
+	x.e.mu.Lock()
+	defer x.e.mu.Unlock()
+	for _, op := range x.rs.openAgentPings() {
+		if op.StageID != st.ID || parked[op.PingID] {
+			continue
+		}
+		if p := x.e.pings[op.PingID]; p != nil && !p.answered && !p.handedBack.Load() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// withPendingMessages appends the human messages nobody has delivered yet
+// (sent while no invocation could take them) to the next prompt.
+func (x *exec) withPendingMessages(st *flow.Stage, iter int, text string) (string, error) {
+	if len(x.rs.pendingMsgs) == 0 {
+		return text, nil
+	}
+	msgs := make([]ports.UserMessage, 0, len(x.rs.pendingMsgs))
+	ids := make([]string, 0, len(x.rs.pendingMsgs))
+	for _, m := range x.rs.pendingMsgs {
+		msgs = append(msgs, ports.UserMessage{ID: m.MessageID, Text: m.Text})
+		ids = append(ids, m.MessageID)
+	}
+	if err := x.append(&event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Iteration: iter}); err != nil {
+		return text, err
+	}
+	x.rs.delivered(ids)
+	return text + "\n\n---\n\n" + formatMessages(msgs), nil
+}
+
+// awaitAgent waits for one harness invocation while servicing pings, human
+// messages and the transcript. The stage timeout is suspended while any ping
+// is pending (§3 defaults.timeout) and what is left of it carries to the next
+// invocation of the same attempt.
 //
-// An invocation that returns with questions still open is a PAUSE, not a
-// result: the agent asked and stopped rather than guessing, and the caller
-// holds the attempt until the human answers. Letting it through instead is
-// what silently turned an unanswered clarification into an approved-looking
-// plan (see IMPLEMENTATION_NOTES) — the agent guessed and nothing said so.
-func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun context.CancelCauseFunc, budget time.Duration) (invocation, error) {
+// A question blocks the agent's turn (ask_human waits in the tool call) for
+// up to Config.AskHumanHold; past that the run is PARKED — the turn is
+// cancelled and the invocation ends as a pause, to be resumed with the answer.
+// An invocation that returns with questions still open is a pause too: the
+// agent stopped rather than guessing, and the caller holds the attempt until
+// the human answers. Letting it through instead is what silently turned an
+// unanswered clarification into an approved-looking plan.
+func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun context.CancelCauseFunc, budget time.Duration,
+	io *invIO, initialOpen []*Ping) (invocation, error) {
 	remaining := budget
-	var open []*Ping
+	open := append([]*Ping(nil), initialOpen...)
 	timer := time.NewTimer(remaining)
 	defer timer.Stop()
 	lastArm := time.Now()
@@ -723,25 +930,92 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		}
 		return remaining - time.Since(lastArm)
 	}
+	var park *time.Timer
+	var parkC <-chan time.Time
+	armPark := func() {
+		park = time.NewTimer(x.e.cfg.AskHumanHold)
+		parkC = park.C
+	}
+	disarmPark := func() {
+		if park != nil {
+			park.Stop()
+			park, parkC = nil, nil
+		}
+	}
+	defer disarmPark()
+	if len(open) > 0 {
+		suspend()
+		armPark()
+	}
+
+	// collect waits for a cancelled invocation to wind down, still recording
+	// its transcript — but doesn't trust the harness to honor the
+	// cancellation: after a grace period it abandons the goroutine rather
+	// than wedge the run.
+	collect := func(out agentOutcome) (invocation, error) {
+		grace := time.NewTimer(60 * time.Second)
+		defer grace.Stop()
+		for {
+			select {
+			case res := <-resCh:
+				if err := io.drain(); err != nil {
+					return invocation{}, err
+				}
+				return invocation{res: res, outcome: out, open: open, left: left()}, nil
+			case ev := <-io.events:
+				if err := io.tr.handle(ev); err != nil {
+					return invocation{}, err
+				}
+			case <-grace.C:
+				x.e.log.Warn("harness ignored cancellation; abandoning attempt", "run", x.rs.runID, "stage", st.ID)
+				return invocation{outcome: out, open: open, left: left()}, nil
+			}
+		}
+	}
 
 	for {
 		select {
 		case res := <-resCh:
+			if err := io.drain(); err != nil {
+				return invocation{}, err
+			}
 			out := outcomeReturned
-			// Questions still open and the harness gone: the agent ended its
-			// turn on them (told to, by the ask_human tool return). An error
-			// is not a pause — a harness that died mid-question has nothing
-			// left to resume into, so it routes as the failure it is.
+			// Questions still open and the turn over: the agent ended it on
+			// them. An error is not a pause — a harness that died
+			// mid-question has nothing left to resume into, so it routes as
+			// the failure it is.
 			if len(open) > 0 && res.err == nil {
 				out = outcomePaused
 			}
 			return invocation{res: res, outcome: out, open: open, left: left()}, nil
+		case ev := <-io.events:
+			if ev.Kind == ports.AgentEvSession && ev.Text != "" && x.rs.sessions[st.ID] != ports.SessionID(ev.Text) {
+				// Recorded the moment it exists, so a crash mid-invocation
+				// resumes (or reattaches to) this session, not a new one.
+				if err := x.append(&event.AgentSession{StageID: st.ID, Iteration: io.tr.iter, SessionID: ev.Text}); err != nil {
+					return invocation{}, err
+				}
+				x.rs.sessions[st.ID] = ports.SessionID(ev.Text)
+				continue
+			}
+			if err := io.tr.handle(ev); err != nil {
+				return invocation{}, err
+			}
+		case req := <-x.h.messages:
+			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, Interrupt: req.msg.Interrupt, StageID: st.ID}
+			if err := x.append(q); err != nil {
+				req.ack <- err
+				return invocation{}, err
+			}
+			x.rs.pendingMsgs = append(x.rs.pendingMsgs, q)
+			io.inbox.push(req.msg)
+			req.ack <- nil
 		case req := <-x.h.mailbox:
 			x.e.mu.Lock()
 			req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
 			x.e.mu.Unlock()
 			raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
-				Question: req.p.Question, Context: req.p.Context,
+				Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
 				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Options: req.p.Options}
 			if err := x.append(raised); err != nil {
 				close(req.ack)
@@ -763,6 +1037,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			})
 			if len(open) == 0 {
 				suspend()
+				armPark()
 			}
 			open = append(open, req.p)
 			close(req.ack)
@@ -772,26 +1047,28 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				return invocation{}, err
 			}
 			// An answer the agent never saw does not close the question: once
-			// the tool call handed the turn back, the only way in is a resume,
+			// the turn was handed back (parked), the only way in is a resume,
 			// so the ping stays open and the attempt pauses on it below.
 			if handled && !ar.p.gate && !ar.p.handedBack.Load() {
 				open = dropPing(open, ar.p)
 				if len(open) == 0 {
 					resume()
+					disarmPark()
 				}
 			}
+		case <-parkC:
+			// Nobody answered while the turn stayed live: park. The open
+			// questions are handed back first, so an answer racing the
+			// cancel is delivered by resume rather than lost in the tool call.
+			parkC = nil
+			for _, p := range open {
+				p.handedBack.Store(true)
+			}
+			cancelRun(errParked)
+			return collect(outcomePaused)
 		case <-timer.C:
 			cancelRun(errStageTimeout)
-			// Collect the cancelled attempt's output for the stage log, but
-			// don't trust the adapter to honor the context — after a grace
-			// period, abandon the goroutine rather than wedging the run.
-			select {
-			case res := <-resCh:
-				return invocation{res: res, outcome: outcomeTimedOut, open: open}, nil
-			case <-time.After(30 * time.Second):
-				x.e.log.Warn("harness ignored cancellation; abandoning attempt", "run", x.rs.runID, "stage", st.ID)
-				return invocation{outcome: outcomeTimedOut, open: open}, nil
-			}
+			return collect(outcomeTimedOut)
 		case <-x.ctx.Done():
 			cancelRun(context.Cause(x.ctx))
 			return invocation{}, context.Cause(x.ctx)

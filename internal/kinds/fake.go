@@ -152,8 +152,8 @@ func (h *fakeHarness) Run(ctx context.Context, env ports.EnvID, spec ports.Agent
 	return h.runner.Run(ctx, env, spec, in)
 }
 
-func (h *fakeHarness) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, reply string) (ports.AgentResult, error) {
-	return h.runner.Resume(ctx, env, s, reply)
+func (h *fakeHarness) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+	return h.runner.Resume(ctx, env, s, in)
 }
 
 func (h *fakeHarness) Test(context.Context) error                  { return nil }
@@ -166,6 +166,10 @@ func (h *fakeHarness) Prepare(_ context.Context, _ ports.EnvID, specs []*agentsp
 	h.runner.RecordPrepare(specs)
 	return nil
 }
+
+// AcceptsAnyModel: the fake runs any model string; its Models are examples.
+func (h *fakeHarness) AcceptsAnyModel() bool { return true }
+
 func (h *fakeHarness) Models(context.Context) ([]ModelInfo, error) {
 	return []ModelInfo{
 		{ID: "fake/fast-1", Name: "Fake · Fast 1"},

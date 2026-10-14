@@ -150,10 +150,12 @@ type RaisePingRequest struct {
 	Options   []string `json:"options,omitempty"`   // closed answer set (max 8)
 	Artifact  string   `json:"artifact,omitempty"`  // legacy single workspace file
 	Artifacts []string `json:"artifacts,omitempty"` // workspace files to review
-	// HoldMS is the grace hold the caller wants, clamped to the server's own
-	// limit. Short by design: the agent's turn goes back to it when nothing
-	// answers in time, and the engine owns the real wait.
+	// HoldMS is how long this request may hold for an answer, clamped to the
+	// server's own limit; the caller long-polls the rest of the wait.
 	HoldMS int `json:"hold_ms,omitempty"`
+	// Key is the caller's idempotency key: a raise retried with the same key
+	// returns the question the first one created.
+	Key string `json:"key,omitempty"`
 }
 
 // PingHold is the answer, when one arrives inside the hold. A 204 means it

@@ -266,6 +266,14 @@ Flag names MUST be verified against the pinned opencode version in M3 and
 corrected in IMPLEMENTATION_NOTES if drifted — behavior, not flags, is
 normative.
 
+> **Superseded (invocation).** Config generation above still holds, but
+> agents no longer run as one-shot `opencode run` invocations parsed after
+> exit. Every harness runs as a long-lived Agent Client Protocol agent
+> (`opencode acp`, `codex-acp`) hosted by the workspace sidecar
+> (`shim sidecar`); the stage's agent is the ACP session mode, its model the
+> session model, and the transcript streams as normalized events. See
+> IMPLEMENTATION_NOTES, *Live agent sessions: the workspace sidecar and ACP*.
+
 ### 5.3 The four v1 agents (prompts ship in the target repo)
 
 `planner` (read_only: true, allow_bash: false): explores the repo, writes
@@ -336,6 +344,8 @@ multi-user auth.
 | GET `/api/runs/{id}/pings/{pid}` | shim re-poll → 200/204 as above |
 | POST `/api/pings/{pid}/answer` | CPUI: `{answer, feedback?}` → 200 |
 | GET `/api/pings?status=pending` | CPUI inbox |
+| POST `/api/runs/{id}/messages` | *(later)* `{text, interrupt?}` → 202: a message into the running agent's session |
+| GET `/api/runs/{id}/workspace/{tree,file,changes,diff}` · `/terminal` | *(later)* the workspace views and a WebSocket terminal, served by the sidecar |
 | GET/POST/DELETE `/api/channels` | channel config CRUD (`{kind:"matrix", homeserver, access_token, room_id}`) |
 
 ## 9. Database DDL (initial migration)
@@ -359,6 +369,15 @@ the shim never gives up; on network error, retry with backoff capped at
 60 s. Tool returns the answer text (for gates the engine, not the shim,
 raises pings). If the engine is unreachable > 10 min, return a tool error
 string `"ask_human unavailable: <err>"` and let the agent proceed.
+
+> **Current contract.** The shim is a static Go binary now (not Node), and
+> the history went: block (this section) → hand the turn back after a 20 s
+> grace hold → block again. Today the call blocks until answered, sending
+> MCP progress notifications so the harness keeps the call alive; the raise
+> carries an idempotency key; the re-poll answers 410 once the engine has
+> **parked** the run (after `AskHumanHold`, default 30 min, it cancels the
+> turn and resumes the session with the answer later). See
+> IMPLEMENTATION_NOTES, *Live agent sessions*.
 
 ## 11. Workspace: template, bootstrap, git policy
 

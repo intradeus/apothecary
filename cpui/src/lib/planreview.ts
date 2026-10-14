@@ -38,9 +38,21 @@ export interface ReviewComment {
 function escapeHTML(s: string): string {
 	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+// Only link where a link is harmless: web, mail, and in-page/relative
+// targets. A `javascript:` href in agent output is not a link, it is code.
+const safeHref = (href: string) => /^(https?:|mailto:|#|\/|\.{0,2}\/|[^:]*$)/i.test(href.trim());
 const renderer = {
 	html({ text }: { text: string }) {
 		return `<pre class="small mono">${escapeHTML(text)}</pre>`;
+	},
+	link(
+		this: { parser: { parseInline: (t: Token[]) => string } },
+		tok: { href: string; title?: string | null; tokens: Token[] }
+	) {
+		const inner = this.parser.parseInline(tok.tokens);
+		if (!safeHref(tok.href)) return inner;
+		const title = tok.title ? ` title="${escapeHTML(tok.title).replace(/"/g, '&quot;')}"` : '';
+		return `<a href="${escapeHTML(tok.href).replace(/"/g, '&quot;')}"${title} target="_blank" rel="noreferrer">${inner}</a>`;
 	}
 };
 marked.use({ renderer });

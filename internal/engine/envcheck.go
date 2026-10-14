@@ -3,12 +3,15 @@ package engine
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 )
 
@@ -27,13 +30,16 @@ type CheckStep struct {
 
 // CheckRun is an envcheck job snapshot (API shape).
 type CheckRun struct {
-	ID         string      `json:"id"`
-	ProjectID  string      `json:"project_id"`
-	Status     string      `json:"status"` // running|pass|fail
-	Keep       bool        `json:"keep"`
-	Steps      []CheckStep `json:"steps"`
-	StartedAt  time.Time   `json:"started_at"`
-	FinishedAt *time.Time  `json:"finished_at,omitempty"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Status    string `json:"status"` // running|pass|fail|cancelled
+	Keep      bool   `json:"keep"`
+	// TearingDown: the verdict is in, the throwaway workspace is still being
+	// destroyed (a destroy step follows). Another check can start meanwhile.
+	TearingDown bool        `json:"tearing_down,omitempty"`
+	Steps       []CheckStep `json:"steps"`
+	StartedAt   time.Time   `json:"started_at"`
+	FinishedAt  *time.Time  `json:"finished_at,omitempty"`
 }
 
 // EnvCheckOptions parameterize a check pass.
@@ -46,20 +52,55 @@ type EnvCheckOptions struct {
 	// step, taken from the project's default flow (FLOWLANG §1, v3 — agents
 	// belong to a flow, not a project). Empty simply generates no configs.
 	Agents []*agentspec.Spec
+	// Stages are the default flow's stages, for checking each agent stage's
+	// model against what the agent in the workspace actually offers.
+	Stages []flow.Stage
 }
 
 // RunEnvCheck provisions, bootstraps and verifies one throwaway
-// environment, emitting steps as they complete. Returns the failure count.
-// The named return matters: the deferred destroy step must be able to count
-// its own failure.
-func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) (failed int) {
+// environment, emitting steps as they complete, then tears it down. Returns
+// the failure count.
+func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) int {
+	failed, teardown := runEnvCheck(ctx, res, runID, opts, emit)
+	return failed + teardown()
+}
+
+// envcheckProbes bounds the egress probes running at once: each is a curl
+// of up to 10 s in the workspace, and a derived allowlist runs to dozens.
+const envcheckProbes = 8
+
+// runEnvCheck runs every probe and returns their failure count together
+// with the teardown still to do: the verdict does not wait on destroying
+// the workspace. A cancelled (or timed-out) ctx stops the remaining probes;
+// one step says why, and the rest are not reported. The teardown always
+// runs on its own context, so a cancelled check still cleans up.
+func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) (int, func() int) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
+	var mu sync.Mutex // probes run concurrently; emit and the count are shared
+	failed := 0
+	stopped := false
 	step := func(id string, err error, detail string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopped {
+			return false
+		}
+		if cerr := ctx.Err(); cerr != nil {
+			// Report the stop once, not one failure per step it cut short.
+			stopped = true
+			failed++
+			why := "cancelled"
+			if errors.Is(cerr, context.DeadlineExceeded) {
+				why = fmt.Sprintf("timed out after %s", opts.Timeout)
+			}
+			emit(CheckStep{ID: "stopped", Status: "fail", Detail: why + " during " + id})
+			return false
+		}
 		s := CheckStep{ID: id, Status: "pass", Detail: detail}
 		if err != nil {
 			failed++
@@ -69,17 +110,29 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		emit(s)
 		return err == nil
 	}
-	skip := func(id, why string) { emit(CheckStep{ID: id, Status: "skip", Detail: why}) }
+	skip := func(id, why string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !stopped {
+			emit(CheckStep{ID: id, Status: "skip", Detail: why})
+		}
+	}
+	noTeardown := func() int { return 0 }
 
 	envp := res.Envp
 	branch := "apothecary/" + strings.ToLower(runID)
 
+	name := workspaceName(branch, runID)
 	env, err := envp.Provision(ctx, ports.EnvSpec{
-		RunID:                runID,
-		RepoURL:              res.RepoRef.URL,
-		Branch:               branch,
-		Name:                 workspaceName(branch, runID),
-		Project:              res.ProjectName,
+		RunID:   runID,
+		RepoURL: res.RepoRef.URL,
+		Branch:  branch,
+		Name:    name,
+		Project: res.ProjectName,
+		// The workspace a run would get: a repo-authored devcontainer
+		// installs the harness itself, so without this the harness_binary
+		// probe could only ever fail on images that don't ship it.
+		HarnessInstall:       res.HarnessInstall,
 		EgressDomains:        res.EgressDomains,
 		EgressMode:           res.EgressMode,
 		EgressDenylist:       res.EgressDenylist,
@@ -91,15 +144,23 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		GitPass:              res.GitPass,
 	})
 	if !step("provision", err, string(env)) {
-		return failed
+		if opts.Keep {
+			return failed, noTeardown
+		}
+		// A failed or cancelled provision returns no id, but may have built
+		// half a workspace (a sandbox, a volume, an egress network) under
+		// the name it was given — which is its identity. Remove by name.
+		if env == "" {
+			env = ports.EnvID(name)
+		}
+		return failed, func() int { return destroyEnv(envp, env, emit) }
 	}
-	if !opts.Keep {
-		defer func() {
-			derr := envp.Destroy(context.WithoutCancel(ctx), env)
-			step("destroy", derr, "")
-		}()
-	} else {
-		defer skip("destroy", "kept for inspection")
+	teardown := func() int { return destroyEnv(envp, env, emit) }
+	if opts.Keep {
+		teardown = func() int {
+			emit(CheckStep{ID: "destroy", Status: "skip", Detail: "kept for inspection"})
+			return 0
+		}
 	}
 
 	step("bootstrap", RunBootstrap(ctx, envp, env, BootstrapSpec{
@@ -140,10 +201,25 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 
 	// Egress positives: one per derived allowlist entry. TCP+TLS connect is
 	// the criterion — any HTTP status counts; connectivity, not auth.
+	sem := make(chan struct{}, envcheckProbes)
+	var wg sync.WaitGroup
 	for _, domain := range res.EgressDomains {
-		step("egress:"+domain, execExpect(ctx, envp, env,
-			fmt.Sprintf("curl -m 10 -s -o /dev/null https://%s", domain), "", true), "")
+		if strings.HasPrefix(domain, "*.") {
+			// A pattern names no host to connect to; curl'ing it literally
+			// fails as a malformed URL (exit 3), which is not an egress fact.
+			skip("egress:"+domain, "wildcard pattern — no single host to probe")
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(domain string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			step("egress:"+domain, execExpect(ctx, envp, env,
+				fmt.Sprintf("curl -m 10 -s -o /dev/null https://%s", domain), "", true), "")
+		}(domain)
 	}
+	wg.Wait()
 	step("repo_reachable", execExpect(ctx, envp, env,
 		"git ls-remote --heads origin >/dev/null", "repo", true), "")
 
@@ -165,6 +241,21 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		}
 		step(name, execExpect(ctx, envp, env, "command -v "+b, "", true), b)
 	}
+	// The agent's own model list is the authoritative one: the installed
+	// harness may not know a model its provider still serves.
+	if len(opts.Stages) == 0 {
+		skip("agent_models", "no flow stages to check")
+	} else {
+		missing, unasked := agentModelCheck(ctx, res, env, opts.Stages)
+		var merr error
+		switch {
+		case len(missing) > 0:
+			merr = errors.New(strings.Join(missing, "; "))
+		case len(unasked) > 0:
+			merr = fmt.Errorf("could not ask the agent: %s", strings.Join(unasked, "; "))
+		}
+		step("agent_models", merr, "every agent stage's model is offered by its agent")
+	}
 	step("shim", execExpect(ctx, envp, env,
 		"test -x /opt/apothecary/shim", "", true), "")
 	// Loopback parity holds on every provisioner (coder: reverse tunnel;
@@ -185,7 +276,24 @@ func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	}
 	step("links", lerr, strings.TrimSpace(detail))
 
-	return failed
+	mu.Lock()
+	defer mu.Unlock()
+	return failed, teardown
+}
+
+// destroyEnv removes a check's workspace on a context of its own: a
+// cancelled check must still clean up after itself.
+func destroyEnv(envp ports.EnvProvisioner, env ports.EnvID, emit func(CheckStep)) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	s := CheckStep{ID: "destroy", Status: "pass"}
+	if err := envp.Destroy(ctx, env); err != nil {
+		s.Status, s.Detail = "fail", err.Error()
+		emit(s)
+		return 1
+	}
+	emit(s)
+	return 0
 }
 
 func execExpect(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, script, dir string, wantSuccess bool) error {
@@ -219,11 +327,15 @@ func rwRoundTrip(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID
 // --- engine-side job registry (API surface, §9) -----------------------------
 
 type envCheckState struct {
-	snap CheckRun
+	snap   CheckRun
+	cancel context.CancelFunc
 }
 
-// StartEnvCheck launches an envcheck for the project; one at a time per
-// project. Returns the check id immediately (202 semantics).
+// StartEnvCheck launches an envcheck for the project. One runs at a time per
+// project: starting another SUPERSEDES the one running (it is cancelled and
+// cleans up after itself) rather than making the caller wait it out — the
+// usual reason to start a check is that the project just changed. Returns
+// the check id immediately (202 semantics).
 func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool) (string, error) {
 	res, err := e.resolver.Resolve(ctx, projectID)
 	if err != nil {
@@ -234,21 +346,23 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	// longer resolves is not this check's business — it probes the
 	// environment, so fall through with no agents rather than refusing.
 	var agents []*agentspec.Spec
+	var stages []flow.Stage
 	if fl, ferr := e.flows.Get(ctx, res.ProjectID, res.DefaultFlow); ferr == nil {
 		agents = fl.AgentSpecs()
+		stages = fl.Stages
 	}
 	id := e.newID()
 	st := &envCheckState{snap: CheckRun{
 		ID: id, ProjectID: projectID, Status: "running", Keep: keep, StartedAt: e.clock(),
 	}}
-	// One lock section for check + insert: two concurrent calls must not
-	// both pass the duplicate guard.
+	ctx, cancel := context.WithCancel(context.Background())
+	st.cancel = cancel
+	// One lock section for supersede + insert: two concurrent calls must not
+	// both leave a running check behind.
 	e.mu.Lock()
 	for _, other := range e.envchecks {
 		if other.snap.ProjectID == projectID && other.snap.Status == "running" {
-			e.mu.Unlock()
-			res.release()
-			return "", fmt.Errorf("an envcheck for project %s is already running", projectID)
+			e.cancelEnvCheckLocked(other, "superseded by a newer check")
 		}
 	}
 	e.envchecks[id] = st
@@ -273,24 +387,79 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	// Provision time (from the EnvSpec egress fields) — nothing to prime here.
 	go func() {
 		defer res.release()
-		failed := RunEnvCheck(context.Background(), res, checkRunID,
-			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep, Agents: agents},
-			func(s CheckStep) {
-				e.mu.Lock()
-				st.snap.Steps = append(st.snap.Steps, s)
-				e.mu.Unlock()
-			})
+		defer cancel()
+		emit := func(s CheckStep) {
+			e.mu.Lock()
+			st.snap.Steps = append(st.snap.Steps, s)
+			e.mu.Unlock()
+		}
+		failed, teardown := runEnvCheck(ctx, res, checkRunID,
+			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep, Agents: agents, Stages: stages}, emit)
+		// The verdict is published now; destroying the workspace can take
+		// minutes and says nothing about the project.
 		now := e.clock()
 		e.mu.Lock()
-		st.snap.FinishedAt = &now
-		if failed > 0 {
-			st.snap.Status = "fail"
-		} else {
-			st.snap.Status = "pass"
+		if st.snap.Status == "running" {
+			st.snap.FinishedAt = &now
+			if failed > 0 {
+				st.snap.Status = "fail"
+			} else {
+				st.snap.Status = "pass"
+			}
 		}
+		st.snap.TearingDown = true
+		e.mu.Unlock()
+		teardown()
+		e.mu.Lock()
+		st.snap.TearingDown = false
 		e.mu.Unlock()
 	}()
 	return id, nil
+}
+
+// cancelEnvCheckLocked stops a running check (e.mu held). Its goroutine
+// winds down and still destroys its workspace.
+func (e *Engine) cancelEnvCheckLocked(st *envCheckState, why string) {
+	if st.snap.Status != "running" {
+		return
+	}
+	now := e.clock()
+	st.snap.Status = "cancelled"
+	st.snap.FinishedAt = &now
+	st.snap.Steps = append(st.snap.Steps, CheckStep{ID: "cancelled", Status: "skip", Detail: why})
+	if st.cancel != nil {
+		st.cancel()
+	}
+}
+
+// CancelEnvCheck stops a running check. ok=false: no such check.
+func (e *Engine) CancelEnvCheck(id string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st, ok := e.envchecks[id]
+	if !ok {
+		return false
+	}
+	e.cancelEnvCheckLocked(st, "cancelled")
+	return true
+}
+
+// LatestEnvCheck is the project's most recent check (running or not), so a
+// page opened mid-check can follow it.
+func (e *Engine) LatestEnvCheck(projectID string) (CheckRun, bool) {
+	e.mu.Lock()
+	var id string
+	for i := len(e.envcheckOrder) - 1; i >= 0; i-- {
+		if st := e.envchecks[e.envcheckOrder[i]]; st != nil && st.snap.ProjectID == projectID {
+			id = e.envcheckOrder[i]
+			break
+		}
+	}
+	e.mu.Unlock()
+	if id == "" {
+		return CheckRun{}, false
+	}
+	return e.EnvCheck(id)
 }
 
 // enginePortOf extracts the port from the engine URL, honoring scheme

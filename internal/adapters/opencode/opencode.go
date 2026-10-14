@@ -1,18 +1,14 @@
-// Package opencode adapts the AgentRunner port to the opencode CLI
-// (DESIGN.md §5.2), executing inside workspaces through the EnvProvisioner.
+// Package opencode generates opencode's workspace config (agents, the
+// ask_human MCP server, permissions, auth) and says how to run it: opencode
+// is driven as a long-lived ACP agent (`opencode acp`, verified against
+// opencode 1.17.8) through the workspace sidecar — see internal/adapters/
+// acpagent. Its ACP session modes ARE its agents (the primary-mode agent
+// markdown written here), so a stage selects its agent as the session mode.
 //
-// Verified against opencode 1.17.8 (drift from the design's sketch is
-// recorded in IMPLEMENTATION_NOTES): invocation is
-//
-//	opencode run --format json --agent <name> -m <provider/model> "$(cat prompt)"
-//
-// There is no --dangerously-skip-permissions flag — permissions are granted
-// via generated config — and no turn cap flag; max_turns is not enforceable
-// per-invocation (budgets still bound the run engine-side).
-//
-// The --format json stream is NDJSON events {type, sessionID, part};
-// step_finish parts carry tokens{input,output,...} and cost, which map to
-// Usage; TurnsUsed = number of step_finish events.
+// There is no --dangerously-skip-permissions: permissions are granted via
+// generated config (and the sidecar auto-approves any stray request). There
+// is no turn cap; max_turns is not enforceable per-invocation (budgets still
+// bound the run engine-side).
 package opencode
 
 import (
@@ -21,11 +17,12 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
+	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 	"apothecary/internal/wshome"
-	"time"
 )
 
 // Config is reserved for adapter-level knobs; auth material arrives per
@@ -41,14 +38,13 @@ func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
 	return &Adapter{envp: envp, cfg: cfg}
 }
 
-// mcpTimeout bounds one ask_human call from opencode's side. Comfortably
-// above the shim's grace hold, nowhere near "as long as a human takes" —
-// that wait lives in the engine (see engine.stageAgent).
+// mcpTimeout is opencode's per-call MCP timeout. ask_human blocks until the
+// human answers, which is fine: opencode RESETS this timer on every MCP
+// progress notification, and the shim sends one every few seconds while it
+// waits — so this only fires if the shim itself hangs.
 const mcpTimeout = 2 * time.Minute
 
 const (
-	promptPath = "/apothecary/prompt.txt"
-	replyPath  = "/apothecary/reply.txt"
 	// defaultHome is the §8 pipeline image's workspace user. Repo-authored
 	// devcontainers run the REPO's user instead, so the real home is probed
 	// per env (see configDir/authFile) and this is only the fallback.
@@ -91,12 +87,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 				"type":    "local",
 				"command": []string{"/opt/apothecary/shim", "ask-human"},
 				"enabled": true,
-				// opencode kills an MCP tool call at 60 s by default and hands
-				// the model the timeout as an error, which reads to it as
-				// permission to guess. The shim never holds a call that long
-				// any more (it posts the question and gives the turn back),
-				// so this is only a floor under the grace hold — but it costs
-				// one line and removes the sharpest edge.
+				// Reset by every progress notification (see mcpTimeout).
 				"timeout": mcpTimeout.Milliseconds(),
 			},
 		},
@@ -154,121 +145,16 @@ func agentMarkdown(s *agentspec.Spec) string {
 	return b.String()
 }
 
-// --- AgentRunner ------------------------------------------------------------
+// --- running it ----------------------------------------------------------------
 
-func (a *Adapter) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
-	if err := a.envp.WriteFile(ctx, env, promptPath, []byte(in.Prompt), 0o600); err != nil {
-		return ports.AgentResult{}, fmt.Errorf("write prompt: %w", err)
+// Profile is how the ACP runner starts and addresses opencode.
+func Profile() acpagent.Profile {
+	return acpagent.Profile{
+		Harness: "opencode",
+		// Logs on stderr (kept by the sidecar): opencode reports a failed
+		// model call ONLY in its log and ends the turn as if it succeeded,
+		// so the sidecar reads them to tell a silent failure from a turn.
+		Command: "opencode acp --print-logs --log-level WARN",
+		Mode:    func(spec ports.AgentSpec) string { return spec.Agent },
 	}
-	// shellQuote, not %q: Go's %q double-quotes, inside which the shell
-	// still expands $ and backticks (a model string like `openai/$(cmd)`
-	// would execute).
-	script := fmt.Sprintf(
-		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; [ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a
-opencode run --format json --agent %s -m %s "$(cat %s)"`,
-		shellQuote(spec.Agent), shellQuote(spec.Model), shellQuote(promptPath))
-	return a.invoke(ctx, env, script)
 }
-
-func (a *Adapter) Resume(ctx context.Context, env ports.EnvID, session ports.SessionID, reply string) (ports.AgentResult, error) {
-	if session == "" {
-		return ports.AgentResult{}, fmt.Errorf("opencode resume: no session recorded for this stage")
-	}
-	if err := a.envp.WriteFile(ctx, env, replyPath, []byte(reply), 0o600); err != nil {
-		return ports.AgentResult{}, fmt.Errorf("write reply: %w", err)
-	}
-	script := fmt.Sprintf(
-		`set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; [ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a
-opencode run --format json --session %s "$(cat %s)"`,
-		shellQuote(string(session)), shellQuote(replyPath))
-	return a.invoke(ctx, env, script)
-}
-
-// shellQuote single-quotes s for POSIX sh (inert $, backticks, spaces).
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func (a *Adapter) invoke(ctx context.Context, env ports.EnvID, script string) (ports.AgentResult, error) {
-	res, err := a.envp.Exec(ctx, env, ports.Command{Script: script, Dir: "repo"})
-	if err != nil {
-		return ports.AgentResult{}, err
-	}
-	result := parseEvents(res.Output)
-	if res.ExitCode != 0 {
-		// Failed invocations often produce no text events at all (startup
-		// errors: unknown model, bad auth …) — the stage log and the
-		// on_fail feed must carry the RAW output, not an empty transcript
-		// (found live: a failed plan stage logged nothing).
-		result.Output = res.Output
-		return result, fmt.Errorf("opencode exit %d: %s", res.ExitCode, tail(res.Output, 2048))
-	}
-	return result, nil
-}
-
-// event mirrors the --format json NDJSON stream (opencode 1.17.8).
-type event struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionID"`
-	Part      struct {
-		Type   string  `json:"type"`
-		Text   string  `json:"text"`
-		Cost   float64 `json:"cost"`
-		Tokens struct {
-			Input     int `json:"input"`
-			Output    int `json:"output"`
-			Reasoning int `json:"reasoning"`
-			Cache     struct {
-				Write int `json:"write"`
-				Read  int `json:"read"`
-			} `json:"cache"`
-		} `json:"tokens"`
-	} `json:"part"`
-}
-
-// parseEvents folds the NDJSON stream into an AgentResult. Non-JSON lines
-// (stderr noise appended by the exec transport) are skipped.
-func parseEvents(output string) ports.AgentResult {
-	var r ports.AgentResult
-	var texts []string
-	for line := range strings.SplitSeq(output, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		var ev event
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue
-		}
-		if ev.SessionID != "" && r.Session == "" {
-			// First session id wins: late events can carry child/subtask
-			// sessions, and Resume must target the primary one.
-			r.Session = ports.SessionID(ev.SessionID)
-		}
-		switch ev.Type {
-		case "step_finish":
-			r.TurnsUsed++
-			r.Usage.CostUSD += ev.Part.Cost
-			// Cache writes were genuinely sent this turn; cache reads were
-			// not — counting them would inflate input several-fold on long
-			// sessions.
-			r.Usage.InputTokens += ev.Part.Tokens.Input + ev.Part.Tokens.Cache.Write
-			r.Usage.OutputTokens += ev.Part.Tokens.Output + ev.Part.Tokens.Reasoning
-		case "text":
-			if ev.Part.Text != "" {
-				texts = append(texts, ev.Part.Text)
-			}
-		}
-	}
-	r.Output = strings.Join(texts, "\n")
-	return r
-}
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
-}
-
-var _ ports.AgentRunner = (*Adapter)(nil)

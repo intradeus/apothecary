@@ -1,0 +1,495 @@
+// Package acpagent adapts the AgentRunner port to any coding agent that
+// speaks the Agent Client Protocol, hosted by the workspace sidecar
+// (internal/sidecar). One runner, every ACP harness: opencode (`opencode
+// acp`), codex (`codex-acp`), and anything else that speaks the protocol. A
+// harness kind contributes only a Profile — how to start it and how a flow's
+// agent maps onto it.
+//
+// What this buys over one-shot CLI invocations:
+//   - the transcript streams as it happens (message text, tool calls with
+//     their input/output, plans), normalized by the protocol, not scraped;
+//   - the agent process and its session outlive a turn, so a human message
+//     is delivered into the SAME session (queued to the end of the turn, or
+//     interrupting it), and an ask_human tool call can simply block;
+//   - the process outlives the engine: after a restart, Reattach follows the
+//     turn still in flight instead of restarting it.
+package acpagent
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"apothecary/internal/ports"
+	"apothecary/internal/sidecar"
+)
+
+// Profile is what one harness contributes.
+type Profile struct {
+	// Harness names the harness in errors ("opencode").
+	Harness string
+	// Command is the shell command that starts the agent speaking ACP on
+	// stdio ("opencode acp"). It runs in the repo after provider.env is
+	// sourced, as the workspace user.
+	Command string
+	// Mode maps a stage's agent to the ACP session mode, "" for none
+	// (opencode's modes ARE its agents; codex has no named agents).
+	Mode func(spec ports.AgentSpec) string
+	// Preamble, when set, is prepended to a NEW session's first prompt —
+	// the role prompt, for harnesses with nowhere else to put it.
+	Preamble func(ctx context.Context, env ports.EnvID, spec ports.AgentSpec) (string, error)
+}
+
+type Runner struct {
+	envp ports.EnvProvisioner
+	p    Profile
+	// cancelGrace bounds how long a cancelled turn may take to wind down
+	// before the runner gives up on it. A var for tests.
+	cancelGrace time.Duration
+}
+
+func New(envp ports.EnvProvisioner, p Profile) *Runner {
+	return &Runner{envp: envp, p: p, cancelGrace: 30 * time.Second}
+}
+
+// envPrelude loads the engine-written credentials into the agent's
+// environment, exactly as the one-shot invocations did.
+const envPrelude = `set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; ` +
+	`[ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a; `
+
+func (r *Runner) client(ctx context.Context, env ports.EnvID) (*sidecar.Client, error) {
+	sc, ok := r.envp.(ports.Sidecar)
+	if !ok {
+		return nil, fmt.Errorf("%s: this workspace provisioner cannot host the agent sidecar", r.p.Harness)
+	}
+	conn, err := sc.Sidecar(ctx, env)
+	if err != nil {
+		return nil, fmt.Errorf("%s: start workspace sidecar: %w", r.p.Harness, err)
+	}
+	return sidecar.New(conn), nil
+}
+
+func (r *Runner) start(ctx context.Context, c *sidecar.Client) error {
+	_, err := c.Start(ctx, sidecar.StartRequest{Argv: []string{"bash", "-c", envPrelude + "exec " + r.p.Command}})
+	if err != nil {
+		return fmt.Errorf("%s: start agent: %w", r.p.Harness, err)
+	}
+	return nil
+}
+
+func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
+	c, err := r.client(ctx, env)
+	if err != nil {
+		return ports.AgentResult{}, err
+	}
+	if err := r.start(ctx, c); err != nil {
+		return ports.AgentResult{}, err
+	}
+	mode := ""
+	if r.p.Mode != nil {
+		mode = r.p.Mode(spec)
+	}
+	sess, err := c.Session(ctx, sidecar.SessionRequest{Mode: mode, Model: spec.Model})
+	if err != nil {
+		return ports.AgentResult{}, fmt.Errorf("%s: %w", r.p.Harness, err)
+	}
+	prompt := in.Prompt
+	if r.p.Preamble != nil {
+		pre, err := r.p.Preamble(ctx, env, spec)
+		if err != nil {
+			return ports.AgentResult{Session: ports.SessionID(sess.SessionID)}, err
+		}
+		prompt = pre + prompt
+	}
+	return r.drive(ctx, c, sess.SessionID, sess.CostUSD, prompt, "", "", in)
+}
+
+func (r *Runner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+	if s == "" {
+		return ports.AgentResult{}, fmt.Errorf("%s resume: no session recorded for this stage", r.p.Harness)
+	}
+	c, err := r.client(ctx, env)
+	if err != nil {
+		return ports.AgentResult{}, err
+	}
+	if err := r.start(ctx, c); err != nil {
+		return ports.AgentResult{}, err
+	}
+	// Live in the process: a no-op. Otherwise (the container restarted, the
+	// harness was swapped) the agent reloads it from its own store.
+	sess, err := c.Session(ctx, sidecar.SessionRequest{SessionID: string(s)})
+	if err != nil {
+		return ports.AgentResult{Session: s}, fmt.Errorf("%s: resume session: %w", r.p.Harness, err)
+	}
+	return r.drive(ctx, c, sess.SessionID, sess.CostUSD, in.Prompt, "", "", in)
+}
+
+// attachable finds what Reattach would follow: the turn of s in flight, or
+// the last turn of s that ran after cursor (it may have finished while the
+// engine was down — its events are still in the sidecar's buffer).
+func (r *Runner) attachable(ctx context.Context, c *sidecar.Client, s, cursor string) (turn string, cost float64, ok bool) {
+	st, err := c.Status(ctx)
+	if err != nil {
+		return "", 0, false
+	}
+	if st.Turn != nil && st.Turn.Session == s {
+		return st.Turn.ID, st.Sessions[s], true
+	}
+	boot, seq, okc := sidecar.ParseCursor(cursor)
+	if !okc {
+		boot, seq = st.Boot, 0
+	}
+	if boot != st.Boot {
+		return "", 0, false // the sidecar restarted: nothing of that turn survives
+	}
+	evs, err := c.Buffered(ctx, boot, seq)
+	if err != nil {
+		return "", 0, false
+	}
+	for _, ev := range evs {
+		if ev.Session == s && ev.Turn != "" && (ev.Type == "turn_start" || ev.Type == "turn_end") {
+			turn = ev.Turn
+		}
+	}
+	return turn, st.Sessions[s], turn != ""
+}
+
+func (r *Runner) Reattachable(ctx context.Context, env ports.EnvID, s ports.SessionID, cursor string) bool {
+	if s == "" {
+		return false
+	}
+	c, err := r.client(ctx, env)
+	if err != nil {
+		return false
+	}
+	_, _, ok := r.attachable(ctx, c, string(s), cursor)
+	return ok
+}
+
+func (r *Runner) Reattach(ctx context.Context, env ports.EnvID, s ports.SessionID, cursor string, in ports.AgentInput) (ports.AgentResult, bool, error) {
+	if s == "" {
+		return ports.AgentResult{}, false, nil
+	}
+	c, err := r.client(ctx, env)
+	if err != nil {
+		return ports.AgentResult{}, false, nil
+	}
+	turn, cost, ok := r.attachable(ctx, c, string(s), cursor)
+	if !ok {
+		return ports.AgentResult{Session: s}, false, nil
+	}
+	// Spend before the cursor was already banked by the engine; what the
+	// session cost meanwhile is not recoverable, so this undercounts by at
+	// most the turn's own spend up to the restart.
+	res, err := r.drive(ctx, c, string(s), cost, "", turn, cursor, in)
+	return res, true, err
+}
+
+// AgentModels opens a throwaway session and returns the models the agent
+// advertises for it. An agent that advertises none returns an empty list
+// with no error — callers treat that as "cannot check".
+func (r *Runner) AgentModels(ctx context.Context, env ports.EnvID) ([]string, error) {
+	c, err := r.client(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.start(ctx, c); err != nil {
+		return nil, err
+	}
+	sess, err := c.Session(ctx, sidecar.SessionRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", r.p.Harness, err)
+	}
+	return sess.Models, nil
+}
+
+func (r *Runner) StopAgent(ctx context.Context, env ports.EnvID) error {
+	c, err := r.client(ctx, env)
+	if err != nil {
+		return err
+	}
+	return c.Stop(ctx)
+}
+
+func newTurnID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "t" + hex.EncodeToString(b)
+}
+
+// stream follows the sidecar's event stream from a position, reconnecting
+// across dropped connections (an engine-side hiccup, not the agent's).
+type stream struct {
+	c    *sidecar.Client
+	ctx  context.Context
+	boot string
+	seq  int64
+}
+
+// errSidecarRestarted: the sidecar itself restarted, so the turn in flight
+// (and its agent process) is gone.
+var errSidecarRestarted = errors.New("the workspace sidecar restarted mid-turn")
+
+// pump delivers events to out until ctx ends; a fatal error goes to errc.
+func (s *stream) pump(out chan<- sidecar.Event, errc chan<- error) {
+	failures := 0
+	for {
+		evs, errs, err := s.c.Events(s.ctx, s.boot, s.seq)
+		if err == nil {
+			for ev := range evs {
+				failures = 0
+				if ev.Type == "gap" && s.boot != "" && ev.Boot != s.boot {
+					errc <- errSidecarRestarted
+					return
+				}
+				if ev.Boot != "" {
+					s.boot = ev.Boot
+				}
+				if ev.Seq > 0 {
+					s.seq = ev.Seq
+				}
+				select {
+				case out <- ev:
+				case <-s.ctx.Done():
+					return
+				}
+			}
+			<-errs
+		}
+		if s.ctx.Err() != nil {
+			return
+		}
+		failures++
+		if failures > 30 {
+			errc <- errors.New("lost the agent's event stream")
+			return
+		}
+		select {
+		case <-time.After(time.Second):
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+// drive runs turns in one session until the agent has nothing left to do:
+// the first turn is text (or, when attaching, the turn already in flight),
+// and each human message queued meanwhile becomes the next turn.
+func (r *Runner) drive(ctx context.Context, c *sidecar.Client, sid string, costBase float64,
+	text, attachTurn, cursor string, in ports.AgentInput) (ports.AgentResult, error) {
+	res := ports.AgentResult{Session: ports.SessionID(sid)}
+	cost := costBase
+	done := func(err error) (ports.AgentResult, error) {
+		res.Usage.CostUSD = cost - costBase
+		return res, err
+	}
+
+	// The stream outlives ctx by the cancel grace, so a cancelled turn can
+	// still be followed to its end (its usage is real spend).
+	sctx, cancelStream := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelStream()
+	st := &stream{c: c, ctx: sctx}
+	if b, seq, ok := sidecar.ParseCursor(cursor); ok && attachTurn != "" {
+		st.boot, st.seq = b, seq
+	} else {
+		status, err := c.Status(ctx)
+		if err != nil {
+			return done(fmt.Errorf("%s: sidecar status: %w", r.p.Harness, err))
+		}
+		st.boot, st.seq = status.Boot, status.LastSeq
+		if attachTurn != "" {
+			st.seq = 0 // no recorded position: replay the whole buffer for this session
+		}
+	}
+	evc := make(chan sidecar.Event, 64)
+	perr := make(chan error, 1)
+	go st.pump(evc, perr)
+
+	var wake <-chan struct{}
+	if in.Inbox != nil {
+		wake = in.Inbox.Wake()
+	}
+	emit := func(ev ports.AgentEvent) {
+		if in.Events != nil {
+			in.Events(ev)
+		}
+	}
+	emit(ports.AgentEvent{Kind: ports.AgentEvSession, Text: sid})
+	// Output is what the agent SAID — its message text, turn by turn: the
+	// stage log and the on_fail feed, as the one-shot CLIs' text was.
+	var said []string
+	var saying strings.Builder
+	flushSaid := func() {
+		if t := strings.TrimSpace(saying.String()); t != "" {
+			said = append(said, t)
+		}
+		saying.Reset()
+	}
+	done = func(err error) (ports.AgentResult, error) {
+		flushSaid()
+		res.Usage.CostUSD = cost - costBase
+		res.Output = strings.Join(said, "\n\n")
+		if err != nil && res.Output == "" {
+			res.Output = err.Error()
+		}
+		return res, err
+	}
+	ctxDone := ctx.Done()
+	cancelled := false
+	var deadline <-chan time.Time
+	lastWasTool := false
+	for {
+		turn := attachTurn
+		attachTurn = ""
+		if turn == "" {
+			if cancelled {
+				return done(ctx.Err())
+			}
+			turn = newTurnID()
+			if err := c.Prompt(ctx, sidecar.PromptRequest{SessionID: sid, Turn: turn, Text: text}); err != nil {
+				return done(fmt.Errorf("%s: prompt: %w", r.p.Harness, err))
+			}
+		}
+		res.TurnsUsed++
+		interrupted := false
+		var end *sidecar.Event
+		for end == nil {
+			select {
+			case err := <-perr:
+				if errors.Is(err, errSidecarRestarted) {
+					emit(ports.AgentEvent{Kind: ports.AgentEvNotice, Text: "The workspace sidecar restarted; the turn in flight was lost."})
+				}
+				return done(fmt.Errorf("%s: %w", r.p.Harness, err))
+			case <-wake:
+				if in.Inbox.Interrupting() && !interrupted {
+					interrupted = true
+					_ = c.Cancel(sctx, sid)
+				}
+			case <-ctxDone:
+				// Cancelled by the engine (timeout, park, abort): ask the
+				// agent to stop, then follow the turn to its end for a while.
+				ctxDone, cancelled = nil, true
+				_ = c.Cancel(sctx, sid)
+				deadline = time.After(r.cancelGrace)
+			case <-deadline:
+				return done(fmt.Errorf("%s: turn did not end within %s of being cancelled", r.p.Harness, r.cancelGrace))
+			case ev := <-evc:
+				if ev.Session != "" && ev.Session != sid {
+					continue // another session's traffic (a previous stage's leftovers)
+				}
+				cur := sidecar.Cursor(ev.Boot, ev.Seq)
+				switch ev.Type {
+				case "message", "thought":
+					if lastWasTool {
+						res.TurnsUsed++ // a new model step after tool results
+						lastWasTool = false
+					}
+					kind := ports.AgentEvMessage
+					if ev.Type == "thought" {
+						kind = ports.AgentEvThought
+					} else {
+						saying.WriteString(ev.Text)
+					}
+					emit(ports.AgentEvent{Kind: kind, Turn: ev.Turn, Text: ev.Text, Cursor: cur})
+				case "tool_call", "tool_update":
+					if !lastWasTool {
+						flushSaid()
+					}
+					lastWasTool = true
+					emit(ports.AgentEvent{Kind: ports.AgentEvTool, Turn: ev.Turn, Tool: toTool(ev.Tool), Cursor: cur})
+				case "permission":
+					emit(ports.AgentEvent{Kind: ports.AgentEvPermission, Turn: ev.Turn, Tool: toTool(ev.Tool), Text: ev.Text, Cursor: cur})
+				case "plan":
+					var plan []ports.AgentPlanEntry
+					for _, p := range ev.Plan {
+						plan = append(plan, ports.AgentPlanEntry{Content: p.Content, Status: p.Status, Priority: p.Priority})
+					}
+					emit(ports.AgentEvent{Kind: ports.AgentEvPlan, Turn: ev.Turn, Plan: plan, Cursor: cur})
+				case "usage":
+					if ev.CostUSD != nil {
+						cost = *ev.CostUSD
+					}
+				case "turn_start":
+					if ev.Turn == turn {
+						emit(ports.AgentEvent{Kind: ports.AgentEvTurnStart, Turn: turn, Cursor: cur})
+					}
+				case "agent_exit":
+					msg := strings.TrimSpace(ev.Error)
+					if t := strings.TrimSpace(ev.Text); t != "" {
+						msg += "\n" + tail(t, 2000)
+					}
+					emit(ports.AgentEvent{Kind: ports.AgentEvNotice, Text: msg, Cursor: cur})
+				case "turn_end":
+					if ev.Turn == turn {
+						e := ev
+						end = &e
+						emit(ports.AgentEvent{Kind: ports.AgentEvTurnEnd, Turn: turn, StopReason: ev.StopReason,
+							Error: ev.Error, Cursor: cur})
+					}
+				}
+			}
+		}
+		if u := end.Usage; u != nil {
+			res.Usage.InputTokens += int(u.InputTokens + u.CachedWriteTokens)
+			res.Usage.OutputTokens += int(u.OutputTokens + u.ThoughtTokens)
+		}
+		if end.StopReason == "error" {
+			return done(fmt.Errorf("%s: %s", r.p.Harness, end.Error))
+		}
+		if cancelled {
+			return done(ctx.Err())
+		}
+		if in.Inbox == nil {
+			return done(nil)
+		}
+		msgs := in.Inbox.Take()
+		if len(msgs) == 0 {
+			return done(nil)
+		}
+		text = FormatMessages(msgs)
+		emit(ports.AgentEvent{Kind: ports.AgentEvUserMessage, Messages: msgs, Text: text})
+	}
+}
+
+// FormatMessages renders human messages as the agent's next prompt.
+func FormatMessages(msgs []ports.UserMessage) string {
+	if len(msgs) == 1 {
+		return "Message from the human operator:\n\n" + msgs[0].Text
+	}
+	var b strings.Builder
+	b.WriteString("Messages from the human operator:\n")
+	for i, m := range msgs {
+		fmt.Fprintf(&b, "\n%d. %s\n", i+1, m.Text)
+	}
+	return b.String()
+}
+
+func toTool(t *sidecar.Tool) *ports.AgentTool {
+	if t == nil {
+		return nil
+	}
+	out := &ports.AgentTool{ID: t.ID, Title: t.Title, Kind: t.Kind, Status: t.Status,
+		Input: t.Input, Output: t.Output, Locations: t.Locations}
+	for _, d := range t.Diffs {
+		out.Diffs = append(out.Diffs, ports.AgentDiff{Path: d.Path, OldText: d.OldText, NewText: d.NewText})
+	}
+	return out
+}
+
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
+var (
+	_ ports.AgentRunner      = (*Runner)(nil)
+	_ ports.AgentReattacher  = (*Runner)(nil)
+	_ ports.AgentStopper     = (*Runner)(nil)
+	_ ports.AgentModelLister = (*Runner)(nil)
+)

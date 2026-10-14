@@ -85,7 +85,7 @@ func TestAgentRunnerScripting(t *testing.T) {
 		t.Errorf("scripted run = %+v", res)
 	}
 
-	res, err = r.Resume(ctx, "env-1", res.Session, "answer")
+	res, err = r.Resume(ctx, "env-1", res.Session, ports.AgentInput{Prompt: "answer"})
 	if err != nil || res.Session == "" {
 		t.Errorf("resume = %+v, %v", res, err)
 	}

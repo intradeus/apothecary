@@ -14,3 +14,4 @@ export * from './flow';
 export * from './integration';
 export * from './egress';
 export * from './settings';
+export * from './workspace';

@@ -54,6 +54,18 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 	defer res.release()
 	id := ports.EnvID(v.EnvID)
 
+	// A live agent process holds the credentials in memory and would keep
+	// using them: stop it before removing the files.
+	for _, kind := range append([]string{res.HarnessKind}, res.HarnessKinds...) {
+		if st, ok := res.runnerFor(kind).(ports.AgentStopper); ok {
+			if err := st.StopAgent(ctx, id); err != nil {
+				e.log.Warn("could not stop the workspace agent of a finished run",
+					"run", v.RunID, "env", v.EnvID, "err", err)
+			}
+			break // one sidecar per workspace: one stop covers every harness
+		}
+	}
+
 	paths := append([]string(nil), scrubbedFiles...)
 	if res.AuthFiles != nil {
 		// Harness auth hangs off the workspace user's home, so the paths are

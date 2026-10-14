@@ -1,0 +1,417 @@
+package acpagent
+
+import (
+	"context"
+	"errors"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"apothecary/internal/ports"
+	"apothecary/internal/sidecar"
+)
+
+// These tests run the REAL sidecar (the shim binary, built from source) with
+// a scripted ACP agent behind it, and drive it through the runner exactly as
+// the engine does: the whole engine↔workspace path minus docker.
+
+type harness struct {
+	sock    string
+	fakeACP string
+}
+
+var (
+	buildOnce sync.Once
+	buildDir  string
+	buildErr  error
+)
+
+func build(t *testing.T) (shim, fake string) {
+	t.Helper()
+	buildOnce.Do(func() {
+		buildDir, buildErr = os.MkdirTemp("", "acpagent-test-*")
+		if buildErr != nil {
+			return
+		}
+		for _, b := range [][2]string{
+			{"shim", "apothecary/workspace/shim"},
+			{"fakeacp", "../../sidecar/testdata/fakeacp"},
+		} {
+			out, err := exec.Command("go", "build", "-o", filepath.Join(buildDir, b[0]), b[1]).CombinedOutput()
+			if err != nil {
+				buildErr = errors.New(string(out))
+				return
+			}
+		}
+	})
+	if buildErr != nil {
+		t.Fatalf("build: %v", buildErr)
+	}
+	return filepath.Join(buildDir, "shim"), filepath.Join(buildDir, "fakeacp")
+}
+
+func startSidecar(t *testing.T) *harness {
+	t.Helper()
+	shim, fake := build(t)
+	// Unix socket paths are short-limited; t.TempDir() can exceed it on macOS.
+	dir, err := os.MkdirTemp("", "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s.sock")
+	cmd := exec.Command(shim, "sidecar", "--listen", sock, "--repo", dir)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = sidecar.New(unixConn(sock)).Stop(context.Background())
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	for range 500 {
+		if c, err := net.Dial("unix", sock); err == nil {
+			c.Close()
+			return &harness{sock: sock, fakeACP: fake}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("sidecar never served")
+	return nil
+}
+
+type unixConn string
+
+func (u unixConn) Dial(ctx context.Context) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "unix", string(u))
+}
+func (u unixConn) Close() error { return nil }
+
+// env is a provisioner with nothing but a sidecar.
+type env struct {
+	ports.EnvProvisioner
+	sock string
+}
+
+func (e env) Sidecar(context.Context, ports.EnvID) (ports.PortConn, error) {
+	return unixConn(e.sock), nil
+}
+
+func (h *harness) runner() *Runner {
+	r := New(env{sock: h.sock}, Profile{Harness: "fake", Command: h.fakeACP,
+		Mode: func(s ports.AgentSpec) string { return s.Agent }})
+	r.cancelGrace = 5 * time.Second
+	return r
+}
+
+// recorder collects events and serves as the inbox.
+type recorder struct {
+	mu     sync.Mutex
+	events []ports.AgentEvent
+	queue  []ports.UserMessage
+	wake   chan struct{}
+	onText func(string)
+}
+
+func newRecorder() *recorder { return &recorder{wake: make(chan struct{}, 1)} }
+
+func (r *recorder) on(ev ports.AgentEvent) {
+	r.mu.Lock()
+	r.events = append(r.events, ev)
+	f := r.onText
+	r.mu.Unlock()
+	if f != nil && ev.Kind == ports.AgentEvMessage {
+		f(ev.Text)
+	}
+}
+
+func (r *recorder) push(m ports.UserMessage) {
+	r.mu.Lock()
+	r.queue = append(r.queue, m)
+	r.mu.Unlock()
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (r *recorder) Wake() <-chan struct{} { return r.wake }
+func (r *recorder) Take() []ports.UserMessage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	q := r.queue
+	r.queue = nil
+	return q
+}
+func (r *recorder) Interrupting() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, m := range r.queue {
+		if m.Interrupt {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *recorder) kinds() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ks []string
+	for _, e := range r.events {
+		ks = append(ks, e.Kind)
+	}
+	return strings.Join(ks, " ")
+}
+
+func (r *recorder) text() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var b strings.Builder
+	for _, e := range r.events {
+		if e.Kind == ports.AgentEvMessage {
+			b.WriteString(e.Text)
+			b.WriteString("|")
+		}
+	}
+	return b.String()
+}
+
+func TestRunStreamsTheTranscript(t *testing.T) {
+	h := startSidecar(t)
+	rec := newRecorder()
+	res, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{Agent: "planner", Model: "m/x"},
+		ports.AgentInput{Prompt: "hello", Events: rec.on, Inbox: rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "session turn_start message tool tool message plan turn_end"; rec.kinds() != want {
+		t.Errorf("events = %s\nwant     %s", rec.kinds(), want)
+	}
+	if rec.text() != "echo: hello| done|" {
+		t.Errorf("text = %q", rec.text())
+	}
+	if res.Session != "s1" || res.Usage.CostUSD < 0.0999 || res.Usage.CostUSD > 0.1001 ||
+		res.Usage.InputTokens != 7 || res.Usage.OutputTokens != 3 || res.TurnsUsed != 2 {
+		t.Errorf("result = %+v", res)
+	}
+	if res.Output != "echo: hello\n\ndone" {
+		t.Errorf("output = %q", res.Output)
+	}
+	for _, e := range rec.events {
+		if e.Cursor == "" && e.Kind != ports.AgentEvSession {
+			t.Errorf("event %s has no cursor", e.Kind)
+		}
+	}
+}
+
+// A message sent while the agent works is delivered into the same session
+// when the turn ends — no restart, no new process.
+func TestQueuedMessageBecomesTheNextTurn(t *testing.T) {
+	h := startSidecar(t)
+	rec := newRecorder()
+	var once sync.Once
+	rec.onText = func(s string) {
+		if s == "working slowly" {
+			once.Do(func() { rec.push(ports.UserMessage{ID: "m1", Text: "also add tests"}) })
+		}
+	}
+	res, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{Agent: "builder"},
+		ports.AgentInput{Prompt: "SLOW", Events: rec.on, Inbox: rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.text(), "echo: Message from the human operator:\n\nalso add tests") {
+		t.Errorf("the queued message was not the next prompt: %q", rec.text())
+	}
+	var delivered []ports.UserMessage
+	for _, e := range rec.events {
+		if e.Kind == ports.AgentEvUserMessage {
+			delivered = append(delivered, e.Messages...)
+		}
+	}
+	if len(delivered) != 1 || delivered[0].ID != "m1" {
+		t.Errorf("delivered = %+v", delivered)
+	}
+	if res.Usage.CostUSD < 0.1999 || res.Usage.CostUSD > 0.2001 {
+		t.Errorf("cost over two turns = %v", res.Usage.CostUSD)
+	}
+}
+
+// An interrupting message cancels the turn in flight and is read at once.
+func TestInterruptingMessage(t *testing.T) {
+	h := startSidecar(t)
+	rec := newRecorder()
+	var once sync.Once
+	rec.onText = func(s string) {
+		if s == "waiting" {
+			once.Do(func() { rec.push(ports.UserMessage{ID: "m2", Text: "stop, use sqlite", Interrupt: true}) })
+		}
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "WAIT", Events: rec.on, Inbox: rec})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("interrupt never ended the waiting turn")
+	}
+	if !strings.Contains(rec.text(), "stop, use sqlite") {
+		t.Errorf("interrupting message not delivered: %q", rec.text())
+	}
+	var stops []string
+	for _, e := range rec.events {
+		if e.Kind == ports.AgentEvTurnEnd {
+			stops = append(stops, e.StopReason)
+		}
+	}
+	if strings.Join(stops, ",") != "cancelled,end_turn" {
+		t.Errorf("turn ends = %v", stops)
+	}
+}
+
+// The engine cancelling (timeout, park, abort) winds the turn down and still
+// reports the session and spend.
+func TestContextCancelEndsTheTurn(t *testing.T) {
+	h := startSidecar(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	rec := newRecorder()
+	rec.onText = func(s string) {
+		if s == "waiting" {
+			cancel()
+		}
+	}
+	start := time.Now()
+	res, err := h.runner().Run(ctx, "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "WAIT", Events: rec.on})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if res.Session == "" || res.Usage.CostUSD < 0.0999 {
+		t.Errorf("result after cancel = %+v", res)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("cancel took the whole grace period")
+	}
+}
+
+func TestPromptErrorFailsTheInvocation(t *testing.T) {
+	h := startSidecar(t)
+	_, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "FAIL"})
+	if err == nil || !strings.Contains(err.Error(), "model exploded") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// After an engine restart the turn is still running in the sidecar: Reattach
+// follows it to its end instead of starting the agent over.
+func TestReattachFollowsTheTurnInFlight(t *testing.T) {
+	h := startSidecar(t)
+	r := h.runner()
+	c := sidecar.New(unixConn(h.sock))
+	ctx := context.Background()
+	if err := r.start(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := c.Session(ctx, sidecar.SessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the previous engine process started, and the last event it saw.
+	if err := c.Prompt(ctx, sidecar.PromptRequest{SessionID: sess.SessionID, Turn: "old-turn", Text: "SLOW"}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := c.Status(ctx)
+	cursor := sidecar.Cursor(st.Boot, 0)
+
+	rec := newRecorder()
+	res, ok, err := r.Reattach(ctx, "e", ports.SessionID(sess.SessionID), cursor, ports.AgentInput{Events: rec.on})
+	if err != nil || !ok {
+		t.Fatalf("reattach = %v %v", ok, err)
+	}
+	if !strings.Contains(rec.text(), "working slowly") || !strings.Contains(rec.kinds(), "turn_end") {
+		t.Errorf("reattached stream = %s / %q", rec.kinds(), rec.text())
+	}
+	if res.Session != ports.SessionID(sess.SessionID) {
+		t.Errorf("session = %q", res.Session)
+	}
+	// Nothing in flight, and nothing after the last event recorded: the
+	// caller resumes normally.
+	st, _ = c.Status(ctx)
+	end := sidecar.Cursor(st.Boot, st.LastSeq)
+	if r.Reattachable(ctx, "e", ports.SessionID(sess.SessionID), end) {
+		t.Error("reattachable with nothing new")
+	}
+	if _, ok, _ := r.Reattach(ctx, "e", ports.SessionID(sess.SessionID), end, ports.AgentInput{}); ok {
+		t.Error("reattached with nothing to follow")
+	}
+}
+
+// A turn that FINISHED while the engine was down is still followed: its
+// events are in the sidecar's buffer, and the attempt continues from its
+// result instead of re-prompting the agent.
+func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
+	h := startSidecar(t)
+	r := h.runner()
+	c := sidecar.New(unixConn(h.sock))
+	ctx := context.Background()
+	if err := r.start(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := c.Session(ctx, sidecar.SessionRequest{})
+	st, _ := c.Status(ctx)
+	before := sidecar.Cursor(st.Boot, st.LastSeq)
+	if err := c.Prompt(ctx, sidecar.PromptRequest{SessionID: sess.SessionID, Turn: "done-turn", Text: "finished while away"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; ; i++ {
+		st, _ = c.Status(ctx)
+		if st.Turn == nil {
+			break
+		}
+		if i > 200 {
+			t.Fatal("turn never ended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !r.Reattachable(ctx, "e", ports.SessionID(sess.SessionID), before) {
+		t.Fatal("a turn that finished after the cursor is reattachable")
+	}
+	rec := newRecorder()
+	res, ok, err := r.Reattach(ctx, "e", ports.SessionID(sess.SessionID), before, ports.AgentInput{Events: rec.on})
+	if err != nil || !ok || !strings.Contains(res.Output, "echo: finished while away") {
+		t.Fatalf("reattach = %+v %v %v", res, ok, err)
+	}
+}
+
+func TestResumeContinuesTheSession(t *testing.T) {
+	h := startSidecar(t)
+	r := h.runner()
+	first, err := r.Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := newRecorder()
+	again, err := r.Resume(context.Background(), "e", first.Session, ports.AgentInput{Prompt: "two", Events: rec.on})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Session != first.Session || !strings.Contains(rec.text(), "echo: two") {
+		t.Errorf("resume = %+v / %q", again, rec.text())
+	}
+	// Each invocation reports only its own spend.
+	if again.Usage.CostUSD < 0.0999 || again.Usage.CostUSD > 0.1001 {
+		t.Errorf("resume cost = %v", again.Usage.CostUSD)
+	}
+}

@@ -10,6 +10,8 @@
 //	relay       loopback<->unix-socket pumps for the engine bridge
 //	portscan    listening-port discovery, reported to the engine
 //	probe       TCP reachability check (image-agnostic readiness)
+//	sidecar     the per-workspace runtime: ACP agent host, files, git,
+//	            terminal — served on a unix socket to the engine
 package main
 
 import (
@@ -30,12 +32,14 @@ func main() {
 		runPortScan(os.Args[2:])
 	case "probe":
 		runProbe(os.Args[2:])
+	case "sidecar":
+		runSidecar(os.Args[2:])
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... | shim portscan [--exclude <ports>] | shim probe [--wait <dur>] <host:port>")
+	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... | shim portscan [--exclude <ports>] | shim probe [--wait <dur>] <host:port> | shim sidecar [--daemon] [--listen <sock>] [--repo <dir>]")
 	os.Exit(2)
 }

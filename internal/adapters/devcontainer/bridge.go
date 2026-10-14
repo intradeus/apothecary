@@ -510,3 +510,63 @@ func (u unixPortConn) Dial(ctx context.Context) (net.Conn, error) {
 }
 
 func (u unixPortConn) Close() error { return nil }
+
+// --- ports.Sidecar ----------------------------------------------------------
+
+// sidecarSock is the sidecar's socket in the bind-mounted shim dir: the
+// workspace sees /opt/apothecary/sidecar.sock, the engine the same file
+// under the env folder.
+const sidecarSock = "sidecar.sock"
+
+// Sidecar (ports.Sidecar) returns a dialer for the workspace's sidecar,
+// starting it first when nothing is serving. It is started through Exec, so it
+// runs as the devcontainer's remote user with its full environment — the same
+// user and PATH the harness always ran with — and it detaches itself (no
+// setsid/nohup assumed in the repo's image). It lives as long as the
+// container; a rebuilt container simply gets a new one on first use.
+func (a *Adapter) Sidecar(ctx context.Context, env ports.EnvID) (ports.PortConn, error) {
+	conn := unixPortConn{path: filepath.Join(a.folderFor(string(env)), "shim", sidecarSock)}
+	if sidecarUp(ctx, conn) {
+		return conn, nil
+	}
+	a.sidecarMu.Lock()
+	defer a.sidecarMu.Unlock()
+	if sidecarUp(ctx, conn) {
+		return conn, nil
+	}
+	res, err := a.Exec(ctx, env, ports.Command{
+		Script: `exec /opt/apothecary/shim sidecar --daemon --listen /opt/apothecary/` + sidecarSock +
+			` --repo "$HOME/repo" --log /apothecary/sidecar.log`,
+		Timeout: time.Minute,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("start sidecar in %s: exit %d: %s", env, res.ExitCode, tail(res.Output, 512))
+	}
+	for range 50 {
+		if sidecarUp(ctx, conn) {
+			return conn, nil
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, fmt.Errorf("sidecar in %s started but its socket is not reachable from the engine", env)
+}
+
+func sidecarUp(ctx context.Context, conn unixPortConn) bool {
+	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	c, err := conn.Dial(dctx)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+var _ ports.Sidecar = (*Adapter)(nil)

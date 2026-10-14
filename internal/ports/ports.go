@@ -157,7 +157,90 @@ type AgentSpec struct {
 }
 
 type AgentInput struct {
-	Prompt string // assembled per §3.2
+	Prompt string // assembled per §3.2 (Run), or the reply to deliver (Resume)
+	// Events receives the invocation's transcript AS IT HAPPENS — message
+	// text, tool calls, plans, turn boundaries. nil = nobody is listening.
+	// Called from the runner's goroutine; implementations must not block for
+	// long (the engine buffers).
+	Events func(AgentEvent)
+	// Inbox holds the human's messages for this invocation. A runner that can
+	// deliver them mid-invocation takes them at the end of each turn (or
+	// interrupts the turn, when a message asks to); one that cannot simply
+	// never takes them, and the engine carries them into the next prompt.
+	// nil = no messages.
+	Inbox Inbox
+}
+
+// UserMessage is one message a human sent to a running agent.
+type UserMessage struct {
+	ID   string
+	Text string
+	// Interrupt asks for the turn in flight to be cancelled so the message
+	// is read now, rather than queued until the agent finishes the turn.
+	Interrupt bool
+}
+
+// Inbox is the engine-owned queue of human messages for one invocation.
+type Inbox interface {
+	// Wake is signalled (buffered, coalescing) whenever a message is queued.
+	Wake() <-chan struct{}
+	// Take removes and returns every queued message: taking IS delivering,
+	// so a runner takes only what it is about to send.
+	Take() []UserMessage
+	// Interrupting reports whether a queued message asked to interrupt.
+	Interrupting() bool
+}
+
+// AgentEvent kinds.
+const (
+	AgentEvMessage     = "message"      // Text: a chunk of the agent's reply
+	AgentEvThought     = "thought"      // Text: a chunk of visible reasoning
+	AgentEvTool        = "tool"         // Tool: a tool call, created or updated
+	AgentEvPlan        = "plan"         // Plan: the agent's current todo list
+	AgentEvPermission  = "permission"   // Tool + Text: a permission request and its outcome
+	AgentEvTurnStart   = "turn_start"   // Turn
+	AgentEvTurnEnd     = "turn_end"     // Turn, StopReason, Error
+	AgentEvUserMessage = "user_message" // Messages: what was delivered to the agent, Text: as sent
+	AgentEvNotice      = "notice"       // Text: something about the agent process itself (it exited, a gap)
+	AgentEvSession     = "session"      // Text: the session id, as soon as it exists
+)
+
+// AgentEvent is one normalized fact about a running agent. Cursor is an
+// opaque position in the runner's own stream: handed back to Reattach after
+// an engine restart, it resumes the stream right after this event.
+type AgentEvent struct {
+	Kind       string
+	Turn       string
+	Text       string
+	Tool       *AgentTool
+	Plan       []AgentPlanEntry
+	StopReason string
+	Error      string
+	Messages   []UserMessage
+	Cursor     string
+}
+
+type AgentTool struct {
+	ID        string
+	Title     string
+	Kind      string // read|edit|delete|move|search|execute|think|fetch|other
+	Status    string // pending|in_progress|completed|failed
+	Input     string // raw input, JSON (truncated)
+	Output    string // text output (truncated)
+	Locations []string
+	Diffs     []AgentDiff
+}
+
+type AgentDiff struct {
+	Path    string
+	OldText string
+	NewText string
+}
+
+type AgentPlanEntry struct {
+	Content  string
+	Status   string // pending|in_progress|completed
+	Priority string
 }
 
 type Verdict struct {
@@ -184,7 +267,36 @@ type AgentResult struct {
 
 type AgentRunner interface {
 	Run(ctx context.Context, env EnvID, spec AgentSpec, in AgentInput) (AgentResult, error)
-	Resume(ctx context.Context, env EnvID, s SessionID, reply string) (AgentResult, error)
+	// Resume continues session s with in.Prompt as the next message.
+	Resume(ctx context.Context, env EnvID, s SessionID, in AgentInput) (AgentResult, error)
+}
+
+// AgentReattacher is an OPTIONAL AgentRunner capability: after an engine
+// restart, pick up a turn that is STILL RUNNING in session s (the agent
+// process outlived the engine) instead of resuming it with a new message.
+// cursor is the last AgentEvent.Cursor the engine recorded ("" = none). ok is
+// false when nothing is in flight for s — the caller then resumes normally.
+type AgentReattacher interface {
+	// Reattachable reports, quickly, whether Reattach has something to
+	// follow: a turn of s still running, or one that finished after cursor
+	// while nobody was listening.
+	Reattachable(ctx context.Context, env EnvID, s SessionID, cursor string) bool
+	Reattach(ctx context.Context, env EnvID, s SessionID, cursor string, in AgentInput) (res AgentResult, ok bool, err error)
+}
+
+// AgentModelLister is an OPTIONAL AgentRunner capability: ask the agent IN
+// the environment which models it will accept — the authoritative list, as
+// opposed to what the provider serves (the installed harness version may not
+// know a model the provider still offers). Ids are the agent's own spelling.
+type AgentModelLister interface {
+	AgentModels(ctx context.Context, env EnvID) ([]string, error)
+}
+
+// AgentStopper is an OPTIONAL AgentRunner capability: stop whatever agent
+// process the runner keeps alive in the environment (a run that ended gives
+// up its credentials, and a live agent holds them in memory).
+type AgentStopper interface {
+	StopAgent(ctx context.Context, env EnvID) error
 }
 
 // RepoRef identifies a project repo at its forge.
@@ -463,6 +575,16 @@ type ResourceSampler interface {
 // implement the interface and the API degrades honestly.
 type ExecLogTailer interface {
 	TailExecLog(ctx context.Context, env EnvID, n int) ([]byte, error)
+}
+
+// Sidecar is an OPTIONAL EnvProvisioner capability: the per-workspace
+// runtime the engine drives over HTTP — the long-lived coding agent (ACP),
+// the workspace's files and git state, and terminals. Sidecar starts it if it
+// is not already serving (idempotent) and returns a dialer for its socket;
+// the HTTP API is internal/sidecar's. Provisioners whose workspaces cannot
+// host it don't implement this, and the features it backs degrade honestly.
+type Sidecar interface {
+	Sidecar(ctx context.Context, env EnvID) (PortConn, error)
 }
 
 type Forge interface {

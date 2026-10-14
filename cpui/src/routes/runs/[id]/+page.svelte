@@ -19,11 +19,53 @@
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import { isGatePing, type PingLike } from '$lib/ping';
 	import { onMount } from 'svelte';
+	import Chat from '$lib/run/Chat.svelte';
+	import FlowSelect from '$lib/FlowSelect.svelte';
+	import Changes from '$lib/run/Changes.svelte';
+	import Files from '$lib/run/Files.svelte';
+	import Terminal from '$lib/run/Terminal.svelte';
+	import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/transcript';
 
 	const runId = page.params.id ?? '';
 
 	let run = $state<Run | null>(null);
 	let events = $state<RunEvent[]>([]);
+	// The agent's in-flight progress (text being written, tool calls running),
+	// superseded by the persisted transcript events as they land.
+	let live = $state<LiveState>(emptyLive());
+
+	// The main panel: the conversation, the workspace views, the raw timeline.
+	type Tab = 'chat' | 'changes' | 'files' | 'terminal' | 'timeline';
+	const tabs: { id: Tab; label: string; workspace?: boolean }[] = [
+		{ id: 'chat', label: 'Chat' },
+		{ id: 'changes', label: 'Changes', workspace: true },
+		{ id: 'files', label: 'Files', workspace: true },
+		{ id: 'terminal', label: 'Terminal', workspace: true },
+		{ id: 'timeline', label: 'Timeline' }
+	];
+	const initialTab = (page.url.hash.slice(1) as Tab) || 'chat';
+	let tab = $state<Tab>(tabs.some((t) => t.id === initialTab) ? initialTab : 'chat');
+	function pickTab(t: Tab) {
+		tab = t;
+		history.replaceState(history.state, '', `#${t}`);
+	}
+	// The workspace views need a live container behind them.
+	const hasWorkspace = $derived(
+		run !== null && !!run.envId && run.state !== 'archived' && run.envStatus !== 'absent'
+	);
+	// Transcript events have their own view; the timeline keeps to the run's
+	// lifecycle so it stays readable.
+	const transcriptTypes = new Set([
+		'agent_session',
+		'agent_prompted',
+		'agent_message',
+		'agent_tool',
+		'agent_plan',
+		'agent_notice',
+		'message_queued',
+		'message_delivered'
+	]);
+	const timelineEvents = $derived(events.filter((e) => !transcriptTypes.has(e.type)));
 	let logStage = $state('');
 	let logText = $state('');
 	let error = $state('');
@@ -84,7 +126,15 @@
 					type: pendingPing.payload.type as string,
 					question: pendingPing.payload.question as string,
 					context: pendingPing.payload.context as string | undefined,
-					primaryRef: pendingPing.payload.payload_ref as string | undefined,
+					// The event carries the typed payload (files / link); the
+					// primary is derived as the engine does for the inbox's
+					// projection: the link, else the first file. With a file,
+					// PingCard offers "review & comment".
+					files: pendingPing.payload.files as string[] | undefined,
+					link: pendingPing.payload.link as string | undefined,
+					primaryRef:
+						(pendingPing.payload.link as string | undefined) ||
+						(pendingPing.payload.files as string[] | undefined)?.[0],
 					options: pendingPing.payload.options as string[] | undefined
 				}
 			: null
@@ -270,15 +320,21 @@
 		}, 2500);
 		refreshRun();
 		refreshFiles();
-		const stop = api.runs.events(runId, 0, (ev) => {
-			events = [...events, ev];
-			// State-changing events refresh the header chip.
-			if (ev.type.startsWith('run_') || ev.type.startsWith('ping_') || ev.type.startsWith('env_'))
-				refreshRun();
-			// A capture (or an answered ping, which may carry attachments) adds a
-			// row: the event carries the reference, the list carries the metadata.
-			if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered') refreshFiles();
-		});
+		const stop = api.runs.events(
+			runId,
+			0,
+			(ev) => {
+				events = [...events, ev];
+				live = pruneLive(live, ev);
+				// State-changing events refresh the header chip.
+				if (ev.type.startsWith('run_') || ev.type.startsWith('ping_') || ev.type.startsWith('env_'))
+					refreshRun();
+				// A capture (or an answered ping, which may carry attachments) adds a
+				// row: the event carries the reference, the list carries the metadata.
+				if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered') refreshFiles();
+			},
+			(d) => (live = applyDelta(live, d))
+		);
 		return () => {
 			clearInterval(tick);
 			clearInterval(poll);
@@ -804,10 +860,17 @@
 			<AttachFiles bind:files={restartFiles} label="Attach files for the new run" />
 			<div class="row" style="gap:8px; align-items:flex-end; margin-top:10px">
 				<div style="flex:1">
-					<label for="rs-flow"
-						>Flow <span class="muted">— empty = same as this run ({run.flowName})</span></label
-					>
-					<input id="rs-flow" bind:value={restartFlow} placeholder={run.flowName} class="mono" />
+					<label for="rs-flow">Flow</label>
+					{#if run.projectId}
+						<FlowSelect
+							id="rs-flow"
+							projectId={run.projectId}
+							bind:value={restartFlow}
+							fallbackLabel={`Same as this run (${run.flowName})`}
+						/>
+					{:else}
+						<input id="rs-flow" bind:value={restartFlow} placeholder={run.flowName} class="mono" />
+					{/if}
 				</div>
 				<button class="primary" onclick={restart} disabled={restarting}>
 					{restarting ? 'Restarting…' : '↻ Restart'}
@@ -1060,42 +1123,89 @@
 	</div>
 
 	<div class="card">
-		<h2>Timeline</h2>
-		<div class="timeline">
-			{#each events as e (e.seq)}
-				{@const d = describe(e)}
-				<div class="tl-item {d.cls}">
-					<span class="muted mono small">{fmtTime(e.ts)}</span>
-					{d.text}
-					{#if hasLog(e, d.stage)}
-						<button
-							class="small"
-							style="padding:1px 8px;margin-left:6px"
-							onclick={() => showLog(d.stage!)}>log</button
-						>
-					{/if}
-					{#if d.snapshot}
-						<a
-							class="small"
-							style="margin-left:6px"
-							href={api.files.snapshotUrl(d.snapshot)}
-							target="_blank"
-							rel="noreferrer">open ↗</a
-						>
-					{/if}
-				</div>
-				{#if logStage && d.stage === logStage && hasLog(e, d.stage)}
-					<pre class="log">{logText}</pre>
+		<div class="tabs">
+			{#each tabs as t (t.id)}
+				{#if !t.workspace || hasWorkspace}
+					<button class="tab" class:active={tab === t.id} onclick={() => pickTab(t.id)}
+						>{t.label}</button
+					>
 				{/if}
 			{/each}
-			{#if events.length === 0}<div class="muted">waiting for events…</div>{/if}
 		</div>
+		{#if tab === 'chat'}
+			<Chat {runId} {events} {live} active={!terminal} />
+		{:else if tab === 'changes' && hasWorkspace}
+			<Changes {runId} active={!terminal} />
+		{:else if tab === 'files' && hasWorkspace}
+			<Files {runId} />
+		{:else if tab === 'terminal' && hasWorkspace}
+			<Terminal {runId} />
+		{:else if tab !== 'timeline'}
+			<div class="muted small">This run has no live workspace to show.</div>
+		{/if}
+		{#if tab === 'timeline'}
+			<div class="timeline">
+				{#each timelineEvents as e (e.seq)}
+					{@const d = describe(e)}
+					<div class="tl-item {d.cls}">
+						<span class="muted mono small">{fmtTime(e.ts)}</span>
+						{d.text}
+						{#if hasLog(e, d.stage)}
+							<button
+								class="small"
+								style="padding:1px 8px;margin-left:6px"
+								onclick={() => showLog(d.stage!)}>log</button
+							>
+						{/if}
+						{#if d.snapshot}
+							<a
+								class="small"
+								style="margin-left:6px"
+								href={api.files.snapshotUrl(d.snapshot)}
+								target="_blank"
+								rel="noreferrer">open ↗</a
+							>
+						{/if}
+					</div>
+					{#if logStage && d.stage === logStage && hasLog(e, d.stage)}
+						<pre class="log">{logText}</pre>
+					{/if}
+				{/each}
+				{#if events.length === 0}<div class="muted">waiting for events…</div>{/if}
+			</div>
+		{/if}
 	</div>
 {:else}
 	<div class="empty">{error || 'Loading…'}</div>
 {/if}
 
 <style>
+	.tabs {
+		display: flex;
+		gap: 2px;
+		border-bottom: 1px solid var(--border);
+		margin: -4px 0 12px;
+	}
+	.tab {
+		background: none;
+		border: none;
+		border-bottom: 2px solid transparent;
+		border-radius: 0;
+		color: var(--muted);
+		padding: 6px 12px;
+		font: inherit;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.tab:hover {
+		color: var(--text);
+		border-color: transparent;
+		border-bottom-color: var(--border);
+	}
+	.tab.active {
+		color: var(--text);
+		border-bottom-color: var(--accent);
+	}
 	.linklike {
 		background: none;
 		border: none;

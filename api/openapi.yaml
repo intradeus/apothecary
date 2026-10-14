@@ -417,6 +417,8 @@ components:
             $ref: '#/components/schemas/CheckStep'
           nullable: true
           type: array
+        tearing_down:
+          type: boolean
       required:
         - id
         - keep
@@ -725,6 +727,13 @@ components:
         - label
         - port
       type: object
+    MessageAccepted:
+      properties:
+        message_id:
+          type: string
+      required:
+        - message_id
+      type: object
     ModelInfo:
       properties:
         id:
@@ -1008,6 +1017,8 @@ components:
           type: string
         hold_ms:
           type: integer
+        key:
+          type: string
         options:
           items:
             type: string
@@ -1212,6 +1223,15 @@ components:
         - state
         - ticket_title
         - updated_at
+      type: object
+    SendMessageRequest:
+      properties:
+        interrupt:
+          type: boolean
+        text:
+          type: string
+      required:
+        - text
       type: object
     Settings:
       properties:
@@ -1509,6 +1529,67 @@ components:
       required:
         - yaml
       type: object
+    WorkspaceChangedFile:
+      properties:
+        additions:
+          type: integer
+        binary:
+          type: boolean
+        committed:
+          type: boolean
+        deletions:
+          type: integer
+        old_path:
+          type: string
+        path:
+          type: string
+        status:
+          type: string
+      required:
+        - additions
+        - committed
+        - deletions
+        - path
+        - status
+      type: object
+    WorkspaceChanges:
+      properties:
+        base:
+          type: string
+        branch:
+          type: string
+        commits:
+          items:
+            $ref: '#/components/schemas/WorkspaceCommit'
+          nullable: true
+          type: array
+        files:
+          items:
+            $ref: '#/components/schemas/WorkspaceChangedFile'
+          nullable: true
+          type: array
+        head:
+          type: string
+        merge_base:
+          type: string
+      required:
+        - base
+        - branch
+        - commits
+        - files
+        - head
+        - merge_base
+      type: object
+    WorkspaceCommit:
+      properties:
+        sha:
+          type: string
+        subject:
+          type: string
+      required:
+        - sha
+        - subject
+      type: object
     WorkspaceConfig:
       properties:
         blocked_domains:
@@ -1539,6 +1620,57 @@ components:
           items:
             type: string
           type: array
+      type: object
+    WorkspaceDiff:
+      properties:
+        diff:
+          type: string
+        path:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - diff
+        - path
+        - truncated
+      type: object
+    WorkspaceEntry:
+      properties:
+        dir:
+          type: boolean
+        ignored:
+          type: boolean
+        name:
+          type: string
+        path:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - dir
+        - name
+        - path
+      type: object
+    WorkspaceFile:
+      properties:
+        binary:
+          type: boolean
+        content:
+          type: string
+        path:
+          type: string
+        size:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - binary
+        - content
+        - path
+        - size
+        - truncated
       type: object
     sourceAttachmentJSON:
       properties:
@@ -1786,6 +1918,37 @@ paths:
       tags:
         - egress
   /api/envchecks/{id}:
+    delete:
+      description: The check stops at its next step and still destroys its workspace.
+      operationId: cancelEnvCheck
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Cancel a running workspace check
+      tags:
+        - projects
     get:
       operationId: getEnvCheck
       parameters:
@@ -2747,7 +2910,39 @@ paths:
       tags:
         - egress
   /api/projects/{id}/envcheck:
+    get:
+      description: Running or finished — what a page opened mid-check follows.
+      operationId: getLatestEnvCheck
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvCheck'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The project's most recent workspace check
+      tags:
+        - projects
     post:
+      description: 'Starting a check cancels the project''s running one, if any: the newest check is the one that matters.'
       operationId: startEnvCheck
       parameters:
         - in: path
@@ -3612,6 +3807,48 @@ paths:
       summary: A stage's captured log (latest attempt)
       tags:
         - runs
+  /api/runs/{id}/messages:
+    post:
+      description: Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it.
+      operationId: sendRunMessage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageAccepted'
+          description: Accepted
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Send a message to the run's running agent
+      tags:
+        - runs
   /api/runs/{id}/observed-ports:
     post:
       operationId: reportObservedPorts
@@ -3724,7 +3961,7 @@ paths:
         - runs
   /api/runs/{id}/pings:
     post:
-      description: Holds for hold_ms and answers in-band when it can; 204 means nobody answered in time and the caller should end its turn.
+      description: Holds for hold_ms and answers in-band when it can; 204 means not yet — re-poll with X-Ping-ID while the agent's turn waits. key makes a retried raise return the same question.
       operationId: raisePing
       parameters:
         - in: path
@@ -3763,6 +4000,8 @@ paths:
           content:
             application/json: {}
           description: error
+        "410":
+          description: the run parked on this question; stop waiting — the answer arrives by resuming the session
         "503":
           content:
             application/json: {}
@@ -3774,6 +4013,7 @@ paths:
         - pings
   /api/runs/{id}/pings/{pid}:
     get:
+      description: 200 with the answer, 204 still open (poll again), 410 the run parked on it (stop waiting).
       operationId: repollPing
       parameters:
         - in: path
@@ -3807,13 +4047,15 @@ paths:
           content:
             application/json: {}
           description: error
+        "410":
+          description: the run parked on this question; stop waiting — the answer arrives by resuming the session
         "503":
           content:
             application/json: {}
           description: error
       security:
         - runToken: []
-      summary: Re-poll a raised question for its answer
+      summary: Long-poll a raised question for its answer
       tags:
         - pings
   /api/runs/{id}/play:
@@ -4053,6 +4295,149 @@ paths:
             application/json: {}
           description: error
       summary: Live tail of the workspace's exec log
+      tags:
+        - workspace
+  /api/runs/{id}/workspace/changes:
+    get:
+      description: Committed and uncommitted, measured from the merge base with the source branch.
+      operationId: getWorkspaceChanges
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceChanges'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The run's changes against the branch it forked from
+      tags:
+        - workspace
+  /api/runs/{id}/workspace/diff:
+    get:
+      operationId: getWorkspaceDiff
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: repo-relative file
+          in: query
+          name: path
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDiff'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: One file's unified diff against the branch the run forked from
+      tags:
+        - workspace
+  /api/runs/{id}/workspace/file:
+    get:
+      operationId: getWorkspaceFile
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: repo-relative file
+          in: query
+          name: path
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFile'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: One file of the run's checkout
+      tags:
+        - workspace
+  /api/runs/{id}/workspace/tree:
+    get:
+      operationId: getWorkspaceTree
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 'repo-relative directory (default: the root)'
+          in: query
+          name: path
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/WorkspaceEntry'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: One directory level of the run's checkout
       tags:
         - workspace
   /api/settings:

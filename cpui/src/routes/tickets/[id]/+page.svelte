@@ -1,4 +1,5 @@
 <script lang="ts">
+	import FlowSelect from '$lib/FlowSelect.svelte';
 	import { api } from '$lib/api';
 	import { stateColors, ago } from '$lib/format';
 	import type { Attachment, Branch, Project, Run, Ticket } from '$lib/domain';
@@ -186,17 +187,15 @@
 			<AttachFiles bind:files={runFiles} label="Attach files for this run only" />
 			<div class="row" style="gap:8px; align-items:flex-end; margin-top:10px">
 				<div style="flex:1">
-					<label for="flow"
-						>Flow <span class="muted"
-							>— empty = project default{project ? ` (${project.defaultFlow})` : ''}</span
-						></label
-					>
-					<input
-						id="flow"
-						bind:value={flow}
-						placeholder={project?.defaultFlow ?? 'default'}
-						class="mono"
-					/>
+					<label for="flow">Flow</label>
+					{#if ticket}
+						<FlowSelect
+							id="flow"
+							projectId={ticket.projectId}
+							bind:value={flow}
+							fallbackLabel={`Project default${project ? ` (${project.defaultFlow})` : ''}`}
+						/>
+					{/if}
 				</div>
 				<div style="flex:1">
 					<label for="source-branch"

@@ -309,6 +309,7 @@ type ResumeCall struct {
 	Env     ports.EnvID
 	Session ports.SessionID
 	Reply   string
+	In      ports.AgentInput
 }
 
 type AgentRunner struct {
@@ -368,9 +369,9 @@ func (r *AgentRunner) Run(ctx context.Context, env ports.EnvID, spec ports.Agent
 	return res, err
 }
 
-func (r *AgentRunner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, reply string) (ports.AgentResult, error) {
+func (r *AgentRunner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
 	r.mu.Lock()
-	call := ResumeCall{Env: env, Session: s, Reply: reply}
+	call := ResumeCall{Env: env, Session: s, Reply: in.Prompt, In: in}
 	r.ResumeCalls = append(r.ResumeCalls, call)
 	fn := r.ResumeFunc
 	r.mu.Unlock()

@@ -12,35 +12,11 @@ import (
 	"apothecary/internal/ports"
 )
 
-// ndjson is a captured `opencode run --format json` stream (v1.17.8),
-// verbatim except for a second turn appended to exercise accumulation.
-const ndjson = `{"type":"step_start","timestamp":1784432171501,"sessionID":"ses_0878de","part":{"id":"prt_1","messageID":"msg_1","sessionID":"ses_0878de","type":"step-start"}}
-{"type":"text","timestamp":1784432171599,"sessionID":"ses_0878de","part":{"id":"prt_2","messageID":"msg_1","sessionID":"ses_0878de","type":"text","text":"OK","time":{"start":1784432171498,"end":1784432171579}}}
-{"type":"step_finish","timestamp":1784432171599,"sessionID":"ses_0878de","part":{"id":"prt_3","reason":"stop","messageID":"msg_1","sessionID":"ses_0878de","type":"step-finish","tokens":{"total":8152,"input":3,"output":4,"reasoning":0,"cache":{"write":8145,"read":0}},"cost":0.01020425}}
-{"type":"step_finish","timestamp":1784432171700,"sessionID":"ses_0878de","part":{"id":"prt_4","reason":"stop","messageID":"msg_2","sessionID":"ses_0878de","type":"step-finish","tokens":{"total":100,"input":50,"output":30,"reasoning":10,"cache":{"write":0,"read":10}},"cost":0.005}}
-some stderr noise that is not json
-`
-
-func TestParseEvents(t *testing.T) {
-	r := parseEvents(ndjson)
-	if r.Session != "ses_0878de" {
-		t.Errorf("session = %q", r.Session)
-	}
-	if r.TurnsUsed != 2 {
-		t.Errorf("turns = %d, want 2", r.TurnsUsed)
-	}
-	if got := r.Usage.CostUSD; got < 0.0152 || got > 0.0153 {
-		t.Errorf("cost = %v", got)
-	}
-	// Cache reads (10 in the second step) are excluded: they were not sent.
-	if r.Usage.InputTokens != 3+8145+50 {
-		t.Errorf("input tokens = %d", r.Usage.InputTokens)
-	}
-	if r.Usage.OutputTokens != 4+0+30+10 {
-		t.Errorf("output tokens = %d", r.Usage.OutputTokens)
-	}
-	if r.Output != "OK" {
-		t.Errorf("output = %q", r.Output)
+// opencode's ACP session modes are its agents: a stage runs as its agent.
+func TestProfileSelectsTheAgentAsMode(t *testing.T) {
+	p := Profile()
+	if !strings.HasPrefix(p.Command, "opencode acp") || p.Mode(ports.AgentSpec{Agent: "planner"}) != "planner" || p.Preamble != nil {
+		t.Errorf("profile = %+v", p)
 	}
 }
 
@@ -58,95 +34,6 @@ func envWith(t *testing.T, files map[string]string) (*fake.EnvProvisioner, ports
 	}
 	return envp, id
 }
-
-func TestRunInvokesOpencodeWithPromptFile(t *testing.T) {
-	envp, id := envWith(t, nil)
-	envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "opencode run") {
-			return ports.ExecResult{ExitCode: 0, Output: ndjson}, nil
-		}
-		return ports.ExecResult{ExitCode: 0}, nil
-	}
-	a := New(envp, Config{})
-
-	res, err := a.Run(context.Background(), id,
-		ports.AgentSpec{Agent: "planner", Model: "openrouter/anthropic/claude-haiku-4.5", MaxTurns: 25},
-		ports.AgentInput{Prompt: "# TASK\nDo the thing"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Session != "ses_0878de" || res.TurnsUsed != 2 {
-		t.Errorf("result = %+v", res)
-	}
-
-	// The prompt traveled via file, not the command line.
-	data, err := envp.ReadFile(context.Background(), id, "/apothecary/prompt.txt")
-	if err != nil || string(data) != "# TASK\nDo the thing" {
-		t.Errorf("prompt file = %q, %v", data, err)
-	}
-	var script string
-	for _, c := range envp.ExecCalls {
-		if strings.Contains(c.Cmd.Script, "opencode run") {
-			script = c.Cmd.Script
-			if c.Cmd.Dir != "repo" {
-				t.Errorf("opencode must run in the repo root, got dir %q", c.Cmd.Dir)
-			}
-		}
-	}
-	for _, want := range []string{`--format json`, `--agent 'planner'`, `-m 'openrouter/anthropic/claude-haiku-4.5'`, `provider.env`, `cat '/apothecary/prompt.txt'`} {
-		if !strings.Contains(script, want) {
-			t.Errorf("script missing %q:\n%s", want, script)
-		}
-	}
-}
-
-func TestResumeUsesSessionFlag(t *testing.T) {
-	envp, id := envWith(t, nil)
-	envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		return ports.ExecResult{ExitCode: 0, Output: ndjson}, nil
-	}
-	a := New(envp, Config{})
-	res, err := a.Resume(context.Background(), id, "ses_prev", "carry on")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Session != "ses_0878de" {
-		t.Errorf("session = %q", res.Session)
-	}
-	script := envp.ExecCalls[len(envp.ExecCalls)-1].Cmd.Script
-	if !strings.Contains(script, `--session 'ses_prev'`) || !strings.Contains(script, "cat '/apothecary/reply.txt'") {
-		t.Errorf("resume script:\n%s", script)
-	}
-}
-
-func TestRunNonzeroExitIsError(t *testing.T) {
-	envp, id := envWith(t, nil)
-	envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "opencode run") {
-			return ports.ExecResult{ExitCode: 1, Output: "ProviderAuthError: no key"}, nil
-		}
-		return ports.ExecResult{ExitCode: 0}, nil
-	}
-	a := New(envp, Config{})
-	res, err := a.Run(context.Background(), id, ports.AgentSpec{Agent: "builder", Model: "a/b"}, ports.AgentInput{})
-	if err == nil || !strings.Contains(err.Error(), "ProviderAuthError") {
-		t.Errorf("err = %v", err)
-	}
-	// The stage log and on_fail feed come from Output — on failure it must
-	// carry the RAW output (startup errors produce no text events; found
-	// live as an empty log for a failed plan stage).
-	if !strings.Contains(res.Output, "ProviderAuthError") {
-		t.Errorf("failed-run Output = %q, want raw error output", res.Output)
-	}
-}
-
-const specYAML = `name: %s
-description: %s
-read_only: %v
-allow_bash: %v
-prompt: |
-  %s
-`
 
 // opencode reads its config and auth from $HOME. The §8 pipeline image runs
 // as `apothecary`, but a repo-authored devcontainer runs the REPO's user

@@ -24,6 +24,7 @@ import (
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/sidecar"
 	"apothecary/internal/signalspec"
 	"apothecary/internal/tickets"
 )
@@ -179,6 +180,26 @@ func (s *Server) routes() []Route {
 		{Method: "POST", Path: "/api/runs/{id}/open-editor", ID: "openEditor", Tag: tagWorkspace,
 			Summary: "Start code-server in the workspace and get its URL",
 			Handler: s.postOpenEditor, Returns: EditorURL{}},
+		{Method: "POST", Path: "/api/runs/{id}/messages", ID: "sendRunMessage", Tag: tagRuns,
+			Summary: "Send a message to the run's running agent",
+			Doc:     "Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it.",
+			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/tree", ID: "getWorkspaceTree", Tag: tagWorkspace,
+			Summary: "One directory level of the run's checkout",
+			Query:   []Param{{Name: "path", Doc: "repo-relative directory (default: the root)"}},
+			Handler: s.getWorkspaceTree, Returns: []sidecar.TreeEntry{}},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/file", ID: "getWorkspaceFile", Tag: tagWorkspace,
+			Summary: "One file of the run's checkout",
+			Query:   []Param{{Name: "path", Doc: "repo-relative file"}},
+			Handler: s.getWorkspaceFile, Returns: sidecar.File{}},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/changes", ID: "getWorkspaceChanges", Tag: tagWorkspace,
+			Summary: "The run's changes against the branch it forked from",
+			Doc:     "Committed and uncommitted, measured from the merge base with the source branch.",
+			Handler: s.getWorkspaceChanges, Returns: sidecar.Changes{}},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/diff", ID: "getWorkspaceDiff", Tag: tagWorkspace,
+			Summary: "One file's unified diff against the branch the run forked from",
+			Query:   []Param{{Name: "path", Doc: "repo-relative file"}},
+			Handler: s.getWorkspaceDiff, Returns: sidecar.FileDiff{}},
 		{Method: "GET", Path: "/api/runs/{id}/resources", ID: "getRunResources", Tag: tagWorkspace,
 			Summary: "Rolling window of workspace cpu/memory/network samples",
 			Handler: s.getRunResources, Returns: RunResources{}},
@@ -186,11 +207,12 @@ func (s *Server) routes() []Route {
 		// --- pings ----------------------------------------------------------
 		{Method: "POST", Path: "/api/runs/{id}/pings", ID: "raisePing", Tag: tagPings,
 			Summary: "Ask the human a question (ask_human)",
-			Doc:     "Holds for hold_ms and answers in-band when it can; 204 means nobody answered in time and the caller should end its turn.",
+			Doc:     "Holds for hold_ms and answers in-band when it can; 204 means not yet — re-poll with X-Ping-ID while the agent's turn waits. key makes a retried raise return the same question.",
 			Handler: s.postPing, Body: RaisePingRequest{}, Returns: PingHold{},
 			RunToken: true},
 		{Method: "GET", Path: "/api/runs/{id}/pings/{pid}", ID: "repollPing", Tag: tagPings,
-			Summary: "Re-poll a raised question for its answer",
+			Summary: "Long-poll a raised question for its answer",
+			Doc:     "200 with the answer, 204 still open (poll again), 410 the run parked on it (stop waiting).",
 			Handler: s.repollPing, Returns: PingHold{},
 			RunToken: true},
 		{Method: "GET", Path: "/api/pings", ID: "listPings", Tag: tagPings,
@@ -318,6 +340,7 @@ func (s *Server) routes() []Route {
 			Handler: s.preflightProject, Returns: PreflightResult{}, Enabled: haveConf},
 		{Method: "POST", Path: "/api/projects/{id}/envcheck", ID: "startEnvCheck", Tag: tagProjects,
 			Summary: "Prove the project's workspace actually builds (throwaway provision)",
+			Doc:     "Starting a check cancels the project's running one, if any: the newest check is the one that matters.",
 			Handler: s.startEnvCheck, Body: EnvCheckRequest{}, Returns: EnvCheckRef{},
 			Status: http.StatusAccepted, Enabled: haveConf},
 		{Method: "GET", Path: "/api/projects/{id}/build-cache", ID: "getBuildCache", Tag: tagProjects,
@@ -331,6 +354,14 @@ func (s *Server) routes() []Route {
 		{Method: "GET", Path: "/api/envchecks/{id}", ID: "getEnvCheck", Tag: tagProjects,
 			Summary: "Poll a workspace check",
 			Handler: s.getEnvCheck, Returns: engine.CheckRun{}, Enabled: haveConf},
+		{Method: "DELETE", Path: "/api/envchecks/{id}", ID: "cancelEnvCheck", Tag: tagProjects,
+			Summary: "Cancel a running workspace check",
+			Doc:     "The check stops at its next step and still destroys its workspace.",
+			Handler: s.cancelEnvCheck, Status: http.StatusNoContent, Enabled: haveConf},
+		{Method: "GET", Path: "/api/projects/{id}/envcheck", ID: "getLatestEnvCheck", Tag: tagProjects,
+			Summary: "The project's most recent workspace check",
+			Doc:     "Running or finished — what a page opened mid-check follows.",
+			Handler: s.getLatestEnvCheck, Returns: engine.CheckRun{}, Enabled: haveConf},
 
 		// --- tickets --------------------------------------------------------
 		{Method: "GET", Path: "/api/tickets", ID: "listTickets", Tag: tagTickets,
@@ -418,6 +449,8 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.HandleFunc(rt.Method+" "+rt.Path, rt.Handler)
 	}
+	// A WebSocket, so outside the table (and the spec): see serveTerminal.
+	mux.HandleFunc("GET /api/runs/{id}/terminal", s.serveTerminal)
 	mux.HandleFunc("GET /api/openapi.json", s.getOpenAPIJSON)
 	mux.HandleFunc("GET /api/openapi.yaml", s.getOpenAPIYAML)
 	mux.HandleFunc("GET /docs", s.serveDocs)

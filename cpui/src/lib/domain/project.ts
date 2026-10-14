@@ -95,8 +95,11 @@ export interface Preflight {
 export interface EnvCheck {
 	id: string;
 	projectId: string;
-	status: 'running' | 'pass' | 'fail';
+	/** cancelled: stopped by hand, or superseded by a newer check. */
+	status: 'running' | 'pass' | 'fail' | 'cancelled';
 	keep: boolean;
+	/** The verdict is in; the throwaway workspace is still being destroyed. */
+	tearingDown: boolean;
 	steps: EnvCheckStep[];
 	startedAt: string;
 	finishedAt?: string;

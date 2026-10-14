@@ -224,8 +224,26 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			WordWrap:       p.Workspace.Editor.WordWrap,
 			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
-		HarnessKind:     defaultKind,
-		HarnessKinds:    kindList,
+		HarnessKind:  defaultKind,
+		HarnessKinds: kindList,
+		Models: func(ctx context.Context, kind string) ([]string, error) {
+			h, ok := byKind[kind]
+			if !ok {
+				return nil, fmt.Errorf("harness %q is not in the project's set", kind)
+			}
+			if am, ok := h.(kinds.AnyModel); ok && am.AcceptsAnyModel() {
+				return nil, nil // no limit to check against
+			}
+			infos, err := h.Models(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ids := make([]string, 0, len(infos))
+			for _, m := range infos {
+				ids = append(ids, m.ID)
+			}
+			return ids, nil
+		},
 		HarnessBinary:   harness.Binary(),
 		HarnessBinaries: harnessBinaries,
 		HarnessInstall:  harnessInstall,

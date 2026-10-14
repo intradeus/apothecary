@@ -434,10 +434,23 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// Live agent progress rides the same stream as "delta" frames: no id
+	// (they are not in the log, so a reconnect must not resume from one),
+	// and superseded by the agent_message / agent_tool event that follows.
+	live, stopLive := s.Engine.SubscribeLive(id)
+	defer stopLive()
+
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 	for {
 		select {
+		case d := <-live:
+			data, err := json.Marshal(d)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: delta\ndata: %s\n\n", data)
+			flusher.Flush()
 		case ev, open := <-ch:
 			if !open {
 				return
@@ -877,7 +890,7 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 	if len(refs) == 0 && body.Artifact != "" {
 		refs = []string{body.Artifact}
 	}
-	p, err := s.Engine.RaisePing(runID, body.Type, body.Question, body.Context, body.Options, refs)
+	p, err := s.Engine.RaisePingKeyed(runID, body.Key, body.Type, body.Question, body.Context, body.Options, refs)
 	switch {
 	case errors.Is(err, engine.ErrRunNotActive):
 		writeErr(w, http.StatusConflict, err.Error())
@@ -929,11 +942,15 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 		})
 		return
 	}
-	// The turn goes back to the agent without an answer. From here on, any
-	// answer — however fast — is one the agent has NOT seen, so its stage must
-	// pause on the question and deliver it on resume rather than let the
-	// invocation close as if it had been answered.
-	p.HandOff(false)
+	if p.HandedBack() {
+		// Parked: the engine ended the agent's turn and will deliver the
+		// answer by resuming its session. The tool call should stop waiting.
+		w.WriteHeader(http.StatusGone)
+		return
+	}
+	// Still open, still live: the ask_human tool call polls again. The wait
+	// itself is the agent's (its turn blocks in the call) until the engine
+	// decides to park the run.
 	w.WriteHeader(http.StatusNoContent)
 }
 

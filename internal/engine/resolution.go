@@ -72,6 +72,12 @@ type Resolution struct {
 	// (per-step harness). A stage/flow may only name one of these; preflight
 	// refuses others. Empty ⇒ just HarnessKind.
 	HarnessKinds []string
+	// Models lists the model ids (provider/model, as flows spell them) a
+	// harness kind in the project's set can reach with its credentials —
+	// the provider's live list where it has one. A nil list with no error
+	// means the harness takes any model. A nil func: this resolution cannot
+	// tell (older wiring), and model checks are skipped.
+	Models func(ctx context.Context, harnessKind string) ([]string, error)
 	// HarnessBinary is the fallback harness executable (envcheck probes it
 	// with `command -v`, §9).
 	HarnessBinary string

@@ -195,6 +195,7 @@ export type EnvCheck = {
 	started_at: string;
 	status: string;
 	steps: Array<CheckStep> | null;
+	tearing_down?: boolean;
 };
 
 export type EnvCheckRef = {
@@ -341,6 +342,10 @@ export type KindDescriptor = {
 	port: string;
 };
 
+export type MessageAccepted = {
+	message_id: string;
+};
+
 export type ModelInfo = {
 	id: string;
 	name: string;
@@ -460,6 +465,7 @@ export type RaisePingRequest = {
 	artifacts?: Array<string>;
 	context?: string;
 	hold_ms?: number;
+	key?: string;
 	options?: Array<string>;
 	question: string;
 	type: string;
@@ -542,6 +548,11 @@ export type RunView = {
 	ticket_id?: string;
 	ticket_title: string;
 	updated_at: string;
+};
+
+export type SendMessageRequest = {
+	interrupt?: boolean;
+	text: string;
 };
 
 export type Settings = {
@@ -671,6 +682,30 @@ export type ValidateFlowRequest = {
 	yaml: string;
 };
 
+export type WorkspaceChangedFile = {
+	additions: number;
+	binary?: boolean;
+	committed: boolean;
+	deletions: number;
+	old_path?: string;
+	path: string;
+	status: string;
+};
+
+export type WorkspaceChanges = {
+	base: string;
+	branch: string;
+	commits: Array<WorkspaceCommit> | null;
+	files: Array<WorkspaceChangedFile> | null;
+	head: string;
+	merge_base: string;
+};
+
+export type WorkspaceCommit = {
+	sha: string;
+	subject: string;
+};
+
 export type WorkspaceConfig = {
 	blocked_domains?: Array<string>;
 	code_server_extensions?: Array<string>;
@@ -680,6 +715,28 @@ export type WorkspaceConfig = {
 	egress_allowed_ports?: Array<number>;
 	egress_mode?: string;
 	extra_domains?: Array<string>;
+};
+
+export type WorkspaceDiff = {
+	diff: string;
+	path: string;
+	truncated: boolean;
+};
+
+export type WorkspaceEntry = {
+	dir: boolean;
+	ignored?: boolean;
+	name: string;
+	path: string;
+	size?: number;
+};
+
+export type WorkspaceFile = {
+	binary: boolean;
+	content: string;
+	path: string;
+	size: number;
+	truncated: boolean;
 };
 
 export type SourceAttachmentJson = {
@@ -935,6 +992,43 @@ export type GetEgressDefaultsResponses = {
 
 export type GetEgressDefaultsResponse =
 	GetEgressDefaultsResponses[keyof GetEgressDefaultsResponses];
+
+export type CancelEnvCheckData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/envchecks/{id}';
+};
+
+export type CancelEnvCheckErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CancelEnvCheckResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type CancelEnvCheckResponse = CancelEnvCheckResponses[keyof CancelEnvCheckResponses];
 
 export type GetEnvCheckData = {
 	body?: never;
@@ -1924,6 +2018,40 @@ export type GetProjectEgressAuditResponses = {
 export type GetProjectEgressAuditResponse =
 	GetProjectEgressAuditResponses[keyof GetProjectEgressAuditResponses];
 
+export type GetLatestEnvCheckData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/envcheck';
+};
+
+export type GetLatestEnvCheckErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetLatestEnvCheckResponses = {
+	/**
+	 * OK
+	 */
+	200: EnvCheck;
+};
+
+export type GetLatestEnvCheckResponse =
+	GetLatestEnvCheckResponses[keyof GetLatestEnvCheckResponses];
+
 export type StartEnvCheckData = {
 	body: EnvCheckRequest;
 	path: {
@@ -2759,6 +2887,43 @@ export type GetStageLogResponses = {
 
 export type GetStageLogResponse = GetStageLogResponses[keyof GetStageLogResponses];
 
+export type SendRunMessageData = {
+	body: SendMessageRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/messages';
+};
+
+export type SendRunMessageErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SendRunMessageResponses = {
+	/**
+	 * Accepted
+	 */
+	202: MessageAccepted;
+};
+
+export type SendRunMessageResponse = SendRunMessageResponses[keyof SendRunMessageResponses];
+
 export type ReportObservedPortsData = {
 	body: ObservedPortsRequest;
 	path: {
@@ -2900,6 +3065,10 @@ export type RaisePingErrors = {
 	 */
 	409: unknown;
 	/**
+	 * the run parked on this question; stop waiting — the answer arrives by resuming the session
+	 */
+	410: unknown;
+	/**
 	 * error
 	 */
 	503: unknown;
@@ -2941,6 +3110,10 @@ export type RepollPingErrors = {
 	 * error
 	 */
 	404: unknown;
+	/**
+	 * the run parked on this question; stop waiting — the answer arrives by resuming the session
+	 */
+	410: unknown;
 	/**
 	 * error
 	 */
@@ -3205,6 +3378,154 @@ export type GetWorkspaceLogResponses = {
 };
 
 export type GetWorkspaceLogResponse = GetWorkspaceLogResponses[keyof GetWorkspaceLogResponses];
+
+export type GetWorkspaceChangesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/workspace/changes';
+};
+
+export type GetWorkspaceChangesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkspaceChangesResponses = {
+	/**
+	 * OK
+	 */
+	200: WorkspaceChanges;
+};
+
+export type GetWorkspaceChangesResponse =
+	GetWorkspaceChangesResponses[keyof GetWorkspaceChangesResponses];
+
+export type GetWorkspaceDiffData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * repo-relative file
+		 */
+		path?: string;
+	};
+	url: '/api/runs/{id}/workspace/diff';
+};
+
+export type GetWorkspaceDiffErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkspaceDiffResponses = {
+	/**
+	 * OK
+	 */
+	200: WorkspaceDiff;
+};
+
+export type GetWorkspaceDiffResponse = GetWorkspaceDiffResponses[keyof GetWorkspaceDiffResponses];
+
+export type GetWorkspaceFileData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * repo-relative file
+		 */
+		path?: string;
+	};
+	url: '/api/runs/{id}/workspace/file';
+};
+
+export type GetWorkspaceFileErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkspaceFileResponses = {
+	/**
+	 * OK
+	 */
+	200: WorkspaceFile;
+};
+
+export type GetWorkspaceFileResponse = GetWorkspaceFileResponses[keyof GetWorkspaceFileResponses];
+
+export type GetWorkspaceTreeData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * repo-relative directory (default: the root)
+		 */
+		path?: string;
+	};
+	url: '/api/runs/{id}/workspace/tree';
+};
+
+export type GetWorkspaceTreeErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkspaceTreeResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<WorkspaceEntry> | null;
+};
+
+export type GetWorkspaceTreeResponse = GetWorkspaceTreeResponses[keyof GetWorkspaceTreeResponses];
 
 export type GetSettingsData = {
 	body?: never;

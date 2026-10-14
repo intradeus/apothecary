@@ -182,6 +182,13 @@ type Harness interface {
 	Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
 }
 
+// AnyModel is an OPTIONAL Harness capability: the harness runs whatever
+// model string it is given (a scripted fake), so Models is a picker
+// suggestion, not a limit, and model checks skip it.
+type AnyModel interface {
+	AcceptsAnyModel() bool
+}
+
 // SecretHolder is an OPTIONAL Harness capability: the literal credential
 // values it puts into a workspace by any route the engine's own injection
 // bookkeeping doesn't already cover — i.e. everything except EnvVars, which

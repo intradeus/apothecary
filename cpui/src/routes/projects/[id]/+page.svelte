@@ -56,25 +56,58 @@
 		}
 	}
 
+	// Follow a check until it is fully done (verdict AND teardown), so the
+	// destroy step shows up too.
+	function follow(checkId: string) {
+		clearInterval(checkTimer);
+		checkTimer = setInterval(async () => {
+			try {
+				check = await api.projects.envCheck(checkId);
+				if (check.status !== 'running' && !check.tearingDown) clearInterval(checkTimer);
+			} catch {
+				/* keep polling */
+			}
+		}, 2000);
+	}
+
+	// Starting a check while one runs supersedes it: the engine cancels the old
+	// one (it cleans up after itself) — no waiting it out.
 	async function startEnvCheck() {
 		checkError = '';
 		try {
 			const checkId = await api.projects.startEnvCheck(project!.id, checkKeep);
 			check = await api.projects.envCheck(checkId);
-			clearInterval(checkTimer);
-			checkTimer = setInterval(async () => {
-				try {
-					check = await api.projects.envCheck(checkId);
-					if (check.status !== 'running') clearInterval(checkTimer);
-				} catch {
-					/* keep polling */
-				}
-			}, 2000);
+			follow(checkId);
 		} catch (e) {
 			checkError = e instanceof Error ? e.message : String(e);
 		}
 	}
-	onMount(() => () => clearInterval(checkTimer));
+
+	async function cancelEnvCheck() {
+		if (!check) return;
+		checkError = '';
+		try {
+			await api.projects.cancelEnvCheck(check.id);
+			check = await api.projects.envCheck(check.id);
+			follow(check.id);
+		} catch (e) {
+			checkError = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	onMount(() => {
+		// A check started before this page opened (or before a reload) is
+		// still the project's check: show it, and follow it if it is live.
+		api.projects
+			.latestEnvCheck(page.params.id!)
+			.then((c) => {
+				if (!c || check) return;
+				check = c;
+				if (c.status === 'running' || c.tearingDown) follow(c.id);
+			})
+			.catch(() => {});
+		return () => clearInterval(checkTimer);
+	});
 
 	const load = async () => {
 		try {
@@ -125,9 +158,17 @@
 			<button onclick={runPreflight} disabled={preflight === 'running'}>
 				{preflight === 'running' ? 'Checking…' : 'Preflight'}
 			</button>
-			<button onclick={startEnvCheck} disabled={check?.status === 'running'}>
-				{check?.status === 'running' ? 'Envcheck running…' : 'Envcheck'}
+			<button
+				onclick={startEnvCheck}
+				title={check?.status === 'running'
+					? 'Start over: cancels the running check (it cleans up after itself)'
+					: 'Provision a throwaway workspace and prove the contract'}
+			>
+				{check?.status === 'running' ? 'Restart envcheck' : 'Envcheck'}
 			</button>
+			{#if check?.status === 'running'}
+				<button onclick={cancelEnvCheck}>Cancel</button>
+			{/if}
 			<label class="row small muted" style="margin:0; gap:4px">
 				<input type="checkbox" bind:checked={checkKeep} style="width:auto" /> keep workspace
 			</label>
@@ -161,8 +202,9 @@
 		<div class="card">
 			<h2>
 				Envcheck
-				{#if check.status === 'running'}— running…{:else if check.status === 'pass'}— all good ✓{:else}—
-					failed{/if}
+				{#if check.status === 'running'}— running…{:else if check.status === 'pass'}— all good ✓{:else if check.status === 'cancelled'}—
+					cancelled{:else}— failed{/if}
+				{#if check.tearingDown}<span class="muted small"> · removing the workspace…</span>{/if}
 			</h2>
 			<p class="muted small" style="margin-top:-6px">
 				Provisions a throwaway workspace and proves the derived contract: image, firewall, egress,

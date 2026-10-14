@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,11 +34,12 @@ func writeTestEnv(t *testing.T, url, token string) {
 
 func fastProtocol(t *testing.T) {
 	t.Helper()
-	oldPoll, oldBase, oldCap, oldLimit, oldPath := pollInterval, backoffBase, backoffCap, unreachableLimit, runEnvPath
+	oldPoll, oldBase, oldCap, oldLimit, oldPath, oldProg := pollInterval, backoffBase, backoffCap, unreachableLimit, runEnvPath, progressInterval
 	pollInterval, backoffBase, backoffCap, unreachableLimit = time.Millisecond, time.Millisecond, 5*time.Millisecond, 200*time.Millisecond
+	progressInterval = 5 * time.Millisecond
 	runEnvPath = filepath.Join(t.TempDir(), "run.env")
 	t.Cleanup(func() {
-		pollInterval, backoffBase, backoffCap, unreachableLimit, runEnvPath = oldPoll, oldBase, oldCap, oldLimit, oldPath
+		pollInterval, backoffBase, backoffCap, unreachableLimit, runEnvPath, progressInterval = oldPoll, oldBase, oldCap, oldLimit, oldPath, oldProg
 	})
 }
 
@@ -56,12 +58,16 @@ func TestAskHumanAnsweredInBand(t *testing.T) {
 				Type, Question string
 				Options        []string
 				HoldMS         int64 `json:"hold_ms"`
+				Key            string
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body.Type != "clarification" || body.Question != "which db?" || len(body.Options) != 2 {
 				t.Errorf("ping body = %+v", body)
 			}
 			holdMS = body.HoldMS
+			if body.Key == "" {
+				t.Error("ping raised without an idempotency key")
+			}
 			w.Header().Set("X-Ping-Id", "p1")
 			_ = json.NewEncoder(w).Encode(map[string]string{"text": "postgres\n(note: use v16)"})
 		default:
@@ -73,7 +79,7 @@ func TestAskHumanAnsweredInBand(t *testing.T) {
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "tok1")
 
-	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?", Options: []string{"postgres", "mysql"}})
+	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?", Options: []string{"postgres", "mysql"}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,35 +96,121 @@ func TestAskHumanAnsweredInBand(t *testing.T) {
 	}
 }
 
-// The whole point of the redesign: an unanswered question hands the turn back
-// instead of blocking until the harness kills the call and the model guesses.
-func TestAskHumanUnansweredEndsTurn(t *testing.T) {
+// The call blocks until the human answers: an open question is long-polled
+// (with progress ticks keeping the harness from timing the call out), never
+// handed back to the model as "stop now".
+func TestAskHumanWaitsForTheAnswer(t *testing.T) {
 	fastProtocol(t)
-	var calls int
 	var mu sync.Mutex
+	var posts, gets int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		calls++
-		w.Header().Set("X-Ping-Id", "p9")
-		w.WriteHeader(204)
+		if r.Method == "POST" {
+			posts++
+			w.Header().Set("X-Ping-Id", "p9")
+			w.WriteHeader(204)
+			return
+		}
+		gets++
+		if r.URL.Path != "/api/runs/run1/pings/p9" {
+			t.Errorf("poll path = %s", r.URL.Path)
+		}
+		if gets < 3 {
+			time.Sleep(10 * time.Millisecond)
+			w.WriteHeader(204)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"text": "use postgres"})
 	}))
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "t")
 
-	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"posted to the human (id p9)", "END YOUR TURN NOW", "next message"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("notice %q missing %q", got, want)
-		}
+	var ticks atomic.Int32
+	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?"}, nil, func() { ticks.Add(1) })
+	if err != nil || got != "use postgres" {
+		t.Fatalf("got %q, %v", got, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if calls != 1 {
-		t.Errorf("calls = %d, want 1 (no polling loop)", calls)
+	if posts != 1 || gets != 3 {
+		t.Errorf("posts=%d gets=%d, want one raise then polls until answered", posts, gets)
+	}
+	if ticks.Load() == 0 {
+		t.Error("no progress was reported while waiting")
+	}
+}
+
+// A parked run cancels the turn; if the call outlives that, 410 ends it with
+// a notice instead of polling forever.
+func TestAskHumanParked(t *testing.T) {
+	fastProtocol(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.Header().Set("X-Ping-Id", "p3")
+			w.WriteHeader(204)
+			return
+		}
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer srv.Close()
+	writeTestEnv(t, srv.URL, "t")
+	got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
+	if err != nil || !strings.Contains(got, "parked") || !strings.Contains(got, "p3") {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+// Cancellation (the harness cancelled the tool call) stops the wait.
+func TestAskHumanCancelled(t *testing.T) {
+	fastProtocol(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Ping-Id", "p4")
+		time.Sleep(5 * time.Millisecond)
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	writeTestEnv(t, srv.URL, "t")
+	done := make(chan struct{})
+	go func() { time.Sleep(30 * time.Millisecond); close(done) }()
+	_, err := askHuman(askArgs{Type: "blocker", Question: "q"}, done, nil)
+	if !errors.Is(err, errCancelled) {
+		t.Fatalf("err = %v, want cancelled", err)
+	}
+}
+
+// A lost response to the raise is retried with the SAME key, so the engine
+// can recognise the retry instead of asking the human twice.
+func TestAskHumanRetryKeepsKey(t *testing.T) {
+	fastProtocol(t)
+	var mu sync.Mutex
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Key string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		keys = append(keys, body.Key)
+		n := len(keys)
+		mu.Unlock()
+		if n == 1 {
+			// Drop the connection mid-response: a transport error client-side.
+			hj, _ := w.(http.Hijacker)
+			c, _, _ := hj.Hijack()
+			c.Close()
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"text": "ok"})
+	}))
+	defer srv.Close()
+	writeTestEnv(t, srv.URL, "t")
+	got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
+	if err != nil || got != "ok" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] {
+		t.Fatalf("keys = %q, want the same key twice", keys)
 	}
 }
 
@@ -136,7 +228,7 @@ func TestAskHumanAnswerRendering(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"answer": c.answer, "feedback": c.feedback})
 		}))
 		writeTestEnv(t, srv.URL, "t")
-		got, err := askHuman(askArgs{Type: "blocker", Question: "q"})
+		got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
 		srv.Close()
 		if err != nil || got != c.want {
 			t.Errorf("answer %q/%q -> %q, %v (want %q)", c.answer, c.feedback, got, err, c.want)
@@ -169,7 +261,7 @@ func TestAskHumanRereadsEnvOn401(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 		writeTestEnv(t, srv.URL, "fresh")
 	}()
-	got, err := askHuman(askArgs{Type: "blocker", Question: "q"})
+	got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
 	<-done
 	if err != nil || got != "ok" || !rotated.Load() {
 		t.Fatalf("got=%q err=%v rotated=%v", got, err, rotated.Load())
@@ -179,7 +271,7 @@ func TestAskHumanRereadsEnvOn401(t *testing.T) {
 func TestAskHumanUnreachableGivesToolError(t *testing.T) {
 	fastProtocol(t)
 	writeTestEnv(t, "http://127.0.0.1:1", "t") // nothing listens on port 1
-	_, err := askHuman(askArgs{Type: "blocker", Question: "q"})
+	_, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "ask_human unavailable") {
 		t.Fatalf("want unavailable error, got %v", err)
 	}

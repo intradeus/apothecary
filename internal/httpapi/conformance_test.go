@@ -78,6 +78,9 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		{method: "GET", path: "/api/settings", want: 200},
 		{method: "POST", path: "/api/flows/validate", body: map[string]any{"yaml": loopFlowDoc}, want: 200},
 		{method: "POST", path: "/api/projects/" + testProject + "/preflight", want: 200},
+		// The fake provisioner hosts no sidecar: an honest 503.
+		{method: "GET", path: "/api/runs/" + runID + "/workspace/tree", want: 503},
+		{method: "POST", path: "/api/runs/" + runID + "/messages", body: map[string]any{"text": "hi"}, want: 409},
 		// An error body is part of the contract as much as a success one.
 		{method: "GET", path: "/api/runs/nope", want: 404},
 	}

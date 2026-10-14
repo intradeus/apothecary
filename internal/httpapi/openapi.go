@@ -200,6 +200,8 @@ func addRoute(doc *openapi3.T, rt Route, schemaFor func(any) (*openapi3.SchemaRe
 	if rt.ID == "raisePing" || rt.ID == "repollPing" {
 		op.AddResponse(http.StatusNoContent, openapi3.NewResponse().
 			WithDescription("nobody answered inside the hold; re-poll with the X-Ping-ID header"))
+		op.AddResponse(http.StatusGone, openapi3.NewResponse().
+			WithDescription("the run parked on this question; stop waiting — the answer arrives by resuming the session"))
 	}
 
 	// Errors: one shape, everywhere, so a client has one thing to handle.
@@ -275,6 +277,12 @@ var typeNameOverrides = map[string]string{
 	"httpapi.ticketResp":       "TicketDetail",
 	"httpapi.integrationJSON":  "Integration",
 	"httpapi.sourceTicketJSON": "SourceTicket",
+	"sidecar.TreeEntry":        "WorkspaceEntry",
+	"sidecar.File":             "WorkspaceFile",
+	"sidecar.Changes":          "WorkspaceChanges",
+	"sidecar.ChangedFile":      "WorkspaceChangedFile",
+	"sidecar.Commit":           "WorkspaceCommit",
+	"sidecar.FileDiff":         "WorkspaceDiff",
 }
 
 func (n *typeNamer) name(t reflect.Type) string {

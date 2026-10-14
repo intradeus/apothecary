@@ -52,7 +52,12 @@ import type {
 	SourceTicket,
 	Ticket,
 	TicketDraft,
-	UploadLimits
+	UploadLimits,
+	FileDiff,
+	LiveDelta,
+	WorkspaceChanges,
+	WorkspaceEntry,
+	WorkspaceFile
 } from '$lib/domain';
 
 /** Go marshals a nil slice as null, so a list endpoint can legitimately answer
@@ -182,11 +187,64 @@ export const runs = {
 
 	/** SSE stream of a run's events: replays from afterSeq, then follows live.
 	 *  Returns the unsubscribe. EventSource is the browser's, not the SDK's —
-	 *  OpenAPI describes the endpoint but cannot hand us a stream. */
-	events(id: string, afterSeq: number, onEvent: (e: RunEvent) => void): () => void {
+	 *  OpenAPI describes the endpoint but cannot hand us a stream.
+	 *
+	 *  onDelta receives the agent's live progress (text being written, tool
+	 *  calls in flight). Deltas are not in the log: they carry no id, so a
+	 *  reconnect never resumes from one, and the persisted event that follows
+	 *  supersedes each. */
+	events(
+		id: string,
+		afterSeq: number,
+		onEvent: (e: RunEvent) => void,
+		onDelta?: (d: LiveDelta) => void
+	): () => void {
 		const es = new EventSource(`/api/runs/${id}/events?after_seq=${afterSeq}`);
 		es.onmessage = (m) => onEvent(map.toRunEvent(JSON.parse(m.data) as Wire.Event));
+		if (onDelta) {
+			es.addEventListener('delta', (m) => {
+				const d = map.toLiveDelta(JSON.parse((m as MessageEvent).data));
+				if (d) onDelta(d);
+			});
+		}
 		return () => es.close();
+	},
+
+	/** Send the running agent a message. Delivered into its live session when
+	 *  the current turn ends — or at once, cancelling the turn, with interrupt.
+	 *  Rejects (409) when no agent is running to take it. */
+	sendMessage: async (id: string, text: string, interrupt = false): Promise<string> =>
+		(await unwrap(gen.sendRunMessage({ path: { id }, body: { text, interrupt } }))).message_id
+};
+
+// --- workspace (files, changes, terminal) -------------------------------------
+
+export const workspace = {
+	/** One directory level of the checkout; '' is the root. */
+	tree: async (runId: string, path = ''): Promise<WorkspaceEntry[]> =>
+		many(
+			await unwrap(gen.getWorkspaceTree({ path: { id: runId }, query: { path } })),
+			map.toWorkspaceEntry
+		),
+
+	file: async (runId: string, path: string): Promise<WorkspaceFile> =>
+		map.toWorkspaceFile(
+			await unwrap(gen.getWorkspaceFile({ path: { id: runId }, query: { path } }))
+		),
+
+	/** The run's changes against the branch it forked from. */
+	changes: async (runId: string): Promise<WorkspaceChanges> =>
+		map.toWorkspaceChanges(await unwrap(gen.getWorkspaceChanges({ path: { id: runId } }))),
+
+	diff: async (runId: string, path: string): Promise<FileDiff> =>
+		map.toFileDiff(await unwrap(gen.getWorkspaceDiff({ path: { id: runId }, query: { path } }))),
+
+	/** WebSocket URL of a terminal in the workspace (binary frames are
+	 *  keystrokes/output; a JSON text frame {type:'resize',cols,rows} resizes).
+	 *  Not in the generated client: a protocol switch is not an OpenAPI call. */
+	terminalUrl: (runId: string, cols: number, rows: number): string => {
+		const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+		return `${proto}//${location.host}/api/runs/${runId}/terminal?cols=${cols}&rows=${rows}`;
 	}
 };
 
@@ -321,6 +379,16 @@ export const projects = {
 
 	envCheck: async (checkId: string): Promise<EnvCheck> =>
 		map.toEnvCheck(await unwrap(gen.getEnvCheck({ path: { id: checkId } }))),
+
+	/** The project's latest check, running or not; null when none has run
+	 *  since the engine started. */
+	latestEnvCheck: async (id: string): Promise<EnvCheck | null> => {
+		const w = await unwrapOptional(gen.getLatestEnvCheck({ path: { id } }));
+		return w ? map.toEnvCheck(w) : null;
+	},
+
+	/** Stop a running check; it still destroys its workspace. */
+	cancelEnvCheck: (checkId: string) => unwrapVoid(gen.cancelEnvCheck({ path: { id: checkId } })),
 
 	/** The devcontainer build cache: what makes a second run of this project
 	 *  fast. null when the provisioner keeps none — a different answer from an
@@ -522,4 +590,15 @@ export const system = {
 
 /** Everything, grouped. Import the group you need — `api.runs.list()` reads
  *  better at a call site than a flat namespace of sixty functions. */
-export const api = { runs, egress, pings, tickets, projects, integrations, flows, files, system };
+export const api = {
+	runs,
+	workspace,
+	egress,
+	pings,
+	tickets,
+	projects,
+	integrations,
+	flows,
+	files,
+	system
+};

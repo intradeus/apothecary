@@ -101,8 +101,10 @@ const (
 
 // StagePaused / StageResumed reasons.
 const (
-	// PauseAskHuman: the agent ended its turn with an unanswered ask_human.
-	// The attempt waits, untimed, until every open ping is answered.
+	// PauseAskHuman: the attempt is parked on unanswered ask_human questions
+	// — the human took longer than the live hold, so the engine ended the turn
+	// (or the agent ended it itself). It waits, untimed, until every open ping
+	// is answered, then resumes the same session with the answers.
 	PauseAskHuman = "ask_human"
 	// ResumeAnswered: the questions that paused the attempt came back
 	// answered and are being delivered into the harness session.
@@ -284,6 +286,10 @@ type PingRaised struct {
 	// (PLAN4 M15): the attribution key joining reviews to stages and,
 	// via stage_started.agent_hash, to prompt versions.
 	StageID string `json:"stage_id,omitempty"`
+	// Key is the raiser's idempotency key: a retried raise (its response
+	// was lost) carries the same key and gets the same ping back instead of
+	// asking the human twice.
+	Key string `json:"key,omitempty"`
 	// Options are the agent-declared answer choices (PLAN4 M16): when
 	// non-empty, the answer MUST be one of them — the agent asked a closed
 	// question so it can branch deterministically — or the reserved "other"

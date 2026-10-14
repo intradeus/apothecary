@@ -26,6 +26,9 @@ import type {
 	ArchiveRunData,
 	ArchiveRunErrors,
 	ArchiveRunResponses,
+	CancelEnvCheckData,
+	CancelEnvCheckErrors,
+	CancelEnvCheckResponses,
 	ClearBuildCacheData,
 	ClearBuildCacheErrors,
 	ClearBuildCacheResponses,
@@ -92,6 +95,9 @@ import type {
 	GetIntegrationData,
 	GetIntegrationErrors,
 	GetIntegrationResponses,
+	GetLatestEnvCheckData,
+	GetLatestEnvCheckErrors,
+	GetLatestEnvCheckResponses,
 	GetPingData,
 	GetPingErrors,
 	GetPingFilesData,
@@ -137,9 +143,21 @@ import type {
 	GetTicketData,
 	GetTicketErrors,
 	GetTicketResponses,
+	GetWorkspaceChangesData,
+	GetWorkspaceChangesErrors,
+	GetWorkspaceChangesResponses,
+	GetWorkspaceDiffData,
+	GetWorkspaceDiffErrors,
+	GetWorkspaceDiffResponses,
+	GetWorkspaceFileData,
+	GetWorkspaceFileErrors,
+	GetWorkspaceFileResponses,
 	GetWorkspaceLogData,
 	GetWorkspaceLogErrors,
 	GetWorkspaceLogResponses,
+	GetWorkspaceTreeData,
+	GetWorkspaceTreeErrors,
+	GetWorkspaceTreeResponses,
 	ListActionsData,
 	ListActionsErrors,
 	ListActionsResponses,
@@ -224,6 +242,9 @@ import type {
 	SearchSourceTicketsData,
 	SearchSourceTicketsErrors,
 	SearchSourceTicketsResponses,
+	SendRunMessageData,
+	SendRunMessageErrors,
+	SendRunMessageResponses,
 	SetEgressRuleData,
 	SetEgressRuleErrors,
 	SetEgressRuleResponses,
@@ -384,6 +405,19 @@ export const getEgressDefaults = <ThrowOnError extends boolean = false>(
 		GetEgressDefaultsErrors,
 		ThrowOnError
 	>({ url: '/api/egress-defaults', ...options });
+
+/**
+ * Cancel a running workspace check
+ *
+ * The check stops at its next step and still destroys its workspace.
+ */
+export const cancelEnvCheck = <ThrowOnError extends boolean = false>(
+	options: Options<CancelEnvCheckData, ThrowOnError>
+): RequestResult<CancelEnvCheckResponses, CancelEnvCheckErrors, ThrowOnError> =>
+	(options.client ?? client).delete<CancelEnvCheckResponses, CancelEnvCheckErrors, ThrowOnError>({
+		url: '/api/envchecks/{id}',
+		...options
+	});
 
 /**
  * Poll a workspace check
@@ -754,7 +788,21 @@ export const getProjectEgressAudit = <ThrowOnError extends boolean = false>(
 	>({ url: '/api/projects/{id}/egress-audit', ...options });
 
 /**
+ * The project's most recent workspace check
+ *
+ * Running or finished — what a page opened mid-check follows.
+ */
+export const getLatestEnvCheck = <ThrowOnError extends boolean = false>(
+	options: Options<GetLatestEnvCheckData, ThrowOnError>
+): RequestResult<GetLatestEnvCheckResponses, GetLatestEnvCheckErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetLatestEnvCheckResponses, GetLatestEnvCheckErrors, ThrowOnError>(
+		{ url: '/api/projects/{id}/envcheck', ...options }
+	);
+
+/**
  * Prove the project's workspace actually builds (throwaway provision)
+ *
+ * Starting a check cancels the project's running one, if any: the newest check is the one that matters.
  */
 export const startEnvCheck = <ThrowOnError extends boolean = false>(
 	options: Options<StartEnvCheckData, ThrowOnError>
@@ -1039,6 +1087,23 @@ export const getStageLog = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * Send a message to the run's running agent
+ *
+ * Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it.
+ */
+export const sendRunMessage = <ThrowOnError extends boolean = false>(
+	options: Options<SendRunMessageData, ThrowOnError>
+): RequestResult<SendRunMessageResponses, SendRunMessageErrors, ThrowOnError> =>
+	(options.client ?? client).post<SendRunMessageResponses, SendRunMessageErrors, ThrowOnError>({
+		url: '/api/runs/{id}/messages',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
  * Report listening ports (in-workspace scanner)
  */
 export const reportObservedPorts = <ThrowOnError extends boolean = false>(
@@ -1085,7 +1150,7 @@ export const pauseRun = <ThrowOnError extends boolean = false>(
 /**
  * Ask the human a question (ask_human)
  *
- * Holds for hold_ms and answers in-band when it can; 204 means nobody answered in time and the caller should end its turn.
+ * Holds for hold_ms and answers in-band when it can; 204 means not yet — re-poll with X-Ping-ID while the agent's turn waits. key makes a retried raise return the same question.
  */
 export const raisePing = <ThrowOnError extends boolean = false>(
 	options: Options<RaisePingData, ThrowOnError>
@@ -1101,7 +1166,9 @@ export const raisePing = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Re-poll a raised question for its answer
+ * Long-poll a raised question for its answer
+ *
+ * 200 with the answer, 204 still open (poll again), 410 the run parked on it (stop waiting).
  */
 export const repollPing = <ThrowOnError extends boolean = false>(
 	options: Options<RepollPingData, ThrowOnError>
@@ -1196,6 +1263,53 @@ export const getWorkspaceLog = <ThrowOnError extends boolean = false>(
 ): RequestResult<GetWorkspaceLogResponses, GetWorkspaceLogErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetWorkspaceLogResponses, GetWorkspaceLogErrors, ThrowOnError>({
 		url: '/api/runs/{id}/workspace-log',
+		...options
+	});
+
+/**
+ * The run's changes against the branch it forked from
+ *
+ * Committed and uncommitted, measured from the merge base with the source branch.
+ */
+export const getWorkspaceChanges = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkspaceChangesData, ThrowOnError>
+): RequestResult<GetWorkspaceChangesResponses, GetWorkspaceChangesErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetWorkspaceChangesResponses,
+		GetWorkspaceChangesErrors,
+		ThrowOnError
+	>({ url: '/api/runs/{id}/workspace/changes', ...options });
+
+/**
+ * One file's unified diff against the branch the run forked from
+ */
+export const getWorkspaceDiff = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkspaceDiffData, ThrowOnError>
+): RequestResult<GetWorkspaceDiffResponses, GetWorkspaceDiffErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetWorkspaceDiffResponses, GetWorkspaceDiffErrors, ThrowOnError>({
+		url: '/api/runs/{id}/workspace/diff',
+		...options
+	});
+
+/**
+ * One file of the run's checkout
+ */
+export const getWorkspaceFile = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkspaceFileData, ThrowOnError>
+): RequestResult<GetWorkspaceFileResponses, GetWorkspaceFileErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetWorkspaceFileResponses, GetWorkspaceFileErrors, ThrowOnError>({
+		url: '/api/runs/{id}/workspace/file',
+		...options
+	});
+
+/**
+ * One directory level of the run's checkout
+ */
+export const getWorkspaceTree = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkspaceTreeData, ThrowOnError>
+): RequestResult<GetWorkspaceTreeResponses, GetWorkspaceTreeErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetWorkspaceTreeResponses, GetWorkspaceTreeErrors, ThrowOnError>({
+		url: '/api/runs/{id}/workspace/tree',
 		...options
 	});
 

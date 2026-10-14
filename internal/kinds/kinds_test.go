@@ -263,11 +263,18 @@ func TestCodexKindCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.Binary() != "codex" {
+	// The engine drives codex through its ACP bridge, so that is what has
+	// to be on PATH; the CLI is installed alongside for humans.
+	if h.Binary() != "codex-acp" {
 		t.Errorf("binary = %q", h.Binary())
 	}
-	if layer := strings.Join(h.InstallLayer(), "\n"); !strings.Contains(layer, "@openai/codex@"+CodexVersion) {
+	if layer := strings.Join(h.InstallLayer(), "\n"); !strings.Contains(layer, "@openai/codex@"+CodexVersion) ||
+		!strings.Contains(layer, "@agentclientprotocol/codex-acp@"+CodexACPVersion) {
 		t.Errorf("install layer = %q", layer)
+	}
+	// Both harnesses run as ACP agents in the workspace sidecar.
+	if _, ok := h.(ports.AgentReattacher); !ok {
+		t.Error("codex harness cannot reattach after an engine restart")
 	}
 	// Harness-owned auth: the API key rides provider.env as OPENAI_API_KEY.
 	if env := h.EnvVars(); env["OPENAI_API_KEY"] != "sk-x" {

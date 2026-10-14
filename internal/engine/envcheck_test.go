@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,8 +31,9 @@ func firewallAwareExec(failDomains ...string) func(*fake.Env, ports.Command) (po
 func TestRunEnvCheckDerivedCatalog(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.envp.ExecFunc = firewallAwareExec()
-	h.res.EgressDomains = []string{"gitlab.local", "openrouter.ai"}
+	h.res.EgressDomains = []string{"gitlab.local", "openrouter.ai", "*.docker.io"}
 	h.res.HarnessBinary = "opencode"
+	h.res.HarnessInstall = []ports.HarnessInstall{{Binary: "opencode", Commands: []string{"npm install -g opencode-ai"}}}
 
 	var steps []CheckStep
 	failed := RunEnvCheck(context.Background(), h.res, "envck-test",
@@ -52,6 +55,10 @@ func TestRunEnvCheckDerivedCatalog(t *testing.T) {
 		if s, ok := byID[want]; !ok || s.Status != "pass" {
 			t.Errorf("step %s = %+v", want, s)
 		}
+	}
+	// A wildcard pattern is not a host: skipped, never curl'ed as a URL.
+	if s := byID["egress:*.docker.io"]; s.Status != "skip" {
+		t.Errorf("wildcard step = %+v, want skip", s)
 	}
 	if len(h.envp.Destroyed) != 1 {
 		t.Errorf("workspace not destroyed: %v", h.envp.Destroyed)
@@ -132,4 +139,135 @@ func TestEngineEnvCheckRegistry(t *testing.T) {
 		<-time.After(10 * time.Millisecond)
 	}
 	t.Fatal("envcheck never finished")
+}
+
+// The check provisions the workspace a run would get — harness install
+// included, or a repo image without the harness can never pass harness_binary.
+func TestEnvCheckInstallsTheHarnessLikeARun(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.envp.ExecFunc = firewallAwareExec()
+	h.res.HarnessInstall = []ports.HarnessInstall{{Binary: "opencode", Commands: []string{"npm install -g opencode-ai"}}}
+	var prov CheckStep
+	RunEnvCheck(context.Background(), h.res, "envck-hi",
+		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", EnginePort: 9, Keep: true},
+		func(s CheckStep) {
+			if s.ID == "provision" {
+				prov = s
+			}
+		})
+	env := h.envp.Env(ports.EnvID(prov.Detail))
+	if env == nil || len(env.Spec.HarnessInstall) != 1 || env.Spec.HarnessInstall[0].Binary != "opencode" {
+		t.Fatalf("provisioned env = %+v", env)
+	}
+}
+
+func waitCheck(t *testing.T, h *harness, id string, done func(CheckRun) bool) CheckRun {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		snap, ok := h.e.EnvCheck(id)
+		if !ok {
+			t.Fatal("check vanished")
+		}
+		if done(snap) {
+			return snap
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap, _ := h.e.EnvCheck(id)
+	t.Fatalf("check %s never got there: %+v", id, snap)
+	return CheckRun{}
+}
+
+func hasStep(r CheckRun, id string) bool {
+	for _, s := range r.Steps {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// Starting a check while one runs supersedes it — no waiting it out — and the
+// superseded check still destroys its workspace.
+func TestNewEnvCheckSupersedesTheRunningOne(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	inner := firewallAwareExec()
+	release := make(chan struct{})
+	var once sync.Once
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		blocked := false
+		once.Do(func() { blocked = true })
+		if blocked {
+			<-release // the first check's bootstrap hangs (a setup that never exits)
+		}
+		return inner(env, cmd)
+	}
+	first, err := h.e.StartEnvCheck(context.Background(), testProject, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCheck(t, h, first, func(r CheckRun) bool { return hasStep(r, "provision") })
+
+	second, err := h.e.StartEnvCheck(context.Background(), testProject, false)
+	if err != nil {
+		t.Fatalf("a second check was refused: %v", err)
+	}
+	if snap, _ := h.e.EnvCheck(first); snap.Status != "cancelled" || snap.FinishedAt == nil {
+		t.Fatalf("superseded check = %+v", snap)
+	}
+	if latest, ok := h.e.LatestEnvCheck(testProject); !ok || latest.ID != second {
+		t.Errorf("latest = %+v, want the new check", latest)
+	}
+	close(release)
+	got := waitCheck(t, h, second, func(r CheckRun) bool { return r.Status != "running" && !r.TearingDown })
+	if got.Status != "pass" || !hasStep(got, "destroy") {
+		t.Fatalf("new check = %+v", got)
+	}
+	old := waitCheck(t, h, first, func(r CheckRun) bool { return hasStep(r, "destroy") })
+	if old.Status != "cancelled" {
+		t.Errorf("superseded check ended %s", old.Status)
+	}
+	// It stopped at its next step instead of failing every remaining probe.
+	for _, s := range old.Steps {
+		if strings.HasPrefix(s.ID, "egress:") {
+			t.Errorf("superseded check kept probing: %+v", s)
+		}
+	}
+}
+
+func TestCancelEnvCheck(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	release := make(chan struct{})
+	defer close(release)
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		<-release
+		return ports.ExecResult{}, nil
+	}
+	id, _ := h.e.StartEnvCheck(context.Background(), testProject, false)
+	waitCheck(t, h, id, func(r CheckRun) bool { return hasStep(r, "provision") })
+	if !h.e.CancelEnvCheck(id) {
+		t.Fatal("cancel refused")
+	}
+	if snap, _ := h.e.EnvCheck(id); snap.Status != "cancelled" {
+		t.Fatalf("status = %s", snap.Status)
+	}
+	if h.e.CancelEnvCheck("nope") {
+		t.Error("cancelled a check that does not exist")
+	}
+}
+
+// A provision that fails (or is cancelled mid-build) may leave half a
+// workspace under its name: the check removes it by that name.
+func TestEnvCheckCleansUpAFailedProvision(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.envp.ProvisionErrs = []error{errors.New("build cancelled")}
+	var steps []CheckStep
+	failed := RunEnvCheck(context.Background(), h.res, "envck-pf", EnvCheckOptions{},
+		func(s CheckStep) { steps = append(steps, s) })
+	if failed == 0 || len(h.envp.Destroyed) != 1 || !strings.HasPrefix(string(h.envp.Destroyed[0]), "apo-") {
+		t.Fatalf("failed=%d destroyed=%v steps=%+v", failed, h.envp.Destroyed, steps)
+	}
+	if last := steps[len(steps)-1]; last.ID != "destroy" || last.Status != "pass" {
+		t.Errorf("last step = %+v", last)
+	}
 }

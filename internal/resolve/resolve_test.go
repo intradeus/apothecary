@@ -212,6 +212,14 @@ func TestResolveFillsResolution(t *testing.T) {
 	if err := res.SeedAuth(context.Background(), env); err != nil {
 		t.Fatal(err)
 	}
+	// The harness's reachable models, as flows spell them (run-creation check).
+	// The fake runs any model: no list, so nothing is refused.
+	if models, err := res.Models(context.Background(), "fake"); err != nil || models != nil {
+		t.Errorf("fake models = %v, %v; want no limit", models, err)
+	}
+	if _, err := res.Models(context.Background(), "nope"); err == nil {
+		t.Error("models for a harness outside the project's set")
+	}
 }
 
 // §6.1: config edits apply to new resolutions; in-flight runs keep their

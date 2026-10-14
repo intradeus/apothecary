@@ -19,6 +19,11 @@ exactly two touchpoints — plan approval and final review.
   is filtered by an external per-project gateway — a default-deny
   allowlist (or allow-all denylist) derived from your configuration,
   hot-reloadable and proven with a deterministic environment check.
+- **Live agent sessions.** The coding agent runs as a long-lived session
+  inside the workspace, driven over the Agent Client Protocol: you watch
+  its conversation and tool calls as they happen, message it mid-run,
+  browse its files and diff, and open a terminal — and its questions to
+  you simply wait for your answer.
 
 ## Prerequisites
 
@@ -167,11 +172,17 @@ automatically. Database migrations apply at boot.
    pick provisioner + harness → add toolchain **presets** to the
    Dockerfile fragment (Go, Python, Node, JVM, C toolchain) → default
    flow.
-4. **Preflight**, then **Envcheck** on the project page. Envcheck
-   provisions a throwaway workspace and proves the whole contract —
-   image, egress gateway (a non-allowlisted host is blocked; each derived
-   domain reachable), harness binary, ask-human shim, engine tunnel — with
-   named pass/fail steps.
+4. **Preflight**, then **Envcheck** on the project page. Preflight checks
+   the configuration without building anything — forge access, AGENTS.md,
+   the devcontainer, the flow's references, and that every agent stage's
+   model is one the harness's credentials can reach. Envcheck provisions a
+   throwaway workspace and proves the whole contract — image, egress
+   gateway (a non-allowlisted host is blocked; each derived domain
+   reachable; wildcard entries are patterns and skipped), harness binary,
+   that the agent **in the workspace** offers every model the flow pins,
+   ask-human shim, engine tunnel — with named pass/fail steps. The verdict
+   shows as soon as the probes finish (the workspace is torn down after);
+   starting another envcheck cancels the running one.
 5. **File a ticket** on the Tickets page — by hand, or imported from a
    configured ticket source. Answer the plan gate in the Inbox;
    merge the draft MR/PR at the end (the run completes itself when you
@@ -224,6 +235,49 @@ the main stack (`APOTHECARY_IMAGE=` in `deploy/.env`), and
 `go run ./cmd/apothecaryd serve -dev` skips docker entirely (fake kinds,
 seeded sandbox project).
 
+## How a run works
+
+```
+apothecaryd (engine: flow interpreter, event log, API + UI)
+  │  unix sockets in the bind-mounted run folder — no container networking
+  ▼
+per-run Docker-in-Docker sandbox ── egress only via the project gateway
+  └─ the repo's own devcontainer (the workspace)
+       ├─ shim sidecar   one per workspace: HTTP on /opt/apothecary/sidecar.sock
+       │    ├─ the coding agent, long-lived, spoken to in ACP
+       │    │    (opencode acp · codex-acp) ── ask_human MCP server (shim)
+       │    ├─ files + git views of the checkout
+       │    └─ terminals (PTY over WebSocket)
+       └─ shim relay / portscan   engine bridge, app port discovery
+```
+
+- **The engine drives every step**; the workspace never schedules work.
+  Command stages are execs; an agent stage asks the workspace's sidecar to
+  open (or resume) a session on the long-lived agent, sets the stage's
+  agent and model, and prompts it. The sidecar normalizes the agent's
+  updates — message text, tool calls with input/output/diffs, plans, usage —
+  and the engine records them as the run's transcript.
+- **The run page** has a *Chat* tab (the transcript, live; your messages to
+  the agent), *Changes* (the run's diff against the branch it forked from),
+  *Files* (the checkout, read-only), *Terminal* (a shell in the repo) and
+  the raw *Timeline*.
+- **Messaging the agent**: *Send* queues a message for the end of its
+  current turn, *Send now* interrupts the turn so it reads it at once —
+  either way into the same session.
+- **ask_human blocks** until you answer (inbox, run page, or chat), with
+  keep-alives so the harness never times the call out. If nobody answers
+  within the live hold (30 min), the engine parks the run — cancels the
+  turn, frees its slot — and resumes the same session with your answer.
+- **Engine restarts don't restart agents.** The agent lives with the
+  workspace; after a restart the engine follows the turn that was in flight
+  (or the one that finished meanwhile) from the last event it recorded.
+- **Models are checked early.** A model the provider no longer serves is
+  refused when the run is created; one the installed harness doesn't offer
+  fails the run before its first stage — not three stages in.
+
+The full design and its rationale: `docs/IMPLEMENTATION_NOTES.md`, section
+*Live agent sessions: the workspace sidecar and ACP*.
+
 ## CLI
 
 Everything ships in the image (`docker compose -p apothecary -f
@@ -259,14 +313,18 @@ in `docs/IMPLEMENTATION_NOTES.md`.
 ## Security model (short form)
 
 Engine and host are trusted; **workspaces are not** (prompt injection is
-assumed). Workspaces get: a per-run Docker-in-Docker sandbox on its own
+assumed). The agent runs with its harness's approvals off — the sandbox is
+the boundary, not the agent's permission prompts. Workspaces get: a per-run Docker-in-Docker sandbox on its own
 `--internal` docker network with no external route, all egress forced
 through a per-project gateway that filters by hostname (TLS SNI / HTTP
 Host, no MITM) against the derived allowlist — a privileged sandbox can't
 bypass it because enforcement lives outside it; a per-run bearer token
 scoped to their own ping endpoints,
 and secrets injected as files at bootstrap — never through provisioner
-parameters. Integration secrets are secretbox-encrypted at rest under
+parameters; when a run ends its agent process is stopped and the
+credential files removed. The run page's terminal and workspace views go
+through the same API, which — like the rest of it — assumes a trusted
+network (bind it to localhost or put auth in front). Integration secrets are secretbox-encrypted at rest under
 `APOTHECARY_MASTER_KEY` and never leave the engine unmasked. Residual risks
 and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
 

@@ -51,7 +51,15 @@ import type {
 	SourceTicket,
 	Ticket,
 	UploadLimits,
-	WorkspacePolicy
+	WorkspacePolicy,
+	AgentToolCall,
+	ChangedFile,
+	ChangeStatus,
+	FileDiff,
+	LiveDelta,
+	WorkspaceChanges,
+	WorkspaceEntry,
+	WorkspaceFile
 } from '$lib/domain';
 
 // --- narrowing ---------------------------------------------------------------
@@ -306,6 +314,7 @@ export function toEnvCheck(w: Wire.EnvCheck): EnvCheck {
 		projectId: w.project_id ?? '',
 		status: (w.status as EnvCheck['status']) ?? 'running',
 		keep: w.keep ?? false,
+		tearingDown: w.tearing_down ?? false,
 		steps: list(w.steps).map((s): EnvCheckStep => ({
 			id: s.id ?? '',
 			status: (s.status as EnvCheckStep['status']) ?? 'skip',
@@ -540,5 +549,89 @@ export function fromSettings(s: Settings): Wire.Settings {
 		destroy_abandoned: s.destroyAbandoned,
 		orphan_uploads_after: s.orphanUploadsAfter,
 		snapshots_after: s.snapshotsAfter
+	};
+}
+
+// --- workspace ---------------------------------------------------------------
+
+export function toWorkspaceEntry(w: Wire.WorkspaceEntry): WorkspaceEntry {
+	return { name: w.name, path: w.path, dir: w.dir, size: w.size, ignored: w.ignored ?? false };
+}
+
+export function toWorkspaceFile(w: Wire.WorkspaceFile): WorkspaceFile {
+	return {
+		path: w.path,
+		size: w.size,
+		binary: w.binary,
+		truncated: w.truncated,
+		content: w.content
+	};
+}
+
+const changeStatuses: readonly ChangeStatus[] = ['A', 'M', 'D', 'R', 'C', '?'];
+
+export function toChangedFile(w: Wire.WorkspaceChangedFile): ChangedFile {
+	return {
+		path: w.path,
+		status: (changeStatuses as readonly string[]).includes(w.status)
+			? (w.status as ChangeStatus)
+			: 'M',
+		oldPath: w.old_path || undefined,
+		additions: w.additions,
+		deletions: w.deletions,
+		binary: w.binary ?? false,
+		committed: w.committed
+	};
+}
+
+export function toWorkspaceChanges(w: Wire.WorkspaceChanges): WorkspaceChanges {
+	return {
+		branch: w.branch,
+		head: w.head,
+		base: w.base,
+		mergeBase: w.merge_base,
+		commits: list(w.commits).map((c) => ({ sha: c.sha, subject: c.subject })),
+		files: list(w.files).map(toChangedFile)
+	};
+}
+
+export function toFileDiff(w: Wire.WorkspaceDiff): FileDiff {
+	return { path: w.path, diff: w.diff, truncated: w.truncated };
+}
+
+/** The agent_tool event payload (and a live delta's tool) — open JSON from the
+ *  event stream, so read defensively. */
+export function toAgentToolCall(p: Record<string, unknown>): AgentToolCall {
+	const diffs = Array.isArray(p.diffs) ? (p.diffs as Record<string, unknown>[]) : [];
+	return {
+		toolCallId: String(p.tool_call_id ?? ''),
+		title: String(p.title ?? ''),
+		kind: String(p.kind ?? 'other'),
+		status: String(p.status ?? ''),
+		input: (p.input as string | undefined) || undefined,
+		output: (p.output as string | undefined) || undefined,
+		locations: Array.isArray(p.locations) ? (p.locations as string[]) : [],
+		diffs: diffs.map((d) => ({
+			path: String(d.path ?? ''),
+			oldText: (d.old_text as string | undefined) || undefined,
+			newText: String(d.new_text ?? '')
+		})),
+		turn: (p.turn as string | undefined) || undefined
+	};
+}
+
+const deltaKinds = ['message', 'thought', 'tool', 'turn_start', 'turn_end'] as const;
+
+export function toLiveDelta(raw: Record<string, unknown>): LiveDelta | null {
+	const kind = raw.kind as LiveDelta['kind'];
+	if (!deltaKinds.includes(kind)) return null;
+	return {
+		stageId: String(raw.stage_id ?? ''),
+		iteration: Number(raw.iteration ?? 0),
+		turn: (raw.turn as string | undefined) || undefined,
+		kind,
+		segment: (raw.segment as string | undefined) || undefined,
+		text: (raw.text as string | undefined) ?? undefined,
+		tool: raw.tool ? toAgentToolCall(raw.tool as Record<string, unknown>) : undefined
 	};
 }

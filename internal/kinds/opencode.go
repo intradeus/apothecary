@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/adapters/acpagent"
 	opencodeadapter "apothecary/internal/adapters/opencode"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
@@ -40,24 +41,21 @@ func (Opencode) Descriptor() Descriptor {
 
 func (Opencode) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 	return &opencodeHarness{
+		Runner:   acpagent.New(envp, opencodeadapter.Profile()),
 		adapter:  opencodeadapter.New(envp, opencodeadapter.Config{}),
 		version:  cfg.Str("version", OpencodeVersion),
 		authJSON: cfg.Secrets["auth_json"],
 	}, nil
 }
 
+// opencodeHarness runs as a long-lived ACP agent (`opencode acp`) in the
+// workspace sidecar; the embedded runner is the AgentRunner (plus reattach
+// and stop), the adapter generates its config.
 type opencodeHarness struct {
+	*acpagent.Runner
 	adapter  *opencodeadapter.Adapter
 	version  string
 	authJSON string
-}
-
-func (h *opencodeHarness) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
-	return h.adapter.Run(ctx, env, spec, in)
-}
-
-func (h *opencodeHarness) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, reply string) (ports.AgentResult, error) {
-	return h.adapter.Resume(ctx, env, s, reply)
 }
 
 // Test statically validates the auth material (§4: no remote to probe).

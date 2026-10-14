@@ -1,26 +1,37 @@
 package main
 
-// ask_human MCP stdio server (DESIGN.md §10) — the Go port of the retired
-// ask-human.mjs, protocol-identical:
+// ask_human MCP stdio server (DESIGN.md §10).
 //
 // Exposes one tool: ask_human{type, question, context?, options?,
-// artifact?}. Protocol with the engine: POST the ping (per-run bearer
-// token) asking for a SHORT grace hold; 200 returns the human's answer
-// in-band and the agent carries on. A 204 means nobody answered inside the
-// grace period, and the tool returns "your question is posted — end your
-// turn" instead of blocking: no harness holds a tool call open for as long
-// as a human takes (opencode cuts one at 60 s), so the engine owns that
-// wait and resumes the agent's session with the answer when it lands.
-// Blocking here is what let a timed-out question look, to the model, like
-// permission to guess. On network error retry with backoff capped at 60 s;
-// if the engine is unreachable > 10 min, return a tool error string and let
-// the agent proceed. Credentials come from /apothecary/run.env and are
-// re-read on 401 (the engine regenerates tokens on restart).
+// artifacts?}. The tool call BLOCKS until the human answers: the agent runs
+// as a long-lived ACP session the engine follows, so nothing needs the turn
+// handed back any more, and the model never sees a "posted, stop now" notice
+// it might ignore.
+//
+// Protocol with the engine (per-run bearer token from /apothecary/run.env,
+// re-read on 401 because the engine rotates tokens on restart):
+//
+//	POST /api/runs/{run}/pings      raise it (idempotency key: a retry after a
+//	                                lost response never asks twice); holds
+//	                                briefly, 200 = answered already, 204 + X-Ping-Id
+//	                                = still open
+//	GET  /api/runs/{run}/pings/{id} long-poll until answered (200), still open
+//	                                (204, poll again) or parked (410)
+//
+// While it waits it sends MCP progress notifications, which harnesses use to
+// keep a slow tool call alive (opencode resets its timeout on progress). A
+// question nobody answers for a long time is the ENGINE's call: it parks the
+// run by cancelling the turn, which cancels this call (notifications/cancelled)
+// — and the answer is then delivered when the session resumes. Transport
+// errors (an engine restart) are retried with backoff.
 
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,12 +45,11 @@ import (
 // the env file at a fixture.
 var (
 	runEnvPath = "/apothecary/run.env"
-	// graceHold is how long the engine is asked to hold the answer in-band.
-	// Short enough to stay well inside every harness's tool-call timeout
-	// (opencode's is 60 s), long enough that a human already looking at the
-	// inbox answers without costing the agent a turn.
+	// graceHold is how long the raising POST asks the engine to hold for an
+	// answer that is already coming; the rest of the wait is long-polls.
 	graceHold        = 20 * time.Second
 	pollInterval     = 5 * time.Second
+	progressInterval = 10 * time.Second
 	unreachableLimit = 10 * time.Minute
 	backoffBase      = time.Second
 	backoffCap       = 60 * time.Second
@@ -89,19 +99,63 @@ type askArgs struct {
 	Artifacts []string `json:"artifacts"` // multi refs
 }
 
-// askHuman drives the full §10 protocol; returns the answer text or an
-// error (surfaced as a tool-level error string, not a protocol error).
-func askHuman(args askArgs) (string, error) {
+// errCancelled: the client cancelled the call (the engine parked the run and
+// cancelled the turn). No reply is due for a cancelled request.
+var errCancelled = errors.New("cancelled")
+
+func newKey() string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// askHuman drives the protocol until the human answers, the call is
+// cancelled (done closes), or the engine stays unreachable too long. tick is
+// called while waiting (MCP progress).
+func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
 	env := readRunEnv()
 	refs := args.Artifacts
 	if len(refs) == 0 && args.Artifact != "" {
 		refs = []string{args.Artifact}
 	}
+	key := newKey()
 	pingID := ""
 	var downSince time.Time
 	backoff := backoffBase
 
+	// Progress keeps flowing for the whole wait, including long-polls and
+	// retries, so the harness never decides the tool hung.
+	stopTick := make(chan struct{})
+	defer close(stopTick)
+	if tick != nil {
+		go func() {
+			t := time.NewTicker(progressInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					tick()
+				case <-stopTick:
+					return
+				}
+			}
+		}()
+	}
+	sleep := func(d time.Duration) bool {
+		select {
+		case <-time.After(d):
+			return true
+		case <-done:
+			return false
+		}
+	}
+
 	for {
+		select {
+		case <-done:
+			return "", errCancelled
+		default:
+		}
 		var res *http.Response
 		var err error
 		if pingID == "" {
@@ -112,10 +166,9 @@ func askHuman(args askArgs) (string, error) {
 				"options":   append([]string{}, args.Options...),
 				"artifacts": append([]string{}, refs...),
 				"hold_ms":   graceHold.Milliseconds(),
+				"key":       key,
 			}, env)
 		} else {
-			// Only reached after a 401 or a transport error: the ping exists,
-			// so re-poll it rather than raising a duplicate question.
 			res, err = callEngine("GET", "/api/runs/"+env["APOTHECARY_RUN_ID"]+"/pings/"+pingID, nil, env)
 		}
 		if err != nil {
@@ -125,7 +178,9 @@ func askHuman(args askArgs) (string, error) {
 			if time.Since(downSince) > unreachableLimit {
 				return "", fmt.Errorf("ask_human unavailable: %v", err)
 			}
-			time.Sleep(backoff)
+			if !sleep(backoff) {
+				return "", errCancelled
+			}
 			backoff = min(backoff*2, backoffCap)
 			continue
 		}
@@ -136,51 +191,25 @@ func askHuman(args askArgs) (string, error) {
 		case http.StatusUnauthorized:
 			// Engine restarted and rotated the run token; pick up the fresh one.
 			drain(res)
-			time.Sleep(pollInterval)
+			if !sleep(pollInterval) {
+				return "", errCancelled
+			}
 			env = readRunEnv()
 		case http.StatusOK:
-			var body struct {
-				Text      string   `json:"text"` // engine-composed answer
-				Answer    string   `json:"answer"`
-				Feedback  string   `json:"feedback"`
-				Artifacts []string `json:"artifacts"` // workspace paths of the human's attachments
-			}
-			err := json.NewDecoder(res.Body).Decode(&body)
-			res.Body.Close()
-			if err != nil {
-				return "", fmt.Errorf("ask_human failed: bad engine response: %v", err)
-			}
-			if body.Text != "" {
-				return body.Text, nil
-			}
-			// Fallback for an engine that predates the composed field: free-text
-			// answers arrive as answer:"text" + the text in feedback; option
-			// answers keep the chosen option in answer with an optional note in
-			// feedback (PLAN4 M16). "other" is the hardcoded escape hatch: the
-			// human rejected every offered option and the note IS their answer.
-			var answer string
-			switch {
-			case body.Answer == "text":
-				answer = body.Feedback
-			case body.Answer == "other":
-				answer = "other — none of the offered options fit; the human answered: " + body.Feedback
-			case body.Feedback != "":
-				answer = body.Answer + "\n(note: " + body.Feedback + ")"
-			default:
-				answer = body.Answer
-			}
-			if len(body.Artifacts) > 0 {
-				answer += "\n\nThe human attached these files — read them with your tools:\n- " + strings.Join(body.Artifacts, "\n- ")
-			}
-			return answer, nil
+			return decodeAnswer(res)
 		case http.StatusNoContent:
 			if id := res.Header.Get("X-Ping-Id"); id != "" {
 				pingID = id
 			}
 			drain(res)
-			// Nobody answered inside the grace period. Hand the turn back
-			// rather than holding a tool call the harness will kill anyway.
-			return postedNotice(pingID), nil
+			if pingID == "" {
+				return "", errors.New("ask_human failed: engine did not return the question's id")
+			}
+		case http.StatusGone:
+			drain(res)
+			// Parked: the engine is ending this turn and will deliver the
+			// answer when the session resumes.
+			return parkedNotice(pingID), nil
 		default:
 			text, _ := io.ReadAll(io.LimitReader(res.Body, 300))
 			res.Body.Close()
@@ -189,23 +218,53 @@ func askHuman(args askArgs) (string, error) {
 	}
 }
 
-// postedNotice is what the agent is told when the answer did not arrive in
-// time to be returned in-band. It has to be unambiguous about two things the
-// model gets wrong on its own: the question DID reach a human (this is not an
-// error to work around), and stopping now costs nothing (the engine resumes
-// this same session with the answer, with everything it has done so far
-// intact).
-func postedNotice(pingID string) string {
+func decodeAnswer(res *http.Response) (string, error) {
+	var body struct {
+		Text      string   `json:"text"` // engine-composed answer
+		Answer    string   `json:"answer"`
+		Feedback  string   `json:"feedback"`
+		Artifacts []string `json:"artifacts"` // workspace paths of the human's attachments
+	}
+	err := json.NewDecoder(res.Body).Decode(&body)
+	res.Body.Close()
+	if err != nil {
+		return "", fmt.Errorf("ask_human failed: bad engine response: %v", err)
+	}
+	if body.Text != "" {
+		return body.Text, nil
+	}
+	// Fallback for an engine that predates the composed field: free-text
+	// answers arrive as answer:"text" + the text in feedback; option answers
+	// keep the chosen option in answer with an optional note in feedback
+	// (PLAN4 M16). "other" is the hardcoded escape hatch: the human rejected
+	// every offered option and the note IS their answer.
+	var answer string
+	switch {
+	case body.Answer == "text":
+		answer = body.Feedback
+	case body.Answer == "other":
+		answer = "other — none of the offered options fit; the human answered: " + body.Feedback
+	case body.Feedback != "":
+		answer = body.Answer + "\n(note: " + body.Feedback + ")"
+	default:
+		answer = body.Answer
+	}
+	if len(body.Artifacts) > 0 {
+		answer += "\n\nThe human attached these files — read them with your tools:\n- " + strings.Join(body.Artifacts, "\n- ")
+	}
+	return answer, nil
+}
+
+// parkedNotice is returned in the rare race where the call outlives the park
+// (the engine cancels the turn, so normally nobody reads this).
+func parkedNotice(pingID string) string {
 	id := ""
 	if pingID != "" {
 		id = " (id " + pingID + ")"
 	}
-	return "Your question has been posted to the human" + id + " and is waiting for them.\n\n" +
-		"END YOUR TURN NOW. Do not guess an answer, do not pick one of your own options, " +
-		"and do not write any of your output files yet. Stop after this message with a one-line " +
-		"note that you are waiting.\n\n" +
-		"Their answer will arrive as your next message in this same session, with all your " +
-		"work so far still in place, and you continue from there."
+	return "Your question" + id + " is still waiting for the human, and this run has been parked " +
+		"until they answer. Stop here without guessing; their answer will arrive as your next " +
+		"message in this same session."
 }
 
 func drain(res *http.Response) {
@@ -220,11 +279,9 @@ var toolDef = map[string]any{
 	"description": "Ask the human operator a question and wait for their answer. Use when " +
 		"blocked: unclear requirements (type=clarification), an obstacle you " +
 		"cannot resolve (type=blocker), or an action needing approval " +
-		"(type=permission). The answer is returned as text when the human is " +
-		"reachable straight away; otherwise the tool returns a notice that the " +
-		"question is posted — when you see that, END YOUR TURN and the answer " +
-		"arrives as your next message in this same session. Either way you " +
-		"never have to guess. For closed " +
+		"(type=permission). The call waits until the human answers and returns " +
+		"their answer as text, so you never have to guess — do not work around " +
+		"a slow answer. For closed " +
 		"questions, pass options — the human picks exactly one (buttons in " +
 		"their UI) and you can branch on the returned option deterministically. " +
 		"The human ALWAYS also has an automatic 'other' escape hatch: if none " +
@@ -288,6 +345,38 @@ func replyErr(id json.RawMessage, code int, message string) {
 
 func runAskHuman() { serveMCP(os.Stdin) }
 
+// inflight tracks running tool calls by JSON-RPC id, so a cancellation can
+// stop the matching wait.
+type inflight struct {
+	mu sync.Mutex
+	m  map[string]chan struct{}
+}
+
+var calls = &inflight{m: map[string]chan struct{}{}}
+
+func (f *inflight) add(id string) chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ch := make(chan struct{})
+	f.m[id] = ch
+	return ch
+}
+
+func (f *inflight) remove(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.m, id)
+}
+
+func (f *inflight) cancel(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ch, ok := f.m[id]; ok {
+		close(ch)
+		delete(f.m, id)
+	}
+}
+
 // serveMCP handles line-delimited JSON-RPC from in until EOF; replies go
 // through send() (mcpOut).
 func serveMCP(in io.Reader) {
@@ -303,7 +392,14 @@ func serveMCP(in io.Reader) {
 			continue
 		}
 		if len(msg.ID) == 0 || string(msg.ID) == "null" {
-			continue // notification
+			if msg.Method == "notifications/cancelled" {
+				var c struct {
+					RequestID json.RawMessage `json:"requestId"`
+				}
+				_ = json.Unmarshal(msg.Params, &c)
+				calls.cancel(string(c.RequestID))
+			}
+			continue // other notifications need no action
 		}
 		switch msg.Method {
 		case "initialize":
@@ -325,16 +421,33 @@ func serveMCP(in io.Reader) {
 			var p struct {
 				Name      string  `json:"name"`
 				Arguments askArgs `json:"arguments"`
+				Meta      struct {
+					ProgressToken json.RawMessage `json:"progressToken"`
+				} `json:"_meta"`
 			}
 			_ = json.Unmarshal(msg.Params, &p)
 			if p.Name != "ask_human" {
 				replyErr(msg.ID, -32602, "unknown tool "+p.Name)
 				continue
 			}
-			// Concurrent calls allowed (parity with the async mjs handler);
-			// send() serializes the stdout frames.
-			go func(id json.RawMessage, args askArgs) {
-				answer, err := askHuman(args)
+			// Concurrent calls allowed; send() serializes the stdout frames.
+			done := calls.add(string(msg.ID))
+			go func(id json.RawMessage, args askArgs, token json.RawMessage) {
+				defer calls.remove(string(id))
+				var tick func()
+				if len(token) > 0 && string(token) != "null" {
+					n := 0
+					tick = func() {
+						n++
+						send(map[string]any{"jsonrpc": "2.0", "method": "notifications/progress",
+							"params": map[string]any{"progressToken": token, "progress": n,
+								"message": "waiting for the human to answer"}})
+					}
+				}
+				answer, err := askHuman(args, done, tick)
+				if errors.Is(err, errCancelled) {
+					return // the client gave up on this call; nothing is owed
+				}
 				if err != nil {
 					// Tool-level error string (§10), not a protocol error:
 					// the agent sees it and proceeds.
@@ -347,7 +460,7 @@ func serveMCP(in io.Reader) {
 				reply(id, map[string]any{
 					"content": []any{map[string]any{"type": "text", "text": answer}},
 				})
-			}(msg.ID, p.Arguments)
+			}(msg.ID, p.Arguments, p.Meta.ProgressToken)
 		case "ping":
 			reply(msg.ID, map[string]any{})
 		default:

@@ -167,6 +167,10 @@ type Adapter struct {
 	sibPortsMu sync.Mutex
 	sibPorts   map[ports.EnvID]map[int]string
 
+	// sidecarMu serializes sidecar starts, so two callers racing on a cold
+	// workspace start one (the shim's own singleton guard backs this up).
+	sidecarMu sync.Mutex
+
 	// runtimeMu guards runtimeOK, the "cfg.SandboxRuntime is registered with
 	// the daemon" check. Only SUCCESS is cached: a transient docker failure
 	// must not wedge the provisioner for the process's lifetime.

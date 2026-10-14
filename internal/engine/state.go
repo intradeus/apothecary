@@ -80,6 +80,15 @@ type runState struct {
 	// stage id: what re-entry has to collect answers for before resuming.
 	pausedAsks map[string][]string
 
+	// agentCursor is, per stage, the position in the agent's own event
+	// stream of the last transcript event recorded: after a restart, a turn
+	// still in flight is followed again from right there (Reattach).
+	agentCursor map[string]string
+	// pendingMsgs are human messages accepted but not yet handed to the
+	// agent (message_queued without message_delivered), oldest first. They
+	// ride into the next prompt.
+	pendingMsgs []*event.MessageQueued
+
 	done bool
 }
 
@@ -108,6 +117,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		raisedPings:   map[string]*event.PingRaised{},
 		answeredPings: map[string]*event.PingAnswered{},
 		pausedAsks:    map[string][]string{},
+		agentCursor:   map[string]string{},
 	}
 	raised := map[string]*event.PingRaised{}
 	for i := range evs {
@@ -238,6 +248,20 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			if fl != nil {
 				rs.pos = fl.Index(p.StageID)
 			}
+		case *event.AgentSession:
+			rs.sessions[p.StageID] = ports.SessionID(p.SessionID)
+		case *event.AgentMessage:
+			rs.noteCursor(p.StageID, p.Cursor)
+		case *event.AgentTool:
+			rs.noteCursor(p.StageID, p.Cursor)
+		case *event.AgentPlan:
+			rs.noteCursor(p.StageID, p.Cursor)
+		case *event.AgentNotice:
+			rs.noteCursor(p.StageID, p.Cursor)
+		case *event.MessageQueued:
+			rs.pendingMsgs = append(rs.pendingMsgs, p)
+		case *event.MessageDelivered:
+			rs.delivered(p.MessageIDs)
 		case *event.RunPaused, *event.RunUnpaused:
 			// View-level only: ph/pos/counters stay exactly as the stage
 			// events left them, so play re-enters like crash recovery.
@@ -267,4 +291,42 @@ func (rs *runState) openAgentPings() []*event.PingRaised {
 		}
 	}
 	return out
+}
+
+func (rs *runState) noteCursor(stageID, cursor string) {
+	if cursor != "" {
+		rs.agentCursor[stageID] = cursor
+	}
+}
+
+// delivered drops handed-over messages from the pending queue.
+func (rs *runState) delivered(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	gone := map[string]bool{}
+	for _, id := range ids {
+		gone[id] = true
+	}
+	kept := rs.pendingMsgs[:0]
+	for _, m := range rs.pendingMsgs {
+		if !gone[m.MessageID] {
+			kept = append(kept, m)
+		}
+	}
+	rs.pendingMsgs = kept
+}
+
+// anyStageStarted reports whether any of the flow's stages has run yet (the
+// provisioning log's pseudo-stage counter does not count).
+func (rs *runState) anyStageStarted() bool {
+	if rs.fl == nil {
+		return true
+	}
+	for i := range rs.fl.Stages {
+		if rs.iters[rs.fl.Stages[i].ID] > 0 {
+			return true
+		}
+	}
+	return false
 }
