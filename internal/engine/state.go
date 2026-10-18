@@ -61,7 +61,10 @@ type runState struct {
 	// edge decision; recovery routes it directly (runloop.routeAfterFail).
 	lastFailure *event.StageFailed
 
-	mr *ports.MRRef
+	// checkouts are the run's repositories (the primary first); mrs the
+	// merge requests opened so far, in creation order.
+	checkouts []event.Checkout
+	mrs       []mrRecord
 
 	// openPings are raised-but-unanswered pings to re-register on recovery.
 	openPings []*event.PingRaised
@@ -128,6 +131,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.RunCreated:
 			rs.branch = p.Branch
 			rs.sourceBranch = p.SourceBranch
+			rs.checkouts = checkoutsOf(p)
 		case *event.EnvReady:
 			rs.envID = ports.EnvID(p.EnvID)
 			rs.links = p.Links
@@ -226,10 +230,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			// must reconcile with the forge instead of re-running blind.
 			rs.actionPending[p.StageID] = true
 		case *event.MRCreated:
-			rs.mr = &ports.MRRef{IID: p.MRIID, URL: p.MRURL}
-			for id := range rs.actionPending {
-				delete(rs.actionPending, id)
-			}
+			rs.addMR(p)
+			// The action's intent is settled only once every merge request it
+			// publishes exists; a partial publication keeps reconciling.
 		case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
 			rs.done = true
 		case *event.RunResumed:
@@ -329,4 +332,84 @@ func (rs *runState) anyStageStarted() bool {
 		}
 	}
 	return false
+}
+
+// mrRecord is one merge request the run opened: which checkout and branch,
+// onto what, and the forge's handle.
+type mrRecord struct {
+	Repo   string
+	Branch string
+	Target string
+	Ref    ports.MRRef
+}
+
+// checkoutsOf is the run's checkout list: as recorded, or — for runs older
+// than multi-repo support — the one primary the event's flat fields describe.
+func checkoutsOf(p *event.RunCreated) []event.Checkout {
+	if len(p.Checkouts) > 0 {
+		return append([]event.Checkout(nil), p.Checkouts...)
+	}
+	return []event.Checkout{{Name: event.PrimaryCheckoutName, Dir: event.PrimaryCheckoutDir,
+		URL: p.RepoURL, Branch: p.Branch, Source: p.SourceBranch, Primary: true}}
+}
+
+func (rs *runState) checkout(name string) *event.Checkout {
+	if name == "" {
+		name = event.PrimaryCheckoutName
+	}
+	for i := range rs.checkouts {
+		if rs.checkouts[i].Name == name {
+			return &rs.checkouts[i]
+		}
+	}
+	return nil
+}
+
+// checkoutDirs lists every checkout's directory (primary first), for a
+// command that runs in each.
+func (rs *runState) checkoutDirs() []string {
+	dirs := make([]string, 0, len(rs.checkouts))
+	for _, c := range rs.checkouts {
+		dirs = append(dirs, c.Dir)
+	}
+	if len(dirs) == 0 {
+		dirs = []string{event.PrimaryCheckoutDir}
+	}
+	return dirs
+}
+
+func (rs *runState) addMR(p *event.MRCreated) {
+	repo := p.Repo
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	for i := range rs.mrs {
+		if rs.mrs[i].Repo == repo && rs.mrs[i].Branch == p.Branch {
+			rs.mrs[i].Ref = ports.MRRef{IID: p.MRIID, URL: p.MRURL}
+			rs.mrs[i].Target = p.Target
+			return
+		}
+	}
+	rs.mrs = append(rs.mrs, mrRecord{Repo: repo, Branch: p.Branch, Target: p.Target, Ref: ports.MRRef{IID: p.MRIID, URL: p.MRURL}})
+}
+
+func (rs *runState) mrFor(repo, branch string) *mrRecord {
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	for i := range rs.mrs {
+		if rs.mrs[i].Repo == repo && rs.mrs[i].Branch == branch {
+			return &rs.mrs[i]
+		}
+	}
+	return nil
+}
+
+// firstMR is the merge request a single-MR world would call "the" MR: the
+// first one opened (the primary repository's).
+func (rs *runState) firstMR() *ports.MRRef {
+	if len(rs.mrs) == 0 {
+		return nil
+	}
+	return &rs.mrs[0].Ref
 }

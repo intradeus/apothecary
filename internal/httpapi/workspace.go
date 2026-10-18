@@ -36,18 +36,31 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// workspace resolves the run's sidecar, answering the error itself.
-func (s *Server) workspace(w http.ResponseWriter, r *http.Request) (*sidecar.Client, string, bool) {
-	c, base, err := s.Engine.Workspace(r.Context(), r.PathValue("id"))
+// workspace resolves the run's sidecar and the checkout ?repo= names (the
+// primary when absent), answering the error itself.
+func (s *Server) workspace(w http.ResponseWriter, r *http.Request) (*sidecar.Client, engine.Checkout, bool) {
+	c, co, err := s.Engine.Workspace(r.Context(), r.PathValue("id"), r.URL.Query().Get("repo"))
 	if err != nil {
-		if errors.Is(err, engine.ErrNoSidecar) {
+		switch {
+		case errors.Is(err, engine.ErrNoSidecar):
 			writeErr(w, http.StatusServiceUnavailable, err.Error())
-		} else {
+		case errors.Is(err, engine.ErrNoSuchCheckout):
+			writeErr(w, http.StatusNotFound, err.Error())
+		default:
 			writeErr(w, http.StatusBadGateway, err.Error())
 		}
-		return nil, "", false
+		return nil, engine.Checkout{}, false
 	}
-	return c, base, true
+	return c, co, true
+}
+
+func (s *Server) getWorkspaceRepos(w http.ResponseWriter, r *http.Request) {
+	cos, err := s.Engine.Checkouts(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, cos)
 }
 
 // sidecarErr passes the sidecar's own client errors (bad path, not found)
@@ -62,11 +75,11 @@ func sidecarErr(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) getWorkspaceTree(w http.ResponseWriter, r *http.Request) {
-	c, _, ok := s.workspace(w, r)
+	c, co, ok := s.workspace(w, r)
 	if !ok {
 		return
 	}
-	ents, err := c.Tree(r.Context(), r.URL.Query().Get("path"))
+	ents, err := c.Tree(r.Context(), co.Name, r.URL.Query().Get("path"))
 	if err != nil {
 		sidecarErr(w, err)
 		return
@@ -78,11 +91,11 @@ func (s *Server) getWorkspaceTree(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWorkspaceFile(w http.ResponseWriter, r *http.Request) {
-	c, _, ok := s.workspace(w, r)
+	c, co, ok := s.workspace(w, r)
 	if !ok {
 		return
 	}
-	f, err := c.File(r.Context(), r.URL.Query().Get("path"))
+	f, err := c.File(r.Context(), co.Name, r.URL.Query().Get("path"))
 	if err != nil {
 		sidecarErr(w, err)
 		return
@@ -91,11 +104,11 @@ func (s *Server) getWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWorkspaceChanges(w http.ResponseWriter, r *http.Request) {
-	c, base, ok := s.workspace(w, r)
+	c, co, ok := s.workspace(w, r)
 	if !ok {
 		return
 	}
-	ch, err := c.Changes(r.Context(), base)
+	ch, err := c.Changes(r.Context(), co.Name, co.Base)
 	if err != nil {
 		sidecarErr(w, err)
 		return
@@ -104,11 +117,11 @@ func (s *Server) getWorkspaceChanges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
-	c, base, ok := s.workspace(w, r)
+	c, co, ok := s.workspace(w, r)
 	if !ok {
 		return
 	}
-	d, err := c.Diff(r.Context(), base, r.URL.Query().Get("path"))
+	d, err := c.Diff(r.Context(), co.Name, co.Base, r.URL.Query().Get("path"))
 	if err != nil {
 		sidecarErr(w, err)
 		return
@@ -120,9 +133,9 @@ func (s *Server) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 // proxied to the sidecar. Not in the route table: a protocol switch is not
 // something OpenAPI describes, and the generated client would not use it.
 func (s *Server) serveTerminal(w http.ResponseWriter, r *http.Request) {
-	c, _, ok := s.workspace(w, r)
+	c, co, ok := s.workspace(w, r)
 	if !ok {
 		return
 	}
-	c.TerminalProxy().ServeHTTP(w, r)
+	c.TerminalProxy(co.Name).ServeHTTP(w, r)
 }

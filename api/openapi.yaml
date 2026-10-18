@@ -209,6 +209,8 @@ components:
           type: string
         description:
           type: string
+        each_repo:
+          type: boolean
         for:
           type: string
         harness:
@@ -481,6 +483,21 @@ components:
           type: string
       required:
         - port
+        - url
+      type: object
+    ExtraRepo:
+      properties:
+        default_branch:
+          type: string
+        locator:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+      required:
+        - default_branch
+        - name
         - url
       type: object
     Field:
@@ -953,6 +970,10 @@ components:
           type: string
         repo:
           $ref: '#/components/schemas/RepoConfig'
+        repos:
+          items:
+            $ref: '#/components/schemas/ExtraRepo'
+          type: array
         updated_at:
           format: date-time
           type: string
@@ -993,6 +1014,10 @@ components:
           type: string
         repo:
           $ref: '#/components/schemas/RepoConfig'
+        repos:
+          items:
+            $ref: '#/components/schemas/ExtraRepo'
+          type: array
         workspace:
           $ref: '#/components/schemas/WorkspaceConfig'
       required:
@@ -1115,6 +1140,29 @@ components:
         source_branch:
           type: string
       type: object
+    RunCheckout:
+      properties:
+        branch:
+          type: string
+        dir:
+          type: string
+        locator:
+          type: string
+        name:
+          type: string
+        primary:
+          type: boolean
+        source:
+          type: string
+        url:
+          type: string
+      required:
+        - branch
+        - dir
+        - name
+        - source
+        - url
+      type: object
     RunDetail:
       properties:
         events:
@@ -1143,6 +1191,24 @@ components:
       required:
         - attachments
         - snapshots
+      type: object
+    RunMergeRequest:
+      properties:
+        branch:
+          type: string
+        iid:
+          type: integer
+        repo:
+          type: string
+        target:
+          type: string
+        url:
+          type: string
+      required:
+        - branch
+        - iid
+        - repo
+        - url
       type: object
     RunPorts:
       properties:
@@ -1183,6 +1249,10 @@ components:
           type: string
         branch_base:
           type: string
+        checkouts:
+          items:
+            $ref: '#/components/schemas/RunCheckout'
+          type: array
         created_at:
           format: date-time
           type: string
@@ -1198,6 +1268,10 @@ components:
           type: string
         mr_url:
           type: string
+        mrs:
+          items:
+            $ref: '#/components/schemas/RunMergeRequest'
+          type: array
         project_id:
           type: string
         run_goal:
@@ -4307,6 +4381,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: 'checkout name (default: the primary)'
+          in: query
+          name: repo
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -4326,7 +4405,7 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: The run's changes against the branch it forked from
+      summary: A checkout's changes against the branch it forked from
       tags:
         - workspace
   /api/runs/{id}/workspace/diff:
@@ -4336,6 +4415,11 @@ paths:
         - in: path
           name: id
           required: true
+          schema:
+            type: string
+        - description: 'checkout name (default: the primary)'
+          in: query
+          name: repo
           schema:
             type: string
         - description: repo-relative file
@@ -4362,7 +4446,7 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: One file's unified diff against the branch the run forked from
+      summary: One file's unified diff against the branch the checkout forked from
       tags:
         - workspace
   /api/runs/{id}/workspace/file:
@@ -4372,6 +4456,11 @@ paths:
         - in: path
           name: id
           required: true
+          schema:
+            type: string
+        - description: 'checkout name (default: the primary)'
+          in: query
+          name: repo
           schema:
             type: string
         - description: repo-relative file
@@ -4398,7 +4487,41 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: One file of the run's checkout
+      summary: One file of a run checkout
+      tags:
+        - workspace
+  /api/runs/{id}/workspace/repos:
+    get:
+      operationId: getWorkspaceRepos
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/RunCheckout'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The run's checkouts (one per repository)
       tags:
         - workspace
   /api/runs/{id}/workspace/tree:
@@ -4408,6 +4531,11 @@ paths:
         - in: path
           name: id
           required: true
+          schema:
+            type: string
+        - description: 'checkout name (default: the primary)'
+          in: query
+          name: repo
           schema:
             type: string
         - description: 'repo-relative directory (default: the root)'
@@ -4437,7 +4565,7 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: One directory level of the run's checkout
+      summary: One directory level of a run checkout
       tags:
         - workspace
   /api/settings:

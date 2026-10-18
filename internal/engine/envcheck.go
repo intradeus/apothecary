@@ -181,6 +181,7 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		Agents:       opts.Agents,
 		Setup:        res.Commands["setup"],
 		Timeout:      10 * time.Minute,
+		Extras:       envcheckExtras(res, branch),
 	}), "clone + seed auth + prepare + setup")
 
 	if verify, ok := res.Commands["verify"]; ok && verify != "" {
@@ -279,6 +280,16 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	mu.Lock()
 	defer mu.Unlock()
 	return failed, teardown
+}
+
+// envcheckExtras clones the project's extra repos too: a run would, and a
+// clone the token cannot reach is exactly what this check is for.
+func envcheckExtras(res *Resolution, branch string) []ExtraCheckout {
+	var out []ExtraCheckout
+	for _, x := range res.ExtraRepos {
+		out = append(out, ExtraCheckout{Name: x.Name, Dir: "repos/" + x.Name, URL: x.URL, Branch: branch, Source: x.DefaultBranch})
+	}
+	return out
 }
 
 // destroyEnv removes a check's workspace on a context of its own: a

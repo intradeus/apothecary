@@ -51,7 +51,13 @@ type View struct {
 	BranchBase          string   `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
 	SourceBranch        string   `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
 	MRURL               string   `json:"mr_url,omitempty"`
-	EnvID               string   `json:"env_id,omitempty"`
+	// MRs are every merge request the run opened (a multi-repo run has one
+	// per changed repo; a stacked change one per layer), in creation order;
+	// MRURL is the first. Checkouts are the run's repositories. Neither is a
+	// read-model column: they are reduced from events on the detail path.
+	MRs       []MRView         `json:"mrs,omitempty"`
+	Checkouts []event.Checkout `json:"checkouts,omitempty"`
+	EnvID     string           `json:"env_id,omitempty"`
 	// EnvStatus is the reconciled LIVE container status (running/starting/
 	// stopped/absent) — NOT a projected column and never set by Apply. The
 	// read path fills it from the engine's reconciler so the workspace badge
@@ -69,6 +75,15 @@ type View struct {
 	Dormant   bool      `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// MRView is one merge request as the run page shows it.
+type MRView struct {
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+	Target string `json:"target,omitempty"`
+	URL    string `json:"url"`
+	IID    int    `json:"iid"`
 }
 
 // Reduce projects a run's ordered event slice into its read-model row.
@@ -101,6 +116,12 @@ func Apply(v *View, e *event.Event) {
 		v.Branch = p.Branch
 		v.BranchBase = p.BranchBase
 		v.SourceBranch = p.SourceBranch
+		if len(p.Checkouts) > 0 {
+			v.Checkouts = append([]event.Checkout(nil), p.Checkouts...)
+		} else {
+			v.Checkouts = []event.Checkout{{Name: event.PrimaryCheckoutName, Dir: event.PrimaryCheckoutDir,
+				URL: p.RepoURL, Branch: p.Branch, Source: p.SourceBranch, Primary: true}}
+		}
 		v.CreatedAt = e.TS
 	case *event.EnvRequested:
 		v.State = Provisioning
@@ -125,7 +146,21 @@ func Apply(v *View, e *event.Event) {
 			v.State = Running
 		}
 	case *event.MRCreated:
-		v.MRURL = p.MRURL
+		repo := p.Repo
+		if repo == "" {
+			repo = event.PrimaryCheckoutName
+		}
+		replaced := false
+		for i := range v.MRs {
+			if v.MRs[i].Repo == repo && v.MRs[i].Branch == p.Branch {
+				v.MRs[i] = MRView{Repo: repo, Branch: p.Branch, Target: p.Target, URL: p.MRURL, IID: p.MRIID}
+				replaced = true
+			}
+		}
+		if !replaced {
+			v.MRs = append(v.MRs, MRView{Repo: repo, Branch: p.Branch, Target: p.Target, URL: p.MRURL, IID: p.MRIID})
+		}
+		v.MRURL = v.MRs[0].URL
 	case *event.RunCompleted:
 		v.State = Completed
 	case *event.RunAbandoned:

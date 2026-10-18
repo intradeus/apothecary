@@ -89,6 +89,7 @@ type DocStage struct {
 	Output      *DocIO   `yaml:"output" json:"output,omitempty"`
 	Run         string   `yaml:"run" json:"run,omitempty"`
 	RunRef      string   `yaml:"run_ref" json:"run_ref,omitempty"`
+	EachRepo    bool     `yaml:"each_repo" json:"each_repo,omitempty"`
 	Question    string   `yaml:"question" json:"question,omitempty"`
 	AutoApprove string   `yaml:"auto_approve" json:"auto_approve,omitempty"`
 	AutoReject  string   `yaml:"auto_reject" json:"auto_reject,omitempty"`
@@ -722,6 +723,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"output", raw.Output != nil, []StageType{StageAgent, StageCommand}},
 		{"run", raw.Run != "", []StageType{StageCommand}},
 		{"run_ref", raw.RunRef != "", []StageType{StageCommand}},
+		{"each_repo", raw.EachRepo, []StageType{StageCommand}},
 		{"question", raw.Question != "", []StageType{StageHumanGate}},
 		{"auto_approve", raw.AutoApprove != "", []StageType{StageHumanGate}},
 		{"auto_reject", raw.AutoReject != "", []StageType{StageHumanGate}},
@@ -793,7 +795,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		if raw.RunRef != "" && !slugRe.MatchString(raw.RunRef) {
 			return fail("run_ref %q is not a slug (key into project.commands)", raw.RunRef)
 		}
-		s.Run, s.RunRef = raw.Run, raw.RunRef
+		s.Run, s.RunRef, s.EachRepo = raw.Run, raw.RunRef, raw.EachRepo
 		if raw.Timeout != "" {
 			t, err := time.ParseDuration(raw.Timeout)
 			if err != nil || t <= 0 {

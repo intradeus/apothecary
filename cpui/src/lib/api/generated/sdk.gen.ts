@@ -155,6 +155,9 @@ import type {
 	GetWorkspaceLogData,
 	GetWorkspaceLogErrors,
 	GetWorkspaceLogResponses,
+	GetWorkspaceReposData,
+	GetWorkspaceReposErrors,
+	GetWorkspaceReposResponses,
 	GetWorkspaceTreeData,
 	GetWorkspaceTreeErrors,
 	GetWorkspaceTreeResponses,
@@ -1267,7 +1270,7 @@ export const getWorkspaceLog = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * The run's changes against the branch it forked from
+ * A checkout's changes against the branch it forked from
  *
  * Committed and uncommitted, measured from the merge base with the source branch.
  */
@@ -1281,7 +1284,7 @@ export const getWorkspaceChanges = <ThrowOnError extends boolean = false>(
 	>({ url: '/api/runs/{id}/workspace/changes', ...options });
 
 /**
- * One file's unified diff against the branch the run forked from
+ * One file's unified diff against the branch the checkout forked from
  */
 export const getWorkspaceDiff = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceDiffData, ThrowOnError>
@@ -1292,7 +1295,7 @@ export const getWorkspaceDiff = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One file of the run's checkout
+ * One file of a run checkout
  */
 export const getWorkspaceFile = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceFileData, ThrowOnError>
@@ -1303,7 +1306,17 @@ export const getWorkspaceFile = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One directory level of the run's checkout
+ * The run's checkouts (one per repository)
+ */
+export const getWorkspaceRepos = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkspaceReposData, ThrowOnError>
+): RequestResult<GetWorkspaceReposResponses, GetWorkspaceReposErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetWorkspaceReposResponses, GetWorkspaceReposErrors, ThrowOnError>(
+		{ url: '/api/runs/{id}/workspace/repos', ...options }
+	);
+
+/**
+ * One directory level of a run checkout
  */
 export const getWorkspaceTree = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceTreeData, ThrowOnError>

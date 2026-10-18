@@ -591,13 +591,16 @@ type Forge interface {
 	// CheckAccess verifies token validity, project reachability and scopes (§1 preflight).
 	CheckAccess(ctx context.Context, repo RepoRef) error
 	FileExists(ctx context.Context, repo RepoRef, path string) (bool, error)
-	CreateDraftMR(ctx context.Context, repo RepoRef, branch, title, body string) (MRRef, error)
-	// FindMR locates an already-open merge request for the run's branch.
+	// CreateDraftMR opens a draft merge request from branch onto target
+	// (empty target = the repo's default branch). A stacked change is MRs
+	// whose targets chain: each layer onto the one below.
+	CreateDraftMR(ctx context.Context, repo RepoRef, branch, target, title, body string) (MRRef, error)
+	// FindMR locates an already-open merge request from branch onto target.
 	// The engine reconciles with it after a crash between creating an MR on
 	// the forge and recording it (PLAN5 M20): the branch is unique per run,
 	// so it is a natural idempotency key and needs no stored token. ok=false
 	// means "no such MR", which is distinct from an error.
-	FindMR(ctx context.Context, repo RepoRef, branch string) (ref MRRef, ok bool, err error)
+	FindMR(ctx context.Context, repo RepoRef, branch, target string) (ref MRRef, ok bool, err error)
 	MRState(ctx context.Context, mr MRRef) (MRState, error)
 }
 

@@ -536,3 +536,38 @@ func TestSidecarSilentFailureBecomesAnError(t *testing.T) {
 		t.Fatalf("normal turn_end = %+v", end)
 	}
 }
+
+// ?repo= addresses one of a multi-repo run's extra checkouts; anything the
+// workspace does not have, or a name that is not a checkout name, is refused.
+func TestSidecarRepoSelector(t *testing.T) {
+	primary := gitInit(t)
+	extra := gitInit(t)
+	repos := t.TempDir()
+	if err := os.Symlink(extra, filepath.Join(repos, "api")); err != nil {
+		t.Fatal(err)
+	}
+	evl := newEventLog()
+	sc := &sidecar{repo: primary, repos: repos, log: evl, agent: newAgentHost(evl)}
+	srv := httptest.NewServer(sc.routes())
+	defer srv.Close()
+	ts := &testSidecar{t: t, srv: srv, sc: sc}
+
+	var tree []treeEntry
+	if code := ts.get("/fs/tree?repo=api", &tree); code != 200 || len(tree) == 0 {
+		t.Fatalf("extra tree = %d %v", code, tree)
+	}
+	var ch changesResp
+	if code := ts.get("/git/changes?repo=api&base=main", &ch); code != 200 || ch.Branch != "work" {
+		t.Errorf("extra changes = %d %+v", code, ch)
+	}
+	var e map[string]string
+	for _, bad := range []string{"nope", "../etc", "Api"} {
+		if code := ts.get("/fs/tree?repo="+bad, &e); code != 404 {
+			t.Errorf("repo %q = %d, want 404", bad, code)
+		}
+	}
+	// "" and "repo" are the primary.
+	if code := ts.get("/fs/tree?repo=repo", &tree); code != 200 {
+		t.Errorf("primary by name = %d", code)
+	}
+}

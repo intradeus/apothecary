@@ -243,8 +243,10 @@ stages:
       on_reject: abort }
   # A failing commit (git identity, hooks) is not something a rerun fixes —
   # hand it straight to a human, then re-run the commit itself.
-  - { id: commit,     type: command,
-      run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi",
+  # each_repo: a multi-repo project commits (and below, pushes) in every
+  # checkout; the message file lives in the primary, so it is addressed there.
+  - { id: commit,     type: command, each_repo: true,
+      run: "git add -A && if ! git diff --cached --quiet; then git commit -F \"$HOME/repo/artifacts/commit.md\"; fi",
       input: { message: artifacts/commit.md },
       on_success: test,
       on_fail: { to: debug_commit, max: -1 } }
@@ -281,7 +283,8 @@ stages:
       question: "Writing the merge request description failed. Inspect the workspace, then approve to retry (reject aborts).",
       on_success: redact,
       on_reject: abort }
-  - { id: push,       type: command, run: "git push -u origin HEAD",
+  - { id: push,       type: command, each_repo: true,
+      run: "git push -u origin HEAD",
       on_success: mr,
       on_fail: { to: push, max: 1, then: { to: debug_push, max: -1 } } }
   - { id: debug_push, type: human_gate, input: { workspace: $WORKSPACE },

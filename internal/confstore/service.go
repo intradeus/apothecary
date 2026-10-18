@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -241,6 +242,29 @@ func (s *Service) DeleteProject(ctx context.Context, id string) error {
 	return s.db.DeleteProject(ctx, id)
 }
 
+// repoNameRe is the shape of an extra repo's name: it is a directory name
+// under ~/repos and a token in flows and prompts.
+var repoNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// RepoNameFromURL derives a checkout name from a repo URL: the last path
+// segment, without .git, lowercased, with anything unusual folded to '-'.
+func RepoNameFromURL(u string) string {
+	u = strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(u), "/"), ".git")
+	if i := strings.LastIndexAny(u, "/:"); i >= 0 {
+		u = u[i+1:]
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(u) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return invalidf("project: name is required")
@@ -253,6 +277,28 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	}
 	if p.Repo.AgentsMDPath == "" {
 		p.Repo.AgentsMDPath = "AGENTS.md"
+	}
+	seen := map[string]bool{"repo": true} // the primary's own checkout dir
+	for i := range p.Repos {
+		r := &p.Repos[i]
+		r.URL = strings.TrimSpace(r.URL)
+		if r.URL == "" {
+			return invalidf("project: repos[%d]: url is required", i)
+		}
+		if r.Name == "" {
+			r.Name = RepoNameFromURL(r.URL)
+		}
+		if !repoNameRe.MatchString(r.Name) {
+			return invalidf("project: repos[%d]: name %q must be a slug (lowercase letters, digits, - and _)", i, r.Name)
+		}
+		if seen[r.Name] {
+			return invalidf("project: repos[%d]: name %q is already used by another repository", i, r.Name)
+		}
+		seen[r.Name] = true
+		if r.DefaultBranch == "" {
+			r.DefaultBranch = "main"
+		}
+		r.Locator = strings.TrimSpace(r.Locator)
 	}
 	if p.Commands == nil {
 		p.Commands = map[string]string{}

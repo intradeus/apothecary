@@ -962,6 +962,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 		Branch:              branch,
 		BranchBase:          base,
 		SourceBranch:        sourceBranch,
+		Checkouts:           runCheckouts(res, branch, sourceBranch),
 		ProjectID:           projectID,
 		TicketID:            t.TicketID,
 		TicketAttachmentIDs: t.TicketAttachmentIDs,
@@ -979,6 +980,19 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	e.scheduleLocked(lim)
 	e.mu.Unlock()
 	return runID, nil
+}
+
+// runCheckouts is what a new run checks out: the primary on the branch it
+// forks from, and every extra repo on the same branch name forked from its
+// own default branch.
+func runCheckouts(res *Resolution, branch, sourceBranch string) []event.Checkout {
+	out := []event.Checkout{{Name: event.PrimaryCheckoutName, Dir: event.PrimaryCheckoutDir,
+		URL: res.RepoRef.URL, Locator: res.RepoRef.Locator, Branch: branch, Source: sourceBranch, Primary: true}}
+	for _, x := range res.ExtraRepos {
+		out = append(out, event.Checkout{Name: x.Name, Dir: "repos/" + x.Name,
+			URL: x.URL, Locator: x.Locator, Branch: branch, Source: x.DefaultBranch})
+	}
+	return out
 }
 
 // ErrEnvCapacity refuses new tickets at the §14 environment cap (HTTP 409).
@@ -1239,6 +1253,13 @@ func hasDevcontainer(ctx context.Context, res *Resolution) (bool, error) {
 func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) error {
 	if err := res.Forge.CheckAccess(ctx, res.RepoRef); err != nil {
 		return fmt.Errorf("preflight: forge access: %w", err)
+	}
+	for _, x := range res.ExtraRepos {
+		if f := res.Forges[x.Name]; f != nil {
+			if err := f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator}); err != nil {
+				return fmt.Errorf("preflight: forge access to repo %s: %w", x.Name, err)
+			}
+		}
 	}
 	// AGENTS.md stays a repo file (it describes the repo); agents themselves
 	// live in the project's library since v3 — the .apothecary/agents/ repo
@@ -2267,6 +2288,12 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	fl, err := e.flows.Get(ctx, res.ProjectID, res.DefaultFlow)
 	steps = append(steps, step("flow:"+res.DefaultFlow, err))
 	steps = append(steps, step("forge_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
+	for _, x := range res.ExtraRepos {
+		if f := res.Forges[x.Name]; f != nil {
+			steps = append(steps, step("forge_access:"+x.Name,
+				f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})))
+		}
+	}
 	ok, ferr := res.Forge.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
 	if ferr == nil && !ok {
 		ferr = fmt.Errorf("%s not found in repo", res.AgentsMDPath)

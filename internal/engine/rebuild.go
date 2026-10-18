@@ -124,6 +124,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		Agents:       fl.AgentSpecs(),
 		Setup:        res.Commands["setup"],
 		Timeout:      fl.Defaults.Timeout,
+		Extras:       viewExtras(v),
 	}); berr != nil {
 		err = fmt.Errorf("rebuild %s: bootstrap: %w", runID, berr)
 		return e.finishRebuild(ctx, runID, v.EnvID, err)
@@ -156,4 +157,16 @@ func (e *Engine) finishRebuild(ctx context.Context, runID, envID string, opErr e
 		return opErr
 	}
 	return e.appendAndEmit(ctx, runID, &event.EnvRebuildCompleted{EnvID: envID})
+}
+
+// viewExtras is a run's extra checkouts as the view records them.
+func viewExtras(v run.View) []ExtraCheckout {
+	var out []ExtraCheckout
+	for _, co := range v.Checkouts {
+		if co.Primary {
+			continue
+		}
+		out = append(out, ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source})
+	}
+	return out
 }

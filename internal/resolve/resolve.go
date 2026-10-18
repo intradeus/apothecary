@@ -101,6 +101,22 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	if err != nil {
 		return nil, unresolvable(fmt.Errorf("forge %s: %v", forgeInt.Name, err))
 	}
+	// Extra repos ride the same forge account; each one with a locator gets
+	// its own bound port (that is what opens its merge requests). One
+	// without is context only: cloned, never published.
+	var extras []engine.ExtraRepo
+	forges := map[string]ports.Forge{}
+	for _, x := range p.Repos {
+		extras = append(extras, engine.ExtraRepo{Name: x.Name, URL: x.URL, Locator: x.Locator, DefaultBranch: x.DefaultBranch})
+		if x.Locator == "" {
+			continue
+		}
+		f, err := forgeKind.Forge(kindConfig(forgeInt), ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})
+		if err != nil {
+			return nil, unresolvable(fmt.Errorf("forge %s, repo %s: %v", forgeInt.Name, x.Name, err))
+		}
+		forges[x.Name] = f
+	}
 
 	// Provisioner: cached + refcounted (see package comment).
 	provInt, err := r.integration(ctx, p.ProvisionerID, confstore.PortProvisioner)
@@ -224,6 +240,8 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			WordWrap:       p.Workspace.Editor.WordWrap,
 			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
+		ExtraRepos:   extras,
+		Forges:       forges,
 		HarnessKind:  defaultKind,
 		HarnessKinds: kindList,
 		Models: func(ctx context.Context, kind string) ([]string, error) {
@@ -433,6 +451,11 @@ func egressDomains(p confstore.Project, contributions ...[]string) []string {
 	set := map[string]bool{}
 	if u, err := url.Parse(p.Repo.URL); err == nil && u.Hostname() != "" {
 		set[u.Hostname()] = true
+	}
+	for _, x := range p.Repos {
+		if u, err := url.Parse(x.URL); err == nil && u.Hostname() != "" {
+			set[u.Hostname()] = true
+		}
 	}
 	for _, list := range contributions {
 		for _, d := range list {

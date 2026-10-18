@@ -49,6 +49,8 @@
 		tab = t;
 		history.replaceState(history.state, '', `#${t}`);
 	}
+	// Which checkout the workspace views show (multi-repo runs); '' = primary.
+	let repo = $state('');
 	// The workspace views need a live container behind them.
 	const hasWorkspace = $derived(
 		run !== null && !!run.envId && run.state !== 'archived' && run.envStatus !== 'absent'
@@ -677,7 +679,10 @@
 					cls: p.approve ? 'ok' : 'warn'
 				};
 			case 'mr_created':
-				return { text: `merge request created: ${p.mr_url}`, cls: 'ok' };
+				return {
+					text: `merge request created: ${p.mr_url}${p.target ? ` (${p.branch} → ${p.target})` : ''}`,
+					cls: 'ok'
+				};
 			case 'run_completed':
 				return {
 					text: `run completed — ${fmtCost(p.total_cost_usd)} · ${p.total_turns} turns · ${p.unwanted_pings} unwanted pings`,
@@ -742,7 +747,18 @@
 				</button>
 			{/if}
 		{/each}
-		{#if run.mrUrl}<a href={run.mrUrl} target="_blank" rel="noreferrer">merge request ↗</a>{/if}
+		{#if run.mrs.length > 1}
+			{#each run.mrs as mr, i (mr.branch)}
+				<a
+					href={mr.url}
+					target="_blank"
+					rel="noreferrer"
+					title={`${mr.repo !== 'repo' ? mr.repo + ': ' : ''}${mr.branch}${mr.target ? ' → ' + mr.target : ''}`}
+					>MR {i + 1}/{run.mrs.length} ↗</a
+				>
+			{/each}
+		{:else if run.mrUrl}<a href={run.mrUrl} target="_blank" rel="noreferrer">merge request ↗</a
+			>{/if}
 		{#if run.envId}
 			<button
 				class="linklike"
@@ -1132,14 +1148,24 @@
 				{/if}
 			{/each}
 		</div>
+		{#if hasWorkspace && run.checkouts.length > 1 && tab !== 'chat' && tab !== 'timeline'}
+			<div class="row small" style="margin:-4px 0 10px">
+				<label for="ws-repo" class="muted" style="margin:0">Repository</label>
+				<select id="ws-repo" bind:value={repo} style="width:auto">
+					{#each run.checkouts as c (c.name)}
+						<option value={c.primary ? '' : c.name}>{c.name}{c.primary ? ' (primary)' : ''}</option>
+					{/each}
+				</select>
+			</div>
+		{/if}
 		{#if tab === 'chat'}
 			<Chat {runId} {events} {live} active={!terminal} />
 		{:else if tab === 'changes' && hasWorkspace}
-			<Changes {runId} active={!terminal} />
+			{#key repo}<Changes {runId} {repo} active={!terminal} />{/key}
 		{:else if tab === 'files' && hasWorkspace}
-			<Files {runId} />
+			{#key repo}<Files {runId} {repo} />{/key}
 		{:else if tab === 'terminal' && hasWorkspace}
-			<Terminal {runId} />
+			{#key repo}<Terminal {runId} {repo} />{/key}
 		{:else if tab !== 'timeline'}
 			<div class="muted small">This run has no live workspace to show.</div>
 		{/if}

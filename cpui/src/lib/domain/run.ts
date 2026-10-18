@@ -47,10 +47,37 @@ export interface Run {
 	/** The branch this run forked off from (origin/<sourceBranch>). */
 	sourceBranch?: string;
 	mrUrl?: string;
+	/** Every merge request the run opened, in review order: one per changed
+	 *  repo of a multi-repo task, one per layer of a stacked change. mrUrl is
+	 *  the first. */
+	mrs: RunMergeRequest[];
+	/** The run's repositories, the primary first. */
+	checkouts: RunCheckout[];
 	envId?: string;
 	envStatus?: EnvStatus;
 	createdAt: string;
 	updatedAt: string;
+}
+
+export interface RunMergeRequest {
+	/** Checkout name ("repo" = the primary). */
+	repo: string;
+	branch: string;
+	/** The branch it merges into: the source branch, or the layer below. */
+	target?: string;
+	url: string;
+	iid: number;
+}
+
+export interface RunCheckout {
+	name: string;
+	/** Relative to the workspace home: "repo", "repos/<name>". */
+	dir: string;
+	url: string;
+	branch: string;
+	/** The branch it forked from (what its changes are measured against). */
+	source: string;
+	primary: boolean;
 }
 
 /** One entry in a run's event log. Payloads stay open: the timeline renders

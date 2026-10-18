@@ -2,7 +2,7 @@
 	// Project wizard/editor (DESIGN2 §11): connect forge → pick repo →
 	// commands → adapter picks → workspace → default flow.
 	import { api } from '$lib/api';
-	import type { Flow, Integration, Project, ProjectDraft, Repo } from '$lib/domain';
+	import type { ExtraRepo, Flow, Integration, Project, ProjectDraft, Repo } from '$lib/domain';
 
 	let {
 		integrations,
@@ -135,6 +135,24 @@
 	// Flows are user-defined — no built-in fallback exists.
 	let defaultFlow = $state(init?.defaultFlow ?? flowNames[0] ?? '');
 
+	// Additional repositories (multi-repo tasks): cloned beside the primary,
+	// each published as its own merge request when a run changes it.
+	let extraRepos = $state<ExtraRepo[]>(init?.repos?.map((r) => ({ ...r })) ?? []);
+	function addExtra(r?: Repo) {
+		extraRepos = [
+			...extraRepos,
+			{
+				name: r ? (r.name.split('/').pop() ?? r.name).toLowerCase() : '',
+				url: r?.url ?? '',
+				locator: r?.locator ?? '',
+				defaultBranch: r?.defaultBranch || 'main'
+			}
+		];
+	}
+	function removeExtra(i: number) {
+		extraRepos = extraRepos.filter((_, j) => j !== i);
+	}
+
 	// Repo picker.
 	let repos = $state<Repo[] | null>(null);
 	let loadingRepos = $state(false);
@@ -183,6 +201,12 @@
 					defaultBranch: defaultBranch.trim(),
 					agentsMdPath: agentsMD.trim()
 				},
+				repos: extraRepos.map((r) => ({
+					name: r.name.trim(),
+					url: r.url.trim(),
+					locator: r.locator?.trim() || undefined,
+					defaultBranch: r.defaultBranch.trim() || 'main'
+				})),
 				commands,
 				workspace: {
 					egressMode,
@@ -248,6 +272,17 @@
 							<tr class="click" onclick={() => pickRepo(r)}>
 								<td>{r.name}</td>
 								<td class="mono muted small">{r.defaultBranch}</td>
+								<td>
+									<button
+										type="button"
+										class="small"
+										title="Add as an additional repository of this project"
+										onclick={(e) => {
+											e.stopPropagation();
+											addExtra(r);
+										}}>+ extra</button
+									>
+								</td>
 							</tr>
 						{:else}
 							<tr><td class="muted">No repositories visible to this token.</td></tr>
@@ -277,6 +312,51 @@
 				<input id="p-agentsmd" bind:value={agentsMD} />
 			</div>
 		</div>
+
+		<label for="extra-0-name" style="margin-top:14px"
+			>Additional repositories
+			<span class="muted"
+				>— multi-repo tasks: cloned beside the primary as <code>~/repos/&lt;name&gt;</code>,
+				branched like it, and each gets its own merge request when a run changes it. Leave the
+				locator empty for a repository the agent should only read.</span
+			></label
+		>
+		{#each extraRepos as r, i (i)}
+			<div class="row" style="margin-bottom:6px; align-items:flex-end">
+				<div style="flex:0 0 120px">
+					<input
+						id={`extra-${i}-name`}
+						class="mono"
+						bind:value={r.name}
+						placeholder="name"
+						aria-label="checkout name"
+						required
+					/>
+				</div>
+				<div style="flex:2">
+					<input
+						bind:value={r.url}
+						placeholder="https://gitlab.com/group/api.git"
+						aria-label="repo url"
+						required
+					/>
+				</div>
+				<div style="flex:0 0 110px">
+					<input class="mono" bind:value={r.locator} placeholder="locator" aria-label="locator" />
+				</div>
+				<div style="flex:0 0 110px">
+					<input bind:value={r.defaultBranch} placeholder="main" aria-label="default branch" />
+				</div>
+				<button type="button" class="small" onclick={() => removeExtra(i)} title="Remove">✕</button>
+			</div>
+		{/each}
+		<button type="button" class="small" onclick={() => addExtra()}>+ Add repository</button>
+		{#if extraRepos.length}
+			<p class="small muted" style="margin:6px 0 0">
+				The primary repository above supplies the devcontainer; its image must carry the toolchains
+				the extra repositories need.
+			</p>
+		{/if}
 	</div>
 
 	<div class="card">

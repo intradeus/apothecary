@@ -283,6 +283,9 @@ var typeNameOverrides = map[string]string{
 	"sidecar.ChangedFile":      "WorkspaceChangedFile",
 	"sidecar.Commit":           "WorkspaceCommit",
 	"sidecar.FileDiff":         "WorkspaceDiff",
+	"event.Checkout":           "RunCheckout",
+	"run.MRView":               "RunMergeRequest",
+	"confstore.ExtraRepo":      "ExtraRepo",
 }
 
 func (n *typeNamer) name(t reflect.Type) string {

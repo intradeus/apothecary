@@ -127,7 +127,7 @@ func TestFileExistsFileAndDirectory(t *testing.T) {
 func TestCreateDraftMRPrefixesTitle(t *testing.T) {
 	ts, calls := glStub(t)
 	a, repo := testAdapter(ts)
-	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x-add-login", "Add login", "body text")
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x-add-login", "", "Add login", "body text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestCreateDraftMRReturnsExistingOnConflict(t *testing.T) {
 	t.Cleanup(ts.Close)
 	a, repo := testAdapter(ts)
 
-	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x-add-login", "Add login", "body")
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x-add-login", "", "Add login", "body")
 	if err != nil {
 		t.Fatalf("conflict must not error: %v", err)
 	}

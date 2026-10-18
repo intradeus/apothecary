@@ -1,0 +1,232 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/event"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
+)
+
+// fakeGit is enough of git for the engine's publish stages: branches
+// pointing at commits, a parent chain, a remote holding what was pushed, and
+// the handful of commands the engine issues — parsed from the scripts it
+// sends through the fake provisioner. One per checkout dir.
+type fakeGit struct {
+	mu       sync.Mutex
+	branches map[string]string
+	parents  map[string]string
+	remote   map[string]string
+	head     string
+	n        int
+	// noChanges: the commit command finds nothing to commit (an untouched
+	// extra repo).
+	noChanges bool
+	pushes    []string
+}
+
+func newFakeGit(source string) *fakeGit {
+	g := &fakeGit{branches: map[string]string{}, parents: map[string]string{}, remote: map[string]string{}}
+	g.parents["c0"] = ""
+	g.remote[source] = "c0"
+	return g
+}
+
+func unq(s string) string { return strings.Trim(s, `'"`) }
+
+func (g *fakeGit) resolve(ref string) string {
+	ref = unq(ref)
+	if strings.HasPrefix(ref, "origin/") {
+		return g.remote[strings.TrimPrefix(ref, "origin/")]
+	}
+	if ref == "HEAD" {
+		return g.branches[g.head]
+	}
+	if tip, ok := g.branches[ref]; ok {
+		return tip
+	}
+	if _, ok := g.parents[ref]; ok {
+		return ref
+	}
+	return ""
+}
+
+func (g *fakeGit) commit(parent string) string {
+	g.n++
+	id := fmt.Sprintf("c%d", g.n)
+	g.parents[id] = parent
+	return id
+}
+
+// chain lists the commits of tip down to (excluding) base, oldest first.
+func (g *fakeGit) chain(tip, base string) []string {
+	var out []string
+	for c := tip; c != "" && c != base; c = g.parents[c] {
+		out = append([]string{c}, out...)
+	}
+	return out
+}
+
+func (g *fakeGit) exec(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s := strings.TrimSpace(cmd.Script)
+	f := strings.Fields(s)
+	ok := func(out string) (ports.ExecResult, error) { return ports.ExecResult{ExitCode: 0, Output: out}, nil }
+	fail := func(out string) (ports.ExecResult, error) { return ports.ExecResult{ExitCode: 1, Output: out}, nil }
+	switch {
+	case strings.HasPrefix(s, "git switch "):
+		// bootstrap: git switch "b" 2>/dev/null || git switch -c "b" origin/src
+		b := unq(f[2])
+		if _, exists := g.branches[b]; !exists {
+			if i := strings.Index(s, "origin/"); i >= 0 {
+				g.branches[b] = g.resolve(strings.Fields(s[i:])[0])
+			} else {
+				return fail("fatal: invalid reference: " + b)
+			}
+		}
+		g.head = b
+		return ok("")
+	case strings.HasPrefix(s, "git rev-list --count "):
+		a, b, _ := strings.Cut(unq(f[3]), "..")
+		return ok(fmt.Sprintf("%d\n", len(g.chain(g.resolve(b), g.resolve(a)))))
+	case strings.HasPrefix(s, "git push -u origin HEAD"):
+		g.remote[g.head] = g.branches[g.head]
+		g.pushes = append(g.pushes, g.head+"->"+g.branches[g.head])
+		return ok("")
+	case strings.HasPrefix(s, "git diff --name-status"):
+		return ok("M\tfile.go\n")
+	case strings.HasPrefix(s, "git add -A"):
+		if g.noChanges {
+			return ok("")
+		}
+		g.branches[g.head] = g.commit(g.branches[g.head])
+		return ok("")
+	}
+	return ok("")
+}
+
+// gitPerDir routes the fake provisioner's exec by checkout dir.
+func gitPerDir(gits map[string]*fakeGit) func(*fake.Env, ports.Command) (ports.ExecResult, error) {
+	return func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if g, ok := gits[cmd.Dir]; ok {
+			return g.exec(env, cmd)
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+}
+
+const multiRepoFlowDoc = `name: multi
+version: 3
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: builder
+    prompt: build it
+  - name: redactor
+    prompt: describe it
+    outputs:
+      - { name: mr, path: artifacts/mr.md }
+stages:
+  - { id: build, type: agent, agent: builder, on_success: commit }
+  - { id: commit, type: command, each_repo: true, run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi", on_success: push }
+  - { id: push, type: command, each_repo: true, run: "git push -u origin HEAD", on_success: redact }
+  - { id: redact, type: agent, agent: redactor, on_success: mr }
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: final_gate }
+  - { id: final_gate, type: human_gate, input: { mr: $MR_URL }, auto_approve: mr_merged, auto_reject: mr_closed, on_success: done, on_reject: abort }
+`
+
+// A project with extra repositories: every checkout is cloned and branched,
+// each_repo commands run in each, and a merge request opens for each repo
+// the run changed — on that repo's forge, onto that repo's default branch.
+func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
+	h := newHarness(t, mustFlow(t, multiRepoFlowDoc))
+	apiForge := &fake.Forge{}
+	h.res.ExtraRepos = []ExtraRepo{
+		{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"},
+		{Name: "docs", URL: "https://gitlab.local/g/docs.git", Locator: "3", DefaultBranch: "main"},
+		{Name: "vendor", URL: "https://gitlab.local/g/vendor.git", DefaultBranch: "main"}, // context only
+	}
+	h.res.Forges = map[string]ports.Forge{"api": apiForge, "docs": &fake.Forge{}}
+	gits := map[string]*fakeGit{"repo": newFakeGit("main"), "repos/api": newFakeGit("develop"),
+		"repos/docs": newFakeGit("main"), "repos/vendor": newFakeGit("main")}
+	gits["repos/docs"].noChanges = true // the run touched nothing there
+	h.envp.ExecFunc = gitPerDir(gits)
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		if call.Spec.Agent == "redactor" {
+			h.writeFile(t, call.Env, "artifacts/mr.md", "# Across repos\n")
+		}
+		if call.Spec.Agent == "builder" && !strings.Contains(call.In.Prompt, "# REPOSITORIES") {
+			t.Errorf("builder prompt lacks the repositories section:\n%s", call.In.Prompt)
+		}
+		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "multi", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := h.waitPing(t, PingGate)
+
+	// Bootstrap cloned and branched every extra beside the primary.
+	var cloned, committed []string
+	for _, c := range h.envp.ExecCalls {
+		if strings.Contains(c.Cmd.Script, "git clone") && strings.Contains(c.Cmd.Script, "repos/") {
+			cloned = append(cloned, c.Cmd.Script[strings.Index(c.Cmd.Script, "repos/"):])
+		}
+		if strings.HasPrefix(c.Cmd.Script, "git add -A") {
+			committed = append(committed, c.Cmd.Dir)
+		}
+	}
+	if len(cloned) != 3 {
+		t.Errorf("extra clones = %v", cloned)
+	}
+	if strings.Join(committed, " ") != "repo repos/api repos/docs repos/vendor" {
+		t.Errorf("each_repo commit ran in %v", committed)
+	}
+	v := h.view(t, runID)
+	if len(v.Checkouts) != 4 || v.Checkouts[1].Dir != "repos/api" || v.Checkouts[1].Source != "develop" {
+		t.Errorf("checkouts = %+v", v.Checkouts)
+	}
+	// One MR for the primary (onto main), one for api (onto develop, on
+	// api's own forge); none for docs (unchanged) or vendor (no locator).
+	primary, api := h.forge.SnapshotMRs(), apiForge.SnapshotMRs()
+	if len(primary) != 1 || primary[0].Target != "main" || len(api) != 1 || api[0].Target != "develop" {
+		t.Fatalf("MRs: primary %+v api %+v; failures: %s", primary, api, failures(h.events(t, runID)))
+	}
+	if len(v.MRs) != 2 || v.MRs[1].Repo != "api" {
+		t.Errorf("view MRs = %+v", v.MRs)
+	}
+	if !strings.Contains(gate.Context, "api: ") {
+		t.Errorf("gate context = %q", gate.Context)
+	}
+	// Done only when BOTH merged.
+	h.forge.SetMRState(primary[0].Ref.IID, ports.MRMerged)
+	time.Sleep(30 * time.Millisecond)
+	if st := h.view(t, runID).State; st != run.WaitingOnHuman {
+		t.Fatalf("state after one merge = %s", st)
+	}
+	apiForge.SetMRState(api[0].Ref.IID, ports.MRMerged)
+	h.e.Wait(runID)
+	if st := h.view(t, runID).State; st != run.Completed {
+		t.Errorf("final state = %s", st)
+	}
+}
+
+// failures renders every stage_failed for a diagnostic.
+func failures(evs []event.Event) string {
+	var out []string
+	for _, e := range evs {
+		if f, ok := e.Payload.(*event.StageFailed); ok {
+			out = append(out, f.StageID+": "+f.Reason+": "+f.Error)
+		}
+		if f, ok := e.Payload.(*event.RunAbandoned); ok {
+			out = append(out, "abandoned: "+f.Reason)
+		}
+	}
+	return strings.Join(out, " | ")
+}

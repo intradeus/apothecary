@@ -225,8 +225,10 @@ type projectBody struct {
 	ProvisionerID string `json:"provisioner_id"`
 	// HarnessIDs is the project's set of available harness integrations (no
 	// default — the flow names the harness kind).
-	HarnessIDs  []string                  `json:"harness_ids"`
-	Repo        confstore.RepoConfig      `json:"repo"`
+	HarnessIDs []string             `json:"harness_ids"`
+	Repo       confstore.RepoConfig `json:"repo"`
+	// Repos are the additional repositories of a multi-repo project.
+	Repos       []confstore.ExtraRepo     `json:"repos,omitempty"`
 	Commands    map[string]string         `json:"commands"`
 	Workspace   confstore.WorkspaceConfig `json:"workspace"`
 	DefaultFlow string                    `json:"default_flow"`
@@ -235,7 +237,7 @@ type projectBody struct {
 func (b projectBody) toProject() confstore.Project {
 	return confstore.Project{
 		Name: b.Name, ForgeID: b.ForgeID, ProvisionerID: b.ProvisionerID,
-		HarnessIDs: b.HarnessIDs, Repo: b.Repo,
+		HarnessIDs: b.HarnessIDs, Repo: b.Repo, Repos: b.Repos,
 		Commands: b.Commands, Workspace: b.Workspace, DefaultFlow: b.DefaultFlow,
 	}
 }

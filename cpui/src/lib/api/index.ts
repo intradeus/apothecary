@@ -55,6 +55,7 @@ import type {
 	UploadLimits,
 	FileDiff,
 	LiveDelta,
+	RunCheckout,
 	WorkspaceChanges,
 	WorkspaceEntry,
 	WorkspaceFile
@@ -100,6 +101,12 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 		default_branch: p.repo.defaultBranch,
 		agents_md_path: p.repo.agentsMdPath
 	},
+	repos: (p.repos ?? []).map((r) => ({
+		name: r.name,
+		url: r.url,
+		locator: r.locator ?? '',
+		default_branch: r.defaultBranch
+	})),
 	commands: p.commands,
 	workspace: {
 		extra_domains: p.workspace.extraDomains,
@@ -219,32 +226,50 @@ export const runs = {
 
 // --- workspace (files, changes, terminal) -------------------------------------
 
+// Every workspace call takes repo: the checkout of a multi-repo run ('' =
+// the primary).
 export const workspace = {
+	/** The run's checkouts, the primary first. */
+	repos: async (runId: string): Promise<RunCheckout[]> =>
+		many(await unwrap(gen.getWorkspaceRepos({ path: { id: runId } })), (c) => ({
+			name: c.name,
+			dir: c.dir,
+			url: c.url,
+			branch: c.branch,
+			source: c.source,
+			primary: c.primary ?? false
+		})),
+
 	/** One directory level of the checkout; '' is the root. */
-	tree: async (runId: string, path = ''): Promise<WorkspaceEntry[]> =>
+	tree: async (runId: string, path = '', repo = ''): Promise<WorkspaceEntry[]> =>
 		many(
-			await unwrap(gen.getWorkspaceTree({ path: { id: runId }, query: { path } })),
+			await unwrap(gen.getWorkspaceTree({ path: { id: runId }, query: { path, repo } })),
 			map.toWorkspaceEntry
 		),
 
-	file: async (runId: string, path: string): Promise<WorkspaceFile> =>
+	file: async (runId: string, path: string, repo = ''): Promise<WorkspaceFile> =>
 		map.toWorkspaceFile(
-			await unwrap(gen.getWorkspaceFile({ path: { id: runId }, query: { path } }))
+			await unwrap(gen.getWorkspaceFile({ path: { id: runId }, query: { path, repo } }))
 		),
 
-	/** The run's changes against the branch it forked from. */
-	changes: async (runId: string): Promise<WorkspaceChanges> =>
-		map.toWorkspaceChanges(await unwrap(gen.getWorkspaceChanges({ path: { id: runId } }))),
+	/** A checkout's changes against the branch it forked from. */
+	changes: async (runId: string, repo = ''): Promise<WorkspaceChanges> =>
+		map.toWorkspaceChanges(
+			await unwrap(gen.getWorkspaceChanges({ path: { id: runId }, query: { repo } }))
+		),
 
-	diff: async (runId: string, path: string): Promise<FileDiff> =>
-		map.toFileDiff(await unwrap(gen.getWorkspaceDiff({ path: { id: runId }, query: { path } }))),
+	diff: async (runId: string, path: string, repo = ''): Promise<FileDiff> =>
+		map.toFileDiff(
+			await unwrap(gen.getWorkspaceDiff({ path: { id: runId }, query: { path, repo } }))
+		),
 
 	/** WebSocket URL of a terminal in the workspace (binary frames are
 	 *  keystrokes/output; a JSON text frame {type:'resize',cols,rows} resizes).
 	 *  Not in the generated client: a protocol switch is not an OpenAPI call. */
-	terminalUrl: (runId: string, cols: number, rows: number): string => {
+	terminalUrl: (runId: string, cols: number, rows: number, repo = ''): string => {
 		const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-		return `${proto}//${location.host}/api/runs/${runId}/terminal?cols=${cols}&rows=${rows}`;
+		const q = new URLSearchParams({ cols: String(cols), rows: String(rows), repo });
+		return `${proto}//${location.host}/api/runs/${runId}/terminal?${q}`;
 	}
 };
 

@@ -391,6 +391,7 @@ type MR struct {
 	Ref    ports.MRRef
 	Repo   ports.RepoRef
 	Branch string
+	Target string
 	Title  string
 	Body   string
 	State  ports.MRState
@@ -423,32 +424,49 @@ func (f *Forge) FileExists(_ context.Context, _ ports.RepoRef, path string) (boo
 	return !f.MissingFiles[path], nil
 }
 
-func (f *Forge) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, title, body string) (ports.MRRef, error) {
+func (f *Forge) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.CreateErr != nil {
 		return ports.MRRef{}, f.CreateErr
 	}
+	if target == "" {
+		target = repo.DefaultBranch
+	}
 	f.nextID++
 	ref := ports.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
-	f.MRs = append(f.MRs, &MR{Ref: ref, Repo: repo, Branch: branch, Title: title, Body: body, State: ports.MROpen})
+	f.MRs = append(f.MRs, &MR{Ref: ref, Repo: repo, Branch: branch, Target: target, Title: title, Body: body, State: ports.MROpen})
 	return ref, nil
 }
 
 // FindMR reports the open MR for a branch, as the reconciliation path needs
 // after a crash between creating one and recording it.
-func (f *Forge) FindMR(_ context.Context, _ ports.RepoRef, branch string) (ports.MRRef, bool, error) {
+func (f *Forge) FindMR(_ context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.FindErr != nil {
 		return ports.MRRef{}, false, f.FindErr
 	}
+	if target == "" {
+		target = repo.DefaultBranch
+	}
 	for _, mr := range f.MRs {
-		if mr.Branch == branch && mr.State == ports.MROpen {
+		if mr.Branch == branch && mr.State == ports.MROpen && (mr.Target == target || mr.Target == "") {
 			return mr.Ref, true, nil
 		}
 	}
 	return ports.MRRef{}, false, nil
+}
+
+// SnapshotMRs returns a locked copy of the merge requests opened so far.
+func (f *Forge) SnapshotMRs() []MR {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]MR, 0, len(f.MRs))
+	for _, mr := range f.MRs {
+		out = append(out, *mr)
+	}
+	return out
 }
 
 func (f *Forge) MRState(_ context.Context, mr ports.MRRef) (ports.MRState, error) {

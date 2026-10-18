@@ -111,7 +111,7 @@ func TestForge(t *testing.T) {
 		t.Error("missing file reported present")
 	}
 
-	ref, err := f.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/x", "Title", "body")
+	ref, err := f.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/x", "", "Title", "body")
 	if err != nil || ref.IID != 1 || ref.URL == "" {
 		t.Fatalf("create MR = %+v, %v", ref, err)
 	}

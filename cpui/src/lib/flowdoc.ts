@@ -97,6 +97,9 @@ export interface DocStage {
 	output?: StageIO;
 	run?: string;
 	run_ref?: string;
+	/** command: run once per checkout of a multi-repo run instead of once in
+	 *  the primary (what git commit / push want). */
+	each_repo?: boolean;
 	/** human_gate: the free text the human is asked. */
 	question?: string;
 	/** human_gate: signals that answer the gate on the human's behalf. */
@@ -280,6 +283,7 @@ export function docToYaml(doc: FlowDoc): string {
 		if (nonEmptyIO(s.output)) o.output = s.output;
 		if (s.run) o.run = s.run;
 		if (s.run_ref) o.run_ref = s.run_ref;
+		if (s.each_repo) o.each_repo = true;
 		if (s.question) o.question = s.question;
 		if (s.auto_approve) o.auto_approve = s.auto_approve;
 		if (s.auto_reject) o.auto_reject = s.auto_reject;

@@ -105,6 +105,7 @@ export type DocStage = {
 	auto_approve?: string;
 	auto_reject?: string;
 	description?: string;
+	each_repo?: boolean;
 	for?: string;
 	harness?: string;
 	id: string;
@@ -224,6 +225,13 @@ export type ExposePortRequest = {
 
 export type ExposedPort = {
 	port: number;
+	url: string;
+};
+
+export type ExtraRepo = {
+	default_branch: string;
+	locator?: string;
+	name: string;
 	url: string;
 };
 
@@ -443,6 +451,7 @@ export type Project = {
 	name: string;
 	provisioner_id: string;
 	repo: RepoConfig;
+	repos?: Array<ExtraRepo>;
 	updated_at: string;
 	workspace: WorkspaceConfig;
 };
@@ -457,6 +466,7 @@ export type ProjectRequest = {
 	name: string;
 	provisioner_id: string;
 	repo: RepoConfig;
+	repos?: Array<ExtraRepo>;
 	workspace: WorkspaceConfig;
 };
 
@@ -507,6 +517,16 @@ export type RestartRunRequest = {
 	source_branch?: string;
 };
 
+export type RunCheckout = {
+	branch: string;
+	dir: string;
+	locator?: string;
+	name: string;
+	primary?: boolean;
+	source: string;
+	url: string;
+};
+
 export type RunDetail = {
 	events: Array<Event> | null;
 	run: RunView;
@@ -515,6 +535,14 @@ export type RunDetail = {
 export type RunFiles = {
 	attachments: Array<Attachment> | null;
 	snapshots: Array<Snapshot> | null;
+};
+
+export type RunMergeRequest = {
+	branch: string;
+	iid: number;
+	repo: string;
+	target?: string;
+	url: string;
 };
 
 export type RunPorts = {
@@ -533,6 +561,7 @@ export type RunResources = {
 export type RunView = {
 	branch?: string;
 	branch_base?: string;
+	checkouts?: Array<RunCheckout>;
 	created_at: string;
 	current_stage?: string;
 	env_id?: string;
@@ -540,6 +569,7 @@ export type RunView = {
 	flow_hash: string;
 	flow_name: string;
 	mr_url?: string;
+	mrs?: Array<RunMergeRequest>;
 	project_id?: string;
 	run_goal?: string;
 	run_id: string;
@@ -3384,7 +3414,12 @@ export type GetWorkspaceChangesData = {
 	path: {
 		id: string;
 	};
-	query?: never;
+	query?: {
+		/**
+		 * checkout name (default: the primary)
+		 */
+		repo?: string;
+	};
 	url: '/api/runs/{id}/workspace/changes';
 };
 
@@ -3419,6 +3454,10 @@ export type GetWorkspaceDiffData = {
 		id: string;
 	};
 	query?: {
+		/**
+		 * checkout name (default: the primary)
+		 */
+		repo?: string;
 		/**
 		 * repo-relative file
 		 */
@@ -3458,6 +3497,10 @@ export type GetWorkspaceFileData = {
 	};
 	query?: {
 		/**
+		 * checkout name (default: the primary)
+		 */
+		repo?: string;
+		/**
 		 * repo-relative file
 		 */
 		path?: string;
@@ -3489,12 +3532,50 @@ export type GetWorkspaceFileResponses = {
 
 export type GetWorkspaceFileResponse = GetWorkspaceFileResponses[keyof GetWorkspaceFileResponses];
 
+export type GetWorkspaceReposData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/workspace/repos';
+};
+
+export type GetWorkspaceReposErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkspaceReposResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<RunCheckout> | null;
+};
+
+export type GetWorkspaceReposResponse =
+	GetWorkspaceReposResponses[keyof GetWorkspaceReposResponses];
+
 export type GetWorkspaceTreeData = {
 	body?: never;
 	path: {
 		id: string;
 	};
 	query?: {
+		/**
+		 * checkout name (default: the primary)
+		 */
+		repo?: string;
 		/**
 		 * repo-relative directory (default: the root)
 		 */

@@ -769,7 +769,6 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		verdict = v
 	}
-
 	completed := &event.StageCompleted{
 		StageID:    st.ID,
 		DurationMS: x.e.clock().Sub(started).Milliseconds(),
@@ -1259,9 +1258,31 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	if timeout == 0 {
 		timeout = rs.fl.Defaults.Timeout
 	}
-	cctx, cancel := context.WithTimeout(x.ctx, timeout)
-	res, err := x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: "repo", Timeout: timeout})
-	cancel()
+	// Once in the primary, or — each_repo — once per checkout, stopping at
+	// the first failure. Each checkout gets the full timeout.
+	dirs := []string{event.PrimaryCheckoutDir}
+	if st.EachRepo {
+		dirs = rs.checkoutDirs()
+	}
+	var res ports.ExecResult
+	var err error
+	var combined strings.Builder
+	for _, dir := range dirs {
+		cctx, cancel := context.WithTimeout(x.ctx, timeout)
+		res, err = x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: dir, Timeout: timeout})
+		cancel()
+		if err != nil {
+			break
+		}
+		if len(dirs) > 1 {
+			fmt.Fprintf(&combined, "=== %s ===\n", dir)
+		}
+		combined.WriteString(res.Output)
+		if res.ExitCode != 0 {
+			break
+		}
+	}
+	res.Output = combined.String()
 	if err != nil {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
@@ -1411,13 +1432,17 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		p = &Ping{
 			ID: x.e.newID(), RunID: rs.runID, Type: PingGate,
 			Question: gateQuestion(st, rs.view.TicketTitle),
-			Files:    files, Link: link, StageID: st.ID, RaisedAt: x.e.clock(),
+			// A gate over several merge requests lists them all; the link
+			// stays the first (the primary repository's).
+			Context: x.mrListMarkdown(),
+			Files:   files, Link: link, StageID: st.ID, RaisedAt: x.e.clock(),
 			gate: true, done: make(chan struct{}),
 		}
 		x.e.mu.Lock()
 		x.e.pings[p.ID] = p
 		x.e.mu.Unlock()
-		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Files: p.Files, Link: p.Link, StageID: st.ID}); err != nil {
+		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
+			Files: p.Files, Link: p.Link, StageID: st.ID}); err != nil {
 			return err
 		}
 		// The plan a human approves is the single most important document in
@@ -1566,29 +1591,48 @@ func (x *exec) signalPoller(st *flow.Stage, slug string) func() (bool, error) {
 	default:
 		return nil
 	}
-	if rs.mr == nil {
+	if len(rs.mrs) == 0 {
 		return nil // nothing to watch: no MR has been opened
 	}
 	fails := 0
+	// A run with several merge requests (a stack, a multi-repo change) is
+	// merged when ALL of them are, and closed as soon as ANY is closed
+	// unmerged — someone decided against part of it.
 	return func() (bool, error) {
-		state, serr := x.res.Forge.MRState(x.ctx, *rs.mr)
-		if serr != nil {
-			if x.ctx.Err() != nil {
-				return false, context.Cause(x.ctx)
+		allMerged, anyClosed := true, false
+		for _, mr := range rs.mrs {
+			forge := x.res.forgeFor(mr.Repo)
+			if forge == nil {
+				continue
 			}
-			fails++
-			x.e.log.Warn("signal poll failed", "run", rs.runID, "signal", slug, "attempt", fails, "err", serr)
-			if fails == signalFailNotify {
-				x.e.notify(x.bg, ports.Notification{
-					RunID: rs.runID, Type: event.PingBlocker,
-					Title: fmt.Sprintf("cannot read %s (%d failed polls): %s", slug, fails, rs.view.TicketTitle),
-					Body:  serr.Error() + " — detection is blind until this recovers.",
-				})
+			state, serr := forge.MRState(x.ctx, mr.Ref)
+			if serr != nil {
+				if x.ctx.Err() != nil {
+					return false, context.Cause(x.ctx)
+				}
+				fails++
+				x.e.log.Warn("signal poll failed", "run", rs.runID, "signal", slug, "attempt", fails, "err", serr)
+				if fails == signalFailNotify {
+					x.e.notify(x.bg, ports.Notification{
+						RunID: rs.runID, Type: event.PingBlocker,
+						Title: fmt.Sprintf("cannot read %s (%d failed polls): %s", slug, fails, rs.view.TicketTitle),
+						Body:  serr.Error() + " — detection is blind until this recovers.",
+					})
+				}
+				return false, nil
 			}
-			return false, nil
+			if state != ports.MRMerged {
+				allMerged = false
+			}
+			if state == ports.MRClosed {
+				anyClosed = true
+			}
 		}
 		fails = 0
-		return state == want, nil
+		if want == ports.MRMerged {
+			return allMerged, nil
+		}
+		return anyClosed, nil
 	}
 }
 
@@ -1625,11 +1669,14 @@ func (x *exec) stageAction(st *flow.Stage) error {
 	}
 	started := x.e.clock()
 
+	// Executors report routed=true when they already decided where the run
+	// goes next (an on_fail or on_next edge, a terminal failure); otherwise
+	// the stage completes and follows on_success.
+	var routed bool
+	var err error
 	switch st.Action {
 	case actionspec.CreateMR:
-		if err := x.actionCreateMR(st); err != nil || rs.done {
-			return err
-		}
+		routed, err = x.actionCreateMR(st)
 	default:
 		// Unreachable: the parser validates the slug against the registry.
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,
@@ -1638,102 +1685,15 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		}
 		return x.fail(fmt.Sprintf("stage %s: action %q has no executor", st.ID, st.Action))
 	}
+	if err != nil || rs.done || routed {
+		return err
+	}
 
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
 	x.advance(st)
 	return nil
-}
-
-// actionCreateMR opens the run's draft merge request. Idempotent via rs.mr,
-// rehydrated from the mr_created event on replay: re-entering after a crash
-// never opens a second MR.
-//
-// The narrow window the event alone cannot cover is a crash BETWEEN the forge
-// call returning and mr_created being appended — the MR exists, the run has
-// no record of it, and re-running would open a duplicate. The action_started
-// intent marker makes that window visible, and reconcileMR closes it by
-// asking the forge what the run's branch already has (PLAN5 M20).
-func (x *exec) actionCreateMR(st *flow.Stage) error {
-	rs := x.rs
-	if rs.mr != nil {
-		return nil
-	}
-	if rs.actionPending[st.ID] {
-		done, err := x.reconcileMR(st)
-		if err != nil || done {
-			return err
-		}
-	}
-	bodyPath := ""
-	if in := st.Input("body"); in != nil {
-		bodyPath = in.Value
-	}
-	body, err := x.res.Envp.ReadFile(x.ctx, rs.envID, bodyPath)
-	if err != nil {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
-			Error: fmt.Sprintf("MR body %s not readable: %v", bodyPath, err)}); aerr != nil {
-			return aerr
-		}
-		return x.abandon(st.ID, "", fmt.Sprintf("MR body artifact %s missing", bodyPath))
-	}
-	title := mrTitle(string(body), rs.view.TicketTitle)
-	// Record the intent BEFORE the effect: if the process dies past this
-	// point the next boot knows an MR may exist and reconciles instead of
-	// creating a second one.
-	if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
-		return err
-	}
-	rs.actionPending[st.ID] = true
-	ref, err := x.res.Forge.CreateDraftMR(x.ctx, x.res.RepoRef, rs.branch, title, string(body))
-	if err != nil {
-		if x.ctx.Err() != nil {
-			return context.Cause(x.ctx)
-		}
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra, Error: err.Error()}); aerr != nil {
-			return aerr
-		}
-		return x.fail("forge MR creation failed: " + err.Error())
-	}
-	rs.mr = &ref
-	delete(rs.actionPending, st.ID)
-	// mr_created is what makes the $MR_URL sentinel and auto_complete polling
-	// work downstream, and what makes this action idempotent.
-	return x.append(&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: rs.branch})
-}
-
-// reconcileMR asks the forge whether the effect this run intended already
-// landed, after a crash in the record-the-effect window. The run's branch is
-// unique per run (factory/<run-id>-…), so it IS the idempotency key — no
-// token needs storing. Reports done=true when an existing MR was adopted.
-//
-// A reconciliation that cannot reach the forge is NOT treated as "no MR":
-// creating a duplicate is worse than failing the stage, which a human can
-// retry once the forge answers again.
-func (x *exec) reconcileMR(st *flow.Stage) (bool, error) {
-	rs := x.rs
-	ref, found, err := x.res.Forge.FindMR(x.ctx, x.res.RepoRef, rs.branch)
-	if err != nil {
-		if x.ctx.Err() != nil {
-			return false, context.Cause(x.ctx)
-		}
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,
-			Error: fmt.Sprintf("cannot tell whether the merge request was already created: %v", err)}); aerr != nil {
-			return false, aerr
-		}
-		return true, x.fail("merge request reconciliation failed: " + err.Error())
-	}
-	if !found {
-		// The crash landed before the forge saw anything: create normally.
-		delete(rs.actionPending, st.ID)
-		return false, nil
-	}
-	x.e.log.Info("adopted an existing merge request after an interrupted create",
-		"run", rs.runID, "stage", st.ID, "mr", ref.URL)
-	rs.mr = &ref
-	delete(rs.actionPending, st.ID)
-	return true, x.append(&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: rs.branch})
 }
 
 // --- wait stages ------------------------------------------------------------
@@ -2078,6 +2038,7 @@ func (x *exec) reseedSecrets(id ports.EnvID) error {
 		GitUser:     res.GitUser,
 		GitPass:     res.GitPass,
 		SeedAuth:    res.SeedAuth,
+		Extras:      x.extraCheckouts(),
 	})
 }
 
@@ -2101,6 +2062,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		Agents:       x.rs.fl.AgentSpecs(),
 		Setup:        res.Commands["setup"], // optional in v2: "" skips step 6
 		Timeout:      x.rs.fl.Defaults.Timeout,
+		Extras:       x.extraCheckouts(),
 	})
 	if err != nil {
 		if x.ctx.Err() != nil {

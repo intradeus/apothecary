@@ -10,6 +10,7 @@ export interface Project {
 	 *  harness kind). One integration per kind. */
 	harnessIds: string[];
 	repo: ProjectRepo;
+	repos: ExtraRepo[];
 	commands: Record<string, string>;
 	workspace: WorkspacePolicy;
 	defaultFlow: string;
@@ -22,6 +23,17 @@ export interface ProjectRepo {
 	locator: string;
 	defaultBranch: string;
 	agentsMdPath: string;
+}
+
+/** An additional repository of a multi-repo project: cloned beside the
+ *  primary as ~/repos/<name>, branched like it, and published as its own
+ *  merge request when a run changes it. Without a locator it is context
+ *  only (cloned, never published). */
+export interface ExtraRepo {
+	name: string;
+	url: string;
+	locator?: string;
+	defaultBranch: string;
 }
 
 export interface WorkspacePolicy {

@@ -5,7 +5,7 @@
 	import { api } from '$lib/api';
 	import '@xterm/xterm/css/xterm.css';
 
-	let { runId }: { runId: string } = $props();
+	let { runId, repo = '' }: { runId: string; repo?: string } = $props();
 
 	let host = $state<HTMLDivElement | null>(null);
 	let status = $state<'connecting' | 'open' | 'closed'>('connecting');
@@ -41,7 +41,7 @@
 			const enc = new TextEncoder();
 			const connect = () => {
 				status = 'connecting';
-				ws = new WebSocket(api.workspace.terminalUrl(runId, term.cols, term.rows));
+				ws = new WebSocket(api.workspace.terminalUrl(runId, term.cols, term.rows, repo));
 				ws.binaryType = 'arraybuffer';
 				ws.onopen = () => {
 					status = 'open';

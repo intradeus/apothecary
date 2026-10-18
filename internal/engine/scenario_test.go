@@ -1030,7 +1030,7 @@ stages:
 	ctx := context.Background()
 
 	// The MR exists on the forge and merged during the "downtime".
-	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-ac", "T", "body")
+	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-ac", "", "T", "body")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2520,7 +2520,7 @@ stages:
 	ctx := context.Background()
 
 	// The MR the interrupted attempt already opened on the forge.
-	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-rec", "T", "body")
+	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-rec", "", "T", "body")
 	if err != nil {
 		t.Fatal(err)
 	}

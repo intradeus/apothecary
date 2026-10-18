@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
@@ -184,21 +185,25 @@ func (s *Server) routes() []Route {
 			Summary: "Send a message to the run's running agent",
 			Doc:     "Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it.",
 			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/repos", ID: "getWorkspaceRepos", Tag: tagWorkspace,
+			Summary: "The run's checkouts (one per repository)",
+			Handler: s.getWorkspaceRepos, Returns: []event.Checkout{}},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/tree", ID: "getWorkspaceTree", Tag: tagWorkspace,
-			Summary: "One directory level of the run's checkout",
-			Query:   []Param{{Name: "path", Doc: "repo-relative directory (default: the root)"}},
+			Summary: "One directory level of a run checkout",
+			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}, {Name: "path", Doc: "repo-relative directory (default: the root)"}},
 			Handler: s.getWorkspaceTree, Returns: []sidecar.TreeEntry{}},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/file", ID: "getWorkspaceFile", Tag: tagWorkspace,
-			Summary: "One file of the run's checkout",
-			Query:   []Param{{Name: "path", Doc: "repo-relative file"}},
+			Summary: "One file of a run checkout",
+			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}, {Name: "path", Doc: "repo-relative file"}},
 			Handler: s.getWorkspaceFile, Returns: sidecar.File{}},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/changes", ID: "getWorkspaceChanges", Tag: tagWorkspace,
-			Summary: "The run's changes against the branch it forked from",
+			Summary: "A checkout's changes against the branch it forked from",
 			Doc:     "Committed and uncommitted, measured from the merge base with the source branch.",
+			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}},
 			Handler: s.getWorkspaceChanges, Returns: sidecar.Changes{}},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/diff", ID: "getWorkspaceDiff", Tag: tagWorkspace,
-			Summary: "One file's unified diff against the branch the run forked from",
-			Query:   []Param{{Name: "path", Doc: "repo-relative file"}},
+			Summary: "One file's unified diff against the branch the checkout forked from",
+			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}, {Name: "path", Doc: "repo-relative file"}},
 			Handler: s.getWorkspaceDiff, Returns: sidecar.FileDiff{}},
 		{Method: "GET", Path: "/api/runs/{id}/resources", ID: "getRunResources", Tag: tagWorkspace,
 			Summary: "Rolling window of workspace cpu/memory/network samples",

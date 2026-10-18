@@ -20,6 +20,9 @@ package main
 //	GET  /git/diff        one file's unified diff (?base=&path=)
 //	GET  /term            WebSocket terminal (PTY) in the repo
 //
+// Every workspace route takes ?repo=<name> to address one of a multi-repo
+// run's additional checkouts (~/repos/<name>); absent = the primary.
+//
 // The agent process lives as long as the sidecar does, which is as long as
 // the container: an engine restart neither kills a turn in flight nor loses
 // its events.
@@ -37,6 +40,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,21 +48,51 @@ import (
 )
 
 type sidecar struct {
-	repo  string
+	repo string
+	// repos holds a multi-repo run's additional checkouts (~/repos/<name>);
+	// a request's ?repo= names one of them, "" or "repo" the primary.
+	repos string
 	log   *eventLog
 	agent *agentHost
 }
+
+// errNoSuchRepo: ?repo= names a checkout this workspace does not have.
+var errNoSuchRepo = errors.New("no such repository checkout")
+
+// root resolves a request's ?repo= to a checkout directory.
+func (s *sidecar) root(r *http.Request) (string, error) {
+	name := r.URL.Query().Get("repo")
+	if name == "" || name == "repo" {
+		return s.repo, nil
+	}
+	if s.repos == "" || !repoNameRe.MatchString(name) {
+		return "", errNoSuchRepo
+	}
+	dir := filepath.Join(s.repos, name)
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return "", errNoSuchRepo
+	}
+	return dir, nil
+}
+
+var repoNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 func runSidecar(args []string) {
 	fs := flag.NewFlagSet("sidecar", flag.ExitOnError)
 	listen := fs.String("listen", "/opt/apothecary/sidecar.sock", "unix socket to serve on")
 	repo := fs.String("repo", "", "repository root (default $HOME/repo)")
+	repos := fs.String("repos", "", "directory of additional checkouts (default $HOME/repos)")
 	daemon := fs.Bool("daemon", false, "detach into the background and return once serving")
 	logPath := fs.String("log", "/apothecary/sidecar.log", "log file when detached")
 	_ = fs.Parse(args)
-	if *repo == "" {
+	if *repo == "" || *repos == "" {
 		home, _ := os.UserHomeDir()
-		*repo = filepath.Join(home, "repo")
+		if *repo == "" {
+			*repo = filepath.Join(home, "repo")
+		}
+		if *repos == "" {
+			*repos = filepath.Join(home, "repos")
+		}
 	}
 	// Singleton: a live socket means a sidecar is already serving.
 	if c, err := net.DialTimeout("unix", *listen, time.Second); err == nil {
@@ -66,7 +100,7 @@ func runSidecar(args []string) {
 		return
 	}
 	if *daemon {
-		os.Exit(detach(*listen, *repo, *logPath))
+		os.Exit(detach(*listen, *repo, *repos, *logPath))
 	}
 	_ = os.Remove(*listen)
 	ln, err := net.Listen("unix", *listen)
@@ -76,7 +110,7 @@ func runSidecar(args []string) {
 	// The engine dials this host-side, usually as another uid.
 	_ = os.Chmod(*listen, 0o666)
 	evl := newEventLog()
-	s := &sidecar{repo: *repo, log: evl, agent: newAgentHost(evl)}
+	s := &sidecar{repo: *repo, repos: *repos, log: evl, agent: newAgentHost(evl)}
 	log.Printf("sidecar: serving on %s (repo %s, boot %s)", *listen, *repo, evl.boot)
 	srv := &http.Server{Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
@@ -85,7 +119,7 @@ func runSidecar(args []string) {
 // detach re-execs the sidecar in its own session with output to a log file,
 // then waits for the socket so the caller knows it is serving. Uses no
 // setsid/nohup binaries: the workspace image is the repo's own.
-func detach(listen, repo, logPath string) int {
+func detach(listen, repo, repos, logPath string) int {
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -95,7 +129,7 @@ func detach(listen, repo, logPath string) int {
 	if err != nil {
 		self = os.Args[0]
 	}
-	cmd := exec.Command(self, "sidecar", "--listen", listen, "--repo", repo)
+	cmd := exec.Command(self, "sidecar", "--listen", listen, "--repo", repo, "--repos", repos)
 	cmd.Stdout, cmd.Stderr = lf, lf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -277,7 +311,12 @@ func (s *sidecar) agentEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *sidecar) fsTree(w http.ResponseWriter, r *http.Request) {
-	ents, err := listDir(s.repo, r.URL.Query().Get("path"))
+	root, err := s.root(r)
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
+	ents, err := listDir(root, r.URL.Query().Get("path"))
 	if err != nil {
 		writeFSErr(w, err)
 		return
@@ -286,7 +325,12 @@ func (s *sidecar) fsTree(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *sidecar) fsFile(w http.ResponseWriter, r *http.Request) {
-	f, err := readRepoFile(s.repo, r.URL.Query().Get("path"))
+	root, err := s.root(r)
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
+	f, err := readRepoFile(root, r.URL.Query().Get("path"))
 	if err != nil {
 		writeFSErr(w, err)
 		return
@@ -298,6 +342,8 @@ func writeFSErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errOutsideRepo):
 		writeErrResp(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, errNoSuchRepo):
+		writeErrResp(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, os.ErrNotExist):
 		writeErrResp(w, http.StatusNotFound, "no such file or directory")
 	default:
@@ -306,7 +352,12 @@ func writeFSErr(w http.ResponseWriter, err error) {
 }
 
 func (s *sidecar) gitChanges(w http.ResponseWriter, r *http.Request) {
-	c, err := gitChanges(s.repo, r.URL.Query().Get("base"))
+	root, err := s.root(r)
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
+	c, err := gitChanges(root, r.URL.Query().Get("base"))
 	if err != nil {
 		writeErrResp(w, http.StatusConflict, err.Error())
 		return
@@ -315,7 +366,12 @@ func (s *sidecar) gitChanges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *sidecar) gitDiff(w http.ResponseWriter, r *http.Request) {
-	d, err := gitDiff(s.repo, r.URL.Query().Get("base"), r.URL.Query().Get("path"))
+	root, err := s.root(r)
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
+	d, err := gitDiff(root, r.URL.Query().Get("base"), r.URL.Query().Get("path"))
 	if err != nil {
 		writeFSErr(w, err)
 		return
@@ -327,6 +383,11 @@ func (s *sidecar) gitDiff(w http.ResponseWriter, r *http.Request) {
 // Binary frames carry terminal bytes both ways; a text frame from the client
 // is a control message: {"type":"resize","cols":N,"rows":N}.
 func (s *sidecar) terminal(w http.ResponseWriter, r *http.Request) {
+	root, err := s.root(r)
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 	shell := os.Getenv("SHELL")
@@ -344,7 +405,7 @@ func (s *sidecar) terminal(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shell, "-l")
-	cmd.Dir = s.repo
+	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGHUP) }
 	master, err := startPTY(cmd, cols, rows)

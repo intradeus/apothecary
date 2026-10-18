@@ -6,7 +6,7 @@
 	import type { ChangedFile, FileDiff, WorkspaceChanges } from '$lib/domain';
 	import { onMount } from 'svelte';
 
-	let { runId, active }: { runId: string; active: boolean } = $props();
+	let { runId, active, repo = '' }: { runId: string; active: boolean; repo?: string } = $props();
 
 	let changes = $state<WorkspaceChanges | null>(null);
 	let error = $state('');
@@ -17,7 +17,7 @@
 
 	async function refresh() {
 		try {
-			changes = await api.workspace.changes(runId);
+			changes = await api.workspace.changes(runId, repo);
 			error = '';
 			if (!selected && changes.files.length) select(changes.files[0].path);
 			else if (selected) loadDiff(selected, true);
@@ -29,7 +29,7 @@
 	async function loadDiff(path: string, quiet = false) {
 		if (!quiet) loadingDiff = true;
 		try {
-			const d = await api.workspace.diff(runId, path);
+			const d = await api.workspace.diff(runId, path, repo);
 			if (path === selected) {
 				diff = d;
 				diffError = '';

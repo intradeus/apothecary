@@ -358,9 +358,11 @@ type TreeEntry struct {
 	Ignored bool   `json:"ignored,omitempty"`
 }
 
-func (c *Client) Tree(ctx context.Context, path string) ([]TreeEntry, error) {
+// Workspace calls take repo: the checkout name of a multi-repo run ("" or
+// "repo" = the primary).
+func (c *Client) Tree(ctx context.Context, repo, path string) ([]TreeEntry, error) {
 	var out []TreeEntry
-	err := c.do(ctx, http.MethodGet, "/fs/tree?"+url.Values{"path": {path}}.Encode(), nil, &out)
+	err := c.do(ctx, http.MethodGet, "/fs/tree?"+url.Values{"repo": {repo}, "path": {path}}.Encode(), nil, &out)
 	return out, err
 }
 
@@ -372,9 +374,9 @@ type File struct {
 	Content   string `json:"content"`
 }
 
-func (c *Client) File(ctx context.Context, path string) (File, error) {
+func (c *Client) File(ctx context.Context, repo, path string) (File, error) {
 	var out File
-	err := c.do(ctx, http.MethodGet, "/fs/file?"+url.Values{"path": {path}}.Encode(), nil, &out)
+	err := c.do(ctx, http.MethodGet, "/fs/file?"+url.Values{"repo": {repo}, "path": {path}}.Encode(), nil, &out)
 	return out, err
 }
 
@@ -402,9 +404,9 @@ type Changes struct {
 	Files     []ChangedFile `json:"files"`
 }
 
-func (c *Client) Changes(ctx context.Context, base string) (Changes, error) {
+func (c *Client) Changes(ctx context.Context, repo, base string) (Changes, error) {
 	var out Changes
-	err := c.do(ctx, http.MethodGet, "/git/changes?"+url.Values{"base": {base}}.Encode(), nil, &out)
+	err := c.do(ctx, http.MethodGet, "/git/changes?"+url.Values{"repo": {repo}, "base": {base}}.Encode(), nil, &out)
 	return out, err
 }
 
@@ -414,22 +416,24 @@ type FileDiff struct {
 	Truncated bool   `json:"truncated"`
 }
 
-func (c *Client) Diff(ctx context.Context, base, path string) (FileDiff, error) {
+func (c *Client) Diff(ctx context.Context, repo, base, path string) (FileDiff, error) {
 	var out FileDiff
-	err := c.do(ctx, http.MethodGet, "/git/diff?"+url.Values{"base": {base}, "path": {path}}.Encode(), nil, &out)
+	err := c.do(ctx, http.MethodGet, "/git/diff?"+url.Values{"repo": {repo}, "base": {base}, "path": {path}}.Encode(), nil, &out)
 	return out, err
 }
 
 // TerminalProxy returns a handler that forwards a browser's WebSocket upgrade
 // to the sidecar's /term (query string preserved). httputil.ReverseProxy
 // passes a 101 Switching Protocols through and splices the two connections.
-func (c *Client) TerminalProxy() http.Handler {
+func (c *Client) TerminalProxy(repo string) http.Handler {
 	target, _ := url.Parse(base)
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.URL.Path = "/term"
-			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
+			q := pr.In.URL.Query()
+			q.Set("repo", repo)
+			pr.Out.URL.RawQuery = q.Encode()
 			pr.Out.Host = "sidecar"
 		},
 		Transport: c.stream.Transport,

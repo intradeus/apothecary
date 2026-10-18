@@ -69,6 +69,22 @@ type RepoConfig struct {
 	AgentsMDPath  string `json:"agents_md_path"`
 }
 
+// ExtraRepo is an additional repository a project's runs check out beside
+// the primary one (projects.repos). The primary repo supplies the
+// devcontainer; extras are cloned as siblings (~/repos/<name>) on the same
+// forge account, branched like the primary, and get their own merge request
+// when a run changes them. A locator is what lets the forge open that MR;
+// without one the repo is context only (cloned, never published).
+type ExtraRepo struct {
+	// Name is the checkout directory under ~/repos and how flows, agents and
+	// the run's branches refer to it. A slug; defaults to the URL's last path
+	// segment.
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	Locator       string `json:"locator,omitempty"`
+	DefaultBranch string `json:"default_branch"`
+}
+
 // WorkspaceConfig is projects.workspace (§2, §8).
 type WorkspaceConfig struct {
 	ExtraDomains []string `json:"extra_domains,omitempty"`
@@ -127,8 +143,10 @@ type Project struct {
 	// named kind resolves to the set member of that kind. At most one
 	// integration per kind, so kind→integration is unambiguous. A flow whose
 	// harness kind is not in this set is refused at run creation (preflight).
-	HarnessIDs  []string          `json:"harness_ids"`
-	Repo        RepoConfig        `json:"repo"`
+	HarnessIDs []string   `json:"harness_ids"`
+	Repo       RepoConfig `json:"repo"`
+	// Repos are the additional repositories (multi-repo tasks); see ExtraRepo.
+	Repos       []ExtraRepo       `json:"repos,omitempty"`
 	Commands    map[string]string `json:"commands"`
 	Workspace   WorkspaceConfig   `json:"workspace"`
 	DefaultFlow string            `json:"default_flow"`

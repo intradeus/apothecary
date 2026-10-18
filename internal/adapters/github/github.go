@@ -142,12 +142,21 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 	return true, nil
 }
 
-// CreateDraftMR opens a native draft pull request onto the default branch.
-func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch, title, body string) (ports.MRRef, error) {
-	base := repo.DefaultBranch
-	if base == "" {
-		base = "main"
+// baseOr is the PR base: the target asked for, else the repo's default.
+func baseOr(target string, repo ports.RepoRef) string {
+	if target != "" {
+		return target
 	}
+	if repo.DefaultBranch != "" {
+		return repo.DefaultBranch
+	}
+	return "main"
+}
+
+// CreateDraftMR opens a native draft pull request onto target (a stacked
+// change chains bases layer onto layer).
+func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
+	base := baseOr(target, repo)
 	var pr struct {
 		Number  int    `json:"number"`
 		HTMLURL string `json:"html_url"`
@@ -184,13 +193,9 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 }
 
 // FindMR implements the port's reconciliation lookup: the open PR whose head
-// is this branch.
-func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch string) (ports.MRRef, bool, error) {
-	base := repo.DefaultBranch
-	if base == "" {
-		base = "main"
-	}
-	ref, err := a.findOpenPR(ctx, branch, base)
+// is this branch, onto target.
+func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
+	ref, err := a.findOpenPR(ctx, branch, baseOr(target, repo))
 	if err != nil {
 		return ports.MRRef{}, false, err
 	}

@@ -101,7 +101,7 @@ func TestFileExists(t *testing.T) {
 func TestCreateDraftMRIsNativeDraft(t *testing.T) {
 	ts, prs := ghStub(t)
 	a, repo := testAdapter(ts)
-	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x", "Add greeting", "body text")
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x", "", "Add greeting", "body text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestCreateDraftMRReturnsExistingOnConflict(t *testing.T) {
 	t.Cleanup(ts.Close)
 	a, repo := testAdapter(ts)
 
-	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x", "Add greeting", "body")
+	ref, err := a.CreateDraftMR(context.Background(), repo, "apothecary/x", "", "Add greeting", "body")
 	if err != nil {
 		t.Fatalf("conflict must not error: %v", err)
 	}

@@ -153,6 +153,12 @@ type RunCreated struct {
 	// router — use the existing middleware"), rendered as its own prompt
 	// section. Additive: it never replaces the ticket's goal.
 	RunGoal string `json:"run_goal,omitempty"`
+	// Checkouts are the repositories this run works in: the primary (the
+	// devcontainer's) first, then the project's extra repos, each with the
+	// branch the run owns there and the branch it forked from. Absent on runs
+	// older than multi-repo support, which had exactly the primary (Branch /
+	// SourceBranch / RepoURL above).
+	Checkouts []Checkout `json:"checkouts,omitempty"`
 	// TicketAttachmentIDs snapshots the parent ticket's attachments at run
 	// start, and pins which ones this attempt saw even if the ticket changes
 	// later.
@@ -165,6 +171,29 @@ type RunCreated struct {
 	// them, and why their ids must ride on the event.
 	TicketAttachmentIDs []string `json:"ticket_attachment_ids,omitempty"`
 }
+
+// Checkout is one repository a run checks out.
+type Checkout struct {
+	// Name is how flows, agents and branches refer to it: "repo" for the
+	// primary, the project's repo name for extras.
+	Name string `json:"name"`
+	// Dir is the checkout's path relative to the workspace home: "repo" for
+	// the primary, "repos/<name>" for extras.
+	Dir     string `json:"dir"`
+	URL     string `json:"url"`
+	Locator string `json:"locator,omitempty"`
+	// Branch is the run's own branch in this repo; Source is what it forked
+	// from (and what its merge request targets).
+	Branch  string `json:"branch"`
+	Source  string `json:"source"`
+	Primary bool   `json:"primary,omitempty"`
+}
+
+// PrimaryCheckoutName / PrimaryCheckoutDir name the devcontainer's own repo.
+const (
+	PrimaryCheckoutName = "repo"
+	PrimaryCheckoutDir  = "repo"
+)
 
 type EnvRequested struct{}
 
@@ -343,6 +372,11 @@ type MRCreated struct {
 	MRURL  string `json:"mr_url"`
 	MRIID  int    `json:"mr_iid"`
 	Branch string `json:"branch"`
+	// Repo is the checkout the branch lives in ("" = the primary, on runs
+	// older than multi-repo); Target is the branch the MR merges into ("" =
+	// the repo's default, on older runs).
+	Repo   string `json:"repo,omitempty"`
+	Target string `json:"target,omitempty"`
 }
 
 type RunCompleted struct {

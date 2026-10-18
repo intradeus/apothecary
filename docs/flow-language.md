@@ -134,7 +134,7 @@ flow is written against, and no binding names them:
 |---|---|
 | the ticket | title + goal — always the prompt's `# TASK` section |
 | the run goal | extra direction for *this* attempt, its own prompt section |
-| the repository | the project's repo, cloned into the workspace |
+| the repository | the project's repo, cloned into the workspace — plus, for a multi-repo project, its *additional* repositories beside it (`~/repos/<name>`), each on the same branch name |
 | the branch | `factory/<run-id>-<slug>`, forked from the run's source branch |
 | the workspace | one checkout shared by every agent and command stage |
 | run identity | run id and its bearer token, for the ask_human channel |
@@ -156,7 +156,7 @@ explicitly, and those *are* declared.
 | type | what it does | key fields |
 |---|---|---|
 | `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout` |
-| `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout` |
+| `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout`, `each_repo` |
 | `human_gate` | parks the run on a human decision | `question`, `input`, `auto_approve`, `auto_reject` |
 | `action` | invokes a built-in apothecary integration | `action`, `input` |
 | `wait` | blocks until an external signal fires | `for`, `timeout` |
@@ -202,6 +202,13 @@ against, so they are free labels — and that is the point: they say what each
 file is *for*, and they title the file's dot in the graph. Declaring them is
 what makes `git commit -F artifacts/commit.md` visible as dataflow rather than
 an opaque string.
+
+**`each_repo: true`** runs the script once per checkout of a multi-repo run
+(see *Several repositories* below): the primary first, then every additional
+repository, each in its own directory. The first non-zero exit fails the stage
+with that repository named; a single-repo run is unaffected. Only a command
+may say it — an agent sees every checkout at once, and an action knows which
+repositories it touches.
 
 ### human_gate
 
@@ -265,12 +272,35 @@ immediately. Registry (`GET /api/actions`):
 
 | action | requires | inputs | outputs | notes |
 |---|---|---|---|---|
-| `create_mr` | `forge` | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per flow; the body's first `# ` heading becomes the MR title |
+| `create_mr` | `forge` | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per flow; the body's first `# ` heading becomes the MR title. On a multi-repo run: one merge request per repository the run changed, each onto the branch that checkout forked from |
 
 Actions carry no *failure* edges in this version: `on_success` routes normally,
 and a failure is terminal. Adding an action is one registry entry, one
 executor, and (if it needs an integration) a `requires` string that run
 creation asserts.
+
+### Several repositories
+
+A project may list **additional repositories** beside its primary (name, URL,
+default branch, an optional forge locator). A run clones each at
+`~/repos/<name>` on the same branch name, forked from its default branch; the
+primary stays `~/repo` and still supplies the devcontainer. What follows from
+one more checkout, without any flow change:
+
+- agents see a `# REPOSITORIES` prompt section naming each checkout and its
+  path; `$CHANGED` is grouped per repository;
+- a command stage marked `each_repo: true` runs in each checkout in turn, so
+  the default template's `commit` and `push` stages commit and push every
+  repository the run touched;
+- `create_mr` opens one draft merge request **per repository the run changed**
+  (an untouched extra repository gets none), each onto the branch that
+  checkout forked from; the final gate lists them all, and `mr_merged` /
+  `mr_closed` wait for all / fire on any;
+- a repository listed **without a locator** is context-only: cloned for the
+  agent to read, never published.
+
+The run page's *Changes*, *Files* and *Terminal* tabs take a repository
+selector when a run has more than one checkout.
 
 **Side effects and interruption.** An action's effect lands outside the run, so
 the engine records an `action_started` intent event *before* the call. If the
@@ -444,10 +474,10 @@ artifact path (no leading `/`, no `.` or `..` segments).
 
 | sentinel | is | bindable on |
 |---|---|---|
-| `$CHANGED` | `git diff --name-status` of the branch against **the branch this run forked from** — the changed-file list, never the full diff | agent input |
+| `$CHANGED` | `git diff --name-status` of the branch against **the branch this run forked from** — the changed-file list, never the full diff; on a multi-repo run, one section per checkout | agent input |
 | `$DECISION` | why the last attempt was turned down: a verdict's comments, or a human's gate feedback | agent input |
 | `$FAILURE` | what the failing stage printed: the last 8 KB, with every secret the engine injected replaced by `[redacted:<kind>]` | agent input |
-| `$MR_URL` | the run's merge request link, produced by `create_mr` | gate input |
+| `$MR_URL` | the run's merge request link, produced by `create_mr`; the first when a multi-repo run opened several — a gate then also lists them all in its context | gate input |
 | `$WORKSPACE` | the workspace's access link (terminal, else IDE) | gate input |
 
 The scoping is enforced: an agent cannot bind `$MR_URL` (a link is for a human
@@ -585,7 +615,8 @@ a project's agent library — became parse errors.)
 
 **Parse errors** (the document) — refuse it. Unknown fields and values, fields
 that do not apply to a stage's type, unknown action slugs, unbound required
-action inputs, malformed edges, success cycles, unreachable stages, `max: -1`
+action inputs, malformed edges, `each_repo` outside a command, success cycles,
+unreachable stages, `max: -1`
 without a gate on the link — and every **contract** violation: an agent a stage
 names but the flow does not declare, an input the agent does not declare, a
 required input left unbound, a non-optional input bound to `$DECISION`/

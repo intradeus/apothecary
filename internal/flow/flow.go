@@ -171,6 +171,10 @@ type Stage struct {
 	// command
 	Run    string // literal bash
 	RunRef string // key into project.commands
+	// EachRepo runs the script once per checkout of a multi-repo run (in
+	// each checkout's root, stopping at the first failure) instead of once
+	// in the primary. What `git commit` and `git push` want.
+	EachRepo bool
 
 	// human_gate
 	//

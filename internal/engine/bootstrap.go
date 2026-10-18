@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -56,6 +57,21 @@ type BootstrapSpec struct {
 	// empty means the step is skipped.
 	Setup   string
 	Timeout time.Duration
+
+	// Extras are the run's additional repositories (multi-repo tasks),
+	// cloned beside the primary and branched like it. Their hosts get
+	// credential-store entries too.
+	Extras []ExtraCheckout
+}
+
+// ExtraCheckout is one additional repository to check out: Dir is relative
+// to the workspace home ("repos/<name>").
+type ExtraCheckout struct {
+	Name   string
+	Dir    string
+	URL    string
+	Branch string
+	Source string
 }
 
 // WriteWorkspaceSecrets writes the credential material bootstrap step 2 owns:
@@ -86,11 +102,25 @@ func WriteWorkspaceSecrets(ctx context.Context, envp ports.EnvProvisioner, id po
 		}
 	}
 	if spec.GitPass != "" {
-		cred, err := credentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
-		if err != nil {
-			return fmt.Errorf("git credentials: %w", err)
+		// One store entry per distinct host: every repo of the run rides the
+		// same forge account.
+		urls := []string{spec.RepoURL}
+		for _, x := range spec.Extras {
+			urls = append(urls, x.URL)
 		}
-		if err := envp.WriteFile(ctx, id, "/apothecary/git-credentials", []byte(cred+"\n"), 0o600); err != nil {
+		var lines []string
+		seen := map[string]bool{}
+		for _, u := range urls {
+			cred, err := credentialLine(u, spec.GitUser, spec.GitPass)
+			if err != nil {
+				return fmt.Errorf("git credentials: %w", err)
+			}
+			if !seen[cred] {
+				seen[cred] = true
+				lines = append(lines, cred)
+			}
+		}
+		if err := envp.WriteFile(ctx, id, "/apothecary/git-credentials", []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 			return fmt.Errorf("write git-credentials: %w", err)
 		}
 	}
@@ -134,6 +164,17 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		step{"agent-configs", "repo", agentConfigScript(spec.AgentsMDPath)},
 		step{"git-config", "repo", gitConfigScript(spec.GitName, spec.GitEmail)},
 	)
+	// Additional repositories: siblings under ~/repos, each on the run's
+	// branch forked from its own source. Idempotent like the primary.
+	for _, x := range spec.Extras {
+		steps = append(steps,
+			step{"clone:" + x.Name, "", fmt.Sprintf("mkdir -p %s && { [ -e %s/.git ] || git clone %q %s; }",
+				shellQuote(filepath.Dir(x.Dir)), shellQuote(x.Dir), x.URL, shellQuote(x.Dir))},
+			step{"branch:" + x.Name, x.Dir, fmt.Sprintf("git switch %q 2>/dev/null || git switch -c %q origin/%s",
+				x.Branch, x.Branch, x.Source)},
+			step{"git-config:" + x.Name, x.Dir, gitConfigScript(spec.GitName, spec.GitEmail)},
+		)
+	}
 	// Egress is filtered externally by the per-project gateway, so bootstrap
 	// steps need no proxy env — HTTP(S) just leaves and the gateway allows/denies
 	// by hostname.

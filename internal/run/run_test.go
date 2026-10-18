@@ -105,3 +105,20 @@ func TestTerminal(t *testing.T) {
 		}
 	}
 }
+
+// Several merge requests (a stack, a multi-repo change) are all on the view,
+// in creation order, and mr_url stays the first; old runs with no recorded
+// checkouts still project their one primary.
+func TestViewCollectsMergeRequestsAndCheckouts(t *testing.T) {
+	v := Reduce([]event.Event{
+		{RunID: "r", Seq: 1, Type: event.TypeRunCreated, Payload: &event.RunCreated{Branch: "b", SourceBranch: "main", RepoURL: "u"}},
+		{RunID: "r", Seq: 2, Type: event.TypeMRCreated, Payload: &event.MRCreated{MRURL: "u1", MRIID: 1, Branch: "b-1", Target: "main"}},
+		{RunID: "r", Seq: 3, Type: event.TypeMRCreated, Payload: &event.MRCreated{MRURL: "u2", MRIID: 2, Branch: "b-2", Target: "b-1", Repo: "repo"}},
+	})
+	if len(v.MRs) != 2 || v.MRURL != "u1" || v.MRs[1].Target != "b-1" || v.MRs[0].Repo != "repo" {
+		t.Errorf("MRs = %+v, mr_url %q", v.MRs, v.MRURL)
+	}
+	if len(v.Checkouts) != 1 || !v.Checkouts[0].Primary || v.Checkouts[0].Source != "main" || v.Checkouts[0].URL != "u" {
+		t.Errorf("checkouts = %+v", v.Checkouts)
+	}
+}

@@ -148,6 +148,14 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	if err != nil {
 		return err
 	}
+	extra := p.Repos
+	if extra == nil {
+		extra = []confstore.ExtraRepo{}
+	}
+	repos, err := json.Marshal(extra)
+	if err != nil {
+		return err
+	}
 	// The SELECT gate is the atomic replacement for the 0004 FK, made
 	// builtin-aware: built-in flows are compiled into the binary, never rows,
 	// so a plain FK rejected them. The flow must be THIS project's own or a
@@ -158,15 +166,15 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	// reads 0.
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO projects (id, name, forge_id, provisioner_id,
-		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13
 		WHERE EXISTS (SELECT 1 FROM flows WHERE project_id=$1 AND name=$8) OR $8 = ANY($12)
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, forge_id=$3, provisioner_id=$4,
-			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11`,
+			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11, repos=$13`,
 		p.ID, p.Name, p.ForgeID, p.ProvisionerID,
 		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt, harnesses,
-		builtin.FlowNames())
+		builtin.FlowNames(), repos)
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
 	}
@@ -186,14 +194,19 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 
 func scanProject(row pgx.Row) (confstore.Project, error) {
 	var p confstore.Project
-	var repo, cmds, ws, harnesses []byte
+	var repo, cmds, ws, harnesses, repos []byte
 	err := row.Scan(&p.ID, &p.Name, &p.ForgeID, &p.ProvisionerID,
-		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses)
+		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses, &repos)
 	if err != nil {
 		return p, err
 	}
 	if err := json.Unmarshal(repo, &p.Repo); err != nil {
 		return p, err
+	}
+	if len(repos) > 0 {
+		if err := json.Unmarshal(repos, &p.Repos); err != nil {
+			return p, err
+		}
 	}
 	if err := json.Unmarshal(cmds, &p.Commands); err != nil {
 		return p, err
@@ -210,7 +223,7 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 }
 
 const projectCols = `id, name, forge_id, provisioner_id,
-	repo, commands, workspace, default_flow, created_at, updated_at, harnesses`
+	repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos`
 
 func (s *Store) GetProject(ctx context.Context, id string) (confstore.Project, error) {
 	p, err := scanProject(s.pool.QueryRow(ctx,

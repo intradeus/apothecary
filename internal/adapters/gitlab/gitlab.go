@@ -148,13 +148,21 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 	return true, nil
 }
 
-// CreateDraftMR opens a draft merge request from branch onto the default
-// branch (§3.1 mr stage).
-func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch, title, body string) (ports.MRRef, error) {
-	target := repo.DefaultBranch
-	if target == "" {
-		target = "main"
+// targetOr is the MR target: the one asked for, else the repo's default.
+func targetOr(target string, repo ports.RepoRef) string {
+	if target != "" {
+		return target
 	}
+	if repo.DefaultBranch != "" {
+		return repo.DefaultBranch
+	}
+	return "main"
+}
+
+// CreateDraftMR opens a draft merge request from branch onto target (§3.1 mr
+// stage); a stacked change chains targets layer onto layer.
+func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
+	target = targetOr(target, repo)
 	if !strings.HasPrefix(title, "Draft:") {
 		title = "Draft: " + title
 	}
@@ -182,14 +190,10 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 	return ports.MRRef{IID: mr.IID, URL: mr.WebURL}, nil
 }
 
-// FindMR implements the port's reconciliation lookup: the open MR for this
-// source branch, onto the repo's default target.
-func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch string) (ports.MRRef, bool, error) {
-	target := repo.DefaultBranch
-	if target == "" {
-		target = "main"
-	}
-	ref, err := a.findOpenMR(ctx, branch, target)
+// FindMR implements the port's reconciliation lookup: the open MR from this
+// source branch onto target.
+func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
+	ref, err := a.findOpenMR(ctx, branch, targetOr(target, repo))
 	if err != nil {
 		return ports.MRRef{}, false, err
 	}

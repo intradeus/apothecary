@@ -493,6 +493,8 @@ func TestValidationErrors(t *testing.T) {
 			`on_success target "abort" does not exist`, 5},
 		{"on_timeout on gate", header + "stages:\n  - { id: g, type: human_gate, on_timeout: { to: g, max: 1 } }\n",
 			`field "on_timeout" does not apply`, 5},
+		{"each_repo on an agent", header + "stages:\n  - { id: a, type: agent, agent: x, each_repo: true }\n",
+			"each_repo", 5},
 		{"then target missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: ghost, max: 1 } } }\n",
 			`on_fail target "ghost" does not exist`, 5},
 		{"then max missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: s } } }\n",

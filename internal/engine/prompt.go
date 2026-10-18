@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 )
@@ -76,24 +77,8 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			continue
 		}
 		if in.Value == flow.SentinelChanged {
-			stat := "(no diff available)"
-			// Diff against the branch this run actually forked from, not the
-			// project default — a run started off a feature branch would
-			// otherwise be diffed against the wrong base and report every
-			// change the two branches differ by (PLAN5 M23).
-			base := sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch)
-			res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
-				// --name-status, not --stat: the sentinel is the changed-FILE
-				// list (FLOWLANG §4) and the agent reads the files itself, so
-				// churn counts are noise that crowds the prompt.
-				Script:  fmt.Sprintf("git diff --name-status origin/%s...HEAD", base),
-				Dir:     "repo",
-				Timeout: rs.fl.Defaults.Timeout,
-			})
-			if err == nil && res.ExitCode == 0 {
-				stat = res.Output
-			}
-			fmt.Fprintf(&b, "# INPUT: %s%s\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n", in.Name, inputDesc(spec, in.Name), stat)
+			fmt.Fprintf(&b, "# INPUT: %s%s\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
+				in.Name, inputDesc(spec, in.Name), x.changedFiles())
 			continue
 		}
 		content := "(artifact missing)"
@@ -101,6 +86,18 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			content = tail(string(data), 16<<10)
 		}
 		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), in.Value, content)
+	}
+
+	if len(rs.checkouts) > 1 {
+		b.WriteString("# REPOSITORIES\nThis run works in several repositories, each checked out on its own run branch:\n")
+		for _, co := range rs.checkouts {
+			role := ""
+			if co.Primary {
+				role = " (primary — relative paths in this prompt are here)"
+			}
+			fmt.Fprintf(&b, "- %s: ~/%s, branch %s forked from %s%s\n", co.Name, co.Dir, co.Branch, co.Source, role)
+		}
+		b.WriteString("Change only the repositories the task needs; each one that changes gets its own merge request.\n")
 	}
 
 	if goals := x.goalAttachments(); len(goals) > 0 {
@@ -199,4 +196,34 @@ func parseVerdict(data []byte) (*ports.Verdict, error) {
 	default:
 		return nil, fmt.Errorf("verdict.json: verdict must be APPROVE or REJECT, got %q", v.Verdict)
 	}
+}
+
+// changedFiles renders $CHANGED: the changed-file list of the work in
+// progress, diffed against each checkout's source branch (a run started off
+// a feature branch is diffed against that branch, not the project default:
+// PLAN5 M23). --name-status, not --stat: the agent reads the files itself,
+// so churn counts are noise that crowds the prompt.
+func (x *exec) changedFiles() string {
+	rs := x.rs
+	diff := func(dir, baseRef string) string {
+		res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
+			Script:  fmt.Sprintf("git diff --name-status %s...HEAD", baseRef),
+			Dir:     dir,
+			Timeout: rs.fl.Defaults.Timeout,
+		})
+		if err != nil || res.ExitCode != 0 {
+			return "(no diff available)"
+		}
+		return res.Output
+	}
+	if len(rs.checkouts) <= 1 {
+		return diff(event.PrimaryCheckoutDir, "origin/"+sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))
+	}
+	var b strings.Builder
+	for _, co := range rs.checkouts {
+		base := sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch)
+		fmt.Fprintf(&b, "## %s (~/%s)\n%s", co.Name, co.Dir, strings.TrimRight(diff(co.Dir, "origin/"+base), "\n"))
+		b.WriteString("\n")
+	}
+	return b.String()
 }

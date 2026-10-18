@@ -22,6 +22,32 @@ func TestDefaultFlowBindingsClean(t *testing.T) {
 	}
 }
 
+// TestBuiltinFlowsBindCleanly: every built-in template parses and binds with
+// zero warnings — each is what a human copies to start
+// from. Reaching the accessor at all proves they parse (load panics).
+func TestBuiltinFlowsBindCleanly(t *testing.T) {
+	names := FlowNames()
+	if len(names) == 0 {
+		t.Fatal("no built-in flows")
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			f := Flow(name)
+			if f == nil {
+				t.Fatal("not loaded")
+			}
+			for _, w := range f.Warnings {
+				t.Errorf("binding warning: %s", w)
+			}
+			for i := range f.Stages {
+				if s := &f.Stages[i]; s.Type == flow.StageHumanGate && s.Question == "" {
+					t.Errorf("gate %s has no question", s.ID)
+				}
+			}
+		})
+	}
+}
+
 // TestShippedFlowsBindCleanly: the flows this repo ships as references parse
 // and bind their own agents' contracts with zero warnings. They are what a
 // human copies to start from, so a stale one teaches the wrong grammar.

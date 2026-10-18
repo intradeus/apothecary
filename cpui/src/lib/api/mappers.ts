@@ -106,6 +106,21 @@ export function toRun(w: Wire.RunView): Run {
 		branch: w.branch,
 		sourceBranch: w.source_branch,
 		mrUrl: w.mr_url,
+		mrs: list(w.mrs).map((m) => ({
+			repo: m.repo,
+			branch: m.branch,
+			target: m.target,
+			url: m.url,
+			iid: m.iid
+		})),
+		checkouts: list(w.checkouts).map((c) => ({
+			name: c.name,
+			dir: c.dir,
+			url: c.url,
+			branch: c.branch,
+			source: c.source,
+			primary: c.primary ?? false
+		})),
 		envId: w.env_id,
 		envStatus: w.env_status as Run['envStatus'],
 		createdAt: w.created_at,
@@ -271,6 +286,12 @@ export function toProject(w: Wire.Project): Project {
 			defaultBranch: w.repo?.default_branch ?? '',
 			agentsMdPath: w.repo?.agents_md_path ?? ''
 		},
+		repos: list(w.repos).map((r) => ({
+			name: r.name,
+			url: r.url,
+			locator: r.locator || undefined,
+			defaultBranch: r.default_branch
+		})),
 		commands: w.commands ?? {},
 		workspace: toWorkspacePolicy(w.workspace),
 		defaultFlow: w.default_flow ?? '',

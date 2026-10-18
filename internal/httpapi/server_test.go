@@ -1236,3 +1236,18 @@ func TestWorkspaceViewsWithoutASidecar(t *testing.T) {
 		}
 	}
 }
+
+// The run's checkouts are listed from its own record — no sidecar needed.
+func TestWorkspaceReposListsTheCheckouts(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	runID := x.createTicketFlow(t, "T", "loop")
+	x.e.Wait(runID)
+	resp, data := x.do(t, "GET", "/api/runs/"+runID+"/workspace/repos", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"name":"repo"`) || !strings.Contains(string(data), `"primary":true`) {
+		t.Fatalf("repos = %d: %s", resp.StatusCode, data)
+	}
+	resp, _ = x.do(t, "GET", "/api/runs/"+runID+"/workspace/tree?repo=nope", nil, nil)
+	if resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown checkout = %d", resp.StatusCode)
+	}
+}

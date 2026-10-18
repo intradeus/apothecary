@@ -7,6 +7,7 @@ import (
 
 	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
+	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -91,6 +92,13 @@ type Resolution struct {
 	// since any set member may run. Empty ⇒ just HarnessBinary.
 	HarnessBinaries []string
 
+	// ExtraRepos are the project's additional repositories (multi-repo
+	// tasks): cloned beside the primary, branched like it, each published as
+	// its own merge request when a run changes it. Forges holds a forge port
+	// per extra repo that has a locator, keyed by name.
+	ExtraRepos []ExtraRepo
+	Forges     map[string]ports.Forge
+
 	Envp   ports.EnvProvisioner
 	Runner ports.AgentRunner
 	// Runners maps harness KIND → runner for the full set (per-step harness).
@@ -115,6 +123,25 @@ type Resolution struct {
 	// Release decrements the resolver's provisioner refcount (§6.1 adapter
 	// cache); nil is fine.
 	Release func()
+}
+
+// ExtraRepo is an additional repository of a multi-repo project, as the
+// engine needs it (mirrors the config plane's ExtraRepo without the import).
+type ExtraRepo struct {
+	Name          string
+	URL           string
+	Locator       string
+	DefaultBranch string
+}
+
+// forgeFor returns the forge port bound to a checkout: the project's for the
+// primary, the per-repo one for an extra that has a locator, nil for an
+// extra that is context only.
+func (r *Resolution) forgeFor(repo string) ports.Forge {
+	if repo == "" || repo == event.PrimaryCheckoutName {
+		return r.Forge
+	}
+	return r.Forges[repo]
 }
 
 func (r *Resolution) release() {

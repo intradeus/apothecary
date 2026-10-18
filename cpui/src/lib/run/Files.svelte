@@ -5,7 +5,7 @@
 	import type { WorkspaceEntry, WorkspaceFile } from '$lib/domain';
 	import { onMount } from 'svelte';
 
-	let { runId }: { runId: string } = $props();
+	let { runId, repo = '' }: { runId: string; repo?: string } = $props();
 
 	let dirs = $state<Record<string, WorkspaceEntry[]>>({});
 	let open = $state<Record<string, boolean>>({ '': true });
@@ -17,7 +17,7 @@
 
 	async function load(path: string) {
 		try {
-			dirs = { ...dirs, [path]: await api.workspace.tree(runId, path) };
+			dirs = { ...dirs, [path]: await api.workspace.tree(runId, path, repo) };
 			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -35,7 +35,7 @@
 		file = null;
 		fileError = '';
 		try {
-			file = await api.workspace.file(runId, path);
+			file = await api.workspace.file(runId, path, repo);
 		} catch (e) {
 			fileError = e instanceof Error ? e.message : String(e);
 		}

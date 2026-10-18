@@ -164,14 +164,19 @@ automatically. Database migrations apply at boot.
      > recently active projects when no filter is set), a **key**
      > (`PROJ-2624`, also `proj 2624`), free **words** (text search), or
      > `jql:…` for raw JQL.
-2. **Flows** — create one (a starter skeleton is offered; the editor
-   validates with line-precise errors, and the *Available models* panel
-   lists the exact `provider/model` strings your harness can route).
+2. **Flows** — create one (copy the built-in *default* template or start
+   from the skeleton; the editor validates with line-precise errors, and
+   the *Available models* panel lists the exact `provider/model` strings
+   your harness can route).
 3. **Projects** — New project: pick the forge → *Browse repositories* →
    set commands (`setup` is optional; `verify` is what test stages run) →
    pick provisioner + harness → add toolchain **presets** to the
    Dockerfile fragment (Go, Python, Node, JVM, C toolchain) → default
-   flow.
+   flow. *Additional repositories* (optional) makes it a multi-repo
+   project: each is cloned beside the primary on every run and published
+   as its own merge request when changed; leave the locator empty for one
+   the agent should only read. The primary's devcontainer must carry their
+   toolchains.
 4. **Preflight**, then **Envcheck** on the project page. Preflight checks
    the configuration without building anything — forge access, AGENTS.md,
    the devcontainer, the flow's references, and that every agent stage's
@@ -186,7 +191,7 @@ automatically. Database migrations apply at boot.
 5. **File a ticket** on the Tickets page — by hand, or imported from a
    configured ticket source. Answer the plan gate in the Inbox;
    merge the draft MR/PR at the end (the run completes itself when you
-   merge).
+   merge — all of them, for a multi-repo project).
 
 Settings (concurrency, environment caps, reaper) live under *Settings*
 and apply without a restart. Notification mirrors (Matrix) live under
@@ -274,9 +279,14 @@ per-run Docker-in-Docker sandbox ── egress only via the project gateway
 - **Models are checked early.** A model the provider no longer serves is
   refused when the run is created; one the installed harness doesn't offer
   fails the run before its first stage — not three stages in.
+- **Several repositories**: a project can list additional repositories;
+  a run clones each beside the primary, the agent sees them all, commit
+  and push run in each, and every repository the run changed gets its own
+  merge request. The run page's workspace views take a repository picker.
 
-The full design and its rationale: `docs/IMPLEMENTATION_NOTES.md`, section
-*Live agent sessions: the workspace sidecar and ACP*.
+The full design and its rationale: `docs/IMPLEMENTATION_NOTES.md`, sections
+*Live agent sessions: the workspace sidecar and ACP* and *Several
+repositories*; the flow-side contract is in `docs/flow-language.md`.
 
 ## CLI
 
