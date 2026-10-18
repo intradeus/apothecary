@@ -6,3 +6,8 @@
 - 19) DinD sandbox follow-ups: (c) sysbox runtime to drop `--privileged` — SHIPPED opt-in via `APOTHECARY_SANDBOX_RUNTIME`; remaining: verify `docker:29-dind` actually runs under sysbox on a supported host (sysbox steers away from dind images), then decide whether it can ever be the default.
 - 23) new run on observability (full flow data + resource stats)
 - 24) Workspace provisionning improvements - cache the devcontainer generated image ? And regen only when needed ? Unsure if its possible. Goal : reduce provisionning time. Not critical.
+- 25) multi-user / org based, k8s/k3s deployment
+- 26) could add more sentinels ? 'CHANGED' could be split in '$STAGED, $UNSTAGED$, or $BRANCH_CHANGE (full git branch change since split')
+- 27) Jira integration to move tickets, connect branch, add fields etc. (feature flag field)
+- 28) normalized "debug" step action, instead of repeating it everytime in the flow.
+- 29) Remove or increase the container running branch and container size limit (? is there container limit).
