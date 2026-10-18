@@ -18,6 +18,8 @@
 		sentinelsFor,
 		setEdge,
 		freshStage,
+		movePhase,
+		triggerLabel,
 		verdictOutput,
 		type DocEdge,
 		type DocStage,
@@ -226,6 +228,24 @@
 		<label for="st-id">Id</label>
 		<input id="st-id" value={s.id} onchange={(e) => renameStage(s.id, e.currentTarget.value)} />
 		<div class="muted small">type: <span class="mono">{s.type}</span></div>
+		{#if doc.phases?.length}
+			<label for="st-phase"
+				>Phase <span class="muted">— its routes stay inside it; the phase's last stage ends it</span
+				></label
+			>
+			<select
+				id="st-phase"
+				value={s.phase}
+				onchange={(e) => {
+					movePhase(doc, s.id, e.currentTarget.value);
+					onchange();
+				}}
+			>
+				{#each doc.phases as ph (ph.id)}
+					<option value={ph.id}>{ph.id} — on {triggerLabel(ph.on)}</option>
+				{/each}
+			</select>
+		{/if}
 
 		{#if s.type === 'agent'}
 			<label for="st-agent"
@@ -550,18 +570,31 @@
 								>{/if}
 							{#if d.description}<span class="muted">— {d.description}</span>{/if}
 						</div>
-						<input
-							value={bindingValue(s, 'input', d.name)}
-							placeholder={d.defaultPath ?? ''}
-							oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
-						/>
+						{#if d.kind === 'enum'}
+							<select
+								value={bindingValue(s, 'input', d.name) || d.defaultValue || ''}
+								onchange={(e) => {
+									setBinding(s, 'input', d.name, e.currentTarget.value);
+									onchange();
+								}}
+							>
+								{#each d.values ?? [] as v (v)}<option value={v}>{v}</option>{/each}
+							</select>
+						{:else}
+							<input
+								value={bindingValue(s, 'input', d.name)}
+								placeholder={d.defaultPath ?? ''}
+								oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
+							/>
+						{/if}
 					</div>
 				{/each}
 				{#each actionSig.outputs ?? [] as d (d.name)}
 					<p class="muted small" style="margin:4px 0 0">
 						Produces <span class="mono">{d.name}</span>{#if d.sentinel}, available to later stages
 							as
-							<span class="mono">{d.sentinel}</span>{/if}{#if d.description}
+							<span class="mono">{d.sentinel}</span>{/if}{#if d.path}
+							at <span class="mono">{d.path}</span>{/if}{#if d.description}
 							— {d.description}{/if}.
 					</p>
 				{/each}

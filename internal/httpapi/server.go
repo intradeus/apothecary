@@ -184,25 +184,26 @@ func (e EventPingStore) GetPing(ctx context.Context, id string) (run.PingView, e
 // pingJSON is the registry-fallback shape (Pings == nil); the projection
 // path serves run.PingView directly.
 type pingJSON struct {
-	PingID     string    `json:"ping_id"`
-	RunID      string    `json:"run_id"`
-	Type       string    `json:"type"`
-	StageID    string    `json:"stage_id,omitempty"`
-	Question   string    `json:"question"`
-	Context    string    `json:"context,omitempty"`
-	Files      []string  `json:"files,omitempty"`
-	Link       string    `json:"link,omitempty"`
-	PayloadRef string    `json:"payload_ref,omitempty"`
-	Options    []string  `json:"options,omitempty"`
-	Status     string    `json:"status"`
-	RaisedAt   time.Time `json:"raised_at"`
+	PingID     string         `json:"ping_id"`
+	RunID      string         `json:"run_id"`
+	Type       string         `json:"type"`
+	StageID    string         `json:"stage_id,omitempty"`
+	Question   string         `json:"question"`
+	Context    string         `json:"context,omitempty"`
+	Files      []string       `json:"files,omitempty"`
+	Link       string         `json:"link,omitempty"`
+	PayloadRef string         `json:"payload_ref,omitempty"`
+	Options    []event.Option `json:"options,omitempty"`
+	AnswerKind string         `json:"answer_kind"`
+	Status     string         `json:"status"`
+	RaisedAt   time.Time      `json:"raised_at"`
 }
 
 func toPingJSON(p *engine.Ping) pingJSON {
 	return pingJSON{
 		PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID, Question: p.Question,
 		Context: p.Context, Files: p.Files, Link: p.Link, PayloadRef: p.Primary(),
-		Options: p.Options, Status: "pending", RaisedAt: p.RaisedAt,
+		Options: p.Options, AnswerKind: p.AnswerKind, Status: "pending", RaisedAt: p.RaisedAt,
 	}
 }
 
@@ -280,6 +281,29 @@ func (s *Server) postAbort(w http.ResponseWriter, r *http.Request) {
 }
 
 // postPause parks an active run (202); 409 when it has no live goroutine.
+func (s *Server) getRunPhases(w http.ResponseWriter, r *http.Request) {
+	out, err := s.Engine.RunPhases(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// postStartPhase starts a reaction phase by hand (202); 409 when the run is
+// not between phases or the phase cannot start on that merge request.
+func (s *Server) postStartPhase(w http.ResponseWriter, r *http.Request) {
+	err := s.Engine.StartPhase(r.PathValue("id"), r.PathValue("phase"), r.URL.Query().Get("repo"))
+	switch {
+	case errors.Is(err, engine.ErrPhaseNotStartable):
+		writeErr(w, http.StatusConflict, err.Error())
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+	default:
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
 func (s *Server) postPause(w http.ResponseWriter, r *http.Request) {
 	err := s.Engine.Pause(r.PathValue("id"))
 	switch {
@@ -890,7 +914,8 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 	if len(refs) == 0 && body.Artifact != "" {
 		refs = []string{body.Artifact}
 	}
-	p, err := s.Engine.RaisePingKeyed(runID, body.Key, body.Type, body.Question, body.Context, body.Options, refs)
+	p, err := s.Engine.RaiseQuestion(runID, engine.Question{Key: body.Key, Type: body.Type, Question: body.Question,
+		Context: body.Context, Options: body.Options, Multi: body.Multi, Artifacts: refs})
 	switch {
 	case errors.Is(err, engine.ErrRunNotActive):
 		writeErr(w, http.StatusConflict, err.Error())

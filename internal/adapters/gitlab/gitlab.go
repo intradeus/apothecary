@@ -218,25 +218,132 @@ func (a *Adapter) findOpenMR(ctx context.Context, branch, target string) (ports.
 	return ports.MRRef{IID: mrs[0].IID, URL: mrs[0].WebURL}, nil
 }
 
-// MRState maps GitLab's state to the port's open|merged|closed. The MRRef
+// MRStatus maps GitLab's merge request to the port's status. The MRRef
 // alone must suffice (§4), so the project id rides in via RepoRef at
-// construction — the adapter is bound to the one v1 project.
-func (a *Adapter) MRState(ctx context.Context, mr ports.MRRef) (ports.MRState, error) {
+// construction — the adapter is bound to one project.
+func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus, error) {
 	var out struct {
-		State string `json:"state"`
+		State               string `json:"state"`
+		HasConflicts        bool   `json:"has_conflicts"`
+		DetailedMergeStatus string `json:"detailed_merge_status"`
+		SHA                 string `json:"sha"`
+		TargetBranch        string `json:"target_branch"`
 	}
-	if _, err := a.api(ctx, http.MethodGet,
-		fmt.Sprintf("/projects/%d/merge_requests/%d", a.projectID, mr.IID), nil, &out); err != nil {
-		return "", err
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID), nil, &out); err != nil {
+		return ports.MRStatus{}, err
 	}
+	st := ports.MRStatus{State: ports.MROpen, HeadSHA: out.SHA, Target: out.TargetBranch, Mergeable: mergeableOf(out.DetailedMergeStatus, out.HasConflicts)}
 	switch out.State {
 	case "merged":
-		return ports.MRMerged, nil
+		st.State = ports.MRMerged
 	case "closed":
-		return ports.MRClosed, nil
-	default: // opened, locked
-		return ports.MROpen, nil
+		st.State = ports.MRClosed
 	}
+	if st.Mergeable == ports.MergeConflicts && out.TargetBranch != "" {
+		var br struct {
+			Commit struct {
+				ID string `json:"id"`
+			} `json:"commit"`
+		}
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/repository/branches/%s", a.path(), url.PathEscape(out.TargetBranch)), nil, &br); err != nil {
+			return ports.MRStatus{}, err
+		}
+		st.TargetSHA = br.Commit.ID
+	}
+	return st, nil
+}
+
+// mergeableOf reads GitLab's merge status. has_conflicts is only meaningful
+// once GitLab has checked: while it is checking it may still describe the
+// previous head, so those states are unknown rather than a guess.
+func mergeableOf(detailed string, hasConflicts bool) ports.Mergeable {
+	switch detailed {
+	case "checking", "unchecked", "preparing", "approvals_syncing":
+		return ports.MergeUnknown
+	case "conflict":
+		return ports.MergeConflicts
+	}
+	if hasConflicts {
+		return ports.MergeConflicts
+	}
+	return ports.MergeClean
+}
+
+// MRThreads lists the merge request's discussions: inline threads and
+// general comments, system notes (pushes, label changes) dropped.
+func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
+	type note struct {
+		ID     int    `json:"id"`
+		Body   string `json:"body"`
+		System bool   `json:"system"`
+		Author struct {
+			Username string `json:"username"`
+		} `json:"author"`
+		CreatedAt  time.Time `json:"created_at"`
+		Resolvable bool      `json:"resolvable"`
+		Resolved   bool      `json:"resolved"`
+		Position   *struct {
+			NewPath string `json:"new_path"`
+			OldPath string `json:"old_path"`
+			NewLine int    `json:"new_line"`
+			OldLine int    `json:"old_line"`
+		} `json:"position"`
+	}
+	var out []ports.ReviewThread
+	for page := 1; page <= 50; page++ {
+		var ds []struct {
+			ID    string `json:"id"`
+			Notes []note `json:"notes"`
+		}
+		p := fmt.Sprintf("%s/merge_requests/%d/discussions?per_page=100&page=%d", a.path(), mr.IID, page)
+		if _, err := a.api(ctx, http.MethodGet, p, nil, &ds); err != nil {
+			return nil, err
+		}
+		for _, d := range ds {
+			th := ports.ReviewThread{ID: d.ID}
+			resolvable, resolved := false, true
+			for _, n := range d.Notes {
+				if n.System {
+					continue
+				}
+				if n.Position != nil && th.Path == "" {
+					th.Path, th.Line = n.Position.NewPath, n.Position.NewLine
+					if th.Path == "" {
+						th.Path, th.Line = n.Position.OldPath, n.Position.OldLine
+					}
+				}
+				if n.Resolvable {
+					resolvable = true
+					resolved = resolved && n.Resolved
+				}
+				th.Comments = append(th.Comments, ports.ReviewComment{ID: fmt.Sprint(n.ID), Author: n.Author.Username, Body: n.Body, CreatedAt: n.CreatedAt})
+			}
+			if len(th.Comments) == 0 {
+				continue
+			}
+			th.Resolved = resolvable && resolved
+			out = append(out, th)
+		}
+		if len(ds) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ReplyThread adds a note to a discussion.
+func (a *Adapter) ReplyThread(ctx context.Context, mr ports.MRRef, threadID, body string) error {
+	_, err := a.api(ctx, http.MethodPost,
+		fmt.Sprintf("%s/merge_requests/%d/discussions/%s/notes", a.path(), mr.IID, url.PathEscape(threadID)),
+		map[string]any{"body": body}, nil)
+	return err
+}
+
+// ResolveThread resolves a discussion.
+func (a *Adapter) ResolveThread(ctx context.Context, mr ports.MRRef, threadID string) error {
+	_, err := a.api(ctx, http.MethodPut,
+		fmt.Sprintf("%s/merge_requests/%d/discussions/%s?resolved=true", a.path(), mr.IID, url.PathEscape(threadID)), nil, nil)
+	return err
 }
 
 func tail(s string, n int) string {

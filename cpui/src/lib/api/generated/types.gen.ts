@@ -12,6 +12,7 @@ export type Action = {
 	requires?: string;
 	single?: boolean;
 	slug: string;
+	subject?: boolean;
 	title: string;
 };
 
@@ -99,6 +100,13 @@ export type DocIo = {
 	[key: string]: string;
 };
 
+export type DocPhase = {
+	description?: string;
+	id: string;
+	on: DocTrigger;
+	stages: Array<DocStage> | null;
+};
+
 export type DocStage = {
 	action?: string;
 	agent?: string;
@@ -122,6 +130,13 @@ export type DocStage = {
 	run_ref?: string;
 	timeout?: string;
 	type: string;
+};
+
+export type DocTrigger = {
+	confirm?: boolean;
+	max?: number | null;
+	quiet_for?: string;
+	signal: string;
 };
 
 export type EditorConfig = {
@@ -262,7 +277,8 @@ export type FlowDoc = {
 	defaults: DocDefaults;
 	description?: string;
 	name: string;
-	stages: Array<DocStage> | null;
+	phases?: Array<DocPhase>;
+	stages?: Array<DocStage>;
 	version: number;
 };
 
@@ -298,11 +314,13 @@ export type InputDecl = {
 };
 
 export type InputSig = {
+	default?: string;
 	default_path?: string;
 	description?: string;
 	kind: string;
 	name: string;
 	required?: boolean;
+	values?: Array<string>;
 };
 
 export type Integration = {
@@ -350,6 +368,19 @@ export type KindDescriptor = {
 	port: string;
 };
 
+export type MrLive = {
+	branch: string;
+	error?: string;
+	head_sha?: string;
+	last_comment_at?: string;
+	mergeable: string;
+	pending_threads: number;
+	repo: string;
+	state: string;
+	target?: string;
+	url: string;
+};
+
 export type MessageAccepted = {
 	message_id: string;
 };
@@ -380,7 +411,20 @@ export type OutputSig = {
 	description?: string;
 	kind: string;
 	name: string;
+	path?: string;
 	sentinel?: string;
+};
+
+export type PhaseInfo = {
+	confirm?: boolean;
+	description?: string;
+	id: string;
+	max: number;
+	quiet_for_s?: number;
+	runs: {
+		[key: string]: number;
+	} | null;
+	signal: string;
 };
 
 export type PingFile = {
@@ -404,15 +448,22 @@ export type PingHold = {
 	text: string;
 };
 
+export type PingOption = {
+	detail?: string;
+	id: string;
+	label: string;
+};
+
 export type PingView = {
 	answer?: string;
 	answer_attachment_ids?: Array<string>;
+	answer_kind: string;
 	answered_at?: string;
 	context?: string;
 	feedback?: string;
 	files?: Array<string>;
 	link?: string;
-	options?: Array<string>;
+	options?: Array<PingOption>;
 	payload_ref?: string;
 	ping_id: string;
 	question: string;
@@ -476,7 +527,8 @@ export type RaisePingRequest = {
 	context?: string;
 	hold_ms?: number;
 	key?: string;
-	options?: Array<string>;
+	multi?: boolean;
+	options?: Array<PingOption>;
 	question: string;
 	type: string;
 };
@@ -568,8 +620,11 @@ export type RunView = {
 	env_status?: string;
 	flow_hash: string;
 	flow_name: string;
+	idle?: boolean;
 	mr_url?: string;
 	mrs?: Array<RunMergeRequest>;
+	phase?: string;
+	phase_subject?: string;
 	project_id?: string;
 	run_goal?: string;
 	run_id: string;
@@ -595,11 +650,13 @@ export type Settings = {
 };
 
 export type Signal = {
+	debounced?: boolean;
 	description?: string;
 	needs?: string;
 	requires?: string;
 	slug: string;
 	title: string;
+	trigger?: boolean;
 };
 
 export type Snapshot = {
@@ -2954,6 +3011,39 @@ export type SendRunMessageResponses = {
 
 export type SendRunMessageResponse = SendRunMessageResponses[keyof SendRunMessageResponses];
 
+export type GetRunMrStatusData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/mrs/status';
+};
+
+export type GetRunMrStatusErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetRunMrStatusResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<MrLive> | null;
+};
+
+export type GetRunMrStatusResponse = GetRunMrStatusResponses[keyof GetRunMrStatusResponses];
+
 export type ReportObservedPortsData = {
 	body: ObservedPortsRequest;
 	path: {
@@ -3062,6 +3152,80 @@ export type PauseRunErrors = {
 };
 
 export type PauseRunResponses = {
+	/**
+	 * Accepted
+	 */
+	202: unknown;
+};
+
+export type GetRunPhasesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/phases';
+};
+
+export type GetRunPhasesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetRunPhasesResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<PhaseInfo> | null;
+};
+
+export type GetRunPhasesResponse = GetRunPhasesResponses[keyof GetRunPhasesResponses];
+
+export type StartPhaseData = {
+	body?: never;
+	path: {
+		id: string;
+		phase: string;
+	};
+	query?: {
+		/**
+		 * the checkout whose merge request the phase acts on (default: the primary)
+		 */
+		repo?: string;
+	};
+	url: '/api/runs/{id}/phases/{phase}/start';
+};
+
+export type StartPhaseErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StartPhaseResponses = {
 	/**
 	 * Accepted
 	 */

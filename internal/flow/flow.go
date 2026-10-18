@@ -209,9 +209,49 @@ type Stage struct {
 	// future kinds — DESIGN3 §2.1). Never nil after Parse.
 	Edges map[string]*Edge
 
+	// Phase is the id of the phase the stage belongs to ("" in a flow
+	// written with top-level stages: one implicit ticket phase).
+	Phase string
+
 	// Line is the stage's line in the source YAML, for error reporting.
 	Line int
 }
+
+// TriggerTicket is the entry trigger: the phase a filed ticket starts.
+const TriggerTicket = "ticket"
+
+// DefaultPhaseMax bounds how many times a reaction phase may run for one
+// merge request when the trigger does not say.
+const DefaultPhaseMax = 10
+
+// Phase is one named sequence of stages (PLAN6). The entry phase (On.Signal
+// == TriggerTicket) is what a ticket starts; every other phase is a
+// reaction its signal starts while the run's merge requests are open. Its
+// stages are Flow.Stages[First..Last], contiguous in document order.
+type Phase struct {
+	ID          string
+	Description string
+	On          Trigger
+	First, Last int
+	Line        int
+}
+
+// Trigger is what starts a phase.
+type Trigger struct {
+	// Signal is TriggerTicket for the entry, else a signalspec slug.
+	Signal string
+	// QuietFor debounces a signal that fires on activity (review comments):
+	// the phase starts once nothing new happened for this long.
+	QuietFor time.Duration
+	// Confirm asks a human before the phase starts (an inbox decision).
+	Confirm bool
+	// Max bounds the phase's runs per merge request; UnlimitedMax only with
+	// Confirm (a human decides every run).
+	Max int
+}
+
+// Entry reports whether this is the ticket's phase.
+func (p *Phase) Entry() bool { return p.On.Signal == TriggerTicket }
 
 // Input returns the stage's named binding for name, or nil.
 func (s *Stage) Input(name string) *IOBinding {
@@ -237,6 +277,10 @@ type Flow struct {
 	// run pins prompts along with the rest of the document.
 	Agents []agentspec.Spec
 	Stages []Stage
+	// Phases is nil for a flow written with top-level stages (one implicit
+	// ticket phase, today's semantics exactly). Otherwise the entry phase is
+	// Phases[0] and its stages come first.
+	Phases []Phase
 
 	// Hash is the SHA-256 (hex) of the raw flow file.
 	Hash string
@@ -281,6 +325,27 @@ func (f *Flow) AgentSpecs() []*agentspec.Spec {
 		out = append(out, &f.Agents[i])
 	}
 	return out
+}
+
+// Phased reports whether the flow declares phases.
+func (f *Flow) Phased() bool { return f != nil && len(f.Phases) > 0 }
+
+// Phase returns the phase with the given id, or nil.
+func (f *Flow) Phase(id string) *Phase {
+	for i := range f.Phases {
+		if f.Phases[i].ID == id {
+			return &f.Phases[i]
+		}
+	}
+	return nil
+}
+
+// Reactions are the phases a signal starts, in document order.
+func (f *Flow) Reactions() []Phase {
+	if !f.Phased() {
+		return nil
+	}
+	return f.Phases[1:]
 }
 
 // Stage returns the stage with the given id, or nil.

@@ -50,10 +50,16 @@ export interface FlowValidation {
 export interface ActionIO {
 	name: string;
 	description?: string;
-	kind: 'file' | 'value';
+	/** enum: a literal the stage writes, one of `values` (sync_target's
+	 *  strategy); `defaultValue` applies when the stage leaves it unbound. */
+	kind: 'file' | 'value' | 'enum';
 	required: boolean;
 	defaultPath?: string;
 	sentinel?: string;
+	values?: string[];
+	defaultValue?: string;
+	/** A file output's path. */
+	path?: string;
 }
 
 /** What an `action` stage may name. Compiled in, not project data. */

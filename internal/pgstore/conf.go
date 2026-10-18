@@ -455,7 +455,7 @@ func (s *Store) DeleteFlow(ctx context.Context, projectID, name string) error {
 	rrows, err := s.pool.Query(ctx, `
 		SELECT run_id FROM runs
 		WHERE project_id=$1 AND flow_name=$2
-		  AND state IN ('pending','provisioning','running','waiting_on_human')
+		  AND state IN ('pending','provisioning','running','waiting_on_human','in_review')
 		ORDER BY run_id`, projectID, name)
 	if err != nil {
 		return err

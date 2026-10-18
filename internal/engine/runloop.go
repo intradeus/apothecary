@@ -138,20 +138,45 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
 				Context: op.Context, Files: op.Files, Link: op.Link, StageID: op.StageID,
-				Options: op.Options, key: op.Key,
-				RaisedAt: e.clock(),
-				gate:     gatePingType(op.Type), done: make(chan struct{}),
+				Options: op.Options, AnswerKind: op.Kind(), key: op.Key,
+				RaisedAt: e.clock(), done: make(chan struct{}),
 			}
 		}
 	}
 	e.mu.Unlock()
 
+	if err := x.entryPhaseStarted(); err != nil {
+		x.exit(err)
+		return
+	}
 	for !rs.done {
 		if cause := context.Cause(ctx); cause != nil {
 			x.exit(cause)
 			return
 		}
-		if rs.pos < 0 || rs.pos >= len(fl.Stages) {
+		if rs.idle {
+			// Between phases (PLAN6): watch the merge requests until a
+			// phase starts or the run ends.
+			if err := x.idle(); err != nil {
+				x.exit(err)
+				return
+			}
+			continue
+		}
+		if rs.pos < 0 {
+			_ = x.fail(fmt.Sprintf("flow %q changed: the run's current phase no longer exists in it", fl.Name))
+			return
+		}
+		if rs.pos >= len(fl.Stages) {
+			// done: a phase ends (the run goes idle, or completes when there
+			// is no merge request to react to); a flow without phases ends.
+			if fl.Phased() {
+				if err := x.phaseDone(); err != nil {
+					x.exit(err)
+					return
+				}
+				continue
+			}
 			if err := x.complete(); err != nil {
 				x.exit(err)
 			}
@@ -442,6 +467,10 @@ func (x *exec) routeAfterFail(st *flow.Stage) error {
 // routeAfterComplete handles recovery when the crash hit between a
 // stage_completed and its routing: no re-execution, only the decision.
 func (x *exec) routeAfterComplete(st *flow.Stage) error {
+	if x.emptyRound(st) {
+		x.endPhase()
+		return nil
+	}
 	if st.Type == flow.StageAgent && x.verdictPath(st) != "" {
 		v, err := x.readVerdict(st)
 		if err != nil {
@@ -769,6 +798,16 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		verdict = v
 	}
+	// A review_replies output is checked against the threads this round
+	// loaded before anything is posted: a reply to an unknown thread is this
+	// stage's fault, retried with the reason as $FAILURE.
+	if msg := x.checkReviewReplies(st); msg != "" {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, msg)
+	}
+
 	completed := &event.StageCompleted{
 		StageID:    st.ID,
 		DurationMS: x.e.clock().Sub(started).Milliseconds(),
@@ -1015,7 +1054,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			x.e.mu.Unlock()
 			raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
 				Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
-				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Options: req.p.Options}
+				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Options: req.p.Options, AnswerKind: req.p.AnswerKind}
 			if err := x.append(raised); err != nil {
 				close(req.ack)
 				return invocation{}, err
@@ -1048,7 +1087,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// An answer the agent never saw does not close the question: once
 			// the turn was handed back (parked), the only way in is a resume,
 			// so the ping stays open and the attempt pauses on it below.
-			if handled && !ar.p.gate && !ar.p.handedBack.Load() {
+			if handled && agentPingType(ar.p.Type) && !ar.p.handedBack.Load() {
 				open = dropPing(open, ar.p)
 				if len(open) == 0 {
 					resume()
@@ -1175,13 +1214,9 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 	ar.p.answer = &ans
 	x.e.mu.Unlock()
 
-	answer, feedback := ar.ans.Answer, ar.ans.Feedback
-	if !ar.p.gate && len(ar.p.Options) == 0 {
-		// §6: free-text agent (ask_human) answers are recorded as
-		// answer:"text". Option answers (PLAN4 M16) keep the chosen option
-		// in answer and the optional note in feedback.
-		answer, feedback = "text", ar.ans.Answer
-	}
+	// §6: free-text agent (ask_human) answers are recorded as answer:"text";
+	// every other kind keeps the choice in answer and the note in feedback.
+	answer, feedback := recordedAnswer(ar.p.AnswerKind, ar.ans)
 	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback,
 		AttachmentIDs: ar.ans.AttachmentIDs}
 	if err := x.append(recorded); err != nil {
@@ -1260,8 +1295,12 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	}
 	// Once in the primary, or — each_repo — once per checkout, stopping at
 	// the first failure. Each checkout gets the full timeout.
+	// In a reaction phase, in the subject's checkout (PLAN6 R12): the phase
+	// acts on that merge request's branch only.
 	dirs := []string{event.PrimaryCheckoutDir}
-	if st.EachRepo {
+	if co := x.subjectCheckout(); co != nil {
+		dirs = []string{co.Dir}
+	} else if st.EachRepo {
 		dirs = rs.checkoutDirs()
 	}
 	var res ports.ExecResult
@@ -1436,13 +1475,13 @@ func (x *exec) stageGate(st *flow.Stage) error {
 			// stays the first (the primary repository's).
 			Context: x.mrListMarkdown(),
 			Files:   files, Link: link, StageID: st.ID, RaisedAt: x.e.clock(),
-			gate: true, done: make(chan struct{}),
+			AnswerKind: event.AnswerDecision, done: make(chan struct{}),
 		}
 		x.e.mu.Lock()
 		x.e.pings[p.ID] = p
 		x.e.mu.Unlock()
 		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
-			Files: p.Files, Link: p.Link, StageID: st.ID}); err != nil {
+			Files: p.Files, Link: p.Link, StageID: st.ID, AnswerKind: event.AnswerDecision}); err != nil {
 			return err
 		}
 		// The plan a human approves is the single most important document in
@@ -1561,6 +1600,10 @@ func (x *exec) stageGate(st *flow.Stage) error {
 func (x *exec) resolveGateInput(v string) string {
 	switch v {
 	case flow.SentinelMRURL:
+		// Inside a reaction phase, the merge request it acts on.
+		if mr := x.subjectMR(); mr != nil {
+			return mr.Ref.URL
+		}
 		return x.rs.view.MRURL
 	case flow.SentinelWorkspace:
 		// Workspace hand-off: point the human at the running environment
@@ -1605,7 +1648,8 @@ func (x *exec) signalPoller(st *flow.Stage, slug string) func() (bool, error) {
 			if forge == nil {
 				continue
 			}
-			state, serr := forge.MRState(x.ctx, mr.Ref)
+			status, serr := forge.MRStatus(x.ctx, mr.Ref)
+			state := status.State
 			if serr != nil {
 				if x.ctx.Err() != nil {
 					return false, context.Cause(x.ctx)
@@ -1677,6 +1721,14 @@ func (x *exec) stageAction(st *flow.Stage) error {
 	switch st.Action {
 	case actionspec.CreateMR:
 		routed, err = x.actionCreateMR(st)
+	case actionspec.LoadReviewComments:
+		routed, err = x.actionLoadReviewComments(st)
+	case actionspec.ReplyReviewComments:
+		routed, err = x.actionReplyReviewComments(st)
+	case actionspec.SyncTarget:
+		routed, err = x.actionSyncTarget(st)
+	case actionspec.PushBranch:
+		routed, err = x.actionPushBranch(st)
 	default:
 		// Unreachable: the parser validates the slug against the registry.
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,
@@ -1692,8 +1744,18 @@ func (x *exec) stageAction(st *flow.Stage) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
+	if x.emptyRound(st) {
+		x.endPhase()
+		return nil
+	}
 	x.advance(st)
 	return nil
+}
+
+// endPhase routes straight to the phase's end (the run loop records it).
+func (x *exec) endPhase() {
+	x.rs.pos = len(x.rs.fl.Stages)
+	x.rs.ph = phStart
 }
 
 // --- wait stages ------------------------------------------------------------

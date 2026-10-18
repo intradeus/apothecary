@@ -2,6 +2,7 @@ package actionspec
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,15 @@ func TestRegistryIntegrity(t *testing.T) {
 				t.Errorf("action %q: bad or duplicate input name %q", a.Slug, in.Name)
 			}
 			names[in.Name] = true
-			if in.Kind != KindFile && in.Kind != KindValue {
+			switch in.Kind {
+			case KindFile, KindValue:
+			case KindEnum:
+				// A literal choice needs its choices, and a default among them
+				// when the stage may leave it unbound.
+				if len(in.Values) == 0 || (!in.Required && !slices.Contains(in.Values, in.Default)) {
+					t.Errorf("action %q enum input %q: values %v, default %q", a.Slug, in.Name, in.Values, in.Default)
+				}
+			default:
 				t.Errorf("action %q input %q: unknown kind %q", a.Slug, in.Name, in.Kind)
 			}
 		}
@@ -42,6 +51,9 @@ func TestRegistryIntegrity(t *testing.T) {
 				t.Errorf("action %q: bad or duplicate output name %q", a.Slug, out.Name)
 			}
 			outs[out.Name] = true
+			if out.Kind == KindFile && out.Path == "" {
+				t.Errorf("action %q file output %q has no path", a.Slug, out.Name)
+			}
 			// A value output is only consumable if it names its sentinel.
 			if out.Kind == KindValue && !strings.HasPrefix(out.Sentinel, "$") {
 				t.Errorf("action %q output %q: value outputs need a $SENTINEL, got %q", a.Slug, out.Name, out.Sentinel)

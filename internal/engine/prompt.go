@@ -26,7 +26,11 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 			// survived: the workspace may have been rebuilt since the question
 			// was asked, and a path in the prompt that resolves to nothing is
 			// worse than no path at all.
-			text = composeAnswerText(a.answer.Answer, a.answer.Feedback, x.pingAnswerPaths(a.id))
+			kind := ""
+			if r := x.rs.raisedPings[a.id]; r != nil {
+				kind = r.Kind()
+			}
+			text = composeAnswerText(kind, a.answer.Answer, a.answer.Feedback, x.pingAnswerPaths(a.id))
 		}
 		fmt.Fprintf(&b, "\nYou asked: %s\nThey answered: %s\n", a.question, text)
 	}
@@ -88,6 +92,9 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), in.Value, content)
 	}
 
+	if sec := x.subjectSection(); sec != "" {
+		b.WriteString(sec)
+	}
 	if len(rs.checkouts) > 1 {
 		b.WriteString("# REPOSITORIES\nThis run works in several repositories, each checked out on its own run branch:\n")
 		for _, co := range rs.checkouts {
@@ -215,6 +222,14 @@ func (x *exec) changedFiles() string {
 			return "(no diff available)"
 		}
 		return res.Output
+	}
+	// Inside a reaction phase: what this phase run changed on its subject,
+	// measured from the branch head when it started.
+	if co := x.subjectCheckout(); co != nil {
+		if rs.phaseTip != "" {
+			return diff(co.Dir, rs.phaseTip)
+		}
+		return diff(co.Dir, "origin/"+sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch))
 	}
 	if len(rs.checkouts) <= 1 {
 		return diff(event.PrimaryCheckoutDir, "origin/"+sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))

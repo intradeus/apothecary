@@ -763,3 +763,101 @@ func TestThenChainDepthCapped(t *testing.T) {
 		t.Errorf("err = %v, want a chain-depth refusal", err)
 	}
 }
+
+// A phased flow (PLAN6): the entry phase first, reactions after, stage ids
+// one namespace, routes kept inside their phase.
+const phasedDoc = header + `phases:
+  - id: deliver
+    on: ticket
+    stages:
+      - { id: build, type: command, run: x }
+      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - id: conflicts
+    on: { signal: mr_conflicts, confirm: true }
+    stages:
+      - { id: sync, type: action, action: sync_target, input: { strategy: merge }, on_success: sync_test }
+      - { id: sync_test, type: command, run: x }
+  - id: review_fixes
+    on: { signal: mr_review_settled, quiet_for: 1h, max: 3 }
+    stages:
+      - { id: load, type: action, action: load_review_comments }
+      - { id: fix, type: command, run: x, input: { comments: artifacts/review.md } }
+`
+
+func TestPhasedFlowParses(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(phasedDoc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.Phased() || len(f.Phases) != 3 || len(f.Stages) != 6 {
+		t.Fatalf("phases %d stages %d", len(f.Phases), len(f.Stages))
+	}
+	d, c, r := f.Phases[0], f.Phases[1], f.Phases[2]
+	if !d.Entry() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
+		t.Errorf("spans: %+v %+v %+v", d, c, r)
+	}
+	if !c.On.Confirm || c.On.Max != DefaultPhaseMax || r.On.QuietFor != time.Hour || r.On.Max != 3 {
+		t.Errorf("triggers: %+v %+v", c.On, r.On)
+	}
+	// Absent on_success: next stage in the phase, the phase's last stage = done.
+	if f.Stage("build").OnSuccess != "mr" || f.Stage("mr").OnSuccess != TerminalDone || f.Stage("sync_test").OnSuccess != TerminalDone {
+		t.Errorf("on_success: build→%s mr→%s sync_test→%s", f.Stage("build").OnSuccess, f.Stage("mr").OnSuccess, f.Stage("sync_test").OnSuccess)
+	}
+	if f.Stage("load").Phase != "review_fixes" || len(f.Stage("load").Outputs) != 1 || f.Stage("load").Outputs[0].Value != "artifacts/review.md" {
+		t.Errorf("load stage = %+v", f.Stage("load"))
+	}
+	for _, w := range f.Warnings {
+		if strings.Contains(w, "review.md") {
+			t.Errorf("warning %q: review.md is produced by load", w)
+		}
+	}
+	if f.Stage("build").Line != 8 || f.Stage("load").Line != 18 {
+		t.Errorf("lines: build %d load %d", f.Stage("build").Line, f.Stage("load").Line)
+	}
+}
+
+func TestPhaseValidationErrors(t *testing.T) {
+	entry := header + "phases:\n  - id: deliver\n    on: ticket\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
+	cases := []struct{ name, doc, substr string }{
+		{"stages and phases", entry + "stages:\n  - { id: s, type: command, run: x }\n", "either top-level stages"},
+		{"entry not first", header + "phases:\n  - { id: c, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "first phase is the entry"},
+		{"two entries", entry + "  - { id: again, on: ticket, stages: [{ id: s, type: command, run: x }] }\n", "only the first phase"},
+		{"ending signal", entry + "  - { id: m, on: mr_merged, stages: [{ id: s, type: command, run: x }] }\n", "ends the run"},
+		{"unknown signal", entry + "  - { id: m, on: mr_ghost, stages: [{ id: s, type: command, run: x }] }\n", "unknown signal"},
+		{"quiet on conflicts", entry + "  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, stages: [{ id: s, type: command, run: x }] }\n", "quiet_for applies only"},
+		{"quiet too short", entry + "  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, stages: [{ id: s, type: command, run: x }] }\n", "at least 1m"},
+		{"unlimited without confirm", entry + "  - { id: m, on: { signal: mr_conflicts, max: -1 }, stages: [{ id: s, type: command, run: x }] }\n", "requires confirm"},
+		{"options on ticket", header + "phases:\n  - { id: d, on: { signal: ticket, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "do not apply"},
+		{"unknown trigger key", entry + "  - { id: m, on: { signal: mr_conflicts, when: now }, stages: [{ id: s, type: command, run: x }] }\n", "field when not found"},
+		{"empty phase", entry + "  - { id: m, on: mr_conflicts, stages: [] }\n", "at least one stage"},
+		{"duplicate phase", entry + "  - { id: deliver, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "duplicate phase id"},
+		{"duplicate stage across phases", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n", "one namespace"},
+		{"route leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n", "stay inside it"},
+		{"edge leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n", "stay inside it"},
+		{"create_mr in a reaction", header + "phases:\n  - { id: d, on: ticket, stages: [{ id: b, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n", "belongs to the entry phase"},
+		{"each_repo in a reaction", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, each_repo: true }] }\n", "each_repo does not apply"},
+		{"subject action in the entry", header + "phases:\n  - { id: d, on: ticket, stages: [{ id: s, type: action, action: sync_target }] }\n", "belongs in a reaction phase"},
+		{"subject action without phases", header + "stages:\n  - { id: s, type: action, action: sync_target }\n", "declare phases"},
+		{"reaction without an MR", header + "phases:\n  - { id: d, on: ticket, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n", "opens none"},
+		{"rebase without a leased push", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n", "push_branch"},
+		{"bad strategy", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: squash } }] }\n", "not one of merge | rebase"},
+		{"trigger on a gate", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: g, type: human_gate, auto_approve: mr_conflicts }\n", "starts a phase"},
+		{"trigger on a wait", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_review_settled }\n", "starts a phase"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse("t.yaml", []byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), tc.substr) {
+				t.Errorf("err = %v, want %q", err, tc.substr)
+			}
+		})
+	}
+}
+
+// The shorthand keeps today's model exactly: no phases, no phase on stages.
+func TestTopLevelStagesAreNotPhased(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x }\n"))
+	if err != nil || f.Phased() || f.Stages[0].Phase != "" {
+		t.Fatalf("err %v phased %v", err, f != nil && f.Phased())
+	}
+}

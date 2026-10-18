@@ -35,12 +35,23 @@ type Signal struct {
 	// Needs names a run fact the signal depends on, so a flow that waits for
 	// something that can never happen is caught rather than hanging.
 	Needs string `json:"needs,omitempty"`
+	// Trigger marks a signal that starts a phase (PLAN6) rather than
+	// answering a gate or ending a wait: it describes something to react to
+	// while the merge request is open, not an outcome.
+	Trigger bool `json:"trigger,omitempty"`
+	// Debounced marks a trigger that fires on activity and so accepts a
+	// quiet_for: the phase starts once the activity has stopped.
+	Debounced bool `json:"debounced,omitempty"`
 }
 
 // Signal slugs, the port kinds they require, and the run facts they need.
 const (
 	MRMerged = "mr_merged"
 	MRClosed = "mr_closed"
+
+	// Phase triggers.
+	MRConflicts     = "mr_conflicts"
+	MRReviewSettled = "mr_review_settled"
 
 	RequiresForge = "forge"
 
@@ -61,6 +72,21 @@ var registry = []Signal{{
 	Description: "Fires when the run's merge request is closed without being merged — someone decided against it on the forge.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
+}, {
+	Slug:        MRConflicts,
+	Title:       "Merge request conflicts with its target",
+	Description: "Holds while the forge reports the merge request cannot merge cleanly into its target. Once per (target tip, head) pair: a declined or finished fix is not offered again until either moves.",
+	Requires:    RequiresForge,
+	Needs:       NeedsMR,
+	Trigger:     true,
+}, {
+	Slug:        MRReviewSettled,
+	Title:       "Review comments settled",
+	Description: "Holds when the merge request has unresolved review threads whose last word is a reviewer's, and the newest of those comments is older than quiet_for: someone reviewed, then stopped.",
+	Requires:    RequiresForge,
+	Needs:       NeedsMR,
+	Trigger:     true,
+	Debounced:   true,
 }}
 
 // Registry returns every registered signal (a copy: callers may sort it).

@@ -122,13 +122,26 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 			t.Errorf("stage %s: on_fail chain ends at %q, want a gate showing %s", s.ID, e.To, flow.SentinelWorkspace)
 			continue
 		}
-		if tgt.OnSuccess != s.ID {
+		// A stage whose job is to unblock another (the resolver unblocks
+		// sync) may hand its rescue to that stage: the human who resolves by
+		// hand replaces the agent, and the blocked stage continues.
+		if tgt.OnSuccess != s.ID && tgt.OnSuccess != s.OnSuccess {
 			t.Errorf("stage %s: rescue gate %s resumes %q, must resume the escalating stage %q",
 				s.ID, tgt.ID, tgt.OnSuccess, s.ID)
 		}
 	}
-	if f.Stage("final_gate").Edge(flow.EdgeReject).To != flow.TerminalAbort {
-		t.Error("final_gate.on_reject must be abort")
+	// The run's whole life (PLAN6): the merge request ends it — no final
+	// gate — and the reactions are the conflict fix (asked first) and the
+	// debounced review round.
+	if !f.Phased() || f.Stage("final_gate") != nil {
+		t.Fatal("the default flow is phased and has no final gate")
+	}
+	conflicts, review := f.Phase("conflicts"), f.Phase("review_fixes")
+	if conflicts == nil || !conflicts.On.Confirm || review == nil || review.On.QuietFor == 0 {
+		t.Errorf("reactions: conflicts %+v review %+v", conflicts, review)
+	}
+	if f.Agent("replier").ReviewRepliesOutput() == nil {
+		t.Error("the replier must declare a review_replies output, or bad replies reach the forge")
 	}
 	// Every human_gate says what it is asking: a gate with no question would
 	// park the run on an unexplained decision.

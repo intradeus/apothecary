@@ -262,6 +262,7 @@ type typeNamer struct {
 var typeNameOverrides = map[string]string{
 	"run.View":                 "RunView",
 	"run.PingView":             "PingView",
+	"event.Option":             "PingOption",
 	"event.Event":              "Event",
 	"flow.Doc":                 "FlowDoc",
 	"channels.Entry":           "ChannelEntry",

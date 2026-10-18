@@ -121,6 +121,12 @@ import type {
 	GetRunFilesData,
 	GetRunFilesErrors,
 	GetRunFilesResponses,
+	GetRunMrStatusData,
+	GetRunMrStatusErrors,
+	GetRunMrStatusResponses,
+	GetRunPhasesData,
+	GetRunPhasesErrors,
+	GetRunPhasesResponses,
 	GetRunPortsData,
 	GetRunPortsErrors,
 	GetRunPortsResponses,
@@ -254,6 +260,9 @@ import type {
 	StartEnvCheckData,
 	StartEnvCheckErrors,
 	StartEnvCheckResponses,
+	StartPhaseData,
+	StartPhaseErrors,
+	StartPhaseResponses,
 	StartTicketRunData,
 	StartTicketRunErrors,
 	StartTicketRunResponses,
@@ -1107,6 +1116,17 @@ export const sendRunMessage = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * Each merge request as the forge reports it now: mergeability and pending review threads
+ */
+export const getRunMrStatus = <ThrowOnError extends boolean = false>(
+	options: Options<GetRunMrStatusData, ThrowOnError>
+): RequestResult<GetRunMrStatusResponses, GetRunMrStatusErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetRunMrStatusResponses, GetRunMrStatusErrors, ThrowOnError>({
+		url: '/api/runs/{id}/mrs/status',
+		...options
+	});
+
+/**
  * Report listening ports (in-workspace scanner)
  */
 export const reportObservedPorts = <ThrowOnError extends boolean = false>(
@@ -1147,6 +1167,30 @@ export const pauseRun = <ThrowOnError extends boolean = false>(
 ): RequestResult<PauseRunResponses, PauseRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<PauseRunResponses, PauseRunErrors, ThrowOnError>({
 		url: '/api/runs/{id}/pause',
+		...options
+	});
+
+/**
+ * The reaction phases of the run's flow, with their runs per merge request
+ */
+export const getRunPhases = <ThrowOnError extends boolean = false>(
+	options: Options<GetRunPhasesData, ThrowOnError>
+): RequestResult<GetRunPhasesResponses, GetRunPhasesErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetRunPhasesResponses, GetRunPhasesErrors, ThrowOnError>({
+		url: '/api/runs/{id}/phases',
+		...options
+	});
+
+/**
+ * Start a reaction phase now, on one merge request
+ *
+ * Only while the run is between phases (in review). The phase's trigger need not hold: a human's start is its own decision. Its max still applies.
+ */
+export const startPhase = <ThrowOnError extends boolean = false>(
+	options: Options<StartPhaseData, ThrowOnError>
+): RequestResult<StartPhaseResponses, StartPhaseErrors, ThrowOnError> =>
+	(options.client ?? client).post<StartPhaseResponses, StartPhaseErrors, ThrowOnError>({
+		url: '/api/runs/{id}/phases/{phase}/start',
 		...options
 	});
 

@@ -3,7 +3,7 @@
 	import { ago } from '$lib/format';
 	import type { Ping } from '$lib/domain';
 	import PingCard from '$lib/PingCard.svelte';
-	import { isGatePing } from '$lib/ping';
+	import { isWantedPing } from '$lib/ping';
 	import { onMount } from 'svelte';
 
 	let pings = $state<Ping[]>([]);
@@ -75,7 +75,7 @@
        (PingCard's draft note must not carry over to the next ping) -->
 	<div class="card">
 		<div class="row spread">
-			<span class="pingtype {isGatePing(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
+			<span class="pingtype {isWantedPing(p.type) ? 'wanted' : 'unwanted'}">{p.type}</span>
 			<span class="muted small">
 				{#if p.stageId}<span class="mono">{p.stageId}</span> ·
 				{/if}

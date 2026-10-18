@@ -78,6 +78,10 @@ type Config struct {
 	// MRPollInterval is the signal poll cadence, shared by wait stages and a
 	// gate's auto_answer (§3: 60s).
 	MRPollInterval time.Duration
+	// ThreadPollInterval is how often an idle run lists a merge request's
+	// review threads (a second, heavier call than its status) when a phase
+	// reacts to review comments. Default 4 × MRPollInterval.
+	ThreadPollInterval time.Duration
 	// RunsDir receives stage logs (<run>/<stage>-<iter>.log, §12/§13);
 	// empty disables log files.
 	RunsDir string
@@ -113,6 +117,9 @@ func (c *Config) withDefaults() Config {
 	}
 	if out.MRPollInterval == 0 {
 		out.MRPollInterval = 60 * time.Second
+	}
+	if out.ThreadPollInterval == 0 {
+		out.ThreadPollInterval = 4 * out.MRPollInterval
 	}
 	if out.PortDiscoveryMaxAuto == 0 {
 		out.PortDiscoveryMaxAuto = 5
@@ -264,7 +271,13 @@ type runHandle struct {
 	messages chan msgReq
 	// agentLive is set while an agent invocation runs (messages can land).
 	agentLive atomic.Bool
-	done      chan struct{}
+	// idle is set while the run sits between phases with its merge requests
+	// open (PLAN6): the loop only polls the forge, so it does not hold a
+	// concurrency slot.
+	idle atomic.Bool
+	// phaseStarts carries a human's "run this phase now" to an idle loop.
+	phaseStarts chan phaseStartReq
+	done        chan struct{}
 }
 
 // Ping is an open (or answered) human interaction. Gate pings are raised by
@@ -278,13 +291,15 @@ type Ping struct {
 	// Files are the attached workspace paths (first = the primary reviewed
 	// document); Link is a resolved URL payload (a gate's mr_url/workspace
 	// sentinel). Typed at the source — never sniffed apart (DESIGN-FILES §4).
-	Files    []string
-	Link     string
-	StageID  string   // flow stage in flight when raised (PLAN4 M15)
-	Options  []string // agent-declared answer choices (PLAN4 M16)
-	RaisedAt time.Time
+	Files   []string
+	Link    string
+	StageID string         // flow stage in flight when raised (PLAN4 M15)
+	Options []event.Option // the answer choices (PLAN4 M16)
+	// AnswerKind is the shape of the answer this ping takes (event.Answer*):
+	// what the UI renders and the one thing validation reads.
+	AnswerKind string
+	RaisedAt   time.Time
 
-	gate           bool
 	key            string      // the raiser's idempotency key (RaisePing)
 	answered       bool        // guarded by Engine.mu
 	answer         *PingAnswer // set before done closes; read only after <-done
@@ -373,7 +388,7 @@ func ComposeAnswer(p *Ping) string {
 	if !ok {
 		return ""
 	}
-	return composeAnswerText(ans.Answer, ans.Feedback, p.DeliveredArtifacts())
+	return composeAnswerText(p.AnswerKind, ans.Answer, ans.Feedback, p.DeliveredArtifacts())
 }
 
 // composeAnswerText is the renderer proper. It takes the two answer fields
@@ -382,9 +397,18 @@ func ComposeAnswer(p *Ping) string {
 // ping to ask. Both forms map onto the same cases: the event stores a
 // free-text agent answer as answer:"text" with the words in feedback, and the
 // live path's raw answer falls through to the default.
-func composeAnswerText(answer, feedback string, delivered []string) string {
+func composeAnswerText(kind, answer, feedback string, delivered []string) string {
 	var text string
 	switch {
+	case kind == event.AnswerMulti:
+		if ids := selectedOptions(answer); len(ids) > 0 {
+			text = "selected: " + strings.Join(ids, ", ")
+		} else {
+			text = "none selected"
+		}
+		if feedback != "" {
+			text += "\n(note: " + feedback + ")"
+		}
 	case answer == "text":
 		text = feedback
 	case answer == PingAnswerOther:
@@ -1390,11 +1414,23 @@ func (e *Engine) scheduleLocked(lim Limits) {
 		// nobody will cancel or wait for; it recovers on next boot.
 		return
 	}
-	for len(e.handles) < lim.MaxConcurrentRuns && len(e.queue) > 0 {
+	for e.busyLocked() < lim.MaxConcurrentRuns && len(e.queue) > 0 {
 		id := e.queue[0]
 		e.queue = e.queue[1:]
 		e.startLocked(id)
 	}
+}
+
+// busyLocked counts the resident loops that hold a concurrency slot: every
+// one except runs idling between phases.
+func (e *Engine) busyLocked() int {
+	n := 0
+	for _, h := range e.handles {
+		if !h.idle.Load() {
+			n++
+		}
+	}
+	return n
 }
 
 func (e *Engine) startLocked(runID string) {
@@ -1403,11 +1439,12 @@ func (e *Engine) startLocked(runID string) {
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	h := &runHandle{
-		cancel:   cancel,
-		mailbox:  make(chan raiseReq, 8),
-		answers:  make(chan answerReq, 8),
-		messages: make(chan msgReq),
-		done:     make(chan struct{}),
+		cancel:      cancel,
+		mailbox:     make(chan raiseReq, 8),
+		answers:     make(chan answerReq, 8),
+		messages:    make(chan msgReq),
+		phaseStarts: make(chan phaseStartReq),
+		done:        make(chan struct{}),
 	}
 	e.handles[runID] = h
 	go e.runLoop(ctx, runID, h)
@@ -1603,10 +1640,36 @@ func (e *Engine) RaisePing(runID, ptype, question, context_ string, options, art
 	return e.RaisePingKeyed(runID, "", ptype, question, context_, options, artifactRefs)
 }
 
-// RaisePingKeyed is RaisePing with the raiser's idempotency key: a raise
-// retried with the same key (its response was lost in transit) returns the
-// ping the first one created instead of asking the human twice.
+// RaisePingKeyed is RaisePing with the raiser's idempotency key (string
+// options; kept for callers that predate structured options).
 func (e *Engine) RaisePingKeyed(runID, key, ptype, question, context_ string, options, artifactRefs []string) (*Ping, error) {
+	q := Question{Key: key, Type: ptype, Question: question, Context: context_, Artifacts: artifactRefs}
+	for _, o := range options {
+		q.Options = append(q.Options, event.Option{ID: o, Label: o})
+	}
+	return e.RaiseQuestion(runID, q)
+}
+
+// Question is what an agent asks through ask_human (§10).
+type Question struct {
+	// Key is the raiser's idempotency key: a raise retried with the same key
+	// (its response was lost in transit) returns the ping the first one
+	// created instead of asking the human twice.
+	Key      string
+	Type     string // clarification|blocker|permission
+	Question string
+	Context  string
+	// Options make it a closed question (choice), or with Multi a selection
+	// of any number of them.
+	Options   []event.Option
+	Multi     bool
+	Artifacts []string
+}
+
+// RaiseQuestion raises an agent's question and hands it to the running
+// agent stage.
+func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
+	key, ptype, question, context_, options, artifactRefs := q.Key, q.Type, q.Question, q.Context, q.Options, q.Artifacts
 	if key != "" {
 		e.mu.Lock()
 		for _, p := range e.pings {
@@ -1622,27 +1685,39 @@ func (e *Engine) RaisePingKeyed(runID, key, ptype, question, context_ string, op
 	default:
 		return nil, fmt.Errorf("invalid ask_human ping type %q", ptype)
 	}
-	if len(options) > 8 {
-		return nil, fmt.Errorf("ask_human: at most 8 options (got %d)", len(options))
+	if len(options) > 16 {
+		return nil, fmt.Errorf("ask_human: at most 16 options (got %d)", len(options))
 	}
 	seen := map[string]bool{}
-	var opts []string
+	var opts []event.Option
 	for _, o := range options {
-		o = strings.TrimSpace(o)
-		if o == "" || len(o) > 200 {
-			return nil, fmt.Errorf("ask_human: options must be non-empty strings of at most 200 chars")
+		o.ID, o.Label, o.Detail = strings.TrimSpace(o.ID), strings.TrimSpace(o.Label), strings.TrimSpace(o.Detail)
+		if o.Label == "" {
+			o.Label = o.ID
 		}
-		// "other" is system-provided on every option ping; a declared one
-		// would duplicate the UI affordance. (Stripping every option this
-		// way leaves a free-text ping — which is what a question whose only
+		if o.ID == "" || len(o.ID) > 200 || len(o.Label) > 200 || len(o.Detail) > 500 || strings.ContainsAny(o.ID, "\n\r") {
+			return nil, fmt.Errorf("ask_human: options need a non-empty id (one line, at most 200 chars), a label of at most 200 and a detail of at most 500")
+		}
+		// "other" is system-provided on every choice; a declared one would
+		// duplicate the UI affordance. (Stripping every option this way
+		// leaves a free-text ping — which is what a question whose only
 		// option is "other" actually is.)
-		if strings.EqualFold(o, PingAnswerOther) {
+		if strings.EqualFold(o.ID, PingAnswerOther) {
 			continue
 		}
-		if !seen[o] {
-			seen[o] = true
+		if !seen[o.ID] {
+			seen[o.ID] = true
 			opts = append(opts, o)
 		}
+	}
+	kind := event.AnswerText
+	switch {
+	case q.Multi && len(opts) == 0:
+		return nil, fmt.Errorf("ask_human: multi needs options to select from")
+	case q.Multi:
+		kind = event.AnswerMulti
+	case len(opts) > 0:
+		kind = event.AnswerChoice
 	}
 	var refs []string
 	for _, a := range artifactRefs {
@@ -1665,7 +1740,7 @@ func (e *Engine) RaisePingKeyed(runID, key, ptype, question, context_ string, op
 	}
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Options: opts, Files: refs, key: key,
+		Options: opts, AnswerKind: kind, Files: refs, key: key,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
@@ -1739,16 +1814,36 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 // option ping takes one of its options or the "other" escape hatch with the
 // human's actual answer in the note. One implementation, because the live and
 // dormant paths must not be able to disagree about what a valid answer is.
-func validateAnswer(gate bool, options []string, ans PingAnswer) error {
-	if gate && ans.Answer != "approve" && ans.Answer != "reject" {
-		return fmt.Errorf("gate ping requires answer approve|reject")
-	}
-	if len(options) > 0 && !slices.Contains(options, ans.Answer) {
-		// The agent asked a closed question (PLAN4 M16): determinism is the
-		// point — the note field carries anything beyond the choice.
+func validateAnswer(kind string, options []event.Option, ans PingAnswer) error {
+	ids := event.OptionIDs(options)
+	switch kind {
+	case event.AnswerDecision:
+		if ans.Answer != "approve" && ans.Answer != "reject" {
+			return fmt.Errorf("this question is answered approve|reject")
+		}
+	case event.AnswerMulti:
+		// Any number of the options, one id per line, or none.
+		if strings.TrimSpace(ans.Answer) == event.SelectNone {
+			return nil
+		}
+		picked := selectedOptions(ans.Answer)
+		if len(picked) == 0 {
+			return fmt.Errorf("select at least one option, or answer %q", event.SelectNone)
+		}
+		for _, o := range picked {
+			if !slices.Contains(ids, o) {
+				return fmt.Errorf("%q is not one of the options", o)
+			}
+		}
+	case event.AnswerChoice:
+		// A closed question (PLAN4 M16): determinism is the point — the note
+		// carries anything beyond the choice.
+		if slices.Contains(ids, ans.Answer) {
+			return nil
+		}
 		if ans.Answer != PingAnswerOther {
 			return fmt.Errorf("answer must be one of: %s | %s (with your answer in the note)",
-				strings.Join(options, " | "), PingAnswerOther)
+				strings.Join(ids, " | "), PingAnswerOther)
 		}
 		if strings.TrimSpace(ans.Feedback) == "" {
 			return fmt.Errorf("answer %q needs the note to carry your actual answer", PingAnswerOther)
@@ -1757,12 +1852,23 @@ func validateAnswer(gate bool, options []string, ans PingAnswer) error {
 	return nil
 }
 
+// selectedOptions splits a selection answer into its chosen options.
+func selectedOptions(answer string) []string {
+	var out []string
+	for _, l := range strings.Split(answer, "\n") {
+		if l = strings.TrimSpace(l); l != "" && l != event.SelectNone {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // recordedAnswer is how an answer is written to the log. Free-text agent
 // answers are recorded as answer:"text" with the words in feedback (§6);
 // gates and option pings keep the choice in answer. Shared for the same
 // reason as validateAnswer: two writers, one shape.
-func recordedAnswer(gate bool, options []string, ans PingAnswer) (string, string) {
-	if !gate && len(options) == 0 {
+func recordedAnswer(kind string, ans PingAnswer) (string, string) {
+	if kind == event.AnswerText {
 		return "text", ans.Answer
 	}
 	return ans.Answer, ans.Feedback
@@ -1787,7 +1893,7 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if !active {
 		return errNoLoop
 	}
-	if err := validateAnswer(p.gate, p.Options, ans); err != nil {
+	if err := validateAnswer(p.AnswerKind, p.Options, ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	// The answers channel is drained only in agent stages and gates. Don't
@@ -1843,8 +1949,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 		// The run ended without it; the projection already says so.
 		return fmt.Errorf("run %s: %w", v.RunID, ErrRunNotActive)
 	}
-	gate := gatePingType(v.Type)
-	if err := validateAnswer(gate, v.Options, ans); err != nil {
+	if err := validateAnswer(v.AnswerKind, v.Options, ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 
@@ -1871,7 +1976,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 		return fmt.Errorf("run %s: %w", v.RunID, errRunBusy)
 	}
 
-	answer, feedback := recordedAnswer(gate, v.Options, ans)
+	answer, feedback := recordedAnswer(v.AnswerKind, ans)
 	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: answer,
 		Feedback: feedback, AttachmentIDs: ans.AttachmentIDs}}
 	// Wake only when this was the last thing the run was waiting for, and only
@@ -1969,7 +2074,7 @@ func (e *Engine) PendingPings() []*Ping {
 		out = append(out, &Ping{
 			ID: v.PingID, RunID: v.RunID, Type: v.Type, Question: v.Question,
 			Context: v.Context, Files: v.Files, Link: v.Link, StageID: v.StageID,
-			Options: v.Options, RaisedAt: v.RaisedAt, gate: gatePingType(v.Type),
+			Options: v.Options, AnswerKind: v.AnswerKind, RaisedAt: v.RaisedAt,
 		})
 	}
 	return out

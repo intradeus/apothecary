@@ -45,6 +45,9 @@ export function edgeKindsFor(type: StageKind): EdgeKind[] {
 	const out: EdgeKind[] = [];
 	if (type === 'agent' || type === 'command' || type === 'wait') out.push('on_fail', 'on_timeout');
 	if (type === 'agent' || type === 'human_gate') out.push('on_reject');
+	// An action fails when its outcome is wrong in a fixable way (a merge
+	// that conflicts, a push the remote refuses).
+	if (type === 'action') out.push('on_fail');
 	return out;
 }
 
@@ -113,7 +116,27 @@ export interface DocStage {
 	on_fail?: DocEdge;
 	on_reject?: DocEdge;
 	on_timeout?: DocEdge;
+	/** Editor-only: the phase this stage belongs to, in a phased flow. The
+	 *  YAML nests stages under their phase; the editor keeps one flat list. */
+	phase?: string;
 }
+
+/** A phase's `on:` (PLAN6): `ticket` for the entry, else a forge signal. */
+export interface DocTrigger {
+	signal: string;
+	quiet_for?: string;
+	confirm?: boolean;
+	max?: number;
+}
+
+/** A phase header; its stages are the flat list's stages tagged with it. */
+export interface DocPhase {
+	id: string;
+	description?: string;
+	on: DocTrigger;
+}
+
+export const TRIGGER_TICKET = 'ticket';
 
 // One declared input of an agent: what the stage binds by name.
 export interface DocAgentInput {
@@ -152,6 +175,49 @@ export interface FlowDoc {
 	budget: { max_cost_usd?: number; max_total_turns?: number };
 	agents?: DocAgent[];
 	stages: DocStage[];
+	/** Phased flows (PLAN6): the phase headers, the entry first. Absent for a
+	 *  flow written with top-level stages. */
+	phases?: DocPhase[];
+}
+
+/** The wire document, where a phased flow nests its stages. */
+type WireDoc = Omit<FlowDoc, 'stages' | 'phases'> & {
+	stages?: DocStage[];
+	phases?: (DocPhase & { stages?: DocStage[] })[];
+};
+
+// normalizeDoc turns the server's document into the editor's: a phased
+// flow's stages flattened in phase order, each tagged with its phase.
+export function normalizeDoc(raw: unknown): FlowDoc {
+	const w = raw as WireDoc;
+	if (!w.phases?.length) return { ...(w as FlowDoc), stages: w.stages ?? [] };
+	const stages: DocStage[] = [];
+	const phases: DocPhase[] = [];
+	for (const ph of w.phases) {
+		const { stages: inner, ...head } = ph;
+		phases.push(head);
+		for (const st of inner ?? []) stages.push({ ...st, phase: ph.id });
+	}
+	return { ...(w as FlowDoc), stages, phases };
+}
+
+/** The stages of one phase, in document order ('' = an unphased flow). */
+export function stagesOf(doc: FlowDoc, phase: string | undefined): DocStage[] {
+	return doc.stages.filter((s) => (s.phase ?? '') === (phase ?? ''));
+}
+
+/** A phase's first stage: where its trigger enters. */
+export function phaseEntry(doc: FlowDoc, phase: string | undefined): DocStage | undefined {
+	return doc.stages.find((s) => (s.phase ?? '') === (phase ?? ''));
+}
+
+/** "on: mr_conflicts (confirm)" — a trigger in a few words. */
+export function triggerLabel(t: DocTrigger): string {
+	const bits: string[] = [];
+	if (t.quiet_for) bits.push(`quiet ${t.quiet_for}`);
+	if (t.confirm) bits.push('confirm');
+	if (t.max != null) bits.push(`max ${t.max}`);
+	return bits.length ? `${t.signal} (${bits.join(', ')})` : t.signal;
 }
 
 /** The flow's definition of an agent by name, or undefined. */
@@ -161,10 +227,13 @@ export function agentOf(doc: FlowDoc, name: string): DocAgent | undefined {
 
 // effectiveSuccess resolves the YAML sugar for display: explicit target, or
 // next stage in document order, or done.
+// In a phased flow, "next" never crosses into another phase: a phase's last
+// stage ends it.
 export function effectiveSuccess(doc: FlowDoc, i: number): string {
 	const s = doc.stages[i];
 	if (s.on_success) return s.on_success;
-	return i === doc.stages.length - 1 ? DONE : doc.stages[i + 1].id;
+	const next = doc.stages[i + 1];
+	return !next || (next.phase ?? '') !== (s.phase ?? '') ? DONE : next.id;
 }
 
 export function edgeOf(s: DocStage, kind: EdgeKind): DocEdge | undefined {
@@ -180,12 +249,39 @@ export function setEdge(s: DocStage, kind: EdgeKind, e: DocEdge | undefined) {
 // setEntry makes the stage with the given id the flow's entry by moving it
 // to the front of the document (the entry IS stages[0]); docToYaml already
 // serializes entry-first. Returns true when the entry actually changed.
+// In a phased flow the stage becomes the entry of ITS phase (moved to the
+// front of that phase's block).
 export function setEntry(doc: FlowDoc, id: string): boolean {
 	const i = doc.stages.findIndex((s) => s.id === id);
-	if (i <= 0) return false;
+	if (i < 0) return false;
+	const first = doc.stages.findIndex((s) => (s.phase ?? '') === (doc.stages[i].phase ?? ''));
+	if (first === i) return false;
 	const [s] = doc.stages.splice(i, 1);
-	doc.stages.unshift(s);
+	doc.stages.splice(first, 0, s);
 	return true;
+}
+
+// movePhase reassigns a stage to another phase, at the end of its block.
+export function movePhase(doc: FlowDoc, id: string, phase: string) {
+	const i = doc.stages.findIndex((s) => s.id === id);
+	if (i < 0 || doc.stages[i].phase === phase) return;
+	const [s] = doc.stages.splice(i, 1);
+	s.phase = phase;
+	let at = doc.stages.length;
+	for (let j = doc.stages.length - 1; j >= 0; j--) {
+		if (doc.stages[j].phase === phase) {
+			at = j + 1;
+			break;
+		}
+	}
+	if (at === doc.stages.length) {
+		// An empty phase: place its block where the phase order says.
+		const order = (doc.phases ?? []).map((p) => p.id);
+		const rank = order.indexOf(phase);
+		at = doc.stages.findIndex((x) => order.indexOf(x.phase ?? '') > rank);
+		if (at < 0) at = doc.stages.length;
+	}
+	doc.stages.splice(at, 0, s);
 }
 
 // pruneEdgeTarget drops chain links that target a deleted stage id,
@@ -202,21 +298,27 @@ export function pruneEdgeTarget(e: DocEdge | undefined, id: string): DocEdge | u
 // (doc.stages[0]) followed by the remaining stages in document order — the
 // serialization order (DESIGN3 §2.3). Entry stays first by construction.
 export function successOrder(doc: FlowDoc): DocStage[] {
-	if (doc.stages.length === 0) return [];
-	const byId = new Map(doc.stages.map((s) => [s.id, s]));
+	if (doc.phases?.length) return doc.phases.flatMap((ph) => phaseOrder(doc, ph.id));
+	return phaseOrder(doc, undefined);
+}
+
+// phaseOrder is successOrder within one phase: the chain from the phase's
+// entry, then its remaining stages in document order.
+function phaseOrder(doc: FlowDoc, phase: string | undefined): DocStage[] {
+	const mine = stagesOf(doc, phase);
+	if (mine.length === 0) return [];
+	const byId = new Map(mine.map((s) => [s.id, s]));
 	const seen = new Set<string>();
 	const out: DocStage[] = [];
-	let cur: DocStage | undefined = doc.stages[0];
-	let i = doc.stages.indexOf(cur);
+	let cur: DocStage | undefined = mine[0];
 	while (cur && !seen.has(cur.id)) {
 		seen.add(cur.id);
 		out.push(cur);
-		const next = effectiveSuccess(doc, i);
+		const next = effectiveSuccess(doc, doc.stages.indexOf(cur));
 		if (next === DONE) break;
 		cur = byId.get(next);
-		i = cur ? doc.stages.indexOf(cur) : -1;
 	}
-	for (const s of doc.stages) if (!seen.has(s.id)) out.push(s);
+	for (const s of mine) if (!seen.has(s.id)) out.push(s);
 	return out;
 }
 
@@ -268,7 +370,7 @@ export function docToYaml(doc: FlowDoc): string {
 			return o;
 		});
 	}
-	obj.stages = ordered.map((s) => {
+	const stageYaml = (s: DocStage) => {
 		const o: Record<string, unknown> = { id: s.id, type: s.type };
 		if (s.description) o.description = s.description;
 		if (s.agent) o.agent = s.agent;
@@ -295,8 +397,29 @@ export function docToYaml(doc: FlowDoc): string {
 			if (e) o[kind] = edgeToYamlValue(e);
 		}
 		return o;
-	});
+	};
+	if (doc.phases?.length) {
+		obj.phases = doc.phases.map((ph) => {
+			const o: Record<string, unknown> = { id: ph.id };
+			if (ph.description) o.description = ph.description;
+			o.on = triggerYaml(ph.on);
+			o.stages = ordered.filter((s) => s.phase === ph.id).map(stageYaml);
+			return o;
+		});
+	} else {
+		obj.stages = ordered.map(stageYaml);
+	}
 	return stringify(obj, { lineWidth: 0 });
+}
+
+// triggerYaml uses the scalar sugar when the trigger has no options.
+function triggerYaml(t: DocTrigger): unknown {
+	if (!t.quiet_for && !t.confirm && t.max == null) return t.signal;
+	const o: Record<string, unknown> = { signal: t.signal };
+	if (t.quiet_for) o.quiet_for = t.quiet_for;
+	if (t.confirm) o.confirm = true;
+	if (t.max != null) o.max = t.max;
+	return o;
 }
 
 // nonEmptyIO reports whether a binding has anything to serialize.
@@ -315,27 +438,31 @@ function edgeToYamlValue(e: DocEdge): unknown {
 
 // autoLayout places nodes left-to-right along the success chain, dropping
 // off-chain stages into lanes below (used when no stored layout exists).
+// A phased flow gets one band per phase, top to bottom.
 export function autoLayout(doc: FlowDoc): Record<string, { x: number; y: number }> {
 	const pos: Record<string, { x: number; y: number }> = {};
-	const ordered = successOrder(doc);
-	const chain = new Set<string>();
-	let cur = doc.stages[0]?.id;
+	const bands = doc.phases?.length ? doc.phases.map((p) => p.id) : [undefined];
 	const byId = new Map(doc.stages.map((s, i) => [s.id, i]));
-	while (cur && cur !== DONE && !chain.has(cur)) {
-		chain.add(cur);
-		cur = effectiveSuccess(doc, byId.get(cur)!);
-	}
-	let cx = 0;
-	let ox = 0;
-	for (const s of ordered) {
-		if (chain.has(s.id)) {
-			pos[s.id] = { x: cx * 240, y: 0 };
-			cx++;
-		} else {
-			pos[s.id] = { x: ox * 240 + 120, y: 160 };
-			ox++;
+	bands.forEach((phase, band) => {
+		const y0 = band * 340;
+		const chain = new Set<string>();
+		let cur = phaseEntry(doc, phase)?.id;
+		while (cur && cur !== DONE && !chain.has(cur)) {
+			chain.add(cur);
+			cur = effectiveSuccess(doc, byId.get(cur)!);
 		}
-	}
+		let cx = 0;
+		let ox = 0;
+		for (const s of phaseOrder(doc, phase)) {
+			if (chain.has(s.id)) {
+				pos[s.id] = { x: cx * 240, y: y0 };
+				cx++;
+			} else {
+				pos[s.id] = { x: ox * 240 + 120, y: y0 + 160 };
+				ox++;
+			}
+		}
+	});
 	return pos;
 }
 
@@ -353,6 +480,7 @@ export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 	const ids = new Set(doc.stages.map((s) => s.id));
 	while (ids.has(id)) id = `${base}_${++n}`;
 	const s: DocStage = { id, type, on_success: DONE };
+	if (doc.phases?.length) s.phase = doc.phases[0].id;
 	if (type === 'agent') s.agent = '';
 	if (type === 'command') s.run_ref = '';
 	if (type === 'human_gate') s.question = '';

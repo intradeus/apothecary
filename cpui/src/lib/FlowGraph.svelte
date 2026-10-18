@@ -21,6 +21,8 @@
 		deriveDataLinks,
 		effectiveSuccess,
 		edgeOf,
+		phaseEntry,
+		triggerLabel,
 		feedDots,
 		feedSentinelFor,
 		type ActionContract,
@@ -74,8 +76,24 @@
 			id: s.id,
 			type: 'stage',
 			position: layout[s.id] ?? { x: i * 240, y: 0 },
-			data: { stage: s, entry: i === 0, agents, actions }
+			data: { stage: s, entry: i === 0 || phaseEntry(doc, s.phase)?.id === s.id, agents, actions }
 		}));
+		// Reaction phases (PLAN6): a marker per phase naming what starts it,
+		// pointing at the phase's first stage.
+		const triggers = (doc.phases ?? []).slice(1);
+		for (const ph of triggers) {
+			const first = phaseEntry(doc, ph.id);
+			const at = first ? (layout[first.id] ?? { x: 0, y: 0 }) : { x: 0, y: 0 };
+			ns.push({
+				id: `__trigger:${ph.id}`,
+				type: 'start',
+				position: layout[`trigger:${ph.id}`] ?? { x: at.x - 220, y: at.y },
+				data: {
+					label: `${ph.id}: on ${triggerLabel(ph.on)}`,
+					title: `Phase ${ph.id} starts when ${ph.on.signal} holds for one of the run's merge requests — drag onto a stage of this phase to start it there`
+				}
+			});
+		}
 		// The entry marker: its edge points at stages[0]; dragging that edge
 		// onto another stage makes it the entry (moves it to document front).
 		const entryPos = doc.stages.length
@@ -134,6 +152,17 @@
 				style: 'stroke:#7aa2f7; stroke-width:2'
 			});
 		}
+		for (const ph of triggers) {
+			const first = phaseEntry(doc, ph.id);
+			if (first)
+				es.push({
+					id: `entry|__trigger:${ph.id}`,
+					source: `__trigger:${ph.id}`,
+					target: first.id,
+					type: 'step',
+					style: 'stroke:#8b7cf6; stroke-width:2; stroke-dasharray:6 3'
+				});
+		}
 		doc.stages.forEach((s, i) => {
 			const target = effectiveSuccess(doc, i);
 			es.push({
@@ -185,15 +214,23 @@
 		if (h.startsWith('in:') || h.startsWith('out:')) return;
 		const target =
 			conn.target === '__done' ? DONE : conn.target === '__abort' ? ABORT : conn.target;
-		if (conn.source === '__start') {
-			onlink(START, 'entry', target); // re-point the entry
+		if (conn.source === '__start' || conn.source.startsWith('__trigger:')) {
+			onlink(START, 'entry', target); // re-point the (phase's) entry
 			return;
 		}
 		onlink(conn.source, conn.sourceHandle ?? 'success', target);
 	}
 
 	const nodeKey = (id: string) =>
-		id === '__done' ? DONE : id === '__abort' ? ABORT : id === '__start' ? START : id;
+		id === '__done'
+			? DONE
+			: id === '__abort'
+				? ABORT
+				: id === '__start'
+					? START
+					: id.startsWith('__trigger:')
+						? id.slice(2)
+						: id;
 </script>
 
 <div class="graph-wrap">
@@ -219,7 +256,10 @@
 				return;
 			}
 			if (kind === 'entry') {
-				onselect(doc.stages.length ? { kind: 'stage', id: doc.stages[0].id } : null);
+				const first = stage.startsWith('__trigger:')
+					? phaseEntry(doc, stage.slice('__trigger:'.length))
+					: doc.stages[0];
+				onselect(first ? { kind: 'stage', id: first.id } : null);
 				return;
 			}
 			onselect(

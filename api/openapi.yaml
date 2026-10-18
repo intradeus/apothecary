@@ -21,6 +21,8 @@ components:
           type: boolean
         slug:
           type: string
+        subject:
+          type: boolean
         title:
           type: string
       required:
@@ -197,6 +199,24 @@ components:
       additionalProperties:
         type: string
       type: object
+    DocPhase:
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        "on":
+          $ref: '#/components/schemas/DocTrigger'
+        stages:
+          items:
+            $ref: '#/components/schemas/DocStage'
+          nullable: true
+          type: array
+      required:
+        - id
+        - "on"
+        - stages
+      type: object
     DocStage:
       properties:
         action:
@@ -247,6 +267,20 @@ components:
       required:
         - id
         - type
+      type: object
+    DocTrigger:
+      properties:
+        confirm:
+          type: boolean
+        max:
+          nullable: true
+          type: integer
+        quiet_for:
+          type: string
+        signal:
+          type: string
+      required:
+        - signal
       type: object
     EditorConfig:
       properties:
@@ -555,10 +589,13 @@ components:
           type: string
         name:
           type: string
+        phases:
+          items:
+            $ref: '#/components/schemas/DocPhase'
+          type: array
         stages:
           items:
             $ref: '#/components/schemas/DocStage'
-          nullable: true
           type: array
         version:
           type: integer
@@ -566,7 +603,6 @@ components:
         - budget
         - defaults
         - name
-        - stages
         - version
       type: object
     FlowValidation:
@@ -640,6 +676,8 @@ components:
       type: object
     InputSig:
       properties:
+        default:
+          type: string
         default_path:
           type: string
         description:
@@ -650,6 +688,10 @@ components:
           type: string
         required:
           type: boolean
+        values:
+          items:
+            type: string
+          type: array
       required:
         - kind
         - name
@@ -744,6 +786,37 @@ components:
         - label
         - port
       type: object
+    MRLive:
+      properties:
+        branch:
+          type: string
+        error:
+          type: string
+        head_sha:
+          type: string
+        last_comment_at:
+          format: date-time
+          type: string
+        mergeable:
+          type: string
+        pending_threads:
+          type: integer
+        repo:
+          type: string
+        state:
+          type: string
+        target:
+          type: string
+        url:
+          type: string
+      required:
+        - branch
+        - mergeable
+        - pending_threads
+        - repo
+        - state
+        - url
+      type: object
     MessageAccepted:
       properties:
         message_id:
@@ -804,11 +877,38 @@ components:
           type: string
         name:
           type: string
+        path:
+          type: string
         sentinel:
           type: string
       required:
         - kind
         - name
+      type: object
+    PhaseInfo:
+      properties:
+        confirm:
+          type: boolean
+        description:
+          type: string
+        id:
+          type: string
+        max:
+          type: integer
+        quiet_for_s:
+          type: integer
+        runs:
+          additionalProperties:
+            type: integer
+          nullable: true
+          type: object
+        signal:
+          type: string
+      required:
+        - id
+        - max
+        - runs
+        - signal
       type: object
     PingFile:
       properties:
@@ -858,6 +958,18 @@ components:
         - ping_id
         - text
       type: object
+    PingOption:
+      properties:
+        detail:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+      required:
+        - id
+        - label
+      type: object
     PingView:
       properties:
         answer:
@@ -866,6 +978,8 @@ components:
           items:
             type: string
           type: array
+        answer_kind:
+          type: string
         answered_at:
           format: date-time
           type: string
@@ -881,7 +995,7 @@ components:
           type: string
         options:
           items:
-            type: string
+            $ref: '#/components/schemas/PingOption'
           type: array
         payload_ref:
           type: string
@@ -901,6 +1015,7 @@ components:
         type:
           type: string
       required:
+        - answer_kind
         - ping_id
         - question
         - raised_at
@@ -1044,9 +1159,11 @@ components:
           type: integer
         key:
           type: string
+        multi:
+          type: boolean
         options:
           items:
-            type: string
+            $ref: '#/components/schemas/PingOption'
           type: array
         question:
           type: string
@@ -1266,12 +1383,18 @@ components:
           type: string
         flow_name:
           type: string
+        idle:
+          type: boolean
         mr_url:
           type: string
         mrs:
           items:
             $ref: '#/components/schemas/RunMergeRequest'
           type: array
+        phase:
+          type: string
+        phase_subject:
+          type: string
         project_id:
           type: string
         run_goal:
@@ -1331,6 +1454,8 @@ components:
       type: object
     Signal:
       properties:
+        debounced:
+          type: boolean
         description:
           type: string
         needs:
@@ -1341,6 +1466,8 @@ components:
           type: string
         title:
           type: string
+        trigger:
+          type: boolean
       required:
         - slug
         - title
@@ -3923,6 +4050,40 @@ paths:
       summary: Send a message to the run's running agent
       tags:
         - runs
+  /api/runs/{id}/mrs/status:
+    get:
+      operationId: getRunMRStatus
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/MRLive'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: 'Each merge request as the forge reports it now: mergeability and pending review threads'
+      tags:
+        - runs
   /api/runs/{id}/observed-ports:
     post:
       operationId: reportObservedPorts
@@ -4031,6 +4192,82 @@ paths:
             application/json: {}
           description: error
       summary: Park a run; nothing moves until play
+      tags:
+        - runs
+  /api/runs/{id}/phases:
+    get:
+      operationId: getRunPhases
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/PhaseInfo'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The reaction phases of the run's flow, with their runs per merge request
+      tags:
+        - runs
+  /api/runs/{id}/phases/{phase}/start:
+    post:
+      description: 'Only while the run is between phases (in review). The phase''s trigger need not hold: a human''s start is its own decision. Its max still applies.'
+      operationId: startPhase
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: phase
+          required: true
+          schema:
+            type: string
+        - description: 'the checkout whose merge request the phase acts on (default: the primary)'
+          in: query
+          name: repo
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Accepted
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Start a reaction phase now, on one merge request
       tags:
         - runs
   /api/runs/{id}/pings:

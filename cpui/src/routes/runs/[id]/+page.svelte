@@ -17,13 +17,15 @@
 	import ResourceGraphs from '$lib/ResourceGraphs.svelte';
 	import WorkspaceBadge from '$lib/WorkspaceBadge.svelte';
 	import AttachFiles from '$lib/AttachFiles.svelte';
-	import { isGatePing, type PingLike } from '$lib/ping';
+	import { isWantedPing, answerKindOf, toPingOption, type PingLike } from '$lib/ping';
 	import { onMount } from 'svelte';
 	import Chat from '$lib/run/Chat.svelte';
 	import FlowSelect from '$lib/FlowSelect.svelte';
 	import Changes from '$lib/run/Changes.svelte';
 	import Files from '$lib/run/Files.svelte';
 	import Terminal from '$lib/run/Terminal.svelte';
+	import MergeStatus from '$lib/run/MergeStatus.svelte';
+	import ReviewCard from '$lib/run/ReviewCard.svelte';
 	import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/transcript';
 
 	const runId = page.params.id ?? '';
@@ -126,6 +128,11 @@
 			? {
 					id: pendingPing.payload.ping_id as string,
 					type: pendingPing.payload.type as string,
+					answerKind: answerKindOf(
+						pendingPing.payload.answer_kind,
+						pendingPing.payload.type as string,
+						pendingPing.payload.options
+					),
 					question: pendingPing.payload.question as string,
 					context: pendingPing.payload.context as string | undefined,
 					// The event carries the typed payload (files / link); the
@@ -137,7 +144,7 @@
 					primaryRef:
 						(pendingPing.payload.link as string | undefined) ||
 						(pendingPing.payload.files as string[] | undefined)?.[0],
-					options: pendingPing.payload.options as string[] | undefined
+					options: ((pendingPing.payload.options as unknown[] | undefined) ?? []).map(toPingOption)
 				}
 			: null
 	);
@@ -678,6 +685,30 @@
 						: `review verdict: REJECT (${p.n_comments} comments)`,
 					cls: p.approve ? 'ok' : 'warn'
 				};
+			case 'phase_started':
+				return {
+					text: p.subject
+						? `▶ phase ${p.phase} on ${p.subject === 'repo' ? 'the merge request' : p.subject} (${p.by === 'human' ? 'started by hand' : 'triggered'})`
+						: `▶ phase ${p.phase}`,
+					cls: 'info'
+				};
+			case 'phase_completed':
+				return { text: `■ phase ${p.phase} done`, cls: 'ok' };
+			case 'phase_declined':
+				return { text: `phase ${p.phase} declined`, cls: 'warn' };
+			case 'review_comments_loaded': {
+				const n = Array.isArray(p.thread_ids) ? p.thread_ids.length : 0;
+				return { text: `loaded ${n} review thread${n === 1 ? '' : 's'}`, cls: 'info' };
+			}
+			case 'review_replies_posted': {
+				const n = Array.isArray(p.thread_ids) ? p.thread_ids.length : 0;
+				return { text: `replied to ${n} review thread${n === 1 ? '' : 's'}`, cls: 'ok' };
+			}
+			case 'target_synced':
+				return {
+					text: `took ${String(p.target_tip ?? '').slice(0, 10)} in (${p.strategy})`,
+					cls: 'ok'
+				};
 			case 'mr_created':
 				return {
 					text: `merge request created: ${p.mr_url}${p.target ? ` (${p.branch} → ${p.target})` : ''}`,
@@ -759,6 +790,7 @@
 			{/each}
 		{:else if run.mrUrl}<a href={run.mrUrl} target="_blank" rel="noreferrer">merge request ↗</a
 			>{/if}
+		{#if run.mrs.length > 0}<MergeStatus {runId} active={!terminal} />{/if}
 		{#if run.envId}
 			<button
 				class="linklike"
@@ -1056,7 +1088,7 @@
 	{#if pendingPingView}
 		{#key pendingPingView.id}
 			<div class="card" style="border-color:var(--amber)">
-				<div class="pingtype {isGatePing(pendingPingView.type) ? 'wanted' : 'unwanted'}">
+				<div class="pingtype {isWantedPing(pendingPingView.type) ? 'wanted' : 'unwanted'}">
 					{pendingPingView.type}
 				</div>
 				{#if pendingCount > 1}
@@ -1071,6 +1103,10 @@
 	{/if}
 
 	{#if error}<div class="error">{error}</div>{/if}
+
+	{#if !terminal && run.mrs.length > 0 && (run.idle || run.phase)}
+		{#key run.idle + (run.phase ?? '')}<ReviewCard {runId} idle={run.idle} />{/key}
+	{/if}
 
 	<div class="card">
 		<div class="row spread">

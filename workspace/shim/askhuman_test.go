@@ -56,7 +56,8 @@ func TestAskHumanAnsweredInBand(t *testing.T) {
 			posts++
 			var body struct {
 				Type, Question string
-				Options        []string
+				Options        []askOption
+				Multi          bool
 				HoldMS         int64 `json:"hold_ms"`
 				Key            string
 			}
@@ -79,7 +80,7 @@ func TestAskHumanAnsweredInBand(t *testing.T) {
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "tok1")
 
-	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?", Options: []string{"postgres", "mysql"}}, nil, nil)
+	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?", Options: []askOption{{ID: "postgres"}, {ID: "mysql"}}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

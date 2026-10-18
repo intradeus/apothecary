@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"strings"
 	"sync"
+	"time"
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
@@ -395,6 +396,13 @@ type MR struct {
 	Title  string
 	Body   string
 	State  ports.MRState
+	// Mergeable / HeadSHA are what MRStatus reports (default clean, "").
+	Mergeable ports.Mergeable
+	HeadSHA   string
+	TargetSHA string
+	// Threads are the review threads MRThreads reports; replies and
+	// resolutions land here.
+	Threads []ports.ReviewThread
 }
 
 type Forge struct {
@@ -409,6 +417,13 @@ type Forge struct {
 	MRStateErr error
 	// FindErr fails FindMR when set (reconciliation failure paths).
 	FindErr error
+	// ThreadsErr / ReplyErr fail MRThreads / ReplyThread when set.
+	ThreadsErr error
+	ReplyErr   error
+	// ReplyFailAfter, when > 0, fails every ReplyThread call after that many
+	// successful ones (a crash in the middle of posting replies).
+	ReplyFailAfter int
+	replies        int
 
 	MRs    []*MR
 	nextID int
@@ -469,18 +484,146 @@ func (f *Forge) SnapshotMRs() []MR {
 	return out
 }
 
-func (f *Forge) MRState(_ context.Context, mr ports.MRRef) (ports.MRState, error) {
+func (f *Forge) mr(iid int) *MR {
+	for _, m := range f.MRs {
+		if m.Ref.IID == iid {
+			return m
+		}
+	}
+	return nil
+}
+
+func (f *Forge) MRStatus(_ context.Context, mr ports.MRRef) (ports.MRStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
-		return "", f.MRStateErr
+		return ports.MRStatus{}, f.MRStateErr
 	}
-	for _, m := range f.MRs {
-		if m.Ref.IID == mr.IID {
-			return m.State, nil
+	m := f.mr(mr.IID)
+	if m == nil {
+		return ports.MRStatus{}, fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	mg := m.Mergeable
+	if mg == "" {
+		mg = ports.MergeClean
+	}
+	st := ports.MRStatus{State: m.State, Mergeable: mg, HeadSHA: m.HeadSHA, Target: m.Target}
+	if mg == ports.MergeConflicts {
+		st.TargetSHA = m.TargetSHA
+	}
+	return st, nil
+}
+
+func (f *Forge) MRThreads(_ context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ThreadsErr != nil {
+		return nil, f.ThreadsErr
+	}
+	m := f.mr(mr.IID)
+	if m == nil {
+		return nil, fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	out := make([]ports.ReviewThread, len(m.Threads))
+	for i, t := range m.Threads {
+		t.Comments = append([]ports.ReviewComment(nil), t.Comments...)
+		out[i] = t
+	}
+	return out, nil
+}
+
+func (f *Forge) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ReplyErr != nil {
+		return f.ReplyErr
+	}
+	if f.ReplyFailAfter > 0 && f.replies >= f.ReplyFailAfter {
+		return fmt.Errorf("forge unavailable")
+	}
+	m := f.mr(mr.IID)
+	if m == nil {
+		return fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	for i := range m.Threads {
+		if m.Threads[i].ID == threadID {
+			f.replies++
+			m.Threads[i].Comments = append(m.Threads[i].Comments, ports.ReviewComment{
+				ID: fmt.Sprintf("r%d", f.replies), Author: "factory", Body: body, CreatedAt: time.Now()})
+			return nil
 		}
 	}
-	return "", fmt.Errorf("mr !%d not found", mr.IID)
+	return fmt.Errorf("thread %s not found", threadID)
+}
+
+func (f *Forge) ResolveThread(_ context.Context, mr ports.MRRef, threadID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := f.mr(mr.IID)
+	if m == nil {
+		return fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	for i := range m.Threads {
+		if m.Threads[i].ID == threadID {
+			m.Threads[i].Resolved = true
+			return nil
+		}
+	}
+	return fmt.Errorf("thread %s not found", threadID)
+}
+
+// SetMergeable scripts what MRStatus reports about merging (test control).
+func (f *Forge) SetMergeable(iid int, mg ports.Mergeable, headSHA string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.Mergeable, m.HeadSHA = mg, headSHA
+	}
+}
+
+// SetTargetSHA scripts the target branch tip reported with a conflict.
+func (f *Forge) SetTargetSHA(iid int, sha string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.TargetSHA = sha
+	}
+}
+
+// AddComment adds a reviewer comment to a thread, creating the thread when
+// it does not exist (test control).
+func (f *Forge) AddComment(iid int, threadID, path, author, body string, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := f.mr(iid)
+	if m == nil {
+		return
+	}
+	c := ports.ReviewComment{ID: fmt.Sprintf("%s-%d", threadID, at.UnixNano()), Author: author, Body: body, CreatedAt: at}
+	for i := range m.Threads {
+		if m.Threads[i].ID == threadID {
+			m.Threads[i].Comments = append(m.Threads[i].Comments, c)
+			m.Threads[i].Resolved = false
+			return
+		}
+	}
+	m.Threads = append(m.Threads, ports.ReviewThread{ID: threadID, Path: path, Line: 1, Comments: []ports.ReviewComment{c}})
+}
+
+// SnapshotThreads returns a copy of an MR's threads (assertions).
+func (f *Forge) SnapshotThreads(iid int) []ports.ReviewThread {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := f.mr(iid)
+	if m == nil {
+		return nil
+	}
+	out := make([]ports.ReviewThread, len(m.Threads))
+	for i, t := range m.Threads {
+		t.Comments = append([]ports.ReviewComment(nil), t.Comments...)
+		out[i] = t
+	}
+	return out
 }
 
 // SetMRStateErr injects/clears an MRState failure while the engine is

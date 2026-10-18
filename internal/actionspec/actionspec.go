@@ -32,6 +32,10 @@ const (
 	// KindValue is a value the engine holds rather than a file; a value
 	// output is surfaced to later stages as its Sentinel (e.g. $MR_URL).
 	KindValue Kind = "value"
+	// KindEnum is a literal the stage writes in the flow, one of Values —
+	// a choice the author makes (sync_target's strategy), visible in the
+	// graph rather than hidden in project settings.
+	KindEnum Kind = "enum"
 )
 
 // InputSig is one input a stage must bind when it invokes the action.
@@ -44,6 +48,10 @@ type InputSig struct {
 	// input. Unlike an agent output decl it is not a fallback: an action
 	// input is bound by the stage or it is unbound.
 	DefaultPath string `json:"default_path,omitempty"`
+	// Values are the literals a KindEnum input accepts; Default is used when
+	// the stage does not bind it.
+	Values  []string `json:"values,omitempty"`
+	Default string   `json:"default,omitempty"`
 }
 
 // OutputSig is one thing the action produces.
@@ -54,6 +62,8 @@ type OutputSig struct {
 	// Sentinel is the flow-language token later stages use to consume a
 	// value output (KindValue only).
 	Sentinel string `json:"sentinel,omitempty"`
+	// Path is where a KindFile output is written.
+	Path string `json:"path,omitempty"`
 }
 
 // Action is one registered action.
@@ -69,14 +79,29 @@ type Action struct {
 	// Provides names the run fact this action establishes, mirroring a
 	// signal's Needs (signalspec): the validator pairs them to catch a wait
 	// whose prerequisite no path creates.
-	Provides string      `json:"provides,omitempty"`
-	Inputs   []InputSig  `json:"inputs,omitempty"`
-	Outputs  []OutputSig `json:"outputs,omitempty"`
+	Provides string `json:"provides,omitempty"`
+	// Subject marks an action that acts on one merge request — the phase's
+	// subject — and so only makes sense in a reaction phase (PLAN6 R12).
+	Subject bool        `json:"subject,omitempty"`
+	Inputs  []InputSig  `json:"inputs,omitempty"`
+	Outputs []OutputSig `json:"outputs,omitempty"`
 }
 
 // Action slugs and the port kinds they require.
 const (
-	CreateMR = "create_mr"
+	CreateMR            = "create_mr"
+	LoadReviewComments  = "load_review_comments"
+	ReplyReviewComments = "reply_review_comments"
+	SyncTarget          = "sync_target"
+	PushBranch          = "push_branch"
+
+	// Who picks a review round's threads (load_review_comments' select).
+	SelectHuman = "human"
+	SelectAll   = "all"
+
+	// Sync strategies (sync_target's strategy input).
+	StrategyMerge  = "merge"
+	StrategyRebase = "rebase"
 
 	RequiresForge = "forge"
 
@@ -105,6 +130,54 @@ var registry = []Action{{
 		Kind:        KindValue,
 		Sentinel:    "$MR_URL",
 	}},
+}, {
+	Slug:        LoadReviewComments,
+	Title:       "Load review comments",
+	Description: "Writes the merge request's pending review threads — unresolved, last word a reviewer's — to a file the fixing agent reads: file, line, diff hunk, the comments in order, and the thread id a reply names. With select: human (the default) a person first picks which threads to fix in the inbox; the others are skipped until someone comments on them again, and picking none ends the round. Re-entry rewrites the same set, so one phase run fixes what it started with.",
+	Requires:    RequiresForge,
+	Subject:     true,
+	Inputs: []InputSig{{
+		Name:        "select",
+		Description: "human: a person picks the threads to fix (some may be wrong, or already handled); all: every pending thread",
+		Kind:        KindEnum,
+		Values:      []string{SelectHuman, SelectAll},
+		Default:     SelectHuman,
+	}},
+	Outputs: []OutputSig{{
+		Name:        "review",
+		Description: "the pending review threads, as markdown",
+		Kind:        KindFile,
+		Path:        "artifacts/review.md",
+	}},
+}, {
+	Slug:        ReplyReviewComments,
+	Title:       "Reply to review comments",
+	Description: "Posts the replies file — one reply per loaded thread, optionally resolving it — on the merge request. Each reply carries an invisible marker, so a crash between two posts is reconciled from the forge and nothing is posted twice.",
+	Requires:    RequiresForge,
+	Subject:     true,
+	Inputs: []InputSig{{
+		Name:        "replies",
+		Description: "the replies (a review_replies-typed agent output)",
+		Kind:        KindFile,
+		Required:    true,
+		DefaultPath: "artifacts/replies.yaml",
+	}},
+}, {
+	Slug:        SyncTarget,
+	Title:       "Take the target branch in",
+	Description: "Brings the merge request's target branch into its branch, in the engine: nothing to do when it is already contained; a conflict pauses the merge (or rebase) in the working tree and fails the stage with the files named, for an agent or a human to resolve by editing them — the retried stage continues it.",
+	Subject:     true,
+	Inputs: []InputSig{{
+		Name:        "strategy",
+		Description: "merge (no history rewrite) or rebase (linear history; the branch is force-pushed, leased)",
+		Kind:        KindEnum,
+		Values:      []string{StrategyMerge, StrategyRebase},
+		Default:     StrategyMerge,
+	}},
+}, {
+	Slug:        PushBranch,
+	Title:       "Push the branch",
+	Description: "Pushes the run's branch — every checkout's in the entry phase, the subject's in a reaction phase. A branch the run pushed before is force-pushed leased against the tip it recorded (or, in a reaction phase, the head when the phase started), never blind; a first push is a plain one. What a rebase needs.",
 }}
 
 // Registry returns every registered action (a copy: callers may sort it).

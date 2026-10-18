@@ -3,6 +3,7 @@ package gitlab
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -179,9 +180,90 @@ func TestCreateDraftMRReturnsExistingOnConflict(t *testing.T) {
 func TestMRStateMapping(t *testing.T) {
 	ts, _ := glStub(t)
 	a, _ := testAdapter(ts)
-	st, err := a.MRState(context.Background(), ports.MRRef{IID: 3})
-	if err != nil || st != ports.MRMerged {
+	st, err := a.MRStatus(context.Background(), ports.MRRef{IID: 3})
+	if err != nil || st.State != ports.MRMerged {
 		t.Errorf("state = %v, %v", st, err)
+	}
+}
+
+func TestMRStatusMergeability(t *testing.T) {
+	for _, tc := range []struct {
+		detailed  string
+		conflicts bool
+		want      ports.Mergeable
+	}{
+		{"mergeable", false, ports.MergeClean},
+		{"conflict", true, ports.MergeConflicts},
+		{"broken_status", true, ports.MergeConflicts},
+		{"checking", true, ports.MergeUnknown}, // stale until checked
+		{"unchecked", false, ports.MergeUnknown},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, `{"state":"opened","has_conflicts":%v,"detailed_merge_status":%q,"sha":"abc","target_branch":"main"}`, tc.conflicts, tc.detailed)
+		})
+		mux.HandleFunc("GET /api/v4/projects/7/repository/branches/main", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"commit":{"id":"t1"}}`))
+		})
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		st, err := a.MRStatus(context.Background(), ports.MRRef{IID: 4})
+		ts.Close()
+		if err != nil || st.Mergeable != tc.want || st.HeadSHA != "abc" || st.Target != "main" || st.State != ports.MROpen {
+			t.Errorf("%s/%v: status = %+v, %v; want %s", tc.detailed, tc.conflicts, st, err, tc.want)
+		}
+		if (tc.want == ports.MergeConflicts) != (st.TargetSHA == "t1") {
+			t.Errorf("%s: target sha %q is fetched only on conflicts", tc.detailed, st.TargetSHA)
+		}
+	}
+}
+
+func TestMRThreadsRepliesAndResolve(t *testing.T) {
+	var replied, resolved string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4/discussions", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[
+		 {"id":"d1","notes":[
+		   {"id":1,"body":"rename this","system":false,"author":{"username":"rev"},"created_at":"2026-10-18T10:00:00Z","resolvable":true,"resolved":false,
+		    "position":{"new_path":"a.go","new_line":12}},
+		   {"id":2,"body":"done <!-- apothecary run=r1 thread=d1 -->","author":{"username":"bot"},"created_at":"2026-10-18T11:00:00Z","resolvable":true,"resolved":false}]},
+		 {"id":"d2","notes":[{"id":3,"body":"added 1 commit","system":true,"created_at":"2026-10-18T10:00:00Z"}]},
+		 {"id":"d3","notes":[{"id":4,"body":"looks good overall","author":{"username":"rev"},"created_at":"2026-10-18T09:00:00Z","resolvable":false}]},
+		 {"id":"d4","notes":[{"id":5,"body":"fixed","author":{"username":"rev"},"created_at":"2026-10-18T09:00:00Z","resolvable":true,"resolved":true}]}
+		]`))
+	})
+	mux.HandleFunc("POST /api/v4/projects/7/merge_requests/4/discussions/d1/notes", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		replied = b["body"]
+		_, _ = w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("PUT /api/v4/projects/7/merge_requests/4/discussions/d1", func(w http.ResponseWriter, r *http.Request) {
+		resolved = r.URL.Query().Get("resolved")
+		_, _ = w.Write([]byte(`{}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	ctx := context.Background()
+	th, err := a.MRThreads(ctx, ports.MRRef{IID: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(th) != 3 {
+		t.Fatalf("threads = %+v, want 3 (system-only discussion dropped)", th)
+	}
+	if th[0].ID != "d1" || th[0].Path != "a.go" || th[0].Line != 12 || th[0].Resolved || len(th[0].Comments) != 2 || th[0].Comments[0].Author != "rev" {
+		t.Errorf("thread d1 = %+v", th[0])
+	}
+	if th[1].Resolved || th[2].ID != "d4" || !th[2].Resolved {
+		t.Errorf("resolution: general comment %+v, resolved %+v", th[1], th[2])
+	}
+	if err := a.ReplyThread(ctx, ports.MRRef{IID: 4}, "d1", "ok"); err != nil || replied != "ok" {
+		t.Errorf("reply = %q, %v", replied, err)
+	}
+	if err := a.ResolveThread(ctx, ports.MRRef{IID: 4}, "d1"); err != nil || resolved != "true" {
+		t.Errorf("resolve = %q, %v", resolved, err)
 	}
 }
 

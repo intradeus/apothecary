@@ -56,6 +56,8 @@ import type {
 	FileDiff,
 	LiveDelta,
 	RunCheckout,
+	MergeRequestLive,
+	RunPhase,
 	WorkspaceChanges,
 	WorkspaceEntry,
 	WorkspaceFile
@@ -141,6 +143,19 @@ export const runs = {
 
 	get: async (id: string): Promise<RunDetail> =>
 		map.toRunDetail(await unwrap(gen.getRun({ path: { id } }))),
+
+	/** The reaction phases of the run's flow, with their runs per merge request. */
+	phases: async (id: string): Promise<RunPhase[]> =>
+		many(await unwrap(gen.getRunPhases({ path: { id } })), map.toRunPhase),
+
+	/** Start a reaction phase now on one merge request ('' = the primary's);
+	 *  only while the run is in review. */
+	startPhase: (id: string, phase: string, repo = '') =>
+		unwrapVoid(gen.startPhase({ path: { id, phase }, query: { repo } })),
+
+	/** Each merge request as the forge reports it now (polled by the run page). */
+	mrStatus: async (id: string): Promise<MergeRequestLive[]> =>
+		many(await unwrap(gen.getRunMrStatus({ path: { id } })), map.toMergeRequestLive),
 
 	abort: (id: string) => unwrapVoid(gen.abortRun({ path: { id } })),
 	/** Park the run: the workspace stays up and nothing moves until play. */

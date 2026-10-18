@@ -4,6 +4,7 @@
 package event
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -48,14 +49,24 @@ const (
 	// rejected at attempt 1" answerable after the workspace is long gone.
 	TypeSnapshotCaptured Type = "snapshot_captured"
 	TypeMRCreated        Type = "mr_created"
-	TypeRunCompleted     Type = "run_completed"
-	TypeRunAbandoned     Type = "run_abandoned"
-	TypeRunFailed        Type = "run_failed"
-	TypeRunArchived      Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
-	TypeRunResumed       Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
-	TypeRunPaused        Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
-	TypeRunUnpaused      Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
-	TypeEnvDestroyed     Type = "env_destroyed"
+	// Phases (PLAN6): a phase run starting on one merge request (its
+	// subject), ending, or a human declining to start one.
+	TypePhaseStarted   Type = "phase_started"
+	TypePhaseCompleted Type = "phase_completed"
+	TypePhaseDeclined  Type = "phase_declined"
+	// Review rounds and target syncs (PLAN6 M31/M32).
+	TypeReviewCommentsLoaded Type = "review_comments_loaded"
+	TypeReviewRepliesPosted  Type = "review_replies_posted"
+	TypeTargetSynced         Type = "target_synced"
+	TypeBranchPushed         Type = "branch_pushed"
+	TypeRunCompleted         Type = "run_completed"
+	TypeRunAbandoned         Type = "run_abandoned"
+	TypeRunFailed            Type = "run_failed"
+	TypeRunArchived          Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
+	TypeRunResumed           Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
+	TypeRunPaused            Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
+	TypeRunUnpaused          Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
+	TypeEnvDestroyed         Type = "env_destroyed"
 	// Rebuild recreates a run's container in place (keeps the run + checkout);
 	// orthogonal to the run's lifecycle State — these never change it.
 	TypeEnvRebuildStarted   Type = "env_rebuild_started"
@@ -293,7 +304,29 @@ type EdgeTaken struct {
 // free-text question, not in a type the engine has to interpret. The rest are
 // raised by agents through ask_human.
 const (
-	PingGate          = "gate"
+	PingGate = "gate"
+	// PingPhaseConfirm asks a human whether a phase may start (a phase with
+	// `confirm: true`). Answered like a gate — approve | reject — but it
+	// belongs to no stage: it is raised while the run is between phases.
+	PingPhaseConfirm = "phase_confirm"
+	// PingSelect asks a human to pick any number of its Options (which
+	// review threads a round should fix). The answer is the chosen options,
+	// one per line, or SelectNone.
+	PingSelect = "select"
+	SelectNone = "none"
+
+	// Answer kinds: the shape of the answer a ping takes, declared on the
+	// ping when it is raised (PingRaised.AnswerKind). One field, one table
+	// of rules — the UI renders it, the engine validates it, no caller
+	// infers it from the ping's type or its options.
+	//   decision  approve | reject (+ feedback)        gates, phase confirmations
+	//   choice    one option id | "other" (+ note)     ask_human closed questions
+	//   multi     option ids, one per line | "none"    which review threads to fix
+	//   text      free text                            ask_human open questions
+	AnswerDecision    = "decision"
+	AnswerChoice      = "choice"
+	AnswerMulti       = "multi"
+	AnswerText        = "text"
 	PingClarification = "clarification"
 	PingBlocker       = "blocker"
 	PingPermission    = "permission"
@@ -319,12 +352,145 @@ type PingRaised struct {
 	// was lost) carries the same key and gets the same ping back instead of
 	// asking the human twice.
 	Key string `json:"key,omitempty"`
-	// Options are the agent-declared answer choices (PLAN4 M16): when
-	// non-empty, the answer MUST be one of them — the agent asked a closed
-	// question so it can branch deterministically — or the reserved "other"
-	// escape hatch (system-provided, never declared; the feedback then
-	// carries the human's actual answer).
-	Options []string `json:"options,omitempty"`
+	// Options are the answer choices (PLAN4 M16): for a choice the answer
+	// is one of their ids — the agent asked a closed question so it can
+	// branch deterministically — or the reserved "other" escape hatch
+	// (system-provided, never declared; the feedback then carries the
+	// human's actual answer); for a multi, any subset of their ids.
+	Options []Option `json:"options,omitempty"`
+	// AnswerKind is the shape of the answer (the Answer* constants). Empty
+	// on pings raised before it existed; Kind() infers those.
+	AnswerKind string `json:"answer_kind,omitempty"`
+	// Phase, Subject and TriggerKey identify what a phase_confirm ping asks
+	// to start: which phase, on which checkout's merge request, for which
+	// occurrence of its trigger.
+	Phase      string `json:"phase,omitempty"`
+	Subject    string `json:"subject,omitempty"`
+	TriggerKey string `json:"trigger_key,omitempty"`
+}
+
+// PhaseStarted: a phase run begins. Subject is the checkout whose merge
+// request it acts on ("" for the entry phase, which acts on all of them);
+// Key is the trigger occurrence it answers (R6: never started twice for
+// one); By is ticket | signal | human; Tip is the subject branch's head at
+// the start — what $CHANGED is measured from inside the phase.
+type PhaseStarted struct {
+	Phase   string `json:"phase"`
+	Subject string `json:"subject,omitempty"`
+	Key     string `json:"key,omitempty"`
+	By      string `json:"by"`
+	Tip     string `json:"tip,omitempty"`
+}
+
+// PhaseCompleted: the phase run reached done; the run is idle again (or,
+// for an entry phase that opened no merge request, about to complete).
+type PhaseCompleted struct {
+	Phase   string `json:"phase"`
+	Subject string `json:"subject,omitempty"`
+}
+
+// PhaseDeclined: a human said no to starting a confirm phase for this
+// trigger occurrence; it is not offered again until the key changes.
+type PhaseDeclined struct {
+	Phase   string `json:"phase"`
+	Subject string `json:"subject,omitempty"`
+	Key     string `json:"key"`
+}
+
+// ReviewCommentsLoaded: a review round took these threads on; Newest is the
+// newest reviewer comment among them.
+type ReviewCommentsLoaded struct {
+	StageID   string   `json:"stage_id,omitempty"`
+	Subject   string   `json:"subject,omitempty"`
+	ThreadIDs []string `json:"thread_ids"`
+	Newest    string   `json:"newest,omitempty"`
+	// Skipped are the pending threads a human chose not to fix, each with
+	// its last comment's id: left alone until someone writes there again.
+	Skipped map[string]string `json:"skipped,omitempty"`
+}
+
+// ReviewRepliesPosted: the round's replies are on the forge.
+type ReviewRepliesPosted struct {
+	StageID   string   `json:"stage_id,omitempty"`
+	Subject   string   `json:"subject,omitempty"`
+	ThreadIDs []string `json:"thread_ids"`
+	Resolved  []string `json:"resolved,omitempty"`
+}
+
+// BranchPushed: push_branch pushed Branch of checkout Repo at Tip — what the
+// next push of it is leased against.
+type BranchPushed struct {
+	StageID string `json:"stage_id,omitempty"`
+	Repo    string `json:"repo"`
+	Branch  string `json:"branch"`
+	Tip     string `json:"tip"`
+}
+
+// TargetSynced: the subject branch now contains its target at TargetTip.
+type TargetSynced struct {
+	StageID   string `json:"stage_id,omitempty"`
+	Subject   string `json:"subject,omitempty"`
+	Strategy  string `json:"strategy"`
+	TargetTip string `json:"target_tip"`
+	ResultTip string `json:"result_tip"`
+}
+
+// Option is one answer choice: ID is what the answer names (and what an
+// agent branches on), Label what the human reads, Detail an optional second
+// line. Decodes from a bare string too — the form every option had before
+// options were structured — as {ID: s, Label: s}.
+type Option struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Detail string `json:"detail,omitempty"`
+}
+
+func (o *Option) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*o = Option{ID: s, Label: s}
+		return nil
+	}
+	type plain Option
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*o = Option(p)
+	if o.Label == "" {
+		o.Label = o.ID
+	}
+	return nil
+}
+
+// OptionIDs lists the options' ids.
+func OptionIDs(opts []Option) []string {
+	out := make([]string, len(opts))
+	for i, o := range opts {
+		out[i] = o.ID
+	}
+	return out
+}
+
+// Kind is the ping's answer kind, inferred for pings recorded before the
+// field existed: a gate or phase confirmation is a decision, a selection a
+// multi, a question with options a choice, anything else free text.
+func (p *PingRaised) Kind() string {
+	if p.AnswerKind != "" {
+		return p.AnswerKind
+	}
+	switch {
+	case p.Type == PingGate || p.Type == PingPhaseConfirm:
+		return AnswerDecision
+	case p.Type == PingSelect:
+		return AnswerMulti
+	case len(p.Options) > 0:
+		return AnswerChoice
+	}
+	return AnswerText
 }
 
 type PingAnswered struct {
@@ -489,14 +655,23 @@ func (*ActionStarted) EventType() Type   { return TypeActionStarted }
 
 func (*SnapshotCaptured) EventType() Type { return TypeSnapshotCaptured }
 func (*MRCreated) EventType() Type        { return TypeMRCreated }
-func (*RunCompleted) EventType() Type     { return TypeRunCompleted }
-func (*RunAbandoned) EventType() Type     { return TypeRunAbandoned }
-func (*RunFailed) EventType() Type        { return TypeRunFailed }
-func (*RunArchived) EventType() Type      { return TypeRunArchived }
-func (*RunResumed) EventType() Type       { return TypeRunResumed }
-func (*RunPaused) EventType() Type        { return TypeRunPaused }
-func (*RunUnpaused) EventType() Type      { return TypeRunUnpaused }
-func (*EnvDestroyed) EventType() Type     { return TypeEnvDestroyed }
+func (*PhaseStarted) EventType() Type     { return TypePhaseStarted }
+func (*PhaseCompleted) EventType() Type   { return TypePhaseCompleted }
+func (*PhaseDeclined) EventType() Type    { return TypePhaseDeclined }
+func (*ReviewCommentsLoaded) EventType() Type {
+	return TypeReviewCommentsLoaded
+}
+func (*ReviewRepliesPosted) EventType() Type { return TypeReviewRepliesPosted }
+func (*TargetSynced) EventType() Type        { return TypeTargetSynced }
+func (*BranchPushed) EventType() Type        { return TypeBranchPushed }
+func (*RunCompleted) EventType() Type        { return TypeRunCompleted }
+func (*RunAbandoned) EventType() Type        { return TypeRunAbandoned }
+func (*RunFailed) EventType() Type           { return TypeRunFailed }
+func (*RunArchived) EventType() Type         { return TypeRunArchived }
+func (*RunResumed) EventType() Type          { return TypeRunResumed }
+func (*RunPaused) EventType() Type           { return TypeRunPaused }
+func (*RunUnpaused) EventType() Type         { return TypeRunUnpaused }
+func (*EnvDestroyed) EventType() Type        { return TypeEnvDestroyed }
 
 func (*EnvRebuildStarted) EventType() Type   { return TypeEnvRebuildStarted }
 func (*EnvRebuildCompleted) EventType() Type { return TypeEnvRebuildCompleted }

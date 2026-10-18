@@ -61,10 +61,28 @@ type OutputDecl struct {
 // decision {"verdict":"APPROVE"|"REJECT","comments":[...]} — the engine
 // parses it and routes REJECT down the stage's on_reject edge. A spec may
 // declare at most one verdict output; the flow stage needs no flag for it.
+//
+// OutputTypeReviewReplies is a review round's answers (PLAN6 M31): a YAML
+// list of {thread, reply, resolve}, validated when the stage ends against
+// the threads the round loaded, before anything is posted.
 const (
-	OutputTypeFile    = ""
-	OutputTypeVerdict = "verdict"
+	OutputTypeFile          = ""
+	OutputTypeVerdict       = "verdict"
+	OutputTypeReviewReplies = "review_replies"
 )
+
+// ReviewRepliesOutput returns the spec's review_replies-typed output, or nil.
+func (s *Spec) ReviewRepliesOutput() *OutputDecl {
+	if s == nil {
+		return nil
+	}
+	for i := range s.Outputs {
+		if s.Outputs[i].Type == OutputTypeReviewReplies {
+			return &s.Outputs[i]
+		}
+	}
+	return nil
+}
 
 // VerdictOutput returns the spec's verdict-typed output, or nil when the
 // agent renders no decision. Its presence is what makes a stage's on_reject
@@ -146,7 +164,7 @@ func ValidateIO(inputs []InputDecl, outputs []OutputDecl) error {
 	}
 	seenOut := make(map[string]bool, len(outputs))
 	seenPath := make(map[string]bool, len(outputs))
-	verdicts := 0
+	verdicts, replies := 0, 0
 	for _, out := range outputs {
 		if !validSlug(out.Name) {
 			return fmt.Errorf("output name must match [a-z0-9][a-z0-9._-]* (lowercase slug), got %q", out.Name)
@@ -162,8 +180,13 @@ func ValidateIO(inputs []InputDecl, outputs []OutputDecl) error {
 			if verdicts > 1 {
 				return fmt.Errorf("output %q: an agent may declare at most one %s output", out.Name, OutputTypeVerdict)
 			}
+		case OutputTypeReviewReplies:
+			replies++
+			if replies > 1 {
+				return fmt.Errorf("output %q: an agent may declare at most one %s output", out.Name, OutputTypeReviewReplies)
+			}
 		default:
-			return fmt.Errorf("output %q: unknown type %q (%q or %q)", out.Name, out.Type, OutputTypeFile, OutputTypeVerdict)
+			return fmt.Errorf("output %q: unknown type %q (%q, %q or %q)", out.Name, out.Type, OutputTypeFile, OutputTypeVerdict, OutputTypeReviewReplies)
 		}
 		if len(out.Description) > descMax {
 			return fmt.Errorf("output %q: description exceeds %d characters", out.Name, descMax)

@@ -63,6 +63,15 @@ func (s *Server) getWorkspaceRepos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cos)
 }
 
+func (s *Server) getRunMRStatus(w http.ResponseWriter, r *http.Request) {
+	out, err := s.Engine.MRStatuses(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // sidecarErr passes the sidecar's own client errors (bad path, not found)
 // through, and reports everything else as the gateway failure it is.
 func sidecarErr(w http.ResponseWriter, err error) {

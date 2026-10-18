@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
@@ -66,6 +67,33 @@ type runState struct {
 	checkouts []event.Checkout
 	mrs       []mrRecord
 
+	// Phases (PLAN6). phase is the phase in progress (or the last one run),
+	// subject the checkout whose merge request it acts on ("" = all: the
+	// entry); idle is true between phases. phaseTip is the subject branch's
+	// head when the phase started ($CHANGED inside it).
+	phase    string
+	subject  string
+	idle     bool
+	phaseTip string
+	// triggerSeen holds every (phase, subject, key) a phase run started for
+	// or a human declined (R6); phaseRuns counts runs per (phase, subject).
+	triggerSeen map[string]bool
+	phaseRuns   map[string]int
+	// confirms are the phase_confirm pings raised, oldest first; their
+	// answers sit in answeredPings until the idle loop acts on them.
+	confirms []*event.PingRaised
+	// roundThreads are the review threads this phase run loaded (M31): a
+	// re-entry rewrites the same set, and replies may name only these.
+	roundThreads []string
+	roundLoaded  bool
+	// selectPing is the thread-selection question this phase run raised.
+	selectPing *event.PingRaised
+	// skipped are the threads a human chose not to fix: thread id → its last
+	// comment id at the time. Kept across rounds.
+	skipped map[string]string
+	// pushed is the tip push_branch last pushed, per repo+branch.
+	pushed map[string]string
+
 	// openPings are raised-but-unanswered pings to re-register on recovery.
 	openPings []*event.PingRaised
 	// gateAnswer is set when a gate's ping was answered but the crash hit
@@ -108,6 +136,48 @@ const PingGate = event.PingGate
 
 func gatePingType(t string) bool { return t == PingGate }
 
+// agentPingType: a question an agent raised through ask_human — the kind a
+// well-briefed agent should not need, hence counted as unwanted. Everything
+// else (a stage's gate, a phase confirmation, a selection) is the engine
+// asking on purpose.
+func agentPingType(t string) bool {
+	return t == event.PingClarification || t == event.PingBlocker || t == event.PingPermission
+}
+
+func triggerKey(phase, subject, key string) string { return phase + "\x00" + subject + "\x00" + key }
+func phaseRunKey(phase, subject string) string     { return phase + "\x00" + subject }
+
+// startPhase moves the cursor to a phase's first stage, fresh: its edge
+// counters reset (R7 — a review round's retries are per round), the feed
+// cleared. Shared by replay and the live start so they cannot disagree.
+func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
+	rs.phase, rs.subject, rs.phaseTip, rs.idle = p.Phase, p.Subject, p.Tip, false
+	rs.roundThreads, rs.roundLoaded, rs.selectPing = nil, false, nil
+	rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
+	if p.Key != "" {
+		rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
+	}
+	if fl == nil {
+		return
+	}
+	ph := fl.Phase(p.Phase)
+	if ph == nil {
+		rs.pos = -1
+		return
+	}
+	for i := ph.First; i <= ph.Last; i++ {
+		prefix := fl.Stages[i].ID + "|"
+		for k := range rs.edgeCounts {
+			if strings.HasPrefix(k, prefix) {
+				delete(rs.edgeCounts, k)
+			}
+		}
+	}
+	rs.pos, rs.ph = ph.First, phStart
+	rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
+	rs.lastFailure, rs.gateAnswer = nil, nil
+}
+
 // replay folds a run's event history into runState. fl may be nil when the
 // flow is unknown; callers must check.
 func replay(evs []event.Event, fl *flow.Flow) *runState {
@@ -121,6 +191,10 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		answeredPings: map[string]*event.PingAnswered{},
 		pausedAsks:    map[string][]string{},
 		agentCursor:   map[string]string{},
+		triggerSeen:   map[string]bool{},
+		phaseRuns:     map[string]int{},
+		pushed:        map[string]string{},
+		skipped:       map[string]string{},
 	}
 	raised := map[string]*event.PingRaised{}
 	for i := range evs {
@@ -161,6 +235,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			delete(rs.pausedAsks, p.StageID)
 		case *event.StageCompleted:
 			rs.ph = phAfterComplete
+			// A completed stage settled whatever intent it recorded: a later
+			// run of the same action (a second review round) starts clean.
+			delete(rs.actionPending, p.StageID)
 			if p.SessionID != "" {
 				rs.sessions[p.StageID] = ports.SessionID(p.SessionID)
 			}
@@ -205,11 +282,30 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.feed = p.Feed
 			rs.feedSentinel = flow.FeedSentinel(p.Edge)
 			rs.feedAttempts = p.Max + 1
+		case *event.PhaseStarted:
+			rs.startPhase(p, fl)
+		case *event.PhaseCompleted:
+			rs.idle = true
+		case *event.BranchPushed:
+			rs.pushed[p.Repo+"\x00"+p.Branch] = p.Tip
+		case *event.ReviewCommentsLoaded:
+			rs.roundThreads, rs.roundLoaded = append([]string(nil), p.ThreadIDs...), true
+			for id, last := range p.Skipped {
+				rs.skipped[id] = last
+			}
+		case *event.PhaseDeclined:
+			rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
 		case *event.PingRaised:
+			if p.Type == event.PingPhaseConfirm {
+				rs.confirms = append(rs.confirms, p)
+			}
+			if p.Type == event.PingSelect {
+				rs.selectPing = p
+			}
 			raised[p.PingID] = p
 			rs.raisedPings[p.PingID] = p
 			rs.openPings = append(rs.openPings, p)
-			if !gatePingType(p.Type) {
+			if agentPingType(p.Type) {
 				rs.unwanted++
 			}
 		case *event.PingAnswered:
@@ -289,7 +385,7 @@ func (rs *runState) openGatePing(stageID string) *event.PingRaised {
 func (rs *runState) openAgentPings() []*event.PingRaised {
 	var out []*event.PingRaised
 	for _, p := range rs.openPings {
-		if !gatePingType(p.Type) {
+		if agentPingType(p.Type) {
 			out = append(out, p)
 		}
 	}

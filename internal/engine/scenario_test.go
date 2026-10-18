@@ -120,8 +120,11 @@ func withAgents(doc string, specs map[string]*agentspec.Spec) string {
 	if err != nil {
 		panic(err)
 	}
-	i := strings.Index(doc, "stages:")
-	if i < 0 {
+	// Ahead of a phased document's phases, else ahead of its stages.
+	i := strings.Index(doc, "\nphases:")
+	if i >= 0 {
+		i++
+	} else if i = strings.Index(doc, "stages:"); i < 0 {
 		return doc
 	}
 	return doc[:i] + string(y) + doc[i:]
@@ -1736,7 +1739,7 @@ stages:
 	runIDCh <- runID
 
 	p := h.waitPing(t, "clarification")
-	if len(p.Options) != 2 || p.Options[0] != "postgres" || p.Options[1] != "sqlite" { // deduped
+	if len(p.Options) != 2 || p.Options[0].ID != "postgres" || p.Options[1].ID != "sqlite" || p.AnswerKind != event.AnswerChoice { // deduped
 		t.Errorf("options = %v", p.Options)
 	}
 	if len(p.Files) != 1 || p.Files[0] != "artifacts/dbs.md" {
@@ -1810,7 +1813,7 @@ stages:
 	}
 	run3 <- rid3
 	p3 := h3.waitPing(t, "clarification")
-	if len(p3.Options) != 2 || p3.Options[0] != "a" || p3.Options[1] != "b" {
+	if len(p3.Options) != 2 || p3.Options[0].ID != "a" || p3.Options[1].ID != "b" {
 		t.Errorf("declared 'Other' not stripped: %v", p3.Options)
 	}
 	if err := h3.e.AnswerPing(p3.ID, PingAnswer{Answer: "other", Feedback: "neither — use c"}); err != nil {

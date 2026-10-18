@@ -48,7 +48,8 @@ budget:                    # run-wide ceilings; exceeding either abandons the ru
   max_cost_usd: 10.0
   max_total_turns: 300
 agents: [...]              # the agents this flow runs — definitions, not references
-stages: [...]              # required, at least one
+stages: [...]              # the stages, at least one — or, instead:
+phases: [...]              # the ticket's whole life, phase by phase (below)
 ```
 
 `version` is required and must equal the version this build speaks (currently
@@ -75,7 +76,7 @@ agents:
         optional: true                  # so a stage may bind $FAILURE to it
     outputs:
       - name: verdict
-        type: verdict                   # "" (a plain file) | verdict
+        type: verdict                   # "" (a plain file) | verdict | review_replies
         path: artifacts/verdict.json    # default; a stage may rebind it
         description: APPROVE or REJECT with actionable comments
     prompt: |
@@ -124,6 +125,68 @@ flow produces no change.
 runs against any project. Harness kinds, `run_ref`s and action integrations are
 *free text* at parse time and validated against a specific project when a run
 is created (§6).
+
+### Phases: the whole life of a ticket
+
+A flow written with top-level `stages:` ends when its stages reach `done`. A flow
+written with `phases:` describes the ticket's **whole life**: what the ticket
+starts, and how the run reacts to what happens to its merge request afterwards.
+
+```yaml
+phases:
+  - id: deliver
+    on: ticket                                   # the entry: what a filed ticket starts
+    stages: [ plan … create_mr ]
+  - id: conflicts
+    on: { signal: mr_conflicts, confirm: true }  # the target moved; ask before spending
+    stages: [ sync, resolve, sync_test, sync_push ]
+  - id: review_fixes
+    on: { signal: mr_review_settled, quiet_for: 1h, max: 10 }
+    stages: [ load, fix, …, reply, post ]
+```
+
+- **The entry** is the first phase and the only one `on: ticket`. It runs like a
+  stages-only flow. When it reaches `done` with merge requests open, the run is
+  **in review** (`in_review`) — or, if it opened none, it completes.
+- **Every other phase is a reaction.** Its `on:` is the whole decision of when
+  it runs; the order phases are written in is *not* a sequence. A conflict can
+  be fixed before, after or between two review rounds, any number of times.
+- **One phase at a time.** A phase run works on **one merge request** — its
+  *subject* (on a multi-repo run, one checkout's). Triggers are evaluated only
+  while no phase runs; several holding at once are taken subject by subject
+  (the primary first) and, for one subject, in document order — the only thing
+  document order decides.
+- **The run ends from its merge requests**: all merged → `completed`, one
+  closed unmerged → `abandoned`, or a human aborts. No final gate is written for
+  it; the editor draws it.
+
+`on:` is a signal name, or a mapping:
+
+| field | meaning |
+|---|---|
+| `signal` | `ticket` (the entry), or a *trigger* signal: `mr_conflicts`, `mr_review_settled` |
+| `quiet_for` | for a signal that fires on activity (`mr_review_settled`): start only once nothing new happened for this long (≥ 1m). Comments arriving mean someone is reviewing; the phase fixes the whole batch when they stop |
+| `confirm` | ask a human first: the trigger raises an inbox decision (*Run it* / *Not now*) and the phase starts on yes. Nothing is spent until then |
+| `max` | phase runs allowed per merge request (default 10); `-1` only with `confirm` — every run then costs a human decision |
+
+**No re-fire on the same fact.** Each trigger occurrence has a key — for
+`mr_conflicts` the (target tip, head) pair, for `mr_review_settled` the newest
+pending comment. A phase run, or a *Not now*, for a key is never repeated: a
+declined conflict is offered again only when the target (or the branch) moves,
+answered comments start a new round only when a reviewer writes again.
+
+**Inside a reaction phase**, everything is scoped to the subject: command
+stages run in its checkout (artifacts stay in the primary's `artifacts/`, so
+address them as `$HOME/repo/artifacts/…`), `$MR_URL` is its merge request,
+`$CHANGED` is what *this phase run* changed, and agents get a `# SUBJECT`
+prompt section saying which checkout to edit (the others are read-only
+context). `each_repo` does not apply there, and `create_mr` belongs to the
+entry. Each phase run's edges start with fresh counters (`max` is per round);
+`budget` is the whole life's. `abort` still abandons the run.
+
+A human can also start any reaction phase from the run page while the run is in
+review (`POST /api/runs/{id}/phases/{phase}/start?repo=`), whether or not its
+trigger holds; its `max` still applies.
 
 ### Run context
 
@@ -272,12 +335,19 @@ immediately. Registry (`GET /api/actions`):
 
 | action | requires | inputs | outputs | notes |
 |---|---|---|---|---|
-| `create_mr` | `forge` | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per flow; the body's first `# ` heading becomes the MR title. On a multi-repo run: one merge request per repository the run changed, each onto the branch that checkout forked from |
+| `create_mr` | `forge` | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per flow, in the entry phase; the body's first `# ` heading becomes the MR title. On a multi-repo run: one merge request per repository the run changed, each onto the branch that checkout forked from |
+| `push_branch` | — | — | — | pushes the run's branch (every checkout's in the entry, the subject's in a reaction). A branch it pushed before is force-pushed **leased** against the tip it recorded — in a reaction phase, at worst the head when the phase started — never blind; a first push is plain. Refused = someone else wrote to the branch: `on_fail` |
+| `sync_target` | — | `strategy` (`merge` \| `rebase`, default `merge`) | — | reaction phases only. Takes the subject's target branch in, in the engine: a no-op when already contained; a conflict leaves the merge (or rebase) **paused** in the working tree and fails the stage with the files named. Whoever resolves it edits those files — no git — and the retried stage checks no marker is left and continues. `rebase` needs a `push_branch` in the same phase |
+| `load_review_comments` | `forge` | `select` (`human` \| `all`, default `human`) | `review` (file → `artifacts/review.md`) | reaction phases only. Writes the subject's **pending** threads (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): file, line, diff hunk, comments, thread id. With `select: human` a person first picks which threads to fix (an inbox checklist; the run waits); unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. A re-entry rewrites the same set |
+| `reply_review_comments` | `forge` | `replies` (file, required) | — | reaction phases only. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the forge and nothing is posted twice |
 
-Actions carry no *failure* edges in this version: `on_success` routes normally,
-and a failure is terminal. Adding an action is one registry entry, one
-executor, and (if it needs an integration) a `requires` string that run
-creation asserts.
+**Edges on actions.** `on_success` routes normally. An action may carry
+`on_fail`, taken when its *outcome* is wrong in a way an agent, a retry or a
+human can fix — a merge that conflicts, a push the remote refused — with the
+reason as `$FAILURE`. Its infrastructure errors (the forge unreachable, the
+workspace gone) stay terminal, and an action without `on_fail` fails the run on
+any error. Adding an action is one registry entry, one executor, and (if it
+needs an integration) a `requires` string that run creation asserts.
 
 ### Several repositories
 
@@ -295,7 +365,9 @@ one more checkout, without any flow change:
 - `create_mr` opens one draft merge request **per repository the run changed**
   (an untouched extra repository gets none), each onto the branch that
   checkout forked from; the final gate lists them all, and `mr_merged` /
-  `mr_closed` wait for all / fire on any;
+  `mr_closed` wait for all / fire on any — as does the end of a phased run;
+- in a phased flow each merge request is its own subject: a conflict on one
+  repository's merge request is fixed in that checkout only;
 - a repository listed **without a locator** is context-only: cloned for the
   agent to read, never published.
 
@@ -338,9 +410,17 @@ hanging forever on something that cannot happen.
 |---|---|---|---|
 | `mr_closed` | `forge` | a merge request | the run's MR is closed *without* being merged |
 
+Two signals are **triggers**: they start a reaction phase (§1 *Phases*) and
+cannot be waited on or answer a gate.
+
+| signal | requires | needs | holds when |
+|---|---|---|---|
+| `mr_conflicts` | `forge` | a merge request | the forge reports the merge request cannot merge cleanly into its target (a forge still computing is *not* a conflict) |
+| `mr_review_settled` | `forge` | a merge request | it has pending review threads — unresolved, last word a reviewer's — and the newest of those comments is older than `quiet_for` |
+
 Three related concepts, kept distinct: an **action** does something now, a
-**wait** blocks until something happens, and a *trigger* — starting a run from
-an outside event — is deliberately not in this version (§10).
+**wait** blocks until something happens, and a **trigger** starts a phase when
+something happened to the merge request.
 
 ### Timeouts
 
@@ -474,10 +554,10 @@ artifact path (no leading `/`, no `.` or `..` segments).
 
 | sentinel | is | bindable on |
 |---|---|---|
-| `$CHANGED` | `git diff --name-status` of the branch against **the branch this run forked from** — the changed-file list, never the full diff; on a multi-repo run, one section per checkout | agent input |
+| `$CHANGED` | `git diff --name-status` of the branch against **the branch this run forked from** — the changed-file list, never the full diff; on a multi-repo run, one section per checkout; in a reaction phase, what this phase run changed on its subject | agent input |
 | `$DECISION` | why the last attempt was turned down: a verdict's comments, or a human's gate feedback | agent input |
 | `$FAILURE` | what the failing stage printed: the last 8 KB, with every secret the engine injected replaced by `[redacted:<kind>]` | agent input |
-| `$MR_URL` | the run's merge request link, produced by `create_mr`; the first when a multi-repo run opened several — a gate then also lists them all in its context | gate input |
+| `$MR_URL` | the run's merge request link, produced by `create_mr`; the first when a multi-repo run opened several — a gate then also lists them all in its context; in a reaction phase, the subject's | gate input |
 | `$WORKSPACE` | the workspace's access link (terminal, else IDE) | gate input |
 
 The scoping is enforced: an agent cannot bind `$MR_URL` (a link is for a human
@@ -548,6 +628,13 @@ what makes `on_reject` reachable; a stage needs no flag of its own, and an
 agent may declare at most one — a stage whose agent declares none cannot carry
 an `on_reject` edge at all (a parse error).
 
+**A `review_replies` output** is a review round's answers: a YAML list of
+`{thread, reply, resolve}`, one entry per thread the round loaded. It is
+checked when the stage ends — every `thread` one of the round's, none twice,
+every `reply` non-empty (an empty list is valid) — so a reply to an unknown
+thread fails *that* stage with `output_invalid`, its reason as `$FAILURE`,
+before anything reaches the forge. `reply_review_comments` posts it.
+
 ### What the editor draws
 
 Because consumption and production are declared, the graph editor derives the
@@ -616,7 +703,13 @@ a project's agent library — became parse errors.)
 **Parse errors** (the document) — refuse it. Unknown fields and values, fields
 that do not apply to a stage's type, unknown action slugs, unbound required
 action inputs, malformed edges, `each_repo` outside a command, success cycles,
-unreachable stages, `max: -1`
+unreachable stages, and for phases: an entry that is not the first phase or
+not the only `on: ticket`, an unknown or non-trigger signal, `quiet_for`/
+`confirm`/`max` where they do not apply, a route leaving its phase,
+`create_mr` outside the entry, a subject action (`sync_target`,
+`load_review_comments`, `reply_review_comments`) outside a reaction phase,
+`each_repo` inside one, a reaction to a merge request the entry never opens,
+a `rebase` without a `push_branch` in its phase; `max: -1`
 without a gate on the link — and every **contract** violation: an agent a stage
 names but the flow does not declare, an input the agent does not declare, a
 required input left unbound, a non-optional input bound to `$DECISION`/
@@ -785,9 +878,9 @@ A stage's agent can stop and ask. This is not a stage type and needs no
 grammar — it is a property of every agent stage, and it is worth stating
 because it changes how a stage behaves in flight.
 
-The agent calls `ask_human{type, question, context?, options?, artifact?}`
-through an MCP tool in its workspace. The engine, not the harness, owns the
-exchange:
+The agent calls `ask_human{type, question, context?, options?, multi?,
+artifacts?}` through an MCP tool in its workspace. The engine, not the
+harness, owns the exchange:
 
 - **The request is an event.** `ping_raised` records the type
   (`clarification` | `blocker` | `permission`), the question, any attached
@@ -800,9 +893,18 @@ exchange:
   hour to answer cannot time the stage out. The run projects as
   `waiting_on_human`.
 - **`options` make the answer closed.** When the agent declares them, the
-  answer must be one of them (or the reserved `other`, whose free text rides
-  in the feedback) — the agent asked a closed question so it can branch
-  deterministically.
+  answer must be one of their ids (or the reserved `other`, whose free text
+  rides in the feedback) — the agent asked a closed question so it can branch
+  deterministically. An option is a string, or `{id, label, detail}` when the
+  human needs a word more than the id. With **`multi: true`** the human may
+  pick any number of them, or none: the tool returns `selected: id, id` or
+  `none selected`.
+- **Every ping declares the shape of its answer** — `ping_raised.answer_kind`:
+  `decision` (approve | reject, a gate or a phase confirmation), `choice`
+  (one option id | other), `multi` (option ids | none) or `text`. The inbox
+  renders that shape and the engine validates against it; nothing is inferred
+  from a ping's type. Pings recorded before the field existed are read with
+  the inference they were written under.
 - **Answers can carry files**, delivered into the workspace under
   `.apothecary/attachments/`, kept separate from the agent's own `artifacts/`.
 - If the engine is unreachable for more than 10 minutes the tool returns an
@@ -827,7 +929,9 @@ Additive, no grammar break:
   `requires` port string. Everything else (parsing, binding, the editor's
   picker, the dataflow view) follows from the signature.
 - **A signal** — one `signalspec` registry entry plus a poller. `wait` and a
-  gate's `auto_approve`/`auto_reject` pick it up for free.
+  gate's `auto_approve`/`auto_reject` pick it up for free; a *trigger* signal
+  (one more registry flag and a predicate in the idle poller) starts a phase
+  instead — reacting to CI failing on the merge request would be one.
 - **A sentinel** — one constant plus one resolution case. The `$NAME` rule
   already tells authors it is engine-provided.
 - **An output type** — like `verdict`: a value on an output's `type` plus the
@@ -841,12 +945,14 @@ Additive, no grammar break:
 
 Deliberately *not* in this version, each a real change rather than a patch:
 
-- **Triggers** — starting a run *from* an outside event. That needs a
-  subscription path, a rule mapping an event to a ticket and project,
-  idempotency, and an auth model: a feature with a security surface, not a
-  stage type. A future top-level `triggers:` key is purely additive.
-- **Parallel stages** — the engine advances one cursor. Fan-out/join would be an
-  engine rework (state machine, replay, budgets), not a grammar patch.
+- **Starting a run from an outside event** (a labelled issue, a schedule).
+  Phases react to what happens to a run's *own* merge request; creating a run
+  needs a subscription path, a rule mapping an event to a ticket and project,
+  idempotency, and an auth model. The `on:` of an entry phase is where it would
+  go.
+- **Parallel stages or phases** — the engine advances one cursor, so phase runs
+  on two merge requests take turns. Fan-out/join would be an engine rework
+  (state machine, replay, budgets), not a grammar patch.
 - **Routing on arbitrary structured output** — the edge kinds are fixed; a
   verdict is the one structured decision.
 - **General value-passing or templating** — sentinels are the only

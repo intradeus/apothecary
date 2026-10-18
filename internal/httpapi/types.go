@@ -144,12 +144,15 @@ type RunResources struct {
 
 // RaisePingRequest is the ask_human shim's question (run-token auth).
 type RaisePingRequest struct {
-	Type      string   `json:"type"` // clarification|blocker|permission
-	Question  string   `json:"question"`
-	Context   string   `json:"context,omitempty"`
-	Options   []string `json:"options,omitempty"`   // closed answer set (max 8)
-	Artifact  string   `json:"artifact,omitempty"`  // legacy single workspace file
-	Artifacts []string `json:"artifacts,omitempty"` // workspace files to review
+	Type     string `json:"type"` // clarification|blocker|permission
+	Question string `json:"question"`
+	Context  string `json:"context,omitempty"`
+	// Options make it a closed question: each a string, or {id, label,
+	// detail}; the answer is one id (or "other"), or with Multi any subset.
+	Options   []event.Option `json:"options,omitempty"`
+	Multi     bool           `json:"multi,omitempty"`
+	Artifact  string         `json:"artifact,omitempty"`  // legacy single workspace file
+	Artifacts []string       `json:"artifacts,omitempty"` // workspace files to review
 	// HoldMS is how long this request may hold for an answer, clamped to the
 	// server's own limit; the caller long-polls the rest of the wait.
 	HoldMS int `json:"hold_ms,omitempty"`

@@ -230,3 +230,40 @@ func failures(evs []event.Event) string {
 	}
 	return strings.Join(out, " | ")
 }
+
+// The run page's live view: the forge's mergeability and pending review
+// threads per merge request, nothing recorded.
+func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
+	h := newHarness(t, mustFlow(t, multiRepoFlowDoc))
+	h.envp.ExecFunc = gitPerDir(map[string]*fakeGit{"repo": newFakeGit("main")})
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		if call.Spec.Agent == "redactor" {
+			h.writeFile(t, call.Env, "artifacts/mr.md", "# T\n")
+		}
+		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "multi", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.waitPing(t, PingGate)
+	before := len(h.events(t, runID))
+	t0 := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
+	h.forge.SetMergeable(1, ports.MergeConflicts, "abc")
+	h.forge.AddComment(1, "d1", "a.go", "rev", "rename", t0)
+	h.forge.AddComment(1, "d2", "b.go", "rev", "add a test", t0.Add(time.Minute))
+	// d3 was answered by the factory: not pending.
+	h.forge.AddComment(1, "d3", "c.go", "rev", "typo", t0)
+	h.forge.AddComment(1, "d3", "c.go", "factory", "fixed "+ports.ReplyMarker(runID, "d3"), t0.Add(2*time.Minute))
+	got, err := h.e.MRStatuses(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Mergeable != ports.MergeConflicts || got[0].HeadSHA != "abc" || got[0].PendingThreads != 2 ||
+		got[0].LastCommentAt == nil || !got[0].LastCommentAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("status = %+v", got)
+	}
+	if after := len(h.events(t, runID)); after != before {
+		t.Errorf("reading the status appended %d events", after-before)
+	}
+}

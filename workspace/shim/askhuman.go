@@ -91,12 +91,39 @@ func callEngine(method, path string, body any, env map[string]string) (*http.Res
 }
 
 type askArgs struct {
-	Type      string   `json:"type"`
-	Question  string   `json:"question"`
-	Context   string   `json:"context"`
-	Options   []string `json:"options"`
-	Artifact  string   `json:"artifact"`  // legacy single ref
-	Artifacts []string `json:"artifacts"` // multi refs
+	Type      string      `json:"type"`
+	Question  string      `json:"question"`
+	Context   string      `json:"context"`
+	Options   []askOption `json:"options"`
+	Multi     bool        `json:"multi"`
+	Artifact  string      `json:"artifact"`  // legacy single ref
+	Artifacts []string    `json:"artifacts"` // multi refs
+}
+
+// askOption is one answer choice: a bare string (id = label) or
+// {id, label, detail}. Passed to the engine as given.
+type askOption struct {
+	ID     string `json:"id"`
+	Label  string `json:"label,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+func (o *askOption) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*o = askOption{ID: s}
+		return nil
+	}
+	type plain askOption
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*o = askOption(p)
+	return nil
 }
 
 // errCancelled: the client cancelled the call (the engine parked the run and
@@ -163,7 +190,8 @@ func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
 				"type":      args.Type,
 				"question":  args.Question,
 				"context":   args.Context,
-				"options":   append([]string{}, args.Options...),
+				"options":   append([]askOption{}, args.Options...),
+				"multi":     args.Multi,
 				"artifacts": append([]string{}, refs...),
 				"hold_ms":   graceHold.Milliseconds(),
 				"key":       key,
@@ -283,11 +311,14 @@ var toolDef = map[string]any{
 		"their answer as text, so you never have to guess — do not work around " +
 		"a slow answer. For closed " +
 		"questions, pass options — the human picks exactly one (buttons in " +
-		"their UI) and you can branch on the returned option deterministically. " +
+		"their UI) and you can branch on the returned option id deterministically. " +
 		"The human ALWAYS also has an automatic 'other' escape hatch: if none " +
 		"of your options fit, the result starts with 'other —' followed by " +
 		"their free-text answer — handle that case rather than assuming one of " +
-		"your options. To have the human review documents you wrote, pass " +
+		"your options. With multi: true the human may pick any number of the " +
+		"options (or none): the result is 'selected: id, id' or 'none selected'. " +
+		"An option is a string, or {id, label, detail} when the human needs a " +
+		"word more than the id. To have the human review documents you wrote, pass " +
 		"artifacts with repo-relative paths (e.g. [\"artifacts/comparison.md\"]): " +
 		"they see them rendered with inline commenting.",
 	"inputSchema": map[string]any{
@@ -297,10 +328,21 @@ var toolDef = map[string]any{
 			"question": map[string]any{"type": "string", "description": "The question for the human"},
 			"context":  map[string]any{"type": "string", "description": "Optional supporting context (markdown renders)"},
 			"options": map[string]any{
-				"type":  "array",
-				"items": map[string]any{"type": "string"},
-				"description": "Optional closed answer set (max 8); the answer will be one of these, or 'other' " +
+				"type": "array",
+				"items": map[string]any{"anyOf": []any{
+					map[string]any{"type": "string"},
+					map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
+						"id":     map[string]any{"type": "string", "description": "what the answer names; one line"},
+						"label":  map[string]any{"type": "string", "description": "what the human reads (defaults to the id)"},
+						"detail": map[string]any{"type": "string", "description": "an optional second line"},
+					}},
+				}},
+				"description": "Optional closed answer set (max 16); the answer will be one of these ids, or 'other' " +
 					"with the human's own text (added automatically — never declare 'other' yourself)",
+			},
+			"multi": map[string]any{
+				"type":        "boolean",
+				"description": "With options: the human may pick any number of them, or none",
 			},
 			"artifacts": map[string]any{
 				"type":        "array",

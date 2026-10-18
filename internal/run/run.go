@@ -16,6 +16,10 @@ const (
 	Provisioning   State = "provisioning"
 	Running        State = "running"
 	WaitingOnHuman State = "waiting_on_human"
+	// InReview: a phased run between phases, its merge requests open — the
+	// reviewers have it, and reaction phases start when their triggers
+	// hold (PLAN6). Non-terminal; the run ends from its merge requests.
+	InReview State = "in_review"
 	// Paused is non-terminal but NOT auto-recovered on boot: the user
 	// pressed pause; only run_unpaused (play) or an abort moves it on.
 	Paused    State = "paused"
@@ -52,12 +56,18 @@ type View struct {
 	SourceBranch        string   `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
 	MRURL               string   `json:"mr_url,omitempty"`
 	// MRs are every merge request the run opened (a multi-repo run has one
-	// per changed repo; a stacked change one per layer), in creation order;
+	// per changed repo), in creation order;
 	// MRURL is the first. Checkouts are the run's repositories. Neither is a
 	// read-model column: they are reduced from events on the detail path.
 	MRs       []MRView         `json:"mrs,omitempty"`
 	Checkouts []event.Checkout `json:"checkouts,omitempty"`
-	EnvID     string           `json:"env_id,omitempty"`
+	// Phase is the phase in progress — or the last one, while Idle — and
+	// PhaseSubject the checkout it acts on ("" for the entry phase). Not
+	// read-model columns.
+	Phase        string `json:"phase,omitempty"`
+	PhaseSubject string `json:"phase_subject,omitempty"`
+	Idle         bool   `json:"idle,omitempty"`
+	EnvID        string `json:"env_id,omitempty"`
 	// EnvStatus is the reconciled LIVE container status (running/starting/
 	// stopped/absent) — NOT a projected column and never set by Apply. The
 	// read path fills it from the engine's reconciler so the workspace badge
@@ -142,7 +152,13 @@ func Apply(v *View, e *event.Event) {
 		// back: a parked run keeps waiting until something wakes it, and a
 		// run a human paused keeps its pause. Claiming "running" for either
 		// would be the projection inventing activity that is not happening.
-		if !v.Dormant {
+		switch {
+		case v.Dormant:
+		case v.Idle:
+			// A phase confirmation answered between phases: back to review
+			// (an approval's phase_started moves it on).
+			v.State = InReview
+		default:
 			v.State = Running
 		}
 	case *event.MRCreated:
@@ -161,6 +177,20 @@ func Apply(v *View, e *event.Event) {
 			v.MRs = append(v.MRs, MRView{Repo: repo, Branch: p.Branch, Target: p.Target, URL: p.MRURL, IID: p.MRIID})
 		}
 		v.MRURL = v.MRs[0].URL
+	case *event.PhaseStarted:
+		v.Phase, v.PhaseSubject, v.Idle = p.Phase, p.Subject, false
+		if v.State == InReview || v.State == WaitingOnHuman {
+			v.State = Running
+		}
+	case *event.PhaseCompleted:
+		v.Idle = true
+		if len(v.MRs) > 0 {
+			v.State = InReview
+		}
+	case *event.PhaseDeclined:
+		if v.Idle && v.State == WaitingOnHuman {
+			v.State = InReview
+		}
 	case *event.RunCompleted:
 		v.State = Completed
 	case *event.RunAbandoned:

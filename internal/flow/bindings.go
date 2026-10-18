@@ -168,6 +168,18 @@ func everyRouteSatisfies(f *Flow, target *Stage, ok func(*Stage) bool) bool {
 		}
 		return true
 	}
+	// A reaction phase starts after the entry phase has run to its end, so
+	// what the entry phase does counts as done for every route inside it
+	// (an approximation for warnings: any entry stage satisfying ok).
+	if ph := f.Phase(target.Phase); ph != nil && !ph.Entry() {
+		before := false
+		for i := f.Phases[0].First; i <= f.Phases[0].Last; i++ {
+			if ok(&f.Stages[i]) {
+				before = true
+			}
+		}
+		return walk(&f.Stages[ph.First], map[string]bool{}, before)
+	}
 	return walk(&f.Stages[0], map[string]bool{}, false)
 }
 
@@ -203,7 +215,7 @@ func producedPaths(f *Flow) map[string]bool {
 					produced[o.Value] = true
 				}
 			}
-		case StageCommand:
+		case StageCommand, StageAction:
 			for _, o := range st.Outputs {
 				if o.Value != "" {
 					produced[o.Value] = true
@@ -365,7 +377,16 @@ func EffectiveOutputs(st *Stage, spec *agentspec.Spec) []IOBinding {
 // renders no verdict — the single resolution used by prompt assembly, the
 // post-run read and crash recovery, so they can never disagree.
 func VerdictPath(st *Stage, spec *agentspec.Spec) string {
-	d := spec.VerdictOutput()
+	return typedOutputPath(st, spec, spec.VerdictOutput())
+}
+
+// ReviewRepliesPath is the effective path of the agent's review_replies
+// output, or "" when it declares none.
+func ReviewRepliesPath(st *Stage, spec *agentspec.Spec) string {
+	return typedOutputPath(st, spec, spec.ReviewRepliesOutput())
+}
+
+func typedOutputPath(st *Stage, spec *agentspec.Spec, d *agentspec.OutputDecl) string {
 	if d == nil {
 		return ""
 	}

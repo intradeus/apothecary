@@ -3,7 +3,7 @@
 	import { ago } from '$lib/format';
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import { mdToHtml } from '$lib/planreview';
-	import { isGatePing, type PingLike } from '$lib/ping';
+	import { isPhaseConfirm, SELECT_NONE, type PingLike } from '$lib/ping';
 
 	let {
 		ping,
@@ -39,11 +39,21 @@
 			uploading = false;
 		}
 	}
-	const isGate = $derived(isGatePing(ping.type));
-	const isPending = $derived((ping.status ?? 'pending') === 'pending');
+	// The card renders the ANSWER KIND; the type only tunes the wording (a
+	// phase confirmation is a decision read as "run it / not now").
+	const kind = $derived(ping.answerKind);
+	const confirmPhase = $derived(isPhaseConfirm(ping.type));
 	const options = $derived(ping.options ?? []);
-	// Gate verbs are plain: what this particular gate means — re-run a stage,
-	// merge, give up — is said in its question, which the flow author wrote.
+	// multi: every option starts checked — unchecking is the deliberate act.
+	let picked = $state<Record<string, boolean>>({});
+	$effect(() => {
+		for (const o of options) if (!(o.id in picked)) picked[o.id] = true;
+	});
+	const pickedIds = $derived(options.filter((o) => picked[o.id]).map((o) => o.id));
+	const isPending = $derived((ping.status ?? 'pending') === 'pending');
+	// Decision verbs are plain: what this particular gate means — re-run a
+	// stage, merge, give up — is said in its question, which the flow author
+	// wrote.
 </script>
 
 <div class="md" style="margin:8px 0">{@html mdToHtml(ping.question)}</div>
@@ -76,7 +86,42 @@
 {:else}
 	<AttachFiles bind:files label="Attach files to your answer" />
 	{#if uploadErr}<div class="error small">upload failed: {uploadErr}</div>{/if}
-	{#if isGate}
+	{#if kind === 'multi'}
+		<div class="picklist">
+			{#each options as o (o.id)}
+				<label class="pick">
+					<input type="checkbox" bind:checked={picked[o.id]} />
+					<span
+						>{o.label}{#if o.detail}<span class="muted"> — {o.detail}</span>{/if}</span
+					>
+				</label>
+			{/each}
+		</div>
+		<textarea bind:value={note} placeholder="Optional note"></textarea>
+		<div class="row" style="margin-top:10px">
+			<button
+				class="approve"
+				disabled={busy || uploading || pickedIds.length === 0}
+				onclick={() => submit(pickedIds.join('\n'))}>Confirm {pickedIds.length} selected</button
+			>
+			<button class="reject" disabled={busy || uploading} onclick={() => submit(SELECT_NONE)}
+				>Select none</button
+			>
+		</div>
+	{:else if kind === 'decision' && confirmPhase}
+		<div class="row" style="margin-top:10px">
+			<button class="approve" disabled={busy || uploading} onclick={() => submit('approve')}
+				>Run it</button
+			>
+			<button class="reject" disabled={busy || uploading} onclick={() => submit('reject')}
+				>Not now</button
+			>
+		</div>
+		<p class="small muted" style="margin:6px 0 0">
+			Not now: it is offered again only when the situation changes (the target moves, new comments
+			arrive).
+		</p>
+	{:else if kind === 'decision'}
 		<textarea bind:value={note} placeholder="Feedback (required when rejecting)"></textarea>
 		<div class="row" style="margin-top:10px">
 			<button class="approve" disabled={busy || uploading} onclick={() => submit('approve')}
@@ -88,14 +133,17 @@
 				onclick={() => submit('reject')}>Reject with feedback</button
 			>
 		</div>
-	{:else if options.length}
+	{:else if kind === 'choice'}
 		<textarea
 			bind:value={note}
 			placeholder="Optional note — or your own answer if none of the options fit"></textarea>
 		<div class="row" style="margin-top:10px; flex-wrap:wrap; gap:8px">
-			{#each options as opt (opt)}
-				<button class="primary" disabled={busy || uploading} onclick={() => submit(opt)}
-					>{opt}</button
+			{#each options as opt (opt.id)}
+				<button
+					class="primary"
+					disabled={busy || uploading}
+					title={opt.detail ?? ''}
+					onclick={() => submit(opt.id)}>{opt.label}</button
 				>
 			{/each}
 			<button
@@ -117,6 +165,24 @@
 {/if}
 
 <style>
+	.picklist {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin-top: 8px;
+	}
+	.pick {
+		display: flex;
+		gap: 8px;
+		align-items: flex-start;
+		font-size: 13px;
+		margin: 0;
+		cursor: pointer;
+	}
+	.pick input {
+		width: auto;
+		margin-top: 2px;
+	}
 	.answerbox {
 		border-left: 3px solid var(--border, #444);
 		padding: 6px 10px;

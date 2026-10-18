@@ -8,6 +8,9 @@ export type RunState =
 	| 'provisioning'
 	| 'running'
 	| 'waiting_on_human'
+	/** Between phases, merge requests open: reviewers have it, reaction
+	 *  phases start when their triggers hold (PLAN6). */
+	| 'in_review'
 	| 'paused'
 	| 'completed'
 	| 'abandoned'
@@ -47,12 +50,17 @@ export interface Run {
 	/** The branch this run forked off from (origin/<sourceBranch>). */
 	sourceBranch?: string;
 	mrUrl?: string;
-	/** Every merge request the run opened, in review order: one per changed
-	 *  repo of a multi-repo task, one per layer of a stacked change. mrUrl is
-	 *  the first. */
+	/** Every merge request the run opened: one per changed repo of a
+	 *  multi-repo task. mrUrl is the first. */
 	mrs: RunMergeRequest[];
 	/** The run's repositories, the primary first. */
 	checkouts: RunCheckout[];
+	/** The phase in progress — or the last one while idle — and the
+	 *  checkout it acts on ('' for the entry phase). */
+	phase?: string;
+	phaseSubject?: string;
+	/** Between phases (in review). */
+	idle: boolean;
 	envId?: string;
 	envStatus?: EnvStatus;
 	createdAt: string;
@@ -63,10 +71,42 @@ export interface RunMergeRequest {
 	/** Checkout name ("repo" = the primary). */
 	repo: string;
 	branch: string;
-	/** The branch it merges into: the source branch, or the layer below. */
+	/** The branch it merges into (the checkout's source branch). */
 	target?: string;
 	url: string;
 	iid: number;
+}
+
+/** A reaction phase of the run's flow (PLAN6), with its runs so far. */
+export interface RunPhase {
+	id: string;
+	description?: string;
+	/** The forge signal that starts it. */
+	signal: string;
+	/** A human confirms each run (an inbox decision). */
+	confirm: boolean;
+	/** Debounce, in seconds (review comments). */
+	quietForS?: number;
+	/** Runs allowed per merge request; -1 = unlimited. */
+	max: number;
+	/** Runs so far, by checkout name. */
+	runs: Record<string, number>;
+}
+
+/** A merge request as the forge reports it right now (not run history). */
+export interface MergeRequestLive {
+	repo: string;
+	branch: string;
+	url: string;
+	state: 'open' | 'merged' | 'closed' | '';
+	/** 'unknown' while the forge is still computing — never a conflict. */
+	mergeable: 'clean' | 'conflicts' | 'unknown' | '';
+	target?: string;
+	headSha?: string;
+	/** Unresolved threads whose last word is a reviewer's. */
+	pendingThreads: number;
+	lastCommentAt?: Date;
+	error?: string;
 }
 
 export interface RunCheckout {

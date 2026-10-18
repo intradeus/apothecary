@@ -154,7 +154,8 @@ func TestMRStateMergedWinsOverClosed(t *testing.T) {
 	a, _ := testAdapter(ts)
 	ctx := context.Background()
 	for iid, want := range map[int]ports.MRState{7: ports.MRMerged, 8: ports.MRClosed, 9: ports.MROpen} {
-		got, err := a.MRState(ctx, ports.MRRef{IID: iid})
+		st, err := a.MRStatus(ctx, ports.MRRef{IID: iid})
+		got := st.State
 		if err != nil || got != want {
 			t.Errorf("pr %d state = %v, %v (want %v)", iid, got, err, want)
 		}
@@ -207,5 +208,106 @@ func TestAccountListBranches(t *testing.T) {
 	}
 	if !got["main"] || got["develop"] {
 		t.Errorf("default flags wrong: %+v", branches)
+	}
+}
+
+func TestMRStatusMergeability(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want ports.Mergeable
+	}{
+		{`{"state":"open","mergeable":true,"mergeable_state":"clean","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeClean},
+		{`{"state":"open","mergeable":false,"mergeable_state":"dirty","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeConflicts},
+		{`{"state":"open","mergeable":null,"mergeable_state":"unknown","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeUnknown},
+		{`{"state":"open","mergeable":false,"mergeable_state":"blocked","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeClean}, // blocked by checks, not conflicts
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/lu/greeter/pulls/5", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.body)) })
+		mux.HandleFunc("GET /repos/lu/greeter/branches/main", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"commit":{"sha":"t1"}}`)) })
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		st, err := a.MRStatus(context.Background(), ports.MRRef{IID: 5})
+		ts.Close()
+		if err != nil || st.Mergeable != tc.want || st.HeadSHA != "h" || st.Target != "main" {
+			t.Errorf("%s: %+v, %v; want %s", tc.body, st, err, tc.want)
+		}
+		if (tc.want == ports.MergeConflicts) != (st.TargetSHA == "t1") {
+			t.Errorf("target sha %q is fetched only on conflicts", st.TargetSHA)
+		}
+	}
+}
+
+func TestMRThreadsRepliesAndResolve(t *testing.T) {
+	var gql []string
+	var issueComment string
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /graphql", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		gql = append(gql, b.Query)
+		switch {
+		case strings.Contains(b.Query, "reviewThreads"):
+			_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+			  {"id":"T1","isResolved":false,"path":"a.go","line":7,"comments":{"nodes":[
+			    {"databaseId":1,"body":"rename","createdAt":"2026-10-18T10:00:00Z","diffHunk":"@@ -1 +1 @@","author":{"login":"rev"}}]}},
+			  {"id":"T2","isResolved":true,"path":"b.go","line":null,"originalLine":3,"comments":{"nodes":[
+			    {"databaseId":2,"body":"ok","createdAt":"2026-10-18T10:00:00Z","author":{"login":"rev"}}]}}]}}}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/pulls/5/reviews", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":9,"body":"please add tests","state":"CHANGES_REQUESTED","user":{"login":"rev"},"submitted_at":"2026-10-18T09:00:00Z"},
+		  {"id":10,"body":"","state":"APPROVED","user":{"login":"rev"}}]`))
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/issues/5/comments", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":50,"body":"added <!-- apothecary run=r thread=review:9 -->","user":{"login":"bot"},"created_at":"2026-10-18T11:00:00Z"},
+		  {"id":51,"body":"ci passed","user":{"login":"ci[bot]","type":"Bot"},"created_at":"2026-10-18T11:00:00Z"},
+		  {"id":52,"body":"also update the README","user":{"login":"rev","type":"User"},"created_at":"2026-10-18T11:30:00Z"},
+		  {"id":53,"body":"done <!-- apothecary run=r thread=issue:52 -->","user":{"login":"bot"},"created_at":"2026-10-18T12:00:00Z"}]`))
+	})
+	mux.HandleFunc("POST /repos/lu/greeter/issues/5/comments", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		issueComment = b["body"]
+		_, _ = w.Write([]byte(`{}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	ctx := context.Background()
+	th, err := a.MRThreads(ctx, ports.MRRef{IID: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(th) != 4 || th[0].ID != "T1" || th[0].Line != 7 || th[0].DiffHunk == "" || th[1].Line != 3 || !th[1].Resolved {
+		t.Fatalf("threads = %+v", th)
+	}
+	// A conversation comment is a thread; the bot's is not; our reply to it
+	// is attached, not a thread of its own.
+	if th[3].ID != "issue:52" || len(th[3].Comments) != 2 || !ports.IsFactoryReply(th[3].Comments[1].Body) {
+		t.Errorf("conversation thread = %+v", th[3])
+	}
+	if err := a.ReplyThread(ctx, ports.MRRef{IID: 5}, "issue:52", "readme updated"); err != nil || issueComment != "readme updated" {
+		t.Errorf("conversation reply: %q, %v", issueComment, err)
+	}
+	if th[2].ID != "review:9" || len(th[2].Comments) != 2 || !ports.IsFactoryReply(th[2].Comments[1].Body) {
+		t.Errorf("review-body thread = %+v (approved empty review dropped, our reply attached)", th[2])
+	}
+	if err := a.ReplyThread(ctx, ports.MRRef{IID: 5}, "T1", "done"); err != nil || !strings.Contains(gql[len(gql)-1], "addPullRequestReviewThreadReply") {
+		t.Errorf("thread reply: %v, %v", err, gql)
+	}
+	if err := a.ReplyThread(ctx, ports.MRRef{IID: 5}, "review:9", "added"); err != nil || issueComment != "added" {
+		t.Errorf("review reply: %q, %v", issueComment, err)
+	}
+	n := len(gql)
+	if err := a.ResolveThread(ctx, ports.MRRef{IID: 5}, "T1"); err != nil || !strings.Contains(gql[len(gql)-1], "resolveReviewThread") {
+		t.Errorf("resolve: %v", err)
+	}
+	if err := a.ResolveThread(ctx, ports.MRRef{IID: 5}, "review:9"); err != nil || len(gql) != n+1 {
+		t.Errorf("a review body has nothing to resolve: %v", err)
 	}
 }

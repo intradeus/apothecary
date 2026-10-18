@@ -15,7 +15,7 @@
 		type PlanBlock,
 		type ReviewComment
 	} from '$lib/planreview';
-	import { isGatePing } from '$lib/ping';
+	import { isAgentPing } from '$lib/ping';
 	import { onMount } from 'svelte';
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
@@ -23,7 +23,8 @@
 	// Gates answer approve/reject; ask_human artifact reviews (PLAN4 M16)
 	// answer with the composed review text — or a declared option with the
 	// review as its note.
-	const isGate = $derived(isGatePing(ping.type));
+	const isGate = $derived(ping.answerKind === 'decision');
+	void isAgentPing;
 
 	let blocks = $state<PlanBlock[]>([]);
 	let path = $state('');
@@ -455,10 +456,12 @@
 						Request changes ({comments.length})
 					</button>
 				</div>
-			{:else if ping.options?.length}
+			{:else if ping.answerKind === 'choice' && ping.options.length}
 				<div class="row" style="margin-top:12px; flex-wrap:wrap; gap:8px">
-					{#each ping.options as opt (opt)}
-						<button class="primary" disabled={busy} onclick={() => chooseOption(opt)}>{opt}</button>
+					{#each ping.options as opt (opt.id)}
+						<button class="primary" disabled={busy} title={opt.detail ?? ''} onclick={() => chooseOption(opt.id)}
+							>{opt.label}</button
+						>
 					{/each}
 				</div>
 				<p class="muted small" style="margin-top:6px">

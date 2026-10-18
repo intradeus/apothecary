@@ -6,8 +6,10 @@ package ports
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -322,6 +324,75 @@ const (
 	MRClosed MRState = "closed"
 )
 
+// Mergeable is what the forge says about merging a merge request into its
+// target. Unknown is "still computing" (GitHub's mergeable:null, GitLab's
+// checking/unchecked) and must never be read as a conflict.
+type Mergeable string
+
+const (
+	MergeClean     Mergeable = "clean"
+	MergeConflicts Mergeable = "conflicts"
+	MergeUnknown   Mergeable = "unknown"
+)
+
+// MRStatus is one poll of a merge request.
+type MRStatus struct {
+	State     MRState
+	Mergeable Mergeable
+	HeadSHA   string
+	Target    string
+	// TargetSHA is the target branch's tip, filled when Mergeable is
+	// MergeConflicts: a conflict is one (target tip, head) pair, so a fix a
+	// human declined is offered again only once either side moves.
+	TargetSHA string
+}
+
+// ReviewThread is one review conversation on a merge request: an inline
+// discussion on a line, or a review's top-level body.
+type ReviewThread struct {
+	ID       string
+	Path     string // "" for a thread not anchored to a file
+	Line     int
+	DiffHunk string
+	Resolved bool
+	Comments []ReviewComment // oldest first
+}
+
+type ReviewComment struct {
+	ID        string
+	Author    string
+	Body      string
+	CreatedAt time.Time
+}
+
+// ReplyMarker is embedded (as an HTML comment, invisible when rendered) in
+// every reply the factory posts; runID may carry a round suffix. It is how a reply is recognised as the
+// factory's — independent of which account the token belongs to — and how
+// a reply posted before a crash is found instead of posted twice.
+func ReplyMarker(runID, threadID string) string {
+	return fmt.Sprintf("<!-- apothecary run=%s thread=%s -->", runID, threadID)
+}
+
+// IsFactoryReply reports whether a comment body carries a ReplyMarker.
+func IsFactoryReply(body string) bool { return strings.Contains(body, "<!-- apothecary run=") }
+
+// MarkerThread returns the thread id a factory reply's marker names, or "".
+func MarkerThread(body string) string {
+	_, rest, ok := strings.Cut(body, "<!-- apothecary run=")
+	if !ok {
+		return ""
+	}
+	_, rest, ok = strings.Cut(rest, " thread=")
+	if !ok {
+		return ""
+	}
+	id, _, ok := strings.Cut(rest, " -->")
+	if !ok {
+		return ""
+	}
+	return id
+}
+
 // WorkspaceReattacher is an OPTIONAL EnvProvisioner capability: after an
 // engine restart, re-establish any engine-side resources for a still-
 // running workspace that died with the previous process — notably the
@@ -601,7 +672,19 @@ type Forge interface {
 	// so it is a natural idempotency key and needs no stored token. ok=false
 	// means "no such MR", which is distinct from an error.
 	FindMR(ctx context.Context, repo RepoRef, branch, target string) (ref MRRef, ok bool, err error)
-	MRState(ctx context.Context, mr MRRef) (MRState, error)
+	// MRStatus is the merge request's state plus what the forge knows about
+	// merging it: whether it conflicts with its target, its head commit and
+	// its target branch. One call on every forge.
+	MRStatus(ctx context.Context, mr MRRef) (MRStatus, error)
+	// MRThreads lists the merge request's review threads: inline discussions
+	// and review comments, system notes dropped. Resolved threads included
+	// (Resolved=true) — the caller decides what is pending.
+	MRThreads(ctx context.Context, mr MRRef) ([]ReviewThread, error)
+	// ReplyThread posts body as a reply in a thread (the body carries
+	// ReplyMarker so the reply is recognisable as the factory's).
+	ReplyThread(ctx context.Context, mr MRRef, threadID, body string) error
+	// ResolveThread marks a thread resolved.
+	ResolveThread(ctx context.Context, mr MRRef, threadID string) error
 }
 
 // Notification is the one-way fan-out payload; the CPUI inbox is canonical,

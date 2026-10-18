@@ -283,10 +283,27 @@ per-run Docker-in-Docker sandbox ── egress only via the project gateway
   a run clones each beside the primary, the agent sees them all, commit
   and push run in each, and every repository the run changed gets its own
   merge request. The run page's workspace views take a repository picker.
+- **After the merge request opens, the run stays with it** (*in review*)
+  until it merges (completed) or is closed (abandoned). The default flow
+  reacts meanwhile, one thing at a time:
+  - **conflicts** — when the target moves and the MR no longer merges, you
+    get an inbox question; on *Run it* the engine merges the target in, an
+    agent resolves any conflict by editing the files (never running git),
+    and the result is tested and pushed (leased, never a blind force).
+    *Not now* is remembered until the target moves again.
+  - **review comments** — once reviewers have commented (inline, in a
+    review, or in the conversation) and then gone quiet for an hour, you get
+    a checklist of the pending threads and untick the ones not worth fixing
+    (wrong, or already handled). The ticked ones are fixed in one batch,
+    tested, pushed, and answered on their own threads. Unticked and answered
+    threads don't come back unless a reviewer writes on them again.
+  The run page's *In review* card shows each MR's mergeability and pending
+  threads, and has a *Run now* button per phase.
 
 The full design and its rationale: `docs/IMPLEMENTATION_NOTES.md`, sections
-*Live agent sessions: the workspace sidecar and ACP* and *Several
-repositories*; the flow-side contract is in `docs/flow-language.md`.
+*Live agent sessions: the workspace sidecar and ACP*, *Several
+repositories* and *Phases: the run's life after the merge request*; the
+flow-side contract is in `docs/flow-language.md`.
 
 ## CLI
 

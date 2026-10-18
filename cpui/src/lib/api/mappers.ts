@@ -9,8 +9,12 @@
 // index.ts, because a request body is only ever built at one call site.
 
 import type * as Wire from './generated/types.gen';
+import { normalizeDoc } from '$lib/flowdoc';
+import { answerKindOf, toPingOption } from '$lib/ping';
 import type {
 	ActionIO,
+	MergeRequestLive,
+	RunPhase,
 	ActionSpec,
 	Attachment,
 	Branch,
@@ -74,13 +78,21 @@ const RUN_STATES: RunState[] = [
 	'provisioning',
 	'running',
 	'waiting_on_human',
+	'in_review',
 	'paused',
 	'completed',
 	'abandoned',
 	'failed',
 	'archived'
 ];
-const PING_TYPES: PingType[] = ['gate', 'clarification', 'blocker', 'permission'];
+const PING_TYPES: PingType[] = [
+	'gate',
+	'phase_confirm',
+	'select',
+	'clarification',
+	'blocker',
+	'permission'
+];
 const PING_STATUSES: PingStatus[] = ['pending', 'answered', 'withdrawn'];
 const PORTS: Port[] = ['forge', 'provisioner', 'harness', 'ticketsource'];
 const SNAPSHOT_KINDS: SnapshotKind[] = ['output', 'log', 'ping_file'];
@@ -121,10 +133,40 @@ export function toRun(w: Wire.RunView): Run {
 			source: c.source,
 			primary: c.primary ?? false
 		})),
+		phase: w.phase || undefined,
+		phaseSubject: w.phase_subject || undefined,
+		idle: w.idle ?? false,
 		envId: w.env_id,
 		envStatus: w.env_status as Run['envStatus'],
 		createdAt: w.created_at,
 		updatedAt: w.updated_at
+	};
+}
+
+export function toRunPhase(w: Wire.PhaseInfo): RunPhase {
+	return {
+		id: w.id,
+		description: w.description || undefined,
+		signal: w.signal,
+		confirm: w.confirm ?? false,
+		quietForS: w.quiet_for_s || undefined,
+		max: w.max,
+		runs: w.runs ?? {}
+	};
+}
+
+export function toMergeRequestLive(w: Wire.MrLive): MergeRequestLive {
+	return {
+		repo: w.repo,
+		branch: w.branch,
+		url: w.url,
+		state: w.state as MergeRequestLive['state'],
+		mergeable: w.mergeable as MergeRequestLive['mergeable'],
+		target: w.target || undefined,
+		headSha: w.head_sha || undefined,
+		pendingThreads: w.pending_threads,
+		lastCommentAt: w.last_comment_at ? new Date(w.last_comment_at) : undefined,
+		error: w.error || undefined
 	};
 }
 
@@ -180,7 +222,8 @@ export function toPing(w: Wire.PingView): Ping {
 		files: list(w.files),
 		link: w.link,
 		primaryRef: w.payload_ref,
-		options: list(w.options),
+		answerKind: answerKindOf(w.answer_kind, w.type, w.options),
+		options: list(w.options).map(toPingOption),
 		answer: w.answer,
 		feedback: w.feedback,
 		answerAttachmentIds: list(w.answer_attachment_ids),
@@ -429,7 +472,7 @@ export function toFlowValidation(w: Wire.FlowValidation): FlowValidation {
 		hash: w.hash,
 		stages: w.stages,
 		agents: w.agents,
-		doc: w.doc as FlowValidation['doc']
+		doc: w.doc ? normalizeDoc(w.doc) : undefined
 	};
 }
 
@@ -439,9 +482,11 @@ function toActionInput(w: Wire.InputSig): ActionIO {
 	return {
 		name: w.name,
 		description: w.description,
-		kind: w.kind === 'value' ? 'value' : 'file',
+		kind: w.kind === 'value' ? 'value' : w.kind === 'enum' ? 'enum' : 'file',
 		required: w.required ?? false,
-		defaultPath: w.default_path
+		defaultPath: w.default_path,
+		values: w.values ?? undefined,
+		defaultValue: w.default || undefined
 	};
 }
 
@@ -451,7 +496,8 @@ function toActionOutput(w: Wire.OutputSig): ActionIO {
 		description: w.description,
 		kind: w.kind === 'value' ? 'value' : 'file',
 		required: false,
-		sentinel: w.sentinel
+		sentinel: w.sentinel,
+		path: w.path || undefined
 	};
 }
 

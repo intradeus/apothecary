@@ -61,7 +61,65 @@ type Doc struct {
 	// the same schema the retired library files spoke, with document order
 	// preserved for free.
 	Agents []agentspec.Spec `yaml:"agents" json:"agents,omitempty"`
-	Stages []DocStage       `yaml:"stages" json:"stages"`
+	// Stages and Phases are exclusive: top-level stages are the one-phase
+	// shorthand (today's flows), phases the whole life of a ticket (PLAN6).
+	Stages []DocStage `yaml:"stages" json:"stages,omitempty"`
+	Phases []DocPhase `yaml:"phases" json:"phases,omitempty"`
+}
+
+// DocPhase is one phase: what starts it and its stages.
+type DocPhase struct {
+	ID          string     `yaml:"id" json:"id"`
+	Description string     `yaml:"description" json:"description,omitempty"`
+	On          DocTrigger `yaml:"on" json:"on"`
+	Stages      []DocStage `yaml:"stages" json:"stages"`
+}
+
+// DocTrigger is a phase's `on:` — a bare signal (`on: ticket`,
+// `on: mr_conflicts`) or a mapping with the trigger's options.
+type DocTrigger struct {
+	Signal   string `yaml:"signal" json:"signal"`
+	QuietFor string `yaml:"quiet_for" json:"quiet_for,omitempty"`
+	Confirm  bool   `yaml:"confirm" json:"confirm,omitempty"`
+	Max      *int   `yaml:"max" json:"max,omitempty"`
+}
+
+// UnmarshalYAML accepts the scalar sugar and the mapping form, rejecting
+// unknown and repeated keys by hand (a custom unmarshaler bypasses the
+// decoder's strictness, as for DocEdge).
+func (t *DocTrigger) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return n.Decode(&t.Signal)
+	case yaml.MappingNode:
+		seen := map[string]bool{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if seen[k.Value] {
+				return fmt.Errorf("line %d: %q set twice", k.Line, k.Value)
+			}
+			seen[k.Value] = true
+			var err error
+			switch k.Value {
+			case "signal":
+				err = v.Decode(&t.Signal)
+			case "quiet_for":
+				err = v.Decode(&t.QuietFor)
+			case "confirm":
+				err = v.Decode(&t.Confirm)
+			case "max":
+				t.Max = new(int)
+				err = v.Decode(t.Max)
+			default:
+				return fmt.Errorf("line %d: field %s not found in type flow.DocTrigger (signal, quiet_for, confirm, max)", k.Line, k.Value)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("line %d: on must be a signal name or a mapping {signal, quiet_for, confirm, max}", n.Line)
 }
 
 type DocDefaults struct {
@@ -153,7 +211,10 @@ type edgeKindSpec struct {
 }
 
 var edgeKinds = map[string]edgeKindSpec{
-	EdgeFail: {on: []StageType{StageAgent, StageCommand, StageWait}},
+	// An action fails too when its outcome is wrong in a way a retry or an
+	// agent can fix (a merge that conflicts); its infrastructure errors stay
+	// terminal. With no on_fail, any failure is terminal.
+	EdgeFail: {on: []StageType{StageAgent, StageCommand, StageWait, StageAction}},
 	// A rejection carries its rationale — an agent's verdict comments or a
 	// gate's feedback text. Either way the target reads one $DECISION.
 	EdgeReject: {on: []StageType{StageAgent, StageHumanGate}},
@@ -395,8 +456,12 @@ func Parse(filename string, data []byte) (*Flow, error) {
 			return nil, err
 		}
 	}
-	if len(raw.Stages) > maxStages {
-		return nil, p.errf(p.keyLine("stages"), "flow declares %d stages; the limit is %d", len(raw.Stages), maxStages)
+	total := len(raw.Stages)
+	for i := range raw.Phases {
+		total += len(raw.Phases[i].Stages)
+	}
+	if total > maxStages {
+		return nil, p.errf(p.keyLine("stages"), "flow declares %d stages; the limit is %d", total, maxStages)
 	}
 	if len(raw.Agents) > maxAgents {
 		return nil, p.errf(p.keyLine("agents"), "flow declares %d agents; the limit is %d", len(raw.Agents), maxAgents)
@@ -430,6 +495,9 @@ func ParseDoc(filename string, data []byte) (*Doc, error) {
 type parser struct {
 	file string
 	root *yaml.Node // document mapping node, for line lookups
+	// stageLines are the source lines of the flattened stages, in order
+	// (top-level stages, or every phase's stages one phase after another).
+	stageLines []int
 }
 
 func (p *parser) errf(line int, format string, args ...any) error {
@@ -481,8 +549,43 @@ func (p *parser) keyLine(key string) int {
 	return 0
 }
 
-// stageLine returns the line of the i-th stage node, or 0.
-func (p *parser) stageLine(i int) int { return p.seqLine("stages", i) }
+// stageLine returns the line of the i-th (flattened) stage node, or 0.
+func (p *parser) stageLine(i int) int {
+	if i < len(p.stageLines) {
+		return p.stageLines[i]
+	}
+	return p.seqLine("stages", i)
+}
+
+// phaseNodes returns the phases sequence's element nodes, or nil.
+func (p *parser) phaseNodes() []*yaml.Node {
+	if p.root == nil || p.root.Kind != yaml.MappingNode {
+		return nil
+	}
+	for k := 0; k+1 < len(p.root.Content); k += 2 {
+		if p.root.Content[k].Value == "phases" && p.root.Content[k+1].Kind == yaml.SequenceNode {
+			return p.root.Content[k+1].Content
+		}
+	}
+	return nil
+}
+
+// phaseStageLines lists the lines of a phase node's stages.
+func phaseStageLines(ph *yaml.Node) []int {
+	if ph == nil || ph.Kind != yaml.MappingNode {
+		return nil
+	}
+	for k := 0; k+1 < len(ph.Content); k += 2 {
+		if ph.Content[k].Value == "stages" && ph.Content[k+1].Kind == yaml.SequenceNode {
+			var out []int
+			for _, c := range ph.Content[k+1].Content {
+				out = append(out, c.Line)
+			}
+			return out
+		}
+	}
+	return nil
+}
 
 // seqLine returns the line of the i-th element of a top-level sequence, or 0.
 func (p *parser) seqLine(key string, i int) int {
@@ -535,28 +638,48 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		return nil, err
 	}
 
-	if len(raw.Stages) == 0 {
+	// Flatten: top-level stages, or every phase's stages in document order.
+	// Stage ids are one namespace across the document.
+	rawStages := raw.Stages
+	if len(raw.Phases) > 0 {
+		if len(raw.Stages) > 0 {
+			return nil, p.errf(p.keyLine("stages"), "a flow declares either top-level stages (one phase) or phases, not both — move these stages into the phase whose trigger is %q", TriggerTicket)
+		}
+		if f.Phases, rawStages, err = p.buildPhases(raw.Phases); err != nil {
+			return nil, err
+		}
+	} else {
+		p.stageLines = nil
+	}
+	if len(rawStages) == 0 {
 		return nil, p.errf(p.keyLine("stages"), "flow must declare at least one stage")
 	}
 	ids := map[string]int{} // id -> stage index, for uniqueness + edge targets
-	for i := range raw.Stages {
-		s, err := p.buildStage(&raw.Stages[i], i, f.Defaults)
+	for i := range rawStages {
+		s, err := p.buildStage(&rawStages[i], i, f.Defaults)
 		if err != nil {
 			return nil, err
 		}
 		if prev, dup := ids[s.ID]; dup {
-			return nil, p.errf(s.Line, "stage %q: duplicate id (first declared at line %d)", s.ID, p.stageLine(prev))
+			return nil, p.errf(s.Line, "stage %q: duplicate id (first declared at line %d) — stage ids are one namespace across phases", s.ID, p.stageLine(prev))
 		}
 		ids[s.ID] = i
 		f.Stages = append(f.Stages, *s)
 	}
+	for pi := range f.Phases {
+		ph := &f.Phases[pi]
+		for i := ph.First; i <= ph.Last; i++ {
+			f.Stages[i].Phase = ph.ID
+		}
+	}
 
 	// The success chain is explicit in the model (DESIGN3 §2.1); absent
 	// on_success is YAML sugar for "next stage in document order", last
-	// stage = done. After this loop every stage has a concrete target.
+	// stage = done — the last stage of its phase, in a phased flow. After
+	// this loop every stage has a concrete target.
 	for i := range f.Stages {
 		if f.Stages[i].OnSuccess == "" {
-			if i == len(f.Stages)-1 {
+			if i == len(f.Stages)-1 || f.Stages[i+1].Phase != f.Stages[i].Phase {
 				f.Stages[i].OnSuccess = TerminalDone
 			} else {
 				f.Stages[i].OnSuccess = f.Stages[i+1].ID
@@ -565,6 +688,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	}
 
 	if err := p.validateFlow(f, ids); err != nil {
+		return nil, err
+	}
+	if err := p.validatePhases(f, ids); err != nil {
 		return nil, err
 	}
 	// Contracts are checked here rather than in a second, project-aware pass:
@@ -832,6 +958,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			if f.slug != "" && signalspec.Get(f.slug) == nil {
 				return fail("unknown %s signal %q (%s)", f.field, f.slug, signalspec.Slugs())
 			}
+			if sig := signalspec.Get(f.slug); sig != nil && sig.Trigger {
+				return fail("%s: %q starts a phase, it does not answer a gate (declare a phase `on: %s`)", f.field, f.slug, f.slug)
+			}
 		}
 		if raw.AutoApprove != "" && raw.AutoApprove == raw.AutoReject {
 			return fail("signal %q cannot both approve and reject this gate", raw.AutoApprove)
@@ -859,6 +988,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				if sig.Kind == actionspec.KindFile && !validArtifactPath(pr.Value) {
 					return fail("input %q: path %q must be a relative artifact path", pr.Name, pr.Value)
 				}
+				if sig.Kind == actionspec.KindEnum && !slices.Contains(sig.Values, pr.Value) {
+					return fail("input %q: %q is not one of %s", pr.Name, pr.Value, strings.Join(sig.Values, " | "))
+				}
 				bound[pr.Name] = true
 				s.Inputs = append(s.Inputs, IOBinding{Name: pr.Name, Value: pr.Value})
 			}
@@ -868,6 +1000,13 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				return fail("action %q requires input %q (%s)", act.Slug, sig.Name, sig.Description)
 			}
 		}
+		// A file an action writes is part of the dataflow like an agent's
+		// output: later stages bind it, the validator sees it produced.
+		for _, o := range act.Outputs {
+			if o.Kind == actionspec.KindFile && o.Path != "" {
+				s.Outputs = append(s.Outputs, IOBinding{Name: o.Name, Value: o.Path})
+			}
+		}
 
 	case StageWait:
 		if raw.For == "" {
@@ -875,6 +1014,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 		if signalspec.Get(raw.For) == nil {
 			return fail("unknown signal %q (%s)", raw.For, signalspec.Slugs())
+		}
+		if signalspec.Get(raw.For).Trigger {
+			return fail("%q starts a phase, it is not something to wait for (declare a phase `on: %s`)", raw.For, raw.For)
 		}
 		s.WaitFor = raw.For
 		if raw.Timeout != "" {
@@ -1104,10 +1246,14 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		}
 	}
 
-	// Reachability: every stage reachable from the entry (first stage) via
-	// on_success or any edge — an orphaned stage would never execute.
+	// Reachability: every stage reachable from an entry (the first stage,
+	// or each phase's first stage) via on_success or any edge — an orphaned
+	// stage would never execute.
 	reached := map[string]bool{}
 	queue := []string{f.Stages[0].ID}
+	for _, ph := range f.Phases {
+		queue = append(queue, f.Stages[ph.First].ID)
+	}
 	for len(queue) > 0 {
 		id := queue[0]
 		queue = queue[1:]
@@ -1129,7 +1275,205 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	}
 	for i := range f.Stages {
 		if !reached[f.Stages[i].ID] {
-			return p.errf(f.Stages[i].Line, "stage %q is unreachable from the entry stage %q", f.Stages[i].ID, f.Stages[0].ID)
+			entry := f.Stages[0].ID
+			if ph := f.Phase(f.Stages[i].Phase); ph != nil {
+				entry = f.Stages[ph.First].ID
+			}
+			return p.errf(f.Stages[i].Line, "stage %q is unreachable from the entry stage %q", f.Stages[i].ID, entry)
+		}
+	}
+	return nil
+}
+
+// buildPhases validates the phases' own fields and flattens their stages,
+// recording each phase's span and every stage's source line.
+func (p *parser) buildPhases(raw []DocPhase) ([]Phase, []DocStage, error) {
+	nodes := p.phaseNodes()
+	var phases []Phase
+	var stages []DocStage
+	seen := map[string]int{}
+	p.stageLines = nil
+	for i := range raw {
+		rp := &raw[i]
+		line := p.seqLine("phases", i)
+		fail := func(format string, args ...any) ([]Phase, []DocStage, error) {
+			id := rp.ID
+			if id == "" {
+				id = fmt.Sprintf("#%d", i+1)
+			}
+			return nil, nil, p.errf(line, "phase %q: %s", id, fmt.Sprintf(format, args...))
+		}
+		if rp.ID == "" {
+			return fail("id is required")
+		}
+		if !slugRe.MatchString(rp.ID) {
+			return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
+		}
+		if prev, dup := seen[rp.ID]; dup {
+			return fail("duplicate phase id (first declared at line %d)", prev)
+		}
+		seen[rp.ID] = line
+		if len(rp.Stages) == 0 {
+			return fail("a phase needs at least one stage")
+		}
+		on, err := buildTrigger(&rp.On)
+		if err != nil {
+			return fail("on: %v", err)
+		}
+		if i == 0 && on.Signal != TriggerTicket {
+			return fail("the first phase is the entry: it must be `on: %s` (what a filed ticket starts)", TriggerTicket)
+		}
+		if i > 0 && on.Signal == TriggerTicket {
+			return fail("only the first phase may be `on: %s` — a run has one entry", TriggerTicket)
+		}
+		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, First: len(stages), Last: len(stages) + len(rp.Stages) - 1, Line: line}
+		phases = append(phases, ph)
+		stages = append(stages, rp.Stages...)
+		var lines []int
+		if i < len(nodes) {
+			lines = phaseStageLines(nodes[i])
+		}
+		for j := range rp.Stages {
+			l := line
+			if j < len(lines) {
+				l = lines[j]
+			}
+			p.stageLines = append(p.stageLines, l)
+		}
+	}
+	return phases, stages, nil
+}
+
+// buildTrigger validates a phase's `on:` on its own; whether the flow can
+// satisfy it (a merge request to react to) is validatePhases' question.
+func buildTrigger(raw *DocTrigger) (Trigger, error) {
+	t := Trigger{Signal: raw.Signal, Confirm: raw.Confirm, Max: DefaultPhaseMax}
+	if raw.Signal == "" {
+		return t, fmt.Errorf("signal is required (%s, or one of: %s)", TriggerTicket, triggerSlugs())
+	}
+	if raw.Signal == TriggerTicket {
+		if raw.QuietFor != "" || raw.Confirm || raw.Max != nil {
+			return t, fmt.Errorf("quiet_for, confirm and max do not apply to %q — a ticket starts its phase once; its plan gate is where a human confirms", TriggerTicket)
+		}
+		t.Max = 1
+		return t, nil
+	}
+	sig := signalspec.Get(raw.Signal)
+	if sig == nil {
+		return t, fmt.Errorf("unknown signal %q (%s, or one of: %s)", raw.Signal, TriggerTicket, triggerSlugs())
+	}
+	if !sig.Trigger {
+		return t, fmt.Errorf("signal %q ends the run, it does not start a phase (phase triggers: %s)", raw.Signal, triggerSlugs())
+	}
+	if raw.QuietFor != "" {
+		if !sig.Debounced {
+			return t, fmt.Errorf("quiet_for applies only to a signal that fires on activity (%s does not)", raw.Signal)
+		}
+		d, err := time.ParseDuration(raw.QuietFor)
+		if err != nil {
+			return t, fmt.Errorf("quiet_for: invalid duration %q", raw.QuietFor)
+		}
+		if d < time.Minute {
+			return t, fmt.Errorf("quiet_for must be at least 1m, got %s", raw.QuietFor)
+		}
+		t.QuietFor = d
+	}
+	if raw.Max != nil {
+		switch {
+		case *raw.Max == UnlimitedMax && !raw.Confirm:
+			return t, fmt.Errorf("max -1 (unlimited) requires confirm: true — every run must cost a human decision")
+		case *raw.Max != UnlimitedMax && *raw.Max < 1:
+			return t, fmt.Errorf("max must be >= 1 (or -1 with confirm), got %d", *raw.Max)
+		}
+		t.Max = *raw.Max
+	}
+	return t, nil
+}
+
+func triggerSlugs() string {
+	var out []string
+	for _, s := range signalspec.Registry() {
+		if s.Trigger {
+			out = append(out, s.Slug)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// validatePhases checks what spans stages: a phase's routes stay inside it,
+// a reaction acts on one merge request (no each_repo, no new one), and the
+// entry opens the merge request every reaction needs.
+func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
+	if !f.Phased() {
+		for i := range f.Stages {
+			if s := &f.Stages[i]; s.Type == StageAction {
+				if act := actionspec.Get(s.Action); act != nil && act.Subject {
+					return p.errf(s.Line, "stage %q: %q acts on the merge request a reaction phase was started for — declare phases (an `on: %s` entry, then a reaction phase holding this stage)", s.ID, s.Action, TriggerTicket)
+				}
+			}
+		}
+		return nil
+	}
+	same := func(from *Stage, to string) bool {
+		return to == TerminalDone || to == TerminalAbort || f.Stages[ids[to]].Phase == from.Phase
+	}
+	entryOpensMR := false
+	for i := range f.Stages {
+		s := &f.Stages[i]
+		if !same(s, s.OnSuccess) {
+			return p.errf(s.Line, "stage %q: on_success %q is in phase %q — a phase's routes stay inside it (end it with %q)",
+				s.ID, s.OnSuccess, f.Stages[ids[s.OnSuccess]].Phase, TerminalDone)
+		}
+		for kind, e := range s.Edges {
+			for link := e; link != nil; link = link.Then {
+				if !same(s, link.To) {
+					return p.errf(s.Line, "stage %q: %s target %q is in phase %q — a phase's routes stay inside it",
+						s.ID, kind, link.To, f.Stages[ids[link.To]].Phase)
+				}
+			}
+		}
+		entry := s.Phase == f.Phases[0].ID
+		if s.Type == StageAction {
+			if act := actionspec.Get(s.Action); act != nil && act.Provides == actionspec.ProvidesMR {
+				if !entry {
+					return p.errf(s.Line, "stage %q: %q opens the run's merge request, which belongs to the entry phase %q — a reaction works on a merge request that already exists",
+						s.ID, s.Action, f.Phases[0].ID)
+				}
+				entryOpensMR = true
+			}
+		}
+		if entry && s.Type == StageAction {
+			if act := actionspec.Get(s.Action); act != nil && act.Subject {
+				return p.errf(s.Line, "stage %q: %q acts on the merge request a reaction phase was started for — it belongs in a reaction phase, not the entry", s.ID, s.Action)
+			}
+		}
+		if !entry && s.EachRepo {
+			return p.errf(s.Line, "stage %q: each_repo does not apply in a reaction phase — a reaction works on one merge request's checkout", s.ID)
+		}
+	}
+	// A rebase rewrites the branch: only a leased push may publish it.
+	for _, ph := range f.Phases {
+		rebase, leased := 0, false
+		for i := ph.First; i <= ph.Last; i++ {
+			s := &f.Stages[i]
+			if s.Type != StageAction {
+				continue
+			}
+			if s.Action == actionspec.PushBranch {
+				leased = true
+			}
+			if in := s.Input("strategy"); s.Action == actionspec.SyncTarget && in != nil && in.Value == actionspec.StrategyRebase {
+				rebase = s.Line
+			}
+		}
+		if rebase > 0 && !leased {
+			return p.errf(rebase, "phase %q: strategy rebase rewrites the branch — publish it with a push_branch stage in this phase (a push leased against what the run last saw), not a plain git push", ph.ID)
+		}
+	}
+	for _, ph := range f.Reactions() {
+		if sig := signalspec.Get(ph.On.Signal); sig != nil && sig.Needs == signalspec.NeedsMR && !entryOpensMR {
+			return p.errf(ph.Line, "phase %q: %q reacts to a merge request, but the entry phase %q opens none (add a create_mr action)",
+				ph.ID, ph.On.Signal, f.Phases[0].ID)
 		}
 	}
 	return nil
