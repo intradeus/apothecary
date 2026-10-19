@@ -1,0 +1,131 @@
+// The guild at a glance: runs, pending pings, workshops and limits, polled
+// once for the whole shell. The sidebar, the desk, the runs list and the
+// capacity strip all read this one copy, so their counts never disagree.
+//
+// Polling pauses while the tab is hidden; on return `paused` stays true until
+// the first refresh lands (DESIGN 4.17 "Live indicators").
+
+import { api } from '$lib/api';
+import { stateTab } from '$lib/format';
+import type { Ping, Project, Run, Settings } from '$lib/domain';
+
+const POLL_MS = 4000;
+
+class Fleet {
+	runs = $state<Run[]>([]);
+	pending = $state<Ping[]>([]);
+	projects = $state<Project[]>([]);
+	settings = $state<Settings | null>(null);
+	/** ms epoch of the last successful refresh; null before the first. */
+	updatedAt = $state<number | null>(null);
+	/** The tab was hidden and nothing has refreshed since it came back. */
+	paused = $state(false);
+	error = $state('');
+
+	#users = 0;
+	#timer: ReturnType<typeof setInterval> | null = null;
+	#inflight: Promise<void> | null = null;
+	/** Bumped by invalidateSettings(): a load that started before the bump
+	 *  carries settings read before the save and must not write them back. */
+	#settingsGen = 0;
+
+	readonly active = $derived(this.runs.filter((r) => stateTab[r.state] === 'active'));
+	readonly finished = $derived(this.runs.filter((r) => stateTab[r.state] === 'finished'));
+	/** Runs holding a concurrency slot: a parked run (waiting on a human,
+	 *  paused, in review) gives its slot back, as the engine schedules. */
+	readonly slots = $derived(
+		this.runs.filter((r) => r.state === 'running' || r.state === 'provisioning')
+	);
+	/** Runs queued for a slot (pending, FIFO). */
+	readonly queued = $derived(this.runs.filter((r) => r.state === 'pending'));
+	/** Runs holding an environment (what the max-environments cap counts). */
+	readonly envs = $derived(
+		this.runs.filter((r) => !!r.envId && r.envStatus !== 'absent' && r.state !== 'archived')
+	);
+	readonly runById = $derived(new Map(this.runs.map((r) => [r.id, r])));
+	readonly projectById = $derived(new Map(this.projects.map((p) => [p.id, p])));
+
+	/** Active runs per workshop. */
+	readonly liveByProject = $derived.by(() => {
+		const m = new Map<string, Run[]>();
+		for (const r of this.active) {
+			if (!r.projectId) continue;
+			m.set(r.projectId, [...(m.get(r.projectId) ?? []), r]);
+		}
+		return m;
+	});
+	/** Pending pings per workshop (through the ping's run). */
+	readonly pingsByProject = $derived.by(() => {
+		const m = new Map<string, number>();
+		for (const p of this.pending) {
+			const pid = this.runById.get(p.runId)?.projectId;
+			if (pid) m.set(pid, (m.get(pid) ?? 0) + 1);
+		}
+		return m;
+	});
+
+	/** Start polling for one consumer; returns its stop. Ref-counted, so the
+	 *  shell and a page can both hold it without double-polling. */
+	use(): () => void {
+		this.#users++;
+		if (this.#users === 1) {
+			void this.refresh();
+			this.#timer = setInterval(() => {
+				if (!document.hidden) void this.refresh();
+			}, POLL_MS);
+			document.addEventListener('visibilitychange', this.#onVis);
+		}
+		return () => {
+			this.#users--;
+			if (this.#users === 0) {
+				if (this.#timer) clearInterval(this.#timer);
+				this.#timer = null;
+				document.removeEventListener('visibilitychange', this.#onVis);
+			}
+		};
+	}
+
+	#onVis = () => {
+		if (document.hidden) this.paused = true;
+		else void this.refresh();
+	};
+
+	/** Refresh now (also after an action that changed something). */
+	refresh(): Promise<void> {
+		this.#inflight ??= this.#load().finally(() => (this.#inflight = null));
+		return this.#inflight;
+	}
+
+	async #load() {
+		const gen = this.#settingsGen;
+		try {
+			const [runs, pending, projects, settings] = await Promise.all([
+				api.runs.list(),
+				api.pings.pending(),
+				api.projects.list(),
+				this.settings ? Promise.resolve(this.settings) : api.system.settings().catch(() => null)
+			]);
+			this.runs = runs;
+			this.pending = pending;
+			this.projects = projects;
+			if (gen === this.#settingsGen) this.settings = settings;
+			this.updatedAt = Date.now();
+			this.paused = false;
+			this.error = '';
+		} catch (e) {
+			this.error = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	/** Settings changed elsewhere (the limits page): drop the cached copy
+	 *  and load it again — after any load already underway, which may hold the
+	 *  pre-save values (its write-back is discarded by the generation check). */
+	async invalidateSettings() {
+		this.#settingsGen++;
+		this.settings = null;
+		await this.#inflight;
+		await this.refresh();
+	}
+}
+
+export const fleet = new Fleet();

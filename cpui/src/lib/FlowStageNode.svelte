@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/svelte';
+	import StageChip from '$lib/ui/StageChip.svelte';
 	import {
 		isFeedSentinel,
 		stageInputs,
@@ -37,12 +38,13 @@
 		updateNodeInternals(id);
 	});
 
-	const typeColors: Record<string, string> = {
-		agent: '#7aa2f7',
-		command: '#9ece6a',
-		human_gate: '#e0af68',
-		action: '#bb9af7',
-		wait: '#7dcfff'
+	// Stage-type hues (DESIGN 3.3), for the node's top accent.
+	const HUE: Record<string, string> = {
+		agent: 'var(--az)',
+		command: 'var(--grn)',
+		human_gate: 'var(--amb)',
+		action: 'var(--vio)',
+		wait: 'var(--tea)'
 	};
 	const detail = $derived(
 		stage.type === 'agent'
@@ -53,80 +55,86 @@
 					? stage.action || '(no action)'
 					: stage.type === 'wait'
 						? `for ${stage.for || '(no signal)'}`
-						: 'gate'
+						: stage.question || 'asks a human'
 	);
 </script>
 
-<div
-	class="stage-node"
-	class:selected
-	style={`border-left: 4px solid ${typeColors[stage.type] ?? '#888'}`}
->
+<div class="stage-node" class:selected style:--h={HUE[stage.type] ?? 'var(--mut)'}>
 	<div class="head">
 		<!-- The un-id'd target: every control edge lands here unless the target
          bound the value it carries, in which case it lands on that dot. -->
-		<Handle type="target" position={Position.Left} style="top:14px" />
+		<Handle type="target" position={Position.Left} class="h-in" style="top:20px" />
+		<StageChip type={stage.type} />
 		<span class="mono id">{stage.id}</span>
-		{#if entry}<span class="entry">entry</span>{/if}
+		{#if entry}<span class="entry" title="The flow (or its phase) starts here">ENTRY</span>{/if}
 		<Handle
 			id="success"
 			type="source"
 			position={Position.Right}
-			style="top:14px; background:#4caf7d"
+			class="h-success"
+			style="top:20px"
 		/>
 	</div>
-	<div class="meta">{stage.type} · {detail}</div>
+	<div class="meta" class:unset={detail.startsWith('(')}>{detail}</div>
 
-	{#each inputs as p (p.name)}
-		<!-- A feed sentinel ($DECISION/$FAILURE) gets a dot too: the control edge
-         that carries it lands there, so the retry path is visible. -->
-		<div class="io in" class:unbound={p.unbound} class:fed={isFeedSentinel(p.value)}>
-			{#if !p.unbound && (!p.sentinel || isFeedSentinel(p.value))}
-				<Handle
-					id={`in:${p.name}`}
-					type="target"
-					position={Position.Left}
-					isConnectable={false}
-					class="io-dot"
-				/>
-			{/if}
-			<span class="pname mono">{p.name}</span>
-			{#if p.unbound}<span class="unset">unbound</span>
-			{:else if p.sentinel}<span class="sent mono">{p.value}</span>
-			{:else if p.value !== p.name}<span class="path mono">{p.value}</span>{/if}
-		</div>
-	{/each}
+	{#if inputs.length || outputs.length}
+		<div class="ports">
+			{#each inputs as p (p.name)}
+				<!-- A feed sentinel ($DECISION/$FAILURE) gets a dot too: the control
+             edge that carries it lands there, so the retry path is visible. -->
+				<div
+					class="io in"
+					class:unbound={p.unbound}
+					class:sentinel={p.sentinel}
+					class:fed={isFeedSentinel(p.value)}
+					title={p.unbound ? 'unbound' : p.value}
+				>
+					{#if !p.unbound && (!p.sentinel || isFeedSentinel(p.value))}
+						<Handle
+							id={`in:${p.name}`}
+							type="target"
+							position={Position.Left}
+							isConnectable={false}
+							class="io-dot"
+						/>
+					{:else}
+						<span class="vdot" aria-hidden="true"></span>
+					{/if}
+					<span class="pname mono">{p.name}</span>
+					{#if p.unbound}<span class="unset">unbound</span>
+					{:else if p.sentinel}<span class="sent mono">{p.value}</span>
+					{:else if p.value !== p.name}<span class="path mono">{p.value}</span>{/if}
+				</div>
+			{/each}
 
-	{#each outputs as p (p.name)}
-		<div class="io out">
-			<span class="pname mono">{p.name}</span>
-			{#if p.value && p.value !== p.name}<span class="path mono" class:sent={p.sentinel}
-					>{p.value}</span
-				>{/if}
-			{#if p.value}
-				<Handle
-					id={`out:${p.name}`}
-					type="source"
-					position={Position.Right}
-					isConnectable={false}
-					class="io-dot"
-				/>
-			{/if}
+			{#each outputs as p (p.name)}
+				<div class="io out" class:sentinel={p.sentinel} title={p.value}>
+					{#if p.value && p.value !== p.name}<span class="path mono" class:sent={p.sentinel}
+							>{p.value}</span
+						>{/if}
+					<span class="pname mono">{p.name}</span>
+					{#if p.value}
+						<Handle
+							id={`out:${p.name}`}
+							type="source"
+							position={Position.Right}
+							isConnectable={false}
+							class="io-dot"
+						/>
+					{/if}
+				</div>
+			{/each}
 		</div>
-	{/each}
+	{/if}
 
 	{#if stage.type === 'agent' || stage.type === 'command' || stage.type === 'wait'}
-		<Handle
-			id="on_fail"
-			type="source"
-			position={Position.Bottom}
-			style="left:25%; background:#e06c75"
-		/>
+		<Handle id="on_fail" type="source" position={Position.Bottom} class="h-fail" style="left:25%" />
 		<Handle
 			id="on_timeout"
 			type="source"
 			position={Position.Bottom}
-			style="left:50%; background:#7dcfff"
+			class="h-timeout"
+			style="left:50%"
 		/>
 	{/if}
 	{#if stage.type === 'agent' || stage.type === 'human_gate'}
@@ -134,106 +142,163 @@
 			id="on_reject"
 			type="source"
 			position={Position.Bottom}
-			style="left:75%; background:#e0af68"
+			class="h-reject"
+			style="left:75%"
 		/>
 	{/if}
 </div>
 
 <style>
+	/* Content glass, radius 14, a 3px top accent in the stage-type hue
+	   (DESIGN 7.8). */
 	.stage-node {
-		background: var(--bg2, #1f2430);
-		border: 1px solid var(--border, #333);
-		border-radius: 6px;
-		padding: 8px 12px;
-		min-width: 170px;
-		font-size: 13px;
-		color: inherit;
+		position: relative;
+		background: var(--cBg);
+		backdrop-filter: var(--cBf);
+		-webkit-backdrop-filter: var(--cBf);
+		border: 1px solid var(--cLn);
+		border-top: 3px solid var(--h);
+		border-radius: 14px;
+		box-shadow: var(--cSh);
+		padding: 8px 12px 10px;
+		min-width: 190px;
+		max-width: 300px;
+		font-size: 12px;
+		color: var(--tx);
 	}
 	.stage-node.selected {
-		outline: 2px solid #7aa2f7;
+		box-shadow:
+			0 0 0 1.5px var(--brand),
+			0 0 22px var(--brandGlow),
+			var(--cSh);
 	}
 	.head {
 		display: flex;
 		gap: 6px;
-		align-items: baseline;
-		position: relative;
+		align-items: center;
 	}
 	.id {
 		font-weight: 600;
+		font-size: 12px;
 	}
 	.entry {
-		font-size: 10px;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-		opacity: 0.7;
+		margin-left: auto;
+		font-size: 9px;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		color: var(--brand);
+		border: 1px solid var(--brandLn);
+		border-radius: 5px;
+		padding: 0 5px;
+		line-height: 15px;
 	}
 	.meta {
 		font-size: 11px;
-		opacity: 0.7;
-		margin-top: 2px;
+		color: var(--mut);
+		margin-top: 4px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
-	/* One io row per port; the dot is absolutely positioned on the node's edge,
-     and xyflow measures handle geometry from the DOM. */
+	.meta.unset {
+		color: var(--amb);
+		font-style: italic;
+	}
+	.ports {
+		margin-top: 7px;
+		padding-top: 5px;
+		border-top: 1px solid var(--cLn);
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	/* One io row per port; the dot sits on the node's edge, and xyflow
+	   measures handle geometry from the DOM. */
 	.io {
 		position: relative;
 		display: flex;
 		gap: 5px;
 		align-items: baseline;
 		font-size: 10px;
-		margin-top: 3px;
-		max-width: 260px;
+		line-height: 15px;
 		white-space: nowrap;
-	}
-	.io.in {
-		padding-left: 2px;
+		min-width: 0;
 	}
 	.io.out {
 		justify-content: flex-end;
-		padding-right: 2px;
-	}
-	.io.unbound {
-		opacity: 0.5;
-	}
-	/* An edge-carried input only fills on a retry: present, but not the
-     stage's main business. */
-	.io.fed {
-		opacity: 0.75;
 	}
 	.pname {
+		font-size: 10px;
 		font-weight: 600;
-		opacity: 0.85;
 	}
 	.path,
 	.unset,
 	.sent {
-		opacity: 0.6;
+		font-size: 10px;
+		color: var(--fnt);
 		overflow: hidden;
 		text-overflow: ellipsis;
+		min-width: 0;
 	}
 	.sent {
-		color: #7dcfff;
-		opacity: 0.85;
+		color: var(--vio);
 	}
 	.unset {
 		font-style: italic;
+		color: var(--amb);
 	}
-	/* Data dots read as plumbing, not as something you can grab: smaller,
-     muted, and not connectable. */
-	.stage-node :global(.io-dot) {
-		width: 6px;
-		height: 6px;
-		min-width: 6px;
-		min-height: 6px;
-		background: #565f89;
-		border: 1px solid var(--bg2, #1f2430);
+	/* An edge-carried input only fills on a retry: present, but not the
+	   stage's main business. */
+	.io.fed {
+		opacity: 0.8;
+	}
+	/* Data dots read as plumbing, not as something you can grab: bound green,
+	   unbound amber hollow, sentinel violet. Not connectable. */
+	.stage-node :global(.io-dot),
+	.vdot {
+		position: absolute;
+		width: 7px !important;
+		height: 7px !important;
+		min-width: 7px !important;
+		min-height: 7px !important;
+		border-radius: 50%;
+		background: var(--grn) !important;
+		border: 1.5px solid var(--body) !important;
 		cursor: default;
-	}
-	.io.in :global(.io-dot) {
-		left: -13px;
 		top: 50%;
+	}
+	.io.in :global(.io-dot),
+	.io.in .vdot {
+		left: -13px;
+		transform: translate(-50%, -50%);
 	}
 	.io.out :global(.io-dot) {
 		right: -13px;
-		top: 50%;
+		left: auto;
+		transform: translate(50%, -50%);
+	}
+	.io.unbound .vdot {
+		background: transparent !important;
+		border: 1.5px solid var(--amb) !important;
+	}
+	.io.sentinel .vdot,
+	.io.sentinel :global(.io-dot) {
+		background: var(--vio) !important;
+	}
+	/* Control handles in their edge colour (DESIGN 3.6). */
+	.stage-node :global(.h-in) {
+		background: var(--mut);
+	}
+	.stage-node :global(.h-success) {
+		background: var(--grn);
+	}
+	.stage-node :global(.h-fail) {
+		background: var(--ros);
+	}
+	.stage-node :global(.h-timeout) {
+		background: var(--tea);
+	}
+	.stage-node :global(.h-reject) {
+		background: var(--amb);
 	}
 </style>

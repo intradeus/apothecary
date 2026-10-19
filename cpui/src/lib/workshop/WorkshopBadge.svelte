@@ -1,0 +1,56 @@
+<script lang="ts">
+	// The workshop's vial at header size, on a control-glass tile — the
+	// workshop page's counterpart of the run badge.
+	import { workshopVial } from '$lib/guild';
+	import { lore } from '$lib/lore';
+	import Vial from '$lib/ui/Vial.svelte';
+
+	let { projectId, live = 0 }: { projectId: string; live?: number } = $props();
+	const hue = $derived(workshopVial(projectId).hue);
+</script>
+
+<div class="wb lg" style:--h={hue}>
+	<span class="cap">{lore('workshop')}</span>
+	<span class="v"><Vial {projectId} idle={!live} /></span>
+</div>
+
+<style>
+	.wb {
+		position: relative;
+		width: 64px;
+		height: 70px;
+		border-radius: 17px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: space-between;
+		padding: 7px 0 15px;
+		overflow: hidden;
+	}
+	.wb::after {
+		content: '';
+		position: absolute;
+		right: -18px;
+		bottom: -18px;
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		background: radial-gradient(
+			circle,
+			color-mix(in oklch, var(--h) 40%, transparent),
+			transparent 70%
+		);
+		pointer-events: none;
+	}
+	.cap {
+		font-size: 9.5px;
+		font-weight: 500;
+		color: var(--mut);
+		letter-spacing: 0.02em;
+	}
+	.v {
+		display: inline-flex;
+		transform: scale(2.1);
+		transform-origin: center bottom;
+	}
+</style>

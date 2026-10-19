@@ -1,5 +1,10 @@
 <script lang="ts">
+	import { lore } from '$lib/lore';
 	import type { Selection } from '$lib/FlowGraph.svelte';
+	import { confirmDialog } from '$lib/ui/confirm.svelte';
+	import StageChip from '$lib/ui/StageChip.svelte';
+	import Toggle from '$lib/ui/Toggle.svelte';
+	import { esc } from '$lib/system/html';
 	import type { ActionSpec, SignalSpec } from '$lib/domain';
 	import {
 		ABORT,
@@ -157,8 +162,19 @@
 		onselect({ kind: 'stage', id: newId });
 	}
 
-	function deleteStage(id: string) {
-		if (!confirm(`Delete stage "${id}"?`)) return;
+	async function deleteStage(id: string) {
+		const refs = doc.stages.filter(
+			(s) =>
+				s.id !== id &&
+				(s.on_success === id ||
+					EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === id)))
+		).length;
+		const ok = await confirmDialog({
+			title: `Delete stage ${id}?`,
+			body: `The stage <b>${esc(id)}</b> is removed from this draft.${refs ? ` ${refs} other stage${refs === 1 ? '' : 's'} pointing at it ${refs === 1 ? 'is' : 'are'} rewired: success goes to <b>done</b>, failure links to it are dropped.` : ''} Nothing changes for runs until you save.`,
+			action: 'Delete stage'
+		});
+		if (!ok) return;
 		doc.stages = doc.stages.filter((s) => s.id !== id);
 		for (const s of doc.stages) {
 			if (s.on_success === id) s.on_success = DONE;
@@ -196,6 +212,19 @@
 		onchange();
 	}
 
+	/** Delete what is selected (⌫ / Del on the canvas): a stage asks first;
+	 *  an edge goes at once (re-adding it is one click). */
+	export function deleteSelection() {
+		if (selection?.kind === 'stage') void deleteStage(selection.id);
+		else if (selection?.kind === 'edge') {
+			const s = doc.stages.find((x) => x.id === selection.stage);
+			if (!s) return;
+			setEdge(s, selection.edge as EdgeKind, undefined);
+			onchange();
+			onselect({ kind: 'stage', id: s.id });
+		}
+	}
+
 	// appendLink adds a fallback ("then") after the chain's last link.
 	function appendLink(e: DocEdge) {
 		let last = e;
@@ -218,16 +247,24 @@
 	}
 </script>
 
-<div class="card inspector">
+<div class="insp">
 	{#if stage}
 		{@const s = stage}
-		<div class="row spread">
-			<h2 style="margin:0">Stage</h2>
-			<button class="danger" onclick={() => deleteStage(s.id)}>Delete</button>
+		<div class="ih">
+			<StageChip type={s.type} />
+			<span class="mono iid ell">{s.id}</span>
+			<span class="spacer"></span>
+			<button class="btn-danger btn-sm" onclick={() => deleteStage(s.id)} title="Delete stage (⌫)"
+				>Delete…</button
+			>
 		</div>
-		<label for="st-id">Id</label>
-		<input id="st-id" value={s.id} onchange={(e) => renameStage(s.id, e.currentTarget.value)} />
-		<div class="muted small">type: <span class="mono">{s.type}</span></div>
+		<label for="st-id">Id <span class="muted">— renaming updates every reference</span></label>
+		<input
+			id="st-id"
+			class="mono"
+			value={s.id}
+			onchange={(e) => renameStage(s.id, e.currentTarget.value)}
+		/>
 		{#if doc.phases?.length}
 			<label for="st-phase"
 				>Phase <span class="muted">— its routes stay inside it; the phase's last stage ends it</span
@@ -386,13 +423,29 @@
 			>
 			<input id="st-runref" bind:value={s.run_ref} oninput={onchange} placeholder="verify" />
 			<label for="st-run">…or literal script</label>
-			<textarea id="st-run" bind:value={s.run} oninput={onchange} rows="3" placeholder="make test"
-			></textarea>
+			<textarea
+				id="st-run"
+				class="mono"
+				bind:value={s.run}
+				oninput={onchange}
+				rows="3"
+				placeholder="make test"></textarea>
+			<div class="tgl">
+				<Toggle
+					checked={!!s.each_repo}
+					label="Run in each repository"
+					title="Multi-repo runs: run once per checkout instead of once in the primary (what git commit / push want)"
+					onchange={(v) => {
+						s.each_repo = v || undefined;
+						onchange();
+					}}
+				/>
+			</div>
 			<div class="row spread" style="margin-top:8px">
 				<div class="fieldhdr">
 					Reads <span class="muted small">— checked before the script runs</span>
 				</div>
-				<button type="button" onclick={() => addBinding(s, 'input')}>Add</button>
+				<button type="button" class="btn-sm" onclick={() => addBinding(s, 'input')}>+ Add</button>
 			</div>
 			{#each ioEntries(s.input) as [name, value] (name)}
 				<div class="row io-row">
@@ -408,8 +461,11 @@
 						placeholder="artifacts/commit.md"
 						oninput={(e) => setBinding(s, 'input', name, e.currentTarget.value.trim())}
 					/>
-					<button type="button" class="danger" onclick={() => setBinding(s, 'input', name, '')}
-						>✕</button
+					<button
+						type="button"
+						class="btn-icon"
+						aria-label="Remove {name}"
+						onclick={() => setBinding(s, 'input', name, '')}>×</button
 					>
 				</div>
 			{/each}
@@ -417,7 +473,7 @@
 				<div class="fieldhdr">
 					Writes <span class="muted small">— must exist when the script exits 0</span>
 				</div>
-				<button type="button" onclick={() => addBinding(s, 'output')}>Add</button>
+				<button type="button" class="btn-sm" onclick={() => addBinding(s, 'output')}>+ Add</button>
 			</div>
 			{#each ioEntries(s.output) as [name, value] (name)}
 				<div class="row io-row">
@@ -433,8 +489,11 @@
 						placeholder="artifacts/report.txt"
 						oninput={(e) => setBinding(s, 'output', name, e.currentTarget.value.trim())}
 					/>
-					<button type="button" class="danger" onclick={() => setBinding(s, 'output', name, '')}
-						>✕</button
+					<button
+						type="button"
+						class="btn-icon"
+						aria-label="Remove {name}"
+						onclick={() => setBinding(s, 'output', name, '')}>×</button
 					>
 				</div>
 			{/each}
@@ -471,13 +530,18 @@
 						placeholder="artifacts/plan.md"
 						oninput={(e) => setBinding(s, 'input', name, e.currentTarget.value.trim())}
 					/>
-					<button type="button" class="danger" onclick={() => setBinding(s, 'input', name, '')}
-						>✕</button
+					<button
+						type="button"
+						class="btn-icon"
+						aria-label="Remove {name}"
+						onclick={() => setBinding(s, 'input', name, '')}>×</button
 					>
 				</div>
 			{/each}
 			{#if ioEntries(s.input).length === 0}
-				<button type="button" onclick={() => addBinding(s, 'input')}>Add what it shows</button>
+				<button type="button" class="btn-sm" onclick={() => addBinding(s, 'input')}
+					>+ Add what it shows</button
+				>
 			{/if}
 			<datalist id="gate-sentinels">
 				{#each sentinelsFor('human_gate') as v (v)}<option value={v}></option>{/each}
@@ -651,8 +715,11 @@
 						{value}
 						oninput={(e) => setBinding(s, 'input', name, e.currentTarget.value.trim())}
 					/>
-					<button type="button" class="danger" onclick={() => setBinding(s, 'input', name, '')}
-						>✕</button
+					<button
+						type="button"
+						class="btn-icon"
+						aria-label="Remove {name}"
+						onclick={() => setBinding(s, 'input', name, '')}>×</button
 					>
 				</div>
 			{/each}
@@ -681,10 +748,11 @@
 		<div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap">
 			{#each edgeKindsFor(s.type) as kind (kind)}
 				{#if !edgeOf(s, kind)}
-					<button onclick={() => addEdge(s, kind)}>+ {kind}</button>
+					<button class="btn-sm ekb {kind}" onclick={() => addEdge(s, kind)}>+ {kind}</button>
 				{:else}
-					<button onclick={() => onselect({ kind: 'edge', stage: s.id, edge: kind })}
-						>{kind} →</button
+					<button
+						class="btn-sm btn-sel"
+						onclick={() => onselect({ kind: 'edge', stage: s.id, edge: kind })}>{kind} →</button
 					>
 				{/if}
 			{/each}
@@ -700,17 +768,19 @@
 		{@const e = edgeOf(s, kind)}
 		{#if e}
 			{@const links = chainLinks(e)}
-			<div class="row spread">
-				<h2 style="margin:0">
-					<span class="mono">{kind}</span> from <span class="mono">{s.id}</span>
-				</h2>
+			<div class="ih">
+				<span class="ek {kind}">{kind}</span>
+				<span class="mut small">from</span>
+				<span class="mono iid ell">{s.id}</span>
+				<span class="spacer"></span>
 				<button
-					class="danger"
+					class="btn-danger btn-sm"
+					title="Remove edge (⌫)"
 					onclick={() => {
 						setEdge(s, kind, undefined);
 						onchange();
 						onselect({ kind: 'stage', id: s.id });
-					}}>Remove</button
+					}}>Remove edge</button
 				>
 			</div>
 			<p class="muted small" style="margin:0 0 8px">
@@ -774,9 +844,11 @@
 			{/each}
 			<div class="row" style="margin-top:10px; gap:8px">
 				{#if links[links.length - 1].to !== ABORT && links[links.length - 1].max !== -1}
-					<button onclick={() => appendLink(e)}>+ then (fallback)</button>
+					<button class="btn-sm" onclick={() => appendLink(e)}>+ then (fallback)</button>
 				{/if}
-				<button onclick={() => dropLink(s, kind, e)}>− remove last link</button>
+				<button class="btn-sm btn-ghost" onclick={() => dropLink(s, kind, e)}
+					>− remove last link</button
+				>
 			</div>
 			<p class="muted small" style="margin:8px 0 0">
 				Links fire top-down: each keeps its own counter; when one is exhausted the next failure
@@ -784,7 +856,11 @@
 			</p>
 		{/if}
 	{:else}
-		<h2 style="margin-top:0">Flow</h2>
+		<div class="ih">
+			<span class="serif ttl">{lore('flow')}</span>
+			<span class="spacer"></span>
+			<span class="fnt tiny">nothing selected</span>
+		</div>
 		<label for="fl-desc">Description</label>
 		<input
 			id="fl-desc"
@@ -865,16 +941,17 @@
 				/>
 			</div>
 		</div>
-		<h2>Add stage</h2>
-		<div class="row" style="gap:8px; flex-wrap:wrap">
-			<button onclick={() => addStage('agent')}>+ agent</button>
-			<button onclick={() => addStage('command')}>+ command</button>
-			<button onclick={() => addStage('human_gate')}>+ human gate</button>
-			<button onclick={() => addStage('action')}>+ action</button>
+		<div class="sec">Add a stage</div>
+		<div class="adds">
+			<button class="btn-sm add az" onclick={() => addStage('agent')}>+ agent</button>
+			<button class="btn-sm add grn" onclick={() => addStage('command')}>+ command</button>
+			<button class="btn-sm add amb" onclick={() => addStage('human_gate')}>+ gate</button>
+			<button class="btn-sm add vio" onclick={() => addStage('action')}>+ action</button>
+			<button class="btn-sm add tea" onclick={() => addStage('wait')}>+ wait</button>
 		</div>
-		<p class="muted small" style="margin-top:10px">
-			Click a node or edge to edit it. Drag from a node's colored handles to rewire control flow:
-			green = success, red = on_fail, cyan = on_timeout, orange = on_reject. Edges may target the
+		<p class="muted small" style="margin-top:12px">
+			Click a node or edge to edit it. Drag from a node's coloured handles to rewire control flow:
+			green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may target the
 			abort terminal to stop the run deliberately. The faint dashed lines are dataflow — they are
 			derived from the artifact paths stages read and write, so you change them by editing an input
 			or output, not by dragging.
@@ -883,26 +960,143 @@
 </div>
 
 <style>
-	.inspector {
-		min-width: 280px;
+	/* The inspector sits on control glass, given by the page (DESIGN 7.8). */
+	.insp {
+		display: flex;
+		flex-direction: column;
+		padding: 12px 14px 16px;
+		font-size: 12.5px;
+	}
+	.ih {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding-bottom: 10px;
+		margin-bottom: 2px;
+		border-bottom: 1px solid var(--ln);
+		min-width: 0;
+	}
+	.iid {
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.ttl {
+		font-size: 19px;
+	}
+	.insp :global(label) {
+		margin: 12px 0 4px;
+	}
+	.insp :global(label .muted) {
+		display: block;
+		font-weight: 400;
+		font-size: 11px;
+		margin-top: 1px;
+	}
+	.insp :global(input),
+	.insp :global(select),
+	.insp :global(textarea) {
+		font-size: 12.5px;
+		padding: 6px 9px;
+	}
+	.insp :global(input.mono),
+	.insp :global(textarea.mono) {
+		font-family: var(--mono) !important;
+		font-size: 12px !important;
+	}
+	.sec {
+		margin: 16px 0 6px;
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--fnt);
+	}
+	.adds {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.add.az {
+		color: var(--az);
+	}
+	.add.grn {
+		color: var(--grn);
+	}
+	.add.amb {
+		color: var(--amb);
+	}
+	.add.vio {
+		color: var(--vio);
+	}
+	.add.tea {
+		color: var(--tea);
+	}
+	.ek {
+		font-family: var(--mono);
+		font-size: 11px;
+		font-weight: 600;
+		padding: 1px 8px;
+		border-radius: 999px;
+		border: 1px solid;
+	}
+	.ek.on_fail,
+	.ekb.on_fail {
+		color: var(--ros);
+		border-color: var(--rosLn);
+	}
+	.ek.on_timeout,
+	.ekb.on_timeout {
+		color: var(--tea);
+		border-color: var(--teaLn);
+	}
+	.ek.on_reject,
+	.ekb.on_reject {
+		color: var(--amb);
+		border-color: var(--ambLn);
+	}
+	.ek.on_fail {
+		background: var(--rosBg);
+	}
+	.ek.on_timeout {
+		background: var(--teaBg);
+	}
+	.ek.on_reject {
+		background: var(--ambBg);
+	}
+	.tgl {
+		margin-top: 10px;
 	}
 	.link.fallback {
-		border-left: 2px solid var(--border, #444);
+		border-left: 2px dashed var(--ln2);
 		padding-left: 10px;
-		margin-top: 10px;
+		margin-top: 12px;
 	}
 	.io-bind {
 		margin-top: 6px;
-		padding: 6px 8px;
-		border: 1px solid var(--border, #333);
-		border-radius: 5px;
+		padding: 7px 9px;
+		background: var(--p2);
+		border: 1px solid var(--ln);
+		border-radius: 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+	}
+	.io-row {
+		margin-top: 6px;
+		flex-wrap: nowrap;
+		gap: 6px;
 	}
 	.req {
-		color: var(--warn, #d08040);
+		color: var(--amb);
+		font-size: 11px;
+	}
+	.warn {
+		color: var(--amb);
 	}
 	.fieldhdr {
 		font-size: 12px;
-		color: var(--muted);
-		margin: 10px 0 4px;
+		font-weight: 500;
+		color: var(--tx);
+		margin: 14px 0 4px;
 	}
 </style>

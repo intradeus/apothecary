@@ -1,7 +1,9 @@
 <script lang="ts">
 	// Generic integration form rendered from the kind's Descriptor fields
-	// (DESIGN2 §4/§11): adding a backend kind needs no frontend change.
-	// Secrets are write-only: on edit, an empty secret input means "keep".
+	// (DESIGN 4.14, 7.10): adding a backend kind needs no frontend change.
+	// Secrets are write-only: on edit a set secret shows "•••• set" and a
+	// Replace button; leaving it alone keeps the stored value.
+	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Integration, KindDescriptor } from '$lib/domain';
 
@@ -17,22 +19,28 @@
 		oncancel?: () => void;
 	} = $props();
 
-	const fields = descriptor.fields ?? [];
-	let name = $state(existing?.name ?? descriptor.label);
+	// Read once: the form mounts fresh per integration and kind.
+	const init = untrack(() => ({ d: descriptor, e: existing }));
+	const fields = init.d.fields ?? [];
+	let name = $state(init.e?.name ?? init.d.label);
 	let values = $state<Record<string, string>>(
 		Object.fromEntries(
 			fields
 				.filter((f) => !f.secret)
-				.map((f) => [f.name, String(existing?.config?.[f.name] ?? f.default ?? '')])
+				.map((f) => [f.name, String(init.e?.config?.[f.name] ?? f.default ?? '')])
 		)
 	);
 	let secretValues = $state<Record<string, string>>(
 		Object.fromEntries(fields.filter((f) => f.secret).map((f) => [f.name, '']))
 	);
+	/** Secrets the user chose to replace (only meaningful when one is set). */
+	let replacing = $state<Record<string, boolean>>({});
 	let busy = $state(false);
 	let error = $state('');
 
 	const isMultiline = (n: string) => n.endsWith('_json');
+	const storedMask = (n: string) => init.e?.secrets?.[n] ?? '';
+	const showSecretInput = (n: string) => !storedMask(n) || replacing[n];
 
 	// Descriptor help is plain text (it comes from the Go kind), but the URLs in
 	// it are the whole point — "go here to make a token" is useless if you have
@@ -84,94 +92,170 @@
 			busy = false;
 		}
 	}
+
+	const uid = Math.random().toString(36).slice(2, 7);
 </script>
 
-<form onsubmit={submit}>
+<form class="if" onsubmit={submit}>
 	{#if descriptor.help}
-		<details class="help" open={!existing}>
-			<summary>How to set this up</summary>
+		<details class="howto" open={!existing}>
+			<summary><span class="caretglyph">▸</span> How to set this up</summary>
 			<div class="helptext">
 				{#each linkify(descriptor.help) as p, i (i)}
 					{#if p.href}
-						<a href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
+						<a class="link" href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
 					{:else}{p.text}{/if}
 				{/each}
 			</div>
 		</details>
 	{/if}
-	<label for="if-name">Name</label>
-	<input id="if-name" bind:value={name} required />
-	{#each fields as f (f.name)}
-		<label for={`if-${f.name}`}>
-			{f.label}{#if f.secret}
-				<span class="muted">
-					— {existing?.secrets?.[f.name]
-						? `set (${existing.secrets[f.name]}); leave empty to keep`
-						: 'write-only'}</span
-				>{/if}
-		</label>
-		{#if f.secret && isMultiline(f.name)}
-			<textarea
-				id={`if-${f.name}`}
-				bind:value={secretValues[f.name]}
-				placeholder={existing?.secrets?.[f.name] ? '(unchanged)' : (f.placeholder ?? '')}
-				rows="4"
-				class="mono"></textarea>
-		{:else if f.secret}
-			<input
-				id={`if-${f.name}`}
-				type="password"
-				bind:value={secretValues[f.name]}
-				placeholder={existing?.secrets?.[f.name] ? '(unchanged)' : (f.placeholder ?? '')}
-				required={f.required && !existing?.secrets?.[f.name]}
-				autocomplete="off"
-			/>
-		{:else}
-			<input
-				id={`if-${f.name}`}
-				bind:value={values[f.name]}
-				placeholder={f.placeholder ?? f.default ?? ''}
-				required={f.required && !f.default}
-			/>
-		{/if}
-		{#if f.help}
-			<div class="fieldhelp small muted">
-				{#each linkify(f.help) as p, i (i)}
-					{#if p.href}
-						<a href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
-					{:else}{p.text}{/if}
-				{/each}
+
+	<div class="grid2">
+		<div class="field">
+			<label for="if-{uid}-name">Name</label>
+			<input id="if-{uid}-name" bind:value={name} required />
+			<div class="help">How setup forms and pickers refer to it.</div>
+		</div>
+		{#each fields as f (f.name)}
+			<div class="field" class:wide={f.secret && isMultiline(f.name)}>
+				<label for="if-{uid}-{f.name}"
+					>{f.label}{#if f.required && !(f.secret && storedMask(f.name))}<span class="req">
+							*</span
+						>{/if}</label
+				>
+				{#if f.secret && !showSecretInput(f.name)}
+					<div class="secret-set">
+						<span class="mask mono">•••• set</span>
+						<span class="mono fnt ell">{storedMask(f.name)}</span>
+						<span class="spacer"></span>
+						<button
+							type="button"
+							class="btn-ghost btn-sm"
+							onclick={() => (replacing = { ...replacing, [f.name]: true })}>Replace</button
+						>
+					</div>
+				{:else if f.secret && isMultiline(f.name)}
+					<textarea
+						id="if-{uid}-{f.name}"
+						bind:value={secretValues[f.name]}
+						placeholder={f.placeholder ?? ''}
+						rows="5"
+						class="mono"
+						required={f.required && !storedMask(f.name)}
+						spellcheck="false"></textarea>
+				{:else if f.secret}
+					<input
+						id="if-{uid}-{f.name}"
+						type="password"
+						bind:value={secretValues[f.name]}
+						placeholder={f.placeholder ?? ''}
+						required={f.required && !storedMask(f.name)}
+						autocomplete="off"
+					/>
+				{:else}
+					<input
+						id="if-{uid}-{f.name}"
+						bind:value={values[f.name]}
+						placeholder={f.placeholder ?? f.default ?? ''}
+						required={f.required && !f.default}
+					/>
+				{/if}
+				{#if f.secret && storedMask(f.name) && replacing[f.name]}
+					<div class="help">
+						Leave empty to keep the current value ·
+						<button
+							type="button"
+							class="linklike"
+							onclick={() => {
+								replacing = { ...replacing, [f.name]: false };
+								secretValues[f.name] = '';
+							}}>keep current</button
+						>
+					</div>
+				{:else if f.help}
+					<div class="help">
+						{#each linkify(f.help) as p, i (i)}
+							{#if p.href}
+								<a class="link" href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
+							{:else}{p.text}{/if}
+						{/each}
+					</div>
+				{:else if f.secret && !storedMask(f.name)}
+					<div class="help">Write-only: stored encrypted, never shown again.</div>
+				{/if}
 			</div>
-		{/if}
-	{/each}
-	{#if error}<div class="error">{error}</div>{/if}
-	<div class="row" style="margin-top:14px">
-		<button class="primary" type="submit" disabled={busy}>
+		{/each}
+	</div>
+
+	{#if error}<div class="err">{error}</div>{/if}
+	<div class="foot">
+		{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button>{/if}
+		<button class="btn-primary" type="submit" disabled={busy}>
 			{busy ? 'Saving…' : existing ? 'Save changes' : `Add ${descriptor.label}`}
 		</button>
-		{#if oncancel}<button type="button" onclick={oncancel}>Cancel</button>{/if}
 	</div>
 </form>
 
 <style>
-	.help {
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		padding: 8px 10px;
-		margin-bottom: 12px;
+	.if {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
 	}
-	.help summary {
-		cursor: pointer;
-		font-size: 13px;
+	.howto {
+		background: var(--p2);
+		border: 1px solid var(--ln);
+		border-radius: 13px;
+	}
+	.howto > summary {
+		padding: 7px 12px;
+		font-size: 12px;
+		font-weight: 600;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.caretglyph {
+		font-size: 10px;
+		color: var(--mut);
 	}
 	.helptext {
 		white-space: pre-wrap;
-		font-size: 13px;
-		line-height: 1.5;
-		margin-top: 8px;
-		color: var(--muted);
+		font-size: 12.5px;
+		line-height: 1.55;
+		padding: 0 12px 10px 28px;
+		color: var(--mut);
+		overflow-wrap: anywhere;
 	}
-	.fieldhelp {
-		margin: -4px 0 6px;
+	.wide {
+		grid-column: 1 / -1;
+	}
+	.req {
+		color: var(--fnt);
+	}
+	.secret-set {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 4px 4px 10px;
+		border-radius: 10px;
+		background: var(--p1);
+		border: 1px dashed var(--ln2);
+		min-height: 34px;
+		min-width: 0;
+	}
+	.mask {
+		color: var(--grn);
+		font-size: 11.5px;
+		flex: none;
+	}
+	.help :global(.link),
+	.helptext :global(.link) {
+		color: var(--az);
+	}
+	.foot {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
 	}
 </style>

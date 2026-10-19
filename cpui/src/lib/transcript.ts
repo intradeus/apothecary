@@ -9,16 +9,28 @@
 import type { AgentToolCall, LiveDelta, RunEvent } from '$lib/domain';
 import { toAgentToolCall } from '$lib/api/mappers';
 
+export type Tone = 'ok' | 'bad' | 'warn' | 'info';
+
 export type ChatItem =
 	| {
 			kind: 'stage';
 			key: string;
 			stageId: string;
 			iteration: number;
+			/** An agent stage (else a command, gate, action or wait). */
+			agentic: boolean;
 			agent?: string;
 			model?: string;
+			ts: string;
 	  }
-	| { kind: 'status'; key: string; text: string; tone: 'ok' | 'bad' | 'warn' | 'info' }
+	| { kind: 'status'; key: string; glyph: string; text: string; meta?: string; tone: Tone }
+	| {
+			kind: 'failure';
+			key: string;
+			stageId: string;
+			title: string;
+			error?: string;
+	  }
 	| { kind: 'prompt'; key: string; promptKind: string; text: string; truncated: boolean }
 	| { kind: 'message'; key: string; text: string; thought: boolean; live: boolean }
 	| { kind: 'tools'; key: string; calls: AgentToolCall[]; live: boolean }
@@ -31,11 +43,14 @@ export type ChatItem =
 			text: string;
 			interrupt: boolean;
 			delivered: boolean;
+			ts: string;
+			deliveredAt?: string;
 	  }
 	| {
 			kind: 'question';
 			key: string;
 			pingId: string;
+			type: string;
 			question: string;
 			options: string[];
 			answer?: string;
@@ -104,15 +119,26 @@ const promptLabels: Record<string, string> = {
 };
 export const promptLabel = (k: string) => promptLabels[k] ?? k;
 
+const cost = (u: unknown) => {
+	const c = (u as { cost_usd?: number } | undefined)?.cost_usd;
+	return typeof c === 'number' && c > 0 ? `$${c.toFixed(3)}` : '';
+};
+const dur = (ms: unknown) => {
+	const s = Math.round(Number(ms ?? 0) / 1000);
+	if (!s) return '';
+	return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+};
+
 export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[] {
 	const items: ChatItem[] = [];
-	const delivered = new Set<string>();
+	const delivered = new Map<string, string>();
 	const answers = new Map<string, string>();
 	const persistedSegments = new Set<string>();
 	const persistedTools = new Set<string>();
 	for (const e of events) {
 		if (e.type === 'message_delivered') {
-			for (const id of (e.payload.message_ids as string[] | undefined) ?? []) delivered.add(id);
+			for (const id of (e.payload.message_ids as string[] | undefined) ?? [])
+				delivered.set(id, e.ts);
 		} else if (e.type === 'ping_answered') {
 			const fb = e.payload.feedback as string | undefined;
 			const a = String(e.payload.answer ?? '');
@@ -124,42 +150,61 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 		}
 	}
 
-	const agentStages = new Set<string>();
 	let planAt = -1; // index of the current attempt's plan item (one per attempt)
 	for (const e of events) {
 		const p = e.payload;
 		const key = `e${e.seq}`;
 		switch (e.type) {
 			case 'stage_started':
-				if (!p.agent && !p.harness) break; // commands, gates: the timeline has them
-				agentStages.add(String(p.stage_id));
 				planAt = -1;
 				items.push({
 					kind: 'stage',
 					key,
 					stageId: String(p.stage_id),
 					iteration: Number(p.iteration ?? 1),
+					agentic: Boolean(p.agent || p.harness),
 					agent: p.agent as string | undefined,
-					model: p.model as string | undefined
+					model: p.model as string | undefined,
+					ts: e.ts
 				});
 				break;
 			case 'stage_completed':
-				if (agentStages.has(String(p.stage_id)))
-					items.push({ kind: 'status', key, text: `${p.stage_id} completed`, tone: 'ok' });
+				items.push({
+					kind: 'status',
+					key,
+					glyph: '✓',
+					text: `${p.stage_id} completed`,
+					meta: [p.turns_used ? `${p.turns_used} turns` : '', cost(p.usage), dur(p.duration_ms)]
+						.filter(Boolean)
+						.join(' · '),
+					tone: 'ok'
+				});
 				break;
 			case 'stage_failed':
-				if (agentStages.has(String(p.stage_id)))
-					items.push({
-						kind: 'status',
-						key,
-						text: `${p.stage_id} failed: ${p.reason}${p.error ? ` — ${String(p.error).slice(0, 300)}` : ''}`,
-						tone: 'bad'
-					});
+				items.push({
+					kind: 'failure',
+					key,
+					stageId: String(p.stage_id),
+					title: `${p.stage_id} failed — ${String(p.reason ?? '').replace(/_/g, ' ')}${
+						typeof p.exit_code === 'number' ? ` (exit ${p.exit_code})` : ''
+					}`,
+					error: p.error ? String(p.error).slice(0, 600) : undefined
+				});
+				break;
+			case 'env_failed':
+				items.push({
+					kind: 'failure',
+					key,
+					stageId: '_provision',
+					title: 'Workspace failed to provision',
+					error: p.error ? String(p.error).slice(0, 600) : undefined
+				});
 				break;
 			case 'stage_paused':
 				items.push({
 					kind: 'status',
 					key,
+					glyph: '⏸',
 					text: 'Parked — waiting for your answer. The session resumes with it.',
 					tone: 'warn'
 				});
@@ -168,10 +213,63 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
+					glyph: p.reason === 'engine_restart' ? '⟳' : '↻',
 					text:
 						p.reason === 'engine_restart'
 							? 'Engine restarted — picked the session back up'
 							: 'Resumed with your answer',
+					tone: 'info'
+				});
+				break;
+			case 'edge_taken':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: '↩',
+					text: `${p.from} → ${p.to} (${p.count}/${p.max === -1 ? '∞' : p.max})`,
+					meta: String(p.edge ?? '').replace(/_/g, ' '),
+					tone: 'warn'
+				});
+				break;
+			case 'run_completed':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: '✓',
+					text: 'Run completed',
+					meta: [
+						cost(p.total_cost_usd !== undefined ? { cost_usd: p.total_cost_usd } : undefined),
+						p.total_turns ? `${p.total_turns} turns` : ''
+					]
+						.filter(Boolean)
+						.join(' · '),
+					tone: 'ok'
+				});
+				break;
+			case 'run_failed':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: '✕',
+					text: `Run failed — ${p.reason ?? ''}`,
+					tone: 'bad'
+				});
+				break;
+			case 'run_abandoned':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: '■',
+					text: `Run abandoned${p.stalled_at ? ` at ${p.stalled_at}` : ''}${p.reason ? ` — ${p.reason}` : ''}`,
+					tone: 'warn'
+				});
+				break;
+			case 'run_resumed':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: '↻',
+					text: 'Retrying in the same workspace',
 					tone: 'info'
 				});
 				break;
@@ -221,17 +319,26 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					id: String(p.message_id),
 					text: String(p.text ?? ''),
 					interrupt: Boolean(p.interrupt),
-					delivered: delivered.has(String(p.message_id))
+					delivered: delivered.has(String(p.message_id)),
+					deliveredAt: delivered.get(String(p.message_id)),
+					ts: e.ts
 				});
 				break;
 			case 'ping_raised':
-				if (p.type === 'gate') break;
+				if (p.type === 'gate' || p.type === 'phase_confirm') break;
 				items.push({
 					kind: 'question',
 					key,
 					pingId: String(p.ping_id),
+					type: String(p.type ?? ''),
 					question: String(p.question ?? ''),
-					options: (p.options as string[] | undefined) ?? [],
+					options: ((p.options as unknown[] | undefined) ?? []).map((o) =>
+						typeof o === 'string'
+							? o
+							: String(
+									(o as { label?: string; id?: string })?.label ?? (o as { id?: string })?.id ?? ''
+								)
+					),
 					answer: answers.get(String(p.ping_id))
 				});
 				break;

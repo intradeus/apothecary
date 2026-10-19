@@ -268,13 +268,16 @@ Pill (999px), 12px / 600, `padding:3px 11px 3px 9px`, 7px leading dot.
 | `provisioning` | azure tint (`--azBg` / `--az` / `--azLn`) | pulsing | — |
 | `running` | azure tint | pulsing azure + glow | "· brewing" (serif italic 14px, .85 opacity) |
 | `waiting_on_human` | **solid amber** fill, ink `#1d1406`, 700, amber glow | pulsing ink dot | label "Waiting on you" |
+| `in_review` | violet tint (`--vioBg` / `--vio` / `--vioLn`), label "In review" | static | — |
 | `paused` | `--p2` tint, `--mut` text, ❚❚ glyph | static | — |
 | `completed` | green tint | ✓ | — |
 | `abandoned` | amber **tint** (not solid) | static | — |
 | `failed` | rose tint, "✕ Failed" | — | "· batch spoiled" |
 | `archived` | transparent, dashed `--ln2` border, `--fnt` text | — | — |
 
-Groups: **Active** = pending, provisioning, running, waiting_on_human, paused. **Finished** = completed, abandoned, failed, archived.
+`in_review` is the run idling between phases with its merge requests open: reviewers have it, and reaction phases start when their triggers hold. It holds no concurrency slot.
+
+Groups: **Active** = pending, provisioning, running, waiting_on_human, in_review, paused. **Finished** = completed, abandoned, failed, archived.
 
 ### 3.2 Workspace status (separate axis, never merged with the run chip)
 
@@ -324,6 +327,8 @@ Type pill: 999px, 11px / 600, tint fill + hue text + hue border, 6px dot.
 | `clarification` | amb | unwanted (counts against run) |
 | `blocker` | ros | unwanted |
 | `permission` | vio | unwanted |
+| `phase_confirm` | grn | **wanted** (a reaction phase asks before running; label "Phase") |
+| `select` | tea | **wanted** (pick which review threads to address; label "Select") |
 
 - Ping status: pending (solid amber count badge), answered ("answered 4m ago — approve" in `--mut`), withdrawn (struck-through, `--fnt`).
 - A queued ping shows "· queued behind N".
@@ -691,7 +696,7 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
 | Logs | Source segmented control (Workspace / Provisioning / stage logs). Mono 11.5px log tail with colored sources (tunnel tea, firewall ros, harness az). |
 | Egress | Verdict filter (All 41 / Allowed / Denied 3) + host search. Table: host:port (mono), seen verdict chip, **rule now** toggle (allow/block, applies live, saved to the workshop policy), protocol, count, bytes out/in, last seen. Footer links to the workshop egress settings. |
 | Ports | Detected ports as buttons (`:4000 beam.smp`), clicking exposes and opens. Manual "Expose port" input (1–65535, Enter submits). |
-| Resources | Process count, time window, and per-process breakdown. |
+| Resources | Process count, time window, and per-process breakdown. *The engine samples only sandbox totals today (`ResourceSample.pids`), so the breakdown waits on a per-process sampling API; until then the view shows totals.* |
 | Vitals | The three sparklines with a shared crosshair (4.16). |
 
 ---

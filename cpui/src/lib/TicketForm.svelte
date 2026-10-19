@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { to } from '$lib/guild';
+	import { lore } from '$lib/lore';
 	// Ticket create/edit form. A ticket is a unit of work; flow is NOT chosen
 	// here — it's picked per run when a run is started.
 	//
@@ -16,16 +18,28 @@
 	let {
 		projects,
 		existing = null,
-		onsaved
+		onsaved,
+		initialProject = '',
+		oncancel
 	}: {
 		projects: Project[];
 		existing?: Ticket | null;
 		onsaved: (t: Ticket) => void;
+		/** Preselect this workshop on a new ticket (e.g. from ?project=). */
+		initialProject?: string;
+		/** Show a Cancel button that calls this. */
+		oncancel?: () => void;
 	} = $props();
 
+	// svelte-ignore state_referenced_locally
 	const init = $state.snapshot(existing) as Ticket | null;
 
-	let projectId = $state(init?.projectId ?? projects[projects.length - 1]?.id ?? '');
+	// svelte-ignore state_referenced_locally
+	let projectId = $state(
+		init?.projectId ?? (projects.some((p) => p.id === initialProject) ? initialProject : '')
+	);
+	// svelte-ignore state_referenced_locally
+	if (!projectId) projectId = projects[projects.length - 1]?.id ?? '';
 	let title = $state(init?.title ?? '');
 	let goal = $state(init?.goal ?? '');
 	let branch = $state(init?.baseBranch ?? '');
@@ -166,193 +180,394 @@
 	}
 </script>
 
-<form class="card" onsubmit={submit}>
-	{#if projects.length === 0}
-		<div class="error">
-			No projects configured — set up <a href="/integrations">integrations</a> and create a
-			<a href="/projects/new">project</a> first.
-		</div>
-	{/if}
+<form class="tf" class:edit={!!init} onsubmit={submit}>
+	<section class="main c">
+		{#if projects.length === 0}
+			<div class="warn">
+				No {lore('workshops').toLowerCase()} yet — set up
+				<a href={to.system('integrations')}>integrations</a> and create a
+				<a href={to.newWorkshop()}>{lore('workshop').toLowerCase()}</a> first.
+			</div>
+		{/if}
 
-	{#if !init && sources.length}
-		<div class="import">
-			{#if picked}
-				<div class="row spread">
-					<div>
-						<span class="chip">{picked.key}</span>
-						<span class="small muted">from {sourceName(sourceId)}</span>
+		<div class="field">
+			<label for="t-project">{lore('workshop')}</label>
+			<select id="t-project" bind:value={projectId} required disabled={init != null}>
+				{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+			</select>
+			{#if init}<span class="help"
+					>Locked: a ticket stays in the {lore('workshop').toLowerCase()} it was written for.</span
+				>{/if}
+		</div>
+
+		<div class="field">
+			<label for="t-title">Title</label>
+			<input id="t-title" bind:value={title} required placeholder="Add a Farewell function" />
+		</div>
+
+		<div class="field">
+			<label for="t-goal">Goal</label>
+			<span class="help"
+				>What should the factory build, and what does done look like? Markdown.</span
+			>
+			<textarea
+				id="t-goal"
+				class="goal"
+				bind:value={goal}
+				required
+				rows="10"
+				placeholder="Add a GET /farewell endpoint that returns “goodbye”. Done = the handler, a test, and the route wired up."
+			></textarea>
+		</div>
+
+		<div class="field">
+			<div class="lrow">
+				<label for="t-branch">Base branch</label>
+				{#if branchEdited && !init}
+					<span class="pill t-amb">edited</span>
+					<button
+						type="button"
+						class="btn-ghost btn-sm"
+						title="Go back to the branch derived from the title"
+						onclick={() => {
+							branchEdited = false;
+							branch = picked
+								? `${picked.key.toLowerCase()}-${slugify(picked.title ?? '')}`
+								: slugify(title);
+						}}>↺ auto</button
+					>
+				{:else if !init}
+					<span class="pill t-mut">auto</span>
+				{/if}
+			</div>
+			<input
+				id="t-branch"
+				bind:value={branch}
+				oninput={() => (branchEdited = true)}
+				placeholder="feat/PROJ-123-short-description"
+				class="mono"
+			/>
+			<span class="help">Each run appends a short unique suffix, so runs never share a branch.</span
+			>
+		</div>
+
+		<div class="field">
+			<span class="flabel">Attachments</span>
+			{#if attached.length}
+				<FileChips
+					items={attached.map((a) => ({ ...a, kind: 'attachment' as const }))}
+					label="Already attached — delivered into every run's workspace"
+				/>
+			{/if}
+			<AttachFiles bind:files label="Drop documents or images for the agent, or browse" />
+		</div>
+
+		{#if error}<div class="err">{error}</div>{/if}
+		{#if warnings.length && created}
+			<div class="warn">
+				<b>Ticket created, but some attachments did not come across:</b>
+				<ul>
+					{#each warnings as w (w)}<li>{w}</li>{/each}
+				</ul>
+			</div>
+			<div class="foot">
+				<button class="btn-primary" type="button" onclick={() => onsaved(created!)}
+					>Continue to the ticket</button
+				>
+			</div>
+		{:else}
+			<div class="foot">
+				{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button
+					>{/if}
+				<button
+					class="btn-primary btn-lg"
+					type="submit"
+					disabled={submitting || !title.trim() || !goal.trim() || !projectId}
+				>
+					{submitting
+						? 'Saving…'
+						: init
+							? 'Save ticket'
+							: picked
+								? `Create from ${picked.key}`
+								: 'Create ticket'}
+				</button>
+			</div>
+		{/if}
+	</section>
+
+	{#if !init}
+		<aside class="imp c">
+			<div class="ih">
+				<h2>Import from tracker</h2>
+				<span class="help"
+					>Copy an issue in: title, goal and attachments. Nothing is written back.</span
+				>
+			</div>
+			{#if sources.length === 0}
+				<div class="none">
+					No ticket source connected.
+					<a href={to.system('integrations')}>Add a tracker integration →</a>
+				</div>
+			{:else if picked}
+				<div class="picked">
+					<div class="prow">
+						<span class="tag">{picked.key}</span>
+						<span class="ell grow">{picked.title}</span>
+					</div>
+					<div class="help">from {sourceName(sourceId)}</div>
+					<!-- Name every file that will be copied — and say so plainly when the
+					     issue has none, so "where are my attachments?" is answered before
+					     the ticket is created rather than after. -->
+					{#if picked.attachments?.length}
+						<div class="help">
+							{picked.attachments.length} file{picked.attachments.length > 1 ? 's' : ''} will be copied
+							into the ticket:
+						</div>
+						<div class="chips">
+							{#each picked.attachments as a (a.filename)}
+								<span class="fchip" title={a.mime ?? ''}>
+									<span class="mut">▤</span>
+									<span class="ell">{a.filename}</span>
+									{#if a.size}<span class="mono mut">{fmtBytes(a.size)}</span>{/if}
+								</span>
+							{/each}
+						</div>
+					{:else}
+						<div class="help">This issue has no attachments.</div>
+					{/if}
+					<div class="prow">
 						{#if picked.url}
-							<a class="small" href={picked.url} target="_blank" rel="noreferrer"
-								>open in tracker ↗</a
+							<a class="btn btn-sm" href={picked.url} target="_blank" rel="noreferrer"
+								>Open in tracker ↗</a
 							>
 						{/if}
+						<button type="button" class="btn-ghost btn-sm" onclick={clearImport}>Clear</button>
 					</div>
-					<button type="button" class="small" onclick={clearImport}>Clear</button>
 				</div>
-				<!-- Name every file that will be copied — and say so plainly when the
-             issue has none, so "where are my attachments?" is answered before
-             the ticket is created rather than after. -->
-				{#if picked.attachments?.length}
-					<div class="small muted">
-						{picked.attachments.length} file{picked.attachments.length > 1 ? 's' : ''} will be copied
-						into the ticket:
-					</div>
-					<div class="chips">
-						{#each picked.attachments as a (a.filename)}
-							<span class="chip" title={a.mime ?? ''}>
-								📄 {a.filename}
-								{#if a.size}<span class="muted">· {fmtBytes(a.size)}</span>{/if}
-							</span>
-						{/each}
-					</div>
-				{:else}
-					<div class="small muted">This issue has no attachments.</div>
-				{/if}
-			{:else if sourceId}
-				<div class="row" style="gap:8px">
-					<input
-						bind:value={query}
-						placeholder="Search the tracker — 2624, PROJ-2624, words, or jql:…"
-						onkeydown={(e) => {
-							if (e.key === 'Enter') {
-								e.preventDefault();
-								search();
-							}
-						}}
-					/>
-					<button type="button" onclick={search} disabled={searching}>
-						{searching ? 'Searching…' : 'Search'}
-					</button>
-					<button type="button" class="small" onclick={clearImport}>Cancel</button>
-				</div>
-				{#if searchErr}<div class="error">{searchErr}</div>{/if}
-				{#if results.length}
-					<div class="results">
-						{#each results as r (r.key)}
-							<button type="button" class="result" onclick={() => pick(r)}>
-								<span class="chip mono">{r.key}</span>
-								<span class="rtitle">{r.title}</span>
-								<span class="small muted">
-									{r.type ?? ''}{r.status ? ` · ${r.status}` : ''}{r.assignee
-										? ` · ${r.assignee}`
-										: ''}
-								</span>
-							</button>
-						{/each}
-					</div>
-				{:else if !searching && !searchErr}
-					<div class="muted small">No matching issues.</div>
-				{/if}
 			{:else}
-				<div class="row" style="gap:8px; align-items:center">
-					<span class="small muted">Start from a tracker issue:</span>
-					{#each sources as s (s.id)}
-						<button type="button" class="small" onclick={() => openSource(s.id)}>
-							⇩ {s.name} <span class="muted">({s.kind})</span>
-						</button>
-					{/each}
+				<div class="field">
+					<label for="t-src">Tracker</label>
+					<select
+						id="t-src"
+						value={sourceId}
+						onchange={(e) => {
+							const v = (e.target as HTMLSelectElement).value;
+							if (v) openSource(v);
+							else clearImport();
+						}}
+					>
+						<option value="">Choose a tracker…</option>
+						{#each sources as s (s.id)}<option value={s.id}>{s.name} ({s.kind})</option>{/each}
+					</select>
 				</div>
+				{#if sourceId}
+					<div class="srow">
+						<input
+							type="search"
+							bind:value={query}
+							placeholder="2624, PROJ-2624, words, or jql:…"
+							onkeydown={(e) => {
+								if (e.key === 'Enter') {
+									e.preventDefault();
+									search();
+								}
+							}}
+						/>
+						<button type="button" onclick={search} disabled={searching}>
+							{searching ? 'Searching…' : 'Search'}
+						</button>
+					</div>
+					{#if searchErr}<div class="err">{searchErr}</div>{/if}
+					{#if searching && !results.length}
+						<div class="help">Searching…</div>
+					{:else if results.length}
+						<div class="results">
+							{#each results as r (r.key)}
+								<button type="button" class="result" onclick={() => pick(r)}>
+									<span class="rl1">
+										<span class="tag">{r.key}</span>
+										<span class="ell rtitle">{r.title}</span>
+									</span>
+									<span class="rl2 ell">
+										{[r.type, r.status, r.assignee].filter(Boolean).join(' · ')}
+									</span>
+								</button>
+							{/each}
+						</div>
+					{:else if !searchErr}
+						<div class="help">No matching issues.</div>
+					{/if}
+				{/if}
 			{/if}
-		</div>
-	{/if}
-
-	<label for="t-project">Project</label>
-	<select id="t-project" bind:value={projectId} required disabled={init != null}>
-		{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-	</select>
-	<label for="t-title">Title</label>
-	<input id="t-title" bind:value={title} required placeholder="Add a Farewell function" />
-	<label for="t-goal">Goal</label>
-	<textarea
-		id="t-goal"
-		bind:value={goal}
-		required
-		placeholder="What should the factory build, and what does done look like?"></textarea>
-	{#if attached.length}
-		<FileChips
-			items={attached.map((a) => ({ ...a, kind: 'attachment' as const }))}
-			label="Already attached — delivered into every run's workspace"
-		/>
-	{/if}
-	<AttachFiles bind:files label="Attach documents / images for the agent to read" />
-	<label for="t-branch"
-		>Base branch <span class="muted"
-			>— prefilled from the title; each run appends a short unique suffix</span
-		></label
-	>
-	<input
-		id="t-branch"
-		bind:value={branch}
-		oninput={() => (branchEdited = true)}
-		placeholder="feat/PROJ-123-short-description"
-		class="mono"
-	/>
-	{#if error}<div class="error">{error}</div>{/if}
-	{#if warnings.length && created}
-		<div class="error">
-			Ticket created, but some attachments did not come across:
-			<ul>
-				{#each warnings as w (w)}<li>{w}</li>{/each}
-			</ul>
-		</div>
-		<div class="row" style="margin-top:14px">
-			<button class="primary" type="button" onclick={() => onsaved(created!)}
-				>Continue to the ticket</button
-			>
-		</div>
-	{:else}
-		<div class="row" style="margin-top:14px; gap:8px">
-			<button
-				class="primary"
-				type="submit"
-				disabled={submitting || !title.trim() || !goal.trim() || !projectId}
-			>
-				{submitting
-					? 'Saving…'
-					: init
-						? 'Save ticket'
-						: picked
-							? `Create from ${picked.key}`
-							: 'Create ticket'}
-			</button>
-		</div>
+		</aside>
 	{/if}
 </form>
 
 <style>
-	.import {
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		padding: 10px;
-		margin-bottom: 14px;
+	.tf {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 360px;
+		gap: 12px;
+		align-items: start;
+	}
+	.tf.edit {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.main,
+	.imp {
+		border-radius: 16px;
+		padding: 16px 18px 18px;
 		display: flex;
 		flex-direction: column;
+		gap: 14px;
+		min-width: 0;
+	}
+	.imp {
+		gap: 12px;
+		position: sticky;
+		top: 0;
+	}
+	.ih {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+	.ih h2 {
+		font-size: 19px;
+	}
+	.flabel {
+		font-size: 12px;
+		font-weight: 500;
+	}
+	.goal {
+		min-height: 180px;
+	}
+	.lrow {
+		display: flex;
+		align-items: center;
 		gap: 8px;
+	}
+	.lrow label {
+		margin: 0;
+	}
+	.lrow .pill {
+		font-size: 10.5px;
+		padding: 0 7px;
+	}
+	.foot {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		padding-top: 4px;
+	}
+	.warn {
+		font-size: 12px;
+		color: var(--amb);
+		background: var(--ambBg);
+		border: 1px solid var(--ambLn);
+		border-radius: 12px;
+		padding: 8px 12px;
+	}
+	.warn ul {
+		margin: 4px 0 0;
+		padding-left: 18px;
+	}
+	.none {
+		font-size: 12px;
+		color: var(--mut);
+		border: 1px dashed var(--ln2);
+		border-radius: 12px;
+		padding: 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.srow {
+		display: flex;
+		gap: 6px;
 	}
 	.results {
 		display: flex;
 		flex-direction: column;
-		max-height: 260px;
+		max-height: 360px;
 		overflow-y: auto;
+		border: 1px solid var(--ln);
+		border-radius: 12px;
 	}
 	.result {
-		display: flex;
-		align-items: baseline;
-		gap: 8px;
-		text-align: left;
-		background: none;
-		border: none;
-		border-bottom: 1px solid var(--border);
-		padding: 6px 2px;
+		all: unset;
+		box-sizing: border-box;
 		cursor: pointer;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 8px 10px;
+		border-top: 1px solid var(--ln);
+		min-width: 0;
+	}
+	.result:first-child {
+		border-top: 0;
 	}
 	.result:hover {
-		background: var(--hover, rgba(127, 127, 127, 0.12));
+		background: var(--p3);
+	}
+	.result:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: -2px;
+	}
+	.rl1 {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
 	}
 	.rtitle {
-		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		font-size: 12.5px;
+		font-weight: 500;
+	}
+	.rl2 {
+		font-size: 11px;
+		color: var(--mut);
+	}
+	.picked {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		background: var(--p2);
+		border: 1px solid var(--ln);
+		border-radius: 13px;
+		padding: 10px 12px;
+	}
+	.prow {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.chips {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.fchip {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		min-width: 0;
+	}
+	.fchip .mono {
+		font-size: 10.5px;
+		flex: none;
+	}
+	@media (max-width: 1000px) {
+		.tf {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.imp {
+			position: static;
+			order: -1;
+		}
 	}
 </style>

@@ -7,12 +7,15 @@
 	// point of ownership, and the thing the dialog should say out loud.
 	import { api } from '$lib/api';
 	import type { Flow, Project } from '$lib/domain';
+	import { lore } from '$lib/lore';
+	import Modal from '$lib/ui/Modal.svelte';
 	import { untrack } from 'svelte';
 
 	let {
 		flow,
 		projects,
 		sourceLabel,
+		target: preset,
 		onclose,
 		oncopied
 	}: {
@@ -20,30 +23,33 @@
 		projects: Project[];
 		/** Where it is being copied FROM, for the sentence at the top. */
 		sourceLabel: string;
+		/** Preselect the target project (e.g. adopting a template into the
+		 *  workshop you are looking at). */
+		target?: string;
 		onclose: () => void;
 		oncopied: (projectId: string, name: string) => void;
 	} = $props();
 
 	// Defaults, read once: the dialog mounts fresh per copy, so the props it
-	// opens with are the props it works with. untrack says that on purpose
-	// rather than leaving a reactivity warning for someone to explain later.
+	// opens with are the props it works with. untrack says that on purpose.
 	//
-	// The target defaults to a project that is NOT the source — copying inside
-	// one project is legitimate (a variant) but needs a different name, so it is
-	// not the obvious first choice.
+	// Without a preset the target defaults to a project that is NOT the
+	// source — copying inside one project is legitimate (a variant) but needs a
+	// different name, so it is not the obvious first choice.
 	let target = $state(
-		untrack(() => projects.find((p) => p.id !== flow.projectId)?.id ?? projects[0]?.id ?? '')
+		untrack(
+			() => preset ?? projects.find((p) => p.id !== flow.projectId)?.id ?? projects[0]?.id ?? ''
+		)
 	);
-	let name = $state(untrack(() => flow.name));
+	// Into its own workshop (the only one, say) a copy needs a new name.
+	let name = $state(untrack(() => (target === flow.projectId ? `${flow.name}-copy` : flow.name)));
 	let busy = $state(false);
 	let error = $state('');
-	let el = $state<HTMLDialogElement | null>(null);
-
-	// showModal (not open) is what makes it modal: focus trap, inert background.
-	$effect(() => el?.showModal());
+	let open = $state(true);
 
 	const sameProject = $derived(target === flow.projectId);
 	const clash = $derived(sameProject && name.trim() === flow.name);
+	const badName = $derived(!!name.trim() && !/^[a-z][a-z0-9_-]*$/.test(name.trim()));
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -64,58 +70,70 @@
 	}
 </script>
 
-<!-- The native dialog: it brings Escape, focus trapping and the backdrop with
-     it, which is three hand-rolled behaviours (and three a11y warnings) fewer. -->
-<dialog
-	bind:this={el}
-	class="card"
-	{onclose}
-	onclick={(e) => {
-		// Clicking the backdrop lands on the dialog element itself.
-		if (e.target === el) onclose();
-	}}
->
-	<form onsubmit={submit}>
-		<h2 style="margin-top:0">Copy <span class="mono">{flow.name}</span></h2>
-		<p class="small muted" style="margin-top:-6px">
-			From {sourceLabel}. The copy is a new document with its own history — editing it never changes
-			the original.
+<Modal bind:open title={flow.builtin ? `Use ${flow.name}` : `Copy ${flow.name}`} icon="⧉" {onclose}>
+	<form id="copy-flow" class="cf" onsubmit={submit}>
+		<p>
+			From <b>{sourceLabel}</b>. The copy is a new document with its own history — editing it never
+			changes the original.
 		</p>
-
-		<label for="cf-project">Into project</label>
-		<select id="cf-project" bind:value={target}>
-			{#each projects as p (p.id)}
-				<option value={p.id}>{p.name}{p.id === flow.projectId ? ' (same project)' : ''}</option>
-			{/each}
-		</select>
-
-		<label for="cf-name" style="margin-top:10px">
-			Name <span class="muted">— the document renames itself to match; the name is its id</span>
-		</label>
-		<input id="cf-name" bind:value={name} required pattern="[a-z][a-z0-9_-]*" class="mono" />
-
-		{#if clash}
-			<div class="error">Copying into the same project needs a different name.</div>
-		{:else if error}
-			<div class="error">{error}</div>
-		{/if}
-
-		<div class="row" style="margin-top:14px; gap:8px">
-			<button class="primary" type="submit" disabled={busy || !target || !name.trim() || clash}>
-				{busy ? 'Copying…' : 'Copy'}
-			</button>
-			<button type="button" onclick={onclose}>Cancel</button>
+		<div class="field">
+			<label for="cf-project">Into {lore('workshop').toLowerCase()}</label>
+			<select id="cf-project" bind:value={target}>
+				{#each projects as p (p.id)}
+					<option value={p.id}>{p.name}{p.id === flow.projectId ? ' (same)' : ''}</option>
+				{/each}
+			</select>
 		</div>
+		<div class="field">
+			<label for="cf-name">Name</label>
+			<input
+				id="cf-name"
+				bind:value={name}
+				required
+				pattern="[a-z][a-z0-9_-]*"
+				class="mono"
+				class:invalid={clash || badName}
+			/>
+			{#if clash}
+				<div class="err">
+					Copying into the same {lore('workshop').toLowerCase()} needs a different name.
+				</div>
+			{:else if badName}
+				<div class="err">A lowercase slug: a letter, then letters, digits, - or _.</div>
+			{:else}
+				<div class="help">The document renames itself to match; the name is its id.</div>
+			{/if}
+		</div>
+		{#if error}<div class="err">{error}</div>{/if}
 	</form>
-</dialog>
+	{#snippet footer()}
+		<button type="button" class="btn-ghost" onclick={onclose}>Cancel</button>
+		<button
+			class="btn-primary"
+			type="submit"
+			form="copy-flow"
+			disabled={busy || !target || !name.trim() || clash || badName}
+		>
+			{busy ? 'Copying…' : flow.builtin ? `Copy into ${lore('workshop').toLowerCase()}` : 'Copy'}
+		</button>
+	{/snippet}
+</Modal>
 
 <style>
-	dialog {
-		width: min(460px, calc(100vw - 32px));
-		border: 1px solid var(--border, #333);
-		padding: 16px;
+	.cf {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
 	}
-	dialog::backdrop {
-		background: rgba(0, 0, 0, 0.45);
+	.cf p {
+		margin: 0;
+	}
+	.cf label {
+		color: var(--tx);
+	}
+	/* app.css's input reset outranks its own input.mono; restate it. */
+	input.mono {
+		font-family: var(--mono) !important;
+		font-size: 12px !important;
 	}
 </style>

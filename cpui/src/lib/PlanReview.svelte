@@ -15,7 +15,11 @@
 		type PlanBlock,
 		type ReviewComment
 	} from '$lib/planreview';
-	import { isAgentPing } from '$lib/ping';
+	import { fmtClock, fmtAbs } from '$lib/format';
+	import { confirmDialog } from '$lib/ui/confirm.svelte';
+	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import { mdToHtml } from '$lib/planreview';
 	import { onMount } from 'svelte';
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
@@ -24,7 +28,6 @@
 	// answer with the composed review text — or a declared option with the
 	// review as its note.
 	const isGate = $derived(ping.answerKind === 'decision');
-	void isAgentPing;
 
 	let blocks = $state<PlanBlock[]>([]);
 	let path = $state('');
@@ -271,7 +274,18 @@
 		};
 	}
 
-	function removeComment(i: number) {
+	async function removeComment(i: number) {
+		const c = comments[i];
+		if (
+			!(await confirmDialog({
+				title: 'Delete this comment?',
+				body: 'The comment is removed from your <b>review draft</b>. Nothing has been sent to the run yet.',
+				action: 'Delete comment'
+			}))
+		)
+			return;
+		i = comments.indexOf(c);
+		if (i < 0) return;
 		comments.splice(i, 1);
 		saveDraft(ping.id, comments);
 		if (hovered === i) hovered = null;
@@ -338,74 +352,150 @@
 	async function approve() {
 		if (
 			comments.length > 0 &&
-			!confirm(`Approve and discard ${comments.length} unsent comment(s)?`)
+			!(await confirmDialog({
+				title: 'Approve and discard your comments?',
+				body: `You have <b>${comments.length} unsent comment${comments.length === 1 ? '' : 's'}</b>. Approving lets the <b>run</b> continue as is and discards them. To send them, use Request changes instead.`,
+				action: 'Approve anyway',
+				tone: 'warn'
+			}))
 		)
 			return;
 		await submit('approve');
 	}
+
+	// ---- outline -------------------------------------------------------------
+
+	const outline = $derived(
+		blocks
+			.map((b, i) => {
+				const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/m.exec(b.raw.trim().split('\n')[0]);
+				return m ? { i, level: m[1].length, text: m[2].replace(/[*_`]/g, '') } : null;
+			})
+			.filter((x): x is { i: number; level: number; text: string } => !!x)
+	);
+	const minLevel = $derived(Math.min(...outline.map((o) => o.level), 6));
+	const commentsUnder = (blockIdx: number) => {
+		const next = outline.find((o) => o.i > blockIdx)?.i ?? Infinity;
+		return comments.filter((c) => {
+			const b = blockOf(c);
+			return b >= blockIdx && b < next;
+		}).length;
+	};
+	const jump = (i: number) => blockEls[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+	// "Draft saved" flashes after each change to the draft.
+	let savedAt = $state<number | null>(null);
+	$effect(() => {
+		void comments.length;
+		void comments.map((c) => c.text).join();
+		if (!loading) savedAt = Date.now();
+	});
 </script>
 
-{#if error}<div class="error">{error}</div>{/if}
+<div class="wb">
+	<!-- Outline -->
+	<nav class="outline c" aria-label="Document outline">
+		<div class="ph">Outline</div>
+		{#if loading}
+			<div class="pad"><Skeleton lines={5} height={10} /></div>
+		{:else if outline.length}
+			<div class="ol">
+				{#each outline as o (o.i)}
+					{@const n = commentsUnder(o.i)}
+					<button
+						class="oi"
+						style:padding-left="{10 + (o.level - minLevel) * 12}px"
+						onclick={() => jump(o.i)}
+						title={o.text}
+						><span class="ell">{o.text}</span>{#if n}<span class="oc">{n}</span>{/if}</button
+					>
+				{/each}
+			</div>
+		{:else}
+			<div class="pad fnt small">No headings in this document.</div>
+		{/if}
+	</nav>
 
-{#if loading}
-	<div class="empty">Loading {ping.primaryRef}…</div>
-{:else if blocks.length > 0}
-	<div class="review row" style="align-items:flex-start; gap:14px">
-		<div class="card plan" style="flex:2; min-width:0" bind:this={planEl}>
-			<div class="muted small mono" style="margin-bottom:8px">{path}</div>
+	<!-- Document -->
+	<section class="doc c">
+		<div class="dh">
+			<span class="mono ell" title={path || ping.primaryRef}>{path || ping.primaryRef}</span>
+			<span class="spacer"></span>
+			<span class="cap" title={fmtAbs(ping.raisedAt)}
+				>snapshot from {fmtClock(ping.raisedAt)} · not the live file</span
+			>
+		</div>
+		<div class="dscroll">
 			{#if extraFiles.length}
-				<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; align-items:center">
-					<span class="small muted">From the agent:</span>
+				<div class="extras">
+					<span class="fnt small">From the agent</span>
 					{#each extraFiles as f (f.path)}
 						{#if !f.captured || !f.snapshotId}
-							<span
-								class="small mono muted"
-								title="this file was not captured when the ping was raised"
-								>📎 {f.path} (not captured)</span
+							<span class="xf missing" title="this file was not captured when the ping was raised"
+								><span class="mono ell">{f.path}</span><span>not captured</span></span
 							>
 						{:else if f.mime?.startsWith('image/')}
 							<a
+								class="thumb"
 								href={api.files.snapshotUrl(f.snapshotId)}
 								target="_blank"
 								rel="noreferrer"
 								title={f.path}
 							>
-								<img
-									src={api.files.snapshotUrl(f.snapshotId)}
-									alt={f.path}
-									style="max-height:80px; border-radius:4px; border:1px solid var(--border,#444)"
-								/>
+								<img src={api.files.snapshotUrl(f.snapshotId)} alt={f.path} />
 							</a>
 						{:else}
 							<a
-								class="small mono"
+								class="xf"
 								href={api.files.snapshotUrl(f.snapshotId)}
 								target="_blank"
-								rel="noreferrer">📎 {f.path}</a
+								rel="noreferrer"><span class="ico">▤</span><span class="mono ell">{f.path}</span></a
 							>
 						{/if}
 					{/each}
 				</div>
 			{/if}
-			{#each blocks as b, i (i)}
-				<div
-					class="block"
-					data-idx={i}
-					bind:this={blockEls[i]}
-					class:commented={comments.some((c) => spans(c, i))}
-					class:active={hovered !== null && spans(comments[hovered], i)}
-					class:pending={!!composer?.anchor &&
-						i >= composer.anchor.startBlock &&
-						i <= composer.anchor.endBlock}
-				>
-					<div class="md">{@html b.html}</div>
-				</div>
-			{/each}
-		</div>
 
-		<div class="card side" style="flex:1; min-width:260px">
-			<h2 style="margin-top:0">Review</h2>
-			<div role="list">
+			{#if loading}
+				<div class="paper"><Skeleton lines={10} /></div>
+			{:else if error && blocks.length === 0}
+				<div class="paper"><ErrorCard cause={error} /></div>
+			{:else if blocks.length === 0}
+				<div class="paper fnt">The document is empty.</div>
+			{:else}
+				<div class="paper" bind:this={planEl}>
+					{#each blocks as b, i (i)}
+						<div
+							class="block"
+							data-idx={i}
+							bind:this={blockEls[i]}
+							class:commented={comments.some((c) => spans(c, i))}
+							class:active={hovered !== null && spans(comments[hovered], i)}
+							class:pending={!!composer?.anchor &&
+								i >= composer.anchor.startBlock &&
+								i <= composer.anchor.endBlock}
+						>
+							<div class="md">{@html b.html}</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	</section>
+
+	<!-- Review sidebar -->
+	<aside class="side lg">
+		<div class="sh">
+			<h2>Review</h2>
+			{#if comments.length}<span class="count hot">{comments.length}</span>{/if}
+		</div>
+		<div class="sscroll">
+			<details class="ask">
+				<summary><span class="caretglyph">▸</span> The ask</summary>
+				<div class="md small">{@html mdToHtml(ping.question)}</div>
+			</details>
+
+			<div class="cl" role="list">
 				{#each comments as c, i (c)}
 					<div
 						class="comment"
@@ -414,183 +504,451 @@
 						onmouseenter={() => (hovered = i)}
 						onmouseleave={() => (hovered = null)}
 					>
-						<div class="row" style="gap:6px; flex-wrap:nowrap">
-							<button
-								class="jump muted small"
-								title="Scroll to this section"
-								onclick={() => reveal(c)}
-							>
-								§ {c.heading || '(top)'} · lines {c.startLine}–{c.endLine}
+						<div class="ch">
+							<button class="jump ell" title="Scroll to this section" onclick={() => reveal(c)}>
+								§ {c.heading || '(top)'} · <span class="mono">L{c.startLine}–{c.endLine}</span>
 							</button>
-							<button class="small" style="margin-left:auto" onclick={() => editComment(i)}
-								>Edit</button
-							>
+							<button class="btn-ghost btn-sm" onclick={() => editComment(i)}>Edit</button>
 							<button
-								class="danger small"
+								class="btn-icon"
 								onclick={() => removeComment(i)}
-								aria-label="Delete comment">×</button
+								aria-label="Delete comment"
+								title="Delete comment">×</button
 							>
 						</div>
-						<blockquote class="small mono">{trunc(c.quote, 120)}</blockquote>
-						<div class="small" style="white-space:pre-wrap">{c.text}</div>
+						<blockquote class="mono">{trunc(c.quote, 120)}</blockquote>
+						<div class="ct">{c.text}</div>
 						{#if c.files?.length}
-							<div class="muted small" style="margin-top:4px">
-								📎 {c.files.map((f) => f.name).join(', ')}
-							</div>
+							<div class="cf">⎘ {c.files.map((f) => f.name).join(', ')}</div>
 						{/if}
 					</div>
 				{:else}
-					<p class="muted small">
-						No comments yet. <strong>Select any text</strong> in the plan — a feedback box opens where
-						you let go. All comments submit together as one feedback prompt.
+					<p class="hint">
+						<strong>Select any text</strong> in the document — a comment box opens where you let go. All
+						comments go back together as one feedback prompt.
 					</p>
 				{/each}
 			</div>
-			<div style="margin-top:12px">
-				<AttachFiles bind:files label="Attach files to your review" />
-			</div>
+
+			<AttachFiles bind:files label="Attach files to your review" compact />
+			{#if error && blocks.length > 0}<div class="err">{error}</div>{/if}
+		</div>
+
+		<footer class="sf">
 			{#if isGate}
-				<div class="row" style="margin-top:12px">
-					<button class="approve" disabled={busy} onclick={approve}>Approve</button>
-					<button class="reject" disabled={busy || comments.length === 0} onclick={requestChanges}>
+				<div class="acts">
+					<button class="btn-primary" disabled={busy} onclick={approve}>Approve</button>
+					<button class="btn-sel" disabled={busy || comments.length === 0} onclick={requestChanges}>
 						Request changes ({comments.length})
 					</button>
 				</div>
 			{:else if ping.answerKind === 'choice' && ping.options.length}
-				<div class="row" style="margin-top:12px; flex-wrap:wrap; gap:8px">
-					{#each ping.options as opt (opt.id)}
-						<button class="primary" disabled={busy} title={opt.detail ?? ''} onclick={() => chooseOption(opt.id)}
-							>{opt.label}</button
+				<div class="acts">
+					{#each ping.options as opt, i (opt.id)}
+						<button
+							class={i === 0 ? 'btn-primary' : ''}
+							disabled={busy}
+							title={opt.detail ?? ''}
+							onclick={() => chooseOption(opt.id)}>{opt.label}</button
 						>
 					{/each}
 				</div>
-				<p class="muted small" style="margin-top:6px">
-					Your pick answers the agent's closed question; comments (if any) ride along as a note.
-				</p>
+				<p class="cap">Your pick answers the agent; comments ride along as the note.</p>
 			{:else}
-				<div class="row" style="margin-top:12px">
-					<button class="primary" disabled={busy || comments.length === 0} onclick={sendReview}>
+				<div class="acts">
+					<button class="btn-primary" disabled={busy || comments.length === 0} onclick={sendReview}>
 						Send review ({comments.length})
 					</button>
 				</div>
 			{/if}
-			<p class="muted small" style="margin-top:8px">
-				Drafts survive reloads (kept in this browser); attachments have to be re-picked.
+			<p class="cap">
+				{#if comments.length && savedAt}
+					<span class="saved">✓ Draft saved</span> · kept in this browser; attachments must be re-picked
+				{:else}
+					Drafts are kept in this browser; attachments must be re-picked.
+				{/if}
 			</p>
+		</footer>
+	</aside>
+</div>
+
+{#if composer}
+	<div
+		class="composer lg-pop"
+		style="left:{composer.x}px; top:{composer.y}px"
+		role="dialog"
+		aria-label={composer.editing !== null ? 'Edit comment' : 'Add comment'}
+		tabindex="-1"
+		onkeydown={onComposerKey}
+	>
+		<div class="cmh">
+			<span class="ell">§ {composer.heading || '(top)'}</span>
+			<span class="mono fnt">L{composer.startLine}–{composer.endLine}</span>
+		</div>
+		<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>
+		<textarea
+			bind:this={composerEl}
+			bind:value={composer.text}
+			rows="3"
+			placeholder="What should change here?"></textarea>
+		<AttachFiles bind:files={composer.files} label="Attach" compact />
+		<div class="cmf">
+			<button class="btn-primary" onclick={commitComment} disabled={!composer.text.trim()}>
+				{composer.editing !== null ? 'Save' : 'Add'}
+			</button>
+			<button class="btn-ghost" onclick={closeComposer}>Close</button>
+			<span class="spacer"></span>
+			<span class="fnt keys">⌘↵ add · Esc close</span>
 		</div>
 	</div>
-
-	{#if composer}
-		<div
-			class="card composer"
-			style="left:{composer.x}px; top:{composer.y}px"
-			role="dialog"
-			aria-label={composer.editing !== null ? 'Edit feedback' : 'Add feedback'}
-			tabindex="-1"
-			onkeydown={onComposerKey}
-		>
-			<div class="muted small">
-				§ {composer.heading || '(top)'} · lines {composer.startLine}–{composer.endLine}
-			</div>
-			<blockquote class="small mono">{trunc(composer.quote, 180)}</blockquote>
-			<textarea
-				bind:this={composerEl}
-				bind:value={composer.text}
-				rows="3"
-				placeholder="What should change here?"></textarea>
-			<div style="display:flex; align-items:flex-start; margin-top:8px">
-				<AttachFiles bind:files={composer.files} label="Attach" />
-			</div>
-			<div class="row" style="margin-top:10px">
-				<button class="primary" onclick={commitComment} disabled={!composer.text.trim()}>
-					{composer.editing !== null ? 'Save' : 'Add'}
-				</button>
-				<button onclick={closeComposer}>Close</button>
-				<span class="muted small" style="margin-left:auto">⌘↵ to add · esc to close</span>
-			</div>
-		</div>
-	{/if}
-{:else}
-	<div class="empty">The artifact is empty.</div>
 {/if}
 
 <style>
+	.wb {
+		flex: 1;
+		min-height: 0;
+		display: grid;
+		grid-template-columns: 220px minmax(0, 1fr) 320px;
+		gap: 10px;
+		padding: 2px 22px 16px;
+	}
+	.c,
+	.lg {
+		border-radius: 16px;
+		min-height: 0;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+	.pad {
+		padding: 10px 14px;
+	}
+	.small {
+		font-size: 12px;
+	}
+	.spacer {
+		flex: 1;
+	}
+
+	/* outline */
+	.ph {
+		font-family: var(--serif);
+		font-style: italic;
+		font-size: 16px;
+		padding: 11px 14px 6px;
+		color: var(--mut);
+	}
+	.ol {
+		overflow: auto;
+		padding: 0 6px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+	.oi {
+		all: unset;
+		box-sizing: border-box;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 8px 4px 10px;
+		border-radius: 8px;
+		font-size: 12px;
+		color: var(--mut);
+		min-width: 0;
+	}
+	.oi:hover {
+		background: var(--p3);
+		color: var(--tx);
+	}
+	.oi:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: -2px;
+	}
+	.oc {
+		margin-left: auto;
+		flex: none;
+		font-family: var(--mono);
+		font-size: 10px;
+		padding: 0 6px;
+		border-radius: 10px;
+		background: var(--brandBg);
+		color: var(--brand);
+		border: 1px solid var(--brandLn);
+	}
+
+	/* document */
+	.dh {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--cLn);
+		min-width: 0;
+	}
+	.dh .mono {
+		font-size: 11.5px;
+		color: var(--mut);
+	}
+	.cap {
+		font-size: 11px;
+		color: var(--fnt);
+		margin: 0;
+	}
+	.dh .cap {
+		white-space: nowrap;
+	}
+	.dscroll {
+		flex: 1;
+		min-height: 0;
+		overflow: auto;
+		padding: 16px 22px 40px;
+	}
+	.paper {
+		max-width: 72ch;
+		margin: 0 auto;
+	}
+	.extras {
+		max-width: 72ch;
+		margin: 0 auto 16px;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+	}
+	.thumb img {
+		display: block;
+		height: 56px;
+		border-radius: 8px;
+		border: 1px solid var(--ln);
+	}
+	.xf {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		max-width: 260px;
+		padding: 3px 9px;
+		border-radius: 9px;
+		background: var(--p2);
+		border: 1px solid var(--ln);
+		font-size: 11.5px;
+		color: var(--tx);
+	}
+	.xf.missing {
+		background: transparent;
+		border-style: dashed;
+		border-color: var(--ln2);
+		color: var(--fnt);
+	}
 	.block {
 		position: relative;
-		border-radius: 4px;
-		padding: 0 6px;
-		margin: 0 -6px;
-		transition: background 0.12s ease;
+		border-radius: 6px;
+		padding: 0 8px;
+		margin: 0 -8px 2px;
 	}
 	.block.commented {
-		box-shadow: inset 2px 0 0 var(--amber, #fbbf24);
+		box-shadow: inset 3px 0 0 var(--brand);
 	}
 	.block.active,
 	.block.pending {
-		background: color-mix(in srgb, var(--amber, #fbbf24) 9%, transparent);
+		background: var(--brandBg);
+	}
+	.paper .md {
+		font-size: 13.5px;
+		line-height: 1.65;
+	}
+	.paper .md :global(h1),
+	.paper .md :global(h2) {
+		font-family: var(--serif);
+		font-style: italic;
+		font-weight: 400;
+		font-size: 22px;
+		margin: 18px 0 6px;
+	}
+	.paper .md :global(h3) {
+		font-size: 14.5px;
+		margin: 14px 0 6px;
+	}
+	.paper .md :global(pre) {
+		overflow-x: auto;
 	}
 
 	/* Exact-selection highlights. ::highlight() isn't attached to an element,
      so it can't be scoped — hence :global. Falls back to the block tint above
      where the Custom Highlight API is missing. */
 	:global(::highlight(apo-plan-pending)) {
-		background: color-mix(in srgb, var(--accent, #8b7cf6) 45%, transparent);
+		background: color-mix(in oklch, var(--brand) 32%, transparent);
 	}
 	:global(::highlight(apo-plan-active)) {
-		background: color-mix(in srgb, var(--amber, #fbbf24) 40%, transparent);
+		background: color-mix(in oklch, var(--brand) 26%, transparent);
 	}
 
-	.composer {
-		position: fixed;
-		z-index: 60;
-		width: 340px;
-		margin: 0;
-		padding: 12px;
-		background: var(--panel2, #1e2230);
-		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+	/* sidebar */
+	.sh {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 11px 14px 8px;
 	}
-
+	.sh h2 {
+		font-size: 19px;
+	}
+	.sscroll {
+		flex: 1;
+		min-height: 0;
+		overflow: auto;
+		padding: 0 12px 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.ask {
+		border-radius: 12px;
+		background: var(--p2);
+		border: 1px solid var(--ln);
+		padding: 6px 10px;
+		font-size: 12px;
+		flex: none;
+	}
+	.ask summary {
+		color: var(--mut);
+		font-weight: 500;
+	}
+	.ask .md {
+		margin-top: 6px;
+		font-size: 12.5px;
+	}
+	.cl {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
 	.comment {
-		border-top: 1px solid var(--border, #333);
-		padding: 8px 6px;
-		margin: 0 -6px;
-		border-radius: 4px;
+		border-radius: 12px;
+		background: var(--p2);
+		border: 1px solid var(--ln);
+		padding: 7px 8px 9px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
 	}
 	.comment.hot {
-		background: color-mix(in srgb, var(--amber, #fbbf24) 8%, transparent);
+		border-color: var(--brandLn);
+		background: var(--brandBg);
 	}
-	.comment .jump {
-		background: none;
-		border: none;
-		padding: 0;
-		text-align: left;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.ch {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		min-width: 0;
 	}
-	.comment .jump:hover {
-		color: var(--text, #e6e9f0);
+	.jump {
+		all: unset;
+		cursor: pointer;
+		flex: 1;
+		font-size: 11.5px;
+		color: var(--mut);
 	}
-
+	.jump:hover {
+		color: var(--tx);
+	}
+	.jump .mono {
+		font-size: 10.5px;
+	}
 	blockquote {
 		white-space: pre-wrap;
-		opacity: 0.7;
-		margin: 6px 0;
+		margin: 0;
 		padding-left: 8px;
-		border-left: 2px solid var(--border, #333);
+		border-left: 2px solid var(--brandLn);
+		color: var(--mut);
+		font-size: 11px;
+		max-height: 5.5em;
+		overflow: hidden;
+	}
+	.ct {
+		white-space: pre-wrap;
+		font-size: 12.5px;
+	}
+	.cf {
+		font-size: 11px;
+		color: var(--mut);
+	}
+	.hint {
+		margin: 0;
+		font-size: 12px;
+		color: var(--mut);
+		padding: 10px 12px;
+		border: 1px dashed var(--ln2);
+		border-radius: 12px;
+	}
+	.sf {
+		border-top: 1px solid var(--lgLn);
+		padding: 10px 12px 11px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.acts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.saved {
+		color: var(--grn);
 	}
 
-	.side {
-		position: sticky;
-		top: 12px;
+	/* floating composer */
+	.composer {
+		position: fixed;
+		z-index: 30;
+		width: 340px;
+		border-radius: 17px;
+		padding: 10px 12px 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.cmh {
+		display: flex;
+		gap: 8px;
+		font-size: 12px;
+		font-weight: 600;
+		align-items: baseline;
+	}
+	.cmh .mono {
+		font-size: 10.5px;
+		font-weight: 500;
+	}
+	.cmf {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.keys {
+		font-size: 11px;
 	}
 
-	.md :global(h1),
-	.md :global(h2),
-	.md :global(h3) {
-		margin: 12px 0 6px;
+	@media (max-width: 1100px) {
+		.wb {
+			grid-template-columns: minmax(0, 1fr) 300px;
+		}
+		.outline {
+			display: none;
+		}
 	}
-	.md :global(pre) {
-		overflow-x: auto;
+	@media (max-width: 760px) {
+		.wb {
+			grid-template-columns: minmax(0, 1fr);
+			overflow: auto;
+			padding: 2px 16px 16px;
+		}
+		.c,
+		.lg {
+			overflow: visible;
+		}
+		.dscroll {
+			padding: 12px 14px 24px;
+		}
 	}
 </style>

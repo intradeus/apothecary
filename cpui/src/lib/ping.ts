@@ -57,4 +57,35 @@ export interface PingLike {
 	answer?: string;
 	feedback?: string;
 	answeredAt?: string;
+	// Optional: shown in the card head when present.
+	stageId?: string;
+	raisedAt?: string;
+}
+
+/** A ping whose primary payload is a captured document (a plan), reviewed in
+ *  the document workbench rather than answered inline. */
+export const isDocumentPing = (p: Pick<PingLike, 'files' | 'link' | 'primaryRef'>) =>
+	!p.link && !!(p.files?.length || p.primaryRef);
+
+/** The call to action a ping row offers (DESIGN 7.2): a plan to review, a
+ *  decision to make, or a question to answer. */
+export function pingCta(
+	p: Pick<PingLike, 'type' | 'answerKind' | 'files' | 'link' | 'primaryRef'>
+): string {
+	if (isDocumentPing(p)) return 'Review plan';
+	if (p.type === 'permission' || p.answerKind === 'decision') return 'Decide';
+	return 'Answer';
+}
+
+/** The first line of a ping's question as plain text, for one-line rows. */
+export function pingHeadline(question: string): string {
+	const line =
+		question
+			.split('\n')
+			.map((l) => l.trim())
+			.find((l) => l && !/^```/.test(l)) ?? '';
+	return line
+		.replace(/^#+\s*|^[-*>]\s+/, '')
+		.replace(/[*_`]+/g, '')
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
 }

@@ -1,4 +1,3 @@
-- 3) merge conflicts / rebase ? PR comments fixes ?
 - 4) `channels` fold into `integrations`.
 - 5) db migration + migration table checks and simplify
 - 7) redo everything in DDD

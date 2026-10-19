@@ -2,16 +2,21 @@
 	import {
 		SvelteFlow,
 		Background,
+		BackgroundVariant,
 		Controls,
+		ControlButton,
 		type Node,
 		type Edge,
 		type Connection
 	} from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
+	import { prefs } from '$lib/prefs.svelte';
+	import { untrack } from 'svelte';
 	import FlowStageNode from '$lib/FlowStageNode.svelte';
 	import FlowDoneNode from '$lib/FlowDoneNode.svelte';
 	import FlowAbortNode from '$lib/FlowAbortNode.svelte';
 	import FlowStartNode from '$lib/FlowStartNode.svelte';
+	import FitOnInit from '$lib/flow/FitOnInit.svelte';
 	import {
 		ABORT,
 		DONE,
@@ -40,6 +45,7 @@
 		onselect,
 		onmove,
 		onlink,
+		onarrange,
 		agents = [],
 		actions = []
 	}: {
@@ -49,6 +55,8 @@
 		onselect: (sel: Selection) => void;
 		onmove: (id: string, x: number, y: number) => void;
 		onlink: (source: string, handle: string, target: string) => void;
+		/** Re-run the success-chain layout (the controls' auto-arrange button). */
+		onarrange?: () => void;
 		// Contracts the dataflow layer reads: which inputs/outputs a stage's agent
 		// or action declares. Optional — without them only explicit bindings show.
 		agents?: AgentContract[];
@@ -62,11 +70,23 @@
 		start: FlowStartNode
 	};
 
-	const edgeStyles: Record<string, string> = {
-		on_fail: 'stroke:#e06c75; stroke-dasharray:6 3',
-		on_reject: 'stroke:#e0af68; stroke-dasharray:6 3',
-		on_timeout: 'stroke:#7dcfff; stroke-dasharray:6 3'
+	// Edges and handles (DESIGN 3.6): success solid green; failure edges
+	// dashed and animated in their hue; a "then" fallback is the same hue at
+	// half opacity; dataflow is faint and dotted.
+	const HUE: Record<string, string> = {
+		on_fail: 'ros',
+		on_reject: 'amb',
+		on_timeout: 'tea'
 	};
+	const SHORT: Record<string, string> = {
+		on_fail: 'fail',
+		on_reject: 'reject',
+		on_timeout: 'timeout'
+	};
+	const edgeStyle = (kind: string, depth: number) =>
+		`stroke: var(--${HUE[kind]}); stroke-width: 1.6; stroke-dasharray: 6 4;${depth > 0 ? ' opacity: 0.5;' : ''}`;
+	const labelStyle = (kind: string, depth: number) =>
+		`color: var(--${HUE[kind]}); border-color: var(--${HUE[kind]}Ln);${depth > 0 ? ' opacity: 0.7;' : ''}`;
 
 	let nodes = $state.raw<Node[]>([]);
 	let edges = $state.raw<Edge[]>([]);
@@ -135,12 +155,12 @@
 				sourceHandle: l.sourceHandle,
 				target: l.target,
 				targetHandle: l.targetHandle,
-				type: 'step',
+				type: 'smoothstep',
 				selectable: false,
 				focusable: false,
 				deletable: false,
 				zIndex: -1,
-				style: 'stroke:#565f89; stroke-dasharray:2 3; stroke-width:1; opacity:0.6'
+				style: 'stroke: var(--ln2); stroke-dasharray: 1 4; stroke-width: 1.4; stroke-linecap: round'
 			});
 		}
 		if (doc.stages.length) {
@@ -148,8 +168,8 @@
 				id: 'entry|__start',
 				source: '__start',
 				target: doc.stages[0].id,
-				type: 'step',
-				style: 'stroke:#7aa2f7; stroke-width:2'
+				type: 'smoothstep',
+				style: 'stroke: var(--brand); stroke-width: 1.6; opacity: 0.8'
 			});
 		}
 		for (const ph of triggers) {
@@ -159,8 +179,8 @@
 					id: `entry|__trigger:${ph.id}`,
 					source: `__trigger:${ph.id}`,
 					target: first.id,
-					type: 'step',
-					style: 'stroke:#8b7cf6; stroke-width:2; stroke-dasharray:6 3'
+					type: 'smoothstep',
+					style: 'stroke: var(--vio); stroke-width: 1.6; stroke-dasharray: 6 4'
 				});
 		}
 		doc.stages.forEach((s, i) => {
@@ -170,8 +190,8 @@
 				source: s.id,
 				sourceHandle: 'success',
 				target: target === DONE ? '__done' : target,
-				type: 'step',
-				style: 'stroke:#4caf7d; stroke-width:2'
+				type: 'smoothstep',
+				style: 'stroke: var(--grn); stroke-width: 1.8'
 			});
 			for (const kind of EDGE_KINDS) {
 				// One rendered edge per chain link; deeper links are the "then"
@@ -186,13 +206,16 @@
 						sourceHandle: kind,
 						target: link.to === ABORT ? '__abort' : link.to,
 						targetHandle: dot ? `in:${dot}` : undefined,
-						type: 'step',
+						type: 'smoothstep',
+						// "fail ×3": the word as well as the hue, so colour is never the
+						// only signal; "then#1" marks a fallback link.
 						label:
 							link.to === ABORT
-								? `${kind}${depth > 0 ? ` then#${depth}` : ''}`
-								: `${kind}${depth > 0 ? ` then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
+								? `${SHORT[kind]}${depth > 0 ? ` · then#${depth}` : ''} → abort`
+								: `${SHORT[kind]}${depth > 0 ? ` · then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
+						labelStyle: labelStyle(kind, depth),
 						animated: true,
-						style: edgeStyles[kind] + (depth > 0 ? '; opacity:0.65' : '')
+						style: edgeStyle(kind, depth)
 					});
 				});
 			}
@@ -200,6 +223,9 @@
 		nodes = ns;
 		edges = es;
 	}
+	// Build once before SvelteFlow mounts, so its initial fitView sees the
+	// nodes (it fits on init only); the effect keeps them in step afterwards.
+	untrack(rebuild);
 	$effect(() => {
 		void rev;
 		rebuild();
@@ -238,8 +264,10 @@
 		bind:nodes
 		bind:edges
 		{nodeTypes}
-		colorMode="dark"
+		colorMode={prefs.theme}
 		fitView
+		fitViewOptions={{ padding: 0.12, maxZoom: 1.1 }}
+		minZoom={0.15}
 		deleteKey={null}
 		onconnect={handleConnect}
 		onnodedragstop={({ targetNode }) => {
@@ -268,8 +296,25 @@
 		}}
 		onpaneclick={() => onselect(null)}
 	>
-		<Background />
-		<Controls />
+		<FitOnInit />
+		<Background
+			variant={BackgroundVariant.Dots}
+			gap={20}
+			size={1.2}
+			bgColor="transparent"
+			patternColor="var(--ln)"
+		/>
+		<Controls position="bottom-left">
+			{#snippet after()}
+				{#if onarrange}
+					<ControlButton
+						onclick={onarrange}
+						title="Auto-arrange along the success chain"
+						aria-label="Auto-arrange">⇶</ControlButton
+					>
+				{/if}
+			{/snippet}
+		</Controls>
 	</SvelteFlow>
 </div>
 
@@ -277,22 +322,85 @@
 	.graph-wrap {
 		height: 100%;
 		min-height: 420px;
-		border: 1px solid var(--border, #333);
-		border-radius: 6px;
-		overflow: hidden;
+		position: relative;
 	}
-	/* Edge labels: xyflow's defaults assume a light canvas; pin them to the
-     app's dark palette so on_fail/on_timeout/on_reject stay readable. */
 	.graph-wrap :global(.svelte-flow) {
-		--xy-edge-label-background-color: var(--bg2, #1f2430);
-		--xy-edge-label-color: var(--fg, #d5dbe8);
+		--xy-background-color: transparent;
+		--xy-edge-label-background-color: var(--popBg);
+		--xy-edge-label-color: var(--tx);
+		--xy-connectionline-stroke: var(--brand);
+		--xy-connectionline-stroke-width: 1.6;
+		--xy-attribution-background-color: transparent;
+		background: transparent;
+		font-family: var(--sans);
 	}
+	/* Edge labels: "fail ×3" as a mono 10px pill in the edge's hue. */
 	.graph-wrap :global(.svelte-flow__edge-label) {
-		background: var(--bg2, #1f2430);
-		color: var(--fg, #d5dbe8);
-		border: 1px solid var(--border, #333);
-		border-radius: 3px;
-		padding: 0 4px;
+		font-family: var(--mono);
 		font-size: 10px;
+		font-weight: 600;
+		padding: 0 6px;
+		line-height: 16px;
+		border-radius: 999px;
+		border: 1px solid var(--ln2);
+		background: var(--popBg);
+		white-space: nowrap;
+	}
+	.graph-wrap :global(.svelte-flow__edge.selected .svelte-flow__edge-path),
+	.graph-wrap :global(.svelte-flow__edge:hover .svelte-flow__edge-path) {
+		stroke-width: 2.6 !important;
+		filter: drop-shadow(0 0 4px currentColor);
+	}
+	/* Handles: 8px dots in the edge colour; the target is neutral. */
+	.graph-wrap :global(.svelte-flow__handle) {
+		width: 8px;
+		height: 8px;
+		min-width: 8px;
+		min-height: 8px;
+		border: 1.5px solid var(--body);
+		background: var(--mut);
+	}
+	.graph-wrap :global(.svelte-flow__handle.connectingto),
+	.graph-wrap :global(.svelte-flow__handle:hover) {
+		box-shadow: 0 0 0 3px var(--brandBg);
+	}
+	/* Controls: a control-glass stack, bottom-left. */
+	.graph-wrap :global(.svelte-flow__controls) {
+		background: var(--lgBg), var(--popBg);
+		border: 1px solid var(--lgLn);
+		border-radius: 12px;
+		overflow: hidden;
+		box-shadow: var(--lgRim);
+		margin: 12px;
+	}
+	.graph-wrap :global(.svelte-flow__controls-button) {
+		background: transparent;
+		border: 0;
+		border-bottom: 1px solid var(--ln);
+		color: var(--mut);
+		width: 28px;
+		height: 26px;
+		padding: 0;
+		border-radius: 0;
+		box-shadow: none;
+		font-size: 13px;
+	}
+	.graph-wrap :global(.svelte-flow__controls-button:last-child) {
+		border-bottom: 0;
+	}
+	.graph-wrap :global(.svelte-flow__controls-button:hover) {
+		background: var(--p3);
+		color: var(--tx);
+	}
+	.graph-wrap :global(.svelte-flow__controls-button svg) {
+		fill: currentColor;
+		max-width: 11px;
+		max-height: 11px;
+	}
+	.graph-wrap :global(.svelte-flow__attribution) {
+		opacity: 0.4;
+	}
+	.graph-wrap :global(.svelte-flow__attribution a) {
+		color: var(--fnt);
 	}
 </style>

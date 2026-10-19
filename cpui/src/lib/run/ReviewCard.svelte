@@ -43,30 +43,32 @@
 
 	onMount(() => {
 		load();
-		const t = setInterval(load, 30_000);
+		const t = setInterval(() => !document.hidden && load(), 30_000);
 		return () => clearInterval(t);
 	});
 </script>
 
 {#if phases.length}
-	<div class="card">
-		<h3 style="margin-top:0">In review</h3>
-		<p class="small muted" style="margin-top:0">
-			The run ends when its merge requests merge (or one is closed). Until then these phases react
-			to what happens on them — one at a time.
-		</p>
+	<div class="rc card-in">
+		<div class="hd">
+			<span class="t">In review</span>
+			<span class="sub"
+				>The run ends when its merge requests merge (or one is closed). Until then these phases
+				react to what happens on them — one at a time.</span
+			>
+		</div>
 		{#each mrs.filter((m) => m.state === 'open') as mr (mr.repo + mr.branch)}
 			<div class="mr">
-				<div class="row small">
+				<div class="mrh">
 					<a href={mr.url} target="_blank" rel="noreferrer" class="mono"
 						>{mr.repo === 'repo' ? mr.branch : `${mr.repo}: ${mr.branch}`} ↗</a
 					>
-					{#if mr.error}<span class="muted">forge unreachable</span>
+					{#if mr.error}<span class="fnt">forge unreachable</span>
 					{:else if mr.mergeable === 'conflicts'}<span class="bad"
 							>conflicts with {mr.target ?? 'its target'}</span
 						>
 					{:else if mr.mergeable === 'clean'}<span class="ok">mergeable</span>
-					{:else}<span class="muted">mergeability pending</span>{/if}
+					{:else}<span class="fnt">mergeability pending</span>{/if}
 					{#if mr.pendingThreads > 0}<span class="warn"
 							>{mr.pendingThreads} unresolved thread{mr.pendingThreads === 1
 								? ''
@@ -77,15 +79,15 @@
 				{#each phases as p (p.id)}
 					{@const used = p.runs[mr.repo] ?? 0}
 					{@const spent = p.max !== -1 && used >= p.max}
-					<div class="row small phase">
-						<span class="mono">{p.id}</span>
-						<span class="muted"
+					<div class="phase">
+						<span class="mono pid">{p.id}</span>
+						<span class="mut ell"
 							>{trigger(p)}{p.confirm ? ', after you confirm' : ''} · {used}/{p.max === -1
 								? '∞'
 								: p.max} runs</span
 						>
 						<button
-							class="small"
+							class="btn-sm"
 							disabled={!idle || spent || busy !== ''}
 							title={spent
 								? 'This phase reached its max for this merge request'
@@ -101,26 +103,71 @@
 				{/each}
 			</div>
 		{/each}
-		{#if error}<div class="error small">{error}</div>{/if}
+		{#if error}<div class="err">{error}</div>{/if}
 	</div>
 {/if}
 
 <style>
+	.rc {
+		border-radius: 14px;
+		display: flex;
+		flex-direction: column;
+	}
+	.hd {
+		padding: 10px 14px 8px;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.t {
+		font-family: var(--serif);
+		font-size: 18px;
+	}
+	.sub {
+		font-size: 12px;
+		color: var(--mut);
+		text-wrap: pretty;
+	}
 	.mr {
-		border-top: 1px solid var(--border);
-		padding: 8px 0;
+		border-top: 1px solid var(--ln);
+		padding: 8px 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+	}
+	.mrh {
+		display: flex;
+		gap: 10px;
+		align-items: baseline;
+		flex-wrap: wrap;
+		font-size: 12px;
+	}
+	.mrh a {
+		color: var(--brand);
 	}
 	.phase {
-		margin-left: 12px;
-		margin-top: 4px;
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		gap: 10px;
+		align-items: center;
+		font-size: 12px;
+		padding-left: 10px;
+	}
+	.pid {
+		font-size: 11.5px;
 	}
 	.ok {
-		color: var(--green);
+		color: var(--grn);
 	}
 	.bad {
-		color: var(--red);
+		color: var(--ros);
 	}
 	.warn {
-		color: var(--amber);
+		color: var(--amb);
+	}
+	.err {
+		padding: 0 14px 10px;
+		color: var(--ros);
+		font-size: 11.5px;
 	}
 </style>

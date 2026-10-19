@@ -75,53 +75,55 @@
 </script>
 
 {#if error && !dirs['']}
-	<div class="muted small">Files are unavailable: {error}</div>
+	<div class="msg">Files are unavailable: {error}</div>
 {:else}
 	<div class="split">
 		<div class="tree">
-			<div class="tree-head small muted">
-				<label
-					><input type="checkbox" bind:checked={showIgnored} style="width:auto" /> ignored</label
-				>
-				<button class="linklike" onclick={reload}>refresh</button>
+			<div class="nodes">
+				{#if !dirs['']}<div class="msg"><span class="d pulse"></span>Loading…</div>{/if}
+				{#each rows as r (r.entry.path)}
+					<button
+						class="node"
+						class:sel={r.entry.path === selected}
+						class:ignored={r.entry.ignored}
+						class:dir={r.entry.dir}
+						style:padding-left="{8 + r.depth * 12}px"
+						onclick={() => (r.entry.dir ? toggle(r.entry) : view(r.entry.path))}
+						title={r.entry.path}
+					>
+						{#if r.entry.dir}{open[r.entry.path] ? '▾' : '▸'}&nbsp;{/if}{r.entry.name}{r.entry.dir
+							? '/'
+							: ''}
+					</button>
+				{/each}
 			</div>
-			{#if !dirs['']}<div class="muted small" style="padding:8px">Loading…</div>{/if}
-			{#each rows as r (r.entry.path)}
-				<button
-					class="node"
-					class:sel={r.entry.path === selected}
-					class:ignored={r.entry.ignored}
-					style="padding-left:{8 + r.depth * 14}px"
-					onclick={() => (r.entry.dir ? toggle(r.entry) : view(r.entry.path))}
-					title={r.entry.path}
-				>
-					<span class="twisty">{r.entry.dir ? (open[r.entry.path] ? '▾' : '▸') : ''}</span>
-					<span class="mono name">{r.entry.name}</span>
-				</button>
-			{/each}
+			<div class="tf">
+				<label class="ig"><input type="checkbox" bind:checked={showIgnored} /> Show ignored</label>
+				<button class="btn-icon" title="Refresh" onclick={reload}>↻</button>
+			</div>
 		</div>
 		<div class="viewer">
 			{#if !selected}
-				<div class="muted small" style="padding:12px">Pick a file.</div>
+				<div class="msg">Pick a file.</div>
 			{:else}
-				<div class="small muted viewer-head">
-					<span class="mono">{selected}</span>
-					{#if file}· {fmtSize(file.size)}{file.truncated ? ' · first 1 MB shown' : ''}{/if}
+				<div class="vh">
+					{selected}
+					{#if file}<span class="fnt"
+							>· {fmtSize(file.size)}{file.truncated ? ' · first 1 MB shown' : ''}</span
+						>{/if}
 				</div>
 				{#if fileError}
-					<div class="muted small" style="padding:12px">{fileError}</div>
+					<div class="msg">{fileError}</div>
 				{:else if !file}
-					<div class="muted small" style="padding:12px">Loading…</div>
+					<div class="msg"><span class="d pulse"></span>Loading…</div>
 				{:else if file.binary}
-					<div class="muted small" style="padding:12px">Binary file.</div>
+					<div class="bin">Binary file · {fmtSize(file.size)}</div>
 				{:else}
-					<table class="mono">
-						<tbody>
-							{#each lines as l, i (i)}
-								<tr><td class="ln">{i + 1}</td><td class="code">{l}</td></tr>
-							{/each}
-						</tbody>
-					</table>
+					<div class="code">
+						{#each lines as l, i (i)}
+							<div class="cl"><span class="ln">{i + 1}</span><span class="tx2">{l}</span></div>
+						{/each}
+					</div>
 				{/if}
 			{/if}
 		</div>
@@ -129,100 +131,138 @@
 {/if}
 
 <style>
+	.msg {
+		color: var(--mut);
+		font-size: 12px;
+		padding: 10px 12px;
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+	.d {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--az);
+	}
 	.split {
+		flex: 1;
+		min-height: 0;
 		display: grid;
-		grid-template-columns: minmax(200px, 30%) 1fr;
-		gap: 10px;
-		min-height: 300px;
+		grid-template-columns: 200px minmax(0, 1fr);
+		gap: 8px;
+		padding: 8px;
 	}
-	.tree,
-	.viewer {
-		border: 1px solid var(--border);
-		border-radius: 8px;
+	.tree {
+		border-radius: 13px;
+		background: var(--p2);
+		padding: 6px;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+	.nodes {
+		flex: 1;
+		min-height: 0;
 		overflow: auto;
-		max-height: 70vh;
+		display: flex;
+		flex-direction: column;
 	}
-	.viewer {
-		background: var(--bg);
+	.node {
+		all: unset;
+		box-sizing: border-box;
+		cursor: pointer;
+		padding: 2px 8px;
+		border-radius: 6px;
+		font-family: var(--mono);
+		font-size: 11.5px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		flex: none;
 	}
-	.tree-head {
+	.node:hover {
+		background: var(--p1);
+	}
+	.node.sel {
+		background: var(--brandBg);
+		color: var(--brand);
+	}
+	.node.ignored {
+		color: var(--fnt);
+	}
+	.tf {
+		flex: none;
+		margin-top: 4px;
+		padding: 4px 4px 0 8px;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 4px 8px;
-		border-bottom: 1px solid var(--border);
+		font-size: 11.5px;
+		color: var(--fnt);
 	}
-	.tree-head label {
-		display: flex;
-		gap: 4px;
-		align-items: center;
+	.ig {
 		margin: 0;
-	}
-	.linklike {
-		background: none;
-		border: none;
-		padding: 0;
-		color: var(--accent);
-		cursor: pointer;
-		font: inherit;
-	}
-	.node {
 		display: flex;
-		gap: 4px;
+		gap: 6px;
 		align-items: center;
-		width: 100%;
-		background: none;
-		border: none;
-		border-radius: 0;
-		color: var(--text);
-		padding-top: 2px;
-		padding-bottom: 2px;
+		font-size: 11.5px;
+		color: var(--fnt);
+		font-weight: 400;
 		cursor: pointer;
-		text-align: left;
-		font: inherit;
 	}
-	.node:hover {
-		background: var(--panel2);
+	.viewer {
+		min-width: 0;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		border-radius: 13px;
+		background: var(--code);
+		overflow: hidden;
 	}
-	.node.sel {
-		background: color-mix(in srgb, var(--accent) 18%, transparent);
+	.vh {
+		flex: none;
+		padding: 7px 12px;
+		font-family: var(--mono);
+		font-size: 11.5px;
+		font-weight: 500;
+		border-bottom: 1px solid var(--ln);
+		overflow-wrap: anywhere;
 	}
-	.node.ignored {
-		opacity: 0.5;
+	.vh .fnt {
+		font-weight: 400;
 	}
-	.twisty {
-		width: 10px;
-		font-size: 10px;
-		color: var(--muted);
-	}
-	.name {
-		white-space: nowrap;
-	}
-	.viewer-head {
-		padding: 6px 10px;
-		border-bottom: 1px solid var(--border);
-		position: sticky;
-		top: 0;
-		background: var(--panel);
-	}
-	table {
-		border-collapse: collapse;
-		width: 100%;
-		font-size: 12px;
-	}
-	td {
-		padding: 0 8px;
-		vertical-align: top;
-	}
-	.ln {
-		width: 1%;
-		color: var(--muted);
-		text-align: right;
-		user-select: none;
-		opacity: 0.6;
+	.bin {
+		margin: auto;
+		color: var(--mut);
 	}
 	.code {
-		white-space: pre-wrap;
-		word-break: break-all;
+		flex: 1;
+		min-height: 0;
+		overflow: auto;
+		padding: 8px 0;
+		font-family: var(--mono);
+		font-size: 11px;
+		line-height: 1.65;
+	}
+	.cl {
+		display: grid;
+		grid-template-columns: 44px 1fr;
+		min-width: max-content;
+	}
+	.ln {
+		text-align: right;
+		padding-right: 10px;
+		color: var(--fnt);
+		user-select: none;
+	}
+	.tx2 {
+		white-space: pre;
+	}
+	@container (max-width: 540px) {
+		.split {
+			grid-template-columns: minmax(0, 1fr);
+			grid-template-rows: minmax(90px, 35%) minmax(0, 1fr);
+		}
 	}
 </style>

@@ -5,7 +5,7 @@
 	import { api } from '$lib/api';
 	import '@xterm/xterm/css/xterm.css';
 
-	let { runId, repo = '' }: { runId: string; repo?: string } = $props();
+	let { runId, repo = '', dir = '' }: { runId: string; repo?: string; dir?: string } = $props();
 
 	let host = $state<HTMLDivElement | null>(null);
 	let status = $state<'connecting' | 'open' | 'closed'>('connecting');
@@ -27,9 +27,26 @@
 			if (disposed) return;
 			const term = new Terminal({
 				cursorBlink: true,
-				fontFamily: "ui-monospace, 'JetBrains Mono', monospace",
-				fontSize: 13,
-				theme: { background: '#0f1115', foreground: '#e6e9f0', cursor: '#8b7cf6' }
+				fontFamily: "'Geist Mono', ui-monospace, 'JetBrains Mono', monospace",
+				fontSize: 12,
+				lineHeight: 1.25,
+				allowTransparency: true,
+				theme: {
+					background: '#00000000',
+					foreground: '#e6efe8',
+					cursor: '#efe6cf',
+					cursorAccent: '#020a06',
+					selectionBackground: 'rgba(239,230,207,.3)',
+					black: '#0b1a12',
+					red: '#ff7a70',
+					green: '#7ee2a8',
+					yellow: '#f5b54a',
+					blue: '#7fb2ff',
+					magenta: '#c3a2ff',
+					cyan: '#5fd6cc',
+					white: '#e6efe8',
+					brightBlack: '#5f7c69'
+				}
 			});
 			const fit = new FitAddon();
 			term.loadAddon(fit);
@@ -82,51 +99,80 @@
 	});
 </script>
 
-<div class="bar small muted">
-	<span class="dot {status}"></span>
-	{status === 'open'
-		? 'connected — a shell in the repo'
-		: status === 'connecting'
-			? 'connecting…'
-			: 'disconnected'}
-	{#if status === 'closed'}
-		<button class="linklike" onclick={() => generation++}>reconnect</button>
-	{/if}
+<div class="panel">
+	<div class="bar">
+		<span class="dot {status}"></span>
+		<span
+			>{status === 'open'
+				? 'connected'
+				: status === 'connecting'
+					? 'connecting…'
+					: 'disconnected'}{#if dir}&nbsp;· <span class="mono">~/{dir}</span>{/if}</span
+		>
+		{#if status === 'closed'}
+			<button class="btn-sm" onclick={() => generation++}>Reconnect</button>
+		{/if}
+		<span class="end">ends when you leave this tab</span>
+	</div>
+	<div class="term" bind:this={host}></div>
 </div>
-<div class="term" bind:this={host}></div>
 
 <style>
-	.bar {
+	.panel {
+		flex: 1;
+		margin: 8px;
+		border-radius: 14px;
+		background: rgba(2, 10, 6, 0.78);
+		color: #e6efe8;
 		display: flex;
-		gap: 6px;
+		flex-direction: column;
+		min-height: 0;
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		overflow: hidden;
+	}
+	.bar {
+		flex: none;
+		padding: 8px 12px;
+		font-size: 11.5px;
+		display: flex;
+		gap: 8px;
 		align-items: center;
-		margin-bottom: 6px;
+		color: #93ad9c;
+	}
+	.mono {
+		font-size: 11px;
 	}
 	.dot {
-		width: 8px;
-		height: 8px;
+		width: 6px;
+		height: 6px;
 		border-radius: 50%;
-		background: var(--muted);
+		background: #ff7a70;
+		flex: none;
 	}
 	.dot.open {
-		background: var(--green);
+		background: #7ee2a8;
+		box-shadow: 0 0 8px #7ee2a8;
 	}
 	.dot.connecting {
-		background: var(--amber);
+		background: #7fb2ff;
+		animation: ap-pulse 1.4s ease-in-out infinite;
 	}
-	.linklike {
-		background: none;
-		border: none;
-		padding: 0;
-		color: var(--accent);
-		cursor: pointer;
-		font: inherit;
+	.btn-sm {
+		color: #e6efe8;
+		background: rgba(170, 255, 205, 0.08);
+		border-color: rgba(210, 255, 225, 0.18);
+	}
+	.end {
+		margin-left: auto;
+		color: #5f7c69;
+		white-space: nowrap;
 	}
 	.term {
-		height: 62vh;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 6px;
-		background: #0f1115;
+		flex: 1;
+		min-height: 0;
+		padding: 2px 6px 8px 12px;
+	}
+	.term :global(.xterm-viewport) {
+		background: transparent !important;
 	}
 </style>

@@ -20,31 +20,36 @@
 
 	onMount(() => {
 		load();
-		const t = setInterval(() => active && load(), 30_000);
+		const t = setInterval(() => active && !document.hidden && load(), 30_000);
 		return () => clearInterval(t);
 	});
 </script>
 
 {#each mrs.filter((m) => m.state === 'open' || m.error) as mr (mr.repo + mr.branch)}
-	<span class="mrs small" title={mr.error ?? `${mr.branch}${mr.target ? ' → ' + mr.target : ''}`}>
+	<span class="mrs" title={mr.error ?? `${mr.branch}${mr.target ? ' → ' + mr.target : ''}`}>
 		{#if mrs.length > 1}<span class="mono">{mr.repo}</span>{/if}
 		{#if mr.error}
-			<span class="muted">forge unreachable</span>
+			<span class="fnt">forge unreachable</span>
 		{:else if mr.mergeable === 'conflicts'}
-			<span class="bad">conflicts with {mr.target ?? 'its target'}</span>
+			<span class="bad">conflicts</span>
 		{:else if mr.mergeable === 'clean'}
 			<span class="ok">mergeable</span>
 		{:else}
-			<span class="muted">mergeability pending</span>
+			<span class="fnt">checking…</span>
 		{/if}
 		{#if mr.pendingThreads > 0}
-			· <span class="warn"
-				>{mr.pendingThreads} unresolved thread{mr.pendingThreads === 1 ? '' : 's'}</span
-			>{#if mr.lastCommentAt}<span class="muted">
-					· last {ago(mr.lastCommentAt.toISOString())}</span
-				>{/if}
+			<span class="warn"
+				>· {mr.pendingThreads} thread{mr.pendingThreads === 1 ? '' : 's'}{#if mr.lastCommentAt}
+					· {ago(mr.lastCommentAt.toISOString())}{/if}</span
+			>
 		{/if}
 	</span>
+{/each}
+{#each mrs.filter((m) => m.state === 'merged') as mr (mr.repo + mr.branch)}
+	<span class="mrs" title={`${mr.branch} merged`}
+		>{#if mrs.length > 1}<span class="mono">{mr.repo}</span>{/if}<span class="ok">merged</span
+		></span
+	>
 {/each}
 
 <style>
@@ -52,15 +57,21 @@
 		display: inline-flex;
 		gap: 4px;
 		align-items: baseline;
-		margin-left: 8px;
+		font-size: 11px;
+		font-weight: 500;
+		white-space: nowrap;
+	}
+	.mono {
+		font-size: 10.5px;
+		color: var(--fnt);
 	}
 	.ok {
-		color: var(--green);
+		color: var(--grn);
 	}
 	.bad {
-		color: var(--red);
+		color: var(--ros);
 	}
 	.warn {
-		color: var(--amber);
+		color: var(--amb);
 	}
 </style>

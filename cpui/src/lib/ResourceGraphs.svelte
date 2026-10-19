@@ -8,7 +8,7 @@
 	// the "now" readout in each chart's header.
 	let { samples }: { samples: ResourceSample[] } = $props();
 
-	const H = 64; // plot height
+	const H = 82; // plot height
 	const PAD = 5; // top inset so the 2px stroke never clips
 	const BASE = H - 1; // baseline y
 
@@ -17,7 +17,7 @@
 
 	const times = $derived(samples.map((s) => Date.parse(s.at)));
 
-	type Series = { label: string; color: string; vals: (number | null)[] };
+	type Series = { label: string; color: string; vals: (number | null)[]; dash?: boolean };
 	type Chart = {
 		title: string;
 		sub?: string; // muted context beside the title (e.g. the CPU core count)
@@ -89,22 +89,22 @@
 					? Math.min(100, nice(Math.max(...cpuShown, 1)))
 					: Math.max(100, Math.ceil(Math.max(...cpu, 0) / 100) * 100),
 				fmt: fmtPct,
-				series: [{ label: 'cpu', color: 'var(--blue)', vals: cpuShown }]
+				series: [{ label: 'cpu', color: 'var(--az)', vals: cpuShown }]
 			},
 			{
 				title: 'Memory',
 				yMax: memLimit || niceBytes(Math.max(...mem, 1)),
 				fmt: fmtBytes,
 				pctOf: memLimit || undefined,
-				series: [{ label: 'used', color: 'var(--accent)', vals: mem }]
+				series: [{ label: 'used', color: 'var(--vio)', vals: mem }]
 			},
 			{
 				title: 'Network',
 				yMax: niceBytes(Math.max(...[...rx, ...tx].map((v) => v ?? 0), 1)),
 				fmt: fmtRate,
 				series: [
-					{ label: 'in', color: 'var(--green)', vals: rx },
-					{ label: 'out', color: 'var(--amber)', vals: tx }
+					{ label: 'in', color: 'var(--tea)', vals: rx },
+					{ label: 'out', color: 'var(--tea)', vals: tx, dash: true }
 				]
 			}
 		];
@@ -168,32 +168,45 @@
 	});
 </script>
 
-{#if samples.length < 2}
-	<p class="muted small" style="margin:8px 0 0">
-		Collecting resource samples… (one every ~10s; needs a live workspace)
-	</p>
-{:else}
-	<div class="grid">
+<div class="rg">
+	<div class="top">
+		<span
+			>{samples.at(-1)?.pids ? `${samples.at(-1)!.pids} processes · ` : ''}sampled every ~10s</span
+		>
+		<span
+			>{hoverIdx != null && times[hoverIdx]
+				? `at ${new Date(times[hoverIdx]).toLocaleTimeString(undefined, { hour12: false })}`
+				: windowLabel}</span
+		>
+	</div>
+	{#if samples.length < 2}
+		<div class="collect">
+			<span class="d pulse"></span>Collecting samples… one every ~10s while the workspace is up.
+		</div>
+	{:else}
 		{#each charts as c, ci (c.title)}
 			<div class="chart">
-				<div class="head small">
-					<span class="muted"
-						>{c.title}{#if c.sub}&nbsp;· {c.sub}{/if}</span
-					>
+				<div class="head">
+					<span class="name">{c.title}</span>
 					<span class="vals">
 						{#each c.series as s (s.label)}
 							{@const v = readout(s)}
 							<span>
-								{#if c.series.length > 1}<span class="key" style="background:{s.color}"></span><span
-										class="muted">{s.label}&nbsp;</span
-									>{/if}{v == null ? '—' : c.fmt(v)}{#if c.pctOf && v != null}
-									<span class="muted">({Math.round((v / c.pctOf) * 100)}%)</span>{/if}
+								{#if c.series.length > 1}<span
+										class="key"
+										class:dash={s.dash}
+										style:border-color={s.color}
+									></span><span class="fnt">{s.label}&nbsp;</span>{/if}{v == null
+									? '—'
+									: c.fmt(v)}{#if c.pctOf && v != null}
+									<span class="fnt">({Math.round((v / c.pctOf) * 100)}%)</span>{/if}
 							</span>
 						{/each}
+						{#if c.sub}<span class="fnt sub">{c.sub}</span>{/if}
 					</span>
 				</div>
 				<div class="plot" bind:clientWidth={widths[ci]}>
-					<span class="ymax muted">{c.fmt(c.yMax)}</span>
+					<span class="ymax">{c.fmt(c.yMax)}</span>
 					{#if (widths[ci] ?? 0) > 10}
 						{@const w = widths[ci]}
 						<svg
@@ -204,36 +217,33 @@
 							onmousemove={move}
 							onmouseleave={() => (hoverIdx = null)}
 						>
-							<line x1="0" x2={w} y1={PAD} y2={PAD} class="grid-line" />
 							<line x1="0" x2={w} y1={(PAD + BASE) / 2} y2={(PAD + BASE) / 2} class="grid-line" />
-							<line x1="0" x2={w} y1={BASE} y2={BASE} class="base-line" />
 							{#each c.series as s (s.label)}
-								<path d={areaPath(s.vals, w, c.yMax)} fill={s.color} opacity="0.1" />
+								{#if !s.dash}<path
+										d={areaPath(s.vals, w, c.yMax)}
+										fill={s.color}
+										opacity="0.16"
+									/>{/if}
 								<path
 									d={linePath(s.vals, w, c.yMax)}
 									fill="none"
 									stroke={s.color}
-									stroke-width="2"
+									stroke-width={s.dash ? 1 : 1.75}
+									stroke-dasharray={s.dash ? '3 3' : undefined}
+									opacity={s.dash ? 0.75 : 1}
 									stroke-linejoin="round"
 									stroke-linecap="round"
 								/>
 							{/each}
 							{#if hoverIdx != null}
-								<line
-									x1={x(hoverIdx, w)}
-									x2={x(hoverIdx, w)}
-									y1={PAD}
-									y2={BASE}
-									class="crosshair"
-								/>
+								<line x1={x(hoverIdx, w)} x2={x(hoverIdx, w)} y1="0" y2={H} class="crosshair" />
 								{#each c.series as s (s.label)}
 									{#if s.vals[hoverIdx] != null}
 										<circle
 											cx={x(hoverIdx, w)}
 											cy={y(s.vals[hoverIdx]!, c.yMax)}
-											r="4"
+											r="3"
 											fill={s.color}
-											class="marker"
 										/>
 									{/if}
 								{/each}
@@ -243,85 +253,109 @@
 				</div>
 			</div>
 		{/each}
-	</div>
-	<div class="foot small muted">
-		<span>
-			{hoverIdx != null
-				? `at ${new Date(times[hoverIdx]).toLocaleTimeString()}`
-				: `${windowLabel} · sampled every ~10s`}
-		</span>
-		{#if samples.at(-1)?.pids}<span>{samples.at(-1)!.pids} processes</span>{/if}
-	</div>
-{/if}
+	{/if}
+</div>
 
 <style>
-	.grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-		gap: 12px;
-		margin-top: 8px;
+	.rg {
+		padding: 2px 8px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.top {
+		display: flex;
+		justify-content: space-between;
+		gap: 10px;
+		font-size: 11.5px;
+		color: var(--fnt);
+		padding: 0 4px;
+	}
+	.collect {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		color: var(--mut);
+		font-size: 12px;
+		padding: 18px 12px;
+		border-radius: 14px;
+		border: 1px dashed var(--ln2);
+	}
+	.d {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--az);
+		flex: none;
 	}
 	.chart {
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		padding: 8px 10px 6px;
+		border-radius: 14px;
+		background: var(--p2);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 		min-width: 0;
 	}
 	.head {
 		display: flex;
 		justify-content: space-between;
+		align-items: baseline;
 		gap: 8px;
+		padding: 8px 12px 2px;
 		white-space: nowrap;
+	}
+	.name {
+		font-family: var(--serif);
+		font-size: 17px;
 	}
 	.vals {
 		display: flex;
 		gap: 10px;
+		font-family: var(--mono);
+		font-size: 11.5px;
 		font-variant-numeric: tabular-nums;
+		overflow: hidden;
+	}
+	.vals .fnt {
+		font-family: var(--sans);
+		font-size: 11px;
 	}
 	.key {
 		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
+		width: 10px;
+		height: 0;
+		border-top: 2px solid;
 		margin-right: 4px;
-		vertical-align: baseline;
+		vertical-align: middle;
+	}
+	.key.dash {
+		border-top-style: dashed;
 	}
 	.plot {
 		position: relative;
-		margin-top: 4px;
+		cursor: crosshair;
 	}
 	.plot svg {
 		display: block;
 	}
 	.ymax {
 		position: absolute;
-		top: 0;
-		left: 2px;
+		top: 2px;
+		left: 12px;
 		font-size: 10px;
 		line-height: 1;
+		color: var(--fnt);
 		pointer-events: none;
+		font-family: var(--mono);
 	}
 	.grid-line {
-		stroke: var(--border);
+		stroke: var(--ln);
 		stroke-width: 1;
-		opacity: 0.5;
-	}
-	.base-line {
-		stroke: var(--border);
-		stroke-width: 1;
+		stroke-dasharray: 2 4;
 	}
 	.crosshair {
-		stroke: var(--muted);
+		stroke: var(--tx);
 		stroke-width: 1;
-		opacity: 0.6;
-	}
-	.marker {
-		stroke: var(--panel);
-		stroke-width: 2;
-	}
-	.foot {
-		display: flex;
-		justify-content: space-between;
-		margin-top: 6px;
+		opacity: 0.5;
 	}
 </style>

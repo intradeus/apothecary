@@ -1,7 +1,7 @@
 <script lang="ts">
-	// Stored files as clickable chips: image thumbnails inline, a glyph
-	// otherwise. kind picks the byte route — attachments (human-given) vs
-	// snapshots (engine-captured record).
+	// Stored files as read-only chips (DESIGN 4.15): image thumbnails inline,
+	// a glyph otherwise; each links to the stored file. kind picks the byte
+	// route — attachments (human-given) vs snapshots (engine-captured record).
 	import { api } from '$lib/api';
 	import { fmtBytes } from '$lib/format';
 
@@ -21,23 +21,23 @@
 
 {#if items.length}
 	<div class="files">
-		{#if label}<div class="small muted">{label}</div>{/if}
+		{#if label}<div class="lbl">{label}</div>{/if}
 		<div class="chips">
 			{#each items as f (f.kind + f.id)}
 				<a
-					class="file"
+					class="fc"
 					href={url(f)}
 					target="_blank"
 					rel="noreferrer"
 					title={`${f.filename} — ${f.mime ?? ''} ${fmtBytes(f.size)}`}
 				>
 					{#if f.mime?.startsWith('image/')}
-						<img src={url(f)} alt={f.filename} />
+						<img src={url(f)} alt="" />
 					{:else}
-						<span class="ico">📄</span>
+						<span class="ico">▤</span>
 					{/if}
 					<span class="name">{f.filename}</span>
-					<span class="size muted">{fmtBytes(f.size)}</span>
+					<span class="size mono">{fmtBytes(f.size)}</span>
 				</a>
 			{/each}
 		</div>
@@ -50,38 +50,56 @@
 		flex-direction: column;
 		gap: 6px;
 	}
+	.lbl {
+		font-size: 11.5px;
+		color: var(--mut);
+	}
 	.chips {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 6px;
 	}
-	.file {
+	.fc {
 		display: inline-flex;
 		align-items: center;
-		gap: 6px;
-		padding: 3px 8px;
-		border: 1px solid var(--border);
-		border-radius: 6px;
+		gap: 8px;
+		padding: 3px 10px 3px 3px;
+		border-radius: 10px;
+		background: var(--p2);
+		border: 1px solid var(--ln);
 		font-size: 12px;
-		max-width: 260px;
+		max-width: 280px;
+		color: var(--tx);
+	}
+	.fc:hover {
+		background: var(--p3);
 		text-decoration: none;
-		color: inherit;
 	}
-	.file:hover {
-		background: var(--hover, rgba(127, 127, 127, 0.12));
-	}
-	.file img {
-		width: 22px;
-		height: 22px;
+	.fc img,
+	.ico {
+		flex: none;
+		width: 28px;
+		height: 28px;
+		border-radius: 7px;
 		object-fit: cover;
-		border-radius: 3px;
 	}
-	.file .name {
+	.ico {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--code);
+		color: var(--mut);
+		font-size: 13px;
+	}
+	.name {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		min-width: 0;
 	}
-	.file .size {
-		font-size: 11px;
+	.size {
+		color: var(--mut);
+		font-size: 10.5px;
+		white-space: nowrap;
 	}
 </style>
