@@ -41,9 +41,10 @@ const (
 	// is lexical: a $NAME input is resolved by the engine at stage time,
 	// anything else is a repo-relative artifact path. Adding one costs a
 	// const here plus one resolution case in the engine.
-	SentinelChanged   = "$CHANGED"   // git diff --stat of the branch vs its base
-	SentinelMRURL     = "$MR_URL"    // the run's merge-request link (create_mr's output)
-	SentinelWorkspace = "$WORKSPACE" // the workspace's access link (terminal/IDE)
+	SentinelChanged     = "$CHANGED"     // changed-file list of the branch vs its base
+	SentinelUncommitted = "$UNCOMMITTED" // the working tree's pending changes (git status)
+	SentinelMRURL       = "$MR_URL"      // the run's merge-request link (create_mr's output)
+	SentinelWorkspace   = "$WORKSPACE"   // the workspace's access link (terminal/IDE)
 	// SentinelDecision and SentinelFailure carry what the edge that re-entered
 	// this stage brought with it: a rejection's rationale (verdict comments or
 	// a human's gate feedback) and a failing stage's output tail. They are

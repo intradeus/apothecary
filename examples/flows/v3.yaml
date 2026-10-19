@@ -92,6 +92,8 @@ agents:
     read_only: true
     allow_bash: true
     inputs:
+      - name: changes
+        description: the uncommitted files the commit will record
       - name: plan
         description: the approved plan, for context on what the change set implements
         optional: true
@@ -113,7 +115,8 @@ agents:
       no bullets, no trailing period.
 
       Inspect before writing:
-      - `git status --short` and `git diff HEAD` — what actually changed.
+      - The files listed in your changes input (`git diff HEAD` on them) —
+        what actually changed.
       - `git log -20 --format='%s'` — the project's existing commit style.
         Match it: follow whatever convention the repo already uses (e.g.
         Conventional Commits `type(scope): summary`, or a plain imperative
@@ -123,8 +126,9 @@ agents:
       The subject line: imperative mood, under 70 characters, summarizing the
       whole change in one line; if it spans areas, name the most significant.
 
-      If `git status --short` shows nothing, write a single short subject in
-      the project's style anyway (the commit stage skips a clean tree).
+      If the changes input shows nothing uncommitted, write a single short
+      subject in the project's style anyway (the commit stage skips a clean
+      tree).
   - name: reviewer
     description: adversarial code reviewer
     read_only: true
@@ -242,6 +246,7 @@ stages:
     agent: committer
     max_turns: 10
     input:
+      changes: $UNCOMMITTED
       plan: artifacts/plan.md
       failure: $FAILURE
     on_success: commit

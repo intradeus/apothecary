@@ -85,6 +85,11 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 				in.Name, inputDesc(spec, in.Name), x.changedFiles())
 			continue
 		}
+		if in.Value == flow.SentinelUncommitted {
+			fmt.Fprintf(&b, "# INPUT: %s%s (git status --short)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
+				in.Name, inputDesc(spec, in.Name), x.uncommittedFiles())
+			continue
+		}
 		content := "(artifact missing)"
 		if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, in.Value); err == nil {
 			content = tail(string(data), 16<<10)
@@ -234,10 +239,46 @@ func (x *exec) changedFiles() string {
 	if len(rs.checkouts) <= 1 {
 		return diff(event.PrimaryCheckoutDir, "origin/"+sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))
 	}
+	return x.checkoutSections(func(co event.Checkout) string {
+		return diff(co.Dir, "origin/"+sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch))
+	})
+}
+
+// uncommittedFiles renders $UNCOMMITTED: the working tree's pending changes
+// (staged, unstaged and untracked) — what a commit stage would record right
+// now, which $CHANGED cannot show since it diffs commits only. Scoped like
+// $CHANGED: the subject alone inside a reaction phase, else every checkout.
+func (x *exec) uncommittedFiles() string {
+	rs := x.rs
+	status := func(dir string) string {
+		res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
+			Script:  "git status --short --untracked-files=all",
+			Dir:     dir,
+			Timeout: rs.fl.Defaults.Timeout,
+		})
+		if err != nil || res.ExitCode != 0 {
+			return "(no status available)"
+		}
+		if strings.TrimSpace(res.Output) == "" {
+			return "(nothing uncommitted)\n"
+		}
+		return res.Output
+	}
+	if co := x.subjectCheckout(); co != nil {
+		return status(co.Dir)
+	}
+	if len(rs.checkouts) <= 1 {
+		return status(event.PrimaryCheckoutDir)
+	}
+	return x.checkoutSections(func(co event.Checkout) string { return status(co.Dir) })
+}
+
+// checkoutSections renders a per-checkout sentinel on a multi-repo run: one
+// section per repository, headed by its name and path.
+func (x *exec) checkoutSections(render func(co event.Checkout) string) string {
 	var b strings.Builder
-	for _, co := range rs.checkouts {
-		base := sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch)
-		fmt.Fprintf(&b, "## %s (~/%s)\n%s", co.Name, co.Dir, strings.TrimRight(diff(co.Dir, "origin/"+base), "\n"))
+	for _, co := range x.rs.checkouts {
+		fmt.Fprintf(&b, "## %s (~/%s)\n%s", co.Name, co.Dir, strings.TrimRight(render(co), "\n"))
 		b.WriteString("\n")
 	}
 	return b.String()

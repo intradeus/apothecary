@@ -555,14 +555,15 @@ artifact path (no leading `/`, no `.` or `..` segments).
 | sentinel | is | bindable on |
 |---|---|---|
 | `$CHANGED` | `git diff --name-status` of the branch against **the branch this run forked from** — the changed-file list, never the full diff; on a multi-repo run, one section per checkout; in a reaction phase, what this phase run changed on its subject | agent input |
+| `$UNCOMMITTED` | `git status --short` of the working tree — staged, unstaged and untracked files, i.e. what a commit stage would record right now (`$CHANGED` diffs commits only, so it cannot see this); scoped per checkout like `$CHANGED` | agent input |
 | `$DECISION` | why the last attempt was turned down: a verdict's comments, or a human's gate feedback | agent input |
 | `$FAILURE` | what the failing stage printed: the last 8 KB, with every secret the engine injected replaced by `[redacted:<kind>]` | agent input |
 | `$MR_URL` | the run's merge request link, produced by `create_mr`; the first when a multi-repo run opened several — a gate then also lists them all in its context; in a reaction phase, the subject's | gate input |
 | `$WORKSPACE` | the workspace's access link (terminal, else IDE) | gate input |
 
 The scoping is enforced: an agent cannot bind `$MR_URL` (a link is for a human
-to click, not for a prompt to read), and a gate cannot bind `$CHANGED` (prompt
-content is not something to show a human).
+to click, not for a prompt to read), and a gate cannot bind `$CHANGED` or
+`$UNCOMMITTED` (prompt content is not something to show a human).
 
 **`$DECISION` and `$FAILURE`** are the retry channel. They hold whatever the
 edge that re-entered this stage brought with it, so they are empty on a first

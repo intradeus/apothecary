@@ -1081,11 +1081,11 @@ func pathValue(v string) error {
 }
 
 // agentInputValue accepts a path or one of the sentinels an agent prompt can
-// render: the changed-file list, and the content of the edge that re-entered
+// render: the changed-file lists, and the content of the edge that re-entered
 // the stage.
 func agentInputValue(v string) error {
 	switch v {
-	case SentinelChanged, SentinelDecision, SentinelFailure:
+	case SentinelChanged, SentinelUncommitted, SentinelDecision, SentinelFailure:
 		return nil
 	case "ticket":
 		return fmt.Errorf("the ticket is always the TASK section; remove this binding")
@@ -1093,8 +1093,8 @@ func agentInputValue(v string) error {
 		return fmt.Errorf("%s is a link for a human_gate, not something an agent reads", v)
 	}
 	if !validArtifactPath(v) {
-		return fmt.Errorf("%q must be a relative artifact path, %s, %s or %s",
-			v, SentinelChanged, SentinelDecision, SentinelFailure)
+		return fmt.Errorf("%q must be a relative artifact path, %s, %s, %s or %s",
+			v, SentinelChanged, SentinelUncommitted, SentinelDecision, SentinelFailure)
 	}
 	return nil
 }
@@ -1108,7 +1108,7 @@ func gateInputValue(v string) error {
 		return fmt.Errorf("retired: use %s", SentinelMRURL)
 	case "workspace":
 		return fmt.Errorf("retired: use %s", SentinelWorkspace)
-	case SentinelChanged, SentinelDecision, SentinelFailure:
+	case SentinelChanged, SentinelUncommitted, SentinelDecision, SentinelFailure:
 		return fmt.Errorf("%s is agent-prompt content, not something to show a human", v)
 	}
 	if !validArtifactPath(v) {

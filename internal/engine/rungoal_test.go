@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports"
 )
 
@@ -122,5 +123,37 @@ func TestRestartCarriesDirection(t *testing.T) {
 	}
 	if !strings.Contains(lastPrompt(h), "avoid the cache this time") {
 		t.Errorf("restart direction not in the prompt:\n%s", lastPrompt(h))
+	}
+}
+
+// $UNCOMMITTED renders the working tree's status — what the commit stage is
+// about to record, which $CHANGED (commits only) cannot see yet.
+func TestUncommittedRendersWorkingTreeStatus(t *testing.T) {
+	h := newHarness(t, mustFlow(t, `name: uncommitted
+version: 3
+defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: committer
+    prompt: name it
+    inputs:
+      - { name: changes, description: the uncommitted files }
+stages:
+  - { id: commit_msg, type: agent, agent: committer, input: { changes: $UNCOMMITTED } }
+`))
+	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.HasPrefix(cmd.Script, "git status --short") {
+			return ports.ExecResult{Output: " M main.go\n?? health.go\n"}, nil
+		}
+		return ports.ExecResult{}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T", Goal: "g"}, "uncommitted", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	prompt := lastPrompt(h)
+	if !strings.Contains(prompt, "# INPUT: changes") || !strings.Contains(prompt, "?? health.go") {
+		t.Errorf("prompt lacks the uncommitted files:\n%s", prompt)
 	}
 }

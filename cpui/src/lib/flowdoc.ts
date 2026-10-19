@@ -60,6 +60,9 @@ export function feedSentinelFor(kind: EdgeKind): string {
 // lexical: a $NAME input is resolved by the engine, anything else is a
 // repo-relative artifact path.
 export const SENTINEL_CHANGED = '$CHANGED';
+// $UNCOMMITTED is the working tree's pending changes — what $CHANGED (commits
+// only) cannot see before a commit stage runs.
+export const SENTINEL_UNCOMMITTED = '$UNCOMMITTED';
 export const SENTINEL_MR_URL = '$MR_URL';
 export const SENTINEL_WORKSPACE = '$WORKSPACE';
 // $DECISION and $FAILURE carry what the edge that re-entered a stage brought:
@@ -72,7 +75,8 @@ export const isFeedSentinel = (v: string) => v === SENTINEL_DECISION || v === SE
 
 /** Which sentinels each stage type may bind (mirror of the Go value rules). */
 export function sentinelsFor(type: StageKind): string[] {
-	if (type === 'agent') return [SENTINEL_CHANGED, SENTINEL_DECISION, SENTINEL_FAILURE];
+	if (type === 'agent')
+		return [SENTINEL_CHANGED, SENTINEL_UNCOMMITTED, SENTINEL_DECISION, SENTINEL_FAILURE];
 	if (type === 'human_gate') return [SENTINEL_WORKSPACE, SENTINEL_MR_URL];
 	return [];
 }
@@ -502,7 +506,7 @@ export interface IOPort {
 	name: string;
 	/** The bound artifact path, or a sentinel. */
 	value: string;
-	/** True when value is engine-provided ($CHANGED, $MR_URL, $WORKSPACE). */
+	/** True when value is engine-provided ($CHANGED, $UNCOMMITTED, $MR_URL, $WORKSPACE). */
 	sentinel: boolean;
 	/** Declared description, when the contract carries one. */
 	description?: string;

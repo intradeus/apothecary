@@ -291,6 +291,10 @@ func TestBindingShapeErrors(t *testing.T) {
 		{"agent gets a link", agent("input: { mr: $MR_URL }"), "is a link for a human_gate"},
 		{"gate gets prompt content", header + "stages:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n",
 			"not something to show a human"},
+		{"gate gets uncommitted", header + "stages:\n  - { id: g, type: human_gate, input: { c: $UNCOMMITTED } }\n",
+			"not something to show a human"},
+		{"command uncommitted input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $UNCOMMITTED } }\n",
+			"must be a relative artifact path"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
