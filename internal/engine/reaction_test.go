@@ -244,11 +244,10 @@ phases:
     on: { signal: mr_conflicts, confirm: true }
     stages:
       - { id: sync, type: action, action: sync_target, input: { strategy: STRATEGY }, on_success: sync_test,
-          on_fail: { to: resolve, max: 2, then: { to: debug_sync, max: -1 } } }
+          on_fail: { to: resolve, max: 2, then: debug } }
       - { id: resolve, type: agent, agent: resolver, input: { conflict: $FAILURE }, on_success: sync }
       - { id: sync_test, type: command, run: "./verify.sh" }
-      - { id: sync_push, type: action, action: push_branch, on_success: done, on_fail: { to: debug_sync, max: -1 } }
-      - { id: debug_sync, type: human_gate, input: { workspace: $WORKSPACE }, on_success: sync, on_reject: abort }
+      - { id: sync_push, type: action, action: push_branch, on_success: done, on_fail: debug }
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1m }
     stages:
@@ -420,8 +419,8 @@ func TestUnresolvedConflictReachesAHuman(t *testing.T) {
 	rh.git.mu.Unlock()
 	rh.conflict(t)
 	rh.approveConflictFix(t)
-	gate := rh.waitPing(t, PingGate)
-	if gate.StageID != "debug_sync" {
+	gate := rh.waitPing(t, PingDebug)
+	if gate.StageID != "sync" {
 		t.Fatalf("parked at %s", gate.StageID)
 	}
 	var fails []string
@@ -480,8 +479,8 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 	if err := rh.e.AnswerPing(first.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
 	}
-	gate := rh.waitPing(t, PingGate)
-	if gate.StageID != "debug_sync" {
+	gate := rh.waitPing(t, PingDebug)
+	if gate.StageID != "sync_push" {
 		t.Fatalf("parked at %s", gate.StageID)
 	}
 	rh.git.mu.Lock()

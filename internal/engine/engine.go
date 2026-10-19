@@ -289,7 +289,7 @@ type runHandle struct {
 type Ping struct {
 	ID       string
 	RunID    string
-	Type     string // plan_approval|final_review|clarification|blocker|permission
+	Type     string // event.Ping*: gate|debug|phase_confirm|select|clarification|blocker|permission
 	Question string
 	Context  string
 	// Files are the attached workspace paths (first = the primary reviewed

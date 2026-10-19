@@ -87,6 +87,7 @@ const RUN_STATES: RunState[] = [
 ];
 const PING_TYPES: PingType[] = [
 	'gate',
+	'debug',
 	'phase_confirm',
 	'select',
 	'clarification',

@@ -15,6 +15,7 @@
 	import type { ActionSpec, SignalSpec } from '$lib/domain';
 	import {
 		ABORT,
+		DEBUG,
 		DONE,
 		EDGE_KINDS,
 		SENTINEL_CHANGED,
@@ -161,7 +162,7 @@
 
 	function renameStage(oldId: string, newId: string) {
 		newId = newId.trim();
-		if (!newId || newId === oldId || newId === DONE || newId === ABORT) return;
+		if (!newId || newId === oldId || newId === DONE || newId === ABORT || newId === DEBUG) return;
 		if (doc.stages.some((s) => s.id === newId)) return;
 		for (const s of doc.stages) {
 			if (s.id === oldId) s.id = newId;
@@ -213,11 +214,11 @@
 		sourceType === 'human_gate' || targetsGate(to);
 
 	// retarget switches one chain link's target, normalizing the link's other
-	// fields: abort links carry no max/feed/then; stage links need a max, and
-	// -1 survives only while a gate remains on the link.
+	// fields: abort and debug links carry no max/feed/then; stage links need a
+	// max, and -1 survives only while a gate remains on the link.
 	function retarget(sourceType: StageKind, link: DocEdge, to: string) {
 		link.to = to;
-		if (to === ABORT) {
+		if (to === ABORT || to === DEBUG) {
 			link.max = undefined;
 			link.then = undefined;
 		} else if (link.max == null || (link.max === -1 && !unlimitedOK(sourceType, to))) {
@@ -243,7 +244,7 @@
 	function appendLink(e: DocEdge) {
 		let last = e;
 		while (last.then) last = last.then;
-		if (last.to === ABORT || last.max === -1) return; // nothing runs after abort/unlimited
+		if (last.to === ABORT || last.to === DEBUG || last.max === -1) return; // nothing follows abort/debug/unlimited
 		last.then = { to: doc.stages[0]?.id ?? '', max: 3 };
 		onchange();
 	}
@@ -769,9 +770,12 @@
 								>
 									{#each stageIds as id (id)}<option value={id}>{id}</option>{/each}
 									<option value={ABORT}>abort — stop the run deliberately</option>
+									<option value={DEBUG}
+										>debug — park for a human to fix the workspace, then re-run this stage</option
+									>
 								</select>
 							</div>
-							{#if link.to !== ABORT}
+							{#if link.to !== ABORT && link.to !== DEBUG}
 								{@const canUnlimit = unlimitedOK(s.type, link.to)}
 								{#if canUnlimit}
 									<Toggle
@@ -815,7 +819,7 @@
 						</div>
 					{/each}
 					<div class="row">
-						{#if links[links.length - 1].to !== ABORT && links[links.length - 1].max !== -1}
+						{#if links[links.length - 1].to !== ABORT && links[links.length - 1].to !== DEBUG && links[links.length - 1].max !== -1}
 							<button class="btn-sm" onclick={() => appendLink(e)}>{I.add} then (fallback)</button>
 						{/if}
 						<button class="btn-sm btn-ghost" onclick={() => dropLink(s, kind, e)}
@@ -924,9 +928,10 @@
 				<div class="help">
 					Click a node or edge to edit it. Drag from a node's coloured handles to rewire control
 					flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may
-					target the abort terminal to stop the run deliberately. The faint dashed lines are
-					dataflow — they are derived from the artifact paths stages read and write, so you change
-					them by editing an input or output, not by dragging.
+					target the abort terminal to stop the run deliberately, or the debug leaf to park it for a
+					human and then run the stage again. The faint dashed lines are dataflow — they are derived
+					from the artifact paths stages read and write, so you change them by editing an input or
+					output, not by dragging.
 				</div>
 			{/if}
 		</div>

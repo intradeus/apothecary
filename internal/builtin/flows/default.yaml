@@ -307,11 +307,7 @@ phases:
           description: "explore the repo and write the implementation plan",
           input: { rejection: $DECISION, failure: $FAILURE },
           on_success: plan_gate,
-          on_fail: { to: plan, max: 2, then: { to: debug_plan, max: -1 } } }
-      - { id: debug_plan, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Planning failed repeatedly. The workspace is parked for inspection — fix what the agent could not, then approve to re-run planning (reject aborts the run).",
-          on_success: plan,
-          on_reject: abort }
+          on_fail: { to: plan, max: 2, then: debug } }
       - { id: plan_gate,  type: human_gate, input: { plan: artifacts/plan.md },
           question: "Approve this implementation plan? Rejecting sends it back to the planner with your feedback.",
           on_success: build,
@@ -320,20 +316,12 @@ phases:
           input: { plan: artifacts/plan.md, rejection: $DECISION, failure: $FAILURE },
           description: "implement the approved plan, leaving the changes uncommitted",
           on_success: commit_msg,
-          on_fail: { to: build, max: 2, then: { to: debug_build, max: -1 } } }
-      - { id: debug_build, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The build stage failed repeatedly. Inspect the workspace, fix what the agent could not, then approve to re-run the build (reject aborts).",
-          on_success: build,
-          on_reject: abort }
+          on_fail: { to: build, max: 2, then: debug } }
       - { id: commit_msg, type: agent, agent: committer, max_turns: 10,
           input: { changes: $UNCOMMITTED, plan: artifacts/plan.md, failure: $FAILURE },
           description: "write the commit subject for the build's uncommitted work",
           on_success: commit,
-          on_fail: { to: commit_msg, max: 1, then: { to: debug_commit_msg, max: -1 } } }
-      - { id: debug_commit_msg, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Writing the commit message failed. Inspect the workspace, then approve to retry (reject aborts).",
-          on_success: commit_msg,
-          on_reject: abort }
+          on_fail: { to: commit_msg, max: 1, then: debug } }
       # A failing commit (git identity, hooks) is not something a rerun fixes —
       # hand it straight to a human, then re-run the commit itself.
       # each_repo: a multi-repo project commits (and below, pushes) in every
@@ -342,19 +330,11 @@ phases:
           run: "git add -A && if ! git diff --cached --quiet; then git commit -F \"$HOME/repo/artifacts/commit.md\"; fi",
           input: { message: artifacts/commit.md },
           on_success: test,
-          on_fail: { to: debug_commit, max: -1 } }
-      - { id: debug_commit, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The commit failed — usually git identity or a hook. Fix it in the workspace, then approve to re-run the commit (reject aborts).",
-          on_success: commit,
-          on_reject: abort }
+          on_fail: debug }
       - { id: test,       type: command, run_ref: verify,
           on_success: review,
-          on_fail: { to: build, max: 5, then: { to: debug_test, max: -1 } },
+          on_fail: { to: build, max: 5, then: debug },
           on_timeout: { to: test, max: 1, then: { to: build, max: 2 } } }
-      - { id: debug_test, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The test suite keeps failing and the builder could not fix it. Inspect the workspace, then approve to re-run the tests (reject aborts).",
-          on_success: test,
-          on_reject: abort }
       # The reviewer's verdict output is what makes on_reject reachable here; a
       # REJECT carries its comments back to the builder as feedback.
       - { id: review,     type: agent, agent: reviewer, model: opencode-go/glm-5.2,
@@ -362,30 +342,18 @@ phases:
           description: "adversarial review against the plan, conventions and correctness",
           on_success: redact,
           on_reject: { to: build, max: 3 },
-          on_fail: { to: review, max: 1, then: { to: debug_review, max: -1 } } }
-      - { id: debug_review, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The review stage itself failed (not a rejection). Inspect the workspace, then approve to re-run the review (reject aborts).",
-          on_success: review,
-          on_reject: abort }
+          on_fail: { to: review, max: 1, then: debug } }
       - { id: redact,     type: agent, agent: redactor, max_turns: 15,
           input: { changes: $CHANGED, failure: $FAILURE },
           description: "write the merge request description",
           on_success: push,
-          on_fail: { to: redact, max: 1, then: { to: debug_redact, max: -1 } } }
-      - { id: debug_redact, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Writing the merge request description failed. Inspect the workspace, then approve to retry (reject aborts).",
-          on_success: redact,
-          on_reject: abort }
+          on_fail: { to: redact, max: 1, then: debug } }
       # push_branch records what it pushed: a later push of this branch (after a
       # rebase) is leased against it, never blind. Refused = someone else wrote to
       # the branch, which is a human's call.
       - { id: push,       type: action, action: push_branch,
           on_success: mr,
-          on_fail: { to: debug_push, max: -1 } }
-      - { id: debug_push, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The push failed — credentials, a protected branch, or commits on the remote branch this run did not make (never overwritten). Fix it in the workspace, then approve to retry (reject aborts).",
-          on_success: push,
-          on_reject: abort }
+          on_fail: debug }
       # The merge request opens and the run goes into review: from here its
       # merge request decides how the run ends, and the phases below react.
       - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },
@@ -400,32 +368,18 @@ phases:
       - { id: sync,       type: action, action: sync_target, input: { strategy: merge },
           description: "the engine merges the target in; a conflict pauses the merge with the files named",
           on_success: sync_test,
-          on_fail: { to: resolve, max: 6, then: { to: debug_sync, max: -1 } } }
+          on_fail: { to: resolve, max: 6, then: debug } }
       - { id: resolve,    type: agent, agent: resolver, max_turns: 30,
           input: { plan: artifacts/plan.md, conflict: $FAILURE },
           description: "remove the conflict markers, keeping both intents — no git",
           on_success: sync,
-          on_fail: { to: debug_sync, max: -1 } }
-      # Approving re-runs sync: a merge the human finished by hand is
-      # continued (or found complete), then tested and pushed as usual.
-      - { id: debug_sync, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Merging the target conflicts and the resolver could not settle it. The merge is paused in the workspace: resolve the markers in the named files (edit the files only — the engine finishes the merge), then approve to retry (reject abandons the run).",
-          on_success: sync,
-          on_reject: abort }
+          on_fail: debug }
       - { id: sync_test,  type: command, run_ref: verify,
           on_success: sync_push,
-          on_fail: { to: debug_sync_test, max: -1 } }
-      - { id: debug_sync_test, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The tests fail after merging the target in. Fix it in the workspace, then approve to re-run them (reject abandons the run).",
-          on_success: sync_test,
-          on_reject: abort }
+          on_fail: debug }
       - { id: sync_push,  type: action, action: push_branch,
           on_success: done,
-          on_fail: { to: debug_sync_push, max: -1 } }
-      - { id: debug_sync_push, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Pushing the merged branch was refused — commits on the remote branch this run did not see are never overwritten. Look at the workspace, then approve to retry (reject abandons the run).",
-          on_success: sync_push,
-          on_reject: abort }
+          on_fail: debug }
 
   # Reviewers commented, then nothing for an hour: someone reviewed and
   # stopped. You pick which pending threads to fix (inbox) — a comment may be
@@ -440,52 +394,28 @@ phases:
           input: { plan: artifacts/plan.md, comments: artifacts/review.md, failure: $FAILURE },
           description: "address every review thread",
           on_success: fix_commit_msg,
-          on_fail: { to: fix, max: 2, then: { to: debug_fix, max: -1 } } }
-      - { id: debug_fix,  type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Fixing the review comments failed repeatedly. Inspect the workspace, then approve to re-run the fix (reject abandons the run).",
-          on_success: fix,
-          on_reject: abort }
+          on_fail: { to: fix, max: 2, then: debug } }
       - { id: fix_commit_msg, type: agent, agent: committer, max_turns: 10,
           input: { changes: $UNCOMMITTED, plan: artifacts/plan.md, failure: $FAILURE },
           on_success: fix_commit,
-          on_fail: { to: fix_commit_msg, max: 1, then: { to: debug_fix_commit_msg, max: -1 } } }
-      - { id: debug_fix_commit_msg, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Writing the commit message failed. Inspect the workspace, then approve to retry (reject abandons the run).",
-          on_success: fix_commit_msg,
-          on_reject: abort }
+          on_fail: { to: fix_commit_msg, max: 1, then: debug } }
       # Runs in the merge request's own checkout; the message lives in the
       # primary, where the committer wrote it.
       - { id: fix_commit, type: command,
           run: "git add -A && if ! git diff --cached --quiet; then git commit -F \"$HOME/repo/artifacts/commit.md\"; fi",
           input: { message: artifacts/commit.md },
           on_success: fix_test,
-          on_fail: { to: debug_fix_commit, max: -1 } }
-      - { id: debug_fix_commit, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The commit failed — usually git identity or a hook. Fix it in the workspace, then approve to re-run the commit (reject abandons the run).",
-          on_success: fix_commit,
-          on_reject: abort }
+          on_fail: debug }
       - { id: fix_test,   type: command, run_ref: verify,
           on_success: fix_push,
-          on_fail: { to: fix, max: 3, then: { to: debug_fix_test, max: -1 } } }
-      - { id: debug_fix_test, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "The tests keep failing after the review fixes. Inspect the workspace, then approve to re-run them (reject abandons the run).",
-          on_success: fix_test,
-          on_reject: abort }
+          on_fail: { to: fix, max: 3, then: debug } }
       - { id: fix_push,   type: action, action: push_branch,
           on_success: reply,
-          on_fail: { to: debug_fix_push, max: -1 } }
-      - { id: debug_fix_push, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Pushing the review fixes was refused — commits on the remote branch this run did not see are never overwritten. Look at the workspace, then approve to retry (reject abandons the run).",
-          on_success: fix_push,
-          on_reject: abort }
+          on_fail: debug }
       - { id: reply,      type: agent, agent: replier, max_turns: 15,
           input: { comments: artifacts/review.md, changes: $CHANGED, failure: $FAILURE },
           description: "answer each thread with what was done",
           on_success: post,
-          on_fail: { to: reply, max: 1, then: { to: debug_reply, max: -1 } } }
-      - { id: debug_reply, type: human_gate, input: { workspace: $WORKSPACE },
-          question: "Writing the replies failed. Inspect the workspace, then approve to retry (reject abandons the run).",
-          on_success: reply,
-          on_reject: abort }
+          on_fail: { to: reply, max: 1, then: debug } }
       - { id: post,       type: action, action: reply_review_comments, input: { replies: artifacts/replies.yaml },
           on_success: done }

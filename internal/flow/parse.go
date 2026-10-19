@@ -270,7 +270,7 @@ func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("line %d: edge must be a mapping or %q", n.Line, TerminalAbort)
+	return fmt.Errorf("line %d: edge must be a mapping, %q or %q", n.Line, TerminalAbort, ReservedDebug)
 }
 
 // IOPair is one named binding in a stage's map-form input/output. Line is
@@ -810,6 +810,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if raw.ID == TerminalAbort {
 		return fail("id %q is reserved (the deliberate-stop edge terminal)", TerminalAbort)
 	}
+	if raw.ID == ReservedDebug {
+		return fail("id %q is reserved (the debug leaf: `then: debug` parks the run for a human and re-enters the failing stage)", ReservedDebug)
+	}
 	if raw.ID == ReservedStart {
 		return fail("id %q is reserved (the entry marker; the entry is the first stage)", ReservedStart)
 	}
@@ -1028,6 +1031,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 	}
 
+	if raw.OnSuccess == TerminalAbort || raw.OnSuccess == ReservedDebug {
+		return fail("on_success cannot be %q — only an edge (on_fail/on_reject/on_timeout) may target it", raw.OnSuccess)
+	}
 	if raw.OnSuccess != "" && raw.OnSuccess != TerminalDone && !slugRe.MatchString(raw.OnSuccess) {
 		return fail("on_success %q must be a stage id or %q", raw.OnSuccess, TerminalDone)
 	}
@@ -1141,7 +1147,7 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 		// An edge no longer says what it carries: its kind decides that, and
 		// the TARGET stage binds the content as an input.
 		where := fmt.Sprintf("on stage %q", raw.To)
-		if raw.To == TerminalAbort || raw.To == "" {
+		if raw.To == TerminalAbort || raw.To == ReservedDebug || raw.To == "" {
 			where = "on the target stage"
 		}
 		return fail("%q is retired: bind %s as an input %s instead", "feed", FeedSentinel(kind), where)
@@ -1162,6 +1168,18 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 			return fail("then does not apply when to is %q (nothing runs after abort)", TerminalAbort)
 		}
 		return &Edge{To: TerminalAbort}, nil
+	}
+	if raw.To == ReservedDebug {
+		// The debug leaf: the run parks for a human and comes back to this
+		// stage when they continue. Unlimited by nature (bounded by human
+		// attention), and nothing can follow it but the stage itself.
+		switch {
+		case raw.Max != nil:
+			return fail("max does not apply when to is %q (the human decides when to stop)", ReservedDebug)
+		case raw.Then != nil:
+			return fail("then does not apply when to is %q (continuing re-enters this stage; nothing else follows)", ReservedDebug)
+		}
+		return &Edge{To: ReservedDebug}, nil
 	}
 	if raw.Max == nil {
 		return fail("max is required")
@@ -1191,7 +1209,7 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		s := &f.Stages[i]
 		for kind, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {
-				if link.To == TerminalAbort {
+				if link.To == TerminalAbort || link.To == ReservedDebug {
 					continue
 				}
 				if _, ok := ids[link.To]; !ok {
@@ -1267,7 +1285,7 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		}
 		for _, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {
-				if link.To != TerminalAbort {
+				if link.To != TerminalAbort && link.To != ReservedDebug {
 					queue = append(queue, link.To)
 				}
 			}
@@ -1415,7 +1433,7 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 		return nil
 	}
 	same := func(from *Stage, to string) bool {
-		return to == TerminalDone || to == TerminalAbort || f.Stages[ids[to]].Phase == from.Phase
+		return to == TerminalDone || to == TerminalAbort || to == ReservedDebug || f.Stages[ids[to]].Phase == from.Phase
 	}
 	entryOpensMR := false
 	for i := range f.Stages {

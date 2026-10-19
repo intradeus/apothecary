@@ -9,6 +9,10 @@ export const DONE = 'done';
 // ABORT is the reserved edge target that deliberately stops the run
 // (projected as abandoned) — the explicit twin of DONE.
 export const ABORT = 'abort';
+// DEBUG is the reserved edge target that parks the run for a human with the
+// workspace and comes BACK to the stage that took it — a leaf on the canvas,
+// not a terminal. Like abort it carries no max/then.
+export const DEBUG = 'debug';
 // START is the entry marker's layout/link key. The entry itself is the
 // first stage in the document (DESIGN3 §2.1) — START is never serialized.
 export const START = 'start';
@@ -23,7 +27,8 @@ export const CURRENT_VERSION = 3;
 
 // An edge is a chain: when a link's max is exhausted the next failure
 // falls through to `then` (retry-then-escalate). A link with to: abort
-// stops the run and carries no max/then.
+// stops the run, one with to: debug parks it for a human; both carry no
+// max/then.
 //
 // An edge does not say what it carries: its kind decides that ($DECISION for a
 // rejection, $FAILURE for a failure), and the TARGET stage binds it as an input.
@@ -431,10 +436,10 @@ function nonEmptyIO(v?: StageIO): boolean {
 	return v != null && Object.keys(v).length > 0;
 }
 
-// edgeToYamlValue serializes one chain link (recursing into then). An
-// abort link uses the parser's scalar sugar: `on_reject: abort`.
+// edgeToYamlValue serializes one chain link (recursing into then). An abort
+// or debug link uses the parser's scalar sugar: `on_reject: abort`, `then: debug`.
 function edgeToYamlValue(e: DocEdge): unknown {
-	if (e.to === ABORT) return ABORT;
+	if (e.to === ABORT || e.to === DEBUG) return e.to;
 	const eo: Record<string, unknown> = { to: e.to, max: e.max };
 	if (e.then) eo.then = edgeToYamlValue(e.then);
 	return eo;

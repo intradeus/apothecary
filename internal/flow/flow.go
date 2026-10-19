@@ -102,11 +102,15 @@ const (
 // (projected as abandoned, mirroring the frontend's Abort verb) — the
 // explicit form of "no edge / edge exhausted". ReservedStart is the graph
 // editor's entry-marker key (the entry IS the first stage in the document;
-// "start" is never a routing target). Stage ids may shadow none of them.
+// "start" is never a routing target). ReservedDebug is the debug leaf: a
+// reserved EDGE target that is NOT a terminal — the run parks for a human
+// who has the workspace, and continuing re-enters the stage that took the
+// link (abandoning ends the run). Stage ids may shadow none of them.
 const (
 	TerminalDone  = "done"
 	TerminalAbort = "abort"
 	ReservedStart = "start"
+	ReservedDebug = "debug"
 )
 
 // UnlimitedMax marks a link that never exhausts (max: -1). It is only
@@ -116,14 +120,16 @@ const (
 // bounded by human attention. Links between agents/commands must carry a
 // finite max — flow budgets cannot bound cost-free retries (a failing
 // command consumes no turns and no dollars; a broken harness can fail in
-// milliseconds).
+// milliseconds). The debug leaf is unlimited by nature and takes no max.
 const UnlimitedMax = -1
 
 // Edge is a recoverable redirect (on_fail / on_reject / on_timeout). Each
 // link carries its own cumulative max; when a link is exhausted the NEXT
 // failure falls through to Then (retry-then-escalate chains). An exhausted
 // chain abandons the run. To may be TerminalAbort: taking that link stops
-// the run deliberately (max/then don't apply — there is no target stage).
+// the run deliberately, or ReservedDebug: the run parks for a human and
+// comes back to this stage on continue (neither takes max/then — there is
+// no target stage).
 //
 // An edge does not say what it carries: the content it brings is always
 // available to its target as $DECISION or $FAILURE (FeedSentinel), and the

@@ -184,7 +184,11 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		}
 		st := &fl.Stages[rs.pos]
 		var err error
-		if rs.ph == phAfterComplete {
+		if rs.ph == phDebug {
+			// Parked on the debug leaf: a human has the workspace. Like a
+			// gate this never provisions; continuing re-enters st below.
+			err = x.stageDebug(st)
+		} else if rs.ph == phAfterComplete {
 			err = x.routeAfterComplete(st)
 		} else if rs.ph == phAfterFail && st.Type != flow.StageAction {
 			err = x.routeAfterFail(st)
@@ -279,6 +283,10 @@ func (x *exec) append(ps ...event.Payload) error {
 			v.Reason = x.redact.scrub(v.Reason)
 		case *event.RunFailed:
 			v.Reason = x.redact.scrub(v.Reason)
+		case *event.PingRaised:
+			// The debug leaf hands a human what the stage printed.
+			v.Question = x.redact.scrub(v.Question)
+			v.Context = x.redact.scrub(v.Context)
 		// The transcript is workspace output verbatim — an agent that cats
 		// .env or echoes a token puts it here first.
 		case *event.AgentPrompted:
@@ -385,6 +393,22 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		}
 		key := chainKey(st.ID, kind, depth)
 		count := rs.edgeCounts[key] + 1
+		if e.To == flow.ReservedDebug {
+			// The debug leaf: park here, on this stage, for a human with the
+			// workspace (stageDebug). Counted like any link — the timeline
+			// shows n/∞ — but never exhausted: the human decides when to stop.
+			feed := tail(feedContent, 8<<10)
+			if err := x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: count,
+				Max: flow.UnlimitedMax, Depth: depth, Feed: feed}); err != nil {
+				return err
+			}
+			rs.edgeCounts[key] = count
+			rs.ph = phDebug
+			rs.feed = feed
+			rs.feedSentinel = flow.FeedSentinel(kind)
+			rs.feedAttempts = 0
+			return nil
+		}
 		if e.Max != flow.UnlimitedMax && count > e.Max {
 			continue // this link is exhausted; fall through to then
 		}
@@ -1449,11 +1473,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 
 	var p *Ping
 	if rs.ph == phIn {
-		if op := rs.openGatePing(st.ID); op != nil {
-			x.e.mu.Lock()
-			p = x.e.pings[op.PingID]
-			x.e.mu.Unlock()
-		}
+		p = x.openDecision(st, PingGate)
 	}
 	started := x.e.clock()
 	if p == nil {
@@ -1477,19 +1497,14 @@ func (x *exec) stageGate(st *flow.Stage) error {
 			}
 		}
 		p = &Ping{
-			ID: x.e.newID(), RunID: rs.runID, Type: PingGate,
+			Type:     PingGate,
 			Question: gateQuestion(st, rs.view.TicketTitle),
 			// A gate over several merge requests lists them all; the link
 			// stays the first (the primary repository's).
 			Context: x.mrListMarkdown(),
-			Files:   files, Link: link, StageID: st.ID, RaisedAt: x.e.clock(),
-			AnswerKind: event.AnswerDecision, done: make(chan struct{}),
+			Files:   files, Link: link, StageID: st.ID, AnswerKind: event.AnswerDecision,
 		}
-		x.e.mu.Lock()
-		x.e.pings[p.ID] = p
-		x.e.mu.Unlock()
-		if err := x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
-			Files: p.Files, Link: p.Link, StageID: st.ID, AnswerKind: event.AnswerDecision}); err != nil {
+		if err := x.raiseDecision(p); err != nil {
 			return err
 		}
 		// The plan a human approves is the single most important document in
@@ -1691,6 +1706,83 @@ func (x *exec) signalPoller(st *flow.Stage, slug string) func() (bool, error) {
 // signalFailNotify is the consecutive-failure count at which a signal poll
 // raises a blocker notification (once per streak).
 const signalFailNotify = 3
+
+// openDecision returns the live Ping for a still-open decision of this stage
+// and type — one runLoop re-registered from the log after a restart — or nil
+// when the stage has to raise one.
+func (x *exec) openDecision(st *flow.Stage, ptype string) *Ping {
+	op := x.rs.openPing(st.ID, ptype)
+	if op == nil {
+		return nil
+	}
+	x.e.mu.Lock()
+	defer x.e.mu.Unlock()
+	return x.e.pings[op.PingID]
+}
+
+// raiseDecision registers a decision ping and records it: the caller fills
+// what is asked and of which stage, this mints the id and the clock. What
+// happens next (a snapshot of the reviewed file, the channels) is the
+// caller's.
+func (x *exec) raiseDecision(p *Ping) error {
+	p.ID, p.RunID, p.RaisedAt, p.done = x.e.newID(), x.rs.runID, x.e.clock(), make(chan struct{})
+	x.e.mu.Lock()
+	x.e.pings[p.ID] = p
+	x.e.mu.Unlock()
+	return x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
+		Files: p.Files, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind})
+}
+
+// --- the debug leaf --------------------------------------------------------
+
+// stageDebug is the debug leaf (FLOWLANG §3): st took `then: debug`, and the
+// run parks here for a human who has the workspace. No stage of its own —
+// the ping belongs to st — and nothing is spent while they look. The engine
+// composes no prose: the ping carries which stage, what it printed and where
+// the workspace is, and the card is the UI's. Continue re-enters st as a
+// fresh attempt (the cursor never left it); abandon ends the run. Like a
+// gate it never provisions: ensureEnv runs lazily when st re-enters, and
+// re-seeds what a human may have changed.
+func (x *exec) stageDebug(st *flow.Stage) error {
+	rs := x.rs
+	// Recovery: answered pre-crash, routing unrecorded.
+	if rs.gateAnswer != nil {
+		ans := rs.gateAnswer
+		rs.gateAnswer = nil
+		return x.routeDebug(st, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback})
+	}
+	if x.openDecision(st, PingDebug) == nil {
+		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: tail(rs.feed, 4<<10),
+			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerDecision}
+		if err := x.raiseDecision(p); err != nil {
+			return err
+		}
+		x.e.notify(x.bg, ports.Notification{
+			RunID: rs.runID, PingID: p.ID, Type: p.Type,
+			Title: p.Question, Body: p.Primary(),
+		})
+	}
+	// Pure waiting: give the slot back. The answer wakes the run, and replay
+	// lands on gateAnswer above.
+	return errWaitingOnHuman
+}
+
+// routeDebug acts on the human's decision at the debug leaf.
+func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
+	rs := x.rs
+	if ans.Answer == "approve" {
+		// Continue: back into st, fresh — pos never moved. What advance does
+		// after a gate's approval, by hand: no feed, no "attempt n of m".
+		rs.ph = phStart
+		rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
+		return nil
+	}
+	reason := fmt.Sprintf("debug rejected at stage %s", st.ID)
+	if fb := strings.TrimSpace(ans.Feedback); fb != "" {
+		reason += ": " + tail(fb, 2<<10)
+	}
+	return x.abandon(st.ID, "", reason)
+}
 
 func (x *exec) routeGate(st *flow.Stage, ans PingAnswer, started time.Time) error {
 	if ans.Answer == "approve" {
@@ -1962,7 +2054,8 @@ func (x *exec) ensureEnv() error {
 			x.deliverRunAttachments()
 			return nil
 		}
-		x.e.log.Warn("environment not running on recovery; re-provisioning", "run", rs.runID, "env", rs.envID, "status", status)
+		x.e.log.Warn("environment not running; re-provisioning — whatever was changed by hand in the old container is gone with it",
+			"run", rs.runID, "env", rs.envID, "status", status)
 	}
 	if rs.view.State == run.Pending {
 		if err := x.append(&event.EnvRequested{}); err != nil {

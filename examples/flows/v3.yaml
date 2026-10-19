@@ -215,9 +215,7 @@ stages:
     on_fail:
       to: plan
       max: 2
-      then:
-        to: debug_plan
-        max: -1
+      then: debug
   - id: plan_gate
     type: human_gate
     question: Approve this implementation plan?
@@ -238,9 +236,7 @@ stages:
     on_fail:
       to: build
       max: 2
-      then:
-        to: debug_build
-        max: -1
+      then: debug
   - id: commit_msg
     type: agent
     agent: committer
@@ -253,18 +249,14 @@ stages:
     on_fail:
       to: commit_msg
       max: 1
-      then:
-        to: debug_commit_msg
-        max: -1
+      then: debug
   - id: commit
     type: command
     run: git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi
     input:
       message: artifacts/commit.md
     on_success: test
-    on_fail:
-      to: debug_commit
-      max: -1
+    on_fail: debug
   - id: test
     type: command
     run_ref: verify
@@ -272,9 +264,7 @@ stages:
     on_fail:
       to: build
       max: 5
-      then:
-        to: debug_test
-        max: -1
+      then: debug
     on_timeout:
       to: test
       max: 1
@@ -294,9 +284,7 @@ stages:
     on_fail:
       to: review
       max: 1
-      then:
-        to: debug_review
-        max: -1
+      then: debug
     on_reject:
       to: build
       max: 3
@@ -311,9 +299,7 @@ stages:
     on_fail:
       to: redact
       max: 1
-      then:
-        to: debug_redact
-        max: -1
+      then: debug
   - id: push
     type: command
     run: git push -u origin HEAD
@@ -321,9 +307,7 @@ stages:
     on_fail:
       to: push
       max: 1
-      then:
-        to: debug_push
-        max: -1
+      then: debug
   - id: mr
     type: action
     action: create_mr
@@ -340,51 +324,3 @@ stages:
     on_reject:
       to: build
       max: -1
-  - id: debug_plan
-    type: human_gate
-    question: Planning failed repeatedly — inspect the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: plan
-    on_reject: abort
-  - id: debug_build
-    type: human_gate
-    question: The build failed repeatedly — inspect the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: build
-    on_reject: abort
-  - id: debug_commit_msg
-    type: human_gate
-    question: Writing the commit message failed — inspect the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: commit_msg
-    on_reject: abort
-  - id: debug_commit
-    type: human_gate
-    question: The commit failed — fix it in the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: commit
-    on_reject: abort
-  - id: debug_test
-    type: human_gate
-    question: The tests keep failing — inspect the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: test
-    on_reject: abort
-  - id: debug_review
-    type: human_gate
-    question: The review stage itself failed — inspect the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: review
-    on_reject: abort
-  - id: debug_redact
-    type: human_gate
-    question: Writing the merge request description failed — inspect the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: redact
-    on_reject: abort
-  - id: debug_push
-    type: human_gate
-    question: The push failed — fix it in the workspace, then approve to retry.
-    input: { workspace: $WORKSPACE }
-    on_success: push
-    on_reject: abort

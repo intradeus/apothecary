@@ -1426,21 +1426,24 @@ stages:
 	}
 }
 
-// TestManualDebugGate: the inspect-and-fix stop. A failing test escalates to a
-// gate whose input is $WORKSPACE, so the human gets the terminal/IDE link;
-// approve re-enters the flow, and the gate counts as a WANTED ping.
-func TestManualDebugGate(t *testing.T) {
-	doc := `name: dbg
+// debugLeafDoc: a build/test loop whose test stage escalates to the debug
+// leaf after one retry.
+const debugLeafDoc = `name: dbg
 version: 2
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_success: done,
-      on_fail: { to: build, max: 1, then: { to: debug, max: 1 } } }
-  - { id: debug, type: human_gate, question: "Inspect the workspace.", input: { workspace: $WORKSPACE },
-      on_success: test, on_reject: abort }
+      on_fail: { to: build, max: 1, then: debug } }
 `
-	h := newHarness(t, mustFlow(t, doc))
+
+// TestDebugLeaf: the inspect-and-fix stop, built in. A failing test escalates
+// to the debug leaf: the run parks on a decision attributed to the failing
+// stage — its output as context, the workspace link — with no stage of its
+// own. Continuing re-runs that stage; the stop is a WANTED ping; rejecting
+// abandons the run at that stage.
+func TestDebugLeaf(t *testing.T) {
+	h := newHarness(t, mustFlow(t, debugLeafDoc))
 	verifies := 0
 	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
@@ -1456,30 +1459,45 @@ stages:
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := h.waitPing(t, PingGate)
-	if !strings.HasSuffix(p.Link, "/terminal") {
-		t.Errorf("payload = %q, want the workspace terminal link", p.Link)
+	p := h.waitPing(t, PingDebug)
+	if p.StageID != "test" || !strings.HasSuffix(p.Link, "/terminal") || !strings.Contains(p.Context, "segfault") || p.Question != "test failed" {
+		t.Errorf("ping = stage %q link %q question %q context %q; want the failing stage, the terminal link, its output", p.StageID, p.Link, p.Question, p.Context)
 	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve", Feedback: "fixed a stale lockfile"}); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
 
+	evs := h.events(t, runID)
 	if v := h.view(t, runID); v.State != run.Completed {
-		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
+		t.Fatalf("state = %s, events: %v", v.State, eventTypes(evs))
 	}
-	rc, _ := findPayload[*event.RunCompleted](h.events(t, runID))
+	tests := 0
+	for _, e := range evs {
+		if st, ok := e.Payload.(*event.StageStarted); ok {
+			if st.StageID == "debug" {
+				t.Error("the debug leaf must not start a stage of its own")
+			}
+			if st.StageID == "test" {
+				tests++
+			}
+		}
+	}
+	if tests != 3 || verifies != 3 {
+		t.Errorf("test attempts = %d (verify ran %d), want 3: fail, fail, then the re-run after the human", tests, verifies)
+	}
+	rc, _ := findPayload[*event.RunCompleted](evs)
 	if rc.UnwantedPings != 0 {
-		t.Errorf("unwanted_pings = %d, want 0 (gates are wanted)", rc.UnwantedPings)
+		t.Errorf("unwanted_pings = %d, want 0 (the debug stop is asked on purpose)", rc.UnwantedPings)
 	}
 
-	// Reject path: the debug gate's on_reject: abort stops the run.
+	// Reject path: abandoned at the failing stage, with the human's words.
 	verifies = -1000 // keep verify failing forever for the second run
 	run2, err := h.e.CreateRun(context.Background(), Ticket{Title: "T2"}, "dbg", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2 := h.waitPing(t, PingGate, p.ID)
+	p2 := h.waitPing(t, PingDebug, p.ID)
 	if err := h.e.AnswerPing(p2.ID, PingAnswer{Answer: "reject", Feedback: "cannot reproduce"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1488,8 +1506,80 @@ stages:
 		t.Fatalf("run2 state = %s", v.State)
 	}
 	ra, _ := findPayload[*event.RunAbandoned](h.events(t, run2))
-	if ra.StalledAt != "debug" || !strings.Contains(ra.Reason, "cannot reproduce") {
+	if ra.StalledAt != "test" || !strings.Contains(ra.Reason, "cannot reproduce") {
 		t.Errorf("run_abandoned = %+v", ra)
+	}
+}
+
+// A run parked at the debug leaf survives a restart: the log ends in the
+// open ping, recovery leaves it parked (nothing to do), the ping is still
+// answerable, and the answer sends the run back into the stage. The crash
+// window between the answer and its routing is covered too.
+func TestDebugLeafSurvivesRestart(t *testing.T) {
+	fl := mustFlow(t, debugLeafDoc)
+	parked := func(t *testing.T, h *harness, runID string, answered bool) {
+		t.Helper()
+		ctx := context.Background()
+		envID, err := h.envp.Provision(ctx, ports.EnvSpec{RunID: runID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		evs := []event.Payload{
+			&event.RunCreated{TicketTitle: "T", FlowName: "dbg", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/" + runID},
+			&event.EnvRequested{},
+			&event.EnvReady{EnvID: string(envID), Links: []event.Link{{Kind: "terminal", URL: "http://ws/" + runID + "/terminal"}}},
+			&event.StageStarted{StageID: "build", Iteration: 1},
+			&event.StageCompleted{StageID: "build", SessionID: "sess-1"},
+			&event.StageStarted{StageID: "test", Iteration: 1},
+			&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "segfault"},
+			&event.EdgeTaken{From: "test", To: "debug", Edge: "on_fail", Count: 1, Max: -1, Feed: "segfault"},
+			&event.PingRaised{PingID: "dbg-" + runID, Type: event.PingDebug, Question: "test failed", Context: "segfault",
+				Link: "http://ws/" + runID + "/terminal", StageID: "test", AnswerKind: event.AnswerDecision},
+			&event.RunPaused{StageID: "test", Reason: event.PauseWaiting},
+		}
+		if answered {
+			evs = append(evs, &event.PingAnswered{PingID: "dbg-" + runID, Answer: "approve", Feedback: "fixed"})
+		}
+		for _, p := range evs {
+			if _, err := h.store.Append(ctx, runID, p); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// Parked, unanswered: recovery leaves it alone; the answer wakes it.
+	h := newHarness(t, fl)
+	parked(t, h, "r-dbg", false)
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-dbg")
+	if v := h.view(t, "r-dbg"); v.State != run.WaitingOnHuman || !v.Dormant {
+		t.Fatalf("after boot: state %s dormant %v, want parked on the debug stop", v.State, v.Dormant)
+	}
+	if err := h.e.AnswerPing("dbg-r-dbg", PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-dbg")
+	if v := h.view(t, "r-dbg"); v.State != run.Completed {
+		t.Fatalf("after the answer: state %s, events %v", v.State, eventTypes(h.events(t, "r-dbg")))
+	}
+	if n := countType(h.events(t, "r-dbg"), event.TypePingRaised); n != 1 {
+		t.Errorf("ping_raised ×%d, want the one the log already had", n)
+	}
+
+	// Answered, then the crash before routing: recovery routes the answer.
+	h2 := newHarness(t, fl)
+	parked(t, h2, "r-dbg2", true)
+	if err := h2.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h2.e.Wait("r-dbg2")
+	if v := h2.view(t, "r-dbg2"); v.State != run.Completed {
+		t.Fatalf("recovered answer: state %s, events %v", v.State, eventTypes(h2.events(t, "r-dbg2")))
+	}
+	if n := countType(h2.events(t, "r-dbg2"), event.TypePingRaised); n != 1 {
+		t.Errorf("ping_raised ×%d after recovery, want 1 (no second question)", n)
 	}
 }
 

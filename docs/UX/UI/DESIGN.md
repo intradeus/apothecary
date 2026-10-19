@@ -351,6 +351,7 @@ Type pill: 999px, 11px / 600, tint fill + hue text + hue border, 6px dot.
 | Type | Hue | Classification |
 |---|---|---|
 | `gate` | grn | **wanted** (human_gate stage) |
+| `debug` | amb | **wanted** (the flow's `debug` leaf: "Stage X failed — check why", the failure, the workspace link; continue re-runs the stage, abandon ends the run; label "Debug") |
 | `clarification` | amb | unwanted (counts against run) |
 | `blocker` | ros | unwanted |
 | `permission` | vio | unwanted |

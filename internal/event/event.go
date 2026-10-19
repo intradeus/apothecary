@@ -305,6 +305,12 @@ type EdgeTaken struct {
 // raised by agents through ask_human.
 const (
 	PingGate = "gate"
+	// PingDebug is the debug leaf (FLOWLANG §3): a stage took `then: debug`
+	// and the run is parked for a human who has the workspace. StageID is the
+	// stage that failed, Context what it printed, Link the workspace; the
+	// question is a bare label — the card is the UI's. Approve re-enters that
+	// stage, reject abandons the run. Engine-raised and wanted, like a gate.
+	PingDebug = "debug"
 	// PingPhaseConfirm asks a human whether a phase may start (a phase with
 	// `confirm: true`). Answered like a gate — approve | reject — but it
 	// belongs to no stage: it is raised while the run is between phases.
@@ -483,7 +489,7 @@ func (p *PingRaised) Kind() string {
 		return p.AnswerKind
 	}
 	switch {
-	case p.Type == PingGate || p.Type == PingPhaseConfirm:
+	case p.Type == PingGate || p.Type == PingPhaseConfirm || p.Type == PingDebug:
 		return AnswerDecision
 	case p.Type == PingSelect:
 		return AnswerMulti

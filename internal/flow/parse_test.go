@@ -160,34 +160,33 @@ func TestCanonicalV3(t *testing.T) {
 
 // TestReferenceFlowParses locks the repo's shipped expanded-form example (what
 // the graph editor emits): abort terminals, on_timeout, then-chains, unlimited
-// links and workspace rescue gates.
+// links and the debug leaf as every stage's rescue.
 func TestReferenceFlowParses(t *testing.T) {
 	f, err := Load("../../examples/flows/v3.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	test := f.Stage("test")
-	if test.Edge(EdgeFail).Then == nil || test.Edge(EdgeFail).Then.To != "debug_test" {
-		t.Errorf("test.on_fail.then = %+v, want debug_test escalation", test.Edge(EdgeFail).Then)
+	if test.Edge(EdgeFail).Then == nil || test.Edge(EdgeFail).Then.To != ReservedDebug {
+		t.Errorf("test.on_fail.then = %+v, want the debug leaf", test.Edge(EdgeFail).Then)
 	}
 	if test.Edge(EdgeTimeout) == nil || test.Edge(EdgeTimeout).To != "test" {
 		t.Errorf("test.on_timeout = %+v, want self-retry", test.Edge(EdgeTimeout))
 	}
-	dbg := f.Stage("debug_test")
-	if len(dbg.Inputs) != 1 || dbg.Inputs[0].Value != SentinelWorkspace || dbg.Edge(EdgeReject).To != TerminalAbort {
-		t.Errorf("debug_test gate = %+v", dbg)
+	if f.Stage("debug_test") != nil {
+		t.Error("the example still carries a debug_test gate; the leaf replaced it")
 	}
 	// Approval gates reject into a feedback loop — rejecting the final MR
 	// review sends the run back to build to address comments, not abort. The
-	// workspace rescue gates (asserted above via debug_test) end at abort.
+	// per-stage rescues are the debug leaf (asserted above via test).
 	if fg := f.Stage("final_gate").Edge(EdgeReject); fg == nil || fg.To != "build" {
 		t.Errorf("final_gate.on_reject = %+v, want a loop back to build", f.Stage("final_gate").Edge(EdgeReject))
 	}
 
 	// The flow's failure philosophy: every agent/command stage declares
-	// on_fail, every on_fail chain ends at a workspace rescue gate, and that
-	// gate resumes the stage that escalated to it — the success chain replays
-	// from the failure point, never skipping stages.
+	// on_fail, and every on_fail chain ends at the debug leaf — a human with
+	// the workspace, then the same stage again, so the success chain replays
+	// from the failure point and never skips a stage.
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		if s.Type != StageAgent && s.Type != StageCommand {
@@ -201,14 +200,8 @@ func TestReferenceFlowParses(t *testing.T) {
 		for e.Then != nil {
 			e = e.Then
 		}
-		tgt := f.Stage(e.To)
-		if tgt == nil || tgt.Type != StageHumanGate || tgt.Input("workspace") == nil {
-			t.Errorf("stage %s: on_fail chain ends at %q, want a workspace rescue gate", s.ID, e.To)
-			continue
-		}
-		if tgt.OnSuccess != s.ID {
-			t.Errorf("stage %s: rescue gate %s resumes %q, must resume the escalating stage %q",
-				s.ID, tgt.ID, tgt.OnSuccess, s.ID)
+		if e.To != ReservedDebug {
+			t.Errorf("stage %s: on_fail chain ends at %q, want the debug leaf", s.ID, e.To)
 		}
 	}
 }
@@ -494,7 +487,15 @@ func TestValidationErrors(t *testing.T) {
 		{"abort edge with then", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, then: { to: s, max: 1 } } }\n",
 			"then does not apply", 5},
 		{"on_success abort", header + "stages:\n  - { id: s, type: command, run: x, on_success: abort }\n",
-			`on_success target "abort" does not exist`, 5},
+			`on_success cannot be "abort"`, 5},
+		{"reserved debug id", header + "stages:\n  - { id: debug, type: command, run: x }\n",
+			"reserved", 5},
+		{"debug edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: debug, max: 2 } }\n",
+			"max does not apply", 5},
+		{"debug edge with then", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: debug, then: { to: s, max: 1 } } }\n",
+			"then does not apply", 5},
+		{"on_success debug", header + "stages:\n  - { id: s, type: command, run: x, on_success: debug }\n",
+			`on_success cannot be "debug"`, 5},
 		{"on_timeout on gate", header + "stages:\n  - { id: g, type: human_gate, on_timeout: { to: g, max: 1 } }\n",
 			`field "on_timeout" does not apply`, 5},
 		{"each_repo on an agent", header + "stages:\n  - { id: a, type: agent, agent: x, each_repo: true }\n",
@@ -610,6 +611,52 @@ func TestWaitStage(t *testing.T) {
 				t.Errorf("err = %v, want mention of %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestDebugLeaf covers the debug leaf: the scalar on an edge, as a chain's
+// escalation, no max/then, and no stage of its own — it is a reserved
+// target the run comes back from, not a terminal.
+func TestDebugLeaf(t *testing.T) {
+	doc := header + commonAgents + `stages:
+  - { id: build, type: agent, agent: b,
+      on_fail: { to: build, max: 2, then: debug } }
+  - { id: test,  type: command, run: t, on_fail: debug,
+      on_timeout: { to: test, max: 1, then: debug } }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	be := f.Stage("build").Edge(EdgeFail)
+	if be == nil || be.To != "build" || be.Max != 2 || be.Then == nil ||
+		be.Then.To != ReservedDebug || be.Then.Max != 0 || be.Then.Then != nil {
+		t.Fatalf("build on_fail chain = %+v / %+v, want retry twice then the debug leaf", be, be.Then)
+	}
+	if te := f.Stage("test").Edge(EdgeFail); te == nil || te.To != ReservedDebug || te.Max != 0 || te.Then != nil {
+		t.Fatalf("test on_fail = %+v, want the bare debug leaf", te)
+	}
+	if to := f.Stage("test").Edge(EdgeTimeout); to == nil || to.Then == nil || to.Then.To != ReservedDebug {
+		t.Fatalf("test on_timeout = %+v, want a chain ending at debug", to)
+	}
+	if len(f.Stages) != 2 || f.Stage(ReservedDebug) != nil {
+		t.Fatalf("stages = %d; the debug leaf must not become a stage", len(f.Stages))
+	}
+	// Inside a phase: a reaction's routes stay in the phase, and the leaf
+	// (like done/abort) is in every phase.
+	phased := header + commonAgents + `phases:
+  - id: deliver
+    on: ticket
+    stages:
+      - { id: build, type: agent, agent: b, on_fail: debug }
+      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - id: fixes
+    on: { signal: mr_review_settled }
+    stages:
+      - { id: fix, type: agent, agent: b, on_fail: { to: fix, max: 1, then: debug } }
+`
+	if _, err := Parse("t.yaml", []byte(phased)); err != nil {
+		t.Fatalf("debug inside phases: %v", err)
 	}
 }
 

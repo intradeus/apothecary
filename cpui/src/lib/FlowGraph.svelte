@@ -21,6 +21,7 @@
 	import { token } from '$lib/ui/tokens';
 	import {
 		ABORT,
+		DEBUG,
 		DONE,
 		START,
 		EDGE_KINDS,
@@ -69,6 +70,7 @@
 		stage: FlowStageNode,
 		done: FlowTerminalNode,
 		abort: FlowTerminalNode,
+		debug: FlowTerminalNode,
 		start: FlowTerminalNode
 	};
 
@@ -186,6 +188,18 @@
 				data: {}
 			});
 		}
+		// The debug leaf likewise: drawn only when some edge parks there.
+		const hasDebug = doc.stages.some((s) =>
+			EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DEBUG))
+		);
+		if (hasDebug) {
+			ns.push({
+				id: '__debug',
+				type: 'debug',
+				position: layout[DEBUG] ?? { x: doc.stages.length * 240, y: 320 },
+				data: {}
+			});
+		}
 		const es: Edge[] = [];
 		const fed = feedDots(doc);
 		// Dataflow, derived from the artifact paths stages read and write: drawn
@@ -249,14 +263,14 @@
 						id: `${kind}|${s.id}|${depth}`,
 						source: s.id,
 						sourceHandle: kind,
-						target: link.to === ABORT ? '__abort' : link.to,
+						target: link.to === ABORT ? '__abort' : link.to === DEBUG ? '__debug' : link.to,
 						targetHandle: dot ? `in:${dot}` : undefined,
 						type: 'smoothstep',
 						// "fail ×3": the word as well as the hue, so colour is never the
 						// only signal; "then#1" marks a fallback link.
 						label:
-							link.to === ABORT
-								? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ${I.forward} abort`
+							link.to === ABORT || link.to === DEBUG
+								? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ${I.forward} ${link.to}`
 								: `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
 						labelStyle: hued(EDGE_HUE[kind]),
 						animated: true,
@@ -285,7 +299,13 @@
 		const h = conn.sourceHandle ?? '';
 		if (h.startsWith('in:') || h.startsWith('out:')) return;
 		const target =
-			conn.target === '__done' ? DONE : conn.target === '__abort' ? ABORT : conn.target;
+			conn.target === '__done'
+				? DONE
+				: conn.target === '__abort'
+					? ABORT
+					: conn.target === '__debug'
+						? DEBUG
+						: conn.target;
 		if (conn.source === '__start' || conn.source.startsWith('__trigger:')) {
 			onlink(START, 'entry', target); // re-point the (phase's) entry
 			return;
@@ -301,11 +321,13 @@
 			? DONE
 			: id === '__abort'
 				? ABORT
-				: id === '__start'
-					? START
-					: id.startsWith('__trigger:')
-						? id.slice(2)
-						: id;
+				: id === '__debug'
+					? DEBUG
+					: id === '__start'
+						? START
+						: id.startsWith('__trigger:')
+							? id.slice(2)
+							: id;
 </script>
 
 <div class="graph-wrap">

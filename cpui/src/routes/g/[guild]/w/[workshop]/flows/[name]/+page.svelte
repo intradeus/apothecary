@@ -29,6 +29,8 @@
 	import { esc } from '$lib/ui/html';
 	import {
 		ABORT,
+		chainLinks,
+		DEBUG,
 		autoLayout,
 		docToYaml,
 		DONE,
@@ -179,13 +181,15 @@
 		if (source === START) {
 			// Dragging the entry marker onto a stage makes it the entry (moves
 			// it to document front); terminals can't be an entry.
-			if (target !== DONE && target !== ABORT && setEntry(doc, target)) markChanged();
+			if (target !== DONE && target !== ABORT && target !== DEBUG && setEntry(doc, target))
+				markChanged();
 			return;
 		}
 		const s = doc.stages.find((x) => x.id === source);
 		if (!s) return;
 		if (handle === 'success') {
-			if (target !== s.id && target !== ABORT) s.on_success = target; // success never aborts
+			// success never aborts or parks
+			if (target !== s.id && target !== ABORT && target !== DEBUG) s.on_success = target;
 		} else {
 			const kind = handle as EdgeKind;
 			if (target === DONE) return; // recoverable edges point at stages or abort, not done
@@ -194,6 +198,15 @@
 				// Dragging onto the abort terminal replaces the chain's first link
 				// with the immediate stop (no max; nothing runs after abort).
 				setEdge(s, kind, { to: ABORT });
+			} else if (target === DEBUG) {
+				// Dragging onto the debug leaf almost always means "and then a
+				// human": it is appended after an existing finite chain. An empty
+				// or unlimited chain becomes the bare leaf.
+				const links = chainLinks(existing);
+				const last = links[links.length - 1];
+				if (last && last.to !== ABORT && last.to !== DEBUG && last.max !== -1)
+					last.then = { to: DEBUG };
+				else setEdge(s, kind, { to: DEBUG });
 			} else {
 				setEdge(s, kind, { to: target, max: existing?.max ?? 3, then: existing?.then });
 			}

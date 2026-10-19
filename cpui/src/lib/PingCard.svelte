@@ -104,8 +104,16 @@
 	const pingRunId = $derived((ping as { runId?: string }).runId);
 	const runLink = $derived(runHref ?? (pingRunId ? to.run(pingRunId) : undefined));
 
+	/** The debug leaf carries facts, not prose: the card is the wording. */
+	const debug = $derived(ping.type === 'debug');
 	const aside = $derived(
-		ping.type === 'gate' ? 'the bench awaits your seal' : unwanted ? 'a note from the builder' : ''
+		ping.type === 'gate'
+			? 'the bench awaits your seal'
+			: debug
+				? 'the bench is yours — mend it, then continue'
+				: unwanted
+					? 'a note from the builder'
+					: ''
 	);
 
 	function keys(e: KeyboardEvent, send: () => void) {
@@ -163,8 +171,13 @@
 		{/if}
 
 		<div class="body">
-			<div class="q"><Markdown src={ping.question} /></div>
-			{#if ping.context}<Markdown src={ping.context} quiet />{/if}
+			{#if debug}
+				<div class="q">Stage <span class="mono">{stageId}</span> failed — check why.</div>
+				{#if ping.context}<pre class="out">{ping.context}</pre>{/if}
+			{:else}
+				<div class="q"><Markdown src={ping.question} /></div>
+				{#if ping.context}<Markdown src={ping.context} quiet />{/if}
+			{/if}
 
 			{#if ping.link}
 				<!-- Typed at the source (DESIGN-FILES §4): a link payload links out… -->
@@ -232,7 +245,9 @@
 					<textarea
 						bind:value={note}
 						rows="3"
-						placeholder="What should change? Required — the run takes it as feedback."
+						placeholder={debug
+							? 'Why stop here? Recorded as the reason the run was abandoned.'
+							: 'What should change? Required — the run takes it as feedback.'}
 						onkeydown={(e) => keys(e, () => note.trim() && !off && submit('reject'))}></textarea>
 				{/if}
 				<div class="acts">
@@ -240,19 +255,20 @@
 						class="btn-hot btn-md"
 						disabled={off}
 						aria-busy={busyOn('approve')}
-						onclick={() => submit('approve')}>Approve</button
+						onclick={() => submit('approve')}
+						>{debug ? `Continue — re-run ${stageId}` : 'Approve'}</button
 					>
 					{#if noteOpen}
 						<button
 							class="btn-hot-outline btn-md"
 							disabled={off || !note.trim()}
 							aria-busy={busyOn('reject')}
-							onclick={() => submit('reject')}>Send changes</button
+							onclick={() => submit('reject')}>{debug ? 'Abandon the run' : 'Send changes'}</button
 						>
 						<button class="btn-ghost btn-sm" onclick={() => (noteOpen = false)}>Cancel</button>
 					{:else}
 						<button class="btn-hot-outline btn-md" disabled={off} onclick={() => (noteOpen = true)}
-							>Request changes…</button
+							>{debug ? 'Abandon…' : 'Request changes…'}</button
 						>
 					{/if}
 					{@render attachBtn()}
@@ -403,6 +419,21 @@
 	}
 	.q {
 		text-wrap: pretty;
+	}
+	/* What the failed stage printed: verbatim, scrollable. */
+	.out {
+		margin: 0;
+		padding: 8px 10px;
+		max-height: 240px;
+		overflow: auto;
+		font-family: var(--mono, ui-monospace, monospace);
+		font-size: var(--fs-label);
+		white-space: pre-wrap;
+		word-break: break-word;
+		color: var(--tx);
+		background: var(--cBg);
+		border: 1px solid var(--ln2);
+		border-radius: 8px;
 	}
 	.ref {
 		display: inline-flex;

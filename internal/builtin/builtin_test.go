@@ -93,10 +93,9 @@ func TestDefaultsParse(t *testing.T) {
 
 // TestDefaultFlowPhilosophy: every agent referenced by the default flow is
 // a built-in agent (a fresh install must resolve the whole flow), every
-// agent/command stage declares on_fail, every on_fail chain ends at a
-// workspace rescue gate, and that gate resumes the stage that escalated
-// to it — the success chain replays from the failure point, never skipping
-// stages.
+// agent/command stage declares on_fail, and every on_fail chain ends at the
+// debug leaf — a human with the workspace, then the same stage again, so the
+// success chain replays from the failure point and never skips a stage.
 func TestDefaultFlowPhilosophy(t *testing.T) {
 	f := Flow(DefaultFlowName)
 	for i := range f.Stages {
@@ -115,19 +114,13 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 		for e.Then != nil {
 			e = e.Then
 		}
-		tgt := f.Stage(e.To)
-		// A rescue gate is one that hands the human the workspace: the kind of
-		// gate is now what it shows, not an enum.
-		if tgt == nil || tgt.Type != flow.StageHumanGate || !showsWorkspace(tgt) {
-			t.Errorf("stage %s: on_fail chain ends at %q, want a gate showing %s", s.ID, e.To, flow.SentinelWorkspace)
-			continue
+		if e.To != flow.ReservedDebug {
+			t.Errorf("stage %s: on_fail chain ends at %q, want the debug leaf", s.ID, e.To)
 		}
-		// A stage whose job is to unblock another (the resolver unblocks
-		// sync) may hand its rescue to that stage: the human who resolves by
-		// hand replaces the agent, and the blocked stage continues.
-		if tgt.OnSuccess != s.ID && tgt.OnSuccess != s.OnSuccess {
-			t.Errorf("stage %s: rescue gate %s resumes %q, must resume the escalating stage %q",
-				s.ID, tgt.ID, tgt.OnSuccess, s.ID)
+	}
+	for i := range f.Stages {
+		if s := &f.Stages[i]; s.Type == flow.StageHumanGate && showsWorkspace(s) {
+			t.Errorf("gate %s hands out the workspace by hand; that is the debug leaf's job", s.ID)
 		}
 	}
 	// The run's whole life (PLAN6): the merge request ends it — no final

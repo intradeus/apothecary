@@ -151,8 +151,10 @@ func everyRouteSatisfies(f *Flow, target *Stage, ok func(*Stage) bool) bool {
 		defer delete(seen, st.ID)
 
 		next := func(id string) bool {
-			if id == TerminalDone || id == TerminalAbort {
-				return true // a terminal never reaches the target
+			if id == TerminalDone || id == TerminalAbort || id == ReservedDebug {
+				// A terminal never reaches the target; the debug leaf only
+				// re-enters st, which is already on this walk.
+				return true
 			}
 			return walk(f.Stage(id), seen, satisfied)
 		}

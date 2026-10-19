@@ -4,6 +4,8 @@
 	//    to make that stage the entry. A reaction phase draws one per phase,
 	//    violet and dashed, naming the signal that starts it.
 	//  - done (grn, dashed) and abort (ros, dashed): where runs end.
+	//  - debug (amb, dashed): the stop that comes back — a human fixes the
+	//    workspace, then the stage that sent the run here runs again.
 	// One component for all of them; the node type picks the tone.
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import type { Hue } from '$lib/ui/hues';
@@ -11,17 +13,39 @@
 
 	let { type, data }: NodeProps = $props();
 
-	type Tone = 'start' | 'trigger' | 'done' | 'abort';
+	type Tone = 'start' | 'trigger' | 'done' | 'abort' | 'debug';
 	const tone = $derived<Tone>(
-		type === 'start' ? (data?.label ? 'trigger' : 'start') : type === 'abort' ? 'abort' : 'done'
+		type === 'start'
+			? data?.label
+				? 'trigger'
+				: 'start'
+			: type === 'abort'
+				? 'abort'
+				: type === 'debug'
+					? 'debug'
+					: 'done'
 	);
-	const HUE: Record<Tone, Hue> = { start: 'brand', trigger: 'vio', done: 'grn', abort: 'ros' };
-	const GLYPH: Record<Tone, string> = { start: I.play, trigger: I.play, done: I.ok, abort: I.bad };
+	const HUE: Record<Tone, Hue> = {
+		start: 'brand',
+		trigger: 'vio',
+		done: 'grn',
+		abort: 'ros',
+		debug: 'amb'
+	};
+	const GLYPH: Record<Tone, string> = {
+		start: I.play,
+		trigger: I.play,
+		done: I.ok,
+		abort: I.bad,
+		debug: I.retry
+	};
 	const TITLE: Record<Tone, string> = {
 		start: 'The entry — drag this handle onto a stage to start the flow there',
 		trigger: '',
 		done: 'The run completes',
-		abort: 'The run stops deliberately'
+		abort: 'The run stops deliberately',
+		debug:
+			'A stop, not an end: the run parks for a human to fix the workspace, then goes back into the stage that sent it here'
 	};
 	const label = $derived(
 		tone === 'start' || tone === 'trigger' ? ((data?.label as string | undefined) ?? 'start') : tone
@@ -31,7 +55,7 @@
 </script>
 
 <div class="term {tone} h-{HUE[tone]}" {title}>
-	{#if tone === 'done' || tone === 'abort'}
+	{#if tone === 'done' || tone === 'abort' || tone === 'debug'}
 		<Handle type="target" position={Position.Left} style={handle} />
 	{/if}
 	<span class="l">{label}</span><span class="g">{GLYPH[tone]}</span>

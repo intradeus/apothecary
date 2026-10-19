@@ -132,6 +132,19 @@ export function stageRows(
 	const state = run?.state;
 	const over = state ? isTerminal(state) : false;
 
+	// Stages parked on the debug leaf: a pending debug ping names its stage.
+	const parked = new Set<string>();
+	const debugStage = new Map<string, string>();
+	for (const e of events) {
+		if (e.type === 'ping_raised' && e.payload.type === 'debug') {
+			debugStage.set(String(e.payload.ping_id), String(e.payload.stage_id));
+			parked.add(String(e.payload.stage_id));
+		} else if (e.type === 'ping_answered') {
+			const sid = debugStage.get(String(e.payload.ping_id));
+			if (sid) parked.delete(sid);
+		}
+	}
+
 	const rows: (StageRow & { endSeq: number; startSeq: number })[] = order.map((d) => {
 		const mine = events.filter((e) => e.payload.stage_id === d.id);
 		const start = mine.findLast((e) => e.type === 'stage_started');
@@ -153,6 +166,12 @@ export function stageRows(
 			].filter(Boolean);
 			return { ...r, status: 'done' as StageStatus, line: bits.join(' · ') };
 		}
+		if (!over && end?.type === 'stage_failed' && parked.has(d.id))
+			return {
+				...r,
+				status: 'waiting' as StageStatus,
+				line: 'failed — parked for you to check why'
+			};
 		if (end?.type === 'stage_failed')
 			return {
 				...r,
@@ -297,6 +316,8 @@ export function describe(e: RunEvent): Described {
 				tone: 'warn'
 			};
 		case 'ping_raised':
+			if (p.type === 'debug')
+				return { text: `${p.stage_id} failed — parked for debugging`, tone: 'warn' };
 			return { text: `ping [${p.type}]: ${p.question}`, tone: 'warn' };
 		case 'ping_answered':
 			return { text: `answered: ${p.answer}${p.feedback ? ` — ${p.feedback}` : ''}`, tone: 'ok' };

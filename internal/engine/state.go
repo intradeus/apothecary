@@ -18,6 +18,7 @@ const (
 	phIn                         // stage_started open (recovery: re-enter)
 	phAfterComplete              // stage_completed appended, routing not yet recorded
 	phAfterFail                  // stage_failed appended, edge decision not yet recorded (recovery: re-execute)
+	phDebug                      // parked on the debug leaf: the stage at pos failed, a human has the workspace (continue re-enters it)
 )
 
 // runState is the single-writer goroutine's working state. Everything here
@@ -130,11 +131,26 @@ func chainKey(from, kind string, depth int) string {
 	return fmt.Sprintf("%s|%s|%d", from, kind, depth)
 }
 
-// PingGate is re-exported for the engine's callers (the HTTP layer and tests);
-// the vocabulary itself belongs to the event catalog.
-const PingGate = event.PingGate
+// PingGate and PingDebug are re-exported for the engine's callers (the HTTP
+// layer and tests); the vocabulary itself belongs to the event catalog.
+const (
+	PingGate  = event.PingGate
+	PingDebug = event.PingDebug
+)
 
-func gatePingType(t string) bool { return t == PingGate }
+func gatePingType(t string) bool  { return t == PingGate }
+func debugPingType(t string) bool { return t == PingDebug }
+
+// decidesHere reports whether an answer to this ping is the routing decision
+// the stage at pos is waiting for: its gate's ping while the gate is open, or
+// the debug leaf's while the run is parked there — and the stage's own ping,
+// never a stale one an earlier attempt raised.
+func (rs *runState) decidesHere(r *event.PingRaised) bool {
+	if rs.fl == nil || rs.pos < 0 || rs.pos >= len(rs.fl.Stages) || r.StageID != rs.fl.Stages[rs.pos].ID {
+		return false
+	}
+	return (gatePingType(r.Type) && rs.ph == phIn) || (debugPingType(r.Type) && rs.ph == phDebug)
+}
 
 // agentPingType: a question an agent raised through ask_human — the kind a
 // well-briefed agent should not need, hence counted as unwanted. Everything
@@ -275,6 +291,18 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.ph = phIn
 		case *event.EdgeTaken:
 			rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
+			if p.To == flow.ReservedDebug {
+				// The debug leaf: the cursor stays on the stage that took the
+				// link, parked for a human (runloop.stageDebug).
+				if fl != nil {
+					rs.pos = fl.Index(p.From)
+				}
+				rs.ph = phDebug
+				rs.feed = p.Feed
+				rs.feedSentinel = flow.FeedSentinel(p.Edge)
+				rs.feedAttempts = 0
+				break
+			}
 			if fl != nil {
 				rs.pos = fl.Index(p.To)
 			}
@@ -316,7 +344,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 					break
 				}
 			}
-			if r, ok := raised[p.PingID]; ok && gatePingType(r.Type) && rs.ph == phIn {
+			if r, ok := raised[p.PingID]; ok && rs.decidesHere(r) {
 				rs.gateAnswer = p
 			}
 		case *event.ActionStarted:
@@ -331,6 +359,10 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			// publishes exists; a partial publication keeps reconciling.
 		case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
 			rs.done = true
+			// The run ended with them open: withdrawn, as the projection reads
+			// them (run.ReducePings). A retry must not re-register a ping
+			// nothing can route anymore.
+			rs.openPings = nil
 		case *event.RunRetried:
 			// "Try again": un-terminal and re-enter the failed stage fresh.
 			// Clearing edgeCounts restores every stage's on_fail/on_reject
@@ -369,12 +401,12 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 	return rs
 }
 
-// openGatePing returns the still-open gate ping raised by the given stage, if
-// any. Keyed by stage, not by kind: a flow may have many gates, and only the
-// one this stage raised may be re-armed on recovery.
-func (rs *runState) openGatePing(stageID string) *event.PingRaised {
+// openPing returns the still-open ping of this type raised by (or for) the
+// given stage, if any. Keyed by stage: a flow may have many gates, and only
+// the one this stage raised may be re-armed on recovery.
+func (rs *runState) openPing(stageID, ptype string) *event.PingRaised {
 	for _, p := range rs.openPings {
-		if p.StageID == stageID && gatePingType(p.Type) {
+		if p.StageID == stageID && p.Type == ptype {
 			return p
 		}
 	}

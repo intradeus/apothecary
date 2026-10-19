@@ -329,7 +329,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				});
 				break;
 			case 'ping_raised':
-				if (p.type === 'gate' || p.type === 'phase_confirm') break;
+				if (p.type === 'gate' || p.type === 'phase_confirm' || p.type === 'debug') break;
 				items.push({
 					kind: 'question',
 					key,

@@ -4,8 +4,6 @@
 - 24) Workspace provisionning improvements - cache the devcontainer generated image ? And regen only when needed ? Unsure if its possible. Goal : reduce provisionning time. Not critical.
 - 25) multi-user / org based
 - 27) Jira integration to move tickets, connect branch, add fields etc. (feature flag field)
-- 28) normalized "debug" step action, instead of repeating it everytime in the flow. It should not be a staged, but a known flow leaf like 'done'
-- 29) Remove or increase the container running branch and container size limit (? is there container limit).
 - 30) k8s/k3s deployment
-- 31) "Review the recipe" and recipe word everywhere, but it shouldnt. The app should be flexible based on flows - the plan = recipe link should NOT exist, a plan is part of the flow which is flexible so there is no reason to have custom logic for "plans". We can have a 'review text' system, which can be used to annotate any kind of markdown, but that's it. We should not assume that a user will create a flow which has a plan, always, it could be anything else.
+- 31) "Review the recipe" page and recipe word everywhere to point to the "plan" step, but it shouldnt. The app should be flexible based on flows - the "plan step = recipe" relation should NOT exist, a plan is part of the flow which is flexible so there is no reason to have custom logic for "plans". We should definitely have a 'review text' system, which can be used to annotate any kind of markdown, but that's it, it should work for all kind of stages which have text-review steps, not specific for plans only. We should not assume that a user will create a flow which has a plan, it could be anything else.
 - 32) i18n

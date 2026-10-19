@@ -211,7 +211,7 @@ explicitly, and those *are* declared.
 ## §2 Stages
 
 ```yaml
-- id: build                # required, slug, unique; `done`/`abort`/`start` reserved
+- id: build                # required, slug, unique; `done`/`abort`/`debug`/`start` reserved
   type: agent              # agent | command | human_gate | action | wait
   description: "..."       # optional note; documentation only, reaches no prompt
 ```
@@ -285,10 +285,11 @@ repositories it touches.
 
 Every gate is the **same machine**: approve follows `on_success`, reject follows
 `on_reject` carrying the human's feedback. There is no gate kind — what a
-particular gate means ("approve the plan", "the workspace is parked, fix it and
-approve to retry", "merge when satisfied") is said in its `question`, and what
-it hands over is its `input` (one binding today). Both are optional; a gate with
-no question is labelled by its stage id.
+particular gate means ("approve the plan", "merge when satisfied") is said in its
+`question`, and what it hands over is its `input` (one binding today). Both are
+optional; a gate with no question is labelled by its stage id. The one decision
+every flow needs — "the workspace is parked, fix it, then run the stage again" —
+is not a gate you write but the `debug` leaf (§3).
 
 **Answered automatically.** A gate is a decision point whose *default* answerer
 is a human. `auto_approve` and `auto_reject` name signals (§2 wait) that may
@@ -456,10 +457,11 @@ both" needs no grammar of its own.
 
 ```yaml
 on_success: build            # a stage id, or `done`
-on_fail:    { to: build, max: 5, then: { to: debug, max: -1 } }
+on_fail:    { to: build, max: 5, then: debug }
 on_reject:  { to: build, max: 3 }
 on_timeout: { to: test,  max: 1 }
 on_reject:  abort            # scalar sugar for the deliberate stop
+on_fail:    debug            # scalar sugar for the debug leaf
 ```
 
 **`on_success`** is a plain target with no counter. Absent, it means "the next
@@ -500,7 +502,17 @@ reads it, next to everything else that stage reads.
 
 **Terminals.** `done` completes the run (only `on_success` may reach it).
 `abort` deliberately stops it; an abort link takes no `max`, `feed` or `then`.
-Stage ids may not shadow `done`, `abort` or `start`.
+
+**The `debug` leaf** is the third reserved edge target, and not a terminal: the
+run comes back from it. Taking a `debug` link parks the run for a human who has
+the workspace — the decision is attributed to the stage that took the link, with
+what it printed and the workspace link — and nothing is spent while they look.
+*Continue* re-enters that same stage as a fresh attempt (the success chain
+replays from there, so no stage is skipped); *abandon* ends the run. Like
+`abort` it takes no `max` or `then`: it is unlimited by nature, bounded by human
+attention, and nothing can follow it but the stage itself. It is written
+`then: debug` at the end of a retry chain, or `on_fail: debug` on its own. Stage
+ids may not shadow `done`, `abort`, `debug` or `start`.
 
 A run ends in one of three states, and the distinction is reporting, not
 capability (`resume` accepts the last two):
@@ -559,7 +571,7 @@ artifact path (no leading `/`, no `.` or `..` segments).
 | `$DECISION` | why the last attempt was turned down: a verdict's comments, or a human's gate feedback | agent input |
 | `$FAILURE` | what the failing stage printed: the last 8 KB, with every secret the engine injected replaced by `[redacted:<kind>]` | agent input |
 | `$MR_URL` | the run's merge request link, produced by `create_mr`; the first when a multi-repo run opened several — a gate then also lists them all in its context; in a reaction phase, the subject's | gate input |
-| `$WORKSPACE` | the workspace's access link (terminal, else IDE) | gate input |
+| `$WORKSPACE` | the workspace's access link (terminal, else IDE); the `debug` leaf hands it out by itself | gate input |
 
 The scoping is enforced: an agent cannot bind `$MR_URL` (a link is for a human
 to click, not for a prompt to read), and a gate cannot bind `$CHANGED` or
@@ -665,11 +677,10 @@ A stage failure records a reason, then follows an edge:
 
 The recommended shape, and the one the built-in default flow uses: every agent
 and command stage first retries itself with its error fed back, then escalates
-to its own rescue gate showing `$WORKSPACE`. A human opens the workspace, fixes
-what the agents could not, and approving re-runs exactly the stage that
-escalated — the success chain replays from there, so no stage is skipped.
-Rescue gates are unlimited (`max: -1`): the human decides when to stop, and
-rejecting one aborts the run.
+to the `debug` leaf (`then: debug`). A human opens the workspace, fixes what the
+agents could not, and continuing re-runs exactly the stage that escalated — the
+success chain replays from there, so no stage is skipped. The leaf is unlimited:
+the human decides when to stop, and abandoning there ends the run.
 
 Budget exhaustion and cancellation are **run-level** outcomes, not stage
 failures: exceeding `budget` abandons the run, and abort/pause act on the run
@@ -781,7 +792,7 @@ bare "unknown field":
 ## §8 Annotated example
 
 The built-in default flow, abridged — plan-gated build with cross-vendor
-adversarial review and per-stage rescue. Full text:
+adversarial review and the debug leaf as every stage's rescue. Full text:
 `internal/builtin/flows/default.yaml`.
 
 ```yaml
@@ -822,15 +833,12 @@ stages:
   # No output binding: the planner's contract says its plan goes to
   # artifacts/plan.md. It binds both retry values, so being sent back — by a
   # human rejecting the plan, or by its own failure — arrives named.
+  # Two retries with the error fed back, then the debug leaf: the workspace is
+  # parked for a human, and continuing re-runs planning.
   - { id: plan, type: agent, agent: planner, max_turns: 25,
       input: { rejection: $DECISION, failure: $FAILURE },
       on_success: plan_gate,
-      on_fail: { to: plan, max: 2, then: { to: debug_plan, max: -1 } } }
-
-  - { id: debug_plan, type: human_gate, input: { workspace: $WORKSPACE },
-      question: "Planning failed repeatedly. The workspace is parked — fix what the
-                 agent could not, then approve to re-run planning (reject aborts).",
-      on_success: plan, on_reject: abort }
+      on_fail: { to: plan, max: 2, then: debug } }
 
   # Rejecting sends the plan back; the planner reads the human's words as its
   # `rejection` input. The edge itself says nothing about that.
@@ -842,7 +850,7 @@ stages:
   - { id: build, type: agent, agent: builder, max_turns: 80,
       input: { plan: artifacts/plan.md, rejection: $DECISION, failure: $FAILURE },
       on_success: commit_msg,
-      on_fail: { to: build, max: 2, then: { to: debug_build, max: -1 } } }
+      on_fail: { to: build, max: 2, then: debug } }
 
   # The committer writes artifacts/commit.md (its contract); the commit stage
   # declares it reads that file, so the dataflow is visible instead of buried
@@ -850,7 +858,7 @@ stages:
   - { id: commit, type: command,
       run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi",
       input: { message: artifacts/commit.md },
-      on_success: test, on_fail: { to: debug_commit, max: -1 } }
+      on_success: test, on_fail: debug }
 
   # A different vendor reviews. The reviewer's verdict output is what makes
   # on_reject reachable; its comments reach the builder's `rejection` input.
@@ -858,7 +866,7 @@ stages:
       input: { plan: artifacts/plan.md, changes: $CHANGED, failure: $FAILURE }, max_turns: 30,
       on_success: redact,
       on_reject: { to: build, max: 3 },
-      on_fail: { to: review, max: 1, then: { to: debug_review, max: -1 } } }
+      on_fail: { to: review, max: 1, then: debug } }
 
   - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md },
       on_success: final_gate }

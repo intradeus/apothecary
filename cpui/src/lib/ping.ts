@@ -11,6 +11,9 @@ import type { Hue } from '$lib/ui/hues';
 import { I } from '$lib/ui/icons';
 
 export const GATE_TYPE = 'gate';
+/** The flow's debug leaf: a parked stage, facts only — the card is the wording. */
+export const DEBUG_TYPE = 'debug';
+export const isDebug = (type: string) => type === DEBUG_TYPE;
 export const PHASE_CONFIRM_TYPE = 'phase_confirm';
 export const SELECT_TYPE = 'select';
 export const SELECT_NONE = 'none';
@@ -35,7 +38,7 @@ export function toPingOption(o: unknown): PingOption {
  *  predates the field. */
 export function answerKindOf(kind: unknown, type: string, options: unknown): AnswerKind {
 	if (kind === 'decision' || kind === 'choice' || kind === 'multi' || kind === 'text') return kind;
-	if (type === 'gate' || type === 'phase_confirm') return 'decision';
+	if (type === 'gate' || type === 'phase_confirm' || type === 'debug') return 'decision';
 	if (type === 'select') return 'multi';
 	return Array.isArray(options) && options.length ? 'choice' : 'text';
 }

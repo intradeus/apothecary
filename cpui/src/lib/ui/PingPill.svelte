@@ -3,6 +3,7 @@
 	 *  are engine-raised, like gates; select is a choice the run needs. */
 	export const PING_META: Record<string, { label: string; hue: string; wanted: boolean }> = {
 		gate: { label: 'Gate', hue: 'grn', wanted: true },
+		debug: { label: 'Debug', hue: 'amb', wanted: true },
 		phase_confirm: { label: 'Phase', hue: 'grn', wanted: true },
 		select: { label: 'Select', hue: 'tea', wanted: true },
 		clarification: { label: 'Clarification', hue: 'amb', wanted: false },
