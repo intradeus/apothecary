@@ -11,13 +11,14 @@
 	import { untrack } from 'svelte';
 	import KeyValueEditor, { type KVRow } from '$lib/ui/KeyValueEditor.svelte';
 	import type { DocStage } from '$lib/flowdoc';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		stage,
 		field,
 		keep = () => false,
 		valuePlaceholder = 'artifacts/file.md',
-		addLabel = 'Add',
+		addLabel,
 		onchange
 	}: {
 		stage: DocStage;
@@ -65,9 +66,9 @@
 
 <KeyValueEditor
 	bind:rows={() => rows, write}
-	keyPlaceholder="name"
+	keyPlaceholder={t('flow.binding.keyPlaceholder')}
 	{valuePlaceholder}
 	keyWidth={110}
-	{addLabel}
+	addLabel={addLabel ?? t('flow.binding.add')}
 	{invalid}
 />

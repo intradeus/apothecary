@@ -7,6 +7,7 @@
 	import { api } from '$lib/api';
 	import type { Integration, KindDescriptor } from '$lib/domain';
 	import { toast } from '$lib/ui/toast.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		descriptor,
@@ -86,7 +87,11 @@
 						config,
 						secrets
 					});
-			toast(existing ? `${saved.name} saved` : `${saved.name} added`);
+			toast(
+				existing
+					? t('form.int.saved', { name: saved.name })
+					: t('form.int.added', { name: saved.name })
+			);
 			onsaved(saved);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -101,7 +106,7 @@
 <form class="if" onsubmit={submit}>
 	{#if descriptor.help}
 		<details class="howto card-in" open={!existing}>
-			<summary class="disclosure">How to set this up</summary>
+			<summary class="disclosure">{t('form.int.howTo')}</summary>
 			<div class="helptext">
 				{#each linkify(descriptor.help) as p, i (i)}
 					{#if p.href}
@@ -114,9 +119,9 @@
 
 	<div class="grid2">
 		<div class="field">
-			<label for="if-{uid}-name">Name</label>
+			<label for="if-{uid}-name">{t('form.int.name')}</label>
 			<input id="if-{uid}-name" bind:value={name} required />
-			<div class="help">How setup forms and pickers refer to it.</div>
+			<div class="help">{t('form.int.nameHelp')}</div>
 		</div>
 		{#each fields as f (f.name)}
 			<div class="field" class:wide={f.secret && isMultiline(f.name)}>
@@ -127,13 +132,14 @@
 				>
 				{#if f.secret && !showSecretInput(f.name)}
 					<div class="secret-set">
-						<span class="mask mono">•••• set</span>
+						<span class="mask mono">{t('form.int.secretSet')}</span>
 						<span class="mono fnt ell">{storedMask(f.name)}</span>
 						<span class="spacer"></span>
 						<button
 							type="button"
 							class="btn-ghost btn-sm"
-							onclick={() => (replacing = { ...replacing, [f.name]: true })}>Replace</button
+							onclick={() => (replacing = { ...replacing, [f.name]: true })}
+							>{t('form.int.replace')}</button
 						>
 					</div>
 				{:else if f.secret && isMultiline(f.name)}
@@ -164,14 +170,14 @@
 				{/if}
 				{#if f.secret && storedMask(f.name) && replacing[f.name]}
 					<div class="help">
-						Leave empty to keep the current value ·
+						{t('form.int.keepEmpty')}
 						<button
 							type="button"
 							class="linklike"
 							onclick={() => {
 								replacing = { ...replacing, [f.name]: false };
 								secretValues[f.name] = '';
-							}}>keep current</button
+							}}>{t('form.int.keepCurrent')}</button
 						>
 					</div>
 				{:else if f.help}
@@ -183,7 +189,7 @@
 						{/each}
 					</div>
 				{:else if f.secret && !storedMask(f.name)}
-					<div class="help">Write-only: stored encrypted, never shown again.</div>
+					<div class="help">{t('form.int.writeOnly')}</div>
 				{/if}
 			</div>
 		{/each}
@@ -191,9 +197,15 @@
 
 	{#if error}<div class="err">{error}</div>{/if}
 	<div class="form-actions">
-		{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button>{/if}
+		{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}
+				>{t('common.cancel')}</button
+			>{/if}
 		<button class="btn-primary" type="submit" disabled={busy} aria-busy={busy}>
-			{busy ? 'Saving…' : existing ? 'Save changes' : `Add ${descriptor.label}`}
+			{busy
+				? t('form.int.saving')
+				: existing
+					? t('form.int.saveChanges')
+					: t('form.int.add', { kind: descriptor.label })}
 		</button>
 	</div>
 </form>

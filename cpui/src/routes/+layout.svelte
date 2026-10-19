@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { i18n, t } from '$lib/i18n/index.svelte';
 	import { NAV, navByChord } from '$lib/nav';
 	import Sigils from '$lib/ui/Sigils.svelte';
 	import ConfirmHost from '$lib/ui/ConfirmHost.svelte';
@@ -27,6 +28,7 @@
 
 	onMount(() => {
 		document.documentElement.dataset.theme = prefs.theme;
+		void i18n.init();
 		const stop = fleet.use();
 
 		// "G then I/R/T/D" chords (from $lib/nav): the G arms for a second.
@@ -43,8 +45,8 @@
 				prefs.toggleCollapsed();
 				return;
 			}
-			const t = e.target as HTMLElement | null;
-			if (mod || e.altKey || t?.closest('input, textarea, select, [contenteditable], .xterm'))
+			const el = e.target as HTMLElement | null;
+			if (mod || e.altKey || el?.closest('input, textarea, select, [contenteditable], .xterm'))
 				return;
 			if (e.key === 'g' || e.key === 'G') {
 				gArmed = Date.now();
@@ -89,21 +91,23 @@
 	</div>
 	<div class="cursor-light" aria-hidden="true"></div>
 
-	<nav class="mtabs lg" aria-label="Primary" use:indicator>
-		{#each tabs as t (t.id)}
-			{@const on = t.match(page.url.pathname)}
-			{@const n = t.id === 'inbox' ? fleet.pending.length : 0}
-			<a class:on href={t.href()} aria-current={on ? 'page' : undefined}
-				><span class="ti">{t.icon}</span>{t.label}{#if t.id === 'inbox'}<span
+	<nav class="mtabs lg" aria-label={t('page.layout.primary')} use:indicator>
+		{#each tabs as tab (tab.id)}
+			{@const on = tab.match(page.url.pathname)}
+			{@const n = tab.id === 'inbox' ? fleet.pending.length : 0}
+			<a class:on href={tab.href()} aria-current={on ? 'page' : undefined}
+				><span class="ti">{tab.icon}</span>{tab.label}{#if tab.id === 'inbox'}<span
 						class="count hot"
 						class:gone={!n}
 						use:bump={n}>{n}</span
 					>{/if}</a
 			>
 		{/each}
-		<button onclick={() => (drawerOpen = true)}><span class="ti">{I.more}</span>More</button>
+		<button onclick={() => (drawerOpen = true)}
+			><span class="ti">{I.more}</span>{t('page.layout.more')}</button
+		>
 	</nav>
-	<Sheet bind:open={drawerOpen} side="left" label="Navigation">
+	<Sheet bind:open={drawerOpen} side="left" label={t('page.layout.navigation')}>
 		<Sidebar drawer onsearch={() => (paletteOpen = true)} onnavigate={() => (drawerOpen = false)} />
 	</Sheet>
 

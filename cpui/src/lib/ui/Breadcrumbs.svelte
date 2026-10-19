@@ -8,12 +8,13 @@
 </script>
 
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Guild / Workshop / Ticket key / Run id (DESIGN 5.2). The last crumb is
 	// the current page.
 	let { crumbs }: { crumbs: Crumb[] } = $props();
 </script>
 
-<nav class="bc" aria-label="Breadcrumb">
+<nav class="bc" aria-label={t('ui.breadcrumb')}>
 	{#each crumbs as c, i (i)}
 		{#if i > 0}<span class="sep">/</span>{/if}
 		{#if i === crumbs.length - 1}

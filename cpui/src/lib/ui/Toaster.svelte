@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Mounted once in the shell. Toasts rise from the bottom edge and leave
 	// the way they came; swipe one right to dismiss it (it follows the finger
 	// and projects the flick). Neighbours slide into place on the spring
@@ -10,17 +11,17 @@
 
 	const GLYPH = { ok: I.ok, info: I.info, warn: I.warn, bad: I.bad } as const;
 
-	function timer(node: HTMLElement, t: Toast) {
-		let left = t.ms;
+	function timer(node: HTMLElement, tst: Toast) {
+		let left = tst.ms;
 		let started = Date.now();
-		let h = setTimeout(() => toasts.dismiss(t.id), left);
+		let h = setTimeout(() => toasts.dismiss(tst.id), left);
 		const pause = () => {
 			clearTimeout(h);
 			left -= Date.now() - started;
 		};
 		const resume = () => {
 			started = Date.now();
-			h = setTimeout(() => toasts.dismiss(t.id), Math.max(800, left));
+			h = setTimeout(() => toasts.dismiss(tst.id), Math.max(800, left));
 		};
 		node.addEventListener('pointerenter', pause);
 		node.addEventListener('pointerleave', resume);
@@ -35,37 +36,37 @@
 </script>
 
 <div class="toaster" aria-live="polite">
-	{#each toasts.list as t (t.id)}
+	{#each toasts.list as tst (tst.id)}
 		<div
-			class="toast lg h-{t.tone === 'ok'
+			class="toast lg h-{tst.tone === 'ok'
 				? 'grn'
-				: t.tone === 'bad'
+				: tst.tone === 'bad'
 					? 'ros'
-					: t.tone === 'warn'
+					: tst.tone === 'warn'
 						? 'amb'
 						: 'az'}"
 			role="status"
 			animate:flip={{ duration: ms('--dur-spring', 450), easing: spring }}
 			transition:slide={{ from: 'bottom', distance: 40 }}
-			use:timer={t}
+			use:timer={tst}
 			use:dragDismiss={{
 				direction: 'right',
-				ondismiss: () => toasts.dismiss(t.id),
+				ondismiss: () => toasts.dismiss(tst.id),
 				threshold: 0.35
 			}}
 		>
-			<span class="g">{GLYPH[t.tone]}</span>
-			<span class="grow">{t.text}</span>
-			{#if t.action}
+			<span class="g">{GLYPH[tst.tone]}</span>
+			<span class="grow">{tst.text}</span>
+			{#if tst.action}
 				<button
 					class="btn-sm"
 					onclick={() => {
-						t.action?.run();
-						toasts.dismiss(t.id);
-					}}>{t.action.label}</button
+						tst.action?.run();
+						toasts.dismiss(tst.id);
+					}}>{tst.action.label}</button
 				>
 			{/if}
-			<button class="btn-icon" aria-label="Dismiss" onclick={() => toasts.dismiss(t.id)}
+			<button class="btn-icon" aria-label={t('ui.dismiss')} onclick={() => toasts.dismiss(tst.id)}
 				>{I.close}</button
 			>
 		</div>

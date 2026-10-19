@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	import type { ResourceSample } from '$lib/domain';
 	import { counterRates, fmtBytes, fmtPct, fmtRate, fmtTime } from '$lib/format';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -68,28 +69,28 @@
 		const cpuShown = cpus ? cpu.map((v) => v / cpus) : cpu;
 		return [
 			{
-				title: 'CPU',
-				sub: cpus ? `% of ${cpus} cores` : undefined,
+				title: t('runview.graphs.cpu'),
+				sub: cpus ? t('runview.graphs.cpu_cores', { count: cpus }) : undefined,
 				yMax: cpus
 					? Math.min(100, nice(Math.max(...cpuShown, 1)))
 					: Math.max(100, Math.ceil(Math.max(...cpu, 0) / 100) * 100),
 				fmt: fmtPct,
-				series: [{ label: 'cpu', color: 'var(--az)', vals: cpuShown }]
+				series: [{ label: t('runview.graphs.s_cpu'), color: 'var(--az)', vals: cpuShown }]
 			},
 			{
-				title: 'Memory',
+				title: t('runview.graphs.memory'),
 				yMax: memLimit || niceBytes(Math.max(...mem, 1)),
 				fmt: bytes,
 				pctOf: memLimit || undefined,
-				series: [{ label: 'used', color: 'var(--vio)', vals: mem }]
+				series: [{ label: t('runview.graphs.s_used'), color: 'var(--vio)', vals: mem }]
 			},
 			{
-				title: 'Network',
+				title: t('runview.graphs.network'),
 				yMax: niceBytes(Math.max(...[...rx, ...tx].map((v) => v ?? 0), 1)),
 				fmt: fmtRate,
 				series: [
-					{ label: 'in', color: 'var(--tea)', vals: rx },
-					{ label: 'out', color: 'var(--tea)', vals: tx, dash: true }
+					{ label: t('runview.graphs.s_in'), color: 'var(--tea)', vals: rx },
+					{ label: t('runview.graphs.s_out'), color: 'var(--tea)', vals: tx, dash: true }
 				]
 			}
 		];
@@ -139,34 +140,42 @@
 	function move(e: MouseEvent) {
 		if (times.length < 2) return;
 		const r = (e.currentTarget as SVGElement).getBoundingClientRect();
-		const t = times[0] + ((e.clientX - r.left) / r.width) * span;
+		const at = times[0] + ((e.clientX - r.left) / r.width) * span;
 		let best = 0;
 		for (let i = 1; i < times.length; i++) {
-			if (Math.abs(times[i] - t) < Math.abs(times[best] - t)) best = i;
+			if (Math.abs(times[i] - at) < Math.abs(times[best] - at)) best = i;
 		}
 		hoverIdx = best;
 	}
 
 	const windowLabel = $derived.by(() => {
 		const m = Math.round(span / 60000);
-		return m < 1 ? 'last minute' : m < 60 ? `last ${m}m` : `last ${Math.round(m / 60)}h`;
+		return m < 1
+			? t('runview.graphs.last_minute')
+			: m < 60
+				? t('runview.graphs.last_m', { n: m })
+				: t('runview.graphs.last_h', { n: Math.round(m / 60) });
 	});
 </script>
 
 <div class="rg">
 	<div class="top">
 		<span
-			>{samples.at(-1)?.pids ? `${samples.at(-1)!.pids} processes · ` : ''}sampled every ~10s</span
+			>{samples.at(-1)?.pids
+				? t('runview.graphs.top_pids', { count: samples.at(-1)!.pids })
+				: t('runview.graphs.top')}</span
 		>
 		<span
-			>{hoverIdx != null && times[hoverIdx] ? `at ${fmtTime(times[hoverIdx])}` : windowLabel}</span
+			>{hoverIdx != null && times[hoverIdx]
+				? t('runview.graphs.at', { time: fmtTime(times[hoverIdx]) })
+				: windowLabel}</span
 		>
 	</div>
 	{#if samples.length < 2}
 		<EmptyState
 			compact
-			title="Collecting samples…"
-			text="One every ~10s while the workspace is up."
+			title={t('runview.graphs.collecting')}
+			text={t('runview.graphs.collecting_text')}
 		/>
 	{:else}
 		{#each charts as c, ci (c.title)}
@@ -198,7 +207,7 @@
 							width={w}
 							height={H}
 							role="img"
-							aria-label={`${c.title} usage, ${windowLabel}`}
+							aria-label={t('runview.graphs.aria', { title: c.title, window: windowLabel })}
 							onmousemove={move}
 							onmouseleave={() => (hoverIdx = null)}
 						>

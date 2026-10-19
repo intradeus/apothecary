@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// An editable list of key → value rows (input bindings, commands, extra
 	// headers). Mono keys, one remove per row, an add at the foot.
 	import { I } from './icons';
@@ -55,7 +56,7 @@
 				value={r.key}
 				placeholder={keyPlaceholder}
 				readonly={locked(r.key, i)}
-				aria-label="Key"
+				aria-label={t('ui.kv.key')}
 				oninput={(e) => update(i, { key: e.currentTarget.value })}
 			/>
 			{#if multiline}
@@ -64,7 +65,7 @@
 					rows="2"
 					value={r.value}
 					placeholder={valuePlaceholder}
-					aria-label="Value for {r.key}"
+					aria-label={t('ui.kv.valueFor', { key: r.key })}
 					oninput={(e) => update(i, { value: e.currentTarget.value })}></textarea>
 			{:else}
 				<input
@@ -72,14 +73,14 @@
 					list={suggestions.length ? listId : undefined}
 					value={r.value}
 					placeholder={valuePlaceholder}
-					aria-label="Value for {r.key}"
+					aria-label={t('ui.kv.valueFor', { key: r.key })}
 					oninput={(e) => update(i, { value: e.currentTarget.value })}
 				/>
 			{/if}
 			<button
 				type="button"
 				class="btn-icon"
-				aria-label="Remove {r.key || 'row'}"
+				aria-label={t('ui.kv.remove', { key: r.key || t('ui.kv.row') })}
 				disabled={locked(r.key, i)}
 				onclick={() => (rows = rows.filter((_, j) => j !== i))}>{I.close}</button
 			>

@@ -3,6 +3,7 @@
 	// workspace path, and a caption saying it is the raise-time snapshot, not
 	// the live file (DESIGN-FILES §9).
 	import { fmtAbs, fmtClock } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		path,
@@ -20,9 +21,9 @@
 	<span class="mono mut ell" title={path}>{path}</span>
 	<span class="spacer"></span>
 	<span class="cap" title={fmtAbs(raisedAt)}
-		>{reviewed ? 'as reviewed · snapshot' : 'snapshot'} from {fmtClock(raisedAt)}{reviewed
-			? ''
-			: ' · not the live file'}</span
+		>{reviewed
+			? t('inbox.snapshotReviewed', { time: fmtClock(raisedAt) })
+			: t('inbox.snapshotLive', { time: fmtClock(raisedAt) })}</span
 	>
 </div>
 

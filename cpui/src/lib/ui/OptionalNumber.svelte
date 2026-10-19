@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// A whole number the flow may leave unset (max turns: "flow default"; a
 	// budget: "no cap"). Stepper has no empty state, so unset reads as a
 	// quiet line with Set, and a set value gets a clear (×).
@@ -37,14 +38,16 @@
 		<button
 			type="button"
 			class="btn-icon"
-			aria-label="Clear {label ?? 'value'}"
+			aria-label={t('ui.optional.clear', { label: label ?? t('ui.optional.value') })}
 			onclick={() => set(undefined)}>{I.close}</button
 		>
 	</div>
 {:else}
 	<div class="row nowrap unset">
 		<span class="fnt grow">{empty}</span>
-		<button type="button" {id} class="btn-dashed btn-sm" onclick={() => set(fallback)}>Set</button>
+		<button type="button" {id} class="btn-dashed btn-sm" onclick={() => set(fallback)}
+			>{t('ui.optional.set')}</button
+		>
 	</div>
 {/if}
 

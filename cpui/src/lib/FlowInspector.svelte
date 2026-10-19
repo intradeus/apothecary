@@ -4,7 +4,7 @@
 	import StageChip from '$lib/ui/StageChip.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import Stepper from '$lib/ui/Stepper.svelte';
-	import { esc } from '$lib/ui/html';
+	import { t, th } from '$lib/i18n/index.svelte';
 	import { EDGE_HUE, STAGE_HUE, STAGE_WORD } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
 	import { ms } from '$lib/ui/motion';
@@ -185,9 +185,15 @@
 					EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === id)))
 		).length;
 		const ok = await confirmDialog({
-			title: `Delete stage ${id}?`,
-			body: `The stage <b>${esc(id)}</b> is removed from this draft.${refs ? ` ${refs} other stage${refs === 1 ? '' : 's'} pointing at it ${refs === 1 ? 'is' : 'are'} rewired: success goes to <b>done</b>, failure links to it are dropped.` : ''} Nothing changes for runs until you save.`,
-			action: 'Delete stage'
+			title: t('flow.insp.deleteStageTitle', { id }),
+			body: [
+				th('flow.insp.deleteBody', { id }),
+				refs ? th('flow.insp.deleteRewired', { count: refs }) : '',
+				t('flow.insp.deleteNote')
+			]
+				.filter(Boolean)
+				.join(' '),
+			action: t('flow.insp.deleteAction')
 		});
 		if (!ok) return;
 		doc.stages = doc.stages.filter((s) => s.id !== id);
@@ -240,6 +246,33 @@
 		}
 	}
 
+	const maxHelp = (depth: number, then: unknown, canUnlimit: boolean) => {
+		const abandon = depth === 0 && !then;
+		return t(
+			abandon
+				? canUnlimit
+					? 'flow.insp.maxHelpAbandonUnl'
+					: 'flow.insp.maxHelpAbandon'
+				: canUnlimit
+					? 'flow.insp.maxHelpUnl'
+					: 'flow.insp.maxHelp'
+		);
+	};
+
+	// What an action output produces: its name, then whichever of sentinel,
+	// path and description it declares.
+	const producesHtml = (d: {
+		name: string;
+		sentinel?: string;
+		path?: string;
+		description?: string;
+	}) =>
+		th('flow.insp.produces', { name: d.name }) +
+		(d.sentinel ? th('flow.insp.producesSentinel', { sentinel: d.sentinel }) : '') +
+		(d.path ? th('flow.insp.producesPath', { path: d.path }) : '') +
+		(d.description ? th('flow.insp.producesDesc', { description: d.description }) : '') +
+		'.';
+
 	// appendLink adds a fallback ("then") after the chain's last link.
 	function appendLink(e: DocEdge) {
 		let last = e;
@@ -274,22 +307,22 @@
 					<button
 						class="btn-danger btn-sm"
 						onclick={() => deleteStage(s.id)}
-						title="Delete stage (⌫)">Delete…</button
+						title={t('flow.insp.deleteTitle')}>{t('flow.insp.delete')}</button
 					>
 				</div>
 				<div class="field">
-					<label for="st-id">Id</label>
+					<label for="st-id">{t('flow.insp.id')}</label>
 					<input
 						id="st-id"
 						class="mono"
 						value={s.id}
 						onchange={(e) => renameStage(s.id, e.currentTarget.value)}
 					/>
-					<div class="help">Renaming updates every reference.</div>
+					<div class="help">{t('flow.insp.renameHelp')}</div>
 				</div>
 				{#if doc.phases?.length}
 					<div class="field">
-						<label for="st-phase">Phase</label>
+						<label for="st-phase">{t('flow.insp.phase')}</label>
 						<select
 							id="st-phase"
 							value={s.phase}
@@ -299,16 +332,18 @@
 							}}
 						>
 							{#each doc.phases as ph (ph.id)}
-								<option value={ph.id}>{ph.id} — on {triggerLabel(ph.on)}</option>
+								<option value={ph.id}
+									>{t('flow.insp.phaseOption', { id: ph.id, trigger: triggerLabel(ph.on) })}</option
+								>
 							{/each}
 						</select>
-						<div class="help">Its routes stay inside it; the phase's last stage ends it.</div>
+						<div class="help">{t('flow.insp.phaseHelp')}</div>
 					</div>
 				{/if}
 
 				{#if s.type === 'agent'}
 					<div class="field">
-						<label for="st-agent">Agent</label>
+						<label for="st-agent">{t('flow.insp.agent')}</label>
 						<input
 							id="st-agent"
 							list="agent-names"
@@ -319,10 +354,10 @@
 						<datalist id="agent-names">
 							{#each agents as a (a.name)}<option value={a.name}></option>{/each}
 						</datalist>
-						<div class="help">A name declared in this flow’s agents block.</div>
+						<div class="help">{t('flow.insp.agentHelp')}</div>
 					</div>
 					<div class="field">
-						<label for="st-harness">Harness</label>
+						<label for="st-harness">{t('flow.insp.harness')}</label>
 						<input
 							id="st-harness"
 							bind:value={s.harness}
@@ -330,11 +365,13 @@
 							placeholder={doc.defaults.harness || 'opencode'}
 						/>
 						<div class="help">
-							Overrides the flow default; empty = {doc.defaults.harness || 'flow default'}.
+							{t('flow.insp.overrideDefault', {
+								value: doc.defaults.harness || t('flow.insp.flowDefault')
+							})}
 						</div>
 					</div>
 					<div class="field">
-						<label for="st-model">Model</label>
+						<label for="st-model">{t('flow.insp.model')}</label>
 						<input
 							id="st-model"
 							bind:value={s.model}
@@ -342,43 +379,49 @@
 							placeholder={doc.defaults.model}
 						/>
 						<div class="help">
-							Overrides the flow default; empty = {doc.defaults.model || 'flow default'}.
+							{t('flow.insp.overrideDefault', {
+								value: doc.defaults.model || t('flow.insp.flowDefault')
+							})}
 						</div>
 					</div>
 					<div class="field">
-						<label for="st-turns">Max turns</label>
+						<label for="st-turns">{t('flow.insp.maxTurns')}</label>
 						<OptionalNumber
 							id="st-turns"
-							label="Max turns"
+							label={t('flow.insp.maxTurns')}
 							bind:value={s.max_turns}
-							empty="flow default{doc.defaults.max_turns ? ` · ${doc.defaults.max_turns}` : ''}"
+							empty={doc.defaults.max_turns
+								? t('flow.insp.flowDefaultWith', { value: doc.defaults.max_turns })
+								: t('flow.insp.flowDefault')}
 							fallback={doc.defaults.max_turns ?? 50}
 							{onchange}
 						/>
 					</div>
 					<div class="field">
-						<label for="st-timeout">Timeout</label>
+						<label for="st-timeout">{t('flow.insp.timeout')}</label>
 						<OptionalDuration
 							id="st-timeout"
-							label="Timeout"
+							label={t('flow.insp.timeout')}
 							bind:value={s.timeout}
-							empty="flow default{doc.defaults.timeout ? ` · ${doc.defaults.timeout}` : ''}"
+							empty={doc.defaults.timeout
+								? t('flow.insp.flowDefaultWith', { value: doc.defaults.timeout })
+								: t('flow.insp.flowDefault')}
 							fallback={doc.defaults.timeout || '30m'}
 							{onchange}
 						/>
 					</div>
 					{#if declInputs.length > 0}
 						<div class="grp">
-							<div class="lbl">Inputs</div>
-							<div class="help">Bind each declared input.</div>
+							<div class="lbl">{t('flow.insp.inputs')}</div>
+							<div class="help">{t('flow.insp.inputsHelp')}</div>
 						</div>
 						{#each declInputs as d (d.name)}
 							{@const val = bindingValue(s, 'input', d.name)}
 							<div class="io-bind card-in field">
 								<label for="in-{d.name}"
 									><span class="mono">{d.name}</span>
-									{#if d.optional}<span class="fnt">optional</span>{:else}<span class="hue-amb"
-											>required</span
+									{#if d.optional}<span class="fnt">{t('flow.insp.optional')}</span>{:else}<span
+											class="hue-amb">{t('flow.insp.required')}</span
 										>{/if}</label
 								>
 								{#if d.description}<div class="help">{d.description}</div>{/if}
@@ -390,10 +433,7 @@
 									oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
 								/>
 								{#if isFeedSentinel(val)}
-									<div class="help">
-										Filled by whichever edge brings the run back here — empty on the first attempt,
-										so this input must be optional on the agent.
-									</div>
+									<div class="help">{t('flow.insp.feedHelp')}</div>
 								{/if}
 							</div>
 						{/each}
@@ -403,21 +443,23 @@
 					{:else if s.agent}
 						<div class="help">
 							{agentDecl
-								? `Agent “${s.agent}” declares no inputs — its prompt gets the task and nothing else.`
-								: `Unknown agent “${s.agent}”: bind its inputs after it exists in the project's library.`}
+								? t('flow.insp.noInputs', { name: s.agent })
+								: t('flow.insp.unknownAgent', { name: s.agent })}
 						</div>
 					{/if}
 
 					{#if declOutputs.length > 0}
 						<div class="grp">
-							<div class="lbl">Outputs</div>
-							<div class="help">Declared by the agent; edit a path only to override it here.</div>
+							<div class="lbl">{t('flow.insp.outputs')}</div>
+							<div class="help">{t('flow.insp.outputsHelp')}</div>
 						</div>
 						{#each declOutputs as d (d.name)}
 							<div class="io-bind card-in field">
 								<label for="out-{d.name}"
 									><span class="mono">{d.name}</span>
-									{#if d.type === 'verdict'}<span class="pill sm t-vio">verdict</span>{/if}</label
+									{#if d.type === 'verdict'}<span class="pill sm t-vio"
+											>{t('flow.insp.verdict')}</span
+										>{/if}</label
 								>
 								{#if d.description}<div class="help">{d.description}</div>{/if}
 								<input
@@ -434,16 +476,10 @@
 					{/if}
 					{#if declVerdict}
 						<div class="help">
-							Renders a verdict, so this stage's <span class="mono">on_reject</span> fires on REJECT
-							— and the target of that edge receives its comments as
-							<span class="mono">{SENTINEL_DECISION}</span>.
+							{@html th('flow.insp.verdictHelp', { sentinel: SENTINEL_DECISION })}
 						</div>
 					{:else if s.agent && agentDecl && edgeOf(s, 'on_reject')}
-						<div class="help hue-amb">
-							<span class="mono">on_reject</span> will never fire: agent “{s.agent}” declares no
-							verdict output. Add one on the agent (Outputs → type
-							<span class="mono">verdict</span>).
-						</div>
+						<div class="help hue-amb">{@html th('flow.insp.neverFires', { agent: s.agent })}</div>
 					{/if}
 				{:else if s.type === 'command'}
 					<div class="field">
@@ -455,10 +491,10 @@
 							oninput={onchange}
 							placeholder="verify"
 						/>
-						<div class="help">A command name in the project running this flow.</div>
+						<div class="help">{t('flow.insp.commandHelp')}</div>
 					</div>
 					<div class="field">
-						<label for="st-run">…or literal script</label>
+						<label for="st-run">{t('flow.insp.literalScript')}</label>
 						<textarea
 							id="st-run"
 							class="mono"
@@ -469,21 +505,21 @@
 					</div>
 					<Toggle
 						checked={!!s.each_repo}
-						label="Run in each repository"
-						title="Multi-repo runs: run once per checkout instead of once in the primary (what git commit / push want)"
+						label={t('flow.insp.eachRepo')}
+						title={t('flow.insp.eachRepoTitle')}
 						onchange={(v) => {
 							s.each_repo = v || undefined;
 							onchange();
 						}}
 					/>
 					<div class="grp">
-						<div class="lbl">Reads</div>
-						<div class="help">Checked before the script runs.</div>
+						<div class="lbl">{t('flow.insp.reads')}</div>
+						<div class="help">{t('flow.insp.readsHelp')}</div>
 					</div>
 					<BindingRows stage={s} field="input" valuePlaceholder="artifacts/commit.md" {onchange} />
 					<div class="grp">
-						<div class="lbl">Writes</div>
-						<div class="help">Must exist when the script exits 0.</div>
+						<div class="lbl">{t('flow.insp.writes')}</div>
+						<div class="help">{t('flow.insp.writesHelp')}</div>
 					</div>
 					<BindingRows
 						stage={s}
@@ -491,45 +527,36 @@
 						valuePlaceholder="artifacts/report.txt"
 						{onchange}
 					/>
-					<div class="help">
-						The name is a label — it documents what each file is for and titles its dot in the
-						graph.
-					</div>
+					<div class="help">{t('flow.insp.nameLabelHelp')}</div>
 				{:else if s.type === 'human_gate'}
 					<div class="field">
-						<label for="st-question">Question</label>
+						<label for="st-question">{t('flow.insp.question')}</label>
 						<textarea
 							id="st-question"
 							bind:value={s.question}
 							oninput={onchange}
 							rows="2"
-							placeholder="Approve this implementation plan?"></textarea>
-						<div class="help">
-							What the human is being asked; approve continues, reject follows on_reject.
-						</div>
+							placeholder={t('flow.insp.questionPlaceholder')}></textarea>
+						<div class="help">{t('flow.insp.questionHelp')}</div>
 					</div>
 					<div class="grp">
-						<div class="lbl">Shows</div>
-						<div class="help">
-							One artifact to review, or a link: <span class="mono">$WORKSPACE</span> hands over the
-							terminal/IDE links; <span class="mono">$MR_URL</span> the merge request opened by a
-							<span class="mono">create_mr</span> action.
-						</div>
+						<div class="lbl">{t('flow.insp.shows')}</div>
+						<div class="help">{@html th('flow.insp.showsHelp')}</div>
 					</div>
 					<BindingRows
 						stage={s}
 						field="input"
 						valuePlaceholder="artifacts/plan.md"
-						addLabel="Add what it shows"
+						addLabel={t('flow.insp.addShows')}
 						{onchange}
 					/>
 					<div class="grp">
-						<div class="lbl">Answered automatically by</div>
-						<div class="help">Signals that supply the same answer a human would.</div>
+						<div class="lbl">{t('flow.insp.autoBy')}</div>
+						<div class="help">{t('flow.insp.autoByHelp')}</div>
 					</div>
 					<div class="grid2">
 						<div class="field">
-							<label for="st-auto-ok">Approve when</label>
+							<label for="st-auto-ok">{t('flow.insp.approveWhen')}</label>
 							<select
 								id="st-auto-ok"
 								value={s.auto_approve ?? ''}
@@ -546,7 +573,7 @@
 							</select>
 						</div>
 						<div class="field">
-							<label for="st-auto-no">Reject when</label>
+							<label for="st-auto-no">{t('flow.insp.rejectWhen')}</label>
 							<select
 								id="st-auto-no"
 								value={s.auto_reject ?? ''}
@@ -565,13 +592,11 @@
 						</div>
 					</div>
 					{#if s.auto_approve || s.auto_reject}
-						<div class="help">
-							The gate keeps accepting a manual answer the whole time; whichever lands first wins.
-						</div>
+						<div class="help">{t('flow.insp.manualStillOk')}</div>
 					{/if}
 				{:else if s.type === 'action'}
 					<div class="field">
-						<label for="st-action">Action</label>
+						<label for="st-action">{t('flow.insp.action')}</label>
 						<select
 							id="st-action"
 							value={s.action ?? ''}
@@ -588,22 +613,21 @@
 							<option value="">—</option>
 							{#each actions as a (a.slug)}<option value={a.slug}>{a.title}</option>{/each}
 						</select>
-						<div class="help">A built-in apothecary integration.</div>
+						<div class="help">{t('flow.insp.actionHelp')}</div>
 					</div>
 					{#if actionSig}
 						{#if actionSig.description}<div class="help">{actionSig.description}</div>{/if}
 						{#if actionSig.requires}
 							<div class="help">
-								Needs a <span class="mono">{actionSig.requires}</span> integration on the project running
-								this flow.
+								{@html th('flow.insp.needsIntegration', { kind: actionSig.requires })}
 							</div>
 						{/if}
 						{#each actionSig.inputs ?? [] as d (d.name)}
 							<div class="io-bind card-in field">
 								<label for="act-{d.name}"
 									><span class="mono">{d.name}</span>
-									{#if d.required}<span class="hue-amb">required</span>{:else}<span class="fnt"
-											>optional</span
+									{#if d.required}<span class="hue-amb">{t('flow.insp.required')}</span>{:else}<span
+											class="fnt">{t('flow.insp.optional')}</span
 										>{/if}</label
 								>
 								{#if d.description}<div class="help">{d.description}</div>{/if}
@@ -629,20 +653,14 @@
 							</div>
 						{/each}
 						{#each actionSig.outputs ?? [] as d (d.name)}
-							<div class="help">
-								Produces <span class="mono">{d.name}</span>{#if d.sentinel}, available to later
-									stages as
-									<span class="mono">{d.sentinel}</span>{/if}{#if d.path}
-									at <span class="mono">{d.path}</span>{/if}{#if d.description}
-									— {d.description}{/if}.
-							</div>
+							<div class="help">{@html producesHtml(d)}</div>
 						{/each}
 					{:else if s.action}
-						<div class="help hue-amb">Unknown action “{s.action}”.</div>
+						<div class="help hue-amb">{t('flow.insp.unknownAction', { name: s.action })}</div>
 					{/if}
 				{:else if s.type === 'wait'}
 					<div class="field">
-						<label for="st-for">Wait for</label>
+						<label for="st-for">{t('flow.insp.waitFor')}</label>
 						<select
 							id="st-for"
 							value={s.for ?? ''}
@@ -654,26 +672,25 @@
 							<option value="">—</option>
 							{#each signals as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
 						</select>
-						<div class="help">An external signal; the run parks until it fires.</div>
+						<div class="help">{t('flow.insp.waitHelp')}</div>
 					</div>
 					{#if waitSig}
 						{#if waitSig.description}<div class="help">{waitSig.description}</div>{/if}
 						{#if waitSig.requires}
 							<div class="help">
-								Needs a <span class="mono">{waitSig.requires}</span> integration on the project running
-								this flow.
+								{@html th('flow.insp.needsIntegration', { kind: waitSig.requires })}
 							</div>
 						{/if}
 					{:else if s.for}
-						<div class="help hue-amb">Unknown signal “{s.for}”.</div>
+						<div class="help hue-amb">{t('flow.insp.unknownSignal', { name: s.for })}</div>
 					{/if}
 					<div class="field">
-						<label for="st-wait-timeout">Timeout</label>
+						<label for="st-wait-timeout">{t('flow.insp.timeout')}</label>
 						<OptionalDuration
 							id="st-wait-timeout"
-							label="Timeout"
+							label={t('flow.insp.timeout')}
 							bind:value={s.timeout}
-							empty="waits indefinitely"
+							empty={t('flow.insp.waitsForever')}
 							fallback="24h"
 							{onchange}
 						/>
@@ -682,10 +699,11 @@
 
 				{#if (freeBindings.length > 0 || freeShown[s.id]) && (s.type === 'agent' || s.type === 'action')}
 					<div class="grp">
-						<div class="lbl">Unrecognized bindings</div>
+						<div class="lbl">{t('flow.insp.unrecognized')}</div>
 						<div class="help hue-amb">
-							Not declared by this stage's {s.type === 'agent' ? 'agent' : 'action'} — run creation will
-							refuse it.
+							{s.type === 'agent'
+								? t('flow.insp.unrecognizedAgent')
+								: t('flow.insp.unrecognizedAction')}
 						</div>
 					</div>
 					{#key s.type === 'agent' ? s.agent : s.action}
@@ -694,20 +712,20 @@
 				{/if}
 
 				<div class="field">
-					<label for="st-desc">Description</label>
+					<label for="st-desc">{t('flow.insp.description')}</label>
 					<input
 						id="st-desc"
 						bind:value={s.description}
 						oninput={onchange}
-						placeholder="implement the approved plan"
+						placeholder={t('flow.insp.descPlaceholder')}
 					/>
-					<div class="help">Optional note on what this stage is for.</div>
+					<div class="help">{t('flow.insp.descHelp')}</div>
 				</div>
 
 				<div class="field">
-					<label for="st-succ">On success</label>
+					<label for="st-succ">{t('flow.insp.onSuccess')}</label>
 					<select id="st-succ" bind:value={s.on_success} {onchange}>
-						<option value={DONE}>done (complete the run)</option>
+						<option value={DONE}>{t('flow.insp.doneOption')}</option>
 						{#each stageIds.filter((id) => id !== s.id) as id (id)}<option value={id}>{id}</option
 							>{/each}
 					</select>
@@ -729,9 +747,7 @@
 					{/each}
 				</div>
 				{#if s.type === 'agent' || s.type === 'command'}
-					<div class="help">
-						Timeouts route via on_timeout when declared, else fall back to on_fail.
-					</div>
+					<div class="help">{t('flow.insp.timeoutsHelp')}</div>
 				{/if}
 			{:else if edgeSel?.stage}
 				{@const s = edgeSel.stage}
@@ -741,38 +757,35 @@
 					{@const links = chainLinks(e)}
 					<div class="ih">
 						<span class="pill sm mono t-{EDGE_HUE[kind]}">{kind}</span>
-						<span class="mut small">from</span>
+						<span class="mut small">{t('flow.insp.from')}</span>
 						<span class="mono iid ell">{s.id}</span>
 						<span class="spacer"></span>
 						<button
 							class="btn-danger btn-sm"
-							title="Remove edge (⌫)"
+							title={t('flow.insp.removeEdgeTitle')}
 							onclick={() => {
 								setEdge(s, kind, undefined);
 								onchange();
 								onselect({ kind: 'stage', id: s.id });
-							}}>Remove edge</button
+							}}>{t('flow.insp.removeEdge')}</button
 						>
 					</div>
 					<div class="help">
-						This edge carries <span class="mono">{feedSentinelFor(kind)}</span>. It lands wherever
-						the target stage binds that value as an input — bind it there, or the retry runs blind.
+						{@html th('flow.insp.edgeCarries', { sentinel: feedSentinelFor(kind) })}
 					</div>
 					{#each links as link, depth (depth)}
 						<div class="link" class:fallback={depth > 0}>
-							{#if depth > 0}<div class="help">then (once the link above is exhausted)</div>{/if}
+							{#if depth > 0}<div class="help">{t('flow.insp.thenHelp')}</div>{/if}
 							<div class="field">
-								<label for="ed-to-{depth}">To</label>
+								<label for="ed-to-{depth}">{t('flow.insp.to')}</label>
 								<select
 									id="ed-to-{depth}"
 									value={link.to}
 									onchange={(ev) => retarget(s.type, link, ev.currentTarget.value)}
 								>
 									{#each stageIds as id (id)}<option value={id}>{id}</option>{/each}
-									<option value={ABORT}>abort — stop the run deliberately</option>
-									<option value={DEBUG}
-										>debug — park for a human to fix the workspace, then re-run this stage</option
-									>
+									<option value={ABORT}>{t('flow.insp.abortOption')}</option>
+									<option value={DEBUG}>{t('flow.insp.debugOption')}</option>
 								</select>
 							</div>
 							{#if link.to !== ABORT && link.to !== DEBUG}
@@ -780,10 +793,10 @@
 								{#if canUnlimit}
 									<Toggle
 										checked={link.max === -1}
-										label="No limit (∞)"
-										title="Every firing costs a human decision{targetsGate(link.to)
-											? '; rejecting the gate ends the run'
-											: ''}"
+										label={t('flow.insp.noLimit')}
+										title={targetsGate(link.to)
+											? t('flow.insp.noLimitTitleGate')
+											: t('flow.insp.noLimitTitle')}
 										onchange={(v) => {
 											link.max = v ? -1 : 3;
 											if (link.max === -1) link.then = undefined;
@@ -792,13 +805,13 @@
 									/>
 								{/if}
 								<div class="field">
-									<label for="ed-max-{depth}">Max</label>
+									<label for="ed-max-{depth}">{t('flow.insp.max')}</label>
 									{#if link.max === -1}
-										<div class="mono unl">∞ unlimited</div>
+										<div class="mono unl">{t('flow.insp.unlimited')}</div>
 									{:else}
 										<Stepper
 											id="ed-max-{depth}"
-											label="Max"
+											label={t('flow.insp.max')}
 											min={1}
 											bind:value={
 												() => link.max ?? 1,
@@ -809,36 +822,31 @@
 											}
 										/>
 									{/if}
-									<div class="help">
-										Times this link may fire{depth === 0 && !link.then
-											? ' before the run is abandoned'
-											: ''}{canUnlimit ? ' · or no limit, a human decides each time' : ''}.
-									</div>
+									<div class="help">{maxHelp(depth, link.then, canUnlimit)}</div>
 								</div>
 							{/if}
 						</div>
 					{/each}
 					<div class="row">
 						{#if links[links.length - 1].to !== ABORT && links[links.length - 1].to !== DEBUG && links[links.length - 1].max !== -1}
-							<button class="btn-sm" onclick={() => appendLink(e)}>{I.add} then (fallback)</button>
+							<button class="btn-sm" onclick={() => appendLink(e)}
+								>{I.add} {t('flow.insp.thenFallback')}</button
+							>
 						{/if}
 						<button class="btn-sm btn-ghost" onclick={() => dropLink(s, kind, e)}
-							>− remove last link</button
+							>{t('flow.insp.removeLast')}</button
 						>
 					</div>
-					<div class="help">
-						Links fire top-down: each keeps its own counter; when one is exhausted the next failure
-						falls through. An exhausted chain abandons the run.
-					</div>
+					<div class="help">{t('flow.insp.linksHelp')}</div>
 				{/if}
 			{:else}
 				<div class="ih">
-					<span class="serif ttl">The formula</span>
+					<span class="serif ttl">{t('flow.insp.formula')}</span>
 					<span class="spacer"></span>
-					<span class="fnt tiny">nothing selected</span>
+					<span class="fnt tiny">{t('flow.insp.nothingSelected')}</span>
 				</div>
 				<div class="field">
-					<label for="fl-desc">Description</label>
+					<label for="fl-desc">{t('flow.insp.description')}</label>
 					<input
 						id="fl-desc"
 						value={doc.description ?? ''}
@@ -849,17 +857,17 @@
 					/>
 				</div>
 				<div class="field">
-					<label for="fl-harness">Default harness</label>
+					<label for="fl-harness">{t('flow.insp.defaultHarness')}</label>
 					<input
 						id="fl-harness"
 						bind:value={doc.defaults.harness}
 						oninput={onchange}
 						placeholder="opencode"
 					/>
-					<div class="help">The harness kind stages run on unless they override it.</div>
+					<div class="help">{t('flow.insp.defaultHarnessHelp')}</div>
 				</div>
 				<div class="field">
-					<label for="fl-model">Default model</label>
+					<label for="fl-model">{t('flow.insp.defaultModel')}</label>
 					<input
 						id="fl-model"
 						bind:value={doc.defaults.model}
@@ -868,36 +876,36 @@
 					/>
 				</div>
 				<div class="field">
-					<label for="fl-timeout">Default timeout</label>
+					<label for="fl-timeout">{t('flow.insp.defaultTimeout')}</label>
 					<OptionalDuration
 						id="fl-timeout"
-						label="Default timeout"
+						label={t('flow.insp.defaultTimeout')}
 						bind:value={doc.defaults.timeout}
-						empty="no default"
+						empty={t('flow.insp.noDefault')}
 						fallback="30m"
 						{onchange}
 					/>
 				</div>
 				<div class="field">
-					<label for="fl-turns">Default max turns</label>
+					<label for="fl-turns">{t('flow.insp.defaultMaxTurns')}</label>
 					<OptionalNumber
 						id="fl-turns"
-						label="Default max turns"
+						label={t('flow.insp.defaultMaxTurns')}
 						bind:value={doc.defaults.max_turns}
-						empty="no default"
+						empty={t('flow.insp.noDefault')}
 						fallback={50}
 						{onchange}
 					/>
 				</div>
-				<div class="lbl">Budget</div>
+				<div class="lbl">{t('flow.insp.budget')}</div>
 				<div class="field">
-					<label for="fl-cost">Max cost (USD)</label>
+					<label for="fl-cost">{t('flow.insp.maxCost')}</label>
 					<input
 						id="fl-cost"
 						type="number"
 						min="0"
 						step="0.5"
-						placeholder="no cap"
+						placeholder={t('flow.insp.noCap')}
 						value={doc.budget?.max_cost_usd ?? ''}
 						oninput={(e) => {
 							doc.budget.max_cost_usd =
@@ -907,32 +915,26 @@
 					/>
 				</div>
 				<div class="field">
-					<label for="fl-tturns">Max total turns</label>
+					<label for="fl-tturns">{t('flow.insp.maxTotalTurns')}</label>
 					<OptionalNumber
 						id="fl-tturns"
-						label="Max total turns"
+						label={t('flow.insp.maxTotalTurns')}
 						bind:value={doc.budget.max_total_turns}
-						empty="no cap"
+						empty={t('flow.insp.noCap')}
 						fallback={300}
 						{onchange}
 					/>
 				</div>
-				<div class="lbl">Add a stage</div>
+				<div class="lbl">{t('flow.insp.addStage')}</div>
 				<div class="chips">
-					{#each ADD as t (t)}
-						<button class="btn-sm" onclick={() => addStage(t)}
-							><span class="ldot sm flat hue-{STAGE_HUE[t]}"></span>{STAGE_WORD[t] ?? t}</button
+					{#each ADD as kind (kind)}
+						<button class="btn-sm" onclick={() => addStage(kind)}
+							><span class="ldot sm flat hue-{STAGE_HUE[kind]}"></span>{STAGE_WORD[kind] ??
+								kind}</button
 						>
 					{/each}
 				</div>
-				<div class="help">
-					Click a node or edge to edit it. Drag from a node's coloured handles to rewire control
-					flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may
-					target the abort terminal to stop the run deliberately, or the debug leaf to park it for a
-					human and then run the stage again. The faint dashed lines are dataflow — they are derived
-					from the artifact paths stages read and write, so you change them by editing an input or
-					output, not by dragging.
-				</div>
+				<div class="help">{t('flow.insp.canvasHelp')}</div>
 			{/if}
 		</div>
 	{/key}

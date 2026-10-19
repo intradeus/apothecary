@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Logs (DESIGN §6): the workspace's live exec output, the provisioning log
 	// (clone + build + bootstrap) and each stage's captured log.
+	import { t } from '$lib/i18n/index.svelte';
 	import { tick } from 'svelte';
 	import { api } from '$lib/api';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -37,20 +38,20 @@
 		loading = true;
 		try {
 			if (src === 'workspace') {
-				const t = await api.runs.workspaceLog(rs.runId);
+				const out = await api.runs.workspaceLog(rs.runId);
 				if (src !== rs.logSource) return;
-				text = t;
-				note = t === null ? 'No live output here — this provisioner does not stream it.' : '';
+				text = out;
+				note = out === null ? t('runview.logs.no_stream') : '';
 			} else {
-				const t = await api.runs.stageLog(rs.runId, src);
+				const out = await api.runs.stageLog(rs.runId, src);
 				if (src !== rs.logSource) return;
-				text = t;
+				text = out;
 				note = '';
 			}
 		} catch (e) {
 			if (src !== rs.logSource) return;
 			text = null;
-			note = `No log: ${e instanceof Error ? e.message : String(e)}`;
+			note = t('runview.logs.no_log', { message: e instanceof Error ? e.message : String(e) });
 		} finally {
 			loading = false;
 		}
@@ -66,8 +67,8 @@
 		stick = true;
 		void load(src);
 		if (src !== 'workspace' || rs.terminal || !rs.hasWorkspace) return;
-		const t = setInterval(() => !document.hidden && load(src), 2500);
-		return () => clearInterval(t);
+		const timer = setInterval(() => !document.hidden && load(src), 2500);
+		return () => clearInterval(timer);
 	});
 
 	function onScroll() {
@@ -94,7 +95,7 @@
 		<Segmented
 			glass={false}
 			size="sm"
-			label="Log source"
+			label={t('runview.logs.source')}
 			value={kind}
 			onchange={(v) =>
 				(rs.logSource =
@@ -104,13 +105,18 @@
 							? PROVISION_STAGE
 							: (stages.at(-1) ?? rs.logSource))}
 			options={[
-				{ value: 'workspace', label: rs.terminal ? 'Workspace' : 'Workspace · live' },
-				...(hasProvision ? [{ value: 'provision' as const, label: 'Provisioning' }] : []),
-				...(stages.length ? [{ value: 'stage' as const, label: 'Stage' }] : [])
+				{
+					value: 'workspace',
+					label: rs.terminal ? t('runview.logs.workspace') : t('runview.logs.workspace_live')
+				},
+				...(hasProvision
+					? [{ value: 'provision' as const, label: t('runview.logs.provisioning') }]
+					: []),
+				...(stages.length ? [{ value: 'stage' as const, label: t('runview.logs.stage') }] : [])
 			]}
 		/>
 		{#if kind === 'stage'}
-			<select class="sel mono" bind:value={rs.logSource} aria-label="Stage">
+			<select class="sel mono" bind:value={rs.logSource} aria-label={t('runview.logs.stage')}>
 				{#each stages as s (s)}<option value={s}>{s}</option>{/each}
 			</select>
 		{/if}
@@ -118,8 +124,8 @@
 			<span class="spacer"></span>
 			<button
 				class="btn-icon"
-				title="Reload"
-				aria-label="Reload"
+				title={t('runview.logs.reload')}
+				aria-label={t('runview.logs.reload')}
 				aria-busy={loading}
 				onclick={() => load(rs.logSource)}>{I.retry}</button
 			>
@@ -129,14 +135,12 @@
 	</div>
 	<div class="out" bind:this={pre} onscroll={onScroll}>
 		{#if text === null}
-			{#if loading}<Loading text="Connecting…" />{:else}<div class="empty-line">
-					{note || 'Nothing yet.'}
+			{#if loading}<Loading text={t('runview.connecting')} />{:else}<div class="empty-line">
+					{note || t('runview.logs.nothing_yet')}
 				</div>{/if}
 		{:else if !text}
 			<div class="empty-line">
-				{kind === 'workspace'
-					? 'No live output yet — it appears here as the workspace works (bootstrap, commands, agent events).'
-					: 'The log is empty.'}
+				{kind === 'workspace' ? t('runview.logs.no_live_ws') : t('runview.logs.empty')}
 			</div>
 		{:else}
 			{#each lines as l, i (i)}<div class="l {hue(l)}">{l || ' '}</div>{/each}

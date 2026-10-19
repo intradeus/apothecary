@@ -9,6 +9,7 @@
 </script>
 
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// One configured thing in a System grid (DESIGN 7.10: an integration, a
 	// channel): its name and kind chip, a status on the right (a test result),
 	// a quiet line under the name, the config summary boxed as `dl.kv.code`,
@@ -81,7 +82,7 @@
 					<dd
 						class="ell"
 						class:secret={s.secret}
-						title={s.title ?? (s.secret ? 'write-only secret' : s.v)}
+						title={s.title ?? (s.secret ? t('ui.config.secret') : s.v)}
 					>
 						{s.v || '—'}
 					</dd>

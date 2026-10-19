@@ -3,6 +3,7 @@
 	// a decision, and the window desk with the run's thirteen views.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/guild';
 	import { shortId, times } from '$lib/format';
 	import Banner from '$lib/ui/Banner.svelte';
@@ -48,35 +49,35 @@
 						: ''
 				};
 			case 'session':
-				return { hint: rs.terminal ? 'closed' : 'following' };
+				return { hint: t(rs.terminal ? 'run.page.closed' : 'run.page.following') };
 			case 'pings':
 				return rs.pendingPings.length
-					? { count: rs.pendingPings.length, alert: 'amb', hint: 'waiting on you' }
+					? { count: rs.pendingPings.length, alert: 'amb', hint: t('run.page.waitingOnYou') }
 					: { count: rs.pings.length || '' };
 			case 'timeline':
-				return { count: timelineCount || '', hint: 'every lifecycle event' };
+				return { count: timelineCount || '', hint: t('run.page.everyEvent') };
 			case 'record':
-				return { count: fileCount || '', hint: 'kept after the workspace' };
+				return { count: fileCount || '', hint: t('run.page.keptAfter') };
 			case 'changes':
 				return {
 					count: rs.hasWorkspace ? (rs.changesCount ?? '') : '',
-					hint: rs.hasWorkspace && !rs.terminal ? 'refreshes every 5s' : ''
+					hint: rs.hasWorkspace && !rs.terminal ? t('run.page.refresh5') : ''
 				};
 			case 'files':
-				return { hint: 'read-only · first 1 MB' };
+				return { hint: t('run.page.readOnly') };
 			case 'terminal':
-				return { hint: 'xterm · ends when hidden' };
+				return { hint: t('run.page.xterm') };
 			case 'logs':
 				return { hint: rs.logSource === 'workspace' && !rs.terminal ? 'tail -f' : '' };
 			case 'egress':
 				return rs.newDenials.length
-					? { count: rs.newDenials.length, alert: 'ros', hint: 'rules apply live' }
-					: { hint: 'rules apply live' };
+					? { count: rs.newDenials.length, alert: 'ros', hint: t('run.page.rulesLive') }
+					: { hint: t('run.page.rulesLive') };
 			case 'ports':
 				return { count: rs.observed.length || '' };
 			case 'resources':
 			case 'vitals':
-				return { hint: 'sampled every 10s' };
+				return { hint: t('run.page.sampled') };
 		}
 	}
 
@@ -104,7 +105,9 @@
 </script>
 
 <svelte:head>
-	<title>{rs.run ? `${shortId(rs.run.id)} · ${rs.run.title}` : 'Run'} · Apothecary</title>
+	<title
+		>{rs.run ? `${shortId(rs.run.id)} · ${rs.run.title}` : t('run.page.docTitle')} · Apothecary</title
+	>
 </svelte:head>
 
 <div class="runpage">
@@ -114,10 +117,10 @@
 		{#if showDenials}
 			<div class="bn">
 				<Banner
-					title="Egress blocked {times(rs.newDenials.length)}"
-					aside="toxic hosts, kept off the shelf"
+					title={t('run.page.egressBlocked', { n: times(rs.newDenials.length) })}
+					aside={t('run.page.egressAside')}
 					items={rs.newDenials.map((d) => d.host)}
-					action="Review & allow"
+					action={t('run.page.reviewAllow')}
 					onaction={() => {
 						rs.egressVerdict = 'deny';
 						desk.reveal('egress');
@@ -130,9 +133,9 @@
 			<div class="bn">
 				<Banner
 					tone="amb"
-					title="Workspace unknown"
-					items={['Provisioner unreachable — check the integration token']}
-					action="Integrations"
+					title={t('run.page.wsUnknown')}
+					items={[t('run.page.provisionerDown')]}
+					action={t('run.page.integrations')}
 					onaction={() => goto(to.system('integrations'))}
 					ondismiss={() => (unknownDismissed = true)}
 				/>
@@ -176,13 +179,13 @@
 	{:else if rs.loadError}
 		<div class="pad">
 			<ErrorCard
-				cause="This run could not be loaded."
+				cause={t('run.page.loadError')}
 				detail={rs.loadError}
 				onretry={() => rs.refreshRun()}
 			/>
 		</div>
 	{:else}
-		<div class="pad"><Loading text="Connecting…" /></div>
+		<div class="pad"><Loading text={t('run.page.connecting')} /></div>
 	{/if}
 </div>
 

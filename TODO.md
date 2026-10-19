@@ -1,9 +1,7 @@
-- 7) redo everything in DDD
-- 19) DinD sandbox follow-ups: (c) sysbox runtime to drop `--privileged` — SHIPPED opt-in via `APOTHECARY_SANDBOX_RUNTIME`; remaining: verify `docker:29-dind` actually runs under sysbox on a supported host (sysbox steers away from dind images), then decide whether it can ever be the default.
+- 7) redo everything in clean architecture
 - 23) new run on observability (full flow data + resource stats)
 - 24) Workspace provisionning improvements - cache the devcontainer generated image ? And regen only when needed ? Unsure if its possible. Goal : reduce provisionning time. Not critical.
 - 25) multi-user / org based
 - 27) Jira integration to move tickets, connect branch, add fields etc. (feature flag field)
 - 30) k8s/k3s deployment
 - 31) "Review the recipe" page and recipe word everywhere to point to the "plan" step, but it shouldnt. The app should be flexible based on flows - the "plan step = recipe" relation should NOT exist, a plan is part of the flow which is flexible so there is no reason to have custom logic for "plans". We should definitely have a 'review text' system, which can be used to annotate any kind of markdown, but that's it, it should work for all kind of stages which have text-review steps, not specific for plans only. We should not assume that a user will create a flow which has a plan, it could be anything else.
-- 32) i18n

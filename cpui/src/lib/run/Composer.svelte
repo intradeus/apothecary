@@ -4,6 +4,7 @@
 	// Sending is optimistic: the box clears and the bubble shows at once; if
 	// the engine refuses, the text comes back with the reason.
 	import { api } from '$lib/api';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		runId,
@@ -62,14 +63,14 @@
 		bind:this={ta}
 		bind:value={draft}
 		rows="1"
-		placeholder="Whisper to the builder…"
+		placeholder={t('run.composer.placeholder')}
 		onkeydown={onKey}
-		aria-label="Message the agent"></textarea>
+		aria-label={t('run.composer.aria')}></textarea>
 	<div class="foot">
 		<span class="keys">
-			<span><span class="k">↵</span> send, queued</span>
-			<span><span class="k">⌘↵</span> send now, interrupts</span>
-			<span class="nl"><span class="k">⇧↵</span> newline</span>
+			<span><span class="k">↵</span> {t('run.composer.keyQueue')}</span>
+			<span><span class="k">⌘↵</span> {t('run.composer.keyNow')}</span>
+			<span class="nl"><span class="k">⇧↵</span> {t('run.composer.keyNewline')}</span>
 		</span>
 		{#if error}<span class="err" title={error}>{error}</span>{/if}
 		<span class="spacer"></span>
@@ -78,14 +79,14 @@
 			onclick={() => send(true)}
 			aria-busy={sending === 'now'}
 			disabled={!!sending || !draft.trim()}
-			title="Cancel the agent's turn now and have it read this">Send now</button
+			title={t('run.composer.sendNowTitle')}>{t('run.composer.sendNow')}</button
 		>
 		<button
 			class="btn-primary"
 			onclick={() => send(false)}
 			aria-busy={sending === 'queue'}
 			disabled={!!sending || !draft.trim()}
-			title="Delivered when the agent finishes its current turn">Send</button
+			title={t('run.composer.sendTitle')}>{t('run.composer.send')}</button
 		>
 	</div>
 </div>

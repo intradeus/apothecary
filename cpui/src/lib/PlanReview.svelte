@@ -27,6 +27,7 @@
 	import { I } from '$lib/ui/icons';
 	import { bump, materialize, ms, spring } from '$lib/ui/motion';
 	import { onMount } from 'svelte';
+	import { t, th } from '$lib/i18n/index.svelte';
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
 
@@ -88,13 +89,13 @@
 			const { files: fs } = await api.pings.payload(ping.id);
 			const primary = fs[0];
 			if (!primary) {
-				error = 'this ping has no attached files';
+				error = t('plan.noFiles');
 			} else if (!primary.captured || !primary.snapshotId) {
-				error = `${primary.path} was not captured when the ping was raised`;
+				error = t('plan.notCaptured', { path: primary.path });
 			} else {
 				path = primary.path;
 				const res = await fetch(api.files.snapshotUrl(primary.snapshotId));
-				if (!res.ok) throw new Error(`document unavailable (${res.status})`);
+				if (!res.ok) throw new Error(t('plan.docUnavailable', { status: res.status }));
 				blocks = planBlocks(await res.text());
 			}
 			extraFiles = fs.slice(1);
@@ -298,9 +299,9 @@
 		const c = comments[i];
 		if (
 			!(await confirmDialog({
-				title: 'Delete this comment?',
-				body: 'The comment is removed from your <b>review draft</b>. Nothing has been sent to the run yet.',
-				action: 'Delete comment'
+				title: t('plan.deleteTitle'),
+				body: th('plan.deleteBody'),
+				action: t('plan.deleteAction')
 			}))
 		)
 			return;
@@ -378,9 +379,9 @@
 		if (
 			comments.length > 0 &&
 			!(await confirmDialog({
-				title: 'Approve and discard your comments?',
-				body: `You have <b>${comments.length} unsent comment${comments.length === 1 ? '' : 's'}</b>. Approving lets the <b>run</b> continue as is and discards them. To send them, use Request changes instead.`,
-				action: 'Approve anyway',
+				title: t('plan.approveTitle'),
+				body: th('plan.approveBody', { count: comments.length }),
+				action: t('plan.approveAnyway'),
 				tone: 'warn'
 			}))
 		)
@@ -419,8 +420,8 @@
 
 <div class="wb">
 	<!-- Outline -->
-	<nav class="outline c pane" aria-label="Document outline">
-		<div class="pane-head"><h2>Outline</h2></div>
+	<nav class="outline c pane" aria-label={t('plan.outlineLabel')}>
+		<div class="pane-head"><h2>{t('plan.outline')}</h2></div>
 		{#if loading}
 			<div class="pane-body"><Skeleton lines={5} height={10} /></div>
 		{:else if outline.length}
@@ -439,7 +440,7 @@
 				{/each}
 			</div>
 		{:else}
-			<div class="empty-line">No headings in this document.</div>
+			<div class="empty-line">{t('plan.noHeadings')}</div>
 		{/if}
 	</nav>
 
@@ -456,7 +457,7 @@
 			{:else if error && blocks.length === 0}
 				<div class="paper"><ErrorCard cause={error} /></div>
 			{:else if blocks.length === 0}
-				<div class="paper fnt">The document is empty.</div>
+				<div class="paper fnt">{t('plan.empty')}</div>
 			{:else}
 				<div class="paper" bind:this={planEl}>
 					{#each blocks as b, i (i)}
@@ -481,14 +482,14 @@
 	<!-- Review sidebar -->
 	<aside class="side lg pane">
 		<div class="pane-head">
-			<h2>Review</h2>
+			<h2>{t('plan.review')}</h2>
 			<span class="count hot" class:gone={!comments.length} use:bump={comments.length}
 				>{comments.length}</span
 			>
 		</div>
 		<div class="sscroll">
 			<details class="card-in ask">
-				<summary class="disclosure">The ask</summary>
+				<summary class="disclosure">{t('plan.theAsk')}</summary>
 				<Markdown src={ping.question} quiet />
 			</details>
 
@@ -504,18 +505,20 @@
 						transition:materialize={{ origin: 'top center', y: 6 }}
 					>
 						<div class="ch">
-							<button class="rowbtn jump" title="Scroll to this section" onclick={() => reveal(c)}>
+							<button class="rowbtn jump" title={t('plan.scrollTo')} onclick={() => reveal(c)}>
 								<span class="ell"
-									>§ {c.heading || '(top)'} ·
+									>§ {c.heading || t('plan.top')} ·
 									<span class="mono">L{c.startLine}–{c.endLine}</span></span
 								>
 							</button>
-							<button class="btn-ghost btn-sm" onclick={() => editComment(i)}>Edit</button>
+							<button class="btn-ghost btn-sm" onclick={() => editComment(i)}
+								>{t('plan.edit')}</button
+							>
 							<button
 								class="btn-icon"
 								onclick={() => removeComment(i)}
-								aria-label="Delete comment"
-								title="Delete comment">{I.close}</button
+								aria-label={t('plan.deleteComment')}
+								title={t('plan.deleteComment')}>{I.close}</button
 							>
 						</div>
 						<blockquote class="mono">{trunc(c.quote, 120)}</blockquote>
@@ -525,14 +528,11 @@
 						{/if}
 					</div>
 				{:else}
-					<p class="note">
-						<strong>Select any text</strong> in the document — a comment box opens where you let go. All
-						comments go back together as one feedback prompt.
-					</p>
+					<p class="note">{@html th('plan.hint')}</p>
 				{/each}
 			</div>
 
-			<AttachFiles bind:files label="Attach files to your review" compact />
+			<AttachFiles bind:files label={t('plan.attachReview')} compact />
 			{#if error && blocks.length > 0}<div class="err">{error}</div>{/if}
 		</div>
 
@@ -543,7 +543,7 @@
 						class="btn-primary"
 						disabled={busy}
 						aria-busy={busy && sending === 'approve'}
-						onclick={approve}>Approve</button
+						onclick={approve}>{t('plan.approve')}</button
 					>
 					<button
 						class="btn-sel"
@@ -551,7 +551,7 @@
 						aria-busy={busy && sending === 'reject'}
 						onclick={requestChanges}
 					>
-						Request changes ({comments.length})
+						{t('plan.requestChanges', { count: comments.length })}
 					</button>
 				</div>
 			{:else if ping.answerKind === 'choice' && ping.options.length}
@@ -566,7 +566,7 @@
 						>
 					{/each}
 				</div>
-				<p class="cap">Your pick answers the agent; comments ride along as the note.</p>
+				<p class="cap">{t('plan.pickHint')}</p>
 			{:else}
 				<div class="acts">
 					<button
@@ -575,16 +575,15 @@
 						aria-busy={busy}
 						onclick={sendReview}
 					>
-						Send review ({comments.length})
+						{t('plan.sendReview', { count: comments.length })}
 					</button>
 				</div>
 			{/if}
 			<p class="cap">
 				{#if comments.length && savedAt}
-					<span class="hue-grn">{I.ok} Draft saved</span> · kept in this browser; attachments must be
-					re-picked
+					<span class="hue-grn">{I.ok} {t('plan.draftSaved')}</span>{t('plan.draftKept')}
 				{:else}
-					Drafts are kept in this browser; attachments must be re-picked.
+					{t('plan.draftsKept')}
 				{/if}
 			</p>
 		</footer>
@@ -606,11 +605,11 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="composer"
-			aria-label={composer.editing !== null ? 'Edit comment' : 'Add comment'}
+			aria-label={composer.editing !== null ? t('plan.editComment') : t('plan.addComment')}
 			onkeydown={onComposerKey}
 		>
 			<div class="cmh">
-				<span class="ell">§ {composer.heading || '(top)'}</span>
+				<span class="ell">§ {composer.heading || t('plan.top')}</span>
 				<span class="mono fnt">L{composer.startLine}–{composer.endLine}</span>
 			</div>
 			<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>
@@ -618,16 +617,18 @@
 				bind:this={composerEl}
 				bind:value={composer.text}
 				rows="3"
-				placeholder="What should change here?"></textarea>
-			<AttachFiles bind:files={composer.files} label="Attach" compact />
+				placeholder={t('plan.commentPlaceholder')}></textarea>
+			<AttachFiles bind:files={composer.files} label={t('plan.attach')} compact />
 			<div class="cmf">
 				<button class="btn-primary" onclick={commitComment} disabled={!composer.text.trim()}>
-					{composer.editing !== null ? 'Save' : 'Add'}
+					{composer.editing !== null ? t('plan.save') : t('plan.add')}
 				</button>
-				<button class="btn-ghost" onclick={closeComposer}>Close</button>
+				<button class="btn-ghost" onclick={closeComposer}>{t('plan.close')}</button>
 				<span class="spacer"></span>
 				<span class="help"
-					><span class="kbd">⌘↵</span> add · <span class="kbd">esc</span> close</span
+					><span class="kbd">⌘↵</span>
+					{t('plan.addHint')} · <span class="kbd">esc</span>
+					{t('plan.closeHint')}</span
 				>
 			</div>
 		</div>

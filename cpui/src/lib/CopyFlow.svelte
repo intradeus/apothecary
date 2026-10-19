@@ -11,6 +11,7 @@
 	import { I } from '$lib/ui/icons';
 	import SlugField, { slugOk } from '$lib/flow/SlugField.svelte';
 	import { untrack } from 'svelte';
+	import { t, th } from '$lib/i18n/index.svelte';
 
 	let {
 		flow,
@@ -73,33 +74,32 @@
 
 <Modal
 	bind:open
-	title={flow.builtin ? `Use ${flow.name}` : `Copy ${flow.name}`}
+	title={flow.builtin
+		? t('copyflow.use', { name: flow.name })
+		: t('copyflow.copy', { name: flow.name })}
 	icon={I.copy}
 	{onclose}
 >
 	<form id="copy-flow" class="cf" onsubmit={submit}>
-		<p>
-			From <b>{sourceLabel}</b>. The copy is a new document with its own history — editing it never
-			changes the original.
-		</p>
+		<p>{@html th('copyflow.intro', { source: sourceLabel })}</p>
 		<div class="field">
-			<label for="cf-project">Into workshop</label>
+			<label for="cf-project">{t('copyflow.into')}</label>
 			<select id="cf-project" bind:value={target}>
 				{#each projects as p (p.id)}
-					<option value={p.id}>{p.name}{p.id === flow.projectId ? ' (same)' : ''}</option>
+					<option value={p.id}>{p.name}{p.id === flow.projectId ? t('copyflow.same') : ''}</option>
 				{/each}
 			</select>
 		</div>
 		<SlugField
 			id="cf-name"
 			bind:value={name}
-			conflict={clash ? `Copying into the same workshop needs a different name.` : ''}
-			help="The document renames itself to match; the name is its id."
+			conflict={clash ? t('copyflow.clash') : ''}
+			help={t('copyflow.help')}
 		/>
 		{#if error}<div class="err">{error}</div>{/if}
 	</form>
 	{#snippet footer()}
-		<button type="button" class="btn-ghost" onclick={onclose}>Cancel</button>
+		<button type="button" class="btn-ghost" onclick={onclose}>{t('common.cancel')}</button>
 		<button
 			class="btn-primary"
 			type="submit"
@@ -107,7 +107,11 @@
 			disabled={busy || !target || !name.trim() || clash || badName}
 			aria-busy={busy}
 		>
-			{busy ? 'Copying…' : flow.builtin ? `Copy into workshop` : 'Copy'}
+			{busy
+				? t('copyflow.copying')
+				: flow.builtin
+					? t('copyflow.intoWorkshop')
+					: t('copyflow.submit')}
 		</button>
 	{/snippet}
 </Modal>

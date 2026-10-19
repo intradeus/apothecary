@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Workshop runs tab: the runs list (DESIGN 7.4), filtered to this
 	// workshop. Runs start from tickets, so there is no "New run" here.
 	import type { Project, Run } from '$lib/domain';
@@ -38,15 +39,17 @@
 <div class="row">
 	<Segmented
 		options={[
-			{ value: 'active', label: 'Active', count: active.length },
-			{ value: 'finished', label: 'Finished', count: finished.length }
+			{ value: 'active', label: t('workshop.runs.active'), count: active.length },
+			{ value: 'finished', label: t('workshop.runs.finished'), count: finished.length }
 		]}
 		bind:value={tab}
 	/>
-	<SearchInput bind:value={q} placeholder="Search title, id, branch" />
+	<SearchInput bind:value={q} placeholder={t('workshop.runs.search')} />
 	<span class="spacer"></span>
 	<Updated at={fleet.updatedAt} paused={fleet.paused} />
-	<a class="btn btn-sm" href={to.runs({ project: project.id, tab })}>Open in Runs {I.forward}</a>
+	<a class="btn btn-sm" href={to.runs({ project: project.id, tab })}
+		>{t('workshop.runs.openIn')} {I.forward}</a
+	>
 </div>
 
 {#if shown.length}
@@ -58,19 +61,24 @@
 		/>
 	</section>
 {:else if q}
-	<EmptyState compact title="No match" text="No {tab} run matches “{q}”." />
-{:else if tab === 'active'}
 	<EmptyState
-		title="All still on the shelf"
-		text="Runs start from tickets. Pick one and start a run."
-	>
-		<a class="btn btn-primary" href={to.newTicket({ project: project.id })}>{I.add} New ticket</a>
-		<a class="btn" href={to.workshop(project.id, 'tickets')}>Tickets</a>
+		compact
+		title={t('workshop.runs.noMatchTitle')}
+		text={t(tab === 'active' ? 'workshop.runs.noMatchActive' : 'workshop.runs.noMatchFinished', {
+			q
+		})}
+	/>
+{:else if tab === 'active'}
+	<EmptyState title={t('workshop.runs.shelfTitle')} text={t('workshop.runs.shelfText')}>
+		<a class="btn btn-primary" href={to.newTicket({ project: project.id })}
+			>{I.add} {t('workshop.runs.newTicket')}</a
+		>
+		<a class="btn" href={to.workshop(project.id, 'tickets')}>{t('workshop.runs.tickets')}</a>
 	</EmptyState>
 {:else}
 	<EmptyState
 		compact
-		title="No finished runs yet"
-		text="Completed, failed and archived runs land here."
+		title={t('workshop.runs.noneFinishedTitle')}
+		text={t('workshop.runs.noneFinishedText')}
 	/>
 {/if}

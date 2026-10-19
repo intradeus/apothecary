@@ -3,6 +3,7 @@
 	// over a WebSocket to the workspace sidecar's PTY. The session lives as
 	// long as this view: leaving the tab ends the shell.
 	import { api } from '$lib/api';
+	import { t } from '$lib/i18n/index.svelte';
 	import '@xterm/xterm/css/xterm.css';
 	import { token } from '$lib/ui/tokens';
 	import { I } from '$lib/ui/icons';
@@ -74,7 +75,7 @@
 				};
 				ws.onclose = () => {
 					status = 'closed';
-					term.write('\r\n\x1b[90m[session closed]\x1b[0m\r\n');
+					term.write(`\r\n\x1b[90m[${t('run.terminal.sessionClosed')}]\x1b[0m\r\n`);
 				};
 			};
 			const input = term.onData((d) => {
@@ -108,15 +109,18 @@
 		<span class="ldot sm {status}" class:pulse={status === 'connecting'}></span>
 		<span
 			>{status === 'open'
-				? 'connected'
+				? t('run.terminal.connected')
 				: status === 'connecting'
-					? 'connecting…'
-					: 'disconnected'}{#if dir}&nbsp;· <span class="mono">~/{dir}</span>{/if}</span
+					? t('run.terminal.connecting')
+					: t('run.terminal.disconnected')}{#if dir}&nbsp;· <span class="mono">~/{dir}</span
+				>{/if}</span
 		>
 		{#if status === 'closed'}
-			<button class="btn-term btn-sm" onclick={() => generation++}>{I.retry} Reconnect</button>
+			<button class="btn-term btn-sm" onclick={() => generation++}
+				>{I.retry} {t('run.terminal.reconnect')}</button
+			>
 		{/if}
-		<span class="hint">ends when you leave this tab</span>
+		<span class="hint">{t('run.terminal.hint')}</span>
 	</div>
 	<div class="term" bind:this={host}></div>
 </div>

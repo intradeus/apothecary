@@ -15,6 +15,7 @@
 </script>
 
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// A vertical section nav (System sections, a stepped form's steps). One
 	// bead springs between items as the selection moves (ui/motion
 	// `indicator`). Below 1000px it becomes a horizontal scroller.
@@ -26,7 +27,7 @@
 		active,
 		title,
 		onselect,
-		label = 'Sections'
+		label
 	}: {
 		items: SideNavItem[];
 		active: string;
@@ -37,7 +38,7 @@
 	} = $props();
 </script>
 
-<nav class="sn lg" aria-label={label}>
+<nav class="sn lg" aria-label={label ?? t('ui.sidenav.label')}>
 	{#if title}<div class="t">{title}</div>{/if}
 	<div class="list" use:indicator>
 		{#each items as it (it.id)}

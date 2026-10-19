@@ -4,8 +4,9 @@
 	// finished runs with their MR, and its tickets. Rows slide into their new
 	// places on the spring when the list reorders.
 	import { flip } from 'svelte/animate';
+	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/guild';
-	import { fmtCost, fmtDuration, plural } from '$lib/format';
+	import { fmtCost, fmtDuration } from '$lib/format';
 	import type { Project, Run } from '$lib/domain';
 	import StageChip from '$lib/ui/StageChip.svelte';
 	import { I } from '$lib/ui/icons';
@@ -38,9 +39,9 @@
 
 	const stageLine = (r: Run) =>
 		r.state === 'provisioning'
-			? 'workspace starting'
+			? t('deskhome.card.starting')
 			: r.state === 'pending'
-				? 'queued'
+				? t('deskhome.card.queued')
 				: (r.currentStage ?? '—');
 	const move = { duration: ms('--dur-spring', 450), easing: spring };
 </script>
@@ -49,8 +50,10 @@
 	<header class="head">
 		<span class="nm"><WorkshopName projectId={project.id} idle={liveTotal === 0} link /></span>
 		<span class="sum">
-			{liveTotal ? `${liveTotal} live` : 'idle'}{#if pings}{' · '}<span class="hue-amb"
-					>{plural(pings, 'ping')}</span
+			{liveTotal
+				? t('deskhome.card.live', { count: liveTotal })
+				: t('deskhome.card.idle')}{#if pings}{' · '}<span class="hue-amb"
+					>{t('deskhome.card.pings', { count: pings })}</span
 				>{/if}
 		</span>
 	</header>
@@ -59,7 +62,11 @@
 		{@const f = runFacts(r)}
 		{@const st = stageType(r)}
 		<div animate:flip={move}>
-			<RunRow run={r} detail={stageLine(r) + (f?.attempt ? ` · attempt ${f.attempt}` : '')}>
+			<RunRow
+				run={r}
+				detail={stageLine(r) +
+					(f?.attempt ? ` · ${t('deskhome.card.attempt', { n: f.attempt })}` : '')}
+			>
 				{#snippet trailing()}
 					<span class="tr">
 						{#if st}<StageChip type={st} />{/if}
@@ -74,7 +81,7 @@
 	{/each}
 
 	{#if finished.length}
-		<div class="pane-sub">Last finished</div>
+		<div class="pane-sub">{t('deskhome.card.lastFinished')}</div>
 		{#each finished as r (r.id)}
 			<div animate:flip={move}><RunRow run={r} variant="finished" /></div>
 		{/each}
@@ -82,10 +89,14 @@
 
 	<footer class="pane-foot">
 		<a href={to.tickets({ project: project.id })}
-			>{tickets === undefined ? 'Tickets' : plural(tickets, 'ticket')}</a
+			>{tickets === undefined
+				? t('deskhome.card.ticketsLoading')
+				: t('deskhome.card.tickets', { count: tickets })}</a
 		>
 		<span class="spacer"></span>
-		<a class="btn btn-sm" href={to.newTicket({ project: project.id })}>{I.add} New ticket</a>
+		<a class="btn btn-sm" href={to.newTicket({ project: project.id })}
+			>{I.add} {t('deskhome.card.newTicket')}</a
+		>
 	</footer>
 </article>
 

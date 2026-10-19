@@ -6,6 +6,7 @@
 	import { api } from '$lib/api';
 	import type { ChangedFile, FileDiff, WorkspaceChanges } from '$lib/domain';
 	import { onMount } from 'svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { parseUnified } from '$lib/diff';
 	import { GIT_HUE, hueOf } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
@@ -70,10 +71,10 @@
 
 	onMount(() => {
 		refresh();
-		const t = setInterval(() => {
+		const timer = setInterval(() => {
 			if (active && visible && !document.hidden) refresh();
 		}, 5000);
-		return () => clearInterval(t);
+		return () => clearInterval(timer);
 	});
 	// Catch up when the window comes back on screen.
 	let wasVisible = true; // mounted the first time it is shown
@@ -92,13 +93,21 @@
 		return { add, del };
 	});
 
-	const statusLabel: Record<string, string> = {
-		A: 'added',
-		M: 'modified',
-		D: 'deleted',
-		R: 'renamed',
-		C: 'copied',
-		'?': 'new, untracked'
+	const statusLabel = (s: string): string | undefined => {
+		switch (s) {
+			case 'A':
+				return t('run.changes.status.added');
+			case 'M':
+				return t('run.changes.status.modified');
+			case 'D':
+				return t('run.changes.status.deleted');
+			case 'R':
+				return t('run.changes.status.renamed');
+			case 'C':
+				return t('run.changes.status.copied');
+			case '?':
+				return t('run.changes.status.untracked');
+		}
 	};
 	const lines = $derived(diff ? parseUnified(diff.diff) : []);
 	const file = $derived<ChangedFile | undefined>(changes?.files.find((f) => f.path === selected));
@@ -106,18 +115,21 @@
 
 {#if error && !changes}
 	<div class="pad">
-		<ErrorCard cause="Changes are unavailable." detail={error} onretry={refresh} />
+		<ErrorCard cause={t('run.changes.unavailable')} detail={error} onretry={refresh} />
 	</div>
 {:else if !changes}
-	<Loading text="Reading the branch…" />
+	<Loading text={t('run.changes.reading')} />
 {:else}
 	<div class="view">
 		<div class="vbar sum">
 			<span
-				>vs <span class="mono tx">{(changes.base || 'HEAD').replace(/^origin\//, '')}</span></span
+				>{t('run.changes.vs')}
+				<span class="mono tx">{(changes.base || 'HEAD').replace(/^origin\//, '')}</span></span
 			>
-			{#if changes.mergeBase}<span class="mono fnt">fork {changes.mergeBase.slice(0, 7)}</span>{/if}
-			<span class="tx">{changes.files.length} file{changes.files.length === 1 ? '' : 's'}</span>
+			{#if changes.mergeBase}<span class="mono fnt"
+					>{t('run.changes.fork', { sha: changes.mergeBase.slice(0, 7) })}</span
+				>{/if}
+			<span class="tx">{t('run.changes.files', { count: changes.files.length })}</span>
 			<span class="mono"
 				><span class="hue-grn">+{totals.add}</span> <span class="hue-ros">−{totals.del}</span></span
 			>
@@ -126,13 +138,16 @@
 					class="linklike brand"
 					aria-expanded={showCommits}
 					onclick={() => (showCommits = !showCommits)}
-					>{changes.commits.length} commit{changes.commits.length === 1 ? '' : 's'}
+					>{t('run.changes.commits', { count: changes.commits.length })}
 					{showCommits ? I.menu : I.caret}</button
 				>
 			{/if}
 			<span class="spacer"></span>
-			<button class="btn-icon" onclick={refresh} title="Refresh now" aria-label="Refresh"
-				>{I.retry}</button
+			<button
+				class="btn-icon"
+				onclick={refresh}
+				title={t('run.changes.refreshNow')}
+				aria-label={t('run.changes.refresh')}>{I.retry}</button
 			>
 		</div>
 		{#if showCommits}
@@ -143,7 +158,7 @@
 			</div>
 		{/if}
 		{#if changes.files.length === 0}
-			<div class="empty-line">No changes yet.</div>
+			<div class="empty-line">{t('run.changes.none')}</div>
 		{:else}
 			<div class="split">
 				<div class="files">
@@ -153,18 +168,18 @@
 							class:sel={f.path === selected}
 							onclick={() => select(f.path)}
 						>
-							<span class="st mono hue-{hueOf(GIT_HUE, f.status)}" title={statusLabel[f.status]}
+							<span class="st mono hue-{hueOf(GIT_HUE, f.status)}" title={statusLabel(f.status)}
 								>{f.status === '?' ? 'U' : f.status}</span
 							>
 							<span class="path mono" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
 								>{f.path}</span
 							>
-							<span class="wip hue-amb" title={f.committed ? '' : 'Not committed yet'}
+							<span class="wip hue-amb" title={f.committed ? '' : t('run.changes.notCommitted')}
 								>{f.committed ? '' : I.dot}</span
 							>
 							<span class="cnt mono">
-								{#if f.binary}<span class="fnt">bin</span>{:else}<span class="hue-grn"
-										>+{f.additions}</span
+								{#if f.binary}<span class="fnt">{t('run.changes.bin')}</span>{:else}<span
+										class="hue-grn">+{f.additions}</span
 									>
 									<span class="hue-ros">−{f.deletions}</span>{/if}
 							</span>
@@ -180,24 +195,24 @@
 									? ''
 									: ` · +${file.additions} −${file.deletions}`}{file.committed
 									? ''
-									: ' · uncommitted'}</span
+									: ` · ${t('run.changes.uncommitted')}`}</span
 							>
 						</div>
 					{/if}
 					{#if diffError}
 						<ErrorCard
-							cause="The diff could not be read."
+							cause={t('run.changes.diffError')}
 							detail={diffError}
 							onretry={() => loadDiff(selected)}
 						/>
 					{:else if loadingDiff && !diff}
-						<Loading text="Loading diff…" />
+						<Loading text={t('run.changes.loadingDiff')} />
 					{:else if diff}
 						<CodeView
 							{lines}
 							gutters={2}
-							binary={file?.binary ? 'Binary file' : undefined}
-							truncated={diff.truncated ? 'the rest is in the editor' : undefined}
+							binary={file?.binary ? t('run.changes.binaryFile') : undefined}
+							truncated={diff.truncated ? t('run.changes.truncated') : undefined}
 						/>
 					{/if}
 				</div>

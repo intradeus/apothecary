@@ -16,6 +16,7 @@
 	// view opens, and the SSE replay that follows, land without it.
 	import { promptLabel, type ChatItem } from '$lib/transcript';
 	import { fmtClock, fmtTime } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 	import { TONE_HUE } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
 	import { ms } from '$lib/ui/motion';
@@ -57,8 +58,8 @@
 	$effect(() => {
 		void items.length;
 		if (armed) return;
-		const t = setTimeout(() => (armed = true), 700);
-		return () => clearTimeout(t);
+		const timer = setTimeout(() => (armed = true), 700);
+		return () => clearTimeout(timer);
 	});
 
 	/** Does this item get the arrival motion? Not when it replaces something
@@ -92,8 +93,9 @@
 			<span class="hl l"></span>
 			<span class="sname serif">{it.stageId}</span>
 			<span class="smeta ell"
-				>attempt {it.iteration}{#if it.agent}&nbsp;· {it.agent}{/if}{#if it.model}&nbsp;· {it.model}{/if}{#if !it.agentic}&nbsp;·
-					stage{/if} · <span class="mono">{fmtTime(it.ts)}</span></span
+				>{t('run.transcript.attempt', { n: it.iteration })}{#if it.agent}&nbsp;· {it.agent}{/if}{#if it.model}&nbsp;·
+					{it.model}{/if}{#if !it.agentic}&nbsp;·
+					{t('run.transcript.stage')}{/if} · <span class="mono">{fmtTime(it.ts)}</span></span
 			>
 			<span class="hl r"></span>
 		</div>
@@ -109,7 +111,7 @@
 			<ErrorCard
 				cause={it.title}
 				detail={it.error}
-				action="View log"
+				action={t('run.transcript.viewLog')}
 				onretry={() => onlog(it.stageId)}
 			/>
 		</div>
@@ -119,13 +121,16 @@
 				<span class="b">{promptLabel(it.promptKind)}</span>
 				<span class="pv mut ell">{it.text.split('\n').find((l) => l.trim()) ?? ''}</span>
 			</summary>
-			<pre>{it.text}{it.truncated ? '\n… [truncated]' : ''}</pre>
+			<pre>{it.text}{it.truncated ? `\n… [${t('run.transcript.truncated')}]` : ''}</pre>
 		</details>
 	{:else if it.kind === 'message'}
 		{#if it.thought}
 			<details class="thought" open={it.live} use:arrive={a}>
 				<summary
-					>{#if it.live}<span class="ldot sm pulse hue-az"></span>{/if}Thinking {I.menu}</summary
+					>{#if it.live}<span class="ldot sm pulse hue-az"></span>{/if}{t(
+						'run.transcript.thinking'
+					)}
+					{I.menu}</summary
 				>
 				<div class="tt serif">{it.text}</div>
 			</details>
@@ -139,8 +144,13 @@
 	{:else if it.kind === 'plan'}
 		<div class="plan card-in">
 			<div class="ph">
-				<span class="pt serif">The recipe</span>
-				<span class="pm">{planDone(it.entries)} of {it.entries.length}</span>
+				<span class="pt serif">{t('run.transcript.recipe')}</span>
+				<span class="pm"
+					>{t('run.transcript.planProgress', {
+						done: planDone(it.entries),
+						total: it.entries.length
+					})}</span
+				>
 			</div>
 			<div class="pl">
 				{#each it.entries as e, i (i)}
@@ -157,27 +167,28 @@
 		<div class="user" use:arrive={a}>
 			<div class="bubble" class:queued={!it.delivered}>{it.text}</div>
 			<div class="um">
-				{#if it.interrupt}<span class="hue-amb">interrupt · </span>{/if}
-				{#if it.delivered}you · delivered {fmtClock(it.deliveredAt ?? it.ts)}{:else}queued — read
-					when its turn ends{/if}
+				{#if it.interrupt}<span class="hue-amb">{t('run.transcript.interrupt')} · </span>{/if}
+				{#if it.delivered}{t('run.transcript.delivered', {
+						at: fmtClock(it.deliveredAt ?? it.ts)
+					})}{:else}{t('run.transcript.queued')}{/if}
 			</div>
 		</div>
 	{:else if it.kind === 'question'}
 		<div class="q card-in" class:open={it.answer === undefined && !over} use:arrive={a}>
 			<div class="qh">
-				<PingPill type={it.type} /><span class="mut small">The agent asked</span>
+				<PingPill type={it.type} /><span class="mut small">{t('run.transcript.asked')}</span>
 			</div>
 			<Markdown src={it.question} />
 			{#if it.options.length && it.answer === undefined}
-				<div class="small mut">options: {it.options.join(' · ')}</div>
+				<div class="small mut">{t('run.transcript.options', { list: it.options.join(' · ') })}</div>
 			{/if}
 			{#if it.answer !== undefined}
-				<div class="ans small"><b>You:</b> {it.answer}</div>
+				<div class="ans small"><b>{t('run.transcript.you')}</b> {it.answer}</div>
 			{:else if over}
-				<div class="small fnt">Withdrawn — the run ended before an answer.</div>
+				<div class="small fnt">{t('run.transcript.withdrawn')}</div>
 			{:else}
 				<button class="linklike wait" onclick={onanswer}
-					><span class="ldot pulse"></span>Waiting for your answer {I.follow}</button
+					><span class="ldot pulse"></span>{t('run.transcript.waiting')} {I.follow}</button
 				>
 			{/if}
 		</div>
@@ -188,7 +199,9 @@
 	<div class="user" use:arrive={true}>
 		<div class="bubble queued">{s.text}</div>
 		<div class="um">
-			{#if s.interrupt}<span class="hue-amb">interrupt · </span>{/if}sending…
+			{#if s.interrupt}<span class="hue-amb">{t('run.transcript.interrupt')} · </span>{/if}{t(
+				'run.transcript.sending'
+			)}
 		</div>
 	</div>
 {/each}

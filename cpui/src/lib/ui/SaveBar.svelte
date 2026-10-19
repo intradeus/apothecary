@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// The sticky save bar at the foot of an editable page (settings, setup):
 	// a note on the left, the unsaved indicator, Discard and Save. "Saved"
 	// confirms for a few seconds after a save lands (completion feedback).
@@ -34,8 +35,8 @@
 	$effect(() => {
 		if (!savedAt) return;
 		now = Date.now();
-		const t = setTimeout(() => (now = Date.now()), 4000);
-		return () => clearTimeout(t);
+		const h = setTimeout(() => (now = Date.now()), 4000);
+		return () => clearTimeout(h);
 	});
 	const justSaved = $derived(!!savedAt && !dirty && now - savedAt < 4000);
 </script>
@@ -44,16 +45,16 @@
 	{#if note}<span class="note-t">{note}</span>{/if}
 	<span class="grow"></span>
 	{#if dirty}
-		<span class="unsaved">Unsaved changes</span>
+		<span class="unsaved">{t('ui.save.unsaved')}</span>
 	{:else if justSaved}
-		<span class="saved materialize">Saved</span>
+		<span class="saved materialize">{t('ui.save.saved')}</span>
 	{/if}
 	{#if extra}{@render extra()}{/if}
 	{#if ondiscard}<button
 			type="button"
 			class="btn-ghost"
 			disabled={!dirty || busy}
-			onclick={ondiscard}>Discard</button
+			onclick={ondiscard}>{t('ui.save.discard')}</button
 		>{/if}
 	<button
 		type={submit ? 'submit' : 'button'}

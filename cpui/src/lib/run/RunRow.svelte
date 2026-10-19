@@ -7,6 +7,7 @@
 	import type { Run } from '$lib/domain';
 	import { to } from '$lib/guild';
 	import { age, ago, fmtAbs, shortId, stateHue, stateLabel } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
 	import MrLink from './MrLink.svelte';
@@ -36,7 +37,7 @@
 		<StatusChip state={run.state} compact />
 	{/if}
 	<span class="mid">
-		<a class="t ell stretch" href={to.run(run.id)}>{run.title || 'Untitled run'}</a>
+		<a class="t ell stretch" href={to.run(run.id)}>{run.title || t('run.row.untitled')}</a>
 		<span class="s ell"
 			><span style:color={stateHue[run.state]}>{stateLabel[run.state]}</span>
 			{#if variant === 'finished'}

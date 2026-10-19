@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// "updated 2s ago" caption for polled data (DESIGN 4.17), or "paused"
 	// when the tab was hidden and nothing has landed since.
 	import { onMount } from 'svelte';
@@ -7,19 +8,19 @@
 
 	let now = $state(Date.now());
 	onMount(() => {
-		const t = setInterval(() => (now = Date.now()), 1000);
-		return () => clearInterval(t);
+		const h = setInterval(() => (now = Date.now()), 1000);
+		return () => clearInterval(h);
 	});
 	const secs = $derived(at ? Math.max(0, Math.round((now - at) / 1000)) : null);
 </script>
 
 <span class="up" title={at ? new Date(at).toLocaleTimeString(undefined, { hour12: false }) : ''}>
 	{#if paused}
-		<span class="d paused"></span>paused
+		<span class="d paused"></span>{t('ui.updated.paused')}
 	{:else if secs === null}
-		<span class="d pulse"></span>Connecting…
+		<span class="d pulse"></span>{t('ui.updated.connecting')}
 	{:else}
-		<span class="d"></span>updated {secs < 2 ? 'just now' : `${secs}s ago`}
+		<span class="d"></span>{secs < 2 ? t('ui.updated.now') : t('ui.updated.ago', { secs })}
 	{/if}
 </span>
 

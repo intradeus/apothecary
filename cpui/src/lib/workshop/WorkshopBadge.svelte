@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// The workshop's vial at header size, on a control-glass tile — the
 	// workshop page's counterpart of the run badge.
 	import { workshopVial } from '$lib/guild';
@@ -9,7 +10,7 @@
 </script>
 
 <div class="wb lg" style:--h={hue}>
-	<span class="cap">Workshop</span>
+	<span class="cap">{t('workshop.badge.caption')}</span>
 	<span class="v"><Vial {projectId} idle={!live} /></span>
 </div>
 

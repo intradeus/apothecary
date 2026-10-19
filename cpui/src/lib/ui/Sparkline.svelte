@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Sparkline tile (DESIGN 4.16): label, mono value, 120×26 polyline + 15%
 	// area. A second series renders dashed (network out). `hover` is a shared
 	// index so sibling tiles show one crosshair; bind it across tiles.
@@ -75,7 +76,9 @@
 			{#if hx !== null}<line x1={hx} x2={hx} y1="0" y2={H} class="cross" />{/if}
 		{/if}
 	</svg>
-	{#if collecting}<div class="col"><span class="d pulse"></span>Collecting samples…</div>{/if}
+	{#if collecting}<div class="col">
+			<span class="d pulse"></span>{t('ui.sparkline.collecting')}
+		</div>{/if}
 </div>
 
 <style>

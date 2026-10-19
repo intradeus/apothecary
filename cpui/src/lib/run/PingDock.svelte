@@ -4,6 +4,7 @@
 	// docks it and says when earlier pings queue behind it.
 	import PingCard from '$lib/PingCard.svelte';
 	import type { RunPing } from './derive';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		ping,
@@ -21,7 +22,7 @@
 
 <div class="dock">
 	{#if queued > 0}
-		<div class="queue">Answer this first — {queued} earlier ping{queued > 1 ? 's' : ''} queued</div>
+		<div class="queue">{t('run.pingDock.queued', { count: queued })}</div>
 	{/if}
 	{#key ping.id}
 		<PingCard {ping} {busy} {onanswer} compact />

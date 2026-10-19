@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Domain / tag list input (DESIGN 4.14): chips with ×; paste splits on
 	// whitespace and commas; Enter or comma commits; Backspace on empty pops.
 	let {
 		values = $bindable([]),
-		placeholder = 'Add…',
+		placeholder,
 		mono = true,
 		validate
 	}: {
@@ -59,7 +60,7 @@
 			>{v}<button
 				type="button"
 				class="x"
-				aria-label="Remove {v}"
+				aria-label={t('ui.tags.remove', { value: v })}
 				onclick={() => (values = values.filter((x) => x !== v))}>×</button
 			></span
 		>
@@ -67,7 +68,7 @@
 	<input
 		class="bare"
 		bind:value={draft}
-		{placeholder}
+		placeholder={placeholder ?? t('ui.tags.add')}
 		onkeydown={key}
 		onpaste={paste}
 		onblur={() => {

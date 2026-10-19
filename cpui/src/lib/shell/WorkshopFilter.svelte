@@ -3,17 +3,18 @@
 	// select over the fleet's workshops, '' meaning all of them. The page owns
 	// the value (it mirrors ?project=).
 	import { fleet } from '$lib/fleet.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let { value, onchange }: { value: string; onchange: (projectId: string) => void } = $props();
 </script>
 
 <select
 	class="wf"
-	aria-label="Filter by workshop"
+	aria-label={t('shell.filter.aria')}
 	{value}
 	onchange={(e) => onchange((e.target as HTMLSelectElement).value)}
 >
-	<option value="">All workshops</option>
+	<option value="">{t('shell.filter.all')}</option>
 	{#each fleet.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 </select>
 

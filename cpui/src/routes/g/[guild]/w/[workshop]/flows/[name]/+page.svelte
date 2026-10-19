@@ -11,6 +11,7 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
 	import { ago, fmtAbs } from '$lib/format';
+	import { t, th } from '$lib/i18n/index.svelte';
 	import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
 	import FlowInspector from '$lib/FlowInspector.svelte';
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
@@ -26,7 +27,6 @@
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
 	import { slide } from '$lib/ui/motion';
-	import { esc } from '$lib/ui/html';
 	import {
 		ABORT,
 		chainLinks,
@@ -104,7 +104,7 @@
 				if (r.warnings?.length)
 					validation = {
 						ok: true,
-						title: 'Valid, with binding warnings',
+						title: t('page.flow.validWarn'),
 						stages: r.stages,
 						hash: r.hash,
 						warnings: r.warnings
@@ -112,7 +112,7 @@
 				rev++;
 			} else {
 				tab = 'yaml';
-				validation = { ok: false, title: 'This flow does not parse', errors: r.errors ?? [] };
+				validation = { ok: false, title: t('page.flow.noParse'), errors: r.errors ?? [] };
 				validateOpen = true;
 			}
 		} catch (e) {
@@ -164,14 +164,14 @@
 					tab = 'yaml';
 					validation = {
 						ok: false,
-						title: 'Fix the YAML to see the graph',
-						errors: r.errors?.length ? r.errors : ['invalid flow']
+						title: t('page.flow.fixYaml'),
+						errors: r.errors?.length ? r.errors : [t('page.flow.invalidFlow')]
 					};
 					validateOpen = true;
 				}
 			})
 			.catch((e) => {
-				validation = { ok: false, title: 'Validation failed', errors: [String(e)] };
+				validation = { ok: false, title: t('page.flow.validationFailed'), errors: [String(e)] };
 				validateOpen = true;
 			});
 	}
@@ -247,21 +247,26 @@
 			validation = r.ok
 				? {
 						ok: true,
-						title: r.warnings?.length ? 'Valid, with binding warnings' : 'Valid',
+						title: r.warnings?.length ? t('page.flow.validWarn') : t('page.flow.valid'),
 						stages: r.stages,
 						hash: r.hash,
 						warnings: r.warnings
 					}
-				: { ok: false, title: 'Invalid', errors: r.errors ?? [] };
+				: { ok: false, title: t('page.flow.invalid'), errors: r.errors ?? [] };
 			if (r.ok)
 				toast(
-					`Valid · ${r.stages ?? stageCount} stages${r.warnings?.length ? `, ${r.warnings.length} binding warnings` : ''}`,
+					r.warnings?.length
+						? t('page.flow.validToastWarn', {
+								count: r.stages ?? stageCount,
+								warnings: r.warnings.length
+							})
+						: t('page.flow.validToast', { count: r.stages ?? stageCount }),
 					{ tone: r.warnings?.length ? 'warn' : 'ok' }
 				);
 		} catch (e) {
 			validation = {
 				ok: false,
-				title: 'Validation failed',
+				title: t('page.flow.validationFailed'),
 				errors: [e instanceof Error ? e.message : String(e)]
 			};
 		} finally {
@@ -288,7 +293,7 @@
 			validation = r.warnings?.length
 				? {
 						ok: true,
-						title: 'Saved, with binding warnings',
+						title: t('page.flow.savedWarn'),
 						stages: r.stages,
 						hash: flow.hash,
 						warnings: r.warnings
@@ -297,14 +302,14 @@
 			notice = null;
 			toast(
 				wasBuiltin
-					? `Saved as this workshop’s own copy · @${flow.hash.slice(0, 8)}`
-					: `Saved · @${flow.hash.slice(0, 8)} — new runs start on this version`
+					? t('page.flow.savedCopy', { hash: flow.hash.slice(0, 8) })
+					: t('page.flow.saved', { hash: flow.hash.slice(0, 8) })
 			);
 			versions = await api.flows.versions(projectId, flow.name);
 		} catch (e) {
 			validation = {
 				ok: false,
-				title: 'Save refused',
+				title: t('page.flow.saveRefused'),
 				errors: [e instanceof Error ? e.message : String(e)]
 			};
 			validateOpen = true;
@@ -322,7 +327,7 @@
 		const y = currentYAML().replace(/^name:[^\n]*$/m, `name: ${name}`);
 		await api.flows.create(projectId, name, y, { nodes: layout });
 		cloning = false;
-		toast(`Cloned as ${name}`);
+		toast(t('page.flow.cloned', { name }));
 		leaving = true;
 		await goto(to.flow(projectId, name));
 	}
@@ -331,9 +336,9 @@
 		if (
 			dirty &&
 			!(await confirmDialog({
-				title: 'Replace your unsaved changes?',
-				body: `Loading <b>@${esc(v.hash.slice(0, 8))}</b> replaces what is in the editor. Nothing is saved until you press Save.`,
-				action: 'Load version',
+				title: t('page.flow.replaceTitle'),
+				body: th('page.flow.replaceBody', { hash: v.hash.slice(0, 8) }),
+				action: t('page.flow.loadVersion'),
 				tone: 'warn'
 			}))
 		)
@@ -346,7 +351,7 @@
 			showVersions = false;
 			notice = {
 				tone: 'info',
-				text: `Loaded @${v.hash.slice(0, 8)} into the editor — Save to make it current again.`
+				text: t('page.flow.loaded', { hash: v.hash.slice(0, 8) })
 			};
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -359,20 +364,24 @@
 		const ok = await confirmDialog(
 			reset
 				? {
-						title: `Reset ${flow.name} to built-in?`,
-						body: `This workshop’s own copy of <b>${esc(flow.name)}</b> is deleted and the built-in template of the same name takes its place. Its versions stay retrievable by hash; runs keep the version they pinned.`,
-						action: 'Reset to built-in'
+						title: t('page.flow.resetTitle', { name: flow.name }),
+						body: th('page.flow.resetBody', { name: flow.name }),
+						action: t('page.flow.resetAction')
 					}
 				: {
-						title: `Delete ${flow.name}?`,
-						body: `The flow <b>${esc(flow.name)}</b> is deleted from this workshop. Its versions stay retrievable by hash; runs keep the version they pinned.`,
-						action: 'Delete flow'
+						title: t('page.flow.deleteTitle', { name: flow.name }),
+						body: th('page.flow.deleteBody', { name: flow.name }),
+						action: t('page.flow.deleteAction')
 					}
 		);
 		if (!ok) return;
 		try {
 			await api.flows.remove(projectId, flow.name);
-			toast(reset ? `${flow.name} reset to the built-in template` : `${flow.name} deleted`);
+			toast(
+				reset
+					? t('page.flow.resetDone', { name: flow.name })
+					: t('page.flow.deleted', { name: flow.name })
+			);
 			leaving = true;
 			await goto(to.workshop(projectId, 'flows'));
 		} catch (e) {
@@ -391,9 +400,9 @@
 		nav.cancel();
 		const dest = nav.to?.url;
 		void confirmDialog({
-			title: 'Leave with unsaved changes?',
-			body: `Your edits to <b>${esc(flow?.name ?? '')}</b> are discarded. Runs keep using the last saved version.`,
-			action: 'Discard and leave'
+			title: t('page.flow.leaveTitle'),
+			body: th('page.flow.leaveBody', { name: flow?.name ?? '' }),
+			action: t('page.flow.leaveAction')
 		}).then((ok) => {
 			if (ok && dest) {
 				leaving = true;
@@ -410,8 +419,8 @@
 			return;
 		}
 		if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-		const t = e.target as HTMLElement | null;
-		if (t?.closest('input, textarea, select, [contenteditable]')) return;
+		const el = e.target as HTMLElement | null;
+		if (el?.closest('input, textarea, select, [contenteditable]')) return;
 		if (tab === 'graph' && selection) {
 			e.preventDefault();
 			inspector?.deleteSelection();
@@ -427,26 +436,28 @@
 	crumbs={[
 		{ label: guild.name, href: to.desk() },
 		{ label: workshopName, href: to.workshop(projectId) },
-		{ label: 'Flows', href: to.workshop(projectId, 'flows') },
+		{ label: t('page.workshops.flows'), href: to.workshop(projectId, 'flows') },
 		{ label: page.params.name ?? '', mono: true }
 	]}
 >
 	{#snippet children()}
 		<div class="trow">
 			<h1 class="mono fname">{flow?.name ?? page.params.name}</h1>
-			{#if flow}<span class="tag hash" title="content hash of the saved version"
+			{#if flow}<span class="tag hash" title={t('page.flow.hashTitle')}
 					>@{flow.hash.slice(0, 8)}</span
 				>{/if}
-			{#if flow?.builtin}<span class="pill t-mut">built-in</span>{/if}
-			{#if flow?.shadowsBuiltin}<span class="pill t-mut">from template</span>{/if}
+			{#if flow?.builtin}<span class="pill t-mut">{t('page.flow.builtin')}</span>{/if}
+			{#if flow?.shadowsBuiltin}<span class="pill t-mut">{t('page.flow.fromTemplate')}</span>{/if}
 			{#if flow && fleet.projectById.get(projectId)?.defaultFlow === flow.name}<span
-					class="pill t-brand">default</span
+					class="pill t-brand">{t('page.flow.default')}</span
 				>{/if}
 		</div>
 		<div class="meta">
 			{#if doc?.description}<span class="ell desc">{doc.description}</span>{/if}
-			{#if doc}<span>{stageCount} stage{stageCount === 1 ? '' : 's'}</span>{/if}
-			{#if flow}<span title={fmtAbs(flow.updatedAt)}>saved {ago(flow.updatedAt)}</span>{/if}
+			{#if doc}<span>{t('page.flow.stages', { count: stageCount })}</span>{/if}
+			{#if flow}<span title={fmtAbs(flow.updatedAt)}
+					>{t('page.flow.savedAgo', { ago: ago(flow.updatedAt) })}</span
+				>{/if}
 		</div>
 	{/snippet}
 	{#snippet actions()}
@@ -454,7 +465,7 @@
 			<div class="vc">
 				<Segmented
 					options={[
-						{ value: 'graph', label: 'Graph' },
+						{ value: 'graph', label: t('page.flow.graph') },
 						{ value: 'yaml', label: 'YAML' }
 					]}
 					value={tab}
@@ -464,9 +475,9 @@
 			<GlassGroup>
 				{#snippet label()}
 					{#if dirty}
-						<span class="unsaved">Unsaved changes</span>
+						<span class="unsaved">{t('page.flow.unsaved')}</span>
 					{:else}
-						<span>The formula</span>
+						<span>{t('page.flow.formula')}</span>
 					{/if}
 				{/snippet}
 				<button
@@ -475,29 +486,35 @@
 					class:warnb={validation && !validation.ok}
 					aria-busy={validating}
 					onclick={validate}
-					>Validate{#if validation?.warnings?.length}<span class="pill sm mono t-amb"
-							>{validation.warnings.length}</span
+					>{t('page.flow.validate')}{#if validation?.warnings?.length}<span
+							class="pill sm mono t-amb">{validation.warnings.length}</span
 						>{/if}</button
 				>
 				<button
 					class="btn-sm"
 					class:btn-sel={showVersions}
 					onclick={() => (showVersions = !showVersions)}
-					>Versions <span class="mono fnt">{versions.length}</span></button
+					>{t('page.flow.versions')} <span class="mono fnt">{versions.length}</span></button
 				>
-				<button class="btn-sm" onclick={() => (cloning = true)} disabled={busy}>Clone</button>
+				<button class="btn-sm" onclick={() => (cloning = true)} disabled={busy}
+					>{t('page.flow.clone')}</button
+				>
 				{#if flow.shadowsBuiltin}
-					<button class="btn-sm btn-danger" onclick={remove}>Reset to built-in…</button>
+					<button class="btn-sm btn-danger" onclick={remove}>{t('page.flow.resetAction')}…</button>
 				{:else if !flow.builtin}
-					<button class="btn-sm btn-danger" onclick={remove}>Delete…</button>
+					<button class="btn-sm btn-danger" onclick={remove}>{t('page.ticket.delete')}</button>
 				{/if}
 				<button
 					class="btn-sm btn-primary"
 					onclick={save}
 					disabled={busy || !dirty}
 					aria-busy={busy}
-					title={flow.builtin ? `Saving creates this workshop’s editable copy` : '⌘S'}
-					>{busy ? 'Saving…' : flow.builtin ? 'Save as copy' : 'Save'}</button
+					title={flow.builtin ? t('page.flow.saveCopyTitle') : '⌘S'}
+					>{busy
+						? t('page.flow.saving')
+						: flow.builtin
+							? t('page.flow.saveAsCopy')
+							: t('common.save')}</button
 				>
 			</GlassGroup>
 		{/if}
@@ -509,7 +526,7 @@
 	bind:open={validateOpen}
 	placement="below-end"
 	width={380}
-	title="Validation"
+	title={t('page.flow.validation')}
 >
 	{#if validation}
 		<div class="vp">
@@ -521,7 +538,9 @@
 			</div>
 			{#if validation.stages !== undefined || validation.hash}
 				<div class="vm">
-					{#if validation.stages !== undefined}<span>{validation.stages} stages</span>{/if}
+					{#if validation.stages !== undefined}<span
+							>{t('page.flow.stagesN', { count: validation.stages })}</span
+						>{/if}
 					{#if validation.hash}<span class="mono">@{validation.hash.slice(0, 12)}</span>{/if}
 				</div>
 			{/if}
@@ -532,7 +551,7 @@
 			{/if}
 			{#if validation.warnings?.length}
 				<div class="vw">
-					Binding warnings <span class="fnt">— advisory; the flow still saves and runs</span>
+					{t('page.flow.bindingWarnings')} <span class="fnt">— {t('page.flow.advisory')}</span>
 				</div>
 				<ul class="vl warn">
 					{#each validation.warnings as w (w)}<li>{w}</li>{/each}
@@ -540,15 +559,14 @@
 			{/if}
 		</div>
 	{:else}
-		<div class="vp mut small">Checking…</div>
+		<div class="vp mut small">{t('page.flow.checking')}</div>
 	{/if}
 </Popover>
 
 {#if flow?.builtin}
 	<div class="strip">
 		<Callout glyph={I.rx}>
-			<b>Built-in template.</b> It ships with the engine and stays available. Saving creates an editable
-			copy in this workshop under the same name; deleting that copy later resets to this template.
+			{@html th('page.flow.builtinCallout')}
 		</Callout>
 	</div>
 {/if}
@@ -563,7 +581,7 @@
 {/if}
 {#if error}
 	<div class="strip">
-		<ErrorCard cause="Something went wrong" detail={error} onretry={flow ? undefined : load} />
+		<ErrorCard cause={t('page.flow.wrong')} detail={error} onretry={flow ? undefined : load} />
 	</div>
 {/if}
 
@@ -585,44 +603,48 @@
 					{actions}
 				/>
 				<div class="hint fnt">
-					<span class="kbd">⌫</span> delete selection · <span class="kbd">⌘S</span> save · drag handles
-					to rewire
+					{@html th('page.flow.hint')}
 				</div>
 			{:else}
-				<textarea class="yaml-ed bare" bind:value={yaml} spellcheck="false" aria-label="Flow YAML"
-				></textarea>
+				<textarea
+					class="yaml-ed bare"
+					bind:value={yaml}
+					spellcheck="false"
+					aria-label={t('page.flow.yamlLabel')}></textarea>
 			{/if}
 		</div>
 
 		{#if showVersions}
 			<aside class="side lg" in:slide={{ from: 'right', distance: 24 }}>
 				<div class="sh">
-					<span class="serif st">Versions</span>
+					<span class="serif st">{t('page.flow.versions')}</span>
 					<span class="spacer"></span>
 					<button
 						class="btn-icon"
-						aria-label="Close versions"
+						aria-label={t('page.flow.closeVersions')}
 						onclick={() => (showVersions = false)}>{I.close}</button
 					>
 				</div>
 				<p class="sp">
-					Content-addressed and immutable; every run pins the hash it started on. Node positions
-					never create versions.
+					{t('page.flow.versionsHelp')}
 				</p>
 				<div class="vers">
 					{#each versions as v (v.hash)}
 						<div class="vr" class:cur={v.hash === flow.hash}>
 							<span class="mono">@{v.hash.slice(0, 10)}</span>
-							{#if v.hash === flow.hash}<span class="pill sm t-grn">current</span>{/if}
+							{#if v.hash === flow.hash}<span class="pill sm t-grn">{t('page.flow.current')}</span
+								>{/if}
 							<span class="spacer"></span>
 							<span class="fnt tiny" title={fmtAbs(v.createdAt)}>{ago(v.createdAt)}</span>
 							{#if v.hash !== flow.hash}
-								<button class="btn-sm" onclick={() => loadVersion(v)}>Load into editor</button>
+								<button class="btn-sm" onclick={() => loadVersion(v)}
+									>{t('page.flow.loadIntoEditor')}</button
+								>
 							{/if}
 						</div>
 					{:else}
 						<div class="fnt small">
-							No saved versions yet{flow.builtin ? ' — this is the built-in template' : ''}.
+							{flow.builtin ? t('page.flow.noVersionsBuiltin') : t('page.flow.noVersions')}
 						</div>
 					{/each}
 				</div>
@@ -646,17 +668,15 @@
 
 {#if cloning && flow}
 	<NameFlowDialog
-		title="Clone {flow.name}"
+		title={t('page.flow.cloneTitle', { name: flow.name })}
 		initial="{flow.name}-copy"
-		action="Clone & open"
+		action={t('page.flow.cloneAction')}
 		taken={[flow.name]}
 		onsubmit={clone}
 		onclose={() => (cloning = false)}
 	>
 		<p>
-			A new flow in this workshop from what is in the editor now{dirty
-				? ', unsaved changes included'
-				: ''}. The original is untouched.
+			{dirty ? t('page.flow.cloneHelpDirty') : t('page.flow.cloneHelp')}
 		</p>
 	</NameFlowDialog>
 {/if}

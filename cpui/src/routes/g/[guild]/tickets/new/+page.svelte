@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import { currentGuild, to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import TicketForm from '$lib/TicketForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -13,26 +14,26 @@
 	const initialProject = $derived(page.url.searchParams.get('project') ?? '');
 </script>
 
-<svelte:head><title>New ticket</title></svelte:head>
+<svelte:head><title>{t('page.newTicket.title')}</title></svelte:head>
 
 <PageHeader
 	crumbs={[
 		{ label: currentGuild().name, href: to.desk() },
-		{ label: 'Tickets', href: to.tickets() },
-		{ label: 'New' }
+		{ label: t('page.tickets.title'), href: to.tickets() },
+		{ label: t('page.newTicket.crumb') }
 	]}
-	title="New"
-	accent="ticket"
+	title={t('page.newTicket.crumb')}
+	accent={t('page.newTicket.accent')}
 >
 	{#snippet meta()}
-		<span>The ingredients: what to build and what done looks like. Runs start from it.</span>
+		<span>{t('page.newTicket.meta')}</span>
 	{/snippet}
 </PageHeader>
 
 <div class="page body">
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard
-			cause="Could not load workshops"
+			cause={t('page.newTicket.loadError')}
 			detail={fleet.error}
 			onretry={() => fleet.refresh()}
 		/>
@@ -42,7 +43,7 @@
 		<TicketForm
 			projects={fleet.projects}
 			{initialProject}
-			onsaved={(t) => goto(to.ticket(t.id))}
+			onsaved={(tk) => goto(to.ticket(tk.id))}
 			oncancel={() => goto(to.tickets(initialProject ? { project: initialProject } : undefined))}
 		/>
 	{/if}

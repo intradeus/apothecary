@@ -21,6 +21,7 @@ import { fleet } from '$lib/fleet.svelte';
 import { normalizeDoc, successOrder } from '$lib/flowdoc';
 import { isTerminal } from '$lib/format';
 import { toast } from '$lib/ui/toast.svelte';
+import { t } from '$lib/i18n/index.svelte';
 import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/transcript';
 import { currentStage, envLinks, pingsOf, totals, workingSince, type StageDef } from './derive';
 
@@ -116,7 +117,7 @@ export class RunStore {
 			if (r.ticketId)
 				api.tickets
 					.get(r.ticketId)
-					.then((t) => (this.ticket = t))
+					.then((tk) => (this.ticket = tk))
 					.catch(() => {});
 			void this.loadRecipe(r);
 			if (this.hasWorkspace) {
@@ -257,7 +258,7 @@ export class RunStore {
 		this.error = '';
 		try {
 			await api.pings.answer(pingId, ans, note?.trim() || undefined, attachmentIds);
-			toast('Answer sent — the run picks it up from here');
+			toast(t('run.store.answerSent'));
 			void fleet.refresh();
 		} catch (e) {
 			this.error = errText(e);

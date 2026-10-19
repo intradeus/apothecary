@@ -6,6 +6,7 @@
 	import { api } from '$lib/api';
 	import type { Integration, KindDescriptor, Port } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import IntegrationForm from '$lib/IntegrationForm.svelte';
 	import IntegrationCard from '$lib/system/IntegrationCard.svelte';
 	import AddCard from '$lib/system/AddCard.svelte';
@@ -19,20 +20,24 @@
 
 	// Model auth is harness-owned (the harness's auth_json carries model
 	// credentials), so there is no "model provider" group.
-	const GROUPS: { port: Port; title: string; sub: string }[] = [
-		{ port: 'forge', title: 'Forge', sub: 'code hosting: repositories, branches, merge requests' },
-		{ port: 'provisioner', title: 'Provisioner', sub: 'where workspaces are built and run' },
+	const GROUPS: { port: Port; title: string; sub: string }[] = $derived([
+		{ port: 'forge', title: t('page.integrations.forge'), sub: t('page.integrations.forgeSub') },
+		{
+			port: 'provisioner',
+			title: t('page.integrations.provisioner'),
+			sub: t('page.integrations.provisionerSub')
+		},
 		{
 			port: 'harness',
-			title: 'Harness',
-			sub: 'the coding agent, and the model credentials it uses'
+			title: t('page.integrations.harness'),
+			sub: t('page.integrations.harnessSub')
 		},
 		{
 			port: 'ticketsource',
-			title: 'Ticket source',
-			sub: 'trackers to import tickets from (read-only)'
+			title: t('page.integrations.ticketsource'),
+			sub: t('page.integrations.ticketsourceSub')
 		}
-	];
+	]);
 
 	let descriptors = $state<KindDescriptor[]>([]);
 	let integrations = $state<Integration[]>([]);
@@ -70,7 +75,7 @@
 </script>
 
 {#if error && !loaded}
-	<ErrorCard cause="Couldn’t load integrations" detail={error} onretry={refresh} />
+	<ErrorCard cause={t('page.integrations.loadError')} detail={error} onretry={refresh} />
 {:else if !loaded}
 	{#each GROUPS as g (g.port)}
 		<section class="col">
@@ -82,10 +87,10 @@
 		</section>
 	{/each}
 {:else if descriptors.length === 0}
-	<EmptyState title="No kinds registered" text="This engine build reports no integration kinds." />
+	<EmptyState title={t('page.integrations.noKinds')} text={t('page.integrations.noKindsText')} />
 {:else}
 	{#if error}<ErrorCard
-			cause="Couldn’t refresh integrations"
+			cause={t('page.integrations.refreshError')}
 			detail={error}
 			onretry={refresh}
 		/>{/if}
@@ -103,7 +108,7 @@
 								(adding = {
 									...adding,
 									[g.port]: adding[g.port] === d.kind ? undefined : d.kind
-								})}>{I.add} Add {d.label}</button
+								})}>{I.add} {t('page.integrations.add', { label: d.label })}</button
 						>
 					{/each}
 				{/snippet}
@@ -112,7 +117,10 @@
 			{#if adding[g.port]}
 				{@const d = kinds.find((k) => k.kind === adding[g.port])}
 				{#if d}
-					<AddCard title="New {d.label}" kind={g.title.toLowerCase()}>
+					<AddCard
+						title={t('page.integrations.new', { label: d.label })}
+						kind={g.title.toLowerCase()}
+					>
 						{#key d.kind}
 							<IntegrationForm
 								descriptor={d}
@@ -147,10 +155,10 @@
 			{:else if !adding[g.port]}
 				<EmptyState
 					inline
-					title="None configured"
+					title={t('page.integrations.none')}
 					text={g.port === 'ticketsource'
-						? 'Optional — tickets can always be written by hand.'
-						: `A workshop needs one ${g.title.toLowerCase()} to run.`}
+						? t('page.integrations.optional')
+						: t('page.integrations.needsOne', { kind: g.title.toLowerCase() })}
 				/>
 			{/if}
 		</section>

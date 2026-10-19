@@ -1,10 +1,11 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// A search field with its glyph, for list filters and pickers.
 	import { I } from './icons';
 
 	let {
 		value = $bindable(''),
-		placeholder = 'Search…',
+		placeholder,
 		width = 280,
 		label,
 		onenter
@@ -24,8 +25,8 @@
 		class="bare"
 		type="search"
 		bind:value
-		{placeholder}
-		aria-label={label ?? placeholder}
+		placeholder={placeholder ?? t('ui.search.placeholder')}
+		aria-label={label ?? placeholder ?? t('ui.search.placeholder')}
 		onkeydown={(e) => {
 			// A search never submits the form around it.
 			if (e.key === 'Enter') {

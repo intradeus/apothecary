@@ -7,6 +7,7 @@
 	// fetched here. Selection mirrors ?ping= (shallow, no navigation) so a
 	// selected ping is a deep link.
 	import { onMount } from 'svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { flip } from 'svelte/animate';
 	import { goto, replaceState } from '$app/navigation';
 	import { currentGuild, to } from '$lib/guild';
@@ -65,12 +66,12 @@
 	onMount(() => {
 		api.tickets
 			.list()
-			.then((ts) => (tickets = new Map(ts.map((t) => [t.id, t]))))
+			.then((ts) => (tickets = new Map(ts.map((tk) => [tk.id, tk]))))
 			.catch(() => {});
-		const t = setInterval(() => {
+		const timer = setInterval(() => {
 			if (tab === 'answered' && !document.hidden) void loadAnswered();
 		}, 8000);
-		return () => clearInterval(t);
+		return () => clearInterval(timer);
 	});
 	$effect(() => {
 		if (tab === 'answered') void loadAnswered();
@@ -94,12 +95,12 @@
 		typeFilter ? groups.filter((g) => g[0].type === typeFilter) : groups
 	);
 	const typeOptions = $derived([
-		{ value: '', label: 'All', count: groups.length },
-		...types.map(([t, n]) => ({
-			value: t,
-			label: pingMeta(t).label,
+		{ value: '', label: t('inbox.filterAll'), count: groups.length },
+		...types.map(([ty, n]) => ({
+			value: ty,
+			label: pingMeta(ty).label,
 			count: n,
-			dot: pingMeta(t).hue as Hue
+			dot: pingMeta(ty).hue as Hue
 		}))
 	]);
 
@@ -159,8 +160,8 @@
 			}
 			await fleet.refresh();
 			const runId = p.runId;
-			toast('Answer sent', {
-				action: { label: 'Open run', run: () => void goto(to.run(runId)) }
+			toast(t('inbox.answerSent'), {
+				action: { label: t('inbox.openRunAction'), run: () => void goto(to.run(runId)) }
 			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -179,26 +180,26 @@
 </script>
 
 <PageHeader
-	crumbs={[{ label: currentGuild().name, href: to.desk() }, { label: 'Inbox' }]}
-	title="Inbox"
-	accent="awaiting your hand"
+	crumbs={[{ label: currentGuild().name, href: to.desk() }, { label: t('inbox.crumb') }]}
+	title={t('inbox.title')}
+	accent={t('inbox.accent')}
 >
 	{#snippet meta()}
 		<span>
 			{fleet.pending.length
-				? `${fleet.pending.length} pending across ${groups.length} run${groups.length === 1 ? '' : 's'}`
-				: 'nothing pending'}
+				? t('inbox.pendingSummary', { count: fleet.pending.length, runs: groups.length })
+				: t('inbox.nothingPending')}
 		</span>
 	{/snippet}
 	{#snippet actions()}
 		<Segmented
 			bind:value={tab}
-			label="Inbox"
+			label={t('inbox.crumb')}
 			options={[
-				{ value: 'pending', label: 'Pending', count: fleet.pending.length },
+				{ value: 'pending', label: t('inbox.tab.pending'), count: fleet.pending.length },
 				{
 					value: 'answered',
-					label: 'Answered',
+					label: t('inbox.tab.answered'),
 					count: answeredLoaded ? answered.length : undefined
 				}
 			]}
@@ -211,7 +212,7 @@
 		{#if !fleet.updatedAt && fleet.error}
 			<div class="full">
 				<ErrorCard
-					cause="Could not load pings"
+					cause={t('inbox.loadErr')}
 					detail={fleet.error}
 					onretry={() => fleet.refresh()}
 				/>
@@ -221,11 +222,8 @@
 			<Skeleton pane lines={4} />
 		{:else if groups.length === 0}
 			<div class="full">
-				<EmptyState
-					title="All quiet at the bench"
-					text="No pending pings. When a run asks you something, it lands here."
-				>
-					<a class="btn" href={to.runs()}>Open runs</a>
+				<EmptyState title={t('inbox.empty.title')} text={t('inbox.empty.text')}>
+					<a class="btn" href={to.runs()}>{t('inbox.openRuns')}</a>
 				</EmptyState>
 			</div>
 		{:else}
@@ -237,7 +235,7 @@
 							options={typeOptions}
 							size="sm"
 							glass={false}
-							label="Ping type"
+							label={t('inbox.filterLabel')}
 						/>
 					</div>
 				{/if}
@@ -271,13 +269,13 @@
 									>{/if}
 							</span>
 							{#if g.length > 1}
-								<span class="queued"
-									>Answer this first — {g.length - 1} earlier ping{g.length > 2 ? 's' : ''} queued</span
-								>
+								<span class="queued">{t('inbox.queued', { count: g.length - 1 })}</span>
 							{/if}
 						</button>
 					{:else}
-						<div class="empty-line">No {pingMeta(typeFilter).label.toLowerCase()} pings.</div>
+						<div class="empty-line">
+							{t('inbox.noneOfType', { type: pingMeta(typeFilter).label.toLowerCase() })}
+						</div>
 					{/each}
 				</div>
 			</aside>
@@ -291,7 +289,9 @@
 								<span class="stg">
 									<StageFlask status={stageStatus(run.state)} size="sm" />
 									<span class="mono">{run.currentStage}</span>
-									{#if facts?.attempt}<span class="fnt">· attempt {facts.attempt}</span>{/if}
+									{#if facts?.attempt}<span class="fnt"
+											>{t('inbox.attempt', { n: facts.attempt })}</span
+										>{/if}
 								</span>
 							{/if}
 							{#if facts && facts.cost > 0}<span class="mono mut">{fmtCost(facts.cost)}</span>{/if}
@@ -304,10 +304,10 @@
 							>
 							<span class="spacer"></span>
 							{#if run.mrs.length || run.mrUrl}<MrLink {run} />{/if}
-							<a class="btn btn-sm" href={to.run(run.id)}>Open run {I.forward}</a>
+							<a class="btn btn-sm" href={to.run(run.id)}>{t('inbox.openRun')} {I.forward}</a>
 						</div>
 					{/if}
-					{#if error}<ErrorCard cause="The answer did not go through" detail={error} />{/if}
+					{#if error}<ErrorCard cause={t('inbox.answerFailed')} detail={error} />{/if}
 					{#key current.id}
 						<PingCard
 							ping={current}
@@ -320,7 +320,7 @@
 					{/key}
 					{#if currentGroup.length > 1}
 						<div class="note later">
-							<div class="lbl">Queued behind this one</div>
+							<div class="lbl">{t('inbox.queuedBehind')}</div>
 							{#each currentGroup.slice(1) as q (q.id)}
 								<div class="lr">
 									<PingPill type={q.type} />
@@ -337,22 +337,20 @@
 {:else}
 	<div class="page hist">
 		{#if answeredErr && !answered.length}
-			<ErrorCard cause="Could not load the history" detail={answeredErr} onretry={loadAnswered} />
+			<ErrorCard cause={t('inbox.histErr')} detail={answeredErr} onretry={loadAnswered} />
 		{:else if !answeredLoaded}
 			<Skeleton pane lines={6} />
 		{:else if answered.length === 0}
-			<EmptyState
-				compact
-				title="No answers yet"
-				text="Pings you answer are kept here, newest first."
-			/>
+			<EmptyState compact title={t('inbox.hist.emptyTitle')} text={t('inbox.hist.emptyText')} />
 		{:else}
 			<div class="c pane">
 				<div class="rows">
 					<div class="r head ah">
-						<span>Type</span><span>Question</span><span class="hide-sm">Run</span><span
-							class="hide-sm">Answer</span
-						><span class="num">Answered</span>
+						<span>{t('inbox.col.type')}</span><span>{t('inbox.col.question')}</span><span
+							class="hide-sm">{t('inbox.col.run')}</span
+						><span class="hide-sm">{t('inbox.col.answer')}</span><span class="num"
+							>{t('inbox.col.answered')}</span
+						>
 					</div>
 					{#each answered as p (p.id)}
 						{@const v = answerMeta(p)}

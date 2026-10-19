@@ -4,6 +4,7 @@
 // wanted to format a timestamp imported the transport layer to get it.
 
 import type { RunState } from '$lib/domain';
+import { i18n, t } from '$lib/i18n/index.svelte';
 
 /** Tab grouping for the runs list. Exhaustive over RunState, so adding a
  *  state without classifying it is a type error. Active = still moving or
@@ -44,16 +45,36 @@ export const stateColors = stateHue;
 
 /** The words a state chip shows. */
 export const stateLabel: Record<RunState, string> = {
-	pending: 'Pending',
-	provisioning: 'Provisioning',
-	running: 'Running',
-	waiting_on_human: 'Waiting on you',
-	in_review: 'In review',
-	paused: 'Paused',
-	completed: 'Completed',
-	abandoned: 'Abandoned',
-	failed: 'Failed',
-	archived: 'Archived'
+	get pending() {
+		return t('state.pending');
+	},
+	get provisioning() {
+		return t('state.provisioning');
+	},
+	get running() {
+		return t('state.running');
+	},
+	get waiting_on_human() {
+		return t('state.waiting_on_human');
+	},
+	get in_review() {
+		return t('state.in_review');
+	},
+	get paused() {
+		return t('state.paused');
+	},
+	get completed() {
+		return t('state.completed');
+	},
+	get abandoned() {
+		return t('state.abandoned');
+	},
+	get failed() {
+		return t('state.failed');
+	},
+	get archived() {
+		return t('state.archived');
+	}
 };
 
 /** A run's short id: "r_" + the ULID's last four (random) characters. */
@@ -61,12 +82,12 @@ export const shortId = (id: string, prefix = 'r_') => `${prefix}${id.slice(-4).t
 
 /** 24-hour clock, seconds included. */
 export function fmtTime(ts: string | number | Date): string {
-	return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
+	return new Date(ts).toLocaleTimeString(i18n.tag, { hour12: false });
 }
 
 /** 24-hour clock, minutes only ("13:21"). */
 export function fmtClock(ts: string | number | Date): string {
-	return new Date(ts).toLocaleTimeString(undefined, {
+	return new Date(ts).toLocaleTimeString(i18n.tag, {
 		hour12: false,
 		hour: '2-digit',
 		minute: '2-digit'
@@ -76,7 +97,7 @@ export function fmtClock(ts: string | number | Date): string {
 /** Full absolute timestamp for tooltips behind relative times. */
 export function fmtAbs(ts: string | number | Date): string {
 	const d = new Date(ts);
-	return `${d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} ${fmtTime(d)}`;
+	return `${d.toLocaleDateString(i18n.tag, { year: 'numeric', month: 'short', day: 'numeric' })} ${fmtTime(d)}`;
 }
 
 export function fmtBytes(n?: number): string {
@@ -121,17 +142,21 @@ export function fmtDuration(ms: number): string {
  *  ticking clock to keep it live. */
 export function ago(ts: string | number | Date, now = Date.now()): string {
 	const s = Math.max(0, (now - new Date(ts).getTime()) / 1000);
-	if (s < 10) return 'just now';
-	if (s < 60) return `${Math.floor(s)}s ago`;
-	if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-	if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-	return `${Math.floor(s / 86400)}d ago`;
+	if (s < 10) return t('fmt.justNow');
+	if (s < 60) return t('fmt.agoS', { n: Math.floor(s) });
+	if (s < 3600) return t('fmt.agoM', { n: Math.floor(s / 60) });
+	if (s < 86400) return t('fmt.agoH', { n: Math.floor(s / 3600) });
+	return t('fmt.agoD', { n: Math.floor(s / 86400) });
 }
 
 /** Age without the "ago" ("38m", "2h") for dense columns. */
 export function age(ts: string | number | Date): string {
-	const a = ago(ts);
-	return a === 'just now' ? 'now' : a.replace(' ago', '');
+	const s = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
+	if (s < 10) return t('fmt.now');
+	if (s < 60) return t('fmt.ageS', { n: Math.floor(s) });
+	if (s < 3600) return t('fmt.ageM', { n: Math.floor(s / 60) });
+	if (s < 86400) return t('fmt.ageH', { n: Math.floor(s / 3600) });
+	return t('fmt.ageD', { n: Math.floor(s / 86400) });
 }
 
 /** "×3" for repeat counts in alerts. */

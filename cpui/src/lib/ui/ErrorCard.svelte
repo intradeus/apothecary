@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	import { I } from './icons';
 	// Inline error (DESIGN 4.17): short cause, mono detail folded, one action
 	// (Retry by default), optionally dismissable.
@@ -6,7 +7,7 @@
 		cause,
 		detail,
 		onretry,
-		action = `${I.retry} Retry`,
+		action,
 		ondismiss
 	}: {
 		cause: string;
@@ -22,12 +23,16 @@
 	<div class="row nowrap">
 		<span class="x">✕</span>
 		<span class="grow">{cause}</span>
-		{#if onretry}<button class="btn-sm" onclick={onretry}>{action}</button>{/if}
-		{#if ondismiss}<button class="btn-icon" aria-label="Dismiss" onclick={ondismiss}>×</button>{/if}
+		{#if onretry}<button class="btn-sm" onclick={onretry}
+				>{action ?? `${I.retry} ${t('ui.error.retry')}`}</button
+			>{/if}
+		{#if ondismiss}<button class="btn-icon" aria-label={t('ui.dismiss')} onclick={ondismiss}
+				>×</button
+			>{/if}
 	</div>
 	{#if detail}
 		<details>
-			<summary class="disclosure tiny mut">Details</summary>
+			<summary class="disclosure tiny mut">{t('ui.error.details')}</summary>
 			<pre class="log">{detail}</pre>
 		</details>
 	{/if}

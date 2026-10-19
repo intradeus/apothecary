@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t, th } from '$lib/i18n/index.svelte';
 	// Workshop health tab (DESIGN 7.7): preflight (config checks), envcheck
 	// (a throwaway workspace that proves the contract) and the build cache.
 	//
@@ -117,9 +118,9 @@
 
 	async function clearBuildCache() {
 		const ok = await confirmDialog({
-			title: 'Clear the build cache?',
-			body: `The devcontainer image layers this workshop’s runs reuse are deleted (${fmtBytes(buildCache?.bytes ?? 0)}). No <b>run</b> or <b>workspace</b> is touched. The next run rebuilds the image from scratch, which is slow; runs after that are fast again.`,
-			action: 'Clear cache'
+			title: t('workshop.health.confirmTitle'),
+			body: th('workshop.health.confirmBody', { size: fmtBytes(buildCache?.bytes ?? 0) }),
+			action: t('workshop.health.confirmAction')
 		});
 		if (!ok) return;
 		clearingCache = true;
@@ -127,7 +128,7 @@
 		try {
 			await api.projects.clearBuildCache(project.id);
 			await loadBuildCache();
-			toast('Build cache cleared');
+			toast(t('workshop.health.cleared'));
 		} catch (e) {
 			cacheError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -152,26 +153,31 @@
 			.catch((e) => (checkError = e instanceof Error ? e.message : String(e)))
 			.finally(() => (checkLoaded = true));
 		void loadBuildCache();
-		const t = setInterval(() => (now = Date.now()), 1000);
+		const tick = setInterval(() => (now = Date.now()), 1000);
 		return () => {
 			clearInterval(checkTimer);
-			clearInterval(t);
+			clearInterval(tick);
 		};
 	});
 
 	const running = $derived(check?.status === 'running');
 	const STATUS: Record<EnvCheck['status'], { label: string; tone: CheckTone }> = {
-		running: { label: 'running', tone: 'live' },
-		pass: { label: 'all good', tone: 'ok' },
-		fail: { label: 'failed', tone: 'bad' },
-		cancelled: { label: 'cancelled', tone: 'none' }
+		running: { label: t('workshop.health.running'), tone: 'live' },
+		pass: { label: t('workshop.health.allGood'), tone: 'ok' },
+		fail: { label: t('workshop.health.failed'), tone: 'bad' },
+		cancelled: { label: t('workshop.health.cancelled'), tone: 'none' }
 	};
 	const checkSteps = $derived<Step[]>(
 		(check?.steps ?? []).map((s, i) => ({
 			key: `${i}:${s.id}`,
 			tone: s.status === 'pass' ? 'ok' : s.status === 'fail' ? 'bad' : 'mut',
 			label: s.id,
-			detail: s.status === 'skip' ? `skipped${s.detail ? `: ${s.detail}` : ''}` : (s.detail ?? ''),
+			detail:
+				s.status === 'skip'
+					? s.detail
+						? t('workshop.health.skippedDetail', { detail: s.detail })
+						: t('workshop.health.skipped')
+					: (s.detail ?? ''),
 			bad: s.status === 'fail'
 		}))
 	);
@@ -181,7 +187,7 @@
 					key: s.id,
 					tone: s.ok ? 'ok' : 'bad',
 					label: s.id,
-					detail: s.ok ? '' : (s.error ?? 'failed'),
+					detail: s.ok ? '' : (s.error ?? t('workshop.health.failed')),
 					bad: !s.ok
 				}))
 			: []
@@ -201,64 +207,70 @@
 	<!-- Envcheck -->
 	<section class="c pane wide">
 		<div class="pane-head">
-			<h2>Envcheck</h2>
+			<h2>{t('workshop.health.envcheck')}</h2>
 			{#if check}
 				<CheckChip tone={STATUS[check.status].tone} label={STATUS[check.status].label} />
-				{#if check.tearingDown}<CheckChip tone="live" label="removing the workspace" />{/if}
+				{#if check.tearingDown}<CheckChip tone="live" label={t('workshop.health.removing')} />{/if}
 			{/if}
 			<span class="spacer"></span>
 			<Toggle
 				bind:checked={checkKeep}
-				label="keep workspace"
-				title="Leave the throwaway workspace up afterwards, to poke at it"
+				label={t('workshop.health.keep')}
+				title={t('workshop.health.keepTitle')}
 			/>
 			{#if running}
 				<button class="btn-sm" aria-busy={cancelling} onclick={cancelEnvCheck}
-					>{I.stop} Cancel</button
+					>{I.stop} {t('workshop.health.cancel')}</button
 				>
 				<button
 					class="btn-sm"
 					aria-busy={starting}
-					title="Start over: cancels the running check (it cleans up after itself)"
-					onclick={startEnvCheck}>{I.retry} Restart</button
+					title={t('workshop.health.restartTitle')}
+					onclick={startEnvCheck}>{I.retry} {t('workshop.health.restart')}</button
 				>
 			{:else}
 				<button
 					class="btn-sm btn-sel"
 					aria-busy={starting}
-					title="Provision a throwaway workspace and prove the contract"
+					title={t('workshop.health.runEnvcheckTitle')}
 					onclick={startEnvCheck}
-					>{check ? `${I.retry} Run again` : `${I.play} Run envcheck`}</button
+					>{check
+						? `${I.retry} ${t('workshop.health.runAgain')}`
+						: `${I.play} ${t('workshop.health.runEnvcheck')}`}</button
 				>
 			{/if}
 		</div>
 		<div class="pane-body col">
 			<p class="lede">
-				Provisions a throwaway workspace and proves the derived contract: image, firewall, egress,
-				harness, shim, tunnel. Then destroys it, unless you keep it.
+				{t('workshop.health.envcheckLede')}
 			</p>
-			{#if checkError}<ErrorCard cause="Envcheck request failed" detail={checkError} />{/if}
+			{#if checkError}<ErrorCard
+					cause={t('workshop.health.envcheckFailed')}
+					detail={checkError}
+				/>{/if}
 			{#if !checkLoaded}
 				<Skeleton lines={3} />
 			{:else if check}
 				<div class="meta">
 					{#if validDate(check.startedAt)}<span title={fmtAbs(check.startedAt)}
-							>started {ago(check.startedAt)}</span
+							>{t('workshop.health.started', { ago: ago(check.startedAt) })}</span
 						>{/if}
 					<span class="mono">{elapsed}</span>
-					{#if check.keep}<span>workspace kept</span>{/if}
+					{#if check.keep}<span>{t('workshop.health.kept')}</span>{/if}
 					<span class="mono fnt">{check.id.slice(-8).toLowerCase()}</span>
 				</div>
 				<StepList
 					steps={checkSteps}
-					live={running ? { label: 'next step', detail: 'working…' } : null}
-					empty="No steps were reported."
+					live={running
+						? { label: t('workshop.health.nextStep'), detail: t('workshop.health.working') }
+						: null}
+					empty={t('workshop.health.noSteps')}
 				/>
 			{:else}
 				<EmptyState
 					inline
-					title="Never checked"
-					text="since the engine started. Run one before the first real run."
+					title={t('workshop.health.neverTitle')}
+					text={t('workshop.health.neverText')}
 				/>
 			{/if}
 		</div>
@@ -267,11 +279,11 @@
 	<!-- Preflight -->
 	<section class="c pane">
 		<div class="pane-head">
-			<h2>Preflight</h2>
+			<h2>{t('workshop.health.preflight')}</h2>
 			{#if preflight && preflight !== 'running'}
 				<CheckChip
 					tone={preflight.ok ? 'ok' : 'bad'}
-					label={preflight.ok ? 'all good' : 'failed'}
+					label={preflight.ok ? t('workshop.health.allGood') : t('workshop.health.failed')}
 				/>
 			{/if}
 			<span class="spacer"></span>
@@ -281,28 +293,35 @@
 				aria-busy={preflight === 'running'}
 				disabled={preflight === 'running'}
 				>{preflight === 'running'
-					? 'Checking…'
+					? t('workshop.health.checking')
 					: preflight
-						? `${I.retry} Check again`
-						: `${I.play} Run preflight`}</button
+						? `${I.retry} ${t('workshop.health.checkAgain')}`
+						: `${I.play} ${t('workshop.health.runPreflight')}`}</button
 			>
 		</div>
 		<div class="pane-body col">
 			<p class="lede">
-				Fast checks of the configuration this workshop names — its integrations, commands and
-				default flow — without provisioning anything. Every run is checked the same way when it is
-				created.
+				{t('workshop.health.preflightLede')}
 			</p>
 			{#if preflight === 'running'}
 				<Skeleton lines={3} />
 			{:else if preflight}
 				<div class="meta">
-					<span>checked {ago(preflightAt ?? now)}</span>
-					<span>{preflight.steps.filter((s) => s.ok).length}/{preflight.steps.length} ok</span>
+					<span>{t('workshop.health.checked', { ago: ago(preflightAt ?? now) })}</span>
+					<span
+						>{t('workshop.health.okCount', {
+							ok: preflight.steps.filter((s) => s.ok).length,
+							total: preflight.steps.length
+						})}</span
+					>
 				</div>
 				<StepList steps={preflightSteps} />
 			{:else}
-				<EmptyState inline title="Not run yet" text="on this page." />
+				<EmptyState
+					inline
+					title={t('workshop.health.notRunTitle')}
+					text={t('workshop.health.notRunText')}
+				/>
 			{/if}
 		</div>
 	</section>
@@ -310,8 +329,9 @@
 	<!-- Build cache -->
 	<section class="c pane">
 		<div class="pane-head">
-			<h2>Build cache</h2>
-			{#if buildCache?.available}<span class="pill t-grn">kept</span>{/if}
+			<h2>{t('workshop.health.cache')}</h2>
+			{#if buildCache?.available}<span class="pill t-grn">{t('workshop.health.cacheKept')}</span
+				>{/if}
 			<span class="spacer"></span>
 			{#if buildCache?.available}
 				<button
@@ -319,13 +339,13 @@
 					onclick={clearBuildCache}
 					aria-busy={clearingCache}
 					disabled={clearingCache || !buildCache.bytes}
-					>{clearingCache ? 'Clearing…' : 'Clear…'}</button
+					>{clearingCache ? t('workshop.health.clearing') : t('workshop.health.clear')}</button
 				>
 			{/if}
 		</div>
 		<div class="pane-body col">
 			{#if cacheError}<ErrorCard
-					cause="Build cache request failed"
+					cause={t('workshop.health.cacheFailed')}
 					detail={cacheError}
 					onretry={loadBuildCache}
 				/>{/if}
@@ -333,22 +353,23 @@
 				<Skeleton lines={2} />
 			{:else if buildCache?.available}
 				<div class="row size">
-					<span class="mono big">{buildCache.bytes ? fmtBytes(buildCache.bytes) : 'empty'}</span>
+					<span class="mono big"
+						>{buildCache.bytes ? fmtBytes(buildCache.bytes) : t('workshop.health.cacheEmpty')}</span
+					>
 					<span class="mut small"
 						>{buildCache.bytes
-							? 'of image layers, restored by every run after the first'
-							: 'the next run builds the image and fills it'}</span
+							? t('workshop.health.cacheFull')
+							: t('workshop.health.cacheFill')}</span
 					>
 				</div>
 				<p class="lede">
-					Clear it when a build starts from something stale — a moved base image, a bad layer. The
-					next run rebuilds and refills it.
+					{t('workshop.health.cacheLede')}
 				</p>
 			{:else if !cacheError}
 				<EmptyState
 					inline
-					title="No cache here"
-					text="This provisioner keeps no build cache of its own."
+					title={t('workshop.health.noCacheTitle')}
+					text={t('workshop.health.noCacheText')}
 				/>
 			{/if}
 		</div>

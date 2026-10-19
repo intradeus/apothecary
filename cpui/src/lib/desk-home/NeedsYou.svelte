@@ -3,6 +3,7 @@
 	// first. One row per run — its newest pending ping is the one to answer;
 	// earlier ones queue behind it (the inbox's rule). The whole row opens the
 	// ping; the workshop link and the call to action sit above it.
+	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
 	import { age, fmtAbs, shortId } from '$lib/format';
@@ -30,10 +31,10 @@
 <section class="ny c pane">
 	<header class="pane-head">
 		<span class="count hot mark" use:bump={pings.length}>{pings.length}</span>
-		<h2>Awaiting your hand</h2>
-		<span class="sub">oldest first</span>
+		<h2>{t('deskhome.needs.title')}</h2>
+		<span class="sub">{t('deskhome.needs.oldest')}</span>
 		<span class="spacer"></span>
-		<a class="small" href={to.inbox()}>Open inbox {I.forward}</a>
+		<a class="small" href={to.inbox()}>{t('deskhome.needs.inbox')} {I.forward}</a>
 	</header>
 	<div class="rows">
 		{#each rows as { ping: p, queued } (p.id)}
@@ -42,12 +43,15 @@
 				<span class="ty"><PingPill type={p.type} /></span>
 				<span class="what">
 					<a class="q ell stretch" href={to.ping(p.id)}
-						>{pingHeadline(p.question) || 'A question for you'}</a
+						>{pingHeadline(p.question) || t('deskhome.needs.fallback')}</a
 					>
 					<span class="sub ell">
 						<span class="mono">{shortId(p.runId)}</span>
-						{' · '}{run?.title ?? 'run'}{#if p.stageId}{' · '}<span class="mono">{p.stageId}</span
-							>{/if}{#if queued > 0}<span class="hue-amb">{' · '}{queued} more queued</span>{/if}
+						{' · '}{run?.title ?? t('deskhome.needs.runFallback')}{#if p.stageId}{' · '}<span
+								class="mono">{p.stageId}</span
+							>{/if}{#if queued > 0}<span class="hue-amb"
+								>{' · '}{t('deskhome.needs.queued', { count: queued })}</span
+							>{/if}
 					</span>
 				</span>
 				<span class="ws ell"><WorkshopName projectId={run?.projectId} link /></span>

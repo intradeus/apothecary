@@ -14,6 +14,7 @@
 </script>
 
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// A check's steps as a vertical timeline (DESIGN 7.7 envcheck, preflight):
 	// a StatusMark per step joined by a hairline, the step's mono name, then
 	// its detail. Rows materialise as they land, so a live check reads as
@@ -58,14 +59,14 @@
 	{/each}
 	{#if live}
 		<li class="st" in:arrive|global={steps.length}>
-			<StatusMark tone="live" title="running" />
+			<StatusMark tone="live" title={t('ui.steplist.running')} />
 			<span class="mono id fnt ell">{live.label}</span>
 			<span class="dt fnt">{live.detail ?? ''}</span>
 		</li>
 	{/if}
 	{#if !steps.length && !live && empty}
 		<li class="st">
-			<StatusMark tone="pending" title="none" />
+			<StatusMark tone="pending" title={t('ui.steplist.none')} />
 			<span class="dt fnt span">{empty}</span>
 		</li>
 	{/if}

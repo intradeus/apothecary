@@ -7,7 +7,8 @@
 	import { currentGuild, to } from '$lib/guild';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
-	import { plural, stateTab } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
+	import { stateTab } from '$lib/format';
 	import type { Ticket } from '$lib/domain';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
@@ -72,7 +73,7 @@
 	});
 </script>
 
-<svelte:head><title>Tickets</title></svelte:head>
+<svelte:head><title>{t('page.tickets.title')}</title></svelte:head>
 
 <PageHeader
 	crumbs={[
@@ -80,56 +81,54 @@
 		...(projectFilter
 			? [{ label: fleet.projectName(projectFilter), href: to.workshop(projectFilter) }]
 			: []),
-		{ label: 'Tickets' }
+		{ label: t('page.tickets.title') }
 	]}
-	title="Tickets"
-	accent="for the bench"
+	title={t('page.tickets.title')}
+	accent={t('page.tickets.accent')}
 >
 	{#snippet meta()}
-		<span>{plural(tickets.length, 'ticket')}</span>
-		<span>runs start from a ticket</span>
+		<span>{t('page.tickets.count', { count: tickets.length })}</span>
+		<span>{t('page.tickets.meta')}</span>
 	{/snippet}
 	{#snippet actions()}
 		<a
 			class="btn btn-primary btn-lg"
 			href={to.newTicket(projectFilter ? { project: projectFilter } : undefined)}
-			>{I.add} New ticket</a
+			>{I.add} {t('page.desk.newTicket')}</a
 		>
 	{/snippet}
 </PageHeader>
 
 <div class="page body">
 	<div class="filters">
-		<SearchInput bind:value={q} placeholder="Search title, key, goal…" />
+		<SearchInput bind:value={q} placeholder={t('page.tickets.search')} />
 		<WorkshopFilter value={projectFilter} onchange={setProject} />
-		<select class="sel" aria-label="Filter by source" bind:value={source}>
-			<option value="">Any source</option>
-			<option value="manual">Written here</option>
-			{#each kinds as k (k)}<option value={k}>Imported · {k}</option>{/each}
+		<select class="sel" aria-label={t('page.tickets.filterSource')} bind:value={source}>
+			<option value="">{t('page.tickets.anySource')}</option>
+			<option value="manual">{t('page.tickets.writtenHere')}</option>
+			{#each kinds as k (k)}<option value={k}>{t('page.tickets.imported', { kind: k })}</option
+				>{/each}
 		</select>
-		<Toggle bind:checked={activeOnly} label="Has an active run" />
+		<Toggle bind:checked={activeOnly} label={t('page.tickets.hasActive')} />
 	</div>
 
 	{#if error && !tickets.length}
-		<ErrorCard cause="Could not load tickets" detail={error} onretry={load} />
+		<ErrorCard cause={t('page.tickets.loadError')} detail={error} onretry={load} />
 	{:else if !loaded}
 		<Skeleton pane lines={6} />
 	{:else if tickets.length === 0}
-		<EmptyState
-			title="No tickets yet"
-			text="A ticket is a unit of work. Write one, then start runs against it."
-		>
-			<a class="btn btn-primary" href={to.newTicket()}>{I.add} New ticket</a>
+		<EmptyState title={t('page.tickets.empty')} text={t('page.tickets.emptyText')}>
+			<a class="btn btn-primary" href={to.newTicket()}>{I.add} {t('page.desk.newTicket')}</a>
 		</EmptyState>
 	{:else if shown.length === 0}
-		<EmptyState compact title="No tickets match" text="Loosen the search or the filters.">
+		<EmptyState compact title={t('page.tickets.noMatch')} text={t('page.tickets.noMatchText')}>
 			<button
 				onclick={() => {
 					q = '';
 					source = '';
 					activeOnly = false;
 					setProject('');
-				}}>Clear filters</button
+				}}>{t('page.tickets.clearFilters')}</button
 			>
 		</EmptyState>
 	{:else}

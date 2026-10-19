@@ -8,6 +8,7 @@
 	// ellipsise, the whole row opens the run (a stretched title link), the MR
 	// link sits above it. Columns are picked per page.
 	import { to } from '$lib/guild';
+	import { t } from '$lib/i18n/index.svelte';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';
 	import type { Run } from '$lib/domain';
@@ -40,17 +41,29 @@
 		mr: '58px',
 		updated: '74px'
 	};
-	const LABEL: Record<RunCol, string> = {
-		title: 'Run',
-		id: 'Id',
-		state: 'State',
-		ws: '',
-		stage: 'Stage',
-		workshop: 'Workshop',
-		flow: 'Flow',
-		branch: 'Branch',
-		mr: 'MR',
-		updated: 'Updated'
+	const label = (c: RunCol): string => {
+		switch (c) {
+			case 'title':
+				return t('run.table.run');
+			case 'id':
+				return t('run.table.id');
+			case 'state':
+				return t('run.table.state');
+			case 'ws':
+				return '';
+			case 'stage':
+				return t('run.table.stage');
+			case 'workshop':
+				return t('run.table.workshop');
+			case 'flow':
+				return t('run.table.flow');
+			case 'branch':
+				return t('run.table.branch');
+			case 'mr':
+				return t('run.table.mr');
+			case 'updated':
+				return t('run.table.updated');
+		}
 	};
 	// Columns that fold away on a phone: title, state and age remain.
 	const WIDE: RunCol[] = ['id', 'ws', 'stage', 'workshop', 'flow', 'branch', 'mr'];
@@ -69,7 +82,7 @@
 <div class="rt rows" style:--tpl={tpl} style:--tpl-sm={tplSm}>
 	<div class="r head">
 		{#each cols as c (c)}<span class:hide-sm={wide.includes(c)} class:right={c === 'updated'}
-				>{c === 'workshop' ? 'Workshop' : LABEL[c]}</span
+				>{label(c)}</span
 			>{/each}
 	</div>
 	{#each runs as r (r.id)}
@@ -78,7 +91,7 @@
 			{#each cols as c (c)}
 				{#if c === 'title'}
 					<span class="title">
-						<a class="stretch ell" href={to.run(r.id)}>{r.title || 'Untitled run'}</a>
+						<a class="stretch ell" href={to.run(r.id)}>{r.title || t('run.row.untitled')}</a>
 						{#if !cols.includes('id')}<span class="mono fnt sid"
 								>{shortId(r.id)}{#if detail && r.branch}{' · '}{r.branch}{/if}</span
 							>{/if}
@@ -105,7 +118,8 @@
 						{#if r.currentStage}
 							<StageFlask status={stageStatus(r.state)} size="sm" />
 							<span class="mono ell">{r.currentStage}</span>
-							{#if f?.attempt}<span class="fnt att" title="attempt {f.attempt}">#{f.attempt}</span
+							{#if f?.attempt}<span class="fnt att" title={t('run.table.attempt', { n: f.attempt })}
+									>#{f.attempt}</span
 								>{/if}
 						{:else}<span class="fnt">—</span>{/if}
 					</span>

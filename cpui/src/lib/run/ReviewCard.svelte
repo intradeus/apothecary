@@ -3,6 +3,7 @@
 	// and the reaction phases that may act on it — started automatically by
 	// their triggers, or right now by hand.
 	import { onMount } from 'svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type { MergeRequestLive, RunPhase } from '$lib/domain';
 	import { toast } from '$lib/ui/toast.svelte';
@@ -21,7 +22,7 @@
 		try {
 			[mrs, phases] = await Promise.all([api.runs.mrStatus(runId), api.runs.phases(runId)]);
 		} catch (e) {
-			cause = 'The forge could not be read.';
+			cause = t('run.review.forgeError');
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
@@ -31,9 +32,9 @@
 		error = '';
 		try {
 			await api.runs.startPhase(runId, phase, repo);
-			toast(`Phase ${phase} started`);
+			toast(t('run.review.phaseStarted', { phase }));
 		} catch (e) {
-			cause = `Phase ${phase} could not start.`;
+			cause = t('run.review.phaseFailed', { phase });
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			busy = '';
@@ -43,26 +44,23 @@
 
 	const trigger = (p: RunPhase) =>
 		p.signal === 'mr_conflicts'
-			? 'when it conflicts with its target'
+			? t('run.review.trigger.conflicts')
 			: p.signal === 'mr_review_settled'
-				? `when review comments go quiet for ${Math.round((p.quietForS ?? 0) / 60)}m`
-				: `on ${p.signal}`;
+				? t('run.review.trigger.quiet', { minutes: Math.round((p.quietForS ?? 0) / 60) })
+				: t('run.review.trigger.on', { signal: p.signal });
 
 	onMount(() => {
 		load();
-		const t = setInterval(() => !document.hidden && load(), 30_000);
-		return () => clearInterval(t);
+		const timer = setInterval(() => !document.hidden && load(), 30_000);
+		return () => clearInterval(timer);
 	});
 </script>
 
 {#if phases.length}
 	<div class="rc card-in">
 		<div class="hd">
-			<span class="t serif">In review</span>
-			<span class="sub"
-				>The run ends when its merge requests merge (or one is closed). Until then these phases
-				react to what happens on them — one at a time.</span
-			>
+			<span class="t serif">{t('run.review.title')}</span>
+			<span class="sub">{t('run.review.sub')}</span>
 		</div>
 		{#each mrs.filter((m) => m.state === 'open') as mr (mr.repo + mr.branch)}
 			<div class="mr">
@@ -78,20 +76,25 @@
 					<div class="phase">
 						<span class="mono pid">{p.id}</span>
 						<span class="mut ell"
-							>{trigger(p)}{p.confirm ? ', after you confirm' : ''} · {used}/{p.max === -1
-								? '∞'
-								: p.max} runs</span
+							>{trigger(p)}{p.confirm ? t('run.review.afterConfirm') : ''} · {t(
+								'run.review.usage',
+								{
+									used,
+									max: p.max === -1 ? '∞' : p.max
+								}
+							)}</span
 						>
 						<button
 							class="btn-sm"
 							aria-busy={busy === p.id + (mr.repo === 'repo' ? '' : mr.repo)}
 							disabled={!idle || spent || busy !== ''}
 							title={spent
-								? 'This phase reached its max for this merge request'
+								? t('run.review.spent')
 								: idle
-									? 'Start it now, whether or not its trigger holds'
-									: 'Another phase is running'}
-							onclick={() => start(p.id, mr.repo === 'repo' ? '' : mr.repo)}>Run now</button
+									? t('run.review.startNow')
+									: t('run.review.otherRunning')}
+							onclick={() => start(p.id, mr.repo === 'repo' ? '' : mr.repo)}
+							>{t('run.review.runNow')}</button
 						>
 					</div>
 				{/each}

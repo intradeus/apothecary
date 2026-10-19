@@ -1625,8 +1625,41 @@ something we can drive). Official packages are Ubuntu/Debian, with
 Fedora/Rocky/Alma/CentOS/Amazon Linux listed compatible and everything else
 building from source; kernel ≥5.12. Sysbox's own docs steer away from
 `docker:dind` images (breakages at dind 20.10.7 and 27.4.0; v0.7.0 added
-openat2 trapping so newer runc works inside), so `docker:29-dind` under sysbox
-is the one thing left to verify live before this could ever become the default.
+openat2 trapping so newer runc works inside), which left `docker:29-dind`
+under sysbox as the one thing to verify live — done below.
+
+**Verified live (2026-10-19) and the default decision.** Host: Arch, kernel
+7.2.11, docker 29.9.1, sysbox-ce 0.7.1 (registered in daemon.json with
+`--no-kernel-check`, Arch being an unlisted distro), sandbox image
+`docker:29-dind` (dockerd 29.6.2 inside). Daemon level, mirroring
+`createSandbox` by hand: the inner dockerd boots in ~1s (privileged: ~0.7s)
+and listens on the parity socket; the sandbox's init is host uid 165536
+(`uid_map 0 165536 65536`) with a 16-entry `/dev` where the privileged
+sandbox sees every host device; the parity bind mount is an ID-mapped mount,
+so the inner socket surfaces on the host as `root:2375 0660` and inner-root
+writes land as host root — byte-identical to the privileged sandbox, which is
+why the engine (root in deploy/) needs no change and why a uid-1000 developer
+cannot talk to the inner socket under either runtime. Inner pulls, bind mounts
+of the run folder, buildkit builds, the egress `ip route replace` + ipv6
+sysctl, an inner `--privileged` container (full CapEff but still inside the
+userns: sysrq read-only, the same 16 devices) and a depth-2 dind all work.
+Provisioner level: `TestLiveLifecycle` (`-tags live`) passes end-to-end under
+`sysbox-runc`, without and with the egress gateway (--internal network,
+gateway DNS, pull-through mirror, default route via the gateway): provision →
+exec → file round-trips → loopback bridge → port exposure → destroy, with the
+sandbox inspected as `privileged=false runtime=sysbox-runc`. The live test
+had rotted since the DinD move (stale `wsimage.New` signature; `t.TempDir()`
+RunsDir, which the dind guard rightly rejects; a host-daemon `docker exec`
+against a workspace that now lives on the inner daemon) — it is repaired and
+now takes its RunsDir, sandbox runtime and gateway switch from the
+environment, skips unless root, and asserts the sandbox posture; the recipe
+to run it inside the engine image is in its header.
+
+Decision: it **stays opt-in**. It cannot become the default because it is a
+host-level install we do not ship (Linux-only, distro packaging, a daemon.json
+entry), and auto-detection was rejected above so a deployment's isolation
+stays readable off one variable. What changes is the recommendation: on a
+Linux host, set it. TODO 19 is closed.
 
 ## DESIGN-FILES implemented — attachments + snapshots replace "artifacts"
 

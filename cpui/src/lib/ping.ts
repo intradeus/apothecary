@@ -9,6 +9,7 @@
 import type { AnswerKind, PingOption } from '$lib/domain';
 import type { Hue } from '$lib/ui/hues';
 import { I } from '$lib/ui/icons';
+import { t } from '$lib/i18n/index.svelte';
 
 export const GATE_TYPE = 'gate';
 /** The flow's debug leaf: a parked stage, facts only — the card is the wording. */
@@ -77,9 +78,9 @@ export const isDocumentPing = (p: Pick<PingLike, 'files' | 'link' | 'primaryRef'
 export function pingCta(
 	p: Pick<PingLike, 'type' | 'answerKind' | 'files' | 'link' | 'primaryRef'>
 ): string {
-	if (isDocumentPing(p)) return 'Review plan';
-	if (p.type === 'permission' || p.answerKind === 'decision') return 'Decide';
-	return 'Answer';
+	if (isDocumentPing(p)) return t('ping.cta.review');
+	if (p.type === 'permission' || p.answerKind === 'decision') return t('ping.cta.decide');
+	return t('ping.cta.answer');
 }
 
 /** The first line of a ping's question as plain text, for one-line rows. */
@@ -103,8 +104,9 @@ export function answerMeta(p: Pick<PingLike, 'status' | 'answer'>): {
 	word: string;
 	hue: Hue;
 } {
-	if (p.status === 'withdrawn') return { glyph: I.none, word: 'Withdrawn', hue: 'mut' };
-	if (p.answer === 'approve') return { glyph: I.ok, word: 'Approved', hue: 'grn' };
-	if (p.answer === 'reject') return { glyph: I.loop, word: 'Changes requested', hue: 'amb' };
-	return { glyph: I.ok, word: 'Answered', hue: 'grn' };
+	if (p.status === 'withdrawn')
+		return { glyph: I.none, word: t('ping.verdict.withdrawn'), hue: 'mut' };
+	if (p.answer === 'approve') return { glyph: I.ok, word: t('ping.verdict.approved'), hue: 'grn' };
+	if (p.answer === 'reject') return { glyph: I.loop, word: t('ping.verdict.rejected'), hue: 'amb' };
+	return { glyph: I.ok, word: t('ping.verdict.answered'), hue: 'grn' };
 }

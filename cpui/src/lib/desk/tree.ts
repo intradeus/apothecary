@@ -3,6 +3,8 @@
 // every change goes through norm() so the tree never holds an empty leaf, a
 // one-child split or two nested splits in the same direction.
 
+import { t } from '$lib/i18n/index.svelte';
+
 export const VIEWS = [
 	'flow',
 	'session',
@@ -21,19 +23,45 @@ export const VIEWS = [
 export type ViewId = (typeof VIEWS)[number];
 
 export const VIEW_LABEL: Record<ViewId, string> = {
-	flow: 'Flow',
-	session: 'Session',
-	pings: 'Pings',
-	timeline: 'Timeline',
-	record: 'Record',
-	changes: 'Changes',
-	files: 'Files',
-	terminal: 'Terminal',
-	logs: 'Logs',
-	egress: 'Egress',
-	ports: 'Ports',
-	resources: 'Resources',
-	vitals: 'Vitals'
+	get flow() {
+		return t('desk.view.flow');
+	},
+	get session() {
+		return t('desk.view.session');
+	},
+	get pings() {
+		return t('desk.view.pings');
+	},
+	get timeline() {
+		return t('desk.view.timeline');
+	},
+	get record() {
+		return t('desk.view.record');
+	},
+	get changes() {
+		return t('desk.view.changes');
+	},
+	get files() {
+		return t('desk.view.files');
+	},
+	get terminal() {
+		return t('desk.view.terminal');
+	},
+	get logs() {
+		return t('desk.view.logs');
+	},
+	get egress() {
+		return t('desk.view.egress');
+	},
+	get ports() {
+		return t('desk.view.ports');
+	},
+	get resources() {
+		return t('desk.view.resources');
+	},
+	get vitals() {
+		return t('desk.view.vitals');
+	}
 };
 
 export interface Leaf {
@@ -78,7 +106,9 @@ export const split = (dir: 'row' | 'col', s: number[], c: Node[]): Split => ({
 
 export const PRESETS = {
 	split: {
-		label: 'Split',
+		get label() {
+			return t('desk.preset.split');
+		},
 		make: () =>
 			split(
 				'col',
@@ -106,7 +136,9 @@ export const PRESETS = {
 			)
 	},
 	focus: {
-		label: 'Focus',
+		get label() {
+			return t('desk.preset.focus');
+		},
 		make: () =>
 			split(
 				'col',
@@ -131,7 +163,9 @@ export const PRESETS = {
 			)
 	},
 	dock: {
-		label: 'Dock',
+		get label() {
+			return t('desk.preset.dock');
+		},
 		make: () =>
 			split(
 				'col',
@@ -152,7 +186,9 @@ export const PRESETS = {
 			)
 	},
 	recipe: {
-		label: 'Recipe',
+		get label() {
+			return t('desk.preset.recipe');
+		},
 		make: () =>
 			split(
 				'row',
@@ -172,7 +208,9 @@ export const PRESETS = {
 			)
 	},
 	bench: {
-		label: 'Bench',
+		get label() {
+			return t('desk.preset.bench');
+		},
 		make: () =>
 			split(
 				'row',
@@ -396,6 +434,6 @@ export function hit(rects: LeafRect[], p: { x: number; y: number }, head: number
 		y,
 		w,
 		h,
-		label: zone === 'center' ? 'Stack here' : `Split ${zone}`
+		label: zone === 'center' ? t('desk.drop.stack') : t(`desk.drop.split_${zone}`)
 	};
 }

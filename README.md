@@ -385,9 +385,13 @@ go into Docker Desktop's VM on macOS/Windows — leave the variable unset there;
 Docker Desktop Business subscribers get the same technology via Enhanced
 Container Isolation instead). Official packages cover Ubuntu/Debian, with
 Fedora/Rocky/Alma/CentOS/Amazon Linux listed as compatible and other distros
-building from source. Kernel ≥5.12. Sysbox's own guidance is to prefer a
-purpose-built image over `docker:dind`, so verify your `dind_image` under
-sysbox before relying on it.
+building from source. Kernel ≥5.12. The default `docker:29-dind` sandbox
+image is verified under sysbox — the full provisioning path, egress gateway
+included (`docs/IMPLEMENTATION_NOTES.md`). If you override `dind_image`,
+re-verify it with the live test described at the top of
+`internal/adapters/devcontainer/live_test.go`. On a Linux host this is the
+recommended setting; it stays opt-in only because it is a host install we
+don't ship.
 
 **One deliberate carve-out:** the gateway also hosts the project's
 pull-through Docker Hub cache on `:5000`, and each run's inner dockerd pulls

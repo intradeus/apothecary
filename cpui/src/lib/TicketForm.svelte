@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { to } from '$lib/guild';
+	import { t, th } from '$lib/i18n/index.svelte';
 	// Ticket create/edit form. A ticket is a unit of work; flow is NOT chosen
 	// here — it's picked per run when a run is started.
 	//
@@ -102,10 +103,10 @@
 	// Picking an issue fills the form from the full issue (search results carry
 	// no attachments, so this re-fetches). Everything stays editable — the
 	// import is a starting point, not a lock.
-	async function pick(t: SourceTicket) {
+	async function pick(st: SourceTicket) {
 		searchErr = '';
 		try {
-			picked = await api.integrations.sourceTicket(sourceId, t.key);
+			picked = await api.integrations.sourceTicket(sourceId, st.key);
 		} catch (e) {
 			searchErr = e instanceof Error ? e.message : String(e);
 			return;
@@ -169,14 +170,14 @@
 				attachmentIds,
 				...(picked ? { sourceIntegrationId: sourceId, sourceKey: picked.key } : {})
 			};
-			const t = init ? await api.tickets.update(init.id, body) : await api.tickets.create(body);
-			if (t.warnings?.length) {
-				warnings = t.warnings;
-				created = t;
+			const saved = init ? await api.tickets.update(init.id, body) : await api.tickets.create(body);
+			if (saved.warnings?.length) {
+				warnings = saved.warnings;
+				created = saved;
 				return;
 			}
-			toast(init ? 'Ticket saved' : 'Ticket created');
-			onsaved(t);
+			toast(init ? t('form.ticket.saved') : t('form.ticket.created'));
+			onsaved(saved);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -189,59 +190,61 @@
 	<section class="main c pane">
 		{#if projects.length === 0}
 			<Callout hue="amb" glyph={I.warn}>
-				No workshops yet — set up
-				<a href={to.system('integrations')}>integrations</a> and create a
-				<a href={to.newWorkshop()}>workshop</a> first.
+				{@html th('form.ticket.noWorkshops', {
+					integrationsHref: to.system('integrations'),
+					workshopHref: to.newWorkshop()
+				})}
 			</Callout>
 		{/if}
 
 		<div class="field">
-			<label for="t-project">Workshop</label>
+			<label for="t-project">{t('form.ticket.workshop')}</label>
 			<select id="t-project" bind:value={projectId} required disabled={init != null}>
 				{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 			</select>
-			{#if init}<span class="help">Locked: a ticket stays in the workshop it was written for.</span
-				>{/if}
+			{#if init}<span class="help">{t('form.ticket.locked')}</span>{/if}
 		</div>
 
 		<div class="field">
-			<label for="t-title">Title</label>
-			<input id="t-title" bind:value={title} required placeholder="Add a Farewell function" />
+			<label for="t-title">{t('form.ticket.title')}</label>
+			<input
+				id="t-title"
+				bind:value={title}
+				required
+				placeholder={t('form.ticket.titlePlaceholder')}
+			/>
 		</div>
 
 		<div class="field">
-			<label for="t-goal">Goal</label>
-			<span class="help"
-				>What should the factory build, and what does done look like? Markdown.</span
-			>
+			<label for="t-goal">{t('form.ticket.goal')}</label>
+			<span class="help">{t('form.ticket.goalHelp')}</span>
 			<textarea
 				id="t-goal"
 				class="goal"
 				bind:value={goal}
 				required
 				rows="10"
-				placeholder="Add a GET /farewell endpoint that returns “goodbye”. Done = the handler, a test, and the route wired up."
-			></textarea>
+				placeholder={t('form.ticket.goalPlaceholder')}></textarea>
 		</div>
 
 		<div class="field">
 			<div class="lrow">
-				<label for="t-branch">Base branch</label>
+				<label for="t-branch">{t('form.ticket.baseBranch')}</label>
 				{#if branchEdited && !init}
-					<span class="pill sm t-amb">edited</span>
+					<span class="pill sm t-amb">{t('form.ticket.edited')}</span>
 					<button
 						type="button"
 						class="btn-ghost btn-sm"
-						title="Go back to the branch derived from the title"
+						title={t('form.ticket.autoTitle')}
 						onclick={() => {
 							branchEdited = false;
 							branch = picked
 								? `${picked.key.toLowerCase()}-${slugify(picked.title ?? '')}`
 								: slugify(title);
-						}}>{I.retry} auto</button
+						}}>{I.retry} {t('form.ticket.auto')}</button
 					>
 				{:else if !init}
-					<span class="pill sm t-mut">auto</span>
+					<span class="pill sm t-mut">{t('form.ticket.auto')}</span>
 				{/if}
 			</div>
 			<input
@@ -251,37 +254,37 @@
 				placeholder="feat/PROJ-123-short-description"
 				class="mono"
 			/>
-			<span class="help">Each run appends a short unique suffix, so runs never share a branch.</span
-			>
+			<span class="help">{t('form.ticket.branchHelp')}</span>
 		</div>
 
 		<div class="field">
-			<span class="flabel">Attachments</span>
+			<span class="flabel">{t('form.ticket.attachments')}</span>
 			{#if attached.length}
 				<FileChips
 					items={attached.map((a) => ({ ...a, kind: 'attachment' as const }))}
-					label="Already attached — delivered into every run's workspace"
+					label={t('form.ticket.alreadyAttached')}
 				/>
 			{/if}
-			<AttachFiles bind:files label="Drop documents or images for the agent, or browse" />
+			<AttachFiles bind:files label={t('form.ticket.dropLabel')} />
 		</div>
 
 		{#if error}<div class="err">{error}</div>{/if}
 		{#if warnings.length && created}
 			<Callout hue="amb" glyph={I.warn}>
-				<b>Ticket created, but some attachments did not come across:</b>
+				<b>{t('form.ticket.warnHead')}</b>
 				<ul>
 					{#each warnings as w (w)}<li>{w}</li>{/each}
 				</ul>
 			</Callout>
 			<div class="form-actions">
 				<button class="btn-primary" type="button" onclick={() => onsaved(created!)}
-					>Continue to the ticket</button
+					>{t('form.ticket.continue')}</button
 				>
 			</div>
 		{:else}
 			<div class="form-actions">
-				{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button
+				{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}
+						>{t('common.cancel')}</button
 					>{/if}
 				<button
 					class="btn-primary btn-lg"
@@ -289,7 +292,11 @@
 					aria-busy={submitting}
 					disabled={!title.trim() || !goal.trim() || !projectId}
 				>
-					{init ? 'Save ticket' : picked ? `Create from ${picked.key}` : 'Create ticket'}
+					{init
+						? t('form.ticket.save')
+						: picked
+							? t('form.ticket.createFrom', { key: picked.key })
+							: t('form.ticket.create')}
 				</button>
 			</div>
 		{/if}
@@ -298,14 +305,14 @@
 	{#if !init}
 		<aside class="imp c pane">
 			<div class="pane-head ih">
-				<h2>Import from tracker</h2>
+				<h2>{t('form.ticket.import')}</h2>
 			</div>
 			<div class="pane-body ib">
-				<p class="lede">Copy an issue in: title, goal and attachments. Nothing is written back.</p>
+				<p class="lede">{t('form.ticket.importLede')}</p>
 				{#if sources.length === 0}
 					<div class="note">
-						No ticket source connected.
-						<a href={to.system('integrations')}>Add a tracker integration {I.forward}</a>
+						{t('form.ticket.noSource')}
+						<a href={to.system('integrations')}>{t('form.ticket.addTracker')} {I.forward}</a>
 					</div>
 				{:else if picked}
 					<div class="card-in picked">
@@ -313,14 +320,13 @@
 							<span class="tag">{picked.key}</span>
 							<span class="ell grow">{picked.title}</span>
 						</div>
-						<div class="help">from {sourceName(sourceId)}</div>
+						<div class="help">{t('form.ticket.from', { name: sourceName(sourceId) })}</div>
 						<!-- Name every file that will be copied — and say so plainly when the
 						     issue has none, so "where are my attachments?" is answered before
 						     the ticket is created rather than after. -->
 						{#if picked.attachments?.length}
 							<div class="help">
-								{picked.attachments.length} file{picked.attachments.length > 1 ? 's' : ''} will be copied
-								into the ticket:
+								{t('form.ticket.copied', { count: picked.attachments.length })}
 							</div>
 							<div class="chips">
 								{#each picked.attachments as a (a.filename)}
@@ -328,20 +334,22 @@
 								{/each}
 							</div>
 						{:else}
-							<div class="help">This issue has no attachments.</div>
+							<div class="help">{t('form.ticket.noAttach')}</div>
 						{/if}
 						<div class="prow">
 							{#if picked.url}
 								<a class="btn btn-sm" href={picked.url} target="_blank" rel="noreferrer"
-									>Open in tracker {I.external}</a
+									>{t('form.ticket.openTracker')} {I.external}</a
 								>
 							{/if}
-							<button type="button" class="btn-ghost btn-sm" onclick={clearImport}>Clear</button>
+							<button type="button" class="btn-ghost btn-sm" onclick={clearImport}
+								>{t('form.ticket.clear')}</button
+							>
 						</div>
 					</div>
 				{:else}
 					<div class="field">
-						<label for="t-src">Tracker</label>
+						<label for="t-src">{t('form.ticket.tracker')}</label>
 						<select
 							id="t-src"
 							value={sourceId}
@@ -351,7 +359,7 @@
 								else clearImport();
 							}}
 						>
-							<option value="">Choose a tracker…</option>
+							<option value="">{t('form.ticket.chooseTracker')}</option>
 							{#each sources as s (s.id)}<option value={s.id}>{s.name} ({s.kind})</option>{/each}
 						</select>
 					</div>
@@ -362,15 +370,17 @@
 							<SearchInput
 								bind:value={query}
 								width={400}
-								placeholder="2624, PROJ-2624, words, or jql:…"
-								label="Search the tracker"
+								placeholder={t('form.ticket.searchPlaceholder')}
+								label={t('form.ticket.searchLabel')}
 								onenter={() => search()}
 							/>
-							<button type="button" onclick={search} aria-busy={searching}>Search</button>
+							<button type="button" onclick={search} aria-busy={searching}
+								>{t('form.ticket.search')}</button
+							>
 						</div>
 						{#if searchErr}<div class="err">{searchErr}</div>{/if}
 						{#if searching && !results.length}
-							<div class="help">Searching…</div>
+							<div class="help">{t('form.ticket.searching')}</div>
 						{:else if results.length}
 							<div class="card-in results">
 								{#each results as r (r.key)}
@@ -386,7 +396,7 @@
 								{/each}
 							</div>
 						{:else if !searchErr}
-							<div class="help">No matching issues.</div>
+							<div class="help">{t('form.ticket.noMatch')}</div>
 						{/if}
 					{/if}
 				{/if}

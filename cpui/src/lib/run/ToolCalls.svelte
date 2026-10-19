@@ -3,6 +3,7 @@
 	// list every call; longer ones fold behind a summary with kind chips. A
 	// live group (the agent is working through it now) never folds.
 	import type { AgentToolCall } from '$lib/domain';
+	import { t } from '$lib/i18n/index.svelte';
 	import { editLines, lineCounts } from '$lib/diff';
 	import { TOOL_HUE, hueOf } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
@@ -15,19 +16,43 @@
 	let expanded = $state<Record<string, boolean>>({});
 
 	/** The kind's word (DESIGN 3.7); its hue comes from TOOL_HUE. */
-	const WORD: Record<string, string> = {
-		read: 'Read',
-		edit: 'Edit',
-		search: 'Search',
-		execute: 'Exec',
-		exec: 'Exec',
-		delete: 'Delete',
-		move: 'Move',
-		fetch: 'Fetch',
-		think: 'Think',
-		other: 'Tool'
+	const word = (k: string): string => {
+		switch (k) {
+			case 'read':
+				return t('run.tool.read');
+			case 'edit':
+				return t('run.tool.edit');
+			case 'search':
+				return t('run.tool.search');
+			case 'execute':
+			case 'exec':
+				return t('run.tool.exec');
+			case 'delete':
+				return t('run.tool.delete');
+			case 'move':
+				return t('run.tool.move');
+			case 'fetch':
+				return t('run.tool.fetch');
+			case 'think':
+				return t('run.tool.think');
+			default:
+				return k && k !== 'other' ? k : t('run.tool.other');
+		}
 	};
-	const word = (k: string) => WORD[k] ?? (k || 'Tool');
+	const statusWord = (s: string): string => {
+		switch (s) {
+			case 'completed':
+				return t('run.tool.status.completed');
+			case 'failed':
+				return t('run.tool.status.failed');
+			case 'in_progress':
+				return t('run.tool.status.inProgress');
+			case 'pending':
+				return t('run.tool.status.pending');
+			default:
+				return s.replace('_', ' ');
+		}
+	};
 	const MAX_LINES = 400;
 	const folded = $derived(!live && calls.length > 3 && !open);
 
@@ -65,18 +90,19 @@
 {#if folded}
 	<div class="card-in">
 		<button class="rowbtn fold" onclick={() => (open = true)}>
-			<span class="b">{I.caret} {calls.length} tool calls</span>
+			<span class="b">{I.caret} {t('run.tool.calls', { count: calls.length })}</span>
 			<span class="chips">
 				{#each byKind as k (k.l)}<span class="pill sm flat sq t-{k.hue}">{k.l} {k.n}</span>{/each}
 			</span>
-			{#if failed}<span class="bad hue-ros">{failed} failed</span>{/if}
+			{#if failed}<span class="bad hue-ros">{t('run.tool.failedCount', { count: failed })}</span
+				>{/if}
 		</button>
 	</div>
 {:else}
 	<div class="group card-in" class:live>
 		{#if !live && calls.length > 3}
 			<button class="rowbtn head mut" onclick={() => (open = false)}
-				><span class="b">{I.menu} {calls.length} tool calls</span></button
+				><span class="b">{I.menu} {t('run.tool.calls', { count: calls.length })}</span></button
 			>
 		{/if}
 		{#each calls as c (c.toolCallId)}
@@ -87,19 +113,21 @@
 					aria-expanded={!!expanded[c.toolCallId]}
 					onclick={() => (expanded = { ...expanded, [c.toolCallId]: !expanded[c.toolCallId] })}
 				>
-					<StatusMark tone={tone(c.status)} size="sm" title={c.status.replace('_', ' ')} />
+					<StatusMark tone={tone(c.status)} size="sm" title={statusWord(c.status)} />
 					<span class="k hue-{hueOf(TOOL_HUE, c.kind)}">{word(c.kind)}</span>
 					<span class="path mono ell" title={c.title}>{title(c)}</span>
 					{#if n}<span class="mono nums"
 							><span class="hue-grn">+{n.add}</span> <span class="hue-ros">−{n.del}</span></span
 						>{/if}
-					{#if c.status === 'in_progress'}<span class="ip hue-az">in progress</span>{/if}
+					{#if c.status === 'in_progress'}<span class="ip hue-az"
+							>{t('run.tool.status.inProgress')}</span
+						>{/if}
 				</button>
 				{#if expanded[c.toolCallId]}
 					<div class="detail">
 						{#if c.title && c.title !== title(c)}<div class="lbl">{c.title}</div>{/if}
 						{#if c.input}
-							<div class="lbl">input</div>
+							<div class="lbl">{t('run.tool.input')}</div>
 							<pre class="log">{c.input}</pre>
 						{/if}
 						{#each c.diffs as d (d.path)}
@@ -109,16 +137,16 @@
 								lines={dl.slice(0, MAX_LINES)}
 								maxHeight={320}
 								truncated={dl.length > MAX_LINES
-									? `showing ${MAX_LINES} of ${dl.length} lines`
+									? t('run.tool.showing', { shown: MAX_LINES, total: dl.length })
 									: undefined}
 							/>
 						{/each}
 						{#if c.output}
-							<div class="lbl">output</div>
+							<div class="lbl">{t('run.tool.output')}</div>
 							<pre class="log">{c.output}</pre>
 						{/if}
 						{#if !c.input && !c.output && !c.diffs.length}
-							<div class="lbl">no details reported</div>
+							<div class="lbl">{t('run.tool.noDetails')}</div>
 						{/if}
 					</div>
 				{/if}

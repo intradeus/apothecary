@@ -4,6 +4,7 @@
 	// short; the review card spells it out (`long`).
 	import type { MergeRequestLive } from '$lib/domain';
 	import { ago } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		mr,
@@ -18,8 +19,10 @@
 
 	const threads = $derived(
 		mr.pendingThreads > 0
-			? `${long ? '' : '· '}${mr.pendingThreads}${long ? ' unresolved' : ''} thread${mr.pendingThreads === 1 ? '' : 's'}${
-					mr.lastCommentAt ? ` · ${long ? 'last ' : ''}${ago(mr.lastCommentAt.toISOString())}` : ''
+			? `${long ? '' : '· '}${t(long ? 'run.mrStatus.unresolved' : 'run.mrStatus.threads', { count: mr.pendingThreads })}${
+					mr.lastCommentAt
+						? ` · ${t(long ? 'run.mrStatus.lastLong' : 'run.mrStatus.last', { ago: ago(mr.lastCommentAt.toISOString()) })}`
+						: ''
 				}`
 			: ''
 	);
@@ -29,20 +32,23 @@
 	class="mrs"
 	class:long
 	title={mr.error ??
-		`${mr.branch}${mr.target ? ' → ' + mr.target : ''}${mr.state === 'merged' ? ' merged' : ''}`}
+		`${mr.branch}${mr.target ? ' → ' + mr.target : ''}${mr.state === 'merged' ? ` ${t('run.mrStatus.mergedSuffix')}` : ''}`}
 >
 	{#if repo}<span class="mono fnt">{mr.repo}</span>{/if}
 	{#if mr.error}
-		<span class="fnt">forge unreachable</span>
+		<span class="fnt">{t('run.mrStatus.unreachable')}</span>
 	{:else if mr.state === 'merged'}
-		<span class="hue-grn">merged</span>
+		<span class="hue-grn">{t('run.mrStatus.merged')}</span>
 	{:else if mr.mergeable === 'conflicts'}
-		<span class="hue-ros">{long ? `conflicts with ${mr.target ?? 'its target'}` : 'conflicts'}</span
+		<span class="hue-ros"
+			>{long
+				? t('run.mrStatus.conflictsWith', { target: mr.target ?? t('run.mrStatus.itsTarget') })
+				: t('run.mrStatus.conflicts')}</span
 		>
 	{:else if mr.mergeable === 'clean'}
-		<span class="hue-grn">mergeable</span>
+		<span class="hue-grn">{t('run.mrStatus.mergeable')}</span>
 	{:else}
-		<span class="fnt">{long ? 'mergeability pending' : 'checking…'}</span>
+		<span class="fnt">{long ? t('run.mrStatus.pendingLong') : t('run.mrStatus.checking')}</span>
 	{/if}
 	{#if threads && mr.state !== 'merged'}<span class="hue-amb">{threads}</span>{/if}
 </span>

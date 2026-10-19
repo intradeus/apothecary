@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// The mark: a glass stopper holding a parchment ℞ (DESIGN 2.6).
 	import { I } from './icons';
 
@@ -7,7 +8,7 @@
 
 <span
 	class="logo"
-	title="Apothecary"
+	title={t('ui.logo.title')}
 	style:width="{size}px"
 	style:height="{size}px"
 	style:border-radius="{Math.round(size * 0.38)}px"

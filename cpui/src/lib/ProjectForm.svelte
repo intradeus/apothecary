@@ -18,6 +18,7 @@
 	import KeyValueEditor, { type KVRow } from '$lib/ui/KeyValueEditor.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
+	import { t, th } from '$lib/i18n/index.svelte';
 
 	let {
 		integrations,
@@ -138,7 +139,7 @@
 	const domainCheck = (v: string) =>
 		/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i.test(v)
 			? null
-			: 'not a host name (wildcards as *.example.com)';
+			: t('form.project.notHost');
 
 	let codeServerExtensions = $state<string[]>([...(init?.workspace.codeServerExtensions ?? [])]);
 	// code-server UI defaults (applied as VS Code user settings at editor open —
@@ -228,7 +229,7 @@
 		e.preventDefault();
 		if (busy) return;
 		if (dupKeys.size) {
-			error = `Command names must be unique: ${[...dupKeys].join(', ')}.`;
+			error = t('form.project.dupNames', { names: [...dupKeys].join(', ') });
 			jump('workshop');
 			return;
 		}
@@ -249,7 +250,11 @@
 				}
 			}
 			savedAt = Date.now();
-			toast(existing ? `${saved.name} setup saved` : `${saved.name} created`);
+			toast(
+				existing
+					? t('form.project.saved', { name: saved.name })
+					: t('form.project.created', { name: saved.name })
+			);
 			onsaved(saved, checked);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -319,30 +324,32 @@
 		{
 			id: 'repository',
 			n: 1,
-			label: 'Repository',
+			label: t('form.project.step.repository'),
 			done: !!forgeId && !!repoURL.trim() && !!locator.trim(),
-			sub: repoURL ? repoURL.replace(/^https?:\/\//, '').replace(/\.git$/, '') : 'forge and repo'
+			sub: repoURL
+				? repoURL.replace(/^https?:\/\//, '').replace(/\.git$/, '')
+				: t('form.project.step.repoSub')
 		},
 		{
 			id: 'workshop',
 			n: 2,
-			label: 'Workshop',
+			label: t('form.project.step.workshop'),
 			done: !!name.trim() && !!defaultFlow,
-			sub: name.trim() || 'name, commands, flow'
+			sub: name.trim() || t('form.project.step.workshopSub')
 		},
 		{
 			id: 'execution',
 			n: 3,
-			label: 'Execution',
+			label: t('form.project.step.execution'),
 			done: !!provisionerId && harnessIds.length > 0,
-			sub: `${harnessIds.length} harness${harnessIds.length === 1 ? '' : 'es'}`
+			sub: t('form.project.step.harnesses', { count: harnessIds.length })
 		},
 		{
 			id: 'workspace',
 			n: 4,
-			label: 'Workspace',
+			label: t('form.project.step.workspace'),
 			done: true,
-			sub: egressMode === 'deny' ? 'denylist egress' : 'allowlist egress'
+			sub: egressMode === 'deny' ? t('form.project.step.denySub') : t('form.project.step.allowSub')
 		}
 	]);
 	let active = $state<StepId>('repository');
@@ -377,7 +384,7 @@
 
 <form class="pf" bind:this={formEl} onsubmit={submit}>
 	<SideNav
-		label="Setup steps"
+		label={t('form.project.stepsLabel')}
 		{active}
 		items={steps.map((s) => ({ id: s.id, label: s.label, sub: s.sub, step: s.n, done: s.done }))}
 		onselect={(id) => jump(id as StepId)}
@@ -388,13 +395,13 @@
 		<section id="repository" class="c pane">
 			<div class="pane-head">
 				<span class="tag">1</span>
-				<h2>Repository</h2>
-				<span class="mut small">where the code lives, and the forge that hosts it</span>
+				<h2>{t('form.project.repoHead')}</h2>
+				<span class="mut small">{t('form.project.repoSub')}</span>
 			</div>
 			<div class="pane-body stack">
 				<div class="grid2">
 					<div class="field">
-						<label for="p-forge">Forge account</label>
+						<label for="p-forge">{t('form.project.forge')}</label>
 						<div class="row nowrap">
 							<select id="p-forge" bind:value={forgeId} required>
 								{#each forges as f (f.id)}<option value={f.id}>{intLabel(f)}</option>{/each}
@@ -404,22 +411,20 @@
 								class="btn-sel"
 								onclick={loadRepos}
 								disabled={!forgeId || loadingRepos}
-								aria-busy={loadingRepos}>{loadingRepos ? 'Loading…' : 'Browse repositories'}</button
+								aria-busy={loadingRepos}
+								>{loadingRepos ? t('form.project.loading') : t('form.project.browse')}</button
 							>
 						</div>
 						{#if forges.length === 0}
 							<div class="err">
-								No forge integration yet — add one under <a
-									class="link"
-									href={to.system('integrations')}>Integrations</a
-								> first.
+								{@html th('form.project.noForge', { href: to.system('integrations') })}
 							</div>
 						{/if}
 					</div>
 				</div>
 
 				{#if repoError}<ErrorCard
-						cause="Couldn’t list repositories"
+						cause={t('form.project.listFail')}
 						detail={repoError}
 						onretry={loadRepos}
 					/>{/if}
@@ -429,11 +434,11 @@
 							<SearchInput
 								bind:value={repoQuery}
 								width={480}
-								placeholder="Filter {repos.length} repositories"
+								placeholder={t('form.project.filterRepos', { count: repos.length })}
 							/>
 							<span class="spacer"></span>
 							<button type="button" class="btn-ghost btn-sm" onclick={() => (repos = null)}
-								>Close</button
+								>{t('form.project.close')}</button
 							>
 						</div>
 						<div class="blist">
@@ -442,20 +447,18 @@
 									<span class="ell">{r.name}</span>
 									<span class="mono fnt">{r.defaultBranch}</span>
 									<button type="button" class="btn-sm btn-sel" onclick={() => pickRepo(r)}
-										>Use</button
+										>{t('form.project.use')}</button
 									>
 									<button
 										type="button"
 										class="btn-sm"
-										title="Add as an additional repository of this workshop"
-										onclick={() => addExtra(r)}>{I.add} extra</button
+										title={t('form.project.addExtraTitle')}
+										onclick={() => addExtra(r)}>{I.add} {t('form.project.extra')}</button
 									>
 								</div>
 							{:else}
 								<div class="empty-line">
-									{repos.length
-										? 'No repository matches.'
-										: 'No repositories visible to this token.'}
+									{repos.length ? t('form.project.noMatch') : t('form.project.noneVisible')}
 								</div>
 							{/each}
 						</div>
@@ -464,7 +467,7 @@
 
 				<div class="grid2">
 					<div class="field wide">
-						<label for="p-url">Repo URL</label>
+						<label for="p-url">{t('form.project.repoUrl')}</label>
 						<input
 							id="p-url"
 							class="mono"
@@ -474,40 +477,40 @@
 						/>
 					</div>
 					<div class="field">
-						<label for="p-locator">Locator</label>
+						<label for="p-locator">{t('form.project.locator')}</label>
 						<input id="p-locator" bind:value={locator} required class="mono" />
-						<div class="help">The forge’s own id for it (GitLab: the numeric project id).</div>
+						<div class="help">{t('form.project.locatorHelp')}</div>
 					</div>
 					<div class="field">
-						<label for="p-branch">Default branch</label>
+						<label for="p-branch">{t('form.project.defaultBranch')}</label>
 						<input id="p-branch" class="mono" bind:value={defaultBranch} />
-						<div class="help">What tickets fork off unless they pick another.</div>
+						<div class="help">{t('form.project.defaultBranchHelp')}</div>
 					</div>
 					<div class="field">
-						<label for="p-agentsmd">AGENTS.md path</label>
+						<label for="p-agentsmd">{t('form.project.agentsMd')}</label>
 						<input id="p-agentsmd" class="mono" bind:value={agentsMD} />
-						<div class="help">The guide every agent reads first.</div>
+						<div class="help">{t('form.project.agentsMdHelp')}</div>
 					</div>
 				</div>
 
 				<div class="sub">
 					<div class="row">
-						<h3>Additional repositories</h3>
+						<h3>{t('form.project.extraHead')}</h3>
 						<span class="count">{extraRepos.length}</span>
 						<span class="spacer"></span>
 						<button type="button" class="btn-sm" onclick={() => addExtra()}
-							>{I.add} Add repository</button
+							>{I.add} {t('form.project.addRepo')}</button
 						>
 					</div>
-					<div class="help">
-						For multi-repo tasks: cloned to <code>~/repos/&lt;name&gt;</code>, branched like the
-						primary, one merge request each when a run changes it. Leave the locator empty for a
-						repository the agent should only read.
-					</div>
+					<div class="help">{@html th('form.project.extraHelp')}</div>
 					{#if extraRepos.length}
 						<table class="xt form-dense">
 							<thead>
-								<tr><th>Name</th><th>URL</th><th>Locator</th><th>Branch</th><th></th></tr>
+								<tr
+									><th>{t('form.project.col.name')}</th><th>{t('form.project.col.url')}</th><th
+										>{t('form.project.col.locator')}</th
+									><th>{t('form.project.col.branch')}</th><th></th></tr
+								>
 							</thead>
 							<tbody>
 								{#each extraRepos as r, i (i)}
@@ -518,7 +521,7 @@
 												class="mono"
 												bind:value={r.name}
 												placeholder="api"
-												aria-label="checkout name"
+												aria-label={t('form.project.checkoutName')}
 												required
 											/></td
 										>
@@ -527,7 +530,7 @@
 												class="mono"
 												bind:value={r.url}
 												placeholder="https://gitlab.com/group/api.git"
-												aria-label="repo url"
+												aria-label={t('form.project.repoUrlAria')}
 												required
 											/></td
 										>
@@ -535,8 +538,8 @@
 											><input
 												class="mono"
 												bind:value={r.locator}
-												placeholder="read-only"
-												aria-label="locator (empty = read-only)"
+												placeholder={t('form.project.readOnly')}
+												aria-label={t('form.project.locatorAria')}
 											/></td
 										>
 										<td
@@ -544,7 +547,7 @@
 												class="mono"
 												bind:value={r.defaultBranch}
 												placeholder="main"
-												aria-label="default branch"
+												aria-label={t('form.project.branchAria')}
 											/></td
 										>
 										<td
@@ -552,17 +555,16 @@
 												type="button"
 												class="btn-icon"
 												onclick={() => removeExtra(i)}
-												aria-label="Remove {r.name || 'repository'}">{I.close}</button
+												aria-label={t('form.project.removeRepo', {
+													name: r.name || t('form.project.repository')
+												})}>{I.close}</button
 											></td
 										>
 									</tr>
 								{/each}
 							</tbody>
 						</table>
-						<div class="help">
-							The primary repository supplies the devcontainer; its image must carry the toolchains
-							the extra repositories need.
-						</div>
+						<div class="help">{t('form.project.primaryHelp')}</div>
 					{/if}
 				</div>
 			</div>
@@ -572,58 +574,56 @@
 		<section id="workshop" class="c pane">
 			<div class="pane-head">
 				<span class="tag">2</span>
-				<h2>Workshop</h2>
-				<span class="mut small">its name, the commands its flows call, and where runs start</span>
+				<h2>{t('form.project.workshopHead')}</h2>
+				<span class="mut small">{t('form.project.workshopSub')}</span>
 			</div>
 			<div class="pane-body stack">
 				<div class="grid2">
 					<div class="field">
-						<label for="p-name">Workshop name</label>
+						<label for="p-name">{t('form.project.workshopName')}</label>
 						<input id="p-name" bind:value={name} required />
 					</div>
 					<div class="field">
-						<label for="p-flow">Default flow</label>
+						<label for="p-flow">{t('form.project.defaultFlow')}</label>
 						<select id="p-flow" class="mono" bind:value={defaultFlow} required>
 							{#if ownFlows.length}
-								<optgroup label="This workshop’s flows">
+								<optgroup label={t('form.project.ownFlows')}>
 									{#each ownFlows as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 								</optgroup>
 							{/if}
 							{#if templateFlows.length}
-								<optgroup label="Built-in templates">
+								<optgroup label={t('form.project.templates')}>
 									{#each templateFlows as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 								</optgroup>
 							{/if}
 						</select>
 						{#if flows.length === 0}
-							<div class="err">No flows exist yet — the engine ships no templates.</div>
+							<div class="err">{t('form.project.noFlows')}</div>
 						{:else}
-							<div class="help">Runs start on it unless they pick another.</div>
+							<div class="help">{t('form.project.flowHelp')}</div>
 						{/if}
 					</div>
 				</div>
 
 				<div class="sub">
 					<div class="row">
-						<h3>Commands</h3>
+						<h3>{t('form.project.commands')}</h3>
 						<span class="count">{commandCount}</span>
 					</div>
-					<div class="help">
-						Shell, run as <code>bash -eo pipefail</code>. Flows call them by name with
-						<code>run_ref</code>. <code>setup</code> is pinned: it runs when a workspace boots — leave
-						it empty to skip.
-					</div>
+					<div class="help">{@html th('form.project.commandsHelp')}</div>
 					<KeyValueEditor
 						bind:rows={commandRows}
 						multiline
 						keyWidth={150}
-						keyPlaceholder="name"
+						keyPlaceholder={t('form.project.cmdKey')}
 						valuePlaceholder="make test"
-						addLabel="Add command"
+						addLabel={t('form.project.addCommand')}
 						locked={(k, i) => i === 0 && k === 'setup'}
 						invalid={dupKeys}
 					/>
-					{#if dupKeys.size}<div class="err">Duplicate names: {[...dupKeys].join(', ')}</div>{/if}
+					{#if dupKeys.size}<div class="err">
+							{t('form.project.dupCommands', { names: [...dupKeys].join(', ') })}
+						</div>{/if}
 				</div>
 			</div>
 		</section>
@@ -632,34 +632,29 @@
 		<section id="execution" class="c pane">
 			<div class="pane-head">
 				<span class="tag">3</span>
-				<h2>Execution</h2>
-				<span class="mut small">where workspaces run, and which coding agents may run in them</span>
+				<h2>{t('form.project.executionHead')}</h2>
+				<span class="mut small">{t('form.project.executionSub')}</span>
 			</div>
 			<div class="pane-body stack">
 				<div class="grid2">
 					<div class="field">
-						<label for="p-prov">Provisioner</label>
+						<label for="p-prov">{t('form.project.provisioner')}</label>
 						<select id="p-prov" bind:value={provisionerId} required>
 							{#each provisioners as p (p.id)}<option value={p.id}>{intLabel(p)}</option>{/each}
 						</select>
 						{#if provisioners.length === 0}
 							<div class="err">
-								No provisioner yet — add one under <a class="link" href={to.system('integrations')}
-									>Integrations</a
-								>.
+								{@html th('form.project.noProvisioner', { href: to.system('integrations') })}
 							</div>
 						{/if}
 					</div>
 				</div>
 				<div class="sub">
 					<div class="row">
-						<h3>Harness integrations</h3>
+						<h3>{t('form.project.harnesses')}</h3>
 						<span class="count">{harnessIds.length}</span>
 					</div>
-					<div class="help">
-						The harnesses this workshop provides (auth and tooling). A flow names which kind it runs
-						on; one integration per kind.
-					</div>
+					<div class="help">{t('form.project.harnessesHelp')}</div>
 					<div class="hs">
 						{#each harnesses as h (h.id)}
 							{@const on = harnessIds.includes(h.id)}
@@ -671,24 +666,21 @@
 								disabled={blocked}
 								role="checkbox"
 								aria-checked={on}
-								title={blocked ? `Another ${h.kind} integration is already picked` : ''}
+								title={blocked ? t('form.project.kindTaken', { kind: h.kind }) : ''}
 								onclick={() => toggleHarness(h)}
 							>
 								<StatusMark
 									tone={on ? 'ok' : 'pending'}
 									size="sm"
-									title={on ? 'picked' : 'not picked'}
+									title={on ? t('form.project.picked') : t('form.project.notPicked')}
 								/>
 								<span class="hn ell">{h.name}</span>
 								<span class="pill sm t-mut">{h.kind}</span>
-								{#if blocked}<span class="fnt tiny">kind taken</span>{/if}
+								{#if blocked}<span class="fnt tiny">{t('form.project.kindTakenTag')}</span>{/if}
 							</button>
 						{:else}
 							<div class="err">
-								No harness integrations yet — add one under <a
-									class="link"
-									href={to.system('integrations')}>Integrations</a
-								>.
+								{@html th('form.project.noHarness', { href: to.system('integrations') })}
 							</div>
 						{/each}
 					</div>
@@ -700,45 +692,44 @@
 		<section id="workspace" class="c pane">
 			<div class="pane-head">
 				<span class="tag">4</span>
-				<h2>Workspace</h2>
-				<span class="mut small"
-					>the repo’s own <code>.devcontainer</code>, behind this workshop’s egress gateway</span
-				>
+				<h2>{t('form.project.workspaceHead')}</h2>
+				<span class="mut small">{@html th('form.project.workspaceSub')}</span>
 			</div>
 			<div class="pane-body stack">
 				<div class="sub">
-					<h3>Egress firewall</h3>
+					<h3>{t('form.project.egress')}</h3>
 					<div class="row modes">
 						<Segmented
 							glass={false}
-							label="Egress mode"
+							label={t('form.project.egressMode')}
 							options={[
-								{ value: 'allow', label: 'Allowlist' },
-								{ value: 'deny', label: 'Denylist' }
+								{ value: 'allow', label: t('form.project.allowlist') },
+								{ value: 'deny', label: t('form.project.denylist') }
 							]}
 							bind:value={egressMode}
 						/>
 						<div class="mexp">
-							<div class:cur={egressMode === 'allow'}>
-								<b>Allowlist</b> — deny everything, permit only the hosts below plus what the forge and
-								harness need.
-							</div>
-							<div class:cur={egressMode === 'deny'}>
-								<b>Denylist</b> — allow everything, block only the hosts below.
-							</div>
+							<div class:cur={egressMode === 'allow'}>{@html th('form.project.allowExplain')}</div>
+							<div class:cur={egressMode === 'deny'}>{@html th('form.project.denyExplain')}</div>
 						</div>
 					</div>
 
 					<div class="row">
-						<h3>{egressMode === 'deny' ? 'Blocked hosts' : 'Allowed hosts'}</h3>
+						<h3>
+							{egressMode === 'deny'
+								? t('form.project.blockedHosts')
+								: t('form.project.allowedHosts')}
+						</h3>
 						<span class="count"
 							>{egressMode === 'deny' ? denyDomains.length : allowDomains.length}</span
 						>
-						<span class="fnt tiny">the other list is kept for when you switch back</span>
+						<span class="fnt tiny">{t('form.project.otherKept')}</span>
 						<span class="spacer"></span>
 						{#if egressMode === 'allow'}
 							{#if defaultsAdded !== null}<span class="fnt tiny"
-									>{defaultsAdded ? `+${defaultsAdded} added` : 'all already present'}</span
+									>{defaultsAdded
+										? t('form.project.defaultsAdded', { count: defaultsAdded })
+										: t('form.project.defaultsPresent')}</span
 								>{/if}
 							<button
 								type="button"
@@ -746,31 +737,31 @@
 								onclick={addDefaults}
 								disabled={defaultsBusy}
 								aria-busy={defaultsBusy}
-								>{defaultsBusy ? 'Loading…' : `${I.add} Add sensible defaults`}</button
+								>{defaultsBusy
+									? t('form.project.loading')
+									: `${I.add} ${t('form.project.addDefaults')}`}</button
 							>
 						{/if}
 					</div>
 					{#if egressMode === 'allow'}
 						<TagInput
 							bind:values={allowDomains}
-							placeholder="api.example.com, *.example.com"
+							placeholder={t('form.project.allowPlaceholder')}
 							validate={domainCheck}
 						/>
 					{:else}
 						<TagInput
 							bind:values={denyDomains}
-							placeholder="tracker.example.com, *.ads.net"
+							placeholder={t('form.project.denyPlaceholder')}
 							validate={domainCheck}
 						/>
 					{/if}
-					<div class="help">
-						Paste a list — whitespace and commas split it. Sensible defaults are common registry,
-						OS-mirror and dev-tool hosts most builds need. Force-blocked hosts are managed from a
-						run’s Egress window.
-					</div>
+					<div class="help">{t('form.project.hostsHelp')}</div>
 					{#if blockedDomains.length}
 						<div class="chips">
-							<span class="fnt tiny">Force-blocked ({blockedDomains.length}):</span>
+							<span class="fnt tiny"
+								>{t('form.project.forceBlocked', { count: blockedDomains.length })}</span
+							>
 							{#each blockedDomains as d (d)}<span class="pill sm mono t-ros">{d}</span>{/each}
 						</div>
 					{/if}
@@ -778,66 +769,61 @@
 
 				<div class="sub">
 					<div class="row">
-						<h3>code-server extensions</h3>
+						<h3>{t('form.project.extensions')}</h3>
 						<span class="count">{codeServerExtensions.length}</span>
 					</div>
 					<TagInput bind:values={codeServerExtensions} placeholder="golang.go, ms-python.python" />
-					<div class="help">
-						VS Code extension ids from Open VSX, baked into the browser editor's image (together
-						with the repo's devcontainer customizations).
-					</div>
+					<div class="help">{t('form.project.extensionsHelp')}</div>
 				</div>
 
 				<div class="sub">
-					<h3>Editor defaults</h3>
-					<div class="help">
-						code-server settings, applied each time the browser editor opens — no rebuild.
-					</div>
+					<h3>{t('form.project.editorDefaults')}</h3>
+					<div class="help">{t('form.project.editorHelp')}</div>
 					<div class="ed">
 						<div class="field">
-							<label for="p-theme">Color theme</label>
+							<label for="p-theme">{t('form.project.colorTheme')}</label>
 							<select id="p-theme" bind:value={editorTheme}>
-								<option value="">code-server default</option>
-								{#each editorThemes as t (t)}<option value={t}>{t}</option>{/each}
+								<option value="">{t('form.project.themeDefault')}</option>
+								{#each editorThemes as theme (theme)}<option value={theme}>{theme}</option>{/each}
 							</select>
 						</div>
 						<div class="field">
-							<label for="p-font">Font size</label>
+							<label for="p-font">{t('form.project.fontSize')}</label>
 							<input
 								id="p-font"
 								type="number"
 								min="0"
 								max="40"
 								bind:value={editorFontSize}
-								placeholder="default"
+								placeholder={t('form.project.default')}
 							/>
 						</div>
 						<div class="field">
-							<label for="p-tab">Tab size</label>
+							<label for="p-tab">{t('form.project.tabSize')}</label>
 							<input
 								id="p-tab"
 								type="number"
 								min="0"
 								max="16"
 								bind:value={editorTabSize}
-								placeholder="default"
+								placeholder={t('form.project.default')}
 							/>
 						</div>
 					</div>
 					<div class="row toggles">
-						<Toggle bind:checked={editorFormatOnSave} label="Format on save" />
-						<Toggle bind:checked={editorWordWrap} label="Word wrap" />
+						<Toggle bind:checked={editorFormatOnSave} label={t('form.project.formatOnSave')} />
+						<Toggle bind:checked={editorWordWrap} label={t('form.project.wordWrap')} />
 						<Toggle
 							bind:checked={editorTrustWorkspace}
-							label="Trust workspace"
-							title="Disables VS Code's Workspace Trust prompts so the sandbox opens as trusted, with no dialogs"
+							label={t('form.project.trustWorkspace')}
+							title={t('form.project.trustTitle')}
 						/>
 					</div>
 				</div>
 			</div>
 		</section>
 
-		{#if error}<ErrorCard cause="Couldn’t save this setup" detail={error} />{/if}
+		{#if error}<ErrorCard cause={t('form.project.saveFail')} detail={error} />{/if}
 
 		<!-- The bar's Save is the form's submit button (SaveBar `submit`): the
 		     native required-field checks run, then submit() saves. -->
@@ -845,19 +831,17 @@
 			{dirty}
 			{busy}
 			{savedAt}
-			note={existing
-				? 'Nothing changes until you save.'
-				: `Creates the workshop; nothing runs until you start a run.`}
-			saveLabel={existing ? 'Save setup' : `Create workshop`}
+			note={existing ? t('form.project.noteEdit') : t('form.project.noteCreate')}
+			saveLabel={existing ? t('form.project.saveSetup') : t('form.project.createWorkshop')}
 			submit
 		>
 			{#snippet extra()}
 				<Toggle
 					bind:checked={runEnvcheck}
-					label="Run envcheck after saving"
-					title="Provision a throwaway workspace right after saving to prove it builds"
+					label={t('form.project.envcheck')}
+					title={t('form.project.envcheckTitle')}
 				/>
-				<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button>
+				<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
 			{/snippet}
 		</SaveBar>
 	</div>
@@ -1006,7 +990,7 @@
 	.mexp .cur {
 		color: var(--tx);
 	}
-	.mexp b {
+	.mexp :global(b) {
 		font-weight: 600;
 	}
 	.ed {

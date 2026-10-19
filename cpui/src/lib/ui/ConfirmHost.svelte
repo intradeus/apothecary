@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Mounted once in the shell; renders whatever confirmDialog() asked. It
 	// keeps the last dialog's content after it settles, so the close can play
 	// out instead of the dialog vanishing mid-frame.
@@ -28,7 +29,7 @@
 		<p style="margin:0">{@html shown.body}</p>
 		{#snippet footer()}
 			<button class="btn-ghost" onclick={() => confirmState.settle(false)}
-				>{shown?.cancel ?? 'Cancel'}</button
+				>{shown?.cancel ?? t('common.cancel')}</button
 			>
 			<button class="btn-danger-solid" onclick={() => confirmState.settle(true)}
 				>{shown?.action}</button

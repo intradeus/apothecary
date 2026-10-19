@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t, th } from '$lib/i18n/index.svelte';
 	// Number + unit (m / h / d / never) over an engine duration string
 	// (DESIGN 7.10). Replaces free text: nothing to mistype.
 	import { fromDur, toDur, type DurUnit } from './duration';
@@ -69,19 +70,18 @@
 	<select
 		value={unit}
 		{disabled}
-		aria-label="unit"
+		aria-label={t('ui.dur.unit')}
 		onchange={(e) => setUnit(e.currentTarget.value as DurUnit)}
 	>
-		<option value="m">minutes</option>
-		<option value="h">hours</option>
-		<option value="d">days</option>
-		{#if allowNever || unit === 'never'}<option value="never">never</option>{/if}
+		<option value="m">{t('ui.dur.minutes')}</option>
+		<option value="h">{t('ui.dur.hours')}</option>
+		<option value="d">{t('ui.dur.days')}</option>
+		{#if allowNever || unit === 'never'}<option value="never">{t('ui.dur.never')}</option>{/if}
 	</select>
 </div>
 {#if parsed === null && value}
 	<div class="err">
-		The engine holds <code>{value}</code>, which this picker cannot read — pick a value to replace
-		it.
+		{@html th('ui.dur.unreadable', { value })}
 	</div>
 {/if}
 

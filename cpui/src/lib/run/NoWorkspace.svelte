@@ -3,29 +3,30 @@
 	// it (DESIGN 7.1): the Record keeps every snapshot.
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import { ago } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 	import type { RunStore } from './store.svelte';
 
 	let { rs, onrecord }: { rs: RunStore; onrecord: () => void } = $props();
 
 	const title = $derived(
 		rs.destroyedAt
-			? `Workspace destroyed ${ago(rs.destroyedAt)}`
+			? t('run.noWorkspace.destroyed', { ago: ago(rs.destroyedAt) })
 			: rs.run?.state === 'archived'
-				? 'Workspace archived away'
+				? t('run.noWorkspace.archived')
 				: rs.run && !rs.run.envId && !rs.terminal
-					? 'No workspace yet'
-					: 'No live workspace'
+					? t('run.noWorkspace.none')
+					: t('run.noWorkspace.noLive')
 	);
 	const text = $derived(
 		rs.run && !rs.run.envId && !rs.terminal
-			? 'It appears here once the run has provisioned one.'
-			: 'The Record keeps every snapshot and log this run captured.'
+			? t('run.noWorkspace.appears')
+			: t('run.noWorkspace.recordKeeps')
 	);
 </script>
 
 <div class="nw">
 	<EmptyState {title} {text} compact>
-		<button onclick={onrecord}>Open the Record</button>
+		<button onclick={onrecord}>{t('run.noWorkspace.openRecord')}</button>
 	</EmptyState>
 </div>
 

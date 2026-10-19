@@ -1,5 +1,6 @@
 <script lang="ts">
 	// Reaper (DESIGN 7.10): when finished runs give their workspaces back.
+	import { t } from '$lib/i18n/index.svelte';
 	import SettingsFrame from '$lib/system/SettingsFrame.svelte';
 	import SettingRow from '$lib/ui/SettingRow.svelte';
 	import DurationInput from '$lib/ui/DurationInput.svelte';
@@ -10,30 +11,32 @@
 	{#snippet children(s)}
 		<section class="c pane">
 			<div class="pane-head">
-				<h2>Workspaces of finished runs</h2>
-				<span class="mut small">the run itself is never touched — only its machine</span>
+				<h2>{t('page.reaper.head')}</h2>
+				<span class="mut small">{t('page.reaper.headSub')}</span>
 			</div>
 			<SettingRow
-				label="Destroy completed environments after"
+				label={t('page.reaper.afterLabel')}
 				forId="s-after"
-				help="Once a run completes, its workspace stays up this long for a look around, then the reaper destroys it. The run stays completed and its record is kept."
+				help={t('page.reaper.afterHelp')}
 			>
-				{#snippet note()}Currently {durWords(s.destroyCompletedAfter)}{/snippet}
+				{#snippet note()}{t('page.reaper.currently', {
+						dur: durWords(s.destroyCompletedAfter)
+					})}{/snippet}
 				<DurationInput
 					id="s-after"
-					label="Destroy completed environments after"
+					label={t('page.reaper.afterLabel')}
 					bind:value={s.destroyCompletedAfter}
 				/>
 			</SettingRow>
 			<SettingRow
-				label="Destroy abandoned environments"
+				label={t('page.reaper.abandonedLabel')}
 				forId="s-abandoned"
-				help="Abandoned and failed runs are inspection material: their workspaces stay until you archive the run. The engine accepts only “never” today."
+				help={t('page.reaper.abandonedHelp')}
 			>
-				{#snippet note()}Archive a run to destroy its workspace by hand.{/snippet}
+				{#snippet note()}{t('page.reaper.abandonedNote')}{/snippet}
 				<DurationInput
 					id="s-abandoned"
-					label="Destroy abandoned environments"
+					label={t('page.reaper.abandonedLabel')}
 					bind:value={s.destroyAbandoned}
 					allowNever
 					disabled

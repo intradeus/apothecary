@@ -7,6 +7,7 @@
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { THEMES } from '$lib/themes';
 	import { to } from '$lib/guild';
 	import { shortId, stateLabel, stateTab } from '$lib/format';
@@ -19,8 +20,20 @@
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
+	type Group = 'go' | 'do' | 'workshops' | 'runs' | 'tickets';
+	const groupLabel = (g: Group) =>
+		g === 'go'
+			? t('shell.palette.goTo')
+			: g === 'do'
+				? t('shell.palette.do')
+				: g === 'workshops'
+					? t('shell.palette.workshops')
+					: g === 'runs'
+						? t('shell.palette.runs')
+						: t('shell.palette.tickets');
+
 	interface Item {
-		group: string;
+		group: Group;
 		label: string;
 		sub?: string;
 		glyph: string;
@@ -40,7 +53,7 @@
 		sel = 0;
 		api.tickets
 			.list()
-			.then((t) => (tickets = t))
+			.then((list) => (tickets = list))
 			.catch(() => {});
 	});
 
@@ -56,41 +69,56 @@
 	const items = $derived.by<Item[]>(() => {
 		const out: Item[] = [
 			...NAV.filter((n) => n.id !== 'system').map((n) => ({
-				group: 'Go to',
+				group: 'go' as const,
 				label: n.label,
 				glyph: n.icon,
 				sub:
 					n.id === 'inbox'
-						? `${fleet.pending.length} pending`
+						? t('shell.palette.pending', { count: fleet.pending.length })
 						: n.chord
 							? `G ${n.chord.toUpperCase()}`
 							: undefined,
 				run: go(n.href())
 			})),
 			{
-				group: 'Go to',
-				label: 'Integrations',
+				group: 'go' as const,
+				label: t('shell.palette.integrations'),
 				glyph: I.integrations,
 				run: go(to.system('integrations'))
 			},
-			{ group: 'Go to', label: 'Channels', glyph: I.channels, run: go(to.system('channels')) },
-			{ group: 'Go to', label: 'Limits', glyph: I.limits, run: go(to.system('limits')) },
-			{ group: 'Do', label: 'New ticket', glyph: I.add, run: go(to.newTicket()) },
 			{
-				group: 'Do',
-				label: `New workshop`,
+				group: 'go' as const,
+				label: t('shell.palette.channels'),
+				glyph: I.channels,
+				run: go(to.system('channels'))
+			},
+			{
+				group: 'go' as const,
+				label: t('shell.palette.limits'),
+				glyph: I.limits,
+				run: go(to.system('limits'))
+			},
+			{
+				group: 'do' as const,
+				label: t('shell.palette.newTicket'),
+				glyph: I.add,
+				run: go(to.newTicket())
+			},
+			{
+				group: 'do' as const,
+				label: t('shell.palette.newWorkshop'),
 				glyph: I.add,
 				run: go(to.newWorkshop())
 			},
-			...THEMES.filter((t) => t.id !== prefs.theme).map((t) => ({
-				group: 'Do',
-				label: `Use the ${t.label.toLowerCase()} theme`,
-				glyph: t.icon,
-				run: act(() => prefs.setTheme(t.id))
+			...THEMES.filter((th) => th.id !== prefs.theme).map((th) => ({
+				group: 'do' as const,
+				label: t('shell.palette.useTheme', { theme: th.label.toLowerCase() }),
+				glyph: th.icon,
+				run: act(() => prefs.setTheme(th.id))
 			})),
 			{
-				group: 'Do',
-				label: prefs.collapsed ? 'Expand sidebar' : 'Collapse sidebar',
+				group: 'do' as const,
+				label: prefs.collapsed ? t('shell.sidebar.expand') : t('shell.sidebar.collapse'),
 				sub: '⌘\\',
 				glyph: prefs.collapsed ? I.expand : I.collapse,
 				run: act(() => prefs.toggleCollapsed())
@@ -98,7 +126,7 @@
 		];
 		for (const p of fleet.projects)
 			out.push({
-				group: 'Workshops',
+				group: 'workshops' as const,
 				label: p.name,
 				sub: p.repo.url,
 				glyph: '',
@@ -117,19 +145,19 @@
 			.slice(0, 60);
 		for (const r of runs)
 			out.push({
-				group: 'Runs',
+				group: 'runs' as const,
 				label: r.title,
 				sub: `${shortId(r.id)} · ${stateLabel[r.state]}`,
 				glyph: I.runs,
 				run: go(to.run(r.id))
 			});
-		for (const t of tickets.slice(0, 80))
+		for (const tk of tickets.slice(0, 80))
 			out.push({
-				group: 'Tickets',
-				label: t.title,
-				sub: t.source?.key ?? fleet.projectName(t.projectId),
+				group: 'tickets' as const,
+				label: tk.title,
+				sub: tk.source?.key ?? fleet.projectName(tk.projectId),
 				glyph: I.tickets,
-				run: go(to.ticket(t.id))
+				run: go(to.ticket(tk.id))
 			});
 		return out;
 	});
@@ -138,12 +166,12 @@
 		const q = query.trim().toLowerCase();
 		if (!q)
 			return items
-				.filter((i) => i.group === 'Go to' || i.group === 'Do' || i.group === 'Runs')
+				.filter((i) => i.group === 'go' || i.group === 'do' || i.group === 'runs')
 				.slice(0, 24);
 		const words = q.split(/\s+/);
 		return items
 			.filter((i) => {
-				const hay = `${i.label} ${i.sub ?? ''} ${i.group}`.toLowerCase();
+				const hay = `${i.label} ${i.sub ?? ''} ${groupLabel(i.group)}`.toLowerCase();
 				return words.every((w) => hay.includes(w));
 			})
 			.slice(0, 40);
@@ -188,7 +216,7 @@
 			class="cp lg-pop"
 			role="dialog"
 			aria-modal="true"
-			aria-label="Command palette"
+			aria-label={t('shell.palette.aria')}
 			transition:materialize={{ origin: 'top center', y: -10 }}
 			use:trap={{ onescape: () => (open = false), initial: () => input }}
 		>
@@ -199,15 +227,15 @@
 					bind:this={input}
 					bind:value={query}
 					onkeydown={key}
-					placeholder="Search runs, tickets, workshops, actions…"
-					aria-label="Search"
+					placeholder={t('shell.palette.placeholder')}
+					aria-label={t('shell.palette.search')}
 				/>
 				<span class="kbd">esc</span>
 			</div>
 			<div class="list" role="listbox" use:indicator>
 				{#each shown as it, i (it.group + it.label + i)}
 					{#if i === 0 || shown[i - 1].group !== it.group}
-						<div class="gh">{it.group}</div>
+						<div class="gh">{groupLabel(it.group)}</div>
 					{/if}
 					<button
 						id="cp-{i}"
@@ -225,7 +253,7 @@
 						{#if it.sub}<span class="sub ell">{it.sub}</span>{/if}
 					</button>
 				{:else}
-					<div class="empty-line none">Nothing matches “{query}”.</div>
+					<div class="empty-line none">{t('shell.palette.none', { query })}</div>
 				{/each}
 			</div>
 		</div>

@@ -2,6 +2,7 @@
 	// Changes, Files and Terminal (DESIGN §6): views into the live workspace,
 	// each with its own repo picker on a multi-repo run. Without a workspace
 	// they say so and point at the Record, which outlives it.
+	import { t } from '$lib/i18n/index.svelte';
 	import Changes from '../Changes.svelte';
 	import Files from '../Files.svelte';
 	import Terminal from '../Terminal.svelte';
@@ -30,10 +31,10 @@
 		kind === 'changes'
 			? rs.terminal
 				? ''
-				: 'refreshes every 5s'
+				: t('runview.workspace.hint_changes')
 			: kind === 'files'
-				? 'read-only · first 1 MB'
-				: 'xterm · a shell in the repo'
+				? t('runview.workspace.hint_files')
+				: t('runview.workspace.hint_terminal')
 	);
 </script>
 

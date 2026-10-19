@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Capacity strip (DESIGN 7.3): concurrent runs, environments and the FIFO
 	// queue, against the guild's limits. Reads the shared fleet poll.
+	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
 	import Meter from '$lib/ui/Meter.svelte';
@@ -15,32 +16,35 @@
 <section class="cap c pane">
 	<div class="card-in tile">
 		<Meter
-			label="Concurrent runs"
+			label={t('deskhome.cap.runs')}
 			value={fleet.capacity.runs.used}
 			max={fleet.capacity.runs.max}
-			sub="a run parked on a human gives its slot back"
+			sub={t('deskhome.cap.runsSub')}
 		/>
 	</div>
 	<div class="card-in tile">
 		<Meter
-			label="Environments"
+			label={t('deskhome.cap.envs')}
 			value={fleet.capacity.envs.used}
 			max={fleet.capacity.envs.max}
 			tone="grn"
-			sub="at the cap, new runs are refused"
+			sub={t('deskhome.cap.envsSub')}
 		/>
 	</div>
 	<div class="card-in tile q">
 		<div class="row spread nowrap">
-			<span>Queue</span><span class="mono tx">{fleet.capacity.queued} pending</span>
+			<span>{t('deskhome.cap.queue')}</span><span class="mono tx"
+				>{t('deskhome.cap.pending', { count: fleet.capacity.queued })}</span
+			>
 		</div>
 		<div class="sub ell">
-			{#if next}next: <a href={to.run(next.id)}>{next.title}</a> · FIFO{:else}nothing waiting for a
-				slot{/if}
+			{#if next}{t('deskhome.cap.next')} <a href={to.run(next.id)}>{next.title}</a> · FIFO{:else}{t(
+					'deskhome.cap.none'
+				)}{/if}
 		</div>
 	</div>
 	<div class="end">
-		<a href={to.system('limits')}>Limits {I.forward}</a>
+		<a href={to.system('limits')}>{t('deskhome.cap.limits')} {I.forward}</a>
 		<Updated at={fleet.updatedAt} paused={fleet.paused} />
 	</div>
 </section>

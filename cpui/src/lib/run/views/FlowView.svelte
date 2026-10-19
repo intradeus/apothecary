@@ -2,6 +2,7 @@
 	// The recipe and where the run is in it (DESIGN §6 Flow, 3.4): a stage
 	// strip when the window is wide and short, a vertical recipe list when it
 	// is tall and narrow. Clicking a stage opens its log.
+	import { t } from '$lib/i18n/index.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import { stageRows } from '../derive';
@@ -15,14 +16,23 @@
 	const hash = $derived(rs.run?.flowHash ? `@${rs.run.flowHash.slice(0, 6)}` : '');
 	const finished = $derived(rs.run?.state === 'completed');
 	const tip = (r: (typeof rows)[number]) =>
-		`${r.id}${r.type ? ` · ${r.type === 'human_gate' ? 'gate' : r.type}` : ''}${r.agent ? ` · ${r.agent}` : ''}${r.attempt ? ` · attempt ${r.attempt}` : ''} — open its log`;
+		t('runview.flow.tip', {
+			parts: [
+				r.id,
+				r.type ? (r.type === 'human_gate' ? t('runview.flow.tip_gate') : r.type) : '',
+				r.agent ?? '',
+				r.attempt ? t('runview.flow.tip_attempt', { n: r.attempt }) : ''
+			]
+				.filter(Boolean)
+				.join(' · ')
+		});
 </script>
 
 {#if rows.length === 0}
-	{#if rs.stageDefs === null && rs.run}<Loading text="Reading the flow…" />{:else}<div
+	{#if rs.stageDefs === null && rs.run}<Loading text={t('runview.flow.reading')} />{:else}<div
 			class="empty-line"
 		>
-			No stages yet.
+			{t('runview.flow.no_stages')}
 		</div>{/if}
 {:else if horizontal}
 	<div class="strip">
@@ -38,11 +48,11 @@
 				<span class="conn"></span>
 			</div>
 		{/each}
-		<span class="fin serif" class:ok={finished}>done</span>
+		<span class="fin serif" class:ok={finished}>{t('runview.flow.done')}</span>
 	</div>
 {:else}
 	<div class="view list">
-		<div class="title serif">The formula</div>
+		<div class="title serif">{t('runview.flow.formula')}</div>
 		<div class="sub mono fnt">{rs.run?.flowName ?? ''} {hash}</div>
 		{#each rows as r, i (r.id)}
 			<div class="vrow">
@@ -56,7 +66,7 @@
 				</button>
 			</div>
 		{/each}
-		<div class="vfin serif" class:ok={finished}>done</div>
+		<div class="vfin serif" class:ok={finished}>{t('runview.flow.done')}</div>
 	</div>
 {/if}
 

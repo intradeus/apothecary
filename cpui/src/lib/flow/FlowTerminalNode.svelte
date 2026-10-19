@@ -10,6 +10,7 @@
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import type { Hue } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let { type, data }: NodeProps = $props();
 
@@ -39,18 +40,17 @@
 		abort: I.bad,
 		debug: I.retry
 	};
-	const TITLE: Record<Tone, string> = {
-		start: 'The entry — drag this handle onto a stage to start the flow there',
-		trigger: '',
-		done: 'The run completes',
-		abort: 'The run stops deliberately',
-		debug:
-			'A stop, not an end: the run parks for a human to fix the workspace, then goes back into the stage that sent it here'
+	const TITLE: Record<Tone, () => string> = {
+		start: () => t('flow.term.start'),
+		trigger: () => '',
+		done: () => t('flow.term.done'),
+		abort: () => t('flow.term.abort'),
+		debug: () => t('flow.term.debug')
 	};
 	const label = $derived(
 		tone === 'start' || tone === 'trigger' ? ((data?.label as string | undefined) ?? 'start') : tone
 	);
-	const title = $derived((data?.title as string | undefined) ?? TITLE[tone]);
+	const title = $derived((data?.title as string | undefined) ?? TITLE[tone]());
 	const handle = '--xy-handle-background-color: var(--h)';
 </script>
 

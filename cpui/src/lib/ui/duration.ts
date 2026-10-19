@@ -3,6 +3,8 @@
 // The engine stores Go duration strings ("48h", "1h30m", "90m") or "never".
 // Go's parser has no day unit, so days travel as hours: 2 d → "48h".
 
+import { t } from '$lib/i18n/index.svelte';
+
 export type DurUnit = 'm' | 'h' | 'd' | 'never';
 
 export interface Dur {
@@ -57,7 +59,7 @@ export function fromDur(d: Dur): string {
 export function durWords(raw: string): string {
 	const d = toDur(raw);
 	if (!d) return raw;
-	if (d.unit === 'never') return 'never';
-	const word = { m: 'minute', h: 'hour', d: 'day' }[d.unit];
-	return `${d.n} ${word}${d.n === 1 ? '' : 's'}`;
+	if (d.unit === 'never') return t('ui.dur.never');
+	const key = { m: 'ui.dur.words_minute', h: 'ui.dur.words_hour', d: 'ui.dur.words_day' } as const;
+	return t(key[d.unit], { count: d.n });
 }

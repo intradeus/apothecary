@@ -5,13 +5,14 @@
 	import { api } from '$lib/api';
 	import type { PingFile } from '$lib/domain';
 	import FileChip from '$lib/ui/FileChip.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 
-	let { files, label = 'From the agent' }: { files: PingFile[]; label?: string } = $props();
+	let { files, label }: { files: PingFile[]; label?: string } = $props();
 </script>
 
 {#if files.length}
 	<div class="chips af">
-		<span class="help">{label}</span>
+		<span class="help">{label ?? t('inbox.fromAgent')}</span>
 		{#each files as f (f.path)}
 			{#if f.captured && f.snapshotId}
 				<FileChip
@@ -21,7 +22,7 @@
 					thumb={f.mime?.startsWith('image/') ? api.files.snapshotUrl(f.snapshotId) : undefined}
 				/>
 			{:else}
-				<FileChip name={f.path} state="missing" reason="not captured" />
+				<FileChip name={f.path} state="missing" reason={t('inbox.notCaptured')} />
 			{/if}
 		{/each}
 	</div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// One file, as a chip (DESIGN 4.15): a 28px thumbnail or glyph, the name,
 	// a mono size or reason. Links out when it has an href, removable when it
 	// has onremove; `missing` and `refused` read as such, never hidden.
@@ -42,7 +43,7 @@
 		{#if onremove}<button
 				type="button"
 				class="btn-icon x"
-				aria-label="Remove {name}"
+				aria-label={t('ui.tags.remove', { value: name })}
 				onclick={onremove}>{I.close}</button
 			>{/if}
 	</span>

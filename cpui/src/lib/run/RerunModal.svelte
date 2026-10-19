@@ -10,6 +10,7 @@
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import FlowSelect from '$lib/FlowSelect.svelte';
 	import type { RunStore } from './store.svelte';
+	import { t, th } from '$lib/i18n/index.svelte';
 
 	let {
 		rs,
@@ -47,31 +48,26 @@
 	}
 </script>
 
-<Modal bind:open title="New run from {shortId(rs.runId)}" icon={I.retry} width={520}>
+<Modal bind:open title={t('run.rerun.title', { id: shortId(rs.runId) })} icon={I.retry} width={520}>
 	<div class="f">
 		<p class="lead">
-			A fresh run of the same ticket in a <b>new workspace</b> on a <b>new branch</b>. This run and
-			its workspace are left as they are.
+			{@html th('run.rerun.lead')}
 		</p>
 		<div class="field">
-			<label for="nr-goal">Direction for the new attempt</label>
-			<textarea
-				id="nr-goal"
-				bind:value={goal}
-				rows="3"
-				placeholder="e.g. The last attempt broke the router — use the existing middleware."
+			<label for="nr-goal">{t('run.rerun.direction')}</label>
+			<textarea id="nr-goal" bind:value={goal} rows="3" placeholder={t('run.rerun.directionPh')}
 			></textarea>
-			<span class="help">Optional. Added to the ticket's goal for this run only.</span>
+			<span class="help">{t('run.rerun.directionHelp')}</span>
 		</div>
-		<AttachFiles bind:files label="Attach files for the new run" compact />
+		<AttachFiles bind:files label={t('run.rerun.attach')} compact />
 		<div class="field">
-			<label for="nr-flow">Flow</label>
+			<label for="nr-flow">{t('run.rerun.flow')}</label>
 			{#if rs.run?.projectId}
 				<FlowSelect
 					id="nr-flow"
 					projectId={rs.run.projectId}
 					bind:value={flow}
-					fallbackLabel={`Same as this run (${rs.run.flowName})`}
+					fallbackLabel={t('run.rerun.sameFlow', { flow: rs.run.flowName })}
 				/>
 			{:else}
 				<input id="nr-flow" class="mono" bind:value={flow} placeholder={rs.run?.flowName} />
@@ -80,9 +76,9 @@
 		{#if error}<div class="err">{error}</div>{/if}
 	</div>
 	{#snippet footer()}
-		<button class="btn-ghost" onclick={() => (open = false)}>Cancel</button>
+		<button class="btn-ghost" onclick={() => (open = false)}>{t('common.cancel')}</button>
 		<button class="btn-primary" disabled={busy} aria-busy={busy} onclick={start}
-			>Start new run</button
+			>{t('run.rerun.start')}</button
 		>
 	{/snippet}
 </Modal>
@@ -98,7 +94,7 @@
 		color: var(--mut);
 		text-wrap: pretty;
 	}
-	.lead b {
+	.lead :global(b) {
 		color: var(--tx);
 		font-weight: 600;
 	}

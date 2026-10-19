@@ -10,6 +10,7 @@ import type { AgentToolCall, LiveDelta, RunEvent } from '$lib/domain';
 import { toAgentToolCall } from '$lib/api/mappers';
 import type { Tone as AnyTone } from '$lib/ui/hues';
 import { I } from '$lib/ui/icons';
+import { t } from '$lib/i18n/index.svelte';
 
 /** A status line's tone; its hue comes from TONE_HUE. */
 export type Tone = Exclude<AnyTone, 'mut'>;
@@ -114,13 +115,14 @@ export function pruneLive(live: LiveState, ev: RunEvent): LiveState {
 	return live;
 }
 
-const promptLabels: Record<string, string> = {
-	stage: 'Stage prompt',
-	answer: 'Your answers, delivered',
-	restart: 'Engine restarted — continue',
-	messages: 'Your messages'
-};
-export const promptLabel = (k: string) => promptLabels[k] ?? k;
+const promptLabelKeys = {
+	stage: 'transcript.prompt.stage',
+	answer: 'transcript.prompt.answer',
+	restart: 'transcript.prompt.restart',
+	messages: 'transcript.prompt.messages'
+} as const;
+export const promptLabel = (k: string) =>
+	k in promptLabelKeys ? t(promptLabelKeys[k as keyof typeof promptLabelKeys]) : k;
 
 const cost = (u: unknown) => {
 	const c = (u as { cost_usd?: number } | undefined)?.cost_usd;
@@ -176,8 +178,12 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'status',
 					key,
 					glyph: I.ok,
-					text: `${p.stage_id} completed`,
-					meta: [p.turns_used ? `${p.turns_used} turns` : '', cost(p.usage), dur(p.duration_ms)]
+					text: t('transcript.stageCompleted', { stage: String(p.stage_id) }),
+					meta: [
+						p.turns_used ? t('transcript.turns', { count: Number(p.turns_used) }) : '',
+						cost(p.usage),
+						dur(p.duration_ms)
+					]
 						.filter(Boolean)
 						.join(' · '),
 					tone: 'ok'
@@ -188,9 +194,14 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'failure',
 					key,
 					stageId: String(p.stage_id),
-					title: `${p.stage_id} failed — ${String(p.reason ?? '').replace(/_/g, ' ')}${
-						typeof p.exit_code === 'number' ? ` (exit ${p.exit_code})` : ''
-					}`,
+					title:
+						t('transcript.stageFailed', {
+							stage: String(p.stage_id),
+							reason: String(p.reason ?? '').replace(/_/g, ' ')
+						}) +
+						(typeof p.exit_code === 'number'
+							? t('transcript.exitCode', { code: p.exit_code })
+							: ''),
 					error: p.error ? String(p.error).slice(0, 600) : undefined
 				});
 				break;
@@ -199,7 +210,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'failure',
 					key,
 					stageId: '_provision',
-					title: 'Workspace failed to provision',
+					title: t('transcript.provisionFailed'),
 					error: p.error ? String(p.error).slice(0, 600) : undefined
 				});
 				break;
@@ -208,7 +219,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'status',
 					key,
 					glyph: I.pause,
-					text: 'Parked — waiting for your answer. The session resumes with it.',
+					text: t('transcript.parked'),
 					tone: 'warn'
 				});
 				break;
@@ -219,8 +230,8 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					glyph: p.reason === 'engine_restart' ? '⟳' : I.retry,
 					text:
 						p.reason === 'engine_restart'
-							? 'Engine restarted — picked the session back up'
-							: 'Resumed with your answer',
+							? t('transcript.resumedRestart')
+							: t('transcript.resumedAnswer'),
 					tone: 'info'
 				});
 				break;
@@ -239,10 +250,10 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'status',
 					key,
 					glyph: I.ok,
-					text: 'Run completed',
+					text: t('transcript.runCompleted'),
 					meta: [
 						cost(p.total_cost_usd !== undefined ? { cost_usd: p.total_cost_usd } : undefined),
-						p.total_turns ? `${p.total_turns} turns` : ''
+						p.total_turns ? t('transcript.turns', { count: Number(p.total_turns) }) : ''
 					]
 						.filter(Boolean)
 						.join(' · '),
@@ -254,7 +265,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'status',
 					key,
 					glyph: I.bad,
-					text: `Run failed — ${p.reason ?? ''}`,
+					text: t('transcript.runFailed', { reason: String(p.reason ?? '') }),
 					tone: 'bad'
 				});
 				break;
@@ -263,7 +274,10 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'status',
 					key,
 					glyph: I.stop,
-					text: `Run abandoned${p.stalled_at ? ` at ${p.stalled_at}` : ''}${p.reason ? ` — ${p.reason}` : ''}`,
+					text:
+						t('transcript.runAbandoned') +
+						(p.stalled_at ? t('transcript.abandonedAt', { stage: String(p.stalled_at) }) : '') +
+						(p.reason ? ` — ${p.reason}` : ''),
 					tone: 'warn'
 				});
 				break;
@@ -273,7 +287,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'status',
 					key,
 					glyph: I.retry,
-					text: 'Retrying in the same workspace',
+					text: t('transcript.retrying'),
 					tone: 'info'
 				});
 				break;
@@ -366,13 +380,13 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 			});
 		} else {
 			const id = k.slice(2);
-			const t = live.tools.get(id);
-			if (!t || persistedTools.has(id)) continue;
+			const tc = live.tools.get(id);
+			if (!tc || persistedTools.has(id)) continue;
 			if (!liveTools) {
 				liveTools = [];
 				items.push({ kind: 'tools', key: 'live-' + k, calls: liveTools, live: true });
 			}
-			liveTools.push(t);
+			liveTools.push(tc);
 		}
 	}
 	return items;

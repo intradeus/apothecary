@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Workshop agents tab (DESIGN 7.7). There is no agent library on the
 	// engine yet: agents are declared inside each flow document (FLOWLANG §1).
 	// This lists them read-only, per flow, with what the flow runs them on.
@@ -66,45 +67,48 @@
 </script>
 
 <Callout hue="az">
-	Agents live inside their flow’s document, so each flow carries its own. They are read-only here
-	for now — edit them in the flow editor’s YAML view.
+	{t('workshop.agents.callout')}
 </Callout>
 
 {#if error && !flows}
-	<ErrorCard cause="Couldn’t load flows" detail={error} {onretry} />
+	<ErrorCard cause={t('workshop.agents.loadError')} detail={error} {onretry} />
 {:else if !flows}
 	<Skeleton pane lines={5} />
 {:else if !relevant.length}
-	<EmptyState title="No agents yet" text="Agents arrive with this workshop’s first flow.">
-		<a class="btn btn-primary" href={to.workshop(project.id, 'flows')}>Flows</a>
+	<EmptyState title={t('workshop.agents.emptyTitle')} text={t('workshop.agents.emptyText')}>
+		<a class="btn btn-primary" href={to.workshop(project.id, 'flows')}
+			>{t('workshop.agents.flows')}</a
+		>
 	</EmptyState>
 {:else}
 	{#if total === 0}
 		<EmptyState
 			compact
-			title="No agents declared"
-			text="These flows run commands, gates and actions only."
+			title={t('workshop.agents.noneDeclaredTitle')}
+			text={t('workshop.agents.noneDeclaredText')}
 		/>
 	{/if}
 	{#each parsed as p (p.flow.name)}
 		<section class="c pane">
 			<div class="pane-head">
 				<h2 class="fname">{p.flow.name}</h2>
-				{#if p.flow.builtin}<span class="pill sm t-mut">built-in</span>{/if}
-				{#if p.flow.name === project.defaultFlow}<span class="pill sm t-brand">default</span>{/if}
+				{#if p.flow.builtin}<span class="pill sm t-mut">{t('workshop.agents.builtin')}</span>{/if}
+				{#if p.flow.name === project.defaultFlow}<span class="pill sm t-brand"
+						>{t('workshop.agents.default')}</span
+					>{/if}
 				<span class="mono fnt">@{p.flow.hash.slice(0, 8)}</span>
 				<span class="count">{p.agents.length}</span>
 				<span class="spacer"></span>
 				<a class="btn btn-sm" href={to.flow(project.id, p.flow.name)}
-					>Edit in flow editor {I.forward}</a
+					>{t('workshop.agents.editInEditor')} {I.forward}</a
 				>
 			</div>
 			{#if p.parseError}
 				<div class="pane-body">
-					<ErrorCard cause="This flow’s YAML didn’t parse here" detail={p.parseError} />
+					<ErrorCard cause={t('workshop.agents.parseError')} detail={p.parseError} />
 				</div>
 			{:else if !p.agents.length}
-				<div class="empty-line">No agents in this flow.</div>
+				<div class="empty-line">{t('workshop.agents.noneInFlow')}</div>
 			{:else}
 				<div class="pane-body card-grid agents">
 					{#each p.agents as a (a.agent.name)}
@@ -113,16 +117,22 @@
 								<StageChip type="agent" />
 								<span class="mono an ell">{a.agent.name}</span>
 								<span class="spacer"></span>
-								{#if a.agent.read_only}<span class="pill sm t-tea" title="May not edit files"
-										>read-only</span
-									>{:else}<span class="pill sm t-amb" title="May edit files">writes</span>{/if}
-								{#if a.agent.allow_bash}<span class="pill sm t-grn" title="May run shell commands"
-										>bash</span
-									>{:else}<span class="pill sm t-mut" title="No shell">no bash</span>{/if}
+								{#if a.agent.read_only}<span
+										class="pill sm t-tea"
+										title={t('workshop.agents.readOnlyTitle')}>{t('workshop.agents.readOnly')}</span
+									>{:else}<span class="pill sm t-amb" title={t('workshop.agents.writesTitle')}
+										>{t('workshop.agents.writes')}</span
+									>{/if}
+								{#if a.agent.allow_bash}<span
+										class="pill sm t-grn"
+										title={t('workshop.agents.bashTitle')}>{t('workshop.agents.bash')}</span
+									>{:else}<span class="pill sm t-mut" title={t('workshop.agents.noBashTitle')}
+										>{t('workshop.agents.noBash')}</span
+									>{/if}
 							</div>
 							{#if a.agent.description}<p class="lede">{a.agent.description}</p>{/if}
 							<dl class="kv">
-								<dt>runs on</dt>
+								<dt>{t('workshop.agents.runsOn')}</dt>
 								<dd class="v">
 									{#each a.stages as s (s.id)}
 										<span class="use"
@@ -133,35 +143,37 @@
 											<span class="mono mut ell">{s.model}</span></span
 										>
 									{:else}
-										<span class="fnt">declared, not used by any stage</span>
+										<span class="fnt">{t('workshop.agents.unused')}</span>
 									{/each}
 								</dd>
-								<dt>inputs</dt>
+								<dt>{t('workshop.agents.inputs')}</dt>
 								<dd class="v io">
 									{#each a.agent.inputs ?? [] as i (i.name)}
 										<span class="port" title={i.description}
 											><span class="ldot sm flat hue-grn" class:hollow={i.optional}></span><span
 												class="mono">{i.name}</span
-											>{#if i.optional}<span class="fnt"> optional</span>{/if}</span
+											>{#if i.optional}<span class="fnt">{t('workshop.agents.optional')}</span
+												>{/if}</span
 										>
-									{:else}<span class="fnt">the ticket only</span>{/each}
+									{:else}<span class="fnt">{t('workshop.agents.ticketOnly')}</span>{/each}
 								</dd>
-								<dt>outputs</dt>
+								<dt>{t('workshop.agents.outputs')}</dt>
 								<dd class="v io">
 									{#each a.agent.outputs ?? [] as o (o.name)}
 										<span class="port" title={o.description}
 											><span class="ldot sm flat {o.type === 'verdict' ? 'hue-vio' : 'hue-az'}"
 											></span><span class="mono">{o.name}</span>
 											<span class="mono fnt">{o.path}</span>
-											{#if o.type === 'verdict'}<span class="pill sm t-vio">verdict</span
+											{#if o.type === 'verdict'}<span class="pill sm t-vio"
+													>{t('workshop.agents.verdict')}</span
 												>{/if}</span
 										>
-									{:else}<span class="fnt">none</span>{/each}
+									{:else}<span class="fnt">{t('workshop.agents.none')}</span>{/each}
 								</dd>
 							</dl>
 							{#if a.agent.prompt}
 								<details>
-									<summary class="disclosure small mut">Prompt</summary>
+									<summary class="disclosure small mut">{t('workshop.agents.prompt')}</summary>
 									<pre class="log prompt">{a.agent.prompt}</pre>
 								</details>
 							{/if}

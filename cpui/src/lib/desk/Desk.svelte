@@ -36,6 +36,7 @@
 	//    its live rect; windows that appear materialise, ones that go fade
 	import { onMount, type Snippet } from 'svelte';
 	import type { TransitionConfig } from 'svelte/transition';
+	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/ui/icons';
 	import { ms, rubberband } from '$lib/ui/motion';
 	import { token } from '$lib/ui/tokens';
@@ -422,15 +423,12 @@
 
 	{#if !desk.tree}
 		<div class="bench" in:fadeIn>
-			<EmptyState
-				title="An empty bench"
-				text="Every window is hidden. Bring one back from Windows, or start from a layout."
-			>
+			<EmptyState title={t('desk.empty.title')} text={t('desk.empty.text')}>
 				<button
 					class="btn-primary"
 					aria-expanded={desk.menuOpen}
 					onpointerdown={(e) => e.stopPropagation()}
-					onclick={() => (desk.menuOpen = !desk.menuOpen)}>Open Windows {I.menu}</button
+					onclick={() => (desk.menuOpen = !desk.menuOpen)}>{t('desk.empty.open')} {I.menu}</button
 				>
 			</EmptyState>
 		</div>

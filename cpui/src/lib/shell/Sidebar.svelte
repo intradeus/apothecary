@@ -12,6 +12,7 @@
 	import { page } from '$app/state';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { i18n, LOCALES, t, type Locale } from '$lib/i18n/index.svelte';
 	import { NAV, type NavItem } from '$lib/nav';
 	import { currentGuild, GUILDS, ME, to } from '$lib/guild';
 	import { shortId, stateLabel } from '$lib/format';
@@ -31,6 +32,10 @@
 		drawer = false,
 		onnavigate
 	}: { onsearch: () => void; drawer?: boolean; onnavigate?: () => void } = $props();
+
+	const localeIds = Object.keys(LOCALES) as Locale[];
+	const multiLocale = localeIds.length > 1;
+	const pickLocale = (e: Event) => void i18n.set((e.target as HTMLSelectElement).value as Locale);
 
 	const rail = $derived(prefs.collapsed && !drawer);
 	const guild = $derived(currentGuild());
@@ -69,23 +74,26 @@
 			<Logo size={32} />
 			<button
 				class="btn-icon rb exp"
-				title="Expand sidebar  ⌘\"
-				aria-label="Expand sidebar"
+				title={t('shell.sidebar.expandTitle')}
+				aria-label={t('shell.sidebar.expand')}
 				onclick={() => prefs.toggleCollapsed()}>{I.expand}</button
 			>
 			<button
 				bind:this={orgBtnRail}
 				class="btn-sel rguild"
 				title={guild.name}
-				aria-label="Switch guild"
+				aria-label={t('shell.sidebar.switchGuild')}
 				onclick={() => (orgOpen = !orgOpen)}
 			>
 				<GuildAvatar {guild} size={24} />
 			</button>
-			<button class="btn-icon rb" title="Search  ⌘K" aria-label="Search" onclick={onsearch}
-				>{I.search}</button
+			<button
+				class="btn-icon rb"
+				title={t('shell.sidebar.searchTitle')}
+				aria-label={t('shell.sidebar.search')}
+				onclick={onsearch}>{I.search}</button
 			>
-			<nav class="rlist on-rail" aria-label="Primary" use:indicator>
+			<nav class="rlist on-rail" aria-label={t('shell.sidebar.primary')} use:indicator>
 				{#each NAV as n (n.id)}
 					{@const c = count(n)}
 					<a
@@ -119,10 +127,21 @@
 				{/each}
 			</div>
 			<span class="grow"></span>
+			{#if multiLocale}
+				<select
+					class="lang rlang"
+					aria-label={t('shell.sidebar.language')}
+					title={t('shell.sidebar.language')}
+					value={i18n.locale}
+					onchange={pickLocale}
+				>
+					{#each localeIds as id (id)}<option value={id}>{id.toUpperCase()}</option>{/each}
+				</select>
+			{/if}
 			<button
 				class="btn-icon rb"
-				title="Theme: {prefs.themeDef.label}"
-				aria-label="Change theme"
+				title={t('shell.sidebar.themeTitle', { name: prefs.themeDef.label })}
+				aria-label={t('shell.sidebar.changeTheme')}
 				onclick={() => prefs.cycleTheme()}>{prefs.themeDef.icon}</button
 			>
 			<UserAvatar name={ME.name} initials={ME.initials} />
@@ -133,13 +152,13 @@
 				<Logo size={30} />
 				<div class="bt">
 					<span class="name">Apothecary</span>
-					<span class="tagline">software, bottled</span>
+					<span class="tagline">{t('shell.sidebar.tagline')}</span>
 				</div>
 				{#if !drawer}
 					<button
 						class="btn-icon rb sm"
-						title="Collapse sidebar  ⌘\"
-						aria-label="Collapse sidebar"
+						title={t('shell.sidebar.collapseTitle')}
+						aria-label={t('shell.sidebar.collapse')}
 						onclick={() => prefs.toggleCollapsed()}>{I.collapse}</button
 					>
 				{/if}
@@ -150,18 +169,17 @@
 				<span class="gt">
 					<span class="gn ell">{guild.name}</span>
 					<span class="gs ell"
-						>{fleet.projects.length}
-						{fleet.projects.length === 1 ? 'workshop' : 'workshops'}</span
+						>{t('shell.sidebar.workshopCount', { count: fleet.projects.length })}</span
 					>
 				</span>
 				<span class="sw">{I.switcher}</span>
 			</button>
 
 			<button class="search" onclick={onsearch}>
-				<span>Search, jump, do…</span><span class="kbd">⌘K</span>
+				<span>{t('shell.sidebar.searchPlaceholder')}</span><span class="kbd">⌘K</span>
 			</button>
 
-			<nav class="nav on-rail" aria-label="Primary" use:indicator>
+			<nav class="nav on-rail" aria-label={t('shell.sidebar.primary')} use:indicator>
 				{#each NAV as n (n.id)}
 					{@const c = count(n)}
 					<a
@@ -183,11 +201,11 @@
 			</nav>
 
 			<div class="wh">
-				<span class="whl">Workshops</span>
+				<span class="whl">{t('shell.sidebar.workshops')}</span>
 				<span class="legend">
-					<span title="live runs">{I.runs}</span>
-					<span title="pending pings">{I.inbox}</span>
-					<a class="plus" href={to.newWorkshop()} title="New workshop">{I.add}</a>
+					<span title={t('shell.sidebar.liveRuns')}>{I.runs}</span>
+					<span title={t('shell.sidebar.pendingPings')}>{I.inbox}</span>
+					<a class="plus" href={to.newWorkshop()} title={t('shell.sidebar.newWorkshop')}>{I.add}</a>
 				</span>
 			</div>
 			<div class="wl on-rail" use:indicator={{ selector: '.wi.on' }}>
@@ -224,16 +242,21 @@
 					{/if}
 				{:else}
 					<a class="wi quiet" href={to.newWorkshop()}
-						><span class="grow">Set up your first workshop {I.forward}</span></a
+						><span class="grow">{t('shell.sidebar.firstWorkshop', { arrow: I.forward })}</span></a
 					>
 				{/each}
 			</div>
 
 			<div class="cap">
-				<Meter rail label="Runs" value={fleet.capacity.runs.used} max={fleet.capacity.runs.max} />
 				<Meter
 					rail
-					label="Envs"
+					label={t('shell.sidebar.runs')}
+					value={fleet.capacity.runs.used}
+					max={fleet.capacity.runs.max}
+				/>
+				<Meter
+					rail
+					label={t('shell.sidebar.envs')}
 					tone="grn"
 					value={fleet.capacity.envs.used}
 					max={fleet.capacity.envs.max}
@@ -246,8 +269,21 @@
 					<span class="un">{ME.name}</span>
 					<span class="ur ell">{guild.role} · {guild.name}</span>
 				</span>
-				<button class="btn-sel btn-sm theme" title="Theme" onclick={() => prefs.cycleTheme()}
-					>{prefs.themeDef.label}</button
+				{#if multiLocale}
+					<select
+						class="lang"
+						aria-label={t('shell.sidebar.language')}
+						title={t('shell.sidebar.language')}
+						value={i18n.locale}
+						onchange={pickLocale}
+					>
+						{#each localeIds as id (id)}<option value={id}>{LOCALES[id].label}</option>{/each}
+					</select>
+				{/if}
+				<button
+					class="btn-sel btn-sm theme"
+					title={t('shell.sidebar.theme')}
+					onclick={() => prefs.cycleTheme()}>{prefs.themeDef.label}</button
 				>
 			</div>
 		</div>
@@ -259,14 +295,16 @@
 	bind:open={orgOpen}
 	at={{ left: rail ? 72 : 248, top: 56 }}
 	width={312}
-	title="Guilds"
-	legend="{I.runs} live  {I.inbox} pings"
+	title={t('shell.sidebar.guilds')}
+	legend="{I.runs} {t('shell.sidebar.legendLive')}  {I.inbox} {t('shell.sidebar.legendPings')}"
 >
 	{#if GUILDS.length > 1}
 		<a class="mi" href={to.allGuilds()} onclick={() => (orgOpen = false)}>
 			<span class="alltile">{I.desk}</span>
 			<span class="col"
-				><span>All guilds</span><span class="sub">Your desk across every guild</span></span
+				><span>{t('shell.sidebar.allGuilds')}</span><span class="sub"
+					>{t('shell.sidebar.allGuildsSub')}</span
+				></span
 			>
 		</a>
 		<div class="menu-div"></div>
@@ -281,8 +319,10 @@
 			<GuildAvatar guild={g} size={26} />
 			<span class="col"
 				><span>{g.name}</span><span class="sub"
-					>{g.role} · {fleet.projects.length}
-					workshops</span
+					>{t('shell.sidebar.guildSub', {
+						role: g.role,
+						workshops: t('shell.sidebar.workshopCount', { count: fleet.projects.length })
+					})}</span
 				></span
 			>
 			<span class="mono hue-az live-n">{fleet.active.length || ''}</span>
@@ -291,11 +331,11 @@
 	{/each}
 	<div class="menu-div"></div>
 	<div class="row nowrap foot">
-		<button class="btn-ghost btn-sm" disabled title="Organisations arrive with multi-user support"
-			>+ Found a guild</button
+		<button class="btn-ghost btn-sm" disabled title={t('shell.sidebar.orgSoon')}
+			>{t('shell.sidebar.foundGuild')}</button
 		>
-		<button class="btn-ghost btn-sm" disabled title="Organisations arrive with multi-user support"
-			>Join with invite</button
+		<button class="btn-ghost btn-sm" disabled title={t('shell.sidebar.orgSoon')}
+			>{t('shell.sidebar.joinGuild')}</button
 		>
 	</div>
 </Popover>
@@ -653,6 +693,15 @@
 	.ur {
 		font-size: var(--fs-meta);
 		color: var(--railMut);
+	}
+	.lang {
+		width: auto;
+		max-width: 96px;
+		font-size: var(--fs-meta);
+	}
+	.rlang {
+		max-width: 44px;
+		padding: 2px;
 	}
 	.theme {
 		font-size: var(--fs-meta);

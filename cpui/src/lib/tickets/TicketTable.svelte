@@ -1,4 +1,5 @@
 <script lang="ts" module>
+	import { t } from '$lib/i18n/index.svelte';
 	export type TicketCol = 'title' | 'source' | 'workshop' | 'branch' | 'status' | 'created';
 </script>
 
@@ -36,12 +37,12 @@
 	);
 	const label = (c: TicketCol) =>
 		({
-			title: 'Title',
-			source: 'Source',
-			workshop: 'Workshop',
-			branch: 'Base branch',
-			status: 'Status',
-			created: 'Created'
+			title: t('tickets.col.title'),
+			source: t('tickets.col.source'),
+			workshop: t('tickets.col.workshop'),
+			branch: t('tickets.col.branch'),
+			status: t('tickets.col.status'),
+			created: t('tickets.col.created')
 		})[c];
 </script>
 
@@ -51,33 +52,34 @@
 				>{label(c)}</span
 			>{/each}
 	</div>
-	{#each tickets as t (t.id)}
-		{@const runs = fleet.runsByTicket.get(t.id) ?? []}
+	{#each tickets as tk (tk.id)}
+		{@const runs = fleet.runsByTicket.get(tk.id) ?? []}
 		<div class="r">
 			{#each cols as c (c)}
 				{#if c === 'title'}
-					<a class="title ell stretch" href={to.ticket(t.id)}>{t.title}</a>
+					<a class="title ell stretch" href={to.ticket(tk.id)}>{tk.title}</a>
 				{:else if c === 'source'}
 					<span class="hide-sm">
-						{#if t.source?.key}<span class="tag" title="Imported from {t.source.kind}"
-								>{t.source.key}</span
+						{#if tk.source?.key}<span
+								class="tag"
+								title={t('tickets.importedFrom', { kind: tk.source.kind })}>{tk.source.key}</span
 							>{:else}<span class="fnt">—</span>{/if}
 					</span>
 				{:else if c === 'workshop'}
-					<span class="hide-sm ell"><WorkshopName projectId={t.projectId} /></span>
+					<span class="hide-sm ell"><WorkshopName projectId={tk.projectId} /></span>
 				{:else if c === 'branch'}
-					<span class="mono mut ell hide-sm" title={t.baseBranch}>{t.baseBranch}</span>
+					<span class="mono mut ell hide-sm" title={tk.baseBranch}>{tk.baseBranch}</span>
 				{:else if c === 'status'}
 					<span class="st">
 						{#if runs.length}
 							<StatusChip state={runs[0].state} size="sm" />
 							{#if runs.length > 1}<span class="fnt mono">×{runs.length}</span>{/if}
 						{:else}
-							<span class="fnt">no runs</span>
+							<span class="fnt">{t('tickets.noRuns')}</span>
 						{/if}
 					</span>
 				{:else if c === 'created'}
-					<span class="mono mut num" title={fmtAbs(t.createdAt)}>{ago(t.createdAt)}</span>
+					<span class="mono mut num" title={fmtAbs(tk.createdAt)}>{ago(tk.createdAt)}</span>
 				{/if}
 			{/each}
 		</div>

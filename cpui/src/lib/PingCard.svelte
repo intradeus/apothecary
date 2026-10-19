@@ -15,6 +15,7 @@
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import FileChip from '$lib/ui/FileChip.svelte';
 	import { I } from '$lib/ui/icons';
+	import { t, th } from '$lib/i18n/index.svelte';
 	import {
 		answerMeta,
 		isAgentPing,
@@ -108,11 +109,11 @@
 	const debug = $derived(ping.type === 'debug');
 	const aside = $derived(
 		ping.type === 'gate'
-			? 'the bench awaits your seal'
+			? t('ping.aside.gate')
 			: debug
-				? 'the bench is yours — mend it, then continue'
+				? t('ping.aside.debug')
 				: unwanted
-					? 'a note from the builder'
+					? t('ping.aside.agent')
 					: ''
 	);
 
@@ -132,9 +133,11 @@
 		{#if stageId}<span class="mono fnt">{stageId}</span>{/if}
 		<span class="ell grow what">
 			{#if status === 'withdrawn'}
-				withdrawn
+				{t('ping.withdrawn')}
 			{:else}
-				answered{ping.answeredAt ? ` ${ago(ping.answeredAt)}` : ''} —
+				{ping.answeredAt
+					? t('ping.answeredAgo', { ago: ago(ping.answeredAt) })
+					: t('ping.answered')}
 				<b class="hue-{verdict.hue}">{ping.answer}</b>{#if ping.feedback}<span
 						class="fnt"
 						title={ping.feedback}>{' · '}{ping.feedback}</span
@@ -152,10 +155,10 @@
 			<span class="when">
 				{#if stageId}<span class="mono">{stageId}</span
 					>{/if}{#if stageId && ping.raisedAt}{' · '}{/if}{#if ping.raisedAt}<span
-						title={fmtAbs(ping.raisedAt)}>raised {ago(ping.raisedAt)}</span
+						title={fmtAbs(ping.raisedAt)}>{t('ping.raised', { ago: ago(ping.raisedAt) })}</span
 					>{/if}
 			</span>
-			{#if unwanted}<span class="pill sm t-ros">unwanted · counts against run</span>{/if}
+			{#if unwanted}<span class="pill sm t-ros">{t('ping.unwanted')}</span>{/if}
 		</div>
 		{#if runTitle || ticketTitle || ticketKey}
 			<div class="ctx">
@@ -172,7 +175,7 @@
 
 		<div class="body">
 			{#if debug}
-				<div class="q">Stage <span class="mono">{stageId}</span> failed — check why.</div>
+				<div class="q">{@html th('ping.debugFailed', { stage: stageId })}</div>
 				{#if ping.context}<pre class="out">{ping.context}</pre>{/if}
 			{:else}
 				<div class="q"><Markdown src={ping.question} /></div>
@@ -189,7 +192,9 @@
 				<div class="card-in docref">
 					<FileChip name={ping.primaryRef} />
 					<span class="spacer"></span>
-					<a class="btn btn-sel btn-sm" href={to.ping(ping.id)}>Review &amp; comment {I.forward}</a>
+					<a class="btn btn-sel btn-sm" href={to.ping(ping.id)}
+						>{t('ping.reviewComment')} {I.forward}</a
+					>
 				</div>
 			{/if}
 
@@ -204,19 +209,20 @@
 						</label>
 					{/each}
 				</div>
-				<textarea bind:value={note} rows="2" placeholder="Optional note"></textarea>
+				<textarea bind:value={note} rows="2" placeholder={t('ping.optionalNote')}></textarea>
 				<div class="acts">
 					<button
 						class="btn-hot btn-md"
 						disabled={off || pickedIds.length === 0}
 						aria-busy={busyOn(pickedIds.join('\n'))}
-						onclick={() => submit(pickedIds.join('\n'))}>Confirm {pickedIds.length} selected</button
+						onclick={() => submit(pickedIds.join('\n'))}
+						>{t('ping.confirmSelected', { count: pickedIds.length })}</button
 					>
 					<button
 						class="btn-hot-outline btn-md"
 						disabled={off}
 						aria-busy={busyOn(SELECT_NONE)}
-						onclick={() => submit(SELECT_NONE)}>Select none</button
+						onclick={() => submit(SELECT_NONE)}>{t('ping.selectNone')}</button
 					>
 					{@render attachBtn()}
 				</div>
@@ -226,28 +232,23 @@
 						class="btn-hot btn-md"
 						disabled={off}
 						aria-busy={busyOn('approve')}
-						onclick={() => submit('approve')}>Run it</button
+						onclick={() => submit('approve')}>{t('ping.runIt')}</button
 					>
 					<button
 						class="btn-hot-outline btn-md"
 						disabled={off}
 						aria-busy={busyOn('reject')}
-						onclick={() => submit('reject')}>Not now</button
+						onclick={() => submit('reject')}>{t('ping.notNow')}</button
 					>
 					{@render attachBtn()}
 				</div>
-				<p class="help">
-					Not now: it is offered again only when the situation changes (the target moves, new
-					comments arrive).
-				</p>
+				<p class="help">{t('ping.notNowHelp')}</p>
 			{:else if kind === 'decision'}
 				{#if noteOpen}
 					<textarea
 						bind:value={note}
 						rows="3"
-						placeholder={debug
-							? 'Why stop here? Recorded as the reason the run was abandoned.'
-							: 'What should change? Required — the run takes it as feedback.'}
+						placeholder={debug ? t('ping.debugReasonPlaceholder') : t('ping.changesPlaceholder')}
 						onkeydown={(e) => keys(e, () => note.trim() && !off && submit('reject'))}></textarea>
 				{/if}
 				<div class="acts">
@@ -256,29 +257,29 @@
 						disabled={off}
 						aria-busy={busyOn('approve')}
 						onclick={() => submit('approve')}
-						>{debug ? `Continue — re-run ${stageId}` : 'Approve'}</button
+						>{debug ? t('ping.continueRerun', { stage: stageId ?? '' }) : t('ping.approve')}</button
 					>
 					{#if noteOpen}
 						<button
 							class="btn-hot-outline btn-md"
 							disabled={off || !note.trim()}
 							aria-busy={busyOn('reject')}
-							onclick={() => submit('reject')}>{debug ? 'Abandon the run' : 'Send changes'}</button
+							onclick={() => submit('reject')}
+							>{debug ? t('ping.abandonRun') : t('ping.sendChanges')}</button
 						>
-						<button class="btn-ghost btn-sm" onclick={() => (noteOpen = false)}>Cancel</button>
+						<button class="btn-ghost btn-sm" onclick={() => (noteOpen = false)}
+							>{t('common.cancel')}</button
+						>
 					{:else}
 						<button class="btn-hot-outline btn-md" disabled={off} onclick={() => (noteOpen = true)}
-							>{debug ? 'Abandon…' : 'Request changes…'}</button
+							>{debug ? t('ping.abandon') : t('ping.requestChanges')}</button
 						>
 					{/if}
 					{@render attachBtn()}
 				</div>
 			{:else if kind === 'choice'}
 				{#if noteOpen}
-					<textarea
-						bind:value={note}
-						rows="2"
-						placeholder="Your own answer — or a note that rides along with an option"></textarea>
+					<textarea bind:value={note} rows="2" placeholder={t('ping.otherPlaceholder')}></textarea>
 				{/if}
 				<div class="acts">
 					{#each options as opt, i (opt.id)}
@@ -295,12 +296,12 @@
 							class="btn-dashed btn-md"
 							disabled={off || !note.trim()}
 							aria-busy={busyOn('other')}
-							title="None of the options fit — sends the note text as your answer"
-							onclick={() => submit('other')}>Send as answer</button
+							title={t('ping.otherTitle')}
+							onclick={() => submit('other')}>{t('ping.sendAsAnswer')}</button
 						>
 					{:else}
 						<button class="btn-dashed btn-md" disabled={off} onclick={() => (noteOpen = true)}
-							>Other…</button
+							>{t('ping.other')}</button
 						>
 					{/if}
 					{@render attachBtn()}
@@ -309,24 +310,24 @@
 				<textarea
 					bind:value={note}
 					rows="3"
-					placeholder="Your answer to the agent…"
+					placeholder={t('ping.answerPlaceholder')}
 					onkeydown={(e) => keys(e, () => note.trim() && !off && submit(note.trim()))}></textarea>
 				<div class="acts">
 					<button
 						class="btn-hot btn-md"
 						disabled={off || !note.trim()}
 						aria-busy={off && sending === note.trim()}
-						onclick={() => submit(note.trim())}>Send answer</button
+						onclick={() => submit(note.trim())}>{t('ping.sendAnswer')}</button
 					>
-					<span class="help"><span class="kbd">⌘↵</span> send</span>
+					<span class="help"><span class="kbd">⌘↵</span> {t('ping.sendHint')}</span>
 					{@render attachBtn()}
 				</div>
 			{/if}
 
 			{#if showAttach || files.length}
-				<AttachFiles bind:files label="Attach files to your answer" compact />
+				<AttachFiles bind:files label={t('ping.attachToAnswer')} compact />
 			{/if}
-			{#if uploadErr}<div class="err">Upload failed: {uploadErr}</div>{/if}
+			{#if uploadErr}<div class="err">{t('ping.uploadFailed', { error: uploadErr })}</div>{/if}
 		</div>
 	</div>
 {/if}
@@ -334,7 +335,8 @@
 {#snippet attachBtn()}
 	<span class="spacer"></span>
 	<button class="btn-ghost btn-sm" onclick={() => (showAttach = !showAttach)}
-		>{I.add} Attach{#if files.length}<span class="mono">&nbsp;{files.length}</span>{/if}</button
+		>{I.add}
+		{t('ping.attach')}{#if files.length}<span class="mono">&nbsp;{files.length}</span>{/if}</button
 	>
 {/snippet}
 

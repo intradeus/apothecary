@@ -23,10 +23,11 @@
 	import type { UploadLimits } from '$lib/domain';
 	import FileChip from '$lib/ui/FileChip.svelte';
 	import { I } from '$lib/ui/icons';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		files = $bindable([]),
-		label = 'Drop files or browse',
+		label,
 		compact = false
 	}: { files?: File[]; label?: string; compact?: boolean } = $props();
 
@@ -44,10 +45,10 @@
 		if (!limits) return '';
 		const k = new Set<string>();
 		for (const m of limits.mimeAllow) {
-			if (m.startsWith('image/')) k.add('images');
+			if (m.startsWith('image/')) k.add(t('attach.kind.images'));
 			else if (m.includes('pdf')) k.add('pdf');
 			else if (m.includes('markdown')) k.add('md');
-			else if (m.startsWith('text/')) k.add('text');
+			else if (m.startsWith('text/')) k.add(t('attach.kind.text'));
 		}
 		return [...k].join(', ');
 	});
@@ -77,11 +78,23 @@
 		const no: typeof refused = [];
 		for (const f of Array.from(list)) {
 			if (limits && f.size > limits.maxBytes) {
-				no.push({ name: f.name, size: f.size, why: `over the ${fmtBytes(limits.maxBytes)} limit` });
+				no.push({
+					name: f.name,
+					size: f.size,
+					why: t('attach.overLimit', { size: fmtBytes(limits.maxBytes) })
+				});
 			} else if (limits && !allowed(limits, f.type)) {
-				no.push({ name: f.name, size: f.size, why: `${f.type || 'unknown type'} is not allowed` });
+				no.push({
+					name: f.name,
+					size: f.size,
+					why: t('attach.typeNotAllowed', { type: f.type || t('attach.unknownType') })
+				});
 			} else if (limits && files.length + add.length >= limits.maxFiles) {
-				no.push({ name: f.name, size: f.size, why: `at most ${limits.maxFiles} files` });
+				no.push({
+					name: f.name,
+					size: f.size,
+					why: t('attach.tooMany', { count: limits.maxFiles })
+				});
 			} else {
 				add.push(f);
 			}
@@ -117,9 +130,11 @@
 		ondrop={onDrop}
 	>
 		<span class="clip">{I.attach}</span>
-		<span>{label}</span>
+		<span>{label ?? t('attach.label')}</span>
 		{#if limits && !compact}
-			<span class="fnt">· max {fmtBytes(limits.maxBytes)}{kinds ? ` · ${kinds}` : ''}</span>
+			<span class="fnt"
+				>{t('attach.max', { size: fmtBytes(limits.maxBytes) })}{kinds ? ` · ${kinds}` : ''}</span
+			>
 		{/if}
 	</button>
 	<input bind:this={inputEl} type="file" multiple hidden onchange={onPick} />

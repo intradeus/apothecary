@@ -5,6 +5,7 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import { I } from '$lib/ui/icons';
 	import SlugField, { slugOk } from './SlugField.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		title,
@@ -58,19 +59,19 @@
 			id="nf-name"
 			bind:value={name}
 			placeholder="v2-fast"
-			conflict={dup ? `This workshop already has a flow called ${trimmed}.` : ''}
-			help="The flow’s id — it can’t be renamed later."
+			conflict={dup ? t('flow.name.taken', { name: trimmed }) : ''}
+			help={t('flow.name.help')}
 		/>
 		{#if error}<div class="err">{error}</div>{/if}
 	</form>
 	{#snippet footer()}
-		<button type="button" class="btn-ghost" onclick={onclose}>Cancel</button>
+		<button type="button" class="btn-ghost" onclick={onclose}>{t('common.cancel')}</button>
 		<button
 			class="btn-primary"
 			type="submit"
 			form="name-flow"
 			disabled={busy || !trimmed || bad || dup}
-			aria-busy={busy}>{busy ? 'Working…' : action}</button
+			aria-busy={busy}>{busy ? t('flow.name.working') : action}</button
 		>
 	{/snippet}
 </Modal>

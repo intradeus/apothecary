@@ -4,34 +4,34 @@
 	import SettingsFrame from '$lib/system/SettingsFrame.svelte';
 	import SettingRow from '$lib/ui/SettingRow.svelte';
 	import Stepper from '$lib/ui/Stepper.svelte';
-	import { plural } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 </script>
 
 <SettingsFrame>
 	{#snippet children(s)}
 		<section class="c pane">
 			<div class="pane-head">
-				<h2>Capacity</h2>
-				<span class="mut small">checked on every admission decision</span>
+				<h2>{t('page.limits.head')}</h2>
+				<span class="mut small">{t('page.limits.headSub')}</span>
 			</div>
 			<SettingRow
-				label="Max concurrent runs"
+				label={t('page.limits.concLabel')}
 				forId="s-conc"
-				help="Runs actively working at once. Beyond this, runs queue as pending, first in first out. A run waiting on a human or paused gives its slot back."
+				help={t('page.limits.concHelp')}
 			>
 				{#snippet note()}
-					Now: {fleet.slots.length} running{#if fleet.queued.length}
-						· {plural(fleet.queued.length, 'run')} queued{/if}
+					{t('page.limits.nowRunning', { count: fleet.slots.length })}{#if fleet.queued.length}
+						· {t('page.limits.queued', { count: fleet.queued.length })}{/if}
 				{/snippet}
-				<Stepper id="s-conc" label="Max concurrent runs" bind:value={s.maxConcurrentRuns} />
+				<Stepper id="s-conc" label={t('page.limits.concLabel')} bind:value={s.maxConcurrentRuns} />
 			</SettingRow>
 			<SettingRow
-				label="Max environments"
+				label={t('page.limits.envsLabel')}
 				forId="s-envs"
-				help="Workspaces that may exist at once, live or stopped. At the cap, new runs are refused until a run is archived or reaped."
+				help={t('page.limits.envsHelp')}
 			>
-				{#snippet note()}Now: {plural(fleet.envs.length, 'environment')} standing{/snippet}
-				<Stepper id="s-envs" label="Max environments" bind:value={s.maxEnvironments} />
+				{#snippet note()}{t('page.limits.envsNow', { count: fleet.envs.length })}{/snippet}
+				<Stepper id="s-envs" label={t('page.limits.envsLabel')} bind:value={s.maxEnvironments} />
 			</SettingRow>
 		</section>
 	{/snippet}

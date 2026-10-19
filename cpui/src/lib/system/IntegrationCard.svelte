@@ -9,7 +9,7 @@
 	import ConfigCard from '$lib/ui/ConfigCard.svelte';
 	import CheckChip from '$lib/ui/CheckChip.svelte';
 	import IntegrationForm from '$lib/IntegrationForm.svelte';
-	import { esc } from '$lib/ui/html';
+	import { t, th } from '$lib/i18n/index.svelte';
 	import { readTests, writeTest, type TestResult } from './testResults';
 
 	let {
@@ -34,8 +34,8 @@
 
 	$effect(() => {
 		result = readTests()[i.id] ?? null;
-		const t = setInterval(() => (now = Date.now()), 30_000);
-		return () => clearInterval(t);
+		const timer = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(timer);
 	});
 
 	const fieldLabel = (k: string) => descriptor?.fields.find((f) => f.name === k)?.label ?? k;
@@ -58,21 +58,29 @@
 		}
 		// The verdict lands on the card; the toast confirms it for a card
 		// scrolled out of view while the test ran.
-		if (result?.ok && result.warnings?.length) toast(`${i.name}: passed, partly unverified`);
-		else if (result?.ok) toast(`${i.name}: test passed`);
-		else toast(`${i.name}: test failed`, { tone: 'bad' });
+		if (result?.ok && result.warnings?.length)
+			toast(t('system.int.passedPartly', { name: i.name }));
+		else if (result?.ok) toast(t('system.int.passed', { name: i.name }));
+		else toast(t('system.int.failed', { name: i.name }), { tone: 'bad' });
 	}
 
 	async function remove() {
 		// The engine refuses (409) while a workshop names it: say so up front.
 		if (usedBy.length) {
-			error = `In use by ${usedBy.join(', ')}. Pick another ${i.port} in ${usedBy.length === 1 ? `that workshop’s` : `those workshops’`} setup first.`;
+			error = t('system.int.inUse', {
+				workshops: usedBy.join(', '),
+				port: i.port,
+				those: usedBy.length === 1 ? t('system.int.thatWorkshop') : t('system.int.thoseWorkshops')
+			});
 			return;
 		}
 		const ok = await confirmDialog({
-			title: `Delete ${i.name}?`,
-			body: `The integration <b>${esc(i.name)}</b> and its stored secrets are deleted. ${i.port === 'ticketsource' ? 'Tickets already imported from it keep their copy.' : `No workshop uses it.`}`,
-			action: 'Delete integration'
+			title: t('system.int.deleteTitle', { name: i.name }),
+			body: th(
+				i.port === 'ticketsource' ? 'system.int.deleteBodyTickets' : 'system.int.deleteBodyUnused',
+				{ name: i.name }
+			),
+			action: t('system.int.deleteAction')
 		});
 		if (!ok) return;
 		error = '';
@@ -80,7 +88,7 @@
 		try {
 			await api.integrations.remove(i.id);
 			writeTest(i.id, null);
-			toast(`${i.name} deleted`);
+			toast(t('system.int.deleted', { name: i.name }));
 			onchanged();
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -97,33 +105,41 @@
 	{error}
 	open={editing}
 	sub={usedBy.length
-		? `used by ${usedBy.join(', ')}`
+		? t('system.int.usedBy', { workshops: usedBy.join(', ') })
 		: i.port !== 'ticketsource'
-			? `not used by any workshop`
+			? t('system.int.unused')
 			: undefined}
 >
 	{#snippet status()}
 		{#if testing}
-			<CheckChip tone="live" label="testing…" />
+			<CheckChip tone="live" label={t('system.int.testing')} />
 		{:else if result}
 			{@const warnings = result.warnings ?? []}
 			<CheckChip
 				tone={!result.ok ? 'bad' : warnings.length ? 'warn' : 'ok'}
-				label={!result.ok ? (result.error ?? 'error') : warnings.length ? 'ok, unverified' : 'ok'}
-				when="tested {ago(Math.min(result.at, now))}"
+				label={!result.ok
+					? (result.error ?? t('system.int.errorLabel'))
+					: warnings.length
+						? t('system.int.okUnverified')
+						: t('system.int.ok')}
+				when={t('system.int.tested', { ago: ago(Math.min(result.at, now)) })}
 				title="{[result.error ?? 'ok', ...warnings].join('\n')} · {fmtAbs(result.at)}"
 			/>
 		{:else}
-			<CheckChip tone="none" label="not tested yet" />
+			<CheckChip tone="none" label={t('system.int.notTested')} />
 		{/if}
 	{/snippet}
 	{#snippet actions()}
-		<button class="btn-sm" onclick={test} disabled={testing} aria-busy={testing}>Test</button>
+		<button class="btn-sm" onclick={test} disabled={testing} aria-busy={testing}
+			>{t('system.int.test')}</button
+		>
 		<button class="btn-sm" class:btn-sel={editing} onclick={() => (editing = !editing)}
-			>{editing ? 'Close' : 'Edit'}</button
+			>{editing ? t('system.int.close') : t('system.int.edit')}</button
 		>
 		<span class="spacer"></span>
-		<button class="btn-danger btn-sm" onclick={remove} aria-busy={removing}>Delete…</button>
+		<button class="btn-danger btn-sm" onclick={remove} aria-busy={removing}
+			>{t('system.int.delete')}</button
+		>
 	{/snippet}
 	{#if descriptor}
 		<IntegrationForm
@@ -136,8 +152,6 @@
 			oncancel={() => (editing = false)}
 		/>
 	{:else}
-		<div class="mut small">
-			Kind <code>{i.kind}</code> is not registered on this engine, so it can’t be edited here.
-		</div>
+		<div class="mut small">{@html th('system.int.unregistered', { kind: i.kind })}</div>
 	{/if}
 </ConfigCard>

@@ -7,6 +7,7 @@
 // sets `motion`, which tells the desk to spring the windows from where they
 // are to their new rects; a gutter drag tracks 1:1 with motion off.
 
+import { t } from '$lib/i18n/index.svelte';
 import { ms } from '$lib/ui/motion';
 
 import {
@@ -89,7 +90,9 @@ export class DeskState {
 	}
 
 	readonly visible = $derived(new Set(leavesOf(this.tree).flatMap((l) => l.tabs)));
-	readonly label = $derived(isPreset(this.preset) ? PRESETS[this.preset].label : 'Custom');
+	readonly label = $derived(
+		isPreset(this.preset) ? PRESETS[this.preset].label : t('desk.preset.custom')
+	);
 
 	/** A structural change (split, move, hide, preset): restores a maximised
 	 *  window, since the layout it was hiding just changed. */

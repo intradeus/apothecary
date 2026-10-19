@@ -5,6 +5,7 @@
 	import type { RunCheckout } from '$lib/domain';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import { I } from '$lib/ui/icons';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		checkouts,
@@ -23,15 +24,15 @@
 		checkouts.map((c) => ({
 			value: c.primary ? '' : c.name,
 			label: c.primary ? `${c.name} ${I.star}` : c.name,
-			title: c.primary ? `${c.url} (primary)` : c.url
+			title: c.primary ? t('run.repo.primary', { url: c.url }) : c.url
 		}))
 	);
 </script>
 
 <div class="vbar">
 	{#if checkouts.length > 1}
-		<span class="lbl">Repo</span>
-		<Segmented mono glass={false} size="sm" label="Repository" {options} bind:value />
+		<span class="lbl">{t('run.repo.label')}</span>
+		<Segmented mono glass={false} size="sm" label={t('run.repo.aria')} {options} bind:value />
 	{/if}
 	{#if children}{@render children()}{/if}
 	{#if hint}<span class="hint">{hint}</span>{/if}

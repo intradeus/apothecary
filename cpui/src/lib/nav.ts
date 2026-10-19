@@ -3,6 +3,7 @@
 // renamed page or a new section changes one entry.
 
 import { to } from '$lib/guild';
+import { t } from '$lib/i18n/index.svelte';
 import { I } from '$lib/ui/icons';
 
 export interface NavItem {
@@ -21,7 +22,9 @@ export interface NavItem {
 export const NAV: readonly NavItem[] = [
 	{
 		id: 'desk',
-		label: 'Desk',
+		get label() {
+			return t('nav.desk');
+		},
 		icon: I.desk,
 		href: () => to.desk(),
 		chord: 'd',
@@ -30,7 +33,9 @@ export const NAV: readonly NavItem[] = [
 	},
 	{
 		id: 'inbox',
-		label: 'Inbox',
+		get label() {
+			return t('nav.inbox');
+		},
 		icon: I.inbox,
 		href: () => to.inbox(),
 		chord: 'i',
@@ -39,7 +44,9 @@ export const NAV: readonly NavItem[] = [
 	},
 	{
 		id: 'runs',
-		label: 'Runs',
+		get label() {
+			return t('nav.runs');
+		},
 		icon: I.runs,
 		href: () => to.runs(),
 		chord: 'r',
@@ -48,7 +55,9 @@ export const NAV: readonly NavItem[] = [
 	},
 	{
 		id: 'tickets',
-		label: 'Tickets',
+		get label() {
+			return t('nav.tickets');
+		},
 		icon: I.tickets,
 		href: () => to.tickets(),
 		chord: 't',
@@ -57,7 +66,9 @@ export const NAV: readonly NavItem[] = [
 	},
 	{
 		id: 'system',
-		label: 'System',
+		get label() {
+			return t('nav.system');
+		},
 		icon: I.system,
 		href: () => to.system(),
 		mobile: false,

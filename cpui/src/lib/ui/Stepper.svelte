@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Integer stepper: − value + (DESIGN 7.10, limits).
 	let {
 		value = $bindable(1),
@@ -15,7 +16,7 @@
 	<button
 		type="button"
 		class="b"
-		aria-label="decrease"
+		aria-label={t('ui.stepper.decrease')}
 		disabled={value <= min}
 		onclick={() => (value = clamp(Number(value) - 1))}>−</button
 	>
@@ -35,7 +36,7 @@
 	<button
 		type="button"
 		class="b"
-		aria-label="increase"
+		aria-label={t('ui.stepper.increase')}
 		disabled={value >= max}
 		onclick={() => (value = clamp(Number(value) + 1))}>+</button
 	>

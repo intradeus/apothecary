@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/svelte';
 	import StageChip from '$lib/ui/StageChip.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { EDGE_HUE, STAGE_HUE, hueOf } from '$lib/ui/hues';
 	import {
 		isFeedSentinel,
@@ -47,17 +48,26 @@
 	// own handle colour variable.
 	const hh = (kind: keyof typeof EDGE_HUE) =>
 		`--xy-handle-background-color: var(--${EDGE_HUE[kind]})`;
-	const detail = $derived(
-		stage.type === 'agent'
-			? stage.agent || '(no agent)'
-			: stage.type === 'command'
-				? stage.run_ref || (stage.run ? 'script' : '(no command)')
-				: stage.type === 'action'
-					? stage.action || '(no action)'
-					: stage.type === 'wait'
-						? `for ${stage.for || '(no signal)'}`
-						: stage.question || 'asks a human'
-	);
+	// `unset` marks a placeholder (nothing chosen yet), styled muted.
+	const detail = $derived.by((): { text: string; unset: boolean } => {
+		const set = (text: string) => ({ text, unset: false });
+		const unset = (text: string) => ({ text, unset: true });
+		if (stage.type === 'agent')
+			return stage.agent ? set(stage.agent) : unset(t('flow.node.noAgent'));
+		if (stage.type === 'command')
+			return stage.run_ref
+				? set(stage.run_ref)
+				: stage.run
+					? set(t('flow.node.script'))
+					: unset(t('flow.node.noCommand'));
+		if (stage.type === 'action')
+			return stage.action ? set(stage.action) : unset(t('flow.node.noAction'));
+		if (stage.type === 'wait')
+			return stage.for
+				? set(t('flow.node.waitFor', { signal: stage.for }))
+				: unset(t('flow.node.waitFor', { signal: t('flow.node.noSignal') }));
+		return set(stage.question || t('flow.node.asksHuman'));
+	});
 </script>
 
 <div
@@ -72,9 +82,8 @@
 		<Handle type="target" position={Position.Left} style="top: 20px" />
 		<StageChip type={stage.type} />
 		<span class="mono id">{stage.id}</span>
-		{#if entry}<span
-				class="pill sm flat sq t-brand entry"
-				title="The flow (or its phase) starts here">entry</span
+		{#if entry}<span class="pill sm flat sq t-brand entry" title={t('flow.node.entryTitle')}
+				>{t('flow.node.entry')}</span
 			>{/if}
 		<Handle
 			id="success"
@@ -83,7 +92,7 @@
 			style="top: 20px; {hh('success')}"
 		/>
 	</div>
-	<div class="meta" class:unset={detail.startsWith('(')}>{detail}</div>
+	<div class="meta" class:unset={detail.unset}>{detail.text}</div>
 
 	{#if inputs.length || outputs.length}
 		<div class="ports">
@@ -95,7 +104,7 @@
 					class:unbound={p.unbound}
 					class:sentinel={p.sentinel}
 					class:fed={isFeedSentinel(p.value)}
-					title={p.unbound ? 'unbound' : p.value}
+					title={p.unbound ? t('flow.node.unbound') : p.value}
 				>
 					{#if !p.unbound && (!p.sentinel || isFeedSentinel(p.value))}
 						<Handle
@@ -109,7 +118,7 @@
 						<span class="vdot" aria-hidden="true"></span>
 					{/if}
 					<span class="pname mono">{p.name}</span>
-					{#if p.unbound}<span class="unset">unbound</span>
+					{#if p.unbound}<span class="unset">{t('flow.node.unbound')}</span>
 					{:else if p.sentinel}<span class="sent mono">{p.value}</span>
 					{:else if p.value !== p.name}<span class="path mono">{p.value}</span>{/if}
 				</div>

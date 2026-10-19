@@ -3,6 +3,7 @@
 
 import type { Run, RunEvent } from '$lib/domain';
 import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/format';
+import { t } from '$lib/i18n/index.svelte';
 import { answerKindOf, toPingOption, type PingLike } from '$lib/ping';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
@@ -160,7 +161,7 @@ export function stageRows(
 		if (end?.type === 'stage_completed') {
 			const u = end.payload.usage as { cost_usd?: number } | undefined;
 			const bits = [
-				'done',
+				t('run.stage.done'),
 				u?.cost_usd ? fmtCost(u.cost_usd) : '',
 				end.payload.duration_ms ? fmtDuration(Number(end.payload.duration_ms)) : ''
 			].filter(Boolean);
@@ -170,7 +171,7 @@ export function stageRows(
 			return {
 				...r,
 				status: 'waiting' as StageStatus,
-				line: 'failed — parked for you to check why'
+				line: t('run.stage.parked')
 			};
 		if (end?.type === 'stage_failed')
 			return {
@@ -179,21 +180,24 @@ export function stageRows(
 				line: String(end.payload.reason ?? 'failed').replace(/_/g, ' ')
 			};
 		if (!over && (end?.type === 'stage_paused' || state === 'waiting_on_human'))
-			return { ...r, status: 'waiting' as StageStatus, line: 'waiting on you' };
+			return { ...r, status: 'waiting' as StageStatus, line: t('run.stage.waiting') };
 		if (state === 'paused')
-			return { ...r, status: 'paused' as StageStatus, line: 'paused — will re-enter' };
+			return { ...r, status: 'paused' as StageStatus, line: t('run.stage.pausedReenter') };
 		if (over)
 			return {
 				...r,
 				status: (state === 'failed' ? 'failed' : 'paused') as StageStatus,
-				line: state === 'failed' ? 'failed' : 'stopped'
+				line: state === 'failed' ? t('run.stage.failed') : t('run.stage.stopped')
 			};
 		// Working: the clock counts from the start or the latest resume.
 		const since = end?.type === 'stage_resumed' ? end.ts : start.ts;
 		return {
 			...r,
 			status: 'running' as StageStatus,
-			line: `attempt ${attempt} · ${fmtClockDuration(now - new Date(since).getTime())}`
+			line: t('run.stage.working', {
+				attempt,
+				clock: fmtClockDuration(now - new Date(since).getTime())
+			})
 		};
 	});
 
@@ -207,14 +211,15 @@ export function stageRows(
 		for (let i = to; i <= from; i++) {
 			const r = rows[i];
 			if (r.startSeq >= 0 && r.endSeq < e.seq && r.startSeq < e.seq) {
-				rows[i] = { ...r, status: 'pending', line: '↩ runs again', looped: true };
+				rows[i] = { ...r, status: 'pending', line: t('run.stage.runsAgain'), looped: true };
 			}
 		}
 		if (rows[to].startSeq > e.seq) rows[to] = { ...rows[to], looped: true };
 	}
 	for (const r of rows) {
 		if (r.status === 'running' || r.status === 'waiting' || r.status === 'done') continue;
-		if (r.status === 'pending' && !r.line) r.line = r.type === 'human_gate' ? 'gate' : r.type;
+		if (r.status === 'pending' && !r.line)
+			r.line = r.type === 'human_gate' ? t('run.stage.gate') : r.type;
 	}
 	return rows.map(({ endSeq: _e, startSeq: _s, ...r }) => r);
 }
@@ -236,161 +241,231 @@ export function describe(e: RunEvent): Described {
 		case 'snapshot_captured': {
 			if (p.kind === 'ping_file')
 				return {
-					text: `captured ${p.path} for a ping (as shown to you)`,
+					text: t('run.event.capturedPing', { path: String(p.path) }),
 					tone: '',
 					snapshot: p.snapshot_id as string
 				};
-			const what = p.kind === 'log' ? 'log' : `output ${p.name || ''}`.trim();
+			const what =
+				p.kind === 'log'
+					? t('run.event.log')
+					: t('run.event.output', { name: String(p.name || '') }).trim();
 			const where = p.path ? ` — ${p.path}` : '';
 			return {
-				text: `${p.stage_id} (attempt ${p.iteration ?? 0}) captured ${what}${where}`,
+				text: t('run.event.captured', {
+					stage: String(p.stage_id),
+					attempt: Number(p.iteration ?? 0),
+					what,
+					where
+				}),
 				tone: '',
 				snapshot: p.snapshot_id as string
 			};
 		}
 		case 'run_created':
-			return { text: `run created — “${p.ticket_title}” (flow ${p.flow_name})`, tone: 'info' };
+			return {
+				text: t('run.event.runCreated', {
+					title: String(p.ticket_title),
+					flow: String(p.flow_name)
+				}),
+				tone: 'info'
+			};
 		case 'env_requested':
-			return { text: 'provisioning workspace…', tone: '', stage: PROVISION_STAGE };
+			return { text: t('run.event.provisioning'), tone: '', stage: PROVISION_STAGE };
 		case 'image_built':
-			return { text: `image built${p.cached ? ' (from cache)' : ''}`, tone: '' };
+			return {
+				text: t(p.cached ? 'run.event.imageBuiltCached' : 'run.event.imageBuilt'),
+				tone: ''
+			};
 		case 'env_ready':
-			return { text: `workspace ready (${p.env_id})`, tone: 'ok', stage: PROVISION_STAGE };
+			return {
+				text: t('run.event.wsReady', { env: String(p.env_id) }),
+				tone: 'ok',
+				stage: PROVISION_STAGE
+			};
 		case 'env_failed':
-			return { text: `environment failed: ${p.error}`, tone: 'bad', stage: PROVISION_STAGE };
+			return {
+				text: t('run.event.envFailed', { error: String(p.error) }),
+				tone: 'bad',
+				stage: PROVISION_STAGE
+			};
 		case 'env_rebuild_started':
-			return { text: 'workspace rebuild started', tone: 'info' };
+			return { text: t('run.event.rebuildStarted'), tone: 'info' };
 		case 'env_rebuild_completed':
-			return { text: 'workspace rebuilt', tone: 'ok' };
+			return { text: t('run.event.rebuilt'), tone: 'ok' };
 		case 'env_rebuild_failed':
-			return { text: `workspace rebuild failed${p.error ? `: ${p.error}` : ''}`, tone: 'bad' };
+			return {
+				text: p.error
+					? t('run.event.rebuildFailedWith', { error: String(p.error) })
+					: t('run.event.rebuildFailed'),
+				tone: 'bad'
+			};
 		case 'stage_started':
 			return {
-				text: `${p.stage_id} started (attempt ${p.iteration})${p.model ? ` · ${p.model}` : ''}`,
+				text: `${t('run.event.stageStarted', { stage: String(p.stage_id), attempt: Number(p.iteration) })}${p.model ? ` · ${p.model}` : ''}`,
 				tone: 'info',
 				stage: p.stage_id as string
 			};
 		case 'stage_completed': {
 			const u = p.usage as { cost_usd?: number } | undefined;
 			const bits = [
-				p.turns_used ? `${p.turns_used} turns` : '',
+				p.turns_used ? t('run.event.turns', { count: Number(p.turns_used) }) : '',
 				u?.cost_usd ? fmtCost(u.cost_usd) : '',
 				`${Math.round((p.duration_ms as number) / 1000)}s`
 			]
 				.filter(Boolean)
 				.join(' · ');
-			return { text: `${p.stage_id} completed (${bits})`, tone: 'ok', stage: p.stage_id as string };
+			return {
+				text: t('run.event.stageCompleted', { stage: String(p.stage_id), bits }),
+				tone: 'ok',
+				stage: p.stage_id as string
+			};
 		}
 		case 'stage_paused': {
 			const u = p.usage as { cost_usd?: number } | undefined;
 			const spent = [
-				p.turns_used ? `${p.turns_used} turns` : '',
+				p.turns_used ? t('run.event.turns', { count: Number(p.turns_used) }) : '',
 				u?.cost_usd ? fmtCost(u.cost_usd) : ''
 			]
 				.filter(Boolean)
 				.join(' · ');
-			const why = p.reason === 'ask_human' ? 'waiting on its own question' : String(p.reason ?? '');
+			const why = p.reason === 'ask_human' ? t('run.event.ownQuestion') : String(p.reason ?? '');
 			return {
-				text: `${p.stage_id} paused — ${why}${spent ? ` (${spent} so far)` : ''}`,
+				text: spent
+					? t('run.event.stagePausedSpent', { stage: String(p.stage_id), why, spent })
+					: t('run.event.stagePaused', { stage: String(p.stage_id), why }),
 				tone: 'warn',
 				stage: p.stage_id as string
 			};
 		}
 		case 'stage_resumed':
 			return {
-				text: `${p.stage_id} resumed — ${p.reason === 'engine_restart' ? 'engine restarted, picking the session back up' : 'the answer landed'}`,
+				text: t(
+					p.reason === 'engine_restart' ? 'run.event.resumedRestart' : 'run.event.resumedAnswer',
+					{ stage: String(p.stage_id) }
+				),
 				tone: 'info',
 				stage: p.stage_id as string
 			};
 		case 'stage_failed':
 			return {
-				text: `${p.stage_id} failed: ${p.reason}${p.error ? ` — ${String(p.error).slice(0, 200)}` : ''}`,
+				text: `${t('run.event.stageFailed', { stage: String(p.stage_id), reason: String(p.reason) })}${p.error ? ` — ${String(p.error).slice(0, 200)}` : ''}`,
 				tone: 'bad',
 				stage: p.stage_id as string
 			};
 		case 'action_started':
-			return { text: `${p.stage_id}: action ${p.action} started`, tone: 'info' };
+			return {
+				text: t('run.event.actionStarted', { stage: String(p.stage_id), action: String(p.action) }),
+				tone: 'info'
+			};
 		case 'edge_taken':
 			return {
-				text: `↩ ${p.edge}${p.depth ? ` (then #${p.depth})` : ''} ${p.from} → ${p.to} (${p.count}/${p.max === -1 ? '∞' : p.max})`,
+				text: `↩ ${p.edge}${p.depth ? ` ${t('run.event.thenDepth', { depth: Number(p.depth) })}` : ''} ${p.from} → ${p.to} (${p.count}/${p.max === -1 ? '∞' : p.max})`,
 				tone: 'warn'
 			};
 		case 'ping_raised':
 			if (p.type === 'debug')
-				return { text: `${p.stage_id} failed — parked for debugging`, tone: 'warn' };
-			return { text: `ping [${p.type}]: ${p.question}`, tone: 'warn' };
+				return { text: t('run.event.parkedDebug', { stage: String(p.stage_id) }), tone: 'warn' };
+			return {
+				text: t('run.event.ping', { type: String(p.type), question: String(p.question) }),
+				tone: 'warn'
+			};
 		case 'ping_answered':
-			return { text: `answered: ${p.answer}${p.feedback ? ` — ${p.feedback}` : ''}`, tone: 'ok' };
+			return {
+				text: `${t('run.event.answered', { answer: String(p.answer) })}${p.feedback ? ` — ${p.feedback}` : ''}`,
+				tone: 'ok'
+			};
 		case 'verdict_received':
 			return {
 				text: p.approve
-					? 'review verdict: APPROVE'
-					: `review verdict: REJECT (${p.n_comments} comments)`,
+					? t('run.event.approve')
+					: t('run.event.reject', { count: Number(p.n_comments) }),
 				tone: p.approve ? 'ok' : 'warn'
 			};
 		case 'phase_started':
 			return {
 				text: p.subject
-					? `phase ${p.phase} on ${p.subject === 'repo' ? 'the merge request' : p.subject} (${p.by === 'human' ? 'started by hand' : 'triggered'})`
-					: `phase ${p.phase}`,
+					? t('run.event.phaseOn', {
+							phase: String(p.phase),
+							subject: p.subject === 'repo' ? t('run.event.theMr') : String(p.subject),
+							how: p.by === 'human' ? t('run.event.byHand') : t('run.event.triggered')
+						})
+					: t('run.event.phase', { phase: String(p.phase) }),
 				tone: 'info'
 			};
 		case 'phase_completed':
-			return { text: `phase ${p.phase} done`, tone: 'ok' };
+			return { text: t('run.event.phaseDone', { phase: String(p.phase) }), tone: 'ok' };
 		case 'phase_declined':
-			return { text: `phase ${p.phase} declined`, tone: 'warn' };
+			return { text: t('run.event.phaseDeclined', { phase: String(p.phase) }), tone: 'warn' };
 		case 'review_comments_loaded': {
 			const n = Array.isArray(p.thread_ids) ? p.thread_ids.length : 0;
-			return { text: `loaded ${n} review thread${n === 1 ? '' : 's'}`, tone: 'info' };
+			return { text: t('run.event.threadsLoaded', { count: n }), tone: 'info' };
 		}
 		case 'review_replies_posted': {
 			const n = Array.isArray(p.thread_ids) ? p.thread_ids.length : 0;
-			return { text: `replied to ${n} review thread${n === 1 ? '' : 's'}`, tone: 'ok' };
+			return { text: t('run.event.threadsReplied', { count: n }), tone: 'ok' };
 		}
 		case 'branch_pushed':
 			return {
-				text: `pushed ${p.branch}${p.repo && p.repo !== 'repo' ? ` (${p.repo})` : ''} at ${String(p.tip ?? '').slice(0, 8)}`,
+				text: t('run.event.pushed', {
+					branch: `${p.branch}${p.repo && p.repo !== 'repo' ? ` (${p.repo})` : ''}`,
+					tip: String(p.tip ?? '').slice(0, 8)
+				}),
 				tone: 'ok'
 			};
 		case 'target_synced':
 			return {
-				text: `took ${String(p.target_tip ?? '').slice(0, 10)} in (${p.strategy})`,
+				text: t('run.event.targetSynced', {
+					tip: String(p.target_tip ?? '').slice(0, 10),
+					strategy: String(p.strategy)
+				}),
 				tone: 'ok'
 			};
 		case 'mr_created':
 			return {
-				text: `merge request created: ${p.mr_url}${p.target ? ` (${p.branch} → ${p.target})` : ''}`,
+				text: `${t('run.event.mrCreated', { url: String(p.mr_url) })}${p.target ? ` (${p.branch} → ${p.target})` : ''}`,
 				tone: 'ok'
 			};
 		case 'run_completed':
 			return {
-				text: `run completed — ${fmtCost(p.total_cost_usd)} · ${p.total_turns} turns · ${p.unwanted_pings} unwanted pings`,
+				text: t('run.event.runCompleted', {
+					cost: fmtCost(p.total_cost_usd),
+					turns: Number(p.total_turns),
+					pings: Number(p.unwanted_pings)
+				}),
 				tone: 'ok'
 			};
 		case 'run_abandoned':
-			return { text: `abandoned at ${p.stalled_at}: ${p.reason}`, tone: 'bad' };
+			return {
+				text: t('run.event.abandoned', { stage: String(p.stalled_at), reason: String(p.reason) }),
+				tone: 'bad'
+			};
 		case 'run_failed':
-			return { text: `run failed: ${p.reason}`, tone: 'bad' };
+			return { text: t('run.event.runFailed', { reason: String(p.reason) }), tone: 'bad' };
 		case 'run_retried':
 		case 'run_resumed': // the pre-rename spelling, still in stored history
-			return { text: 'retry — re-entering the failed stage in the same workspace', tone: 'info' };
+			return { text: t('run.event.retried'), tone: 'info' };
 		case 'run_paused':
 			// Parked by the engine on a human is not the same as paused by one:
 			// the first releases the slot and comes back on its own.
 			return p.reason === 'waiting_on_human'
 				? {
-						text: `parked at ${p.stage_id} — waiting for you (the run released its slot)`,
+						text: t('run.event.parked', { stage: String(p.stage_id) }),
 						tone: ''
 					}
-				: { text: `paused${p.stage_id ? ` at ${p.stage_id}` : ''}`, tone: '' };
+				: {
+						text: p.stage_id
+							? t('run.event.pausedAt', { stage: String(p.stage_id) })
+							: t('run.event.paused'),
+						tone: ''
+					};
 		case 'run_unpaused':
 			return p.reason === 'answered'
-				? { text: 'picked back up — your answer landed', tone: 'info' }
-				: { text: 'play — continuing where it left off', tone: 'info' };
+				? { text: t('run.event.pickedUp'), tone: 'info' }
+				: { text: t('run.event.play'), tone: 'info' };
 		case 'run_archived':
-			return { text: 'archived', tone: '' };
+			return { text: t('run.event.archived'), tone: '' };
 		case 'env_destroyed':
-			return { text: 'workspace destroyed', tone: '' };
+			return { text: t('run.event.destroyed'), tone: '' };
 		default:
 			return { text: e.type.replace(/_/g, ' '), tone: '' };
 	}

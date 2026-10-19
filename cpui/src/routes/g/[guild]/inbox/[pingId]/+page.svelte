@@ -10,6 +10,7 @@
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 	import { answerMeta, isDocumentPing } from '$lib/ping';
 	import type { Ping, PingFile } from '$lib/domain';
 	import PlanReview from '$lib/PlanReview.svelte';
@@ -68,38 +69,40 @@
 	const run = $derived(ping ? fleet.runById.get(ping.runId) : undefined);
 	const crumbs = $derived([
 		{ label: currentGuild().name, href: to.desk() },
-		{ label: 'Inbox', href: to.inbox() },
+		{ label: t('page.inbox.title'), href: to.inbox() },
 		{ label: ping ? shortId(ping.id, 'p_') : '…', mono: true }
 	]);
 	const verdict = $derived(ping ? answerMeta(ping) : answerMeta({}));
 </script>
 
-<svelte:head><title>Review · Inbox</title></svelte:head>
+<svelte:head><title>{t('page.ping.docTitle')}</title></svelte:head>
 
 {#if gone}
 	<div class="page">
-		<EmptyState title="No such ping" text="It may have been withdrawn, or the link is wrong.">
-			<a class="btn btn-primary" href={to.inbox()}>Back to the inbox</a>
+		<EmptyState title={t('page.ping.gone')} text={t('page.ping.goneText')}>
+			<a class="btn btn-primary" href={to.inbox()}>{t('page.ping.backToInbox')}</a>
 		</EmptyState>
 	</div>
 {:else if !ping}
-	<PageHeader {crumbs} title="Review" />
+	<PageHeader {crumbs} title={t('page.ping.review')} />
 	<div class="page"><Skeleton pane lines={8} /></div>
 {:else if ping.status === 'pending' && !isDocumentPing(ping)}
 	<Inbox initial={ping.id} />
 {:else}
-	<PageHeader {crumbs} title="Review" accent="the recipe">
+	<PageHeader {crumbs} title={t('page.ping.review')} accent={t('page.ping.accent')}>
 		{#snippet chip()}<PingPill type={ping!.type} />{/snippet}
 		{#snippet meta()}
 			{#if run}<a href={to.run(run.id)}>{run.title}</a>{:else}<a href={to.run(ping!.runId)}
 					>{shortId(ping!.runId)}</a
 				>{/if}
 			{#if ping!.stageId}<span class="mono">{ping!.stageId}</span>{/if}
-			<span title={fmtAbs(ping!.raisedAt)}>raised {ago(ping!.raisedAt)}</span>
-			{#if ping!.status === 'pending'}<span class="hue-amb">waiting on you</span>{/if}
+			<span title={fmtAbs(ping!.raisedAt)}
+				>{t('page.ping.raised', { ago: ago(ping!.raisedAt) })}</span
+			>
+			{#if ping!.status === 'pending'}<span class="hue-amb">{t('page.ping.waiting')}</span>{/if}
 		{/snippet}
 		{#snippet actions()}
-			<a class="btn" href={to.run(ping!.runId)}>Open run {I.forward}</a>
+			<a class="btn" href={to.run(ping!.runId)}>{t('page.ping.openRun')} {I.forward}</a>
 		{/snippet}
 	</PageHeader>
 
@@ -108,8 +111,8 @@
 			{ping}
 			onanswered={() => {
 				const runId = ping!.runId;
-				toast('Review sent', {
-					action: { label: 'Open run', run: () => void goto(to.run(runId)) }
+				toast(t('page.ping.reviewSent'), {
+					action: { label: t('page.ping.openRun'), run: () => void goto(to.run(runId)) }
 				});
 				void fleet.refresh();
 				void goto(to.inbox());
@@ -125,7 +128,7 @@
 					<span class="g hue-{verdict.hue}">{verdict.glyph}</span>
 					<span class="w" class:fnt={ping.status === 'withdrawn'}>{verdict.word}</span>
 					{#if ping.status === 'withdrawn'}
-						<span class="mut">the run moved on before anyone answered</span>
+						<span class="mut">{t('page.ping.moved')}</span>
 					{:else}
 						{#if ping.answer && ping.answer !== 'approve' && ping.answer !== 'reject'}
 							<span class="tag">{ping.answer}</span>
@@ -138,7 +141,7 @@
 				<Markdown src={ping.question} quiet />
 				{#if ping.feedback}
 					<div class="fb">
-						<div class="lbl">Feedback sent</div>
+						<div class="lbl">{t('page.ping.feedbackSent')}</div>
 						<Markdown src={ping.feedback} />
 					</div>
 				{/if}
@@ -150,7 +153,7 @@
 					<div class="paper doc"><Markdown src={reviewed.text} doc /></div>
 				</section>
 			{/if}
-			<AgentFiles files={answeredFiles.slice(1)} label="Also attached by the agent" />
+			<AgentFiles files={answeredFiles.slice(1)} label={t('page.ping.alsoAttached')} />
 		</div>
 	{/if}
 {/if}

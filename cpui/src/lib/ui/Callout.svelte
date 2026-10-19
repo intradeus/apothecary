@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// A glass note strip inside a page (informational, not an alert): "this
 	// flow is a built-in", "pings are always answered here". For problems that
 	// need action use Banner.
@@ -17,7 +18,8 @@
 <div class="co lg h-{hue}">
 	<span class="g">{glyph}</span>
 	<div class="grow">{@render children()}</div>
-	{#if ondismiss}<button class="btn-ghost btn-sm" onclick={ondismiss}>Dismiss</button>{/if}
+	{#if ondismiss}<button class="btn-ghost btn-sm" onclick={ondismiss}>{t('ui.dismiss')}</button
+		>{/if}
 </div>
 
 <style>

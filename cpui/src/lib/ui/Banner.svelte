@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// In-flow alert banner (DESIGN 4.7): control glass over a hue tint.
 	import type { Snippet } from 'svelte';
 
@@ -36,7 +37,9 @@
 	{#if aside}<span class="aside">{aside}</span>{/if}
 	{#if shown.length}
 		<span class="items mono"
-			>{shown.join(' · ')}{#if more > 0}<span class="more"> +{more} more</span>{/if}</span
+			>{shown.join(' · ')}{#if more > 0}<span class="more">
+					{t('ui.banner.more', { count: more })}</span
+				>{/if}</span
 		>
 	{/if}
 	{#if children}{@render children()}{/if}
@@ -46,7 +49,7 @@
 			>{action}</button
 		>
 	{/if}
-	{#if ondismiss}<button class="btn-ghost" onclick={ondismiss}>Dismiss</button>{/if}
+	{#if ondismiss}<button class="btn-ghost" onclick={ondismiss}>{t('ui.dismiss')}</button>{/if}
 </div>
 
 <style>

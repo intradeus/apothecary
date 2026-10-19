@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t, th } from '$lib/i18n/index.svelte';
 	// Workshop flows tab (DESIGN 7.7): this workshop's own flows, then the
 	// built-in templates it has not adopted. New flow, Copy into another
 	// workshop, and "Use" a template (adopt a copy) — everything the old
@@ -38,33 +39,35 @@
 	async function create(name: string) {
 		await api.flows.create(project.id, name, flowSkeleton(name));
 		creating = false;
-		toast(`Flow ${name} created`);
+		toast(t('workshop.flows.created', { name }));
 		await goto(to.flow(project.id, name));
 	}
 </script>
 
 <div class="row nowrap">
 	<p class="lede grow">
-		A flow belongs to this workshop: its stages run these commands and its agents know this
-		repository. Runs pin the version they start on.
+		{t('workshop.flows.lede')}
 	</p>
-	<button class="btn-primary" onclick={() => (creating = true)}>{I.add} New flow</button>
+	<button class="btn-primary" onclick={() => (creating = true)}
+		>{I.add} {t('workshop.flows.new')}</button
+	>
 </div>
 
 {#if error && !flows}
-	<ErrorCard cause="Couldn’t load flows" detail={error} onretry={onreload} />
+	<ErrorCard cause={t('workshop.flows.loadError')} detail={error} onretry={onreload} />
 {:else if !flows}
 	<Skeleton pane lines={4} />
 {:else}
 	<section class="c pane">
 		<div class="pane-head">
-			<h2>This workshop’s flows</h2>
+			<h2>{t('workshop.flows.ownTitle')}</h2>
 			<span class="count">{own.length}</span>
 		</div>
 		{#if own.length}
 			<div class="rows">
 				<div class="r head fr">
-					<span>Flow</span><span>Version</span><span class="num">Updated</span><span></span>
+					<span>{t('workshop.flows.colFlow')}</span><span>{t('workshop.flows.colVersion')}</span
+					><span class="num">{t('workshop.flows.colUpdated')}</span><span></span>
 				</div>
 				{#each own as f (f.name)}
 					<div class="r fr">
@@ -72,22 +75,23 @@
 							<a class="mono stretch" href={to.flow(project.id, f.name)}>{f.name}</a>
 							{#if f.name === project.defaultFlow}<span
 									class="pill sm t-brand"
-									title="Runs start on this flow unless one is picked">default</span
+									title={t('workshop.flows.defaultTitle')}>{t('workshop.flows.default')}</span
 								>{/if}
 							{#if f.shadowsBuiltin}<span
 									class="pill sm t-mut"
-									title="This workshop’s own copy of a built-in template; deleting it resets to the template"
-									>from template</span
+									title={t('workshop.flows.fromTemplateTitle')}
+									>{t('workshop.flows.fromTemplate')}</span
 								>{/if}
 						</span>
 						<span><span class="tag">@{f.hash.slice(0, 8)}</span></span>
 						<span class="num mono fnt" title={fmtAbs(f.updatedAt)}>{ago(f.updatedAt)}</span>
 						<span class="acts over-stretch">
-							<a class="btn btn-sm" href={to.flow(project.id, f.name)}>Edit</a>
+							<a class="btn btn-sm" href={to.flow(project.id, f.name)}>{t('workshop.flows.edit')}</a
+							>
 							<button
 								class="btn-sm"
-								title="Copy this flow into another workshop"
-								onclick={() => (copying = { flow: f })}>{I.copy} Copy…</button
+								title={t('workshop.flows.copyTitle')}
+								onclick={() => (copying = { flow: f })}>{I.copy} {t('workshop.flows.copy')}</button
 							>
 						</span>
 					</div>
@@ -97,10 +101,12 @@
 			<div class="pane-body">
 				<EmptyState
 					compact
-					title="No flows of its own"
-					text="Runs use the {project.defaultFlow} template until this workshop authors or adopts one."
+					title={t('workshop.flows.emptyTitle')}
+					text={t('workshop.flows.emptyText', { flow: project.defaultFlow })}
 				>
-					<button class="btn-primary" onclick={() => (creating = true)}>{I.add} New flow</button>
+					<button class="btn-primary" onclick={() => (creating = true)}
+						>{I.add} {t('workshop.flows.new')}</button
+					>
 				</EmptyState>
 			</div>
 		{/if}
@@ -109,27 +115,31 @@
 	{#if templates.length}
 		<section class="c pane">
 			<div class="pane-head">
-				<h2>Built-in templates</h2>
+				<h2>{t('workshop.flows.templates')}</h2>
 				<span class="count">{templates.length}</span>
-				<span class="mut small">compiled in, owned by nobody — using one copies it here</span>
+				<span class="mut small">{t('workshop.flows.templatesNote')}</span>
 			</div>
 			<div class="rows">
-				{#each templates as t (t.name)}
+				{#each templates as tpl (tpl.name)}
 					<div class="r fr">
 						<span class="nm">
-							<a class="mono stretch" href={to.flow(project.id, t.name)}>{t.name}</a>
-							<span class="pill sm t-mut">built-in</span>
-							{#if t.name === project.defaultFlow}<span class="pill sm t-brand">default</span>{/if}
+							<a class="mono stretch" href={to.flow(project.id, tpl.name)}>{tpl.name}</a>
+							<span class="pill sm t-mut">{t('workshop.flows.builtin')}</span>
+							{#if tpl.name === project.defaultFlow}<span class="pill sm t-brand"
+									>{t('workshop.flows.default')}</span
+								>{/if}
 						</span>
-						<span><span class="tag">@{t.hash.slice(0, 8)}</span></span>
-						<span class="num fnt small">from the binary</span>
+						<span><span class="tag">@{tpl.hash.slice(0, 8)}</span></span>
+						<span class="num fnt small">{t('workshop.flows.fromBinary')}</span>
 						<span class="acts over-stretch">
-							<a class="btn btn-sm" href={to.flow(project.id, t.name)}>View</a>
+							<a class="btn btn-sm" href={to.flow(project.id, tpl.name)}
+								>{t('workshop.flows.view')}</a
+							>
 							<button
 								class="btn-sm btn-sel"
-								title="Copy this template into the workshop as an editable flow"
-								onclick={() => (copying = { flow: t, target: project.id })}
-								>Use built-in template</button
+								title={t('workshop.flows.useTitle')}
+								onclick={() => (copying = { flow: tpl, target: project.id })}
+								>{t('workshop.flows.use')}</button
 							>
 						</span>
 					</div>
@@ -141,13 +151,13 @@
 
 {#if creating}
 	<NameFlowDialog
-		title="New flow"
-		action="Create & edit"
+		title={t('workshop.flows.createTitle')}
+		action={t('workshop.flows.createAction')}
 		taken={own.map((f) => f.name)}
 		onsubmit={create}
 		onclose={() => (creating = false)}
 	>
-		<p>Starts from a minimal skeleton — one builder stage — in <b>{project.name}</b>.</p>
+		<p>{@html th('workshop.flows.createNote', { name: project.name })}</p>
 	</NameFlowDialog>
 {/if}
 
@@ -157,12 +167,12 @@
 		{projects}
 		target={copying.target}
 		sourceLabel={copying.flow.builtin
-			? 'the built-in template'
+			? t('workshop.flows.sourceBuiltin')
 			: projectName(copying.flow.projectId)}
 		onclose={() => (copying = null)}
 		oncopied={async (projectId, name) => {
 			copying = null;
-			toast(`Copied as ${name} into ${projectName(projectId)}`);
+			toast(t('workshop.flows.copied', { name, project: projectName(projectId) }));
 			onreload();
 			await goto(to.flow(projectId, name));
 		}}

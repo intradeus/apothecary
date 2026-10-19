@@ -4,6 +4,7 @@
 	// carry only mrUrl (no list), which still links.
 	import type { Run } from '$lib/domain';
 	import { I } from '$lib/ui/icons';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let { run, detail = false }: { run: Run; detail?: boolean } = $props();
 
@@ -25,10 +26,11 @@
 	</span>
 {:else if first}
 	<a class="mr over-stretch" href={first} target="_blank" rel="noreferrer" title={first}
-		>MR{run.mrs.length > 1 ? ` ×${run.mrs.length}` : ''} {I.external}</a
+		>{run.mrs.length > 1 ? t('run.mr.multi', { count: run.mrs.length }) : t('run.mr.one')}
+		{I.external}</a
 	>
 {:else}
-	<span class="fnt" title="No merge request yet">—</span>
+	<span class="fnt" title={t('run.mr.none')}>—</span>
 {/if}
 
 <style>

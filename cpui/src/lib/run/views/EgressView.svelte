@@ -3,6 +3,7 @@
 	// and the rule in force NOW per host — toggled live, saved to the
 	// workshop's policy. "Seen" is history and never changes; "rule now" is
 	// what the gateway does today.
+	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import { to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
@@ -40,8 +41,8 @@
 		if (!visible) return;
 		void refresh();
 		if (rs.terminal) return;
-		const t = setInterval(() => !document.hidden && refresh(), 5000);
-		return () => clearInterval(t);
+		const timer = setInterval(() => !document.hidden && refresh(), 5000);
+		return () => clearInterval(timer);
 	});
 
 	// matchesList mirrors the gateway's hostMatches: exact entry, or a
@@ -77,13 +78,28 @@
 			await api.egress.setRule(rs.runId, h, allow);
 			policy = await api.egress.policy(rs.runId);
 			await rs.refreshDenials();
-			toast(`${h} ${allow ? 'allowed' : 'blocked'}${undo ? ' again' : ''}`, {
-				tone: allow ? 'ok' : 'warn',
-				action:
-					prev && !undo
-						? { label: 'Undo', run: () => void setRule(h, prev === 'allow', true) }
-						: undefined
-			});
+			toast(
+				t(
+					allow
+						? undo
+							? 'runview.egress.toast_allowed_again'
+							: 'runview.egress.toast_allowed'
+						: undo
+							? 'runview.egress.toast_blocked_again'
+							: 'runview.egress.toast_blocked',
+					{ host: h }
+				),
+				{
+					tone: allow ? 'ok' : 'warn',
+					action:
+						prev && !undo
+							? {
+									label: t('runview.egress.undo'),
+									run: () => void setRule(h, prev === 'allow', true)
+								}
+							: undefined
+				}
+			);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -104,6 +120,13 @@
 	);
 	const nAllow = $derived(all.filter((r) => r.verdict === 'allow').length);
 	const nDeny = $derived(all.filter((r) => r.verdict === 'deny').length);
+	const mode = $derived(
+		policy
+			? t('runview.egress.mode_paren', {
+					mode: t(policy.mode === 'deny' ? 'runview.egress.denylist' : 'runview.egress.allowlist')
+				})
+			: ''
+	);
 	const project = $derived(rs.run?.projectId ? fleet.projectById.get(rs.run.projectId) : undefined);
 </script>
 
@@ -112,20 +135,27 @@
 		<Segmented
 			glass={false}
 			size="sm"
-			label="Verdict"
+			label={t('runview.egress.verdict')}
 			bind:value={rs.egressVerdict}
 			options={[
-				{ value: '', label: 'All', count: all.length },
-				{ value: 'allow', label: 'Allowed', count: nAllow },
-				{ value: 'deny', label: 'Denied', count: nDeny }
+				{ value: '', label: t('runview.egress.all'), count: all.length },
+				{ value: 'allow', label: t('runview.egress.allowed'), count: nAllow },
+				{ value: 'deny', label: t('runview.egress.denied'), count: nDeny }
 			]}
 		/>
-		<input class="q" placeholder="Filter host…" bind:value={host} aria-label="Filter host" />
+		<input
+			class="q"
+			placeholder={t('runview.egress.filter_ph')}
+			bind:value={host}
+			aria-label={t('runview.egress.filter_aria')}
+		/>
 	</div>
 	{#if error}
 		<div class="pad">
 			<ErrorCard
-				cause={rows === null ? 'The egress audit is unavailable.' : 'The rule did not change.'}
+				cause={rows === null
+					? t('runview.egress.audit_unavailable')
+					: t('runview.egress.rule_unchanged')}
 				detail={error}
 				onretry={rows === null ? refresh : undefined}
 				ondismiss={() => (error = '')}
@@ -133,19 +163,21 @@
 		</div>
 	{/if}
 	{#if rows === null && !error}
-		<Loading text="Connecting…" />
+		<Loading text={t('runview.connecting')} />
 	{:else if rows === null}
 		<!-- the error card above says why -->
 	{:else if all.length === 0}
 		<div class="empty-line">
-			No egress recorded yet. Every host this workspace reaches — or is refused — shows up here.
+			{t('runview.egress.empty')}
 		</div>
 	{:else}
 		<div class="rows card-in">
 			<div class="r head">
-				<span>Host:port</span><span>Seen</span><span>Rule now</span><span>Proto</span><span
-					class="rt">×</span
-				><span class="rt">Out/in</span><span class="rt">Last</span>
+				<span>{t('runview.egress.col_host')}</span><span>{t('runview.egress.col_seen')}</span><span
+					>{t('runview.egress.col_rule')}</span
+				><span>{t('runview.egress.col_proto')}</span><span class="rt">×</span><span class="rt"
+					>{t('runview.egress.col_out_in')}</span
+				><span class="rt">{t('runview.egress.col_last')}</span>
 			</div>
 			{#each shown as r (r.host + ':' + r.port + ':' + r.verdict)}
 				{@const rule = shownRule(r.host)}
@@ -155,30 +187,32 @@
 					>
 					<span
 						class="seen {r.verdict === 'allow' ? 'hue-grn' : 'hue-ros'}"
-						title="What happened to this traffic when it occurred — history, never changed by rule edits"
-						>{r.verdict === 'allow' ? 'allowed' : 'blocked'}</span
+						title={t('runview.egress.seen_title')}
+						>{r.verdict === 'allow'
+							? t('runview.egress.seen_allowed')
+							: t('runview.egress.seen_blocked')}</span
 					>
 					<span>
 						{#if rule}
 							<span
 								class="tg"
 								class:busy={toggling[r.host]}
-								title="Allow or block this host now (live, saved to the workshop)"
+								title={t('runview.egress.toggle_title')}
 							>
 								<Segmented
 									glass={false}
 									size="sm"
-									label="Rule for {r.host}"
+									label={t('runview.egress.rule_for', { host: r.host })}
 									value={rule}
 									onchange={(v) => v !== ruleFor(r.host) && setRule(r.host, v === 'allow')}
 									options={[
-										{ value: 'allow', label: 'allow', tone: 'grn' },
-										{ value: 'deny', label: 'block', tone: 'ros' }
+										{ value: 'allow', label: t('runview.egress.rule_allow'), tone: 'grn' },
+										{ value: 'deny', label: t('runview.egress.rule_block'), tone: 'ros' }
 									]}
 								/>
 							</span>
 						{:else}
-							<span class="fnt" title="No live gateway — the workspace is gone">{I.none}</span>
+							<span class="fnt" title={t('runview.egress.no_gateway')}>{I.none}</span>
 						{/if}
 					</span>
 					<span class="fnt sm">{r.proto}</span>
@@ -188,16 +222,22 @@
 					<span class="rt mono fnt" title={fmtAbs(r.lastSeen)}>{ago(r.lastSeen)}</span>
 				</div>
 			{/each}
-			{#if shown.length === 0}<div class="empty-line">Nothing matches.</div>{/if}
+			{#if shown.length === 0}<div class="empty-line">
+					{t('runview.egress.nothing_matches')}
+				</div>{/if}
 		</div>
 	{/if}
 	<div class="foot">
-		Rule changes apply live and are saved to
-		{#if rs.run?.projectId}<a class="brand" href={to.workshopSettings(rs.run.projectId)}
-				>{project?.name ?? `the workshop`} › workspace policy</a
-			>{:else}the workshop's policy{/if}{policy
-			? ` (${policy.mode === 'deny' ? 'denylist' : 'allowlist'})`
-			: ''}.
+		{#if rs.run?.projectId}
+			{@const parts = t('runview.egress.foot_linked', { link: '\u0000', mode }).split('\u0000')}
+			{parts[0]}<a class="brand" href={to.workshopSettings(rs.run.projectId)}
+				>{t('runview.egress.foot_link', {
+					name: project?.name ?? t('runview.egress.the_workshop')
+				})}</a
+			>{parts[1]}
+		{:else}
+			{t('runview.egress.foot_plain', { mode })}
+		{/if}
 	</div>
 </div>
 

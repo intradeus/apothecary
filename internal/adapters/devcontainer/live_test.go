@@ -3,12 +3,33 @@
 package devcontainer
 
 // Live integration test against the real local toolchain. Excluded from
-// normal runs; execute manually with:
+// normal runs. It drives the REAL provisioner path — a DinD sandbox on the
+// host daemon, `devcontainer up` against the inner daemon, the shim bridge —
+// so it inherits the provisioner's own requirements:
 //
-//	go test -tags live -run TestLiveLifecycle -v ./internal/adapters/devcontainer/
+//   - root: the inner daemon's socket surfaces on the host as root:docker
+//     (the dind image's gid) 0660, exactly as apothecaryd sees it (root in
+//     deploy/). Run it as root, or inside the engine image (recipe below),
+//     which also brings the pinned @devcontainers/cli.
+//   - APOTHECARY_LIVE_RUNS_DIR: a RunsDir NOT under /tmp (dind masks /tmp —
+//     the guard in sandbox.go), bind-mounted at the SAME path when the test
+//     runs in a container (Invariant A).
+//   - APOTHECARY_SANDBOX_RUNTIME (optional, e.g. sysbox-runc): the test then
+//     asserts the sandbox came up unprivileged under that runtime.
+//   - APOTHECARY_LIVE_GATEWAY=1 (optional): also stand up the per-project
+//     egress gateway (--internal network, DNS + pull-through mirror via the
+//     gateway) instead of the default bridge. Torn down at the end.
 //
-// Requires: a docker daemon, the @devcontainers/cli (`npm install -g
-// @devcontainers/cli`) and git on PATH.
+// From the repo root, with the local engine image built
+// (docker compose -p apothecary-local -f deploy/docker-compose.local.yaml build):
+//
+//	go test -c -tags live -o /tmp/live.test ./internal/adapters/devcontainer/
+//	R=$HOME/.cache/apothecary-live; mkdir -p $R
+//	docker run --rm --entrypoint /live.test \
+//	  -v /var/run/docker.sock:/var/run/docker.sock -v $R:$R \
+//	  -v /tmp/live.test:/live.test:ro \
+//	  -e APOTHECARY_LIVE_RUNS_DIR=$R -e APOTHECARY_SANDBOX_RUNTIME=sysbox-runc \
+//	  apothecary/apothecaryd:local -test.v -test.run TestLiveLifecycle
 
 import (
 	"bytes"
@@ -78,16 +99,47 @@ func TestLiveLifecycle(t *testing.T) {
 	_, portStr, _ := net.SplitHostPort(engine.Addr().String())
 	enginePort, _ := strconv.Atoi(portStr)
 
-	runsDir := t.TempDir()
-	a := New(Config{
+	// RunsDir: a DinD sandbox parity-mounts it, so it cannot be t.TempDir()
+	// (dind masks /tmp) and, in a container, must sit at the same host path.
+	runsDir := os.Getenv("APOTHECARY_LIVE_RUNS_DIR")
+	if runsDir == "" {
+		t.Skip("APOTHECARY_LIVE_RUNS_DIR unset: needs a RunsDir outside /tmp — see the header comment")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("must run as root: the inner daemon's socket is root:docker 0660 on the host, as apothecaryd sees it")
+	}
+	runsDir, err = filepath.Abs(runsDir)
+	must(err)
+	must(os.MkdirAll(runsDir, 0o755))
+
+	const project = "livetest"
+	sandboxRuntime := os.Getenv("APOTHECARY_SANDBOX_RUNTIME")
+	// The real thing: docker-built static shim (golang image pull on first
+	// ever run; content-addressed cache after) and, opted in, the real
+	// per-project gateway image.
+	builder := wsimage.New(runsDir)
+	cfg := Config{
 		RunsDir: runsDir, ProvisionTimeout: 8 * time.Minute, EnginePort: enginePort,
-		// The real thing: docker-built static shim (golang image pull on
-		// first ever run; content-addressed cache after).
-		ShimBin: wsimage.New(runsDir, "").EnsureShim,
-	})
+		ShimBin:        builder.EnsureShim,
+		SandboxRuntime: sandboxRuntime,
+	}
+	if os.Getenv("APOTHECARY_LIVE_GATEWAY") == "1" {
+		cfg.GatewayImage = builder.EnsureGatewayImage
+		// Nothing reaps a project's gateway (egressgw/manager.go); this test
+		// owns its project, so it removes the gateway + caches it created.
+		defer func() {
+			for _, args := range [][]string{
+				{"rm", "-f", "apo-gw-" + project},
+				{"volume", "rm", "-f", "apo-gw-" + project + "-cache", "apo-gw-" + project + "-buildcache"},
+			} {
+				_ = exec.Command("docker", args...).Run()
+			}
+		}()
+	}
+	a := New(cfg)
 	defer a.Close()
 
-	id, err := a.Provision(ctx, ports.EnvSpec{RunID: "LIVETEST1", RepoURL: "file://" + repo})
+	id, err := a.Provision(ctx, ports.EnvSpec{RunID: "LIVETEST1", RepoURL: "file://" + repo, Project: project})
 	must(err)
 	defer func() {
 		if err := a.Destroy(context.WithoutCancel(ctx), id); err != nil {
@@ -101,6 +153,21 @@ func TestLiveLifecycle(t *testing.T) {
 
 	if st, err := a.Status(ctx, id); err != nil || st != ports.EnvRunning {
 		t.Fatalf("status = %s, %v", st, err)
+	}
+
+	// Sandbox posture on the HOST daemon (the sandbox shares the env's name):
+	// privileged under the default runtime, or unprivileged under the opted-in
+	// user-namespace runtime — never both, never neither.
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
+		"{{.HostConfig.Privileged}} {{.HostConfig.Runtime}}", string(id)).Output()
+	must(err)
+	posture := strings.TrimSpace(string(out))
+	t.Logf("sandbox posture (privileged runtime): %s", posture)
+	switch {
+	case sandboxRuntime != "" && posture != "false "+sandboxRuntime:
+		t.Errorf("sandbox posture = %q, want unprivileged under %s", posture, sandboxRuntime)
+	case sandboxRuntime == "" && !strings.HasPrefix(posture, "true "):
+		t.Errorf("sandbox posture = %q, want privileged under the default runtime", posture)
 	}
 
 	// Exec: containerEnv, lifecycle hook, and the $HOME/repo contract.
@@ -162,8 +229,10 @@ func TestLiveLifecycle(t *testing.T) {
 	//   -> forward relay -> engine.sock -> the live-pong server.
 	cid, err := a.containerID(ctx, string(id))
 	must(err)
-	must(exec.CommandContext(ctx, "docker", "exec", "-d", cid,
-		"/opt/apothecary/shim", "relay", "3000:/opt/apothecary/engine.sock").Run())
+	relay := exec.CommandContext(ctx, "docker", "exec", "-d", cid,
+		"/opt/apothecary/shim", "relay", "3000:/opt/apothecary/engine.sock")
+	relay.Env = append(os.Environ(), a.dockerEnv(string(id))...) // the workspace lives on the INNER daemon
+	must(relay.Run())
 	pc, err := a.ExposePort(ctx, id, 3000)
 	must(err)
 	mgr := portrelay.New("127.0.0.1")

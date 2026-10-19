@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Vitals (DESIGN 4.16): CPU, memory and network as three sparkline tiles
 	// sharing one crosshair.
+	import { t } from '$lib/i18n/index.svelte';
 	import Sparkline from '$lib/ui/Sparkline.svelte';
 	import { counterRates, fmtBytes, fmtPct, fmtRate } from '$lib/format';
 	import type { RunStore } from '../store.svelte';
@@ -35,7 +36,7 @@
 
 <div class="vt">
 	<Sparkline
-		label="CPU"
+		label={t('runview.vitals.cpu')}
 		hue="var(--az)"
 		value={cpu.length ? fmtPct(cpu.at(-1)!) : '—'}
 		series={cpu}
@@ -44,7 +45,7 @@
 		bind:hover
 	/>
 	<Sparkline
-		label="Memory"
+		label={t('runview.vitals.memory')}
 		hue="var(--vio)"
 		value={mem.length ? `${bytes(mem.at(-1)!)}${memLimit ? ` / ${bytes(memLimit)}` : ''}` : '—'}
 		series={mem}
@@ -53,7 +54,7 @@
 		bind:hover
 	/>
 	<Sparkline
-		label="Network in / out"
+		label={t('runview.vitals.network')}
 		hue="var(--tea)"
 		value={rx.length > 1 ? `${fmtRate(rx.at(-1)!)} · ${fmtRate(tx.at(-1)!)}` : '—'}
 		series={rx}
@@ -64,7 +65,7 @@
 	/>
 </div>
 {#if !rs.hasWorkspace && s.length < 2}
-	<div class="empty-line">No live workspace to sample.</div>
+	<div class="empty-line">{t('runview.vitals.no_workspace')}</div>
 {/if}
 
 <style>

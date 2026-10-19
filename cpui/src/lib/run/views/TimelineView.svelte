@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Timeline (DESIGN §6): every lifecycle event, with the log of a finished
 	// attempt and captured files one click away.
+	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import { fmtAbs, fmtTime } from '$lib/format';
 	import { I } from '$lib/ui/icons';
@@ -24,18 +25,20 @@
 			return;
 		}
 		logSeq = seq;
-		logText = 'loading…';
+		logText = t('runview.timeline.loading_log');
 		try {
-			logText = (await api.runs.stageLog(rs.runId, stage)) || '(empty log)';
+			logText = (await api.runs.stageLog(rs.runId, stage)) || t('runview.timeline.empty_log');
 		} catch (e) {
-			logText = `no log: ${e instanceof Error ? e.message : e}`;
+			logText = t('runview.timeline.no_log', {
+				message: e instanceof Error ? e.message : String(e)
+			});
 		}
 	}
 </script>
 
 <div class="view tl">
 	{#if rows.length === 0}
-		<Loading text="Connecting…" />
+		<Loading text={t('runview.connecting')} />
 	{/if}
 	{#each rows as { e, d } (e.seq)}
 		<div class="r">
@@ -47,12 +50,13 @@
 					<button
 						class="linklike brand"
 						aria-expanded={logSeq === e.seq}
-						onclick={() => showLog(e.seq, d.stage!)}>{logSeq === e.seq ? 'hide log' : 'log'}</button
+						onclick={() => showLog(e.seq, d.stage!)}
+						>{logSeq === e.seq ? t('runview.timeline.hide_log') : t('runview.timeline.log')}</button
 					>
 				{/if}
 				{#if d.snapshot}
 					<a class="brand" href={api.files.snapshotUrl(d.snapshot)} target="_blank" rel="noreferrer"
-						>open {I.external}</a
+						>{t('runview.timeline.open')} {I.external}</a
 					>
 				{/if}
 			</span>

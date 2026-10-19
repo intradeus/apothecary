@@ -7,6 +7,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { ChannelEntry } from '$lib/domain';
+	import { t, th } from '$lib/i18n/index.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -17,7 +18,6 @@
 	import ConfigCard, { type ConfigRow } from '$lib/ui/ConfigCard.svelte';
 	import AddCard from '$lib/system/AddCard.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { esc } from '$lib/ui/html';
 	import { I } from '$lib/ui/icons';
 	import type { Hue } from '$lib/ui/hues';
 	import { materialize, ms, spring } from '$lib/ui/motion';
@@ -66,7 +66,7 @@
 				webhookUrl = '';
 			}
 			adding = false;
-			toast(`${label(kind)} channel added`);
+			toast(t('page.channels.added', { kind: label(kind) }));
 			await refresh();
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -77,16 +77,16 @@
 
 	async function remove(c: ChannelEntry) {
 		const ok = await confirmDialog({
-			title: `Remove this ${label(c.kind)} channel?`,
-			body: `Pings stop being mirrored to <b>${esc(where(c))}</b>. Nothing else changes: pings are still raised and answered in Apothecary, and no run is affected.`,
-			action: 'Remove channel'
+			title: t('page.channels.removeTitle', { kind: label(c.kind) }),
+			body: th('page.channels.removeBody', { where: where(c) }),
+			action: t('page.channels.removeAction')
 		});
 		if (!ok) return;
 		error = '';
 		removing = c.id;
 		try {
 			await api.system.removeChannel(c.id);
-			toast(`${label(c.kind)} channel removed`);
+			toast(t('page.channels.removed', { kind: label(c.kind) }));
 			await refresh();
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -100,12 +100,14 @@
 
 	/** Where pings land, without leaking the webhook's secret path. */
 	function where(c: ChannelEntry): string {
-		if (c.kind === 'matrix') return `${c.config.room_id ?? 'room'}`;
+		if (c.kind === 'matrix') return `${c.config.room_id ?? t('page.channels.room').toLowerCase()}`;
 		if (c.kind === 'slack') {
 			try {
-				return `${new URL(String(c.config.webhook_url ?? '')).host} webhook`;
+				return t('page.channels.hostWebhook', {
+					host: new URL(String(c.config.webhook_url ?? '')).host
+				});
 			} catch {
-				return 'webhook';
+				return t('page.channels.webhook').toLowerCase();
 			}
 		}
 		return c.kind;
@@ -113,45 +115,45 @@
 	function detail(c: ChannelEntry): ConfigRow[] {
 		if (c.kind === 'matrix')
 			return [
-				{ k: 'Homeserver', v: String(c.config.homeserver ?? '') },
-				{ k: 'Room', v: String(c.config.room_id ?? '') },
-				{ k: 'Access token', v: '•••• set', secret: true }
+				{ k: t('page.channels.homeserver'), v: String(c.config.homeserver ?? '') },
+				{ k: t('page.channels.room'), v: String(c.config.room_id ?? '') },
+				{ k: t('page.channels.accessToken'), v: t('page.channels.tokenSet'), secret: true }
 			];
-		if (c.kind === 'slack') return [{ k: 'Webhook', v: `•••• ${where(c)}`, secret: true }];
+		if (c.kind === 'slack')
+			return [{ k: t('page.channels.webhook'), v: `•••• ${where(c)}`, secret: true }];
 		return Object.entries(c.config).map(([k, v]) => ({ k, v: String(v) }));
 	}
 </script>
 
 <Callout hue="tea" glyph={I.forward}>
-	<b>One-way mirrors.</b> New pings are posted to the channel as they are raised. Pings are always answered
-	in Apothecary.
+	{@html th('page.channels.callout')}
 </Callout>
 
 {#if loadError && !loaded}
-	<ErrorCard cause="Couldn’t load channels" detail={loadError} onretry={refresh} />
+	<ErrorCard cause={t('page.channels.loadError')} detail={loadError} onretry={refresh} />
 {:else if !loaded}
 	<div class="card-grid">
 		<Skeleton pane lines={3} />
 		<Skeleton pane lines={3} />
 	</div>
 {:else}
-	<SectionHeader title="Channels" count={entries.length}>
+	<SectionHeader title={t('page.system.channels.title')} count={entries.length}>
 		{#snippet actions()}
 			<button class="btn-sm" class:btn-sel={adding} onclick={() => (adding = !adding)}
-				>{adding ? 'Close' : `${I.add} Add channel`}</button
+				>{adding ? t('page.channels.close') : `${I.add} ${t('page.channels.add')}`}</button
 			>
 		{/snippet}
 	</SectionHeader>
 
-	{#if error && !adding}<ErrorCard cause="That didn’t work" detail={error} />{/if}
+	{#if error && !adding}<ErrorCard cause={t('page.channels.failed')} detail={error} />{/if}
 
 	{#if adding}
-		<AddCard title="New channel">
+		<AddCard title={t('page.channels.new')}>
 			{#snippet head()}
 				<Segmented
 					glass={false}
 					size="sm"
-					label="Channel kind"
+					label={t('page.channels.kind')}
 					options={[
 						{ value: 'matrix', label: 'Matrix' },
 						{ value: 'slack', label: 'Slack' }
@@ -163,11 +165,11 @@
 				{#if kind === 'matrix'}
 					<div class="grid2">
 						<div class="field">
-							<label for="c-hs">Homeserver</label>
+							<label for="c-hs">{t('page.channels.homeserver')}</label>
 							<input id="c-hs" bind:value={homeserver} required placeholder="https://matrix.org" />
 						</div>
 						<div class="field">
-							<label for="c-room">Room ID</label>
+							<label for="c-room">{t('page.channels.roomId')}</label>
 							<input
 								id="c-room"
 								class="mono"
@@ -175,10 +177,10 @@
 								required
 								placeholder="!room:matrix.org"
 							/>
-							<div class="help">Invite the bot account to this room first.</div>
+							<div class="help">{t('page.channels.roomHelp')}</div>
 						</div>
 						<div class="field">
-							<label for="c-token">Access token</label>
+							<label for="c-token">{t('page.channels.accessToken')}</label>
 							<input
 								id="c-token"
 								type="password"
@@ -187,12 +189,12 @@
 								placeholder="syt_…"
 								autocomplete="off"
 							/>
-							<div class="help">Write-only: stored encrypted, never shown again.</div>
+							<div class="help">{t('page.channels.tokenHelp')}</div>
 						</div>
 					</div>
 				{:else}
 					<div class="field">
-						<label for="c-webhook">Incoming webhook URL</label>
+						<label for="c-webhook">{t('page.channels.webhookUrl')}</label>
 						<input
 							id="c-webhook"
 							type="password"
@@ -201,16 +203,18 @@
 							placeholder="https://hooks.slack.com/services/T…/B…/…"
 							autocomplete="off"
 						/>
-						<div class="help">
-							From a Slack app’s Incoming Webhooks page. Its path is the secret.
-						</div>
+						<div class="help">{t('page.channels.webhookHelp')}</div>
 					</div>
 				{/if}
 				{#if error}<div class="err">{error}</div>{/if}
 				<div class="form-actions">
-					<button type="button" class="btn-ghost" onclick={() => (adding = false)}>Cancel</button>
+					<button type="button" class="btn-ghost" onclick={() => (adding = false)}
+						>{t('common.cancel')}</button
+					>
 					<button class="btn-primary" type="submit" disabled={busy} aria-busy={busy}
-						>{busy ? 'Adding…' : `Add ${label(kind)} channel`}</button
+						>{busy
+							? t('page.channels.adding')
+							: t('page.channels.addKind', { kind: label(kind) })}</button
 					>
 				</div>
 			</form>
@@ -225,17 +229,18 @@
 						title={label(c.kind)}
 						glyph={I.channels}
 						hue={hue(c.kind)}
-						sub="mirrors pings to {where(c)}"
+						sub={t('page.channels.mirrorsTo', { where: where(c) })}
 						summary={detail(c)}
 					>
-						{#snippet status()}<span class="pill sm t-tea">one-way</span>{/snippet}
+						{#snippet status()}<span class="pill sm t-tea">{t('page.channels.oneWay')}</span
+							>{/snippet}
 						{#snippet actions()}
-							<span class="fnt tiny">To change it, remove it and add it again.</span>
+							<span class="fnt tiny">{t('page.channels.changeHint')}</span>
 							<span class="spacer"></span>
 							<button
 								class="btn-danger btn-sm"
 								aria-busy={removing === c.id}
-								onclick={() => remove(c)}>Remove…</button
+								onclick={() => remove(c)}>{t('page.channels.remove')}</button
 							>
 						{/snippet}
 					</ConfigCard>
@@ -243,11 +248,10 @@
 			{/each}
 		</div>
 	{:else if !adding}
-		<EmptyState
-			title="No channels yet"
-			text="Pings show up in the inbox either way. Add Matrix or Slack to hear about them there too."
-		>
-			<button class="btn-primary" onclick={() => (adding = true)}>{I.add} Add channel</button>
+		<EmptyState title={t('page.channels.empty')} text={t('page.channels.emptyText')}>
+			<button class="btn-primary" onclick={() => (adding = true)}
+				>{I.add} {t('page.channels.add')}</button
+			>
 		</EmptyState>
 	{/if}
 {/if}

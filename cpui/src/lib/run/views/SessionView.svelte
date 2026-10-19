@@ -6,6 +6,7 @@
 	// Following glides (a smooth scroll that retargets as text streams in);
 	// scrolling up hands control to the reader and the "Follow" pill
 	// materialises; sending snaps straight back to the bottom.
+	import { t } from '$lib/i18n/index.svelte';
 	import { tick } from 'svelte';
 	import { buildTranscript } from '$lib/transcript';
 	import { I } from '$lib/ui/icons';
@@ -58,8 +59,8 @@
 	$effect(() => {
 		void items.length;
 		if (settled) return;
-		const t = setTimeout(() => (settled = true), 700);
-		return () => clearTimeout(t);
+		const timer = setTimeout(() => (settled = true), 700);
+		return () => clearTimeout(timer);
 	});
 	// Follow while the reader is at the bottom; leave them alone once they
 	// scroll up to read. Re-pin (instantly) when the view comes back on screen.
@@ -86,10 +87,9 @@
 			{#if items.length === 0}
 				<div class="noconv">
 					{#if rs.terminal}
-						No conversation was recorded for this run.
+						{t('runview.session.noconv_over')}
 					{:else}
-						<span class="ldot sm pulse hue-az"></span>No conversation yet. When an agent stage
-						starts, its prompt, replies and tool calls appear here as they happen.
+						<span class="ldot sm pulse hue-az"></span>{t('runview.session.noconv_pending')}
 					{/if}
 				</div>
 			{/if}
@@ -103,7 +103,7 @@
 				<button
 					class="follow"
 					transition:materialize={{ origin: 'center bottom', y: 8 }}
-					onclick={() => follow()}>{I.follow} Follow</button
+					onclick={() => follow()}>{I.follow} {t('runview.session.follow')}</button
 				>
 			</div>
 		{/if}
@@ -131,10 +131,10 @@
 			<EmptyState
 				compact
 				inline
-				title="The bottle is corked"
-				text="The run is finished.{rs.hasWorkspace
-					? ' The workspace stays up until the reaper removes it.'
-					: ''}"
+				title={t('runview.session.closed_title')}
+				text={rs.hasWorkspace
+					? t('runview.session.closed_text_ws')
+					: t('runview.session.closed_text')}
 			/>
 		</div>
 	{/if}

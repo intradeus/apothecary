@@ -2,6 +2,7 @@
 	// The Layouts popover (DESIGN §6): presets, the Windows checklist and how
 	// to arrange things by hand. Saved in this browser. Picking a preset
 	// springs every window to its new place; the bead slides to the pick.
+	import { t } from '$lib/i18n/index.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
 	import { indicator } from '$lib/ui/motion';
@@ -16,8 +17,8 @@
 	bind:open={desk.menuOpen}
 	placement="below-end"
 	width={300}
-	title="Layouts"
-	legend="saved in this browser"
+	title={t('desk.layouts.title')}
+	legend={t('desk.layouts.legend')}
 >
 	<div class="presets" use:indicator>
 		{#each PRESET_IDS as id (id)}
@@ -32,13 +33,15 @@
 			class="mi pre"
 			class:on={desk.preset === 'custom'}
 			aria-pressed={desk.preset === 'custom'}
-			title="Your own arrangement — drag tabs and gaps to make one"
-			disabled={desk.preset !== 'custom'}>Custom</button
+			title={t('desk.layouts.customTip')}
+			disabled={desk.preset !== 'custom'}>{t('desk.preset.custom')}</button
 		>
 	</div>
 	<div class="menu-div"></div>
 	<div class="sub lbl">
-		<span>Windows</span><span>{desk.visible.size} of {VIEWS.length} shown</span>
+		<span>{t('desk.layouts.windows')}</span><span
+			>{t('desk.layouts.shown', { shown: desk.visible.size, total: VIEWS.length })}</span
+		>
 	</div>
 	<div class="wins">
 		{#each VIEWS as v (v)}
@@ -56,7 +59,7 @@
 	</div>
 	<div class="menu-div"></div>
 	<div class="help">
-		Drag a tab onto another window to stack it, or onto an edge to split. Drag the gaps to resize.
+		{t('desk.layouts.help')}
 	</div>
 </Popover>
 

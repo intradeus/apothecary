@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// A capacity meter: label, mono n/max, a bar. `rail` is the sidebar's
 	// compact dark form. The bar's width rides the spring when it changes.
 	let {
@@ -21,7 +22,7 @@
 	const pct = $derived(max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0);
 </script>
 
-<div class="mt" class:rail title="{label}: {value} of {max || '–'}">
+<div class="mt" class:rail title={t('ui.meter.title', { label, value, max: max || '–' })}>
 	<div class="top">
 		<span>{label}</span>
 		<span class="mono v">{value}/{max || '–'}</span>

@@ -7,10 +7,12 @@
 	// The flow-name field (New flow, Clone, Copy): mono, slug-checked as you
 	// type, with the caller's own conflict (a name already taken) taking the
 	// error line when the slug itself is fine.
+	import { t } from '$lib/i18n/index.svelte';
+
 	let {
 		id,
 		value = $bindable(''),
-		label = 'Name',
+		label,
 		conflict = '',
 		help,
 		placeholder = ''
@@ -28,7 +30,7 @@
 </script>
 
 <div class="field">
-	<label for={id}>{label}</label>
+	<label for={id}>{label ?? t('flow.name.label')}</label>
 	<input
 		{id}
 		class="mono"
@@ -40,7 +42,7 @@
 		class:invalid={bad || !!conflict}
 	/>
 	{#if bad}
-		<div class="err">A lowercase slug: a letter, then letters, digits, - or _.</div>
+		<div class="err">{t('flow.name.badSlug')}</div>
 	{:else if conflict}
 		<div class="err">{conflict}</div>
 	{:else}

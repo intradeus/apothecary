@@ -10,6 +10,7 @@
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { settingsDraft as sd } from './settings.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let { children }: { children: Snippet<[Settings]> } = $props();
 
@@ -18,7 +19,7 @@
 	async function save() {
 		const before = sd.savedAt;
 		await sd.save();
-		if (sd.savedAt !== before) toast('Settings saved · applied now');
+		if (sd.savedAt !== before) toast(t('system.settingsSaved'));
 	}
 </script>
 
@@ -28,25 +29,21 @@
 	<form class="sf" onsubmit={(e) => e.preventDefault()}>
 		{@render children(sd.draft)}
 
-		{#if sd.error}<ErrorCard cause="The engine refused these settings" detail={sd.error} />{/if}
+		{#if sd.error}<ErrorCard cause={t('system.settingsRefused')} detail={sd.error} />{/if}
 
 		<div class="bar">
 			<SaveBar
 				dirty={sd.dirty}
 				busy={sd.busy}
 				savedAt={sd.savedAt}
-				note="Applies immediately — no restart"
+				note={t('system.applyNote')}
 				onsave={save}
 				ondiscard={() => sd.discard()}
 			/>
 		</div>
 	</form>
 {:else if sd.error}
-	<ErrorCard
-		cause="Couldn’t load the engine settings"
-		detail={sd.error}
-		onretry={() => sd.load()}
-	/>
+	<ErrorCard cause={t('system.settingsLoadFail')} detail={sd.error} onretry={() => sd.load()} />
 {:else}
 	<Skeleton pane lines={4} />
 {/if}

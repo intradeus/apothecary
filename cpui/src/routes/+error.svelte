@@ -1,14 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { to } from '$lib/guild';
+	import { t } from '$lib/i18n/index.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 </script>
 
 <div class="page">
 	<EmptyState
-		title={page.status === 404 ? 'Not on the shelf' : 'Something spilled'}
-		text={page.error?.message ?? 'An unexpected error occurred.'}
+		title={page.status === 404 ? t('page.error.notFound') : t('page.error.spilled')}
+		text={page.error?.message ?? t('page.error.unexpected')}
 	>
-		<a class="btn btn-primary" href={to.desk()}>Back to the desk</a>
+		<a class="btn btn-primary" href={to.desk()}>{t('page.error.backToDesk')}</a>
 	</EmptyState>
 </div>

@@ -8,6 +8,7 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';
 	import type { Attachment, Branch, Ticket } from '$lib/domain';
+	import { t, th } from '$lib/i18n/index.svelte';
 	import FlowSelect from '$lib/FlowSelect.svelte';
 	import TicketForm from '$lib/TicketForm.svelte';
 	import FileChips from '$lib/FileChips.svelte';
@@ -83,11 +84,11 @@
 		sourceBranch = '';
 		api.tickets
 			.get(id)
-			.then((t) => {
+			.then((tk) => {
 				if (id !== ticketId) return;
-				ticket = t;
-				loadBranches(t.projectId);
-				loadAttachments(t.id);
+				ticket = tk;
+				loadBranches(tk.projectId);
+				loadAttachments(tk.id);
 			})
 			.catch((e) => {
 				if (id === ticketId) loadErr = e instanceof Error ? e.message : String(e);
@@ -111,8 +112,8 @@
 				attachmentIds
 			});
 			void fleet.refresh();
-			toast(`Run ${shortId(runId)} started`, {
-				action: { label: 'Open run', run: () => void goto(to.run(runId)) }
+			toast(t('page.ticket.runStarted', { id: shortId(runId) }), {
+				action: { label: t('page.ping.openRun'), run: () => void goto(to.run(runId)) }
 			});
 			await goto(to.run(runId));
 		} catch (e) {
@@ -126,9 +127,9 @@
 	async function del() {
 		if (
 			!(await confirmDialog({
-				title: 'Delete this ticket?',
-				body: `The <b>ticket</b> is deleted. Its <b>runs</b> keep their history, and their <b>workspaces</b> are untouched.`,
-				action: 'Delete ticket'
+				title: t('page.ticket.deleteTitle'),
+				body: th('page.ticket.deleteBody'),
+				action: t('page.ticket.deleteAction')
 			}))
 		)
 			return;
@@ -137,7 +138,7 @@
 			const title = ticket?.title;
 			await api.tickets.remove(ticketId);
 			void fleet.refresh();
-			toast(title ? `Ticket “${title}” deleted` : 'Ticket deleted');
+			toast(title ? t('page.ticket.deletedNamed', { title }) : t('page.ticket.deleted'));
 			await goto(to.tickets());
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -156,12 +157,12 @@
 					}
 				]
 			: []),
-		{ label: 'Tickets', href: to.tickets() },
+		{ label: t('page.tickets.title'), href: to.tickets() },
 		{ label: ticket?.source?.key ?? `t_${ticketId.slice(-4).toLowerCase()}`, mono: true }
 	]);
 </script>
 
-<svelte:head><title>{ticket?.title ?? 'Ticket'}</title></svelte:head>
+<svelte:head><title>{ticket?.title ?? t('page.ticket.fallbackTitle')}</title></svelte:head>
 
 {#if ticket}
 	<PageHeader {crumbs} title={ticket.title}>
@@ -181,15 +182,21 @@
 				</span>
 			{/if}
 			<WorkshopName projectId={ticket!.projectId} link />
-			{#if ticket!.baseBranch}<span class="mono" title="Base branch — each run appends a suffix"
+			{#if ticket!.baseBranch}<span class="mono" title={t('page.ticket.baseBranch')}
 					>{I.branch} {ticket!.baseBranch}</span
 				>{/if}
-			<span title={fmtAbs(ticket!.createdAt)}>created {ago(ticket!.createdAt)}</span>
+			<span title={fmtAbs(ticket!.createdAt)}
+				>{t('page.ticket.created', { ago: ago(ticket!.createdAt) })}</span
+			>
 		{/snippet}
 		{#snippet actions()}
 			<div class="row nowrap">
-				<button onclick={() => (editing = !editing)}>{editing ? 'Cancel edit' : 'Edit'}</button>
-				<button class="btn-danger" aria-busy={deleting} onclick={del}>Delete…</button>
+				<button onclick={() => (editing = !editing)}
+					>{editing ? t('page.ticket.cancelEdit') : t('page.ticket.edit')}</button
+				>
+				<button class="btn-danger" aria-busy={deleting} onclick={del}
+					>{t('page.ticket.delete')}</button
+				>
 			</div>
 		{/snippet}
 	</PageHeader>
@@ -203,10 +210,10 @@
 					projects={fleet.projects}
 					existing={ticket}
 					oncancel={() => (editing = false)}
-					onsaved={(t) => {
-						ticket = t;
+					onsaved={(tk) => {
+						ticket = tk;
 						editing = false;
-						loadAttachments(t.id);
+						loadAttachments(tk.id);
 					}}
 				/>
 			</div>
@@ -214,24 +221,23 @@
 			<div class="grid">
 				<section class="c pane">
 					<div class="pane-head">
-						<h2>The goal</h2>
-						<span class="help">every run of this ticket works toward it</span>
+						<h2>{t('page.ticket.goal')}</h2>
+						<span class="help">{t('page.ticket.goalHelp')}</span>
 					</div>
 					<div class="pane-body goal">
 						{#if ticket.goal}
 							<Markdown src={ticket.goal} />
 						{:else}
-							<p class="empty-line">No goal written.</p>
+							<p class="empty-line">{t('page.ticket.noGoal')}</p>
 						{/if}
 					</div>
 					{#if attachments.length}
 						<div class="pane-body att">
 							<div class="ah">
-								<span class="flabel">Attachments · {attachments.length}</span>
-								<span class="help"
-									>delivered into every run's workspace under <code>.apothecary/attachments/</code
-									></span
+								<span class="flabel"
+									>{t('page.ticket.attachments', { count: attachments.length })}</span
 								>
+								<span class="help">{@html th('page.ticket.attachmentsHelp')}</span>
 							</div>
 							<FileChips items={attachments.map((a) => ({ ...a, kind: 'attachment' as const }))} />
 						</div>
@@ -239,32 +245,34 @@
 				</section>
 
 				<aside class="start lg pane">
-					<div class="pane-head"><h2>Start a run</h2></div>
+					<div class="pane-head"><h2>{t('page.ticket.startRun')}</h2></div>
 					<div class="pane-body sb">
 						<div class="field">
-							<label for="run-goal">Direction <span class="mut">· optional</span></label>
+							<label for="run-goal"
+								>{t('page.ticket.direction')}
+								<span class="mut">· {t('page.ticket.optional')}</span></label
+							>
 							<textarea
 								id="run-goal"
 								bind:value={runGoal}
 								rows="3"
-								placeholder="e.g. Last attempt broke the router — use the existing middleware."
-							></textarea>
-							<span class="help"
-								>Added to the ticket's goal for this run only; never replaces it.</span
-							>
+								placeholder={t('page.ticket.directionPlaceholder')}></textarea>
+							<span class="help">{t('page.ticket.directionHelp')}</span>
 						</div>
-						<AttachFiles bind:files={runFiles} label="Files for this run only" compact />
+						<AttachFiles bind:files={runFiles} label={t('page.ticket.runFiles')} compact />
 						<div class="field">
-							<label for="flow">Flow</label>
+							<label for="flow">{t('page.ticket.flow')}</label>
 							<FlowSelect
 								id="flow"
 								projectId={ticket.projectId}
 								bind:value={flow}
-								fallbackLabel={`Default · ${project?.defaultFlow || 'project default'}`}
+								fallbackLabel={t('page.ticket.defaultFlow', {
+									flow: project?.defaultFlow || t('page.ticket.projectDefault')
+								})}
 							/>
 						</div>
 						<div class="field">
-							<label for="source-branch">Source branch</label>
+							<label for="source-branch">{t('page.ticket.sourceBranch')}</label>
 							{#if branches.length}
 								<select id="source-branch" bind:value={sourceBranch} class="mono">
 									{#each branches as b (b.name)}
@@ -276,18 +284,21 @@
 									id="source-branch"
 									class="mono"
 									disabled
-									placeholder={branchesErr ? 'branches unavailable' : 'loading branches…'}
+									placeholder={branchesErr
+										? t('page.ticket.branchesUnavailable')
+										: t('page.ticket.loadingBranches')}
 									value={branchesErr ? (project?.repo.defaultBranch ?? '') : ''}
 								/>
 							{/if}
 							<span class="help"
 								>{branchesErr
-									? 'Branches could not be listed — the run forks off the default branch.'
-									: `The run forks its branch off this one. ${I.star} = the repo default.`}</span
+									? t('page.ticket.branchesFailed')
+									: t('page.ticket.branchHelp', { star: I.star })}</span
 							>
 						</div>
 						<button class="btn-primary btn-lg go" onclick={startRun} aria-busy={starting}>
-							{I.play} Start run
+							{I.play}
+							{t('page.ticket.startRunBtn')}
 						</button>
 					</div>
 				</aside>
@@ -295,15 +306,11 @@
 		{/if}
 
 		<section class="runs">
-			<SectionHeader title="Runs" count={runs.length}>
+			<SectionHeader title={t('page.runs.title')} count={runs.length}>
 				{#snippet actions()}<Updated at={fleet.updatedAt} paused={fleet.paused} />{/snippet}
 			</SectionHeader>
 			{#if runs.length === 0}
-				<EmptyState
-					compact
-					title="All still on the shelf"
-					text="No runs of this ticket yet. Start one above."
-				/>
+				<EmptyState compact title={t('page.runs.shelf')} text={t('page.ticket.noRuns')} />
 			{:else}
 				<div class="c pane">
 					<RunTable
@@ -316,12 +323,12 @@
 	</div>
 {:else if loaded}
 	<div class="page">
-		<EmptyState title="No such ticket" text={loadErr || 'It may have been deleted.'}>
-			<a class="btn btn-primary" href={to.tickets()}>All tickets</a>
+		<EmptyState title={t('page.ticket.gone')} text={loadErr || t('page.ticket.goneText')}>
+			<a class="btn btn-primary" href={to.tickets()}>{t('page.ticket.allTickets')}</a>
 		</EmptyState>
 	</div>
 {:else}
-	<PageHeader {crumbs} title="Ticket" />
+	<PageHeader {crumbs} title={t('page.ticket.fallbackTitle')} />
 	<div class="page"><Skeleton pane lines={8} /></div>
 {/if}
 

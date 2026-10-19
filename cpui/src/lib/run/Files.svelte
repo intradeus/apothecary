@@ -4,6 +4,7 @@
 	import { api } from '$lib/api';
 	import type { WorkspaceEntry, WorkspaceFile } from '$lib/domain';
 	import { onMount } from 'svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { fileLines } from '$lib/diff';
 	import { fmtBytes } from '$lib/format';
 	import { I } from '$lib/ui/icons';
@@ -74,7 +75,7 @@
 
 {#if error && !dirs['']}
 	<div class="pad">
-		<ErrorCard cause="Files are unavailable." detail={error} onretry={() => load('')} />
+		<ErrorCard cause={t('run.files.unavailable')} detail={error} onretry={() => load('')} />
 	</div>
 {:else}
 	<div class="split">
@@ -101,26 +102,31 @@
 				{/each}
 			</div>
 			<div class="tf">
-				<label class="ig"><input type="checkbox" bind:checked={showIgnored} /> Show ignored</label>
-				<button class="btn-icon" title="Refresh" aria-label="Refresh" onclick={reload}
-					>{I.retry}</button
+				<label class="ig"
+					><input type="checkbox" bind:checked={showIgnored} /> {t('run.files.showIgnored')}</label
+				>
+				<button
+					class="btn-icon"
+					title={t('run.files.refresh')}
+					aria-label={t('run.files.refresh')}
+					onclick={reload}>{I.retry}</button
 				>
 			</div>
 		</div>
 		<div class="viewer">
 			{#if !selected}
-				<div class="empty-line">Pick a file.</div>
+				<div class="empty-line">{t('run.files.pick')}</div>
 			{:else}
 				<div class="vh mono">
 					{selected}
 					{#if file}<span class="fnt"
-							>· {fmtBytes(file.size)}{file.truncated ? ' · first 1 MB shown' : ''}</span
+							>· {fmtBytes(file.size)}{file.truncated ? ` · ${t('run.files.firstMb')}` : ''}</span
 						>{/if}
 				</div>
 				{#if fileError}
 					<div class="pad">
 						<ErrorCard
-							cause="This file could not be read."
+							cause={t('run.files.readError')}
 							detail={fileError}
 							onretry={() => view(selected)}
 						/>
@@ -131,8 +137,10 @@
 					<div class="code">
 						<CodeView
 							{lines}
-							binary={file.binary ? `Binary file · ${fmtBytes(file.size)}` : undefined}
-							truncated={file.truncated ? 'first 1 MB shown' : undefined}
+							binary={file.binary
+								? t('run.files.binary', { size: fmtBytes(file.size) })
+								: undefined}
+							truncated={file.truncated ? t('run.files.firstMb') : undefined}
 						/>
 					</div>
 				{/if}

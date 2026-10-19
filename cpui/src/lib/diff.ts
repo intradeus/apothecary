@@ -2,6 +2,7 @@
 // Rendering lives in $lib/ui/CodeView; this only decides what each line is.
 
 import type { CodeLine } from '$lib/ui/CodeView.svelte';
+import { t } from '$lib/i18n/index.svelte';
 
 const GIT_HEADER = [
 	'diff --git',
@@ -54,7 +55,7 @@ export function editLines(d: { oldText?: string; newText: string }): CodeLine[] 
 		oldL[oldL.length - 1 - tail] === newL[newL.length - 1 - tail]
 	)
 		tail++;
-	const fold = (k: number) => `… ${k} unchanged line${k > 1 ? 's' : ''}`;
+	const fold = (k: number) => t('diff.unchanged', { count: k });
 	if (head > 0) out.push({ kind: 'meta', text: fold(head) });
 	oldL
 		.slice(head, oldL.length - tail)

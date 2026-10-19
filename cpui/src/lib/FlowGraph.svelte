@@ -18,6 +18,7 @@
 	import { EDGE_HUE } from '$lib/ui/hues';
 	import { ms } from '$lib/ui/motion';
 	import { I } from '$lib/ui/icons';
+	import { t } from '$lib/i18n/index.svelte';
 	import { token } from '$lib/ui/tokens';
 	import {
 		ABORT,
@@ -154,8 +155,8 @@
 				type: 'start',
 				position: layout[`trigger:${ph.id}`] ?? { x: at.x - 220, y: at.y },
 				data: {
-					label: `${ph.id}: on ${triggerLabel(ph.on)}`,
-					title: `Phase ${ph.id} starts when ${ph.on.signal} holds for one of the run's merge requests — drag onto a stage of this phase to start it there`
+					label: t('flow.graph.triggerLabel', { phase: ph.id, trigger: triggerLabel(ph.on) }),
+					title: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal })
 				}
 			});
 		}
@@ -374,8 +375,8 @@
 				{#if onarrange}
 					<ControlButton
 						onclick={onarrange}
-						title="Auto-arrange along the success chain"
-						aria-label="Auto-arrange">⇶</ControlButton
+						title={t('flow.graph.arrangeTitle')}
+						aria-label={t('flow.graph.arrangeAria')}>⇶</ControlButton
 					>
 				{/if}
 			{/snippet}

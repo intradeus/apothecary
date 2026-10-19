@@ -6,6 +6,7 @@
 	import { page } from '$app/state';
 	import { currentGuild, to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { stateTab, type RunTab } from '$lib/format';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -25,9 +26,9 @@
 
 	function setParams(next: { project?: string; tab?: RunTab }) {
 		const project = next.project ?? projectFilter;
-		const t = next.tab ?? tab;
+		const tb = next.tab ?? tab;
 		void goto(
-			to.runs({ project: project || undefined, tab: t === 'finished' ? 'finished' : undefined }),
+			to.runs({ project: project || undefined, tab: tb === 'finished' ? 'finished' : undefined }),
 			{
 				replaceState: true,
 				keepFocus: true,
@@ -58,35 +59,37 @@
 	const projectName = $derived(projectFilter ? fleet.projectName(projectFilter) : '');
 </script>
 
-<svelte:head><title>Runs</title></svelte:head>
+<svelte:head><title>{t('page.runs.title')}</title></svelte:head>
 
 <PageHeader
 	crumbs={[
 		{ label: currentGuild().name, href: to.desk() },
 		...(projectFilter ? [{ label: projectName, href: to.workshop(projectFilter) }] : []),
-		{ label: 'Runs' }
+		{ label: t('page.runs.title') }
 	]}
-	title={projectName ? `Runs in ${projectName}` : 'Runs'}
-	accent={tab === 'active' ? 'on the fire' : 'bottled & spoiled'}
+	title={projectName ? t('page.runs.titleIn', { name: projectName }) : t('page.runs.title')}
+	accent={tab === 'active' ? t('page.runs.accentActive') : t('page.runs.accentFinished')}
 >
 	{#snippet meta()}
-		<span>{fleet.active.length} active · {fleet.finished.length} finished</span>
+		<span
+			>{t('page.runs.meta', { active: fleet.active.length, finished: fleet.finished.length })}</span
+		>
 		<Updated at={fleet.updatedAt} paused={fleet.paused} />
 	{/snippet}
 	{#snippet actions()}
 		<div class="ctl">
 			<Segmented
 				value={tab}
-				label="Runs"
+				label={t('page.runs.title')}
 				onchange={(v) => setParams({ tab: v })}
 				options={[
-					{ value: 'active', label: 'Active', count: active.length },
-					{ value: 'finished', label: 'Finished', count: finished.length }
+					{ value: 'active', label: t('page.runs.tabActive'), count: active.length },
+					{ value: 'finished', label: t('page.runs.tabFinished'), count: finished.length }
 				]}
 			/>
 			<WorkshopFilter value={projectFilter} onchange={(project) => setParams({ project })} />
 			<span class="sw"
-				><SearchInput bind:value={q} width={220} placeholder="Search title, id, stage…" /></span
+				><SearchInput bind:value={q} width={220} placeholder={t('page.runs.search')} /></span
 			>
 		</div>
 	{/snippet}
@@ -94,36 +97,44 @@
 
 <div class="page body">
 	{#if !fleet.updatedAt && fleet.error}
-		<ErrorCard cause="Could not load runs" detail={fleet.error} onretry={() => fleet.refresh()} />
+		<ErrorCard
+			cause={t('page.runs.loadError')}
+			detail={fleet.error}
+			onretry={() => fleet.refresh()}
+		/>
 	{:else if !fleet.updatedAt}
 		<Skeleton pane lines={6} />
 	{:else if shown.length === 0}
 		{#if fleet.runs.length === 0}
-			<EmptyState
-				title="All still on the shelf"
-				text="Runs start from tickets. Write one, then start a run against it."
-			>
-				<a class="btn btn-primary" href={to.tickets()}>Open tickets</a>
+			<EmptyState title={t('page.runs.shelf')} text={t('page.runs.shelfText')}>
+				<a class="btn btn-primary" href={to.tickets()}>{t('page.runs.openTickets')}</a>
 			</EmptyState>
 		{:else if q.trim()}
-			<EmptyState compact title="No runs match" text="Nothing here matches “{q.trim()}”.">
-				<button onclick={() => (q = '')}>Clear search</button>
+			<EmptyState
+				compact
+				title={t('page.runs.noMatch')}
+				text={t('page.runs.noMatchText', { q: q.trim() })}
+			>
+				<button onclick={() => (q = '')}>{t('page.runs.clearSearch')}</button>
 			</EmptyState>
 		{:else if tab === 'active'}
 			<EmptyState
-				title="All still on the shelf"
-				text="No active runs{projectName ? ` in ${projectName}` : ''}. Start one from a ticket."
+				title={t('page.runs.shelf')}
+				text={projectName
+					? t('page.runs.noActiveIn', { name: projectName })
+					: t('page.runs.noActive')}
 			>
 				<a
 					class="btn btn-primary"
-					href={to.tickets(projectFilter ? { project: projectFilter } : undefined)}>Open tickets</a
+					href={to.tickets(projectFilter ? { project: projectFilter } : undefined)}
+					>{t('page.runs.openTickets')}</a
 				>
 			</EmptyState>
 		{:else}
 			<EmptyState
 				compact
-				title="Nothing finished yet"
-				text="Completed, failed and archived runs land here."
+				title={t('page.runs.nothingFinished')}
+				text={t('page.runs.nothingFinishedText')}
 			/>
 		{/if}
 	{:else}

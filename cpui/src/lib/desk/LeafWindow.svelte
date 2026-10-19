@@ -9,6 +9,7 @@
 	// that on for discrete changes only); a new window materialises, a hidden
 	// one scales and fades back out; the selected tab's bead slides.
 	import type { TransitionConfig } from 'svelte/transition';
+	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/ui/icons';
 	import { bump, indicator, ms, spring } from '$lib/ui/motion';
 	import { token } from '$lib/ui/tokens';
@@ -74,9 +75,9 @@
 		const duration = Math.max(move, fade);
 		return {
 			duration,
-			css: (t) => {
-				const m = spring(Math.min(1, (t * duration) / move));
-				const o = Math.min(1, (t * duration) / fade);
+			css: (p) => {
+				const m = spring(Math.min(1, (p * duration) / move));
+				const o = Math.min(1, (p * duration) / fade);
 				return `opacity:${o};transform:scale(${s0 + (1 - s0) * m})`;
 			}
 		};
@@ -107,7 +108,7 @@
 					role="tab"
 					tabindex="0"
 					aria-selected={v === leaf.act}
-					title="Drag to move or split"
+					title={t('desk.tab.drag')}
 					onpointerdown={(e) => ontabdown(v, e)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onactivate(v)}
 				>
@@ -124,8 +125,8 @@
 						class="x"
 						role="button"
 						tabindex="-1"
-						title="Hide window"
-						aria-label="Hide {VIEW_LABEL[v]}"
+						title={t('desk.tab.hide')}
+						aria-label={t('desk.tab.hideNamed', { name: VIEW_LABEL[v] })}
 						onpointerdown={stop}
 						onclick={(e) => {
 							e.stopPropagation();
@@ -141,30 +142,30 @@
 			<button
 				class="btn-icon"
 				class:dim={!multi}
-				title={multi ? 'Split right' : 'Split right (needs a second tab)'}
-				aria-label="Split right"
+				title={multi ? t('desk.leaf.splitRight') : t('desk.leaf.splitRightNeeds')}
+				aria-label={t('desk.leaf.splitRight')}
 				onpointerdown={stop}
 				onclick={() => multi && onsplit('right')}>{I.splitRight}</button
 			>
 			<button
 				class="btn-icon"
 				class:dim={!multi}
-				title={multi ? 'Split down' : 'Split down (needs a second tab)'}
-				aria-label="Split down"
+				title={multi ? t('desk.leaf.splitDown') : t('desk.leaf.splitDownNeeds')}
+				aria-label={t('desk.leaf.splitDown')}
 				onpointerdown={stop}
 				onclick={() => multi && onsplit('bottom')}>{I.splitDown}</button
 			>
 			<button
 				class="btn-icon"
-				title={maxed ? 'Restore' : 'Maximise'}
-				aria-label={maxed ? 'Restore' : 'Maximise'}
+				title={maxed ? t('desk.leaf.restore') : t('desk.leaf.maximise')}
+				aria-label={maxed ? t('desk.leaf.restore') : t('desk.leaf.maximise')}
 				onpointerdown={stop}
 				onclick={onmax}>{maxed ? I.restore : I.maximise}</button
 			>
 			<button
 				class="btn-icon big"
-				title="Hide this window"
-				aria-label="Hide this window"
+				title={t('desk.leaf.hideThis')}
+				aria-label={t('desk.leaf.hideThis')}
 				onpointerdown={stop}
 				onclick={onclose}>{I.close}</button
 			>

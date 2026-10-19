@@ -2,6 +2,7 @@
 	// Record (DESIGN §6): everything this run put on the record — each stage
 	// attempt's declared outputs and log (captured on success and failure),
 	// and the files you attached. Snapshots outlive the workspace.
+	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import { to } from '$lib/guild';
 	import { fmtAbs, fmtBytes, fmtClock } from '$lib/format';
@@ -34,11 +35,15 @@
 			kind: sn.kind === 'log' ? 'log' : 'output',
 			snapshot: true,
 			label:
-				sn.kind === 'log' ? 'log' : sn.kind === 'ping_file' ? 'ping file' : (sn.name ?? 'output'),
+				sn.kind === 'log'
+					? t('runview.record.lbl_log')
+					: sn.kind === 'ping_file'
+						? t('runview.record.lbl_ping_file')
+						: (sn.name ?? t('runview.record.lbl_output')),
 			source:
 				sn.kind === 'ping_file'
-					? 'shown in a ping'
-					: `${sn.stageId} · attempt ${sn.iteration ?? 0}`,
+					? t('runview.record.src_ping')
+					: t('runview.record.src_stage', { stage: sn.stageId, n: sn.iteration ?? 0 }),
 			href: sn.pingId ? to.ping(sn.pingId) : undefined,
 			size: sn.size,
 			at: sn.createdAt
@@ -49,8 +54,8 @@
 				filename: a.filename,
 				kind: 'attachment',
 				snapshot: false,
-				label: 'attachment',
-				source: a.pingId ? 'ping answer' : 'run goal',
+				label: t('runview.record.lbl_attachment'),
+				source: a.pingId ? t('runview.record.src_ping_answer') : t('runview.record.src_goal'),
 				href: a.pingId ? to.ping(a.pingId) : undefined,
 				size: a.size,
 				at: a.createdAt
@@ -67,29 +72,30 @@
 		<Segmented
 			glass={false}
 			size="sm"
-			label="Kind"
+			label={t('runview.record.kind_label')}
 			bind:value={filter}
 			options={[
-				{ value: '', label: 'All', count: all.length },
-				{ value: 'output', label: 'Outputs', count: n('output') },
-				{ value: 'log', label: 'Logs', count: n('log') },
-				{ value: 'attachment', label: 'Attachments', count: n('attachment') }
+				{ value: '', label: t('runview.record.all'), count: all.length },
+				{ value: 'output', label: t('runview.record.outputs'), count: n('output') },
+				{ value: 'log', label: t('runview.record.logs'), count: n('log') },
+				{ value: 'attachment', label: t('runview.record.attachments'), count: n('attachment') }
 			]}
 		/>
-		<span class="hint">Kept after the workspace is destroyed</span>
+		<span class="hint">{t('runview.record.kept')}</span>
 	</div>
 	{#if all.length === 0}
 		<div class="empty-line">
-			Nothing on the record yet. Each stage attempt files its declared outputs and its log here as
-			it finishes, whether it passed or failed.
+			{t('runview.record.empty')}
 		</div>
 	{:else if rows.length === 0}
-		<div class="empty-line">No files of that kind.</div>
+		<div class="empty-line">{t('runview.record.no_kind')}</div>
 	{:else}
 		<div class="rows card-in">
 			<div class="r head">
-				<span>Name</span><span>Kind</span><span>Source</span><span class="rt">Size</span><span
-					class="rt">Time</span
+				<span>{t('runview.record.col_name')}</span><span>{t('runview.record.col_kind')}</span><span
+					>{t('runview.record.col_source')}</span
+				><span class="rt">{t('runview.record.col_size')}</span><span class="rt"
+					>{t('runview.record.col_time')}</span
 				><span></span>
 			</div>
 			{#each rows as r (r.id)}
@@ -110,11 +116,13 @@
 						>{r.at ? fmtClock(r.at) : I.none}</span
 					>
 					<span class="acts"
-						><a class="brand" href={url} target="_blank" rel="noreferrer">Open</a><a
+						><a class="brand" href={url} target="_blank" rel="noreferrer"
+							>{t('runview.record.open')}</a
+						><a
 							class="brand"
 							href={dl}
-							title="Download {r.filename}"
-							aria-label="Download {r.filename}">{I.follow}</a
+							title={t('runview.record.download', { name: r.filename })}
+							aria-label={t('runview.record.download', { name: r.filename })}>{I.follow}</a
 						></span
 					>
 				</div>

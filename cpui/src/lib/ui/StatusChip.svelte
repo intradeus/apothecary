@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Run state chip (DESIGN 3.1). The workspace has its own badge: never merge
 	// the two axes into one chip.
 	import type { RunState } from '$lib/domain';
@@ -33,7 +34,13 @@
 		state === 'running' || state === 'provisioning' || state === 'waiting_on_human'
 	);
 	const aside = $derived(
-		!suffix ? '' : state === 'running' ? 'brewing' : state === 'failed' ? 'batch spoiled' : ''
+		!suffix
+			? ''
+			: state === 'running'
+				? t('ui.status.brewing')
+				: state === 'failed'
+					? t('ui.status.spoiled')
+					: ''
 	);
 </script>
 

@@ -44,6 +44,7 @@
 </script>
 
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	let {
 		state,
 		envId,
@@ -76,11 +77,13 @@
 			} as const
 		)[v]
 	);
-	const word = $derived(v === 'none' ? 'no workspace' : v);
+	const word = $derived(v === 'none' ? t('ui.ws.none') : v);
 	const tip = $derived(
 		v === 'unknown'
-			? 'Provisioner unreachable — check integration token'
-			: `Workspace: ${word}${envId ? ` · ${envId}` : ''}`
+			? t('ui.ws.unreachable')
+			: envId
+				? t('ui.ws.tipEnv', { word, env: envId })
+				: t('ui.ws.tip', { word })
 	);
 	const pulsing = $derived(
 		v === 'starting' || v === 'provisioning' || v === 'rebuilding' || v === 'destroying'
@@ -91,7 +94,7 @@
 	<span class="dot-only {hue} {v}" title={tip}><span class="d" class:pulse={pulsing}></span></span>
 {:else}
 	<span class="ws {hue}" title={tip}>
-		{#if !bare}<span class="lbl">Workspace</span>{/if}
+		{#if !bare}<span class="lbl">{t('ui.ws.label')}</span>{/if}
 		{#if v !== 'none'}<span class="d {v}" class:pulse={pulsing}></span>{/if}
 		<span class="v">{word}</span>
 		{#if envId && v !== 'none'}<span class="id mono">{envId}</span>{/if}

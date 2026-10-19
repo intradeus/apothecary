@@ -8,14 +8,13 @@
 	import type { Flow, Integration, Project, Ticket } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to, type WorkshopTab } from '$lib/guild';
-	import { plural } from '$lib/format';
+	import { t, th } from '$lib/i18n/index.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { esc } from '$lib/ui/html';
 	import { I } from '$lib/ui/icons';
 	import { indicator } from '$lib/ui/motion';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
@@ -30,8 +29,8 @@
 	const projectId = $derived(page.params.workshop!);
 	const TABS: WorkshopTab[] = ['overview', 'runs', 'tickets', 'flows', 'agents', 'health'];
 	const tab = $derived.by<WorkshopTab>(() => {
-		const t = page.url.searchParams.get('tab') as WorkshopTab | null;
-		return t && TABS.includes(t) ? t : 'overview';
+		const q = page.url.searchParams.get('tab') as WorkshopTab | null;
+		return q && TABS.includes(q) ? q : 'overview';
 	});
 
 	let project = $state<Project | null>(null);
@@ -90,14 +89,14 @@
 		tickets: tickets?.length,
 		flows: flows ? ownFlows.length : undefined
 	});
-	const LABELS: Record<WorkshopTab, string> = {
-		overview: 'Overview',
-		runs: 'Runs',
-		tickets: 'Tickets',
-		flows: 'Flows',
-		agents: 'Agents',
-		health: 'Health'
-	};
+	const LABELS: Record<WorkshopTab, string> = $derived({
+		overview: t('page.workshop.tabOverview'),
+		runs: t('page.runs.title'),
+		tickets: t('page.tickets.title'),
+		flows: t('page.workshops.flows'),
+		agents: t('page.workshop.tabAgents'),
+		health: t('page.workshop.tabHealth')
+	});
 
 	let delBtn = $state<HTMLButtonElement | null>(null);
 	let blockedOpen = $state(false);
@@ -110,9 +109,9 @@
 			return;
 		}
 		const ok = await confirmDialog({
-			title: `Delete ${project.name}?`,
-			body: `The workshop <b>${esc(project.name)}</b> is deleted, along with its <b>tickets</b>, <b>flows</b>, commands and egress policy. Every run is already archived, so no <b>workspace</b> is affected. Integrations are untouched.`,
-			action: `Delete workshop`
+			title: t('page.workshop.deleteTitle', { name: project.name }),
+			body: th('page.workshop.deleteBody', { name: project.name }),
+			action: t('page.workshop.deleteAction')
 		});
 		if (!ok) return;
 		deleting = true;
@@ -120,7 +119,7 @@
 			const gone = project.name;
 			await api.projects.remove(project.id);
 			await fleet.refresh();
-			toast(`${gone} deleted`);
+			toast(t('page.workshop.deleted', { name: gone }));
 			await goto(to.workshops());
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -138,16 +137,18 @@
 <PageHeader
 	crumbs={[
 		{ label: guild.name, href: to.desk() },
-		{ label: 'Workshops', href: to.workshops() },
+		{ label: t('page.workshops.title'), href: to.workshops() },
 		{ label: project?.name ?? fallbackName ?? '…' }
 	]}
 	title={project?.name ?? fallbackName ?? ''}
 >
 	{#snippet lead()}<WorkshopBadge {projectId} live={live.length} />{/snippet}
 	{#snippet chip()}
-		{#if live.length}<span class="pill t-az"><span class="dot pulse"></span>{live.length} live</span
+		{#if live.length}<span class="pill t-az"
+				><span class="dot pulse"></span>{t('page.desk.nLive', { count: live.length })}</span
 			>{/if}
-		{#if pings}<span class="pill t-hot">{plural(pings, 'ping')} awaiting you</span>{/if}
+		{#if pings}<span class="pill t-hot">{t('page.workshop.pingsAwaiting', { count: pings })}</span
+			>{/if}
 	{/snippet}
 	{#snippet meta()}
 		{#if project}
@@ -159,7 +160,8 @@
 			{:else}
 				<span class="mono repo">{project.repo.url}</span>
 			{/if}
-			{#if project.repos?.length}<span class="fnt">+{plural(project.repos.length, 'repo')}</span
+			{#if project.repos?.length}<span class="fnt"
+					>{t('page.workshops.moreRepos', { count: project.repos.length })}</span
 				>{/if}
 			<span class="mono fnt">{I.branch} {project.repo.defaultBranch}</span>
 			<WorkshopChips {project} {integrations} />
@@ -170,15 +172,15 @@
 	{#snippet actions()}
 		{#if project}
 			<div class="acts">
-				<a class="btn" href={to.workshopSettings(project.id)}>Edit setup</a>
+				<a class="btn" href={to.workshopSettings(project.id)}>{t('page.workshop.editSetup')}</a>
 				<button
 					bind:this={delBtn}
 					class="btn-danger"
 					aria-busy={deleting}
 					onclick={remove}
 					title={blocking.length
-						? `${plural(blocking.length, 'run')} not archived yet`
-						: `Delete this workshop`}>Delete…</button
+						? t('page.workshop.notArchived', { count: blocking.length })
+						: t('page.workshop.deleteThis')}>{t('page.ticket.delete')}</button
 				>
 			</div>
 		{/if}
@@ -187,39 +189,37 @@
 
 <Popover anchor={delBtn} bind:open={blockedOpen} placement="below-end" width={320}>
 	<div class="blocked">
-		<div class="bt">Archive its runs first</div>
+		<div class="bt">{t('page.workshop.archiveFirst')}</div>
 		<p>
-			{plural(blocking.length, 'run')}
-			{blocking.length === 1 ? 'still belongs' : 'still belong'} to this workshop. Archiving a run destroys
-			its workspace and keeps its record; once every run is archived the workshop can be deleted.
+			{t('page.workshop.blockedText', { count: blocking.length })}
 		</p>
 		<a
 			class="btn btn-sm"
 			href={to.workshop(projectId, 'runs')}
-			onclick={() => (blockedOpen = false)}>Show runs {I.forward}</a
+			onclick={() => (blockedOpen = false)}>{t('page.workshop.showRuns')} {I.forward}</a
 		>
 	</div>
 </Popover>
 
-<nav class="tabs wt" aria-label="Workshop sections" use:indicator>
-	{#each TABS as t (t)}
+<nav class="tabs wt" aria-label={t('page.workshop.sections')} use:indicator>
+	{#each TABS as tb (tb)}
 		<a
-			href={to.workshop(projectId, t)}
-			class:on={tab === t}
-			aria-current={tab === t ? 'page' : undefined}
+			href={to.workshop(projectId, tb)}
+			class:on={tab === tb}
+			aria-current={tab === tb ? 'page' : undefined}
 			data-sveltekit-noscroll
-			>{LABELS[t]}{#if counts[t] !== undefined}<span class="count">{counts[t]}</span>{/if}</a
+			>{LABELS[tb]}{#if counts[tb] !== undefined}<span class="count">{counts[tb]}</span>{/if}</a
 		>
 	{/each}
 </nav>
 
 <div class="page">
 	{#if error && !project}
-		<ErrorCard cause="Couldn’t load this workshop" detail={error} onretry={loadProject} />
+		<ErrorCard cause={t('page.settings.loadError')} detail={error} onretry={loadProject} />
 	{:else if !project}
 		<Skeleton pane lines={5} />
 	{:else}
-		{#if error}<ErrorCard cause="That didn’t work" detail={error} />{/if}
+		{#if error}<ErrorCard cause={t('page.channels.failed')} detail={error} />{/if}
 		<div class="tab">
 			{#if tab === 'overview'}
 				<OverviewTab {project} {integrations} {flows} {runs} />

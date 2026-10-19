@@ -7,6 +7,7 @@
 	import type { Flow, Integration, Project } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
+	import { t } from '$lib/i18n/index.svelte';
 	import ProjectForm from '$lib/ProjectForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -41,21 +42,21 @@
 <PageHeader
 	crumbs={[
 		{ label: guild.name, href: to.desk() },
-		{ label: 'Workshops', href: to.workshops() },
+		{ label: t('page.workshops.title'), href: to.workshops() },
 		{ label: name, href: to.workshop(projectId) },
-		{ label: 'Setup' }
+		{ label: t('page.settings.crumb') }
 	]}
 	title={name}
-	accent="setup"
+	accent={t('page.settings.accent')}
 >
 	{#snippet meta()}
-		<span>Repository, commands, execution and workspace.</span>
+		<span>{t('page.settings.meta')}</span>
 	{/snippet}
 </PageHeader>
 
 <div class="page">
 	{#if error}
-		<ErrorCard cause="Couldn’t load this workshop" detail={error} onretry={load} />
+		<ErrorCard cause={t('page.settings.loadError')} detail={error} onretry={load} />
 	{:else if !project}
 		<Skeleton pane lines={6} />
 	{:else}

@@ -7,7 +7,7 @@
 	import { ME, currentGuild, to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
 	import { api } from '$lib/api';
-	import { plural } from '$lib/format';
+	import { t } from '$lib/i18n/index.svelte';
 	import type { Run } from '$lib/domain';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
@@ -30,7 +30,7 @@
 	let ticketCounts = $state<Map<string, number> | null>(null);
 
 	onMount(() => {
-		const t = setInterval(() => (now = Date.now()), 1000);
+		const tick = setInterval(() => (now = Date.now()), 1000);
 		api.tickets
 			.list()
 			.then((ts) => {
@@ -39,7 +39,7 @@
 				ticketCounts = m;
 			})
 			.catch(() => (ticketCounts = new Map()));
-		return () => clearInterval(t);
+		return () => clearInterval(tick);
 	});
 
 	const pingRuns = $derived(new Set(fleet.pending.map((p) => p.runId)));
@@ -54,21 +54,21 @@
 	});
 
 	const hour = new Date().getHours();
-	const greeting =
+	const greeting = $derived(
 		hour < 5
-			? 'Good evening'
+			? t('page.desk.goodEvening')
 			: hour < 12
-				? 'Good morning'
+				? t('page.desk.goodMorning')
 				: hour < 18
-					? 'Good afternoon'
-					: 'Good evening';
+					? t('page.desk.goodAfternoon')
+					: t('page.desk.goodEvening')
+	);
 	const headline = $derived.by(() => {
 		const n = fleet.pending.length;
 		const live = fleet.active.length;
-		const needs =
-			n === 0 ? 'Nothing needs you' : `${plural(n, 'thing')} ${n === 1 ? 'needs' : 'need'} you`;
-		const fire = `${live} ${live === 1 ? 'brew' : 'brews'} on the fire.`;
-		return `${needs}, ${fire}`;
+		const needs = n === 0 ? t('page.desk.nothingNeeds') : t('page.desk.thingsNeed', { count: n });
+		const fire = t('page.desk.brewsOnFire', { count: live });
+		return t('page.desk.headline', { needs, fire });
 	});
 
 	// Last finished runs per workshop (completed / failed), newest first.
@@ -107,37 +107,40 @@
 		const c = recent.filter((r) => r.state === 'completed').length;
 		const f = recent.filter((r) => r.state === 'failed').length;
 		return c || f
-			? `last 24h · ${c} completed${f ? ` · ${f} failed` : ''}`
-			: 'nothing finished in 24h';
+			? t('page.desk.last24h', { completed: c }) +
+					(f ? t('page.desk.last24hFailed', { failed: f }) : '')
+			: t('page.desk.nothingFinished24h');
 	});
 </script>
 
-<svelte:head><title>{guild.name} · Desk</title></svelte:head>
+<svelte:head><title>{t('page.desk.docTitle', { guild: guild.name })}</title></svelte:head>
 
 <div class="page desk">
 	<header class="top">
 		<div class="tt">
 			<div class="cap">
 				<span>{guild.name}</span><span class="fnt">·</span>
-				<span>{plural(fleet.projects.length, 'workshop')}</span><span class="fnt">·</span>
+				<span>{t('page.desk.workshopCount', { count: fleet.projects.length })}</span><span
+					class="fnt">·</span
+				>
 				<span>{guild.role}</span>
 			</div>
 			<h1>{greeting}, {ME.name}. <span class="accent">{headline}</span></h1>
 		</div>
 		<Segmented
 			bind:value={filter}
-			label="Filter runs"
+			label={t('page.desk.filterRuns')}
 			options={[
-				{ value: 'all', label: 'Everything', count: counts.all },
-				{ value: 'needs', label: 'Needs me', count: counts.needs },
-				{ value: 'running', label: 'Running', count: counts.running }
+				{ value: 'all', label: t('page.desk.filterAll'), count: counts.all },
+				{ value: 'needs', label: t('page.desk.filterNeeds'), count: counts.needs },
+				{ value: 'running', label: t('page.desk.filterRunning'), count: counts.running }
 			]}
 		/>
 	</header>
 
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard
-			cause="Could not reach the engine"
+			cause={t('page.desk.engineDown')}
 			detail={fleet.error}
 			onretry={() => fleet.refresh()}
 		/>
@@ -153,26 +156,31 @@
 		{/if}
 
 		<section class="sect">
-			<SectionHeader title="Workshops" href={to.runs()} linkLabel="All runs">
+			<SectionHeader
+				title={t('page.desk.workshops')}
+				href={to.runs()}
+				linkLabel={t('page.desk.allRuns')}
+			>
 				{#snippet actions()}
 					<span class="pill t-az"
-						>{fleet.active.length ? `${fleet.active.length} live` : 'idle'}</span
+						>{fleet.active.length
+							? t('page.desk.nLive', { count: fleet.active.length })
+							: t('page.desk.idle')}</span
 					>
 					<span
 						class="pill t-hot"
 						class:gone={!fleet.pending.length}
-						use:bump={fleet.pending.length}>{fleet.pending.length} need you</span
+						use:bump={fleet.pending.length}
+						>{t('page.desk.nNeedYou', { count: fleet.pending.length })}</span
 					>
 					<span class="mut tiny today">{today}</span>
 				{/snippet}
 			</SectionHeader>
 
 			{#if fleet.projects.length === 0}
-				<EmptyState
-					title="No workshops yet"
-					text="A workshop is a repository plus how to build it. Set one up to start taking tickets."
-				>
-					<a class="btn btn-primary" href={to.newWorkshop()}>{I.add} New workshop</a>
+				<EmptyState title={t('page.desk.noWorkshops')} text={t('page.desk.noWorkshopsText')}>
+					<a class="btn btn-primary" href={to.newWorkshop()}>{I.add} {t('page.desk.newWorkshop')}</a
+					>
 				</EmptyState>
 			{:else}
 				<div class="card-grid" style:--min="330px">
@@ -198,9 +206,9 @@
 					<EmptyState
 						inline
 						title={cards.length || filter !== 'all'
-							? `${quiet.length} quiet ${quiet.length === 1 ? 'workshop' : 'workshops'}`
-							: 'All still on the shelf'}
-						text="nothing running"
+							? t('page.desk.quietWorkshops', { count: quiet.length })
+							: t('page.desk.allOnShelf')}
+						text={t('page.desk.nothingRunning')}
 					>
 						<span class="qn">
 							{#each quiet as p, i (p.id)}{#if i}<span class="fnt"> · </span>{/if}<a
@@ -208,15 +216,15 @@
 								>{/each}
 						</span>
 						<a class="btn btn-sm" href={to.newTicket({ project: quiet[0].id })}
-							>{I.add} New ticket</a
+							>{I.add} {t('page.desk.newTicket')}</a
 						>
 					</EmptyState>
 				{/if}
 				{#if !cards.length && filter !== 'all' && !quiet.length}
 					<EmptyState
 						inline
-						title={filter === 'needs' ? 'Nothing needs you' : 'Nothing brewing'}
-						text="No live runs match this filter."
+						title={filter === 'needs' ? t('page.desk.nothingNeeds') : t('page.desk.nothingBrewing')}
+						text={t('page.desk.noLiveMatch')}
 					/>
 				{/if}
 			{/if}
@@ -224,10 +232,10 @@
 
 		<section class="sect">
 			<SectionHeader
-				title="Recently finished"
-				sub="last 24h"
+				title={t('page.desk.recentlyFinished')}
+				sub={t('page.desk.last24hSub')}
 				href={to.runs({ tab: 'finished' })}
-				linkLabel="All finished"
+				linkLabel={t('page.desk.allFinished')}
 			/>
 			{#if recent.length}
 				<div class="c pane">
@@ -239,8 +247,8 @@
 			{:else}
 				<EmptyState
 					compact
-					title="Nothing bottled today"
-					text="Runs that finish in the last 24 hours land here."
+					title={t('page.desk.nothingBottled')}
+					text={t('page.desk.nothingBottledText')}
 				/>
 			{/if}
 		</section>

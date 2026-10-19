@@ -6,6 +6,7 @@
 // { data, error, response } triple.
 
 import { client } from './generated/client.gen';
+import { t } from '$lib/i18n/index.svelte';
 
 // Same origin: the engine serves the UI, and the dev server proxies /api.
 client.setConfig({ baseUrl: '' });
@@ -26,7 +27,7 @@ function messageOf(error: unknown, response?: Response): string {
 	}
 	if (typeof error === 'string' && error) return error;
 	if (response) return `${response.status} ${response.statusText}`.trim();
-	return 'the engine could not be reached';
+	return t('api.unreachable');
 }
 
 /** Resolve a call to its body, or throw the engine's message. */

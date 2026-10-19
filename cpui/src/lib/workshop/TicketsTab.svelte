@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/index.svelte';
 	// Workshop tickets tab (DESIGN 7.6 list, filtered to this workshop). The
 	// status is derived: the latest run's state, or "no runs".
 	import type { Project, Ticket } from '$lib/domain';
@@ -23,22 +24,22 @@
 	let q = $state('');
 	let filter = $state<'all' | 'active' | 'idle'>('all');
 
-	const hasActive = (t: Ticket) =>
-		(fleet.runsByTicket.get(t.id) ?? []).some((r) => stateTab[r.state] === 'active');
+	const hasActive = (tk: Ticket) =>
+		(fleet.runsByTicket.get(tk.id) ?? []).some((r) => stateTab[r.state] === 'active');
 
 	const shown = $derived(
 		(tickets ?? [])
-			.filter((t) => {
+			.filter((tk) => {
 				const s = q.trim().toLowerCase();
 				if (
 					s &&
-					!t.title.toLowerCase().includes(s) &&
-					!(t.source?.key ?? '').toLowerCase().includes(s) &&
-					!t.goal.toLowerCase().includes(s)
+					!tk.title.toLowerCase().includes(s) &&
+					!(tk.source?.key ?? '').toLowerCase().includes(s) &&
+					!tk.goal.toLowerCase().includes(s)
 				)
 					return false;
-				if (filter === 'active') return hasActive(t);
-				if (filter === 'idle') return !hasActive(t);
+				if (filter === 'active') return hasActive(tk);
+				if (filter === 'idle') return !hasActive(tk);
 				return true;
 			})
 			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -49,20 +50,24 @@
 <div class="row">
 	<Segmented
 		options={[
-			{ value: 'all', label: 'All', count: tickets?.length ?? '…' },
-			{ value: 'active', label: 'Running', count: activeN },
-			{ value: 'idle', label: 'Idle', count: (tickets?.length ?? 0) - activeN }
+			{ value: 'all', label: t('workshop.tickets.all'), count: tickets?.length ?? '…' },
+			{ value: 'active', label: t('workshop.tickets.running'), count: activeN },
+			{ value: 'idle', label: t('workshop.tickets.idle'), count: (tickets?.length ?? 0) - activeN }
 		]}
 		bind:value={filter}
 	/>
-	<SearchInput bind:value={q} placeholder="Search title, key, goal" />
+	<SearchInput bind:value={q} placeholder={t('workshop.tickets.search')} />
 	<span class="spacer"></span>
-	<a class="btn btn-sm" href={to.tickets({ project: project.id })}>Open in Tickets {I.forward}</a>
-	<a class="btn btn-primary" href={to.newTicket({ project: project.id })}>{I.add} New ticket</a>
+	<a class="btn btn-sm" href={to.tickets({ project: project.id })}
+		>{t('workshop.tickets.openIn')} {I.forward}</a
+	>
+	<a class="btn btn-primary" href={to.newTicket({ project: project.id })}
+		>{I.add} {t('workshop.tickets.new')}</a
+	>
 </div>
 
 {#if error && !tickets}
-	<ErrorCard cause="Couldn’t load tickets" detail={error} {onretry} />
+	<ErrorCard cause={t('workshop.tickets.loadError')} detail={error} {onretry} />
 {:else if !tickets}
 	<Skeleton pane lines={4} />
 {:else if shown.length}
@@ -70,12 +75,15 @@
 		<TicketTable tickets={shown} cols={['title', 'source', 'branch', 'status', 'created']} />
 	</section>
 {:else if q || filter !== 'all'}
-	<EmptyState compact title="No match" text="No ticket matches this filter." />
-{:else}
 	<EmptyState
-		title="No tickets yet"
-		text="A ticket is the work: a goal, files, and a branch. Runs start from it."
-	>
-		<a class="btn btn-primary" href={to.newTicket({ project: project.id })}>{I.add} New ticket</a>
+		compact
+		title={t('workshop.tickets.noMatchTitle')}
+		text={t('workshop.tickets.noMatchText')}
+	/>
+{:else}
+	<EmptyState title={t('workshop.tickets.emptyTitle')} text={t('workshop.tickets.emptyText')}>
+		<a class="btn btn-primary" href={to.newTicket({ project: project.id })}
+			>{I.add} {t('workshop.tickets.new')}</a
+		>
 	</EmptyState>
 {/if}

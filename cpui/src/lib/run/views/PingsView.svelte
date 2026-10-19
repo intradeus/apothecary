@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Pings (DESIGN §6): every ping this run raised, newest first. A pending
 	// one opens into the card that answers it; answered ones say how.
+	import { t } from '$lib/i18n/index.svelte';
 	import PingCard from '$lib/PingCard.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
 	import { ago, fmtAbs, fmtClock } from '$lib/format';
@@ -18,9 +19,9 @@
 	const withdrawn = $derived(rs.pings.filter((p) => p.status === 'withdrawn').length);
 	const summary = $derived(
 		[
-			pending ? `${pending} pending` : '',
-			answered ? `${answered} answered` : '',
-			withdrawn ? `${withdrawn} withdrawn` : ''
+			pending ? t('runview.pings.pending', { count: pending }) : '',
+			answered ? t('runview.pings.answered', { count: answered }) : '',
+			withdrawn ? t('runview.pings.withdrawn', { count: withdrawn }) : ''
 		]
 			.filter(Boolean)
 			.join(' · ')
@@ -30,13 +31,12 @@
 
 <div class="view pv">
 	<div class="top">
-		<span>Pings raised by this run</span>
-		<span>{summary || 'none yet'}</span>
+		<span>{t('runview.pings.raised')}</span>
+		<span>{summary || t('runview.pings.none_yet')}</span>
 	</div>
 	{#if list.length === 0}
 		<div class="empty-line">
-			No pings. Gates and the agent's own questions land here — and in the inbox — when the run
-			needs you.
+			{t('runview.pings.empty')}
 		</div>
 	{/if}
 	{#each list as p (p.id)}
@@ -62,21 +62,23 @@
 							>{p.stageId ? `${p.stageId} · ` : ''}<span title={fmtAbs(p.raisedAt)}
 								>{fmtClock(p.raisedAt)}</span
 							>
-							· {isAgentPing(p.type) ? 'unwanted' : 'wanted'}</span
+							· {isAgentPing(p.type)
+								? t('runview.pings.unwanted')
+								: t('runview.pings.wanted')}</span
 						>
 					</span>
 					<span class="st" class:fnt={p.status === 'withdrawn'}>
-						{#if p.status === 'answered'}{p.answer === 'text' ? 'answered' : p.answer}{p.answeredAt
-								? ` · ${ago(p.answeredAt)}`
-								: ''}
-						{:else}withdrawn{/if}
+						{#if p.status === 'answered'}{p.answer === 'text'
+								? t('runview.pings.st_answered')
+								: p.answer}{p.answeredAt ? ` · ${ago(p.answeredAt)}` : ''}
+						{:else}{t('runview.pings.st_withdrawn')}{/if}
 					</span>
 				</button>
 				{#if open === p.id}
 					<div class="body">
 						<Markdown src={p.question} />
-						{#if p.feedback}<div class="fb"><b>You:</b> {p.feedback}</div>{/if}
-						<a class="brand ib" href={to.ping(p.id)}>Open in inbox {I.forward}</a>
+						{#if p.feedback}<div class="fb"><b>{t('runview.pings.you')}</b> {p.feedback}</div>{/if}
+						<a class="brand ib" href={to.ping(p.id)}>{t('runview.pings.open_inbox')} {I.forward}</a>
 					</div>
 				{/if}
 			</div>

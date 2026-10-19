@@ -6,6 +6,7 @@
 	import type { Flow, Integration } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
+	import { t } from '$lib/i18n/index.svelte';
 	import ProjectForm from '$lib/ProjectForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -41,32 +42,33 @@
 <PageHeader
 	crumbs={[
 		{ label: guild.name, href: to.desk() },
-		{ label: 'Workshops', href: to.workshops() },
-		{ label: 'New' }
+		{ label: t('page.workshops.title'), href: to.workshops() },
+		{ label: t('page.newTicket.crumb') }
 	]}
-	title="Set up a"
-	accent="new workshop"
+	title={t('page.newWorkshop.title')}
+	accent={t('page.newWorkshop.accent')}
 >
 	{#snippet meta()}
-		<span
-			>A repository, the commands its flows call, where runs execute, and what they may reach.</span
-		>
+		<span>{t('page.newWorkshop.meta')}</span>
 	{/snippet}
 </PageHeader>
 
 <div class="page">
 	{#if error}
-		<ErrorCard cause="Couldn’t load integrations and templates" detail={error} onretry={load} />
+		<ErrorCard cause={t('page.newWorkshop.loadError')} detail={error} onretry={load} />
 	{:else if !loaded}
 		<Skeleton pane lines={6} />
 	{:else if missing.length}
 		<EmptyState
-			title="Integrations first"
-			text="A workshop needs a {missing.join(', ')} integration to run. Add {missing.length === 1
-				? 'it'
-				: 'them'} in System, then come back."
+			title={t('page.newWorkshop.integrationsFirst')}
+			text={t('page.newWorkshop.integrationsText', {
+				count: missing.length,
+				list: missing.join(', ')
+			})}
 		>
-			<a class="btn btn-primary" href={to.system('integrations')}>Open integrations</a>
+			<a class="btn btn-primary" href={to.system('integrations')}
+				>{t('page.newWorkshop.openIntegrations')}</a
+			>
 		</EmptyState>
 	{:else}
 		<ProjectForm

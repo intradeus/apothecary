@@ -5,6 +5,7 @@
 	// If the list cannot be loaded it degrades to free text.
 	import { api } from '$lib/api';
 	import type { Flow } from '$lib/domain';
+	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		projectId,
@@ -44,25 +45,23 @@
 {#if failed}
 	<div class="fs">
 		<input {id} bind:value placeholder={fallbackLabel} class="mono" />
-		<span class="help"
-			>Flows could not be listed — type a flow name, or leave empty for the default.</span
-		>
+		<span class="help">{t('flowselect.failed')}</span>
 	</div>
 {:else}
 	<select {id} bind:value class="mono" disabled={!flows}>
 		{#if !flows}
-			<option {value}>Loading flows…</option>
+			<option {value}>{t('flowselect.loading')}</option>
 		{:else}
 			<option value="">{fallbackLabel}</option>
 			{#if owned.length}
-				<optgroup label="Workshop flows">
+				<optgroup label={t('flowselect.workshopFlows')}>
 					{#each owned as f (f.name)}<option value={f.name}
-							>{f.name}{f.shadowsBuiltin ? ' (customised template)' : ''}</option
+							>{f.name}{f.shadowsBuiltin ? t('flowselect.customised') : ''}</option
 						>{/each}
 				</optgroup>
 			{/if}
 			{#if templates.length}
-				<optgroup label="Built-in templates">
+				<optgroup label={t('flowselect.templates')}>
 					{#each templates as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 				</optgroup>
 			{/if}
