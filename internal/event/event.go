@@ -107,6 +107,12 @@ const (
 	// when the stage started. Distinct from output_contract because the fault
 	// is upstream wiring, not this stage's work.
 	ReasonInputMissing = "input_missing"
+	// ReasonInputInvalid: a value the flow wrote for the stage does not fit
+	// what it addresses — a status the tracker cannot reach, a field it does
+	// not have or cannot write from text. Like input_missing the fault is
+	// the flow's wiring, not this stage's work; unlike it the input is there,
+	// it just means nothing where it lands.
+	ReasonInputInvalid = "input_invalid"
 	ReasonInfra        = "infra"
 )
 
@@ -181,6 +187,15 @@ type RunCreated struct {
 	// so they can reach EVERY run — which is exactly why ForRun cannot see
 	// them, and why their ids must ride on the event.
 	TicketAttachmentIDs []string `json:"ticket_attachment_ids,omitempty"`
+	// TicketSource* snapshot where the ticket was imported from — the
+	// ticketsource integration, its vendor, the issue key and its page — so
+	// a tracker action (FLOWLANG §2) knows which issue to write to without a
+	// lookup the ticket's later deletion could break. Absent on a ticket
+	// written by hand: tracker actions then skip.
+	TicketSourceID   string `json:"ticket_source_id,omitempty"`
+	TicketSourceKind string `json:"ticket_source_kind,omitempty"`
+	TicketSourceKey  string `json:"ticket_source_key,omitempty"`
+	TicketSourceURL  string `json:"ticket_source_url,omitempty"`
 }
 
 // Checkout is one repository a run checks out.
@@ -246,6 +261,12 @@ type StageCompleted struct {
 	TurnsUsed  int    `json:"turns_used,omitempty"`
 	Usage      *Usage `json:"usage,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
+	// Skipped marks a completion that did no work because the stage had
+	// nothing to act on — a tracker action on a ticket with no tracker
+	// issue. Routing is unchanged (on_success follows); Note says why, for
+	// the timeline. Engine-authored text, never workspace output.
+	Skipped bool   `json:"skipped,omitempty"`
+	Note    string `json:"note,omitempty"`
 }
 
 type StageFailed struct {

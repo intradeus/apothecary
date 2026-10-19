@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -336,3 +337,45 @@ func TestIntegrationOps(t *testing.T) {
 }
 
 var _ = fake.Forge{} // keep the fake import for future scenarios
+
+// A ticketsource integration's write side is the same adapter, asserted for
+// the capability; one without it is refused by name.
+func TestTicketWriterResolvesTheWriteSide(t *testing.T) {
+	ctx := context.Background()
+	key, _ := secrets.ParseKey(secrets.GenerateKey())
+	svc := confstore.New(confstore.NewMem(), key)
+	reg := kinds.NewRegistry()
+	kinds.RegisterFakes(reg)
+	reg.RegisterTicketSource(readOnlyKind{})
+	svc.KindValid = reg.Valid
+	r := New(svc, reg, t.TempDir(), 0, "")
+
+	writable, err := svc.CreateIntegration(ctx, confstore.Integration{Name: "tracker", Port: confstore.PortTicketSource, Kind: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.TicketWriter(ctx, writable.ID); err != nil {
+		t.Errorf("fake tracker: %v", err)
+	}
+	ro, err := svc.CreateIntegration(ctx, confstore.Integration{Name: "legacy", Port: confstore.PortTicketSource, Kind: "readonly"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.TicketWriter(ctx, ro.ID); err == nil || !strings.Contains(err.Error(), "legacy (readonly)") {
+		t.Errorf("read-only tracker: err = %v, want the integration named", err)
+	}
+	if _, err := r.TicketWriter(ctx, "nope"); !errors.Is(err, engine.ErrUnresolvable) {
+		t.Errorf("missing integration: err = %v, want unresolvable", err)
+	}
+}
+
+// readOnlyKind is a ticketsource kind whose adapter never learned to write.
+type readOnlyKind struct{}
+
+func (readOnlyKind) Descriptor() kinds.Descriptor {
+	return kinds.Descriptor{Port: "ticketsource", Kind: "readonly", Label: "read-only"}
+}
+
+func (readOnlyKind) New(kinds.Config) (ports.TicketSource, error) {
+	return fake.ReadOnlyTicketSource{Src: &fake.TicketSource{}}, nil
+}

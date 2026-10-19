@@ -10,6 +10,7 @@ export default {
 	'run.header.brewing': 'brewing {duration}',
 	'run.header.layouts': 'Windows & layouts',
 	'run.header.ticket': 'ticket',
+	'run.header.tracker': 'tracker issue',
 	'run.header.flow': 'flow',
 	'run.header.branchTitle': "This run's branch, forked off {source}",
 	'run.header.theDefault': 'the default',
@@ -296,6 +297,7 @@ export default {
 
 	// Stage rows
 	'run.stage.done': 'done',
+	'run.stage.skipped': 'skipped — nothing to act on',
 	'run.stage.parked': 'failed — parked for you to check why',
 	'run.stage.waiting': 'waiting on you',
 	'run.stage.pausedReenter': 'paused — will re-enter',
@@ -324,6 +326,7 @@ export default {
 	'run.event.turns_one': '{count} turn',
 	'run.event.turns_other': '{count} turns',
 	'run.event.stageCompleted': '{stage} completed ({bits})',
+	'run.event.stageSkipped': '{stage} skipped — {note}',
 	'run.event.ownQuestion': 'waiting on its own question',
 	'run.event.stagePaused': '{stage} paused — {why}',
 	'run.event.stagePausedSpent': '{stage} paused — {why} ({spent} so far)',

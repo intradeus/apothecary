@@ -9,12 +9,16 @@ components:
           items:
             $ref: '#/components/schemas/InputSig'
           type: array
+        needs:
+          type: string
         outputs:
           items:
             $ref: '#/components/schemas/OutputSig'
           type: array
         provides:
           type: string
+        remote:
+          type: boolean
         requires:
           type: string
         single:
@@ -1409,7 +1413,11 @@ components:
           type: string
         ticket_id:
           type: string
+        ticket_key:
+          type: string
         ticket_title:
+          type: string
+        ticket_url:
           type: string
         updated_at:
           format: date-time

@@ -132,6 +132,7 @@ func registry(dev bool) *kinds.Registry {
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
 	reg.RegisterTicketSource(kinds.Jira{})
+	reg.RegisterTicketSource(kinds.GitHubIssues{})
 	if dev {
 		kinds.RegisterFakes(reg)
 	}

@@ -277,6 +277,11 @@
 					{I.external}</a
 				>
 			{/if}
+			{#if run.ticketUrl}
+				<a class="tx" href={run.ticketUrl} target="_blank" rel="noreferrer"
+					>{t('run.header.tracker')} {I.external}</a
+				>
+			{/if}
 			<span
 				>{t('run.header.flow')} <span class="tx">{run.flowName}</span>{#if run.flowHash}
 					<span class="mono hash fnt">@{run.flowHash.slice(0, 6)}</span>{/if}</span

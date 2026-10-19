@@ -49,13 +49,21 @@ type View struct {
 	// TicketAttachmentIDs are the parent ticket's attachments, snapshotted at
 	// run start; carried for prompt assembly + delivery (not a column).
 	TicketAttachmentIDs []string `json:"-"`
-	FlowName            string   `json:"flow_name"`
-	FlowHash            string   `json:"flow_hash"`
-	CurrentStage        string   `json:"current_stage,omitempty"`
-	Branch              string   `json:"branch,omitempty"`        // the run's actual git branch (from RunCreated)
-	BranchBase          string   `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
-	SourceBranch        string   `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
-	MRURL               string   `json:"mr_url,omitempty"`
+	// TicketKey/TicketURL name the tracker issue the ticket was imported from
+	// ("PROJ-123" and its page), for the run page; empty on a ticket written
+	// by hand. TicketSourceID/Kind are the integration a tracker action
+	// writes through — engine-side only, like TicketGoal.
+	TicketKey        string `json:"ticket_key,omitempty"`
+	TicketURL        string `json:"ticket_url,omitempty"`
+	TicketSourceID   string `json:"-"`
+	TicketSourceKind string `json:"-"`
+	FlowName         string `json:"flow_name"`
+	FlowHash         string `json:"flow_hash"`
+	CurrentStage     string `json:"current_stage,omitempty"`
+	Branch           string `json:"branch,omitempty"`        // the run's actual git branch (from RunCreated)
+	BranchBase       string `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
+	SourceBranch     string `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
+	MRURL            string `json:"mr_url,omitempty"`
 	// MRs are every merge request the run opened (a multi-repo run has one
 	// per changed repo), in creation order;
 	// MRURL is the first. Checkouts are the run's repositories. Neither is a
@@ -130,6 +138,10 @@ func Apply(v *View, e *event.Event) {
 		v.TicketGoal = p.TicketGoal
 		v.RunGoal = p.RunGoal
 		v.TicketAttachmentIDs = p.TicketAttachmentIDs
+		v.TicketSourceID = p.TicketSourceID
+		v.TicketSourceKind = p.TicketSourceKind
+		v.TicketKey = p.TicketSourceKey
+		v.TicketURL = p.TicketSourceURL
 		v.FlowName = p.FlowName
 		v.FlowHash = p.FlowHash
 		v.Branch = p.Branch
@@ -154,6 +166,12 @@ func Apply(v *View, e *event.Event) {
 		}
 	case *event.StageStarted:
 		v.CurrentStage = p.StageID
+		// A stage that runs before any workspace exists (a remote tracker
+		// action first in the flow) is still the run working: pending means
+		// "queued, never started", and recovery would re-queue it as such.
+		if v.State == Pending {
+			v.State = Running
+		}
 	case *event.PingRaised:
 		v.State = WaitingOnHuman
 	case *event.PingAnswered:

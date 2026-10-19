@@ -106,7 +106,7 @@
 					class:fed={isFeedSentinel(p.value)}
 					title={p.unbound ? t('flow.node.unbound') : p.value}
 				>
-					{#if !p.unbound && (!p.sentinel || isFeedSentinel(p.value))}
+					{#if !p.unbound && !p.literal && (!p.sentinel || isFeedSentinel(p.value))}
 						<Handle
 							id={`in:${p.name}`}
 							type="target"

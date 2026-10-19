@@ -112,6 +112,12 @@ type Resolution struct {
 	// engine falls back to Runner.
 	Runners map[string]ports.AgentRunner
 	Forge   ports.Forge
+	// TicketWriter resolves the write side of a ticketsource integration — a
+	// tracker action's target — by integration id: the TICKET's (recorded at
+	// import), not the project's. nil = this build cannot write back (fakes
+	// that don't wire it); an adapter without the capability errors, naming
+	// the integration, so run creation can say so.
+	TicketWriter func(ctx context.Context, integrationID string) (ports.TicketWriter, error)
 
 	// AuthFiles lists where the harnesses' auth material lives in a workspace,
 	// so the engine can delete it when the run ends (kinds.AuthLocator). nil
@@ -172,8 +178,45 @@ func (r *Resolution) actionAvailable(st *flow.Stage) error {
 		if r.Forge == nil {
 			return fmt.Errorf("action %q needs a forge integration, which this project has not configured", act.Slug)
 		}
+	case actionspec.RequiresTracker:
+		// Per ticket, not per project: whether THIS ticket's tracker can be
+		// written is preflightTicket's question. Here only "can this build
+		// write back at all".
+		if r.TicketWriter == nil {
+			return fmt.Errorf("action %q writes to the ticket's tracker, which this build cannot", act.Slug)
+		}
 	default:
 		return fmt.Errorf("action %q requires %q, which this build cannot verify", act.Slug, act.Requires)
+	}
+	return nil
+}
+
+// preflightTicket is the per-TICKET half of preflight: a tracker action
+// writes through the integration the ticket was imported from, so whether
+// that integration can write is checked here, where the ticket is known,
+// rather than in preflight (per project, also run without a ticket by
+// PreflightProject). A ticket with no tracker passes — the engine skips
+// those stages, visibly — and so does a flow with no tracker action.
+func (e *Engine) preflightTicket(ctx context.Context, res *Resolution, fl *flow.Flow, t Ticket) error {
+	if t.SourceID == "" {
+		return nil
+	}
+	for i := range fl.Stages {
+		st := &fl.Stages[i]
+		if st.Type != flow.StageAction {
+			continue
+		}
+		act := actionspec.Get(st.Action)
+		if act == nil || act.Requires != actionspec.RequiresTracker {
+			continue
+		}
+		if res.TicketWriter == nil {
+			return fmt.Errorf("preflight: stage %q: action %q writes to the ticket's tracker, which this build cannot", st.ID, st.Action)
+		}
+		if _, err := res.TicketWriter(ctx, t.SourceID); err != nil {
+			return fmt.Errorf("preflight: stage %q: action %q writes to ticket %s's tracker, but %w", st.ID, st.Action, t.SourceKey, err)
+		}
+		return nil // every tracker stage writes through the same integration
 	}
 	return nil
 }

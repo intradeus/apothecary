@@ -102,6 +102,14 @@ func (FakeTicketSource) New(Config) (ports.TicketSource, error) {
 		Blobs: map[string][]byte{
 			"att-1": []byte("# Farewell\n\nMirror Greet: `Farewell(name) => \"Goodbye, <name>!\"`.\n"),
 		},
+		// A small board, so a flow's tracker actions have somewhere to move
+		// the issue: To Do → In Progress → In Review → Done (and back).
+		Reachable: map[string][]string{
+			"To Do":       {"In Progress"},
+			"In Progress": {"In Review", "To Do"},
+			"In Review":   {"Done", "In Progress"},
+			"Done":        {"To Do"},
+		},
 	}, nil
 }
 

@@ -115,6 +115,8 @@ export function toRun(w: Wire.RunView): Run {
 		currentStage: w.current_stage,
 		projectId: w.project_id,
 		ticketId: w.ticket_id,
+		ticketKey: w.ticket_key,
+		ticketUrl: w.ticket_url,
 		goal: w.run_goal,
 		branch: w.branch,
 		sourceBranch: w.source_branch,
@@ -484,7 +486,14 @@ function toActionInput(w: Wire.InputSig): ActionIO {
 	return {
 		name: w.name,
 		description: w.description,
-		kind: w.kind === 'value' ? 'value' : w.kind === 'enum' ? 'enum' : 'file',
+		kind:
+			w.kind === 'value'
+				? 'value'
+				: w.kind === 'enum'
+					? 'enum'
+					: w.kind === 'text'
+						? 'text'
+						: 'file',
 		required: w.required ?? false,
 		defaultPath: w.default_path,
 		values: w.values ?? undefined,
@@ -510,6 +519,8 @@ export function toActionSpec(w: Wire.Action): ActionSpec {
 		description: w.description,
 		requires: w.requires,
 		single: w.single ?? false,
+		remote: w.remote ?? false,
+		needs: w.needs,
 		inputs: list(w.inputs).map(toActionInput),
 		outputs: list(w.outputs).map(toActionOutput)
 	};

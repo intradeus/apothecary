@@ -2,6 +2,8 @@ package pgstore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"slices"
@@ -10,6 +12,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"apothecary/internal/event"
+	"apothecary/internal/run"
 )
 
 // freshSchemaDSN returns TEST_POSTGRES_DSN pointed at a new, empty schema
@@ -98,8 +103,12 @@ func TestMigrateFreshAndIdempotent(t *testing.T) {
 func TestMigrateCollapsesPreSquashLedger(t *testing.T) {
 	dsn := freshSchemaDSN(t)
 	s := openDSN(t, dsn)
-	// A pre-squash database: the init schema under a ledger of
-	// 1..preSquashHead.
+	// A pre-squash database: exactly the init schema (nothing a later
+	// migration added) under a ledger of 1..preSquashHead.
+	if _, err := s.pool.Exec(context.Background(), `ALTER TABLE runs DROP COLUMN view, DROP COLUMN dormant, DROP COLUMN rebuilding;
+		DELETE FROM schema_migrations WHERE version > 1`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.pool.Exec(context.Background(),
 		`INSERT INTO schema_migrations (version) SELECT generate_series(2, $1)`, preSquashHead); err != nil {
 		t.Fatal(err)
@@ -121,5 +130,65 @@ func TestMigrateRefusesUnknownVersion(t *testing.T) {
 	s.Close()
 	if _, err := Open(context.Background(), dsn); err == nil || !strings.Contains(err.Error(), "999") {
 		t.Fatalf("Open = %v, want refusal naming migration 999", err)
+	}
+}
+
+// TestInitMigrationIsFrozen: 0001_init.sql is the squash of the whole
+// pre-squash chain, and every database out there — collapsed or created
+// since — has applied version 1. An edit to the file reaches NONE of them (the
+// runner never re-runs an applied version), so the daemon boots against a
+// schema the code no longer matches; runs.view did exactly that once. A
+// schema change is a new migrations/NNNN_name.sql, written to be a no-op
+// where a fresh database already has the result.
+func TestInitMigrationIsFrozen(t *testing.T) {
+	data, err := migrationsFS.ReadFile("migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const frozen = "7cb275a590866bb54af5ae9f0b9a4d92b40c0b2456dca427477d4035c5d229d1"
+	if got := hex.EncodeToString(sha256sum(data)); got != frozen {
+		t.Fatalf("0001_init.sql changed (sha256 %s, frozen %s): databases that already applied version 1 will never see the edit — put the change in a new migrations/NNNN_name.sql instead", got, frozen)
+	}
+}
+
+func sha256sum(b []byte) []byte {
+	h := sha256.Sum256(b)
+	return h[:]
+}
+
+// A database stuck where an in-place edit of 0001 left it — ledger {1}, the
+// runs table without the projection columns the edit added, runs on the log —
+// catches up at the next boot: the catch-up migration adds the columns and
+// the projections are rebuilt from events, so every existing run has its view
+// again. (The shape the local stack was in when its daemon died on
+// `column "view" does not exist`.)
+func TestMigrateCatchesUpAnInitEditedInPlace(t *testing.T) {
+	dsn := freshSchemaDSN(t)
+	ctx := context.Background()
+	s := openDSN(t, dsn)
+	if _, err := s.Append(ctx, "r1", &event.RunCreated{TicketTitle: "T", FlowName: "f"}, &event.EnvRequested{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `ALTER TABLE runs DROP COLUMN view, DROP COLUMN dormant, DROP COLUMN rebuilding;
+		DELETE FROM schema_migrations WHERE version > 1`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s2 := openDSN(t, dsn)
+	if got, want := ledger(t, s2), shipped(t); !slices.Equal(got, want) {
+		t.Fatalf("ledger = %v, want %v", got, want)
+	}
+	views, err := s2.RunViews(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].RunID != "r1" || views[0].TicketTitle != "T" || views[0].State != run.Provisioning {
+		t.Fatalf("views after catch-up = %+v, want r1 rebuilt from its events", views)
+	}
+	// Idempotent: a reopen applies nothing and rebuilds nothing.
+	s2.Close()
+	if got, want := ledger(t, openDSN(t, dsn)), shipped(t); !slices.Equal(got, want) {
+		t.Fatalf("ledger after reopen = %v, want %v", got, want)
 	}
 }

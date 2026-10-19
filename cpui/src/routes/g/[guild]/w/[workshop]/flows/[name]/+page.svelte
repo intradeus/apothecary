@@ -32,6 +32,7 @@
 		chainLinks,
 		DEBUG,
 		autoLayout,
+		type NodeSize,
 		docToYaml,
 		DONE,
 		START,
@@ -46,6 +47,9 @@
 	let yaml = $state('');
 	let doc = $state<FlowDoc | null>(null);
 	let layout = $state<Record<string, { x: number; y: number }>>({});
+	// autoPlaced: the layout was guessed by autoLayout (no stored one); it is
+	// redone once the graph has measured its nodes.
+	let autoPlaced = false;
 	let rev = $state(0);
 	let tab = $state<'graph' | 'yaml'>('graph');
 	let graphDirty = $state(false);
@@ -101,6 +105,7 @@
 			if (r.ok && r.doc) {
 				doc = r.doc;
 				layout = flow.layout?.nodes ?? autoLayout(doc);
+				autoPlaced = !flow.layout?.nodes;
 				if (r.warnings?.length)
 					validation = {
 						ok: true,
@@ -230,14 +235,25 @@
 		}, 800);
 	}
 
-	// autoArrange re-runs the success-chain layout, discarding manual positions,
-	// and persists the fresh map (via onmove's layout-only autosave path).
-	function autoArrange() {
+	// autoArrange re-runs the success-chain layout with the nodes' measured
+	// sizes, discarding manual positions, and persists the fresh map (via
+	// onmove's layout-only autosave path).
+	function autoArrange(sizes: Record<string, NodeSize> = {}) {
 		if (!doc) return;
-		layout = autoLayout(doc);
+		layout = autoLayout(doc, sizes);
 		rev++;
 		const first = doc.stages[0]?.id;
 		if (first) onmove(first, layout[first].x, layout[first].y);
+	}
+
+	// onmeasured: a flow opened without a stored layout was placed with guessed
+	// sizes; now that the nodes are measured, place them for real. Not
+	// persisted — nothing was dragged; the next drag or arrange saves.
+	function onmeasured(sizes: Record<string, NodeSize>) {
+		if (!doc || !autoPlaced) return;
+		autoPlaced = false;
+		layout = autoLayout(doc, sizes);
+		rev++;
 	}
 
 	async function validate() {
@@ -599,6 +615,7 @@
 					{onmove}
 					{onlink}
 					onarrange={autoArrange}
+					{onmeasured}
 					agents={doc?.agents ?? []}
 					{actions}
 				/>

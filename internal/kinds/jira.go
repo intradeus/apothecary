@@ -5,9 +5,10 @@ import (
 	"apothecary/internal/ports"
 )
 
-// Jira is the ticketsource/jira kind: the tracker tickets are imported FROM.
-// Read-only by construction (the port has no write surface) — apothecary
-// copies the issue in and never transitions it back.
+// Jira is the ticketsource/jira kind: the tracker tickets are imported FROM
+// — and, when a flow runs tracker actions (FLOWLANG §2 ticket_*), written
+// back to: a transition, a comment, a field, a remote link to the merge
+// request. Nothing writes unless a flow says so, stage by stage.
 type Jira struct{}
 
 // jiraHelp is the whole "what do I paste here" answer, shown above the form.
@@ -15,7 +16,14 @@ type Jira struct{}
 // wrong one fails with an unhelpful 401, so both recipes are spelled out —
 // including the exact token scopes, since Atlassian's scoped-token page offers
 // dozens and every extra one is access apothecary provably never uses.
-const jiraHelp = `Read-only: apothecary copies an issue's summary, description and attachments into a ticket. It never comments, transitions, or writes anything back.
+const jiraHelp = `Import: apothecary copies an issue's summary, description and attachments into a ticket — a copy taken once; editing the ticket never travels back.
+
+Write-back happens ONLY when a flow runs a tracker action on a ticket imported from here — each one a stage the flow's author placed:
+• ticket_transition — moves the issue (status names as your workflow spells them; a move the workflow does not allow fails the stage naming the ones it does).
+• ticket_comment — posts a markdown artifact as a comment, ending with a short apothecary trailer (run + stage).
+• ticket_set_field — writes one field by its DISPLAY NAME ("Feature flags"): text, paragraph, number, select, labels, components, versions, priority. Replace or append (comma-separated items merged).
+• ticket_link — attaches the run's merge request(s) as remote issue links.
+A flow with none of these never writes. A token without write permissions still imports fine; a run of a flow WITH tracker actions on such a ticket fails at creation with the integration named.
 
 Which Jira is this?
 • Cloud — Atlassian hosts it, your site is <something>.atlassian.net. Credential: account email + API token. API version 3.
@@ -27,19 +35,24 @@ What the New Ticket search box accepts:
 • any other words — a text search over summary, description and comments.
 • jql:… — the rest is passed to Jira as raw JQL, e.g. jql:status = "In Review" AND assignee = currentUser()
 
-EXACTLY what this integration calls (all reads, nothing else exists in the code):
+EXACTLY what this integration calls — the reads (import):
 1. GET /rest/api/3/myself — the Test button only; proves the credential authenticates.
 2. POST /rest/api/3/search/jql (older sites: GET /rest/api/3/search) — the search box on the New Ticket form.
 3. GET /rest/api/3/issue/{KEY}?fields=summary,description,status,issuetype,assignee,updated,attachment — the preview and the import.
 4. GET the attachment content URL returned by (3) — copies the files.
+And the writes, each only when a flow runs the named tracker action:
+5. ticket_transition: GET /issue/{KEY}?fields=status, GET /issue/{KEY}/transitions, POST /issue/{KEY}/transitions.
+6. ticket_comment: POST /issue/{KEY}/comment (GET /issue/{KEY}/comment only to reconcile after a crash).
+7. ticket_set_field: GET /field (name → id, once per run), GET /issue/{KEY}?fields=… (append mode), PUT /issue/{KEY}.
+8. ticket_link: POST /issue/{KEY}/remotelink.
 
 CLOUD — create the API token:
 1. Sign in as the account whose issues you want to see, then open https://id.atlassian.com/manage-profile/security/api-tokens
 2. Use "Create API token" — the plain, UNSCOPED one. Atlassian accepts it on your own site URL, which is what this integration calls.
    A token created with "Create API token with scopes" is only accepted on Atlassian's api.atlassian.com gateway; against https://<site>.atlassian.net it comes back 401 "Client must be authenticated to access this resource". If that is the 401 you are looking at, swap it for an unscoped token.
    An unscoped token is not a wider grant than the human holds: it inherits that account's permissions exactly (see the Browse Projects note below), and this integration only ever issues the four reads listed above.
-3. If you do use a scoped token (against the gateway), select READ scopes only —
-   • Classic scopes: read:jira-user (call 1) and read:jira-work (calls 2-4). Those two are exactly enough.
+3. If you do use a scoped token (against the gateway), select READ scopes for the import, and WRITE scopes only if your flows run tracker actions —
+   • Classic scopes: read:jira-user (call 1) and read:jira-work (calls 2-4) are exactly enough to import; add write:jira-work for calls 5-8.
    • Granular scopes (if the picker shows those instead), one line per thing this integration actually reads:
        read:user:jira          — call 1 (/myself, the Test button) and the assignee name in search results
        read:issue-details:jira, read:issue:jira, read:issue-meta:jira — the issue itself: summary, description, updated
@@ -47,7 +60,8 @@ CLOUD — create the API token:
        read:project:jira       — resolving keys and any "project = …" search filter
        read:attachment:jira    — call 4
      Atlassian also lists read:avatar:jira and read:group:jira on these endpoints because the RESPONSES carry avatar URLs and group memberships — this integration never reads either field, so start without them. If your site enforces the full documented list, the refused call names the missing scope and apothecary prints that message verbatim; add exactly what it names.
-   Never select write:, manage: or delete: anything — apothecary has no code path that writes, so a write scope only widens the blast radius of a leaked token.
+     For the writes (calls 5-8), only when your flows use tracker actions: write:issue:jira (transitions + fields), write:comment:jira (comments), write:issue.remote-link:jira (links), plus read:field:jira for resolving a field's display name.
+   Never select manage: or delete: anything, and no write: scope unless a flow of yours runs a tracker action — a scope apothecary never uses only widens the blast radius of a leaked token.
 4. Label it (e.g. apothecary), set an expiry, Create, and copy it — it is shown once. Paste it below with that account's email address. Revoke it on the same page.
 Scopes cap the token; they do not grant anything. The account itself still needs the Jira "Browse Projects" permission on every project you want to import from, and the token can never see more than the human can.
 Atlassian's granular list per endpoint is long and moves; if a call is refused, Jira names the missing scope in its error and apothecary shows that message verbatim.
@@ -77,7 +91,7 @@ func (Jira) Descriptor() Descriptor {
 			},
 			{
 				Name: "api_token", Label: "API token", Secret: true, Required: true,
-				Help: "Cloud: https://id.atlassian.com/manage-profile/security/api-tokens — scopes read:jira-user + read:jira-work (nothing else). Data Center: Profile → Personal Access Tokens (no scopes; it inherits the account's permissions).",
+				Help: "Cloud: https://id.atlassian.com/manage-profile/security/api-tokens — scopes read:jira-user + read:jira-work to import, plus write:jira-work only if your flows run tracker actions. Data Center: Profile → Personal Access Tokens (no scopes; it inherits the account's permissions).",
 			},
 			{
 				// Named "search filter" rather than "scope": on Atlassian, scope

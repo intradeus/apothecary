@@ -161,7 +161,7 @@ export function stageRows(
 		if (end?.type === 'stage_completed') {
 			const u = end.payload.usage as { cost_usd?: number } | undefined;
 			const bits = [
-				t('run.stage.done'),
+				end.payload.skipped ? t('run.stage.skipped') : t('run.stage.done'),
 				u?.cost_usd ? fmtCost(u.cost_usd) : '',
 				end.payload.duration_ms ? fmtDuration(Number(end.payload.duration_ms)) : ''
 			].filter(Boolean);
@@ -306,6 +306,15 @@ export function describe(e: RunEvent): Described {
 				stage: p.stage_id as string
 			};
 		case 'stage_completed': {
+			if (p.skipped)
+				return {
+					text: t('run.event.stageSkipped', {
+						stage: String(p.stage_id),
+						note: String(p.note ?? '')
+					}),
+					tone: 'info',
+					stage: p.stage_id as string
+				};
 			const u = p.usage as { cost_usd?: number } | undefined;
 			const bits = [
 				p.turns_used ? t('run.event.turns', { count: Number(p.turns_used) }) : '',
@@ -489,8 +498,8 @@ export const TRANSCRIPT_TYPES = new Set([
  *  that ended mid-build, the one place left to hang it). */
 export function hasLog(e: RunEvent, stage: string | undefined, events: RunEvent[], over: boolean) {
 	if (!stage) return false;
-	if (e.type === 'stage_completed' || e.type === 'stage_failed' || e.type === 'stage_paused')
-		return true;
+	if (e.type === 'stage_completed') return !e.payload.skipped;
+	if (e.type === 'stage_failed' || e.type === 'stage_paused') return true;
 	if (e.type === 'env_ready' || e.type === 'env_failed') return true;
 	return (
 		e.type === 'env_requested' &&

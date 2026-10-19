@@ -617,10 +617,15 @@
 					</div>
 					{#if actionSig}
 						{#if actionSig.description}<div class="help">{actionSig.description}</div>{/if}
-						{#if actionSig.requires}
+						{#if actionSig.requires === 'tracker'}
+							<div class="help">{t('flow.insp.tracker')}</div>
+						{:else if actionSig.requires}
 							<div class="help">
 								{@html th('flow.insp.needsIntegration', { kind: actionSig.requires })}
 							</div>
+						{/if}
+						{#if actionSig.needs === 'merge_request'}
+							<div class="help">{t('flow.insp.needsMR')}</div>
 						{/if}
 						{#each actionSig.inputs ?? [] as d (d.name)}
 							<div class="io-bind card-in field">
@@ -642,6 +647,14 @@
 									>
 										{#each d.values ?? [] as v (v)}<option value={v}>{v}</option>{/each}
 									</select>
+								{:else if d.kind === 'text'}
+									<input
+										id="act-{d.name}"
+										value={bindingValue(s, 'input', d.name)}
+										placeholder={t('flow.insp.textPlaceholder')}
+										oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
+									/>
+									<div class="help">{t('flow.insp.textInputHelp')}</div>
 								{:else}
 									<input
 										id="act-{d.name}"

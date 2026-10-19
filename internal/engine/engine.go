@@ -57,6 +57,14 @@ type Ticket struct {
 	// ticket, delivered to every run of it. Snapshotted onto run_created;
 	// NOT associated to this run.
 	TicketAttachmentIDs []string
+	// Source* snapshot the tracker issue the ticket was imported from — the
+	// ticketsource integration id, its vendor, the issue key and its page —
+	// so a flow's tracker actions (FLOWLANG §2) know what to write to. All
+	// empty for a ticket written by hand: those stages then skip.
+	SourceID   string
+	SourceKind string
+	SourceKey  string
+	SourceURL  string
 }
 
 // RunInput is the optional per-attempt input when starting a run from a
@@ -947,6 +955,9 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	if err := e.preflight(ctx, res, fl); err != nil {
 		return "", err
 	}
+	if err := e.preflightTicket(ctx, res, fl, t); err != nil {
+		return "", err
+	}
 
 	if err := e.checkEnvCapacity(ctx); err != nil {
 		return "", err
@@ -995,6 +1006,10 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 		ProjectID:           projectID,
 		TicketID:            t.TicketID,
 		TicketAttachmentIDs: t.TicketAttachmentIDs,
+		TicketSourceID:      t.SourceID,
+		TicketSourceKind:    t.SourceKind,
+		TicketSourceKey:     t.SourceKey,
+		TicketSourceURL:     t.SourceURL,
 	}); err != nil {
 		return "", err
 	}
@@ -1157,8 +1172,13 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
 			SourceBranch: sourceBranch,
 			RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
-			// The ticket's own attachments carry over to every attempt.
+			// The ticket's own attachments carry over to every attempt, and so
+			// does the tracker issue it was imported from.
 			TicketAttachmentIDs: v.TicketAttachmentIDs,
+			SourceID:            v.TicketSourceID,
+			SourceKind:          v.TicketSourceKind,
+			SourceKey:           v.TicketKey,
+			SourceURL:           v.TicketURL,
 		}, flowName, v.ProjectID)
 	}
 	branch := v.Branch

@@ -319,6 +319,11 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		// by every run and only pinned here (run_created).
 		AttachmentIDs:       body.AttachmentIDs,
 		TicketAttachmentIDs: s.ticketAttachmentIDs(r, t.ID),
+		// Where the ticket came from, for the flow's tracker actions.
+		SourceID:   t.SourceID,
+		SourceKind: t.SourceKind,
+		SourceKey:  t.SourceKey,
+		SourceURL:  t.SourceURL,
 	}, body.Flow, t.ProjectID)
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):

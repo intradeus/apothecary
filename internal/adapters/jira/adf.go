@@ -3,6 +3,7 @@ package jira
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -304,4 +305,190 @@ func prefixLines(s, prefix string) string {
 		lines[i] = prefix + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+// --- markdown → ADF ---------------------------------------------------------
+
+// FromMarkdown renders markdown as an ADF document — what Jira Cloud's API v3
+// wants for a comment body or a paragraph ("textarea") custom field. The
+// inverse of ToMarkdown for the subset the engine writes: paragraphs (a
+// single newline is a hard break), ATX headings, bullet and ordered lists
+// (one level), fenced code, blockquotes, rules; inline bold, emphasis, code,
+// strikethrough and links. Anything else is kept as text rather than lost.
+func FromMarkdown(md string) map[string]any {
+	lines := strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n")
+	var blocks []map[string]any
+	for i := 0; i < len(lines); {
+		trim := strings.TrimSpace(lines[i])
+		switch {
+		case trim == "":
+			i++
+		case strings.HasPrefix(trim, "```"):
+			lang := strings.TrimSpace(strings.TrimPrefix(trim, "```"))
+			var code []string
+			i++
+			for i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
+				code = append(code, lines[i])
+				i++
+			}
+			i++ // the closing fence (or the end)
+			blocks = append(blocks, adfCodeBlock(lang, strings.Join(code, "\n")))
+		case headingRe.MatchString(trim):
+			m := headingRe.FindStringSubmatch(trim)
+			blocks = append(blocks, map[string]any{"type": "heading",
+				"attrs": map[string]any{"level": len(m[1])}, "content": inlineNodes(m[2])})
+			i++
+		case trim == "---" || trim == "***" || trim == "___":
+			blocks = append(blocks, map[string]any{"type": "rule"})
+			i++
+		case bulletRe.MatchString(trim), orderedRe.MatchString(trim):
+			re, kind := bulletRe, "bulletList"
+			if orderedRe.MatchString(trim) {
+				re, kind = orderedRe, "orderedList"
+			}
+			var items []map[string]any
+			for i < len(lines) && re.MatchString(strings.TrimSpace(lines[i])) {
+				text := re.FindStringSubmatch(strings.TrimSpace(lines[i]))[1]
+				items = append(items, map[string]any{"type": "listItem", "content": []map[string]any{adfParagraph(text)}})
+				i++
+			}
+			blocks = append(blocks, map[string]any{"type": kind, "content": items})
+		case strings.HasPrefix(trim, ">"):
+			var quoted []string
+			for i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), ">") {
+				quoted = append(quoted, strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(lines[i]), ">"), " "))
+				i++
+			}
+			blocks = append(blocks, map[string]any{"type": "blockquote",
+				"content": []map[string]any{adfParagraph(strings.Join(quoted, "\n"))}})
+		default:
+			var para []string
+			for i < len(lines) && isParagraphLine(lines[i]) {
+				para = append(para, strings.TrimSpace(lines[i]))
+				i++
+			}
+			blocks = append(blocks, adfParagraph(strings.Join(para, "\n")))
+		}
+	}
+	if blocks == nil {
+		blocks = []map[string]any{}
+	}
+	return map[string]any{"type": "doc", "version": 1, "content": blocks}
+}
+
+var (
+	headingRe = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+	bulletRe  = regexp.MustCompile(`^[-*+]\s+(.*)$`)
+	orderedRe = regexp.MustCompile(`^\d+[.)]\s+(.*)$`)
+)
+
+// isParagraphLine: a non-blank line that does not open another block.
+func isParagraphLine(line string) bool {
+	trim := strings.TrimSpace(line)
+	if trim == "" || strings.HasPrefix(trim, "```") || strings.HasPrefix(trim, ">") ||
+		trim == "---" || trim == "***" || trim == "___" {
+		return false
+	}
+	return !headingRe.MatchString(trim) && !bulletRe.MatchString(trim) && !orderedRe.MatchString(trim)
+}
+
+func adfParagraph(text string) map[string]any {
+	return map[string]any{"type": "paragraph", "content": inlineNodes(text)}
+}
+
+func adfCodeBlock(lang, code string) map[string]any {
+	n := map[string]any{"type": "codeBlock", "content": []map[string]any{{"type": "text", "text": code}}}
+	if lang != "" {
+		n["attrs"] = map[string]any{"language": lang}
+	}
+	return n
+}
+
+// inlineNodes tokenizes a run of inline markdown into ADF text nodes with
+// marks: **strong**, *em* / _em_, `code`, ~~strike~~, [text](href); a
+// newline is a hardBreak. Marks do not nest (a link's text is plain) — the
+// engine's own comments never need more, and an unmatched opener stays
+// literal rather than swallowing the rest of the line.
+func inlineNodes(s string) []map[string]any {
+	var out []map[string]any
+	var text strings.Builder
+	flush := func() {
+		if text.Len() > 0 {
+			out = append(out, map[string]any{"type": "text", "text": text.String()})
+			text.Reset()
+		}
+	}
+	marked := func(body string, mark map[string]any) {
+		flush()
+		out = append(out, map[string]any{"type": "text", "text": body, "marks": []map[string]any{mark}})
+	}
+	// span finds the closing delimiter for a non-empty body starting at i+len(open).
+	span := func(i int, open, close string) (body string, next int, ok bool) {
+		start := i + len(open)
+		end := strings.Index(s[start:], close)
+		if end <= 0 {
+			return "", 0, false
+		}
+		return s[start : start+end], start + end + len(close), true
+	}
+	for i := 0; i < len(s); {
+		switch {
+		case s[i] == '\n':
+			flush()
+			out = append(out, map[string]any{"type": "hardBreak"})
+			i++
+		case strings.HasPrefix(s[i:], "**"):
+			if body, next, ok := span(i, "**", "**"); ok {
+				marked(body, map[string]any{"type": "strong"})
+				i = next
+				continue
+			}
+			text.WriteString("**")
+			i += 2
+		case strings.HasPrefix(s[i:], "~~"):
+			if body, next, ok := span(i, "~~", "~~"); ok {
+				marked(body, map[string]any{"type": "strike"})
+				i = next
+				continue
+			}
+			text.WriteString("~~")
+			i += 2
+		case s[i] == '`':
+			if body, next, ok := span(i, "`", "`"); ok {
+				marked(body, map[string]any{"type": "code"})
+				i = next
+				continue
+			}
+			text.WriteByte('`')
+			i++
+		case s[i] == '[':
+			if label, next, ok := span(i, "[", "]("); ok && next <= len(s) {
+				if end := strings.IndexByte(s[next:], ')'); end >= 0 {
+					href := s[next : next+end]
+					marked(label, map[string]any{"type": "link", "attrs": map[string]any{"href": href}})
+					i = next + end + 1
+					continue
+				}
+			}
+			text.WriteByte('[')
+			i++
+		case s[i] == '*' || s[i] == '_':
+			d := string(s[i])
+			if body, next, ok := span(i, d, d); ok && !strings.HasPrefix(body, " ") && !strings.HasSuffix(body, " ") {
+				marked(body, map[string]any{"type": "em"})
+				i = next
+				continue
+			}
+			text.WriteString(d)
+			i++
+		default:
+			text.WriteByte(s[i])
+			i++
+		}
+	}
+	flush()
+	if out == nil {
+		out = []map[string]any{}
+	}
+	return out
 }

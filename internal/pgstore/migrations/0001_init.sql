@@ -122,11 +122,6 @@ CREATE TABLE events (
 
 -- project_id has no FK: runs are kept forever, projects are deletable once
 -- all their runs are archived.
---
--- view is the whole run.View as JSON, next to the typed columns SQL filters
--- on; dormant and rebuilding are the two view fields the JSON omits (json:"-")
--- that run.Apply reads — without them the incremental fold disagrees with a
--- full reduce (a parked run's answer would project as "running").
 CREATE TABLE runs (
     run_id        text PRIMARY KEY,
     project_id    text NOT NULL DEFAULT '',
@@ -137,9 +132,6 @@ CREATE TABLE runs (
     current_stage text NOT NULL DEFAULT '',
     mr_url        text NOT NULL DEFAULT '',
     env_id        text NOT NULL DEFAULT '',
-    view          jsonb NOT NULL DEFAULT '{}'::jsonb,
-    dormant       boolean NOT NULL DEFAULT false,
-    rebuilding    boolean NOT NULL DEFAULT false,
     created_at    timestamptz NOT NULL,
     updated_at    timestamptz NOT NULL
 );

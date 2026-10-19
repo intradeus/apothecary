@@ -277,6 +277,9 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		Runner:          harness,
 		Runners:         runners,
 		Forge:           forge,
+		// The write side of a ticket's tracker, by integration id (the
+		// ticket's, not the project's): what a tracker action calls.
+		TicketWriter: r.TicketWriter,
 		// Seed and prepare EVERY harness in the set: a stage may run on any of
 		// them, so all their auth + native configs must be in the workspace.
 		SeedAuth: func(ctx context.Context, env ports.EnvID) error {
@@ -618,6 +621,26 @@ func (r *Resolver) TicketSource(ctx context.Context, id string) (ports.TicketSou
 		return nil, err
 	}
 	return tk.New(kindConfig(in))
+}
+
+// TicketWriter constructs the write side of a ticketsource integration for a
+// flow's tracker actions — the same adapter the import uses, asserted for its
+// optional ports.TicketWriter capability. An adapter without it is refused by
+// name, so run creation can say which integration cannot write back.
+func (r *Resolver) TicketWriter(ctx context.Context, id string) (ports.TicketWriter, error) {
+	in, tk, err := r.ticketSourceKind(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	src, err := tk.New(kindConfig(in))
+	if err != nil {
+		return nil, err
+	}
+	w, ok := src.(ports.TicketWriter)
+	if !ok {
+		return nil, fmt.Errorf("integration %s (%s) can only read its tracker, not write to it", in.Name, in.Kind)
+	}
+	return w, nil
 }
 
 // TicketSourceKind names an integration's vendor ("jira") for the provenance

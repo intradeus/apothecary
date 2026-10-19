@@ -122,3 +122,20 @@ func TestViewCollectsMergeRequestsAndCheckouts(t *testing.T) {
 		t.Errorf("checkouts = %+v", v.Checkouts)
 	}
 }
+
+// A stage may start before any workspace exists (a remote tracker action
+// first in the flow): the run is then working, not pending — pending means
+// "queued, never started", and recovery would re-queue it as such.
+func TestStageStartedLeavesPending(t *testing.T) {
+	v := Reduce([]event.Event{
+		{RunID: "r", Seq: 1, Type: event.TypeRunCreated, Payload: &event.RunCreated{TicketTitle: "T",
+			TicketSourceID: "int-1", TicketSourceKind: "jira", TicketSourceKey: "PROJ-1", TicketSourceURL: "https://j/browse/PROJ-1"}},
+		{RunID: "r", Seq: 2, Type: event.TypeStageStarted, Payload: &event.StageStarted{StageID: "start", Iteration: 1}},
+	})
+	if v.State != Running {
+		t.Errorf("state = %s, want running", v.State)
+	}
+	if v.TicketKey != "PROJ-1" || v.TicketURL != "https://j/browse/PROJ-1" || v.TicketSourceID != "int-1" || v.TicketSourceKind != "jira" {
+		t.Errorf("ticket source not projected: %+v", v)
+	}
+}

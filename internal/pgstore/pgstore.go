@@ -51,15 +51,28 @@ type sub struct {
 }
 
 // Open connects, applies pending migrations, and returns the store.
+//
+// Applying a migration also rebuilds the projections from the event log: a
+// schema change can add a projection column that every existing row lacks
+// (runs.view did exactly that), and the projections are derived data by
+// design — rebuildable from events alone — so replaying them is always safe.
+// It costs one pass over every run's events, once, at the boot that migrates.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres connect: %w", err)
 	}
 	s := &Store{pool: pool, subs: map[string][]*sub{}, Clock: time.Now}
-	if err := s.migrate(ctx); err != nil {
+	applied, err := s.migrate(ctx)
+	if err != nil {
 		pool.Close()
 		return nil, err
+	}
+	if applied > 0 {
+		if _, err := s.RebuildProjections(ctx); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("rebuild projections after migrating: %w", err)
+		}
 	}
 	return s, nil
 }
@@ -70,6 +83,12 @@ func (s *Store) Close() { s.pool.Close() }
 // 0001_init.sql (2026-10-19). A DB that applied that whole chain already has
 // exactly the init schema, so migrate collapses its ledger to {1}. Remove
 // once no pre-squash DB is left.
+//
+// That equivalence is why 0001_init.sql is FROZEN at its squash-time content
+// (TestInitMigrationIsFrozen): a database that applied version 1 — collapsed
+// or fresh — never re-runs it, so an edit to the file reaches only databases
+// created after the edit. Every schema change since the squash is its own
+// NNNN_name.sql, idempotent where a fresh database already has the result.
 const preSquashHead = 25
 
 // migration is one embedded migrations/NNNN_name.sql file.
@@ -102,36 +121,37 @@ func migrations() ([]migration, error) {
 	return out, nil
 }
 
-func (s *Store) migrate(ctx context.Context) error {
+// migrate applies the pending migrations and reports how many it applied.
+func (s *Store) migrate(ctx context.Context) (int, error) {
 	migs, err := migrations()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Advisory lock serializes concurrently booting instances — without it,
 	// two boots can both pass the applied-version check and race the DDL.
 	lockConn, err := s.pool.Acquire(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer lockConn.Release()
 	const migLockKey = int64(0x61706f7468656361) // "apotheca"
 	if _, err := lockConn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migLockKey); err != nil {
-		return fmt.Errorf("migration lock: %w", err)
+		return 0, fmt.Errorf("migration lock: %w", err)
 	}
 	defer func() { _, _ = lockConn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migLockKey) }()
 
 	if _, err := s.pool.Exec(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version int PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
-		return fmt.Errorf("migrations table: %w", err)
+		return 0, fmt.Errorf("migrations table: %w", err)
 	}
 	applied, err := s.appliedMigrations(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if squashed(applied) {
 		if _, err := s.pool.Exec(ctx, `DELETE FROM schema_migrations WHERE version > 1`); err != nil {
-			return fmt.Errorf("collapse pre-squash migrations: %w", err)
+			return 0, fmt.Errorf("collapse pre-squash migrations: %w", err)
 		}
 		applied = map[int]bool{1: true}
 	}
@@ -145,35 +165,37 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	for v := range applied {
 		if !known[v] {
-			return fmt.Errorf("database has migration %d applied, which this apothecaryd does not ship — upgrade apothecaryd, or reset a dev database", v)
+			return 0, fmt.Errorf("database has migration %d applied, which this apothecaryd does not ship — upgrade apothecaryd, or reset a dev database", v)
 		}
 	}
 
+	n := 0
 	for _, m := range migs {
 		if applied[m.version] {
 			continue
 		}
 		sql, err := migrationsFS.ReadFile("migrations/" + m.name)
 		if err != nil {
-			return err
+			return n, err
 		}
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
-			return err
+			return n, err
 		}
 		if _, err := tx.Exec(ctx, string(sql)); err != nil {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migration %s: %w", m.name, err)
+			return n, fmt.Errorf("migration %s: %w", m.name, err)
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, m.version); err != nil {
 			_ = tx.Rollback(ctx)
-			return err
+			return n, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return err
+			return n, err
 		}
+		n++
 	}
-	return nil
+	return n, nil
 }
 
 func (s *Store) appliedMigrations(ctx context.Context) (map[int]bool, error) {

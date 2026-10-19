@@ -23,6 +23,8 @@
 	import {
 		ABORT,
 		DEBUG,
+		debugKey,
+		parksOnDebug,
 		DONE,
 		START,
 		EDGE_KINDS,
@@ -36,7 +38,8 @@
 		feedSentinelFor,
 		type ActionContract,
 		type AgentContract,
-		type FlowDoc
+		type FlowDoc,
+		type NodeSize
 	} from '$lib/flowdoc';
 
 	export type Selection =
@@ -50,6 +53,7 @@
 		onmove,
 		onlink,
 		onarrange,
+		onmeasured,
 		agents = [],
 		actions = []
 	}: {
@@ -59,8 +63,12 @@
 		onselect: (sel: Selection) => void;
 		onmove: (id: string, x: number, y: number) => void;
 		onlink: (source: string, handle: string, target: string) => void;
-		/** Re-run the success-chain layout (the controls' auto-arrange button). */
-		onarrange?: () => void;
+		/** Re-run the success-chain layout (the controls' auto-arrange button),
+		 *  given every node's rendered size so nothing overlaps. */
+		onarrange?: (sizes: Record<string, NodeSize>) => void;
+		/** The nodes have been measured for the first time: a layout guessed
+		 *  without sizes can now be redone with them. */
+		onmeasured?: (sizes: Record<string, NodeSize>) => void;
 		// Contracts the dataflow layer reads: which inputs/outputs a stage's agent
 		// or action declares. Optional — without them only explicit bindings show.
 		agents?: AgentContract[];
@@ -189,16 +197,18 @@
 				data: {}
 			});
 		}
-		// The debug leaf likewise: drawn only when some edge parks there.
-		const hasDebug = doc.stages.some((s) =>
-			EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DEBUG))
-		);
-		if (hasDebug) {
+		// The debug leaf is no terminal: it parks the run and comes back to the
+		// stage that sent it there. So it is drawn once PER STAGE that
+		// escalates to it, beside that stage, with its return edge — a shared
+		// sink hid the one fact that matters.
+		for (const s of doc.stages) {
+			if (!parksOnDebug(s)) continue;
+			const at = layout[s.id] ?? { x: 0, y: 0 };
 			ns.push({
-				id: '__debug',
+				id: debugNodeID(s.id),
 				type: 'debug',
-				position: layout[DEBUG] ?? { x: doc.stages.length * 240, y: 320 },
-				data: {}
+				position: layout[debugKey(s.id)] ?? { x: at.x + 24, y: at.y + 170 },
+				data: { stage: s.id, title: t('flow.term.debugFor', { stage: s.id }) }
 			});
 		}
 		const es: Edge[] = [];
@@ -264,7 +274,7 @@
 						id: `${kind}|${s.id}|${depth}`,
 						source: s.id,
 						sourceHandle: kind,
-						target: link.to === ABORT ? '__abort' : link.to === DEBUG ? '__debug' : link.to,
+						target: link.to === ABORT ? '__abort' : link.to === DEBUG ? debugNodeID(s.id) : link.to,
 						targetHandle: dot ? `in:${dot}` : undefined,
 						type: 'smoothstep',
 						// "fail ×3": the word as well as the hue, so colour is never the
@@ -278,6 +288,20 @@
 						class: depth > 0 ? 'e-dash e-then' : 'e-dash',
 						style: hued(EDGE_HUE[kind])
 					});
+				});
+			}
+			// The way back from the stage's debug leaf: the human has fixed the
+			// workspace, and the same stage runs again.
+			if (parksOnDebug(s)) {
+				es.push({
+					id: `debugreturn|${s.id}`,
+					source: debugNodeID(s.id),
+					target: s.id,
+					type: 'smoothstep',
+					label: `${I.retry} ${t('flow.graph.debugReturn', { stage: s.id })}`,
+					labelStyle: hued('amb'),
+					class: 'e-dash e-then',
+					style: hued('amb')
 				});
 			}
 		});
@@ -294,6 +318,8 @@
 
 	function handleConnect(conn: Connection) {
 		if (!conn.source || !conn.target) return;
+		// A debug leaf's own handle carries the drawn return edge only.
+		if (conn.source.startsWith('__debug:')) return;
 		// Dataflow dots are not rewireable: an artifact path is what connects two
 		// stages, so a drag from one must not be read as a control-flow rewire
 		// (setEdge's fallthrough would silently overwrite on_timeout).
@@ -304,7 +330,7 @@
 				? DONE
 				: conn.target === '__abort'
 					? ABORT
-					: conn.target === '__debug'
+					: conn.target.startsWith('__debug:')
 						? DEBUG
 						: conn.target;
 		if (conn.source === '__start' || conn.source.startsWith('__trigger:')) {
@@ -317,13 +343,27 @@
 	// The canvas grid, from the flow tokens (Svelte Flow takes a number).
 	const gridGap = parseFloat(token('--grid-gap')) || 20;
 
+	// measuredSizes reports every node's rendered size, keyed like `layout`, so
+	// autoLayout can give each column and row the room its nodes take.
+	function measuredSizes(): Record<string, NodeSize> {
+		const out: Record<string, NodeSize> = {};
+		for (const n of nodes) {
+			const { width, height } = n.measured ?? {};
+			if (width && height) out[nodeKey(n.id)] = { width, height };
+		}
+		return out;
+	}
+
+	// A stage's debug leaf on the canvas.
+	const debugNodeID = (stage: string) => `__debug:${stage}`;
+
 	const nodeKey = (id: string) =>
 		id === '__done'
 			? DONE
 			: id === '__abort'
 				? ABORT
-				: id === '__debug'
-					? DEBUG
+				: id.startsWith('__debug:')
+					? debugKey(id.slice('__debug:'.length))
 					: id === '__start'
 						? START
 						: id.startsWith('__trigger:')
@@ -346,12 +386,18 @@
 			if (targetNode) onmove(nodeKey(targetNode.id), targetNode.position.x, targetNode.position.y);
 		}}
 		onnodeclick={({ node }) =>
-			onselect(node.id.startsWith('__') ? null : { kind: 'stage', id: node.id })}
+			onselect(
+				node.id.startsWith('__debug:')
+					? { kind: 'stage', id: node.id.slice('__debug:'.length) }
+					: node.id.startsWith('__')
+						? null
+						: { kind: 'stage', id: node.id }
+			)}
 		onedgeclick={({ edge }) => {
 			const [kind, stage] = edge.id.split('|');
 			// A data edge has nothing of its own to edit — select its producer, which
 			// is where the path it carries is written.
-			if (kind === 'data') {
+			if (kind === 'data' || kind === 'debugreturn') {
 				onselect({ kind: 'stage', id: stage });
 				return;
 			}
@@ -368,13 +414,13 @@
 		}}
 		onpaneclick={() => onselect(null)}
 	>
-		<FitOnInit />
+		<FitOnInit onmeasured={() => onmeasured?.(measuredSizes())} />
 		<Background variant={BackgroundVariant.Dots} gap={gridGap} size={1.2} />
 		<Controls position="bottom-left" class="lg-pop fg-ctl">
 			{#snippet after()}
 				{#if onarrange}
 					<ControlButton
-						onclick={onarrange}
+						onclick={() => onarrange?.(measuredSizes())}
 						title={t('flow.graph.arrangeTitle')}
 						aria-label={t('flow.graph.arrangeAria')}>⇶</ControlButton
 					>
@@ -394,7 +440,9 @@
 	 * it reads maps to ours, so its own rules draw our look and only what it
 	 * has no variable for (sizes, the label pill, edge kinds) is styled below. */
 	.graph-wrap :global(.svelte-flow) {
-		--xy-background-color: transparent;
+		/* Opaque, not glass: the sigils turning behind the shell made edges
+		 * and labels hard to read through a transparent canvas. */
+		--xy-background-color: var(--solidBg);
 		--xy-background-pattern-color: var(--ln);
 		--xy-edge-stroke: var(--ln2);
 		--xy-edge-stroke-width: var(--edge-w);

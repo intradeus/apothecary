@@ -263,7 +263,7 @@ func TestBindingShapeErrors(t *testing.T) {
 		{"dup key", agent("input: { plan: a.md, plan: b.md }"), "bound twice"},
 		{"ticket value", agent("input: { plan: ticket }"), "always the TASK section"},
 		{"bad input path", agent("input: { plan: /abs }"), "artifact path"},
-		{"non-scalar value", agent("input: { plan: [a, b] }"), "value must be a path"},
+		{"non-scalar value", agent("input: { plan: [a, b] }"), "value must be a single value"},
 		{"bad output path", agent("output: { p: /abs }"), "artifact path"},
 		{"bad binding name", agent("input: { Bad Name: a.md }"), "lowercase slug"},
 		// One form everywhere: a bare value or a list is a shape error whose
@@ -910,5 +910,72 @@ func TestTopLevelStagesAreNotPhased(t *testing.T) {
 	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x }\n"))
 	if err != nil || f.Phased() || f.Stages[0].Phase != "" {
 		t.Fatalf("err %v phased %v", err, f != nil && f.Phased())
+	}
+}
+
+// Tracker actions: a text input is the tracker's vocabulary (only blankness
+// is a parse error, and quoting is the author's choice), ticket_set_field
+// takes its value from an artifact OR the flow, and ticket_link warns when
+// no merge request precedes it.
+func TestTrackerActionBindings(t *testing.T) {
+	head := "name: tk\nversion: 3\ndefaults: { harness: fake, model: fake/m }\nagents: []\nstages:\n"
+	plain := head + "  - { id: s, type: action, action: ticket_transition, input: { to: In Progress } }\n"
+	quoted := head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"In Progress\" } }\n"
+	fp, err := Parse("t.yaml", []byte(plain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fq, err := Parse("t.yaml", []byte(quoted))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in := fp.Stages[0].Input("to"); in == nil || in.Value != "In Progress" || in.Value != fq.Stages[0].Input("to").Value {
+		t.Errorf("plain/quoted text bindings differ: %+v vs %+v", fp.Stages[0].Inputs, fq.Stages[0].Inputs)
+	}
+	for _, tc := range []struct{ doc, substr string }{
+		{head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"  \" } }\n", `input "to": a value is required`},
+		{head + "  - { id: s, type: action, action: ticket_transition }\n", `requires input "to"`},
+		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team } }\n", "exactly one of value"},
+		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, value: artifacts/t.txt, text: Platform } }\n", "exactly one of value"},
+		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, text: Platform, mode: merge } }\n", "not one of replace | append"},
+		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, value: /abs } }\n", "relative artifact path"},
+	} {
+		if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.substr) {
+			t.Errorf("doc %q: err = %v, want %q", tc.doc[len(head):], err, tc.substr)
+		}
+	}
+	ok := head + "  - { id: s, type: action, action: ticket_set_field, input: { field: \"Feature flags\", value: artifacts/flags.txt, mode: append } }\n"
+	if _, err := Parse("t.yaml", []byte(ok)); err != nil {
+		t.Errorf("valid set_field refused: %v", err)
+	}
+
+	// ticket_link's prerequisite: a warning in a stages-only flow with no
+	// create_mr before it, none inside a reaction phase (the subject exists).
+	alone := head + "  - { id: l, type: action, action: ticket_link }\n"
+	f, err := Parse("t.yaml", []byte(alone))
+	if err != nil {
+		t.Fatal(err)
+	}
+	needsMR := func(f *Flow) int {
+		n := 0
+		for _, w := range f.Warnings {
+			if strings.Contains(w, "needs a merge request") {
+				n++
+			}
+		}
+		return n
+	}
+	if needsMR(f) != 1 {
+		t.Errorf("warnings = %v", f.Warnings)
+	}
+	after := head + "  - { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: l, type: action, action: ticket_link }\n"
+	if f, err := Parse("t.yaml", []byte(after)); err != nil || needsMR(f) != 0 {
+		t.Errorf("link after create_mr: err %v warnings %v", err, f.Warnings)
+	}
+	phased := "name: tk\nversion: 3\ndefaults: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
+		"  - { id: deliver, on: ticket, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
+		"  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n"
+	if f, err := Parse("t.yaml", []byte(phased)); err != nil || needsMR(f) != 0 {
+		t.Errorf("link in a reaction phase: err %v warnings %v", err, f.Warnings)
 	}
 }

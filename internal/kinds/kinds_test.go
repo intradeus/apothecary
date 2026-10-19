@@ -339,3 +339,42 @@ func TestGitLabForgeKind(t *testing.T) {
 		t.Errorf("numeric locator refused: %v", err)
 	}
 }
+
+func TestGitHubIssuesKind(t *testing.T) {
+	gi := GitHubIssues{}
+	d := gi.Descriptor()
+	if d.Port != "ticketsource" || d.Kind != "github" || d.Help == "" {
+		t.Errorf("descriptor = %+v", d)
+	}
+	src, err := gi.New(Config{
+		Values:  map[string]any{"repos": "acme/app, acme/docs,"},
+		Secrets: map[string]string{"token": "ghp-x"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The write side rides on the same adapter: what a flow's tracker
+	// actions resolve through the integration.
+	if _, ok := src.(ports.TicketWriter); !ok {
+		t.Error("the GitHub Issues source does not implement ports.TicketWriter")
+	}
+	reg := NewRegistry()
+	reg.RegisterTicketSource(gi)
+	reg.RegisterTicketSource(Jira{})
+	if !reg.Valid("ticketsource", "github") || !reg.Valid("ticketsource", "jira") {
+		t.Error("ticketsource kinds not valid in the registry")
+	}
+	if _, ok := must(Jira{}.New(Config{Values: map[string]any{"base_url": "https://acme.atlassian.net"}, Secrets: map[string]string{"api_token": "t"}})).(ports.TicketWriter); !ok {
+		t.Error("the Jira source does not implement ports.TicketWriter")
+	}
+	if _, ok := must(FakeTicketSource{}.New(Config{})).(ports.TicketWriter); !ok {
+		t.Error("the fake source does not implement ports.TicketWriter (dev needs a writable tracker)")
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}

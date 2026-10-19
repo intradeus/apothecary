@@ -341,6 +341,48 @@ immediately. Registry (`GET /api/actions`):
 | `sync_target` | — | `strategy` (`merge` \| `rebase`, default `merge`) | — | reaction phases only. Takes the subject's target branch in, in the engine: a no-op when already contained; a conflict leaves the merge (or rebase) **paused** in the working tree and fails the stage with the files named. Whoever resolves it edits those files — no git — and the retried stage checks no marker is left and continues. `rebase` needs a `push_branch` in the same phase |
 | `load_review_comments` | `forge` | `select` (`human` \| `all`, default `human`) | `review` (file → `artifacts/review.md`) | reaction phases only. Writes the subject's **pending** threads (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): file, line, diff hunk, comments, thread id. With `select: human` a person first picks which threads to fix (an inbox checklist; the run waits); unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. A re-entry rewrites the same set |
 | `reply_review_comments` | `forge` | `replies` (file, required) | — | reaction phases only. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the forge and nothing is posted twice |
+| `ticket_transition` | `tracker` | `to` (text, required) | — | moves the ticket's tracker issue to the named status, as the tracker spells it (`"In Progress"`, `Done`; case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
+| `ticket_comment` | `tracker` | `body` (file, required → `artifacts/ticket_comment.md`) | — | posts the markdown artifact as a comment, ending with a short trailer naming the run and stage — also how a crash between posting and recording is reconciled, so nothing is posted twice |
+| `ticket_set_field` | `tracker` | `field` (text, required); `value` (file) **or** `text` (text), exactly one; `mode` (`replace` \| `append`, default `replace`) | — | writes one field by its display name (`"Feature flags"`, `labels`). `append` merges comma-separated items into the current value (a union: re-applying changes nothing). A field the tracker has no name for, or cannot write from text, fails the stage with `input_invalid` |
+| `ticket_link` | `tracker` | — | — | attaches every merge request the run opened (the subject's in a reaction phase) to the issue — a remote link on Jira, a comment on GitHub — titled with the branch; an upsert, so a re-entry attaches nothing twice. Needs a merge request: `input_missing` without one, and the validator warns when no `create_mr` precedes it |
+
+**Tracker actions** (`ticket_*`) are the one family whose prerequisite is per
+*ticket* rather than per project: they write through the `ticketsource`
+integration the ticket was imported from, and a ticket written by hand has
+none. Such a stage then completes as **skipped** — `stage_completed{skipped,
+note}` on the timeline, `on_success` followed — so one flow serves every
+ticket. Run creation refuses a flow with tracker actions only when the
+ticket *is* linked and its integration cannot write (a read-only adapter, a
+token without write scopes), naming the stage. A tracker that errors at
+stage time — unreachable, refused — is an outcome failure like any other
+action's (`on_fail`, with the reason as `$FAILURE`), never terminal: route it
+to the next stage for "best effort". Every tracker action is *remote*: it
+needs no workspace unless one of its file inputs is bound, so a flow may
+open with `ticket_transition` and have the issue moved seconds in, before
+anything is provisioned — and a `"Done"` after the final gate never
+re-provisions a workspace the reaper took.
+
+```yaml
+- { id: kick,   type: action, action: ticket_transition, input: { to: "In Progress" },
+    on_success: plan, on_fail: { to: plan, max: 1 } }   # best effort: a tracker hiccup never blocks the work
+…
+- { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: link }
+- { id: link,   type: action, action: ticket_link, on_success: flags }
+- { id: flags,  type: action, action: ticket_set_field,
+    input: { field: "Feature flags", value: artifacts/feature_flags.txt, mode: append },
+    on_success: in_review }
+- { id: in_review, type: action, action: ticket_transition, input: { to: "In Review" }, on_success: final_gate }
+- { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
+    auto_approve: mr_merged, auto_reject: mr_closed, on_success: ticket_done, on_reject: abort }
+- { id: ticket_done, type: action, action: ticket_transition, input: { to: Done }, on_success: done }
+```
+
+`artifacts/feature_flags.txt` is an agent output like any other — a small
+agent that reads the diff for the flags it introduced and writes them,
+comma-separated — and the field name is the author's, written in the flow
+where the graph shows it. "Done once the merge request is accepted" is not a
+hook but a stage after the final gate: the gate approves when a human says so
+*or* the forge merges, and the move follows either.
 
 **Edges on actions.** `on_success` routes normally. An action may carry
 `on_fail`, taken when its *outcome* is wrong in a way an agent, a retry or a
@@ -512,7 +554,10 @@ replays from there, so no stage is skipped); *abandon* ends the run. Like
 `abort` it takes no `max` or `then`: it is unlimited by nature, bounded by human
 attention, and nothing can follow it but the stage itself. It is written
 `then: debug` at the end of a retry chain, or `on_fail: debug` on its own. Stage
-ids may not shadow `done`, `abort`, `debug` or `start`.
+ids may not shadow `done`, `abort`, `debug` or `start`. Because the leaf is
+that stage's pause rather than a place runs go to, the editor draws one per
+stage that escalates to it, beside the stage, with the return edge — never a
+shared sink.
 
 A run ends in one of three states, and the distinction is reporting, not
 capability (`resume` accepts the last two):
@@ -555,7 +600,7 @@ What differs is only how the **name** is checked, which follows from the type:
 | type | `input` names | `output` names |
 |---|---|---|
 | `agent` | must be a declared input | must be a declared output (rebinds its path) |
-| `action` | must be in the action's signature | — |
+| `action` | must be in the action's signature; an `enum` or `text` input takes a literal, not a path | — |
 | `command` | free labels | free labels |
 | `human_gate` | free label, exactly one binding | — |
 
@@ -671,6 +716,7 @@ A stage failure records a reason, then follows an edge:
 | `timeout` | the stage exceeded its timeout |
 | `harness_error` | the harness itself failed |
 | `input_missing` | a path the stage declared it consumes was not there — upstream wiring, not this stage's work |
+| `input_invalid` | a value the flow wrote means nothing where it lands — a status the tracker cannot reach, a field it has no name for or cannot write from text; wiring again, but the input is there |
 | `output_contract` | the stage finished without writing what it declared (its outputs are cleared before each fresh attempt, so a stale file cannot satisfy it) |
 | `output_invalid` | a declared output exists but does not hold what its type promises — a malformed verdict |
 | `infra` | provisioning, forge or other infrastructure failure |
@@ -732,13 +778,15 @@ with no verdict output. A flow cannot be saved with any of these.
 `POST /api/flows/validate` and never blocking anything. These are legal
 constructs that look like mistakes: a path no stage produces, a path produced
 on only *some* of the routes that reach its consumer, a feed sentinel no edge
-can fill, a `wait` on a signal whose prerequisite isn't opened on every route
-reaching it.
+can fill, a `wait` on a signal — or a `ticket_link` — whose prerequisite
+merge request isn't opened on every route reaching it.
 
 **Preflight errors** (this project) — refuse to *create a run*. Checked with the
 project's real configuration: `run_ref`s exist in its commands, a pinned
 harness is in its set, an action's required integration is configured, the repo
-has a devcontainer and an `AGENTS.md`.
+has a devcontainer and an `AGENTS.md` — and, for a ticket imported from a
+tracker, that its integration can write when the flow has a tracker action
+(a ticket written by hand passes; those stages skip).
 
 A flow whose stored text no longer parses fails its runs terminally with the
 parse error — retrying cannot fix a grammar problem.
@@ -792,7 +840,8 @@ bare "unknown field":
 ## §8 Annotated example
 
 The built-in default flow, abridged — plan-gated build with cross-vendor
-adversarial review and the debug leaf as every stage's rescue. Full text:
+adversarial review, the debug leaf as every stage's rescue, and the ticket's
+tracker issue following the work. Full text:
 `internal/builtin/flows/default.yaml`.
 
 ```yaml
@@ -830,6 +879,13 @@ agents:
       You are the adversarial reviewer of a software factory...
 
 stages:
+  # The ticket's tracker issue moves first — before any workspace exists, since
+  # a tracker action needs none. A ticket written by hand has no issue and the
+  # stage skips; a tracker hiccup routes straight on to the plan.
+  - { id: in_progress, type: action, action: ticket_transition, input: { to: "In Progress" },
+      on_success: plan,
+      on_fail: { to: plan, max: 1 } }
+
   # No output binding: the planner's contract says its plan goes to
   # artifacts/plan.md. It binds both retry values, so being sent back — by a
   # human rejecting the plan, or by its own failure — arrives named.
@@ -869,7 +925,15 @@ stages:
       on_fail: { to: review, max: 1, then: debug } }
 
   - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md },
-      on_success: final_gate }
+      on_success: in_review }
+
+  # The merge request is open: the issue reads "In Review". Best effort again —
+  # a failure routes on to the gate rather than stopping a run whose work is
+  # done. (In the phased default flow this stage sits just BEFORE create_mr,
+  # because a phase's last stage has nowhere to route a failure but a human.)
+  - { id: in_review, type: action, action: ticket_transition, input: { to: "In Review" },
+      on_success: final_gate,
+      on_fail: { to: final_gate, max: 1 } }
 
   # $MR_URL comes from the action above. The forge can answer this gate either
   # way — merging is a yes, closing it unmerged is a no — and so can a human.

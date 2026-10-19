@@ -35,6 +35,11 @@ func TestRegistryIntegrity(t *testing.T) {
 			names[in.Name] = true
 			switch in.Kind {
 			case KindFile, KindValue:
+			case KindText:
+				// A free literal carries neither a path nor choices.
+				if in.DefaultPath != "" || len(in.Values) != 0 {
+					t.Errorf("action %q text input %q carries file/enum fields", a.Slug, in.Name)
+				}
 			case KindEnum:
 				// A literal choice needs its choices, and a default among them
 				// when the stage may leave it unbound.
@@ -109,5 +114,57 @@ func TestJSONShape(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("json missing %s:\n%s", want, b)
 		}
+	}
+}
+
+// TestTrackerActions: the ticket_* family writes back to the ticket's
+// tracker — remote (no workspace), per-ticket prerequisite, and
+// ticket_set_field's "value or text" pair that the parser enforces.
+func TestTrackerActions(t *testing.T) {
+	for _, slug := range []string{TicketTransition, TicketComment, TicketSetField, TicketLink} {
+		a := Get(slug)
+		if a == nil {
+			t.Fatalf("%s is not registered", slug)
+		}
+		if a.Requires != RequiresTracker {
+			t.Errorf("%s requires = %q, want %q", slug, a.Requires, RequiresTracker)
+		}
+		if !a.Remote {
+			t.Errorf("%s must be remote: it acts on the tracker, not the workspace", slug)
+		}
+		if a.Single || a.Subject {
+			t.Errorf("%s must be usable anywhere in a flow (single=%v subject=%v)", slug, a.Single, a.Subject)
+		}
+	}
+	if to := Get(TicketTransition).Input("to"); to == nil || to.Kind != KindText || !to.Required {
+		t.Errorf("ticket_transition.to = %+v, want a required text input", to)
+	}
+	if body := Get(TicketComment).Input("body"); body == nil || body.Kind != KindFile || !body.Required || body.DefaultPath == "" {
+		t.Errorf("ticket_comment.body = %+v, want a required file input with a conventional path", body)
+	}
+	sf := Get(TicketSetField)
+	if f := sf.Input("field"); f == nil || f.Kind != KindText || !f.Required {
+		t.Errorf("ticket_set_field.field = %+v", f)
+	}
+	if v, x := sf.Input("value"), sf.Input("text"); v == nil || x == nil || v.Kind != KindFile || x.Kind != KindText || v.Required || x.Required {
+		t.Errorf("ticket_set_field value/text = %+v / %+v: want an optional file and an optional text (exactly one is bound, checked by the parser)", v, x)
+	}
+	if m := sf.Input("mode"); m == nil || m.Kind != KindEnum || m.Default != ModeReplace || !slices.Contains(m.Values, ModeAppend) {
+		t.Errorf("ticket_set_field.mode = %+v", m)
+	}
+	if l := Get(TicketLink); l.Needs != NeedsMR || len(l.Inputs) != 0 {
+		t.Errorf("ticket_link = %+v: wants needs=%s and no inputs", l, NeedsMR)
+	}
+	b, err := json.Marshal(Get(TicketSetField))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"requires":"tracker"`, `"remote":true`, `"kind":"text"`, `"default":"replace"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("json missing %s:\n%s", want, b)
+		}
+	}
+	if b, _ := json.Marshal(Get(TicketLink)); !strings.Contains(string(b), `"needs":"merge_request"`) {
+		t.Errorf("ticket_link json lacks needs:\n%s", b)
 	}
 }

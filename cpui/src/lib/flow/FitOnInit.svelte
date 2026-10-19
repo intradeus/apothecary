@@ -7,12 +7,21 @@
 	// anchors on the entry (left edge) at that zoom instead, keeping the
 	// fitted vertical centre.
 	import { useNodesInitialized, useSvelteFlow } from '@xyflow/svelte';
+	import { tick } from 'svelte';
 
 	let {
 		padding = 0.12,
 		maxZoom = 1.1,
-		legible = 0.55
-	}: { padding?: number; maxZoom?: number; legible?: number } = $props();
+		legible = 0.55,
+		onmeasured
+	}: {
+		padding?: number;
+		maxZoom?: number;
+		legible?: number;
+		/** Called once the nodes have sizes, BEFORE the fit — a layout guessed
+		 *  without them can be redone first, and the fit sees the result. */
+		onmeasured?: () => void;
+	} = $props();
 
 	const initialized = useNodesInitialized();
 	const flow = useSvelteFlow();
@@ -22,6 +31,8 @@
 		if (done || !initialized.current) return;
 		done = true;
 		void (async () => {
+			onmeasured?.();
+			await tick();
 			await flow.fitView({ padding, maxZoom });
 			const vp = flow.getViewport();
 			if (vp.zoom >= legible) return;

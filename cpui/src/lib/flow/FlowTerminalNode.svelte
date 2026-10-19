@@ -5,7 +5,9 @@
 	//    violet and dashed, naming the signal that starts it.
 	//  - done (grn, dashed) and abort (ros, dashed): where runs end.
 	//  - debug (amb, dashed): the stop that comes back — a human fixes the
-	//    workspace, then the stage that sent the run here runs again.
+	//    workspace, then the stage that sent the run here runs again. Drawn
+	//    once per stage that escalates to it, beside that stage, so its source
+	//    handle carries the return edge.
 	// One component for all of them; the node type picks the tone.
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import type { Hue } from '$lib/ui/hues';
@@ -59,7 +61,7 @@
 		<Handle type="target" position={Position.Left} style={handle} />
 	{/if}
 	<span class="l">{label}</span><span class="g">{GLYPH[tone]}</span>
-	{#if tone === 'start' || tone === 'trigger'}
+	{#if tone === 'start' || tone === 'trigger' || tone === 'debug'}
 		<Handle type="source" position={Position.Right} style={handle} />
 	{/if}
 </div>

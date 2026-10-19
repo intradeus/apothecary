@@ -7,8 +7,10 @@ export type ClientOptions = {
 export type Action = {
 	description?: string;
 	inputs?: Array<InputSig>;
+	needs?: string;
 	outputs?: Array<OutputSig>;
 	provides?: string;
+	remote?: boolean;
 	requires?: string;
 	single?: boolean;
 	slug: string;
@@ -632,7 +634,9 @@ export type RunView = {
 	source_branch?: string;
 	state: string;
 	ticket_id?: string;
+	ticket_key?: string;
 	ticket_title: string;
+	ticket_url?: string;
 	updated_at: string;
 };
 

@@ -99,11 +99,21 @@ automatically. Database migrations apply at boot.
      > one can then be revoked with `coder tokens remove <name>`.
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
      credentials) or codex (API key and/or ChatGPT `auth.json`).
-   - *Ticket source* (optional): Jira. Lets you create a ticket **from** a
-     Jira issue — search the tracker on the New Ticket form, pick an issue,
-     and its summary, description and attachments are copied in. Read-only:
-     nothing is ever written back, and the copy is taken once (edit the
-     apothecary ticket freely afterwards).
+   - *Ticket source* (optional): Jira or GitHub Issues. Lets you create a
+     ticket **from** a tracker issue — search the tracker on the New Ticket
+     form, pick an issue, and its summary, description and attachments are
+     copied in. The copy is taken once (edit the apothecary ticket freely
+     afterwards). Nothing is written back **unless a flow says so**: the
+     tracker actions (`ticket_transition`, `ticket_comment`,
+     `ticket_set_field`, `ticket_link` — see `docs/flow-language.md` §2) move
+     the issue, comment on it, fill a field such as a comma-separated
+     "Feature flags" list, and attach the merge request, each as a stage the
+     flow's author placed. A ticket written by hand skips those stages.
+
+     > **GitHub Issues:** a fine-grained token with *Issues: read and write*
+     > on the repositories (read-only is enough to import). Keys are
+     > `owner/repo#123`; the only statuses are `open` and `closed`, the only
+     > writable fields `labels`, `assignees` and `milestone`.
 
      > **Which Jira?** *Cloud* is the Atlassian-hosted one, at
      > `<site>.atlassian.net` — credential is an **account email + API
@@ -133,10 +143,12 @@ automatically. Database migrations apply at boot.
      > `read:avatar:jira` and `read:group:jira` on those endpoints because the
      > *responses* carry avatar URLs and group memberships — nothing here
      > reads either, so start without them and add only what a refused call
-     > names (Jira's message is surfaced verbatim). Never grant `write:`,
-     > `manage:` or `delete:` — no code path here writes. Label + expiry →
-     > copy it (shown once) and paste it with that account's email. Revoke on
-     > the same page.
+     > names (Jira's message is surfaced verbatim). Grant `write:jira-work`
+     > (granular: `write:issue:jira`, `write:comment:jira`,
+     > `write:issue.remote-link:jira`, plus `read:field:jira`) **only** if
+     > your flows run tracker actions; never `manage:` or `delete:`. Label +
+     > expiry → copy it (shown once) and paste it with that account's email.
+     > Revoke on the same page.
      >
      > *Data Center token:* profile menu → **Profile → Personal Access
      > Tokens** → **Create token** → label + expiry → copy. Paste into *API
@@ -149,11 +161,14 @@ automatically. Database migrations apply at boot.
      > Scopes only cap a token; they grant nothing. Either way the account
      > needs Jira's **Browse Projects** permission on the projects you import
      > from, and the token can never see more than that human can. The four
-     > calls this integration makes, and nothing else:
+     > calls the import makes, and nothing else:
      > `GET /myself` (the Test button), `POST /search/jql` (the picker's
      > search, falling back to `GET /search` on older sites),
      > `GET /issue/{KEY}?fields=…,attachment` (preview + import), and a `GET`
-     > of each attachment's content URL.
+     > of each attachment's content URL. A flow's tracker actions add, each
+     > only when run: `GET`/`POST /issue/{KEY}/transitions`,
+     > `POST /issue/{KEY}/comment`, `GET /field` + `PUT /issue/{KEY}`, and
+     > `POST /issue/{KEY}/remotelink`.
      >
      > Optionally set a **JQL search filter** (`project = PROJ`); it is ANDed
      > into every search so the picker only shows issues you care about — it

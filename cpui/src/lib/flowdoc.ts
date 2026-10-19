@@ -445,33 +445,108 @@ function edgeToYamlValue(e: DocEdge): unknown {
 	return eo;
 }
 
+/** A node's rendered size, as Svelte Flow measured it. FlowGraph reports them
+ *  keyed the way `layout` is: stage ids, START/DONE/ABORT, `trigger:<phase>`
+ *  and `debug:<stage>`. */
+export interface NodeSize {
+	width: number;
+	height: number;
+}
+
+// Layout metrics: the gaps between nodes, and the size assumed for a node
+// nobody has measured yet (a first render, a stage just typed into the YAML).
+const GAP_X = 56;
+const GAP_Y = 72;
+const BAND_GAP = 140;
+const LANE_INDENT = 120;
+const GUESS: NodeSize = { width: 220, height: 120 };
+const GUESS_TERMINAL: NodeSize = { width: 110, height: 44 };
+
+/** The layout key of a stage's debug leaf (one per stage that escalates to
+ *  debug: the leaf is that stage's pause, not a shared terminal). */
+export const debugKey = (stage: string) => `debug:${stage}`;
+
+/** parksOnDebug reports whether any of the stage's edge chains reaches the
+ *  debug leaf — the stage then draws its own leaf. */
+export function parksOnDebug(s: DocStage): boolean {
+	return EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DEBUG));
+}
+
 // autoLayout places nodes left-to-right along the success chain, dropping
-// off-chain stages into lanes below (used when no stored layout exists).
-// A phased flow gets one band per phase, top to bottom.
-export function autoLayout(doc: FlowDoc): Record<string, { x: number; y: number }> {
+// off-chain stages into a lane below (used when no stored layout exists, and
+// by the auto-arrange button). A phased flow gets one band per phase, top to
+// bottom. Every column is as wide as the node in it and every row as tall as
+// its tallest node — from the sizes Svelte Flow measured, when the caller has
+// them — so nodes never overlap however many ports they grew.
+export function autoLayout(
+	doc: FlowDoc,
+	sizes: Record<string, NodeSize> = {}
+): Record<string, { x: number; y: number }> {
+	const size = (key: string, guess = GUESS) => sizes[key] ?? guess;
 	const pos: Record<string, { x: number; y: number }> = {};
 	const bands = doc.phases?.length ? doc.phases.map((p) => p.id) : [undefined];
 	const byId = new Map(doc.stages.map((s, i) => [s.id, i]));
+	let y0 = 0;
+	let right = 0; // the widest band's right edge: where the terminals go
 	bands.forEach((phase, band) => {
-		const y0 = band * 340;
 		const chain = new Set<string>();
 		let cur = phaseEntry(doc, phase)?.id;
 		while (cur && cur !== DONE && !chain.has(cur)) {
 			chain.add(cur);
 			cur = effectiveSuccess(doc, byId.get(cur)!);
 		}
-		let cx = 0;
-		let ox = 0;
-		for (const s of phaseOrder(doc, phase)) {
-			if (chain.has(s.id)) {
-				pos[s.id] = { x: cx * 240, y: y0 };
-				cx++;
-			} else {
-				pos[s.id] = { x: ox * 240 + 120, y: y0 + 160 };
-				ox++;
+		const onChain: DocStage[] = [];
+		const offChain: DocStage[] = [];
+		for (const s of phaseOrder(doc, phase)) (chain.has(s.id) ? onChain : offChain).push(s);
+		// Under a row, a strip holds the debug leaves of its stages that
+		// escalate there — each beside its own stage. Returns the row's new
+		// bottom edge.
+		const leaves = (row: DocStage[], bottom: number): number => {
+			let h = 0;
+			for (const s of row) {
+				if (!parksOnDebug(s)) continue;
+				const key = debugKey(s.id);
+				pos[key] = { x: pos[s.id].x + 24, y: bottom + GAP_Y / 2 };
+				h = Math.max(h, size(key, GUESS_TERMINAL).height);
 			}
+			return h ? bottom + GAP_Y / 2 + h : bottom;
+		};
+		// Row 0: the chain. Row 1, below the tallest chain node: the rest.
+		let x = 0;
+		let rowH = 0;
+		for (const s of onChain) {
+			const { width, height } = size(s.id);
+			pos[s.id] = { x, y: y0 };
+			x += width + GAP_X;
+			rowH = Math.max(rowH, height);
 		}
+		const y1 = leaves(onChain, y0 + rowH) + GAP_Y;
+		let x1 = LANE_INDENT;
+		let laneH = 0;
+		for (const s of offChain) {
+			const { width, height } = size(s.id);
+			pos[s.id] = { x: x1, y: y1 };
+			x1 += width + GAP_X;
+			laneH = Math.max(laneH, height);
+		}
+		right = Math.max(right, x, offChain.length ? x1 : 0);
+		// A reaction phase's trigger marker sits left of its first stage.
+		if (band > 0 && phase !== undefined) {
+			const key = `trigger:${phase}`;
+			pos[key] = { x: -(size(key, GUESS_TERMINAL).width + GAP_X), y: y0 };
+		}
+		y0 = (offChain.length ? leaves(offChain, y1 + laneH) : leaves(onChain, y0 + rowH)) + BAND_GAP;
 	});
+	// Terminals: the entry marker left of the first stage; done and abort
+	// stacked right of everything (abort draws only when an edge targets it,
+	// but a position costs nothing). Debug is no terminal — its leaves sit by
+	// their stages, above.
+	pos[START] = { x: -(size(START, GUESS_TERMINAL).width + GAP_X), y: 0 };
+	let ty = 0;
+	for (const key of [DONE, ABORT]) {
+		pos[key] = { x: right, y: ty };
+		ty += size(key, GUESS_TERMINAL).height + GAP_Y;
+	}
 	return pos;
 }
 
@@ -517,6 +592,9 @@ export interface IOPort {
 	description?: string;
 	/** True for a declared-but-unbound input (nothing to connect yet). */
 	unbound?: boolean;
+	/** True for a literal the stage writes (an enum choice, a text input):
+	 *  the author's word, not a path — shown, never connectable. */
+	literal?: boolean;
 }
 
 /** The agent/action contract shapes the graph needs; a subset of api.ts types. */
@@ -546,7 +624,8 @@ const port = (name: string, value: string, decl?: IODecl, unbound = false): IOPo
 	value,
 	sentinel: isSentinel(value),
 	description: decl?.description,
-	unbound: unbound || undefined
+	unbound: unbound || undefined,
+	literal: decl?.kind === 'enum' || decl?.kind === 'text' || undefined
 });
 
 /**

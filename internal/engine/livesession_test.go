@@ -27,8 +27,13 @@ func emitAll(in ports.AgentInput, evs ...ports.AgentEvent) {
 func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	var deltas []LiveDelta
-	var dmu sync.Mutex
+	// Deltas are live, never replayed: the viewer must be listening before the
+	// agent speaks, or the whole transcript streams to nobody. The fake agent
+	// runs on the run's own goroutine, which may well reach it before this
+	// test has subscribed — so it waits for the subscription first.
+	subscribed := make(chan struct{})
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		<-subscribed
 		emitAll(call.In,
 			ports.AgentEvent{Kind: ports.AgentEvSession, Text: "sess-t"},
 			ports.AgentEvent{Kind: ports.AgentEvTurnStart, Turn: "T1", Cursor: "b:1"},
@@ -55,14 +60,18 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 	}
 	live, stop := h.e.SubscribeLive(runID)
 	defer stop()
-	go func() {
-		for d := range live {
-			dmu.Lock()
-			deltas = append(deltas, d)
-			dmu.Unlock()
-		}
-	}()
+	close(subscribed)
 	h.e.Wait(runID)
+	// Every delta was published on the run's goroutine before it ended, so
+	// they are all buffered by now: drain, rather than race a collector.
+	for drained := false; !drained; {
+		select {
+		case d := <-live:
+			deltas = append(deltas, d)
+		default:
+			drained = true
+		}
+	}
 	evs := h.events(t, runID)
 
 	var kinds []string
@@ -104,8 +113,6 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 	if sess.SessionID != "sess-t" {
 		t.Errorf("session = %+v", sess)
 	}
-	dmu.Lock()
-	defer dmu.Unlock()
 	sawTool := false
 	for _, d := range deltas {
 		if d.Kind == "tool" && d.Tool != nil && d.Tool.ToolCallID == "c1" {

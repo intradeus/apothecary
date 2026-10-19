@@ -51,7 +51,9 @@ func TestTerminalThroughTheProxy(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	srv := httptest.NewServer(New(unixDialer(sock)).TerminalProxy())
+	// "repo" names the primary checkout — the directory the sidecar was
+	// started on (--repo), as httpapi passes a checkout's name.
+	srv := httptest.NewServer(New(unixDialer(sock)).TerminalProxy("repo"))
 	defer srv.Close()
 
 	c, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))

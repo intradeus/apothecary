@@ -174,6 +174,17 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				});
 				break;
 			case 'stage_completed':
+				if (p.skipped) {
+					items.push({
+						kind: 'status',
+						key,
+						glyph: I.ok,
+						text: t('transcript.stageSkipped', { stage: String(p.stage_id) }),
+						meta: String(p.note ?? ''),
+						tone: 'ok'
+					});
+					break;
+				}
 				items.push({
 					kind: 'status',
 					key,

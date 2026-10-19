@@ -337,7 +337,7 @@ func decodeYAMLPairs(n *yaml.Node) ([]IOPair, error) {
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
 		if v.Kind != yaml.ScalarNode {
-			return nil, fmt.Errorf("line %d: %q: value must be a path or a sentinel", v.Line, k.Value)
+			return nil, fmt.Errorf("line %d: %q: value must be a single value (a path, a sentinel or a literal), not a mapping or a list", v.Line, k.Value)
 		}
 		if seen[k.Value] {
 			return nil, fmt.Errorf("line %d: %q bound twice", k.Line, k.Value)
@@ -994,6 +994,11 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				if sig.Kind == actionspec.KindEnum && !slices.Contains(sig.Values, pr.Value) {
 					return fail("input %q: %q is not one of %s", pr.Name, pr.Value, strings.Join(sig.Values, " | "))
 				}
+				// A text input is the tracker's vocabulary, not ours: only
+				// blankness is checkable here.
+				if sig.Kind == actionspec.KindText && strings.TrimSpace(pr.Value) == "" {
+					return fail("input %q: a value is required (%s)", pr.Name, sig.Description)
+				}
 				bound[pr.Name] = true
 				s.Inputs = append(s.Inputs, IOBinding{Name: pr.Name, Value: pr.Value})
 			}
@@ -1002,6 +1007,11 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			if sig := &act.Inputs[i]; sig.Required && !bound[sig.Name] {
 				return fail("action %q requires input %q (%s)", act.Slug, sig.Name, sig.Description)
 			}
+		}
+		// ticket_set_field takes its value from an artifact OR from the flow —
+		// exactly one, the way a command takes run OR run_ref.
+		if act.Slug == actionspec.TicketSetField && bound["value"] == bound["text"] {
+			return fail("action %q takes exactly one of value (an artifact holding the value) or text (the value written here)", act.Slug)
 		}
 		// A file an action writes is part of the dataflow like an agent's
 		// output: later stages bind it, the validator sees it produced.

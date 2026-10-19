@@ -53,6 +53,10 @@ type Client struct {
 	// not looked up yet, empty = looked up and there is nothing to try.
 	projMu   sync.Mutex
 	projects []string
+
+	// fieldList caches GET /field (fields.go) for the client's life.
+	fieldMu   sync.Mutex
+	fieldList []fieldJSON
 }
 
 func New(cfg Config) *Client {

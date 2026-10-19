@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -31,6 +32,9 @@ type runState struct {
 	branch       string
 	sourceBranch string // branch this run forks off from (origin/<sourceBranch>)
 	envID        ports.EnvID
+	// envRequested: the run asked for its workspace once (env_requested is
+	// on the log), whatever its state is now.
+	envRequested bool
 
 	pos int
 	ph  phase
@@ -222,6 +226,8 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.branch = p.Branch
 			rs.sourceBranch = p.SourceBranch
 			rs.checkouts = checkoutsOf(p)
+		case *event.EnvRequested:
+			rs.envRequested = true
 		case *event.EnvReady:
 			rs.envID = ports.EnvID(p.EnvID)
 			rs.links = p.Links
@@ -448,18 +454,45 @@ func (rs *runState) delivered(ids []string) {
 	rs.pendingMsgs = kept
 }
 
-// anyStageStarted reports whether any of the flow's stages has run yet (the
-// provisioning log's pseudo-stage counter does not count).
-func (rs *runState) anyStageStarted() bool {
+// anyWorkspaceStageStarted reports whether a stage that USES the workspace
+// has run yet (the provisioning log's pseudo-stage counter does not count) —
+// what decides whether a fresh run's model check is still due. Gates, waits
+// and remote actions start without one, so counting them would skip the
+// check on a flow that opens with one.
+func (rs *runState) anyWorkspaceStageStarted() bool {
 	if rs.fl == nil {
 		return true
 	}
 	for i := range rs.fl.Stages {
-		if rs.iters[rs.fl.Stages[i].ID] > 0 {
+		if st := &rs.fl.Stages[i]; needsWorkspace(st) && rs.iters[st.ID] > 0 {
 			return true
 		}
 	}
 	return false
+}
+
+// needsWorkspace reports whether running st requires the environment: an
+// agent or a command always; a gate or a wait never (they park on something
+// outside the run); an action unless it is remote with no file input bound
+// (a tracker call needs no checkout — and must not re-provision a reaped
+// one after the final gate).
+func needsWorkspace(st *flow.Stage) bool {
+	switch st.Type {
+	case flow.StageHumanGate, flow.StageWait:
+		return false
+	case flow.StageAction:
+		act := actionspec.Get(st.Action)
+		if act == nil || !act.Remote {
+			return true
+		}
+		for _, in := range st.Inputs {
+			if sig := act.Input(in.Name); sig != nil && sig.Kind == actionspec.KindFile {
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // mrRecord is one merge request the run opened: which checkout and branch,

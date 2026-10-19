@@ -39,6 +39,7 @@ export default {
 	'transcript.prompt.restart': 'Engine restarted — continue',
 	'transcript.prompt.messages': 'Your messages',
 	'transcript.stageCompleted': '{stage} completed',
+	'transcript.stageSkipped': '{stage} skipped',
 	'transcript.turns_one': '{count} turn',
 	'transcript.turns_other': '{count} turns',
 	'transcript.stageFailed': '{stage} failed — {reason}',
@@ -131,6 +132,8 @@ export default {
 	'flow.term.abort': 'The run stops deliberately',
 	'flow.term.debug':
 		'A stop, not an end: the run parks for a human to fix the workspace, then goes back into the stage that sent it here',
+	'flow.term.debugFor':
+		'A stop, not an end: the run parks for a human to fix the workspace, then {stage} runs again',
 	// system
 	'system.settingsSaved': 'Settings saved · applied now',
 	'system.settingsRefused': 'The engine refused these settings',
@@ -400,6 +403,7 @@ export default {
 	'flow.graph.triggerLabel': '{phase}: on {trigger}',
 	'flow.graph.triggerTitle':
 		"Phase {phase} starts when {signal} holds for one of the run's merge requests — drag onto a stage of this phase to start it there",
+	'flow.graph.debugReturn': 'then {stage} again',
 	'flow.graph.arrangeTitle': 'Auto-arrange along the success chain',
 	'flow.graph.arrangeAria': 'Auto-arrange',
 	// FlowInspector
@@ -473,6 +477,11 @@ export default {
 	'flow.insp.actionHelp': 'A built-in apothecary integration.',
 	'flow.insp.needsIntegration':
 		'Needs a <span class="mono">{kind}</span> integration on the project running this flow.',
+	'flow.insp.tracker':
+		"Acts on the ticket's tracker issue (Jira, GitHub Issues) through the integration it was imported from. A ticket written by hand has none: the stage is skipped.",
+	'flow.insp.needsMR': 'Needs a merge request: place it after a create_mr, or in a reaction phase.',
+	'flow.insp.textPlaceholder': 'as the tracker spells it',
+	'flow.insp.textInputHelp': 'A literal written in the flow, not a file.',
 	'flow.insp.produces': 'Produces <span class="mono">{name}</span>',
 	'flow.insp.producesSentinel':
 		', available to later stages as <span class="mono">{sentinel}</span>',

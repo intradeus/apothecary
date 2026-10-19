@@ -195,12 +195,13 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		} else {
 			// Ensure the workspace lazily, right before a stage that uses it —
 			// and NEVER for a stage that only parks on something outside the
-			// run (a gate or a wait). Ensuring it up front blocked a run parked
+			// run (a gate or a wait) or acts there (a remote tracker action
+			// with no file input). Ensuring it up front blocked a run parked
 			// at a gate whose workspace had been reaped: recovery tried to
 			// re-provision it before re-arming the gate, so answers were
 			// silently buffered and dropped (found live: rejecting a final_gate
 			// returned {"status":"answered"} but nothing happened).
-			if st.Type != flow.StageHumanGate && st.Type != flow.StageWait && !x.envEnsured {
+			if needsWorkspace(st) && !x.envEnsured {
 				if eerr := x.ensureEnv(); eerr != nil {
 					x.exit(eerr)
 					return
@@ -210,8 +211,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				}
 				x.envEnsured = true
 				// A fresh run: before any stage spends anything, make sure the
-				// agent in the workspace accepts every model the flow pins.
-				if !rs.anyStageStarted() {
+				// agent in the workspace accepts every model the flow pins. A
+				// gate, a wait or a remote action may have run already — none
+				// of them had a workspace to check in.
+				if !rs.anyWorkspaceStageStarted() {
 					if missing := x.checkAgentModels(); len(missing) > 0 {
 						_ = x.fail("the flow pins models the workspace's agent does not offer: " +
 							strings.Join(missing, "; "))
@@ -1829,6 +1832,14 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		routed, err = x.actionSyncTarget(st)
 	case actionspec.PushBranch:
 		routed, err = x.actionPushBranch(st)
+	case actionspec.TicketTransition:
+		routed, err = x.actionTicketTransition(st)
+	case actionspec.TicketComment:
+		routed, err = x.actionTicketComment(st)
+	case actionspec.TicketSetField:
+		routed, err = x.actionTicketSetField(st)
+	case actionspec.TicketLink:
+		routed, err = x.actionTicketLink(st)
 	default:
 		// Unreachable: the parser validates the slug against the registry.
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,
@@ -2057,10 +2068,15 @@ func (x *exec) ensureEnv() error {
 		x.e.log.Warn("environment not running; re-provisioning — whatever was changed by hand in the old container is gone with it",
 			"run", rs.runID, "env", rs.envID, "status", status)
 	}
-	if rs.view.State == run.Pending {
+	// The first provisioning announces itself (the timeline's "provisioning
+	// workspace…"); a re-provisioning after a reap does not. The run may
+	// already be past pending — a remote action first in the flow runs
+	// before any workspace — so the record of the request is what decides.
+	if !rs.envRequested {
 		if err := x.append(&event.EnvRequested{}); err != nil {
 			return err
 		}
+		rs.envRequested = true
 	}
 	// The container/workspace name derives from the branch STEM, not the
 	// suffixed actual branch: base already ends where the run-id tail begins,

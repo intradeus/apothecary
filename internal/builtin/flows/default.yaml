@@ -15,6 +15,12 @@ budget: { max_cost_usd: 20.0, max_total_turns: 600 }
 #                 the threads worth fixing; those are fixed in one batch,
 #                 tested, pushed, and answered on their threads
 #
+# The ticket's tracker issue follows the work: "In Progress" as the run
+# starts, "In Review" once the branch is pushed and the merge request is
+# about to open. Both are tracker actions on the integration the ticket was
+# imported from — a ticket written by hand has no issue, and the two stages
+# skip. Spell the statuses the way your workflow does.
+#
 # Failure philosophy: every agent/command stage first retries itself with its
 # error fed back, then escalates to its OWN rescue gate — a human opens the
 # workspace (terminal/IDE), fixes what agents can't, and approve re-runs
@@ -301,6 +307,13 @@ phases:
     on: ticket
     description: "plan, build, review and open the merge request"
     stages:
+      # The issue moves first — before any workspace exists; the move needs
+      # none, so it lands seconds in. A tracker hiccup routes straight on to
+      # the plan: bookkeeping never blocks the work.
+      - { id: in_progress, type: action, action: ticket_transition, input: { to: "In Progress" },
+          description: "move the ticket's tracker issue to In Progress",
+          on_success: plan,
+          on_fail: { to: plan, max: 1 } }
       # Agent stages bind their agents' declared inputs by name; outputs come from
       # the agent's contract (planner → artifacts/plan.md) unless rebound here.
       - { id: plan,       type: agent, agent: planner, max_turns: 25,
@@ -352,8 +365,16 @@ phases:
       # rebase) is leased against it, never blind. Refused = someone else wrote to
       # the branch, which is a human's call.
       - { id: push,       type: action, action: push_branch,
-          on_success: mr,
+          on_success: in_review,
           on_fail: debug }
+      # The work is pushed and reviewed; the issue reads "In Review" as the
+      # merge request opens. It sits BEFORE create_mr so a tracker hiccup can
+      # route on to it — the phase's last stage has nowhere to route a failure
+      # but a human, and a Jira outage is not worth one.
+      - { id: in_review,  type: action, action: ticket_transition, input: { to: "In Review" },
+          description: "move the ticket's tracker issue to In Review",
+          on_success: mr,
+          on_fail: { to: mr, max: 1 } }
       # The merge request opens and the run goes into review: from here its
       # merge request decides how the run ends, and the phases below react.
       - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },

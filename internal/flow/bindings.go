@@ -97,8 +97,24 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 					slug)
 			}
 		}
+		// An action's prerequisite, the same way: ticket_link attaches the
+		// merge request, so a route that never opens one reaches a stage
+		// that can only fail with input_missing. Inside a reaction phase the
+		// subject merge request exists by definition.
+		if st.Type == StageAction {
+			if act := actionspec.Get(st.Action); act != nil && act.Needs == actionspec.NeedsMR &&
+				!inReaction(f, st) && !definitelyHasMR(f, st) {
+				warnf("%q needs a merge request that is not opened on every path reaching this stage", st.Action)
+			}
+		}
 	}
 	return warns, nil
+}
+
+// inReaction reports whether st belongs to a reaction phase (any phase but
+// the entry), where the run acts on an existing merge request.
+func inReaction(f *Flow, st *Stage) bool {
+	return f.Phased() && st.Phase != f.Phases[0].ID
 }
 
 // definitelyProduced reports whether every route from the entry to consumer

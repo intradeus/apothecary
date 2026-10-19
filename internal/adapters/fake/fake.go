@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -685,11 +686,26 @@ func (c *Channel) Sent() []ports.Notification {
 // TicketSource is an in-memory tracker: Tickets is the whole corpus, searched
 // by a case-insensitive substring of key/title/body. Attachment bytes come
 // from Blobs, keyed by attachment id.
+//
+// It also implements the write side (ports.TicketWriter), so engine scenarios
+// can script a flow's tracker actions: Reachable says which statuses a
+// Transition may reach from each one (nil = any), KnownFields which field
+// names exist (nil = any), and every write lands in FieldValues/Posted/Linked
+// and is logged to Calls ("transition DEV-1 In Progress") for assertions.
+// WriteErr fails every write when set; Err fails everything.
 type TicketSource struct {
 	mu      sync.Mutex
 	Tickets []ports.SourceTicket
 	Blobs   map[string][]byte
 	Err     error // returned by every method when set
+
+	Reachable   map[string][]string
+	KnownFields []string
+	FieldValues map[string]map[string]string
+	Posted      map[string][]string
+	Linked      map[string][]ports.TicketLink
+	Calls       []string
+	WriteErr    error
 }
 
 func (s *TicketSource) Test(context.Context) error { return s.Err }
@@ -747,6 +763,199 @@ func (s *TicketSource) OpenAttachment(_ context.Context, a ports.SourceAttachmen
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
+// --- TicketSource write side (ports.TicketWriter) ----------------------------
+
+func (s *TicketSource) ticket(key string) *ports.SourceTicket {
+	for i := range s.Tickets {
+		if strings.EqualFold(s.Tickets[i].Key, key) {
+			return &s.Tickets[i]
+		}
+	}
+	return nil
+}
+
+func (s *TicketSource) record(format string, args ...any) {
+	s.Calls = append(s.Calls, fmt.Sprintf(format, args...))
+}
+
+func (s *TicketSource) writeErr() error {
+	if s.Err != nil {
+		return s.Err
+	}
+	return s.WriteErr
+}
+
+// Transition moves the ticket when the status is reachable (Reachable's
+// vocabulary wins over the flow's spelling); already there is a no-op that
+// is still recorded, so a test can tell "called" from "moved".
+func (s *TicketSource) Transition(_ context.Context, key, status string) error {
+	if err := s.writeErr(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.ticket(key)
+	if t == nil {
+		return fmt.Errorf("fake: no ticket %q", key)
+	}
+	if strings.EqualFold(t.Status, status) {
+		s.record("transition %s %s (already there)", t.Key, t.Status)
+		return nil
+	}
+	target := status
+	if s.Reachable != nil {
+		reachable := s.Reachable[t.Status]
+		found := ""
+		for _, r := range reachable {
+			if strings.EqualFold(r, status) {
+				found = r
+			}
+		}
+		if found == "" {
+			return &ports.ErrStatusUnreachable{Key: t.Key, From: t.Status, To: status, Reachable: reachable}
+		}
+		target = found
+	}
+	s.record("transition %s %s", t.Key, target)
+	t.Status = target
+	return nil
+}
+
+func (s *TicketSource) Comment(_ context.Context, key, body string) error {
+	if err := s.writeErr(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.ticket(key)
+	if t == nil {
+		return fmt.Errorf("fake: no ticket %q", key)
+	}
+	if s.Posted == nil {
+		s.Posted = map[string][]string{}
+	}
+	s.Posted[t.Key] = append(s.Posted[t.Key], body)
+	s.record("comment %s", t.Key)
+	return nil
+}
+
+func (s *TicketSource) Comments(_ context.Context, key string) ([]string, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.ticket(key)
+	if t == nil {
+		return nil, fmt.Errorf("fake: no ticket %q", key)
+	}
+	return append([]string(nil), s.Posted[t.Key]...), nil
+}
+
+func (s *TicketSource) knows(field string) bool {
+	if s.KnownFields == nil {
+		return true
+	}
+	for _, f := range s.KnownFields {
+		if strings.EqualFold(f, field) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *TicketSource) SetFields(_ context.Context, key string, fields map[string]string) error {
+	if err := s.writeErr(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.ticket(key)
+	if t == nil {
+		return fmt.Errorf("fake: no ticket %q", key)
+	}
+	if s.FieldValues == nil {
+		s.FieldValues = map[string]map[string]string{}
+	}
+	if s.FieldValues[t.Key] == nil {
+		s.FieldValues[t.Key] = map[string]string{}
+	}
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !s.knows(name) {
+			return &ports.ErrFieldUnknown{Key: t.Key, Field: name, Candidates: s.KnownFields}
+		}
+		s.FieldValues[t.Key][name] = fields[name]
+		s.record("set %s %s=%s", t.Key, name, fields[name])
+	}
+	return nil
+}
+
+func (s *TicketSource) Fields(_ context.Context, key string, names []string) (map[string]string, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.ticket(key)
+	if t == nil {
+		return nil, fmt.Errorf("fake: no ticket %q", key)
+	}
+	out := map[string]string{}
+	for _, name := range names {
+		if !s.knows(name) {
+			return nil, &ports.ErrFieldUnknown{Key: t.Key, Field: name, Candidates: s.KnownFields}
+		}
+		out[name] = s.FieldValues[t.Key][name]
+	}
+	return out, nil
+}
+
+// AddLink upserts on URL, the way Jira's remote links do on globalId.
+func (s *TicketSource) AddLink(_ context.Context, key string, link ports.TicketLink) error {
+	if err := s.writeErr(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.ticket(key)
+	if t == nil {
+		return fmt.Errorf("fake: no ticket %q", key)
+	}
+	if s.Linked == nil {
+		s.Linked = map[string][]ports.TicketLink{}
+	}
+	s.record("link %s %s", t.Key, link.URL)
+	for i, l := range s.Linked[t.Key] {
+		if l.URL == link.URL {
+			s.Linked[t.Key][i] = link
+			return nil
+		}
+	}
+	s.Linked[t.Key] = append(s.Linked[t.Key], link)
+	return nil
+}
+
+// ReadOnlyTicketSource is a tracker with no write side — what an adapter
+// that never implemented ports.TicketWriter looks like to the resolver (the
+// "this integration cannot write back" path). It serves Src's corpus.
+type ReadOnlyTicketSource struct{ Src *TicketSource }
+
+func (r ReadOnlyTicketSource) Test(ctx context.Context) error { return r.Src.Test(ctx) }
+func (r ReadOnlyTicketSource) Search(ctx context.Context, q string, limit int) ([]ports.SourceTicket, error) {
+	return r.Src.Search(ctx, q, limit)
+}
+func (r ReadOnlyTicketSource) Fetch(ctx context.Context, key string) (ports.SourceTicket, error) {
+	return r.Src.Fetch(ctx, key)
+}
+func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a ports.SourceAttachment) (io.ReadCloser, error) {
+	return r.Src.OpenAttachment(ctx, a)
+}
+
 // Compile-time port conformance.
 var (
 	_ ports.EnvProvisioner      = (*EnvProvisioner)(nil)
@@ -754,4 +963,6 @@ var (
 	_ ports.Forge               = (*Forge)(nil)
 	_ ports.NotificationChannel = (*Channel)(nil)
 	_ ports.TicketSource        = (*TicketSource)(nil)
+	_ ports.TicketWriter        = (*TicketSource)(nil)
+	_ ports.TicketSource        = ReadOnlyTicketSource{}
 )

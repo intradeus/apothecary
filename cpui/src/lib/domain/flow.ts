@@ -51,8 +51,10 @@ export interface ActionIO {
 	name: string;
 	description?: string;
 	/** enum: a literal the stage writes, one of `values` (sync_target's
-	 *  strategy); `defaultValue` applies when the stage leaves it unbound. */
-	kind: 'file' | 'value' | 'enum';
+	 *  strategy); `defaultValue` applies when the stage leaves it unbound.
+	 *  text: a free literal the stage writes (a tracker's status or field
+	 *  name) — the author's choice, not dataflow. */
+	kind: 'file' | 'value' | 'enum' | 'text';
 	required: boolean;
 	defaultPath?: string;
 	sentinel?: string;
@@ -71,6 +73,11 @@ export interface ActionSpec {
 	requires?: string;
 	/** At most one stage per flow may use it. */
 	single: boolean;
+	/** Acts on an external service only (the ticket tracker): needs no
+	 *  workspace unless a file input is bound. */
+	remote: boolean;
+	/** A run fact the action depends on ('merge_request' for ticket_link). */
+	needs?: string;
 	inputs: ActionIO[];
 	outputs: ActionIO[];
 }
