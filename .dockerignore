@@ -1,5 +1,6 @@
 # deploy/Dockerfile build context (repo root): keep it lean.
 .git
+build
 cpui/node_modules
 cpui/build
 cpui/.svelte-kit

@@ -3,8 +3,16 @@
 deploy/.env
 
 # --- Go --------------------------------------------------------------------
-# locally built binaries (the image builds its own)
+# locally built binaries go to build/ (`task build`; the image builds its own).
+# workspace/ is go:embed'ed into apothecaryd and its gateway tree is hashed into
+# the egress-gw image tag, so a stray in-tree `go build` output would ship in
+# the daemon and churn the tag — ignore the default output names too.
+/build/
 /apothecaryd
+/gateway
+/shim
+/workspace/gateway/gateway
+/workspace/shim/shim
 *.test
 cover.out
 coverage.*

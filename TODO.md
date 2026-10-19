@@ -9,4 +9,3 @@
 - 28) normalized "debug" step action, instead of repeating it everytime in the flow.
 - 29) Remove or increase the container running branch and container size limit (? is there container limit).
 - 30) k8s/k3s deployment
-- 31) Move workspace builds to a build folder.

@@ -82,6 +82,41 @@ tasks:
     cmds:
       - docker rm -f {{.DEV_PG}} 2>/dev/null || true
 
+  # --- local binaries (build/, gitignored) -----------------------------------
+  # For poking at binaries directly. Production never uses these: the deploy
+  # image builds apothecaryd, and the engine builds the shim + gateway inside
+  # docker from the go:embed'ed workspace/ sources (internal/wsimage). Always
+  # build here, never in-tree: workspace/ is embedded, so a binary dropped in
+  # it ships inside apothecaryd and changes the egress-gw image hash.
+  build:
+    desc: Build apothecaryd, the workspace shim and the egress gateway into build/
+    cmds:
+      - task: build:daemon
+      - task: build:shim
+      - task: build:gateway
+
+  build:daemon:
+    desc: Build apothecaryd into build/
+    cmds:
+      - go build -o build/apothecaryd ./cmd/apothecaryd
+
+  build:shim:
+    desc: Build the in-workspace shim into build/ (static, like the engine's)
+    env: {CGO_ENABLED: '0'}
+    cmds:
+      - go build -trimpath -o build/shim ./workspace/shim
+
+  build:gateway:
+    desc: Build the egress gateway daemon into build/ (static, like the engine's)
+    env: {CGO_ENABLED: '0'}
+    cmds:
+      - go build -trimpath -o build/gateway ./workspace/gateway
+
+  clean:
+    desc: Remove build/
+    cmds:
+      - rm -rf build
+
   # --- UI --------------------------------------------------------------------
   ui:
     desc: CPUI dev server with hot reload (proxies /api to :8080)
