@@ -22,7 +22,7 @@
 	import LayoutsPopover from '$lib/desk/LayoutsPopover.svelte';
 	import type { DeskState } from '$lib/desk/desk.svelte';
 	import MrStatus from './MrStatus.svelte';
-	import RestartModal from './RestartModal.svelte';
+	import RerunModal from './RerunModal.svelte';
 	import { accentSplit } from './derive';
 	import type { RunStore } from './store.svelte';
 
@@ -81,7 +81,7 @@
 	let rebuildBtn = $state<HTMLButtonElement | null>(null);
 	let envOpen = $state(false);
 	let rebuildOpen = $state(false);
-	let restartOpen = $state(false);
+	let rerunOpen = $state(false);
 	let busy = $state<'' | 'pause' | 'play' | 'stop' | 'retry' | 'archive' | 'editor' | 'rebuild'>(
 		''
 	);
@@ -155,7 +155,7 @@
 	async function retry() {
 		busy = 'retry';
 		// Same run, same workspace: the page re-subscribes once it continues.
-		if (await rs.act(() => api.runs.resume(run.id))) onretried();
+		if (await rs.act(() => api.runs.retry(run.id))) onretried();
 		busy = '';
 	}
 
@@ -300,15 +300,15 @@
 						disabled={busy !== ''}
 						aria-busy={busy === 'play'}
 						onclick={() => act('play', () => api.runs.play(run.id))}
-						title="Continue where it left off — the in-flight stage re-enters (agent sessions resume); retry budgets are untouched"
-						>{I.play} Resume</button
+						title="Play: continue where it left off — the in-flight stage re-enters (agent sessions pick up); retry budgets are untouched"
+						>{I.play} Play</button
 					>
 				{:else if run.state !== 'pending'}
 					<button
 						disabled={busy !== ''}
 						aria-busy={busy === 'pause'}
 						onclick={() => act('pause', () => api.runs.pause(run.id))}
-						title="Park the run: the current attempt is stopped, the workspace stays up for inspection, and nothing moves until Resume"
+						title="Park the run: the current attempt is stopped, the workspace stays up for inspection, and nothing moves until Play"
 						>{I.pause} Pause</button
 					>
 				{/if}
@@ -329,7 +329,7 @@
 				{/if}
 				<button
 					disabled={busy !== ''}
-					onclick={() => (restartOpen = true)}
+					onclick={() => (rerunOpen = true)}
 					title="A fresh run of the same ticket: new workspace, new branch — with direction, files and a flow of your choosing"
 					>New run from this…</button
 				>
@@ -367,12 +367,15 @@
 				disabled={!canRebuild || busy === 'rebuild'}
 				aria-busy={busy === 'rebuild'}
 				aria-expanded={rebuildOpen}
-				title={canRebuild
-					? 'Recreate the container in place — the run and its commits are untouched'
-					: run.envId
-						? 'Pause or stop the run first — a live run refuses a rebuild'
-						: 'No workspace to rebuild'}
-				onclick={() => (rebuildOpen = !rebuildOpen)}>Rebuild {I.menu}</button
+				title={run.envDirty
+					? `The devcontainer configuration changed since this workspace was built — rebuild to apply it${canRebuild ? '' : ' (pause or stop the run first)'}`
+					: canRebuild
+						? 'Recreate the container in place — the run and its commits are untouched'
+						: run.envId
+							? 'Pause or stop the run first — a live run refuses a rebuild'
+							: 'No workspace to rebuild'}
+				onclick={() => (rebuildOpen = !rebuildOpen)}
+				>{#if run.envDirty}<span class="dirty" aria-hidden="true"></span>{/if}Rebuild {I.menu}</button
 			>
 		</GlassGroup>
 
@@ -431,7 +434,7 @@
 	placement="below-end"
 	width={300}
 	title="Rebuild"
-	legend="the run is untouched"
+	legend={run.envDirty ? 'config changed since the build' : 'the run is untouched'}
 >
 	<button class="mi" onclick={() => rebuild(false)}>
 		<span class="col wrap">
@@ -451,9 +454,9 @@
 	</button>
 </Popover>
 
-<RestartModal
+<RerunModal
 	{rs}
-	bind:open={restartOpen}
+	bind:open={rerunOpen}
 	onstarted={(id) => {
 		const from = run.id;
 		toast(`New run ${shortId(id)} started`, {
@@ -647,5 +650,16 @@
 		.rh {
 			grid-template-columns: minmax(0, 1fr);
 		}
+	}
+	/* The devcontainer config moved on since the build: the rebuild is due. */
+	.dirty {
+		display: inline-block;
+		width: 7px;
+		height: 7px;
+		margin-right: 6px;
+		border-radius: 50%;
+		background: var(--amb);
+		box-shadow: 0 0 6px var(--amb);
+		vertical-align: middle;
 	}
 </style>

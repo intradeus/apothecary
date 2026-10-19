@@ -253,12 +253,12 @@ func TestTicketSourceRoutesWithoutWiring(t *testing.T) {
 }
 
 // Restart accepts per-attempt direction and records it on the new run.
-func TestRestartWithDirection(t *testing.T) {
+func TestRerunWithDirection(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	runID := x.createTicket(t, "T")
 	x.e.Wait(runID)
 
-	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/restart",
+	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/rerun",
 		map[string]any{"goal": "try the other adapter"}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("restart = %d: %s", resp.StatusCode, data)

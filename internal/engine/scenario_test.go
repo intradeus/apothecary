@@ -132,11 +132,20 @@ func withAgents(doc string, specs map[string]*agentspec.Spec) string {
 
 func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 	t.Helper()
+	return newHarnessOn(t, nil, flows...)
+}
+
+// newHarnessOn is newHarness with the engine reading and writing through
+// `store` — a wrapper over the harness's MemStore (which stays h.store), for
+// tests about what the engine asks a store that has more to offer (a runs
+// projection). nil is the plain MemStore.
+func newHarnessOn(t *testing.T, store func(*event.MemStore) event.Store, flows ...*flow.Flow) *harness {
+	t.Helper()
 	fm := flow.MapSource{}
 	for _, f := range flows {
 		fm[f.Name] = f
 	}
-	h := newHarnessSource(t, fm, flows...)
+	h := newHarnessSourceOn(t, store, fm, flows...)
 	h.flows = fm
 	return h
 }
@@ -155,6 +164,11 @@ func (h *harness) flowOf(t *testing.T, name string) *flow.Flow {
 // newHarnessSource is newHarness over a caller-supplied flow.Source, for tests
 // about what happens when the source itself misbehaves.
 func newHarnessSource(t *testing.T, src flow.Source, flows ...*flow.Flow) *harness {
+	t.Helper()
+	return newHarnessSourceOn(t, nil, src, flows...)
+}
+
+func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, src flow.Source, flows ...*flow.Flow) *harness {
 	t.Helper()
 	h := &harness{
 		store:  event.NewMemStore(),
@@ -178,7 +192,11 @@ func newHarnessSource(t *testing.T, src flow.Source, flows ...*flow.Flow) *harne
 	}
 	h.settings = &varSettings{L: Limits{}.withDefaults()}
 	cfg := Config{MRPollInterval: 5 * time.Millisecond}
-	h.e = New(cfg, h.store, StaticResolver{R: h.res}, src, h.settings, []ports.NotificationChannel{h.ch})
+	var es event.Store = h.store
+	if store != nil {
+		es = store(h.store)
+	}
+	h.e = New(cfg, es, StaticResolver{R: h.res}, src, h.settings, []ports.NotificationChannel{h.ch})
 	t.Cleanup(h.e.Shutdown)
 	return h
 }
@@ -1829,9 +1847,9 @@ stages:
 	}
 }
 
-// TestResumeRerunsFailedStage: a run that abandons at a command stage
+// TestRetryRerunsFailedStage: a run that abandons at a command stage
 // resumes IN THE SAME WORKSPACE, re-running only the failed stage.
-func TestResumeRerunsFailedStage(t *testing.T) {
+func TestRetryRerunsFailedStage(t *testing.T) {
 	// A single command stage with no on_fail: it abandons on failure.
 	doc := `name: r
 version: 2
@@ -1862,7 +1880,7 @@ stages:
 
 	// Fix the failing command; resume re-runs push in the SAME env.
 	fail = false
-	if err := h.e.ResumeRun(context.Background(), runID); err != nil {
+	if err := h.e.RetryRun(context.Background(), runID); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
@@ -1877,12 +1895,12 @@ stages:
 	if got := len(h.envp.Destroyed); got != 0 {
 		t.Errorf("env destroyed on resume (%d) — should be reused", got)
 	}
-	if countType(h.events(t, runID), event.TypeRunResumed) != 1 {
-		t.Error("no run_resumed event")
+	if countType(h.events(t, runID), event.TypeRunRetried) != 1 {
+		t.Error("no run_retried event")
 	}
 
 	// A completed run cannot be resumed.
-	if err := h.e.ResumeRun(context.Background(), runID); err == nil || !strings.Contains(err.Error(), "can be resumed") {
+	if err := h.e.RetryRun(context.Background(), runID); err == nil || !strings.Contains(err.Error(), "can be retried") {
 		t.Errorf("resume completed err = %v", err)
 	}
 }

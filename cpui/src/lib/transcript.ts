@@ -267,7 +267,8 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					tone: 'warn'
 				});
 				break;
-			case 'run_resumed':
+			case 'run_retried':
+			case 'run_resumed': // the pre-rename spelling, still in stored history
 				items.push({
 					kind: 'status',
 					key,

@@ -209,12 +209,31 @@ func toPingJSON(p *engine.Ping) pingJSON {
 
 // --- tickets & runs ---------------------------------------------------------
 
-func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
-	ids, err := s.Store.RunIDs(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+// runViews is every run's read-model row: the store's projection when it keeps
+// one (one query), else every log reduced — the engine's own rule (engine.views).
+func (s *Server) runViews(ctx context.Context) ([]run.View, error) {
+	if vs, ok := s.Store.(run.ViewSource); ok {
+		return vs.RunViews(ctx)
 	}
+	ids, err := s.Store.RunIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]run.View, 0, len(ids))
+	for _, id := range ids {
+		evs, err := s.Store.Events(ctx, id, 0)
+		if err != nil {
+			return nil, err
+		}
+		if len(evs) == 0 {
+			continue
+		}
+		out = append(out, run.Reduce(evs))
+	}
+	return out, nil
+}
+
+func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	project := r.URL.Query().Get("project")
 	ticket := r.URL.Query().Get("ticket")
 	// One snapshot of the reconciler's live-status map (overlaid with any
@@ -222,17 +241,14 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	// to tell a live env from a stopped one, and to show rebuilding/destroying/
 	// error transitions (env_id alone can't, see run.View.EnvStatus).
 	envStatus := s.Engine.EnvBadges()
-	views := make([]run.View, 0, len(ids))
-	for _, id := range ids {
-		evs, err := s.Store.Events(r.Context(), id, 0)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if len(evs) == 0 {
-			continue
-		}
-		v := run.Reduce(evs)
+	envDirty := s.Engine.EnvDirty()
+	all, err := s.runViews(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	views := make([]run.View, 0, len(all))
+	for _, v := range all {
 		if project != "" && v.ProjectID != project {
 			continue
 		}
@@ -244,6 +260,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		if st, ok := envStatus[v.RunID]; ok {
 			v.EnvStatus = st
 		}
+		v.EnvDirty = envDirty[v.RunID]
 		views = append(views, v)
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].CreatedAt.After(views[j].CreatedAt) })
@@ -263,6 +280,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	if st, ok := s.Engine.EnvBadges()[v.RunID]; ok {
 		v.EnvStatus = st
 	}
+	v.EnvDirty = s.Engine.EnvDirty()[v.RunID]
 	writeJSON(w, http.StatusOK, RunDetail{Run: v, Events: last})
 }
 
@@ -347,16 +365,16 @@ func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// postRestart starts a terminal run over as a fresh run; 201 carries the
+// postRerun starts a terminal run over as a fresh run; 201 carries the
 // new run id. 409 when the run is active/non-terminal, 404 when unknown,
 // 400 when the re-preflight refuses (config drifted since the original).
 // The optional body {flow, goal, attachment_ids} steers THIS attempt —
-// restart-after-failure is when a human most wants to give direction.
-func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
-	var body RestartRunRequest
+// a rerun after a failure is when a human most wants to give direction.
+func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
+	var body RerunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
-	newID, err := s.Engine.RestartRun(r.Context(), r.PathValue("id"), engine.RunInput{
+	newID, err := s.Engine.Rerun(r.Context(), r.PathValue("id"), engine.RunInput{
 		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
 	})
 	if err != nil {
@@ -374,18 +392,18 @@ func (s *Server) postRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, RunRef{RunID: newID})
 }
 
-// postResume re-enters the failed stage of an abandoned/failed run in its
+// postRetry re-enters the failed stage of an abandoned/failed run in its
 // existing workspace ("try again") — 202, the run continues under the same
-// id. 409 when active/not-resumable, 404 when unknown.
-func (s *Server) postResume(w http.ResponseWriter, r *http.Request) {
-	err := s.Engine.ResumeRun(r.Context(), r.PathValue("id"))
+// id. 409 when active/not retryable, 404 when unknown.
+func (s *Server) postRetry(w http.ResponseWriter, r *http.Request) {
+	err := s.Engine.RetryRun(r.Context(), r.PathValue("id"))
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest
 		switch {
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "still active"), strings.Contains(msg, "can be resumed"):
+		case strings.Contains(msg, "still active"), strings.Contains(msg, "can be retried"):
 			status = http.StatusConflict
 		}
 		writeErr(w, status, msg)

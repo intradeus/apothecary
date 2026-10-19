@@ -579,7 +579,7 @@ func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
 	rh.pick(t, "d1", "d2")
 	rh.waitState(t, runID, run.Failed)
 	rh.forge.ReplyFailAfter = 0
-	if err := rh.e.ResumeRun(context.Background(), runID); err != nil {
+	if err := rh.e.RetryRun(context.Background(), runID); err != nil {
 		t.Fatal(err)
 	}
 	rh.waitPhaseRuns(t, runID, "review_fixes", 1)

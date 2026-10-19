@@ -1210,6 +1210,19 @@ components:
         - name
         - url
       type: object
+    RerunRequest:
+      properties:
+        attachment_ids:
+          items:
+            type: string
+          type: array
+        flow:
+          type: string
+        goal:
+          type: string
+        source_branch:
+          type: string
+      type: object
     ResourceSample:
       properties:
         at:
@@ -1243,19 +1256,6 @@ components:
         - net_rx
         - net_tx
         - pids
-      type: object
-    RestartRunRequest:
-      properties:
-        attachment_ids:
-          items:
-            type: string
-          type: array
-        flow:
-          type: string
-        goal:
-          type: string
-        source_branch:
-          type: string
       type: object
     RunCheckout:
       properties:
@@ -1375,6 +1375,8 @@ components:
           type: string
         current_stage:
           type: string
+        env_dirty:
+          type: boolean
         env_id:
           type: string
         env_status:
@@ -4473,6 +4475,47 @@ paths:
       summary: Recreate the run's container in place, keeping the checkout
       tags:
         - workspace
+  /api/runs/{id}/rerun:
+    post:
+      operationId: rerunRun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RerunRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunRef'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Run the ticket again as a new run in a fresh workspace
+      tags:
+        - runs
   /api/runs/{id}/resources:
     get:
       operationId: getRunResources
@@ -4504,50 +4547,9 @@ paths:
       summary: Rolling window of workspace cpu/memory/network samples
       tags:
         - workspace
-  /api/runs/{id}/restart:
+  /api/runs/{id}/retry:
     post:
-      operationId: restartRun
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RestartRunRequest'
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RunRef'
-          description: Created
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
-        "409":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      summary: Run the ticket again as a new run in a fresh workspace
-      tags:
-        - runs
-  /api/runs/{id}/resume:
-    post:
-      operationId: resumeRun
+      operationId: retryRun
       parameters:
         - in: path
           name: id

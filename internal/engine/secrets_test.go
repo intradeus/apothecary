@@ -129,7 +129,7 @@ func TestResumeReseedsScrubbedCredentials(t *testing.T) {
 	// Retry, this time letting it pass.
 	credsPresentDuringWork = false
 	failVerify = false
-	if err := h.e.ResumeRun(ctx, runID); err != nil {
+	if err := h.e.RetryRun(ctx, runID); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)

@@ -163,11 +163,11 @@ export const runs = {
 	/** Continue mid-stage, like crash recovery; retry budgets are untouched. */
 	play: (id: string) => unwrapVoid(gen.playRun({ path: { id } })),
 	archive: (id: string) => unwrapVoid(gen.archiveRun({ path: { id } })),
-	/** Try again: re-enter the failed stage in the same workspace. */
-	resume: (id: string) => unwrapVoid(gen.resumeRun({ path: { id } })),
-	/** Run the ticket again as a NEW run in a fresh workspace. */
-	restart: async (id: string, opts?: RunInput): Promise<string> =>
-		(await unwrap(gen.restartRun({ path: { id }, body: runInputBody(opts) }))).run_id,
+	/** Retry: re-enter the failed stage in the same workspace. */
+	retry: (id: string) => unwrapVoid(gen.retryRun({ path: { id } })),
+	/** Rerun: the ticket again as a NEW run in a fresh workspace. */
+	rerun: async (id: string, opts?: RunInput): Promise<string> =>
+		(await unwrap(gen.rerunRun({ path: { id }, body: runInputBody(opts) }))).run_id,
 	/** Recreate the container in place (keeps the checkout and the commits).
 	 *  Blocks until done; the run page shows progress through the workspace
 	 *  log tail and the rebuilding badge.

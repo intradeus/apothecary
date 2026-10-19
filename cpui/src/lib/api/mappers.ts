@@ -138,6 +138,7 @@ export function toRun(w: Wire.RunView): Run {
 		idle: w.idle ?? false,
 		envId: w.env_id,
 		envStatus: w.env_status as Run['envStatus'],
+		envDirty: w.env_dirty ?? false,
 		createdAt: w.created_at,
 		updatedAt: w.updated_at
 	};

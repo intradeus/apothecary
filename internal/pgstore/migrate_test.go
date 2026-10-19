@@ -68,30 +68,46 @@ func ledger(t *testing.T, s *Store) []int {
 	return out
 }
 
+// shipped is the ledger a fresh database ends up with: every embedded
+// migration, in order.
+func shipped(t *testing.T) []int {
+	t.Helper()
+	migs, err := migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]int, 0, len(migs))
+	for _, m := range migs {
+		out = append(out, m.version)
+	}
+	return out
+}
+
 func TestMigrateFreshAndIdempotent(t *testing.T) {
 	dsn := freshSchemaDSN(t)
 	s := openDSN(t, dsn)
-	if got := ledger(t, s); !slices.Equal(got, []int{1}) {
-		t.Fatalf("ledger = %v, want [1]", got)
+	if got, want := ledger(t, s), shipped(t); !slices.Equal(got, want) {
+		t.Fatalf("ledger = %v, want %v", got, want)
 	}
 	s.Close()
-	if got := ledger(t, openDSN(t, dsn)); !slices.Equal(got, []int{1}) {
-		t.Fatalf("ledger after reopen = %v, want [1]", got)
+	if got, want := ledger(t, openDSN(t, dsn)), shipped(t); !slices.Equal(got, want) {
+		t.Fatalf("ledger after reopen = %v, want %v", got, want)
 	}
 }
 
 func TestMigrateCollapsesPreSquashLedger(t *testing.T) {
 	dsn := freshSchemaDSN(t)
 	s := openDSN(t, dsn)
-	// The pre-squash chain's end state is the init schema; only the ledger
-	// differs.
+	// A pre-squash database: the init schema under a ledger of
+	// 1..preSquashHead.
 	if _, err := s.pool.Exec(context.Background(),
 		`INSERT INTO schema_migrations (version) SELECT generate_series(2, $1)`, preSquashHead); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
-	if got := ledger(t, openDSN(t, dsn)); !slices.Equal(got, []int{1}) {
-		t.Fatalf("ledger = %v, want [1]", got)
+	// The ledger collapses to {1}, then whatever post-squash migrations exist apply.
+	if got, want := ledger(t, openDSN(t, dsn)), shipped(t); !slices.Equal(got, want) {
+		t.Fatalf("ledger = %v, want %v", got, want)
 	}
 }
 

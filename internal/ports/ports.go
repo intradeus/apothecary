@@ -102,6 +102,14 @@ type Command struct {
 	// root (§3); bootstrap's clone step runs in home.
 	Dir     string
 	Timeout time.Duration
+	// Marker tags the command's process tree (as APOTHECARY_CMD in its
+	// environment) and, before it starts, kills whatever earlier command with
+	// the same marker is still running in the environment — TERM, then KILL.
+	// Command stages set it per stage: an attempt's exec client dies with its
+	// timeout or with the engine process, but the tree inside the container
+	// does not, so without this a retry or a recovery re-entry would race
+	// the orphan. Empty: no tagging, no sweep.
+	Marker string
 }
 
 type ExecResult struct {
@@ -589,6 +597,16 @@ type EditorStarter interface {
 // re-runs bootstrap afterwards (the fresh container has no /apothecary state).
 type WorkspaceRebuilder interface {
 	Rebuild(ctx context.Context, spec EnvSpec) error
+}
+
+// WorkspaceDirtyChecker is an OPTIONAL EnvProvisioner capability: whether the
+// environment's build inputs (its devcontainer configuration) have changed
+// since the container was built, so the UI can suggest a rebuild — Coder's
+// "dirty" workspace. External state like EnvStatus: polled by the engine's
+// reconciler, kept in memory, never in the event log. False when the adapter
+// cannot tell (an environment built before it recorded the inputs).
+type WorkspaceDirtyChecker interface {
+	ConfigDirty(ctx context.Context, env EnvID) (bool, error)
 }
 
 // ObservedPort is a listening TCP port discovered at runtime inside an

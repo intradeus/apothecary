@@ -37,10 +37,13 @@ var registry = map[Type]func() Payload{
 	TypeRunAbandoned:         func() Payload { return &RunAbandoned{} },
 	TypeRunFailed:            func() Payload { return &RunFailed{} },
 	TypeRunArchived:          func() Payload { return &RunArchived{} },
-	TypeRunResumed:           func() Payload { return &RunResumed{} },
-	TypeRunPaused:            func() Payload { return &RunPaused{} },
-	TypeRunUnpaused:          func() Payload { return &RunUnpaused{} },
-	TypeEnvDestroyed:         func() Payload { return &EnvDestroyed{} },
+	TypeRunRetried:           func() Payload { return &RunRetried{} },
+	// The pre-rename spelling of run_retried: stored history decodes to the
+	// same payload (the envelope keeps the type it was written with).
+	Type("run_resumed"): func() Payload { return &RunRetried{} },
+	TypeRunPaused:       func() Payload { return &RunPaused{} },
+	TypeRunUnpaused:     func() Payload { return &RunUnpaused{} },
+	TypeEnvDestroyed:    func() Payload { return &EnvDestroyed{} },
 
 	TypeEnvRebuildStarted:   func() Payload { return &EnvRebuildStarted{} },
 	TypeEnvRebuildCompleted: func() Payload { return &EnvRebuildCompleted{} },

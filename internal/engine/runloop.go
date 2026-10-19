@@ -1306,9 +1306,10 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	var res ports.ExecResult
 	var err error
 	var combined strings.Builder
+	marker := commandMarker(rs.runID, st.ID)
 	for _, dir := range dirs {
 		cctx, cancel := context.WithTimeout(x.ctx, timeout)
-		res, err = x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: dir, Timeout: timeout})
+		res, err = x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: dir, Timeout: timeout, Marker: marker})
 		cancel()
 		if err != nil {
 			break
@@ -1364,6 +1365,13 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	x.advance(st)
 	return nil
 }
+
+// commandMarker is one command stage's ports.Command.Marker: the run and the
+// stage, since a workspace only ever hosts one run. An attempt's exec client
+// dies with its timeout or with the engine process; the adapter uses the
+// marker to kill what the previous attempt left running before this one
+// starts (see ports.Command.Marker).
+func commandMarker(runID, stageID string) string { return runID + ":" + stageID }
 
 // missingPaths returns the bindings' paths that cannot be read in the
 // workspace, in declaration order. Sentinels are engine-provided, never files.

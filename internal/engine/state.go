@@ -331,7 +331,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			// publishes exists; a partial publication keeps reconciling.
 		case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
 			rs.done = true
-		case *event.RunResumed:
+		case *event.RunRetried:
 			// "Try again": un-terminal and re-enter the failed stage fresh.
 			// Clearing edgeCounts restores every stage's on_fail/on_reject
 			// retry budget from the resume point; feed/lastFailure reset so

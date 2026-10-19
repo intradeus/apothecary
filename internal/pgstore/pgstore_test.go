@@ -103,6 +103,51 @@ func TestRunsProjectionUpdatedInTx(t *testing.T) {
 	}
 }
 
+// The projection row must agree with a full reduce after any sequence of
+// appends: that needs every field Apply reads to round-trip through the row —
+// including Dormant and Rebuilding, which the JSON view omits.
+func TestRunsProjectionRoundTripsWhatApplyReads(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	steps := [][]event.Payload{
+		{&event.RunCreated{TicketTitle: "t", ProjectID: "p", Branch: "feat/x", TicketID: "tk-1"},
+			&event.EnvRequested{}, &event.EnvReady{EnvID: "env-1"},
+			&event.StageStarted{StageID: "build", Iteration: 1}},
+		{&event.PingRaised{PingID: "q1", Type: "blocker", Question: "which db?"}},
+		// The engine parks the run: no loop, waiting on the human.
+		{&event.RunPaused{StageID: "build", Reason: event.PauseWaiting}},
+		// The answer lands while it is parked: it must keep reading
+		// waiting_on_human (the row's dormant flag is what Apply consults).
+		{&event.PingAnswered{PingID: "q1", Answer: "postgres"}},
+		{&event.RunUnpaused{Reason: event.UnpauseAnswered}, &event.StageCompleted{StageID: "build"}, &event.RunCompleted{}},
+		{&event.EnvRebuildStarted{EnvID: "env-1"}},
+		{&event.EnvRebuildFailed{EnvID: "env-1", Error: "interrupted"}},
+	}
+	var all []event.Event
+	for i, ps := range steps {
+		evs, err := s.Append(ctx, "r1", ps...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, evs...)
+		want := run.Reduce(all)
+		views, err := s.RunViews(ctx)
+		if err != nil || len(views) != 1 {
+			t.Fatalf("step %d: views = %+v, %v", i, views, err)
+		}
+		got := views[0]
+		if got.State != want.State || got.Dormant != want.Dormant || got.Rebuilding != want.Rebuilding ||
+			got.Branch != want.Branch || got.TicketID != want.TicketID || got.CurrentStage != want.CurrentStage {
+			t.Errorf("step %d: projection %s/dormant=%v/rebuilding=%v/%s/%s/%s, reduce %s/dormant=%v/rebuilding=%v/%s/%s/%s",
+				i, got.State, got.Dormant, got.Rebuilding, got.Branch, got.TicketID, got.CurrentStage,
+				want.State, want.Dormant, want.Rebuilding, want.Branch, want.TicketID, want.CurrentStage)
+		}
+	}
+	if views, _ := s.RunViews(ctx); views[0].State != run.Completed || views[0].Rebuilding {
+		t.Errorf("final row = %+v", views[0])
+	}
+}
+
 func TestPingsProjection(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()

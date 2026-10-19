@@ -82,7 +82,7 @@ func TestRunSourceBranch(t *testing.T) {
 
 	// Restart carries the original source branch forward.
 	h.e.Wait(exp)
-	newID, err := h.e.RestartRun(ctx, exp, RunInput{})
+	newID, err := h.e.Rerun(ctx, exp, RunInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestRunSourceBranch(t *testing.T) {
 
 // Restart of a ticketed run is a fresh attempt under the SAME ticket: same
 // base, same ticket id, a NEW tail (so the two attempts never collide).
-func TestRestartTicketedRunKeepsBaseNewTail(t *testing.T) {
+func TestRerunTicketedRunKeepsBaseNewTail(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 
@@ -111,7 +111,7 @@ func TestRestartTicketedRunKeepsBaseNewTail(t *testing.T) {
 	h.e.Wait(id)
 	orig := h.view(t, id)
 
-	newID, err := h.e.RestartRun(ctx, id, RunInput{})
+	newID, err := h.e.Rerun(ctx, id, RunInput{})
 	if err != nil {
 		t.Fatal(err)
 	}

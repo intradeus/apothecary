@@ -350,7 +350,8 @@ export function describe(e: RunEvent): Described {
 			return { text: `abandoned at ${p.stalled_at}: ${p.reason}`, tone: 'bad' };
 		case 'run_failed':
 			return { text: `run failed: ${p.reason}`, tone: 'bad' };
-		case 'run_resumed':
+		case 'run_retried':
+		case 'run_resumed': // the pre-rename spelling, still in stored history
 			return { text: 'retry — re-entering the failed stage in the same workspace', tone: 'info' };
 		case 'run_paused':
 			// Parked by the engine on a human is not the same as paused by one:
@@ -364,7 +365,7 @@ export function describe(e: RunEvent): Described {
 		case 'run_unpaused':
 			return p.reason === 'answered'
 				? { text: 'picked back up — your answer landed', tone: 'info' }
-				: { text: 'resumed (play)', tone: 'info' };
+				: { text: 'play — continuing where it left off', tone: 'info' };
 		case 'run_archived':
 			return { text: 'archived', tone: '' };
 		case 'env_destroyed':

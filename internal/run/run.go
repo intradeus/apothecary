@@ -4,6 +4,7 @@
 package run
 
 import (
+	"context"
 	"time"
 
 	"apothecary/internal/event"
@@ -74,6 +75,10 @@ type View struct {
 	// can tell a live env from one stopped/removed out-of-band; empty means
 	// "not reconciled" and the UI falls back to the env_id liveness guess.
 	EnvStatus string `json:"env_status,omitempty"`
+	// EnvDirty: the workspace's devcontainer configuration changed since its
+	// container was built (a rebuild would pick it up). Like EnvStatus, live
+	// state from the reconciler, never a projected column.
+	EnvDirty bool `json:"env_dirty,omitempty"`
 	// Dormant: the run has no loop goroutine and none is owed to it until
 	// something wakes it (play, or the answer it is waiting for). NOT a
 	// projected column — recovery, pause/play and the answer path all derive
@@ -82,9 +87,13 @@ type View struct {
 	// Orthogonal to State on purpose: a run parked on a human reads
 	// waiting_on_human AND is dormant, which is what lets the engine free its
 	// concurrency slot without the UI claiming someone paused it.
-	Dormant   bool      `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Dormant bool `json:"-"`
+	// Rebuilding: an env_rebuild_started with no completion or failure after
+	// it. Only ever true between the two halves of one RebuildEnv call — or
+	// when the process died in between, which is what recovery closes.
+	Rebuilding bool      `json:"-"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // MRView is one merge request as the run page shows it.
@@ -199,7 +208,7 @@ func Apply(v *View, e *event.Event) {
 		v.State = Failed
 	case *event.RunArchived:
 		v.State = Archived
-	case *event.RunResumed:
+	case *event.RunRetried:
 		// Back to work: re-entering StageID in the same workspace. The env
 		// persisted (abandoned/failed runs are never reaped).
 		v.State = Running
@@ -238,10 +247,22 @@ func Apply(v *View, e *event.Event) {
 		}
 	case *event.EnvDestroyed:
 		v.EnvID = ""
-	case *event.EnvRebuildStarted, *event.EnvRebuildCompleted, *event.EnvRebuildFailed:
+	case *event.EnvRebuildStarted:
 		// Rebuild recreates the container in place — orthogonal to lifecycle,
 		// so State and EnvID are untouched (a completed run stays completed).
 		// The UpdatedAt bump above IS wanted: it resets the reaper's
 		// destroy-completed window so a just-rebuilt env isn't reaped at once.
+		v.Rebuilding = true
+	case *event.EnvRebuildCompleted, *event.EnvRebuildFailed:
+		v.Rebuilding = false
 	}
+}
+
+// ViewSource is an OPTIONAL event.Store capability: the runs read-model as
+// rows, every run in one query. The engine's pollers, boot recovery and the
+// list endpoint prefer it to reducing every run's log on each pass; a store
+// without it (the in-memory one) is reduced instead, which is also what the
+// projection is checked against.
+type ViewSource interface {
+	RunViews(ctx context.Context) ([]View, error)
 }

@@ -106,7 +106,7 @@ and the repo's own `AGENTS.md`.
 A run records that hash at creation and **executes that exact version for its
 whole life** — recovery after a restart re-reads the same pinned document, so
 a flow edited mid-run (including a prompt inside it) cannot change a run
-already going. The one deliberate exception is **"try again"** (`run_resumed`):
+already going. The one deliberate exception is **"try again"** (`run_retried`):
 resume is the human-initiated repair moment, so it re-pins the run to the
 flow's current version — fix a prompt or a binding, then resume. Pause/play and
 crash recovery never re-pin.
@@ -477,7 +477,7 @@ times that link has been taken **over the whole run**. It does not reset when
 the source stage later succeeds: `max` bounds total spend on a loop, which is
 what makes it a budget rather than a per-visit allowance. Counters are
 persisted in the `edge_taken` events, so they survive a restart exactly, and
-pause/play leaves them untouched. **"Try again"** (`run_resumed`) is the only
+pause/play leaves them untouched. **"Try again"** (`run_retried`) is the only
 thing that clears them: a human deciding to retry a dead run restores every
 stage's budget from the resume point.
 

@@ -97,7 +97,7 @@ func TestTicketAttachmentsReachEveryRun(t *testing.T) {
 
 // Restart carries this attempt's direction (and a flow override) onto the new
 // run, while keeping the ticket linkage.
-func TestRestartCarriesDirection(t *testing.T) {
+func TestRerunCarriesDirection(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 
@@ -108,7 +108,7 @@ func TestRestartCarriesDirection(t *testing.T) {
 	}
 	h.e.Wait(id)
 
-	newID, err := h.e.RestartRun(ctx, id, RunInput{Goal: "avoid the cache this time"})
+	newID, err := h.e.Rerun(ctx, id, RunInput{Goal: "avoid the cache this time"})
 	if err != nil {
 		t.Fatal(err)
 	}

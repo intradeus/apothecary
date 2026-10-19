@@ -572,6 +572,8 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	if err := a.rootInit(ctx, name, res); err != nil {
 		return "", err
 	}
+	// What this container was built from, for the "config changed" hint.
+	a.recordConfigDigest(name, src, plog)
 	// Engine bridge + in-container relay: loopback parity for the shim before
 	// anything runs in the workspace.
 	if err := a.ensureBridge(ports.EnvID(name)); err != nil {
@@ -1062,9 +1064,15 @@ func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) 
 	if tee != nil {
 		teeW = tee
 	}
-	stdout, stderr, code, err := a.runInner(ctx, string(env), a.cfg.DevcontainerBin,
-		[]string{"exec", "--id-label", label(string(env)), "bash", "-eo", "pipefail", "-s"},
-		[]byte(script), teeW)
+	args := []string{"exec", "--id-label", label(string(env))}
+	if cmd.Marker != "" {
+		// The marker rides in the environment (the shell's own included, which
+		// an export in the script could never do) and the sweep runs first.
+		args = append(args, "--remote-env", markerVar+"="+cmd.Marker)
+		script = sweepPrelude(cmd.Marker) + script
+	}
+	args = append(args, "bash", "-eo", "pipefail", "-s")
+	stdout, stderr, code, err := a.runInner(ctx, string(env), a.cfg.DevcontainerBin, args, []byte(script), teeW)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ports.ExecResult{}, ctx.Err()

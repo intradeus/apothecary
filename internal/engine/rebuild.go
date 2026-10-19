@@ -137,10 +137,12 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	x.autoExpose(id)
 
 	// One targeted probe so the badge returns to live immediately instead of
-	// waiting up to 30s for the next reconcile pass.
+	// waiting up to 30s for the next reconcile pass — and the "config changed"
+	// hint goes with it: the container was just built from the current inputs.
 	if st, serr := res.Envp.Status(ctx, id); serr == nil {
 		e.envStatusMu.Lock()
 		e.envStatus[runID] = st
+		delete(e.envDirty, runID)
 		e.envStatusMu.Unlock()
 	}
 	return e.finishRebuild(ctx, runID, v.EnvID, nil)

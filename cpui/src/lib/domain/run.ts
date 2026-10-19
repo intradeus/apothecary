@@ -63,6 +63,9 @@ export interface Run {
 	idle: boolean;
 	envId?: string;
 	envStatus?: EnvStatus;
+	/** The devcontainer configuration changed since the workspace's container
+	 *  was built: a rebuild would pick it up. */
+	envDirty: boolean;
 	createdAt: string;
 	updatedAt: string;
 }

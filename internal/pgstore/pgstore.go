@@ -272,14 +272,23 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 	for i := range evs {
 		run.Apply(&v, &evs[i])
 	}
+	// The row carries the whole view as JSON next to the columns SQL filters
+	// on; Dormant and Rebuilding are not in the JSON (json:"-") and get their
+	// own columns — Apply reads both, so they must round-trip for the
+	// incremental fold to agree with a full reduce.
+	view, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO runs (run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		INSERT INTO runs (run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at, view, dormant, rebuilding)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (run_id) DO UPDATE SET
 			project_id=$2, state=$3, ticket_title=$4, flow_name=$5, flow_hash=$6,
-			current_stage=$7, mr_url=$8, env_id=$9, created_at=$10, updated_at=$11`,
+			current_stage=$7, mr_url=$8, env_id=$9, created_at=$10, updated_at=$11,
+			view=$12, dormant=$13, rebuilding=$14`,
 		v.RunID, v.ProjectID, string(v.State), v.TicketTitle, v.FlowName, v.FlowHash,
-		v.CurrentStage, v.MRURL, v.EnvID, v.CreatedAt, v.UpdatedAt); err != nil {
+		v.CurrentStage, v.MRURL, v.EnvID, v.CreatedAt, v.UpdatedAt, view, v.Dormant, v.Rebuilding); err != nil {
 		return err
 	}
 	for i := range evs {
@@ -344,21 +353,32 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 func loadView(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, runID string) (run.View, bool, error) {
-	var v run.View
-	var state string
-	err := q.QueryRow(ctx, `
-		SELECT run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at
-		FROM runs WHERE run_id=$1`, runID).
-		Scan(&v.RunID, &v.ProjectID, &state, &v.TicketTitle, &v.FlowName, &v.FlowHash,
-			&v.CurrentStage, &v.MRURL, &v.EnvID, &v.CreatedAt, &v.UpdatedAt)
+	v, err := scanView(q.QueryRow(ctx, `SELECT `+viewColumns+` FROM runs WHERE run_id=$1`, runID))
 	if err == pgx.ErrNoRows {
 		return v, false, nil
 	}
 	if err != nil {
 		return v, false, err
 	}
-	v.State = run.State(state)
 	return v, true, nil
+}
+
+// viewColumns is what scanView reads: the JSON view plus its two json:"-"
+// companions. The typed columns exist for SQL to filter on, not to be read
+// back — the JSON is the row.
+const viewColumns = `run_id, view, dormant, rebuilding`
+
+func scanView(row pgx.Row) (run.View, error) {
+	var v run.View
+	var id string
+	var view []byte
+	if err := row.Scan(&id, &view, &v.Dormant, &v.Rebuilding); err != nil {
+		return v, err
+	}
+	if err := json.Unmarshal(view, &v); err != nil {
+		return v, fmt.Errorf("decode runs.view for %s: %w", id, err)
+	}
+	return v, nil
 }
 
 func (s *Store) Events(ctx context.Context, runID string, afterSeq int64) ([]event.Event, error) {
@@ -496,25 +516,20 @@ func (s *Store) RebuildProjections(ctx context.Context) (int, error) {
 	return len(ids), tx.Commit(ctx)
 }
 
-// RunViews reads the runs read-model table (the §8 list endpoint's backing
-// once serve wires this store).
+// RunViews reads the runs read-model table: every run's view in one query
+// (run.ViewSource — the list endpoint's and the engine pollers' backing).
 func (s *Store) RunViews(ctx context.Context) ([]run.View, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at
-		FROM runs ORDER BY created_at DESC`)
+	rows, err := s.pool.Query(ctx, `SELECT `+viewColumns+` FROM runs ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []run.View
 	for rows.Next() {
-		var v run.View
-		var state string
-		if err := rows.Scan(&v.RunID, &v.ProjectID, &state, &v.TicketTitle, &v.FlowName, &v.FlowHash,
-			&v.CurrentStage, &v.MRURL, &v.EnvID, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		v, err := scanView(rows)
+		if err != nil {
 			return nil, err
 		}
-		v.State = run.State(state)
 		out = append(out, v)
 	}
 	return out, rows.Err()

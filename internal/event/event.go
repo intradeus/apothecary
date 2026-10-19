@@ -63,7 +63,7 @@ const (
 	TypeRunAbandoned         Type = "run_abandoned"
 	TypeRunFailed            Type = "run_failed"
 	TypeRunArchived          Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
-	TypeRunResumed           Type = "run_resumed"  // "try again": re-enter a failed stage in the same workspace
+	TypeRunRetried           Type = "run_retried"  // "try again": re-enter a failed stage in the same workspace
 	TypeRunPaused            Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
 	TypeRunUnpaused          Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
 	TypeEnvDestroyed         Type = "env_destroyed"
@@ -564,16 +564,16 @@ type RunFailed struct {
 
 type RunArchived struct{}
 
-// RunResumed un-terminals an abandoned/failed run and re-enters StageID
+// RunRetried un-terminals an abandoned/failed run and re-enters StageID
 // (the "try again" path): the workspace and prior stages are reused, only
 // the failed stage re-runs, with its retry budgets reset. History stays
 // immutable — this is a forward event, not a rewind.
-type RunResumed struct {
+type RunRetried struct {
 	StageID string `json:"stage_id"`
 	// FlowHash re-pins the run to the flow's CURRENT version (PLAN5 M19).
 	// Runs execute the document they started with, so "try again" is the one
 	// sanctioned moment to pick up an edit — fix a prompt or a binding, then
-	// resume. Empty on pre-repin events, which keep their original pin.
+	// retry. Empty on pre-repin events, which keep their original pin.
 	FlowHash string `json:"flow_hash,omitempty"`
 }
 
@@ -601,7 +601,7 @@ const (
 
 // RunUnpaused (play) restarts a paused run's loop; it re-enters mid-stage
 // exactly like crash recovery (recorded harness sessions resume, commands
-// re-execute, gates re-arm). Unlike RunResumed it resets NO retry budgets —
+// re-execute, gates re-arm). Unlike RunRetried it resets NO retry budgets —
 // the run continues, it does not start the stage's accounting over.
 // Waiting is set when the run still has an open ping at play time (a
 // paused gate): re-arming appends no new ping_raised, so the projection
@@ -668,7 +668,7 @@ func (*RunCompleted) EventType() Type        { return TypeRunCompleted }
 func (*RunAbandoned) EventType() Type        { return TypeRunAbandoned }
 func (*RunFailed) EventType() Type           { return TypeRunFailed }
 func (*RunArchived) EventType() Type         { return TypeRunArchived }
-func (*RunResumed) EventType() Type          { return TypeRunResumed }
+func (*RunRetried) EventType() Type          { return TypeRunRetried }
 func (*RunPaused) EventType() Type           { return TypeRunPaused }
 func (*RunUnpaused) EventType() Type         { return TypeRunUnpaused }
 func (*EnvDestroyed) EventType() Type        { return TypeEnvDestroyed }

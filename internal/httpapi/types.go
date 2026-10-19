@@ -46,10 +46,10 @@ type RunRef struct {
 	RunID string `json:"run_id"`
 }
 
-// RestartRunRequest re-runs a finished run's ticket as a NEW run: same ticket,
+// RerunRequest re-runs a finished run's ticket as a NEW run: same ticket,
 // fresh workspace. Every field is optional and overrides what the original
 // used.
-type RestartRunRequest struct {
+type RerunRequest struct {
 	Flow          string   `json:"flow,omitempty"`
 	Goal          string   `json:"goal,omitempty"`
 	SourceBranch  string   `json:"source_branch,omitempty"`

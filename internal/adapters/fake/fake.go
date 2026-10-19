@@ -58,6 +58,16 @@ type EnvProvisioner struct {
 	Allowed map[ports.EnvID][]string
 	Rules   map[ports.EnvID][]string
 	Denied  map[ports.EnvID][]ports.EgressDenial
+	// Dirty seeds ConfigDirty (ports.WorkspaceDirtyChecker): which envs
+	// report build inputs newer than their container.
+	Dirty map[ports.EnvID]bool
+}
+
+// ConfigDirty implements ports.WorkspaceDirtyChecker from the Dirty seed.
+func (p *EnvProvisioner) ConfigDirty(_ context.Context, id ports.EnvID) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Dirty[id], nil
 }
 
 func NewEnvProvisioner() *EnvProvisioner {

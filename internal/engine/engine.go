@@ -184,6 +184,10 @@ type Engine struct {
 	// to the env_id-based liveness guess.
 	envStatusMu sync.Mutex
 	envStatus   map[string]ports.EnvStatus
+	// envDirty is, per run, whether the workspace's build inputs changed
+	// since its container was built (ports.WorkspaceDirtyChecker), refreshed
+	// with envStatus. Same discipline: external state, memory only.
+	envDirty map[string]bool
 
 	// resources is the per-run rolling window of workspace resource samples
 	// (cpu/mem/net), appended by SampleResourcesOnce and served to the
@@ -503,6 +507,7 @@ func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
 		ops:       map[string]*envOp{},
 		envchecks: map[string]*envCheckState{},
 		envStatus: map[string]ports.EnvStatus{},
+		envDirty:  map[string]bool{},
 		resources: map[string][]ports.ResourceSample{},
 		observed:  map[string]*observedRun{},
 	}
@@ -1101,14 +1106,18 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	return nil
 }
 
-// RestartRun starts a terminal run over from scratch: a FRESH run (new
+// Rerun starts a terminal run over from scratch: a FRESH run (new
 // id, branch, workspace, events) with the original ticket, project and
 // flow name — resolved against the CURRENT config and flow version, and
 // re-preflighted like any new ticket. History is immutable; the old run
 // keeps its record. `in` carries this attempt's optional direction, extra
-// attachments and flow override — restart-after-failure is exactly when a
+// attachments and flow override — a rerun after a failure is exactly when a
 // human wants to steer the next try.
-func (e *Engine) RestartRun(ctx context.Context, runID string, in RunInput) (string, error) {
+//
+// Vocabulary: "rerun" is a new run of the same ticket, "retry" (RetryRun)
+// re-enters a failed stage in place, "play" continues a paused run, and
+// "restart" is reserved for the engine PROCESS restarting (recovery).
+func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, error) {
 	e.mu.Lock()
 	_, active := e.handles[runID]
 	e.mu.Unlock()
@@ -1163,13 +1172,13 @@ func (e *Engine) RestartRun(ctx context.Context, runID string, in RunInput) (str
 	}, flowName, v.ProjectID)
 }
 
-// ResumeRun re-enters the stage where an abandoned/failed run stalled,
+// RetryRun re-enters the stage where an abandoned/failed run stalled,
 // in the SAME workspace ("try again"): the plan/build/earlier stages and
 // the agent's commits are reused; only the failed stage re-runs, with
-// retry budgets reset. Distinct from RestartRun (a fresh run from stage
+// retry budgets reset. Distinct from Rerun (a fresh run from stage
 // one). Refused when the run is active, not terminal, completed/archived,
 // has no stalled stage, or its workspace is gone.
-func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
+func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	e.mu.Lock()
 	_, active := e.handles[runID]
 	e.mu.Unlock()
@@ -1185,15 +1194,15 @@ func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
 	}
 	v := run.Reduce(evs)
 	if v.State != run.Abandoned && v.State != run.Failed {
-		return fmt.Errorf("run %s is %s; only abandoned or failed runs can be resumed (completed runs have nothing to retry)", runID, v.State)
+		return fmt.Errorf("run %s is %s; only abandoned or failed runs can be retried (completed runs have nothing to retry)", runID, v.State)
 	}
 	if v.CurrentStage == "" {
-		return fmt.Errorf("run %s has no stage to resume (it never started one); restart it instead", runID)
+		return fmt.Errorf("run %s has no stage to retry (it never started one); rerun it as a new run instead", runID)
 	}
 	if v.EnvID == "" {
-		return fmt.Errorf("run %s has no workspace to resume into; restart it instead", runID)
+		return fmt.Errorf("run %s has no workspace to retry in; rerun it as a new run instead", runID)
 	}
-	// Re-pin to the flow's current version: resume is human-initiated, so it
+	// Re-pin to the flow's current version: a retry is human-initiated, so it
 	// is where an edited flow (an edited prompt, a fixed binding) legitimately
 	// reaches a run in flight — unlike crash recovery or play, which must
 	// never change behavior underneath a running stage (PLAN5 M19). A flow
@@ -1201,12 +1210,12 @@ func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
 	hash := ""
 	if fl, ferr := e.flows.Get(ctx, v.ProjectID, v.FlowName); ferr == nil {
 		if fl.Stage(v.CurrentStage) == nil {
-			return fmt.Errorf("run %s cannot resume: flow %q no longer has a stage %q — restart it instead",
+			return fmt.Errorf("run %s cannot resume: flow %q no longer has a stage %q — rerun it as a new run instead",
 				runID, v.FlowName, v.CurrentStage)
 		}
 		hash = fl.Hash
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunResumed{StageID: v.CurrentStage, FlowHash: hash}); err != nil {
+	if err := e.appendAndEmit(ctx, runID, &event.RunRetried{StageID: v.CurrentStage, FlowHash: hash}); err != nil {
 		return err
 	}
 	lim := e.limits(ctx)
@@ -1362,12 +1371,38 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	return nil
 }
 
+// views is every run's read-model row: one query when the store keeps the
+// projection (run.ViewSource), else each run's log reduced — the in-memory
+// store's path, and the reference the projection is checked against.
+func (e *Engine) views(ctx context.Context) ([]run.View, error) {
+	if vs, ok := e.store.(run.ViewSource); ok {
+		return vs.RunViews(ctx)
+	}
+	ids, err := e.store.RunIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]run.View, 0, len(ids))
+	for _, id := range ids {
+		evs, err := e.store.Events(ctx, id, 0)
+		if err != nil {
+			return nil, err
+		}
+		if len(evs) == 0 {
+			continue
+		}
+		out = append(out, run.Reduce(evs))
+	}
+	return out, nil
+}
+
 // Recover replays events on boot (§2) and restarts every non-terminal run.
 // Runs that already hold resources (provisioning and beyond) restart
 // unconditionally; still-pending runs re-queue FIFO by creation order and
-// start as §14 slots allow.
+// start as §14 slots allow. A workspace rebuild the previous process never
+// finished is closed as failed first: nothing is rebuilding it anymore.
 func (e *Engine) Recover(ctx context.Context) error {
-	ids, err := e.store.RunIDs(ctx)
+	views, err := e.views(ctx)
 	if err != nil {
 		return err
 	}
@@ -1379,15 +1414,18 @@ func (e *Engine) Recover(ctx context.Context) error {
 	lim := e.limits(ctx)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, id := range ids {
-		evs, err := e.store.Events(ctx, id, 0)
-		if err != nil {
-			return err
+	for _, v := range views {
+		id := v.RunID
+		if v.Rebuilding {
+			// The op-gate that owned this rebuild died with the process, so
+			// the record would otherwise show a rebuild that never ends.
+			// Appending here is safe: a rebuild only runs on a run with no
+			// loop, and this one has none yet.
+			if err := e.appendAndEmit(ctx, id, &event.EnvRebuildFailed{EnvID: v.EnvID,
+				Error: "interrupted: the engine restarted while the workspace was being rebuilt"}); err != nil {
+				return err
+			}
 		}
-		if len(evs) == 0 {
-			continue
-		}
-		v := run.Reduce(evs)
 		if v.State.Terminal() {
 			continue
 		}
@@ -1397,7 +1435,14 @@ func (e *Engine) Recover(ctx context.Context) error {
 			// have all landed IS owed a loop, though — that is the crash
 			// window between recording an answer and re-queuing the run, and
 			// skipping it here would park the run forever.
-			if v.State == run.Paused || !answersAllIn(evs) {
+			if v.State == run.Paused {
+				continue
+			}
+			evs, err := e.store.Events(ctx, id, 0)
+			if err != nil {
+				return err
+			}
+			if !answersAllIn(evs) {
 				continue
 			}
 		}
@@ -1470,7 +1515,7 @@ func (e *Engine) startLocked(runID string) {
 // no longer parses. A person deliberately stopping a run is a decision, and
 // reporting it as a failure both misstates the history and makes the two
 // spellings of "abort" (this verb and the flow's `abort` terminal) land in
-// opposite states. Resumability is unchanged: ResumeRun accepts both.
+// opposite states. Resumability is unchanged: RetryRun accepts both.
 func (e *Engine) Abort(runID string) error {
 	e.mu.Lock()
 	h, ok := e.handles[runID]
@@ -1546,7 +1591,7 @@ func (e *Engine) Pause(runID string) error {
 
 // Play restarts a paused run through the normal scheduling queue; the loop
 // replays events and re-enters mid-stage like crash recovery. Distinct
-// from ResumeRun ("try again"): play resets no retry budgets — the run
+// from RetryRun ("try again"): play resets no retry budgets — the run
 // simply continues.
 func (e *Engine) Play(ctx context.Context, runID string) error {
 	e.mu.Lock()
@@ -1602,8 +1647,13 @@ func (e *Engine) Shutdown() {
 		hs = append(hs, h)
 	}
 	e.mu.Unlock()
+	// Cancel every loop first, then wait: a harness that ignores its
+	// cancellation gets a 60s grace (runloop.awaitAgent), and paying that
+	// once per run in sequence would stretch a shutdown to minutes.
 	for _, h := range hs {
 		h.cancel(errShutdown)
+	}
+	for _, h := range hs {
 		<-h.done
 	}
 }
@@ -2103,16 +2153,12 @@ func (e *Engine) RunToken(runID string) string {
 // Appending env_destroyed for a terminal run is safe — no writer goroutine
 // exists anymore.
 func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter time.Duration) error {
-	ids, err := e.store.RunIDs(ctx)
+	views, err := e.views(ctx)
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		evs, err := e.store.Events(ctx, id, 0)
-		if err != nil {
-			return err
-		}
-		v := run.Reduce(evs)
+	for _, v := range views {
+		id := v.RunID
 		if v.EnvID == "" || v.State != run.Completed {
 			continue
 		}
@@ -2145,11 +2191,12 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter time.Durati
 // session expired would stay green "live" forever. Honest "unknown" beats a
 // stale "live"; a genuinely transient blip self-heals on the next 30s pass.
 func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
-	ids, err := e.store.RunIDs(ctx)
+	views, err := e.views(ctx)
 	if err != nil {
 		return err
 	}
 	next := map[string]ports.EnvStatus{}
+	dirty := map[string]bool{}
 	// Runs with an op in flight (rebuild/destroy) are skipped: their docker
 	// state is churning and the EnvBadges overlay already covers the badge, so
 	// probing would only manufacture a spurious EnvUnknown mid-op.
@@ -2169,15 +2216,11 @@ func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
 			res.release()
 		}
 	}()
-	for _, id := range ids {
+	for _, v := range views {
+		id := v.RunID
 		if inflight[id] {
 			continue
 		}
-		evs, err := e.store.Events(ctx, id, 0)
-		if err != nil {
-			return err
-		}
-		v := run.Reduce(evs)
 		// A run with no env_id has no workspace to report on; pre-v2 runs with
 		// no project can't be resolved to a provisioner (§6.1).
 		if v.EnvID == "" || v.ProjectID == "" {
@@ -2200,11 +2243,32 @@ func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
 			continue
 		}
 		next[id] = st
+		// Same pass, same honesty: a failed check records nothing, so the
+		// hint disappears rather than carrying a stale "changed" forward.
+		if dc, ok := res.Envp.(ports.WorkspaceDirtyChecker); ok {
+			if d, derr := dc.ConfigDirty(ctx, ports.EnvID(v.EnvID)); derr == nil {
+				dirty[id] = d
+			} else {
+				e.log.Debug("env reconcile: config dirty check failed", "run", id, "env", v.EnvID, "err", derr)
+			}
+		}
 	}
 	e.envStatusMu.Lock()
 	e.envStatus = next
+	e.envDirty = dirty
 	e.envStatusMu.Unlock()
 	return nil
+}
+
+// EnvDirty returns a snapshot copy of which runs' workspaces have build
+// inputs newer than their container (keyed by run id); absent means "no" or
+// "not reconciled yet".
+func (e *Engine) EnvDirty() map[string]bool {
+	e.envStatusMu.Lock()
+	defer e.envStatusMu.Unlock()
+	out := make(map[string]bool, len(e.envDirty))
+	maps.Copy(out, e.envDirty)
+	return out
 }
 
 // EnvStatuses returns a snapshot copy of the reconciled per-run live
@@ -2233,7 +2297,7 @@ const resourceWindow = 360
 // workspace may outlive the run for inspection, but the graphs are working
 // feedback, not history.
 func (e *Engine) SampleResourcesOnce(ctx context.Context) error {
-	ids, err := e.store.RunIDs(ctx)
+	views, err := e.views(ctx)
 	if err != nil {
 		return err
 	}
@@ -2245,12 +2309,8 @@ func (e *Engine) SampleResourcesOnce(ctx context.Context) error {
 			res.release()
 		}
 	}()
-	for _, id := range ids {
-		evs, err := e.store.Events(ctx, id, 0)
-		if err != nil {
-			return err
-		}
-		v := run.Reduce(evs)
+	for _, v := range views {
+		id := v.RunID
 		// Pending runs have no container yet; pre-v2 runs with no project
 		// can't be resolved to a provisioner.
 		if v.ProjectID == "" || v.State == run.Pending || v.State.Terminal() {

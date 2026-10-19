@@ -9,7 +9,7 @@ import (
 // A user-chosen branch (fix/task-123-…) must survive a restart verbatim —
 // restart re-derived it as apothecary/<new-id>-<slug> before, which also
 // mangled the branch-slug-derived container name.
-func TestRestartPreservesUserBranch(t *testing.T) {
+func TestRerunPreservesUserBranch(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 
@@ -24,7 +24,7 @@ func TestRestartPreservesUserBranch(t *testing.T) {
 		t.Fatalf("setup: original branch = %q", b)
 	}
 
-	newID, err := h.e.RestartRun(ctx, id, RunInput{})
+	newID, err := h.e.Rerun(ctx, id, RunInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestRestartPreservesUserBranch(t *testing.T) {
 
 // An auto-generated branch, by contrast, must NOT carry the old run's id into
 // the new run — CreateRun mints a fresh apothecary/<new-id>-<slug>.
-func TestRestartRegeneratesAutoBranch(t *testing.T) {
+func TestRerunRegeneratesAutoBranch(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 
@@ -52,7 +52,7 @@ func TestRestartRegeneratesAutoBranch(t *testing.T) {
 		t.Fatalf("setup: expected generated branch, got %q", orig)
 	}
 
-	newID, err := h.e.RestartRun(ctx, id, RunInput{})
+	newID, err := h.e.Rerun(ctx, id, RunInput{})
 	if err != nil {
 		t.Fatal(err)
 	}

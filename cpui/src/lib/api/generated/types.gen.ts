@@ -551,6 +551,13 @@ export type RepoInfo = {
 	url: string;
 };
 
+export type RerunRequest = {
+	attachment_ids?: Array<string>;
+	flow?: string;
+	goal?: string;
+	source_branch?: string;
+};
+
 export type ResourceSample = {
 	at: string;
 	cpu_perc: number;
@@ -560,13 +567,6 @@ export type ResourceSample = {
 	net_rx: number;
 	net_tx: number;
 	pids: number;
-};
-
-export type RestartRunRequest = {
-	attachment_ids?: Array<string>;
-	flow?: string;
-	goal?: string;
-	source_branch?: string;
 };
 
 export type RunCheckout = {
@@ -616,6 +616,7 @@ export type RunView = {
 	checkouts?: Array<RunCheckout>;
 	created_at: string;
 	current_stage?: string;
+	env_dirty?: boolean;
 	env_id?: string;
 	env_status?: string;
 	flow_hash: string;
@@ -3431,6 +3432,43 @@ export type RebuildWorkspaceResponses = {
 	202: unknown;
 };
 
+export type RerunRunData = {
+	body: RerunRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/rerun';
+};
+
+export type RerunRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RerunRunResponses = {
+	/**
+	 * Created
+	 */
+	201: RunRef;
+};
+
+export type RerunRunResponse = RerunRunResponses[keyof RerunRunResponses];
+
 export type GetRunResourcesData = {
 	body?: never;
 	path: {
@@ -3464,53 +3502,16 @@ export type GetRunResourcesResponses = {
 
 export type GetRunResourcesResponse = GetRunResourcesResponses[keyof GetRunResourcesResponses];
 
-export type RestartRunData = {
-	body: RestartRunRequest;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/runs/{id}/restart';
-};
-
-export type RestartRunErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type RestartRunResponses = {
-	/**
-	 * Created
-	 */
-	201: RunRef;
-};
-
-export type RestartRunResponse = RestartRunResponses[keyof RestartRunResponses];
-
-export type ResumeRunData = {
+export type RetryRunData = {
 	body?: never;
 	path: {
 		id: string;
 	};
 	query?: never;
-	url: '/api/runs/{id}/resume';
+	url: '/api/runs/{id}/retry';
 };
 
-export type ResumeRunErrors = {
+export type RetryRunErrors = {
 	/**
 	 * error
 	 */
@@ -3529,7 +3530,7 @@ export type ResumeRunErrors = {
 	503: unknown;
 };
 
-export type ResumeRunResponses = {
+export type RetryRunResponses = {
 	/**
 	 * Accepted
 	 */

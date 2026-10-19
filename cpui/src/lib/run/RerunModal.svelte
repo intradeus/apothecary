@@ -29,7 +29,7 @@
 		try {
 			let attachmentIds: string[] | undefined;
 			if (files.length) attachmentIds = (await api.files.upload(files)).map((a) => a.id);
-			const id = await api.runs.restart(rs.runId, {
+			const id = await api.runs.rerun(rs.runId, {
 				flow: flow.trim() || undefined,
 				goal: goal.trim() || undefined,
 				attachmentIds

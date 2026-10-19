@@ -242,12 +242,12 @@ import type {
 	ReportObservedPortsData,
 	ReportObservedPortsErrors,
 	ReportObservedPortsResponses,
-	RestartRunData,
-	RestartRunErrors,
-	RestartRunResponses,
-	ResumeRunData,
-	ResumeRunErrors,
-	ResumeRunResponses,
+	RerunRunData,
+	RerunRunErrors,
+	RerunRunResponses,
+	RetryRunData,
+	RetryRunErrors,
+	RetryRunResponses,
 	SearchSourceTicketsData,
 	SearchSourceTicketsErrors,
 	SearchSourceTicketsResponses,
@@ -1266,6 +1266,21 @@ export const rebuildWorkspace = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * Run the ticket again as a new run in a fresh workspace
+ */
+export const rerunRun = <ThrowOnError extends boolean = false>(
+	options: Options<RerunRunData, ThrowOnError>
+): RequestResult<RerunRunResponses, RerunRunErrors, ThrowOnError> =>
+	(options.client ?? client).post<RerunRunResponses, RerunRunErrors, ThrowOnError>({
+		url: '/api/runs/{id}/rerun',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
  * Rolling window of workspace cpu/memory/network samples
  */
 export const getRunResources = <ThrowOnError extends boolean = false>(
@@ -1277,28 +1292,13 @@ export const getRunResources = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Run the ticket again as a new run in a fresh workspace
- */
-export const restartRun = <ThrowOnError extends boolean = false>(
-	options: Options<RestartRunData, ThrowOnError>
-): RequestResult<RestartRunResponses, RestartRunErrors, ThrowOnError> =>
-	(options.client ?? client).post<RestartRunResponses, RestartRunErrors, ThrowOnError>({
-		url: '/api/runs/{id}/restart',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
  * Try again: re-enter the failed stage in the same workspace
  */
-export const resumeRun = <ThrowOnError extends boolean = false>(
-	options: Options<ResumeRunData, ThrowOnError>
-): RequestResult<ResumeRunResponses, ResumeRunErrors, ThrowOnError> =>
-	(options.client ?? client).post<ResumeRunResponses, ResumeRunErrors, ThrowOnError>({
-		url: '/api/runs/{id}/resume',
+export const retryRun = <ThrowOnError extends boolean = false>(
+	options: Options<RetryRunData, ThrowOnError>
+): RequestResult<RetryRunResponses, RetryRunErrors, ThrowOnError> =>
+	(options.client ?? client).post<RetryRunResponses, RetryRunErrors, ThrowOnError>({
+		url: '/api/runs/{id}/retry',
 		...options
 	});
 

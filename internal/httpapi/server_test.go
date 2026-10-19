@@ -976,14 +976,45 @@ func TestOptionPingOverHTTP(t *testing.T) {
 	}
 }
 
-// TestRestartRun: a terminal run restarts as a FRESH run with the same
+// The read path overlays the reconciler's config-dirty hint on the list and
+// the detail, like env_status.
+func TestRunViewsCarryEnvDirty(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	runID := x.createTicket(t, "Add search")
+	x.e.Wait(runID)
+	_, d := x.do(t, "GET", "/api/runs/"+runID, nil, nil)
+	var detail struct {
+		Run run.View `json:"run"`
+	}
+	_ = json.Unmarshal(d, &detail)
+	if detail.Run.EnvID == "" || detail.Run.EnvDirty {
+		t.Fatalf("setup: %+v", detail.Run)
+	}
+	x.envp.Dirty = map[ports.EnvID]bool{ports.EnvID(detail.Run.EnvID): true}
+	if err := x.e.ReconcileEnvsOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, d = x.do(t, "GET", "/api/runs/"+runID, nil, nil)
+	_ = json.Unmarshal(d, &detail)
+	if !detail.Run.EnvDirty {
+		t.Errorf("detail env_dirty = false after a dirty reconcile")
+	}
+	_, d = x.do(t, "GET", "/api/runs", nil, nil)
+	var list []run.View
+	_ = json.Unmarshal(d, &list)
+	if len(list) != 1 || !list[0].EnvDirty {
+		t.Errorf("list = %+v, want env_dirty on the one run", list)
+	}
+}
+
+// TestRerunRun: a terminal run restarts as a FRESH run with the same
 // ticket/flow/project; active runs refuse with 409, unknown runs 404.
-func TestRestartRun(t *testing.T) {
+func TestRerunRun(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	runID := x.createTicket(t, "Add search")
 	x.e.Wait(runID)
 
-	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/restart", nil, nil)
+	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/rerun", nil, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("restart = %d: %s", resp.StatusCode, data)
 	}
@@ -1014,14 +1045,14 @@ func TestRestartRun(t *testing.T) {
 		return ports.AgentResult{TurnsUsed: 1}, nil
 	}
 	activeID := x.createTicket(t, "Busy")
-	resp, _ = x.do(t, "POST", "/api/runs/"+activeID+"/restart", nil, nil)
+	resp, _ = x.do(t, "POST", "/api/runs/"+activeID+"/rerun", nil, nil)
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("active restart = %d, want 409", resp.StatusCode)
 	}
 	close(block)
 	x.e.Wait(activeID)
 
-	resp, _ = x.do(t, "POST", "/api/runs/nope/restart", nil, nil)
+	resp, _ = x.do(t, "POST", "/api/runs/nope/rerun", nil, nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown restart = %d, want 404", resp.StatusCode)
 	}
