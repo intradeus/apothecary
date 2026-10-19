@@ -10,7 +10,6 @@
 	import type { ActionSpec, Flow, FlowVersion, SignalSpec } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
-	import { lore, loreLc } from '$lib/lore';
 	import { ago, fmtAbs } from '$lib/format';
 	import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
 	import FlowInspector from '$lib/FlowInspector.svelte';
@@ -21,8 +20,13 @@
 	import Popover from '$lib/ui/Popover.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import Callout from '$lib/ui/Callout.svelte';
+	import CheckChip from '$lib/ui/CheckChip.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
-	import { esc } from '$lib/system/html';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
+	import { slide } from '$lib/ui/motion';
+	import { esc } from '$lib/ui/html';
 	import {
 		ABORT,
 		autoLayout,
@@ -56,8 +60,10 @@
 		errors?: string[];
 		warnings?: string[];
 	} | null>(null);
-	/** A one-line note over the canvas (a version loaded, a save landed). */
+	/** A one-line note over the canvas (a version loaded into the editor). */
 	let notice = $state<{ tone: 'ok' | 'info'; text: string } | null>(null);
+	/** A validation request is in flight (aria-busy on Validate). */
+	let validating = $state(false);
 	// The compiled-in action registry: what an `action` stage may name, and the
 	// signature the inspector and the dataflow layer bind against.
 	let actions = $state<ActionSpec[]>([]);
@@ -222,6 +228,7 @@
 	}
 
 	async function validate() {
+		validating = true;
 		try {
 			const r = await api.flows.validate(currentYAML());
 			validation = r.ok
@@ -233,12 +240,19 @@
 						warnings: r.warnings
 					}
 				: { ok: false, title: 'Invalid', errors: r.errors ?? [] };
+			if (r.ok)
+				toast(
+					`Valid · ${r.stages ?? stageCount} stages${r.warnings?.length ? `, ${r.warnings.length} binding warnings` : ''}`,
+					{ tone: r.warnings?.length ? 'warn' : 'ok' }
+				);
 		} catch (e) {
 			validation = {
 				ok: false,
 				title: 'Validation failed',
 				errors: [e instanceof Error ? e.message : String(e)]
 			};
+		} finally {
+			validating = false;
 		}
 		validateOpen = true;
 	}
@@ -267,12 +281,12 @@
 						warnings: r.warnings
 					}
 				: null;
-			notice = {
-				tone: 'ok',
-				text: wasBuiltin
-					? `Saved as this ${lore('workshop').toLowerCase()}’s own copy · @${flow.hash.slice(0, 8)}`
+			notice = null;
+			toast(
+				wasBuiltin
+					? `Saved as this workshop’s own copy · @${flow.hash.slice(0, 8)}`
 					: `Saved · @${flow.hash.slice(0, 8)} — new runs start on this version`
-			};
+			);
 			versions = await api.flows.versions(projectId, flow.name);
 		} catch (e) {
 			validation = {
@@ -295,6 +309,7 @@
 		const y = currentYAML().replace(/^name:[^\n]*$/m, `name: ${name}`);
 		await api.flows.create(projectId, name, y, { nodes: layout });
 		cloning = false;
+		toast(`Cloned as ${name}`);
 		leaving = true;
 		await goto(to.flow(projectId, name));
 	}
@@ -332,18 +347,19 @@
 			reset
 				? {
 						title: `Reset ${flow.name} to built-in?`,
-						body: `This ${lore('workshop').toLowerCase()}’s own copy of <b>${esc(flow.name)}</b> is deleted and the built-in template of the same name takes its place. Its versions stay retrievable by hash; runs keep the version they pinned.`,
+						body: `This workshop’s own copy of <b>${esc(flow.name)}</b> is deleted and the built-in template of the same name takes its place. Its versions stay retrievable by hash; runs keep the version they pinned.`,
 						action: 'Reset to built-in'
 					}
 				: {
 						title: `Delete ${flow.name}?`,
-						body: `The flow <b>${esc(flow.name)}</b> is deleted from this ${lore('workshop').toLowerCase()}. Its versions stay retrievable by hash; runs keep the version they pinned.`,
+						body: `The flow <b>${esc(flow.name)}</b> is deleted from this workshop. Its versions stay retrievable by hash; runs keep the version they pinned.`,
 						action: 'Delete flow'
 					}
 		);
 		if (!ok) return;
 		try {
 			await api.flows.remove(projectId, flow.name);
+			toast(reset ? `${flow.name} reset to the built-in template` : `${flow.name} deleted`);
 			leaving = true;
 			await goto(to.workshop(projectId, 'flows'));
 		} catch (e) {
@@ -435,17 +451,18 @@
 			<GlassGroup>
 				{#snippet label()}
 					{#if dirty}
-						<span class="unsaved"><span class="d"></span>Unsaved changes</span>
+						<span class="unsaved">Unsaved changes</span>
 					{:else}
-						<span>{lore('flow')}</span>
+						<span>The formula</span>
 					{/if}
 				{/snippet}
 				<button
 					bind:this={validateBtn}
 					class="btn-sm"
 					class:warnb={validation && !validation.ok}
+					aria-busy={validating}
 					onclick={validate}
-					>Validate{#if validation?.warnings?.length}<span class="wcount"
+					>Validate{#if validation?.warnings?.length}<span class="pill sm mono t-amb"
 							>{validation.warnings.length}</span
 						>{/if}</button
 				>
@@ -465,7 +482,8 @@
 					class="btn-sm btn-primary"
 					onclick={save}
 					disabled={busy || !dirty}
-					title={flow.builtin ? `Saving creates this ${loreLc('workshop')}’s editable copy` : '⌘S'}
+					aria-busy={busy}
+					title={flow.builtin ? `Saving creates this workshop’s editable copy` : '⌘S'}
 					>{busy ? 'Saving…' : flow.builtin ? 'Save as copy' : 'Save'}</button
 				>
 			</GlassGroup>
@@ -483,9 +501,10 @@
 	{#if validation}
 		<div class="vp">
 			<div class="vh">
-				<span class="pill {validation.ok ? 't-grn' : 't-ros'}"
-					>{validation.ok ? '✓' : '✕'} {validation.title}</span
-				>
+				<CheckChip
+					tone={validation.ok ? (validation.warnings?.length ? 'warn' : 'ok') : 'bad'}
+					label={validation.title}
+				/>
 			</div>
 			{#if validation.stages !== undefined || validation.hash}
 				<div class="vm">
@@ -513,31 +532,31 @@
 </Popover>
 
 {#if flow?.builtin}
-	<div class="bstrip lg">
-		<span class="bi">℞</span>
-		<span
-			><b>Built-in template.</b> It ships with the engine and stays available. Saving creates an
-			editable copy in this {lore('workshop').toLowerCase()} under the same name; deleting that copy later
-			resets to this template.</span
-		>
+	<div class="strip">
+		<Callout glyph={I.rx}>
+			<b>Built-in template.</b> It ships with the engine and stays available. Saving creates an editable
+			copy in this workshop under the same name; deleting that copy later resets to this template.
+		</Callout>
 	</div>
 {/if}
 {#if notice}
-	<div class="nstrip {notice.tone}">
-		<span>{notice.tone === 'ok' ? '✓' : 'ⓘ'}</span>
-		<span class="grow">{notice.text}</span>
-		<button class="btn-ghost btn-sm" onclick={() => (notice = null)}>Dismiss</button>
+	<div class="strip">
+		<Callout
+			hue={notice.tone === 'ok' ? 'grn' : 'az'}
+			glyph={notice.tone === 'ok' ? I.ok : I.info}
+			ondismiss={() => (notice = null)}>{notice.text}</Callout
+		>
 	</div>
 {/if}
 {#if error}
-	<div class="estrip">
+	<div class="strip">
 		<ErrorCard cause="Something went wrong" detail={error} onretry={flow ? undefined : load} />
 	</div>
 {/if}
 
 <div class="fe">
 	{#if !flow && !error}
-		<div class="canvas c"><div class="pad"><Skeleton lines={6} /></div></div>
+		<div class="canvas"><Skeleton pane lines={6} /></div>
 	{:else if flow}
 		<div class="canvas" class:yaml={tab === 'yaml'}>
 			{#if tab === 'graph' && doc}
@@ -552,22 +571,25 @@
 					agents={doc?.agents ?? []}
 					{actions}
 				/>
-				<div class="hint fnt">⌫ delete selection · ⌘S save · drag handles to rewire</div>
+				<div class="hint fnt">
+					<span class="kbd">⌫</span> delete selection · <span class="kbd">⌘S</span> save · drag handles
+					to rewire
+				</div>
 			{:else}
-				<textarea class="yaml-ed" bind:value={yaml} spellcheck="false" aria-label="Flow YAML"
+				<textarea class="yaml-ed bare" bind:value={yaml} spellcheck="false" aria-label="Flow YAML"
 				></textarea>
 			{/if}
 		</div>
 
 		{#if showVersions}
-			<aside class="side lg">
+			<aside class="side lg" in:slide={{ from: 'right', distance: 24 }}>
 				<div class="sh">
 					<span class="serif st">Versions</span>
 					<span class="spacer"></span>
 					<button
 						class="btn-icon"
 						aria-label="Close versions"
-						onclick={() => (showVersions = false)}>×</button
+						onclick={() => (showVersions = false)}>{I.close}</button
 					>
 				</div>
 				<p class="sp">
@@ -578,7 +600,7 @@
 					{#each versions as v (v.hash)}
 						<div class="vr" class:cur={v.hash === flow.hash}>
 							<span class="mono">@{v.hash.slice(0, 10)}</span>
-							{#if v.hash === flow.hash}<span class="pill t-grn">current</span>{/if}
+							{#if v.hash === flow.hash}<span class="pill sm t-grn">current</span>{/if}
 							<span class="spacer"></span>
 							<span class="fnt tiny" title={fmtAbs(v.createdAt)}>{ago(v.createdAt)}</span>
 							{#if v.hash !== flow.hash}
@@ -593,7 +615,7 @@
 				</div>
 			</aside>
 		{:else if tab === 'graph' && doc}
-			<aside class="side lg">
+			<aside class="side lg" in:slide={{ from: 'right', distance: 24 }}>
 				<FlowInspector
 					bind:this={inspector}
 					{doc}
@@ -619,7 +641,7 @@
 		onclose={() => (cloning = false)}
 	>
 		<p>
-			A new flow in this {lore('workshop').toLowerCase()} from what is in the editor now{dirty
+			A new flow in this workshop from what is in the editor now{dirty
 				? ', unsaved changes included'
 				: ''}. The original is untouched.
 		</p>
@@ -635,64 +657,41 @@
 	}
 	.fname {
 		font-family: var(--mono);
-		font-size: 22px;
+		font-size: var(--fs-mark);
 		font-weight: 600;
-		letter-spacing: -0.01em;
+		letter-spacing: var(--tr-heading);
 	}
 	.hash {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 	}
 	.meta {
 		display: flex;
 		gap: 4px 14px;
 		flex-wrap: wrap;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--mut);
 		min-width: 0;
 	}
 	.desc {
 		max-width: 60ch;
 	}
-	.unsaved {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		color: var(--amb);
-		font-weight: 600;
-	}
-	.unsaved .d {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--amb);
-		box-shadow: 0 0 8px var(--amb);
-	}
 	.warnb {
 		border-color: var(--rosLn);
 		color: var(--ros);
-	}
-	.wcount {
-		font-family: var(--mono);
-		font-size: 10px;
-		font-weight: 700;
-		padding: 0 5px;
-		border-radius: 8px;
-		background: var(--ambBg);
-		color: var(--amb);
 	}
 	.vp {
 		padding: 2px 8px 8px;
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
 	.vm {
 		display: flex;
 		gap: 12px;
 		color: var(--mut);
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
 	.vl {
 		margin: 0;
@@ -705,54 +704,19 @@
 		overflow: auto;
 	}
 	.vl.err li {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--ros);
 		white-space: pre-wrap;
 	}
 	.vl.warn li {
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--amb);
 	}
 	.vw {
-		font-size: 12px;
+		font-size: var(--fs-label);
 		font-weight: 600;
 	}
-	.bstrip {
-		margin: 0 16px 8px;
-		padding: 7px 12px;
-		border-radius: 12px;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		font-size: 12.5px;
-	}
-	.bi {
-		font-family: var(--serif);
-		font-size: 18px;
-		color: var(--brand);
-	}
-	.nstrip {
-		margin: 0 16px 8px;
-		padding: 4px 6px 4px 12px;
-		border-radius: 12px;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		font-size: 12.5px;
-		border: 1px solid var(--ln);
-		background: var(--p2);
-	}
-	.nstrip.ok {
-		border-color: var(--grnLn);
-		background: var(--grnBg);
-	}
-	.nstrip.ok > :first-child {
-		color: var(--grn);
-	}
-	.nstrip.info > :first-child {
-		color: var(--az);
-	}
-	.estrip {
+	.strip {
 		margin: 0 16px 8px;
 	}
 	.fe {
@@ -766,7 +730,7 @@
 		position: relative;
 		flex: 1;
 		min-width: 0;
-		border-radius: 16px;
+		border-radius: var(--r-pane);
 		border: 1px solid var(--cLn);
 		overflow: hidden;
 	}
@@ -774,9 +738,6 @@
 		background: var(--cBg);
 		backdrop-filter: var(--cBf);
 		-webkit-backdrop-filter: var(--cBf);
-	}
-	.pad {
-		padding: 16px;
 	}
 	.vc {
 		display: flex;
@@ -786,28 +747,26 @@
 		position: absolute;
 		right: 14px;
 		top: 10px;
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		pointer-events: none;
 	}
+	/* .bare strips the field chrome (the canvas draws it). */
 	.yaml-ed {
 		width: 100%;
 		height: 100%;
 		min-height: 0;
 		resize: none;
-		border: 0 !important;
-		border-radius: 0 !important;
-		box-shadow: none !important;
-		background: transparent !important;
-		font-family: var(--mono) !important;
-		font-size: 12.5px;
+		border-radius: 0;
+		font-family: var(--mono);
+		font-size: var(--fs-ui);
 		line-height: 1.65;
-		padding: 14px 18px !important;
+		padding: 14px 18px;
 		tab-size: 2;
 	}
 	.side {
 		flex: none;
-		width: 340px;
-		border-radius: 16px;
+		width: var(--aside-w);
+		border-radius: var(--r-pane);
 		overflow: auto;
 	}
 	.sh {
@@ -817,12 +776,12 @@
 		padding: 12px 14px 8px;
 	}
 	.st {
-		font-size: 19px;
+		font-size: var(--fs-section);
 	}
 	.sp {
 		margin: 0;
 		padding: 0 14px 10px;
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 	}
 	.vers {
@@ -836,13 +795,13 @@
 		gap: 8px;
 		padding: 7px 8px;
 		border-top: 1px solid var(--ln);
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
 	.vr.cur {
 		background: var(--p2);
-		border-radius: 10px;
+		border-radius: var(--r-row);
 	}
-	@media (max-width: 900px) {
+	@media (max-width: 1000px) {
 		.fe {
 			flex-direction: column;
 		}

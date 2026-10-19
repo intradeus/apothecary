@@ -45,6 +45,20 @@ class Fleet {
 	readonly runById = $derived(new Map(this.runs.map((r) => [r.id, r])));
 	readonly projectById = $derived(new Map(this.projects.map((p) => [p.id, p])));
 
+	/** A workshop's name, or a short id while projects are loading (or for
+	 *  one that was deleted). Reactive inside components. */
+	projectName(id: string | undefined): string {
+		if (!id) return '';
+		return this.projectById.get(id)?.name ?? id.slice(-6);
+	}
+
+	/** The engine's caps against what holds them now (sidebar, desk). */
+	readonly capacity = $derived({
+		runs: { used: this.slots.length, max: this.settings?.maxConcurrentRuns ?? 0 },
+		envs: { used: this.envs.length, max: this.settings?.maxEnvironments ?? 0 },
+		queued: this.queued.length
+	});
+
 	/** Active runs per workshop. */
 	readonly liveByProject = $derived.by(() => {
 		const m = new Map<string, Run[]>();
@@ -52,6 +66,16 @@ class Fleet {
 			if (!r.projectId) continue;
 			m.set(r.projectId, [...(m.get(r.projectId) ?? []), r]);
 		}
+		return m;
+	});
+	/** Each ticket's runs, newest first (ticket lists, a ticket's status). */
+	readonly runsByTicket = $derived.by(() => {
+		const m = new Map<string, Run[]>();
+		for (const r of this.runs) {
+			if (!r.ticketId) continue;
+			m.set(r.ticketId, [...(m.get(r.ticketId) ?? []), r]);
+		}
+		for (const arr of m.values()) arr.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 		return m;
 	});
 	/** Pending pings per workshop (through the ping's run). */

@@ -8,8 +8,11 @@
 
 import type { AgentToolCall, LiveDelta, RunEvent } from '$lib/domain';
 import { toAgentToolCall } from '$lib/api/mappers';
+import type { Tone as AnyTone } from '$lib/ui/hues';
+import { I } from '$lib/ui/icons';
 
-export type Tone = 'ok' | 'bad' | 'warn' | 'info';
+/** A status line's tone; its hue comes from TONE_HUE. */
+export type Tone = Exclude<AnyTone, 'mut'>;
 
 export type ChatItem =
 	| {
@@ -172,7 +175,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: '✓',
+					glyph: I.ok,
 					text: `${p.stage_id} completed`,
 					meta: [p.turns_used ? `${p.turns_used} turns` : '', cost(p.usage), dur(p.duration_ms)]
 						.filter(Boolean)
@@ -204,7 +207,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: '⏸',
+					glyph: I.pause,
 					text: 'Parked — waiting for your answer. The session resumes with it.',
 					tone: 'warn'
 				});
@@ -213,7 +216,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: p.reason === 'engine_restart' ? '⟳' : '↻',
+					glyph: p.reason === 'engine_restart' ? '⟳' : I.retry,
 					text:
 						p.reason === 'engine_restart'
 							? 'Engine restarted — picked the session back up'
@@ -225,7 +228,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: '↩',
+					glyph: I.loop,
 					text: `${p.from} → ${p.to} (${p.count}/${p.max === -1 ? '∞' : p.max})`,
 					meta: String(p.edge ?? '').replace(/_/g, ' '),
 					tone: 'warn'
@@ -235,7 +238,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: '✓',
+					glyph: I.ok,
 					text: 'Run completed',
 					meta: [
 						cost(p.total_cost_usd !== undefined ? { cost_usd: p.total_cost_usd } : undefined),
@@ -250,7 +253,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: '✕',
+					glyph: I.bad,
 					text: `Run failed — ${p.reason ?? ''}`,
 					tone: 'bad'
 				});
@@ -259,7 +262,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: '■',
+					glyph: I.stop,
 					text: `Run abandoned${p.stalled_at ? ` at ${p.stalled_at}` : ''}${p.reason ? ` — ${p.reason}` : ''}`,
 					tone: 'warn'
 				});
@@ -268,7 +271,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				items.push({
 					kind: 'status',
 					key,
-					glyph: '↻',
+					glyph: I.retry,
 					text: 'Retrying in the same workspace',
 					tone: 'info'
 				});

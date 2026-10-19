@@ -3,6 +3,8 @@
 	// and opens), what is already exposed, and a manual "expose a port".
 	import { api } from '$lib/api';
 	import { CODE_SERVER_PORT } from '../derive';
+	import { I } from '$lib/ui/icons';
+	import { toast } from '$lib/ui/toast.svelte';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
@@ -27,6 +29,9 @@
 			await rs.refreshPorts(); // the now-exposed port drops off the detected list
 			if (w) w.location.href = res.url;
 			else window.open(res.url, '_blank');
+			toast(`Port :${port} exposed`, {
+				action: { label: 'Open', run: () => window.open(res.url, '_blank') }
+			});
 		} catch (e) {
 			w?.close();
 			error = e instanceof Error ? e.message : String(e);
@@ -47,22 +52,23 @@
 	const exposed = $derived(rs.exposed.filter((p) => p.port !== CODE_SERVER_PORT));
 </script>
 
-<div class="pt">
+<div class="view pt">
 	<div class="lbl">Detected listening</div>
 	{#if rs.observed.length === 0}
-		<div class="none">Nothing new listening — ports the workspace opens show up here.</div>
+		<div class="note-line">Nothing new listening — ports the workspace opens show up here.</div>
 	{:else}
 		<div class="list">
 			{#each rs.observed as p (p.port)}
 				<button
 					class="port"
 					disabled={busy !== null || rs.terminal}
+					aria-busy={busy === p.port}
 					title={`Detected listener${p.service ? ` in service ${p.service}` : p.process ? ` (${p.process})` : ''} — expose and open`}
 					onclick={() => expose(p.port)}
 				>
-					<span class="pn">:{p.port}</span>
+					<span class="pn mono">:{p.port}</span>
 					{p.service ?? p.process ?? ''}
-					{busy === p.port ? '…' : '↗'}
+					{I.external}
 				</button>
 			{/each}
 		</div>
@@ -72,7 +78,7 @@
 		<div class="list">
 			{#each exposed as p (p.port)}
 				<a class="btn port" href={p.url} target="_blank" rel="noreferrer" title={p.url}
-					><span class="pn">:{p.port}</span> open ↗</a
+					><span class="pn mono">:{p.port}</span> open {I.external}</a
 				>
 			{/each}
 		</div>
@@ -88,10 +94,11 @@
 				onkeydown={(e) => e.key === 'Enter' && exposeInput()}
 				aria-label="Port"
 			/>
-			<button class="btn-primary" disabled={busy !== null || !input} onclick={exposeInput}
-				>{busy !== null && !rs.observed.some((p) => p.port === busy)
-					? 'Exposing…'
-					: 'Expose ↵'}</button
+			<button
+				class="btn-primary"
+				disabled={busy !== null || !input}
+				aria-busy={busy !== null && !rs.observed.some((p) => p.port === busy)}
+				onclick={exposeInput}>Expose ↵</button
 			>
 		</div>
 		<div class="help">
@@ -103,28 +110,20 @@
 
 <style>
 	.pt {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		padding: 12px 12px;
-		display: flex;
-		flex-direction: column;
+		padding: 12px;
 		gap: 10px;
 	}
-	.lbl {
-		font-size: 11.5px;
-		color: var(--fnt);
+	.pt > * {
+		flex: none;
 	}
 	.lbl:not(:first-child) {
 		margin-top: 6px;
 	}
-	.none,
-	.help {
-		font-size: 12px;
+	.note-line {
+		font-size: var(--fs-label);
 		color: var(--mut);
 	}
 	.help {
-		font-size: 11.5px;
 		color: var(--fnt);
 	}
 	.list {
@@ -139,7 +138,6 @@
 		border-color: var(--tea);
 	}
 	.pn {
-		font-family: var(--mono);
 		color: var(--tea);
 	}
 	.ex {
@@ -149,14 +147,9 @@
 	.ex input {
 		width: 130px;
 		padding: 5px 11px;
-		border-radius: 12px;
-		font-size: 12px;
+		border-radius: var(--r-btn);
 	}
 	.ex .btn-primary {
 		padding: 5px 14px;
-	}
-	.err {
-		color: var(--ros);
-		font-size: 11.5px;
 	}
 </style>

@@ -708,6 +708,7 @@ export type StartRunRequest = {
 export type TestResult = {
 	error?: string;
 	ok: boolean;
+	warnings?: Array<string>;
 };
 
 export type Ticket = {

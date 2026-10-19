@@ -262,6 +262,14 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			}
 			return ids, nil
 		},
+		CheckAuth: func(ctx context.Context, kind string, models []string) ([]string, []string) {
+			ac, ok := byKind[kind].(kinds.AuthChecker)
+			if !ok {
+				return nil, nil // nothing to probe (a fake), or no probe yet
+			}
+			r := ac.CheckAuth(ctx, models)
+			return r.Rejected, r.Unverified
+		},
 		HarnessBinary:   harness.Binary(),
 		HarnessBinaries: harnessBinaries,
 		HarnessInstall:  harnessInstall,
@@ -480,12 +488,45 @@ func egressDomains(p confstore.Project, contributions ...[]string) []string {
 // --- integration-level operations for the API (§10) -------------------------
 
 // TestIntegration constructs the integration's adapter and runs its Test
-// probe (the UI "Test connection" button).
-func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
+// probe (the UI "Test connection" button). A harness's credentials are then
+// probed against their providers: a rejected one fails the test, one that
+// could not be probed comes back as a warning.
+func (r *Resolver) TestIntegration(ctx context.Context, id string) (warnings []string, err error) {
 	in, err := r.conf.GetIntegration(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	if in.Port == confstore.PortHarness {
+		return r.testHarness(ctx, in)
+	}
+	return nil, r.testIntegration(ctx, in)
+}
+
+func (r *Resolver) testHarness(ctx context.Context, in confstore.Integration) ([]string, error) {
+	hk, err := r.reg.Harness(in.Kind)
+	if err != nil {
+		return nil, err
+	}
+	h, err := hk.New(kindConfig(in), nil) // probes run from the engine: the envp is never touched
+	if err != nil {
+		return nil, err
+	}
+	if err := h.Test(ctx); err != nil {
+		return nil, err
+	}
+	ac, ok := h.(kinds.AuthChecker)
+	if !ok {
+		return nil, nil
+	}
+	res := ac.CheckCredentials(ctx)
+	if len(res.Rejected) > 0 {
+		return res.Unverified, errors.New(strings.Join(res.Rejected, "; "))
+	}
+	return res.Unverified, nil
+}
+
+func (r *Resolver) testIntegration(ctx context.Context, in confstore.Integration) error {
+	id := in.ID
 	switch in.Port {
 	case confstore.PortForge:
 		fk, err := r.reg.Forge(in.Kind)
@@ -512,16 +553,6 @@ func (r *Resolver) TestIntegration(ctx context.Context, id string) error {
 		}
 		defer prov.Close()
 		return prov.Test(ctx)
-	case confstore.PortHarness:
-		hk, err := r.reg.Harness(in.Kind)
-		if err != nil {
-			return err
-		}
-		h, err := hk.New(kindConfig(in), nil) // Test is static: the envp is never touched
-		if err != nil {
-			return err
-		}
-		return h.Test(ctx)
 	case confstore.PortTicketSource:
 		tk, err := r.reg.TicketSource(in.Kind)
 		if err != nil {

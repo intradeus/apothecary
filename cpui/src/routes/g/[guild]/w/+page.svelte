@@ -6,15 +6,17 @@
 	import type { Integration } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
-	import { lore, loreLc, fl, isLore } from '$lib/lore';
 	import { plural } from '$lib/format';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Vial from '$lib/ui/Vial.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import { I } from '$lib/ui/icons';
+	import { ms, spring } from '$lib/ui/motion';
+	import RunRow from '$lib/run/RunRow.svelte';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
-	import LiveRunRow from '$lib/workshop/LiveRunRow.svelte';
+	import { flip } from 'svelte/animate';
 
 	let integrations = $state<Integration[] | null>(null);
 	onMount(() => {
@@ -28,16 +30,18 @@
 	const projects = $derived([...fleet.projects].sort((a, b) => a.name.localeCompare(b.name)));
 	const liveTotal = $derived(fleet.active.length);
 	const repoLabel = (url: string) => url.replace(/^https?:\/\//, '').replace(/\.git$/, '');
-	const newLabel = $derived(`+ New ${lore('workshop').toLowerCase()}`);
+	const newLabel = $derived(`${I.add} New workshop`);
+	// Cards reorder (a rename, a new workshop) on the spring rather than jumping.
+	const move = () => ({ duration: ms('--dur-spring', 450), easing: spring });
 </script>
 
 <PageHeader
-	crumbs={[{ label: guild.name, href: to.desk() }, { label: lore('workshops') }]}
-	title={lore('workshops')}
-	accent={isLore() ? 'at the bench' : undefined}
+	crumbs={[{ label: guild.name, href: to.desk() }, { label: 'Workshops' }]}
+	title="Workshops"
+	accent="at the bench"
 >
 	{#snippet meta()}
-		<span>{plural(projects.length, lore('workshop').toLowerCase())}</span>
+		<span>{plural(projects.length, 'workshop')}</span>
 		<span><span class="hue-az mono">{liveTotal}</span> live</span>
 		{#if fleet.pending.length}<span
 				><span class="count hot">{fleet.pending.length}</span> awaiting you</span
@@ -51,22 +55,18 @@
 <div class="page">
 	{#if fleet.error && !fleet.updatedAt}
 		<ErrorCard
-			cause={`Couldn’t load ${loreLc('workshops')}`}
+			cause="Couldn’t load workshops"
 			detail={fleet.error}
 			onretry={() => fleet.refresh()}
 		/>
 	{:else if !fleet.updatedAt}
-		<div class="grid">
-			{#each [0, 1, 2] as i (i)}<div class="wcard c">
-					<div class="sk"><Skeleton lines={4} /></div>
-				</div>{/each}
+		<div class="card-grid">
+			{#each [0, 1, 2] as i (i)}<Skeleton pane lines={4} />{/each}
 		</div>
 	{:else if projects.length === 0}
 		<EmptyState
-			title={fl('An empty workshop', 'No projects yet')}
-			text="A {loreLc(
-				'workshop'
-			)} ties a repository to the forge, provisioner and harness its runs use."
+			title="An empty workshop"
+			text="A workshop ties a repository to the forge, provisioner and harness its runs use."
 		>
 			<a class="btn btn-primary" href={to.newWorkshop()}>{newLabel}</a>
 			{#if integrations && integrations.length === 0}
@@ -74,11 +74,11 @@
 			{/if}
 		</EmptyState>
 	{:else}
-		<div class="grid">
+		<div class="card-grid">
 			{#each projects as p (p.id)}
 				{@const live = fleet.liveByProject.get(p.id) ?? []}
 				{@const pings = fleet.pingsByProject.get(p.id) ?? 0}
-				<article class="wcard c" class:quiet={!live.length}>
+				<article class="wcard c" class:quiet={!live.length} animate:flip={move()}>
 					<a class="head" href={to.workshop(p.id)}>
 						<Vial projectId={p.id} idle={!live.length} />
 						<span class="nm ell">{p.name}</span>
@@ -95,17 +95,17 @@
 						</div>
 						<WorkshopChips project={p} {integrations} />
 					</div>
-					{#each live.slice(0, 3) as r (r.id)}<LiveRunRow run={r} />{/each}
+					{#each live.slice(0, 3) as r (r.id)}<RunRow run={r} />{/each}
 					{#if live.length > 3}
 						<a class="more-runs" href={to.workshop(p.id, 'runs')}>+{live.length - 3} more live</a>
 					{/if}
 					<div class="foot">
-						<span class="fnt">{fl('formula', 'flow')}</span>
+						<span class="fnt">formula</span>
 						<span class="tag">{p.defaultFlow || '—'}</span>
 						<span class="spacer"></span>
 						<a href={to.workshop(p.id, 'tickets')}>Tickets</a>
 						<a href={to.workshop(p.id, 'flows')}>Flows</a>
-						<a href={to.workshop(p.id)}>Open →</a>
+						<a href={to.workshop(p.id)}>Open {I.forward}</a>
 					</div>
 				</article>
 			{/each}
@@ -114,20 +114,14 @@
 </div>
 
 <style>
-	.grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-		gap: 10px;
-		align-items: start;
+	.card-grid {
+		--min: 340px;
 	}
 	.wcard {
-		border-radius: 16px;
+		border-radius: var(--r-pane);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-	}
-	.sk {
-		padding: 14px;
 	}
 	.head {
 		display: flex;
@@ -145,7 +139,7 @@
 	.nm {
 		flex: 1;
 		font-weight: 600;
-		font-size: 14px;
+		font-size: var(--fs-aside);
 	}
 	.wcard.quiet .nm {
 		color: var(--mut);
@@ -155,7 +149,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
 	.body {
@@ -165,7 +159,7 @@
 		padding: 2px 14px 12px 33px;
 	}
 	.repo {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
 	.more {
@@ -174,7 +168,7 @@
 	.more-runs {
 		padding: 6px 14px;
 		border-top: 1px solid var(--cLn);
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 	}
 	.foot {
@@ -183,7 +177,7 @@
 		gap: 10px;
 		padding: 8px 14px;
 		border-top: 1px solid var(--cLn);
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 	}
 	.foot a {
 		color: var(--mut);

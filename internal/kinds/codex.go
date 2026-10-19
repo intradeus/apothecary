@@ -141,4 +141,36 @@ func (h *codexHarness) Models(ctx context.Context) ([]ModelInfo, error) {
 	return out, nil
 }
 
+// CheckAuth (kinds.AuthChecker) probes the API key against OpenAI's model
+// list. A ChatGPT login has no zero-token probe; when one is configured too,
+// codex may well be using it, so a rejected key is only a warning.
+func (h *codexHarness) CheckAuth(ctx context.Context, models []string) AuthResult {
+	if len(models) == 0 {
+		return AuthResult{}
+	}
+	return h.CheckCredentials(ctx)
+}
+
+// CheckCredentials (kinds.AuthChecker): codex has one credential whatever
+// the model, so it is the same probe.
+func (h *codexHarness) CheckCredentials(ctx context.Context) AuthResult {
+	var out AuthResult
+	if h.apiKey == "" {
+		if h.authJSON != "" {
+			out.Unverified = append(out.Unverified, "codex: ChatGPT login — no zero-token probe")
+		}
+		return out
+	}
+	rejected, reason, err := openaiModelsProbe(h.apiKey).run(ctx, h.apiKey)
+	switch {
+	case err != nil:
+		out.Unverified = append(out.Unverified, "codex api_key: "+err.Error())
+	case rejected && h.authJSON != "":
+		out.Unverified = append(out.Unverified, "codex api_key: "+reason+" (the ChatGPT login may still work)")
+	case rejected:
+		out.Rejected = append(out.Rejected, "codex api_key: "+reason+" — fix api_key on the codex integration")
+	}
+	return out
+}
+
 var _ HarnessKind = Codex{}

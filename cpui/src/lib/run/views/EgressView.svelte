@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { loreLc } from '$lib/lore';
 	// Egress (DESIGN §6): every host this workspace reached or was refused,
 	// and the rule in force NOW per host — toggled live, saved to the
 	// workshop's policy. "Seen" is history and never changes; "rule now" is
@@ -9,6 +8,10 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, fmtBytes } from '$lib/format';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import Loading from '$lib/ui/Loading.svelte';
+	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
 	import type { EgressAuditRow, EgressPolicy } from '$lib/domain';
 	import type { RunStore } from '../store.svelte';
 
@@ -60,16 +63,33 @@
 		return m ? 'allow' : 'deny';
 	}
 
-	async function setRule(h: string, allow: boolean) {
+	// The rule flips the moment it is clicked (optimistic); a refusal puts
+	// it back and says why.
+	let flipped = $state<Record<string, 'allow' | 'deny'>>({});
+	const shownRule = (h: string) => flipped[h] ?? ruleFor(h);
+
+	async function setRule(h: string, allow: boolean, undo = false) {
+		const prev = ruleFor(h);
 		toggling = { ...toggling, [h]: true };
+		flipped = { ...flipped, [h]: allow ? 'allow' : 'deny' };
 		error = '';
 		try {
 			await api.egress.setRule(rs.runId, h, allow);
 			policy = await api.egress.policy(rs.runId);
 			await rs.refreshDenials();
+			toast(`${h} ${allow ? 'allowed' : 'blocked'}${undo ? ' again' : ''}`, {
+				tone: allow ? 'ok' : 'warn',
+				action:
+					prev && !undo
+						? { label: 'Undo', run: () => void setRule(h, prev === 'allow', true) }
+						: undefined
+			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
+			const next = { ...flipped };
+			delete next[h];
+			flipped = next;
 			toggling = { ...toggling, [h]: false };
 		}
 	}
@@ -87,11 +107,12 @@
 	const project = $derived(rs.run?.projectId ? fleet.projectById.get(rs.run.projectId) : undefined);
 </script>
 
-<div class="eg">
-	<div class="bar">
+<div class="view">
+	<div class="vbar">
 		<Segmented
 			glass={false}
 			size="sm"
+			label="Verdict"
 			bind:value={rs.egressVerdict}
 			options={[
 				{ value: '', label: 'All', count: all.length },
@@ -101,232 +122,161 @@
 		/>
 		<input class="q" placeholder="Filter host…" bind:value={host} aria-label="Filter host" />
 	</div>
-	{#if error}<div class="err">{error}</div>{/if}
+	{#if error}
+		<div class="pad">
+			<ErrorCard
+				cause={rows === null ? 'The egress audit is unavailable.' : 'The rule did not change.'}
+				detail={error}
+				onretry={rows === null ? refresh : undefined}
+				ondismiss={() => (error = '')}
+			/>
+		</div>
+	{/if}
 	{#if rows === null && !error}
-		<div class="msg"><span class="d pulse"></span>Connecting…</div>
+		<Loading text="Connecting…" />
 	{:else if rows === null}
-		<div class="msg">The egress audit is unavailable.</div>
+		<!-- the error card above says why -->
 	{:else if all.length === 0}
-		<div class="msg">
+		<div class="empty-line">
 			No egress recorded yet. Every host this workspace reaches — or is refused — shows up here.
 		</div>
 	{:else}
-		<div class="tbl card-in">
-			<div class="h">
-				<span class="c0">Host:port</span><span>Seen</span><span>Rule now</span><span>Proto</span
-				><span class="rt">×</span><span class="rt">Out/in</span><span class="rt c9">Last</span>
+		<div class="rows card-in">
+			<div class="r head">
+				<span>Host:port</span><span>Seen</span><span>Rule now</span><span>Proto</span><span
+					class="rt">×</span
+				><span class="rt">Out/in</span><span class="rt">Last</span>
 			</div>
 			{#each shown as r (r.host + ':' + r.port + ':' + r.verdict)}
-				{@const rule = ruleFor(r.host)}
+				{@const rule = shownRule(r.host)}
 				<div class="r">
-					<span class="c0 hostc" title={r.dstIp ? `${r.host} (${r.dstIp})` : r.host}
+					<span class="mono hostc ell" title={r.dstIp ? `${r.host} (${r.dstIp})` : r.host}
 						>{r.host}{r.port && r.port !== 443 ? `:${r.port}` : ''}</span
 					>
 					<span
-						class="seen {r.verdict}"
+						class="seen {r.verdict === 'allow' ? 'hue-grn' : 'hue-ros'}"
 						title="What happened to this traffic when it occurred — history, never changed by rule edits"
 						>{r.verdict === 'allow' ? 'allowed' : 'blocked'}</span
 					>
 					<span>
 						{#if rule}
-							<span class="tg" class:busy={toggling[r.host]}>
-								<button
-									class:on={rule === 'allow'}
-									class="al"
-									disabled={toggling[r.host] || rule === 'allow'}
-									title="Allow this host now (live, saved to the {loreLc('workshop')})"
-									onclick={() => setRule(r.host, true)}>allow</button
-								><button
-									class:on={rule === 'deny'}
-									class="bl"
-									disabled={toggling[r.host] || rule === 'deny'}
-									title="Block this host now (live, saved to the {loreLc('workshop')})"
-									onclick={() => setRule(r.host, false)}>block</button
-								>
+							<span
+								class="tg"
+								class:busy={toggling[r.host]}
+								title="Allow or block this host now (live, saved to the workshop)"
+							>
+								<Segmented
+									glass={false}
+									size="sm"
+									label="Rule for {r.host}"
+									value={rule}
+									onchange={(v) => v !== ruleFor(r.host) && setRule(r.host, v === 'allow')}
+									options={[
+										{ value: 'allow', label: 'allow', tone: 'grn' },
+										{ value: 'deny', label: 'block', tone: 'ros' }
+									]}
+								/>
 							</span>
 						{:else}
-							<span class="fnt" title="No live gateway — the workspace is gone">—</span>
+							<span class="fnt" title="No live gateway — the workspace is gone">{I.none}</span>
 						{/if}
 					</span>
 					<span class="fnt sm">{r.proto}</span>
 					<span class="rt mono">{r.count}</span>
 					<span class="rt mono fnt">{fmtBytes(r.bytesOut) || '0'}/{fmtBytes(r.bytesIn) || '0'}</span
 					>
-					<span class="rt mono fnt c9" title={fmtAbs(r.lastSeen)}>{ago(r.lastSeen)}</span>
+					<span class="rt mono fnt" title={fmtAbs(r.lastSeen)}>{ago(r.lastSeen)}</span>
 				</div>
 			{/each}
-			{#if shown.length === 0}<div class="msg">Nothing matches.</div>{/if}
+			{#if shown.length === 0}<div class="empty-line">Nothing matches.</div>{/if}
 		</div>
 	{/if}
 	<div class="foot">
 		Rule changes apply live and are saved to
-		{#if rs.run?.projectId}<a href={to.workshopSettings(rs.run.projectId)}
-				>{project?.name ?? `the ${loreLc('workshop')}`} › workspace policy</a
-			>{:else}the {loreLc('workshop')}'s policy{/if}{policy
+		{#if rs.run?.projectId}<a class="brand" href={to.workshopSettings(rs.run.projectId)}
+				>{project?.name ?? `the workshop`} › workspace policy</a
+			>{:else}the workshop's policy{/if}{policy
 			? ` (${policy.mode === 'deny' ? 'denylist' : 'allowlist'})`
 			: ''}.
 	</div>
 </div>
 
 <style>
-	.eg {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		display: flex;
-		flex-direction: column;
-	}
-	.bar {
-		display: flex;
-		gap: 6px;
-		padding: 8px 12px;
-		align-items: center;
-		flex-wrap: wrap;
-	}
 	.q {
 		margin-left: auto;
 		flex: 1 1 100px;
 		max-width: 180px;
 		padding: 3px 10px;
-		font-size: 12px;
-		border-radius: 10px;
+		font-size: var(--fs-label);
 	}
-	.err {
-		color: var(--ros);
-		font-size: 11.5px;
-		padding: 0 12px 6px;
+	.pad {
+		padding: 0 8px 8px;
 	}
-	.msg {
-		color: var(--mut);
-		font-size: 12px;
-		padding: 10px 12px;
-		display: flex;
-		gap: 8px;
-		align-items: center;
-	}
-	.d {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
-	}
-	.tbl {
+	.rows {
 		margin: 0 8px;
-		border-radius: 13px;
 		overflow: hidden;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		flex: none;
 	}
-	.h,
 	.r {
-		display: grid;
 		grid-template-columns: minmax(0, 1fr) 58px 112px 40px 34px 92px 64px;
-		align-items: center;
 		gap: 0 6px;
+		padding: 4px 12px;
 	}
-	.h {
-		font-size: 11px;
-		color: var(--fnt);
-		padding: 8px 12px 8px 0;
-	}
-	.r {
-		border-top: 1px solid var(--ln);
-		padding: 4px 12px 4px 0;
-	}
-	.r:hover {
-		background: var(--p1);
-	}
-	.c0 {
-		padding-left: 12px;
+	.r.head {
+		padding-top: 8px;
+		padding-bottom: 8px;
 	}
 	.hostc {
-		font-family: var(--mono);
-		font-size: 11px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		font-size: var(--fs-meta);
 	}
 	.seen {
 		font-weight: 600;
-		font-size: 11px;
-	}
-	.seen.allow {
-		color: var(--grn);
-	}
-	.seen.deny {
-		color: var(--ros);
+		font-size: var(--fs-meta);
 	}
 	.tg {
 		display: inline-flex;
-		padding: 2px;
-		border-radius: 8px;
-		background: var(--p1);
 	}
 	.tg.busy {
-		opacity: 0.6;
-	}
-	.tg button {
-		padding: 0 8px;
-		border-radius: 12px;
-		font-size: 11px;
-		font-weight: 600;
-		background: transparent;
-		border: 0;
-		box-shadow: none;
-		color: var(--fnt);
-	}
-	.tg button:disabled {
-		opacity: 1;
-	}
-	.tg button:hover {
-		color: var(--tx);
-	}
-	.tg .al.on {
-		background: var(--grnBg);
-		color: var(--grn);
-	}
-	.tg .bl.on {
-		background: var(--rosBg);
-		color: var(--ros);
+		pointer-events: none;
+		opacity: var(--o-dim);
 	}
 	.sm {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 	.rt {
 		text-align: right;
 	}
-	.mono {
-		font-size: 10.5px;
+	.r .mono {
+		font-size: var(--fs-id);
+	}
+	.r .hostc {
+		font-size: var(--fs-meta);
 	}
 	.foot {
 		padding: 10px 12px;
 		color: var(--mut);
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
 	.foot a {
-		color: var(--brand);
 		font-weight: 500;
 	}
+	/* Drop columns as the window narrows: container queries on the window
+	 * (not the viewport), sized to when the columns stop fitting. */
 	@container (max-width: 560px) {
-		.h,
 		.r {
 			grid-template-columns: minmax(0, 1fr) 54px 108px 34px;
 		}
-		.h > :nth-child(4),
 		.r > :nth-child(4),
-		.h > :nth-child(6),
 		.r > :nth-child(6),
-		.h > :nth-child(7),
 		.r > :nth-child(7) {
 			display: none;
 		}
 	}
 	@container (max-width: 380px) {
-		.h,
 		.r {
 			grid-template-columns: minmax(0, 1fr) 50px 100px;
 		}
-		.h > :nth-child(5),
 		.r > :nth-child(5) {
 			display: none;
 		}

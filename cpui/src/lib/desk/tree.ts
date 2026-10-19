@@ -53,9 +53,14 @@ export type Node = Leaf | Split;
 /** null = every view hidden ("an empty bench"). */
 export type Tree = Node | null;
 
-/** Gap between panes and the leaf header height, in px. */
-export const GAP = 8;
-export const HEAD = 38;
+/** The desk's geometry in px: the gutter between panes, a leaf's tab
+ *  strip, and the smallest a pane resizes to. The values live in tokens.css
+ *  (--desk-gap, --leaf-head, --pane-min); the desk reads them at mount. */
+export interface Geo {
+	gap: number;
+	head: number;
+	min: number;
+}
 
 let LID = 0;
 export const leaf = (tabs: ViewId[], act?: ViewId): Leaf => ({
@@ -282,19 +287,20 @@ export function lay(
 	w: number,
 	h: number,
 	path: number[],
-	out: { leaves: LeafRect[]; divs: Divider[] }
+	out: { leaves: LeafRect[]; divs: Divider[] },
+	gap: number
 ) {
 	if (n.k === 'leaf') {
 		out.leaves.push({ n, x, y, w, h });
 		return;
 	}
 	const row = n.dir === 'row';
-	const tot = (row ? w : h) - GAP * (n.c.length - 1);
+	const tot = (row ? w : h) - gap * (n.c.length - 1);
 	let p = row ? x : y;
 	n.c.forEach((c, i) => {
 		const sz = tot * n.s[i];
-		if (row) lay(c, p, y, sz, h, [...path, i], out);
-		else lay(c, x, p, w, sz, [...path, i], out);
+		if (row) lay(c, p, y, sz, h, [...path, i], out, gap);
+		else lay(c, x, p, w, sz, [...path, i], out, gap);
 		p += sz;
 		if (i < n.c.length - 1) {
 			out.divs.push({
@@ -304,10 +310,10 @@ export function lay(
 				tot,
 				x: row ? p : x,
 				y: row ? y : p,
-				w: row ? GAP : w,
-				h: row ? h : GAP
+				w: row ? gap : w,
+				h: row ? h : gap
 			});
-			p += GAP;
+			p += gap;
 		}
 	});
 }
@@ -357,14 +363,14 @@ export interface Drop {
 }
 
 /** Where a dragged tab would land: the centre of a leaf stacks it, the outer
- *  26% of an edge (below the tab strip) splits that side. */
-export function hit(rects: LeafRect[], p: { x: number; y: number }): Drop | null {
+ *  26% of an edge (below the tab strip, `head` px) splits that side. */
+export function hit(rects: LeafRect[], p: { x: number; y: number }, head: number): Drop | null {
 	const r = rects.find((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
 	if (!r) return null;
 	const fx = (p.x - r.x) / r.w;
 	const fy = (p.y - r.y) / r.h;
 	let zone: DropZone = 'center';
-	if (p.y - r.y > HEAD) {
+	if (p.y - r.y > head) {
 		const e = (
 			[
 				['left', fx],

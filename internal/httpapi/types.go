@@ -246,6 +246,9 @@ type IntegrationUpdate struct {
 type TestResult struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+	// Warnings: what the test could not verify (a credential with no
+	// zero-token probe, a provider out of reach). Not a failure.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // PreflightResult is a project's readiness: every check reports on its own so

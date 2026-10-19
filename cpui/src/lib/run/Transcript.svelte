@@ -1,21 +1,41 @@
+<script lang="ts" module>
+	/** A message you sent that the run has not echoed back yet. */
+	export interface Sending {
+		text: string;
+		interrupt: boolean;
+	}
+</script>
+
 <script lang="ts">
 	// The run's conversation (DESIGN 4.10): stage dividers, status lines, the
 	// prompt, agent messages (streaming with a caret), thinking, tool groups,
 	// the plan, your messages and the agent's questions.
-	import { mdToHtml } from '$lib/planreview';
+	//
+	// New items arrive with a small fade and rise (transform and opacity
+	// only, so nothing below them jumps); the history already there when the
+	// view opens, and the SSE replay that follows, land without it.
 	import { promptLabel, type ChatItem } from '$lib/transcript';
 	import { fmtClock, fmtTime } from '$lib/format';
-	import { lore } from '$lib/lore';
+	import { TONE_HUE } from '$lib/ui/hues';
+	import { I } from '$lib/ui/icons';
+	import { ms } from '$lib/ui/motion';
+	import { token } from '$lib/ui/tokens';
 	import PingPill from '$lib/ui/PingPill.svelte';
+	import Markdown from '$lib/ui/Markdown.svelte';
+	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import StatusMark, { type MarkTone } from '$lib/ui/StatusMark.svelte';
 	import ToolCalls from './ToolCalls.svelte';
 
 	let {
 		items,
+		sending = [],
 		over = false,
 		onlog,
 		onanswer
 	}: {
 		items: ChatItem[];
+		/** Messages you sent that the run has not echoed back yet. */
+		sending?: Sending[];
 		/** The run is finished: an unanswered question was withdrawn with it. */
 		over?: boolean;
 		/** Open a stage's log. */
@@ -25,80 +45,116 @@
 	} = $props();
 
 	const planDone = (es: { status: string }[]) => es.filter((e) => e.status === 'completed').length;
+	const planTone = (s: string): MarkTone =>
+		s === 'completed' ? 'ok' : s === 'in_progress' ? 'live' : 'pending';
+
+	const userTexts = $derived(new Set(items.flatMap((it) => (it.kind === 'user' ? [it.text] : []))));
+	const unechoed = $derived(sending.filter((s) => !userTexts.has(s.text)));
+
+	// Arm the arrival motion once the list has been quiet for a moment: the
+	// initial history (and the replay burst behind it) settles first.
+	let armed = false;
+	$effect(() => {
+		void items.length;
+		if (armed) return;
+		const t = setTimeout(() => (armed = true), 700);
+		return () => clearTimeout(t);
+	});
+
+	/** Does this item get the arrival motion? Not when it replaces something
+	 *  already on screen: a persisted message or tool call superseding its
+	 *  live twin, a plan moving to its latest spot, your own message echoing
+	 *  the bubble you sent. */
+	const arrives = (it: ChatItem) =>
+		!(
+			it.kind === 'plan' ||
+			((it.kind === 'message' || it.kind === 'tools') && !it.live) ||
+			(it.kind === 'user' && sending.some((s) => s.text === it.text))
+		);
+
+	function arrive(node: HTMLElement, on: boolean) {
+		if (!armed || !on) return;
+		node.animate([{ opacity: 0 }, { opacity: 1 }], {
+			duration: ms('--dur-fade', 160),
+			easing: 'ease-out'
+		});
+		node.animate([{ transform: 'translateY(8px)' }, { transform: 'none' }], {
+			duration: ms('--dur-spring', 450),
+			easing: token('--spring') || 'ease-out'
+		});
+	}
 </script>
 
 {#each items as it (it.key)}
+	{@const a = arrives(it)}
 	{#if it.kind === 'stage'}
-		<div class="divider">
+		<div class="divider" use:arrive={a}>
 			<span class="hl l"></span>
-			<span class="sname">{it.stageId}</span>
-			<span class="smeta"
+			<span class="sname serif">{it.stageId}</span>
+			<span class="smeta ell"
 				>attempt {it.iteration}{#if it.agent}&nbsp;· {it.agent}{/if}{#if it.model}&nbsp;· {it.model}{/if}{#if !it.agentic}&nbsp;·
 					stage{/if} · <span class="mono">{fmtTime(it.ts)}</span></span
 			>
 			<span class="hl r"></span>
 		</div>
 	{:else if it.kind === 'status'}
-		<div class="status {it.tone}">
+		<div class="status hue-{TONE_HUE[it.tone]}" use:arrive={a}>
 			<span>{it.glyph}</span>
 			<span
-				>{it.text}{#if it.meta}<span class="sm">{' · '}{it.meta}</span>{/if}</span
+				>{it.text}{#if it.meta}<span class="mut">{' · '}{it.meta}</span>{/if}</span
 			>
 		</div>
 	{:else if it.kind === 'failure'}
-		<div class="fail">
-			<b>✕ {it.title}</b>
-			{#if it.error}<span class="err">{it.error}</span>{/if}
-			<div class="acts">
-				<button class="btn-sm" onclick={() => onlog(it.stageId)}>View log</button>
-			</div>
+		<div use:arrive={a}>
+			<ErrorCard
+				cause={it.title}
+				detail={it.error}
+				action="View log"
+				onretry={() => onlog(it.stageId)}
+			/>
 		</div>
 	{:else if it.kind === 'prompt'}
-		<details class="card-in prompt">
-			<summary>
-				<span class="b"><span class="caretglyph">▸</span> {promptLabel(it.promptKind)}</span>
-				<span class="pv">{it.text.split('\n').find((l) => l.trim()) ?? ''}</span>
+		<details class="card-in prompt" use:arrive={a}>
+			<summary class="disclosure">
+				<span class="b">{promptLabel(it.promptKind)}</span>
+				<span class="pv mut ell">{it.text.split('\n').find((l) => l.trim()) ?? ''}</span>
 			</summary>
 			<pre>{it.text}{it.truncated ? '\n… [truncated]' : ''}</pre>
 		</details>
 	{:else if it.kind === 'message'}
 		{#if it.thought}
-			<details class="thought" open={it.live}>
+			<details class="thought" open={it.live} use:arrive={a}>
 				<summary
-					>{#if it.live}<span class="td pulse"></span>{/if}Thinking{it.live ? '' : ''} ▾</summary
+					>{#if it.live}<span class="ldot sm pulse hue-az"></span>{/if}Thinking {I.menu}</summary
 				>
-				<div class="tt">{it.text}</div>
+				<div class="tt serif">{it.text}</div>
 			</details>
 		{:else}
-			<div class="agent md">
-				{@html mdToHtml(it.text)}{#if it.live}<span class="caret"></span>{/if}
+			<div class="agent" use:arrive={a}>
+				<Markdown src={it.text} />{#if it.live}<span class="caret"></span>{/if}
 			</div>
 		{/if}
 	{:else if it.kind === 'tools'}
-		<ToolCalls calls={it.calls} live={it.live} />
+		<div use:arrive={a}><ToolCalls calls={it.calls} live={it.live} /></div>
 	{:else if it.kind === 'plan'}
 		<div class="plan card-in">
 			<div class="ph">
-				<span class="pt">{lore('plan')}</span>
+				<span class="pt serif">The recipe</span>
 				<span class="pm">{planDone(it.entries)} of {it.entries.length}</span>
 			</div>
 			<div class="pl">
 				{#each it.entries as e, i (i)}
 					<div class="pe {e.status}">
-						<span class="pc">
-							{#if e.status === 'completed'}✓{:else if e.status === 'in_progress'}<span
-									class="pd pulse"
-								></span>{/if}
-						</span>
+						<StatusMark tone={planTone(e.status)} size="sm" />
 						{#if e.status === 'completed'}<s>{e.content}</s>{:else}<span>{e.content}</span>{/if}
 					</div>
 				{/each}
 			</div>
 		</div>
 	{:else if it.kind === 'notice'}
-		<div class="notice">{it.text}</div>
+		<div class="notice mut" use:arrive={a}>{it.text}</div>
 	{:else if it.kind === 'user'}
-		<div class="user">
+		<div class="user" use:arrive={a}>
 			<div class="bubble" class:queued={!it.delivered}>{it.text}</div>
 			<div class="um">
 				{#if it.interrupt}<span class="hue-amb">interrupt · </span>{/if}
@@ -107,11 +163,11 @@
 			</div>
 		</div>
 	{:else if it.kind === 'question'}
-		<div class="q card-in" class:open={it.answer === undefined && !over}>
+		<div class="q card-in" class:open={it.answer === undefined && !over} use:arrive={a}>
 			<div class="qh">
 				<PingPill type={it.type} /><span class="mut small">The agent asked</span>
 			</div>
-			<div class="md">{@html mdToHtml(it.question)}</div>
+			<Markdown src={it.question} />
 			{#if it.options.length && it.answer === undefined}
 				<div class="small mut">options: {it.options.join(' · ')}</div>
 			{/if}
@@ -121,11 +177,20 @@
 				<div class="small fnt">Withdrawn — the run ended before an answer.</div>
 			{:else}
 				<button class="linklike wait" onclick={onanswer}
-					><span class="wd pulse"></span>Waiting for your answer ↓</button
+					><span class="ldot pulse"></span>Waiting for your answer {I.follow}</button
 				>
 			{/if}
 		</div>
 	{/if}
+{/each}
+
+{#each unechoed as s, i (i + s.text)}
+	<div class="user" use:arrive={true}>
+		<div class="bubble queued">{s.text}</div>
+		<div class="um">
+			{#if s.interrupt}<span class="hue-amb">interrupt · </span>{/if}sending…
+		</div>
+	</div>
 {/each}
 
 <style>
@@ -147,94 +212,37 @@
 		background: linear-gradient(90deg, var(--ln2), transparent);
 	}
 	.sname {
-		font-family: var(--serif);
-		font-style: italic;
-		font-size: 19px;
+		font-size: var(--fs-section);
 		line-height: 1.1;
 	}
 	.smeta {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
 	}
 	.smeta .mono {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 	.status {
-		font-size: 12px;
+		font-size: var(--fs-label);
 		display: flex;
 		gap: 6px;
-		color: var(--mut);
-	}
-	.status.ok {
-		color: var(--grn);
-	}
-	.status.bad {
-		color: var(--ros);
-	}
-	.status.warn {
-		color: var(--amb);
-	}
-	.status.info {
-		color: var(--az);
-	}
-	.sm {
-		color: var(--mut);
-	}
-	.fail {
-		border-radius: 14px;
-		background: var(--rosBg);
-		border: 1px solid var(--rosLn);
-		padding: 11px 14px;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.fail b {
-		color: var(--ros);
-		font-weight: 600;
-	}
-	.fail .err {
-		font-family: var(--mono);
-		font-size: 11.5px;
-		white-space: pre-wrap;
-		word-break: break-word;
-		max-height: 140px;
-		overflow: auto;
-	}
-	.acts {
-		display: flex;
-		gap: 6px;
-		margin-top: 4px;
 	}
 	.prompt > summary {
 		padding: 7px 12px;
-		display: flex;
+		font-size: var(--fs-label);
 		gap: 10px;
-		align-items: center;
-		font-size: 12px;
 		min-width: 0;
 	}
 	.b {
 		white-space: nowrap;
 		font-weight: 600;
 	}
-	.pv {
-		color: var(--mut);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
-	}
 	.prompt pre {
 		margin: 0;
 		padding: 8px 12px;
 		border-top: 1px solid var(--ln);
 		color: var(--mut);
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		white-space: pre-wrap;
 		word-break: break-word;
 		max-height: 360px;
@@ -242,39 +250,29 @@
 	}
 	.thought {
 		padding: 8px 12px;
-		border-radius: 13px;
+		border-radius: var(--r-card);
 		background: linear-gradient(90deg, var(--azBg), transparent 70%);
 	}
 	.thought > summary {
 		display: flex;
 		gap: 7px;
 		align-items: center;
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		font-weight: 600;
 		color: var(--az);
-	}
-	.td {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
-		box-shadow: 0 0 8px var(--az);
 	}
 	.tt {
 		padding-top: 4px;
 		color: var(--mut);
-		font-family: var(--serif);
-		font-style: italic;
-		font-size: 16px;
+		font-size: var(--fs-title);
 		line-height: 1.35;
 		white-space: pre-wrap;
 	}
 	.agent {
-		max-width: 70ch;
+		max-width: var(--measure);
 		text-wrap: pretty;
 	}
 	.plan {
-		border-radius: 14px;
 		display: flex;
 		flex-direction: column;
 	}
@@ -285,11 +283,10 @@
 		align-items: baseline;
 	}
 	.pt {
-		font-family: var(--serif);
-		font-size: 18px;
+		font-size: var(--fs-section);
 	}
 	.pm {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
 	.pl {
@@ -297,51 +294,23 @@
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
 	.pe {
 		display: flex;
 		gap: 9px;
 		align-items: center;
 	}
-	.pc {
-		width: 15px;
-		height: 15px;
-		flex: none;
-		border-radius: 50%;
-		border: 1.5px solid var(--ln2);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 9px;
-		font-weight: 800;
-	}
 	.pe.completed {
 		color: var(--mut);
-	}
-	.pe.completed .pc {
-		background: var(--grn);
-		border-color: var(--grn);
-		color: #0b1a12;
 	}
 	.pe.in_progress {
 		color: var(--az);
 		font-weight: 600;
 	}
-	.pe.in_progress .pc {
-		border-color: var(--az);
-	}
-	.pd {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
-		box-shadow: 0 0 6px var(--az);
-	}
 	.notice {
-		color: var(--mut);
 		font-style: italic;
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
 	.user {
 		align-self: flex-end;
@@ -353,7 +322,7 @@
 	}
 	.bubble {
 		padding: 8px 13px;
-		border-radius: 10px 14px 4px 14px;
+		border-radius: var(--r-row) var(--r-card) var(--r-xs) var(--r-card);
 		background: var(--brandBg);
 		border: 1px solid var(--brandLn);
 		white-space: pre-wrap;
@@ -365,11 +334,10 @@
 		color: var(--mut);
 	}
 	.um {
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		color: var(--fnt);
 	}
 	.q {
-		border-radius: 14px;
 		padding: 10px 14px;
 		display: flex;
 		flex-direction: column;
@@ -390,14 +358,7 @@
 		align-self: flex-start;
 		color: var(--amb);
 		font-weight: 600;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		gap: 8px;
-	}
-	.wd {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--amb);
-		box-shadow: 0 0 8px var(--amb);
 	}
 </style>

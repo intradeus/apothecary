@@ -302,6 +302,96 @@ func liveModels(ctx context.Context, p catalogProvider, entry authEntry) ([]stri
 	return ids, nil
 }
 
+// CheckAuth (kinds.AuthChecker) probes every provider the flow's models
+// route through with its auth.json credential. The OpenCode gateways are
+// probed per model: their probe also says whether the model is still served,
+// which their catalog entry (they have no live list) cannot.
+func (h *opencodeHarness) CheckAuth(ctx context.Context, models []string) AuthResult {
+	return h.checkAuth(ctx, func(map[string]json.RawMessage, map[string]catalogProvider) []string { return models }, false)
+}
+
+// CheckCredentials (kinds.AuthChecker) probes every provider auth.json
+// carries. A gateway's probe needs a model, so it borrows one from the
+// catalog; that model being retired leaves the key unverified.
+func (h *opencodeHarness) CheckCredentials(ctx context.Context) AuthResult {
+	return h.checkAuth(ctx, func(auth map[string]json.RawMessage, catalog map[string]catalogProvider) []string {
+		models := make([]string, 0, len(auth))
+		for providerID := range auth {
+			ids := make([]string, 0, len(catalog[providerID].Models))
+			for id := range catalog[providerID].Models {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			model := ""
+			if len(ids) > 0 {
+				model = ids[0]
+			}
+			models = append(models, providerID+"/"+model)
+		}
+		sort.Strings(models)
+		return models
+	}, true)
+}
+
+// checkAuth probes the models pick returns; credentialOnly reports a "model
+// refused" verdict as unverified — the model was borrowed, not chosen.
+func (h *opencodeHarness) checkAuth(ctx context.Context, pick func(map[string]json.RawMessage, map[string]catalogProvider) []string, credentialOnly bool) AuthResult {
+	var out AuthResult
+	auth := map[string]json.RawMessage{}
+	if err := json.Unmarshal([]byte(h.authJSON), &auth); err != nil {
+		out.Unverified = append(out.Unverified, "opencode: auth_json: "+err.Error())
+		return out
+	}
+	catalog, err := fetchCatalog(ctx)
+	if err != nil {
+		out.Unverified = append(out.Unverified, "opencode: "+err.Error())
+		return out
+	}
+	models := pick(auth, catalog)
+	done := map[string]bool{}
+	for _, m := range models {
+		providerID, modelID, ok := strings.Cut(m, "/")
+		raw, known := auth[providerID]
+		if !ok || !known {
+			continue // the model check refuses a provider auth.json lacks
+		}
+		var entry authEntry
+		_ = json.Unmarshal(raw, &entry)
+		pr, probeable := providerAuthProbe(providerID, catalog[providerID], entry.Key, modelID)
+		label, once := "opencode provider "+providerID, providerID
+		if pr.kind == probeEmptyChat && !credentialOnly {
+			label, once = "opencode model "+m, m
+		}
+		if done[once] {
+			continue
+		}
+		done[once] = true
+		switch {
+		case entry.Type != "api" || entry.Key == "":
+			out.Unverified = append(out.Unverified, label+": not an API key (subscription login) — no zero-token probe")
+		case !probeable:
+			out.Unverified = append(out.Unverified, label+": no zero-token probe for this provider")
+		default:
+			rejected, reason, err := pr.run(ctx, entry.Key)
+			switch {
+			case err != nil:
+				out.Unverified = append(out.Unverified, fmt.Sprintf("%s: %v", label, err))
+			case rejected && credentialOnly && strings.HasPrefix(reason, "model"):
+				// The gateway checks the model before the key: this says
+				// nothing about the credential.
+				out.Unverified = append(out.Unverified, fmt.Sprintf("%s: probe model %s %s", label, modelID, reason))
+			case rejected:
+				fix := "fix auth_json on the opencode integration"
+				if strings.HasPrefix(reason, "model") {
+					fix = "pick another model in the flow"
+				}
+				out.Rejected = append(out.Rejected, fmt.Sprintf("%s: %s — %s", label, reason, fix))
+			}
+		}
+	}
+	return out
+}
+
 func sortModels(out []ModelInfo) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 }

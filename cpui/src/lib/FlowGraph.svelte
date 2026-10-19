@@ -13,10 +13,12 @@
 	import { prefs } from '$lib/prefs.svelte';
 	import { untrack } from 'svelte';
 	import FlowStageNode from '$lib/FlowStageNode.svelte';
-	import FlowDoneNode from '$lib/FlowDoneNode.svelte';
-	import FlowAbortNode from '$lib/FlowAbortNode.svelte';
-	import FlowStartNode from '$lib/FlowStartNode.svelte';
+	import FlowTerminalNode from '$lib/flow/FlowTerminalNode.svelte';
 	import FitOnInit from '$lib/flow/FitOnInit.svelte';
+	import { EDGE_HUE } from '$lib/ui/hues';
+	import { ms } from '$lib/ui/motion';
+	import { I } from '$lib/ui/icons';
+	import { token } from '$lib/ui/tokens';
 	import {
 		ABORT,
 		DONE,
@@ -65,39 +67,80 @@
 
 	const nodeTypes = {
 		stage: FlowStageNode,
-		done: FlowDoneNode,
-		abort: FlowAbortNode,
-		start: FlowStartNode
+		done: FlowTerminalNode,
+		abort: FlowTerminalNode,
+		start: FlowTerminalNode
 	};
 
 	// Edges and handles (DESIGN 3.6): success solid green; failure edges
-	// dashed and animated in their hue; a "then" fallback is the same hue at
-	// half opacity; dataflow is faint and dotted.
-	const HUE: Record<string, string> = {
-		on_fail: 'ros',
-		on_reject: 'amb',
-		on_timeout: 'tea'
-	};
-	const SHORT: Record<string, string> = {
-		on_fail: 'fail',
-		on_reject: 'reject',
-		on_timeout: 'timeout'
-	};
-	const edgeStyle = (kind: string, depth: number) =>
-		`stroke: var(--${HUE[kind]}); stroke-width: 1.6; stroke-dasharray: 6 4;${depth > 0 ? ' opacity: 0.5;' : ''}`;
-	const labelStyle = (kind: string, depth: number) =>
-		`color: var(--${HUE[kind]}); border-color: var(--${HUE[kind]}Ln);${depth > 0 ? ' opacity: 0.7;' : ''}`;
+	// dashed and animated in their hue; a "then" fallback is the same hue
+	// faded; dataflow is faint and dotted. The look lives in CSS classes
+	// below, sized by the flow tokens (--edge-w…); an edge only carries its
+	// hue (--eh, from hues.ts) so hover and selection can transition it.
+	const hued = (h: string) => `--eh: var(--${h}); --eh-ln: var(--${h}Ln)`;
+	// "on_fail" reads "fail" on the canvas.
+	const word = (kind: string) => kind.replace(/^on_/, '');
 
 	let nodes = $state.raw<Node[]>([]);
 	let edges = $state.raw<Edge[]>([]);
 
+	// What the last build drew, so a rebuild can tell what just arrived (it
+	// materialises) from what just left (a ghost dematerialises, then goes).
+	let known: Set<string> | null = null;
+	const ghosts = new Map<string, Node>();
+
 	function rebuild() {
+		const ids = new Set(doc.stages.map((s) => s.id));
+		// Untracked: Svelte Flow writes `nodes` on every drag frame, and a drag
+		// must never rebuild the graph.
+		const prev = untrack(() => nodes).filter((n) => n.type === 'stage' && !n.data.leaving);
+		const added = known ? doc.stages.filter((s) => !known!.has(s.id)).map((s) => s.id) : [];
+		const removed = known ? prev.filter((n) => !ids.has(n.id)) : [];
+		// One out, one in, in the same edit: a rename. It keeps its place on
+		// the canvas instead of leaving and arriving.
+		const renamed =
+			added.length === 1 && removed.length === 1 ? { from: removed[0], to: added[0] } : null;
+		if (renamed && !layout[renamed.to]) {
+			const { x, y } = renamed.from.position;
+			queueMicrotask(() => onmove(renamed.to, x, y));
+		}
+		if (!renamed) {
+			for (const n of removed) {
+				ghosts.set(n.id, {
+					...n,
+					selected: false,
+					selectable: false,
+					draggable: false,
+					connectable: false,
+					data: { ...n.data, leaving: true, fresh: false }
+				});
+				setTimeout(
+					() => {
+						if (ghosts.delete(n.id)) rebuild();
+					},
+					ms('--dur-spring', 450)
+				);
+			}
+		}
+		known = ids;
+
 		const ns: Node[] = doc.stages.map((s, i) => ({
 			id: s.id,
 			type: 'stage',
-			position: layout[s.id] ?? { x: i * 240, y: 0 },
-			data: { stage: s, entry: i === 0 || phaseEntry(doc, s.phase)?.id === s.id, agents, actions }
+			position: layout[s.id] ??
+				(renamed?.to === s.id ? renamed.from.position : undefined) ?? { x: i * 240, y: 0 },
+			data: {
+				stage: s,
+				entry: i === 0 || phaseEntry(doc, s.phase)?.id === s.id,
+				agents,
+				actions,
+				fresh: !renamed && added.includes(s.id)
+			}
 		}));
+		for (const [id, g] of ghosts) {
+			if (ids.has(id)) ghosts.delete(id);
+			else ns.push(g);
+		}
 		// Reaction phases (PLAN6): a marker per phase naming what starts it,
 		// pointing at the phase's first stage.
 		const triggers = (doc.phases ?? []).slice(1);
@@ -160,7 +203,7 @@
 				focusable: false,
 				deletable: false,
 				zIndex: -1,
-				style: 'stroke: var(--ln2); stroke-dasharray: 1 4; stroke-width: 1.4; stroke-linecap: round'
+				class: 'e-data'
 			});
 		}
 		if (doc.stages.length) {
@@ -169,7 +212,7 @@
 				source: '__start',
 				target: doc.stages[0].id,
 				type: 'smoothstep',
-				style: 'stroke: var(--brand); stroke-width: 1.6; opacity: 0.8'
+				style: hued('brand')
 			});
 		}
 		for (const ph of triggers) {
@@ -180,7 +223,8 @@
 					source: `__trigger:${ph.id}`,
 					target: first.id,
 					type: 'smoothstep',
-					style: 'stroke: var(--vio); stroke-width: 1.6; stroke-dasharray: 6 4'
+					class: 'e-dash',
+					style: hued('vio')
 				});
 		}
 		doc.stages.forEach((s, i) => {
@@ -191,7 +235,8 @@
 				sourceHandle: 'success',
 				target: target === DONE ? '__done' : target,
 				type: 'smoothstep',
-				style: 'stroke: var(--grn); stroke-width: 1.8'
+				class: 'e-success',
+				style: hued(EDGE_HUE.success)
 			});
 			for (const kind of EDGE_KINDS) {
 				// One rendered edge per chain link; deeper links are the "then"
@@ -211,11 +256,12 @@
 						// only signal; "then#1" marks a fallback link.
 						label:
 							link.to === ABORT
-								? `${SHORT[kind]}${depth > 0 ? ` · then#${depth}` : ''} → abort`
-								: `${SHORT[kind]}${depth > 0 ? ` · then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
-						labelStyle: labelStyle(kind, depth),
+								? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ${I.forward} abort`
+								: `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
+						labelStyle: hued(EDGE_HUE[kind]),
 						animated: true,
-						style: edgeStyle(kind, depth)
+						class: depth > 0 ? 'e-dash e-then' : 'e-dash',
+						style: hued(EDGE_HUE[kind])
 					});
 				});
 			}
@@ -247,6 +293,9 @@
 		onlink(conn.source, conn.sourceHandle ?? 'success', target);
 	}
 
+	// The canvas grid, from the flow tokens (Svelte Flow takes a number).
+	const gridGap = parseFloat(token('--grid-gap')) || 20;
+
 	const nodeKey = (id: string) =>
 		id === '__done'
 			? DONE
@@ -264,7 +313,7 @@
 		bind:nodes
 		bind:edges
 		{nodeTypes}
-		colorMode={prefs.theme}
+		colorMode={prefs.themeDef.scheme}
 		fitView
 		fitViewOptions={{ padding: 0.12, maxZoom: 1.1 }}
 		minZoom={0.15}
@@ -297,14 +346,8 @@
 		onpaneclick={() => onselect(null)}
 	>
 		<FitOnInit />
-		<Background
-			variant={BackgroundVariant.Dots}
-			gap={20}
-			size={1.2}
-			bgColor="transparent"
-			patternColor="var(--ln)"
-		/>
-		<Controls position="bottom-left">
+		<Background variant={BackgroundVariant.Dots} gap={gridGap} size={1.2} />
+		<Controls position="bottom-left" class="lg-pop fg-ctl">
 			{#snippet after()}
 				{#if onarrange}
 					<ControlButton
@@ -324,83 +367,114 @@
 		min-height: 420px;
 		position: relative;
 	}
+	/* Svelte Flow themed from the tokens, in one place: every --xy-* variable
+	 * it reads maps to ours, so its own rules draw our look and only what it
+	 * has no variable for (sizes, the label pill, edge kinds) is styled below. */
 	.graph-wrap :global(.svelte-flow) {
 		--xy-background-color: transparent;
+		--xy-background-pattern-color: var(--ln);
+		--xy-edge-stroke: var(--ln2);
+		--xy-edge-stroke-width: var(--edge-w);
+		--xy-edge-stroke-selected: var(--brand);
 		--xy-edge-label-background-color: var(--popBg);
 		--xy-edge-label-color: var(--tx);
 		--xy-connectionline-stroke: var(--brand);
-		--xy-connectionline-stroke-width: 1.6;
+		--xy-connectionline-stroke-width: var(--edge-w);
+		--xy-node-color: var(--tx);
+		--xy-node-background-color: var(--cBg);
+		--xy-node-border: 1px solid var(--cLn);
+		--xy-node-border-radius: var(--r-card);
+		--xy-node-group-background-color: var(--p1);
+		--xy-node-boxshadow-hover: none;
+		--xy-node-boxshadow-selected: none;
+		--xy-handle-background-color: var(--mut);
+		--xy-handle-border-color: var(--body);
+		--xy-selection-background-color: var(--brandBg);
+		--xy-selection-border: 1px dashed var(--brandLn);
+		--xy-resize-background-color: var(--brand);
+		--xy-controls-button-background-color: transparent;
+		--xy-controls-button-background-color-hover: var(--p3);
+		--xy-controls-button-color: var(--mut);
+		--xy-controls-button-color-hover: var(--tx);
+		--xy-controls-button-border-color: var(--ln);
+		--xy-controls-box-shadow: var(--lgRim), var(--popSh);
+		--xy-minimap-background-color: var(--popBg);
+		--xy-minimap-mask-background-color: var(--scrim);
+		--xy-minimap-mask-stroke-color: var(--ln2);
+		--xy-minimap-mask-stroke-width: 1;
+		--xy-minimap-node-background-color: var(--p3);
+		--xy-minimap-node-stroke-color: var(--ln);
+		--xy-minimap-node-stroke-width: 1;
 		--xy-attribution-background-color: transparent;
-		background: transparent;
 		font-family: var(--sans);
 	}
-	/* Edge labels: "fail ×3" as a mono 10px pill in the edge's hue. */
-	.graph-wrap :global(.svelte-flow__edge-label) {
-		font-family: var(--mono);
-		font-size: 10px;
-		font-weight: 600;
-		padding: 0 6px;
-		line-height: 16px;
-		border-radius: 999px;
-		border: 1px solid var(--ln2);
-		background: var(--popBg);
-		white-space: nowrap;
+
+	/* Edges (DESIGN 3.6). Each carries its hue as --eh; width, dash and the
+	 * fallback fade come from the flow tokens. Hover and selection thicken
+	 * the stroke on the spring (interruptible: it retargets mid-way). */
+	.graph-wrap :global(.svelte-flow__edge .svelte-flow__edge-path) {
+		stroke: var(--eh, var(--xy-edge-stroke));
+		transition:
+			stroke-width var(--dur-spring) var(--spring),
+			filter var(--dur-fade) var(--ease-out);
+	}
+	.graph-wrap :global(.e-success .svelte-flow__edge-path) {
+		stroke-width: var(--edge-w-strong);
+	}
+	.graph-wrap :global(.e-dash .svelte-flow__edge-path) {
+		stroke-dasharray: var(--edge-dash);
+	}
+	.graph-wrap :global(.e-then .svelte-flow__edge-path) {
+		opacity: var(--edge-fallback-o);
+	}
+	.graph-wrap :global(.e-data .svelte-flow__edge-path) {
+		stroke: var(--ln2);
+		stroke-dasharray: var(--edge-dash-data);
+		stroke-linecap: round;
 	}
 	.graph-wrap :global(.svelte-flow__edge.selected .svelte-flow__edge-path),
-	.graph-wrap :global(.svelte-flow__edge:hover .svelte-flow__edge-path) {
-		stroke-width: 2.6 !important;
-		filter: drop-shadow(0 0 4px currentColor);
+	.graph-wrap :global(.svelte-flow__edge.selectable:hover .svelte-flow__edge-path) {
+		stroke-width: var(--edge-w-hover);
+		filter: drop-shadow(0 0 var(--glow-xs) var(--eh, var(--brand)));
 	}
-	/* Handles: 8px dots in the edge colour; the target is neutral. */
+	/* Edge labels: "fail ×3" as a mono pill in the edge's hue. */
+	.graph-wrap :global(.svelte-flow__edge-label) {
+		font-family: var(--mono);
+		font-size: var(--fs-id);
+		font-weight: 600;
+		padding: 0 6px;
+		border-radius: var(--r-pill);
+		border: 1px solid var(--eh-ln, var(--ln2));
+		color: var(--eh, var(--tx));
+		white-space: nowrap;
+	}
+
+	/* Handles: dots in their edge's hue (--xy-handle-background-color, set
+	 * per handle), sized by --handle (data dots shrink it through --hs). */
 	.graph-wrap :global(.svelte-flow__handle) {
-		width: 8px;
-		height: 8px;
-		min-width: 8px;
-		min-height: 8px;
-		border: 1.5px solid var(--body);
-		background: var(--mut);
+		width: var(--hs, var(--handle));
+		height: var(--hs, var(--handle));
+		min-width: var(--hs, var(--handle));
+		min-height: var(--hs, var(--handle));
+		transition: box-shadow var(--dur-fade) var(--ease-out);
 	}
 	.graph-wrap :global(.svelte-flow__handle.connectingto),
-	.graph-wrap :global(.svelte-flow__handle:hover) {
+	.graph-wrap :global(.svelte-flow__handle.connectable:hover) {
 		box-shadow: 0 0 0 3px var(--brandBg);
 	}
-	/* Controls: a control-glass stack, bottom-left. */
-	.graph-wrap :global(.svelte-flow__controls) {
-		background: var(--lgBg), var(--popBg);
-		border: 1px solid var(--lgLn);
-		border-radius: 12px;
+
+	/* Controls: a popover-glass stack (.lg-pop) with rounded corners. */
+	.graph-wrap :global(.fg-ctl) {
+		border-radius: var(--r-btn);
 		overflow: hidden;
-		box-shadow: var(--lgRim);
-		margin: 12px;
-	}
-	.graph-wrap :global(.svelte-flow__controls-button) {
-		background: transparent;
-		border: 0;
-		border-bottom: 1px solid var(--ln);
-		color: var(--mut);
-		width: 28px;
-		height: 26px;
-		padding: 0;
-		border-radius: 0;
-		box-shadow: none;
-		font-size: 13px;
-	}
-	.graph-wrap :global(.svelte-flow__controls-button:last-child) {
-		border-bottom: 0;
-	}
-	.graph-wrap :global(.svelte-flow__controls-button:hover) {
-		background: var(--p3);
-		color: var(--tx);
-	}
-	.graph-wrap :global(.svelte-flow__controls-button svg) {
-		fill: currentColor;
-		max-width: 11px;
-		max-height: 11px;
-	}
-	.graph-wrap :global(.svelte-flow__attribution) {
-		opacity: 0.4;
 	}
 	.graph-wrap :global(.svelte-flow__attribution a) {
 		color: var(--fnt);
+	}
+	/* Marching dashes stop for reduced motion; the dash itself stays. */
+	@media (prefers-reduced-motion: reduce) {
+		.graph-wrap :global(.svelte-flow__edge.animated path) {
+			animation: none;
+		}
 	}
 </style>

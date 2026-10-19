@@ -54,7 +54,7 @@
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		border-radius: 12px;
+		border-radius: var(--r-btn);
 		padding: 5px 5px 5px 7px;
 		min-width: 0;
 	}
@@ -74,7 +74,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		font-weight: 800;
 	}
 	.ros .bang {
@@ -100,7 +100,7 @@
 	.aside {
 		font-family: var(--serif);
 		font-style: italic;
-		font-size: 14px;
+		font-size: var(--fs-aside);
 		color: var(--mut);
 		white-space: nowrap;
 	}

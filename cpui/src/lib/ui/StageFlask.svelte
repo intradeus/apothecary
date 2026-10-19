@@ -56,6 +56,10 @@
 		right: -2px;
 		bottom: 0;
 		background: color-mix(in oklch, var(--h) 75%, transparent);
+		/* The level rides the spring when the stage's status changes. */
+		transition:
+			height var(--dur-spring) var(--spring),
+			background var(--dur-fade) var(--ease-out);
 	}
 	.slosh {
 		animation: ap-slosh 2.4s ease-in-out infinite;
@@ -68,7 +72,7 @@
 		height: 3px;
 		margin-left: -1.5px;
 		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.8);
+		background: var(--bubble);
 		animation: ap-bubble 1.8s ease-in infinite;
 	}
 	@media (prefers-reduced-motion: reduce) {

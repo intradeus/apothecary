@@ -3,41 +3,36 @@
 	// queue, against the guild's limits. Reads the shared fleet poll.
 	import { to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
+	import Meter from '$lib/ui/Meter.svelte';
 	import Updated from '$lib/ui/Updated.svelte';
+	import { I } from '$lib/ui/icons';
 
-	const maxRuns = $derived(fleet.settings?.maxConcurrentRuns ?? 0);
-	const maxEnvs = $derived(fleet.settings?.maxEnvironments ?? 0);
-	const pct = (n: number, max: number) => (max > 0 ? Math.min(100, (n / max) * 100) : 0);
 	const next = $derived(
 		[...fleet.queued].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
 	);
 </script>
 
-<section class="cap c">
-	<div class="tile">
-		<div class="lbl">Concurrent runs</div>
-		<div class="val mono">
-			{fleet.slots.length}<span class="fnt">/{maxRuns || '∞'}</span>
-		</div>
-		<div class="bar">
-			<span class="fill brand" style:width="{pct(fleet.slots.length, maxRuns)}%"></span>
-		</div>
-		<div class="sub">a run parked on a human gives its slot back</div>
+<section class="cap c pane">
+	<div class="card-in tile">
+		<Meter
+			label="Concurrent runs"
+			value={fleet.capacity.runs.used}
+			max={fleet.capacity.runs.max}
+			sub="a run parked on a human gives its slot back"
+		/>
 	</div>
-	<div class="tile">
-		<div class="lbl">Environments</div>
-		<div class="val mono">
-			{fleet.envs.length}<span class="fnt">/{maxEnvs || '∞'}</span>
-		</div>
-		<div class="bar">
-			<span class="fill grn" style:width="{pct(fleet.envs.length, maxEnvs)}%"></span>
-		</div>
-		<div class="sub">at the cap, new runs are refused</div>
+	<div class="card-in tile">
+		<Meter
+			label="Environments"
+			value={fleet.capacity.envs.used}
+			max={fleet.capacity.envs.max}
+			tone="grn"
+			sub="at the cap, new runs are refused"
+		/>
 	</div>
-	<div class="tile">
-		<div class="lbl">Queue</div>
-		<div class="val mono">
-			{fleet.queued.length}<span class="fnt">{' pending'}</span>
+	<div class="card-in tile q">
+		<div class="row spread nowrap">
+			<span>Queue</span><span class="mono tx">{fleet.capacity.queued} pending</span>
 		</div>
 		<div class="sub ell">
 			{#if next}next: <a href={to.run(next.id)}>{next.title}</a> · FIFO{:else}nothing waiting for a
@@ -45,70 +40,38 @@
 		</div>
 	</div>
 	<div class="end">
-		<a href={to.system('limits')}>Limits →</a>
+		<a href={to.system('limits')}>Limits {I.forward}</a>
 		<Updated at={fleet.updatedAt} paused={fleet.paused} />
 	</div>
 </section>
 
 <style>
 	.cap {
-		border-radius: 16px;
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
 		gap: 6px;
 		padding: 8px;
-		flex: none;
 	}
 	.tile {
-		background: var(--p2);
-		border-radius: 13px;
-		padding: 8px 12px 9px;
+		padding: 9px 12px 10px;
+		min-width: 0;
+	}
+	.q {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-		min-width: 0;
-	}
-	.lbl {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
-	.val {
-		font-size: 15px;
-		font-weight: 600;
+	.q .row {
+		gap: 8px;
 	}
-	.val .fnt {
-		font-weight: 500;
-		font-size: 12px;
-	}
-	.bar {
-		height: 5px;
-		border-radius: 3px;
-		background: var(--p1);
-		border: 1px solid var(--ln);
-		overflow: hidden;
-	}
-	.fill {
-		display: block;
-		height: 100%;
-		border-radius: 3px;
-	}
-	.fill.brand {
-		background: linear-gradient(
-			90deg,
-			color-mix(in oklch, var(--brand) 55%, transparent),
-			var(--brand)
-		);
-	}
-	.fill.grn {
-		background: linear-gradient(
-			90deg,
-			color-mix(in oklch, var(--grn) 55%, transparent),
-			var(--grn)
-		);
+	.q .mono {
+		font-size: var(--fs-meta);
 	}
 	.sub {
-		font-size: 11px;
 		color: var(--fnt);
+		font-size: var(--fs-help);
 	}
 	.end {
 		display: flex;
@@ -116,7 +79,7 @@
 		justify-content: space-between;
 		align-items: flex-end;
 		padding: 6px 8px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		gap: 8px;
 		white-space: nowrap;
 	}

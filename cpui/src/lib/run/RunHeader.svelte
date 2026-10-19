@@ -7,8 +7,12 @@
 	import { api } from '$lib/api';
 	import { currentGuild, to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
-	import { fmtClock, fmtCost, shortId, stateHue } from '$lib/format';
-	import { lore, loreLc, isLore } from '$lib/lore';
+	import { onMount } from 'svelte';
+	import type { MergeRequestLive } from '$lib/domain';
+	import { ago, fmtAbs, fmtCost, fmtHoursMinutes, shortId, stateHue } from '$lib/format';
+	import { esc } from '$lib/ui/html';
+	import { I } from '$lib/ui/icons';
+	import { toast } from '$lib/ui/toast.svelte';
 	import Breadcrumbs, { type Crumb } from '$lib/ui/Breadcrumbs.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import GlassGroup from '$lib/ui/GlassGroup.svelte';
@@ -17,7 +21,7 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import LayoutsPopover from '$lib/desk/LayoutsPopover.svelte';
 	import type { DeskState } from '$lib/desk/desk.svelte';
-	import MergeStatus from './MergeStatus.svelte';
+	import MrStatus from './MrStatus.svelte';
 	import RestartModal from './RestartModal.svelte';
 	import { accentSplit } from './derive';
 	import type { RunStore } from './store.svelte';
@@ -35,7 +39,7 @@
 		...(run.projectId
 			? [
 					{
-						label: project?.name ?? (rs.projectName || loreLc('workshop')),
+						label: project?.name ?? (rs.projectName || 'workshop'),
 						href: to.workshop(run.projectId)
 					}
 				]
@@ -51,14 +55,20 @@
 			: []),
 		{ label: sid, mono: true }
 	]);
+	// How long the batch has brewed: ticking while the run lives, stopped at
+	// its last word once it ends (updatedAt for runs that never said one).
+	const END = new Set(['run_completed', 'run_failed', 'run_abandoned']);
+	const endedAt = $derived(
+		rs.terminal ? (rs.events.findLast((e) => END.has(e.type))?.ts ?? run.updatedAt) : undefined
+	);
+	const brewed = $derived(
+		fmtHoursMinutes(
+			(endedAt ? new Date(endedAt).getTime() : rs.now) - new Date(run.createdAt).getTime()
+		)
+	);
 	const glow = $derived(`color-mix(in oklch, ${stateHue[run.state]} 45%, transparent)`);
 	const active = $derived(!rs.terminal);
 	const wsName = $derived(run.envId ?? 'the workspace');
-	const esc = (s: string) =>
-		s.replace(
-			/[&<>"']/g,
-			(c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!
-		);
 
 	// The stage a retry re-enters: where the run stopped.
 	const retryStage = $derived(
@@ -82,18 +92,41 @@
 		if (envOpen) return rs.usePorts();
 	});
 
-	async function act(which: typeof busy, fn: () => Promise<unknown>) {
+	async function act(which: typeof busy, fn: () => Promise<unknown>): Promise<boolean> {
 		busy = which;
-		await rs.act(fn);
+		const ok = await rs.act(fn);
 		busy = '';
+		return ok;
 	}
+
+	// What the forge says about the run's merge requests right now, polled
+	// while the run is alive; an observation, not part of the run's record.
+	let mrLive = $state<MergeRequestLive[]>([]);
+	const hasMr = $derived(run.mrs.length > 0 || !!run.mrUrl);
+	async function loadMrs() {
+		if (!hasMr) return;
+		try {
+			mrLive = await api.runs.mrStatus(run.id);
+		} catch {
+			// The header must not break on a forge hiccup; the next poll retries.
+		}
+	}
+	onMount(() => {
+		void loadMrs();
+		const t = setInterval(() => active && !document.hidden && loadMrs(), 30_000);
+		return () => clearInterval(t);
+	});
+	const mrShown = $derived([
+		...mrLive.filter((m) => m.state === 'open' || m.error),
+		...mrLive.filter((m) => m.state === 'merged' && !m.error)
+	]);
 
 	async function stop() {
 		const ok = await confirmDialog({
 			title: `Stop run ${sid}?`,
-			body: `<span style="color:var(--tx)">The current turn is cancelled and the run becomes <b>abandoned</b>. You can still retry a stage or start a new run from it.</span><br><br>${
+			body: `<span class="tx">The current turn is cancelled and the run becomes <b>abandoned</b>. You can still retry a stage or start a new run from it.</span><br><br>${
 				run.envId
-					? `Workspace <span style="font-family:var(--mono)">${esc(run.envId)}</span> stays up until the reaper removes it.`
+					? `Workspace <span class="mono">${esc(run.envId)}</span> stays up until the reaper removes it.`
 					: 'No workspace is running for it.'
 			} The record and timeline are kept.`,
 			action: 'Stop run'
@@ -104,14 +137,19 @@
 	async function archive() {
 		const ok = await confirmDialog({
 			title: `Archive run ${sid}?`,
-			body: `<span style="color:var(--tx)">The run is filed away as <b>archived</b> and leaves the lists; its record and timeline are kept.</span><br><br>${
+			body: `<span class="tx">The run is filed away as <b>archived</b> and leaves the lists; its record and timeline are kept.</span><br><br>${
 				run.envId
-					? `Workspace <span style="font-family:var(--mono)">${esc(run.envId)}</span> is <b>destroyed</b> — anything not committed or captured is gone.`
+					? `Workspace <span class="mono">${esc(run.envId)}</span> is <b>destroyed</b> — anything not committed or captured is gone.`
 					: 'It has no workspace left to destroy.'
 			}`,
 			action: 'Archive run'
 		});
-		if (ok) await act('archive', () => api.runs.archive(run.id));
+		if (ok && (await act('archive', () => api.runs.archive(run.id))))
+			toast(`Run ${sid} archived`, {
+				action: run.ticketId
+					? { label: 'Open ticket', run: () => goto(to.ticket(run.ticketId!)) }
+					: undefined
+			});
 	}
 
 	async function retry() {
@@ -143,13 +181,18 @@
 		rebuildOpen = false;
 		// The request blocks for the whole build; the badge and the Logs tail
 		// show progress meanwhile.
-		await act('rebuild', () => api.runs.rebuild(run.id, noCache));
+		toast(noCache ? 'Rebuild started, without cache' : 'Rebuild started', {
+			tone: 'info',
+			action: { label: 'Watch logs', run: () => desk.reveal('logs') }
+		});
+		if (await act('rebuild', () => api.runs.rebuild(run.id, noCache))) toast('Workspace rebuilt');
 	}
 
 	async function copy(l: { kind: string; command?: string }) {
 		if (!l.command) return;
 		try {
 			await navigator.clipboard.writeText(l.command);
+			toast(`Copied the ${l.kind} command`);
 			copied = l.kind;
 			setTimeout(() => copied === l.kind && (copied = ''), 1500);
 		} catch {
@@ -169,7 +212,7 @@
 		run.mrs.forEach((mr, i) => {
 			seen.add(mr.repo);
 			slots.push({
-				label: `${name(i)} ↗`,
+				label: `${name(i)} ${I.external}`,
 				url: mr.url,
 				title: `${mr.repo !== 'repo' ? mr.repo + ': ' : ''}${mr.branch}${mr.target ? ' → ' + mr.target : ''}`
 			});
@@ -177,21 +220,28 @@
 		for (const c of run.checkouts) {
 			const key = c.primary ? 'repo' : c.name;
 			if (seen.has(key) || seen.has(c.name) || slots.length >= n) continue;
-			slots.push({ label: `${name(slots.length)} —`, title: `${c.name}: not opened yet` });
+			slots.push({ label: `${name(slots.length)} ${I.none}`, title: `${c.name}: not opened yet` });
 		}
 		// Runs from before multi-repo carry only mrUrl, no mrs list.
 		if (!slots.length && run.mrUrl)
-			slots.push({ label: 'MR ↗', url: run.mrUrl, title: run.branch ?? 'Merge request' });
-		if (!slots.length) slots.push({ label: 'MR —', title: 'Not opened yet' });
+			slots.push({
+				label: `MR ${I.external}`,
+				url: run.mrUrl,
+				title: run.branch ?? 'Merge request'
+			});
+		if (!slots.length) slots.push({ label: `MR ${I.none}`, title: 'Not opened yet' });
 		return slots;
 	});
 </script>
 
 <header class="rh">
 	<div class="rbadge lg" style:--glow={glow}>
-		<div class="bt"><span>{isLore() ? lore('run') : 'Run'}</span><span class="mono">Nº</span></div>
+		<div class="bt"><span>Batch</span><span class="mono">Nº</span></div>
 		<div class="bid">{shortId(run.id, '')}</div>
-		<div class="bb">{isLore() ? 'brewed' : 'started'} {fmtClock(run.createdAt)}</div>
+		<div class="bb" title="Started {fmtAbs(run.createdAt)} · {ago(run.createdAt, rs.now)}">
+			{rs.terminal ? 'brewed' : 'brewing'}
+			{brewed}
+		</div>
 		<span class="bg"></span>
 	</div>
 
@@ -202,9 +252,11 @@
 				bind:this={splitBtn}
 				class="btn-sel layout"
 				title="Windows & layouts"
+				aria-expanded={desk.menuOpen}
 				onclick={() => (desk.menuOpen = !desk.menuOpen)}
 			>
-				<span class="lg-ic"><span></span><span></span><span></span></span>{desk.label} ▾
+				<span class="lg-ic"><span></span><span></span><span></span></span>{desk.label}
+				{I.menu}
 			</button>
 		</div>
 		<div class="trow">
@@ -215,17 +267,17 @@
 		</div>
 		<div class="meta">
 			{#if run.ticketId}
-				<a class="tk" href={to.ticket(run.ticketId)}
-					>{#if ticketKey}<span class="tag">{ticketKey}</span>{/if}ticket ↗</a
+				<a class="tk tx" href={to.ticket(run.ticketId)}
+					>{#if ticketKey}<span class="tag">{ticketKey}</span>{/if}ticket {I.external}</a
 				>
 			{/if}
 			<span
 				>flow <span class="tx">{run.flowName}</span>{#if run.flowHash}
-					<span class="mono hash">@{run.flowHash.slice(0, 6)}</span>{/if}</span
+					<span class="mono hash fnt">@{run.flowHash.slice(0, 6)}</span>{/if}</span
 			>
 			{#if run.branch}
 				<span
-					class="mono br"
+					class="mono br ell"
 					title="This run's branch, forked off {run.sourceBranch ?? 'the default'}"
 					><span class="tx">{run.branch}</span> ← {run.sourceBranch ?? 'default'}</span
 				>
@@ -246,32 +298,33 @@
 					<button
 						class="btn-primary"
 						disabled={busy !== ''}
+						aria-busy={busy === 'play'}
 						onclick={() => act('play', () => api.runs.play(run.id))}
 						title="Continue where it left off — the in-flight stage re-enters (agent sessions resume); retry budgets are untouched"
-						>▶ Resume</button
+						>{I.play} Resume</button
 					>
 				{:else if run.state !== 'pending'}
 					<button
 						disabled={busy !== ''}
+						aria-busy={busy === 'pause'}
 						onclick={() => act('pause', () => api.runs.pause(run.id))}
 						title="Park the run: the current attempt is stopped, the workspace stays up for inspection, and nothing moves until Resume"
-						>{busy === 'pause' ? 'Pausing…' : '❚❚ Pause'}</button
+						>{I.pause} Pause</button
 					>
 				{/if}
-				<button class="btn-danger" disabled={busy !== ''} onclick={stop}
-					>{busy === 'stop' ? 'Stopping…' : '■ Stop…'}</button
+				<button class="btn-danger" disabled={busy !== ''} aria-busy={busy === 'stop'} onclick={stop}
+					>{I.stop} Stop…</button
 				>
 			{:else}
 				{#if run.state === 'failed' || run.state === 'abandoned'}
 					<button
 						class="btn-primary"
 						disabled={busy !== ''}
+						aria-busy={busy === 'retry'}
 						onclick={retry}
 						title="Re-run {retryStage ??
 							'the failed stage'} in the same workspace — keeps the plan, build and commits; only retries what failed"
-						>{busy === 'retry'
-							? 'Retrying…'
-							: `↻ Retry${retryStage ? ` ${retryStage}` : ''}`}</button
+						>{I.retry} Retry{retryStage ? ` ${retryStage}` : ''}</button
 					>
 				{/if}
 				<button
@@ -281,8 +334,11 @@
 					>New run from this…</button
 				>
 				{#if run.state !== 'archived'}
-					<button class="arch" disabled={busy !== ''} onclick={archive}
-						>{busy === 'archive' ? 'Archiving…' : 'Archive…'}</button
+					<button
+						class="btn-danger"
+						disabled={busy !== ''}
+						aria-busy={busy === 'archive'}
+						onclick={archive}>Archive…</button
 					>
 				{/if}
 			{/if}
@@ -296,31 +352,34 @@
 				bind:this={envBtn}
 				disabled={!rs.hasWorkspace || rs.links.length === 0}
 				title={rs.links.length ? 'Environment links' : 'No environment links'}
-				onclick={() => (envOpen = !envOpen)}>Env ▾</button
+				aria-expanded={envOpen}
+				onclick={() => (envOpen = !envOpen)}>Env {I.menu}</button
 			>
 			<button
 				disabled={!rs.hasWorkspace || busy === 'editor'}
+				aria-busy={busy === 'editor'}
 				onclick={openEditor}
 				title="VS Code (code-server) in the browser on this workspace — the repo, the agent's commits, a terminal"
-				>{busy === 'editor' ? 'Opening…' : 'Editor ↗'}</button
+				>Editor {I.external}</button
 			>
 			<button
 				bind:this={rebuildBtn}
 				disabled={!canRebuild || busy === 'rebuild'}
+				aria-busy={busy === 'rebuild'}
+				aria-expanded={rebuildOpen}
 				title={canRebuild
 					? 'Recreate the container in place — the run and its commits are untouched'
 					: run.envId
 						? 'Pause or stop the run first — a live run refuses a rebuild'
 						: 'No workspace to rebuild'}
-				onclick={() => (rebuildOpen = !rebuildOpen)}
-				>{busy === 'rebuild' ? 'Rebuilding…' : 'Rebuild ▾'}</button
+				onclick={() => (rebuildOpen = !rebuildOpen)}>Rebuild {I.menu}</button
 			>
 		</GlassGroup>
 
 		<GlassGroup>
 			{#snippet label()}
 				<span>Merge requests</span>
-				{#if run.mrs.length || run.mrUrl}<MergeStatus runId={run.id} {active} />{/if}
+				{#each mrShown as mr (mr.repo + mr.branch)}<MrStatus {mr} repo={mrLive.length > 1} />{/each}
 			{/snippet}
 			{#each mrSlots as m, i (i)}
 				{#if m.url}
@@ -341,40 +400,68 @@
 
 <LayoutsPopover {desk} anchor={splitBtn} />
 
-<Popover anchor={envBtn} bind:open={envOpen} placement="below-end" width={270}>
-	<div class="ph">Environment links</div>
+<Popover
+	anchor={envBtn}
+	bind:open={envOpen}
+	placement="below-end"
+	width={300}
+	title="Environment"
+	legend="{rs.links.length} link{rs.links.length === 1 ? '' : 's'}"
+>
 	{#each rs.links as l (l.kind + (l.url ?? l.command ?? ''))}
 		{#if l.url}
 			<a class="mi" href={l.url} target="_blank" rel="noreferrer" title={l.url}>
-				<span class="grow">{l.kind}</span><span>↗</span>
+				<span class="col"><span>{l.kind}</span><span class="sub ell">{l.url}</span></span>
+				<span class="g">{I.external}</span>
 			</a>
 		{:else if l.command}
 			<button class="mi" title="Copy: {l.command}" onclick={() => copy(l)}>
-				<span class="grow cmd">{l.command}</span>
-				<span class="cp" class:ok={copied === l.kind}
-					>{copied === l.kind ? 'copied ✓' : 'copy'}</span
+				<span class="col"><span>{l.kind}</span><span class="sub mono ell">{l.command}</span></span>
+				<span class="cp" class:hue-grn={copied === l.kind}
+					>{copied === l.kind ? `copied ${I.ok}` : 'copy'}</span
 				>
 			</button>
 		{/if}
 	{/each}
 </Popover>
 
-<Popover anchor={rebuildBtn} bind:open={rebuildOpen} placement="below-end" width={300}>
-	<button class="mi col" onclick={() => rebuild(false)}>
-		<span>Rebuild workspace</span>
-		<span class="sub"
-			>Recreate the container in place, re-run setup. The run and its commits stay.</span
-		>
+<Popover
+	anchor={rebuildBtn}
+	bind:open={rebuildOpen}
+	placement="below-end"
+	width={300}
+	title="Rebuild"
+	legend="the run is untouched"
+>
+	<button class="mi" onclick={() => rebuild(false)}>
+		<span class="col wrap">
+			<span>Rebuild workspace</span>
+			<span class="sub"
+				>Recreate the container in place, re-run setup. The run and its commits stay.</span
+			>
+		</span>
 	</button>
-	<button class="mi col" onclick={() => rebuild(true)}>
-		<span>Rebuild without cache</span>
-		<span class="sub"
-			>Every layer from scratch — for a moved base tag or a stale layer the cache can't see. Slow.</span
-		>
+	<button class="mi" onclick={() => rebuild(true)}>
+		<span class="col wrap">
+			<span>Rebuild without cache</span>
+			<span class="sub"
+				>Every layer from scratch — for a moved base tag or a stale layer the cache can't see. Slow.</span
+			>
+		</span>
 	</button>
 </Popover>
 
-<RestartModal {rs} bind:open={restartOpen} onstarted={(id) => goto(to.run(id))} />
+<RestartModal
+	{rs}
+	bind:open={restartOpen}
+	onstarted={(id) => {
+		const from = run.id;
+		toast(`New run ${shortId(id)} started`, {
+			action: { label: `Back to ${sid}`, run: () => goto(to.run(from)) }
+		});
+		goto(to.run(id));
+	}}
+/>
 
 <style>
 	.rh {
@@ -388,7 +475,7 @@
 	.rbadge {
 		width: 96px;
 		height: 78px;
-		border-radius: 17px;
+		border-radius: var(--r-group);
 		display: flex;
 		flex-direction: column;
 		justify-content: space-between;
@@ -398,19 +485,19 @@
 	}
 	.bt,
 	.bb {
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		color: var(--mut);
 		display: flex;
 		justify-content: space-between;
 	}
 	.bt .mono {
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 	}
 	.bid {
 		font-family: var(--mono);
 		font-weight: 600;
-		font-size: 21px;
-		letter-spacing: -0.02em;
+		font-size: var(--fs-mark);
+		letter-spacing: var(--tr-display);
 		line-height: 1;
 	}
 	.bg {
@@ -452,8 +539,8 @@
 		flex: none;
 		margin-left: auto;
 		padding: 3px 10px;
-		border-radius: 9px;
-		font-size: 11.5px;
+		border-radius: var(--r-tab);
+		font-size: var(--fs-help);
 		gap: 7px;
 	}
 	.lg-ic {
@@ -465,7 +552,7 @@
 		gap: 2px;
 	}
 	.lg-ic > span {
-		border-radius: 2px;
+		border-radius: calc(var(--r-xs) / 2);
 		border: 1.2px solid currentColor;
 	}
 	.lg-ic > span:first-child {
@@ -479,11 +566,11 @@
 	}
 	h1 {
 		min-width: 0;
-		font-size: 24px;
+		font-size: var(--fs-empty);
 		overflow-wrap: anywhere;
 	}
 	h1 .accent {
-		font-size: 29px;
+		font-size: var(--fs-display);
 	}
 	.trow :global(> :last-child) {
 		flex: none;
@@ -494,38 +581,30 @@
 		flex-wrap: wrap;
 		gap: 4px 14px;
 		color: var(--mut);
-		font-size: 12px;
+		font-size: var(--fs-label);
 		align-items: center;
 		min-width: 0;
+	}
+	.meta .tx {
+		font-weight: 500;
 	}
 	.tk {
 		display: inline-flex;
 		gap: 6px;
 		align-items: center;
-		color: var(--tx);
-	}
-	.tx {
-		color: var(--tx);
-		font-weight: 500;
 	}
 	.hash {
-		font-size: 11px;
-		color: var(--fnt);
-		font-weight: 500;
+		font-size: var(--fs-meta);
 	}
 	.br {
-		font-size: 11.5px;
 		font-weight: 400;
 		max-width: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
-	.br .tx {
+	.meta .br .tx {
 		font-weight: 400;
 	}
 	.cost {
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
 	.groups {
 		display: flex;
@@ -534,49 +613,23 @@
 		justify-content: flex-end;
 		flex-wrap: wrap;
 	}
-	.arch {
-		background: transparent;
-		box-shadow: none;
-		color: var(--mut);
-		border-color: var(--ln);
-	}
-	.arch:hover {
-		color: var(--tx);
-	}
-	.ph {
-		padding: 5px 8px 6px;
-		font-size: 11px;
-		color: var(--mut);
-	}
-	.grow {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.cmd {
-		font-family: var(--mono);
-		font-size: 11.5px;
-	}
 	.cp {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		font-weight: 600;
 		color: var(--mut);
 	}
-	.cp.ok {
+	.cp.hue-grn {
 		color: var(--grn);
 	}
-	:global(.pop) .col {
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 2px;
+	/* Menu rows don't wrap; these explain themselves in a sentence. */
+	.wrap {
 		white-space: normal;
 	}
-	.col .sub {
-		color: var(--mut);
-		font-size: 11px;
+	.wrap .sub {
 		line-height: 1.35;
 	}
+	/* Container queries on the run page's own width (the desk beside the
+	 * sidebar), at the shared breakpoints. */
 	@container runpage (max-width: 1180px) {
 		.rh {
 			grid-template-columns: auto minmax(0, 1fr);
@@ -587,7 +640,7 @@
 			justify-content: flex-start;
 		}
 	}
-	@container runpage (max-width: 640px) {
+	@container runpage (max-width: 760px) {
 		.rbadge {
 			display: none;
 		}

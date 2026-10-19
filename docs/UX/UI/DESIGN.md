@@ -19,23 +19,23 @@ The visual metaphor is a **dark medicine bottle**:
 The UI is professional and dense (an IDE-grade power tool). The lore appears only in:
 1. a serif italic accent font for display words
 2. vial/flask iconography for progress
-3. a small set of renamed nouns (below), shown through a `flavor` switch (`lore` | `plain`). Lore is the default.
+3. a small set of renamed nouns (below). There is one vocabulary: no plain/lore switch.
 
-| Domain object | Plain label | Lore label |
-|---|---|---|
-| Organisation | Organisation / org | **Guild** |
-| Project | Project | **Workshop** |
-| Run | Run | Batch (badge) · "brewing" (running) · "batch spoiled" (failed) |
-| Flow | Flow | The formula / recipe |
-| Plan | Plan | The recipe |
-| "Needs you" | Needs you | Awaiting your hand |
-| Composer placeholder | Message builder… | Whisper to the builder… |
-| Empty window desk | — | "An empty bench" |
-| Egress blocked | — | "toxic hosts, kept off the shelf" |
-| Create org | + New organisation | + Found a guild |
+| Domain object | UI label |
+|---|---|
+| Organisation | **Guild** |
+| Project | **Workshop** |
+| Run | Batch (badge) · "brewing" (running) · "batch spoiled" (failed) |
+| Flow | The formula |
+| Plan | The recipe |
+| "Needs you" | Awaiting your hand |
+| Composer placeholder | Whisper to the builder… |
+| Empty window desk | "An empty bench" |
+| Egress blocked | "toxic hosts, kept off the shelf" |
+| Create org | + Found a guild |
 
 Rules:
-- Ticket, stage, ping, workspace, MR, egress and all state names stay technical in both flavors. Never rename status vocabulary.
+- Ticket, stage, ping, workspace, MR, egress and all state names stay technical. Never rename status vocabulary.
 - Copy is short, sentence case, and uses no exclamation marks.
 - Destructive dialogs say exactly what happens to the **run** vs the **workspace**.
 
@@ -236,9 +236,36 @@ The sidebar stays **dark green in light mode too**, with light text.
 | `ap-slosh` | translateX ±2px | liquid in the active stage vial |
 | `ap-bubble` | translateY −10px + fade | bubble rising in the active stage vial |
 
-- Hovers are instant (no transitions on dense UI).
-- Popovers appear without animation, or with a 120ms fade at most.
-- Respect `prefers-reduced-motion`: stop the sigils animation, slosh and bubbles. Pulses may stay as static dots.
+**Feel.** These rules follow Apple's fluid-interface principles. The implementation is in `cpui/src/styles/motion.css` and `cpui/src/lib/ui/motion.ts`, with the tokens in `cpui/src/styles/tokens.css`.
+
+- **Respond on press.**
+  - Hovers are instant, with no transitions on dense UI.
+  - Buttons sink on pointer-down (`--press-scale` .97, 100ms) and spring back on release.
+  - Options inside a control (segments, tabs, menu rows, list rows) dim on press instead of scaling.
+- **One spring for movement.** `--spring` is critically damped (damping 1.0, response .35s).
+  - `--spring-bounce` (damping .8, response .4s) is only for things released with momentum: a dragged window, a flicked sheet.
+  - Both are the real spring equations sampled into CSS `linear()`, so transitions stay interruptible: flipping a state mid-flight retargets from the live value.
+- **Enter and exit along the same path.**
+  - Popovers and menus materialise from their trigger: scale .96, blur and opacity together, with `transform-origin` on the trigger's side.
+  - Dialogs materialise over a fading scrim.
+  - Sheets and toasts slide from their edge and leave the same way.
+  - An interrupted open or close reverses from where it is.
+- **Selection slides.** In segmented controls, tabs and side navs, one bead springs between options.
+- **Gestures track 1:1.**
+  - A drag commits after a ~10px intent threshold and then follows the pointer from the grab offset, with pointer capture.
+  - At a limit it rubber-bands instead of stopping hard.
+  - On release, momentum is projected (decay .998) to choose the target, and the release velocity is handed to the animation.
+  - This applies to window tabs and gutters, sheets and toasts.
+- **Feedback.**
+  - Status: live dots, "updated 2s ago".
+  - Completion: a toast for things confirmed away from the pointer, and `aria-busy` on a button while its action runs.
+  - Error: inline, next to the cause.
+  - A count that goes up pops once.
+- **Theme changes cross-fade** (`--dur-theme`) instead of jumping in brightness.
+- **Respect the user's settings.**
+  - `prefers-reduced-motion` zeroes every move, so motion becomes cross-fades. The sigils animation, slosh and bubbles stop, and pulses become static dots.
+  - `prefers-reduced-transparency` makes the glass solid.
+  - `prefers-contrast: more` strengthens lines and secondary text.
 
 ### 2.6 Iconography
 

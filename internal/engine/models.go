@@ -75,6 +75,46 @@ func checkModels(ctx context.Context, res *Resolution, fl *flow.Flow) modelCheck
 	return out
 }
 
+// authCheckTimeout bounds probing every harness's credentials: one probe per
+// provider (per model on gateways), each up to 10 s.
+const authCheckTimeout = 30 * time.Second
+
+// checkAuth probes, per harness, the credentials of the providers the agent
+// stages' models route through — a revoked key otherwise passes every model
+// check (the catalog fallback needs none) and fails at the first stage, as
+// an agent that ends its turn without output.
+func checkAuth(ctx context.Context, res *Resolution, stages []flow.Stage) (rejected, unverified []string) {
+	if res.CheckAuth == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, authCheckTimeout)
+	defer cancel()
+	var order []string
+	models := map[string][]string{}
+	for i := range stages {
+		st := &stages[i]
+		if st.Type != flow.StageAgent || st.Model == "" {
+			continue
+		}
+		kind := st.Harness
+		if kind == "" {
+			kind = res.HarnessKind
+		}
+		if _, seen := models[kind]; !seen {
+			order = append(order, kind)
+		}
+		if !contains(models[kind], st.Model) {
+			models[kind] = append(models[kind], st.Model)
+		}
+	}
+	for _, kind := range order {
+		r, u := res.CheckAuth(ctx, kind, models[kind])
+		rejected = append(rejected, r...)
+		unverified = append(unverified, u...)
+	}
+	return rejected, unverified
+}
+
 func contains(xs []string, x string) bool {
 	for _, v := range xs {
 		if v == x {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/svelte';
 	import StageChip from '$lib/ui/StageChip.svelte';
+	import { EDGE_HUE, STAGE_HUE, hueOf } from '$lib/ui/hues';
 	import {
 		isFeedSentinel,
 		stageInputs,
@@ -13,6 +14,10 @@
 	let { id, data, selected }: NodeProps = $props();
 	const stage = $derived(data.stage as DocStage);
 	const entry = $derived(Boolean(data.entry));
+	// Lifecycle marks from FlowGraph: a stage just added materialises; a
+	// stage just deleted dematerialises before it goes.
+	const fresh = $derived(Boolean(data.fresh));
+	const leaving = $derived(Boolean(data.leaving));
 	const agents = $derived((data.agents ?? []) as AgentContract[]);
 	const actions = $derived((data.actions ?? []) as ActionContract[]);
 
@@ -38,14 +43,10 @@
 		updateNodeInternals(id);
 	});
 
-	// Stage-type hues (DESIGN 3.3), for the node's top accent.
-	const HUE: Record<string, string> = {
-		agent: 'var(--az)',
-		command: 'var(--grn)',
-		human_gate: 'var(--amb)',
-		action: 'var(--vio)',
-		wait: 'var(--tea)'
-	};
+	// A control handle in its edge's hue (DESIGN 3.6), through Svelte Flow's
+	// own handle colour variable.
+	const hh = (kind: keyof typeof EDGE_HUE) =>
+		`--xy-handle-background-color: var(--${EDGE_HUE[kind]})`;
 	const detail = $derived(
 		stage.type === 'agent'
 			? stage.agent || '(no agent)'
@@ -59,20 +60,27 @@
 	);
 </script>
 
-<div class="stage-node" class:selected style:--h={HUE[stage.type] ?? 'var(--mut)'}>
+<div
+	class="stage-node c h-{hueOf(STAGE_HUE, stage.type)}"
+	class:selected
+	class:materialize={fresh}
+	class:leaving
+>
 	<div class="head">
 		<!-- The un-id'd target: every control edge lands here unless the target
          bound the value it carries, in which case it lands on that dot. -->
-		<Handle type="target" position={Position.Left} class="h-in" style="top:20px" />
+		<Handle type="target" position={Position.Left} style="top: 20px" />
 		<StageChip type={stage.type} />
 		<span class="mono id">{stage.id}</span>
-		{#if entry}<span class="entry" title="The flow (or its phase) starts here">ENTRY</span>{/if}
+		{#if entry}<span
+				class="pill sm flat sq t-brand entry"
+				title="The flow (or its phase) starts here">entry</span
+			>{/if}
 		<Handle
 			id="success"
 			type="source"
 			position={Position.Right}
-			class="h-success"
-			style="top:20px"
+			style="top: 20px; {hh('success')}"
 		/>
 	</div>
 	<div class="meta" class:unset={detail.startsWith('(')}>{detail}</div>
@@ -128,13 +136,17 @@
 	{/if}
 
 	{#if stage.type === 'agent' || stage.type === 'command' || stage.type === 'wait'}
-		<Handle id="on_fail" type="source" position={Position.Bottom} class="h-fail" style="left:25%" />
+		<Handle
+			id="on_fail"
+			type="source"
+			position={Position.Bottom}
+			style="left: 25%; {hh('on_fail')}"
+		/>
 		<Handle
 			id="on_timeout"
 			type="source"
 			position={Position.Bottom}
-			class="h-timeout"
-			style="left:50%"
+			style="left: 50%; {hh('on_timeout')}"
 		/>
 	{/if}
 	{#if stage.type === 'agent' || stage.type === 'human_gate'}
@@ -142,35 +154,55 @@
 			id="on_reject"
 			type="source"
 			position={Position.Bottom}
-			class="h-reject"
-			style="left:75%"
+			style="left: 75%; {hh('on_reject')}"
 		/>
 	{/if}
 </div>
 
 <style>
-	/* Content glass, radius 14, a 3px top accent in the stage-type hue
-	   (DESIGN 7.8). */
+	/* Content glass (.c), radius 14, a top accent in the stage-type hue
+	   (DESIGN 7.8). Selection and hover ride the spring: the ring and glow
+	   grow in and retarget from wherever they are when the pointer moves on. */
 	.stage-node {
 		position: relative;
-		background: var(--cBg);
-		backdrop-filter: var(--cBf);
-		-webkit-backdrop-filter: var(--cBf);
-		border: 1px solid var(--cLn);
-		border-top: 3px solid var(--h);
-		border-radius: 14px;
-		box-shadow: var(--cSh);
+		border-top: var(--node-accent) solid var(--h);
+		border-radius: var(--r-card);
 		padding: 8px 12px 10px;
 		min-width: 190px;
 		max-width: 300px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--tx);
+		transition:
+			box-shadow var(--dur-spring) var(--spring),
+			border-color var(--dur-spring) var(--spring);
+	}
+	.stage-node:hover {
+		border-color: color-mix(in oklch, var(--h) 38%, transparent);
+		border-top-color: var(--h);
+		box-shadow:
+			0 0 0 1px color-mix(in oklch, var(--h) 38%, transparent),
+			0 0 var(--glow-md) color-mix(in oklch, var(--h) 14%, transparent),
+			var(--cSh);
 	}
 	.stage-node.selected {
+		border-color: var(--brandLn);
+		border-top-color: var(--h);
 		box-shadow:
 			0 0 0 1.5px var(--brand),
-			0 0 22px var(--brandGlow),
+			0 0 calc(var(--glow-md) * 1.5) var(--brandGlow),
 			var(--cSh);
+	}
+	/* Deleted: it leaves the way a surface arrives, in reverse. */
+	.leaving {
+		pointer-events: none;
+		animation: fsn-leave var(--dur-spring) var(--spring) both;
+	}
+	@keyframes fsn-leave {
+		to {
+			opacity: 0;
+			transform: scale(var(--enter-scale));
+			filter: blur(var(--enter-blur));
+		}
 	}
 	.head {
 		display: flex;
@@ -179,21 +211,13 @@
 	}
 	.id {
 		font-weight: 600;
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
 	.entry {
 		margin-left: auto;
-		font-size: 9px;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		color: var(--brand);
-		border: 1px solid var(--brandLn);
-		border-radius: 5px;
-		padding: 0 5px;
-		line-height: 15px;
 	}
 	.meta {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 		margin-top: 4px;
 		white-space: nowrap;
@@ -219,7 +243,7 @@
 		display: flex;
 		gap: 5px;
 		align-items: baseline;
-		font-size: 10px;
+		font-size: var(--fs-id);
 		line-height: 15px;
 		white-space: nowrap;
 		min-width: 0;
@@ -228,13 +252,13 @@
 		justify-content: flex-end;
 	}
 	.pname {
-		font-size: 10px;
+		font-size: var(--fs-id);
 		font-weight: 600;
 	}
 	.path,
 	.unset,
 	.sent {
-		font-size: 10px;
+		font-size: var(--fs-id);
 		color: var(--fnt);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -253,19 +277,23 @@
 		opacity: 0.8;
 	}
 	/* Data dots read as plumbing, not as something you can grab: bound green,
-	   unbound amber hollow, sentinel violet. Not connectable. */
-	.stage-node :global(.io-dot),
+	   unbound amber hollow, sentinel violet. Not connectable. Their colour and
+	   size go through the handle variables FlowGraph maps (--xy-handle-*,
+	   --hs), so nothing here fights Svelte Flow's own rules. */
+	.stage-node :global(.io-dot) {
+		--hs: calc(var(--handle) - 1px);
+		--xy-handle-background-color: var(--grn);
+		top: 50%;
+		cursor: default;
+	}
 	.vdot {
 		position: absolute;
-		width: 7px !important;
-		height: 7px !important;
-		min-width: 7px !important;
-		min-height: 7px !important;
-		border-radius: 50%;
-		background: var(--grn) !important;
-		border: 1.5px solid var(--body) !important;
-		cursor: default;
 		top: 50%;
+		width: calc(var(--handle) - 1px);
+		height: calc(var(--handle) - 1px);
+		border-radius: 50%;
+		background: var(--grn);
+		border: 1px solid var(--body);
 	}
 	.io.in :global(.io-dot),
 	.io.in .vdot {
@@ -278,27 +306,13 @@
 		transform: translate(50%, -50%);
 	}
 	.io.unbound .vdot {
-		background: transparent !important;
-		border: 1.5px solid var(--amb) !important;
+		background: transparent;
+		border-color: var(--amb);
 	}
-	.io.sentinel .vdot,
+	.io.sentinel .vdot {
+		background: var(--vio);
+	}
 	.io.sentinel :global(.io-dot) {
-		background: var(--vio) !important;
-	}
-	/* Control handles in their edge colour (DESIGN 3.6). */
-	.stage-node :global(.h-in) {
-		background: var(--mut);
-	}
-	.stage-node :global(.h-success) {
-		background: var(--grn);
-	}
-	.stage-node :global(.h-fail) {
-		background: var(--ros);
-	}
-	.stage-node :global(.h-timeout) {
-		background: var(--tea);
-	}
-	.stage-node :global(.h-reject) {
-		background: var(--amb);
+		--xy-handle-background-color: var(--vio);
 	}
 </style>

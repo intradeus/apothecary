@@ -6,7 +6,6 @@
 	import { page } from '$app/state';
 	import { currentGuild, to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
-	import { lore, isLore } from '$lib/lore';
 	import { stateTab, type RunTab } from '$lib/format';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -14,7 +13,9 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Updated from '$lib/ui/Updated.svelte';
-	import RunTable from '$lib/desk-home/RunTable.svelte';
+	import SearchInput from '$lib/ui/SearchInput.svelte';
+	import RunTable from '$lib/run/RunTable.svelte';
+	import WorkshopFilter from '$lib/shell/WorkshopFilter.svelte';
 
 	const projectFilter = $derived(page.url.searchParams.get('project') ?? '');
 	const tab = $derived<RunTab>(
@@ -54,7 +55,7 @@
 			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 	);
 	const shown = $derived(tab === 'active' ? active : finished);
-	const projectName = $derived(projectFilter ? fleet.projectById.get(projectFilter)?.name : '');
+	const projectName = $derived(projectFilter ? fleet.projectName(projectFilter) : '');
 </script>
 
 <svelte:head><title>Runs</title></svelte:head>
@@ -62,13 +63,11 @@
 <PageHeader
 	crumbs={[
 		{ label: currentGuild().name, href: to.desk() },
-		...(projectFilter
-			? [{ label: projectName || projectFilter.slice(-6), href: to.workshop(projectFilter) }]
-			: []),
+		...(projectFilter ? [{ label: projectName, href: to.workshop(projectFilter) }] : []),
 		{ label: 'Runs' }
 	]}
 	title={projectName ? `Runs in ${projectName}` : 'Runs'}
-	accent={isLore() ? (tab === 'active' ? 'on the fire' : 'bottled & spoiled') : undefined}
+	accent={tab === 'active' ? 'on the fire' : 'bottled & spoiled'}
 >
 	{#snippet meta()}
 		<span>{fleet.active.length} active · {fleet.finished.length} finished</span>
@@ -78,22 +77,17 @@
 		<div class="ctl">
 			<Segmented
 				value={tab}
+				label="Runs"
 				onchange={(v) => setParams({ tab: v })}
 				options={[
 					{ value: 'active', label: 'Active', count: active.length },
 					{ value: 'finished', label: 'Finished', count: finished.length }
 				]}
 			/>
-			<select
-				class="wsf"
-				aria-label="Filter by {lore('workshop').toLowerCase()}"
-				value={projectFilter}
-				onchange={(e) => setParams({ project: (e.target as HTMLSelectElement).value })}
+			<WorkshopFilter value={projectFilter} onchange={(project) => setParams({ project })} />
+			<span class="sw"
+				><SearchInput bind:value={q} width={220} placeholder="Search title, id, stage…" /></span
 			>
-				<option value="">All {lore('workshops').toLowerCase()}</option>
-				{#each fleet.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-			</select>
-			<input class="search" type="search" bind:value={q} placeholder="⌕ Search title, id, stage…" />
 		</div>
 	{/snippet}
 </PageHeader>
@@ -102,11 +96,11 @@
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard cause="Could not load runs" detail={fleet.error} onretry={() => fleet.refresh()} />
 	{:else if !fleet.updatedAt}
-		<div class="c pane sk"><Skeleton lines={6} /></div>
+		<Skeleton pane lines={6} />
 	{:else if shown.length === 0}
 		{#if fleet.runs.length === 0}
 			<EmptyState
-				title={lore('nothingRunning')}
+				title="All still on the shelf"
 				text="Runs start from tickets. Write one, then start a run against it."
 			>
 				<a class="btn btn-primary" href={to.tickets()}>Open tickets</a>
@@ -117,7 +111,7 @@
 			</EmptyState>
 		{:else if tab === 'active'}
 			<EmptyState
-				title={lore('nothingRunning')}
+				title="All still on the shelf"
 				text="No active runs{projectName ? ` in ${projectName}` : ''}. Start one from a ticket."
 			>
 				<a
@@ -146,36 +140,13 @@
 </div>
 
 <style>
-	.body {
-		padding-top: 4px;
-	}
-	.ctl {
+	.sw {
 		display: flex;
-		gap: 8px;
-		align-items: center;
-		flex-wrap: wrap;
-	}
-	.wsf {
-		width: auto;
-		min-width: 160px;
-		max-width: 220px;
-	}
-	.search {
-		width: 220px !important;
-	}
-	.pane {
-		border-radius: 16px;
-		overflow: hidden;
-		flex: none;
-	}
-	.sk {
-		padding: 16px;
+		width: 220px;
 	}
 	@media (max-width: 760px) {
-		.search,
-		.wsf {
-			width: 100% !important;
-			max-width: none;
+		.sw {
+			width: 100%;
 		}
 	}
 </style>

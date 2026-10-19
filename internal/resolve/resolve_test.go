@@ -320,10 +320,10 @@ func TestUnresolvableMapping(t *testing.T) {
 func TestIntegrationOps(t *testing.T) {
 	r, _, p, _, _ := setup(t)
 	ctx := context.Background()
-	if err := r.TestIntegration(ctx, p.ForgeID); err != nil {
+	if _, err := r.TestIntegration(ctx, p.ForgeID); err != nil {
 		t.Errorf("forge test = %v", err)
 	}
-	if err := r.TestIntegration(ctx, p.HarnessIDs[0]); err != nil {
+	if _, err := r.TestIntegration(ctx, p.HarnessIDs[0]); err != nil {
 		t.Errorf("harness test = %v", err)
 	}
 	repos, err := r.ListRepos(ctx, p.ForgeID)

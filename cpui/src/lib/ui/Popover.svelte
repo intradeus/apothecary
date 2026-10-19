@@ -1,10 +1,19 @@
+<script lang="ts" module>
+	// Open popovers, innermost last: Esc closes only the top one, so a menu
+	// inside a sticky composer doesn't take the composer with it.
+	const stack: symbol[] = [];
+</script>
+
 <script lang="ts">
 	// Popover / menu (DESIGN 4.8). Positioned BESIDE its anchor, never on top
-	// of it; closes on outside mousedown or Esc.
+	// of it; closes on outside pointer-down or Esc. It materialises out of its
+	// trigger (transform-origin on the anchor's side) and leaves the same way;
+	// reopening mid-close reverses from wherever it is.
 	//
 	//   <button bind:this={btn} onclick={() => (open = !open)}>Env ▾</button>
 	//   <Popover anchor={btn} bind:open placement="below-end">…</Popover>
 	import type { Snippet } from 'svelte';
+	import { materialize } from './motion';
 
 	let {
 		anchor,
@@ -15,7 +24,10 @@
 		legend,
 		children,
 		/** Explicit fixed position, overriding the anchor (e.g. the guild switcher). */
-		at
+		at,
+		/** Stay open on outside clicks (a floating composer); Esc still closes. */
+		sticky = false,
+		onclose
 	}: {
 		anchor?: HTMLElement | null;
 		open: boolean;
@@ -25,7 +37,28 @@
 		legend?: string;
 		children: Snippet;
 		at?: { left?: number; top?: number; right?: number; bottom?: number };
+		sticky?: boolean;
+		onclose?: () => void;
 	} = $props();
+
+	// Grow from the side the trigger is on, travelling a few px away from it.
+	const motion = $derived.by(() => {
+		if (at) return { origin: 'left top', x: -6, y: 0 };
+		return (
+			{
+				'below-start': { origin: 'left top', x: 0, y: -6 },
+				'below-end': { origin: 'right top', x: 0, y: -6 },
+				'above-start': { origin: 'left bottom', x: 0, y: 6 },
+				'above-end': { origin: 'right bottom', x: 0, y: 6 },
+				right: { origin: 'left top', x: -6, y: 0 }
+			} as const
+		)[placement];
+	});
+
+	function close() {
+		open = false;
+		onclose?.();
+	}
 
 	let el = $state<HTMLDivElement | null>(null);
 	let pos = $state<{ left?: number; top?: number; right?: number; bottom?: number }>({});
@@ -62,23 +95,27 @@
 	$effect(() => {
 		if (!open) return;
 		place();
-		const down = (e: MouseEvent) => {
+		const down = (e: PointerEvent) => {
 			const t = e.target as Node;
-			if (el?.contains(t) || anchor?.contains(t)) return;
-			open = false;
+			if (sticky || el?.contains(t) || anchor?.contains(t)) return;
+			close();
 		};
+		const me = Symbol('popover');
+		stack.push(me);
 		const key = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				open = false;
+			if (e.key === 'Escape' && stack.at(-1) === me && !e.defaultPrevented) {
+				e.preventDefault();
+				close();
 				anchor?.focus();
 			}
 		};
 		const reflow = () => place();
-		window.addEventListener('mousedown', down, true);
+		window.addEventListener('pointerdown', down, true);
 		window.addEventListener('keydown', key);
 		window.addEventListener('resize', reflow);
 		return () => {
-			window.removeEventListener('mousedown', down, true);
+			stack.splice(stack.indexOf(me), 1);
+			window.removeEventListener('pointerdown', down, true);
 			window.removeEventListener('keydown', key);
 			window.removeEventListener('resize', reflow);
 		};
@@ -90,6 +127,7 @@
 		bind:this={el}
 		class="pop lg-pop"
 		role="dialog"
+		transition:materialize={motion}
 		style:left={pos.left !== undefined ? `${pos.left}px` : null}
 		style:top={pos.top !== undefined ? `${pos.top}px` : null}
 		style:right={pos.right !== undefined ? `${pos.right}px` : null}
@@ -109,8 +147,8 @@
 <style>
 	.pop {
 		position: fixed;
-		z-index: 30;
-		border-radius: 17px;
+		z-index: var(--z-pop);
+		border-radius: var(--r-group);
 		padding: 6px;
 		display: flex;
 		flex-direction: column;
@@ -128,41 +166,14 @@
 	}
 	.t {
 		font-family: var(--serif);
-		font-size: 19px;
+		font-size: var(--fs-section);
 	}
 	.lg2 {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
-	/* Menu rows: <button class="mi"> / <a class="mi"> inside a popover. */
-	.pop :global(.mi) {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		padding: 7px 9px;
-		border-radius: 10px;
-		font-size: 12.5px;
-		color: var(--tx);
-		white-space: nowrap;
-	}
-	.pop :global(.mi:hover) {
-		background: var(--p3);
-		text-decoration: none;
-	}
-	.pop :global(.mi.on) {
-		background: var(--sel);
-		box-shadow:
-			inset 0 0 0 1px var(--selLn),
-			var(--selSh);
-		font-weight: 600;
-	}
-	.pop :global(.mi .sub) {
-		color: var(--mut);
-		font-size: 11px;
-	}
+	/* Menu rows (.mi, .menu-div) are shared classes in components.css; the
+	 * old .div divider name still works inside a popover. */
 	.pop :global(.div) {
 		height: 1px;
 		background: var(--ln);

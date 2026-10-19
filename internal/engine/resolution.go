@@ -79,6 +79,11 @@ type Resolution struct {
 	// means the harness takes any model. A nil func: this resolution cannot
 	// tell (older wiring), and model checks are skipped.
 	Models func(ctx context.Context, harnessKind string) ([]string, error)
+	// CheckAuth probes, without spending tokens, whether the providers behind
+	// the given models (provider/model) accept the harness kind's
+	// credentials. rejected: a run would fail on them; unverified: no probe,
+	// or it said nothing either way. A nil func: auth checks are skipped.
+	CheckAuth func(ctx context.Context, harnessKind string, models []string) (rejected, unverified []string)
 	// HarnessBinary is the fallback harness executable (envcheck probes it
 	// with `command -v`, §9).
 	HarnessBinary string

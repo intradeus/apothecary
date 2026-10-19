@@ -12,9 +12,11 @@
 	import { ago, fmtAbs } from '$lib/format';
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import { pingMeta } from '$lib/ui/PingPill.svelte';
-	import { mdToHtml } from '$lib/planreview';
-	import { isLore } from '$lib/lore';
+	import Markdown from '$lib/ui/Markdown.svelte';
+	import FileChip from '$lib/ui/FileChip.svelte';
+	import { I } from '$lib/ui/icons';
 	import {
+		answerMeta,
 		isAgentPing,
 		isDocumentPing,
 		isPhaseConfirm,
@@ -64,7 +66,10 @@
 	// Upload any attached files first, then hand the answer up. A failed
 	// upload SURFACES and keeps the draft — it used to be swallowed, leaving
 	// the card idle with the answer silently unsent.
+	/** The answer in flight, so only its button shows busy. */
+	let sending = $state('');
 	async function submit(answer: string) {
+		sending = answer;
 		uploading = true;
 		uploadErr = '';
 		try {
@@ -94,17 +99,13 @@
 	const unwanted = $derived(isAgentPing(ping.type));
 	const stageId = $derived(stage ?? ping.stageId);
 	const off = $derived(busy || uploading);
+	const busyOn = (answer: string) => off && sending === answer;
+	const verdict = $derived(answerMeta(ping));
 	const pingRunId = $derived((ping as { runId?: string }).runId);
 	const runLink = $derived(runHref ?? (pingRunId ? to.run(pingRunId) : undefined));
 
 	const aside = $derived(
-		!isLore()
-			? ''
-			: ping.type === 'gate'
-				? 'the bench awaits your seal'
-				: unwanted
-					? 'a note from the builder'
-					: ''
+		ping.type === 'gate' ? 'the bench awaits your seal' : unwanted ? 'a note from the builder' : ''
 	);
 
 	function keys(e: KeyboardEvent, send: () => void) {
@@ -118,24 +119,25 @@
 {#if !isPending}
 	<!-- Answered / withdrawn: one muted line. -->
 	<div class="pc-done" class:withdrawn={status === 'withdrawn'}>
-		<span class="glyph">{status === 'withdrawn' ? '–' : '✓'}</span>
+		<span class="hue-{verdict.hue} glyph">{verdict.glyph}</span>
 		<span class="ty">{meta.label}</span>
-		{#if stageId}<span class="mono st">{stageId}</span>{/if}
-		<span class="ell what">
+		{#if stageId}<span class="mono fnt">{stageId}</span>{/if}
+		<span class="ell grow what">
 			{#if status === 'withdrawn'}
 				withdrawn
 			{:else}
 				answered{ping.answeredAt ? ` ${ago(ping.answeredAt)}` : ''} —
-				<b class:ok={ping.answer === 'approve'} class:bad={ping.answer === 'reject'}
-					>{ping.answer}</b
-				>{#if ping.feedback}<span class="fb" title={ping.feedback}> · {ping.feedback}</span>{/if}
+				<b class="hue-{verdict.hue}">{ping.answer}</b>{#if ping.feedback}<span
+						class="fnt"
+						title={ping.feedback}>{' · '}{ping.feedback}</span
+					>{/if}
 			{/if}
 		</span>
 	</div>
 {:else}
-	<div class="pc" class:compact>
+	<div class="pc lg wash h-amb" class:compact>
 		<div class="head">
-			<span class="badge" aria-hidden="true">?</span>
+			<span class="count hot mark" aria-hidden="true">?</span>
 			<span class="ty">{meta.label}</span>
 			{#if aside}<span class="aside">{aside}</span>{/if}
 			<span class="spacer"></span>
@@ -145,7 +147,7 @@
 						title={fmtAbs(ping.raisedAt)}>raised {ago(ping.raisedAt)}</span
 					>{/if}
 			</span>
-			{#if unwanted}<span class="cls">unwanted · counts against run</span>{/if}
+			{#if unwanted}<span class="pill sm t-ros">unwanted · counts against run</span>{/if}
 		</div>
 		{#if runTitle || ticketTitle || ticketKey}
 			<div class="ctx">
@@ -161,20 +163,20 @@
 		{/if}
 
 		<div class="body">
-			<div class="md q">{@html mdToHtml(ping.question)}</div>
-			{#if ping.context}<div class="md ctxt">{@html mdToHtml(ping.context)}</div>{/if}
+			<div class="q"><Markdown src={ping.question} /></div>
+			{#if ping.context}<Markdown src={ping.context} quiet />{/if}
 
 			{#if ping.link}
 				<!-- Typed at the source (DESIGN-FILES §4): a link payload links out… -->
 				<a class="ref" href={ping.link} target="_blank" rel="noreferrer">
-					<span class="mono ell">{ping.link}</span><span>↗</span>
+					<span class="mono ell">{ping.link}</span><span>{I.external}</span>
 				</a>
 			{:else if isDocumentPing(ping) && ping.primaryRef}
 				<!-- …and a file payload opens the review workbench. -->
-				<div class="docref">
-					<span class="ico">▤</span>
-					<span class="mono ell">{ping.primaryRef}</span>
-					<a class="btn btn-sel btn-sm" href={to.ping(ping.id)}>Review &amp; comment →</a>
+				<div class="card-in docref">
+					<FileChip name={ping.primaryRef} />
+					<span class="spacer"></span>
+					<a class="btn btn-sel btn-sm" href={to.ping(ping.id)}>Review &amp; comment {I.forward}</a>
 				</div>
 			{/if}
 
@@ -192,22 +194,36 @@
 				<textarea bind:value={note} rows="2" placeholder="Optional note"></textarea>
 				<div class="acts">
 					<button
-						class="a-pri"
+						class="btn-hot btn-md"
 						disabled={off || pickedIds.length === 0}
+						aria-busy={busyOn(pickedIds.join('\n'))}
 						onclick={() => submit(pickedIds.join('\n'))}>Confirm {pickedIds.length} selected</button
 					>
-					<button class="a-sec" disabled={off} onclick={() => submit(SELECT_NONE)}
-						>Select none</button
+					<button
+						class="btn-hot-outline btn-md"
+						disabled={off}
+						aria-busy={busyOn(SELECT_NONE)}
+						onclick={() => submit(SELECT_NONE)}>Select none</button
 					>
 					{@render attachBtn()}
 				</div>
 			{:else if kind === 'decision' && confirmPhase}
 				<div class="acts">
-					<button class="a-pri" disabled={off} onclick={() => submit('approve')}>Run it</button>
-					<button class="a-sec" disabled={off} onclick={() => submit('reject')}>Not now</button>
+					<button
+						class="btn-hot btn-md"
+						disabled={off}
+						aria-busy={busyOn('approve')}
+						onclick={() => submit('approve')}>Run it</button
+					>
+					<button
+						class="btn-hot-outline btn-md"
+						disabled={off}
+						aria-busy={busyOn('reject')}
+						onclick={() => submit('reject')}>Not now</button
+					>
 					{@render attachBtn()}
 				</div>
-				<p class="hint">
+				<p class="help">
 					Not now: it is offered again only when the situation changes (the target moves, new
 					comments arrive).
 				</p>
@@ -220,14 +236,22 @@
 						onkeydown={(e) => keys(e, () => note.trim() && !off && submit('reject'))}></textarea>
 				{/if}
 				<div class="acts">
-					<button class="a-pri" disabled={off} onclick={() => submit('approve')}>Approve</button>
+					<button
+						class="btn-hot btn-md"
+						disabled={off}
+						aria-busy={busyOn('approve')}
+						onclick={() => submit('approve')}>Approve</button
+					>
 					{#if noteOpen}
-						<button class="a-sec" disabled={off || !note.trim()} onclick={() => submit('reject')}
-							>Send changes</button
+						<button
+							class="btn-hot-outline btn-md"
+							disabled={off || !note.trim()}
+							aria-busy={busyOn('reject')}
+							onclick={() => submit('reject')}>Send changes</button
 						>
 						<button class="btn-ghost btn-sm" onclick={() => (noteOpen = false)}>Cancel</button>
 					{:else}
-						<button class="a-sec" disabled={off} onclick={() => (noteOpen = true)}
+						<button class="btn-hot-outline btn-md" disabled={off} onclick={() => (noteOpen = true)}
 							>Request changes…</button
 						>
 					{/if}
@@ -243,21 +267,25 @@
 				<div class="acts">
 					{#each options as opt, i (opt.id)}
 						<button
-							class={i === 0 ? 'a-pri' : 'a-sec'}
+							class="{i === 0 ? 'btn-hot' : 'btn-hot-outline'} btn-md"
 							disabled={off}
+							aria-busy={busyOn(opt.id)}
 							title={opt.detail ?? ''}
 							onclick={() => submit(opt.id)}>{opt.label}</button
 						>
 					{/each}
 					{#if noteOpen}
 						<button
-							class="a-other"
+							class="btn-dashed btn-md"
 							disabled={off || !note.trim()}
+							aria-busy={busyOn('other')}
 							title="None of the options fit — sends the note text as your answer"
 							onclick={() => submit('other')}>Send as answer</button
 						>
 					{:else}
-						<button class="a-other" disabled={off} onclick={() => (noteOpen = true)}>Other…</button>
+						<button class="btn-dashed btn-md" disabled={off} onclick={() => (noteOpen = true)}
+							>Other…</button
+						>
 					{/if}
 					{@render attachBtn()}
 				</div>
@@ -268,10 +296,13 @@
 					placeholder="Your answer to the agent…"
 					onkeydown={(e) => keys(e, () => note.trim() && !off && submit(note.trim()))}></textarea>
 				<div class="acts">
-					<button class="a-pri" disabled={off || !note.trim()} onclick={() => submit(note.trim())}
-						>Send answer</button
+					<button
+						class="btn-hot btn-md"
+						disabled={off || !note.trim()}
+						aria-busy={off && sending === note.trim()}
+						onclick={() => submit(note.trim())}>Send answer</button
 					>
-					<span class="fnt keyhint">⌘↵ send</span>
+					<span class="help"><span class="kbd">⌘↵</span> send</span>
 					{@render attachBtn()}
 				</div>
 			{/if}
@@ -287,21 +318,18 @@
 {#snippet attachBtn()}
 	<span class="spacer"></span>
 	<button class="btn-ghost btn-sm" onclick={() => (showAttach = !showAttach)}
-		>+ Attach{#if files.length}<span class="mono">&nbsp;{files.length}</span>{/if}</button
+		>{I.add} Attach{#if files.length}<span class="mono">&nbsp;{files.length}</span>{/if}</button
 	>
 {/snippet}
 
 <style>
+	/* Control glass with an amber wash (.wash.h-amb): a human must act now. */
 	.pc {
-		border-radius: 20px;
-		background:
-			radial-gradient(ellipse 70% 140% at 0% 0%, var(--ambBg), transparent 70%), var(--lgBg);
-		border: 1px solid var(--ambLn);
-		backdrop-filter: var(--lgBf);
-		-webkit-backdrop-filter: var(--lgBf);
+		border-radius: var(--r-float);
+		border-color: var(--ambLn);
 		box-shadow:
 			var(--lgRim),
-			0 0 44px var(--ambGlow);
+			0 0 var(--glow-lg) var(--ambGlow);
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
@@ -314,57 +342,44 @@
 		flex-wrap: wrap;
 		row-gap: 4px;
 	}
-	.badge {
+	/* The round amber "?" — the same mark as the desk's needs-you count. */
+	.mark {
 		flex: none;
 		width: 22px;
 		height: 22px;
+		padding: 0;
 		border-radius: 50%;
-		background: var(--amb);
-		color: var(--ink);
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		font-weight: 800;
-		font-size: 12px;
-		box-shadow: 0 0 12px var(--ambLn);
+		font-size: var(--fs-label);
+		box-shadow: 0 0 var(--glow-sm) var(--ambLn);
 	}
 	.ty {
 		font-family: var(--serif);
-		font-size: 20px;
+		font-size: var(--fs-section);
 		line-height: 1.1;
 	}
 	.aside {
 		font-family: var(--serif);
 		font-style: italic;
-		font-size: 14.5px;
+		font-size: var(--fs-aside);
 		color: var(--mut);
 	}
-	.spacer {
-		flex: 1;
-	}
 	.when {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 		white-space: nowrap;
 	}
 	.when .mono {
-		font-size: 11px;
-	}
-	.cls {
-		font-size: 11px;
-		font-weight: 600;
-		padding: 1px 8px;
-		border-radius: 12px;
-		color: var(--ros);
-		background: var(--rosBg);
-		white-space: nowrap;
+		font-size: var(--fs-meta);
 	}
 	.ctx {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		padding: 2px 14px 0 46px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--mut);
 		min-width: 0;
 		white-space: nowrap;
@@ -386,15 +401,8 @@
 	.compact .ctx {
 		padding-left: 14px;
 	}
-	.compact .ty {
-		font-size: 18px;
-	}
 	.q {
 		text-wrap: pretty;
-	}
-	.ctxt {
-		font-size: 12.5px;
-		color: var(--mut);
 	}
 	.ref {
 		display: inline-flex;
@@ -403,23 +411,14 @@
 		align-self: flex-start;
 		max-width: 100%;
 		color: var(--az);
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
 	.docref {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 6px 6px 6px 10px;
-		border-radius: 12px;
-		background: var(--p2);
-		border: 1px solid var(--ln);
+		padding: 5px 6px 5px 5px;
 		min-width: 0;
-	}
-	.docref .ico {
-		color: var(--mut);
-	}
-	.docref .mono {
-		flex: 1;
 	}
 	.acts {
 		display: flex;
@@ -427,49 +426,8 @@
 		gap: 6px;
 		align-items: center;
 	}
-	.a-pri,
-	.a-sec,
-	.a-other {
-		font-size: 12.5px;
-		padding: 5px 13px;
-		border-radius: 12px;
-		box-shadow: none;
-	}
-	.a-pri {
-		background: var(--amb);
-		color: var(--ink);
-		border-color: transparent;
-		font-weight: 600;
-		box-shadow: 0 0 14px var(--ambGlow);
-	}
-	.a-pri:hover {
-		background: var(--amb);
-		filter: brightness(1.06);
-	}
-	.a-sec {
-		background: transparent;
-		border: 1px solid var(--ambLn);
-		color: var(--amb);
-	}
-	.a-sec:hover {
-		background: var(--ambBg);
-	}
-	.a-other {
-		background: transparent;
-		border: 1px dashed var(--ln2);
-		color: var(--mut);
-	}
-	.a-other:hover {
-		background: var(--p2);
-		color: var(--tx);
-	}
-	.keyhint {
-		font-size: 11px;
-	}
-	.hint {
+	.help {
 		margin: 0;
-		font-size: 11.5px;
-		color: var(--mut);
 	}
 	.picklist {
 		display: flex;
@@ -480,7 +438,7 @@
 		display: flex;
 		gap: 8px;
 		align-items: flex-start;
-		font-size: 13px;
+		font-size: var(--fs-body);
 		font-weight: 400;
 		margin: 0;
 		cursor: pointer;
@@ -489,12 +447,6 @@
 		width: auto;
 		margin-top: 3px;
 	}
-	.md :global(p) {
-		margin: 4px 0;
-	}
-	.md :global(pre) {
-		overflow-x: auto;
-	}
 
 	/* answered / withdrawn */
 	.pc-done {
@@ -502,41 +454,25 @@
 		align-items: center;
 		gap: 8px;
 		padding: 7px 12px;
-		border-radius: 14px;
+		border-radius: var(--r-card);
 		border: 1px solid var(--ln);
 		background: var(--p1);
 		color: var(--mut);
-		font-size: 12px;
+		font-size: var(--fs-label);
 		min-width: 0;
 		white-space: nowrap;
 	}
 	.pc-done .glyph {
-		color: var(--grn);
 		font-weight: 700;
 	}
 	.pc-done .ty {
-		font-size: 15px;
+		font-size: var(--fs-lead);
 		color: var(--tx);
 	}
-	.pc-done .st {
-		font-size: 11px;
-		color: var(--fnt);
+	.pc-done .mono {
+		font-size: var(--fs-meta);
 	}
-	.pc-done .what {
-		flex: 1;
-	}
-	.pc-done .ok {
-		color: var(--grn);
-	}
-	.pc-done .bad {
-		color: var(--ros);
-	}
-	.pc-done .fb {
-		color: var(--fnt);
-	}
-	.pc-done.withdrawn {
-		color: var(--fnt);
-	}
+	.pc-done.withdrawn,
 	.pc-done.withdrawn .glyph {
 		color: var(--fnt);
 	}

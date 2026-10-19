@@ -8,7 +8,6 @@
 	import type { Flow, Project } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { to } from '$lib/guild';
-	import { lore, loreLc } from '$lib/lore';
 	import { ago, fmtAbs } from '$lib/format';
 	import CopyFlow from '$lib/CopyFlow.svelte';
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
@@ -16,6 +15,8 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
 
 	let {
 		project,
@@ -37,27 +38,27 @@
 	async function create(name: string) {
 		await api.flows.create(project.id, name, flowSkeleton(name));
 		creating = false;
+		toast(`Flow ${name} created`);
 		await goto(to.flow(project.id, name));
 	}
 </script>
 
-<div class="bar">
-	<p class="mut small intro">
-		A flow belongs to this {lore('workshop').toLowerCase()}: its stages run these commands and its
-		agents know this repository. Runs pin the version they start on.
+<div class="row nowrap">
+	<p class="lede grow">
+		A flow belongs to this workshop: its stages run these commands and its agents know this
+		repository. Runs pin the version they start on.
 	</p>
-	<span class="spacer"></span>
-	<button class="btn-primary" onclick={() => (creating = true)}>+ New flow</button>
+	<button class="btn-primary" onclick={() => (creating = true)}>{I.add} New flow</button>
 </div>
 
 {#if error && !flows}
 	<ErrorCard cause="Couldn’t load flows" detail={error} onretry={onreload} />
 {:else if !flows}
-	<div class="c pane"><div class="pane-body"><Skeleton lines={4} /></div></div>
+	<Skeleton pane lines={4} />
 {:else}
 	<section class="c pane">
 		<div class="pane-head">
-			<h2>This {lore('workshop').toLowerCase()}’s flows</h2>
+			<h2>This workshop’s flows</h2>
 			<span class="count">{own.length}</span>
 		</div>
 		{#if own.length}
@@ -70,25 +71,23 @@
 						<span class="nm">
 							<a class="mono stretch" href={to.flow(project.id, f.name)}>{f.name}</a>
 							{#if f.name === project.defaultFlow}<span
-									class="pill t-brand"
+									class="pill sm t-brand"
 									title="Runs start on this flow unless one is picked">default</span
 								>{/if}
 							{#if f.shadowsBuiltin}<span
-									class="pill t-mut"
-									title="This {loreLc(
-										'workshop'
-									)}’s own copy of a built-in template; deleting it resets to the template"
+									class="pill sm t-mut"
+									title="This workshop’s own copy of a built-in template; deleting it resets to the template"
 									>from template</span
 								>{/if}
 						</span>
 						<span><span class="tag">@{f.hash.slice(0, 8)}</span></span>
 						<span class="num mono fnt" title={fmtAbs(f.updatedAt)}>{ago(f.updatedAt)}</span>
-						<span class="acts">
+						<span class="acts over-stretch">
 							<a class="btn btn-sm" href={to.flow(project.id, f.name)}>Edit</a>
 							<button
 								class="btn-sm"
-								title="Copy this flow into another {lore('workshop').toLowerCase()}"
-								onclick={() => (copying = { flow: f })}>⧉ Copy…</button
+								title="Copy this flow into another workshop"
+								onclick={() => (copying = { flow: f })}>{I.copy} Copy…</button
 							>
 						</span>
 					</div>
@@ -99,11 +98,9 @@
 				<EmptyState
 					compact
 					title="No flows of its own"
-					text="Runs use the {project.defaultFlow} template until this {loreLc(
-						'workshop'
-					)} authors or adopts one."
+					text="Runs use the {project.defaultFlow} template until this workshop authors or adopts one."
 				>
-					<button class="btn-primary" onclick={() => (creating = true)}>+ New flow</button>
+					<button class="btn-primary" onclick={() => (creating = true)}>{I.add} New flow</button>
 				</EmptyState>
 			</div>
 		{/if}
@@ -121,16 +118,16 @@
 					<div class="r fr">
 						<span class="nm">
 							<a class="mono stretch" href={to.flow(project.id, t.name)}>{t.name}</a>
-							<span class="pill t-mut">built-in</span>
-							{#if t.name === project.defaultFlow}<span class="pill t-brand">default</span>{/if}
+							<span class="pill sm t-mut">built-in</span>
+							{#if t.name === project.defaultFlow}<span class="pill sm t-brand">default</span>{/if}
 						</span>
 						<span><span class="tag">@{t.hash.slice(0, 8)}</span></span>
 						<span class="num fnt small">from the binary</span>
-						<span class="acts">
+						<span class="acts over-stretch">
 							<a class="btn btn-sm" href={to.flow(project.id, t.name)}>View</a>
 							<button
 								class="btn-sm btn-sel"
-								title="Copy this template into the {loreLc('workshop')} as an editable flow"
+								title="Copy this template into the workshop as an editable flow"
 								onclick={() => (copying = { flow: t, target: project.id })}
 								>Use built-in template</button
 							>
@@ -165,6 +162,7 @@
 		onclose={() => (copying = null)}
 		oncopied={async (projectId, name) => {
 			copying = null;
+			toast(`Copied as ${name} into ${projectName(projectId)}`);
 			onreload();
 			await goto(to.flow(projectId, name));
 		}}
@@ -172,18 +170,8 @@
 {/if}
 
 <style>
-	.bar {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-	.intro {
-		margin: 0;
-		max-width: 80ch;
-	}
 	.fr {
 		grid-template-columns: minmax(0, 1fr) 110px 80px auto;
-		position: relative;
 	}
 	.nm {
 		display: flex;
@@ -192,20 +180,16 @@
 		min-width: 0;
 	}
 	.nm .mono {
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		font-weight: 600;
 		color: var(--tx);
 	}
-	.stretch::after {
-		content: '';
-		position: absolute;
-		inset: 0;
+	.nm .mono:hover {
+		text-decoration: none;
 	}
 	.acts {
 		display: flex;
 		gap: 6px;
 		justify-content: flex-end;
-		position: relative;
-		z-index: 1;
 	}
 </style>

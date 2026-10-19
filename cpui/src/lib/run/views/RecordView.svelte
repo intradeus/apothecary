@@ -6,6 +6,8 @@
 	import { to } from '$lib/guild';
 	import { fmtAbs, fmtBytes, fmtClock } from '$lib/format';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import type { Hue } from '$lib/ui/hues';
+	import { I } from '$lib/ui/icons';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs }: { rs: RunStore } = $props();
@@ -57,14 +59,15 @@
 	});
 	const rows = $derived(filter ? all.filter((r) => r.kind === filter) : all);
 	const n = (k: Kind) => all.filter((r) => r.kind === k).length;
-	const hue: Record<Kind, string> = { output: 'vio', log: 'tea', attachment: 'brand' };
+	const hue: Record<Kind, Hue> = { output: 'vio', log: 'tea', attachment: 'brand' };
 </script>
 
-<div class="rec">
-	<div class="bar">
+<div class="view">
+	<div class="vbar">
 		<Segmented
 			glass={false}
 			size="sm"
+			label="Kind"
 			bind:value={filter}
 			options={[
 				{ value: '', label: 'All', count: all.length },
@@ -73,20 +76,21 @@
 				{ value: 'attachment', label: 'Attachments', count: n('attachment') }
 			]}
 		/>
-		<span class="note">Kept after the workspace is destroyed</span>
+		<span class="hint">Kept after the workspace is destroyed</span>
 	</div>
 	{#if all.length === 0}
-		<div class="none">
+		<div class="empty-line">
 			Nothing on the record yet. Each stage attempt files its declared outputs and its log here as
 			it finishes, whether it passed or failed.
 		</div>
 	{:else if rows.length === 0}
-		<div class="none">No files of that kind.</div>
+		<div class="empty-line">No files of that kind.</div>
 	{:else}
-		<div class="tbl card-in">
-			<div class="h">
-				<span class="c0">Name</span><span>Kind</span><span>Source</span><span class="rt">Size</span
-				><span class="rt">Time</span><span></span>
+		<div class="rows card-in">
+			<div class="r head">
+				<span>Name</span><span>Kind</span><span>Source</span><span class="rt">Size</span><span
+					class="rt">Time</span
+				><span></span>
 			</div>
 			{#each rows as r (r.id)}
 				{@const url = r.snapshot ? api.files.snapshotUrl(r.id) : api.files.attachmentUrl(r.id)}
@@ -94,21 +98,23 @@
 					? api.files.snapshotUrl(r.id, true)
 					: api.files.attachmentUrl(r.id, true)}
 				<div class="r">
-					<a class="c0 nm" href={url} target="_blank" rel="noreferrer" title={r.filename}
+					<a class="nm mono ell tx" href={url} target="_blank" rel="noreferrer" title={r.filename}
 						>{r.filename}</a
 					>
-					<span><span class="kc t-{hue[r.kind]}">{r.label}</span></span>
-					<span class="src ell"
-						>{#if r.href}<a href={r.href}>{r.source}</a>{:else}{r.source}{/if}</span
+					<span><span class="pill sm flat sq t-{hue[r.kind]}">{r.label}</span></span>
+					<span class="mut ell"
+						>{#if r.href}<a class="src" href={r.href}>{r.source}</a>{:else}{r.source}{/if}</span
 					>
 					<span class="rt mono">{fmtBytes(r.size)}</span>
 					<span class="rt mono fnt" title={r.at ? fmtAbs(r.at) : ''}
-						>{r.at ? fmtClock(r.at) : '—'}</span
+						>{r.at ? fmtClock(r.at) : I.none}</span
 					>
 					<span class="acts"
-						><a href={url} target="_blank" rel="noreferrer">Open</a><a
+						><a class="brand" href={url} target="_blank" rel="noreferrer">Open</a><a
+							class="brand"
 							href={dl}
-							title="Download {r.filename}">↓</a
+							title="Download {r.filename}"
+							aria-label="Download {r.filename}">{I.follow}</a
 						></span
 					>
 				</div>
@@ -118,111 +124,48 @@
 </div>
 
 <style>
-	.rec {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		display: flex;
-		flex-direction: column;
-		padding: 12px 14px;
-		gap: 10px;
-	}
-	.bar {
-		display: flex;
-		gap: 10px;
-		align-items: center;
-		flex-wrap: wrap;
-	}
-	.note {
-		margin-left: auto;
-		color: var(--fnt);
-		font-size: 11.5px;
-	}
-	.none {
-		color: var(--mut);
-		font-size: 12.5px;
-		max-width: 60ch;
-	}
-	.tbl {
-		border-radius: 14px;
+	.rows {
+		margin: 0 8px 10px;
 		overflow: hidden;
-		font-size: 12px;
+		font-size: var(--fs-label);
+		flex: none;
 	}
-	.h,
 	.r {
-		display: grid;
 		grid-template-columns: minmax(0, 1.4fr) 92px minmax(0, 1fr) 62px 48px 64px;
-		align-items: center;
 		gap: 0 8px;
+		padding: 5px 12px;
 	}
-	.h {
-		font-size: 11px;
-		color: var(--fnt);
-		padding: 8px 0;
+	.r.head {
+		padding-top: 8px;
+		padding-bottom: 8px;
 	}
-	.r {
-		border-top: 1px solid var(--ln);
-		padding: 5px 0;
+	.r .mono {
+		font-size: var(--fs-id);
 	}
-	.r:hover {
-		background: var(--p1);
-	}
-	.c0 {
-		padding-left: 12px;
-	}
-	.nm {
-		font-family: var(--mono);
-		font-size: 11px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.kc {
-		padding: 0 7px;
-		border-radius: 12px;
-		font-size: 11px;
-		white-space: nowrap;
-	}
-	.t-vio {
-		background: var(--vioBg);
-		color: var(--vio);
-	}
-	.t-tea {
-		background: var(--teaBg);
-		color: var(--tea);
-	}
-	.t-brand {
-		background: var(--brandBg);
-		color: var(--brand);
+	.r .nm {
+		font-size: var(--fs-meta);
 	}
 	.src {
-		color: var(--mut);
+		color: inherit;
 	}
-	.src a:hover {
+	.src:hover {
 		color: var(--tx);
 	}
 	.rt {
 		text-align: right;
 	}
-	.mono {
-		font-size: 10.5px;
-	}
 	.acts {
 		display: flex;
 		gap: 8px;
 		justify-content: flex-end;
-		padding-right: 12px;
-		color: var(--brand);
 		font-weight: 500;
 	}
+	/* Drop columns as the window narrows (a container query on the window). */
 	@container (max-width: 560px) {
-		.h,
 		.r {
 			grid-template-columns: minmax(0, 1fr) 80px 56px 54px;
 		}
-		.h > :nth-child(3),
 		.r > :nth-child(3),
-		.h > :nth-child(5),
 		.r > :nth-child(5) {
 			display: none;
 		}

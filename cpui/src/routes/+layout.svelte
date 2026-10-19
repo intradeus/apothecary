@@ -1,14 +1,20 @@
 <script lang="ts">
 	// The app shell (DESIGN §5): the scene and its sigils behind everything,
 	// the sidebar, the main column the pages fill, and the cursor light on top.
+	// On a phone the sidebar becomes a sheet (flick it away) and the nav a
+	// bottom tab bar whose bead slides between tabs.
 	import '../app.css';
 	import { goto, afterNavigate } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
-	import { to } from '$lib/guild';
+	import { NAV, navByChord } from '$lib/nav';
 	import Sigils from '$lib/ui/Sigils.svelte';
 	import ConfirmHost from '$lib/ui/ConfirmHost.svelte';
+	import Toaster from '$lib/ui/Toaster.svelte';
+	import Sheet from '$lib/ui/Sheet.svelte';
+	import { I } from '$lib/ui/icons';
+	import { bump, indicator } from '$lib/ui/motion';
 	import Sidebar from '$lib/shell/Sidebar.svelte';
 	import CommandPalette from '$lib/shell/CommandPalette.svelte';
 	import { page } from '$app/state';
@@ -23,7 +29,7 @@
 		document.documentElement.dataset.theme = prefs.theme;
 		const stop = fleet.use();
 
-		// "G then I/R/T/D" chords: the G arms for a second.
+		// "G then I/R/T/D" chords (from $lib/nav): the G arms for a second.
 		let gArmed = 0;
 		const key = (e: KeyboardEvent) => {
 			const mod = e.metaKey || e.ctrlKey;
@@ -45,13 +51,11 @@
 				return;
 			}
 			if (gArmed && Date.now() - gArmed < 1000) {
-				const dest = { i: to.inbox(), r: to.runs(), t: to.tickets(), d: to.desk() }[
-					e.key.toLowerCase()
-				];
+				const dest = navByChord(e.key);
 				gArmed = 0;
 				if (dest) {
 					e.preventDefault();
-					void goto(dest);
+					void goto(dest.href());
 				}
 			}
 		};
@@ -69,18 +73,7 @@
 		root?.style.setProperty('--ly', `${e.clientY}px`);
 	}
 
-	const tabs = $derived([
-		{ label: 'Desk', icon: '◈', href: to.desk(), on: page.url.pathname === to.desk() },
-		{
-			label: 'Inbox',
-			icon: '✉',
-			href: to.inbox(),
-			on: page.url.pathname.startsWith(to.inbox()),
-			n: fleet.pending.length
-		},
-		{ label: 'Runs', icon: '▶', href: to.runs(), on: page.url.pathname.includes('/runs') },
-		{ label: 'Tickets', icon: '☰', href: to.tickets(), on: page.url.pathname.includes('/tickets') }
-	]);
+	const tabs = NAV.filter((n) => n.mobile);
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -96,28 +89,27 @@
 	</div>
 	<div class="cursor-light" aria-hidden="true"></div>
 
-	<nav class="mtabs lg" aria-label="Primary">
-		{#each tabs as t (t.label)}
-			<a class:on={t.on} href={t.href}
-				><span class="mi">{t.icon}{'︎'}</span>{t.label}{#if t.n}<span class="count hot">{t.n}</span
+	<nav class="mtabs lg" aria-label="Primary" use:indicator>
+		{#each tabs as t (t.id)}
+			{@const on = t.match(page.url.pathname)}
+			{@const n = t.id === 'inbox' ? fleet.pending.length : 0}
+			<a class:on href={t.href()} aria-current={on ? 'page' : undefined}
+				><span class="ti">{t.icon}</span>{t.label}{#if t.id === 'inbox'}<span
+						class="count hot"
+						class:gone={!n}
+						use:bump={n}>{n}</span
 					>{/if}</a
 			>
 		{/each}
-		<button onclick={() => (drawerOpen = true)}><span class="mi">≡</span>More</button>
+		<button onclick={() => (drawerOpen = true)}><span class="ti">{I.more}</span>More</button>
 	</nav>
-	{#if drawerOpen}
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<div class="drawer-scrim" onclick={(e) => e.target === e.currentTarget && (drawerOpen = false)}>
-			<Sidebar
-				drawer
-				onsearch={() => (paletteOpen = true)}
-				onnavigate={() => (drawerOpen = false)}
-			/>
-		</div>
-	{/if}
+	<Sheet bind:open={drawerOpen} side="left" label="Navigation">
+		<Sidebar drawer onsearch={() => (paletteOpen = true)} onnavigate={() => (drawerOpen = false)} />
+	</Sheet>
 
 	<CommandPalette bind:open={paletteOpen} />
 	<ConfirmHost />
+	<Toaster />
 </div>
 
 <style>
@@ -132,7 +124,7 @@
 	}
 	.shell {
 		position: relative;
-		z-index: 1;
+		z-index: var(--z-raise);
 		flex: 1;
 		min-height: 0;
 		display: flex;
@@ -152,7 +144,7 @@
 	.cursor-light {
 		position: absolute;
 		inset: 0;
-		z-index: 40;
+		z-index: var(--z-light);
 		pointer-events: none;
 		mix-blend-mode: screen;
 		background: radial-gradient(
@@ -162,16 +154,12 @@
 		);
 	}
 
-	/* Mobile: the sidebar becomes a drawer and the rail a bottom tab bar. */
+	/* Mobile: the sidebar becomes a sheet and the rail a bottom tab bar. */
 	.mtabs {
 		display: none;
 	}
-	.drawer-scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 55;
-		background: var(--scrim);
-		display: flex;
+	.gone {
+		display: none;
 	}
 	@media (max-width: 760px) {
 		.side-slot {
@@ -183,13 +171,16 @@
 		.mtabs {
 			display: flex;
 			position: fixed;
-			z-index: 20;
+			z-index: var(--z-float);
 			left: 8px;
 			right: 8px;
 			bottom: 8px;
-			border-radius: 18px;
+			border-radius: var(--r-group);
 			padding: 4px;
 			justify-content: space-around;
+		}
+		.mtabs > :global(.ind) {
+			border-radius: var(--r-card);
 		}
 		.mtabs > a,
 		.mtabs > button {
@@ -202,26 +193,29 @@
 			align-items: center;
 			justify-content: center;
 			gap: 1px;
-			font-size: 10.5px;
+			font-size: var(--fs-id);
 			color: var(--mut);
-			border-radius: 13px;
+			border-radius: var(--r-card);
 			position: relative;
+			-webkit-tap-highlight-color: transparent;
+		}
+		.mtabs > a:active,
+		.mtabs > button:active {
+			opacity: 0.7;
 		}
 		.mtabs > a.on {
-			background: var(--sel);
-			box-shadow:
-				inset 0 0 0 1px var(--selLn),
-				var(--selSh);
 			color: var(--tx);
+			font-weight: 600;
 		}
-		.mtabs .mi {
-			font-size: 16px;
+		.ti {
+			font-size: var(--fs-title);
 		}
 		.mtabs .count {
 			position: absolute;
 			top: 3px;
 			right: 18%;
-			font-size: 9.5px;
+			min-width: 0;
+			font-size: var(--fs-badge);
 			padding: 0 5px;
 		}
 	}

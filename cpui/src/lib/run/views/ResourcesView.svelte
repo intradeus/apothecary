@@ -13,15 +13,12 @@
 	});
 </script>
 
-<div class="rv">
+<div class="view rv">
 	<ResourceGraphs samples={rs.samples} />
 </div>
 
 <style>
 	.rv {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
 		padding-top: 8px;
 	}
 </style>

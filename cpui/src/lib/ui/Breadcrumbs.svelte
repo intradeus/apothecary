@@ -31,7 +31,7 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--mut);
 		white-space: nowrap;
 		overflow: hidden;
@@ -53,6 +53,6 @@
 		color: var(--tx);
 	}
 	.mono {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 	}
 </style>

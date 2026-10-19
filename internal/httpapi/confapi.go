@@ -46,7 +46,7 @@ func builtinFlowRow(projectID, name string) (confstore.FlowRow, bool) {
 // IntegrationOps is the slice of the resolver these routes need — an
 // interface so tests can stub it without a kinds registry.
 type IntegrationOps interface {
-	TestIntegration(ctx context.Context, id string) error
+	TestIntegration(ctx context.Context, id string) (warnings []string, err error)
 	ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error)
 	ListModels(ctx context.Context, id string) ([]kinds.ModelInfo, error)
 	// ListBranches lists the branches of a PROJECT's repo (source-branch
@@ -162,11 +162,12 @@ func (s *Server) testIntegration(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "integration testing is not wired")
 		return
 	}
-	if err := s.Ops.TestIntegration(r.Context(), r.PathValue("id")); err != nil {
-		writeJSON(w, http.StatusOK, TestResult{Error: err.Error()})
+	warnings, err := s.Ops.TestIntegration(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusOK, TestResult{Error: err.Error(), Warnings: warnings})
 		return
 	}
-	writeJSON(w, http.StatusOK, TestResult{OK: true})
+	writeJSON(w, http.StatusOK, TestResult{OK: true, Warnings: warnings})
 }
 
 func (s *Server) listIntegrationRepos(w http.ResponseWriter, r *http.Request) {

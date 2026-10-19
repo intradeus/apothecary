@@ -2,9 +2,16 @@
 	// Session (DESIGN §6): the transcript, auto-following the bottom; the ping
 	// card docked above the composer while the run waits on you; the composer
 	// while the run is active, a closing note once it is finished.
+	//
+	// Following glides (a smooth scroll that retargets as text streams in);
+	// scrolling up hands control to the reader and the "Follow" pill
+	// materialises; sending snaps straight back to the bottom.
 	import { tick } from 'svelte';
 	import { buildTranscript } from '$lib/transcript';
-	import Transcript from '../Transcript.svelte';
+	import { I } from '$lib/ui/icons';
+	import { materialize } from '$lib/ui/motion';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import Transcript, { type Sending } from '../Transcript.svelte';
 	import PingDock from '../PingDock.svelte';
 	import Composer from '../Composer.svelte';
 	import ReviewCard from '../ReviewCard.svelte';
@@ -22,24 +29,54 @@
 
 	let scroller = $state<HTMLDivElement | null>(null);
 	let stick = $state(true);
+	let lastTop = 0;
+	let sending = $state<Sending[]>([]);
 
+	const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	function toBottom(smooth: boolean) {
+		const el = scroller;
+		if (!el) return;
+		el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduced() ? 'smooth' : 'instant' });
+	}
 	function onScroll() {
-		if (!scroller) return;
-		stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
+		const el = scroller;
+		if (!el) return;
+		// Near the bottom: following. Moving UP: the reader took over. (A
+		// smooth follow only ever moves down, so it never unsticks itself.)
+		if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) stick = true;
+		else if (el.scrollTop < lastTop - 2) stick = false;
+		lastTop = el.scrollTop;
 	}
-	function follow() {
+	function follow(smooth = true) {
 		stick = true;
-		tick().then(() => scroller && (scroller.scrollTop = scroller.scrollHeight));
+		tick().then(() => toBottom(smooth));
 	}
+	// The history (and the replay burst behind it) jumps into place; only
+	// what arrives after the list went quiet glides.
+	let settled = false;
+	$effect(() => {
+		void items.length;
+		if (settled) return;
+		const t = setTimeout(() => (settled = true), 700);
+		return () => clearTimeout(t);
+	});
 	// Follow while the reader is at the bottom; leave them alone once they
-	// scroll up to read. Also re-pin when the view comes back on screen.
+	// scroll up to read. Re-pin (instantly) when the view comes back on screen.
 	$effect(() => {
 		void items.length;
 		void rs.live;
-		void visible;
 		void ping?.id;
-		if (stick && scroller)
-			tick().then(() => scroller && (scroller.scrollTop = scroller.scrollHeight));
+		if (stick && scroller) tick().then(() => toBottom(settled));
+	});
+	$effect(() => {
+		if (visible && stick) tick().then(() => toBottom(false));
+	});
+	// A sent bubble stays until the run echoes the message back.
+	$effect(() => {
+		const echoed = new Set(items.flatMap((it) => (it.kind === 'user' ? [it.text] : [])));
+		if (sending.some((s) => echoed.has(s.text)))
+			sending = sending.filter((s) => !echoed.has(s.text));
 	});
 </script>
 
@@ -51,18 +88,24 @@
 					{#if rs.terminal}
 						No conversation was recorded for this run.
 					{:else}
-						<span class="d pulse"></span>No conversation yet. When an agent stage starts, its
-						prompt, replies and tool calls appear here as they happen.
+						<span class="ldot sm pulse hue-az"></span>No conversation yet. When an agent stage
+						starts, its prompt, replies and tool calls appear here as they happen.
 					{/if}
 				</div>
 			{/if}
-			<Transcript {items} over={rs.terminal} {onlog} onanswer={follow} />
+			<Transcript {items} {sending} over={rs.terminal} {onlog} onanswer={() => follow()} />
 			{#if inReview && run}
 				{#key run.idle + (run.phase ?? '')}<ReviewCard runId={rs.runId} idle={run.idle} />{/key}
 			{/if}
 		</div>
 		{#if !stick}
-			<button class="follow" onclick={follow}>↓ Follow</button>
+			<div class="followbar">
+				<button
+					class="follow"
+					transition:materialize={{ origin: 'center bottom', y: 8 }}
+					onclick={() => follow()}>{I.follow} Follow</button
+				>
+			</div>
 		{/if}
 	</div>
 
@@ -75,11 +118,24 @@
 		/>
 	{/if}
 	{#if rs.run && !rs.terminal}
-		<Composer runId={rs.runId} onsent={follow} />
+		<Composer
+			runId={rs.runId}
+			onsent={(text, interrupt) => {
+				sending = [...sending, { text, interrupt }];
+				follow(false);
+			}}
+			onfailed={(text) => (sending = sending.filter((s) => s.text !== text))}
+		/>
 	{:else if rs.run}
 		<div class="closed">
-			The run is finished, so messaging is closed.{#if rs.hasWorkspace}
-				The workspace stays up until the reaper removes it.{/if}
+			<EmptyState
+				compact
+				inline
+				title="The bottle is corked"
+				text="The run is finished.{rs.hasWorkspace
+					? ' The workspace stays up until the reaper removes it.'
+					: ''}"
+			/>
 		</div>
 	{/if}
 </div>
@@ -111,39 +167,35 @@
 	}
 	.noconv {
 		color: var(--mut);
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		padding: 20px 4px;
-		max-width: 60ch;
+		max-width: var(--measure-short);
 	}
-	.d {
-		display: inline-block;
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
+	.noconv .ldot {
 		margin-right: 8px;
 		vertical-align: 1px;
 	}
-	.follow {
+	/* Centres the pill without a transform, so its own transform is free for
+	 * the materialise. */
+	.followbar {
 		position: absolute;
-		left: 50%;
-		transform: translateX(-50%);
+		left: 0;
+		right: 0;
 		bottom: 12px;
-		z-index: 3;
+		z-index: var(--z-float);
+		display: flex;
+		justify-content: center;
+		pointer-events: none;
+	}
+	.follow {
+		pointer-events: auto;
 		background: var(--sel);
 		border: 1px solid var(--selLn);
-		box-shadow:
-			var(--selSh),
-			0 8px 24px rgba(0, 0, 0, 0.35);
+		box-shadow: var(--selSh), var(--floatSh);
 		font-weight: 600;
 	}
 	.closed {
 		flex: none;
 		margin: 0 14px 14px;
-		padding: 11px 14px;
-		border-radius: 10px;
-		border: 1px dashed var(--ln2);
-		color: var(--mut);
-		font-size: 12.5px;
 	}
 </style>

@@ -465,9 +465,9 @@ export const integrations = {
 	remove: (id: string) => unwrapVoid(gen.deleteIntegration({ path: { id } })),
 
 	/** Check the credentials against the real service. */
-	test: async (id: string): Promise<{ ok: boolean; error?: string }> => {
+	test: async (id: string): Promise<{ ok: boolean; error?: string; warnings: string[] }> => {
 		const r = await unwrap(gen.testIntegration({ path: { id } }));
-		return { ok: r.ok, error: r.error };
+		return { ok: r.ok, error: r.error, warnings: r.warnings ?? [] };
 	},
 
 	repos: async (id: string): Promise<Repo[]> =>

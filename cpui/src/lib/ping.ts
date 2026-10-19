@@ -7,6 +7,8 @@
 // permission); its ANSWER KIND says what shape the answer takes. The card
 // renders the kind; the type only colours the badge and tunes the wording.
 import type { AnswerKind, PingOption } from '$lib/domain';
+import type { Hue } from '$lib/ui/hues';
+import { I } from '$lib/ui/icons';
 
 export const GATE_TYPE = 'gate';
 export const PHASE_CONFIRM_TYPE = 'phase_confirm';
@@ -88,4 +90,18 @@ export function pingHeadline(question: string): string {
 		.replace(/^#+\s*|^[-*>]\s+/, '')
 		.replace(/[*_`]+/g, '')
 		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+}
+
+/** How an answered (or withdrawn) ping reads: the verdict's glyph, word and
+ *  hue. One table for the inbox history, the card's answered line and the
+ *  review page's banner. */
+export function answerMeta(p: Pick<PingLike, 'status' | 'answer'>): {
+	glyph: string;
+	word: string;
+	hue: Hue;
+} {
+	if (p.status === 'withdrawn') return { glyph: I.none, word: 'Withdrawn', hue: 'mut' };
+	if (p.answer === 'approve') return { glyph: I.ok, word: 'Approved', hue: 'grn' };
+	if (p.answer === 'reject') return { glyph: I.loop, word: 'Changes requested', hue: 'amb' };
+	return { glyph: I.ok, word: 'Answered', hue: 'grn' };
 }

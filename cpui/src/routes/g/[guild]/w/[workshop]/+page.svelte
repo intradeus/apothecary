@@ -8,14 +8,16 @@
 	import type { Flow, Integration, Project, Ticket } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to, type WorkshopTab } from '$lib/guild';
-	import { lore } from '$lib/lore';
 	import { plural } from '$lib/format';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
-	import { esc } from '$lib/system/html';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { esc } from '$lib/ui/html';
+	import { I } from '$lib/ui/icons';
+	import { indicator } from '$lib/ui/motion';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
 	import WorkshopBadge from '$lib/workshop/WorkshopBadge.svelte';
 	import OverviewTab from '$lib/workshop/OverviewTab.svelte';
@@ -99,6 +101,7 @@
 
 	let delBtn = $state<HTMLButtonElement | null>(null);
 	let blockedOpen = $state(false);
+	let deleting = $state(false);
 
 	async function remove() {
 		if (!project) return;
@@ -108,16 +111,21 @@
 		}
 		const ok = await confirmDialog({
 			title: `Delete ${project.name}?`,
-			body: `The ${lore('workshop').toLowerCase()} <b>${esc(project.name)}</b> is deleted, along with its <b>tickets</b>, <b>flows</b>, commands and egress policy. Every run is already archived, so no <b>workspace</b> is affected. Integrations are untouched.`,
-			action: `Delete ${lore('workshop').toLowerCase()}`
+			body: `The workshop <b>${esc(project.name)}</b> is deleted, along with its <b>tickets</b>, <b>flows</b>, commands and egress policy. Every run is already archived, so no <b>workspace</b> is affected. Integrations are untouched.`,
+			action: `Delete workshop`
 		});
 		if (!ok) return;
+		deleting = true;
 		try {
+			const gone = project.name;
 			await api.projects.remove(project.id);
 			await fleet.refresh();
+			toast(`${gone} deleted`);
 			await goto(to.workshops());
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -130,7 +138,7 @@
 <PageHeader
 	crumbs={[
 		{ label: guild.name, href: to.desk() },
-		{ label: lore('workshops'), href: to.workshops() },
+		{ label: 'Workshops', href: to.workshops() },
 		{ label: project?.name ?? fallbackName ?? '…' }
 	]}
 	title={project?.name ?? fallbackName ?? ''}
@@ -139,24 +147,24 @@
 	{#snippet chip()}
 		{#if live.length}<span class="pill t-az"><span class="dot pulse"></span>{live.length} live</span
 			>{/if}
-		{#if pings}<span class="pill hotpill">{plural(pings, 'ping')} awaiting you</span>{/if}
+		{#if pings}<span class="pill t-hot">{plural(pings, 'ping')} awaiting you</span>{/if}
 	{/snippet}
 	{#snippet meta()}
 		{#if project}
 			{@const href = repoHref(project.repo.url)}
 			{#if href}
 				<a class="mono repo" {href} target="_blank" rel="noreferrer"
-					>{repoLabel(project.repo.url)} ↗</a
+					>{repoLabel(project.repo.url)} {I.external}</a
 				>
 			{:else}
 				<span class="mono repo">{project.repo.url}</span>
 			{/if}
 			{#if project.repos?.length}<span class="fnt">+{plural(project.repos.length, 'repo')}</span
 				>{/if}
-			<span class="mono fnt">⎇ {project.repo.defaultBranch}</span>
+			<span class="mono fnt">{I.branch} {project.repo.defaultBranch}</span>
 			<WorkshopChips {project} {integrations} />
 		{:else if !error}
-			<span class="skel" style="width:320px"></span>
+			<span class="meta-skel"><Skeleton lines={1} /></span>
 		{/if}
 	{/snippet}
 	{#snippet actions()}
@@ -166,10 +174,11 @@
 				<button
 					bind:this={delBtn}
 					class="btn-danger"
+					aria-busy={deleting}
 					onclick={remove}
 					title={blocking.length
 						? `${plural(blocking.length, 'run')} not archived yet`
-						: `Delete this ${lore('workshop').toLowerCase()}`}>Delete…</button
+						: `Delete this workshop`}>Delete…</button
 				>
 			</div>
 		{/if}
@@ -181,20 +190,18 @@
 		<div class="bt">Archive its runs first</div>
 		<p>
 			{plural(blocking.length, 'run')}
-			{blocking.length === 1 ? 'still belongs' : 'still belong'} to this {lore(
-				'workshop'
-			).toLowerCase()}. Archiving a run destroys its workspace and keeps its record; once every run
-			is archived the {lore('workshop').toLowerCase()} can be deleted.
+			{blocking.length === 1 ? 'still belongs' : 'still belong'} to this workshop. Archiving a run destroys
+			its workspace and keeps its record; once every run is archived the workshop can be deleted.
 		</p>
 		<a
 			class="btn btn-sm"
 			href={to.workshop(projectId, 'runs')}
-			onclick={() => (blockedOpen = false)}>Show runs →</a
+			onclick={() => (blockedOpen = false)}>Show runs {I.forward}</a
 		>
 	</div>
 </Popover>
 
-<nav class="tabs wt" aria-label="{lore('workshop')} sections">
+<nav class="tabs wt" aria-label="Workshop sections" use:indicator>
 	{#each TABS as t (t)}
 		<a
 			href={to.workshop(projectId, t)}
@@ -208,13 +215,9 @@
 
 <div class="page">
 	{#if error && !project}
-		<ErrorCard
-			cause="Couldn’t load this {lore('workshop').toLowerCase()}"
-			detail={error}
-			onretry={loadProject}
-		/>
+		<ErrorCard cause="Couldn’t load this workshop" detail={error} onretry={loadProject} />
 	{:else if !project}
-		<div class="c pane"><div class="pane-body"><Skeleton lines={5} /></div></div>
+		<Skeleton pane lines={5} />
 	{:else}
 		{#if error}<ErrorCard cause="That didn’t work" detail={error} />{/if}
 		<div class="tab">
@@ -238,7 +241,7 @@
 <style>
 	.repo {
 		color: var(--tx);
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 	}
 	.acts {
 		display: flex;
@@ -246,10 +249,10 @@
 		align-items: center;
 		padding-top: 18px;
 	}
-	.hotpill {
-		background: var(--amb);
-		color: var(--ink);
-		font-weight: 700;
+	.meta-skel {
+		display: block;
+		width: var(--aside-w);
+		max-width: 100%;
 	}
 	.wt {
 		flex: none;
@@ -282,12 +285,12 @@
 	}
 	.bt {
 		font-family: var(--serif);
-		font-size: 18px;
+		font-size: var(--fs-section);
 	}
 	.blocked p {
 		margin: 0;
 		color: var(--mut);
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		text-wrap: pretty;
 	}
 </style>

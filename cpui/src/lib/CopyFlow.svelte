@@ -7,8 +7,9 @@
 	// point of ownership, and the thing the dialog should say out loud.
 	import { api } from '$lib/api';
 	import type { Flow, Project } from '$lib/domain';
-	import { lore } from '$lib/lore';
 	import Modal from '$lib/ui/Modal.svelte';
+	import { I } from '$lib/ui/icons';
+	import SlugField, { slugOk } from '$lib/flow/SlugField.svelte';
 	import { untrack } from 'svelte';
 
 	let {
@@ -49,7 +50,7 @@
 
 	const sameProject = $derived(target === flow.projectId);
 	const clash = $derived(sameProject && name.trim() === flow.name);
-	const badName = $derived(!!name.trim() && !/^[a-z][a-z0-9_-]*$/.test(name.trim()));
+	const badName = $derived(!!name.trim() && !slugOk(name));
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -70,40 +71,31 @@
 	}
 </script>
 
-<Modal bind:open title={flow.builtin ? `Use ${flow.name}` : `Copy ${flow.name}`} icon="⧉" {onclose}>
+<Modal
+	bind:open
+	title={flow.builtin ? `Use ${flow.name}` : `Copy ${flow.name}`}
+	icon={I.copy}
+	{onclose}
+>
 	<form id="copy-flow" class="cf" onsubmit={submit}>
 		<p>
 			From <b>{sourceLabel}</b>. The copy is a new document with its own history — editing it never
 			changes the original.
 		</p>
 		<div class="field">
-			<label for="cf-project">Into {lore('workshop').toLowerCase()}</label>
+			<label for="cf-project">Into workshop</label>
 			<select id="cf-project" bind:value={target}>
 				{#each projects as p (p.id)}
 					<option value={p.id}>{p.name}{p.id === flow.projectId ? ' (same)' : ''}</option>
 				{/each}
 			</select>
 		</div>
-		<div class="field">
-			<label for="cf-name">Name</label>
-			<input
-				id="cf-name"
-				bind:value={name}
-				required
-				pattern="[a-z][a-z0-9_-]*"
-				class="mono"
-				class:invalid={clash || badName}
-			/>
-			{#if clash}
-				<div class="err">
-					Copying into the same {lore('workshop').toLowerCase()} needs a different name.
-				</div>
-			{:else if badName}
-				<div class="err">A lowercase slug: a letter, then letters, digits, - or _.</div>
-			{:else}
-				<div class="help">The document renames itself to match; the name is its id.</div>
-			{/if}
-		</div>
+		<SlugField
+			id="cf-name"
+			bind:value={name}
+			conflict={clash ? `Copying into the same workshop needs a different name.` : ''}
+			help="The document renames itself to match; the name is its id."
+		/>
 		{#if error}<div class="err">{error}</div>{/if}
 	</form>
 	{#snippet footer()}
@@ -113,8 +105,9 @@
 			type="submit"
 			form="copy-flow"
 			disabled={busy || !target || !name.trim() || clash || badName}
+			aria-busy={busy}
 		>
-			{busy ? 'Copying…' : flow.builtin ? `Copy into ${lore('workshop').toLowerCase()}` : 'Copy'}
+			{busy ? 'Copying…' : flow.builtin ? `Copy into workshop` : 'Copy'}
 		</button>
 	{/snippet}
 </Modal>
@@ -127,13 +120,5 @@
 	}
 	.cf p {
 		margin: 0;
-	}
-	.cf label {
-		color: var(--tx);
-	}
-	/* app.css's input reset outranks its own input.mono; restate it. */
-	input.mono {
-		font-family: var(--mono) !important;
-		font-size: 12px !important;
 	}
 </style>

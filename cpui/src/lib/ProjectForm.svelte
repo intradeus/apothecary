@@ -7,11 +7,17 @@
 	import { api } from '$lib/api';
 	import type { ExtraRepo, Flow, Integration, Project, ProjectDraft, Repo } from '$lib/domain';
 	import { to } from '$lib/guild';
-	import { lore, loreLc } from '$lib/lore';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import TagInput from '$lib/ui/TagInput.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import SideNav from '$lib/ui/SideNav.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
+	import SearchInput from '$lib/ui/SearchInput.svelte';
+	import StatusMark from '$lib/ui/StatusMark.svelte';
+	import KeyValueEditor, { type KVRow } from '$lib/ui/KeyValueEditor.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
 
 	let {
 		integrations,
@@ -76,17 +82,18 @@
 	let defaultBranch = $state(init?.repo.defaultBranch ?? 'main');
 	let agentsMD = $state(init?.repo.agentsMdPath ?? 'AGENTS.md');
 
-	// Commands as editable key/value rows. `setup` is pinned first: it runs at
-	// workspace bootstrap and stays optional (empty = skipped).
+	// Commands as editable key → script rows. `setup` is pinned first (its
+	// name locked, never removed): it runs at workspace bootstrap and stays
+	// optional (empty = skipped).
 	const initCommands = Object.entries(init?.commands ?? {});
-	let setupCmd = $state(init?.commands?.setup ?? '');
-	let commandRows = $state<{ key: string; value: string }[]>(
-		init
+	let commandRows = $state<KVRow[]>([
+		{ key: 'setup', value: init?.commands?.setup ?? '' },
+		...(init
 			? initCommands.filter(([k]) => k !== 'setup').map(([key, value]) => ({ key, value }))
-			: [{ key: 'verify', value: '' }]
-	);
+			: [{ key: 'verify', value: '' }])
+	]);
 	const dupKeys = $derived.by(() => {
-		const seen = new Set<string>(['setup']);
+		const seen = new Set<string>();
 		const dup = new Set<string>();
 		for (const r of commandRows) {
 			const k = r.key.trim();
@@ -96,6 +103,9 @@
 		}
 		return dup;
 	});
+	const commandCount = $derived(
+		commandRows.filter((r) => r.key.trim() && (r.key.trim() !== 'setup' || r.value.trim())).length
+	);
 
 	// Egress firewall. Allowlist (deny-all, permit these) vs denylist
 	// (allow-all, block these). Both lists are kept so flipping the mode never
@@ -216,6 +226,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
+		if (busy) return;
 		if (dupKeys.size) {
 			error = `Command names must be unique: ${[...dupKeys].join(', ')}.`;
 			jump('workshop');
@@ -224,50 +235,7 @@
 		busy = true;
 		error = '';
 		try {
-			const commands: Record<string, string> = {};
-			if (setupCmd.trim()) commands.setup = setupCmd;
-			for (const row of commandRows) {
-				if (row.key.trim() && row.value.trim()) commands[row.key.trim()] = row.value;
-			}
-			const body: ProjectDraft = {
-				name: name.trim(),
-				forgeId,
-				provisionerId,
-				harnessIds: harnessSet(),
-				repo: {
-					url: repoURL.trim(),
-					locator: locator.trim(),
-					defaultBranch: defaultBranch.trim(),
-					agentsMdPath: agentsMD.trim()
-				},
-				repos: extraRepos.map((r) => ({
-					name: r.name.trim(),
-					url: r.url.trim(),
-					locator: r.locator?.trim() || undefined,
-					defaultBranch: r.defaultBranch.trim() || 'main'
-				})),
-				commands,
-				workspace: {
-					egressMode,
-					extraDomains: allowDomains,
-					deniedDomains: denyDomains,
-					blockedDomains,
-					// Not edited here, but a save replaces the whole policy: carry the
-					// raw-egress escape hatch through untouched.
-					allowedCidrs: existing?.workspace.allowedCidrs ?? [],
-					allowedPorts: existing?.workspace.allowedPorts ?? [],
-					codeServerExtensions: codeServerExtensions.map((e) => e.trim()).filter(Boolean),
-					editor: {
-						theme: editorTheme,
-						fontSize: Number(editorFontSize) || 0,
-						tabSize: Number(editorTabSize) || 0,
-						formatOnSave: editorFormatOnSave,
-						wordWrap: editorWordWrap,
-						trustWorkspace: editorTrustWorkspace
-					}
-				},
-				defaultFlow
-			};
+			const body = draft();
 			const saved = existing
 				? await api.projects.update(existing.id, body)
 				: await api.projects.create(body);
@@ -280,6 +248,8 @@
 					/* saved anyway; the Health tab offers to run it */
 				}
 			}
+			savedAt = Date.now();
+			toast(existing ? `${saved.name} setup saved` : `${saved.name} created`);
 			onsaved(saved, checked);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -287,6 +257,60 @@
 			busy = false;
 		}
 	}
+
+	// The whole draft as the engine takes it (also what "unsaved" compares).
+	function draft(): ProjectDraft {
+		const commands: Record<string, string> = {};
+		for (const row of commandRows) {
+			const k = row.key.trim();
+			if (k && row.value.trim()) commands[k] = row.value;
+		}
+		return {
+			name: name.trim(),
+			forgeId,
+			provisionerId,
+			harnessIds: harnessSet(),
+			repo: {
+				url: repoURL.trim(),
+				locator: locator.trim(),
+				defaultBranch: defaultBranch.trim(),
+				agentsMdPath: agentsMD.trim()
+			},
+			repos: extraRepos.map((r) => ({
+				name: r.name.trim(),
+				url: r.url.trim(),
+				locator: r.locator?.trim() || undefined,
+				defaultBranch: r.defaultBranch.trim() || 'main'
+			})),
+			commands,
+			workspace: {
+				egressMode,
+				extraDomains: allowDomains,
+				deniedDomains: denyDomains,
+				blockedDomains,
+				// Not edited here, but a save replaces the whole policy: carry the
+				// raw-egress escape hatch through untouched.
+				allowedCidrs: existing?.workspace.allowedCidrs ?? [],
+				allowedPorts: existing?.workspace.allowedPorts ?? [],
+				codeServerExtensions: codeServerExtensions.map((e) => e.trim()).filter(Boolean),
+				editor: {
+					theme: editorTheme,
+					fontSize: Number(editorFontSize) || 0,
+					tabSize: Number(editorTabSize) || 0,
+					formatOnSave: editorFormatOnSave,
+					wordWrap: editorWordWrap,
+					trustWorkspace: editorTrustWorkspace
+				}
+			},
+			defaultFlow
+		};
+	}
+	// Editing: Save waits for a change (or an envcheck to run after it).
+	// Creating: there is always something to create.
+	const initialDraft = untrack(() => JSON.stringify(draft()));
+	const changed = $derived(JSON.stringify(draft()) !== initialDraft);
+	const dirty = $derived(!existing || changed || runEnvcheck);
+	let savedAt = $state<number | null>(null);
 
 	// --- step rail --------------------------------------------------------------
 
@@ -302,7 +326,7 @@
 		{
 			id: 'workshop',
 			n: 2,
-			label: lore('workshop'),
+			label: 'Workshop',
 			done: !!name.trim() && !!defaultFlow,
 			sub: name.trim() || 'name, commands, flow'
 		},
@@ -352,37 +376,22 @@
 </script>
 
 <form class="pf" bind:this={formEl} onsubmit={submit}>
-	<aside class="rail">
-		<nav class="steps lg" aria-label="Setup steps">
-			{#each steps as s (s.id)}
-				<a
-					href="#{s.id}"
-					class="step"
-					class:on={active === s.id}
-					onclick={(e) => {
-						e.preventDefault();
-						jump(s.id);
-					}}
-				>
-					<span class="n" class:done={s.done}>{s.done && active !== s.id ? '✓' : s.n}</span>
-					<span class="sl">
-						<span class="lb">{s.label}</span>
-						<span class="sb ell">{s.sub}</span>
-					</span>
-				</a>
-			{/each}
-		</nav>
-	</aside>
+	<SideNav
+		label="Setup steps"
+		{active}
+		items={steps.map((s) => ({ id: s.id, label: s.label, sub: s.sub, step: s.n, done: s.done }))}
+		onselect={(id) => jump(id as StepId)}
+	/>
 
 	<div class="secs">
 		<!-- 1 · Repository ----------------------------------------------------->
 		<section id="repository" class="c pane">
 			<div class="pane-head">
-				<span class="num-b">1</span>
+				<span class="tag">1</span>
 				<h2>Repository</h2>
 				<span class="mut small">where the code lives, and the forge that hosts it</span>
 			</div>
-			<div class="pane-body col">
+			<div class="pane-body stack">
 				<div class="grid2">
 					<div class="field">
 						<label for="p-forge">Forge account</label>
@@ -395,7 +404,7 @@
 								class="btn-sel"
 								onclick={loadRepos}
 								disabled={!forgeId || loadingRepos}
-								>{loadingRepos ? 'Loading…' : 'Browse repositories'}</button
+								aria-busy={loadingRepos}>{loadingRepos ? 'Loading…' : 'Browse repositories'}</button
 							>
 						</div>
 						{#if forges.length === 0}
@@ -415,14 +424,14 @@
 						onretry={loadRepos}
 					/>{/if}
 				{#if repos}
-					<div class="browser card-in">
-						<div class="bh">
-							<input
-								type="search"
-								placeholder="⌕  Filter {repos.length} repositories"
+					<div class="browser card-in materialize">
+						<div class="row nowrap bh">
+							<SearchInput
 								bind:value={repoQuery}
-								aria-label="Filter repositories"
+								width={480}
+								placeholder="Filter {repos.length} repositories"
 							/>
+							<span class="spacer"></span>
 							<button type="button" class="btn-ghost btn-sm" onclick={() => (repos = null)}
 								>Close</button
 							>
@@ -438,12 +447,12 @@
 									<button
 										type="button"
 										class="btn-sm"
-										title="Add as an additional repository of this {loreLc('workshop')}"
-										onclick={() => addExtra(r)}>+ extra</button
+										title="Add as an additional repository of this workshop"
+										onclick={() => addExtra(r)}>{I.add} extra</button
 									>
 								</div>
 							{:else}
-								<div class="fnt small pad">
+								<div class="empty-line">
 									{repos.length
 										? 'No repository matches.'
 										: 'No repositories visible to this token.'}
@@ -482,11 +491,12 @@
 				</div>
 
 				<div class="sub">
-					<div class="subh">
-						<span class="lbl">Additional repositories</span>
+					<div class="row">
+						<h3>Additional repositories</h3>
 						<span class="count">{extraRepos.length}</span>
 						<span class="spacer"></span>
-						<button type="button" class="btn-sm" onclick={() => addExtra()}>+ Add repository</button
+						<button type="button" class="btn-sm" onclick={() => addExtra()}
+							>{I.add} Add repository</button
 						>
 					</div>
 					<div class="help">
@@ -495,49 +505,60 @@
 						repository the agent should only read.
 					</div>
 					{#if extraRepos.length}
-						<div class="xt">
-							<div class="xr head">
-								<span>Name</span><span>URL</span><span>Locator</span><span>Branch</span><span
-								></span>
-							</div>
-							{#each extraRepos as r, i (i)}
-								<div class="xr">
-									<input
-										id={`extra-${i}-name`}
-										class="mono"
-										bind:value={r.name}
-										placeholder="api"
-										aria-label="checkout name"
-										required
-									/>
-									<input
-										class="mono"
-										bind:value={r.url}
-										placeholder="https://gitlab.com/group/api.git"
-										aria-label="repo url"
-										required
-									/>
-									<input
-										class="mono"
-										bind:value={r.locator}
-										placeholder="read-only"
-										aria-label="locator (empty = read-only)"
-									/>
-									<input
-										class="mono"
-										bind:value={r.defaultBranch}
-										placeholder="main"
-										aria-label="default branch"
-									/>
-									<button
-										type="button"
-										class="btn-icon"
-										onclick={() => removeExtra(i)}
-										aria-label="Remove {r.name || 'repository'}">×</button
-									>
-								</div>
-							{/each}
-						</div>
+						<table class="xt form-dense">
+							<thead>
+								<tr><th>Name</th><th>URL</th><th>Locator</th><th>Branch</th><th></th></tr>
+							</thead>
+							<tbody>
+								{#each extraRepos as r, i (i)}
+									<tr>
+										<td
+											><input
+												id={`extra-${i}-name`}
+												class="mono"
+												bind:value={r.name}
+												placeholder="api"
+												aria-label="checkout name"
+												required
+											/></td
+										>
+										<td
+											><input
+												class="mono"
+												bind:value={r.url}
+												placeholder="https://gitlab.com/group/api.git"
+												aria-label="repo url"
+												required
+											/></td
+										>
+										<td
+											><input
+												class="mono"
+												bind:value={r.locator}
+												placeholder="read-only"
+												aria-label="locator (empty = read-only)"
+											/></td
+										>
+										<td
+											><input
+												class="mono"
+												bind:value={r.defaultBranch}
+												placeholder="main"
+												aria-label="default branch"
+											/></td
+										>
+										<td
+											><button
+												type="button"
+												class="btn-icon"
+												onclick={() => removeExtra(i)}
+												aria-label="Remove {r.name || 'repository'}">{I.close}</button
+											></td
+										>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
 						<div class="help">
 							The primary repository supplies the devcontainer; its image must carry the toolchains
 							the extra repositories need.
@@ -550,21 +571,21 @@
 		<!-- 2 · Workshop ------------------------------------------------------->
 		<section id="workshop" class="c pane">
 			<div class="pane-head">
-				<span class="num-b">2</span>
-				<h2>{lore('workshop')}</h2>
+				<span class="tag">2</span>
+				<h2>Workshop</h2>
 				<span class="mut small">its name, the commands its flows call, and where runs start</span>
 			</div>
-			<div class="pane-body col">
+			<div class="pane-body stack">
 				<div class="grid2">
 					<div class="field">
-						<label for="p-name">{lore('workshop')} name</label>
+						<label for="p-name">Workshop name</label>
 						<input id="p-name" bind:value={name} required />
 					</div>
 					<div class="field">
 						<label for="p-flow">Default flow</label>
 						<select id="p-flow" class="mono" bind:value={defaultFlow} required>
 							{#if ownFlows.length}
-								<optgroup label="This {lore('workshop').toLowerCase()}’s flows">
+								<optgroup label="This workshop’s flows">
 									{#each ownFlows as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 								</optgroup>
 							{/if}
@@ -583,60 +604,25 @@
 				</div>
 
 				<div class="sub">
-					<div class="subh">
-						<span class="lbl">Commands</span>
-						<span class="count"
-							>{commandRows.filter((r) => r.key.trim()).length + (setupCmd.trim() ? 1 : 0)}</span
-						>
-						<span class="spacer"></span>
-						<button
-							type="button"
-							class="btn-sm"
-							onclick={() => (commandRows = [...commandRows, { key: '', value: '' }])}
-							>+ Add command</button
-						>
+					<div class="row">
+						<h3>Commands</h3>
+						<span class="count">{commandCount}</span>
 					</div>
 					<div class="help">
 						Shell, run as <code>bash -eo pipefail</code>. Flows call them by name with
-						<code>run_ref</code>.
+						<code>run_ref</code>. <code>setup</code> is pinned: it runs when a workspace boots — leave
+						it empty to skip.
 					</div>
-					<div class="ct">
-						<div class="cr pinned">
-							<span class="key mono">setup <span class="pill t-grn">bootstrap</span></span>
-							<input
-								class="mono"
-								id="cmd-setup"
-								bind:value={setupCmd}
-								placeholder="runs when a workspace boots — leave empty to skip"
-								aria-label="setup command"
-							/>
-							<span></span>
-						</div>
-						{#each commandRows as row, idx (idx)}
-							<div class="cr">
-								<input
-									class="mono"
-									class:invalid={dupKeys.has(row.key.trim())}
-									bind:value={row.key}
-									placeholder="name"
-									aria-label="command name"
-								/>
-								<input
-									class="mono"
-									id={`cmd-${idx}-v`}
-									bind:value={row.value}
-									placeholder="make test"
-									aria-label="command script"
-								/>
-								<button
-									type="button"
-									class="btn-icon"
-									aria-label="Remove command {row.key}"
-									onclick={() => (commandRows = commandRows.filter((_, i) => i !== idx))}>×</button
-								>
-							</div>
-						{/each}
-					</div>
+					<KeyValueEditor
+						bind:rows={commandRows}
+						multiline
+						keyWidth={150}
+						keyPlaceholder="name"
+						valuePlaceholder="make test"
+						addLabel="Add command"
+						locked={(k, i) => i === 0 && k === 'setup'}
+						invalid={dupKeys}
+					/>
 					{#if dupKeys.size}<div class="err">Duplicate names: {[...dupKeys].join(', ')}</div>{/if}
 				</div>
 			</div>
@@ -645,11 +631,11 @@
 		<!-- 3 · Execution ------------------------------------------------------->
 		<section id="execution" class="c pane">
 			<div class="pane-head">
-				<span class="num-b">3</span>
+				<span class="tag">3</span>
 				<h2>Execution</h2>
 				<span class="mut small">where workspaces run, and which coding agents may run in them</span>
 			</div>
-			<div class="pane-body col">
+			<div class="pane-body stack">
 				<div class="grid2">
 					<div class="field">
 						<label for="p-prov">Provisioner</label>
@@ -666,14 +652,13 @@
 					</div>
 				</div>
 				<div class="sub">
-					<div class="subh">
-						<span class="lbl">Harness integrations</span><span class="count"
-							>{harnessIds.length}</span
-						>
+					<div class="row">
+						<h3>Harness integrations</h3>
+						<span class="count">{harnessIds.length}</span>
 					</div>
 					<div class="help">
-						The harnesses this {lore('workshop').toLowerCase()} provides (auth and tooling). A flow names
-						which kind it runs on; one integration per kind.
+						The harnesses this workshop provides (auth and tooling). A flow names which kind it runs
+						on; one integration per kind.
 					</div>
 					<div class="hs">
 						{#each harnesses as h (h.id)}
@@ -681,7 +666,7 @@
 							{@const blocked = kindTaken(h) && !on}
 							<button
 								type="button"
-								class="hopt"
+								class="rowbtn hopt"
 								class:on
 								disabled={blocked}
 								role="checkbox"
@@ -689,9 +674,13 @@
 								title={blocked ? `Another ${h.kind} integration is already picked` : ''}
 								onclick={() => toggleHarness(h)}
 							>
-								<span class="ck">{on ? '✓' : ''}</span>
+								<StatusMark
+									tone={on ? 'ok' : 'pending'}
+									size="sm"
+									title={on ? 'picked' : 'not picked'}
+								/>
 								<span class="hn ell">{h.name}</span>
-								<span class="pill t-mut">{h.kind}</span>
+								<span class="pill sm t-mut">{h.kind}</span>
 								{#if blocked}<span class="fnt tiny">kind taken</span>{/if}
 							</button>
 						{:else}
@@ -710,19 +699,19 @@
 		<!-- 4 · Workspace ------------------------------------------------------->
 		<section id="workspace" class="c pane">
 			<div class="pane-head">
-				<span class="num-b">4</span>
+				<span class="tag">4</span>
 				<h2>Workspace</h2>
 				<span class="mut small"
-					>the repo’s own <code>.devcontainer</code>, behind this {loreLc('workshop')}’s egress
-					gateway</span
+					>the repo’s own <code>.devcontainer</code>, behind this workshop’s egress gateway</span
 				>
 			</div>
-			<div class="pane-body col">
+			<div class="pane-body stack">
 				<div class="sub">
-					<div class="subh"><span class="lbl">Egress firewall</span></div>
-					<div class="modes">
+					<h3>Egress firewall</h3>
+					<div class="row modes">
 						<Segmented
 							glass={false}
+							label="Egress mode"
 							options={[
 								{ value: 'allow', label: 'Allowlist' },
 								{ value: 'deny', label: 'Denylist' }
@@ -740,8 +729,8 @@
 						</div>
 					</div>
 
-					<div class="subh">
-						<span class="lbl">{egressMode === 'deny' ? 'Blocked hosts' : 'Allowed hosts'}</span>
+					<div class="row">
+						<h3>{egressMode === 'deny' ? 'Blocked hosts' : 'Allowed hosts'}</h3>
 						<span class="count"
 							>{egressMode === 'deny' ? denyDomains.length : allowDomains.length}</span
 						>
@@ -751,8 +740,13 @@
 							{#if defaultsAdded !== null}<span class="fnt tiny"
 									>{defaultsAdded ? `+${defaultsAdded} added` : 'all already present'}</span
 								>{/if}
-							<button type="button" class="btn-sm" onclick={addDefaults} disabled={defaultsBusy}
-								>{defaultsBusy ? 'Loading…' : '+ Add sensible defaults'}</button
+							<button
+								type="button"
+								class="btn-sm"
+								onclick={addDefaults}
+								disabled={defaultsBusy}
+								aria-busy={defaultsBusy}
+								>{defaultsBusy ? 'Loading…' : `${I.add} Add sensible defaults`}</button
 							>
 						{/if}
 					</div>
@@ -775,18 +769,17 @@
 						run’s Egress window.
 					</div>
 					{#if blockedDomains.length}
-						<div class="forced">
+						<div class="chips">
 							<span class="fnt tiny">Force-blocked ({blockedDomains.length}):</span>
-							{#each blockedDomains as d (d)}<span class="pill t-ros mono">{d}</span>{/each}
+							{#each blockedDomains as d (d)}<span class="pill sm mono t-ros">{d}</span>{/each}
 						</div>
 					{/if}
 				</div>
 
 				<div class="sub">
-					<div class="subh">
-						<span class="lbl">code-server extensions</span><span class="count"
-							>{codeServerExtensions.length}</span
-						>
+					<div class="row">
+						<h3>code-server extensions</h3>
+						<span class="count">{codeServerExtensions.length}</span>
 					</div>
 					<TagInput bind:values={codeServerExtensions} placeholder="golang.go, ms-python.python" />
 					<div class="help">
@@ -796,7 +789,7 @@
 				</div>
 
 				<div class="sub">
-					<div class="subh"><span class="lbl">Editor defaults</span></div>
+					<h3>Editor defaults</h3>
 					<div class="help">
 						code-server settings, applied each time the browser editor opens — no rebuild.
 					</div>
@@ -831,7 +824,7 @@
 							/>
 						</div>
 					</div>
-					<div class="toggles">
+					<div class="row toggles">
 						<Toggle bind:checked={editorFormatOnSave} label="Format on save" />
 						<Toggle bind:checked={editorWordWrap} label="Word wrap" />
 						<Toggle
@@ -843,103 +836,41 @@
 				</div>
 			</div>
 		</section>
-	</div>
 
-	<footer class="foot lg">
-		{#if error}<span class="ferr err ell" title={error}>✕ {error}</span>{:else}<span
-				class="fnt small"
-				>{existing
-					? 'Nothing changes until you save.'
-					: `Creates the ${lore('workshop').toLowerCase()}; nothing runs until you start a run.`}</span
-			>{/if}
-		<span class="spacer"></span>
-		<Toggle
-			bind:checked={runEnvcheck}
-			label="Run envcheck after saving"
-			title="Provision a throwaway workspace right after saving to prove it builds"
-		/>
-		<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button>
-		<button class="btn-primary btn-lg" type="submit" disabled={busy}>
-			{busy ? 'Saving…' : existing ? 'Save setup' : `Create ${lore('workshop').toLowerCase()}`}
-		</button>
-	</footer>
+		{#if error}<ErrorCard cause="Couldn’t save this setup" detail={error} />{/if}
+
+		<!-- The bar's Save is the form's submit button (SaveBar `submit`): the
+		     native required-field checks run, then submit() saves. -->
+		<SaveBar
+			{dirty}
+			{busy}
+			{savedAt}
+			note={existing
+				? 'Nothing changes until you save.'
+				: `Creates the workshop; nothing runs until you start a run.`}
+			saveLabel={existing ? 'Save setup' : `Create workshop`}
+			submit
+		>
+			{#snippet extra()}
+				<Toggle
+					bind:checked={runEnvcheck}
+					label="Run envcheck after saving"
+					title="Provision a throwaway workspace right after saving to prove it builds"
+				/>
+				<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button>
+			{/snippet}
+		</SaveBar>
+	</div>
 </form>
 
 <style>
 	.pf {
 		display: grid;
-		grid-template-columns: 210px minmax(0, 1fr);
+		grid-template-columns: auto minmax(0, 1fr);
 		gap: 14px 16px;
 		align-items: start;
 		max-width: 1180px;
 		width: 100%;
-	}
-	.rail {
-		position: sticky;
-		top: 0;
-	}
-	.steps {
-		border-radius: 16px;
-		padding: 8px;
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-	.step {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 7px 8px;
-		border-radius: 10px;
-		color: var(--tx);
-	}
-	.step:hover {
-		background: var(--p3);
-		text-decoration: none;
-	}
-	.step.on {
-		background: var(--sel);
-		box-shadow:
-			inset 0 0 0 1px var(--selLn),
-			var(--selSh);
-	}
-	.n {
-		flex: none;
-		width: 22px;
-		height: 22px;
-		border-radius: 50%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-family: var(--mono);
-		font-size: 11px;
-		font-weight: 600;
-		border: 1px solid var(--ln2);
-		color: var(--mut);
-	}
-	.n.done {
-		background: var(--grnBg);
-		border-color: var(--grnLn);
-		color: var(--grn);
-	}
-	.on .n {
-		background: var(--brand);
-		color: var(--onBrand);
-		border-color: transparent;
-	}
-	.sl {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		line-height: 1.3;
-	}
-	.lb {
-		font-size: 12.5px;
-		font-weight: 600;
-	}
-	.sb {
-		font-size: 11px;
-		color: var(--mut);
 	}
 	.secs {
 		display: flex;
@@ -950,31 +881,13 @@
 	section {
 		scroll-margin-top: 8px;
 	}
-	.num-b {
-		flex: none;
-		width: 22px;
-		height: 22px;
-		border-radius: 7px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-family: var(--mono);
-		font-size: 11px;
-		font-weight: 600;
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		color: var(--mut);
-	}
 	.pane-head {
 		flex-wrap: wrap;
 	}
-	.col {
+	.stack {
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
-	}
-	.wide {
-		grid-column: 1 / -1;
 	}
 	.sub {
 		display: flex;
@@ -983,26 +896,20 @@
 		padding-top: 14px;
 		border-top: 1px solid var(--cLn);
 	}
-	.col > .sub:first-child {
+	.stack > .sub:first-child {
 		border-top: 0;
 		padding-top: 0;
 	}
-	.subh {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-wrap: wrap;
+	.sub h3 {
+		font-size: var(--fs-ui);
 	}
-	.lbl {
-		font-size: 12.5px;
-		font-weight: 600;
+	.sub > .row {
+		gap: 8px;
 	}
 	.browser {
 		overflow: hidden;
 	}
 	.bh {
-		display: flex;
-		gap: 8px;
 		padding: 8px;
 		border-bottom: 1px solid var(--ln);
 	}
@@ -1017,7 +924,7 @@
 		align-items: center;
 		padding: 6px 10px;
 		border-top: 1px solid var(--ln);
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
 	.br:first-child {
 		border-top: 0;
@@ -1026,103 +933,61 @@
 		background: var(--p1);
 	}
 	.br .mono {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
-	.pad {
-		padding: 10px;
+	/* Extra repositories: a table of inputs; tight cells, no row rules. */
+	.xt th,
+	.xt td {
+		padding: 3px 3px;
+		border-top: 0;
 	}
-	.xt,
-	.ct {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		margin-top: 4px;
+	.xt th {
+		position: static;
 	}
-	.xr {
-		display: grid;
-		grid-template-columns: 120px minmax(0, 1fr) 120px 110px 24px;
-		gap: 6px;
-		align-items: center;
+	.xt td:last-child {
+		width: 28px;
 	}
-	.xr.head {
-		font-size: 11px;
-		color: var(--mut);
-		font-weight: 500;
+	.xt th:first-child {
+		width: 130px;
 	}
-	.cr {
-		display: grid;
-		grid-template-columns: 150px minmax(0, 1fr) 24px;
-		gap: 6px;
-		align-items: center;
+	.xt th:nth-child(3) {
+		width: 120px;
 	}
-	.key {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding-left: 10px;
-		font-weight: 600;
-		font-size: 12px;
-	}
-	.key .pill {
-		font-family: var(--sans);
-		font-size: 9.5px;
-		padding: 0 6px;
-	}
-	.cr.pinned {
-		padding-bottom: 6px;
-		border-bottom: 1px dashed var(--ln2);
+	.xt th:nth-child(4) {
+		width: 110px;
 	}
 	.hs {
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
 		margin-top: 4px;
+		max-width: 520px;
 	}
 	.hopt {
-		justify-content: flex-start;
 		gap: 10px;
-		padding: 7px 10px;
-		border-radius: 10px;
-		background: var(--p1);
 		border: 1px solid var(--ln);
-		box-shadow: none;
-		max-width: 520px;
+		background: var(--p1);
+		transition:
+			background var(--dur-fade) var(--ease-out),
+			border-color var(--dur-fade) var(--ease-out);
 	}
 	.hopt.on {
 		background: var(--grnBg);
 		border-color: var(--grnLn);
+		box-shadow: none;
 	}
 	.hopt:disabled {
-		opacity: 0.55;
-		pointer-events: auto;
+		opacity: var(--o-dim);
 		cursor: not-allowed;
 	}
-	.ck {
-		flex: none;
-		width: 16px;
-		height: 16px;
-		border-radius: 5px;
-		border: 1px solid var(--ln2);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 11px;
-		font-weight: 700;
-		color: var(--onBrand);
-	}
-	.on .ck {
-		background: var(--grn);
-		border-color: transparent;
-	}
 	.hn {
+		flex: 1;
 		font-weight: 500;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
 	.modes {
-		display: flex;
 		align-items: flex-start;
 		gap: 14px;
-		flex-wrap: wrap;
 		margin-bottom: 6px;
 	}
 	.mexp {
@@ -1131,23 +996,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: 3px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--fnt);
+		transition: color var(--dur-fade) var(--ease-out);
+	}
+	.mexp > div {
+		transition: color var(--dur-fade) var(--ease-out);
 	}
 	.mexp .cur {
 		color: var(--tx);
 	}
 	.mexp b {
 		font-weight: 600;
-	}
-	.forced {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px;
-		align-items: center;
-	}
-	.forced .pill {
-		font-size: 10.5px;
 	}
 	.ed {
 		display: grid;
@@ -1156,51 +1016,24 @@
 		max-width: 620px;
 	}
 	.toggles {
-		display: flex;
 		gap: 18px;
-		flex-wrap: wrap;
 		margin-top: 6px;
 	}
-	.foot {
-		grid-column: 1 / -1;
-		position: sticky;
-		bottom: 0;
-		z-index: 5;
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 8px 8px 8px 16px;
-		border-radius: 16px;
-	}
-	.ferr {
-		max-width: 50%;
-		font-size: 12px;
-	}
-	@media (max-width: 900px) {
+	@media (max-width: 1000px) {
 		.pf {
 			grid-template-columns: minmax(0, 1fr);
-		}
-		.rail {
-			position: static;
-		}
-		.steps {
-			flex-direction: row;
-			overflow-x: auto;
-		}
-		.xr {
-			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 24px;
 		}
 		.ed {
 			grid-template-columns: minmax(0, 1fr);
 		}
-		.foot {
-			flex-wrap: wrap;
-		}
 	}
-	/* app.css's input reset outranks its own input.mono; restate it. */
-	input.mono,
-	select.mono {
-		font-family: var(--mono) !important;
-		font-size: 12px !important;
+	@media (max-width: 760px) {
+		.xt thead {
+			display: none;
+		}
+		.xt tr {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
+		}
 	}
 </style>

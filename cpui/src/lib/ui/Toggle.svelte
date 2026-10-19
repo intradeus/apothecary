@@ -1,5 +1,8 @@
 <script lang="ts">
-	// Toggle (DESIGN 4.14): 28×16 track, green when on.
+	// Toggle (DESIGN 4.14): 28×16 track, green when on. It feels physical:
+	// the knob stretches toward its destination on press (like iOS) and
+	// springs across on release; flipping it again mid-travel retargets from
+	// where it is.
 	let {
 		checked = $bindable(false),
 		label,
@@ -38,16 +41,17 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--tx);
+		-webkit-tap-highlight-color: transparent;
 	}
 	.tg:focus-visible {
 		outline: 2px solid var(--brand);
 		outline-offset: 2px;
-		border-radius: 6px;
+		border-radius: var(--r-tag);
 	}
 	.tg:disabled {
-		opacity: 0.5;
+		opacity: var(--o-disabled);
 		cursor: default;
 	}
 	.track {
@@ -55,26 +59,41 @@
 		flex: none;
 		width: 28px;
 		height: 16px;
-		border-radius: 9px;
+		border-radius: var(--r-pill);
 		background: var(--p2);
 		border: 1px solid var(--ln2);
+		transition:
+			background var(--dur-fade) var(--ease-out),
+			border-color var(--dur-fade) var(--ease-out);
 	}
 	.track.on {
 		background: var(--grn);
 		border-color: transparent;
 	}
+	/* Positioned by transform (compositor-only), sized by width; both ride
+	 * the spring. Pressed, the knob stretches toward the far side. */
 	.knob {
 		position: absolute;
 		top: 1px;
 		left: 1px;
 		width: 12px;
 		height: 12px;
-		border-radius: 50%;
-		background: #fff;
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+		border-radius: var(--r-pill);
+		background: var(--knob);
+		box-shadow: var(--knobSh);
+		transition:
+			transform var(--dur-spring) var(--spring),
+			width var(--dur-spring) var(--spring);
 	}
 	.on .knob {
-		left: 13px;
+		transform: translateX(12px);
+	}
+	.tg:active:not(:disabled) .knob {
+		width: 15px;
+		transition-duration: var(--dur-press);
+	}
+	.tg:active:not(:disabled) .on .knob {
+		transform: translateX(9px);
 	}
 	.l {
 		white-space: nowrap;

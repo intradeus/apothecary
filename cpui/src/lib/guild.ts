@@ -83,7 +83,8 @@ export const to = {
 
 // --- workshop identity ------------------------------------------------------
 
-const HUES = ['#7ee2a8', '#7fb2ff', '#c3a2ff', '#5fd6cc', '#efe6cf', '#f5b54a'];
+// Token references, not colours: a vial follows the theme like everything else.
+const HUES = ['var(--grn)', 'var(--az)', 'var(--vio)', 'var(--tea)', 'var(--parch)', 'var(--amb)'];
 
 const hash = (s: string) => {
 	let h = 2166136261;

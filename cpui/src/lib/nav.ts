@@ -1,0 +1,69 @@
+// The app's top-level destinations, once. The sidebar, the mobile tab bar,
+// the command palette and the "G then …" chords all read this list, so a
+// renamed page or a new section changes one entry.
+
+import { to } from '$lib/guild';
+import { I } from '$lib/ui/icons';
+
+export interface NavItem {
+	id: 'desk' | 'inbox' | 'runs' | 'tickets' | 'system';
+	label: string;
+	icon: string;
+	href: () => string;
+	/** The second key of its "G then …" chord. */
+	chord?: string;
+	/** On the mobile tab bar (the rest live in the drawer). */
+	mobile: boolean;
+	/** Whether a path is inside this destination. */
+	match: (path: string) => boolean;
+}
+
+export const NAV: readonly NavItem[] = [
+	{
+		id: 'desk',
+		label: 'Desk',
+		icon: I.desk,
+		href: () => to.desk(),
+		chord: 'd',
+		mobile: true,
+		match: (p) => p === to.desk()
+	},
+	{
+		id: 'inbox',
+		label: 'Inbox',
+		icon: I.inbox,
+		href: () => to.inbox(),
+		chord: 'i',
+		mobile: true,
+		match: (p) => p.startsWith(to.inbox())
+	},
+	{
+		id: 'runs',
+		label: 'Runs',
+		icon: I.runs,
+		href: () => to.runs(),
+		chord: 'r',
+		mobile: true,
+		match: (p) => p.startsWith(`${to.desk()}/runs`)
+	},
+	{
+		id: 'tickets',
+		label: 'Tickets',
+		icon: I.tickets,
+		href: () => to.tickets(),
+		chord: 't',
+		mobile: true,
+		match: (p) => p.startsWith(`${to.desk()}/tickets`)
+	},
+	{
+		id: 'system',
+		label: 'System',
+		icon: I.system,
+		href: () => to.system(),
+		mobile: false,
+		match: (p) => p.startsWith(`${to.desk()}/system`)
+	}
+];
+
+/** The destination a "G then <key>" chord goes to. */
+export const navByChord = (key: string) => NAV.find((n) => n.chord === key.toLowerCase());

@@ -2,7 +2,7 @@
 	// Vitals (DESIGN 4.16): CPU, memory and network as three sparkline tiles
 	// sharing one crosshair.
 	import Sparkline from '$lib/ui/Sparkline.svelte';
-	import { fmtBytes } from '$lib/format';
+	import { counterRates, fmtBytes, fmtPct, fmtRate } from '$lib/format';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
@@ -21,28 +21,26 @@
 	const cpu = $derived(s.map((x) => (cpus ? x.cpuPerc / cpus : x.cpuPerc)));
 	const mem = $derived(s.map((x) => x.memUsed));
 	const memLimit = $derived(s.at(-1)?.memLimit || 0);
-	// Per-second rates from the cumulative counters; a reset reads 0.
+	// Per-second rates from the cumulative counters (a gap reads 0 here: a
+	// sparkline has no breaks).
 	const rate = (k: 'netRx' | 'netTx') =>
-		s.map((x, i) => {
-			if (i === 0) return 0;
-			const dt = (times[i] - times[i - 1]) / 1000;
-			return dt > 0 ? Math.max(0, (x[k] - s[i - 1][k]) / dt) : 0;
-		});
+		counterRates(
+			s.map((x) => x[k]),
+			times
+		).map((v) => v ?? 0);
 	const rx = $derived(rate('netRx'));
 	const tx = $derived(rate('netTx'));
-	const pct = (v: number) => `${v >= 10 ? Math.round(v) : v.toFixed(1)}%`;
 	const bytes = (v: number) => fmtBytes(Math.round(v)) || '0 B';
-	const rateFmt = (v: number) => `${bytes(v)}/s`;
 </script>
 
 <div class="vt">
 	<Sparkline
 		label="CPU"
 		hue="var(--az)"
-		value={cpu.length ? pct(cpu.at(-1)!) : '—'}
+		value={cpu.length ? fmtPct(cpu.at(-1)!) : '—'}
 		series={cpu}
 		{times}
-		fmt={pct}
+		fmt={fmtPct}
 		bind:hover
 	/>
 	<Sparkline
@@ -57,16 +55,16 @@
 	<Sparkline
 		label="Network in / out"
 		hue="var(--tea)"
-		value={rx.length > 1 ? `${rateFmt(rx.at(-1)!)} · ${rateFmt(tx.at(-1)!)}` : '—'}
+		value={rx.length > 1 ? `${fmtRate(rx.at(-1)!)} · ${fmtRate(tx.at(-1)!)}` : '—'}
 		series={rx}
 		series2={tx}
 		{times}
-		fmt={rateFmt}
+		fmt={fmtRate}
 		bind:hover
 	/>
 </div>
 {#if !rs.hasWorkspace && s.length < 2}
-	<div class="gone">No live workspace to sample.</div>
+	<div class="empty-line">No live workspace to sample.</div>
 {/if}
 
 <style>
@@ -76,10 +74,5 @@
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 6px;
 		padding: 8px;
-	}
-	.gone {
-		padding: 0 12px;
-		font-size: 11.5px;
-		color: var(--fnt);
 	}
 </style>

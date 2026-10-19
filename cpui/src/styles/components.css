@@ -1,0 +1,1142 @@
+/* Components: materials, buttons, pills, tabs, forms, tables, panes.
+ * Part of the design system; see app.css for the map. */
+
+/* ── materials ─────────────────────────────────────────────────────────── */
+
+/* Control glass: anything that floats and controls. Never nest one in
+ * another. */
+.lg {
+	background: var(--lgBg);
+	backdrop-filter: var(--lgBf);
+	-webkit-backdrop-filter: var(--lgBf);
+	border: 1px solid var(--lgLn);
+	box-shadow: var(--lgRim);
+}
+/* Popovers and modals: control glass over an opaque underlay. */
+.lg-pop {
+	background: var(--lgBg), var(--popBg);
+	backdrop-filter: var(--lgBf);
+	-webkit-backdrop-filter: var(--lgBf);
+	border: 1px solid var(--lgLn);
+	box-shadow: var(--lgRim), var(--popSh);
+}
+/* Content glass: panes that hold reading material. */
+.c {
+	background: var(--cBg);
+	backdrop-filter: var(--cBf);
+	-webkit-backdrop-filter: var(--cBf);
+	border: 1px solid var(--cLn);
+	box-shadow: var(--cSh);
+}
+/* Card inside a pane. */
+.card-in {
+	background: var(--p2);
+	border: 1px solid var(--ln);
+	border-radius: var(--r-card);
+}
+
+/* ── buttons ───────────────────────────────────────────────────────────── */
+/* One secondary/selected look everywhere (DESIGN 4.1). Bare <button> is the
+ * secondary; variants are classes.
+ *
+ * The bare-element rules sit in :where() (zero specificity, so any class
+ * wins) and skip third-party widget roots: Svelte Flow and xterm ship their
+ * own buttons and must keep them. Add a root here when adopting another. */
+
+:where(button:not(.svelte-flow *, .xterm *)),
+.btn {
+	all: unset;
+	box-sizing: border-box;
+	cursor: pointer;
+	white-space: nowrap;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	font-family: var(--sans);
+	font-size: var(--fs-label);
+	font-weight: 500;
+	line-height: 1.4;
+	color: var(--tx);
+	padding: 4px 11px;
+	border-radius: var(--r-btn);
+	background: var(--p2);
+	border: 1px solid var(--ln2);
+	box-shadow: var(--spec);
+}
+:where(button:not(.svelte-flow *, .xterm *)):hover,
+.btn:hover {
+	background: var(--p3);
+	text-decoration: none;
+}
+:where(button:not(.svelte-flow *, .xterm *)):focus-visible,
+.btn:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 2px;
+}
+:where(button:not(.svelte-flow *, .xterm *)):disabled,
+.btn[aria-disabled='true'] {
+	opacity: 0.5;
+	cursor: default;
+	pointer-events: none;
+}
+
+.btn-primary,
+button.primary {
+	background: var(--brand);
+	color: var(--onBrand);
+	border-color: transparent;
+	font-weight: 600;
+	box-shadow: 0 0 14px var(--brandLn);
+}
+.btn-primary:hover,
+button.primary:hover {
+	background: var(--brand);
+	filter: brightness(1.06);
+}
+.btn-sel {
+	background: var(--railSel);
+	border: 1px solid var(--railSelLn);
+	box-shadow: var(--railSelSh);
+	color: var(--railSelTx);
+	font-weight: 600;
+}
+.btn-sel:hover {
+	background: var(--railSel);
+	filter: brightness(1.12);
+}
+.btn-danger,
+button.danger {
+	background: transparent;
+	box-shadow: none;
+	color: var(--ros);
+	border: 1px solid var(--rosLn);
+}
+.btn-danger:hover,
+button.danger:hover {
+	background: var(--rosBg);
+}
+.btn-danger-solid {
+	background: var(--ros);
+	color: var(--rosInk);
+	border-color: transparent;
+	font-weight: 600;
+	box-shadow: 0 0 14px var(--rosGlow);
+}
+.btn-danger-solid:hover {
+	background: var(--ros);
+	filter: brightness(1.08);
+}
+.btn-ghost {
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+	color: var(--mut);
+}
+.btn-ghost:hover {
+	background: var(--p3);
+	color: var(--tx);
+}
+.btn-icon {
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border-radius: var(--r-icon);
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+	color: var(--mut);
+	font-size: var(--fs-body);
+}
+.btn-icon:hover {
+	background: var(--p3);
+	color: var(--tx);
+}
+.btn-notyet {
+	background: transparent;
+	box-shadow: none;
+	border: 1px dashed var(--ln2);
+	color: var(--fnt);
+	cursor: default;
+}
+.btn-notyet:hover {
+	background: transparent;
+}
+.btn-sm {
+	font-size: var(--fs-help);
+	padding: 3px 9px;
+	border-radius: var(--r-tab);
+}
+.btn-lg {
+	font-size: var(--fs-body);
+	padding: 7px 14px;
+}
+/* A text-only button that reads as a link. */
+.linklike {
+	padding: 0;
+	border: 0;
+	background: none;
+	box-shadow: none;
+	border-radius: var(--r-xs);
+}
+.linklike:hover {
+	background: none;
+	text-decoration: underline;
+}
+
+/* ── chips, pills, tags, counts ────────────────────────────────────────── */
+
+.pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 9px;
+	border-radius: var(--r-pill);
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	line-height: 1.5;
+	white-space: nowrap;
+	border: 1px solid transparent;
+}
+.pill > .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	flex: none;
+}
+.t-az {
+	background: var(--azBg);
+	color: var(--az);
+	border-color: var(--azLn);
+}
+.t-amb {
+	background: var(--ambBg);
+	color: var(--amb);
+	border-color: var(--ambLn);
+}
+.t-grn {
+	background: var(--grnBg);
+	color: var(--grn);
+	border-color: var(--grnLn);
+}
+.t-ros {
+	background: var(--rosBg);
+	color: var(--ros);
+	border-color: var(--rosLn);
+}
+.t-vio {
+	background: var(--vioBg);
+	color: var(--vio);
+	border-color: var(--vioLn);
+}
+.t-tea {
+	background: var(--teaBg);
+	color: var(--tea);
+	border-color: var(--teaLn);
+}
+.t-mut {
+	background: var(--p2);
+	color: var(--mut);
+	border-color: var(--ln);
+}
+.t-brand {
+	background: var(--brandBg);
+	color: var(--brand);
+	border-color: var(--brandLn);
+}
+
+/* Mono tag: ticket keys, hashes. */
+.tag {
+	display: inline-flex;
+	align-items: center;
+	font-family: var(--mono);
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	padding: 0 6px;
+	border-radius: var(--r-tag);
+	background: var(--p2);
+	border: 1px solid var(--ln);
+	color: var(--tx);
+	white-space: nowrap;
+}
+
+/* Count in nav/tab. .hot = a human must act now. */
+.count {
+	display: inline-block;
+	font-family: var(--mono);
+	font-size: var(--fs-id);
+	font-weight: 600;
+	padding: 0 7px;
+	border-radius: var(--r-card);
+	color: var(--mut);
+	line-height: 1.6;
+	min-width: 18px;
+	text-align: center;
+}
+.count.hot {
+	background: var(--amb);
+	color: var(--ink);
+	font-weight: 700;
+}
+
+.dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	flex: none;
+	display: inline-block;
+}
+
+/* ── tabs + segmented ──────────────────────────────────────────────────── */
+
+.seg {
+	display: inline-flex;
+	gap: 3px;
+	padding: 3px;
+	border-radius: var(--r-btn);
+}
+.seg > button,
+.seg > a {
+	all: unset;
+	cursor: pointer;
+	white-space: nowrap;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: var(--fs-ui);
+	font-weight: 500;
+	color: var(--mut);
+	padding: 5px 12px;
+	border-radius: var(--r-tab);
+}
+.seg > button:hover,
+.seg > a:hover {
+	color: var(--tx);
+	text-decoration: none;
+}
+.seg > .on,
+.tabs > .on,
+.bead {
+	background: var(--sel);
+	box-shadow:
+		inset 0 0 0 1px var(--selLn),
+		var(--selSh);
+	color: var(--tx);
+	font-weight: 600;
+}
+.seg .n {
+	font-family: var(--mono);
+	font-size: var(--fs-id);
+	color: var(--mut);
+}
+
+.tabs {
+	display: flex;
+	gap: 2px;
+	align-items: center;
+	border-bottom: 1px solid var(--cLn);
+	padding: 0 8px;
+	min-height: 38px;
+}
+.tabs > button,
+.tabs > a {
+	all: unset;
+	cursor: pointer;
+	white-space: nowrap;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 10px;
+	border-radius: var(--r-tab);
+	font-size: var(--fs-ui);
+	font-weight: 500;
+	color: var(--mut);
+}
+.tabs > button:hover,
+.tabs > a:hover {
+	color: var(--tx);
+	text-decoration: none;
+}
+
+/* The sliding bead (ui/motion `indicator`). With it, one bead springs
+ * between options instead of the selection jumping; options keep their own
+ * background clear. Interruptible: clicking again mid-slide retargets it
+ * from where it is. `.on-rail` swaps in the sidebar's selected look. */
+.has-ind {
+	position: relative;
+}
+.has-ind > :not(.ind) {
+	position: relative;
+	z-index: var(--z-raise);
+}
+/* Doubled class: beats any option's own selected look (.rowbtn.on, …). */
+.has-ind.has-ind > .on {
+	background: transparent;
+	box-shadow: none;
+}
+.ind {
+	position: absolute;
+	left: 0;
+	top: 0;
+	z-index: var(--z-scene);
+	pointer-events: none;
+	border-radius: var(--r-tab);
+	background: var(--sel);
+	box-shadow:
+		inset 0 0 0 1px var(--selLn),
+		var(--selSh);
+	transition:
+		transform var(--dur-spring) var(--spring),
+		width var(--dur-spring) var(--spring),
+		height var(--dur-spring) var(--spring),
+		opacity var(--dur-fade) var(--ease-out);
+}
+.on-rail > .ind {
+	border-radius: var(--r-row);
+	background: var(--railSel);
+	box-shadow: var(--railOnSh);
+}
+
+/* ── menus (popovers, the command palette) ─────────────────────────────── */
+
+.mi {
+	all: unset;
+	box-sizing: border-box;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	padding: 7px 9px;
+	border-radius: var(--r-row);
+	font-size: var(--fs-ui);
+	color: var(--tx);
+	white-space: nowrap;
+	min-width: 0;
+}
+.mi:hover {
+	background: var(--p3);
+	text-decoration: none;
+}
+.mi:active {
+	background: var(--p3);
+	opacity: 0.8;
+}
+.mi:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: -2px;
+}
+.mi.on {
+	background: var(--sel);
+	box-shadow:
+		inset 0 0 0 1px var(--selLn),
+		var(--selSh);
+	font-weight: 600;
+}
+.mi .sub {
+	color: var(--mut);
+	font-size: var(--fs-meta);
+}
+.mi .g {
+	width: 16px;
+	text-align: center;
+	color: var(--mut);
+	flex: none;
+}
+/* A two-line row: title over a muted sub. */
+.mi .col {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+	line-height: 1.25;
+	min-width: 0;
+	flex: 1;
+}
+.menu-div {
+	height: 1px;
+	background: var(--ln);
+	margin: 4px 6px;
+	flex: none;
+}
+
+/* ── forms (DESIGN 4.14) ───────────────────────────────────────────────── */
+
+/* Element defaults sit in :where() (zero specificity), so any class —
+ * .bare, .mono, a component's own — overrides them without !important. */
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'])),
+:where(textarea, select) {
+	width: 100%;
+	font-family: var(--sans);
+	font-size: var(--fs-body);
+	color: var(--tx);
+	padding: 7px 10px;
+	border-radius: var(--r-row);
+	background: var(--p1);
+	border: 1px solid var(--ln2);
+	outline: none;
+}
+input::placeholder,
+textarea::placeholder {
+	color: var(--fnt);
+}
+:where(input, textarea, select):focus {
+	border-color: var(--brand);
+	box-shadow: 0 0 0 3px var(--brandBg);
+}
+input.invalid,
+textarea.invalid,
+select.invalid {
+	border-color: var(--ros);
+}
+input.mono,
+textarea.mono {
+	font-family: var(--mono);
+	font-size: var(--fs-label);
+}
+:where(textarea) {
+	resize: vertical;
+	min-height: 64px;
+	line-height: 1.5;
+}
+:where(select) {
+	appearance: none;
+	padding-right: 28px;
+	background-image:
+		linear-gradient(45deg, transparent 50%, var(--mut) 50%),
+		linear-gradient(135deg, var(--mut) 50%, transparent 50%);
+	background-position:
+		calc(100% - 15px) 50%,
+		calc(100% - 10px) 50%;
+	background-size:
+		5px 5px,
+		5px 5px;
+	background-repeat: no-repeat;
+}
+select option {
+	background: var(--popBg);
+	color: var(--tx);
+}
+input[type='checkbox'] {
+	accent-color: var(--grn);
+}
+
+label {
+	display: block;
+	font-size: var(--fs-label);
+	font-weight: 500;
+	color: var(--tx);
+	margin: 10px 0 4px;
+}
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+.field > label {
+	margin: 0;
+}
+.help {
+	font-size: var(--fs-help);
+	letter-spacing: var(--tr-small);
+	color: var(--mut);
+}
+.err,
+.error {
+	font-size: var(--fs-help);
+	color: var(--ros);
+}
+.grid2 {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 12px 16px;
+}
+@media (max-width: 760px) {
+	.grid2 {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+/* ── tables (DESIGN 4.13) ──────────────────────────────────────────────── */
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+}
+th {
+	letter-spacing: var(--tr-small);
+	text-align: left;
+	color: var(--mut);
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	padding: 8px 14px;
+	position: sticky;
+	top: 0;
+	white-space: nowrap;
+}
+td {
+	padding: 9px 14px;
+	border-top: 1px solid var(--cLn);
+	vertical-align: middle;
+}
+tr.click {
+	cursor: pointer;
+}
+tr.click:hover,
+.rows > .r:hover {
+	background: var(--p1);
+}
+tr.sel {
+	background: var(--p3);
+}
+/* Grid rows (preferred for dense lists so long text ellipsises). */
+.rows > .r {
+	display: grid;
+	align-items: center;
+	gap: 12px;
+	padding: 9px 16px;
+	border-top: 1px solid var(--cLn);
+	color: inherit;
+	text-decoration: none;
+}
+.rows > .r.head {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: var(--mut);
+	border-top: 0;
+	padding-top: 8px;
+	padding-bottom: 6px;
+}
+.rows > .r.head:hover {
+	background: none;
+}
+
+/* ── panes ─────────────────────────────────────────────────────────────── */
+
+/* Section pane on content glass. */
+.pane {
+	border-radius: var(--r-pane);
+	overflow: hidden;
+}
+.pane-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--cLn);
+}
+.pane-head h2 {
+	font-size: var(--fs-section);
+}
+.pane-body {
+	padding: 14px 16px;
+}
+
+details > summary {
+	cursor: pointer;
+	list-style: none;
+}
+details > summary::-webkit-details-marker {
+	display: none;
+}
+details > summary .caretglyph {
+	display: inline-block;
+	transition: none;
+}
+details[open] > summary .caretglyph {
+	transform: rotate(90deg);
+}
+
+/* Diff (DESIGN 4.10). */
+.diff {
+	font-family: var(--mono);
+	font-size: var(--fs-meta);
+	background: var(--code);
+	border-radius: var(--r-sm);
+	overflow: auto;
+	line-height: 1.55;
+}
+.diff .dl {
+	min-width: max-content; /* tints span the full scroll width */
+	display: grid;
+	grid-template-columns: 36px 1fr;
+	white-space: pre;
+}
+.diff .dl > .ln {
+	text-align: right;
+	padding-right: 8px;
+	opacity: 0.6;
+	color: var(--mut);
+	user-select: none;
+}
+.diff .dl.add {
+	background: var(--grnBg);
+	color: var(--grn);
+}
+.diff .dl.del {
+	background: var(--rosBg);
+	color: var(--ros);
+}
+.diff .dl.hunk {
+	color: var(--az);
+	opacity: 0.8;
+}
+
+pre.log {
+	font-family: var(--mono);
+	font-size: var(--fs-help);
+	background: var(--code);
+	border-radius: var(--r-row);
+	padding: 10px 12px;
+	margin: 0;
+	overflow: auto;
+	max-height: 400px;
+	white-space: pre-wrap;
+	word-break: break-all;
+	color: var(--tx);
+}
+
+/* Skeleton loading bar. */
+.skel {
+	display: block;
+	height: 12px;
+	border-radius: var(--r-tag);
+	background: var(--p1) linear-gradient(90deg, transparent, var(--p2), transparent) no-repeat;
+	background-size: 50% 100%;
+	animation: ap-shimmer 1.4s linear infinite;
+}
+
+/* ── more button variants ──────────────────────────────────────────────── */
+
+.btn-md {
+	font-size: var(--fs-label);
+	padding: 5px 14px;
+}
+/* "A human must act now": the amber pair (ping cards, gates). */
+.btn-hot {
+	background: var(--amb);
+	color: var(--ink);
+	border-color: transparent;
+	font-weight: 700;
+	box-shadow: 0 0 var(--glow-md) var(--ambGlow);
+}
+.btn-hot:hover {
+	background: var(--amb);
+	filter: brightness(1.06);
+}
+.btn-hot-outline {
+	background: transparent;
+	box-shadow: none;
+	color: var(--amb);
+	border: 1px solid var(--ambLn);
+	font-weight: 600;
+}
+.btn-hot-outline:hover {
+	background: var(--ambBg);
+}
+/* Live, but secondary to everything else in its group ("Other…"). */
+.btn-dashed {
+	background: transparent;
+	box-shadow: none;
+	border: 1px dashed var(--ln2);
+	color: var(--mut);
+}
+.btn-dashed:hover {
+	background: var(--p1);
+	color: var(--tx);
+}
+/* The terminal's own buttons (it stays dark in every theme). */
+.btn-term {
+	color: var(--termTx);
+	background: var(--termBtnBg);
+	border-color: var(--termBtnLn);
+	box-shadow: none;
+}
+/* Link colour at zero specificity, so a .hue-* on the same element wins. */
+:where(.linklike) {
+	color: var(--az);
+}
+.linklike.brand,
+a.brand {
+	color: var(--brand);
+}
+
+/* ── live dots and marks ───────────────────────────────────────────────── */
+
+/* A live indicator: colour it with a .hue-* class (currentColor), add
+ * .pulse while something is happening. */
+.ldot {
+	flex: none;
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+	box-shadow: 0 0 var(--glow-sm) currentColor;
+}
+.ldot.sm {
+	width: 6px;
+	height: 6px;
+}
+.ldot.flat {
+	box-shadow: none;
+}
+.ldot.hollow {
+	background: transparent;
+	border: 1.5px solid currentColor;
+	box-shadow: none;
+}
+.ldot.dashed {
+	background: transparent;
+	border: 1.5px dashed currentColor;
+	box-shadow: none;
+}
+/* Unsaved changes: an amber dot beside a label. */
+.unsaved {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--amb);
+	font-size: var(--fs-meta);
+	font-weight: 600;
+}
+.unsaved::before {
+	content: '';
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--amb);
+	box-shadow: 0 0 var(--glow-sm) var(--amb);
+}
+
+/* ── pills, extra sizes and tones ──────────────────────────────────────── */
+
+.pill.sm {
+	font-size: var(--fs-id);
+	padding: 0 7px;
+}
+.pill.flat {
+	border-color: transparent;
+}
+/* Squarer corners: stage-type chips, kind chips. */
+.pill.sq {
+	border-radius: var(--r-tag);
+}
+.pill.mono {
+	font-family: var(--mono);
+	font-weight: 500;
+}
+/* Solid amber: the "N need you" pill. */
+.pill.t-hot {
+	background: var(--amb);
+	color: var(--ink);
+	font-weight: 700;
+	box-shadow: 0 0 var(--glow-md) var(--ambLn);
+}
+.count.bad {
+	background: var(--ros);
+	color: var(--rosInk);
+	font-weight: 700;
+}
+.chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+}
+
+/* A hue as a variable, for components that tint several properties from
+ * one colour (washes, accents, dots): `class="h-amb"` then var(--h). */
+.h-az {
+	--h: var(--az);
+}
+.h-amb {
+	--h: var(--amb);
+}
+.h-grn {
+	--h: var(--grn);
+}
+.h-ros {
+	--h: var(--ros);
+}
+.h-vio {
+	--h: var(--vio);
+}
+.h-tea {
+	--h: var(--tea);
+}
+.h-mut {
+	--h: var(--mut);
+}
+.h-brand {
+	--h: var(--brand);
+}
+/* A tinted wash in the top-left corner of a surface (the ping card). */
+.wash {
+	background:
+		radial-gradient(
+			ellipse 70% 140% at 0% 0%,
+			color-mix(in oklch, var(--h, var(--brand)) var(--hueBg), transparent),
+			transparent 70%
+		),
+		var(--wash-base, var(--lgBg));
+}
+
+/* ── rows ──────────────────────────────────────────────────────────────── */
+
+/* A full-width clickable row in a list (files, outline, results, menus):
+ * dims on press instead of scaling, bead when selected. */
+/* The reset sits in :where() so classes on the same element (.card-in,
+ * .fnt, …) still apply. */
+:where(.rowbtn) {
+	all: unset;
+	color: var(--tx);
+}
+.rowbtn {
+	box-sizing: border-box;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	padding: 7px 10px;
+	border-radius: var(--r-row);
+	text-align: left;
+	-webkit-tap-highlight-color: transparent;
+}
+.rowbtn:hover {
+	background: var(--p1);
+	text-decoration: none;
+}
+.rowbtn:active {
+	background: var(--p3);
+}
+.rowbtn:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: -2px;
+}
+.rowbtn.on,
+.rowbtn.sel {
+	background: var(--sel);
+	box-shadow:
+		inset 0 0 0 1px var(--selLn),
+		var(--selSh);
+}
+/* A row whose title link covers the whole row (other links stay on top). */
+.rows > .r {
+	position: relative;
+}
+.stretch::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: var(--z-raise);
+}
+.over-stretch {
+	position: relative;
+	z-index: calc(var(--z-raise) + 1);
+}
+
+/* ── pane parts, sections, cards ───────────────────────────────────────── */
+
+.page > .pane {
+	flex: none;
+}
+.pane-foot {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 9px 16px;
+	border-top: 1px solid var(--cLn);
+	font-size: var(--fs-meta);
+	color: var(--mut);
+}
+/* A small label for a group inside a pane ("Recently finished"). */
+.pane-sub,
+.lbl {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: var(--fnt);
+	letter-spacing: var(--tr-small);
+}
+.pane-sub {
+	padding: 10px 16px 4px;
+}
+/* A card's own head: serif title, muted legend on the right. */
+.card-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 10px;
+}
+.card-head > .t {
+	font-family: var(--serif);
+	font-style: italic;
+	font-size: var(--fs-section);
+	line-height: 1.15;
+}
+.card-head > .lg2,
+.card-head > .legend {
+	font-size: var(--fs-meta);
+	color: var(--mut);
+}
+/* Cards in a responsive grid; set --min per use. */
+.card-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(var(--min, 340px), 100%), 1fr));
+	gap: 10px;
+	align-items: start;
+}
+
+/* Key/value pairs (config summaries, agent specs). `.code` boxes them. */
+dl.kv {
+	display: grid;
+	grid-template-columns: var(--k, max-content) minmax(0, 1fr);
+	gap: 4px 14px;
+	margin: 0;
+	font-size: var(--fs-label);
+}
+dl.kv > dt {
+	color: var(--mut);
+	white-space: nowrap;
+}
+dl.kv > dd {
+	margin: 0;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+dl.kv.code {
+	background: var(--code);
+	border-radius: var(--r-row);
+	padding: 8px 10px;
+}
+dl.kv.code > dd {
+	font-family: var(--mono);
+	font-size: var(--fs-help);
+}
+
+/* A quiet dashed note ("nothing here yet", "how this works"). */
+.note {
+	border: 1px dashed var(--ln2);
+	border-radius: var(--r-btn);
+	padding: 10px 12px;
+	color: var(--mut);
+	font-size: var(--fs-label);
+}
+
+/* ── desk views and toolbars ───────────────────────────────────────────── */
+
+/* The scrolling body of a desk window (the desk's .page). */
+.view {
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+	overflow: auto;
+	display: flex;
+	flex-direction: column;
+}
+/* A view's toolbar: controls left, a quiet hint right. */
+.vbar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 12px;
+	min-width: 0;
+	flex-wrap: wrap;
+}
+/* A quiet hint ("refreshes every 5s"); at the right end of a .vbar. */
+.hint {
+	font-size: var(--fs-meta);
+	color: var(--fnt);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+.vbar > .hint {
+	margin-left: auto;
+}
+
+/* ── forms, extra ──────────────────────────────────────────────────────── */
+
+.form-actions {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 8px;
+}
+.wide {
+	grid-column: 1 / -1;
+}
+/* A denser form (inspectors, side panels). */
+.form-dense label,
+.form-dense .field > label {
+	font-size: var(--fs-help);
+	margin: 6px 0 3px;
+}
+.form-dense input:not([type='checkbox'], [type='radio']),
+.form-dense select,
+.form-dense textarea {
+	padding: 5px 8px;
+	font-size: var(--fs-label);
+	border-radius: var(--r-tab);
+}
+/* A borderless input that lives inside another control. */
+input.bare,
+textarea.bare {
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+	padding: 3px 0;
+}
+
+/* ── overlays ──────────────────────────────────────────────────────────── */
+
+.scrim {
+	position: fixed;
+	inset: 0;
+	z-index: var(--z-modal);
+	background: var(--scrim);
+	backdrop-filter: blur(6px);
+	-webkit-backdrop-filter: blur(6px);
+}
+
+/* ── documents ─────────────────────────────────────────────────────────── */
+
+/* A reading column (plan review, captured documents). */
+.paper {
+	max-width: var(--paper);
+	margin: 0 auto;
+	width: 100%;
+}
+/* Rendered documents get the serif headings the rest of the UI uses for
+ * section titles. */
+.md.doc h1,
+.md.doc h2 {
+	font-family: var(--serif);
+	font-style: italic;
+	font-weight: 400;
+	font-size: var(--fs-section);
+	letter-spacing: 0;
+	margin: 18px 0 8px;
+}
+.md.doc h1 {
+	font-size: var(--fs-empty);
+}
+
+/* ── code and diffs, extra ─────────────────────────────────────────────── */
+
+/* Two gutters (old and new line numbers) for side-aware diffs. */
+.diff.two .dl {
+	grid-template-columns: 36px 36px 1fr;
+}
+.diff .dl.meta {
+	color: var(--mut);
+}
+.diff-foot {
+	font-size: var(--fs-meta);
+	color: var(--fnt);
+	padding: 6px 10px;
+}

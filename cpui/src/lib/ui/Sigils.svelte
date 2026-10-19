@@ -4,14 +4,29 @@
 	// one still frame under prefers-reduced-motion.
 	import { onMount } from 'svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { token } from './tokens';
 
 	let canvas = $state<HTMLCanvasElement | null>(null);
 
 	const GLYPHS = ['☉', '☽', '☿', '♀', '♂', '♃', '♄'];
 
-	function draw(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, dark: boolean) {
+	/** The chart's ink, from app.css (--sigil*): re-read when the theme flips. */
+	interface Ink {
+		gold: string; // "r, g, b"
+		alpha: number; // the large chart
+		alpha2: number; // the small chart
+		glow: string;
+	}
+	const readInk = (): Ink => ({
+		gold: token('--sigil'),
+		alpha: parseFloat(token('--sigilA')) || 0.14,
+		alpha2: parseFloat(token('--sigilA2')) || 0.11,
+		glow: token('--sigilGlow')
+	});
+
+	function draw(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, ink: Ink) {
 		ctx.clearRect(0, 0, W, H);
-		const gold = dark ? '233,205,130' : '120,90,30';
+		const gold = ink.gold;
 		// Charts are laid out for 1440×900 and scale with the viewport's
 		// smaller relative dimension so they never crowd a small screen.
 		const s = Math.min(W / 1440, H / 900);
@@ -71,11 +86,11 @@
 			ctx.setLineDash([]);
 			ctx.restore();
 		};
-		chart(W * 0.66, H * 0.56, 420 * s, t * 0.012, dark ? 0.14 : 0.22);
-		chart(W * 0.13, H * 0.2, 170 * s, -t * 0.02, dark ? 0.11 : 0.18);
+		chart(W * 0.66, H * 0.56, 420 * s, t * 0.012, ink.alpha);
+		chart(W * 0.13, H * 0.2, 170 * s, -t * 0.02, ink.alpha2);
 		const g = ctx.createRadialGradient(W * 0.66, H * 0.56, 10, W * 0.66, H * 0.56, 320 * s);
-		g.addColorStop(0, dark ? 'rgba(233,205,130,.08)' : 'rgba(233,205,130,.2)');
-		g.addColorStop(1, 'rgba(0,0,0,0)');
+		g.addColorStop(0, ink.glow);
+		g.addColorStop(1, 'transparent');
 		ctx.fillStyle = g;
 		ctx.fillRect(0, 0, W, H);
 	}
@@ -95,6 +110,7 @@
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		};
 		resize();
+		let ink = readInk();
 		const t0 = performance.now();
 		let last = -1;
 		let raf = 0;
@@ -102,11 +118,11 @@
 			const t = (now - t0) / 1000;
 			if (t - last >= 1 / 20) {
 				last = t;
-				draw(ctx, W, H, t, prefs.theme !== 'light');
+				draw(ctx, W, H, t, ink);
 			}
 			if (!reduce && !document.hidden) raf = requestAnimationFrame(frame);
 		};
-		const redraw = () => draw(ctx, W, H, (performance.now() - t0) / 1000, prefs.theme !== 'light');
+		const redraw = () => draw(ctx, W, H, (performance.now() - t0) / 1000, ink);
 		const onVis = () => {
 			cancelAnimationFrame(raf);
 			if (!document.hidden && !reduce) raf = requestAnimationFrame(frame);
@@ -122,6 +138,7 @@
 		const stopTheme = $effect.root(() => {
 			$effect(() => {
 				void prefs.theme;
+				ink = readInk();
 				redraw();
 			});
 		});
@@ -142,7 +159,7 @@
 		inset: 0;
 		width: 100vw;
 		height: 100vh;
-		z-index: 0;
+		z-index: var(--z-scene);
 		pointer-events: none;
 	}
 </style>

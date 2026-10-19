@@ -1,15 +1,17 @@
 <script lang="ts">
 	// "Needs you" panel (DESIGN 7.2): every run waiting on a human, oldest
 	// first. One row per run — its newest pending ping is the one to answer;
-	// earlier ones queue behind it (the inbox's rule).
+	// earlier ones queue behind it (the inbox's rule). The whole row opens the
+	// ping; the workshop link and the call to action sit above it.
 	import { to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
 	import { age, fmtAbs, shortId } from '$lib/format';
-	import { lore } from '$lib/lore';
 	import { pingCta, pingHeadline } from '$lib/ping';
 	import type { Ping } from '$lib/domain';
 	import PingPill from '$lib/ui/PingPill.svelte';
-	import Vial from '$lib/ui/Vial.svelte';
+	import { I } from '$lib/ui/icons';
+	import { bump } from '$lib/ui/motion';
+	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
 
 	let { pings }: { pings: Ping[] } = $props();
 
@@ -25,96 +27,71 @@
 	});
 </script>
 
-<section class="ny c">
-	<header>
-		<span class="n">{pings.length}</span>
-		<h2>{lore('needsYou')}</h2>
+<section class="ny c pane">
+	<header class="pane-head">
+		<span class="count hot mark" use:bump={pings.length}>{pings.length}</span>
+		<h2>Awaiting your hand</h2>
 		<span class="sub">oldest first</span>
 		<span class="spacer"></span>
-		<a href={to.inbox()}>Open inbox →</a>
+		<a class="small" href={to.inbox()}>Open inbox {I.forward}</a>
 	</header>
-	{#each rows as { ping: p, queued } (p.id)}
-		{@const run = fleet.runById.get(p.runId)}
-		{@const pid = run?.projectId}
-		<div class="row-ny">
-			<span class="ty"><PingPill type={p.type} /></span>
-			<span class="what">
-				<a class="q ell" href={to.ping(p.id)}>{pingHeadline(p.question) || 'A question for you'}</a>
-				<span class="sub ell">
-					<span class="mono">{shortId(p.runId)}</span>
-					{' · '}{run?.title ?? 'run'}{#if p.stageId}{' · '}<span class="mono">{p.stageId}</span
-						>{/if}{#if queued > 0}<span class="amb">{' · '}{queued} more queued</span>{/if}
+	<div class="rows">
+		{#each rows as { ping: p, queued } (p.id)}
+			{@const run = fleet.runById.get(p.runId)}
+			<div class="r ny-r">
+				<span class="ty"><PingPill type={p.type} /></span>
+				<span class="what">
+					<a class="q ell stretch" href={to.ping(p.id)}
+						>{pingHeadline(p.question) || 'A question for you'}</a
+					>
+					<span class="sub ell">
+						<span class="mono">{shortId(p.runId)}</span>
+						{' · '}{run?.title ?? 'run'}{#if p.stageId}{' · '}<span class="mono">{p.stageId}</span
+							>{/if}{#if queued > 0}<span class="hue-amb">{' · '}{queued} more queued</span>{/if}
+					</span>
 				</span>
-			</span>
-			<span class="ws ell">
-				{#if pid}<Vial projectId={pid} />{/if}
-				<span class="ell">{(pid && fleet.projectById.get(pid)?.name) ?? '—'}</span>
-			</span>
-			<span class="age mono" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
-			<a class="btn btn-sel cta" href={to.ping(p.id)}>{pingCta(p)}</a>
-		</div>
-	{/each}
+				<span class="ws ell"><WorkshopName projectId={run?.projectId} link /></span>
+				<span class="mono mut num age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
+				<a class="btn btn-sel btn-sm over-stretch cta" href={to.ping(p.id)}>{pingCta(p)}</a>
+			</div>
+		{/each}
+	</div>
 </section>
 
 <style>
 	.ny {
-		border-radius: 18px;
-		overflow: hidden;
-		display: flex;
-		flex-direction: column;
+		border-radius: var(--r-group);
+	}
+	/* The round amber count: the same mark as the ping card's "?". */
+	.mark {
 		flex: none;
-	}
-	header {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 12px 16px;
-		border-bottom: 1px solid var(--cLn);
-	}
-	header .n {
 		width: 20px;
 		height: 20px;
+		padding: 0;
 		border-radius: 50%;
-		background: var(--amb);
-		color: var(--ink);
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 11px;
-		font-weight: 800;
-		font-family: var(--mono);
-		box-shadow: 0 0 10px var(--ambGlow);
-		flex: none;
+		box-shadow: 0 0 var(--glow-sm) var(--ambGlow);
 	}
-	header h2 {
-		font-size: 20px;
+	h2 {
 		white-space: nowrap;
 	}
 	header .sub {
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--mut);
 		white-space: nowrap;
 	}
 	header a {
-		font-size: 12px;
 		white-space: nowrap;
 	}
-	.spacer {
-		flex: 1;
-	}
-	.row-ny {
-		display: grid;
+	.ny-r {
 		grid-template-columns: 118px minmax(0, 1fr) 210px 64px auto;
 		gap: 14px;
-		align-items: center;
 		padding: 10px 16px;
-		border-top: 1px solid var(--cLn);
 	}
-	header + .row-ny {
+	.rows > .ny-r:first-child {
 		border-top: 0;
-	}
-	.row-ny:hover {
-		background: var(--p1);
 	}
 	.ty {
 		justify-self: start;
@@ -129,34 +106,25 @@
 		font-weight: 500;
 		color: var(--tx);
 	}
+	.q:hover {
+		text-decoration: none;
+	}
 	.what .sub {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 	}
 	.what .sub .mono {
-		font-size: 11px;
-	}
-	.amb {
-		color: var(--amb);
+		font-size: var(--fs-meta);
 	}
 	.ws {
 		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 12px;
 		min-width: 0;
 	}
 	.age {
-		font-size: 11px;
-		color: var(--mut);
-		text-align: right;
+		font-size: var(--fs-meta);
 	}
-	.cta {
-		padding: 4px 12px;
-		border-radius: 9px;
-	}
-	@media (max-width: 900px) {
-		.row-ny {
+	@media (max-width: 1000px) {
+		.ny-r {
 			grid-template-columns: auto minmax(0, 1fr) auto;
 			grid-template-areas: 'ty age cta' 'what what what';
 			row-gap: 6px;

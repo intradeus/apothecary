@@ -7,13 +7,13 @@
 	// fetched here. Selection mirrors ?ping= (shallow, no navigation) so a
 	// selected ping is a deep link.
 	import { onMount } from 'svelte';
-	import { replaceState } from '$app/navigation';
+	import { flip } from 'svelte/animate';
+	import { goto, replaceState } from '$app/navigation';
 	import { currentGuild, to } from '$lib/guild';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, age, fmtAbs, fmtCost, shortId } from '$lib/format';
-	import { lore, isLore } from '$lib/lore';
-	import { pingHeadline } from '$lib/ping';
+	import { answerMeta, pingHeadline } from '$lib/ping';
 	import type { Ping, Ticket } from '$lib/domain';
 	import PingCard from '$lib/PingCard.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
@@ -22,11 +22,16 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
 	import WorkspaceStatus from '$lib/ui/WorkspaceStatus.svelte';
-	import Vial from '$lib/ui/Vial.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import { runFacts, stageStatus } from '$lib/desk-home/runfacts.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
+	import type { Hue } from '$lib/ui/hues';
+	import { indicator, ms, slide, spring } from '$lib/ui/motion';
+	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import MrLink from '$lib/run/MrLink.svelte';
+	import { runFacts, stageStatus } from '$lib/run/runfacts.svelte';
 
 	let {
 		initial = '',
@@ -88,11 +93,23 @@
 	const shownGroups = $derived(
 		typeFilter ? groups.filter((g) => g[0].type === typeFilter) : groups
 	);
+	const typeOptions = $derived([
+		{ value: '', label: 'All', count: groups.length },
+		...types.map(([t, n]) => ({
+			value: t,
+			label: pingMeta(t).label,
+			count: n,
+			dot: pingMeta(t).hue as Hue
+		}))
+	]);
 
 	// The selected ping: an explicit pick if it is still pending, else the
 	// first card. A ping that was just answered falls through to its run's
 	// next-earlier one, which now heads the same group.
+	// When a run's last ping is answered its card leaves; the one that slid
+	// into its place (the next card down) is selected, not the top of the list.
 	let lastRun = $state('');
+	let lastIdx = $state(0);
 	const current = $derived.by(() => {
 		const all = groups.flat();
 		const exact = all.find((p) => p.id === selected);
@@ -102,11 +119,19 @@
 			return groups.find((g) => g[0].runId === exact.runId)?.[0] ?? exact;
 		}
 		const sameRun = groups.find((g) => g[0].runId === lastRun);
-		return sameRun?.[0] ?? shownGroups[0]?.[0] ?? null;
+		return (
+			sameRun?.[0] ??
+			shownGroups[Math.min(lastIdx, shownGroups.length - 1)]?.[0] ??
+			shownGroups[0]?.[0] ??
+			null
+		);
 	});
 	const currentGroup = $derived(current ? (groups.find((g) => g[0].id === current.id) ?? []) : []);
 	$effect(() => {
-		if (current) lastRun = current.runId;
+		if (!current) return;
+		lastRun = current.runId;
+		const i = shownGroups.findIndex((g) => g[0].runId === current.runId);
+		if (i >= 0) lastIdx = i;
 	});
 
 	function pick(p: Ping) {
@@ -133,6 +158,10 @@
 				}
 			}
 			await fleet.refresh();
+			const runId = p.runId;
+			toast('Answer sent', {
+				action: { label: 'Open run', run: () => void goto(to.run(runId)) }
+			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -146,16 +175,13 @@
 		const tid = fleet.runById.get(runId)?.ticketId;
 		return tid ? tickets.get(tid) : undefined;
 	};
-	const workshopName = (runId: string) => {
-		const pid = fleet.runById.get(runId)?.projectId;
-		return pid ? fleet.projectById.get(pid)?.name : undefined;
-	};
+	const move = { duration: ms('--dur-spring', 450), easing: spring };
 </script>
 
 <PageHeader
 	crumbs={[{ label: currentGuild().name, href: to.desk() }, { label: 'Inbox' }]}
 	title="Inbox"
-	accent={isLore() ? lore('needsYou').toLowerCase() : undefined}
+	accent="awaiting your hand"
 >
 	{#snippet meta()}
 		<span>
@@ -167,6 +193,7 @@
 	{#snippet actions()}
 		<Segmented
 			bind:value={tab}
+			label="Inbox"
 			options={[
 				{ value: 'pending', label: 'Pending', count: fleet.pending.length },
 				{
@@ -190,57 +217,58 @@
 				/>
 			</div>
 		{:else if !fleet.updatedAt}
-			<div class="list c"><div class="pad"><Skeleton lines={5} /></div></div>
-			<div class="detail"><div class="c sk"><Skeleton lines={4} /></div></div>
+			<Skeleton pane lines={5} />
+			<Skeleton pane lines={4} />
 		{:else if groups.length === 0}
 			<div class="full">
 				<EmptyState
-					title={isLore() ? 'All quiet at the bench' : 'Nothing needs you'}
+					title="All quiet at the bench"
 					text="No pending pings. When a run asks you something, it lands here."
 				>
 					<a class="btn" href={to.runs()}>Open runs</a>
 				</EmptyState>
 			</div>
 		{:else}
-			<aside class="list c">
+			<aside class="list c pane">
 				{#if types.length > 1}
-					<div class="chips">
-						<button class="chip-f" class:on={!typeFilter} onclick={() => (typeFilter = '')}
-							>All <span class="n">{groups.length}</span></button
-						>
-						{#each types as [t, n] (t)}
-							<button
-								class="chip-f h-{pingMeta(t).hue}"
-								class:on={typeFilter === t}
-								onclick={() => (typeFilter = typeFilter === t ? '' : t)}
-								><span class="d"></span>{pingMeta(t).label} <span class="n">{n}</span></button
-							>
-						{/each}
+					<div class="pane-head filt">
+						<Segmented
+							bind:value={typeFilter}
+							options={typeOptions}
+							size="sm"
+							glass={false}
+							label="Ping type"
+						/>
 					</div>
 				{/if}
-				<div class="scroll">
-					{#each shownGroups as g (g[0].runId)}
+				<div class="scroll" use:indicator>
+					{#each shownGroups as g, i (g[0].runId)}
 						{@const p = g[0]}
 						{@const r = fleet.runById.get(p.runId)}
 						{@const tk = ticketOf(p.runId)}
-						<button class="card" class:sel={current?.id === p.id} onclick={() => pick(p)}>
+						<button
+							class="rowbtn card"
+							class:on={current?.id === p.id}
+							aria-current={current?.id === p.id ? 'true' : undefined}
+							onclick={() => {
+								lastIdx = i;
+								pick(p);
+							}}
+							animate:flip={move}
+							out:slide={{ from: 'left' }}
+						>
 							<span class="l1">
 								<PingPill type={p.type} />
-								{#if p.stageId}<span class="mono st ell">{p.stageId}</span>{/if}
+								{#if p.stageId}<span class="mono mut st ell">{p.stageId}</span>{/if}
 								<span class="spacer"></span>
-								<span class="mono age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
+								<span class="mono mut age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
 							</span>
 							<span class="q ell">{pingHeadline(p.question)}</span>
 							<span class="l3">
 								<span class="rt ell">{r?.title ?? shortId(p.runId)}</span>
 								{#if tk?.source?.key}<span class="tag">{tk.source.key}</span>{/if}
-								{#if r?.projectId}
-									<span class="wsn"
-										><Vial projectId={r.projectId} /><span class="ell"
-											>{workshopName(p.runId) ?? ''}</span
-										></span
-									>
-								{/if}
+								{#if r?.projectId}<span class="wsn"><WorkshopName projectId={r.projectId} /></span
+									>{/if}
 							</span>
 							{#if g.length > 1}
 								<span class="queued"
@@ -249,7 +277,7 @@
 							{/if}
 						</button>
 					{:else}
-						<div class="pad mut small">No {pingMeta(typeFilter).label.toLowerCase()} pings.</div>
+						<div class="empty-line">No {pingMeta(typeFilter).label.toLowerCase()} pings.</div>
 					{/each}
 				</div>
 			</aside>
@@ -275,9 +303,8 @@
 								/></span
 							>
 							<span class="spacer"></span>
-							{#if run.mrUrl}<a class="mr" href={run.mrUrl} target="_blank" rel="noreferrer">MR ↗</a
-								>{/if}
-							<a class="btn btn-sm" href={to.run(run.id)}>Open run →</a>
+							{#if run.mrs.length || run.mrUrl}<MrLink {run} />{/if}
+							<a class="btn btn-sm" href={to.run(run.id)}>Open run {I.forward}</a>
 						</div>
 					{/if}
 					{#if error}<ErrorCard cause="The answer did not go through" detail={error} />{/if}
@@ -292,8 +319,8 @@
 						/>
 					{/key}
 					{#if currentGroup.length > 1}
-						<div class="later">
-							<div class="lh">Queued behind this one</div>
+						<div class="note later">
+							<div class="lbl">Queued behind this one</div>
 							{#each currentGroup.slice(1) as q (q.id)}
 								<div class="lr">
 									<PingPill type={q.type} />
@@ -312,7 +339,7 @@
 		{#if answeredErr && !answered.length}
 			<ErrorCard cause="Could not load the history" detail={answeredErr} onretry={loadAnswered} />
 		{:else if !answeredLoaded}
-			<div class="c pane sk"><Skeleton lines={6} /></div>
+			<Skeleton pane lines={6} />
 		{:else if answered.length === 0}
 			<EmptyState
 				compact
@@ -323,27 +350,26 @@
 			<div class="c pane">
 				<div class="rows">
 					<div class="r head ah">
-						<span>Type</span><span>Question</span><span class="wide">Run</span><span class="wide"
-							>Answer</span
-						><span class="right">Answered</span>
+						<span>Type</span><span>Question</span><span class="hide-sm">Run</span><span
+							class="hide-sm">Answer</span
+						><span class="num">Answered</span>
 					</div>
 					{#each answered as p (p.id)}
+						{@const v = answerMeta(p)}
 						<div class="r ah">
 							<span><PingPill type={p.type} /></span>
 							<a class="q ell stretch" href={to.ping(p.id)}>{pingHeadline(p.question)}</a>
-							<span class="ell mut wide"
+							<span class="ell mut hide-sm"
 								>{fleet.runById.get(p.runId)?.title ?? shortId(p.runId)}{#if p.stageId}<span
 										class="mono fnt">{' · '}{p.stageId}</span
 									>{/if}</span
 							>
-							<span
-								class="ans ell wide"
-								class:ok={p.answer === 'approve'}
-								class:bad={p.answer === 'reject'}
-								>{p.answer ?? '—'}{#if p.feedback}<span class="fnt">{' · '}{p.feedback}</span
+							<span class="ans ell hide-sm"
+								><span class="hue-{v.hue}">{v.glyph} {p.answer ?? '—'}</span>{#if p.feedback}<span
+										class="fnt">{' · '}{p.feedback}</span
 									>{/if}</span
 							>
-							<span class="mono mut right" title={p.answeredAt ? fmtAbs(p.answeredAt) : ''}
+							<span class="mono mut num" title={p.answeredAt ? fmtAbs(p.answeredAt) : ''}
 								>{p.answeredAt ? ago(p.answeredAt) : ''}</span
 							>
 						</div>
@@ -359,7 +385,8 @@
 		flex: 1;
 		min-height: 0;
 		display: grid;
-		grid-template-columns: 380px minmax(0, 1fr);
+		grid-template-columns: var(--list-w) minmax(0, 1fr);
+		grid-template-rows: minmax(0, 1fr);
 		gap: 12px;
 		padding: 2px 22px 16px;
 	}
@@ -367,103 +394,31 @@
 		grid-column: 1 / -1;
 	}
 	.list {
-		border-radius: 16px;
-		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
 	}
-	.pad {
-		padding: 14px 16px;
-	}
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 5px;
-		padding: 10px 12px;
-		border-bottom: 1px solid var(--cLn);
-	}
-	.chip-f {
-		font-size: 11.5px;
-		padding: 2px 10px;
-		border-radius: 999px;
-		background: transparent;
-		border: 1px solid var(--ln);
-		box-shadow: none;
-		color: var(--mut);
-		gap: 5px;
-	}
-	.chip-f .d {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--h, var(--mut));
-	}
-	.chip-f .n {
-		font-family: var(--mono);
-		font-size: 10px;
-	}
-	.chip-f.on {
-		background: var(--sel);
-		box-shadow:
-			inset 0 0 0 1px var(--selLn),
-			var(--selSh);
-		color: var(--tx);
-		font-weight: 600;
-		border-color: transparent;
-	}
-	.h-grn {
-		--h: var(--grn);
-	}
-	.h-amb {
-		--h: var(--amb);
-	}
-	.h-ros {
-		--h: var(--ros);
-	}
-	.h-vio {
-		--h: var(--vio);
-	}
-	.h-tea {
-		--h: var(--tea);
+	.filt {
+		padding: 8px 10px;
 	}
 	.scroll {
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
-	}
-	.card {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		width: 100%;
 		display: flex;
 		flex-direction: column;
+		gap: 2px;
+		padding: 6px;
+	}
+	.scroll > :global(.ind) {
+		border-radius: var(--r-card);
+	}
+	.card {
+		flex-direction: column;
+		align-items: stretch;
 		gap: 5px;
-		padding: 11px 14px 12px;
-		border-bottom: 1px solid var(--cLn);
-		position: relative;
-	}
-	.card:hover {
-		background: var(--p1);
-	}
-	.card.sel {
-		background: var(--p3);
-	}
-	.card.sel::before {
-		content: '';
-		position: absolute;
-		left: 0;
-		top: 10px;
-		bottom: 10px;
-		width: 3px;
-		border-radius: 0 3px 3px 0;
-		background: var(--amb);
-		box-shadow: 0 0 8px var(--amb);
-	}
-	.card:focus-visible {
-		outline: 2px solid var(--brand);
-		outline-offset: -2px;
+		padding: 10px 12px 11px;
+		border-radius: var(--r-card);
 	}
 	.l1,
 	.l3 {
@@ -473,24 +428,19 @@
 		min-width: 0;
 	}
 	.st {
-		font-size: 11px;
-		color: var(--mut);
+		font-size: var(--fs-meta);
 	}
 	.age {
-		font-size: 10.5px;
-		color: var(--mut);
+		font-size: var(--fs-id);
 		flex: none;
-	}
-	.spacer {
-		flex: 1;
 	}
 	.q {
 		font-weight: 500;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		color: var(--tx);
 	}
 	.l3 {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 	}
 	.rt {
@@ -500,13 +450,11 @@
 	}
 	.wsn {
 		display: flex;
-		align-items: center;
-		gap: 5px;
 		min-width: 0;
 		flex: 0 1 auto;
 	}
 	.queued {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--amb);
 	}
 	.detail {
@@ -515,15 +463,15 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-		padding: 2px 2px 8px;
+		padding: 0 2px 8px;
 	}
 	.strip {
 		display: flex;
 		align-items: center;
 		gap: 12px;
 		padding: 7px 8px 7px 12px;
-		border-radius: 14px;
-		font-size: 12px;
+		border-radius: var(--r-card);
+		font-size: var(--fs-label);
 		flex: none;
 	}
 	.wsx {
@@ -540,94 +488,55 @@
 		gap: 6px;
 	}
 	.stg .mono {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 	}
-	.strip > .btn,
-	.mr {
+	.strip > .btn {
 		flex: none;
-		white-space: nowrap;
-	}
-	.mr {
-		color: var(--brand);
-		font-weight: 600;
-		font-size: 12px;
 	}
 	.later {
-		border: 1px dashed var(--ln2);
-		border-radius: 14px;
-		padding: 8px 12px;
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
 		flex: none;
-	}
-	.lh {
-		font-size: 11px;
-		color: var(--fnt);
 	}
 	.lr {
 		display: grid;
 		grid-template-columns: auto minmax(0, 1fr) auto;
 		gap: 10px;
 		align-items: center;
-		font-size: 12px;
-		color: var(--mut);
 	}
 	.lr .mono {
-		font-size: 10.5px;
-	}
-	.sk {
-		border-radius: 16px;
-		padding: 16px;
+		font-size: var(--fs-id);
 	}
 	.hist {
 		padding-top: 2px;
 	}
-	.pane {
-		border-radius: 16px;
-		overflow: hidden;
-		flex: none;
-	}
 	.ah {
 		grid-template-columns: 120px minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) 80px;
-		position: relative;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
 	.ah .q:hover {
 		text-decoration: none;
 	}
-	.stretch::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-	}
 	.ans {
 		font-weight: 600;
-	}
-	.ans.ok {
-		color: var(--grn);
-	}
-	.ans.bad {
-		color: var(--ros);
 	}
 	.ans .fnt {
 		font-weight: 400;
 	}
-	.right {
-		text-align: right;
-		font-size: 11px;
+	.num {
+		font-size: var(--fs-meta);
 	}
-	@media (max-width: 900px) {
+	@media (max-width: 1000px) {
 		.ib {
 			grid-template-columns: minmax(0, 1fr);
+			grid-template-rows: none;
 			padding: 2px 16px 16px;
 			overflow: auto;
+			align-content: start;
 		}
 		.list {
 			max-height: 45vh;
-		}
-		.ib {
-			align-content: start;
 		}
 		.strip {
 			flex-wrap: wrap;
@@ -638,7 +547,7 @@
 		.ah {
 			grid-template-columns: 110px minmax(0, 1fr) 70px;
 		}
-		.ah .wide {
+		.ah .hide-sm {
 			display: none;
 		}
 	}

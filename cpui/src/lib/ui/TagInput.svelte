@@ -65,6 +65,7 @@
 		>
 	{/each}
 	<input
+		class="bare"
 		bind:value={draft}
 		{placeholder}
 		onkeydown={key}
@@ -83,7 +84,7 @@
 		flex-wrap: wrap;
 		gap: 5px;
 		padding: 5px 6px;
-		border-radius: 10px;
+		border-radius: var(--r-row);
 		background: var(--p1);
 		border: 1px solid var(--ln2);
 		min-height: 36px;
@@ -98,15 +99,15 @@
 		align-items: center;
 		gap: 4px;
 		padding: 1px 4px 1px 9px;
-		border-radius: 999px;
+		border-radius: var(--r-pill);
 		background: var(--p2);
 		border: 1px solid var(--ln);
-		font-size: 12px;
+		font-size: var(--fs-label);
 		font-weight: 500;
 	}
 	.chip.mono {
 		font-family: var(--mono);
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 	.x {
 		all: unset;
@@ -126,9 +127,6 @@
 	.ti input {
 		flex: 1;
 		min-width: 120px;
-		border: 0 !important;
-		background: transparent !important;
-		box-shadow: none !important;
-		padding: 3px 4px !important;
+		padding: 3px 4px;
 	}
 </style>

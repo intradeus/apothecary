@@ -6,7 +6,8 @@
 	import { ago, fmtAbs, fmtClock } from '$lib/format';
 	import { isAgentPing } from '$lib/ping';
 	import { to } from '$lib/guild';
-	import { mdToHtml } from '$lib/planreview';
+	import Markdown from '$lib/ui/Markdown.svelte';
+	import { I } from '$lib/ui/icons';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs }: { rs: RunStore } = $props();
@@ -27,13 +28,13 @@
 	let open = $state<string | null>(null);
 </script>
 
-<div class="pv">
+<div class="view pv">
 	<div class="top">
 		<span>Pings raised by this run</span>
 		<span>{summary || 'none yet'}</span>
 	</div>
 	{#if list.length === 0}
-		<div class="none">
+		<div class="empty-line">
 			No pings. Gates and the agent's own questions land here — and in the inbox — when the run
 			needs you.
 		</div>
@@ -49,10 +50,14 @@
 			{/key}
 		{:else}
 			<div class="pr card-in">
-				<button class="row" onclick={() => (open = open === p.id ? null : p.id)}>
+				<button
+					class="rowbtn row"
+					aria-expanded={open === p.id}
+					onclick={() => (open = open === p.id ? null : p.id)}
+				>
 					<PingPill type={p.type} />
 					<span class="mid">
-						<span class="q" class:struck={p.status === 'withdrawn'}>{p.question}</span>
+						<span class="q ell" class:struck={p.status === 'withdrawn'}>{p.question}</span>
 						<span class="meta"
 							>{p.stageId ? `${p.stageId} · ` : ''}<span title={fmtAbs(p.raisedAt)}
 								>{fmtClock(p.raisedAt)}</span
@@ -60,7 +65,7 @@
 							· {isAgentPing(p.type) ? 'unwanted' : 'wanted'}</span
 						>
 					</span>
-					<span class="st {p.status}">
+					<span class="st" class:fnt={p.status === 'withdrawn'}>
 						{#if p.status === 'answered'}{p.answer === 'text' ? 'answered' : p.answer}{p.answeredAt
 								? ` · ${ago(p.answeredAt)}`
 								: ''}
@@ -69,9 +74,9 @@
 				</button>
 				{#if open === p.id}
 					<div class="body">
-						<div class="md">{@html mdToHtml(p.question)}</div>
+						<Markdown src={p.question} />
 						{#if p.feedback}<div class="fb"><b>You:</b> {p.feedback}</div>{/if}
-						<a class="ib" href={to.ping(p.id)}>Open in inbox →</a>
+						<a class="brand ib" href={to.ping(p.id)}>Open in inbox {I.forward}</a>
 					</div>
 				{/if}
 			</div>
@@ -81,43 +86,30 @@
 
 <style>
 	.pv {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
 		padding: 12px 14px;
-		display: flex;
-		flex-direction: column;
 		gap: 8px;
+	}
+	.pv > :global(*) {
+		flex: none;
 	}
 	.top {
 		display: flex;
 		justify-content: space-between;
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--fnt);
 	}
-	.none {
-		color: var(--mut);
-		font-size: 12.5px;
-		padding: 12px 0;
-		max-width: 60ch;
+	.pv .empty-line {
+		padding-left: 0;
 	}
 	.pr {
-		border-radius: 14px;
 		overflow: hidden;
 	}
 	.row {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		width: 100%;
 		display: grid;
 		grid-template-columns: auto minmax(0, 1fr) auto;
 		gap: 12px;
-		align-items: center;
 		padding: 10px 12px;
-	}
-	.row:hover {
-		background: var(--p1);
+		border-radius: 0;
 	}
 	.mid {
 		min-width: 0;
@@ -126,26 +118,23 @@
 		gap: 2px;
 	}
 	.q {
-		font-size: 13px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		font-size: var(--fs-body);
 	}
 	.q.struck {
 		text-decoration: line-through;
 		color: var(--fnt);
 	}
 	.meta {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 	}
 	.st {
-		font-size: 12px;
+		font-size: var(--fs-label);
 		font-weight: 600;
 		white-space: nowrap;
 		color: var(--mut);
 	}
-	.st.withdrawn {
+	.st.fnt {
 		color: var(--fnt);
 		font-weight: 500;
 	}
@@ -157,13 +146,11 @@
 		gap: 6px;
 	}
 	.fb {
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		white-space: pre-wrap;
 	}
 	.ib {
-		display: inline-block;
-		font-size: 12px;
-		color: var(--brand);
+		font-size: var(--fs-label);
 		font-weight: 500;
 	}
 </style>

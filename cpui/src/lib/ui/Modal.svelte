@@ -3,6 +3,7 @@
 	// scrim close it; focus is trapped inside while open.
 	import type { Snippet } from 'svelte';
 	import { trap } from './trap';
+	import { materialize, scrim } from './motion';
 
 	let {
 		open = $bindable(false),
@@ -33,9 +34,14 @@
 
 {#if open}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-	<div class="scrim" onmousedown={(e) => e.target === e.currentTarget && close()}>
+	<div
+		class="scrim"
+		transition:scrim
+		onpointerdown={(e) => e.target === e.currentTarget && close()}
+	>
 		<div
 			use:trap={{ onescape: close }}
+			transition:materialize={{ y: 10 }}
 			class="dlg lg"
 			role="dialog"
 			aria-modal="true"
@@ -53,13 +59,8 @@
 {/if}
 
 <style>
+	/* Shared .scrim (components.css) plus centring. */
 	.scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 50;
-		background: var(--scrim);
-		backdrop-filter: blur(6px);
-		-webkit-backdrop-filter: blur(6px);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -67,10 +68,8 @@
 	}
 	.dlg {
 		background: var(--lgBg), var(--thick);
-		border-radius: 26px;
-		box-shadow:
-			var(--lgRim),
-			0 30px 80px rgba(0, 0, 0, 0.5);
+		border-radius: var(--r-modal);
+		box-shadow: var(--lgRim), var(--modalSh);
 		padding: 20px 22px 18px;
 		display: flex;
 		flex-direction: column;
@@ -86,7 +85,7 @@
 	.head h2 {
 		font-family: var(--sans);
 		font-style: normal;
-		font-size: 16px;
+		font-size: var(--fs-title);
 		font-weight: 600;
 	}
 	.ic {
@@ -97,7 +96,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 15px;
+		font-size: var(--fs-lead);
 		font-weight: 700;
 		background: var(--p2);
 		color: var(--tx);
@@ -113,7 +112,7 @@
 	.body {
 		color: var(--mut);
 		text-wrap: pretty;
-		font-size: 13px;
+		font-size: var(--fs-body);
 	}
 	.body :global(b),
 	.body :global(strong) {

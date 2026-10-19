@@ -5,12 +5,13 @@
 	import { parse } from 'yaml';
 	import type { Flow, Project } from '$lib/domain';
 	import { to } from '$lib/guild';
-	import { lore } from '$lib/lore';
 	import { normalizeDoc, type DocAgent, type FlowDoc } from '$lib/flowdoc';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import StageChip from '$lib/ui/StageChip.svelte';
+	import Callout from '$lib/ui/Callout.svelte';
+	import { I } from '$lib/ui/icons';
 
 	let {
 		project,
@@ -62,26 +63,19 @@
 		})
 	);
 	const total = $derived(parsed.reduce((n, p) => n + p.agents.length, 0));
-	let open = $state<Record<string, boolean>>({});
 </script>
 
-<div class="note lg">
-	<span class="ic">ⓘ</span>
-	<span>
-		Agents live inside their flow’s document, so each flow carries its own. They are read-only here
-		for now — edit them in the flow editor’s YAML view.
-	</span>
-</div>
+<Callout hue="az">
+	Agents live inside their flow’s document, so each flow carries its own. They are read-only here
+	for now — edit them in the flow editor’s YAML view.
+</Callout>
 
 {#if error && !flows}
 	<ErrorCard cause="Couldn’t load flows" detail={error} {onretry} />
 {:else if !flows}
-	<div class="c pane"><div class="pane-body"><Skeleton lines={5} /></div></div>
+	<Skeleton pane lines={5} />
 {:else if !relevant.length}
-	<EmptyState
-		title="No agents yet"
-		text="Agents arrive with this {lore('workshop').toLowerCase()}’s first flow."
-	>
+	<EmptyState title="No agents yet" text="Agents arrive with this workshop’s first flow.">
 		<a class="btn btn-primary" href={to.workshop(project.id, 'flows')}>Flows</a>
 	</EmptyState>
 {:else}
@@ -95,40 +89,41 @@
 	{#each parsed as p (p.flow.name)}
 		<section class="c pane">
 			<div class="pane-head">
-				<h2>{p.flow.name}</h2>
-				{#if p.flow.builtin}<span class="pill t-mut">built-in</span>{/if}
-				{#if p.flow.name === project.defaultFlow}<span class="pill t-brand">default</span>{/if}
+				<h2 class="fname">{p.flow.name}</h2>
+				{#if p.flow.builtin}<span class="pill sm t-mut">built-in</span>{/if}
+				{#if p.flow.name === project.defaultFlow}<span class="pill sm t-brand">default</span>{/if}
 				<span class="mono fnt">@{p.flow.hash.slice(0, 8)}</span>
 				<span class="count">{p.agents.length}</span>
 				<span class="spacer"></span>
-				<a class="btn btn-sm" href={to.flow(project.id, p.flow.name)}>Edit in flow editor →</a>
+				<a class="btn btn-sm" href={to.flow(project.id, p.flow.name)}
+					>Edit in flow editor {I.forward}</a
+				>
 			</div>
 			{#if p.parseError}
 				<div class="pane-body">
 					<ErrorCard cause="This flow’s YAML didn’t parse here" detail={p.parseError} />
 				</div>
 			{:else if !p.agents.length}
-				<div class="pane-body fnt small">No agents in this flow.</div>
+				<div class="empty-line">No agents in this flow.</div>
 			{:else}
-				<div class="agents">
+				<div class="pane-body card-grid agents">
 					{#each p.agents as a (a.agent.name)}
-						{@const key = `${p.flow.name}/${a.agent.name}`}
 						<article class="ag card-in">
-							<div class="ah">
+							<div class="row nowrap ah">
 								<StageChip type="agent" />
-								<span class="mono an">{a.agent.name}</span>
+								<span class="mono an ell">{a.agent.name}</span>
 								<span class="spacer"></span>
-								{#if a.agent.read_only}<span class="pill t-tea" title="May not edit files"
+								{#if a.agent.read_only}<span class="pill sm t-tea" title="May not edit files"
 										>read-only</span
-									>{:else}<span class="pill t-amb" title="May edit files">writes</span>{/if}
-								{#if a.agent.allow_bash}<span class="pill t-grn" title="May run shell commands"
+									>{:else}<span class="pill sm t-amb" title="May edit files">writes</span>{/if}
+								{#if a.agent.allow_bash}<span class="pill sm t-grn" title="May run shell commands"
 										>bash</span
-									>{:else}<span class="pill t-mut" title="No shell">no bash</span>{/if}
+									>{:else}<span class="pill sm t-mut" title="No shell">no bash</span>{/if}
 							</div>
-							{#if a.agent.description}<div class="desc">{a.agent.description}</div>{/if}
-							<div class="kv">
-								<span class="k">runs on</span>
-								<span class="v">
+							{#if a.agent.description}<p class="lede">{a.agent.description}</p>{/if}
+							<dl class="kv">
+								<dt>runs on</dt>
+								<dd class="v">
 									{#each a.stages as s (s.id)}
 										<span class="use"
 											><span class="mono">{s.id}</span>
@@ -140,34 +135,33 @@
 									{:else}
 										<span class="fnt">declared, not used by any stage</span>
 									{/each}
-								</span>
-								<span class="k">inputs</span>
-								<span class="v io">
+								</dd>
+								<dt>inputs</dt>
+								<dd class="v io">
 									{#each a.agent.inputs ?? [] as i (i.name)}
 										<span class="port" title={i.description}
-											><span class="pd in" class:opt={i.optional}></span><span class="mono"
-												>{i.name}</span
+											><span class="ldot sm flat hue-grn" class:hollow={i.optional}></span><span
+												class="mono">{i.name}</span
 											>{#if i.optional}<span class="fnt"> optional</span>{/if}</span
 										>
 									{:else}<span class="fnt">the ticket only</span>{/each}
-								</span>
-								<span class="k">outputs</span>
-								<span class="v io">
+								</dd>
+								<dt>outputs</dt>
+								<dd class="v io">
 									{#each a.agent.outputs ?? [] as o (o.name)}
 										<span class="port" title={o.description}
-											><span class="pd out" class:verdict={o.type === 'verdict'}></span><span
-												class="mono">{o.name}</span
-											>
+											><span class="ldot sm flat {o.type === 'verdict' ? 'hue-vio' : 'hue-az'}"
+											></span><span class="mono">{o.name}</span>
 											<span class="mono fnt">{o.path}</span>
-											{#if o.type === 'verdict'}<span class="pill t-vio vd">verdict</span
+											{#if o.type === 'verdict'}<span class="pill sm t-vio">verdict</span
 												>{/if}</span
 										>
 									{:else}<span class="fnt">none</span>{/each}
-								</span>
-							</div>
+								</dd>
+							</dl>
 							{#if a.agent.prompt}
-								<details bind:open={open[key]}>
-									<summary class="ps"><span class="caretglyph">▸</span> Prompt</summary>
+								<details>
+									<summary class="disclosure small mut">Prompt</summary>
 									<pre class="log prompt">{a.agent.prompt}</pre>
 								</details>
 							{/if}
@@ -180,28 +174,14 @@
 {/if}
 
 <style>
-	.note {
-		border-radius: 14px;
-		padding: 9px 14px;
-		display: flex;
-		align-items: baseline;
-		gap: 10px;
-		font-size: 12.5px;
-	}
-	.note .ic {
-		color: var(--az);
-	}
-	.pane-head h2 {
+	.fname {
 		font-family: var(--mono);
 		font-style: normal;
-		font-size: 14px;
+		font-size: var(--fs-aside);
 		font-weight: 600;
 	}
 	.agents {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-		gap: 10px;
-		padding: 12px;
+		--min: 420px;
 	}
 	.ag {
 		padding: 10px 12px;
@@ -211,32 +191,20 @@
 		min-width: 0;
 	}
 	.ah {
-		display: flex;
-		align-items: center;
 		gap: 6px;
 	}
 	.an {
-		font-size: 13px;
+		font-size: var(--fs-body);
 		font-weight: 600;
 	}
-	.desc {
-		font-size: 12px;
-		color: var(--mut);
-	}
-	.kv {
-		display: grid;
-		grid-template-columns: 64px minmax(0, 1fr);
-		gap: 5px 10px;
-		font-size: 11.5px;
-	}
-	.k {
-		color: var(--fnt);
+	dl.kv {
+		--k: 64px;
+		font-size: var(--fs-help);
 	}
 	.v {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-		min-width: 0;
 	}
 	.v.io {
 		flex-direction: row;
@@ -248,55 +216,18 @@
 		gap: 5px;
 		min-width: 0;
 	}
-	.use .mono {
-		font-size: 11px;
-	}
 	.port {
 		display: inline-flex;
 		align-items: center;
 		gap: 5px;
 	}
+	.use .mono,
 	.port .mono {
-		font-size: 11px;
-	}
-	.pd {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--grn);
-	}
-	.pd.in.opt {
-		background: transparent;
-		border: 1.5px solid var(--grn);
-	}
-	.pd.out {
-		background: var(--az);
-	}
-	.pd.out.verdict {
-		background: var(--vio);
-	}
-	.vd {
-		font-size: 9.5px;
-		padding: 0 6px;
-	}
-	.ps {
-		font-size: 11.5px;
-		color: var(--mut);
-		display: flex;
-		gap: 6px;
-		align-items: center;
-	}
-	.caretglyph {
-		font-size: 9px;
+		font-size: var(--fs-meta);
 	}
 	.prompt {
 		margin-top: 6px;
 		max-height: 260px;
-		font-size: 11px;
-	}
-	@media (max-width: 720px) {
-		.agents {
-			grid-template-columns: minmax(0, 1fr);
-		}
+		font-size: var(--fs-meta);
 	}
 </style>

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { to } from '$lib/guild';
-	import { lore } from '$lib/lore';
 	// Ticket create/edit form. A ticket is a unit of work; flow is NOT chosen
 	// here — it's picked per run when a run is started.
 	//
@@ -9,10 +8,14 @@
 	// submit — title/goal are whatever the fields say by then, and the issue's
 	// attachments come across as ticket attachments.
 	import { api } from '$lib/api';
-	import { fmtBytes } from '$lib/format';
 	import type { Attachment, Integration, Project, SourceTicket, Ticket } from '$lib/domain';
 	import FileChips from '$lib/FileChips.svelte';
 	import AttachFiles from '$lib/AttachFiles.svelte';
+	import Callout from '$lib/ui/Callout.svelte';
+	import FileChip from '$lib/ui/FileChip.svelte';
+	import SearchInput from '$lib/ui/SearchInput.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
 	import { onMount } from 'svelte';
 
 	let {
@@ -148,6 +151,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
+		if (submitting) return; // busy: Enter in a field must not send it twice
 		submitting = true;
 		error = '';
 		warnings = [];
@@ -171,6 +175,7 @@
 				created = t;
 				return;
 			}
+			toast(init ? 'Ticket saved' : 'Ticket created');
 			onsaved(t);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -181,22 +186,21 @@
 </script>
 
 <form class="tf" class:edit={!!init} onsubmit={submit}>
-	<section class="main c">
+	<section class="main c pane">
 		{#if projects.length === 0}
-			<div class="warn">
-				No {lore('workshops').toLowerCase()} yet — set up
+			<Callout hue="amb" glyph={I.warn}>
+				No workshops yet — set up
 				<a href={to.system('integrations')}>integrations</a> and create a
-				<a href={to.newWorkshop()}>{lore('workshop').toLowerCase()}</a> first.
-			</div>
+				<a href={to.newWorkshop()}>workshop</a> first.
+			</Callout>
 		{/if}
 
 		<div class="field">
-			<label for="t-project">{lore('workshop')}</label>
+			<label for="t-project">Workshop</label>
 			<select id="t-project" bind:value={projectId} required disabled={init != null}>
 				{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 			</select>
-			{#if init}<span class="help"
-					>Locked: a ticket stays in the {lore('workshop').toLowerCase()} it was written for.</span
+			{#if init}<span class="help">Locked: a ticket stays in the workshop it was written for.</span
 				>{/if}
 		</div>
 
@@ -224,7 +228,7 @@
 			<div class="lrow">
 				<label for="t-branch">Base branch</label>
 				{#if branchEdited && !init}
-					<span class="pill t-amb">edited</span>
+					<span class="pill sm t-amb">edited</span>
 					<button
 						type="button"
 						class="btn-ghost btn-sm"
@@ -234,10 +238,10 @@
 							branch = picked
 								? `${picked.key.toLowerCase()}-${slugify(picked.title ?? '')}`
 								: slugify(title);
-						}}>↺ auto</button
+						}}>{I.retry} auto</button
 					>
 				{:else if !init}
-					<span class="pill t-mut">auto</span>
+					<span class="pill sm t-mut">auto</span>
 				{/if}
 			</div>
 			<input
@@ -264,142 +268,129 @@
 
 		{#if error}<div class="err">{error}</div>{/if}
 		{#if warnings.length && created}
-			<div class="warn">
+			<Callout hue="amb" glyph={I.warn}>
 				<b>Ticket created, but some attachments did not come across:</b>
 				<ul>
 					{#each warnings as w (w)}<li>{w}</li>{/each}
 				</ul>
-			</div>
-			<div class="foot">
+			</Callout>
+			<div class="form-actions">
 				<button class="btn-primary" type="button" onclick={() => onsaved(created!)}
 					>Continue to the ticket</button
 				>
 			</div>
 		{:else}
-			<div class="foot">
+			<div class="form-actions">
 				{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button
 					>{/if}
 				<button
 					class="btn-primary btn-lg"
 					type="submit"
-					disabled={submitting || !title.trim() || !goal.trim() || !projectId}
+					aria-busy={submitting}
+					disabled={!title.trim() || !goal.trim() || !projectId}
 				>
-					{submitting
-						? 'Saving…'
-						: init
-							? 'Save ticket'
-							: picked
-								? `Create from ${picked.key}`
-								: 'Create ticket'}
+					{init ? 'Save ticket' : picked ? `Create from ${picked.key}` : 'Create ticket'}
 				</button>
 			</div>
 		{/if}
 	</section>
 
 	{#if !init}
-		<aside class="imp c">
-			<div class="ih">
+		<aside class="imp c pane">
+			<div class="pane-head ih">
 				<h2>Import from tracker</h2>
-				<span class="help"
-					>Copy an issue in: title, goal and attachments. Nothing is written back.</span
-				>
 			</div>
-			{#if sources.length === 0}
-				<div class="none">
-					No ticket source connected.
-					<a href={to.system('integrations')}>Add a tracker integration →</a>
-				</div>
-			{:else if picked}
-				<div class="picked">
-					<div class="prow">
-						<span class="tag">{picked.key}</span>
-						<span class="ell grow">{picked.title}</span>
+			<div class="pane-body ib">
+				<p class="lede">Copy an issue in: title, goal and attachments. Nothing is written back.</p>
+				{#if sources.length === 0}
+					<div class="note">
+						No ticket source connected.
+						<a href={to.system('integrations')}>Add a tracker integration {I.forward}</a>
 					</div>
-					<div class="help">from {sourceName(sourceId)}</div>
-					<!-- Name every file that will be copied — and say so plainly when the
-					     issue has none, so "where are my attachments?" is answered before
-					     the ticket is created rather than after. -->
-					{#if picked.attachments?.length}
-						<div class="help">
-							{picked.attachments.length} file{picked.attachments.length > 1 ? 's' : ''} will be copied
-							into the ticket:
+				{:else if picked}
+					<div class="card-in picked">
+						<div class="prow">
+							<span class="tag">{picked.key}</span>
+							<span class="ell grow">{picked.title}</span>
 						</div>
-						<div class="chips">
-							{#each picked.attachments as a (a.filename)}
-								<span class="fchip" title={a.mime ?? ''}>
-									<span class="mut">▤</span>
-									<span class="ell">{a.filename}</span>
-									{#if a.size}<span class="mono mut">{fmtBytes(a.size)}</span>{/if}
-								</span>
-							{/each}
-						</div>
-					{:else}
-						<div class="help">This issue has no attachments.</div>
-					{/if}
-					<div class="prow">
-						{#if picked.url}
-							<a class="btn btn-sm" href={picked.url} target="_blank" rel="noreferrer"
-								>Open in tracker ↗</a
-							>
+						<div class="help">from {sourceName(sourceId)}</div>
+						<!-- Name every file that will be copied — and say so plainly when the
+						     issue has none, so "where are my attachments?" is answered before
+						     the ticket is created rather than after. -->
+						{#if picked.attachments?.length}
+							<div class="help">
+								{picked.attachments.length} file{picked.attachments.length > 1 ? 's' : ''} will be copied
+								into the ticket:
+							</div>
+							<div class="chips">
+								{#each picked.attachments as a (a.filename)}
+									<FileChip name={a.filename} size={a.size} />
+								{/each}
+							</div>
+						{:else}
+							<div class="help">This issue has no attachments.</div>
 						{/if}
-						<button type="button" class="btn-ghost btn-sm" onclick={clearImport}>Clear</button>
-					</div>
-				</div>
-			{:else}
-				<div class="field">
-					<label for="t-src">Tracker</label>
-					<select
-						id="t-src"
-						value={sourceId}
-						onchange={(e) => {
-							const v = (e.target as HTMLSelectElement).value;
-							if (v) openSource(v);
-							else clearImport();
-						}}
-					>
-						<option value="">Choose a tracker…</option>
-						{#each sources as s (s.id)}<option value={s.id}>{s.name} ({s.kind})</option>{/each}
-					</select>
-				</div>
-				{#if sourceId}
-					<div class="srow">
-						<input
-							type="search"
-							bind:value={query}
-							placeholder="2624, PROJ-2624, words, or jql:…"
-							onkeydown={(e) => {
-								if (e.key === 'Enter') {
-									e.preventDefault();
-									search();
-								}
-							}}
-						/>
-						<button type="button" onclick={search} disabled={searching}>
-							{searching ? 'Searching…' : 'Search'}
-						</button>
-					</div>
-					{#if searchErr}<div class="err">{searchErr}</div>{/if}
-					{#if searching && !results.length}
-						<div class="help">Searching…</div>
-					{:else if results.length}
-						<div class="results">
-							{#each results as r (r.key)}
-								<button type="button" class="result" onclick={() => pick(r)}>
-									<span class="rl1">
-										<span class="tag">{r.key}</span>
-										<span class="ell rtitle">{r.title}</span>
-									</span>
-									<span class="rl2 ell">
-										{[r.type, r.status, r.assignee].filter(Boolean).join(' · ')}
-									</span>
-								</button>
-							{/each}
+						<div class="prow">
+							{#if picked.url}
+								<a class="btn btn-sm" href={picked.url} target="_blank" rel="noreferrer"
+									>Open in tracker {I.external}</a
+								>
+							{/if}
+							<button type="button" class="btn-ghost btn-sm" onclick={clearImport}>Clear</button>
 						</div>
-					{:else if !searchErr}
-						<div class="help">No matching issues.</div>
+					</div>
+				{:else}
+					<div class="field">
+						<label for="t-src">Tracker</label>
+						<select
+							id="t-src"
+							value={sourceId}
+							onchange={(e) => {
+								const v = (e.target as HTMLSelectElement).value;
+								if (v) openSource(v);
+								else clearImport();
+							}}
+						>
+							<option value="">Choose a tracker…</option>
+							{#each sources as s (s.id)}<option value={s.id}>{s.name} ({s.kind})</option>{/each}
+						</select>
+					</div>
+					{#if sourceId}
+						<!-- Enter searches; it must never submit the ticket form around it. -->
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="srow" onkeydown={(e) => e.key === 'Enter' && e.preventDefault()}>
+							<SearchInput
+								bind:value={query}
+								width={400}
+								placeholder="2624, PROJ-2624, words, or jql:…"
+								label="Search the tracker"
+								onenter={() => search()}
+							/>
+							<button type="button" onclick={search} aria-busy={searching}>Search</button>
+						</div>
+						{#if searchErr}<div class="err">{searchErr}</div>{/if}
+						{#if searching && !results.length}
+							<div class="help">Searching…</div>
+						{:else if results.length}
+							<div class="card-in results">
+								{#each results as r (r.key)}
+									<button type="button" class="rowbtn result" onclick={() => pick(r)}>
+										<span class="rl1">
+											<span class="tag">{r.key}</span>
+											<span class="ell rtitle">{r.title}</span>
+										</span>
+										<span class="rl2 ell">
+											{[r.type, r.status, r.assignee].filter(Boolean).join(' · ')}
+										</span>
+									</button>
+								{/each}
+							</div>
+						{:else if !searchErr}
+							<div class="help">No matching issues.</div>
+						{/if}
 					{/if}
 				{/if}
-			{/if}
+			</div>
 		</aside>
 	{/if}
 </form>
@@ -407,16 +398,14 @@
 <style>
 	.tf {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 360px;
+		grid-template-columns: minmax(0, 1fr) var(--aside-w);
 		gap: 12px;
 		align-items: start;
 	}
 	.tf.edit {
 		grid-template-columns: minmax(0, 1fr);
 	}
-	.main,
-	.imp {
-		border-radius: 16px;
+	.main {
 		padding: 16px 18px 18px;
 		display: flex;
 		flex-direction: column;
@@ -424,20 +413,17 @@
 		min-width: 0;
 	}
 	.imp {
-		gap: 12px;
 		position: sticky;
 		top: 0;
+		min-width: 0;
 	}
-	.ih {
+	.ib {
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
-	}
-	.ih h2 {
-		font-size: 19px;
+		gap: 12px;
 	}
 	.flabel {
-		font-size: 12px;
+		font-size: var(--fs-label);
 		font-weight: 500;
 	}
 	.goal {
@@ -451,34 +437,14 @@
 	.lrow label {
 		margin: 0;
 	}
-	.lrow .pill {
-		font-size: 10.5px;
-		padding: 0 7px;
-	}
-	.foot {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
+	.form-actions {
 		padding-top: 4px;
 	}
-	.warn {
-		font-size: 12px;
-		color: var(--amb);
-		background: var(--ambBg);
-		border: 1px solid var(--ambLn);
-		border-radius: 12px;
-		padding: 8px 12px;
-	}
-	.warn ul {
+	ul {
 		margin: 4px 0 0;
 		padding-left: 18px;
 	}
-	.none {
-		font-size: 12px;
-		color: var(--mut);
-		border: 1px dashed var(--ln2);
-		border-radius: 12px;
-		padding: 12px;
+	.note {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
@@ -490,31 +456,16 @@
 	.results {
 		display: flex;
 		flex-direction: column;
+		gap: 1px;
+		padding: 4px;
 		max-height: 360px;
 		overflow-y: auto;
-		border: 1px solid var(--ln);
-		border-radius: 12px;
 	}
 	.result {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		display: flex;
 		flex-direction: column;
+		align-items: stretch;
 		gap: 2px;
-		padding: 8px 10px;
-		border-top: 1px solid var(--ln);
-		min-width: 0;
-	}
-	.result:first-child {
-		border-top: 0;
-	}
-	.result:hover {
-		background: var(--p3);
-	}
-	.result:focus-visible {
-		outline: 2px solid var(--brand);
-		outline-offset: -2px;
+		padding: 7px 9px;
 	}
 	.rl1 {
 		display: flex;
@@ -523,20 +474,17 @@
 		min-width: 0;
 	}
 	.rtitle {
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		font-weight: 500;
 	}
 	.rl2 {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
 	.picked {
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		border-radius: 13px;
 		padding: 10px 12px;
 	}
 	.prow {
@@ -544,22 +492,6 @@
 		align-items: center;
 		gap: 8px;
 		min-width: 0;
-	}
-	.chips {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.fchip {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12px;
-		min-width: 0;
-	}
-	.fchip .mono {
-		font-size: 10.5px;
-		flex: none;
 	}
 	@media (max-width: 1000px) {
 		.tf {

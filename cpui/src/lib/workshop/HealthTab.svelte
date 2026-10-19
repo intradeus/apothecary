@@ -7,12 +7,16 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { BuildCache, EnvCheck, Preflight, Project } from '$lib/domain';
-	import { lore } from '$lib/lore';
 	import { ago, fmtAbs, fmtBytes, fmtDuration } from '$lib/format';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import CheckChip, { type CheckTone } from '$lib/ui/CheckChip.svelte';
+	import StepList, { type Step } from '$lib/ui/StepList.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
 
 	let { project }: { project: Project } = $props();
 
@@ -40,6 +44,9 @@
 	let checkLoaded = $state(false);
 	let checkKeep = $state(false);
 	let checkError = $state('');
+	/** A start / cancel request is in flight (aria-busy on its button). */
+	let starting = $state(false);
+	let cancelling = $state(false);
 	let checkTimer: ReturnType<typeof setInterval> | undefined;
 	let now = $state(Date.now());
 
@@ -61,24 +68,30 @@
 	// one (it cleans up after itself) — no waiting it out.
 	async function startEnvCheck() {
 		checkError = '';
+		starting = true;
 		try {
 			const checkId = await api.projects.startEnvCheck(project.id, checkKeep);
 			check = await api.projects.envCheck(checkId);
 			follow(checkId);
 		} catch (e) {
 			checkError = e instanceof Error ? e.message : String(e);
+		} finally {
+			starting = false;
 		}
 	}
 
 	async function cancelEnvCheck() {
 		if (!check) return;
 		checkError = '';
+		cancelling = true;
 		try {
 			await api.projects.cancelEnvCheck(check.id);
 			check = await api.projects.envCheck(check.id);
 			follow(check.id);
 		} catch (e) {
 			checkError = e instanceof Error ? e.message : String(e);
+		} finally {
+			cancelling = false;
 		}
 	}
 
@@ -105,7 +118,7 @@
 	async function clearBuildCache() {
 		const ok = await confirmDialog({
 			title: 'Clear the build cache?',
-			body: `The devcontainer image layers this ${lore('workshop').toLowerCase()}’s runs reuse are deleted (${fmtBytes(buildCache?.bytes ?? 0)}). No <b>run</b> or <b>workspace</b> is touched. The next run rebuilds the image from scratch, which is slow; runs after that are fast again.`,
+			body: `The devcontainer image layers this workshop’s runs reuse are deleted (${fmtBytes(buildCache?.bytes ?? 0)}). No <b>run</b> or <b>workspace</b> is touched. The next run rebuilds the image from scratch, which is slow; runs after that are fast again.`,
 			action: 'Clear cache'
 		});
 		if (!ok) return;
@@ -114,6 +127,7 @@
 		try {
 			await api.projects.clearBuildCache(project.id);
 			await loadBuildCache();
+			toast('Build cache cleared');
 		} catch (e) {
 			cacheError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -146,12 +160,32 @@
 	});
 
 	const running = $derived(check?.status === 'running');
-	const STATUS: Record<EnvCheck['status'], { label: string; tone: string }> = {
-		running: { label: 'running', tone: 't-az' },
-		pass: { label: '✓ all good', tone: 't-grn' },
-		fail: { label: '✕ failed', tone: 't-ros' },
-		cancelled: { label: 'cancelled', tone: 't-mut' }
+	const STATUS: Record<EnvCheck['status'], { label: string; tone: CheckTone }> = {
+		running: { label: 'running', tone: 'live' },
+		pass: { label: 'all good', tone: 'ok' },
+		fail: { label: 'failed', tone: 'bad' },
+		cancelled: { label: 'cancelled', tone: 'none' }
 	};
+	const checkSteps = $derived<Step[]>(
+		(check?.steps ?? []).map((s, i) => ({
+			key: `${i}:${s.id}`,
+			tone: s.status === 'pass' ? 'ok' : s.status === 'fail' ? 'bad' : 'mut',
+			label: s.id,
+			detail: s.status === 'skip' ? `skipped${s.detail ? `: ${s.detail}` : ''}` : (s.detail ?? ''),
+			bad: s.status === 'fail'
+		}))
+	);
+	const preflightSteps = $derived<Step[]>(
+		preflight && preflight !== 'running'
+			? preflight.steps.map((s) => ({
+					key: s.id,
+					tone: s.ok ? 'ok' : 'bad',
+					label: s.id,
+					detail: s.ok ? '' : (s.error ?? 'failed'),
+					bad: !s.ok
+				}))
+			: []
+	);
 	const validDate = (s?: string) => !!s && !Number.isNaN(new Date(s).getTime());
 	const elapsed = $derived(
 		check && validDate(check.startedAt)
@@ -169,12 +203,8 @@
 		<div class="pane-head">
 			<h2>Envcheck</h2>
 			{#if check}
-				<span class="pill {STATUS[check.status].tone}"
-					>{#if running}<span class="dot pulse"></span>{/if}{STATUS[check.status].label}</span
-				>
-				{#if check.tearingDown}<span class="pill t-amb"
-						><span class="dot pulse"></span>removing the workspace</span
-					>{/if}
+				<CheckChip tone={STATUS[check.status].tone} label={STATUS[check.status].label} />
+				{#if check.tearingDown}<CheckChip tone="live" label="removing the workspace" />{/if}
 			{/if}
 			<span class="spacer"></span>
 			<Toggle
@@ -183,21 +213,26 @@
 				title="Leave the throwaway workspace up afterwards, to poke at it"
 			/>
 			{#if running}
-				<button class="btn-sm" onclick={cancelEnvCheck}>■ Cancel</button>
+				<button class="btn-sm" aria-busy={cancelling} onclick={cancelEnvCheck}
+					>{I.stop} Cancel</button
+				>
 				<button
 					class="btn-sm"
+					aria-busy={starting}
 					title="Start over: cancels the running check (it cleans up after itself)"
-					onclick={startEnvCheck}>↻ Restart</button
+					onclick={startEnvCheck}>{I.retry} Restart</button
 				>
 			{:else}
 				<button
 					class="btn-sm btn-sel"
+					aria-busy={starting}
 					title="Provision a throwaway workspace and prove the contract"
-					onclick={startEnvCheck}>{check ? '↻ Run again' : '▶ Run envcheck'}</button
+					onclick={startEnvCheck}
+					>{check ? `${I.retry} Run again` : `${I.play} Run envcheck`}</button
 				>
 			{/if}
 		</div>
-		<div class="pane-body">
+		<div class="pane-body col">
 			<p class="lede">
 				Provisions a throwaway workspace and proves the derived contract: image, firewall, egress,
 				harness, shim, tunnel. Then destroys it, unless you keep it.
@@ -214,35 +249,17 @@
 					{#if check.keep}<span>workspace kept</span>{/if}
 					<span class="mono fnt">{check.id.slice(-8).toLowerCase()}</span>
 				</div>
-				<ol class="steps">
-					{#each check.steps ?? [] as s, i (i)}
-						<li class="st {s.status}">
-							<span class="g">{s.status === 'pass' ? '✓' : s.status === 'fail' ? '✕' : '–'}</span>
-							<span class="mono id">{s.id}</span>
-							<span class="dt" class:bad={s.status === 'fail'}
-								>{#if s.status === 'skip'}skipped{#if s.detail}: {s.detail}{/if}{:else}{s.detail ??
-										''}{/if}</span
-							>
-						</li>
-					{/each}
-					{#if running}
-						<li class="st live">
-							<span class="g"><span class="pd pulse"></span></span>
-							<span class="mono id fnt">next step</span>
-							<span class="dt fnt">working…</span>
-						</li>
-					{/if}
-					{#if !(check.steps ?? []).length && !running}
-						<li class="st">
-							<span class="g">–</span><span class="dt fnt">No steps were reported.</span>
-						</li>
-					{/if}
-				</ol>
+				<StepList
+					steps={checkSteps}
+					live={running ? { label: 'next step', detail: 'working…' } : null}
+					empty="No steps were reported."
+				/>
 			{:else}
-				<div class="none">
-					<span class="serif">Never checked</span>
-					<span class="mut">since the engine started. Run one before the first real run.</span>
-				</div>
+				<EmptyState
+					inline
+					title="Never checked"
+					text="since the engine started. Run one before the first real run."
+				/>
 			{/if}
 		</div>
 	</section>
@@ -252,24 +269,29 @@
 		<div class="pane-head">
 			<h2>Preflight</h2>
 			{#if preflight && preflight !== 'running'}
-				<span class="pill {preflight.ok ? 't-grn' : 't-ros'}"
-					>{preflight.ok ? '✓ all good' : '✕ failed'}</span
-				>
+				<CheckChip
+					tone={preflight.ok ? 'ok' : 'bad'}
+					label={preflight.ok ? 'all good' : 'failed'}
+				/>
 			{/if}
 			<span class="spacer"></span>
-			<button class="btn-sm" onclick={runPreflight} disabled={preflight === 'running'}
+			<button
+				class="btn-sm"
+				onclick={runPreflight}
+				aria-busy={preflight === 'running'}
+				disabled={preflight === 'running'}
 				>{preflight === 'running'
 					? 'Checking…'
 					: preflight
-						? '↻ Check again'
-						: '▶ Run preflight'}</button
+						? `${I.retry} Check again`
+						: `${I.play} Run preflight`}</button
 			>
 		</div>
-		<div class="pane-body">
+		<div class="pane-body col">
 			<p class="lede">
-				Fast checks of the configuration this {lore('workshop').toLowerCase()} names — its integrations,
-				commands and default flow — without provisioning anything. Every run is checked the same way when
-				it is created.
+				Fast checks of the configuration this workshop names — its integrations, commands and
+				default flow — without provisioning anything. Every run is checked the same way when it is
+				created.
 			</p>
 			{#if preflight === 'running'}
 				<Skeleton lines={3} />
@@ -278,20 +300,9 @@
 					<span>checked {ago(preflightAt ?? now)}</span>
 					<span>{preflight.steps.filter((s) => s.ok).length}/{preflight.steps.length} ok</span>
 				</div>
-				<ol class="steps">
-					{#each preflight.steps as s (s.id)}
-						<li class="st {s.ok ? 'pass' : 'fail'}">
-							<span class="g">{s.ok ? '✓' : '✕'}</span>
-							<span class="mono id">{s.id}</span>
-							<span class="dt" class:bad={!s.ok}>{s.ok ? '' : (s.error ?? 'failed')}</span>
-						</li>
-					{/each}
-				</ol>
+				<StepList steps={preflightSteps} />
 			{:else}
-				<div class="none">
-					<span class="serif">Not run yet</span>
-					<span class="mut">on this page.</span>
-				</div>
+				<EmptyState inline title="Not run yet" text="on this page." />
 			{/if}
 		</div>
 	</section>
@@ -306,12 +317,13 @@
 				<button
 					class="btn-danger btn-sm"
 					onclick={clearBuildCache}
+					aria-busy={clearingCache}
 					disabled={clearingCache || !buildCache.bytes}
 					>{clearingCache ? 'Clearing…' : 'Clear…'}</button
 				>
 			{/if}
 		</div>
-		<div class="pane-body">
+		<div class="pane-body col">
 			{#if cacheError}<ErrorCard
 					cause="Build cache request failed"
 					detail={cacheError}
@@ -320,7 +332,7 @@
 			{#if !cacheLoaded}
 				<Skeleton lines={2} />
 			{:else if buildCache?.available}
-				<div class="size">
+				<div class="row size">
 					<span class="mono big">{buildCache.bytes ? fmtBytes(buildCache.bytes) : 'empty'}</span>
 					<span class="mut small"
 						>{buildCache.bytes
@@ -333,10 +345,11 @@
 					next run rebuilds and refills it.
 				</p>
 			{:else if !cacheError}
-				<div class="none">
-					<span class="serif">No cache here</span>
-					<span class="mut">This provisioner keeps no build cache of its own.</span>
-				</div>
+				<EmptyState
+					inline
+					title="No cache here"
+					text="This provisioner keeps no build cache of its own."
+				/>
 			{/if}
 		</div>
 	</section>
@@ -349,122 +362,21 @@
 		gap: 12px;
 		align-items: start;
 	}
-	.wide {
-		grid-column: 1 / -1;
-	}
 	.pane-head {
 		flex-wrap: wrap;
-	}
-	.lede {
-		margin: 0 0 10px;
-		font-size: 12px;
-		color: var(--mut);
-		max-width: 80ch;
-		text-wrap: pretty;
 	}
 	.meta {
 		display: flex;
 		gap: 6px 14px;
 		flex-wrap: wrap;
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--mut);
-		margin-bottom: 8px;
-	}
-	.steps {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		position: relative;
-	}
-	.st {
-		position: relative;
-		display: grid;
-		grid-template-columns: 22px 120px minmax(0, 1fr);
-		gap: 8px;
-		align-items: baseline;
-		padding: 5px 0;
-		font-size: 12px;
-	}
-	.st:not(:last-child)::before {
-		content: '';
-		position: absolute;
-		left: 10px;
-		top: 22px;
-		bottom: -6px;
-		width: 1px;
-		background: var(--ln2);
-	}
-	.g {
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 10.5px;
-		font-weight: 700;
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		color: var(--mut);
-		align-self: center;
-	}
-	.pass .g {
-		background: var(--grnBg);
-		border-color: var(--grnLn);
-		color: var(--grn);
-	}
-	.fail .g {
-		background: var(--rosBg);
-		border-color: var(--rosLn);
-		color: var(--ros);
-	}
-	.live .g {
-		border-color: var(--azLn);
-	}
-	.pd {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--az);
-		box-shadow: 0 0 8px var(--az);
-	}
-	.id {
-		font-size: 11.5px;
-	}
-	.skip .id {
-		color: var(--mut);
-	}
-	.dt {
-		color: var(--mut);
-		overflow-wrap: anywhere;
-	}
-	.dt.bad {
-		color: var(--ros);
-		font-family: var(--mono);
-		font-size: 11px;
-	}
-	.none {
-		border: 1.5px dashed var(--ln2);
-		border-radius: 12px;
-		padding: 10px 12px;
-		display: flex;
-		align-items: baseline;
-		gap: 8px;
-		flex-wrap: wrap;
-		font-size: 12px;
-	}
-	.none .serif {
-		font-size: 16px;
 	}
 	.size {
-		display: flex;
 		align-items: baseline;
-		gap: 10px;
-		margin-bottom: 8px;
-		flex-wrap: wrap;
 	}
 	.big {
-		font-size: 20px;
+		font-size: var(--fs-section);
 		font-weight: 600;
 	}
 	@media (max-width: 1000px) {

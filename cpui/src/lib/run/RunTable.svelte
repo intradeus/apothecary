@@ -4,7 +4,6 @@
 </script>
 
 <script lang="ts">
-	import { lore } from '$lib/lore';
 	// A dense runs table (DESIGN 4.13): one grid per row so long titles
 	// ellipsise, the whole row opens the run (a stretched title link), the MR
 	// link sits above it. Columns are picked per page.
@@ -15,15 +14,19 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import WorkspaceStatus from '$lib/ui/WorkspaceStatus.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
-	import Vial from '$lib/ui/Vial.svelte';
+	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import MrLink from './MrLink.svelte';
 	import { runFacts, stageStatus } from './runfacts.svelte';
 
 	let {
 		runs,
 		cols = ['title', 'state', 'ws', 'stage', 'workshop', 'flow', 'mr', 'updated'],
 		/** Fetch per-run facts (attempt) for the stage column. Keep to short lists. */
-		facts = false
-	}: { runs: Run[]; cols?: RunCol[]; facts?: boolean } = $props();
+		facts = false,
+		/** Detail for a single workshop's list: the flow's @hash, the branch
+		 *  under the title, one !iid link per merge request. */
+		detail = false
+	}: { runs: Run[]; cols?: RunCol[]; facts?: boolean; detail?: boolean } = $props();
 
 	const WIDTH: Record<RunCol, string> = {
 		title: 'minmax(0,1fr)',
@@ -61,14 +64,12 @@
 			.map((c) => (c === 'state' ? 'auto' : WIDTH[c]))
 			.join(' ')
 	);
-	const projectName = (id?: string) =>
-		(id && fleet.projectById.get(id)?.name) || (id ? id.slice(-6) : '—');
 </script>
 
 <div class="rt rows" style:--tpl={tpl} style:--tpl-sm={tplSm}>
 	<div class="r head">
-		{#each cols as c (c)}<span class:wide={wide.includes(c)} class:right={c === 'updated'}
-				>{c === 'workshop' ? lore('workshop') : LABEL[c]}</span
+		{#each cols as c (c)}<span class:hide-sm={wide.includes(c)} class:right={c === 'updated'}
+				>{c === 'workshop' ? 'Workshop' : LABEL[c]}</span
 			>{/each}
 	</div>
 	{#each runs as r (r.id)}
@@ -78,18 +79,20 @@
 				{#if c === 'title'}
 					<span class="title">
 						<a class="stretch ell" href={to.run(r.id)}>{r.title || 'Untitled run'}</a>
-						{#if !cols.includes('id')}<span class="mono fnt sid">{shortId(r.id)}</span>{/if}
+						{#if !cols.includes('id')}<span class="mono fnt sid"
+								>{shortId(r.id)}{#if detail && r.branch}{' · '}{r.branch}{/if}</span
+							>{/if}
 					</span>
 				{:else if c === 'id'}
 					{#if cols.includes('title')}
-						<span class="mono mut wide">{shortId(r.id)}</span>
+						<span class="mono mut hide-sm">{shortId(r.id)}</span>
 					{:else}
 						<a class="mono idl stretch" href={to.run(r.id)} title={r.id}>{shortId(r.id)}</a>
 					{/if}
 				{:else if c === 'state'}
 					<span class="st"><StatusChip state={r.state} size="sm" /></span>
 				{:else if c === 'ws'}
-					<span class="wide ws"
+					<span class="hide-sm ws"
 						><WorkspaceStatus
 							state={r.state}
 							envId={r.envId}
@@ -98,7 +101,7 @@
 						/></span
 					>
 				{:else if c === 'stage'}
-					<span class="stage wide">
+					<span class="stage hide-sm">
 						{#if r.currentStage}
 							<StageFlask status={stageStatus(r.state)} size="sm" />
 							<span class="mono ell">{r.currentStage}</span>
@@ -107,22 +110,17 @@
 						{:else}<span class="fnt">—</span>{/if}
 					</span>
 				{:else if c === 'workshop'}
-					<span class="ws-name wide">
-						{#if r.projectId}<Vial projectId={r.projectId} />{/if}
-						<span class="ell">{projectName(r.projectId)}</span>
-					</span>
+					<span class="hide-sm ell"><WorkshopName projectId={r.projectId} /></span>
 				{:else if c === 'flow'}
-					<span class="mono mut ell wide">{r.flowName}</span>
+					<span class="mono mut ell hide-sm"
+						>{r.flowName}{#if detail && r.flowHash}<span class="fnt">
+								@{r.flowHash.slice(0, 6)}</span
+							>{/if}</span
+					>
 				{:else if c === 'branch'}
-					<span class="mono mut ell wide" title={r.branch}>{r.branch ?? ''}</span>
+					<span class="mono mut ell hide-sm" title={r.branch}>{r.branch ?? ''}</span>
 				{:else if c === 'mr'}
-					<span class="wide mr">
-						{#if r.mrUrl}
-							<a href={r.mrUrl} target="_blank" rel="noreferrer" title={r.mrUrl}
-								>MR{r.mrs.length > 1 ? ` ×${r.mrs.length}` : ''} ↗</a
-							>
-						{:else}<span class="fnt">—</span>{/if}
-					</span>
+					<span class="hide-sm"><MrLink run={r} {detail} /></span>
 				{:else if c === 'updated'}
 					<span class="mono mut upd" title={fmtAbs(r.updatedAt)}>{ago(r.updatedAt)}</span>
 				{/if}
@@ -135,7 +133,7 @@
 	.rt > .r {
 		grid-template-columns: var(--tpl);
 		position: relative;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
 	.title {
 		display: flex;
@@ -150,12 +148,8 @@
 	.title a:hover {
 		text-decoration: none;
 	}
-	/* The title link covers the row; the MR link sits above it. */
-	.stretch::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-	}
+	/* The title link covers the row (.stretch); MR and workshop links sit
+	 * above it (.over-stretch), both shared classes. */
 	.idl {
 		color: var(--tx);
 		font-weight: 600;
@@ -165,7 +159,7 @@
 	}
 	.sid {
 		flex: none;
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 	}
 	.st {
 		display: flex;
@@ -175,37 +169,24 @@
 		display: flex;
 		justify-content: center;
 	}
-	.stage,
-	.ws-name {
+	.stage {
 		display: flex;
 		align-items: center;
 		gap: 7px;
 		min-width: 0;
 	}
 	.stage .mono {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 	}
 	.att {
 		font-family: var(--mono);
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		flex: none;
-	}
-	.ws-name {
-		font-size: 12px;
-	}
-	.mr {
-		position: relative;
-		z-index: 1;
-	}
-	.mr a {
-		color: var(--brand);
-		font-weight: 600;
-		font-size: 12px;
 	}
 	.upd,
 	.right {
 		text-align: right;
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 	.head > span {
 		white-space: nowrap;
@@ -216,9 +197,10 @@
 			padding-left: 14px;
 			padding-right: 14px;
 		}
-		.wide,
-		.sid {
-			display: none !important;
+		/* Specific enough to beat each cell's own display rule. */
+		.rt > .r > .hide-sm,
+		.rt .sid {
+			display: none;
 		}
 	}
 </style>

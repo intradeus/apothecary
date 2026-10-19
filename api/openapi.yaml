@@ -1584,6 +1584,10 @@ components:
           type: string
         ok:
           type: boolean
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - ok
       type: object

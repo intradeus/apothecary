@@ -6,23 +6,25 @@
 	import { currentGuild, to } from '$lib/guild';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
-	import { lore } from '$lib/lore';
-	import { ago, fmtAbs } from '$lib/format';
-	import { mdToHtml } from '$lib/planreview';
+	import { ago, fmtAbs, shortId } from '$lib/format';
 	import type { Attachment, Branch, Ticket } from '$lib/domain';
 	import FlowSelect from '$lib/FlowSelect.svelte';
 	import TicketForm from '$lib/TicketForm.svelte';
 	import FileChips from '$lib/FileChips.svelte';
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
+	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
-	import Vial from '$lib/ui/Vial.svelte';
+	import Markdown from '$lib/ui/Markdown.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Updated from '$lib/ui/Updated.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
-	import RunTable from '$lib/desk-home/RunTable.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
+	import { I } from '$lib/ui/icons';
+	import RunTable from '$lib/run/RunTable.svelte';
+	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
 
 	const ticketId = $derived(page.params.ticketId ?? '');
 
@@ -43,11 +45,7 @@
 	const project = $derived(ticket ? fleet.projectById.get(ticket.projectId) : undefined);
 
 	// The ticket's runs, newest first, from the shared fleet poll (4s).
-	const runs = $derived(
-		fleet.runs
-			.filter((r) => r.ticketId === ticketId)
-			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-	);
+	const runs = $derived(fleet.runsByTicket.get(ticketId) ?? []);
 
 	// The ticket's attachments — hand-uploaded or copied from a tracker. They
 	// are delivered into the workspace of EVERY run of this ticket, so they
@@ -100,6 +98,7 @@
 	});
 
 	async function startRun() {
+		if (starting) return;
 		starting = true;
 		error = '';
 		try {
@@ -112,6 +111,9 @@
 				attachmentIds
 			});
 			void fleet.refresh();
+			toast(`Run ${shortId(runId)} started`, {
+				action: { label: 'Open run', run: () => void goto(to.run(runId)) }
+			});
 			await goto(to.run(runId));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -120,6 +122,7 @@
 		}
 	}
 
+	let deleting = $state(false);
 	async function del() {
 		if (
 			!(await confirmDialog({
@@ -129,12 +132,17 @@
 			}))
 		)
 			return;
+		deleting = true;
 		try {
+			const title = ticket?.title;
 			await api.tickets.remove(ticketId);
 			void fleet.refresh();
+			toast(title ? `Ticket “${title}” deleted` : 'Ticket deleted');
 			await goto(to.tickets());
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -166,29 +174,28 @@
 				<span class="src">
 					<span class="tag">{ticket!.source.key}</span>
 					{#if ticket!.source.url}
-						<a href={ticket!.source.url} target="_blank" rel="noreferrer">{ticket!.source.kind} ↗</a
+						<a href={ticket!.source.url} target="_blank" rel="noreferrer"
+							>{ticket!.source.kind} {I.external}</a
 						>
 					{:else}<span>{ticket!.source.kind}</span>{/if}
 				</span>
 			{/if}
-			<a class="ws" href={to.workshop(ticket!.projectId)}
-				><Vial projectId={ticket!.projectId} />{project?.name ?? ticket!.projectId.slice(-6)}</a
-			>
-			{#if ticket!.baseBranch}<span class="mono br" title="Base branch — each run appends a suffix"
-					>⎇ {ticket!.baseBranch}</span
+			<WorkshopName projectId={ticket!.projectId} link />
+			{#if ticket!.baseBranch}<span class="mono" title="Base branch — each run appends a suffix"
+					>{I.branch} {ticket!.baseBranch}</span
 				>{/if}
 			<span title={fmtAbs(ticket!.createdAt)}>created {ago(ticket!.createdAt)}</span>
 		{/snippet}
 		{#snippet actions()}
-			<div class="hacts">
+			<div class="row nowrap">
 				<button onclick={() => (editing = !editing)}>{editing ? 'Cancel edit' : 'Edit'}</button>
-				<button class="btn-danger" onclick={del}>Delete…</button>
+				<button class="btn-danger" aria-busy={deleting} onclick={del}>Delete…</button>
 			</div>
 		{/snippet}
 	</PageHeader>
 
 	<div class="page body">
-		{#if error}<ErrorCard cause={error} />{/if}
+		{#if error}<ErrorCard cause={error} ondismiss={() => (error = '')} />{/if}
 
 		{#if editing}
 			<div class="edit">
@@ -205,20 +212,22 @@
 			</div>
 		{:else}
 			<div class="grid">
-				<section class="goal c">
-					<div class="sh">
+				<section class="c pane">
+					<div class="pane-head">
 						<h2>The goal</h2>
 						<span class="help">every run of this ticket works toward it</span>
 					</div>
-					{#if ticket.goal}
-						<div class="md">{@html mdToHtml(ticket.goal)}</div>
-					{:else}
-						<p class="fnt">No goal written.</p>
-					{/if}
+					<div class="pane-body goal">
+						{#if ticket.goal}
+							<Markdown src={ticket.goal} />
+						{:else}
+							<p class="empty-line">No goal written.</p>
+						{/if}
+					</div>
 					{#if attachments.length}
-						<div class="att">
+						<div class="pane-body att">
 							<div class="ah">
-								<span class="lbl">Attachments · {attachments.length}</span>
+								<span class="flabel">Attachments · {attachments.length}</span>
 								<span class="help"
 									>delivered into every run's workspace under <code>.apothecary/attachments/</code
 									></span
@@ -229,73 +238,70 @@
 					{/if}
 				</section>
 
-				<aside class="start lg">
-					<div class="sh">
-						<h2>Start a run</h2>
-					</div>
-					<div class="field">
-						<label for="run-goal">Direction <span class="mut">· optional</span></label>
-						<textarea
-							id="run-goal"
-							bind:value={runGoal}
-							rows="3"
-							placeholder="e.g. Last attempt broke the router — use the existing middleware."
-						></textarea>
-						<span class="help"
-							>Added to the ticket's goal for this run only; never replaces it.</span
-						>
-					</div>
-					<AttachFiles bind:files={runFiles} label="Files for this run only" compact />
-					<div class="field">
-						<label for="flow">Flow</label>
-						<FlowSelect
-							id="flow"
-							projectId={ticket.projectId}
-							bind:value={flow}
-							fallbackLabel={`Default · ${project?.defaultFlow || 'project default'}`}
-						/>
-					</div>
-					<div class="field">
-						<label for="source-branch">Source branch</label>
-						{#if branches.length}
-							<select id="source-branch" bind:value={sourceBranch} class="mono">
-								{#each branches as b (b.name)}
-									<option value={b.name}>{b.isDefault ? `★ ${b.name}` : b.name}</option>
-								{/each}
-							</select>
-						{:else}
-							<input
-								id="source-branch"
-								class="mono"
-								disabled
-								placeholder={branchesErr ? 'branches unavailable' : 'loading branches…'}
-								value={branchesErr ? (project?.repo.defaultBranch ?? '') : ''}
+				<aside class="start lg pane">
+					<div class="pane-head"><h2>Start a run</h2></div>
+					<div class="pane-body sb">
+						<div class="field">
+							<label for="run-goal">Direction <span class="mut">· optional</span></label>
+							<textarea
+								id="run-goal"
+								bind:value={runGoal}
+								rows="3"
+								placeholder="e.g. Last attempt broke the router — use the existing middleware."
+							></textarea>
+							<span class="help"
+								>Added to the ticket's goal for this run only; never replaces it.</span
+							>
+						</div>
+						<AttachFiles bind:files={runFiles} label="Files for this run only" compact />
+						<div class="field">
+							<label for="flow">Flow</label>
+							<FlowSelect
+								id="flow"
+								projectId={ticket.projectId}
+								bind:value={flow}
+								fallbackLabel={`Default · ${project?.defaultFlow || 'project default'}`}
 							/>
-						{/if}
-						<span class="help"
-							>{branchesErr
-								? 'Branches could not be listed — the run forks off the default branch.'
-								: 'The run forks its branch off this one. ★ = the repo default.'}</span
-						>
+						</div>
+						<div class="field">
+							<label for="source-branch">Source branch</label>
+							{#if branches.length}
+								<select id="source-branch" bind:value={sourceBranch} class="mono">
+									{#each branches as b (b.name)}
+										<option value={b.name}>{b.isDefault ? `${I.star} ${b.name}` : b.name}</option>
+									{/each}
+								</select>
+							{:else}
+								<input
+									id="source-branch"
+									class="mono"
+									disabled
+									placeholder={branchesErr ? 'branches unavailable' : 'loading branches…'}
+									value={branchesErr ? (project?.repo.defaultBranch ?? '') : ''}
+								/>
+							{/if}
+							<span class="help"
+								>{branchesErr
+									? 'Branches could not be listed — the run forks off the default branch.'
+									: `The run forks its branch off this one. ${I.star} = the repo default.`}</span
+							>
+						</div>
+						<button class="btn-primary btn-lg go" onclick={startRun} aria-busy={starting}>
+							{I.play} Start run
+						</button>
 					</div>
-					<button class="btn-primary btn-lg go" onclick={startRun} disabled={starting}>
-						{starting ? 'Starting…' : '▶ Start run'}
-					</button>
 				</aside>
 			</div>
 		{/if}
 
 		<section class="runs">
-			<div class="rh">
-				<h2>Runs</h2>
-				<span class="count">{runs.length}</span>
-				<span class="spacer"></span>
-				<Updated at={fleet.updatedAt} paused={fleet.paused} />
-			</div>
+			<SectionHeader title="Runs" count={runs.length}>
+				{#snippet actions()}<Updated at={fleet.updatedAt} paused={fleet.paused} />{/snippet}
+			</SectionHeader>
 			{#if runs.length === 0}
 				<EmptyState
 					compact
-					title={lore('nothingRunning')}
+					title="All still on the shelf"
 					text="No runs of this ticket yet. Start one above."
 				/>
 			{:else}
@@ -316,66 +322,40 @@
 	</div>
 {:else}
 	<PageHeader {crumbs} title="Ticket" />
-	<div class="page"><div class="c sk"><Skeleton lines={8} /></div></div>
+	<div class="page"><Skeleton pane lines={8} /></div>
 {/if}
 
 <style>
 	.body {
 		padding-top: 2px;
 	}
-	.hacts {
-		display: flex;
-		gap: 8px;
-	}
 	.src {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
 	}
-	.ws {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		color: var(--tx);
-	}
-	.br {
-		font-size: 11.5px;
-	}
 	.grid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 380px;
+		grid-template-columns: minmax(0, 1fr) var(--aside-w);
 		gap: 12px;
 		align-items: start;
 		flex: none;
 	}
-	.goal,
 	.start {
-		border-radius: 16px;
-		padding: 14px 18px 18px;
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		min-width: 0;
+		border-radius: var(--r-group);
 	}
-	.start {
-		border-radius: 17px;
-		padding: 14px 16px 16px;
+	.start .pane-head {
+		border-bottom-color: var(--lgLn);
 	}
-	.sh {
-		display: flex;
-		align-items: baseline;
-		gap: 10px;
-		flex-wrap: wrap;
+	.goal > :global(.md) {
+		max-width: var(--measure);
 	}
-	.sh h2 {
-		font-size: 20px;
-	}
-	.goal .md {
-		max-width: 80ch;
+	.goal .empty-line {
+		padding: 0;
+		margin: 0;
 	}
 	.att {
 		border-top: 1px solid var(--cLn);
-		padding-top: 12px;
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
@@ -386,9 +366,14 @@
 		gap: 10px;
 		flex-wrap: wrap;
 	}
-	.lbl {
-		font-size: 12px;
+	.flabel {
+		font-size: var(--fs-label);
 		font-weight: 500;
+	}
+	.sb {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
 	}
 	.go {
 		align-self: stretch;
@@ -399,26 +384,6 @@
 		flex-direction: column;
 		gap: 10px;
 		flex: none;
-	}
-	.rh {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 0 4px;
-	}
-	.rh h2 {
-		font-size: 20px;
-	}
-	.spacer {
-		flex: 1;
-	}
-	.pane {
-		border-radius: 16px;
-		overflow: hidden;
-	}
-	.sk {
-		border-radius: 16px;
-		padding: 16px;
 	}
 	.edit {
 		max-width: 900px;

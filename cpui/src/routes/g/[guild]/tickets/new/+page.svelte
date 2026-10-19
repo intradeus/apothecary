@@ -5,7 +5,6 @@
 	import { page } from '$app/state';
 	import { currentGuild, to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
-	import { isLore } from '$lib/lore';
 	import TicketForm from '$lib/TicketForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -26,11 +25,7 @@
 	accent="ticket"
 >
 	{#snippet meta()}
-		<span
-			>{isLore()
-				? 'The ingredients: what to build and what done looks like.'
-				: 'What to build and what done looks like.'} Runs start from it.</span
-		>
+		<span>The ingredients: what to build and what done looks like. Runs start from it.</span>
 	{/snippet}
 </PageHeader>
 
@@ -42,7 +37,7 @@
 			onretry={() => fleet.refresh()}
 		/>
 	{:else if !fleet.updatedAt}
-		<div class="c sk"><Skeleton lines={8} /></div>
+		<Skeleton pane lines={8} />
 	{:else}
 		<TicketForm
 			projects={fleet.projects}
@@ -60,9 +55,5 @@
 	.body > :global(*) {
 		max-width: 1180px;
 		width: 100%;
-	}
-	.sk {
-		border-radius: 16px;
-		padding: 16px;
 	}
 </style>

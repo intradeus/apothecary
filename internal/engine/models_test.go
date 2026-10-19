@@ -191,3 +191,45 @@ func TestAgentAccepts(t *testing.T) {
 		}
 	}
 }
+
+// A provider refusing the harness credential refuses the run before a
+// workspace is built; preflight names it too. Each harness is asked about
+// exactly the models its stages route through.
+func TestRunRefusedWhenTheProviderRejectsTheCredential(t *testing.T) {
+	h := newHarness(t, mustFlow(t, modelFlowDoc))
+	var asked []string
+	h.res.CheckAuth = func(_ context.Context, kind string, models []string) ([]string, []string) {
+		asked = append(asked, kind+":"+strings.Join(models, ","))
+		return []string{"opencode model zen/glm-5.1: credential rejected (401 Invalid credential)"}, nil
+	}
+	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+	if err == nil || !strings.Contains(err.Error(), "Invalid credential") {
+		t.Fatalf("err = %v, want the provider's refusal", err)
+	}
+	if len(asked) != 1 || asked[0] != "fake:zen/glm-5.1,zen/glm-5.3" {
+		t.Errorf("asked %v", asked)
+	}
+	if len(h.envp.ExecCalls) != 0 {
+		t.Error("a workspace was touched for a run whose credentials were refused")
+	}
+	if s := stepNamed(h.e.PreflightProject(context.Background(), testProject), "harness_auth"); s == nil || s.OK || !strings.Contains(s.Error, "Invalid credential") {
+		t.Errorf("preflight harness_auth step = %+v", s)
+	}
+}
+
+// A credential that cannot be probed (a subscription login, a provider down)
+// does not block the run, nor fail preflight.
+func TestUnverifiableCredentialsDoNotBlockTheRun(t *testing.T) {
+	h := newHarness(t, mustFlow(t, modelFlowDoc))
+	h.res.CheckAuth = func(context.Context, string, []string) ([]string, []string) {
+		return nil, []string{"opencode provider zen: not an API key (subscription login)"}
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if s := stepNamed(h.e.PreflightProject(context.Background(), testProject), "harness_auth"); s == nil || !s.OK {
+		t.Errorf("preflight harness_auth step = %+v", s)
+	}
+}

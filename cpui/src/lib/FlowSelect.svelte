@@ -4,7 +4,6 @@
 	// flows, then the built-in templates it has not adopted (both run as-is).
 	// If the list cannot be loaded it degrades to free text.
 	import { api } from '$lib/api';
-	import { lore } from '$lib/lore';
 	import type { Flow } from '$lib/domain';
 
 	let {
@@ -56,7 +55,7 @@
 		{:else}
 			<option value="">{fallbackLabel}</option>
 			{#if owned.length}
-				<optgroup label="{lore('workshop')} flows">
+				<optgroup label="Workshop flows">
 					{#each owned as f (f.name)}<option value={f.name}
 							>{f.name}{f.shadowsBuiltin ? ' (customised template)' : ''}</option
 						>{/each}

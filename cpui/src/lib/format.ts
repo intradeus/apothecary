@@ -101,6 +101,12 @@ export function fmtClockDuration(ms: number): string {
 	return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
+/** "0:04", "1:12", "26:05" — an elapsed span as hours:minutes. */
+export function fmtHoursMinutes(ms: number): string {
+	const m = Math.max(0, Math.floor(ms / 60000));
+	return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+}
+
 /** "14m 08s", "2h 05m", "41s" — an elapsed span. */
 export function fmtDuration(ms: number): string {
 	const s = Math.max(0, Math.floor(ms / 1000));
@@ -111,9 +117,10 @@ export function fmtDuration(ms: number): string {
 	return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
-/** Relative time: "just now", "3m ago", "2h ago", "4d ago". */
-export function ago(ts: string | number | Date): string {
-	const s = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
+/** Relative time: "just now", "3m ago", "2h ago", "4d ago". Pass `now` from a
+ *  ticking clock to keep it live. */
+export function ago(ts: string | number | Date, now = Date.now()): string {
+	const s = Math.max(0, (now - new Date(ts).getTime()) / 1000);
 	if (s < 10) return 'just now';
 	if (s < 60) return `${Math.floor(s)}s ago`;
 	if (s < 3600) return `${Math.floor(s / 60)}m ago`;
@@ -131,3 +138,22 @@ export function age(ts: string | number | Date): string {
 export const times = (n: number) => `×${n}`;
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** A byte rate ("12 KB/s"); fractions of a byte round away. */
+export const fmtRate = (bytesPerSec: number): string =>
+	`${fmtBytes(Math.round(bytesPerSec)) || '0 B'}/s`;
+
+/** A percentage with one decimal under 10 ("4.2%", "37%"). */
+export const fmtPct = (v: number): string => `${v >= 10 ? Math.round(v) : v.toFixed(1)}%`;
+
+/** Per-second rates from a cumulative counter sampled at `times` (ms). The
+ *  first point has no rate (null); a negative delta is a counter reset
+ *  (container restart) and reads 0; a non-increasing time is a gap (null). */
+export function counterRates(cum: number[], times: number[]): (number | null)[] {
+	return cum.map((v, i) => {
+		if (i === 0) return null;
+		const dt = (times[i] - times[i - 1]) / 1000;
+		if (!(dt > 0)) return null;
+		return Math.max(0, (v - cum[i - 1]) / dt);
+	});
+}

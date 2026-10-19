@@ -20,6 +20,7 @@
 		onclick={() => (value = clamp(Number(value) - 1))}>−</button
 	>
 	<input
+		class="bare"
 		{id}
 		type="number"
 		{min}
@@ -44,7 +45,7 @@
 	.st {
 		display: inline-flex;
 		align-items: stretch;
-		border-radius: 10px;
+		border-radius: var(--r-row);
 		border: 1px solid var(--ln2);
 		background: var(--p1);
 		overflow: hidden;
@@ -61,22 +62,21 @@
 		background: transparent;
 		box-shadow: none;
 		color: var(--mut);
-		font-size: 15px;
+		font-size: var(--fs-lead);
 	}
 	.b:hover {
 		background: var(--p3);
 		color: var(--tx);
 	}
-	input {
-		width: 64px !important;
-		border: 0 !important;
-		border-left: 1px solid var(--ln) !important;
-		border-right: 1px solid var(--ln) !important;
-		border-radius: 0 !important;
-		box-shadow: none !important;
-		background: transparent !important;
+	/* .bare (components.css) strips the field chrome; the stepper draws it. */
+	input.bare {
+		width: 64px;
+		border-left: 1px solid var(--ln);
+		border-right: 1px solid var(--ln);
+		border-radius: 0;
+		padding: 6px 0;
 		text-align: center;
-		font-family: var(--mono) !important;
+		font-family: var(--mono);
 		font-weight: 600;
 		appearance: textfield;
 		-moz-appearance: textfield;

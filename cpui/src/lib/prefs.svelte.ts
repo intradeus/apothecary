@@ -1,12 +1,9 @@
-// Per-browser UI preferences: theme, label flavor, sidebar state.
+// Per-browser UI preferences: theme, sidebar state.
 //
 // These are conveniences, not records: they live in localStorage and every
 // read tolerates its absence (private windows, blocked storage).
 
-export type Theme = 'dark' | 'light';
-/** 'lore' renames a handful of nouns (Guild, Workshop, Batch…); 'plain' keeps
- *  them technical. Status vocabulary is never renamed in either. */
-export type Flavor = 'lore' | 'plain';
+import { DEFAULT_THEME, isTheme, nextTheme, themeById, type ThemeDef } from '$lib/themes';
 
 const read = (k: string): string | null => {
 	try {
@@ -23,8 +20,8 @@ const write = (k: string, v: string) => {
 	}
 };
 
-// ?theme=light|dark wins for this page load (screenshots, support links)
-// without overwriting the saved preference.
+// ?theme=<id> wins for this page load (screenshots, support links) without
+// overwriting the saved preference.
 const urlTheme = () => {
 	try {
 		return new URLSearchParams(location.search).get('theme');
@@ -34,21 +31,32 @@ const urlTheme = () => {
 };
 
 class Prefs {
-	theme = $state<Theme>((urlTheme() ?? read('apothecary.theme')) === 'light' ? 'light' : 'dark');
-	flavor = $state<Flavor>(read('apothecary.flavor') === 'plain' ? 'plain' : 'lore');
+	/** A registered theme id (see $lib/themes). */
+	theme = $state<string>(
+		[urlTheme(), read('apothecary.theme')].find((t) => isTheme(t)) ?? DEFAULT_THEME
+	);
 	collapsed = $state(read('apothecary.sidebar') === 'rail');
 
-	setTheme(t: Theme) {
-		this.theme = t;
-		write('apothecary.theme', t);
-		document.documentElement.dataset.theme = t;
+	/** The current theme's definition: label, icon, base scheme. */
+	readonly themeDef: ThemeDef = $derived(themeById(this.theme));
+
+	/** Switch theme. Where the browser supports view transitions the whole
+	 *  page cross-fades (--dur-theme) instead of jumping in brightness. */
+	setTheme(id: string) {
+		if (!isTheme(id) || id === this.theme) return;
+		const apply = () => {
+			this.theme = id;
+			write('apothecary.theme', id);
+			document.documentElement.dataset.theme = id;
+		};
+		const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+		const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+		if (doc.startViewTransition && !still) doc.startViewTransition(apply);
+		else apply();
 	}
-	toggleTheme() {
-		this.setTheme(this.theme === 'dark' ? 'light' : 'dark');
-	}
-	setFlavor(f: Flavor) {
-		this.flavor = f;
-		write('apothecary.flavor', f);
+	/** Step to the next registered theme (the one-button toggle). */
+	cycleTheme() {
+		this.setTheme(nextTheme(this.theme).id);
 	}
 	toggleCollapsed() {
 		this.collapsed = !this.collapsed;

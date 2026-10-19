@@ -18,7 +18,9 @@
 				var t =
 					new URLSearchParams(location.search).get('theme') ||
 					localStorage.getItem('apothecary.theme');
-				if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+				// Any id is applied as-is; prefs ($lib/themes) validates it on
+				// boot, and an unknown one falls back to the :root default.
+				if (t && /^[a-z0-9-]+$/.test(t)) document.documentElement.dataset.theme = t;
 			} catch (e) {}
 		</script>
 		%sveltekit.head%

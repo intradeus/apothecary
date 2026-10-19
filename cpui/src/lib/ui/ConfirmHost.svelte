@@ -1,30 +1,38 @@
 <script lang="ts">
-	// Mounted once in the shell; renders whatever confirmDialog() asked.
+	// Mounted once in the shell; renders whatever confirmDialog() asked. It
+	// keeps the last dialog's content after it settles, so the close can play
+	// out instead of the dialog vanishing mid-frame.
 	import Modal from './Modal.svelte';
-	import { confirmState } from './confirm.svelte';
+	import { confirmState, type ConfirmOptions } from './confirm.svelte';
 
+	let shown = $state<ConfirmOptions | null>(null);
 	let open = $state(false);
 	$effect(() => {
-		open = !!confirmState.current;
+		const c = confirmState.current;
+		if (c) {
+			shown = c;
+			open = true;
+		} else open = false;
 	});
 </script>
 
-{#if confirmState.current}
-	{@const c = confirmState.current}
+{#if shown}
 	<Modal
 		bind:open
-		title={c.title}
-		icon={c.tone === 'warn' ? '!' : '■'}
-		tone={c.tone ?? 'danger'}
+		title={shown.title}
+		icon={shown.tone === 'warn' ? '!' : '■'}
+		tone={shown.tone ?? 'danger'}
 		onclose={() => confirmState.settle(false)}
 	>
 		<!-- trusted copy, see confirm.svelte.ts -->
-		<p style="margin:0">{@html c.body}</p>
+		<p style="margin:0">{@html shown.body}</p>
 		{#snippet footer()}
 			<button class="btn-ghost" onclick={() => confirmState.settle(false)}
-				>{c.cancel ?? 'Cancel'}</button
+				>{shown?.cancel ?? 'Cancel'}</button
 			>
-			<button class="btn-danger-solid" onclick={() => confirmState.settle(true)}>{c.action}</button>
+			<button class="btn-danger-solid" onclick={() => confirmState.settle(true)}
+				>{shown?.action}</button
+			>
 		{/snippet}
 	</Modal>
 {/if}

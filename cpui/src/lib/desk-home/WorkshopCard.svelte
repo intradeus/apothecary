@@ -1,13 +1,18 @@
 <script lang="ts">
 	// A workshop on the desk (DESIGN 7.2/7.3): its live runs (state dot, title
 	// over "state · stage", stage-type chip, elapsed over cost), its last
-	// finished runs with their MR, and its tickets.
+	// finished runs with their MR, and its tickets. Rows slide into their new
+	// places on the spring when the list reorders.
+	import { flip } from 'svelte/animate';
 	import { to } from '$lib/guild';
-	import { ago, fmtAbs, fmtCost, fmtDuration, plural, stateHue, stateLabel } from '$lib/format';
+	import { fmtCost, fmtDuration, plural } from '$lib/format';
 	import type { Project, Run } from '$lib/domain';
-	import Vial from '$lib/ui/Vial.svelte';
 	import StageChip from '$lib/ui/StageChip.svelte';
-	import { runFacts, stageType } from './runfacts.svelte';
+	import { I } from '$lib/ui/icons';
+	import { ms, spring } from '$lib/ui/motion';
+	import RunRow from '$lib/run/RunRow.svelte';
+	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import { runFacts, stageType } from '$lib/run/runfacts.svelte';
 
 	let {
 		project,
@@ -31,21 +36,20 @@
 		now: number;
 	} = $props();
 
-	const live_ = (s: Run['state']) => s === 'running' || s === 'provisioning';
 	const stageLine = (r: Run) =>
 		r.state === 'provisioning'
 			? 'workspace starting'
 			: r.state === 'pending'
 				? 'queued'
 				: (r.currentStage ?? '—');
+	const move = { duration: ms('--dur-spring', 450), easing: spring };
 </script>
 
-<article class="wc c">
-	<header>
-		<Vial projectId={project.id} idle={liveTotal === 0} />
-		<a class="name ell" href={to.workshop(project.id)}>{project.name}</a>
+<article class="wc c pane">
+	<header class="head">
+		<span class="nm"><WorkshopName projectId={project.id} idle={liveTotal === 0} link /></span>
 		<span class="sum">
-			{liveTotal ? `${liveTotal} live` : 'idle'}{#if pings}{' · '}<span class="amb"
+			{liveTotal ? `${liveTotal} live` : 'idle'}{#if pings}{' · '}<span class="hue-amb"
 					>{plural(pings, 'ping')}</span
 				>{/if}
 		</span>
@@ -54,145 +58,74 @@
 	{#each live as r (r.id)}
 		{@const f = runFacts(r)}
 		{@const st = stageType(r)}
-		<a class="run" href={to.run(r.id)}>
-			<span
-				class="dot"
-				class:pulse={live_(r.state) || r.state === 'waiting_on_human'}
-				style:--h={stateHue[r.state]}
-			></span>
-			<span class="mid">
-				<span class="t ell">{r.title || 'Untitled run'}</span>
-				<span class="s ell"
-					><span style:color={stateHue[r.state]}>{stateLabel[r.state]}</span> ·
-					<span class="mono">{stageLine(r)}</span
-					>{#if f?.attempt}{` · attempt ${f.attempt}`}{/if}</span
-				>
-			</span>
-			<span class="chip-slot"
-				>{#if st}<StageChip type={st} />{/if}</span
-			>
-			<span class="nums">
-				<span>{fmtDuration(now - new Date(r.createdAt).getTime())}</span>
-				<span class="fnt">{f ? fmtCost(f.cost) : '…'}</span>
-			</span>
-		</a>
+		<div animate:flip={move}>
+			<RunRow run={r} detail={stageLine(r) + (f?.attempt ? ` · attempt ${f.attempt}` : '')}>
+				{#snippet trailing()}
+					<span class="tr">
+						{#if st}<StageChip type={st} />{/if}
+						<span class="nums">
+							<span>{fmtDuration(now - new Date(r.createdAt).getTime())}</span>
+							<span class="fnt">{f ? fmtCost(f.cost) : '…'}</span>
+						</span>
+					</span>
+				{/snippet}
+			</RunRow>
+		</div>
 	{/each}
 
 	{#if finished.length}
-		<div class="sec">Last finished</div>
+		<div class="pane-sub">Last finished</div>
 		{#each finished as r (r.id)}
-			<div class="run fin">
-				<span class="glyph" style:color={stateHue[r.state]}
-					>{r.state === 'completed' ? '✓' : r.state === 'failed' ? '✕' : '–'}</span
-				>
-				<span class="mid">
-					<a class="t ell stretch" href={to.run(r.id)}>{r.title || 'Untitled run'}</a>
-					<span class="s ell"
-						><span style:color={stateHue[r.state]}>{stateLabel[r.state]}</span> ·
-						<span title={fmtAbs(r.updatedAt)}>{ago(r.updatedAt)}</span></span
-					>
-				</span>
-				<span></span>
-				<span class="mr">
-					{#if r.mrUrl}<a href={r.mrUrl} target="_blank" rel="noreferrer">MR ↗</a>{:else}<span
-							class="fnt">no MR</span
-						>{/if}
-				</span>
-			</div>
+			<div animate:flip={move}><RunRow run={r} variant="finished" /></div>
 		{/each}
 	{/if}
 
-	<footer>
+	<footer class="pane-foot">
 		<a href={to.tickets({ project: project.id })}
 			>{tickets === undefined ? 'Tickets' : plural(tickets, 'ticket')}</a
 		>
 		<span class="spacer"></span>
-		<a class="btn btn-sm" href={to.newTicket({ project: project.id })}>+ New ticket</a>
+		<a class="btn btn-sm" href={to.newTicket({ project: project.id })}>{I.add} New ticket</a>
 	</footer>
 </article>
 
 <style>
 	.wc {
-		border-radius: 16px;
 		display: flex;
 		flex-direction: column;
-		overflow: hidden;
 		min-width: 0;
+		height: 100%;
 	}
-	header {
+	.head {
 		display: flex;
 		align-items: center;
 		gap: 9px;
 		padding: 11px 14px;
 	}
-	.name {
-		font-weight: 600;
+	.nm {
 		flex: 1;
+		min-width: 0;
+		display: flex;
+	}
+	/* The workshop's name is the card's title. */
+	.nm :global(.wn) {
+		font-size: var(--fs-body);
+		font-weight: 600;
 		color: var(--tx);
 	}
 	.sum {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 		white-space: nowrap;
 	}
-	.amb {
-		color: var(--amb);
-	}
-	.run {
-		position: relative;
-		display: grid;
-		grid-template-columns: 8px minmax(0, 1fr) auto auto;
-		gap: 10px;
-		align-items: center;
-		padding: 8px 14px;
-		border-top: 1px solid var(--cLn);
-		color: var(--tx);
-	}
-	.run:hover {
-		background: var(--p1);
-		text-decoration: none;
-	}
-	.dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--h);
-		box-shadow: 0 0 8px var(--h);
-	}
-	.glyph {
-		font-size: 11px;
-		font-weight: 700;
-		text-align: center;
-	}
-	.mid {
-		min-width: 0;
+	.tr {
 		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-	.t {
-		font-size: 12.5px;
-		font-weight: 500;
-		color: var(--tx);
-	}
-	a.t:hover {
-		text-decoration: none;
-	}
-	.stretch::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-	}
-	.s {
-		font-size: 11px;
-		color: var(--mut);
-	}
-	.s .mono {
-		font-size: 10.5px;
+		align-items: center;
+		gap: 10px;
 	}
 	.nums {
 		font-family: var(--mono);
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		color: var(--mut);
 		text-align: right;
 		white-space: nowrap;
@@ -200,42 +133,12 @@
 		flex-direction: column;
 		line-height: 1.3;
 	}
-	.sec {
-		padding: 9px 14px 3px;
-		border-top: 1px solid var(--cLn);
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--fnt);
-	}
-	.sec + .run {
-		border-top: 0;
-	}
-	.fin .t {
-		color: var(--mut);
-	}
-	.mr {
-		position: relative;
-		z-index: 1;
-		font-size: 11.5px;
-		white-space: nowrap;
-	}
-	.mr a {
-		color: var(--brand);
-		font-weight: 600;
-	}
-	footer {
+	.pane-foot {
 		margin-top: auto;
-		display: flex;
-		align-items: center;
-		gap: 8px;
 		padding: 8px 10px 8px 14px;
-		border-top: 1px solid var(--cLn);
-		font-size: 12px;
+		font-size: var(--fs-label);
 	}
-	footer > a:first-child {
+	.pane-foot > a:first-child {
 		color: var(--mut);
-	}
-	.spacer {
-		flex: 1;
 	}
 </style>

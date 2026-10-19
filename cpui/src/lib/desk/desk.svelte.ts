@@ -2,6 +2,12 @@
 // maximised leaf, and an in-flight tab drag. Persisted per browser
 // ({tree, preset}); the server can take this over later without the
 // component noticing.
+//
+// Every discrete layout change (split, move, hide, preset, maximise) also
+// sets `motion`, which tells the desk to spring the windows from where they
+// are to their new rects; a gutter drag tracks 1:1 with motion off.
+
+import { ms } from '$lib/ui/motion';
 
 import {
 	PRESETS,
@@ -45,14 +51,32 @@ function load(): { tree: Tree; preset: LayoutId } {
 	return { tree: PRESETS.split.make(), preset: 'split' };
 }
 
+/** A tab being dragged: the view, the pointer (desk-relative), where on
+ *  the tab it was grabbed, and the tab's home spot to fly back to. */
+export interface TabDrag {
+	v: ViewId;
+	x: number;
+	y: number;
+	ox: number;
+	oy: number;
+	home: { x: number; y: number };
+	/** Released over nothing: flying home before it disappears. */
+	back?: boolean;
+}
+
+export type DeskMotion = '' | 'spring' | 'bounce';
+
 export class DeskState {
 	tree = $state<Tree>(null);
 	preset = $state<LayoutId>('split');
 	focus = $state<string | null>(null);
 	max = $state<string | null>(null);
-	/** A tab being dragged: the view and the cursor, desk-relative. */
-	drag = $state<{ v: ViewId; x: number; y: number } | null>(null);
+	drag = $state<TabDrag | null>(null);
 	drop = $state<Drop | null>(null);
+	/** How window rects move right now: spring to a new layout, bounce back
+	 *  from a released gutter, or '' (track 1:1). */
+	motion = $state<DeskMotion>('');
+	#settle: ReturnType<typeof setTimeout> | undefined;
 	/** The Layouts popover (opened from the header or the empty bench). */
 	menuOpen = $state(false);
 	/** The leaf rects of the last layout pass (for hit-testing and showView). */
@@ -71,7 +95,31 @@ export class DeskState {
 	 *  window, since the layout it was hiding just changed. */
 	set(t: Tree, preset: LayoutId = 'custom') {
 		this.max = null;
+		this.animate();
 		this.#write(t, preset);
+	}
+
+	/** Spring the windows to wherever the next layout puts them. Interrupting
+	 *  one move with another retargets from the live rects (CSS transitions
+	 *  start from the current value). */
+	animate(kind: DeskMotion = 'spring') {
+		this.motion = kind;
+		clearTimeout(this.#settle);
+		const d = kind === 'bounce' ? ms('--dur-bounce', 600) : ms('--dur-spring', 450);
+		this.#settle = setTimeout(() => (this.motion = ''), d + 50);
+	}
+
+	/** A gutter drag in progress: 1:1, not saved until it is released. */
+	resizeLive(t: Tree) {
+		clearTimeout(this.#settle);
+		this.motion = '';
+		this.tree = norm(t);
+	}
+
+	/** The gutter was released; `snap` when it sprang back from a limit. */
+	resizeDone(t: Tree, snap: boolean) {
+		if (snap) this.animate('bounce');
+		this.#write(t, 'custom');
 	}
 
 	#write(t: Tree, preset: LayoutId) {
@@ -137,7 +185,10 @@ export class DeskState {
 	reveal(v: ViewId) {
 		const l = this.leafOf(v);
 		if (!l) return this.showView(v);
-		if (this.max && this.max !== l.id) this.max = null;
+		if (this.max && this.max !== l.id) {
+			this.animate();
+			this.max = null;
+		}
 		if (l.act !== v) this.activate(l.id, v);
 		else this.focus = l.id;
 	}
@@ -165,6 +216,7 @@ export class DeskState {
 	}
 
 	toggleMax(id: string) {
+		this.animate();
 		this.max = this.max === id ? null : id;
 	}
 }

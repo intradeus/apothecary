@@ -24,10 +24,8 @@
 		align-items: center;
 		justify-content: center;
 		font-weight: 700;
-		color: #0b1a12;
+		color: var(--deepInk);
 		letter-spacing: -0.02em;
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.35),
-			0 1px 3px rgba(0, 0, 0, 0.4);
+		box-shadow: var(--guildSh);
 	}
 </style>

@@ -1344,6 +1344,16 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 		e.log.Warn("preflight: could not verify the flow's models", "flow", fl.Name,
 			"harnesses", strings.Join(mc.unverified, "; "))
 	}
+	// And the providers must accept the harness credentials — probed without
+	// spending tokens. A probe that says nothing is not a reason to refuse.
+	rejected, unverified := checkAuth(ctx, res, fl.Stages)
+	if len(rejected) > 0 {
+		return fmt.Errorf("preflight: %s", strings.Join(rejected, "; "))
+	}
+	if len(unverified) > 0 {
+		e.log.Warn("preflight: could not verify harness credentials", "flow", fl.Name,
+			"why", strings.Join(unverified, "; "))
+	}
 	// The agent I/O contract is enforced at parse time now that the flow
 	// carries its agents; what is left here is advisory.
 	if len(fl.Warnings) > 0 {
@@ -2421,6 +2431,15 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 				merr = fmt.Errorf("could not list models to check against — %s", strings.Join(mc.unverified, "; "))
 			}
 			steps = append(steps, step("models", merr))
+		}
+		if res.CheckAuth != nil {
+			// Only a refusal fails: a subscription login has no probe, and
+			// must not fail the project's preflight forever.
+			var aerr error
+			if rejected, _ := checkAuth(ctx, res, fl.Stages); len(rejected) > 0 {
+				aerr = errors.New(strings.Join(rejected, "; "))
+			}
+			steps = append(steps, step("harness_auth", aerr))
 		}
 	}
 	return steps

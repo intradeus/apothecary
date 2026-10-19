@@ -2,10 +2,11 @@
 // blocks for anchoring, and the deterministic composition of accumulated
 // comments into ONE feedback prompt for the existing on_reject feed path —
 // the engine learns nothing new.
-import { marked, type Token } from 'marked';
+import type { Token } from 'marked';
+import { marked } from '$lib/markdown';
 
 export interface PlanBlock {
-	html: string;
+	/** The block's own markdown; rendered through <Markdown>. */
 	raw: string;
 	heading: string; // nearest heading above (or at) this block
 	startLine: number;
@@ -24,6 +25,8 @@ export interface CommentAnchor {
 }
 
 export interface ReviewComment {
+	/** Stable identity for the list (edits keep it); absent in old drafts. */
+	id?: string;
 	quote: string;
 	heading: string;
 	startLine: number;
@@ -31,36 +34,6 @@ export interface ReviewComment {
 	text: string;
 	anchor?: CommentAnchor;
 	files?: File[]; // per-comment attachments — live only, never persisted
-}
-
-// Agent-generated markdown is semi-trusted: escape raw HTML instead of
-// injecting it (marked passes HTML through by default).
-function escapeHTML(s: string): string {
-	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-// Only link where a link is harmless: web, mail, and in-page/relative
-// targets. A `javascript:` href in agent output is not a link, it is code.
-const safeHref = (href: string) => /^(https?:|mailto:|#|\/|\.{0,2}\/|[^:]*$)/i.test(href.trim());
-const renderer = {
-	html({ text }: { text: string }) {
-		return `<pre class="small mono">${escapeHTML(text)}</pre>`;
-	},
-	link(
-		this: { parser: { parseInline: (t: Token[]) => string } },
-		tok: { href: string; title?: string | null; tokens: Token[] }
-	) {
-		const inner = this.parser.parseInline(tok.tokens);
-		if (!safeHref(tok.href)) return inner;
-		const title = tok.title ? ` title="${escapeHTML(tok.title).replace(/"/g, '&quot;')}"` : '';
-		return `<a href="${escapeHTML(tok.href).replace(/"/g, '&quot;')}"${title} target="_blank" rel="noreferrer">${inner}</a>`;
-	}
-};
-marked.use({ renderer });
-
-// mdToHtml renders markdown for ping questions/context/answers (same
-// escaped-HTML posture as plans — agent output is semi-trusted).
-export function mdToHtml(src: string): string {
-	return marked.parse(src, { async: false }) as string;
 }
 
 // planBlocks lexes the markdown into top-level blocks, each carrying its
@@ -77,7 +50,6 @@ export function planBlocks(src: string): PlanBlock[] {
 		if (tok.type === 'heading') heading = (tok as Token & { text: string }).text;
 		if (tok.type !== 'space') {
 			out.push({
-				html: marked.parser([tok] as Token[], { async: false }) as string,
 				raw,
 				heading,
 				startLine: line,
@@ -163,10 +135,14 @@ export function composeFeedback(comments: ReviewComment[], reviewFiles: string[]
 
 const draftKey = (pingId: string) => `plan-review-${pingId}`;
 
+/** A fresh comment id (list identity only; never sent). */
+export const commentId = () => Math.random().toString(36).slice(2, 10);
+
 export function loadDraft(pingId: string): ReviewComment[] {
 	try {
 		const raw = localStorage.getItem(draftKey(pingId));
-		return raw ? (JSON.parse(raw) as ReviewComment[]) : [];
+		const list = raw ? (JSON.parse(raw) as ReviewComment[]) : [];
+		return list.map((c) => ({ ...c, id: c.id ?? commentId() }));
 	} catch {
 		return [];
 	}

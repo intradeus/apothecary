@@ -2,16 +2,28 @@
 	// The sidebar (DESIGN §5): brand, guild switcher, search, guild-scoped nav,
 	// workshops (the current one expanded into its live runs), capacity and
 	// the user row with the theme toggle. Collapses to a 60px rail.
+	//
+	// Collapsing is one surface changing shape, not a swap: the aside's width
+	// rides the spring while the full and rail contents cross-fade. Each
+	// layer keeps its own width and is clipped by the aside, so nothing inside
+	// reflows mid-flight; flipping it again retargets from wherever it is.
+	// Selection slides: one bead springs between nav items and workshops.
+	import { fade } from 'svelte/transition';
 	import { page } from '$app/state';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
-	import { lore } from '$lib/lore';
+	import { NAV, type NavItem } from '$lib/nav';
 	import { currentGuild, GUILDS, ME, to } from '$lib/guild';
 	import { shortId, stateLabel } from '$lib/format';
 	import GuildAvatar from '$lib/ui/GuildAvatar.svelte';
+	import UserAvatar from '$lib/ui/UserAvatar.svelte';
+	import Logo from '$lib/ui/Logo.svelte';
+	import Meter from '$lib/ui/Meter.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import Vial from '$lib/ui/Vial.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
-	import type { Run } from '$lib/domain';
+	import { I } from '$lib/ui/icons';
+	import { bump, indicator, ms } from '$lib/ui/motion';
 
 	let {
 		onsearch,
@@ -22,51 +34,16 @@
 
 	const rail = $derived(prefs.collapsed && !drawer);
 	const guild = $derived(currentGuild());
+	const xfade = { duration: ms('--dur-fade', 160) };
 
 	let orgOpen = $state(false);
-	let orgBtn = $state<HTMLElement | null>(null);
+	let orgBtnFull = $state<HTMLElement | null>(null);
+	let orgBtnRail = $state<HTMLElement | null>(null);
 
 	const path = $derived(page.url.pathname);
-	const base = $derived(to.desk());
-	const nav = $derived([
-		{ id: 'desk', icon: '◈', label: 'Desk', href: base, on: path === base, count: 0, hot: false },
-		{
-			id: 'inbox',
-			icon: '✉',
-			label: 'Inbox',
-			href: to.inbox(),
-			on: path.startsWith(to.inbox()),
-			count: fleet.pending.length,
-			hot: fleet.pending.length > 0
-		},
-		{
-			id: 'runs',
-			icon: '▶',
-			label: 'Runs',
-			href: to.runs(),
-			on: path.startsWith(`${base}/runs`),
-			count: fleet.active.length,
-			hot: false
-		},
-		{
-			id: 'tickets',
-			icon: '☰',
-			label: 'Tickets',
-			href: to.tickets(),
-			on: path.startsWith(`${base}/tickets`),
-			count: 0,
-			hot: false
-		},
-		{
-			id: 'system',
-			icon: '⚙',
-			label: 'System',
-			href: to.system(),
-			on: path.startsWith(`${base}/system`),
-			count: 0,
-			hot: false
-		}
-	]);
+	/** A destination's count: pending pings on the inbox, live runs on runs. */
+	const count = (n: NavItem) =>
+		n.id === 'inbox' ? fleet.pending.length : n.id === 'runs' ? fleet.active.length : 0;
 
 	// The workshop the page is "in": its own page, the run's, or ?project=.
 	const currentRunId = $derived(page.params.runId);
@@ -84,209 +61,215 @@
 			return lb - la || a.name.localeCompare(b.name);
 		})
 	);
-
-	const runDot = (r: Run) =>
-		r.state === 'waiting_on_human'
-			? 'var(--amb)'
-			: r.state === 'running' || r.state === 'provisioning'
-				? 'var(--az)'
-				: r.state === 'in_review'
-					? 'var(--vio)'
-					: 'var(--mut)';
-
-	const maxRuns = $derived(fleet.settings?.maxConcurrentRuns ?? 0);
-	const maxEnvs = $derived(fleet.settings?.maxEnvironments ?? 0);
-	const pct = (n: number, d: number) => (d > 0 ? Math.min(100, Math.round((n / d) * 100)) : 0);
 </script>
 
-{#if rail}
-	<aside class="rail lg">
-		<div class="logo" title="Apothecary">℞</div>
-		<button class="rb exp" title="Expand sidebar  ⌘\" onclick={() => prefs.toggleCollapsed()}
-			>»</button
-		>
-		<button
-			bind:this={orgBtn}
-			class="rguild"
-			title={guild.name}
-			onclick={() => (orgOpen = !orgOpen)}
-		>
-			<GuildAvatar {guild} size={24} />
-		</button>
-		<button class="rb" title="Search  ⌘K" onclick={onsearch}>⌕</button>
-		{#each nav as n (n.id)}
-			<a class="rnav" class:on={n.on} href={n.href} title={n.label}
-				>{n.icon}{'︎'}{#if n.hot}<span class="rbadge">{n.count}</span>{/if}</a
+<aside class="sb lg" class:rail class:drawer>
+	{#if rail}
+		<div class="layer rl" transition:fade={xfade}>
+			<Logo size={32} />
+			<button
+				class="btn-icon rb exp"
+				title="Expand sidebar  ⌘\"
+				aria-label="Expand sidebar"
+				onclick={() => prefs.toggleCollapsed()}>{I.expand}</button
 			>
-		{/each}
-		<span class="rdiv"></span>
-		<div class="rws">
-			{#each workshops as p (p.id)}
-				{@const pings = fleet.pingsByProject.get(p.id) ?? 0}
-				<a
-					class="rnav ws"
-					class:on={currentWorkshop === p.id}
-					href={to.workshop(p.id)}
-					title={p.name}
-				>
-					<Vial projectId={p.id} idle={!fleet.liveByProject.get(p.id)?.length} />
-					{#if pings}<span class="rbadge">{pings}</span>{/if}
-				</a>
-			{/each}
-		</div>
-		<span class="grow"></span>
-		<button
-			class="rb"
-			title="Theme: {prefs.theme === 'dark' ? 'Dark' : 'Light'}"
-			onclick={() => prefs.toggleTheme()}>{prefs.theme === 'dark' ? '☾' : '☀'}</button
-		>
-		<span class="avatar" title={ME.name}>{ME.initials}</span>
-	</aside>
-{:else}
-	<aside class="side lg" class:drawer>
-		<div class="brand">
-			<div class="logo" title="Apothecary">℞</div>
-			<div class="bt">
-				<span class="name">Apothecary</span>
-				<span class="tagline">{lore('tagline')}</span>
+			<button
+				bind:this={orgBtnRail}
+				class="btn-sel rguild"
+				title={guild.name}
+				aria-label="Switch guild"
+				onclick={() => (orgOpen = !orgOpen)}
+			>
+				<GuildAvatar {guild} size={24} />
+			</button>
+			<button class="btn-icon rb" title="Search  ⌘K" aria-label="Search" onclick={onsearch}
+				>{I.search}</button
+			>
+			<nav class="rlist on-rail" aria-label="Primary" use:indicator>
+				{#each NAV as n (n.id)}
+					{@const c = count(n)}
+					<a
+						class="rnav"
+						class:on={n.match(path)}
+						href={n.href()}
+						title={n.label}
+						aria-label={n.label}
+						aria-current={n.match(path) ? 'page' : undefined}
+						>{n.icon}{#if n.id === 'inbox'}<span
+								class="count hot rbadge"
+								class:gone={!c}
+								use:bump={c}>{c}</span
+							>{/if}</a
+					>
+				{/each}
+			</nav>
+			<span class="rdiv"></span>
+			<div class="rlist rws on-rail" use:indicator>
+				{#each workshops as p (p.id)}
+					{@const pings = fleet.pingsByProject.get(p.id) ?? 0}
+					<a
+						class="rnav ws"
+						class:on={currentWorkshop === p.id}
+						href={to.workshop(p.id)}
+						title={fleet.projectName(p.id)}
+					>
+						<Vial projectId={p.id} idle={!fleet.liveByProject.get(p.id)?.length} />
+						<span class="count hot rbadge" class:gone={!pings} use:bump={pings}>{pings}</span>
+					</a>
+				{/each}
 			</div>
-			{#if !drawer}
-				<button class="rb sm" title="Collapse sidebar  ⌘\" onclick={() => prefs.toggleCollapsed()}
-					>«</button
-				>
-			{/if}
+			<span class="grow"></span>
+			<button
+				class="btn-icon rb"
+				title="Theme: {prefs.themeDef.label}"
+				aria-label="Change theme"
+				onclick={() => prefs.cycleTheme()}>{prefs.themeDef.icon}</button
+			>
+			<UserAvatar name={ME.name} initials={ME.initials} />
 		</div>
-
-		<button bind:this={orgBtn} class="guild" onclick={() => (orgOpen = !orgOpen)}>
-			<GuildAvatar {guild} size={26} />
-			<span class="gt">
-				<span class="gn">{guild.name}</span>
-				<span class="gs"
-					>{fleet.projects.length}
-					{fleet.projects.length === 1
-						? lore('workshop').toLowerCase()
-						: lore('workshops').toLowerCase()}</span
-				>
-			</span>
-			<span class="sw">⇅</span>
-		</button>
-
-		<button class="search" onclick={onsearch}>
-			<span>Search, jump, do…</span><span class="kc mono">⌘K</span>
-		</button>
-
-		<nav class="nav">
-			{#each nav as n (n.id)}
-				<a class="ni" class:on={n.on} href={n.href} onclick={onnavigate}>
-					<span class="ic">{n.icon}{'︎'}</span>
-					<span class="grow">{n.label}</span>
-					{#if n.count}<span class="count" class:hot={n.hot}>{n.count}</span>{/if}
-				</a>
-			{/each}
-		</nav>
-
-		<div class="wh">
-			<span class="whl">{lore('workshops')}</span>
-			<span class="legend">
-				<span title="live runs">▶{'︎'}</span>
-				<span title="pending pings">✉{'︎'}</span>
-				<a class="plus" href={to.newWorkshop()} title="New {lore('workshop').toLowerCase()}">+</a>
-			</span>
-		</div>
-		<div class="wl">
-			{#each workshops as p (p.id)}
-				{@const live = fleet.liveByProject.get(p.id) ?? []}
-				{@const pings = fleet.pingsByProject.get(p.id) ?? 0}
-				{@const cur = currentWorkshop === p.id}
-				<a
-					class="wi"
-					class:on={cur}
-					class:quiet={!live.length && !cur}
-					href={to.workshop(p.id)}
-					onclick={onnavigate}
-				>
-					<Vial projectId={p.id} idle={!live.length} />
-					<span class="grow ell">{p.name}</span>
-					<span class="lc mono">{live.length || ''}</span>
-					<span class="pc mono" class:hot={pings > 0}>{pings || ''}</span>
-				</a>
-				{#if cur && live.length}
-					{#each live as r (r.id)}
-						<a
-							class="ri"
-							class:on={currentRunId === r.id}
-							href={to.run(r.id)}
-							title="{r.title} — {stateLabel[r.state]}"
-							onclick={onnavigate}
-						>
-							<span
-								class="rd"
-								class:pulse={r.state === 'waiting_on_human'}
-								style:background={runDot(r)}
-								style:box-shadow="0 0 8px {runDot(r)}"
-							></span>
-							<span class="grow ell">{r.title}</span>
-							<span class="rid mono">{shortId(r.id)}</span>
-						</a>
-					{/each}
+	{:else}
+		<div class="layer fl" transition:fade={xfade}>
+			<div class="brand">
+				<Logo size={30} />
+				<div class="bt">
+					<span class="name">Apothecary</span>
+					<span class="tagline">software, bottled</span>
+				</div>
+				{#if !drawer}
+					<button
+						class="btn-icon rb sm"
+						title="Collapse sidebar  ⌘\"
+						aria-label="Collapse sidebar"
+						onclick={() => prefs.toggleCollapsed()}>{I.collapse}</button
+					>
 				{/if}
-			{:else}
-				<a class="wi quiet" href={to.newWorkshop()}
-					><span class="grow">Set up your first {lore('workshop').toLowerCase()} →</span></a
+			</div>
+
+			<button bind:this={orgBtnFull} class="btn-sel guild" onclick={() => (orgOpen = !orgOpen)}>
+				<GuildAvatar {guild} size={26} />
+				<span class="gt">
+					<span class="gn ell">{guild.name}</span>
+					<span class="gs ell"
+						>{fleet.projects.length}
+						{fleet.projects.length === 1 ? 'workshop' : 'workshops'}</span
+					>
+				</span>
+				<span class="sw">{I.switcher}</span>
+			</button>
+
+			<button class="search" onclick={onsearch}>
+				<span>Search, jump, do…</span><span class="kbd">⌘K</span>
+			</button>
+
+			<nav class="nav on-rail" aria-label="Primary" use:indicator>
+				{#each NAV as n (n.id)}
+					{@const c = count(n)}
+					<a
+						class="ni"
+						class:on={n.match(path)}
+						href={n.href()}
+						aria-current={n.match(path) ? 'page' : undefined}
+						onclick={onnavigate}
+					>
+						<span class="ic">{n.icon}</span>
+						<span class="grow">{n.label}</span>
+						<span
+							class="count"
+							class:hot={n.id === 'inbox' && c > 0}
+							use:bump={n.id === 'inbox' ? c : 0}>{c || ''}</span
+						>
+					</a>
+				{/each}
+			</nav>
+
+			<div class="wh">
+				<span class="whl">Workshops</span>
+				<span class="legend">
+					<span title="live runs">{I.runs}</span>
+					<span title="pending pings">{I.inbox}</span>
+					<a class="plus" href={to.newWorkshop()} title="New workshop">{I.add}</a>
+				</span>
+			</div>
+			<div class="wl on-rail" use:indicator={{ selector: '.wi.on' }}>
+				{#each workshops as p (p.id)}
+					{@const live = fleet.liveByProject.get(p.id) ?? []}
+					{@const pings = fleet.pingsByProject.get(p.id) ?? 0}
+					{@const cur = currentWorkshop === p.id}
+					<a
+						class="wi"
+						class:on={cur}
+						class:quiet={!live.length && !cur}
+						href={to.workshop(p.id)}
+						onclick={onnavigate}
+					>
+						<Vial projectId={p.id} idle={!live.length} />
+						<span class="grow ell">{fleet.projectName(p.id)}</span>
+						<span class="lc mono">{live.length || ''}</span>
+						<span class="count" class:hot={pings > 0} use:bump={pings}>{pings || ''}</span>
+					</a>
+					{#if cur && live.length}
+						{#each live as r (r.id)}
+							<a
+								class="ri"
+								class:cur={currentRunId === r.id}
+								href={to.run(r.id)}
+								title="{r.title} — {stateLabel[r.state]}"
+								onclick={onnavigate}
+							>
+								<StatusChip state={r.state} compact />
+								<span class="grow ell">{r.title}</span>
+								<span class="rid mono">{shortId(r.id)}</span>
+							</a>
+						{/each}
+					{/if}
+				{:else}
+					<a class="wi quiet" href={to.newWorkshop()}
+						><span class="grow">Set up your first workshop {I.forward}</span></a
+					>
+				{/each}
+			</div>
+
+			<div class="cap">
+				<Meter rail label="Runs" value={fleet.capacity.runs.used} max={fleet.capacity.runs.max} />
+				<Meter
+					rail
+					label="Envs"
+					tone="grn"
+					value={fleet.capacity.envs.used}
+					max={fleet.capacity.envs.max}
+				/>
+			</div>
+
+			<div class="user">
+				<UserAvatar name={ME.name} initials={ME.initials} presence />
+				<span class="ut">
+					<span class="un">{ME.name}</span>
+					<span class="ur ell">{guild.role} · {guild.name}</span>
+				</span>
+				<button class="btn-sel btn-sm theme" title="Theme" onclick={() => prefs.cycleTheme()}
+					>{prefs.themeDef.label}</button
 				>
-			{/each}
-		</div>
-
-		<div class="cap">
-			<div class="cc" title="Runs holding a concurrency slot / max concurrent runs">
-				<div class="row spread nowrap">
-					<span>Runs</span><span class="mono v">{fleet.slots.length}/{maxRuns || '–'}</span>
-				</div>
-				<div class="bar">
-					<div class="fill parch" style:width="{pct(fleet.slots.length, maxRuns)}%"></div>
-				</div>
-			</div>
-			<div class="cc" title="Live environments / max environments">
-				<div class="row spread nowrap">
-					<span>Envs</span><span class="mono v">{fleet.envs.length}/{maxEnvs || '–'}</span>
-				</div>
-				<div class="bar">
-					<div class="fill grn" style:width="{pct(fleet.envs.length, maxEnvs)}%"></div>
-				</div>
 			</div>
 		</div>
-
-		<div class="user">
-			<span class="avatar">{ME.initials}<span class="presence"></span></span>
-			<span class="ut">
-				<span class="un">{ME.name}</span>
-				<span class="ur">{guild.role} · {guild.name}</span>
-			</span>
-			<button class="btn-sel btn-sm theme" title="Theme" onclick={() => prefs.toggleTheme()}
-				>{prefs.theme === 'dark' ? 'Dark' : 'Light'}</button
-			>
-		</div>
-	</aside>
-{/if}
+	{/if}
+</aside>
 
 <Popover
-	anchor={orgBtn}
+	anchor={rail ? orgBtnRail : orgBtnFull}
 	bind:open={orgOpen}
 	at={{ left: rail ? 72 : 248, top: 56 }}
 	width={312}
-	title={lore('guilds')}
-	legend="▶ live  ✉ pings"
+	title="Guilds"
+	legend="{I.runs} live  {I.inbox} pings"
 >
 	{#if GUILDS.length > 1}
 		<a class="mi" href={to.allGuilds()} onclick={() => (orgOpen = false)}>
-			<span class="alltile">◈</span>
-			<span class="grow col0"
-				><span>All {lore('guilds').toLowerCase()}</span><span class="sub"
-					>Your desk across every {lore('guild').toLowerCase()}</span
-				></span
+			<span class="alltile">{I.desk}</span>
+			<span class="col"
+				><span>All guilds</span><span class="sub">Your desk across every guild</span></span
 			>
 		</a>
-		<div class="div"></div>
+		<div class="menu-div"></div>
 	{/if}
 	{#each GUILDS as g (g.slug)}
 		<a
@@ -296,20 +279,20 @@
 			onclick={() => (orgOpen = false)}
 		>
 			<GuildAvatar guild={g} size={26} />
-			<span class="grow col0"
+			<span class="col"
 				><span>{g.name}</span><span class="sub"
 					>{g.role} · {fleet.projects.length}
-					{lore('workshops').toLowerCase()}</span
+					workshops</span
 				></span
 			>
-			<span class="mono hue-az" style="font-size:10.5px">{fleet.active.length || ''}</span>
+			<span class="mono hue-az live-n">{fleet.active.length || ''}</span>
 			{#if fleet.pending.length}<span class="count hot">{fleet.pending.length}</span>{/if}
 		</a>
 	{/each}
-	<div class="div"></div>
-	<div class="row nowrap" style="padding:2px 4px; gap:4px">
+	<div class="menu-div"></div>
+	<div class="row nowrap foot">
 		<button class="btn-ghost btn-sm" disabled title="Organisations arrive with multi-user support"
-			>{lore('newGuild')}</button
+			>+ Found a guild</button
 		>
 		<button class="btn-ghost btn-sm" disabled title="Organisations arrive with multi-user support"
 			>Join with invite</button
@@ -319,117 +302,97 @@
 
 <style>
 	/* The sidebar is dark green in both themes: its text is fixed light. */
-	.side,
-	.rail {
+	.sb {
 		position: relative;
-		z-index: 1;
+		z-index: var(--z-raise);
 		flex: none;
-		margin: 6px 0 6px 6px;
-		border-radius: 16px;
+		width: var(--sidebar-w);
+		margin: var(--shell-gap) 0 var(--shell-gap) var(--shell-gap);
+		border-radius: var(--r-pane);
 		background: var(--railBg);
 		color: var(--railTx);
+		overflow: hidden;
+		transition: width var(--dur-spring) var(--spring);
+	}
+	.sb.rail {
+		width: var(--rail-w);
+	}
+	.sb.drawer {
+		margin: 0;
+		height: 100%;
+		border-radius: 0 var(--r-pane) var(--r-pane) 0;
+	}
+	/* Each layer keeps its own width (inside the 1px glass border); the
+	 * aside clips whichever is leaving while it changes shape. */
+	.layer {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 0;
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
-		overflow: hidden;
 	}
-	.side {
-		width: 232px;
+	.fl {
+		width: calc(var(--sidebar-w) - 2px);
 	}
-	.side.drawer {
-		margin: 0;
-		height: 100%;
-		border-radius: 0 16px 16px 0;
-	}
-	.rail {
-		width: 60px;
+	.rl {
+		width: calc(var(--rail-w) - 2px);
 		align-items: center;
 		gap: 4px;
 		padding: 12px 0 10px;
 	}
 
-	.logo {
-		flex: none;
-		width: 30px;
-		height: 30px;
-		border-radius: 12px;
-		background: radial-gradient(
-			circle at 30% 22%,
-			rgba(220, 255, 230, 0.75),
-			rgba(60, 160, 100, 0.55) 35%,
-			#0f3a22 80%
-		);
-		border: 1px solid rgba(210, 255, 225, 0.35);
-		box-shadow:
-			0 0 18px rgba(80, 200, 130, 0.32),
-			inset 0 1px 1px rgba(255, 255, 255, 0.6),
-			inset 0 -4px 8px rgba(0, 0, 0, 0.35);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-family: var(--serif);
-		font-size: 19px;
-		color: #efe6cf;
-		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-	}
-	.rail .logo {
-		width: 32px;
-		height: 32px;
-		font-size: 21px;
-	}
-
+	/* Chrome buttons on the dark rail: the shared icon button, in rail ink. */
 	.rb {
-		all: unset;
-		cursor: pointer;
 		width: 40px;
 		height: 32px;
-		border-radius: 11px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+		border-radius: var(--r-row);
 		color: var(--railMut);
-		font-size: 15px;
+		font-size: var(--fs-lead);
 	}
 	.rb.exp {
 		height: 24px;
-		border-radius: 9px;
-		font-size: 13px;
+		border-radius: var(--r-tab);
+		font-size: var(--fs-body);
 	}
 	.rb.sm {
 		width: 28px;
 		height: 28px;
-		border-radius: 9px;
-		font-size: 13px;
+		border-radius: var(--r-tab);
+		font-size: var(--fs-body);
 	}
 	.rb:hover {
-		background: rgba(255, 255, 255, 0.06);
+		background: var(--railActive);
 		color: var(--railTx);
 	}
 	.rguild {
-		all: unset;
-		cursor: pointer;
-		position: relative;
 		width: 40px;
 		height: 38px;
-		border-radius: 11px;
-		background: var(--railSel);
-		border: 1px solid rgba(140, 230, 175, 0.26);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.07),
-			0 1px 3px rgba(0, 0, 0, 0.35);
+		padding: 0;
+		border-radius: var(--r-row);
+	}
+	.rlist {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		justify-content: center;
+		gap: 4px;
+		flex: none;
+	}
+	.rws {
+		flex: 0 1 auto;
+		overflow: auto;
+		min-height: 0;
 	}
 	.rnav {
 		position: relative;
 		width: 40px;
 		height: 36px;
-		border-radius: 11px;
+		border-radius: var(--r-row);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 15px;
+		font-size: var(--fs-lead);
 		color: var(--railMut);
 		flex: none;
 	}
@@ -437,43 +400,31 @@
 		height: 34px;
 	}
 	.rnav:hover {
-		background: rgba(255, 255, 255, 0.05);
+		background: var(--railHover);
 		text-decoration: none;
 		color: var(--railTx);
 	}
 	.rnav.on {
-		background: var(--railSel);
-		box-shadow:
-			inset 0 0 0 1px rgba(140, 230, 175, 0.26),
-			0 1px 3px rgba(0, 0, 0, 0.35);
 		color: var(--railTx);
 	}
 	.rbadge {
 		position: absolute;
 		top: 2px;
 		right: 1px;
-		font-family: var(--mono);
-		font-size: 9.5px;
-		font-weight: 700;
+		min-width: 0;
 		padding: 0 4px;
-		border-radius: 9px;
-		background: var(--amb);
-		color: var(--ink);
+		font-size: var(--fs-badge);
 		line-height: 14px;
 	}
+	.gone {
+		display: none;
+	}
 	.rdiv {
+		flex: none;
 		width: 24px;
 		height: 1px;
 		margin: 6px 0;
-		background: rgba(210, 255, 225, 0.14);
-	}
-	.rws {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		align-items: center;
-		overflow: auto;
-		min-height: 0;
+		background: var(--railRule);
 	}
 
 	.brand {
@@ -493,32 +444,25 @@
 	}
 	.name {
 		font-weight: 600;
-		font-size: 15px;
-		letter-spacing: -0.01em;
+		font-size: var(--fs-lead);
+		letter-spacing: var(--tr-heading);
 	}
 	.tagline {
 		font-family: var(--serif);
 		font-style: italic;
-		font-size: 13px;
+		font-size: var(--fs-body);
 		color: var(--railMut);
 	}
 
 	.guild {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
 		flex: none;
+		display: flex;
+		justify-content: flex-start;
+		gap: 9px;
 		margin: 0 10px 8px;
 		padding: 7px 9px;
-		border-radius: 12px;
-		background: var(--railSel);
-		border: 1px solid rgba(140, 230, 175, 0.26);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.07),
-			0 1px 3px rgba(0, 0, 0, 0.35);
-		display: flex;
-		align-items: center;
-		gap: 9px;
+		text-align: left;
+		font-weight: 400;
 	}
 	.gt {
 		flex: 1;
@@ -529,48 +473,39 @@
 	}
 	.gn {
 		font-weight: 600;
-		font-size: 13px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		font-size: var(--fs-body);
 	}
 	.gs {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--railMut);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 	.sw {
 		flex: none;
 		color: var(--railMut);
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 
+	/* The command bar: a field in rail ink that opens the palette. */
 	.search {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
 		flex: none;
-		margin: 0 10px 6px;
-		padding: 6px 10px;
-		border-radius: 11px;
-		background: rgba(210, 255, 225, 0.05);
-		border: 1px solid rgba(210, 255, 225, 0.1);
 		display: flex;
 		justify-content: space-between;
-		align-items: center;
+		margin: 0 10px 6px;
+		padding: 6px 10px;
+		border-radius: var(--r-row);
+		background: var(--railField);
+		border: 1px solid var(--railLn);
+		box-shadow: none;
 		color: var(--railMut);
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
+		font-weight: 400;
 	}
 	.search:hover {
-		background: rgba(210, 255, 225, 0.08);
+		background: var(--railFieldHover);
 	}
-	.kc {
-		font-size: 10.5px;
-		padding: 1px 5px;
-		border-radius: 5px;
-		background: rgba(255, 255, 255, 0.06);
+	.search .kbd {
+		background: var(--railActive);
+		color: var(--railMut);
 	}
 
 	.nav {
@@ -586,27 +521,28 @@
 		align-items: center;
 		gap: 10px;
 		padding: 6px 10px;
-		border-radius: 10px;
+		border-radius: var(--r-row);
 		color: var(--railTx);
 	}
 	.ni:hover,
 	.wi:hover,
 	.ri:hover {
-		background: rgba(255, 255, 255, 0.05);
+		background: var(--railHover);
 		text-decoration: none;
+	}
+	.ni:active,
+	.wi:active,
+	.rnav:active {
+		opacity: 0.75;
 	}
 	.ni.on,
 	.wi.on {
-		background: var(--railSel);
-		box-shadow:
-			inset 0 0 0 1px rgba(140, 230, 175, 0.26),
-			0 1px 3px rgba(0, 0, 0, 0.35);
 		font-weight: 600;
 	}
 	.ic {
 		width: 16px;
 		text-align: center;
-		font-size: 13px;
+		font-size: var(--fs-body);
 		color: var(--railMut);
 	}
 	.count {
@@ -619,7 +555,7 @@
 	.wh {
 		flex: none;
 		padding: 14px 18px 6px;
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--railFnt);
 		display: flex;
 		justify-content: space-between;
@@ -628,7 +564,7 @@
 	.whl {
 		font-family: var(--serif);
 		font-style: italic;
-		font-size: 14px;
+		font-size: var(--fs-aside);
 		color: var(--railMut);
 	}
 	.legend {
@@ -638,7 +574,7 @@
 	}
 	.plus {
 		color: var(--railMut);
-		font-size: 14px;
+		font-size: var(--fs-aside);
 		line-height: 1;
 	}
 	.plus:hover {
@@ -658,45 +594,28 @@
 		color: var(--railMut);
 	}
 	.lc {
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		color: var(--az);
 		min-width: 12px;
 		text-align: right;
 	}
-	.pc {
-		font-size: 10.5px;
-		font-weight: 700;
-		min-width: 18px;
-		text-align: center;
-		border-radius: 9px;
-	}
-	.pc.hot {
-		background: var(--amb);
-		color: var(--ink);
-	}
 	.ri {
 		margin-left: 15px;
 		padding: 4px 10px 4px 14px;
-		border-left: 1px solid rgba(210, 255, 225, 0.12);
+		border-left: 1px solid var(--railRule);
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--railMut);
-		border-radius: 0 9px 9px 0;
+		border-radius: 0 var(--r-tab) var(--r-tab) 0;
 	}
-	.ri.on {
-		background: rgba(255, 255, 255, 0.06);
+	.ri.cur {
+		background: var(--railActive);
 		color: var(--railTx);
 	}
-	.rd {
-		flex: none;
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-	}
 	.rid {
-		font-size: 10px;
+		font-size: var(--fs-id);
 		color: var(--railFnt);
 	}
 
@@ -704,72 +623,21 @@
 		flex: none;
 		margin: 0 10px 6px;
 		padding: 8px 10px;
-		border-radius: 11px;
-		background: rgba(210, 255, 225, 0.04);
-		border: 1px solid rgba(210, 255, 225, 0.08);
+		border-radius: var(--r-row);
+		background: var(--railCard);
+		border: 1px solid var(--railCardLn);
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: 10px;
-		font-size: 11px;
-		color: var(--railMut);
-	}
-	.cc {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.cc .v {
-		color: var(--railTx);
-		font-size: 11px;
-	}
-	.bar {
-		height: 5px;
-		border-radius: 4px;
-		background: rgba(0, 0, 0, 0.3);
-		overflow: hidden;
-		display: flex;
-	}
-	.fill.parch {
-		background: linear-gradient(90deg, #cbbd98, #efe6cf);
-	}
-	.fill.grn {
-		background: linear-gradient(90deg, #3fae72, #7ee2a8);
 	}
 
 	.user {
 		flex: none;
-		border-top: 1px solid rgba(210, 255, 225, 0.1);
+		border-top: 1px solid var(--railLn);
 		padding: 10px 10px 10px 12px;
 		display: flex;
 		align-items: center;
 		gap: 10px;
-	}
-	.avatar {
-		flex: none;
-		position: relative;
-		width: 30px;
-		height: 30px;
-		border-radius: 50%;
-		background: linear-gradient(160deg, #efe6cf, #b9a77a);
-		color: #2a2210;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 11.5px;
-		font-weight: 700;
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.5),
-			0 1px 3px rgba(0, 0, 0, 0.4);
-	}
-	.presence {
-		position: absolute;
-		right: -1px;
-		bottom: -1px;
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		background: #7ee2a8;
-		border: 2px solid #0a1a10;
 	}
 	.ut {
 		flex: 1;
@@ -779,34 +647,37 @@
 		line-height: 1.2;
 	}
 	.un {
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		font-weight: 600;
 	}
 	.ur {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--railMut);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 	.theme {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 
 	.alltile {
 		flex: none;
 		width: 26px;
 		height: 26px;
-		border-radius: 9px;
+		border-radius: var(--r-tab);
 		border: 1px dashed var(--ln2);
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		color: var(--mut);
 	}
-	.col0 {
-		display: flex;
-		flex-direction: column;
-		line-height: 1.25;
+	.live-n {
+		font-size: var(--fs-id);
+	}
+	/* A two-line menu row: base .col's gap is for page columns. */
+	.col {
+		gap: 0;
+	}
+	.foot {
+		padding: 2px 4px;
+		gap: 4px;
 	}
 </style>

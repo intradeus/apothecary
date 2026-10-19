@@ -7,7 +7,6 @@
 	import type { Flow, Integration, Project } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
-	import { lore } from '$lib/lore';
 	import ProjectForm from '$lib/ProjectForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -42,7 +41,7 @@
 <PageHeader
 	crumbs={[
 		{ label: guild.name, href: to.desk() },
-		{ label: lore('workshops'), href: to.workshops() },
+		{ label: 'Workshops', href: to.workshops() },
 		{ label: name, href: to.workshop(projectId) },
 		{ label: 'Setup' }
 	]}
@@ -56,13 +55,9 @@
 
 <div class="page">
 	{#if error}
-		<ErrorCard
-			cause="Couldn’t load this {lore('workshop').toLowerCase()}"
-			detail={error}
-			onretry={load}
-		/>
+		<ErrorCard cause="Couldn’t load this workshop" detail={error} onretry={load} />
 	{:else if !project}
-		<div class="c pane"><div class="pane-body"><Skeleton lines={6} /></div></div>
+		<Skeleton pane lines={6} />
 	{:else}
 		{#key project.id}
 			<ProjectForm

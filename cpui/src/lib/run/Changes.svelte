@@ -6,6 +6,12 @@
 	import { api } from '$lib/api';
 	import type { ChangedFile, FileDiff, WorkspaceChanges } from '$lib/domain';
 	import { onMount } from 'svelte';
+	import { parseUnified } from '$lib/diff';
+	import { GIT_HUE, hueOf } from '$lib/ui/hues';
+	import { I } from '$lib/ui/icons';
+	import CodeView from '$lib/ui/CodeView.svelte';
+	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import Loading from '$lib/ui/Loading.svelte';
 
 	let {
 		runId,
@@ -94,77 +100,40 @@
 		C: 'copied',
 		'?': 'new, untracked'
 	};
-	const stHue: Record<string, string> = {
-		A: 'grn',
-		M: 'amb',
-		D: 'ros',
-		R: 'vio',
-		C: 'tea',
-		'?': 'mut'
-	};
-
-	type Line = { cls: string; old?: number; new?: number; text: string };
-	/** Unified diff → rows with old/new line numbers. */
-	function parse(d: string): Line[] {
-		const out: Line[] = [];
-		let o = 0,
-			n = 0;
-		for (const raw of d.split('\n')) {
-			if (
-				raw.startsWith('diff --git') ||
-				raw.startsWith('index ') ||
-				raw.startsWith('new file') ||
-				raw.startsWith('deleted file') ||
-				raw.startsWith('similarity') ||
-				raw.startsWith('rename ') ||
-				raw.startsWith('--- ') ||
-				raw.startsWith('+++ ')
-			)
-				continue;
-			const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(raw);
-			if (h) {
-				o = Number(h[1]);
-				n = Number(h[2]);
-				out.push({ cls: 'hunk', text: raw });
-			} else if (raw.startsWith('+')) {
-				out.push({ cls: 'add', new: n++, text: raw.slice(1) });
-			} else if (raw.startsWith('-')) {
-				out.push({ cls: 'del', old: o++, text: raw.slice(1) });
-			} else if (raw.startsWith('\\')) {
-				out.push({ cls: 'meta', text: raw });
-			} else if (raw.length || out.length) {
-				out.push({ cls: 'ctx', old: o++, new: n++, text: raw.slice(1) });
-			}
-		}
-		while (out.length && out[out.length - 1].cls === 'ctx' && !out[out.length - 1].text) out.pop();
-		return out;
-	}
-	const lines = $derived(diff ? parse(diff.diff) : []);
+	const lines = $derived(diff ? parseUnified(diff.diff) : []);
 	const file = $derived<ChangedFile | undefined>(changes?.files.find((f) => f.path === selected));
 </script>
 
 {#if error && !changes}
-	<div class="msg">Changes are unavailable: {error}</div>
+	<div class="pad">
+		<ErrorCard cause="Changes are unavailable." detail={error} onretry={refresh} />
+	</div>
 {:else if !changes}
-	<div class="msg"><span class="d pulse"></span>Reading the branch…</div>
+	<Loading text="Reading the branch…" />
 {:else}
-	<div class="ch">
-		<div class="sum">
+	<div class="view">
+		<div class="vbar sum">
 			<span
 				>vs <span class="mono tx">{(changes.base || 'HEAD').replace(/^origin\//, '')}</span></span
 			>
-			{#if changes.mergeBase}<span class="mono sm">fork {changes.mergeBase.slice(0, 7)}</span>{/if}
+			{#if changes.mergeBase}<span class="mono fnt">fork {changes.mergeBase.slice(0, 7)}</span>{/if}
 			<span class="tx">{changes.files.length} file{changes.files.length === 1 ? '' : 's'}</span>
-			<span class="mono nums"
+			<span class="mono"
 				><span class="hue-grn">+{totals.add}</span> <span class="hue-ros">−{totals.del}</span></span
 			>
 			{#if changes.commits.length}
-				<button class="linklike cm" onclick={() => (showCommits = !showCommits)}
+				<button
+					class="linklike brand"
+					aria-expanded={showCommits}
+					onclick={() => (showCommits = !showCommits)}
 					>{changes.commits.length} commit{changes.commits.length === 1 ? '' : 's'}
-					{showCommits ? '▾' : '▸'}</button
+					{showCommits ? I.menu : I.caret}</button
 				>
 			{/if}
-			<button class="linklike rf" onclick={refresh} title="Refresh now">↻</button>
+			<span class="spacer"></span>
+			<button class="btn-icon" onclick={refresh} title="Refresh now" aria-label="Refresh"
+				>{I.retry}</button
+			>
 		</div>
 		{#if showCommits}
 			<div class="commits">
@@ -174,22 +143,26 @@
 			</div>
 		{/if}
 		{#if changes.files.length === 0}
-			<div class="msg">No changes yet.</div>
+			<div class="empty-line">No changes yet.</div>
 		{:else}
 			<div class="split">
 				<div class="files">
 					{#each changes.files as f (f.path)}
-						<button class="file" class:sel={f.path === selected} onclick={() => select(f.path)}>
-							<span class="st hue-{stHue[f.status]}" title={statusLabel[f.status]}
+						<button
+							class="rowbtn file"
+							class:sel={f.path === selected}
+							onclick={() => select(f.path)}
+						>
+							<span class="st mono hue-{hueOf(GIT_HUE, f.status)}" title={statusLabel[f.status]}
 								>{f.status === '?' ? 'U' : f.status}</span
 							>
-							<span class="path" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
+							<span class="path mono" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
 								>{f.path}</span
 							>
-							<span class="wip" title={f.committed ? '' : 'Not committed yet'}
-								>{f.committed ? '' : '●'}</span
+							<span class="wip hue-amb" title={f.committed ? '' : 'Not committed yet'}
+								>{f.committed ? '' : I.dot}</span
 							>
-							<span class="cnt">
+							<span class="cnt mono">
 								{#if f.binary}<span class="fnt">bin</span>{:else}<span class="hue-grn"
 										>+{f.additions}</span
 									>
@@ -200,7 +173,7 @@
 				</div>
 				<div class="dv">
 					{#if file}
-						<div class="dh">
+						<div class="dh mono">
 							{file.oldPath ? `${file.oldPath} → ` : ''}{file.path}
 							<span class="fnt"
 								>· {file.status === '?' ? 'U' : file.status}{file.binary
@@ -212,24 +185,20 @@
 						</div>
 					{/if}
 					{#if diffError}
-						<div class="msg">{diffError}</div>
+						<ErrorCard
+							cause="The diff could not be read."
+							detail={diffError}
+							onretry={() => loadDiff(selected)}
+						/>
 					{:else if loadingDiff && !diff}
-						<div class="msg"><span class="d pulse"></span>Loading diff…</div>
-					{:else if diff && file?.binary}
-						<div class="bin">Binary file</div>
+						<Loading text="Loading diff…" />
 					{:else if diff}
-						<div class="code">
-							{#each lines as l, i (i)}
-								<div class="dl {l.cls}">
-									<span class="ln">{l.old ?? ''}</span><span class="ln">{l.new ?? ''}</span><b
-										>{l.cls === 'add' ? '+' : l.cls === 'del' ? '−' : ''}</b
-									><span class="tx2">{l.text}</span>
-								</div>
-							{/each}
-							{#if diff.truncated}<div class="trunc">
-									truncated — the rest is in the editor
-								</div>{/if}
-						</div>
+						<CodeView
+							{lines}
+							gutters={2}
+							binary={file?.binary ? 'Binary file' : undefined}
+							truncated={diff.truncated ? 'the rest is in the editor' : undefined}
+						/>
 					{/if}
 				</div>
 			</div>
@@ -238,60 +207,20 @@
 {/if}
 
 <style>
-	.msg {
-		color: var(--mut);
-		font-size: 12px;
-		padding: 10px 14px;
-		display: flex;
-		gap: 8px;
-		align-items: center;
-	}
-	.d {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
-	}
-	.ch {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		display: flex;
-		flex-direction: column;
+	.pad {
+		padding: 12px;
 	}
 	.sum {
-		padding: 10px 12px 8px;
-		display: flex;
-		flex-wrap: wrap;
 		gap: 4px 14px;
-		font-size: 12px;
-		align-items: baseline;
+		font-size: var(--fs-label);
 		color: var(--mut);
-	}
-	.tx {
-		color: var(--tx);
-	}
-	.sm {
-		font-size: 11px;
-	}
-	.nums {
-		font-weight: 500;
-	}
-	.cm,
-	.rf {
-		color: var(--brand);
-		font-size: 12px;
-		font-weight: 500;
-	}
-	.rf {
-		margin-left: auto;
 	}
 	.commits {
 		margin: 0 8px 8px;
 		padding: 6px 10px;
-		border-radius: 10px;
+		border-radius: var(--r-row);
 		background: var(--p1);
-		font-size: 12px;
+		font-size: var(--fs-label);
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
@@ -305,39 +234,22 @@
 	.files {
 		display: flex;
 		flex-direction: column;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		padding: 4px;
-		border-radius: 13px;
+		border-radius: var(--r-card);
 		background: var(--p2);
 	}
 	.file {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
 		display: grid;
 		grid-template-columns: 18px minmax(0, 1fr) 10px 80px;
-		gap: 8px;
 		padding: 3px 8px;
-		border-radius: 7px;
-		align-items: center;
-	}
-	.file:hover {
-		background: var(--p1);
-	}
-	.file.sel {
-		background: var(--p3);
+		border-radius: var(--r-icon);
 	}
 	.st {
-		font-family: var(--mono);
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		font-weight: 600;
 	}
-	.hue-mut {
-		color: var(--mut);
-	}
 	.path {
-		font-family: var(--mono);
-		font-size: 11.5px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -345,13 +257,11 @@
 		text-align: left;
 	}
 	.wip {
-		color: var(--amb);
-		font-size: 8px;
+		font-size: var(--fs-badge);
 	}
 	.cnt {
 		text-align: right;
-		font-family: var(--mono);
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 	.dv {
 		min-width: 0;
@@ -360,70 +270,14 @@
 	}
 	.dh {
 		padding: 4px 4px 6px;
-		font-family: var(--mono);
-		font-size: 11.5px;
-		font-weight: 500;
 		overflow-wrap: anywhere;
 	}
 	.dh .fnt {
 		font-weight: 400;
 	}
-	.bin {
-		padding: 30px;
-		text-align: center;
-		color: var(--mut);
-		background: var(--code);
-		border-radius: 13px;
-	}
-	.code {
-		font-family: var(--mono);
-		font-size: 11px;
-		line-height: 1.65;
-		border-radius: 13px;
-		overflow: auto;
-		background: var(--code);
-	}
-	.dl {
-		display: grid;
-		grid-template-columns: 34px 34px 14px 1fr;
-		min-width: max-content;
-	}
-	.dl .ln {
-		text-align: right;
-		padding-right: 6px;
-		opacity: 0.45;
-		user-select: none;
-	}
-	.dl b {
-		font-weight: 600;
-	}
-	.tx2 {
-		white-space: pre;
-	}
-	.dl.add {
-		background: var(--grnBg);
-		color: var(--grn);
-	}
-	.dl.del {
-		background: var(--rosBg);
-		color: var(--ros);
-	}
-	.dl.hunk {
-		color: var(--az);
-		opacity: 0.8;
-		display: block;
-		padding: 2px 8px;
-	}
-	.dl.meta {
-		color: var(--mut);
-		display: block;
-		padding: 0 8px;
-	}
-	.trunc {
-		padding: 6px 10px;
-		color: var(--mut);
-		font-family: var(--sans);
-	}
+	/* Side by side once the window is wide enough for a file list beside a
+	 * readable diff: a container query on the window, not the viewport, so
+	 * it has its own threshold. */
 	@container (min-width: 820px) {
 		.split {
 			display: grid;

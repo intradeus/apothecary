@@ -6,7 +6,6 @@
 	import type { Flow, Integration } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
-	import { lore } from '$lib/lore';
 	import ProjectForm from '$lib/ProjectForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -42,11 +41,11 @@
 <PageHeader
 	crumbs={[
 		{ label: guild.name, href: to.desk() },
-		{ label: lore('workshops'), href: to.workshops() },
+		{ label: 'Workshops', href: to.workshops() },
 		{ label: 'New' }
 	]}
 	title="Set up a"
-	accent="new {lore('workshop').toLowerCase()}"
+	accent="new workshop"
 >
 	{#snippet meta()}
 		<span
@@ -59,13 +58,13 @@
 	{#if error}
 		<ErrorCard cause="Couldn’t load integrations and templates" detail={error} onretry={load} />
 	{:else if !loaded}
-		<div class="c pane"><div class="pane-body"><Skeleton lines={6} /></div></div>
+		<Skeleton pane lines={6} />
 	{:else if missing.length}
 		<EmptyState
 			title="Integrations first"
-			text="A {lore('workshop').toLowerCase()} needs a {missing.join(
-				', '
-			)} integration to run. Add {missing.length === 1 ? 'it' : 'them'} in System, then come back."
+			text="A workshop needs a {missing.join(', ')} integration to run. Add {missing.length === 1
+				? 'it'
+				: 'them'} in System, then come back."
 		>
 			<a class="btn btn-primary" href={to.system('integrations')}>Open integrations</a>
 		</EmptyState>

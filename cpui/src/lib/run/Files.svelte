@@ -4,6 +4,12 @@
 	import { api } from '$lib/api';
 	import type { WorkspaceEntry, WorkspaceFile } from '$lib/domain';
 	import { onMount } from 'svelte';
+	import { fileLines } from '$lib/diff';
+	import { fmtBytes } from '$lib/format';
+	import { I } from '$lib/ui/icons';
+	import CodeView from '$lib/ui/CodeView.svelte';
+	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import Loading from '$lib/ui/Loading.svelte';
 
 	let { runId, repo = '' }: { runId: string; repo?: string } = $props();
 
@@ -63,66 +69,71 @@
 		walk('', 0);
 		return out;
 	});
-	const lines = $derived(file && !file.binary ? file.content.split('\n') : []);
-	const fmtSize = (n?: number) =>
-		n === undefined
-			? ''
-			: n < 1024
-				? `${n} B`
-				: n < 1 << 20
-					? `${(n / 1024).toFixed(1)} KB`
-					: `${(n / (1 << 20)).toFixed(1)} MB`;
+	const lines = $derived(file && !file.binary ? fileLines(file.content) : []);
 </script>
 
 {#if error && !dirs['']}
-	<div class="msg">Files are unavailable: {error}</div>
+	<div class="pad">
+		<ErrorCard cause="Files are unavailable." detail={error} onretry={() => load('')} />
+	</div>
 {:else}
 	<div class="split">
 		<div class="tree">
 			<div class="nodes">
-				{#if !dirs['']}<div class="msg"><span class="d pulse"></span>Loading…</div>{/if}
+				{#if !dirs['']}<Loading />{/if}
 				{#each rows as r (r.entry.path)}
 					<button
-						class="node"
+						class="rowbtn node mono"
 						class:sel={r.entry.path === selected}
 						class:ignored={r.entry.ignored}
-						class:dir={r.entry.dir}
 						style:padding-left="{8 + r.depth * 12}px"
+						aria-expanded={r.entry.dir ? !!open[r.entry.path] : undefined}
 						onclick={() => (r.entry.dir ? toggle(r.entry) : view(r.entry.path))}
 						title={r.entry.path}
 					>
-						{#if r.entry.dir}{open[r.entry.path] ? '▾' : '▸'}&nbsp;{/if}{r.entry.name}{r.entry.dir
-							? '/'
-							: ''}
+						<span class="ell"
+							>{#if r.entry.dir}{open[r.entry.path] ? I.menu : I.caret}&nbsp;{/if}{r.entry.name}{r
+								.entry.dir
+								? '/'
+								: ''}</span
+						>
 					</button>
 				{/each}
 			</div>
 			<div class="tf">
 				<label class="ig"><input type="checkbox" bind:checked={showIgnored} /> Show ignored</label>
-				<button class="btn-icon" title="Refresh" onclick={reload}>↻</button>
+				<button class="btn-icon" title="Refresh" aria-label="Refresh" onclick={reload}
+					>{I.retry}</button
+				>
 			</div>
 		</div>
 		<div class="viewer">
 			{#if !selected}
-				<div class="msg">Pick a file.</div>
+				<div class="empty-line">Pick a file.</div>
 			{:else}
-				<div class="vh">
+				<div class="vh mono">
 					{selected}
 					{#if file}<span class="fnt"
-							>· {fmtSize(file.size)}{file.truncated ? ' · first 1 MB shown' : ''}</span
+							>· {fmtBytes(file.size)}{file.truncated ? ' · first 1 MB shown' : ''}</span
 						>{/if}
 				</div>
 				{#if fileError}
-					<div class="msg">{fileError}</div>
+					<div class="pad">
+						<ErrorCard
+							cause="This file could not be read."
+							detail={fileError}
+							onretry={() => view(selected)}
+						/>
+					</div>
 				{:else if !file}
-					<div class="msg"><span class="d pulse"></span>Loading…</div>
-				{:else if file.binary}
-					<div class="bin">Binary file · {fmtSize(file.size)}</div>
+					<Loading />
 				{:else}
 					<div class="code">
-						{#each lines as l, i (i)}
-							<div class="cl"><span class="ln">{i + 1}</span><span class="tx2">{l}</span></div>
-						{/each}
+						<CodeView
+							{lines}
+							binary={file.binary ? `Binary file · ${fmtBytes(file.size)}` : undefined}
+							truncated={file.truncated ? 'first 1 MB shown' : undefined}
+						/>
 					</div>
 				{/if}
 			{/if}
@@ -131,19 +142,8 @@
 {/if}
 
 <style>
-	.msg {
-		color: var(--mut);
-		font-size: 12px;
-		padding: 10px 12px;
-		display: flex;
-		gap: 8px;
-		align-items: center;
-	}
-	.d {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
+	.pad {
+		padding: 10px;
 	}
 	.split {
 		flex: 1;
@@ -154,7 +154,7 @@
 		padding: 8px;
 	}
 	.tree {
-		border-radius: 13px;
+		border-radius: var(--r-card);
 		background: var(--p2);
 		padding: 6px;
 		display: flex;
@@ -169,24 +169,10 @@
 		flex-direction: column;
 	}
 	.node {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		padding: 2px 8px;
-		border-radius: 6px;
-		font-family: var(--mono);
-		font-size: 11.5px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 		flex: none;
-	}
-	.node:hover {
-		background: var(--p1);
-	}
-	.node.sel {
-		background: var(--brandBg);
-		color: var(--brand);
+		padding-top: 2px;
+		padding-bottom: 2px;
+		border-radius: var(--r-tag);
 	}
 	.node.ignored {
 		color: var(--fnt);
@@ -198,15 +184,13 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		font-size: 11.5px;
-		color: var(--fnt);
 	}
 	.ig {
 		margin: 0;
 		display: flex;
 		gap: 6px;
 		align-items: center;
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--fnt);
 		font-weight: 400;
 		cursor: pointer;
@@ -216,49 +200,34 @@
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
-		border-radius: 13px;
+		border-radius: var(--r-card);
 		background: var(--code);
 		overflow: hidden;
 	}
 	.vh {
 		flex: none;
 		padding: 7px 12px;
-		font-family: var(--mono);
-		font-size: 11.5px;
-		font-weight: 500;
 		border-bottom: 1px solid var(--ln);
 		overflow-wrap: anywhere;
 	}
 	.vh .fnt {
 		font-weight: 400;
 	}
-	.bin {
-		margin: auto;
-		color: var(--mut);
-	}
 	.code {
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
-		padding: 8px 0;
-		font-family: var(--mono);
-		font-size: 11px;
-		line-height: 1.65;
+		display: flex;
+		flex-direction: column;
 	}
-	.cl {
-		display: grid;
-		grid-template-columns: 44px 1fr;
-		min-width: max-content;
+	.code > :global(.bin) {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
-	.ln {
-		text-align: right;
-		padding-right: 10px;
-		color: var(--fnt);
-		user-select: none;
-	}
-	.tx2 {
-		white-space: pre;
-	}
+	/* Stack the tree over the file when the window gets narrow (a container
+	 * query on the window, so its own threshold). */
 	@container (max-width: 540px) {
 		.split {
 			grid-template-columns: minmax(0, 1fr);

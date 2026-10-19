@@ -103,7 +103,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		white-space: nowrap;
 		min-width: 0;
 	}
@@ -116,7 +116,7 @@
 	}
 	.id {
 		color: var(--fnt);
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		max-width: 160px;

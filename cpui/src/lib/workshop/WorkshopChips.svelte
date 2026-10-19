@@ -16,16 +16,16 @@
 	]);
 </script>
 
-<span class="wc">
+<span class="chips wc">
 	{#each chips as c (c.k)}
 		{#if c.ids.length === 0}
-			<span class="pill t-amb" title="No {c.k} integration picked"
+			<span class="pill sm t-amb" title="No {c.k} integration picked"
 				><span class="k">{c.k}</span>none</span
 			>
 		{:else}
 			{#each c.ids as id (id)}
 				<span
-					class="pill {missing(id) ? 't-ros' : 't-mut'}"
+					class="pill sm {missing(id) ? 't-ros' : 't-mut'}"
 					title={missing(id)
 						? `The ${c.k} integration this workshop names no longer exists`
 						: `${c.k}: ${byId.get(id)?.kind ?? ''}`}><span class="k">{c.k}</span>{name(id)}</span
@@ -37,9 +37,6 @@
 
 <style>
 	.wc {
-		display: inline-flex;
-		flex-wrap: wrap;
-		gap: 5px;
 		min-width: 0;
 	}
 	.pill {
@@ -47,19 +44,9 @@
 		max-width: 300px;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		gap: 5px;
 	}
-	.t-mut {
-		color: var(--tx);
-	}
+	/* The port word reads quieter than the integration's name. */
 	.k {
-		color: var(--fnt);
-		font-weight: 500;
-	}
-	.t-ros .k {
-		color: var(--ros);
-	}
-	.t-amb .k {
-		color: var(--amb);
+		opacity: 0.75;
 	}
 </style>

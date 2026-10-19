@@ -5,9 +5,9 @@
 	import { goto } from '$app/navigation';
 	import { to } from '$lib/guild';
 	import { shortId, times } from '$lib/format';
-	import { lore } from '$lib/lore';
 	import Banner from '$lib/ui/Banner.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import Loading from '$lib/ui/Loading.svelte';
 	import Desk, { type ViewMeta } from '$lib/desk/Desk.svelte';
 	import { DeskState } from '$lib/desk/desk.svelte';
 	import type { ViewId } from '$lib/desk/tree';
@@ -115,7 +115,7 @@
 			<div class="bn">
 				<Banner
 					title="Egress blocked {times(rs.newDenials.length)}"
-					aside={lore('egressBlocked') || undefined}
+					aside="toxic hosts, kept off the shelf"
 					items={rs.newDenials.map((d) => d.host)}
 					action="Review & allow"
 					onaction={() => {
@@ -139,9 +139,8 @@
 			</div>
 		{/if}
 		{#if rs.error}
-			<div class="err" role="alert">
-				<span>{rs.error}</span>
-				<button class="btn-icon" title="Dismiss" onclick={() => (rs.error = '')}>×</button>
+			<div class="bn err">
+				<ErrorCard cause={rs.error} ondismiss={() => (rs.error = '')} />
 			</div>
 		{/if}
 
@@ -183,7 +182,7 @@
 			/>
 		</div>
 	{:else}
-		<div class="pad conn"><span class="d pulse"></span>Connecting…</div>
+		<div class="pad"><Loading text="Connecting…" /></div>
 	{/if}
 </div>
 
@@ -204,37 +203,9 @@
 		margin-top: 6px;
 	}
 	.err {
-		flex: none;
-		margin: 6px 16px 0;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 4px 6px 4px 12px;
-		border-radius: 10px;
-		background: var(--rosBg);
-		border: 1px solid var(--rosLn);
-		color: var(--ros);
-		font-size: 12px;
-	}
-	.err span {
-		flex: 1;
-		min-width: 0;
-		overflow-wrap: anywhere;
+		margin-top: 6px;
 	}
 	.pad {
 		padding: 22px;
-	}
-	.conn {
-		display: flex;
-		gap: 8px;
-		align-items: center;
-		color: var(--mut);
-	}
-	.d {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--az);
-		box-shadow: 0 0 8px var(--az);
 	}
 </style>

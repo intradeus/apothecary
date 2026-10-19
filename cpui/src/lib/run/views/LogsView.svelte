@@ -4,6 +4,8 @@
 	import { tick } from 'svelte';
 	import { api } from '$lib/api';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import Loading from '$lib/ui/Loading.svelte';
+	import { I } from '$lib/ui/icons';
 	import { PROVISION_STAGE } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
@@ -72,24 +74,27 @@
 		if (pre) stick = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
 	}
 
+	// A line's source tints it (DESIGN §6 Logs): failures rose, the tunnel
+	// teal, the harness azure, the shim violet.
 	const hue = (l: string) =>
 		/\b(DENY|denied|error|fatal|panic|failed)\b/i.test(l)
-			? 'ros'
+			? 'hue-ros'
 			: /\btunnel\b/i.test(l)
-				? 'tea'
+				? 'hue-tea'
 				: /\bharness\b/i.test(l)
-					? 'az'
+					? 'hue-az'
 					: /\bshim\b/i.test(l)
-						? 'vio'
+						? 'hue-vio'
 						: '';
 	const lines = $derived((text ?? '').replace(/\n$/, '').split('\n'));
 </script>
 
-<div class="lv">
-	<div class="bar">
+<div class="view">
+	<div class="vbar">
 		<Segmented
 			glass={false}
 			size="sm"
+			label="Log source"
 			value={kind}
 			onchange={(v) =>
 				(rs.logSource =
@@ -109,20 +114,26 @@
 				{#each stages as s (s)}<option value={s}>{s}</option>{/each}
 			</select>
 		{/if}
-		<span class="sp"></span>
 		{#if kind !== 'workspace' || rs.terminal}
-			<button class="btn-icon" title="Reload" onclick={() => load(rs.logSource)}>↻</button>
+			<span class="spacer"></span>
+			<button
+				class="btn-icon"
+				title="Reload"
+				aria-label="Reload"
+				aria-busy={loading}
+				onclick={() => load(rs.logSource)}>{I.retry}</button
+			>
 		{:else}
-			<span class="hint"><span class="d pulse"></span>tail -f</span>
+			<span class="hint live"><span class="ldot sm pulse hue-az"></span>tail -f</span>
 		{/if}
 	</div>
 	<div class="out" bind:this={pre} onscroll={onScroll}>
 		{#if text === null}
-			<div class="msg">
-				{#if loading}<span class="d pulse"></span>Connecting…{:else}{note || 'Nothing yet.'}{/if}
-			</div>
+			{#if loading}<Loading text="Connecting…" />{:else}<div class="empty-line">
+					{note || 'Nothing yet.'}
+				</div>{/if}
 		{:else if !text}
-			<div class="msg">
+			<div class="empty-line">
 				{kind === 'workspace'
 					? 'No live output yet — it appears here as the workspace works (bootstrap, commands, agent events).'
 					: 'The log is empty.'}
@@ -134,41 +145,15 @@
 </div>
 
 <style>
-	.lv {
-		flex: 1;
-		min-height: 0;
-		display: flex;
-		flex-direction: column;
-	}
-	.bar {
-		flex: none;
-		display: flex;
-		gap: 6px;
-		align-items: center;
-		padding: 8px 12px;
-	}
 	.sel {
 		width: auto;
 		padding: 3px 26px 3px 8px;
-		font-size: 11.5px;
-		border-radius: 8px;
+		border-radius: var(--r-sm);
 	}
-	.sp {
-		flex: 1;
-	}
-	.hint {
-		font-size: 11px;
-		color: var(--fnt);
+	.live {
 		display: flex;
 		gap: 6px;
 		align-items: center;
-	}
-	.d {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
-		flex: none;
 	}
 	.out {
 		flex: 1;
@@ -176,34 +161,19 @@
 		overflow: auto;
 		margin: 0 8px 8px;
 		padding: 10px 12px;
-		border-radius: 13px;
+		border-radius: var(--r-card);
 		background: var(--code);
 		font-family: var(--mono);
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		line-height: 1.75;
 		color: var(--mut);
+	}
+	.out > .empty-line {
+		font-family: var(--sans);
+		padding: 0;
 	}
 	.l {
 		white-space: pre-wrap;
 		word-break: break-all;
-	}
-	.l.ros {
-		color: var(--ros);
-	}
-	.l.tea {
-		color: var(--tea);
-	}
-	.l.az {
-		color: var(--az);
-	}
-	.l.vio {
-		color: var(--vio);
-	}
-	.msg {
-		font-family: var(--sans);
-		font-size: 12px;
-		display: flex;
-		gap: 8px;
-		align-items: center;
 	}
 </style>

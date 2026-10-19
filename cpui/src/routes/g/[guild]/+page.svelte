@@ -3,20 +3,23 @@
      is left. Everything reads the shared fleet poll. -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { flip } from 'svelte/animate';
 	import { ME, currentGuild, to } from '$lib/guild';
 	import { fleet } from '$lib/fleet.svelte';
 	import { api } from '$lib/api';
-	import { lore, fl, isLore } from '$lib/lore';
 	import { plural } from '$lib/format';
 	import type { Run } from '$lib/domain';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import { I } from '$lib/ui/icons';
+	import { bump, materialize, ms, spring } from '$lib/ui/motion';
 	import NeedsYou from '$lib/desk-home/NeedsYou.svelte';
 	import WorkshopCard from '$lib/desk-home/WorkshopCard.svelte';
 	import Capacity from '$lib/desk-home/Capacity.svelte';
-	import RunTable from '$lib/desk-home/RunTable.svelte';
+	import RunTable from '$lib/run/RunTable.svelte';
 
 	const guild = $derived(currentGuild());
 
@@ -64,9 +67,7 @@
 		const live = fleet.active.length;
 		const needs =
 			n === 0 ? 'Nothing needs you' : `${plural(n, 'thing')} ${n === 1 ? 'needs' : 'need'} you`;
-		const fire = isLore()
-			? `${live} ${live === 1 ? 'brew' : 'brews'} on the fire.`
-			: `${plural(live, 'run')} live.`;
+		const fire = `${live} ${live === 1 ? 'brew' : 'brews'} on the fire.`;
 		return `${needs}, ${fire}`;
 	});
 
@@ -94,6 +95,8 @@
 	);
 	const quiet = $derived(fleet.projects.filter((p) => !fleet.liveByProject.get(p.id)?.length));
 
+	const move = { duration: ms('--dur-spring', 450), easing: spring };
+
 	const DAY = 24 * 3600 * 1000;
 	const recent = $derived(
 		fleet.finished
@@ -116,15 +119,14 @@
 		<div class="tt">
 			<div class="cap">
 				<span>{guild.name}</span><span class="fnt">·</span>
-				<span>{plural(fleet.projects.length, lore('workshop').toLowerCase())}</span><span
-					class="fnt">·</span
-				>
+				<span>{plural(fleet.projects.length, 'workshop')}</span><span class="fnt">·</span>
 				<span>{guild.role}</span>
 			</div>
 			<h1>{greeting}, {ME.name}. <span class="accent">{headline}</span></h1>
 		</div>
 		<Segmented
 			bind:value={filter}
+			label="Filter runs"
 			options={[
 				{ value: 'all', label: 'Everything', count: counts.all },
 				{ value: 'needs', label: 'Needs me', count: counts.needs },
@@ -140,10 +142,10 @@
 			onretry={() => fleet.refresh()}
 		/>
 	{:else if !fleet.updatedAt}
-		<div class="c sk"><Skeleton lines={4} /></div>
-		<div class="grid">
-			<div class="c sk"><Skeleton lines={3} /></div>
-			<div class="c sk"><Skeleton lines={3} /></div>
+		<Skeleton pane lines={4} />
+		<div class="card-grid" style:--min="330px">
+			<Skeleton pane lines={3} />
+			<Skeleton pane lines={3} />
 		</div>
 	{:else}
 		{#if fleet.pending.length}
@@ -151,76 +153,82 @@
 		{/if}
 
 		<section class="sect">
-			<div class="sh">
-				<h2>{lore('workshops')}</h2>
-				<span class="pill t-az">{fleet.active.length ? `${fleet.active.length} live` : 'idle'}</span
-				>
-				{#if fleet.pending.length}<span class="pill hot">{fleet.pending.length} need you</span>{/if}
-				<span class="rule"></span>
-				<span class="mut tiny nowrap">{today}</span>
-				<a class="tiny nowrap" href={to.runs()}>All runs →</a>
-			</div>
+			<SectionHeader title="Workshops" href={to.runs()} linkLabel="All runs">
+				{#snippet actions()}
+					<span class="pill t-az"
+						>{fleet.active.length ? `${fleet.active.length} live` : 'idle'}</span
+					>
+					<span
+						class="pill t-hot"
+						class:gone={!fleet.pending.length}
+						use:bump={fleet.pending.length}>{fleet.pending.length} need you</span
+					>
+					<span class="mut tiny today">{today}</span>
+				{/snippet}
+			</SectionHeader>
 
 			{#if fleet.projects.length === 0}
 				<EmptyState
-					title="No {lore('workshops').toLowerCase()} yet"
-					text="A {lore(
-						'workshop'
-					).toLowerCase()} is a repository plus how to build it. Set one up to start taking tickets."
+					title="No workshops yet"
+					text="A workshop is a repository plus how to build it. Set one up to start taking tickets."
 				>
-					<a class="btn btn-primary" href={to.newWorkshop()}
-						>+ New {lore('workshop').toLowerCase()}</a
-					>
+					<a class="btn btn-primary" href={to.newWorkshop()}>{I.add} New workshop</a>
 				</EmptyState>
 			{:else}
-				<div class="grid">
+				<div class="card-grid" style:--min="330px">
 					{#each cards as c (c.project.id)}
-						<WorkshopCard
-							project={c.project}
-							live={c.live}
-							liveTotal={c.all.length}
-							finished={lastFinished.get(c.project.id) ?? []}
-							pings={fleet.pingsByProject.get(c.project.id) ?? 0}
-							tickets={ticketCounts?.get(c.project.id) ?? (ticketCounts ? 0 : undefined)}
-							{now}
-						/>
+						<div
+							class="cell"
+							animate:flip={move}
+							transition:materialize={{ origin: 'top center', y: 6 }}
+						>
+							<WorkshopCard
+								project={c.project}
+								live={c.live}
+								liveTotal={c.all.length}
+								finished={lastFinished.get(c.project.id) ?? []}
+								pings={fleet.pingsByProject.get(c.project.id) ?? 0}
+								tickets={ticketCounts?.get(c.project.id) ?? (ticketCounts ? 0 : undefined)}
+								{now}
+							/>
+						</div>
 					{/each}
-					{#if quiet.length}
-						<div class="quiet">
-							<span class="qt"
-								>{cards.length || filter !== 'all'
-									? `${quiet.length} quiet ${quiet.length === 1 ? lore('workshop').toLowerCase() : lore('workshops').toLowerCase()}`
-									: lore('nothingRunning')}</span
-							>
-							<span class="qn">
-								{#each quiet as p, i (p.id)}{#if i}<span class="fnt"> · </span>{/if}<a
-										href={to.workshop(p.id)}>{p.name}</a
-									>{/each} — nothing running
-							</span>
-							<a class="tiny" href={to.newTicket({ project: quiet[0].id })}>+ New ticket</a>
-						</div>
-					{/if}
-					{#if !cards.length && filter !== 'all' && !quiet.length}
-						<div class="quiet">
-							<span class="qt"
-								>{filter === 'needs'
-									? 'Nothing needs you'
-									: fl('Nothing brewing', 'Nothing running')}</span
-							>
-							<span class="qn">No live runs match this filter.</span>
-						</div>
-					{/if}
 				</div>
+				{#if quiet.length}
+					<EmptyState
+						inline
+						title={cards.length || filter !== 'all'
+							? `${quiet.length} quiet ${quiet.length === 1 ? 'workshop' : 'workshops'}`
+							: 'All still on the shelf'}
+						text="nothing running"
+					>
+						<span class="qn">
+							{#each quiet as p, i (p.id)}{#if i}<span class="fnt"> · </span>{/if}<a
+									href={to.workshop(p.id)}>{p.name}</a
+								>{/each}
+						</span>
+						<a class="btn btn-sm" href={to.newTicket({ project: quiet[0].id })}
+							>{I.add} New ticket</a
+						>
+					</EmptyState>
+				{/if}
+				{#if !cards.length && filter !== 'all' && !quiet.length}
+					<EmptyState
+						inline
+						title={filter === 'needs' ? 'Nothing needs you' : 'Nothing brewing'}
+						text="No live runs match this filter."
+					/>
+				{/if}
 			{/if}
 		</section>
 
 		<section class="sect">
-			<div class="sh">
-				<h2>Recently finished</h2>
-				<span class="mut tiny">last 24h</span>
-				<span class="rule"></span>
-				<a class="tiny nowrap" href={to.runs({ tab: 'finished' })}>All finished →</a>
-			</div>
+			<SectionHeader
+				title="Recently finished"
+				sub="last 24h"
+				href={to.runs({ tab: 'finished' })}
+				linkLabel="All finished"
+			/>
 			{#if recent.length}
 				<div class="c pane">
 					<RunTable
@@ -231,7 +239,7 @@
 			{:else}
 				<EmptyState
 					compact
-					title={isLore() ? 'Nothing bottled today' : 'Nothing finished today'}
+					title="Nothing bottled today"
 					text="Runs that finish in the last 24 hours land here."
 				/>
 			{/if}
@@ -260,18 +268,12 @@
 		gap: 6px;
 	}
 	.cap {
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--mut);
 		display: flex;
 		gap: 7px;
 		white-space: nowrap;
 		overflow: hidden;
-	}
-	h1 {
-		font-size: 26px;
-	}
-	h1 .accent {
-		font-size: 31px;
 	}
 	.sect {
 		display: flex;
@@ -279,66 +281,18 @@
 		gap: 10px;
 		flex: none;
 	}
-	.sh {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 0 4px;
+	.gone {
+		display: none;
+	}
+	.today {
+		white-space: nowrap;
+	}
+	.cell {
 		min-width: 0;
-	}
-	.sh h2 {
-		font-size: 20px;
-		white-space: nowrap;
-	}
-	.rule {
-		flex: 1;
-		height: 1px;
-		margin: 0 6px;
-		background: var(--cLn);
-		min-width: 12px;
-	}
-	.nowrap {
-		white-space: nowrap;
-	}
-	.pill.hot {
-		background: var(--amb);
-		color: var(--ink);
-		font-weight: 700;
-	}
-	.grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-		gap: 10px;
-	}
-	.quiet {
-		border-radius: 16px;
-		border: 1px dashed var(--ln2);
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		align-items: flex-start;
-		gap: 4px;
-		padding: 14px 16px;
-		color: var(--mut);
-		font-size: 12px;
-		min-height: 92px;
-	}
-	.qt {
-		font-family: var(--serif);
-		font-style: italic;
-		font-size: 17px;
-		color: var(--tx);
+		height: 100%;
 	}
 	.qn a {
 		color: var(--mut);
-	}
-	.pane {
-		border-radius: 16px;
-		overflow: hidden;
-	}
-	.sk {
-		border-radius: 16px;
-		padding: 16px;
 	}
 	@media (max-width: 760px) {
 		.desk {
@@ -352,15 +306,12 @@
 			width: 100%;
 		}
 		h1 {
-			font-size: 22px;
+			font-size: var(--fs-mark);
 		}
 		h1 .accent {
-			font-size: 25px;
+			font-size: var(--fs-h1);
 		}
-		.grid {
-			grid-template-columns: minmax(0, 1fr);
-		}
-		.sh .tiny.mut {
+		.today {
 			display: none;
 		}
 	}

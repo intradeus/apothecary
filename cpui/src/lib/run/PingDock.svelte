@@ -39,7 +39,7 @@
 		gap: 4px;
 	}
 	.queue {
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--amb);
 		padding: 0 6px;
 	}

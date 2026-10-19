@@ -1,0 +1,178 @@
+/* Motion: keyframes and the interaction feel (press, enter, exit).
+ * Part of the design system; see app.css for the map. */
+
+/* ── motion ────────────────────────────────────────────────────────────── */
+
+@keyframes ap-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.4;
+		transform: scale(0.75);
+	}
+}
+@keyframes ap-blink {
+	0%,
+	49% {
+		opacity: 1;
+	}
+	50%,
+	100% {
+		opacity: 0;
+	}
+}
+@keyframes ap-bubble {
+	0% {
+		transform: translateY(0);
+		opacity: 0;
+	}
+	25% {
+		opacity: 0.9;
+	}
+	100% {
+		transform: translateY(-10px);
+		opacity: 0;
+	}
+}
+@keyframes ap-slosh {
+	0%,
+	100% {
+		transform: translateX(-2px);
+	}
+	50% {
+		transform: translateX(2px);
+	}
+}
+@keyframes ap-shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
+}
+.pulse {
+	animation: ap-pulse 1.4s ease-in-out infinite;
+}
+.pulse-slow {
+	animation: ap-pulse 2s ease-in-out infinite;
+}
+.caret {
+	display: inline-block;
+	width: 7px;
+	height: 15px;
+	vertical-align: text-bottom;
+	margin-left: 2px;
+	background: var(--brand);
+	box-shadow: 0 0 8px var(--brandLn);
+	animation: ap-blink 1s steps(1) infinite;
+}
+
+/* ── feel ──────────────────────────────────────────────────────────────── */
+/* Apple's fluid-interface rules, applied app-wide:
+ *  - respond on pointer-down, instantly; hovers stay instant (DESIGN 2.5)
+ *  - every move rides the --spring, so it is interruptible: a CSS transition
+ *    retargets from the live value when the state flips mid-flight
+ *  - things leave along the path they came in
+ * All of it collapses to fades under prefers-reduced-motion (tokens.css). */
+
+/* Press: buttons sink on pointer-down and spring back on release. */
+:where(button:not(.svelte-flow *, .xterm *)),
+.btn,
+.press {
+	-webkit-tap-highlight-color: transparent;
+	transition: transform var(--dur-spring) var(--spring);
+}
+:where(button:not(.svelte-flow *, .xterm *)):active:not(:disabled),
+.btn:active,
+.press:active {
+	transform: scale(var(--press-scale));
+	transition: transform var(--dur-press) var(--ease-out);
+}
+
+/* Options inside a control (segments, tabs, menu rows, list rows) don't
+ * shrink, which would jostle their neighbours: they dim on press instead. */
+.seg > button:active,
+.seg > a:active,
+.tabs > button:active,
+.tabs > a:active {
+	opacity: 0.7;
+}
+
+/* Busy: an action in flight. The control stays put (no layout jump) and a
+ * soft sheen runs across it until the work lands. */
+:where(button, .btn)[aria-busy='true'] {
+	cursor: progress;
+	pointer-events: none;
+	background-image: linear-gradient(
+		100deg,
+		transparent 30%,
+		color-mix(in oklch, currentColor 14%, transparent) 50%,
+		transparent 70%
+	);
+	background-size: 250% 100%;
+	animation: ap-sheen 1.1s linear infinite;
+}
+@keyframes ap-sheen {
+	from {
+		background-position: 120% 0;
+	}
+	to {
+		background-position: -120% 0;
+	}
+}
+
+/* A count that just went up: one small spring pop (see bump in ui/motion). */
+@keyframes ap-bump {
+	from {
+		transform: scale(1.25);
+	}
+	to {
+		transform: scale(1);
+	}
+}
+.bumped {
+	animation: ap-bump var(--dur-bounce) var(--spring-bounce);
+}
+
+/* A surface arriving without JS (no exit needed): it materialises — scale,
+ * blur and opacity together — rather than just fading in. */
+@keyframes ap-materialize {
+	from {
+		opacity: 0;
+		transform: scale(var(--enter-scale));
+		filter: blur(var(--enter-blur));
+	}
+}
+.materialize {
+	animation:
+		ap-materialize var(--dur-spring) var(--spring) both,
+		ap-fade var(--dur-fade) var(--ease-out) both;
+}
+@keyframes ap-fade {
+	from {
+		opacity: 0;
+	}
+}
+
+/* Theme changes cross-fade instead of jumping in brightness (prefs.setTheme
+ * wraps the switch in a view transition where the browser supports it). */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation-duration: var(--dur-theme);
+	animation-timing-function: var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pulse,
+	.pulse-slow {
+		animation: none;
+	}
+	:where(button, .btn)[aria-busy='true'] {
+		animation: none;
+		opacity: var(--o-dim);
+	}
+}

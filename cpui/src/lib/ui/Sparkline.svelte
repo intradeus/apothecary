@@ -81,7 +81,7 @@
 <style>
 	.sp {
 		background: var(--p2);
-		border-radius: 13px;
+		border-radius: var(--r-card);
 		padding: 7px 10px 6px;
 		display: flex;
 		flex-direction: column;
@@ -96,11 +96,11 @@
 		gap: 8px;
 	}
 	.l {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
 	.v {
-		font-size: 13px;
+		font-size: var(--fs-body);
 		font-weight: 600;
 		white-space: nowrap;
 		overflow: hidden;
@@ -139,7 +139,7 @@
 		position: absolute;
 		left: 10px;
 		bottom: 8px;
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		color: var(--fnt);
 		display: flex;
 		align-items: center;

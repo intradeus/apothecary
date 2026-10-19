@@ -5,6 +5,8 @@
 export interface TestResult {
 	ok: boolean;
 	error?: string;
+	/** What the test could not verify (no zero-token probe, provider out of reach). */
+	warnings?: string[];
 	/** ms epoch */
 	at: number;
 }

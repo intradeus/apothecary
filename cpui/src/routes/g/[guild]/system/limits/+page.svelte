@@ -2,8 +2,8 @@
 	// Limits (DESIGN 7.10): concurrency and environment caps.
 	import { fleet } from '$lib/fleet.svelte';
 	import SettingsFrame from '$lib/system/SettingsFrame.svelte';
-	import SettingRow from '$lib/system/SettingRow.svelte';
-	import Stepper from '$lib/system/Stepper.svelte';
+	import SettingRow from '$lib/ui/SettingRow.svelte';
+	import Stepper from '$lib/ui/Stepper.svelte';
 	import { plural } from '$lib/format';
 </script>
 

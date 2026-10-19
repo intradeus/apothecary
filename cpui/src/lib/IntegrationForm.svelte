@@ -6,6 +6,7 @@
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Integration, KindDescriptor } from '$lib/domain';
+	import { toast } from '$lib/ui/toast.svelte';
 
 	let {
 		descriptor,
@@ -85,6 +86,7 @@
 						config,
 						secrets
 					});
+			toast(existing ? `${saved.name} saved` : `${saved.name} added`);
 			onsaved(saved);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -98,8 +100,8 @@
 
 <form class="if" onsubmit={submit}>
 	{#if descriptor.help}
-		<details class="howto" open={!existing}>
-			<summary><span class="caretglyph">▸</span> How to set this up</summary>
+		<details class="howto card-in" open={!existing}>
+			<summary class="disclosure">How to set this up</summary>
 			<div class="helptext">
 				{#each linkify(descriptor.help) as p, i (i)}
 					{#if p.href}
@@ -188,9 +190,9 @@
 	</div>
 
 	{#if error}<div class="err">{error}</div>{/if}
-	<div class="foot">
+	<div class="form-actions">
 		{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button>{/if}
-		<button class="btn-primary" type="submit" disabled={busy}>
+		<button class="btn-primary" type="submit" disabled={busy} aria-busy={busy}>
 			{busy ? 'Saving…' : existing ? 'Save changes' : `Add ${descriptor.label}`}
 		</button>
 	</div>
@@ -202,33 +204,18 @@
 		flex-direction: column;
 		gap: 12px;
 	}
-	.howto {
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		border-radius: 13px;
-	}
 	.howto > summary {
 		padding: 7px 12px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		font-weight: 600;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.caretglyph {
-		font-size: 10px;
-		color: var(--mut);
 	}
 	.helptext {
 		white-space: pre-wrap;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 		line-height: 1.55;
 		padding: 0 12px 10px 28px;
 		color: var(--mut);
 		overflow-wrap: anywhere;
-	}
-	.wide {
-		grid-column: 1 / -1;
 	}
 	.req {
 		color: var(--fnt);
@@ -238,7 +225,7 @@
 		align-items: center;
 		gap: 8px;
 		padding: 4px 4px 4px 10px;
-		border-radius: 10px;
+		border-radius: var(--r-row);
 		background: var(--p1);
 		border: 1px dashed var(--ln2);
 		min-height: 34px;
@@ -246,16 +233,7 @@
 	}
 	.mask {
 		color: var(--grn);
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		flex: none;
-	}
-	.help :global(.link),
-	.helptext :global(.link) {
-		color: var(--az);
-	}
-	.foot {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
 	}
 </style>

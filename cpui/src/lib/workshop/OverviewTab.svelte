@@ -4,10 +4,9 @@
 	// egress — each pane linking to its section of the setup form.
 	import type { Flow, Integration, Project, Run } from '$lib/domain';
 	import { to } from '$lib/guild';
-	import { lore } from '$lib/lore';
-	import { age, fmtAbs, plural, shortId, stateTab } from '$lib/format';
-	import StatusChip from '$lib/ui/StatusChip.svelte';
-	import LiveRunRow from './LiveRunRow.svelte';
+	import { plural, stateTab } from '$lib/format';
+	import { I } from '$lib/ui/icons';
+	import RunRow from '$lib/run/RunRow.svelte';
 
 	let {
 		project,
@@ -68,28 +67,21 @@
 	<div class="col">
 		<section class="c pane">
 			<div class="pane-head">
-				<h2>{live.length ? 'Brewing now' : lore('nothingRunning')}</h2>
+				<h2>{live.length ? 'Brewing now' : 'All still on the shelf'}</h2>
 				{#if live.length}<span class="count">{live.length}</span>{/if}
 				<span class="spacer"></span>
-				<a class="small mut" href={to.workshop(project.id, 'runs')}>All runs →</a>
+				<a class="small mut" href={to.workshop(project.id, 'runs')}>All runs {I.forward}</a>
 			</div>
-			{#each live as r (r.id)}<LiveRunRow run={r} />{/each}
+			{#each live as r (r.id)}<RunRow run={r} />{/each}
 			{#if !live.length}
-				<div class="quiet">
-					<span class="mut">Runs start from tickets.</span>
-					<a class="btn btn-sm" href={to.newTicket({ project: project.id })}>+ New ticket</a>
+				<div class="pane-body row">
+					<span class="mut small">Runs start from tickets.</span>
+					<a class="btn btn-sm" href={to.newTicket({ project: project.id })}>{I.add} New ticket</a>
 				</div>
 			{/if}
 			{#if finished.length}
-				<div class="sub-h">Recently finished</div>
-				{#each finished as r (r.id)}
-					<a class="fr" href={to.run(r.id)}>
-						<span class="ell">{r.title || 'Untitled run'}</span>
-						<StatusChip state={r.state} size="sm" />
-						<span class="mono fnt id">{shortId(r.id)}</span>
-						<span class="mono fnt" title={fmtAbs(r.updatedAt)}>{age(r.updatedAt)}</span>
-					</a>
-				{/each}
+				<div class="pane-sub fin">Recently finished</div>
+				{#each finished as r (r.id)}<RunRow run={r} variant="finished" />{/each}
 			{/if}
 		</section>
 
@@ -100,31 +92,37 @@
 				<span class="spacer"></span>
 				<a class="small mut" href={settings('repository')}>Edit</a>
 			</div>
-			<div class="rows">
-				<div class="r rp">
-					<span class="mono nm">repo <span class="star" title="primary">★</span></span>
+			<div class="pane-body col">
+				<div class="repo">
+					<span class="mono nm">repo <span class="hue-brand" title="primary">{I.star}</span></span>
 					<span class="ell mono url" title={project.repo.url}>{project.repo.url}</span>
-					<span class="mono mut">⎇ {project.repo.defaultBranch}</span>
+					<span class="mono mut">{I.branch} {project.repo.defaultBranch}</span>
 				</div>
-				<div class="r kv">
-					<span class="mut">locator</span><span class="mono">{project.repo.locator || '—'}</span>
-					<span class="mut">guide</span><span class="mono">{project.repo.agentsMdPath || '—'}</span>
-					<span class="mut">forge</span><span>{intName(project.forgeId)}</span>
-				</div>
+				<dl class="kv">
+					<dt>locator</dt>
+					<dd class="mono">{project.repo.locator || '—'}</dd>
+					<dt>guide</dt>
+					<dd class="mono">{project.repo.agentsMdPath || '—'}</dd>
+					<dt>forge</dt>
+					<dd>{intName(project.forgeId)}</dd>
+				</dl>
 				{#each project.repos ?? [] as r (r.name)}
-					<div class="r rp">
+					<div class="repo">
 						<span class="mono nm">{r.name}</span>
 						<span class="ell mono url" title={r.url}>{r.url}</span>
 						<span class="mono mut"
-							>⎇ {r.defaultBranch}{#if !r.locator}<span class="pill t-mut ro">read-only</span
-								>{/if}</span
+							>{I.branch}
+							{r.defaultBranch}{#if !r.locator}
+								<span class="pill sm t-mut">read-only</span>{/if}</span
 						>
 					</div>
 				{/each}
 			</div>
 			{#if project.repos?.length}
-				<div class="foot-note">
-					Cloned to <code>~/repos/&lt;name&gt;</code> beside the primary, one merge request each.
+				<div class="pane-foot">
+					<span
+						>Cloned to <code>~/repos/&lt;name&gt;</code> beside the primary, one merge request each.</span
+					>
 				</div>
 			{/if}
 		</section>
@@ -139,41 +137,44 @@
 				<a class="small mut" href={settings('workshop')}>Edit</a>
 			</div>
 			{#if commands.length}
-				<div class="rows">
-					{#each commands as [k, v] (k)}
-						<div class="r cmd">
-							<span class="mono nm"
-								>{k}{#if k === 'setup'}<span class="pill t-grn boot">bootstrap</span>{/if}</span
-							>
-							<code class="script">{v}</code>
-						</div>
-					{/each}
+				<div class="pane-body">
+					<dl class="kv cmds">
+						{#each commands as [k, v] (k)}
+							<dt class="mono">
+								{k}{#if k === 'setup'}<span class="pill sm t-grn">bootstrap</span>{/if}
+							</dt>
+							<dd><code class="script">{v}</code></dd>
+						{/each}
+					</dl>
 				</div>
-				<div class="foot-note">
-					Flows run these by name with <code>run_ref</code>; <code>setup</code> runs when a workspace
-					boots.
+				<div class="pane-foot">
+					<span
+						>Flows run these by name with <code>run_ref</code>; <code>setup</code> runs when a workspace
+						boots.</span
+					>
 				</div>
 			{:else}
-				<div class="pane-body mut small">
+				<p class="pane-body lede">
 					No commands — workspace setup is skipped, and flows that use <code>run_ref</code> fail preflight.
-				</div>
+				</p>
 			{/if}
 		</section>
 
 		<section class="c pane">
 			<div class="pane-head">
-				<h2>{lore('flow')}</h2>
+				<h2>The formula</h2>
 				<span class="spacer"></span>
-				<a class="small mut" href={to.workshop(project.id, 'flows')}>{plural(ownCount, 'flow')} →</a
+				<a class="small mut" href={to.workshop(project.id, 'flows')}
+					>{plural(ownCount, 'flow')} {I.forward}</a
 				>
 			</div>
-			<div class="pane-body fl">
+			<div class="pane-body row fl">
 				<span class="mut">Runs start on</span>
-				<a class="tag big" href={to.flow(project.id, project.defaultFlow)}
+				<a class="tag" href={to.flow(project.id, project.defaultFlow)}
 					>{project.defaultFlow || '—'}</a
 				>
-				{#if defaultFlow?.builtin}<span class="pill t-mut">built-in</span>{/if}
-				{#if defaultFlow?.shadowsBuiltin}<span class="pill t-mut">from template</span>{/if}
+				{#if defaultFlow?.builtin}<span class="pill sm t-mut">built-in</span>{/if}
+				{#if defaultFlow?.shadowsBuiltin}<span class="pill sm t-mut">from template</span>{/if}
 				{#if defaultFlow}<span class="mono fnt">@{defaultFlow.hash.slice(0, 6)}</span>{/if}
 				<span class="spacer"></span>
 				<span class="fnt small">unless a run picks another</span>
@@ -187,16 +188,16 @@
 				<span class="spacer"></span>
 				<a class="small mut" href={settings('workspace')}>Edit</a>
 			</div>
-			<div class="pane-body eg">
-				<div class="mut small">
+			<div class="pane-body col">
+				<p class="lede">
 					{deny
 						? 'Allow everything except the hosts below.'
 						: 'Deny everything except the hosts below, plus what the forge and harness need.'}
-				</div>
+				</p>
 				{#if domains.length}
 					<div class="chips">
 						{#each showAll ? domains : domains.slice(0, CAP) as d (d)}
-							<span class="dm mono" class:den={deny}>{d}</span>
+							<span class="pill sm mono {deny ? 't-ros' : 't-mut'}">{d}</span>
 						{/each}
 						{#if domains.length > CAP}
 							<button class="btn-ghost btn-sm" onclick={() => (showAll = !showAll)}
@@ -210,11 +211,9 @@
 					</div>
 				{/if}
 				{#if blocked.length}
-					<div class="sub-l">
-						Force-blocked <span class="fnt">· from the run’s Egress window</span>
-					</div>
+					<div class="lbl">Force-blocked · from the run’s Egress window</div>
 					<div class="chips">
-						{#each blocked as d (d)}<span class="dm mono den">{d}</span>{/each}
+						{#each blocked as d (d)}<span class="pill sm mono t-ros">{d}</span>{/each}
 					</div>
 				{/if}
 			</div>
@@ -226,19 +225,17 @@
 				<span class="spacer"></span>
 				<a class="small mut" href={settings('workspace')}>Edit</a>
 			</div>
-			<div class="rows">
-				<div class="r kv">
-					<span class="mut">provisioner</span><span>{intName(project.provisionerId)}</span>
-					<span class="mut">harnesses</span><span
-						>{(project.harnessIds ?? []).map(intName).join(', ') || '—'}</span
-					>
-					<span class="mut">extensions</span><span class="mono ell"
-						>{(project.workspace.codeServerExtensions ?? []).join(', ') || '—'}</span
-					>
-					<span class="mut">editor</span><span
-						>{editorBits.join(' · ') || 'code-server defaults'}</span
-					>
-				</div>
+			<div class="pane-body">
+				<dl class="kv">
+					<dt>provisioner</dt>
+					<dd>{intName(project.provisionerId)}</dd>
+					<dt>harnesses</dt>
+					<dd>{(project.harnessIds ?? []).map(intName).join(', ') || '—'}</dd>
+					<dt>extensions</dt>
+					<dd class="mono">{(project.workspace.codeServerExtensions ?? []).join(', ') || '—'}</dd>
+					<dt>editor</dt>
+					<dd>{editorBits.join(' · ') || 'code-server defaults'}</dd>
+				</dl>
 			</div>
 		</section>
 	</div>
@@ -251,133 +248,52 @@
 		gap: 12px;
 		align-items: start;
 	}
-	.col {
-		display: flex;
-		flex-direction: column;
+	.ov > .col {
 		gap: 12px;
 		min-width: 0;
 	}
-	.quiet {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 12px 16px;
-		font-size: 12.5px;
-	}
-	.sub-h {
-		padding: 10px 14px 4px;
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--mut);
+	.fin {
 		border-top: 1px solid var(--cLn);
 	}
-	.fr {
+	dl.kv {
+		--k: 90px;
+	}
+	.repo {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto 52px 36px;
-		gap: 10px;
-		align-items: center;
-		padding: 7px 14px;
-		border-top: 1px solid var(--cLn);
-		font-size: 12.5px;
-		color: var(--tx);
-	}
-	.fr:hover {
-		background: var(--p1);
-		text-decoration: none;
-	}
-	.fr .mono {
-		font-size: 10.5px;
-		text-align: right;
-	}
-	.rp {
 		grid-template-columns: 90px minmax(0, 1fr) auto;
-		font-size: 12px;
-	}
-	.kv {
-		grid-template-columns: 90px minmax(0, 1fr);
-		gap: 4px 12px;
-		font-size: 12px;
-	}
-	.kv > :nth-child(odd) {
-		font-size: 11.5px;
+		gap: 12px;
+		align-items: center;
+		font-size: var(--fs-label);
 	}
 	.nm {
 		font-weight: 600;
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.star {
-		color: var(--brand);
 	}
 	.url {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
 	}
-	.ro {
-		margin-left: 6px;
-		font-size: 10px;
-		padding: 0 6px;
+	.cmds {
+		--k: 120px;
+		row-gap: 8px;
 	}
-	.cmd {
-		grid-template-columns: 130px minmax(0, 1fr);
-		align-items: start;
-	}
-	.boot {
-		font-size: 9.5px;
-		padding: 0 6px;
-	}
-	.script {
-		white-space: pre-wrap;
-		word-break: break-word;
-		font-size: 11.5px;
-		display: block;
-	}
-	.foot-note {
-		padding: 8px 16px 10px;
-		border-top: 1px solid var(--cLn);
-		font-size: 11.5px;
-		color: var(--fnt);
-	}
-	.fl {
+	.cmds > dt {
 		display: flex;
 		align-items: center;
+		gap: 6px;
+		color: var(--tx);
+		font-weight: 600;
+	}
+	.script {
+		display: block;
+		white-space: pre-wrap;
+		word-break: break-word;
+		font-size: var(--fs-help);
+	}
+	.fl {
 		gap: 8px;
-		flex-wrap: wrap;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
-	.tag.big {
-		font-size: 12px;
-		padding: 1px 8px;
-	}
-	.eg {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px;
-	}
-	.dm {
-		font-size: 10.5px;
-		padding: 1px 8px;
-		border-radius: 999px;
-		background: var(--p2);
-		border: 1px solid var(--ln);
-	}
-	.dm.den {
-		background: var(--rosBg);
-		border-color: var(--rosLn);
-		color: var(--ros);
-	}
-	.sub-l {
-		font-size: 11.5px;
-		font-weight: 500;
-		margin-top: 4px;
-	}
-	@media (max-width: 1100px) {
+	@media (max-width: 1180px) {
 		.ov {
 			grid-template-columns: minmax(0, 1fr);
 		}

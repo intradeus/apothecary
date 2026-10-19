@@ -1,0 +1,492 @@
+/* Tokens: every colour, scale and theme. The only file a theme touches.
+ * Part of the design system; see app.css for the map. */
+
+/* ── fixed palette: the same in both themes ────────────────────────────── */
+/* Every literal colour of the dark-glass pieces lives here once: the dark
+ * theme's hues point at it, and so do the parts that stay dark in light mode
+ * (the sidebar, the logo stopper, avatars, the terminal). */
+
+:root {
+	/* the Onyx ink and hues (the dark theme reads these) */
+	--dk-tx: #e6efe8;
+	--dk-mut: #93ad9c;
+	--dk-fnt: #5f7c69;
+	--dk-az: #7fb2ff;
+	--dk-amb: #f5b54a;
+	--dk-grn: #7ee2a8;
+	--dk-ros: #ff7a70;
+	--dk-vio: #c3a2ff;
+	--dk-tea: #5fd6cc;
+
+	/* parchment: labels, stoppers, the user avatar */
+	--parch: #efe6cf;
+	--parch2: #cbbd98;
+	--parch3: #b9a77a;
+	--onParch: #0b2116;
+	--ink: #1d1406; /* text on solid amber */
+	--rosInk: #1b0a0a; /* text on solid rose */
+	--deepInk: #0b1a12; /* text on light fills: guild avatars, solid-green checks */
+	--userInk: #2a2210; /* text on the user avatar */
+
+	/* the sidebar (dark green in both themes) */
+	--railTx: var(--dk-tx);
+	--railMut: var(--dk-mut);
+	--railFnt: var(--dk-fnt);
+	--railSelLn: rgba(140, 230, 175, 0.26);
+	--railSelSh: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 3px rgba(0, 0, 0, 0.35);
+	/* a selected nav row: the same bead as a selected button, drawn inside */
+	--railOnSh: inset 0 0 0 1px var(--railSelLn), 0 1px 3px rgba(0, 0, 0, 0.35);
+	--railHover: rgba(255, 255, 255, 0.05);
+	--railActive: rgba(255, 255, 255, 0.06);
+	--railRule: rgba(210, 255, 225, 0.12);
+	--railLn: rgba(210, 255, 225, 0.1);
+	--railField: rgba(210, 255, 225, 0.05);
+	--railFieldHover: rgba(210, 255, 225, 0.08);
+	--railCard: rgba(210, 255, 225, 0.04);
+	--railCardLn: rgba(210, 255, 225, 0.08);
+	--railTrack: rgba(0, 0, 0, 0.3);
+	--barParch: linear-gradient(90deg, var(--parch2), var(--parch));
+	--barGrn: linear-gradient(90deg, #3fae72, var(--dk-grn));
+
+	/* the logo: a glass stopper with a parchment ℞ */
+	--logoBg: radial-gradient(
+		circle at 30% 22%,
+		rgba(220, 255, 230, 0.75),
+		rgba(60, 160, 100, 0.55) 35%,
+		#0f3a22 80%
+	);
+	--logoLn: rgba(210, 255, 225, 0.35);
+	--logoSh:
+		0 0 18px rgba(80, 200, 130, 0.32), inset 0 1px 1px rgba(255, 255, 255, 0.6),
+		inset 0 -4px 8px rgba(0, 0, 0, 0.35);
+	--logoTxSh: 0 1px 2px rgba(0, 0, 0, 0.5);
+
+	/* avatars */
+	--avatarBg: linear-gradient(160deg, var(--parch), var(--parch3));
+	--avatarSh: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+	--guildSh: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 3px rgba(0, 0, 0, 0.4);
+	--presence: var(--dk-grn);
+	--presenceRing: #0a1a10;
+
+	/* elevation */
+	--popSh: 0 24px 60px rgba(0, 0, 0, 0.45);
+	--modalSh: 0 30px 80px rgba(0, 0, 0, 0.5);
+	--dragSh: 0 10px 30px rgba(0, 0, 0, 0.45);
+	--floatSh: 0 8px 24px rgba(0, 0, 0, 0.35);
+
+	/* small fixed bits */
+	--knob: #fff;
+	--knobSh: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--bubble: rgba(255, 255, 255, 0.8);
+	--vialIdleLn: rgba(255, 255, 255, 0.2);
+
+	/* the terminal stays dark in both themes, like a real one; xterm reads
+	 * these at mount (Terminal.svelte) */
+	--termBg: rgba(2, 10, 6, 0.78);
+	--termLn: rgba(255, 255, 255, 0.06);
+	--termTx: var(--dk-tx);
+	--termMut: var(--dk-mut);
+	--termFnt: var(--dk-fnt);
+	--termBtnBg: rgba(170, 255, 205, 0.08);
+	--termBtnLn: rgba(210, 255, 225, 0.18);
+	--termCursor: var(--parch);
+	--termCursorAccent: #020a06;
+	--termSel: rgba(239, 230, 207, 0.3);
+	--termBlack: var(--deepInk);
+}
+
+/* ── scales: type, radius ─────────────────────────────────────────────── */
+/* Named by role (DESIGN 2.1 / 2.4). Components use these, never px, so a
+ * redesign (or a theme that wants a different density or corner style)
+ * changes them here. A theme block may override any of them. */
+
+:root {
+	/* type */
+	--fs-badge: 9.5px; /* rail and count badges */
+	--fs-id: 10.5px; /* mono ids, hashes, counts, tiny chips */
+	--fs-meta: 11px; /* captions, meta, table heads */
+	--fs-help: 11.5px; /* help text, mono paths */
+	--fs-label: 12px; /* labels, header buttons, chips */
+	--fs-ui: 12.5px; /* tabs, menu rows, segmented, nav */
+	--fs-body: 13px; /* the base */
+	--fs-read: 13.5px; /* agent prose, long reading */
+	--fs-aside: 14px; /* serif inline asides */
+	--fs-lead: 15px; /* brand name, section names */
+	--fs-title: 16px; /* dialog titles, thinking, big glyphs */
+	--fs-section: 19px; /* serif section and window titles */
+	--fs-mark: 21px; /* the run badge's id */
+	--fs-empty: 24px; /* empty-state serif titles */
+	--fs-h1: 25px; /* page titles */
+	--fs-display: 30px; /* the h1's serif accent */
+
+	/* radius: outer containers rounder than what they hold */
+	--r-xs: 4px; /* hairline bits */
+	--r-tag: 6px; /* inline code, mono tags, stage chips */
+	--r-icon: 7px; /* tiny icon buttons */
+	--r-sm: 8px; /* diffs, small wells */
+	--r-tab: 9px; /* tabs, segmented options, compact buttons */
+	--r-row: 10px; /* nav items, fields, menu rows */
+	--r-btn: 12px; /* buttons, banners, segmented shells */
+	--r-card: 14px; /* cards inside panes, stage pills */
+	--r-pane: 16px; /* windows, sidebar, sections */
+	--r-group: 17px; /* header control groups, popovers */
+	--r-float: 20px; /* composer, ping card */
+	--r-modal: 26px; /* dialogs */
+	--r-pill: 999px; /* status chips, type pills */
+
+	/* glow: soft halos on live indicators, as `0 0 var(--glow-sm) <hue>` */
+	--glow-xs: 6px;
+	--glow-sm: 8px; /* live dots */
+	--glow-md: 14px; /* primary buttons, solid chips */
+	--glow-lg: 44px; /* the ping card's wash */
+
+	/* stacking: one ladder, so overlays never fight */
+	--z-scene: 0; /* the backdrop, a sliding bead under its options */
+	--z-raise: 1; /* a row link above its row */
+	--z-float: 20; /* desk ghosts, the mobile tab bar */
+	--z-pop: 30; /* popovers, the review composer */
+	--z-light: 40; /* the cursor light (pointer-events: none) */
+	--z-modal: 50; /* modal scrims */
+	--z-drawer: 55; /* the mobile drawer */
+	--z-palette: 60; /* the command palette, above everything */
+
+	/* layout */
+	--sidebar-w: 232px;
+	--rail-w: 60px;
+	--shell-gap: 6px; /* the margin around the sidebar */
+	--paper: 72ch; /* a reading column (plan review, documents) */
+	--aside-w: 320px; /* a side column next to a document or form */
+	--list-w: 380px; /* a master list beside its detail (inbox) */
+	/* motion (DESIGN 2.5 + the Apple fluid-interface rules). Springs are the
+	 * real spring equations sampled into linear(), so CSS transitions stay
+	 * interruptible (a transition retargets from the live value) and settle
+	 * like a physical object. Damping 1.0 (no overshoot) is the default; the
+	 * bounce (damping 0.8) is only for things released with momentum: a
+	 * dragged window, a flicked drawer. Hovers stay instant. */
+	--spring: linear(
+		0,
+		0.0454,
+		0.1465,
+		0.2678,
+		0.3895,
+		0.5015,
+		0.5993,
+		0.6819,
+		0.75,
+		0.8052,
+		0.8493,
+		0.884,
+		0.9113,
+		0.9324,
+		0.9487,
+		0.9612,
+		0.9707,
+		0.978,
+		0.9835,
+		0.9877,
+		0.9908,
+		0.9931,
+		0.9949,
+		0.9962,
+		1
+	); /* damping 1.0, response 0.35s */
+	--spring-bounce: linear(
+		0,
+		0.0417,
+		0.1406,
+		0.2666,
+		0.3993,
+		0.5257,
+		0.6387,
+		0.7348,
+		0.8134,
+		0.8753,
+		0.9223,
+		0.9567,
+		0.9809,
+		0.997,
+		1.0069,
+		1.0124,
+		1.0148,
+		1.0151,
+		1.0141,
+		1.0124,
+		1.0105,
+		1.0085,
+		1.0066,
+		1.005,
+		1.0036,
+		1.0025,
+		1.0016,
+		1.001,
+		1.0005,
+		1.0002,
+		1
+	); /* damping 0.8, response 0.4s */
+	--ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* fades and colour */
+	--ease-in: cubic-bezier(0.4, 0, 1, 1); /* things leaving */
+	--dur-press: 100ms; /* pointer-down feedback */
+	--dur-fade: 160ms; /* opacity and colour */
+	--dur-spring: 450ms; /* the --spring curve's settle time */
+	--dur-bounce: 600ms; /* the --spring-bounce curve's settle time */
+	--dur-theme: 280ms; /* the cross-fade between themes */
+	--press-scale: 0.97; /* a pressed button */
+	--enter-scale: 0.96; /* a surface materialising from its trigger */
+	--enter-blur: 6px;
+
+	/* opacity */
+	--o-disabled: 0.5;
+	--o-dim: 0.55; /* pending, not-yet, inactive */
+	--o-ghost: 0.35; /* a dragged-away placeholder */
+
+	/* tracking: size-specific, never one value for all sizes */
+	--tr-display: -0.02em; /* page titles */
+	--tr-heading: -0.01em; /* names, card titles */
+	--tr-small: 0.01em; /* 11px and under */
+
+	/* reading measures */
+	--measure: 70ch; /* prose */
+	--measure-short: 60ch; /* hints and one-liners */
+	--measure-tiny: 40ch; /* empty-state lines */
+
+	/* the run desk (tiling windows) */
+	--desk-gap: 8px; /* gutter between windows */
+	--leaf-head: 38px; /* a window's tab strip; desk/tree.ts reads this */
+	--pane-min: 120px; /* the smallest a window resizes to */
+
+	/* the flow editor (Svelte Flow) */
+	--edge-w: 1.6px;
+	--edge-w-strong: 1.8px; /* success path */
+	--edge-w-hover: 2.6px;
+	--edge-dash: 6 4; /* failure / timeout / reject edges */
+	--edge-dash-data: 1 4; /* dataflow hints */
+	--edge-fallback-o: 0.5; /* a "then" fallback link */
+	--node-accent: 3px; /* the stage-type stripe on a node */
+	--handle: 8px;
+	--grid-gap: 20px; /* the canvas dot grid */
+
+	/* Breakpoints can't be custom properties in media queries; use these
+	 * values, nothing else: 760px (phone), 1000px (narrow), 1180px (wide). */
+}
+
+/* ── tokens: dark ("Onyx bottle", the default) ─────────────────────────── */
+
+:root,
+:root[data-theme='dark'] {
+	color-scheme: dark;
+
+	--tx: var(--dk-tx);
+	--mut: var(--dk-mut);
+	--fnt: var(--dk-fnt);
+	--brand: var(--parch);
+	--onBrand: #10261a;
+	--p1: rgba(170, 255, 205, 0.045);
+	--p2: rgba(170, 255, 205, 0.065);
+	--p3: rgba(200, 255, 220, 0.13);
+	--ln: rgba(210, 255, 225, 0.13);
+	--ln2: rgba(210, 255, 225, 0.18);
+	--code: rgba(0, 0, 0, 0.22);
+	--spec: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+
+	--az: var(--dk-az);
+	--amb: var(--dk-amb);
+	--grn: var(--dk-grn);
+	--ros: var(--dk-ros);
+	--vio: var(--dk-vio);
+	--tea: var(--dk-tea);
+	--hueBg: 15%;
+
+	--scene:
+		radial-gradient(ellipse 34% 48% at 10% 20%, rgba(11, 40, 23, 0.38), transparent 70%),
+		radial-gradient(ellipse 30% 42% at 82% 72%, rgba(6, 32, 24, 0.32), transparent 70%),
+		radial-gradient(ellipse 26% 26% at 58% 6%, rgba(220, 190, 110, 0.05), transparent 70%),
+		radial-gradient(ellipse 50% 40% at 40% 105%, rgba(2, 20, 11, 0.7), transparent 70%),
+		linear-gradient(160deg, #020906, #010302 60%, #010604);
+	--body: #000302;
+
+	--sel: #0f271b;
+	--railSel: #0f271b;
+	--selLn: rgba(140, 230, 175, 0.26);
+	--selSh: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 3px rgba(0, 0, 0, 0.35);
+	--selTx: var(--dk-tx);
+	--railSelTx: var(--dk-tx); /* text on the selected-chrome button */
+
+	/* control glass (lg) */
+	--lgBg:
+		radial-gradient(130% 90% at 12% -35%, rgba(255, 255, 255, 0.11), transparent 48%),
+		linear-gradient(180deg, rgba(210, 255, 228, 0.09), rgba(170, 255, 210, 0.045));
+	--lgBf: blur(20px) saturate(185%) brightness(1.07);
+	--lgLn: rgba(220, 255, 235, 0.14);
+	--lgRim:
+		inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -1px 0 rgba(255, 255, 255, 0.07),
+		inset 0 -14px 24px -18px rgba(170, 255, 210, 0.18), 0 14px 34px rgba(0, 8, 3, 0.4);
+	--popBg: rgba(6, 16, 10, 0.94);
+	--solidBg: #07120c; /* glass made opaque (reduced transparency) */
+	--thick: rgba(1, 8, 4, 0.78);
+
+	/* content glass (c) */
+	--cBg: rgba(1, 6, 3, 0.64);
+	--cBf: blur(28px) saturate(155%);
+	--cLn: rgba(210, 255, 225, 0.11);
+	--cSh: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 20px 50px rgba(0, 6, 2, 0.4);
+
+	/* the sidebar stays dark green in both themes */
+	--railBg:
+		linear-gradient(180deg, rgba(1, 6, 3, 0.6), rgba(1, 6, 3, 0.6)),
+		linear-gradient(180deg, rgba(225, 255, 238, 0.07), rgba(160, 255, 200, 0.02));
+
+	--light: rgba(220, 255, 230, 0.035);
+	--tshadow: rgba(0, 0, 0, 0.45);
+	--scrim: rgba(2, 12, 6, 0.45);
+	--sigil: 233, 205, 130;
+	--sigilA: 0.14;
+	--sigilA2: 0.11;
+	--sigilGlow: rgba(233, 205, 130, 0.08);
+}
+
+/* ── tokens: light ─────────────────────────────────────────────────────── */
+
+:root[data-theme='light'] {
+	color-scheme: light;
+
+	--tx: #0f2a1b;
+	--mut: #4e6a58;
+	--fnt: #7f9787;
+	--brand: #1f5a38;
+	--onBrand: #f4f1e6;
+	--p1: rgba(255, 255, 255, 0.5);
+	--p2: rgba(255, 255, 255, 0.55);
+	--p3: rgba(255, 255, 255, 0.85);
+	--ln: rgba(255, 255, 255, 0.7);
+	--ln2: rgba(20, 60, 35, 0.14);
+	--code: rgba(15, 60, 35, 0.06);
+	--spec: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+
+	--az: #2f6fe0;
+	--amb: #b8780c;
+	--grn: #1c8a55;
+	--ros: #d6403c;
+	--vio: #7a52d6;
+	--tea: #138a85;
+	--hueBg: 12%;
+
+	--scene:
+		radial-gradient(ellipse 34% 48% at 10% 20%, rgba(90, 190, 130, 0.45), transparent 70%),
+		radial-gradient(ellipse 30% 42% at 82% 72%, rgba(60, 170, 140, 0.35), transparent 70%),
+		radial-gradient(ellipse 26% 26% at 58% 6%, rgba(240, 210, 140, 0.35), transparent 70%),
+		linear-gradient(160deg, #eef5ef, #dbe9df 60%, #e4efe6);
+	--body: #cfdcd2;
+
+	--sel: #ffffff;
+	--railSel: #24553a;
+	--selLn: rgba(20, 60, 35, 0.14);
+	--selSh: 0 1px 3px rgba(20, 60, 35, 0.12);
+	--selTx: #0f2a1b;
+	--railSelTx: #fff;
+
+	--lgBg:
+		radial-gradient(130% 90% at 12% -35%, rgba(255, 255, 255, 0.7), transparent 50%),
+		linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.4));
+	--lgBf: blur(20px) saturate(165%);
+	--lgLn: rgba(255, 255, 255, 0.75);
+	--lgRim:
+		inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -10px 20px -16px rgba(255, 255, 255, 0.5),
+		0 14px 34px rgba(20, 60, 35, 0.13);
+	--popBg: rgba(250, 252, 250, 0.95);
+	--solidBg: #f3f7f4;
+	--thick: rgba(255, 255, 255, 0.72);
+
+	--cBg: rgba(255, 255, 255, 0.58);
+	--cBf: blur(28px) saturate(150%);
+	--cLn: rgba(255, 255, 255, 0.75);
+	--cSh: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 20px 50px rgba(20, 60, 35, 0.1);
+
+	--railBg: linear-gradient(180deg, rgba(16, 52, 32, 0.84), rgba(12, 42, 26, 0.9));
+
+	--light: rgba(255, 255, 255, 0.12);
+	--scrim: rgba(2, 12, 6, 0.45); /* DESIGN 4.9 gives one scrim for both */
+	--tshadow: rgba(255, 255, 255, 0.5);
+	--sigil: 120, 90, 30;
+	--sigilA: 0.22;
+	--sigilA2: 0.18;
+	--sigilGlow: rgba(233, 205, 130, 0.2);
+}
+
+/* ── derived hues: --XBg / --XLn / --XGlow ─────────────────────────────── */
+
+:root {
+	--brandBg: color-mix(in oklch, var(--brand) var(--hueBg), transparent);
+	--brandLn: color-mix(in oklch, var(--brand) 38%, transparent);
+	--brandGlow: color-mix(in oklch, var(--brand) 14%, transparent);
+	--azBg: color-mix(in oklch, var(--az) var(--hueBg), transparent);
+	--azLn: color-mix(in oklch, var(--az) 38%, transparent);
+	--azGlow: color-mix(in oklch, var(--az) 14%, transparent);
+	--ambBg: color-mix(in oklch, var(--amb) var(--hueBg), transparent);
+	--ambLn: color-mix(in oklch, var(--amb) 38%, transparent);
+	--ambGlow: color-mix(in oklch, var(--amb) 14%, transparent);
+	--grnBg: color-mix(in oklch, var(--grn) var(--hueBg), transparent);
+	--grnLn: color-mix(in oklch, var(--grn) 38%, transparent);
+	--grnGlow: color-mix(in oklch, var(--grn) 14%, transparent);
+	--rosBg: color-mix(in oklch, var(--ros) var(--hueBg), transparent);
+	--rosLn: color-mix(in oklch, var(--ros) 38%, transparent);
+	--rosGlow: color-mix(in oklch, var(--ros) 14%, transparent);
+	--vioBg: color-mix(in oklch, var(--vio) var(--hueBg), transparent);
+	--vioLn: color-mix(in oklch, var(--vio) 38%, transparent);
+	--vioGlow: color-mix(in oklch, var(--vio) 14%, transparent);
+	--teaBg: color-mix(in oklch, var(--tea) var(--hueBg), transparent);
+	--teaLn: color-mix(in oklch, var(--tea) 38%, transparent);
+	--teaGlow: color-mix(in oklch, var(--tea) 14%, transparent);
+
+	--sans: 'Geist', system-ui, -apple-system, sans-serif;
+	--mono: 'Geist Mono', ui-monospace, 'JetBrains Mono', monospace;
+	--serif: 'Instrument Serif', Georgia, serif;
+}
+
+/* ── user preferences ──────────────────────────────────────────────────── */
+/* Written against each theme's own tokens, so every theme, current or
+ * future, honours them without per-theme work. Placed last so they win over
+ * the theme blocks at equal specificity. */
+
+/* Motion becomes a gentle cross-fade: nothing travels, scales or bounces,
+ * but state changes still fade so they stay legible. */
+@media (prefers-reduced-motion: reduce) {
+	:root,
+	:root[data-theme] {
+		--dur-spring: 1ms;
+		--dur-bounce: 1ms;
+		--press-scale: 1;
+		--enter-scale: 1;
+		--enter-blur: 0px;
+	}
+}
+
+/* Glass becomes frosted solid: no blur, opaque surfaces. */
+@media (prefers-reduced-transparency: reduce) {
+	:root,
+	:root[data-theme] {
+		--lgBg: var(--solidBg);
+		--lgBf: none;
+		--cBg: var(--solidBg);
+		--cBf: none;
+		--popBg: var(--solidBg);
+		--thick: var(--solidBg);
+		--railBg: #08150d;
+	}
+}
+
+/* More contrast: defined lines, darker secondary text, solid surfaces. */
+@media (prefers-contrast: more) {
+	:root,
+	:root[data-theme] {
+		--ln: color-mix(in oklch, var(--tx) 32%, transparent);
+		--ln2: color-mix(in oklch, var(--tx) 45%, transparent);
+		--cLn: var(--ln2);
+		--lgLn: var(--ln2);
+		--mut: color-mix(in oklch, var(--tx) 82%, var(--body));
+		--fnt: color-mix(in oklch, var(--tx) 62%, var(--body));
+		--lgBg: var(--solidBg);
+		--lgBf: none;
+		--cBg: var(--solidBg);
+		--cBf: none;
+	}
+}

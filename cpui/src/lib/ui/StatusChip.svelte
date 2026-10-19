@@ -2,15 +2,16 @@
 	// Run state chip (DESIGN 3.1). The workspace has its own badge: never merge
 	// the two axes into one chip.
 	import type { RunState } from '$lib/domain';
-	import { stateLabel } from '$lib/format';
-	import { lore, isLore } from '$lib/lore';
+	import { stateHue, stateLabel } from '$lib/format';
 
 	let {
 		state,
-		/** Show the lore suffix ("· brewing", "· batch spoiled") when in lore flavor. */
+		/** Show the lore suffix ("· brewing", "· batch spoiled"). */
 		suffix = false,
-		size = 'md'
-	}: { state: RunState; suffix?: boolean; size?: 'sm' | 'md' } = $props();
+		size = 'md',
+		/** Just the dot (8px) with the state in a tooltip, for dense rows. */
+		compact = false
+	}: { state: RunState; suffix?: boolean; size?: 'sm' | 'md'; compact?: boolean } = $props();
 
 	const tone = $derived(
 		(
@@ -32,29 +33,34 @@
 		state === 'running' || state === 'provisioning' || state === 'waiting_on_human'
 	);
 	const aside = $derived(
-		suffix && isLore()
-			? state === 'running'
-				? lore('brewing')
-				: state === 'failed'
-					? lore('spoiled')
-					: ''
-			: ''
+		!suffix ? '' : state === 'running' ? 'brewing' : state === 'failed' ? 'batch spoiled' : ''
 	);
 </script>
 
-<span class="sc {tone} {size}" title={state}>
-	{#if state === 'completed'}
-		<span class="g">✓</span>
-	{:else if state === 'failed'}
-		<span class="g">✕</span>
-	{:else if state === 'paused'}
-		<span class="g">❚❚</span>
-	{:else if state !== 'archived'}
-		<span class="d" class:pulse={live}></span>
-	{/if}
-	{stateLabel[state]}
-	{#if aside}<span class="aside">· {aside}</span>{/if}
-</span>
+{#if compact}
+	<span
+		class="ldot {state === 'archived' || state === 'pending' || state === 'paused' ? 'flat' : ''}"
+		class:pulse={live}
+		style:color={stateHue[state]}
+		title={stateLabel[state]}
+		role="img"
+		aria-label={stateLabel[state]}
+	></span>
+{:else}
+	<span class="sc {tone} {size}" title={state}>
+		{#if state === 'completed'}
+			<span class="g">✓</span>
+		{:else if state === 'failed'}
+			<span class="g">✕</span>
+		{:else if state === 'paused'}
+			<span class="g">❚❚</span>
+		{:else if state !== 'archived'}
+			<span class="d" class:pulse={live}></span>
+		{/if}
+		{stateLabel[state]}
+		{#if aside}<span class="aside">· {aside}</span>{/if}
+	</span>
+{/if}
 
 <style>
 	.sc {
@@ -62,15 +68,15 @@
 		align-items: center;
 		gap: 6px;
 		padding: 3px 11px 3px 9px;
-		border-radius: 999px;
-		font-size: 12px;
+		border-radius: var(--r-pill);
+		font-size: var(--fs-label);
 		font-weight: 600;
 		white-space: nowrap;
 		border: 1px solid transparent;
 		line-height: 1.35;
 	}
 	.sc.sm {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		padding: 1px 9px 1px 7px;
 	}
 	.d {
@@ -81,13 +87,13 @@
 		flex: none;
 	}
 	.g {
-		font-size: 10px;
+		font-size: var(--fs-id);
 	}
 	.aside {
 		font-family: var(--serif);
 		font-style: italic;
 		font-weight: 400;
-		font-size: 14px;
+		font-size: var(--fs-aside);
 		opacity: 0.85;
 	}
 	.pending {

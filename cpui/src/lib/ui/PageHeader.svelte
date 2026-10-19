@@ -100,7 +100,7 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 4px 14px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		color: var(--mut);
 	}
 	.acts {

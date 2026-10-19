@@ -8,9 +8,14 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import IntegrationForm from '$lib/IntegrationForm.svelte';
 	import IntegrationCard from '$lib/system/IntegrationCard.svelte';
+	import AddCard from '$lib/system/AddCard.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import SectionHeader from '$lib/ui/SectionHeader.svelte';
+	import { I } from '$lib/ui/icons';
+	import { materialize, ms, spring } from '$lib/ui/motion';
+	import { flip } from 'svelte/animate';
 
 	// Model auth is harness-owned (the harness's auth_json carries model
 	// credentials), so there is no "model provider" group.
@@ -54,6 +59,8 @@
 	const rowsFor = (port: Port) => integrations.filter((i) => i.port === port);
 	const descriptorOf = (i: Integration) =>
 		descriptors.find((d) => d.port === i.port && d.kind === i.kind);
+	// Cards make room on the spring when one arrives or leaves.
+	const move = () => ({ duration: ms('--dur-spring', 450), easing: spring });
 	const usedBy = (i: Integration) =>
 		fleet.projects
 			.filter(
@@ -66,11 +73,11 @@
 	<ErrorCard cause="Couldn’t load integrations" detail={error} onretry={refresh} />
 {:else if !loaded}
 	{#each GROUPS as g (g.port)}
-		<section class="grp">
-			<div class="gh"><h2>{g.title}</h2></div>
-			<div class="cards">
-				<div class="c sk"><Skeleton lines={3} /></div>
-				<div class="c sk"><Skeleton lines={3} /></div>
+		<section class="col">
+			<SectionHeader title={g.title} />
+			<div class="card-grid">
+				<Skeleton pane lines={3} />
+				<Skeleton pane lines={3} />
 			</div>
 		</section>
 	{/each}
@@ -85,132 +92,76 @@
 	{#each GROUPS as g (g.port)}
 		{@const rows = rowsFor(g.port)}
 		{@const kinds = kindsFor(g.port)}
-		<section class="grp">
-			<div class="gh">
-				<h2>{g.title}</h2>
-				<span class="count">{rows.length}</span>
-				<span class="sub">{g.sub}</span>
-				<span class="spacer"></span>
-				{#each kinds as d (d.kind)}
-					<button
-						class="btn-sm"
-						class:btn-sel={adding[g.port] === d.kind}
-						onclick={() =>
-							(adding = { ...adding, [g.port]: adding[g.port] === d.kind ? undefined : d.kind })}
-						>+ Add {d.label}</button
-					>
-				{/each}
-			</div>
+		<section class="col">
+			<SectionHeader title={g.title} count={rows.length} sub={g.sub}>
+				{#snippet actions()}
+					{#each kinds as d (d.kind)}
+						<button
+							class="btn-sm"
+							class:btn-sel={adding[g.port] === d.kind}
+							onclick={() =>
+								(adding = {
+									...adding,
+									[g.port]: adding[g.port] === d.kind ? undefined : d.kind
+								})}>{I.add} Add {d.label}</button
+						>
+					{/each}
+				{/snippet}
+			</SectionHeader>
 
 			{#if adding[g.port]}
 				{@const d = kinds.find((k) => k.kind === adding[g.port])}
 				{#if d}
-					<div class="c add">
-						<div class="ah">
-							<span class="serif at">New {d.label}</span>
-							<span class="pill t-mut">{g.title.toLowerCase()}</span>
-						</div>
-						<IntegrationForm
-							descriptor={d}
-							onsaved={() => {
-								adding = { ...adding, [g.port]: undefined };
-								void refresh();
-								void fleet.refresh();
-							}}
-							oncancel={() => (adding = { ...adding, [g.port]: undefined })}
-						/>
-					</div>
+					<AddCard title="New {d.label}" kind={g.title.toLowerCase()}>
+						{#key d.kind}
+							<IntegrationForm
+								descriptor={d}
+								onsaved={() => {
+									adding = { ...adding, [g.port]: undefined };
+									void refresh();
+									void fleet.refresh();
+								}}
+								oncancel={() => (adding = { ...adding, [g.port]: undefined })}
+							/>
+						{/key}
+					</AddCard>
 				{/if}
 			{/if}
 
 			{#if rows.length}
-				<div class="cards">
+				<div class="card-grid">
 					{#each rows as i (i.id)}
-						<IntegrationCard
-							integration={i}
-							descriptor={descriptorOf(i)}
-							usedBy={usedBy(i)}
-							onchanged={() => {
-								void refresh();
-								void fleet.refresh();
-							}}
-						/>
+						<div class="cell" animate:flip={move()} in:materialize={{ y: 8 }}>
+							<IntegrationCard
+								integration={i}
+								descriptor={descriptorOf(i)}
+								usedBy={usedBy(i)}
+								onchanged={() => {
+									void refresh();
+									void fleet.refresh();
+								}}
+							/>
+						</div>
 					{/each}
 				</div>
 			{:else if !adding[g.port]}
-				<div class="none">
-					<span class="serif">None configured</span>
-					<span class="mut"
-						>{g.port === 'ticketsource'
-							? 'Optional — tickets can always be written by hand.'
-							: `A workshop needs one ${g.title.toLowerCase()} to run.`}</span
-					>
-				</div>
+				<EmptyState
+					inline
+					title="None configured"
+					text={g.port === 'ticketsource'
+						? 'Optional — tickets can always be written by hand.'
+						: `A workshop needs one ${g.title.toLowerCase()} to run.`}
+				/>
 			{/if}
 		</section>
 	{/each}
 {/if}
 
 <style>
-	.grp {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
+	.card-grid {
+		--min: 380px;
 	}
-	.gh {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-wrap: wrap;
-		padding: 0 2px;
-	}
-	.gh h2 {
-		font-size: 20px;
-	}
-	.sub {
-		font-size: 12px;
-		color: var(--mut);
-	}
-	.cards {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-		gap: 10px;
-	}
-	.sk {
-		border-radius: 16px;
-		padding: 14px;
-	}
-	.add {
-		border-radius: 16px;
-		padding: 14px 16px;
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		border-color: var(--brandLn);
-	}
-	.ah {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-	.at {
-		font-size: 19px;
-	}
-	.none {
-		border: 1.5px dashed var(--ln2);
-		border-radius: 16px;
-		padding: 12px 14px;
-		display: flex;
-		align-items: baseline;
-		gap: 10px;
-		font-size: 12px;
-	}
-	.none .serif {
-		font-size: 16px;
-	}
-	@media (max-width: 720px) {
-		.cards {
-			grid-template-columns: minmax(0, 1fr);
-		}
+	.cell {
+		min-width: 0;
 	}
 </style>

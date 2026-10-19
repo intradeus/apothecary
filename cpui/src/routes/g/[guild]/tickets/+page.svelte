@@ -7,16 +7,17 @@
 	import { currentGuild, to } from '$lib/guild';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
-	import { lore, isLore } from '$lib/lore';
-	import { ago, fmtAbs, plural, stateTab } from '$lib/format';
-	import type { Run, Ticket } from '$lib/domain';
+	import { plural, stateTab } from '$lib/format';
+	import type { Ticket } from '$lib/domain';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
-	import StatusChip from '$lib/ui/StatusChip.svelte';
-	import Vial from '$lib/ui/Vial.svelte';
+	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import { I } from '$lib/ui/icons';
+	import TicketTable from '$lib/tickets/TicketTable.svelte';
+	import WorkshopFilter from '$lib/shell/WorkshopFilter.svelte';
 
 	let tickets = $state<Ticket[]>([]);
 	let loaded = $state(false);
@@ -47,18 +48,8 @@
 		});
 	}
 
-	// Runs per ticket, newest first.
-	const runsByTicket = $derived.by(() => {
-		const m = new Map<string, Run[]>();
-		for (const r of fleet.runs) {
-			if (!r.ticketId) continue;
-			m.set(r.ticketId, [...(m.get(r.ticketId) ?? []), r]);
-		}
-		for (const arr of m.values()) arr.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-		return m;
-	});
 	const hasActive = (t: Ticket) =>
-		(runsByTicket.get(t.id) ?? []).some((r) => stateTab[r.state] === 'active');
+		(fleet.runsByTicket.get(t.id) ?? []).some((r) => stateTab[r.state] === 'active');
 
 	const kinds = $derived([
 		...new Set(tickets.map((t) => t.source?.kind).filter(Boolean))
@@ -79,7 +70,6 @@
 			)
 			.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 	});
-	const projectName = (id: string) => fleet.projectById.get(id)?.name ?? id.slice(-6);
 </script>
 
 <svelte:head><title>Tickets</title></svelte:head>
@@ -88,12 +78,12 @@
 	crumbs={[
 		{ label: currentGuild().name, href: to.desk() },
 		...(projectFilter
-			? [{ label: projectName(projectFilter), href: to.workshop(projectFilter) }]
+			? [{ label: fleet.projectName(projectFilter), href: to.workshop(projectFilter) }]
 			: []),
 		{ label: 'Tickets' }
 	]}
 	title="Tickets"
-	accent={isLore() ? 'for the bench' : undefined}
+	accent="for the bench"
 >
 	{#snippet meta()}
 		<span>{plural(tickets.length, 'ticket')}</span>
@@ -102,23 +92,16 @@
 	{#snippet actions()}
 		<a
 			class="btn btn-primary btn-lg"
-			href={to.newTicket(projectFilter ? { project: projectFilter } : undefined)}>+ New ticket</a
+			href={to.newTicket(projectFilter ? { project: projectFilter } : undefined)}
+			>{I.add} New ticket</a
 		>
 	{/snippet}
 </PageHeader>
 
 <div class="page body">
 	<div class="filters">
-		<input class="search" type="search" bind:value={q} placeholder="⌕ Search title, key, goal…" />
-		<select
-			class="sel"
-			aria-label="Filter by {lore('workshop').toLowerCase()}"
-			value={projectFilter}
-			onchange={(e) => setProject((e.target as HTMLSelectElement).value)}
-		>
-			<option value="">All {lore('workshops').toLowerCase()}</option>
-			{#each fleet.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-		</select>
+		<SearchInput bind:value={q} placeholder="Search title, key, goal…" />
+		<WorkshopFilter value={projectFilter} onchange={setProject} />
 		<select class="sel" aria-label="Filter by source" bind:value={source}>
 			<option value="">Any source</option>
 			<option value="manual">Written here</option>
@@ -130,13 +113,13 @@
 	{#if error && !tickets.length}
 		<ErrorCard cause="Could not load tickets" detail={error} onretry={load} />
 	{:else if !loaded}
-		<div class="c pane sk"><Skeleton lines={6} /></div>
+		<Skeleton pane lines={6} />
 	{:else if tickets.length === 0}
 		<EmptyState
 			title="No tickets yet"
 			text="A ticket is a unit of work. Write one, then start runs against it."
 		>
-			<a class="btn btn-primary" href={to.newTicket()}>+ New ticket</a>
+			<a class="btn btn-primary" href={to.newTicket()}>{I.add} New ticket</a>
 		</EmptyState>
 	{:else if shown.length === 0}
 		<EmptyState compact title="No tickets match" text="Loosen the search or the filters.">
@@ -151,39 +134,12 @@
 		</EmptyState>
 	{:else}
 		<div class="c pane">
-			<div class="rows tk">
-				<div class="r head">
-					<span>Title</span><span class="wide">Source</span><span class="wide"
-						>{lore('workshop')}</span
-					><span class="wide">Base branch</span><span>Status</span><span class="right">Created</span
-					>
-				</div>
-				{#each shown as t (t.id)}
-					{@const runs = runsByTicket.get(t.id) ?? []}
-					<div class="r">
-						<a class="title ell stretch" href={to.ticket(t.id)}>{t.title}</a>
-						<span class="wide">
-							{#if t.source?.key}<span class="tag" title="Imported from {t.source.kind}"
-									>{t.source.key}</span
-								>{:else}<span class="fnt">—</span>{/if}
-						</span>
-						<span class="ws wide"
-							><Vial projectId={t.projectId} /><span class="ell">{projectName(t.projectId)}</span
-							></span
-						>
-						<span class="mono mut ell wide" title={t.baseBranch}>{t.baseBranch}</span>
-						<span class="st">
-							{#if runs.length}
-								<StatusChip state={runs[0].state} size="sm" />
-								{#if runs.length > 1}<span class="fnt mono n">×{runs.length}</span>{/if}
-							{:else}
-								<span class="fnt">no runs</span>
-							{/if}
-						</span>
-						<span class="mono mut right" title={fmtAbs(t.createdAt)}>{ago(t.createdAt)}</span>
-					</div>
-				{/each}
-			</div>
+			<TicketTable
+				tickets={shown}
+				cols={projectFilter
+					? ['title', 'source', 'branch', 'status', 'created']
+					: ['title', 'source', 'workshop', 'branch', 'status', 'created']}
+			/>
 		</div>
 	{/if}
 </div>
@@ -199,72 +155,13 @@
 		flex-wrap: wrap;
 		flex: none;
 	}
-	.search {
-		width: 280px !important;
-	}
 	.sel {
 		width: auto;
 		min-width: 150px;
 	}
-	.filters :global(label) {
-		margin: 0;
-	}
-	.pane {
-		border-radius: 16px;
-		overflow: hidden;
-		flex: none;
-	}
-	.sk {
-		padding: 16px;
-	}
-	.tk > .r {
-		grid-template-columns: minmax(0, 2fr) 110px minmax(0, 1fr) minmax(0, 1.2fr) 170px 74px;
-		position: relative;
-		font-size: 12.5px;
-	}
-	.title {
-		font-weight: 500;
-		color: var(--tx);
-	}
-	.title:hover {
-		text-decoration: none;
-	}
-	.stretch::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-	}
-	.ws {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		min-width: 0;
-		font-size: 12px;
-	}
-	.st {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.n {
-		font-size: 10.5px;
-	}
-	.right {
-		text-align: right;
-		font-size: 11px;
-	}
 	@media (max-width: 760px) {
-		.tk > .r {
-			grid-template-columns: minmax(0, 1fr) auto 60px;
-			padding-left: 14px;
-			padding-right: 14px;
-		}
-		.wide {
-			display: none !important;
-		}
-		.search,
 		.sel {
-			width: 100% !important;
+			width: 100%;
 		}
 	}
 </style>

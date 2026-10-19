@@ -21,7 +21,7 @@
 		box-shadow: 0 0 8px color-mix(in oklch, var(--h) 35%, transparent);
 	}
 	.vial.idle {
-		border-color: rgba(255, 255, 255, 0.2);
+		border-color: var(--vialIdleLn);
 		background: transparent;
 		box-shadow: none;
 	}

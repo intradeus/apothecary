@@ -6,7 +6,8 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node scripts/check-themes.mjs",
+		"check:themes": "node scripts/check-themes.mjs",
 		"format": "prettier --write ."
 	},
 	"devDependencies": {

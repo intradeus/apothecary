@@ -1,14 +1,21 @@
 <script lang="ts">
-	// ⌘K: jump to a run, ticket, workshop or page, or do something.
+	// ⌘K: jump to a run, ticket, workshop or page, or do something. It
+	// materialises from the top centre over a fading scrim and leaves the same
+	// way; the keyboard-selected row carries a sliding bead. The filter runs on
+	// every keystroke (no debounce): typing never waits for the list.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
-	import { lore } from '$lib/lore';
+	import { THEMES } from '$lib/themes';
 	import { to } from '$lib/guild';
 	import { shortId, stateLabel, stateTab } from '$lib/format';
 	import type { Ticket } from '$lib/domain';
+	import { NAV } from '$lib/nav';
 	import { trap } from '$lib/ui/trap';
+	import { I } from '$lib/ui/icons';
+	import { indicator, materialize, scrim } from '$lib/ui/motion';
+	import Vial from '$lib/ui/Vial.svelte';
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
@@ -17,6 +24,8 @@
 		label: string;
 		sub?: string;
 		glyph: string;
+		/** A workshop row shows its vial instead of a glyph. */
+		vial?: string;
 		run: () => void;
 	}
 
@@ -46,53 +55,54 @@
 
 	const items = $derived.by<Item[]>(() => {
 		const out: Item[] = [
-			{ group: 'Go to', label: 'Desk', glyph: '◈', run: go(to.desk()) },
+			...NAV.filter((n) => n.id !== 'system').map((n) => ({
+				group: 'Go to',
+				label: n.label,
+				glyph: n.icon,
+				sub:
+					n.id === 'inbox'
+						? `${fleet.pending.length} pending`
+						: n.chord
+							? `G ${n.chord.toUpperCase()}`
+							: undefined,
+				run: go(n.href())
+			})),
 			{
 				group: 'Go to',
-				label: 'Inbox',
-				glyph: '✉',
-				sub: `${fleet.pending.length} pending`,
-				run: go(to.inbox())
+				label: 'Integrations',
+				glyph: I.integrations,
+				run: go(to.system('integrations'))
 			},
-			{ group: 'Go to', label: 'Runs', glyph: '▶', run: go(to.runs()) },
-			{ group: 'Go to', label: 'Tickets', glyph: '☰', run: go(to.tickets()) },
-			{ group: 'Go to', label: 'Integrations', glyph: '⚙', run: go(to.system('integrations')) },
-			{ group: 'Go to', label: 'Channels', glyph: '⚙', run: go(to.system('channels')) },
-			{ group: 'Go to', label: 'Limits', glyph: '⚙', run: go(to.system('limits')) },
-			{ group: 'Do', label: 'New ticket', glyph: '+', run: go(to.newTicket()) },
+			{ group: 'Go to', label: 'Channels', glyph: I.channels, run: go(to.system('channels')) },
+			{ group: 'Go to', label: 'Limits', glyph: I.limits, run: go(to.system('limits')) },
+			{ group: 'Do', label: 'New ticket', glyph: I.add, run: go(to.newTicket()) },
 			{
 				group: 'Do',
-				label: `New ${lore('workshop').toLowerCase()}`,
-				glyph: '+',
+				label: `New workshop`,
+				glyph: I.add,
 				run: go(to.newWorkshop())
 			},
-			{
+			...THEMES.filter((t) => t.id !== prefs.theme).map((t) => ({
 				group: 'Do',
-				label: `Switch to ${prefs.theme === 'dark' ? 'light' : 'dark'} theme`,
-				glyph: prefs.theme === 'dark' ? '☀' : '☾',
-				run: act(() => prefs.toggleTheme())
-			},
-			{
-				group: 'Do',
-				label: prefs.flavor === 'lore' ? 'Use plain labels' : 'Use lore labels',
-				sub: prefs.flavor === 'lore' ? 'Organisation, Project, Run' : 'Guild, Workshop, Batch',
-				glyph: '℞',
-				run: act(() => prefs.setFlavor(prefs.flavor === 'lore' ? 'plain' : 'lore'))
-			},
+				label: `Use the ${t.label.toLowerCase()} theme`,
+				glyph: t.icon,
+				run: act(() => prefs.setTheme(t.id))
+			})),
 			{
 				group: 'Do',
 				label: prefs.collapsed ? 'Expand sidebar' : 'Collapse sidebar',
 				sub: '⌘\\',
-				glyph: prefs.collapsed ? '»' : '«',
+				glyph: prefs.collapsed ? I.expand : I.collapse,
 				run: act(() => prefs.toggleCollapsed())
 			}
 		];
 		for (const p of fleet.projects)
 			out.push({
-				group: lore('workshops'),
+				group: 'Workshops',
 				label: p.name,
 				sub: p.repo.url,
-				glyph: '⚗',
+				glyph: '',
+				vial: p.id,
 				run: go(to.workshop(p.id))
 			});
 		const runs = [...fleet.runs]
@@ -110,15 +120,15 @@
 				group: 'Runs',
 				label: r.title,
 				sub: `${shortId(r.id)} · ${stateLabel[r.state]}`,
-				glyph: '▶',
+				glyph: I.runs,
 				run: go(to.run(r.id))
 			});
 		for (const t of tickets.slice(0, 80))
 			out.push({
 				group: 'Tickets',
 				label: t.title,
-				sub: t.source?.key ?? fleet.projectById.get(t.projectId)?.name,
-				glyph: '☰',
+				sub: t.source?.key ?? fleet.projectName(t.projectId),
+				glyph: I.tickets,
 				run: go(to.ticket(t.id))
 			});
 		return out;
@@ -139,9 +149,14 @@
 			.slice(0, 40);
 	});
 
+	// A new query starts at the top; a poll that reshapes the list (runs,
+	// pings) keeps the keyboard where it was, clamped to what is left.
 	$effect(() => {
-		void shown;
+		void query;
 		sel = 0;
+	});
+	$effect(() => {
+		if (sel > shown.length - 1) sel = Math.max(0, shown.length - 1);
 	});
 
 	function key(e: KeyboardEvent) {
@@ -161,27 +176,35 @@
 </script>
 
 {#if open}
-	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-	<div class="scrim" onmousedown={(e) => e.target === e.currentTarget && (open = false)}>
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="scrim cp-scrim"
+		transition:scrim
+		onpointerdown={(e) => e.target === e.currentTarget && (open = false)}
+	></div>
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="cp-wrap" onpointerdown={(e) => e.target === e.currentTarget && (open = false)}>
 		<div
 			class="cp lg-pop"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Command palette"
+			transition:materialize={{ origin: 'top center', y: -10 }}
 			use:trap={{ onescape: () => (open = false), initial: () => input }}
 		>
 			<div class="qrow">
-				<span class="glass">⌕</span>
+				<span class="glass" aria-hidden="true">{I.search}</span>
 				<input
+					class="bare q"
 					bind:this={input}
 					bind:value={query}
 					onkeydown={key}
-					placeholder="Search runs, tickets, {lore('workshops').toLowerCase()}, actions…"
+					placeholder="Search runs, tickets, workshops, actions…"
 					aria-label="Search"
 				/>
-				<span class="kc mono">esc</span>
+				<span class="kbd">esc</span>
 			</div>
-			<div class="list" role="listbox">
+			<div class="list" role="listbox" use:indicator>
 				{#each shown as it, i (it.group + it.label + i)}
 					{#if i === 0 || shown[i - 1].group !== it.group}
 						<div class="gh">{it.group}</div>
@@ -195,12 +218,14 @@
 						onmouseenter={() => (sel = i)}
 						onclick={it.run}
 					>
-						<span class="g">{it.glyph}{'︎'}</span>
+						<span class="g"
+							>{#if it.vial}<Vial projectId={it.vial} />{:else}{it.glyph}{/if}</span
+						>
 						<span class="ell grow">{it.label}</span>
 						{#if it.sub}<span class="sub ell">{it.sub}</span>{/if}
 					</button>
 				{:else}
-					<div class="none">Nothing matches “{query}”.</div>
+					<div class="empty-line none">Nothing matches “{query}”.</div>
 				{/each}
 			</div>
 		</div>
@@ -208,12 +233,13 @@
 {/if}
 
 <style>
-	.scrim {
+	.cp-scrim {
+		z-index: var(--z-palette);
+	}
+	.cp-wrap {
 		position: fixed;
 		inset: 0;
-		z-index: 60;
-		background: var(--scrim);
-		backdrop-filter: blur(4px);
+		z-index: var(--z-palette);
 		display: flex;
 		justify-content: center;
 		align-items: flex-start;
@@ -221,7 +247,7 @@
 	}
 	.cp {
 		width: min(620px, 100%);
-		border-radius: 20px;
+		border-radius: var(--r-float);
 		display: flex;
 		flex-direction: column;
 		max-height: 64vh;
@@ -236,21 +262,15 @@
 	}
 	.glass {
 		color: var(--mut);
-		font-size: 16px;
+		font-size: var(--fs-title);
 	}
-	.qrow input {
-		border: 0 !important;
-		background: transparent !important;
-		box-shadow: none !important;
-		font-size: 14px !important;
-		padding: 4px 0 !important;
+	.q {
+		font-size: var(--fs-aside);
+		padding: 4px 0;
 	}
-	.kc {
-		font-size: 10px;
-		color: var(--fnt);
-		padding: 1px 5px;
-		border-radius: 5px;
-		background: var(--p2);
+	/* The palette's one field is plainly focused; no ring around it. */
+	.q:focus-visible {
+		outline: none;
 	}
 	.list {
 		overflow: auto;
@@ -259,43 +279,28 @@
 		flex-direction: column;
 		gap: 1px;
 	}
+	.list > :global(.ind) {
+		border-radius: var(--r-row);
+	}
 	.gh {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--fnt);
 		padding: 8px 10px 4px;
 	}
 	.mi {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 7px 10px;
-		border-radius: 10px;
-		font-size: 13px;
-		min-width: 0;
-	}
-	.mi.on {
-		background: var(--sel);
-		box-shadow:
-			inset 0 0 0 1px var(--selLn),
-			var(--selSh);
-	}
-	.g {
-		width: 16px;
-		text-align: center;
-		color: var(--mut);
+		font-size: var(--fs-body);
 		flex: none;
 	}
+	/* The bead marks the selection; hover only moves it (onmouseenter). */
+	.mi:hover {
+		background: transparent;
+	}
 	.sub {
-		color: var(--mut);
-		font-size: 11.5px;
 		max-width: 40%;
 	}
 	.none {
-		padding: 18px;
-		color: var(--mut);
+		align-self: center;
 		text-align: center;
+		padding: 18px;
 	}
 </style>

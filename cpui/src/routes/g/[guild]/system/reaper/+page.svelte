@@ -1,9 +1,9 @@
 <script lang="ts">
 	// Reaper (DESIGN 7.10): when finished runs give their workspaces back.
 	import SettingsFrame from '$lib/system/SettingsFrame.svelte';
-	import SettingRow from '$lib/system/SettingRow.svelte';
-	import DurationInput from '$lib/system/DurationInput.svelte';
-	import { durWords } from '$lib/system/duration';
+	import SettingRow from '$lib/ui/SettingRow.svelte';
+	import DurationInput from '$lib/ui/DurationInput.svelte';
+	import { durWords } from '$lib/ui/duration';
 </script>
 
 <SettingsFrame>

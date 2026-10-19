@@ -21,6 +21,8 @@
 	// refused INLINE with the reason, instead of after a failed round trip.
 	import { fmtBytes } from '$lib/format';
 	import type { UploadLimits } from '$lib/domain';
+	import FileChip from '$lib/ui/FileChip.svelte';
+	import { I } from '$lib/ui/icons';
 
 	let {
 		files = $bindable([]),
@@ -114,33 +116,25 @@
 		ondragleave={() => (over = false)}
 		ondrop={onDrop}
 	>
-		<span class="clip">⎘</span>
+		<span class="clip">{I.attach}</span>
 		<span>{label}</span>
 		{#if limits && !compact}
-			<span class="lim">· max {fmtBytes(limits.maxBytes)}{kinds ? ` · ${kinds}` : ''}</span>
+			<span class="fnt">· max {fmtBytes(limits.maxBytes)}{kinds ? ` · ${kinds}` : ''}</span>
 		{/if}
 	</button>
 	<input bind:this={inputEl} type="file" multiple hidden onchange={onPick} />
 	{#if files.length || refused.length}
 		<div class="chips">
 			{#each files as f, i (i)}
-				<span class="fc">
-					{#if f.type.startsWith('image/')}<img src={preview(f)} alt="" />{:else}<span class="ico"
-							>▤</span
-						>{/if}
-					<span class="name" title={f.name}>{f.name}</span>
-					<span class="size mono">{fmtBytes(f.size)}</span>
-					<button type="button" class="x" onclick={() => remove(i)} aria-label="Remove {f.name}"
-						>×</button
-					>
-				</span>
+				<FileChip
+					name={f.name}
+					size={f.size}
+					thumb={f.type.startsWith('image/') ? preview(f) : undefined}
+					onremove={() => remove(i)}
+				/>
 			{/each}
 			{#each refused as r (r.name)}
-				<span class="fc bad" title={r.why}>
-					<span class="ico">!</span>
-					<span class="name">{r.name}</span>
-					<span class="size mono">{r.why}</span>
-				</span>
+				<FileChip name={r.name} state="refused" reason={r.why} />
 			{/each}
 		</div>
 	{/if}
@@ -153,21 +147,18 @@
 		gap: 8px;
 		min-width: 0;
 	}
+	/* The drop zone (DESIGN 4.15): dashed, lights up under a dragged file. */
 	.drop {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
+		width: 100%;
 		justify-content: center;
-		gap: 6px;
-		padding: 12px;
-		border: 1px dashed var(--ln2);
-		border-radius: 12px;
-		color: var(--mut);
-		font-size: 12px;
-		text-align: center;
 		flex-wrap: wrap;
+		white-space: normal;
+		padding: 12px;
+		background: transparent;
+		box-shadow: none;
+		border: 1px dashed var(--ln2);
+		color: var(--mut);
+		text-align: center;
 	}
 	.drop.compact {
 		justify-content: flex-start;
@@ -179,85 +170,10 @@
 		background: var(--brandBg);
 		color: var(--tx);
 	}
-	.drop:focus-visible {
-		outline: 2px solid var(--brand);
-		outline-offset: 2px;
-	}
 	.clip {
-		font-size: 13px;
-	}
-	.lim {
-		color: var(--fnt);
+		font-size: var(--fs-body);
 	}
 	.chips {
-		display: flex;
-		flex-wrap: wrap;
 		gap: 6px;
-	}
-	.fc {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		padding: 3px 4px 3px 3px;
-		border-radius: 10px;
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		font-size: 12px;
-		max-width: 280px;
-	}
-	.fc.bad {
-		background: var(--rosBg);
-		border-color: var(--rosLn);
-		color: var(--ros);
-		padding-right: 10px;
-	}
-	.fc img,
-	.ico {
-		flex: none;
-		width: 28px;
-		height: 28px;
-		border-radius: 7px;
-		object-fit: cover;
-	}
-	.ico {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--code);
-		color: var(--mut);
-		font-size: 13px;
-	}
-	.bad .ico {
-		color: var(--ros);
-		font-weight: 700;
-	}
-	.name {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		min-width: 0;
-	}
-	.size {
-		color: var(--mut);
-		font-size: 10.5px;
-		white-space: nowrap;
-	}
-	.bad .size {
-		color: var(--ros);
-	}
-	.x {
-		all: unset;
-		cursor: pointer;
-		width: 18px;
-		height: 18px;
-		border-radius: 6px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--mut);
-	}
-	.x:hover {
-		background: var(--p3);
-		color: var(--tx);
 	}
 </style>

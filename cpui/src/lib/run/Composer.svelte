@@ -1,29 +1,43 @@
 <script lang="ts">
 	// The composer (DESIGN 4.12): ↵ queues a message for the end of the
 	// agent's turn, ⌘↵ sends it now (interrupting the turn), ⇧↵ is a newline.
+	// Sending is optimistic: the box clears and the bubble shows at once; if
+	// the engine refuses, the text comes back with the reason.
 	import { api } from '$lib/api';
-	import { lore } from '$lib/lore';
 
-	let { runId, onsent }: { runId: string; onsent: () => void } = $props();
+	let {
+		runId,
+		onsent,
+		onfailed
+	}: {
+		runId: string;
+		/** Fired as the message leaves (before the engine confirms). */
+		onsent: (text: string, interrupt: boolean) => void;
+		/** The engine refused it: the bubble should go. */
+		onfailed?: (text: string) => void;
+	} = $props();
 
 	let draft = $state('');
-	let sending = $state(false);
+	let sending = $state<'' | 'queue' | 'now'>('');
 	let error = $state('');
 	let ta = $state<HTMLTextAreaElement | null>(null);
 
 	async function send(interrupt: boolean) {
 		const text = draft.trim();
 		if (!text || sending) return;
-		sending = true;
+		sending = interrupt ? 'now' : 'queue';
 		error = '';
+		draft = '';
+		onsent(text, interrupt);
 		try {
 			await api.runs.sendMessage(runId, text, interrupt);
-			draft = '';
-			onsent();
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+			onfailed?.(text);
+			// Give the words back unless something new was typed meanwhile.
+			if (!draft.trim()) draft = text;
 		} finally {
-			sending = false;
+			sending = '';
 		}
 	}
 
@@ -48,9 +62,8 @@
 		bind:this={ta}
 		bind:value={draft}
 		rows="1"
-		placeholder={lore('composer')}
+		placeholder="Whisper to the builder…"
 		onkeydown={onKey}
-		disabled={sending}
 		aria-label="Message the agent"></textarea>
 	<div class="foot">
 		<span class="keys">
@@ -59,17 +72,19 @@
 			<span class="nl"><span class="k">⇧↵</span> newline</span>
 		</span>
 		{#if error}<span class="err" title={error}>{error}</span>{/if}
-		<span class="sp"></span>
+		<span class="spacer"></span>
 		<button
 			class="now"
 			onclick={() => send(true)}
-			disabled={sending || !draft.trim()}
+			aria-busy={sending === 'now'}
+			disabled={!!sending || !draft.trim()}
 			title="Cancel the agent's turn now and have it read this">Send now</button
 		>
 		<button
 			class="btn-primary"
 			onclick={() => send(false)}
-			disabled={sending || !draft.trim()}
+			aria-busy={sending === 'queue'}
+			disabled={!!sending || !draft.trim()}
 			title="Delivered when the agent finishes its current turn">Send</button
 		>
 	</div>
@@ -79,7 +94,7 @@
 	.comp {
 		flex: none;
 		margin: 0 12px 12px;
-		border-radius: 20px;
+		border-radius: var(--r-float);
 		display: flex;
 		flex-direction: column;
 	}
@@ -89,7 +104,7 @@
 		width: 100%;
 		min-height: 44px;
 		padding: 11px 14px;
-		font-size: 13px;
+		font-size: var(--fs-body);
 		line-height: 1.5;
 		color: var(--tx);
 		white-space: pre-wrap;
@@ -112,7 +127,7 @@
 		align-items: center;
 		gap: 14px;
 		padding: 6px 6px 6px 14px;
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--fnt);
 		min-width: 0;
 	}
@@ -134,9 +149,6 @@
 		text-overflow: ellipsis;
 		min-width: 0;
 	}
-	.sp {
-		flex: 1;
-	}
 	.now {
 		padding: 5px 12px;
 		background: var(--p3);
@@ -146,6 +158,8 @@
 	.btn-primary {
 		padding: 5px 14px;
 	}
+	/* Drop key hints as the Session window narrows (a container query on
+	 * the window, so its own threshold). */
 	@container (max-width: 520px) {
 		.keys .nl,
 		.keys > span:nth-child(2) {

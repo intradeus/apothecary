@@ -20,6 +20,7 @@ import type {
 import { fleet } from '$lib/fleet.svelte';
 import { normalizeDoc, successOrder } from '$lib/flowdoc';
 import { isTerminal } from '$lib/format';
+import { toast } from '$lib/ui/toast.svelte';
 import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/transcript';
 import { currentStage, envLinks, pingsOf, totals, workingSince, type StageDef } from './derive';
 
@@ -256,6 +257,7 @@ export class RunStore {
 		this.error = '';
 		try {
 			await api.pings.answer(pingId, ans, note?.trim() || undefined, attachmentIds);
+			toast('Answer sent — the run picks it up from here');
 			void fleet.refresh();
 		} catch (e) {
 			this.error = errText(e);

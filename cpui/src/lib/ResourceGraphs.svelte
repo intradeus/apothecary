@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { ResourceSample } from '$lib/domain';
+	import { counterRates, fmtBytes, fmtPct, fmtRate, fmtTime } from '$lib/format';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 
 	// Sparkline charts of the run's workspace resource usage (CPU / memory /
 	// network) from the engine's ~10s sample window. Hand-rolled SVG: the
@@ -27,16 +29,9 @@
 		series: Series[];
 	};
 
-	// Per-second rates from a cumulative counter; a negative delta is a counter
-	// reset (container restart) and reads 0, a non-monotonic timestamp is a gap.
-	function rates(cum: number[]): (number | null)[] {
-		return cum.map((v, i) => {
-			if (i === 0) return null;
-			const dt = (times[i] - times[i - 1]) / 1000;
-			if (dt <= 0) return null;
-			return Math.max(0, (v - cum[i - 1]) / dt);
-		});
-	}
+	// Per-second rates from a cumulative counter (gaps and resets handled
+	// in $lib/format).
+	const rates = (cum: number[]) => counterRates(cum, times);
 
 	// Round a raw maximum up to a clean 1/2/5×10^k so the scale label reads well.
 	function nice(v: number): number {
@@ -46,8 +41,8 @@
 		return 10 * p;
 	}
 
-	// Same, but snapped within 1024-based units so fmtBytes prints a clean
-	// label (plain nice(1e6) would read "977KB").
+	// Same, but snapped within 1024-based units so the byte formatter prints
+	// a clean label (plain nice(1e6) would read "977 KB").
 	function niceBytes(v: number): number {
 		if (v <= 1) return 1;
 		let unit = Math.pow(1024, Math.floor(Math.log(v) / Math.log(1024)));
@@ -59,17 +54,7 @@
 		return m * unit;
 	}
 
-	function fmtBytes(n: number): string {
-		const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-		let i = 0;
-		while (n >= 1024 && i < u.length - 1) {
-			n /= 1024;
-			i++;
-		}
-		return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)}${u[i]}`;
-	}
-	const fmtPct = (v: number) => `${v >= 10 ? Math.round(v) : v.toFixed(1)}%`;
-	const fmtRate = (v: number) => `${fmtBytes(v)}/s`;
+	const bytes = (v: number) => fmtBytes(Math.round(v)) || '0 B';
 
 	const charts: Chart[] = $derived.by(() => {
 		const cpu = samples.map((s) => s.cpuPerc);
@@ -94,7 +79,7 @@
 			{
 				title: 'Memory',
 				yMax: memLimit || niceBytes(Math.max(...mem, 1)),
-				fmt: fmtBytes,
+				fmt: bytes,
 				pctOf: memLimit || undefined,
 				series: [{ label: 'used', color: 'var(--vio)', vals: mem }]
 			},
@@ -174,20 +159,20 @@
 			>{samples.at(-1)?.pids ? `${samples.at(-1)!.pids} processes · ` : ''}sampled every ~10s</span
 		>
 		<span
-			>{hoverIdx != null && times[hoverIdx]
-				? `at ${new Date(times[hoverIdx]).toLocaleTimeString(undefined, { hour12: false })}`
-				: windowLabel}</span
+			>{hoverIdx != null && times[hoverIdx] ? `at ${fmtTime(times[hoverIdx])}` : windowLabel}</span
 		>
 	</div>
 	{#if samples.length < 2}
-		<div class="collect">
-			<span class="d pulse"></span>Collecting samples… one every ~10s while the workspace is up.
-		</div>
+		<EmptyState
+			compact
+			title="Collecting samples…"
+			text="One every ~10s while the workspace is up."
+		/>
 	{:else}
 		{#each charts as c, ci (c.title)}
 			<div class="chart">
 				<div class="head">
-					<span class="name">{c.title}</span>
+					<span class="name serif">{c.title}</span>
 					<span class="vals">
 						{#each c.series as s (s.label)}
 							{@const v = readout(s)}
@@ -267,29 +252,12 @@
 		display: flex;
 		justify-content: space-between;
 		gap: 10px;
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		color: var(--fnt);
 		padding: 0 4px;
 	}
-	.collect {
-		display: flex;
-		gap: 8px;
-		align-items: center;
-		color: var(--mut);
-		font-size: 12px;
-		padding: 18px 12px;
-		border-radius: 14px;
-		border: 1px dashed var(--ln2);
-	}
-	.d {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
-		flex: none;
-	}
 	.chart {
-		border-radius: 14px;
+		border-radius: var(--r-card);
 		background: var(--p2);
 		display: flex;
 		flex-direction: column;
@@ -305,20 +273,19 @@
 		white-space: nowrap;
 	}
 	.name {
-		font-family: var(--serif);
-		font-size: 17px;
+		font-size: var(--fs-title);
 	}
 	.vals {
 		display: flex;
 		gap: 10px;
 		font-family: var(--mono);
-		font-size: 11.5px;
+		font-size: var(--fs-help);
 		font-variant-numeric: tabular-nums;
 		overflow: hidden;
 	}
 	.vals .fnt {
 		font-family: var(--sans);
-		font-size: 11px;
+		font-size: var(--fs-meta);
 	}
 	.key {
 		display: inline-block;
@@ -342,7 +309,7 @@
 		position: absolute;
 		top: 2px;
 		left: 12px;
-		font-size: 10px;
+		font-size: var(--fs-id);
 		line-height: 1;
 		color: var(--fnt);
 		pointer-events: none;
@@ -354,8 +321,7 @@
 		stroke-dasharray: 2 4;
 	}
 	.crosshair {
-		stroke: var(--tx);
+		stroke: var(--mut);
 		stroke-width: 1;
-		opacity: 0.5;
 	}
 </style>

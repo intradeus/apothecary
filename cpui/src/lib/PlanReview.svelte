@@ -1,10 +1,14 @@
 <script lang="ts">
+	import { flip } from 'svelte/animate';
 	import { api } from '$lib/api';
 	import type { Ping, PingFile } from '$lib/domain';
 	import AttachFiles from '$lib/AttachFiles.svelte';
+	import DocHead from '$lib/inbox/DocHead.svelte';
+	import AgentFiles from '$lib/inbox/AgentFiles.svelte';
 	import {
 		byPosition,
 		clearDraft,
+		commentId,
 		composeFeedback,
 		loadDraft,
 		planBlocks,
@@ -15,11 +19,13 @@
 		type PlanBlock,
 		type ReviewComment
 	} from '$lib/planreview';
-	import { fmtClock, fmtAbs } from '$lib/format';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import { mdToHtml } from '$lib/planreview';
+	import Markdown from '$lib/ui/Markdown.svelte';
+	import Popover from '$lib/ui/Popover.svelte';
+	import { I } from '$lib/ui/icons';
+	import { bump, materialize, ms, spring } from '$lib/ui/motion';
 	import { onMount } from 'svelte';
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
@@ -54,10 +60,23 @@
 		y: number;
 	}
 	let composer = $state<Composer | null>(null);
+	// What the popover shows: the open composer, and the last one while the
+	// popover materialises away (so it never empties mid-exit). The same
+	// object while open, so typing here is typing into the composer.
+	let shownComposer = $state<Composer | null>(null);
+	$effect(() => {
+		if (composer) shownComposer = composer;
+	});
 	let composerEl = $state<HTMLTextAreaElement | null>(null);
 	let hovered = $state<number | null>(null);
 	let planEl = $state<HTMLDivElement | null>(null);
+	// Rendered blocks by index, for anchoring and highlighting. Deliberately
+	// not reactive: they are read on demand (selection, scroll, paint).
 	const blockEls: HTMLElement[] = [];
+	const block = (node: HTMLElement, i: number) => {
+		blockEls[i] = node;
+		return { update: (j: number) => void (blockEls[j] = node) };
+	};
 
 	onMount(async () => {
 		comments = loadDraft(ping.id);
@@ -236,6 +255,7 @@
 	function commitComment() {
 		if (!composer || !composer.text.trim()) return;
 		const c: ReviewComment = {
+			id: (composer.editing !== null ? comments[composer.editing]?.id : undefined) ?? commentId(),
 			quote: composer.quote,
 			heading: composer.heading,
 			startLine: composer.startLine,
@@ -297,15 +317,17 @@
 		blockEls[blockOf(c)]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}
 
+	// Esc is the popover's own (it closes through onclose).
 	function onComposerKey(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			closeComposer();
-		} else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			commitComment();
 		}
 	}
+
+	// Comments rise into the list and leave the same way; the rest close the
+	// gap on the spring.
+	const move = { duration: ms('--dur-spring', 450), easing: spring };
 
 	const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
 
@@ -317,7 +339,10 @@
 			files.map((f) => f.name)
 		);
 
+	/** Which action is in flight, so only its button shows busy. */
+	let sending = $state('');
 	async function submit(answer: string, text?: string) {
+		sending = answer;
 		busy = true;
 		error = '';
 		try {
@@ -394,66 +419,36 @@
 
 <div class="wb">
 	<!-- Outline -->
-	<nav class="outline c" aria-label="Document outline">
-		<div class="ph">Outline</div>
+	<nav class="outline c pane" aria-label="Document outline">
+		<div class="pane-head"><h2>Outline</h2></div>
 		{#if loading}
-			<div class="pad"><Skeleton lines={5} height={10} /></div>
+			<div class="pane-body"><Skeleton lines={5} height={10} /></div>
 		{:else if outline.length}
 			<div class="ol">
 				{#each outline as o (o.i)}
 					{@const n = commentsUnder(o.i)}
 					<button
-						class="oi"
+						class="rowbtn oi"
 						style:padding-left="{10 + (o.level - minLevel) * 12}px"
 						onclick={() => jump(o.i)}
 						title={o.text}
-						><span class="ell">{o.text}</span>{#if n}<span class="oc">{n}</span>{/if}</button
+						><span class="ell grow">{o.text}</span>{#if n}<span class="pill sm mono t-brand"
+								>{n}</span
+							>{/if}</button
 					>
 				{/each}
 			</div>
 		{:else}
-			<div class="pad fnt small">No headings in this document.</div>
+			<div class="empty-line">No headings in this document.</div>
 		{/if}
 	</nav>
 
 	<!-- Document -->
-	<section class="doc c">
-		<div class="dh">
-			<span class="mono ell" title={path || ping.primaryRef}>{path || ping.primaryRef}</span>
-			<span class="spacer"></span>
-			<span class="cap" title={fmtAbs(ping.raisedAt)}
-				>snapshot from {fmtClock(ping.raisedAt)} · not the live file</span
-			>
-		</div>
+	<section class="doc c pane">
+		<DocHead path={path || ping.primaryRef || ''} raisedAt={ping.raisedAt} />
 		<div class="dscroll">
 			{#if extraFiles.length}
-				<div class="extras">
-					<span class="fnt small">From the agent</span>
-					{#each extraFiles as f (f.path)}
-						{#if !f.captured || !f.snapshotId}
-							<span class="xf missing" title="this file was not captured when the ping was raised"
-								><span class="mono ell">{f.path}</span><span>not captured</span></span
-							>
-						{:else if f.mime?.startsWith('image/')}
-							<a
-								class="thumb"
-								href={api.files.snapshotUrl(f.snapshotId)}
-								target="_blank"
-								rel="noreferrer"
-								title={f.path}
-							>
-								<img src={api.files.snapshotUrl(f.snapshotId)} alt={f.path} />
-							</a>
-						{:else}
-							<a
-								class="xf"
-								href={api.files.snapshotUrl(f.snapshotId)}
-								target="_blank"
-								rel="noreferrer"><span class="ico">▤</span><span class="mono ell">{f.path}</span></a
-							>
-						{/if}
-					{/each}
-				</div>
+				<div class="paper extras"><AgentFiles files={extraFiles} /></div>
 			{/if}
 
 			{#if loading}
@@ -468,14 +463,14 @@
 						<div
 							class="block"
 							data-idx={i}
-							bind:this={blockEls[i]}
+							use:block={i}
 							class:commented={comments.some((c) => spans(c, i))}
 							class:active={hovered !== null && spans(comments[hovered], i)}
 							class:pending={!!composer?.anchor &&
 								i >= composer.anchor.startBlock &&
 								i <= composer.anchor.endBlock}
 						>
-							<div class="md">{@html b.html}</div>
+							<Markdown src={b.raw} doc />
 						</div>
 					{/each}
 				</div>
@@ -484,46 +479,53 @@
 	</section>
 
 	<!-- Review sidebar -->
-	<aside class="side lg">
-		<div class="sh">
+	<aside class="side lg pane">
+		<div class="pane-head">
 			<h2>Review</h2>
-			{#if comments.length}<span class="count hot">{comments.length}</span>{/if}
+			<span class="count hot" class:gone={!comments.length} use:bump={comments.length}
+				>{comments.length}</span
+			>
 		</div>
 		<div class="sscroll">
-			<details class="ask">
-				<summary><span class="caretglyph">▸</span> The ask</summary>
-				<div class="md small">{@html mdToHtml(ping.question)}</div>
+			<details class="card-in ask">
+				<summary class="disclosure">The ask</summary>
+				<Markdown src={ping.question} quiet />
 			</details>
 
 			<div class="cl" role="list">
-				{#each comments as c, i (c)}
+				{#each comments as c, i (c.id)}
 					<div
-						class="comment"
+						class="card-in comment"
 						class:hot={hovered === i}
 						role="listitem"
 						onmouseenter={() => (hovered = i)}
 						onmouseleave={() => (hovered = null)}
+						animate:flip={move}
+						transition:materialize={{ origin: 'top center', y: 6 }}
 					>
 						<div class="ch">
-							<button class="jump ell" title="Scroll to this section" onclick={() => reveal(c)}>
-								§ {c.heading || '(top)'} · <span class="mono">L{c.startLine}–{c.endLine}</span>
+							<button class="rowbtn jump" title="Scroll to this section" onclick={() => reveal(c)}>
+								<span class="ell"
+									>§ {c.heading || '(top)'} ·
+									<span class="mono">L{c.startLine}–{c.endLine}</span></span
+								>
 							</button>
 							<button class="btn-ghost btn-sm" onclick={() => editComment(i)}>Edit</button>
 							<button
 								class="btn-icon"
 								onclick={() => removeComment(i)}
 								aria-label="Delete comment"
-								title="Delete comment">×</button
+								title="Delete comment">{I.close}</button
 							>
 						</div>
 						<blockquote class="mono">{trunc(c.quote, 120)}</blockquote>
 						<div class="ct">{c.text}</div>
 						{#if c.files?.length}
-							<div class="cf">⎘ {c.files.map((f) => f.name).join(', ')}</div>
+							<div class="help">{I.attach} {c.files.map((f) => f.name).join(', ')}</div>
 						{/if}
 					</div>
 				{:else}
-					<p class="hint">
+					<p class="note">
 						<strong>Select any text</strong> in the document — a comment box opens where you let go. All
 						comments go back together as one feedback prompt.
 					</p>
@@ -534,11 +536,21 @@
 			{#if error && blocks.length > 0}<div class="err">{error}</div>{/if}
 		</div>
 
-		<footer class="sf">
+		<footer class="pane-foot sf">
 			{#if isGate}
 				<div class="acts">
-					<button class="btn-primary" disabled={busy} onclick={approve}>Approve</button>
-					<button class="btn-sel" disabled={busy || comments.length === 0} onclick={requestChanges}>
+					<button
+						class="btn-primary"
+						disabled={busy}
+						aria-busy={busy && sending === 'approve'}
+						onclick={approve}>Approve</button
+					>
+					<button
+						class="btn-sel"
+						disabled={busy || comments.length === 0}
+						aria-busy={busy && sending === 'reject'}
+						onclick={requestChanges}
+					>
 						Request changes ({comments.length})
 					</button>
 				</div>
@@ -548,6 +560,7 @@
 						<button
 							class={i === 0 ? 'btn-primary' : ''}
 							disabled={busy}
+							aria-busy={busy && sending === opt.id}
 							title={opt.detail ?? ''}
 							onclick={() => chooseOption(opt.id)}>{opt.label}</button
 						>
@@ -556,14 +569,20 @@
 				<p class="cap">Your pick answers the agent; comments ride along as the note.</p>
 			{:else}
 				<div class="acts">
-					<button class="btn-primary" disabled={busy || comments.length === 0} onclick={sendReview}>
+					<button
+						class="btn-primary"
+						disabled={busy || comments.length === 0}
+						aria-busy={busy}
+						onclick={sendReview}
+					>
 						Send review ({comments.length})
 					</button>
 				</div>
 			{/if}
 			<p class="cap">
 				{#if comments.length && savedAt}
-					<span class="saved">✓ Draft saved</span> · kept in this browser; attachments must be re-picked
+					<span class="hue-grn">{I.ok} Draft saved</span> · kept in this browser; attachments must be
+					re-picked
 				{:else}
 					Drafts are kept in this browser; attachments must be re-picked.
 				{/if}
@@ -572,180 +591,103 @@
 	</aside>
 </div>
 
-{#if composer}
-	<div
-		class="composer lg-pop"
-		style="left:{composer.x}px; top:{composer.y}px"
-		role="dialog"
-		aria-label={composer.editing !== null ? 'Edit comment' : 'Add comment'}
-		tabindex="-1"
-		onkeydown={onComposerKey}
-	>
-		<div class="cmh">
-			<span class="ell">§ {composer.heading || '(top)'}</span>
-			<span class="mono fnt">L{composer.startLine}–{composer.endLine}</span>
+<!-- The floating composer: sticky (only Add/Save, Close or Esc dismiss it, so
+     clicking away to re-read the plan never throws away what was typed), and
+     it materialises where the selection was released. -->
+<Popover
+	open={composer !== null}
+	sticky
+	width={POPUP_W}
+	at={shownComposer ? { left: shownComposer.x, top: shownComposer.y } : undefined}
+	onclose={closeComposer}
+>
+	{#if shownComposer}
+		{@const composer = shownComposer}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="composer"
+			aria-label={composer.editing !== null ? 'Edit comment' : 'Add comment'}
+			onkeydown={onComposerKey}
+		>
+			<div class="cmh">
+				<span class="ell">§ {composer.heading || '(top)'}</span>
+				<span class="mono fnt">L{composer.startLine}–{composer.endLine}</span>
+			</div>
+			<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>
+			<textarea
+				bind:this={composerEl}
+				bind:value={composer.text}
+				rows="3"
+				placeholder="What should change here?"></textarea>
+			<AttachFiles bind:files={composer.files} label="Attach" compact />
+			<div class="cmf">
+				<button class="btn-primary" onclick={commitComment} disabled={!composer.text.trim()}>
+					{composer.editing !== null ? 'Save' : 'Add'}
+				</button>
+				<button class="btn-ghost" onclick={closeComposer}>Close</button>
+				<span class="spacer"></span>
+				<span class="help"
+					><span class="kbd">⌘↵</span> add · <span class="kbd">esc</span> close</span
+				>
+			</div>
 		</div>
-		<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>
-		<textarea
-			bind:this={composerEl}
-			bind:value={composer.text}
-			rows="3"
-			placeholder="What should change here?"></textarea>
-		<AttachFiles bind:files={composer.files} label="Attach" compact />
-		<div class="cmf">
-			<button class="btn-primary" onclick={commitComment} disabled={!composer.text.trim()}>
-				{composer.editing !== null ? 'Save' : 'Add'}
-			</button>
-			<button class="btn-ghost" onclick={closeComposer}>Close</button>
-			<span class="spacer"></span>
-			<span class="fnt keys">⌘↵ add · Esc close</span>
-		</div>
-	</div>
-{/if}
+	{/if}
+</Popover>
 
 <style>
 	.wb {
 		flex: 1;
 		min-height: 0;
 		display: grid;
-		grid-template-columns: 220px minmax(0, 1fr) 320px;
+		grid-template-columns: 220px minmax(0, 1fr) var(--aside-w);
 		gap: 10px;
 		padding: 2px 22px 16px;
 	}
-	.c,
-	.lg {
-		border-radius: 16px;
+	.outline,
+	.doc,
+	.side {
 		min-height: 0;
-		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 	}
-	.pad {
-		padding: 10px 14px;
-	}
-	.small {
-		font-size: 12px;
-	}
-	.spacer {
-		flex: 1;
+	.gone {
+		display: none;
 	}
 
 	/* outline */
-	.ph {
-		font-family: var(--serif);
-		font-style: italic;
-		font-size: 16px;
-		padding: 11px 14px 6px;
-		color: var(--mut);
-	}
 	.ol {
 		overflow: auto;
-		padding: 0 6px 10px;
+		padding: 6px;
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
 	}
 	.oi {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 4px 8px 4px 10px;
-		border-radius: 8px;
-		font-size: 12px;
+		padding-top: 4px;
+		padding-bottom: 4px;
+		font-size: var(--fs-label);
 		color: var(--mut);
-		min-width: 0;
 	}
 	.oi:hover {
-		background: var(--p3);
 		color: var(--tx);
-	}
-	.oi:focus-visible {
-		outline: 2px solid var(--brand);
-		outline-offset: -2px;
-	}
-	.oc {
-		margin-left: auto;
-		flex: none;
-		font-family: var(--mono);
-		font-size: 10px;
-		padding: 0 6px;
-		border-radius: 10px;
-		background: var(--brandBg);
-		color: var(--brand);
-		border: 1px solid var(--brandLn);
 	}
 
 	/* document */
-	.dh {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 10px 16px;
-		border-bottom: 1px solid var(--cLn);
-		min-width: 0;
-	}
-	.dh .mono {
-		font-size: 11.5px;
-		color: var(--mut);
-	}
-	.cap {
-		font-size: 11px;
-		color: var(--fnt);
-		margin: 0;
-	}
-	.dh .cap {
-		white-space: nowrap;
-	}
 	.dscroll {
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
 		padding: 16px 22px 40px;
 	}
-	.paper {
-		max-width: 72ch;
-		margin: 0 auto;
-	}
 	.extras {
-		max-width: 72ch;
-		margin: 0 auto 16px;
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-		align-items: center;
-	}
-	.thumb img {
-		display: block;
-		height: 56px;
-		border-radius: 8px;
-		border: 1px solid var(--ln);
-	}
-	.xf {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		max-width: 260px;
-		padding: 3px 9px;
-		border-radius: 9px;
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		font-size: 11.5px;
-		color: var(--tx);
-	}
-	.xf.missing {
-		background: transparent;
-		border-style: dashed;
-		border-color: var(--ln2);
-		color: var(--fnt);
+		margin-bottom: 16px;
 	}
 	.block {
 		position: relative;
-		border-radius: 6px;
+		border-radius: var(--r-tag);
 		padding: 0 8px;
 		margin: 0 -8px 2px;
+		transition: background var(--dur-fade) var(--ease-out);
 	}
 	.block.commented {
 		box-shadow: inset 3px 0 0 var(--brand);
@@ -753,25 +695,6 @@
 	.block.active,
 	.block.pending {
 		background: var(--brandBg);
-	}
-	.paper .md {
-		font-size: 13.5px;
-		line-height: 1.65;
-	}
-	.paper .md :global(h1),
-	.paper .md :global(h2) {
-		font-family: var(--serif);
-		font-style: italic;
-		font-weight: 400;
-		font-size: 22px;
-		margin: 18px 0 6px;
-	}
-	.paper .md :global(h3) {
-		font-size: 14.5px;
-		margin: 14px 0 6px;
-	}
-	.paper .md :global(pre) {
-		overflow-x: auto;
 	}
 
 	/* Exact-selection highlights. ::highlight() isn't attached to an element,
@@ -785,39 +708,26 @@
 	}
 
 	/* sidebar */
-	.sh {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 11px 14px 8px;
-	}
-	.sh h2 {
-		font-size: 19px;
-	}
 	.sscroll {
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
-		padding: 0 12px 12px;
+		padding: 12px;
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
 	}
 	.ask {
-		border-radius: 12px;
-		background: var(--p2);
-		border: 1px solid var(--ln);
 		padding: 6px 10px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		flex: none;
 	}
 	.ask summary {
 		color: var(--mut);
 		font-weight: 500;
 	}
-	.ask .md {
+	.ask > :global(.md) {
 		margin-top: 6px;
-		font-size: 12.5px;
 	}
 	.cl {
 		display: flex;
@@ -825,13 +735,13 @@
 		gap: 6px;
 	}
 	.comment {
-		border-radius: 12px;
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		padding: 7px 8px 9px 10px;
+		padding: 5px 6px 9px 10px;
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
+		transition:
+			background var(--dur-fade) var(--ease-out),
+			border-color var(--dur-fade) var(--ease-out);
 	}
 	.comment.hot {
 		border-color: var(--brandLn);
@@ -844,17 +754,16 @@
 		min-width: 0;
 	}
 	.jump {
-		all: unset;
-		cursor: pointer;
 		flex: 1;
-		font-size: 11.5px;
+		padding: 3px 4px;
+		font-size: var(--fs-help);
 		color: var(--mut);
 	}
 	.jump:hover {
 		color: var(--tx);
 	}
 	.jump .mono {
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 	}
 	blockquote {
 		white-space: pre-wrap;
@@ -862,49 +771,37 @@
 		padding-left: 8px;
 		border-left: 2px solid var(--brandLn);
 		color: var(--mut);
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		max-height: 5.5em;
 		overflow: hidden;
 	}
 	.ct {
 		white-space: pre-wrap;
-		font-size: 12.5px;
+		font-size: var(--fs-ui);
 	}
-	.cf {
-		font-size: 11px;
-		color: var(--mut);
-	}
-	.hint {
+	.note {
 		margin: 0;
-		font-size: 12px;
-		color: var(--mut);
-		padding: 10px 12px;
-		border: 1px dashed var(--ln2);
-		border-radius: 12px;
 	}
 	.sf {
-		border-top: 1px solid var(--lgLn);
-		padding: 10px 12px 11px;
-		display: flex;
 		flex-direction: column;
+		align-items: stretch;
 		gap: 6px;
+		padding: 10px 12px 11px;
 	}
 	.acts {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 6px;
 	}
-	.saved {
-		color: var(--grn);
+	.cap {
+		font-size: var(--fs-meta);
+		color: var(--fnt);
+		margin: 0;
 	}
 
-	/* floating composer */
+	/* floating composer (inside the Popover's glass) */
 	.composer {
-		position: fixed;
-		z-index: 30;
-		width: 340px;
-		border-radius: 17px;
-		padding: 10px 12px 12px;
+		padding: 4px 6px 6px;
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
@@ -912,12 +809,12 @@
 	.cmh {
 		display: flex;
 		gap: 8px;
-		font-size: 12px;
+		font-size: var(--fs-label);
 		font-weight: 600;
 		align-items: baseline;
 	}
 	.cmh .mono {
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 		font-weight: 500;
 	}
 	.cmf {
@@ -925,13 +822,10 @@
 		align-items: center;
 		gap: 6px;
 	}
-	.keys {
-		font-size: 11px;
-	}
 
-	@media (max-width: 1100px) {
+	@media (max-width: 1180px) {
 		.wb {
-			grid-template-columns: minmax(0, 1fr) 300px;
+			grid-template-columns: minmax(0, 1fr) var(--aside-w);
 		}
 		.outline {
 			display: none;
@@ -943,8 +837,9 @@
 			overflow: auto;
 			padding: 2px 16px 16px;
 		}
-		.c,
-		.lg {
+		.outline,
+		.doc,
+		.side {
 			overflow: visible;
 		}
 		.dscroll {

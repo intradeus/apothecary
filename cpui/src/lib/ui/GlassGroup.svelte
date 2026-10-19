@@ -14,7 +14,7 @@
 
 <style>
 	.gg {
-		border-radius: 17px;
+		border-radius: var(--r-group);
 		padding: 8px 10px;
 		display: flex;
 		flex-direction: column;
@@ -22,7 +22,7 @@
 		min-width: 0;
 	}
 	.lbl {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		font-weight: 500;
 		color: var(--mut);
 		display: flex;

@@ -3,7 +3,7 @@
 	// strip when the window is wide and short, a vertical recipe list when it
 	// is tall and narrow. Clicking a stage opens its log.
 	import StageFlask from '$lib/ui/StageFlask.svelte';
-	import { lore } from '$lib/lore';
+	import Loading from '$lib/ui/Loading.svelte';
 	import { stageRows } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
@@ -19,61 +19,48 @@
 </script>
 
 {#if rows.length === 0}
-	<div class="none">
-		{#if rs.stageDefs === null && rs.run}<span class="dot pulse"></span>Reading the flow…{:else}No
-			stages yet.{/if}
-	</div>
+	{#if rs.stageDefs === null && rs.run}<Loading text="Reading the flow…" />{:else}<div
+			class="empty-line"
+		>
+			No stages yet.
+		</div>{/if}
 {:else if horizontal}
 	<div class="strip">
 		{#each rows as r (r.id)}
 			<div class="cell">
-				<button class="spill {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
+				<button class="rowbtn stage spill {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
 					<StageFlask status={r.status} />
 					<span class="txt">
-						<span class="id">{r.id}</span>
-						<span class="st">{r.line || ' '}</span>
+						<span class="id mono ell">{r.id}</span>
+						<span class="st ell">{r.line || ' '}</span>
 					</span>
 				</button>
 				<span class="conn"></span>
 			</div>
 		{/each}
-		<span class="fin" class:ok={finished}>done</span>
+		<span class="fin serif" class:ok={finished}>done</span>
 	</div>
 {:else}
-	<div class="list">
-		<div class="title">{lore('flow')}</div>
-		<div class="sub">{rs.run?.flowName ?? ''} {hash}</div>
+	<div class="view list">
+		<div class="title serif">The formula</div>
+		<div class="sub mono fnt">{rs.run?.flowName ?? ''} {hash}</div>
 		{#each rows as r, i (r.id)}
 			<div class="vrow">
 				<div class="rail">
 					<StageFlask status={r.status} />
 					<span class="vconn" class:last={i === rows.length - 1}></span>
 				</div>
-				<button class="card {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
-					<span class="id">{r.id}</span>
-					<span class="st">{r.line || ' '}</span>
+				<button class="rowbtn stage card {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
+					<span class="id mono ell">{r.id}</span>
+					<span class="st ell">{r.line || ' '}</span>
 				</button>
 			</div>
 		{/each}
-		<div class="vfin" class:ok={finished}>done</div>
+		<div class="vfin serif" class:ok={finished}>done</div>
 	</div>
 {/if}
 
 <style>
-	.none {
-		margin: auto;
-		color: var(--mut);
-		font-size: 12px;
-		display: flex;
-		gap: 8px;
-		align-items: center;
-	}
-	.dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--az);
-	}
 	.strip {
 		flex: 1;
 		min-height: 0;
@@ -95,23 +82,27 @@
 		height: 1px;
 		background: var(--ln2);
 	}
-	.spill,
-	.card {
-		all: unset;
-		box-sizing: border-box;
-		cursor: pointer;
+	/* A stage's status change cross-fades its tint, and the flask's liquid
+	 * rides the spring to its new level. */
+	.stage {
 		flex: 1;
 		min-width: 0;
-		display: flex;
-		align-items: center;
-		gap: 8px;
 		padding: 7px 10px;
-		border-radius: 14px;
+		border-radius: var(--r-card);
 		background: var(--p1);
 		border: 1px solid var(--cLn);
+		transition:
+			background-color var(--dur-fade) var(--ease-out),
+			border-color var(--dur-fade) var(--ease-out),
+			box-shadow var(--dur-fade) var(--ease-out),
+			opacity var(--dur-fade) var(--ease-out);
 	}
-	.spill:hover,
-	.card:hover {
+	.strip :global(.liquid),
+	.list :global(.liquid) {
+		transition: height var(--dur-spring) var(--spring);
+	}
+	.stage.stage:hover {
+		background: var(--p2);
 		border-color: var(--ln2);
 	}
 	.txt {
@@ -122,22 +113,13 @@
 		line-height: 1.3;
 	}
 	.id {
-		font-family: var(--mono);
-		font-size: 11.5px;
-		font-weight: 500;
 		color: var(--tx);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 	.st {
-		font-size: 11px;
+		font-size: var(--fs-meta);
 		color: var(--mut);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
-	.running {
+	.stage.running {
 		background: var(--azBg);
 		border-color: var(--azLn);
 		box-shadow: 0 0 16px var(--azGlow);
@@ -145,9 +127,9 @@
 	.running .st {
 		color: var(--az);
 		font-family: var(--mono);
-		font-size: 10.5px;
+		font-size: var(--fs-id);
 	}
-	.waiting {
+	.stage.waiting {
 		background: var(--ambBg);
 		border-color: var(--ambLn);
 		box-shadow: 0 0 16px var(--ambGlow);
@@ -156,20 +138,17 @@
 		color: var(--amb);
 		font-weight: 600;
 	}
-	.failed {
+	.stage.failed {
 		background: var(--rosBg);
 		border-color: var(--rosLn);
 	}
 	.failed .st {
 		color: var(--ros);
 	}
-	.paused .st {
-		color: var(--mut);
-	}
-	.pending {
+	.stage.pending {
 		background: transparent;
 		border: 1px dashed var(--ln2);
-		opacity: 0.55;
+		opacity: var(--o-dim);
 	}
 	.pending .st {
 		color: var(--fnt);
@@ -181,11 +160,9 @@
 		align-self: stretch;
 		margin: 4px 0;
 		padding: 0 14px;
-		border-radius: 14px;
+		border-radius: var(--r-card);
 		border: 1px dashed var(--ln2);
-		font-family: var(--serif);
-		font-style: italic;
-		font-size: 16px;
+		font-size: var(--fs-title);
 		color: var(--mut);
 	}
 	.fin.ok,
@@ -194,25 +171,18 @@
 		color: var(--grn);
 	}
 	.list {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
 		padding: 12px;
-		display: flex;
-		flex-direction: column;
 	}
 	.title {
-		font-family: var(--serif);
-		font-size: 20px;
+		font-size: var(--fs-section);
 		padding: 0 4px 2px;
 	}
 	.sub {
-		font-family: var(--mono);
-		font-size: 11px;
-		color: var(--fnt);
+		font-size: var(--fs-meta);
 		padding: 0 4px 14px;
 	}
 	.vrow {
+		flex: none;
 		display: flex;
 		gap: 10px;
 		align-items: stretch;
@@ -238,17 +208,16 @@
 		gap: 0;
 		padding: 6px 10px;
 		margin-bottom: 6px;
-		border-radius: 12px;
+		border-radius: var(--r-btn);
 		line-height: 1.35;
 	}
 	.vfin {
+		flex: none;
 		margin-left: 28px;
 		padding: 5px 12px;
-		border-radius: 12px;
+		border-radius: var(--r-btn);
 		border: 1px dashed var(--ln2);
-		font-family: var(--serif);
-		font-style: italic;
-		font-size: 16px;
+		font-size: var(--fs-title);
 		color: var(--mut);
 		text-align: center;
 	}

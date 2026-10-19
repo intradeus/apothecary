@@ -257,6 +257,22 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		}
 		step("agent_models", merr, "every agent stage's model is offered by its agent")
 	}
+	// Engine-side, like a run's preflight: the providers must accept the
+	// credentials the workspace was just seeded with.
+	if len(opts.Stages) == 0 {
+		skip("harness_auth", "no flow stages to check")
+	} else {
+		rejected, unverified := checkAuth(ctx, res, opts.Stages)
+		var aerr error
+		if len(rejected) > 0 {
+			aerr = errors.New(strings.Join(rejected, "; "))
+		}
+		detail := "every provider accepted its credentials (no tokens spent)"
+		if len(unverified) > 0 {
+			detail = "not verified: " + strings.Join(unverified, "; ")
+		}
+		step("harness_auth", aerr, detail)
+	}
 	step("shim", execExpect(ctx, envp, env,
 		"test -x /opt/apothecary/shim", "", true), "")
 	// Loopback parity holds on every provisioner (coder: reverse tunnel;
