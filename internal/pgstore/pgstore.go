@@ -66,7 +66,48 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 
 func (s *Store) Close() { s.pool.Close() }
 
+// preSquashHead is the last version of the migration chain folded into
+// 0001_init.sql (2026-10-19). A DB that applied that whole chain already has
+// exactly the init schema, so migrate collapses its ledger to {1}. Remove
+// once no pre-squash DB is left.
+const preSquashHead = 25
+
+// migration is one embedded migrations/NNNN_name.sql file.
+type migration struct {
+	version int
+	name    string
+}
+
+// migrations lists the embedded migrations in version order, rejecting
+// unnumbered names and duplicate versions.
+func migrations() ([]migration, error) {
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]migration, 0, len(entries))
+	seen := map[int]string{}
+	for _, e := range entries {
+		var version int
+		if _, err := fmt.Sscanf(e.Name(), "%d_", &version); err != nil || version <= 0 {
+			return nil, fmt.Errorf("migration %s: name must start with a positive number", e.Name())
+		}
+		if prev, dup := seen[version]; dup {
+			return nil, fmt.Errorf("migrations %s and %s share version %d", prev, e.Name(), version)
+		}
+		seen[version] = e.Name()
+		out = append(out, migration{version, e.Name()})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
+	return out, nil
+}
+
 func (s *Store) migrate(ctx context.Context) error {
+	migs, err := migrations()
+	if err != nil {
+		return err
+	}
+
 	// Advisory lock serializes concurrently booting instances — without it,
 	// two boots can both pass the applied-version check and race the DDL.
 	lockConn, err := s.pool.Acquire(ctx)
@@ -84,29 +125,35 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version int PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
 		return fmt.Errorf("migrations table: %w", err)
 	}
-	entries, err := migrationsFS.ReadDir("migrations")
+	applied, err := s.appliedMigrations(ctx)
 	if err != nil {
 		return err
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
+	if squashed(applied) {
+		if _, err := s.pool.Exec(ctx, `DELETE FROM schema_migrations WHERE version > 1`); err != nil {
+			return fmt.Errorf("collapse pre-squash migrations: %w", err)
+		}
+		applied = map[int]bool{1: true}
 	}
-	sort.Strings(names)
-	for _, name := range names {
-		var version int
-		if _, err := fmt.Sscanf(name, "%d_", &version); err != nil {
-			return fmt.Errorf("migration %s: name must start with a number", name)
+
+	// A version this binary doesn't ship means the schema was written by a
+	// newer apothecaryd (or a pre-squash chain applied only partway): refuse
+	// rather than run against tables we don't know.
+	known := map[int]bool{}
+	for _, m := range migs {
+		known[m.version] = true
+	}
+	for v := range applied {
+		if !known[v] {
+			return fmt.Errorf("database has migration %d applied, which this apothecaryd does not ship — upgrade apothecaryd, or reset a dev database", v)
 		}
-		var exists bool
-		if err := s.pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
+	}
+
+	for _, m := range migs {
+		if applied[m.version] {
 			continue
 		}
-		sql, err := migrationsFS.ReadFile("migrations/" + name)
+		sql, err := migrationsFS.ReadFile("migrations/" + m.name)
 		if err != nil {
 			return err
 		}
@@ -116,9 +163,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.Exec(ctx, string(sql)); err != nil {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migration %s: %w", name, err)
+			return fmt.Errorf("migration %s: %w", m.name, err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, m.version); err != nil {
 			_ = tx.Rollback(ctx)
 			return err
 		}
@@ -127,6 +174,35 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) appliedMigrations(ctx context.Context) (map[int]bool, error) {
+	rows, err := s.pool.Query(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("read migrations table: %w", err)
+	}
+	versions, err := pgx.CollectRows(rows, pgx.RowTo[int])
+	if err != nil {
+		return nil, fmt.Errorf("read migrations table: %w", err)
+	}
+	applied := make(map[int]bool, len(versions))
+	for _, v := range versions {
+		applied[v] = true
+	}
+	return applied, nil
+}
+
+// squashed reports a ledger holding the whole pre-squash chain (1..preSquashHead).
+func squashed(applied map[int]bool) bool {
+	if len(applied) != preSquashHead {
+		return false
+	}
+	for v := 1; v <= preSquashHead; v++ {
+		if !applied[v] {
+			return false
+		}
+	}
+	return true
 }
 
 // --- event.Store ------------------------------------------------------------
