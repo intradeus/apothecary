@@ -200,7 +200,11 @@ export default {
 	// Review card
 	'run.phases.title': 'Phases',
 	'run.phases.sub':
-		"The flow's phases, each opened by its own wait point — a signal from the forge, or you. One runs at a time; the run ends when nothing is left to react.",
+		"The flow's phases, each opened by its own wait point — a signal from the forge, or you. One runs at a time; an outcome — the merge request merged or closed — ends the run.",
+	'run.phases.beganHere': 'began here',
+	'run.phases.onTheForge': 'happens on the forge',
+	'run.phases.outcomeTitle':
+		'An outcome opens by itself when the merge request merges or closes, and ends the run. To stop the run yourself, use Abort.',
 	'run.phases.forgeError': 'The forge could not be read.',
 	'run.phases.phaseStarted': 'Phase {phase} started',
 	'run.phases.phaseFailed': 'Phase {phase} could not start.',

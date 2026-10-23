@@ -135,7 +135,7 @@
 					<div class="who">
 						<span class="mono pid">{p.id}</span>
 						{#if p.id === beginPhase}<span class="pill fnt" title={t('run.phases.began')}
-								>{t('run.phases.entrypoint')}</span
+								>{t('run.phases.beganHere')}</span
 							>{/if}
 						{#if waits.length}<span
 								class="pill t-hot fnt"
@@ -150,13 +150,21 @@
 									: t('run.phases.running')}</span
 							>{/if}</span
 					>
-					<button
-						class="btn-sm"
-						aria-busy={busy === p.id}
-						disabled={!idle || !!p.live || spent(p) || busy !== ''}
-						title={disabledWhy(p)}
-						onclick={(ev) => run(p, ev)}>{t('run.phases.runNow')}</button
-					>
+					{#if p.outcome}
+						<!-- An outcome happens on the forge; starting one by hand would
+						     end the run from a button beside the ones that do not. -->
+						<span class="fnt small" title={t('run.phases.outcomeTitle')}
+							>{t('run.phases.onTheForge')}</span
+						>
+					{:else}
+						<button
+							class="btn-sm"
+							aria-busy={busy === p.id}
+							disabled={!idle || !!p.live || spent(p) || busy !== ''}
+							title={disabledWhy(p)}
+							onclick={(ev) => run(p, ev)}>{t('run.phases.runNow')}</button
+						>
+					{/if}
 				</div>
 			{/each}
 		</div>
