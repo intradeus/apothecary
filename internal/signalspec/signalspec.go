@@ -2,10 +2,10 @@
 // "the merge request merged", and in future "CI went green", "the ticket moved
 // to Done". A signal is something that happens *to* the run from outside it.
 //
-// Two stages use this registry (FLOWLANG §3, §6):
+// Two stages use this registry (FLOWLANG §2):
 //
-//	type: wait, for: mr_merged      — block until the signal fires
-//	type: human_gate, auto_answer:  — the signal approves the gate for you
+//	type: wait, for: mr_merged                — park the phase until the signal holds
+//	type: human_gate, auto_approve/auto_reject — the signal answers the gate for you
 //
 // A phase's `on:` (FLOWLANG §1) names a signal too: the wait point that
 // opens it. Those carry Trigger (may open a phase while the merge request is

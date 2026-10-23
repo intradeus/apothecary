@@ -2755,8 +2755,9 @@ adapters. Decisions worth recording:
   `run_ref`.
 - **No run-end hook.** "Done once the merge request merges" is a stage after
   the final gate (`auto_approve: mr_merged` → `ticket_transition`), which the
-  language already expresses; a phased flow has no final gate, which is
-  accepted for now.
+  language already expresses. (Flow v4, below, made the same true of a phased
+  flow: the delivery phase parks on a `wait` for the merge and the move
+  follows it.)
 
 Not done, deliberately: a `Test`-button probe of write permissions (the
 button's `error`-only result has nowhere to put "reads ok, writes denied");
@@ -2878,6 +2879,10 @@ phases.
 
 ## One beginning per phase: `on: manual`
 
+*Superseded by flow v4 (next entry): the entrypoint is `on: run_start`,
+`confirm: true` became `start: confirm`, `ticket` is no longer read, and the
+entry is no longer the first phase by position.*
+
 A phase is one beginning and the stages it runs, and the three places that
 said so disagreed. The YAML had `on: ticket` on the entry — a noun, a magic
 string outside the signal registry — and a trigger signal on each reaction;
@@ -2908,3 +2913,79 @@ chosen signal takes them. `GET /api/signals` carries `entry`; the run page's
 review card names a manual phase "only when you start it". The entry's
 `phase_started` records `by: human` (it was `ticket`); the timeline reads
 `by` only for reaction starts.
+
+## Flow v4: wait points, one scheduler, bound parameters, canonical statuses
+
+The flow language felt static for two reasons. One YAML carried three
+concerns — the recipe, the delivery lifecycle and the environment bindings —
+and the lifecycle part was hardwired: the entry was `Phases[0]` by position,
+manual only, once; a run could only end from its merge requests; reactions
+were evaluated only against open MRs; `create_mr` was entry-only; a `wait`
+polled inside the stage loop and a gate paused the whole run. About fifteen of
+the parse rules existed only to force a graph into that envelope, and the
+engine had five waiting mechanisms (phase triggers, confirm pings, hand
+starts, wait stages, gates) that were one thing implemented five ways. And
+nothing was reusable across environments: `to: "In Progress"` was a Jira
+literal, and there were no parameters, so the same recipe on another project
+was a full copy that drifted.
+
+v4 (2026-10-23, no compatibility: the project is unreleased, dev databases
+were reset) collapses the mechanisms into one primitive and moves the
+environment out of the document. FLOWLANG *The model* is the normative
+statement; what the code does:
+
+- **Wait points, one scheduler** (`internal/engine/scheduler.go`,
+  `phase.go`, `state.go`). A phase's `on:`, a `wait` stage and a `human_gate`
+  are one thing: a source, a policy (`auto` / `confirm` / `manual`), a
+  subject, an occurrence key. The idle loop walks every wait point in document
+  order — parked stages of live phase runs and unopened heads alike — and
+  opens or resumes one per tick; the chosen phase run holds the workspace
+  until its next wait point or `done`. A wait or gate stage records
+  `phase_parked` and returns to the loop instead of polling or pausing;
+  `phase_resumed` closes the park. Per-phase-run cursors (`phaseRun`) replace
+  the one cursor; a phase has at most one live run. Holds under `start:
+  manual` are memory-only, recomputed each tick, exposed on the run page.
+- **The end rule.** `endCheck`: a run completes when nothing is parked and no
+  firing phase is armed (policy auto/confirm, an open MR subject, runs left,
+  or an open confirm ping). `done` only finishes a phase; a closed-unmerged MR
+  abandons a run only through the flow (`wait_merge … on_fail: abort`). The
+  parser warns about a `create_mr` no wait ever waits on.
+- **Explicit entrypoints.** `run_start` joined the signal registry (`Entry`);
+  a flow needs one such phase, may have several, and a run is created at one
+  of them (`RunCreated.Phase`, `run.View.BeginPhase`; the start form and the
+  rerun modal pick). `manual` is a phase only the run page opens; any phase
+  without a live run can be started by hand (`StartPhase` takes a `subject`
+  body). `max` counts hand starts, defaults to 10 for firing signals and
+  unlimited otherwise.
+- **Parameters** (`internal/flow` `parameters:`, `Flow.Resolve`,
+  `internal/engine/params.go`). One block declares every knob with its
+  default; six engine-known names always exist. Values are layered flow
+  default ← project binding (`flow_bindings`, `confstore/bindings.go`, the
+  workshop's Configure sheet) ← run override, recorded on `run_created`.
+  `Resolve` re-parses the pinned bytes with the values, so parse-time and
+  resolve-time validation are one code path and a bad binding is refused
+  where it is bound. `$lower` is a parameter, `$UPPER` a sentinel; a reference
+  is allowed at typed sites only (stage model/harness/max_turns/timeout/
+  run_ref, action inputs, `on.start/quiet_for/max`, `when`).
+- **`when:`** (`condition.go`): `tracker`, `subject`, a bool parameter, `not
+  x`; false completes the stage as skipped.
+- **Canonical statuses** (`ports.TicketStatus`, `TicketWriter.TransitionTo`).
+  `ticket_transition` takes `to` (todo / in_progress / in_review / done /
+  blocked) or `status` (the tracker's word), exactly one. Jira maps through
+  the integration's status map (`status_map`, stock words by default), GitHub
+  Issues to open/closed; a status a tracker has no word for skips the stage
+  (`ErrStatusUnsupported`) rather than failing, so one flow fits both.
+- **Preflight** runs on the resolved flow (a bound harness or model lands on
+  every agent stage and is held to the project's set and model list) and
+  checks every firing phase's signal; `PreflightProject` gained a
+  `parameters` step.
+
+Decisions worth remembering: gates park like waits, so a phase started by
+hand may edit the workspace while a gate is open — the person chose that;
+`ask_human` and the debug leaf still hold the workspace. `create_mr` is
+Single per phase and adopts an existing MR via `FindMR`, so re-running the
+delivery phase by hand is safe. Subject actions without a subject fail
+routably (`input_missing`) rather than at parse. A stale project binding is
+dropped with a warning at run creation; a stale run override refuses the run.
+The automation watcher (event- and schedule-started runs) is slice 3 of the
+same plan and lives outside the engine (`internal/automation`).
