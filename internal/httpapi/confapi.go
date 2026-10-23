@@ -552,11 +552,22 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, FlowValidation{Errors: []string{err.Error()}})
 		return
 	}
-	writeJSON(w, http.StatusOK, FlowValidation{
+	out := FlowValidation{
 		OK: true, Name: f.Name, Hash: f.Hash,
 		Stages: len(f.Stages), Agents: len(f.Agents), Doc: doc,
-		Warnings: f.Warnings,
-	})
+		Warnings: f.Warnings, Parameters: f.Params, Refs: f.Refs, Phases: phaseSummaries(f),
+	}
+	// Bound values (a workshop's) are validated by the same rules as the
+	// author's defaults; a value that breaks one is an error of the document
+	// as that workshop would run it.
+	if len(body.Params) > 0 {
+		if bound, err := f.Resolve(body.Params); err != nil {
+			out.OK, out.Errors = false, []string{err.Error()}
+		} else {
+			out.Warnings, out.Phases = bound.Warnings, phaseSummaries(bound)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) listFlowVersions(w http.ResponseWriter, r *http.Request) {

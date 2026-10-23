@@ -1171,7 +1171,7 @@ export const pauseRun = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * The reaction phases of the run's flow, with their runs per merge request
+ * Every phase of the run's flow: what opens it, its runs per merge request, its live run and the signals holding for it
  */
 export const getRunPhases = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunPhasesData, ThrowOnError>
@@ -1182,16 +1182,20 @@ export const getRunPhases = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Start a reaction phase now, on one merge request
+ * Start a phase now, by hand
  *
- * Only while the run is between phases (in review). The phase's trigger need not hold: a human's start is its own decision. Its max still applies.
+ * Only while the run is idle (between phases, or parked at a wait point). Any phase without a live run: the phase's signal need not hold — a person's start is its own decision — and its max still applies. Acts on the named checkout's merge request, else the run's single open one, else on none.
  */
 export const startPhase = <ThrowOnError extends boolean = false>(
 	options: Options<StartPhaseData, ThrowOnError>
 ): RequestResult<StartPhaseResponses, StartPhaseErrors, ThrowOnError> =>
 	(options.client ?? client).post<StartPhaseResponses, StartPhaseErrors, ThrowOnError>({
 		url: '/api/runs/{id}/phases/{phase}/start',
-		...options
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**

@@ -308,10 +308,14 @@ func (s *Server) getRunPhases(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// postStartPhase starts a reaction phase by hand (202); 409 when the run is
-// not between phases or the phase cannot start on that merge request.
+// postStartPhase starts a phase by hand (202); 409 when the run is not idle
+// or the phase cannot start (parked, past its max, no such merge request).
+// The body is optional: {subject} names the checkout whose merge request
+// the phase acts on.
 func (s *Server) postStartPhase(w http.ResponseWriter, r *http.Request) {
-	err := s.Engine.StartPhase(r.PathValue("id"), r.PathValue("phase"), r.URL.Query().Get("repo"))
+	var body StartPhaseRequest
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body)
+	err := s.Engine.StartPhase(r.PathValue("id"), r.PathValue("phase"), body.Subject)
 	switch {
 	case errors.Is(err, engine.ErrPhaseNotStartable):
 		writeErr(w, http.StatusConflict, err.Error())

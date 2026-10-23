@@ -1282,3 +1282,13 @@ func TestWorkspaceReposListsTheCheckouts(t *testing.T) {
 		t.Errorf("unknown checkout = %d", resp.StatusCode)
 	}
 }
+
+// Starting a phase by hand takes its subject in the body; a run with no
+// loop to take the request is a 409 like every other refusal.
+func TestStartPhaseTakesASubjectBody(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	resp, data := x.do(t, "POST", "/api/runs/nope/phases/polish/start", map[string]string{"subject": "repo"}, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("start phase on an unknown run = %d: %s", resp.StatusCode, data)
+	}
+}

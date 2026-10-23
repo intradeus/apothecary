@@ -528,3 +528,56 @@ func TestActionRegistryRoute(t *testing.T) {
 		t.Errorf("create_mr outputs = %+v", mr.Outputs)
 	}
 }
+
+// Validation carries the document's parameters and phases with the defaults
+// applied, and validates a workshop's bound values when given.
+func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
+	x := newConfEnv(t)
+	doc := "name: p\nversion: 4\nparameters:\n  harness: fake\n  model: a/b\n  mode: { default: confirm, enum: [auto, confirm, manual] }\n  turns: 3\n" +
+		"agents:\n  - { name: b, prompt: build }\n" +
+		"phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: agent, agent: b, max_turns: $turns }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n"
+	var vr struct {
+		OK         bool     `json:"ok"`
+		Errors     []string `json:"errors"`
+		Parameters []struct {
+			Name  string `json:"name"`
+			Type  string `json:"type"`
+			Known bool   `json:"known"`
+		} `json:"parameters"`
+		Refs []struct {
+			Param, Stage, Field string
+		} `json:"refs"`
+		Phases []struct {
+			ID      string `json:"id"`
+			Signal  string `json:"signal"`
+			Start   string `json:"start"`
+			Max     int    `json:"max"`
+			Entry   bool   `json:"entry"`
+			Subject bool   `json:"subject"`
+			Stages  int    `json:"stages"`
+		} `json:"phases"`
+	}
+	resp, data := x.do(t, "POST", "/api/flows/validate", map[string]any{"yaml": doc}, nil)
+	if err := json.Unmarshal(data, &vr); err != nil || resp.StatusCode != 200 || !vr.OK {
+		t.Fatalf("validate = %d %v ok=%v errors=%v", resp.StatusCode, err, vr.OK, vr.Errors)
+	}
+	if len(vr.Parameters) != 8 || vr.Parameters[0].Name != "harness" || !vr.Parameters[0].Known || vr.Parameters[2].Name != "mode" || vr.Parameters[3].Type != "int" {
+		t.Errorf("parameters = %+v", vr.Parameters)
+	}
+	if len(vr.Refs) != 2 || len(vr.Phases) != 2 || !vr.Phases[0].Entry || vr.Phases[0].Signal != "run_start" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
+		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != 10 {
+		t.Errorf("refs = %+v phases = %+v", vr.Refs, vr.Phases)
+	}
+	// Bound values: a legal one changes the summary, an illegal one is an error.
+	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]any{"yaml": doc, "params": map[string]string{"mode": "manual"}}, nil)
+	_ = json.Unmarshal(data, &vr)
+	if resp.StatusCode != 200 || !vr.OK || vr.Phases[1].Start != "manual" {
+		t.Errorf("bound validate = %d ok=%v phases=%+v", resp.StatusCode, vr.OK, vr.Phases)
+	}
+	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]any{"yaml": doc, "params": map[string]string{"turns": "0"}}, nil)
+	_ = json.Unmarshal(data, &vr)
+	if resp.StatusCode != 200 || vr.OK || !strings.Contains(strings.Join(vr.Errors, " "), "max_turns must be > 0") {
+		t.Errorf("bad binding validate = %d ok=%v errors=%v", resp.StatusCode, vr.OK, vr.Errors)
+	}
+}

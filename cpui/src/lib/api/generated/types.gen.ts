@@ -304,6 +304,9 @@ export type FlowValidation = {
 	hash?: string;
 	name?: string;
 	ok: boolean;
+	parameters?: Array<Param>;
+	phases?: Array<PhaseSummary>;
+	refs?: Array<ParamRef>;
 	stages?: number;
 	warnings?: Array<string>;
 };
@@ -430,6 +433,23 @@ export type OutputSig = {
 	sentinel?: string;
 };
 
+export type Param = {
+	default: string;
+	description?: string;
+	enum?: Array<string>;
+	known?: boolean;
+	name: string;
+	type: string;
+};
+
+export type ParamRef = {
+	field: string;
+	input?: string;
+	param: string;
+	phase?: string;
+	stage?: string;
+};
+
 export type PhaseInfo = {
 	confirm?: boolean;
 	description?: string;
@@ -450,6 +470,18 @@ export type PhaseInfo = {
 export type PhaseLive = {
 	parked_at?: string;
 	subject?: string;
+};
+
+export type PhaseSummary = {
+	description?: string;
+	entry?: boolean;
+	id: string;
+	max: number;
+	quiet_for?: string;
+	signal: string;
+	stages: number;
+	start: string;
+	subject?: boolean;
 };
 
 export type PingFile = {
@@ -737,6 +769,10 @@ export type Spec = {
 	read_only?: boolean;
 };
 
+export type StartPhaseRequest = {
+	subject?: string;
+};
+
 export type StartRunRequest = {
 	attachment_ids?: Array<string>;
 	flow?: string;
@@ -818,6 +854,9 @@ export type Uploaded = {
 };
 
 export type ValidateFlowRequest = {
+	params?: {
+		[key: string]: string;
+	};
 	yaml: string;
 };
 
@@ -3244,17 +3283,12 @@ export type GetRunPhasesResponses = {
 export type GetRunPhasesResponse = GetRunPhasesResponses[keyof GetRunPhasesResponses];
 
 export type StartPhaseData = {
-	body?: never;
+	body: StartPhaseRequest;
 	path: {
 		id: string;
 		phase: string;
 	};
-	query?: {
-		/**
-		 * the checkout whose merge request the phase acts on (default: the primary)
-		 */
-		repo?: string;
-	};
+	query?: never;
 	url: '/api/runs/{id}/phases/{phase}/start';
 };
 

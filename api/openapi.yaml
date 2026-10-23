@@ -654,6 +654,18 @@ components:
           type: string
         ok:
           type: boolean
+        parameters:
+          items:
+            $ref: '#/components/schemas/Param'
+          type: array
+        phases:
+          items:
+            $ref: '#/components/schemas/PhaseSummary'
+          type: array
+        refs:
+          items:
+            $ref: '#/components/schemas/ParamRef'
+          type: array
         stages:
           type: integer
         warnings:
@@ -918,6 +930,43 @@ components:
         - kind
         - name
       type: object
+    Param:
+      properties:
+        default:
+          type: string
+        description:
+          type: string
+        enum:
+          items:
+            type: string
+          type: array
+        known:
+          type: boolean
+        name:
+          type: string
+        type:
+          type: string
+      required:
+        - default
+        - name
+        - type
+      type: object
+    ParamRef:
+      properties:
+        field:
+          type: string
+        input:
+          type: string
+        param:
+          type: string
+        phase:
+          type: string
+        stage:
+          type: string
+      required:
+        - field
+        - param
+      type: object
     PhaseInfo:
       properties:
         confirm:
@@ -963,6 +1012,33 @@ components:
           type: string
         subject:
           type: string
+      type: object
+    PhaseSummary:
+      properties:
+        description:
+          type: string
+        entry:
+          type: boolean
+        id:
+          type: string
+        max:
+          type: integer
+        quiet_for:
+          type: string
+        signal:
+          type: string
+        stages:
+          type: integer
+        start:
+          type: string
+        subject:
+          type: boolean
+      required:
+        - id
+        - max
+        - signal
+        - stages
+        - start
       type: object
     PingFile:
       properties:
@@ -1645,6 +1721,11 @@ components:
         - name
         - prompt
       type: object
+    StartPhaseRequest:
+      properties:
+        subject:
+          type: string
+      type: object
     StartRunRequest:
       properties:
         attachment_ids:
@@ -1835,6 +1916,10 @@ components:
       type: object
     ValidateFlowRequest:
       properties:
+        params:
+          additionalProperties:
+            type: string
+          type: object
         yaml:
           type: string
       required:
@@ -4335,12 +4420,12 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: The reaction phases of the run's flow, with their runs per merge request
+      summary: 'Every phase of the run''s flow: what opens it, its runs per merge request, its live run and the signals holding for it'
       tags:
         - runs
   /api/runs/{id}/phases/{phase}/start:
     post:
-      description: 'Only while the run is between phases (in review). The phase''s trigger need not hold: a human''s start is its own decision. Its max still applies.'
+      description: 'Only while the run is idle (between phases, or parked at a wait point). Any phase without a live run: the phase''s signal need not hold — a person''s start is its own decision — and its max still applies. Acts on the named checkout''s merge request, else the run''s single open one, else on none.'
       operationId: startPhase
       parameters:
         - in: path
@@ -4353,11 +4438,12 @@ paths:
           required: true
           schema:
             type: string
-        - description: 'the checkout whose merge request the phase acts on (default: the primary)'
-          in: query
-          name: repo
-          schema:
-            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartPhaseRequest'
+        required: true
       responses:
         "202":
           description: Accepted
@@ -4377,7 +4463,7 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: Start a reaction phase now, on one merge request
+      summary: Start a phase now, by hand
       tags:
         - runs
   /api/runs/{id}/pings:

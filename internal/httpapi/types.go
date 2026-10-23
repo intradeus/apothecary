@@ -318,22 +318,69 @@ type CopyFlowRequest struct {
 	Name        string `json:"name,omitempty"`
 }
 
-// ValidateFlowRequest checks a flow document without saving it.
+// StartPhaseRequest starts a phase by hand. Subject is the checkout whose
+// merge request the phase acts on; empty picks the run's single open one, or
+// none.
+type StartPhaseRequest struct {
+	Subject string `json:"subject,omitempty"`
+}
+
+// ValidateFlowRequest checks a flow document without saving it. Params, when
+// given, are bound values to validate it with too (a workshop's bindings): a
+// value that breaks a rule is reported like any error.
 type ValidateFlowRequest struct {
-	YAML string `json:"yaml"`
+	YAML   string            `json:"yaml"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // FlowValidation is the verdict. On failure Errors says why and the rest is
-// absent; on success the parsed shape comes back for the editor to render.
+// absent; on success the parsed shape comes back for the editor to render,
+// with the document's parameters (declared and read where) and its phases
+// summarized with the defaults applied — so the editor never re-derives a
+// start policy or a max.
 type FlowValidation struct {
-	OK       bool      `json:"ok"`
-	Errors   []string  `json:"errors,omitempty"`
-	Name     string    `json:"name,omitempty"`
-	Hash     string    `json:"hash,omitempty"`
-	Stages   int       `json:"stages,omitempty"`
-	Agents   int       `json:"agents,omitempty"`
-	Doc      *flow.Doc `json:"doc,omitempty"`
-	Warnings []string  `json:"warnings,omitempty"`
+	OK         bool            `json:"ok"`
+	Errors     []string        `json:"errors,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Hash       string          `json:"hash,omitempty"`
+	Stages     int             `json:"stages,omitempty"`
+	Agents     int             `json:"agents,omitempty"`
+	Doc        *flow.Doc       `json:"doc,omitempty"`
+	Warnings   []string        `json:"warnings,omitempty"`
+	Parameters []flow.Param    `json:"parameters,omitempty"`
+	Refs       []flow.ParamRef `json:"refs,omitempty"`
+	Phases     []PhaseSummary  `json:"phases,omitempty"`
+}
+
+// PhaseSummary is one phase of a flow with its wait point's effective
+// values (FLOWLANG §1): what opens it, the start policy, the debounce, the
+// run bound, whether a run may begin there and whether its runs act on one
+// merge request.
+type PhaseSummary struct {
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
+	Signal      string `json:"signal"`
+	Start       string `json:"start"`
+	QuietFor    string `json:"quiet_for,omitempty"`
+	Max         int    `json:"max"`
+	Entry       bool   `json:"entry,omitempty"`
+	Subject     bool   `json:"subject,omitempty"`
+	Stages      int    `json:"stages"`
+}
+
+// phaseSummaries renders a parsed flow's phases.
+func phaseSummaries(f *flow.Flow) []PhaseSummary {
+	out := make([]PhaseSummary, 0, len(f.Phases))
+	for i := range f.Phases {
+		ph := &f.Phases[i]
+		ps := PhaseSummary{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Start: string(ph.On.Start),
+			Max: ph.On.Max, Entry: ph.IsEntrypoint(), Subject: ph.HasSubject(), Stages: ph.Last - ph.First + 1}
+		if ph.On.QuietFor > 0 {
+			ps.QuietFor = ph.On.QuietFor.String()
+		}
+		out = append(out, ps)
+	}
+	return out
 }
 
 // --- registries -------------------------------------------------------------
