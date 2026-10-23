@@ -28,11 +28,14 @@ import (
 // By is who an automation's runs say began them.
 const By = "automation"
 
-// Engine is the slice of the engine a pass needs: create a run, and tell
-// whether a ticket has one.
+// Engine is the slice of the engine a pass needs: create a run, tell
+// whether a ticket has one, and — for forge_mr — list a repository's open
+// merge requests and who the forge integration is.
 type Engine interface {
 	CreateRunWith(ctx context.Context, t engine.Ticket, flowName, projectID string, in engine.RunInput) (string, error)
 	RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error)
+	ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error)
+	ForgeUser(ctx context.Context, projectID, repo string) (string, error)
 }
 
 type Watcher struct {
@@ -95,6 +98,8 @@ func (w *Watcher) pass(ctx context.Context, a confstore.Automation) {
 		fired, err = w.pollTracker(ctx, a)
 	case confstore.AutomationCron:
 		fired, err = w.tick(ctx, a)
+	case confstore.AutomationForgeMR:
+		fired, err = w.pollMRs(ctx, a)
 	default:
 		err = fmt.Errorf("unknown automation kind %q", a.Kind)
 	}
@@ -185,6 +190,100 @@ func (w *Watcher) existing(ctx context.Context, projectID, key string) (confstor
 		}
 	}
 	return confstore.Ticket{}, false, nil
+}
+
+// pollMRs lists the repository's open merge requests and creates a run on
+// each one someone else opened that has none yet: its own ticket first (the
+// merge request's title, description and link; keyed by its URL, with no
+// tracker), then the run at the automation's mr_opened entrypoint. Drafts
+// wait until they are marked ready; the integration's own merge requests —
+// the ones the factory's runs opened — are never picked. A ticket made by an
+// earlier pass and left without a run (a crash) is adopted; a person's
+// ticket for the same merge request is theirs.
+func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, error) {
+	mrs, err := w.Engine.ListMRs(ctx, a.ProjectID, a.Repo)
+	if err != nil {
+		return false, fmt.Errorf("list merge requests: %w", err)
+	}
+	me, err := w.Engine.ForgeUser(ctx, a.ProjectID, a.Repo)
+	if err != nil {
+		return false, fmt.Errorf("forge account: %w", err)
+	}
+	var errs []string
+	fired := false
+	for i, mr := range mrs {
+		if i >= w.limit() {
+			break
+		}
+		if mr.State != ports.MROpen || mr.Draft || strings.EqualFold(mr.Author, me) {
+			continue
+		}
+		t, ok, err := w.ticketForMR(ctx, a, mr)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", mr.Ref.URL, err))
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if _, err := w.startOn(ctx, a, t, mr); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", mr.Ref.URL, err))
+			continue
+		}
+		fired = true
+	}
+	if len(errs) > 0 {
+		return fired, errors.New(strings.Join(errs, "; "))
+	}
+	return fired, nil
+}
+
+// ticketForMR is the ticket a merge request's run belongs to: made now, or
+// this automation's earlier one still without a run.
+func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr ports.MRInfo) (confstore.Ticket, bool, error) {
+	existing, found, err := w.existing(ctx, a.ProjectID, mr.Ref.URL)
+	if err != nil {
+		return confstore.Ticket{}, false, err
+	}
+	if found {
+		if existing.AutomationID != a.ID {
+			return confstore.Ticket{}, false, nil
+		}
+		runs, err := w.Engine.RunsOfTicket(ctx, existing.ID)
+		if err != nil || len(runs) > 0 {
+			return confstore.Ticket{}, false, err
+		}
+		return existing, true, nil
+	}
+	goal := strings.TrimSpace(mr.Body)
+	if goal != "" {
+		goal += "\n\n"
+	}
+	goal += fmt.Sprintf("Merge request %s by %s: %s → %s.", mr.Ref.URL, mr.Author, mr.Source, mr.Target)
+	t, err := w.Conf.CreateTicket(ctx, confstore.Ticket{
+		ProjectID: a.ProjectID, Title: fmt.Sprintf("%s (!%d by %s)", mr.Title, mr.Ref.IID, mr.Author), Goal: goal,
+		SourceKind: confstore.TicketKindMR, SourceKey: mr.Ref.URL, SourceURL: mr.Ref.URL, AutomationID: a.ID,
+	})
+	if err != nil {
+		return confstore.Ticket{}, false, err
+	}
+	w.log().Info("automation made a ticket for a merge request", "automation", a.ID, "name", a.Name, "ticket", t.ID, "mr", mr.Ref.URL)
+	return t, true, nil
+}
+
+// startOn creates the run of a merge request's ticket, on that merge request.
+func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confstore.Ticket, mr ports.MRInfo) (string, error) {
+	id, err := w.Engine.CreateRunWith(ctx, engine.Ticket{
+		TicketID: t.ID, Title: t.Title, Goal: t.Goal,
+		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
+	}, a.Flow, a.ProjectID, engine.RunInput{Phase: a.Phase, Params: maps.Clone(a.Params), By: By,
+		MR: &engine.RunMR{Repo: a.Repo, IID: mr.Ref.IID}})
+	if err != nil {
+		return "", err
+	}
+	w.log().Info("automation started a run on a merge request", "automation", a.ID, "name", a.Name,
+		"ticket", t.ID, "run", id, "mr", mr.Ref.URL)
+	return id, nil
 }
 
 // tick fires a cron automation once its next slot after the last firing has

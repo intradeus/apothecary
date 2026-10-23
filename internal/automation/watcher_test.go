@@ -31,6 +31,8 @@ type fakeEngine struct {
 	}
 	runs map[string][]run.View
 	next int
+	// MRs is what ListMRs reports (forge_mr).
+	MRs []ports.MRInfo
 }
 
 func (f *fakeEngine) CreateRunWith(_ context.Context, t engine.Ticket, flowName, _ string, in engine.RunInput) (string, error) {
@@ -57,6 +59,16 @@ func (f *fakeEngine) RunsOfTicket(_ context.Context, ticketID string) ([]run.Vie
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.runs[ticketID], nil
+}
+
+func (f *fakeEngine) ListMRs(context.Context, string, string) ([]ports.MRInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ports.MRInfo(nil), f.MRs...), nil
+}
+
+func (f *fakeEngine) ForgeUser(context.Context, string, string) (string, error) {
+	return "apothecary", nil
 }
 
 func (f *fakeEngine) count() int {
@@ -330,5 +342,85 @@ func TestDisabledAndStale(t *testing.T) {
 	}
 	if got := h.get(t, a.ID); got.LastPolledAt != nil {
 		t.Errorf("a disabled automation was polled: %+v", got)
+	}
+}
+
+const reviewerYAML = `name: rev
+version: 4
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+agents:
+  - name: pr_reviewer
+    prompt: review it
+    inputs:
+      - { name: changes }
+    outputs:
+      - { name: review, type: review_threads, path: artifacts/review.yaml }
+phases:
+  - id: first_look
+    on: mr_opened
+    stages:
+      - { id: read, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
+      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+  - { id: merged, on: mr_merged, then: done }
+  - { id: closed, on: mr_closed, then: done }
+`
+
+// forge_mr creates a run on each merge request someone else opened, once:
+// drafts wait, the integration's own are never picked, and each gets a
+// ticket of its own keyed by the merge request.
+func TestForgeMRStartsOnOthersMergeRequestsOnce(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {
+		t.Fatal(err)
+	}
+	mr := func(iid int, author string, draft bool) ports.MRInfo {
+		return ports.MRInfo{Ref: ports.MRRef{IID: iid, URL: fmt.Sprintf("https://gitlab.com/g/p/-/merge_requests/%d", iid)},
+			Title: fmt.Sprintf("change %d", iid), Author: author, State: ports.MROpen, Draft: draft, Source: "feature", Target: "main"}
+	}
+	h.eng.MRs = []ports.MRInfo{mr(5, "bob", true), mr(4, "alice", false), mr(3, "apothecary", false)}
+	a := h.automation(t, confstore.Automation{Name: "review others", Kind: confstore.AutomationForgeMR, Flow: "rev", Enabled: true})
+	h.pass(t)
+	if n := h.eng.count(); n != 1 {
+		t.Fatalf("runs = %d, want one (alice's)", n)
+	}
+	c := h.eng.calls[0]
+	if c.In.MR == nil || c.In.MR.IID != 4 || c.In.By != By || c.Flow != "rev" || !strings.Contains(c.Ticket.Title, "(!4 by alice)") ||
+		c.Ticket.SourceKind != confstore.TicketKindMR || c.Ticket.SourceKey != mr(4, "", false).Ref.URL {
+		t.Errorf("call = %+v", c)
+	}
+	h.pass(t)
+	if n := h.eng.count(); n != 1 {
+		t.Errorf("a second pass started %d more", n-1)
+	}
+	// Marked ready: now it is picked.
+	h.eng.MRs[0].Draft = false
+	h.pass(t)
+	if n := h.eng.count(); n != 2 || h.eng.calls[1].In.MR.IID != 5 {
+		t.Errorf("after the draft was marked ready: %d runs", n)
+	}
+	if got := h.get(t, a.ID); got.LastError != "" || got.LastFiredAt == nil {
+		t.Errorf("automation = %+v", got)
+	}
+}
+
+// Each kind takes the entrypoints of its kind of run.
+func TestAutomationEntrypointKinds(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "x", Kind: confstore.AutomationForgeMR, Flow: builtin.DefaultFlowName})
+	if err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a run on a merge request") {
+		t.Errorf("forge_mr on the default flow: %v", err)
+	}
+	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "y", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Flow: "rev"})
+	if err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a fresh run") {
+		t.Errorf("tracker_query on a reviewer flow: %v", err)
+	}
+	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "z", Kind: confstore.AutomationForgeMR, Flow: "rev", Repo: "ghost"})
+	if err == nil || !strings.Contains(err.Error(), `no repository "ghost"`) {
+		t.Errorf("unknown repo: %v", err)
 	}
 }

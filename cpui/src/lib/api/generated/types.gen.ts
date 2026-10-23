@@ -75,6 +75,7 @@ export type Automation = {
 	phase?: string;
 	project_id: string;
 	query?: string;
+	repo?: string;
 	schedule?: string;
 	source_id?: string;
 	ticket_id?: string;
@@ -91,6 +92,7 @@ export type AutomationRequest = {
 	};
 	phase?: string;
 	query?: string;
+	repo?: string;
 	schedule?: string;
 	source_id?: string;
 	ticket_id?: string;

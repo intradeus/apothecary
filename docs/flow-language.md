@@ -1520,9 +1520,10 @@ over one workspace. Additive, no grammar break:
 - **A gate variant** — a new human interaction is a variant of `human_gate`:
   the same park, the same inbox, a different question shape.
 - **An automation** — a new way to *begin* runs lives outside the run: a rule
-  (a tracker query, a schedule) that creates a run at one of a flow's
-  `run_start` phases with its parameters, recorded as `phase_started{by:
-  automation}`. The flow is untouched.
+  (a tracker query, a schedule, the merge requests others open) that creates
+  a run at one of a flow's entrypoints of the matching kind — `run_start`, or
+  `mr_opened` for `forge_mr` — with its parameters, recorded as
+  `phase_started{by: automation}`. The flow is untouched.
 - **An action** — one `actionspec` registry entry, one executor case, one
   `requires` port string. Everything else (parsing, binding, the editor's
   picker, the dataflow view) follows from the signature.

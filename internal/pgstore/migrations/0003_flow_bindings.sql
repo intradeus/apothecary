@@ -5,7 +5,7 @@
 -- row there, and binding one is the common case — and never part of the
 -- flow's hash: a binding changes nothing in the document. Dropped with the
 -- project.
-CREATE TABLE flow_bindings (
+CREATE TABLE IF NOT EXISTS flow_bindings (
     project_id text NOT NULL,
     flow_name  text NOT NULL,
     params     jsonb NOT NULL DEFAULT '{}'::jsonb,

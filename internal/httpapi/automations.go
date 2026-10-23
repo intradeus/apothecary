@@ -27,7 +27,7 @@ func (s *Server) listAutomations(w http.ResponseWriter, r *http.Request) {
 func automationFrom(projectID string, body AutomationRequest) confstore.Automation {
 	a := confstore.Automation{
 		ProjectID: projectID, Name: body.Name, Kind: body.Kind,
-		SourceID: body.SourceID, Query: body.Query, Schedule: body.Schedule, TicketID: body.TicketID,
+		SourceID: body.SourceID, Query: body.Query, Schedule: body.Schedule, TicketID: body.TicketID, Repo: body.Repo,
 		Flow: body.Flow, Phase: body.Phase, Params: body.Params, Enabled: true,
 	}
 	if body.Enabled != nil {

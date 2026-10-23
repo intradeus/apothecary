@@ -103,6 +103,18 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 	if again, err := s.GetAutomation(ctx, "au1"); err != nil || again.LastFiredAt == nil || !again.LastFiredAt.Equal(fired) || again.LastError != "boom" || again.Params != nil {
 		t.Fatalf("marked = %+v, %v", again, err)
 	}
+	// A forge_mr automation passes the kind check (0006) and keeps its repo.
+	mrw := confstore.Automation{ID: "au2", ProjectID: p.ID, Name: "review others", Kind: confstore.AutomationForgeMR,
+		Repo: "api", Flow: "rev", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := s.UpsertAutomation(ctx, mrw); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetAutomation(ctx, "au2"); err != nil || got.Repo != "api" || got.Kind != confstore.AutomationForgeMR {
+		t.Fatalf("forge_mr roundtrip = %+v, %v", got, err)
+	}
+	if err := s.DeleteAutomation(ctx, "au2"); err != nil {
+		t.Fatal(err)
+	}
 	if list, err := s.ListAutomations(ctx, p.ID); err != nil || len(list) != 1 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}

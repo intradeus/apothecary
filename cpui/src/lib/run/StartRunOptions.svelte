@@ -17,6 +17,8 @@
 		phase = $bindable(''),
 		params = $bindable({}),
 		mr = $bindable(0),
+		entries = 'all',
+		askMR = true,
 		under,
 		underLabel = 'workshop',
 		idPrefix = 'sro'
@@ -32,6 +34,13 @@
 		/** The merge request to create the run on (0 = none), asked for when
 		 *  the entrypoint begins runs on one (mr_opened). */
 		mr?: number;
+		/** Which entrypoints to offer: every one, those beginning a fresh run
+		 *  (run_start), or those beginning one on a merge request (mr_opened)
+		 *  — what an automation of that kind can create. */
+		entries?: 'all' | 'fresh' | 'mr';
+		/** Ask which merge request (a person starting a run does; an
+		 *  automation picks them itself). */
+		askMR?: boolean;
 		/** What applies when a field is left empty: the workshop's binding
 		 *  (loaded here when absent), or the run a rerun comes from. */
 		under?: Record<string, string>;
@@ -45,10 +54,14 @@
 	let models = $state<Model[]>([]);
 	let loadError = $state('');
 
-	const entrypoints = $derived((flow?.phases ?? []).filter((p) => p.entry));
+	const kindOK = (signal: string) =>
+		entries === 'all' || (entries === 'mr') === (signal === MR_OPENED);
+	const entrypoints = $derived((flow?.phases ?? []).filter((p) => p.entry && kindOK(p.signal)));
 	// An entrypoint on mr_opened begins the run on a merge request someone
 	// opened: the form asks which.
-	const onMR = $derived((flow?.phases ?? []).find((p) => p.id === phase)?.signal === MR_OPENED);
+	const onMR = $derived(
+		askMR && (flow?.phases ?? []).find((p) => p.id === phase)?.signal === MR_OPENED
+	);
 	let openMRs = $state<OpenMergeRequest[] | null>(null);
 	let mrError = $state('');
 	$effect(() => {
@@ -115,8 +128,8 @@
 					.map((i) => ({ kind: i.kind, label: `${i.kind} · ${i.name}`, id: i.id }));
 				loadError = '';
 				// The entrypoint: a still-valid choice stays, else the flow's first.
-				const entries = f.phases.filter((ph) => ph.entry);
-				if (!entries.some((ph) => ph.id === phase)) phase = entries[0]?.id ?? '';
+				const offered = f.phases.filter((ph) => ph.entry && kindOK(ph.signal));
+				if (!offered.some((ph) => ph.id === phase)) phase = offered[0]?.id ?? '';
 				// Overrides of parameters this flow does not declare are dropped.
 				const declared = new Set(f.parameters.map((d) => d.name));
 				const kept = Object.fromEntries(Object.entries(params).filter(([k]) => declared.has(k)));

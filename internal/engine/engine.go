@@ -1160,6 +1160,25 @@ func (e *Engine) ListMRs(ctx context.Context, projectID, repo string) ([]ports.M
 	return forge.ListMRs(ctx)
 }
 
+// ForgeUser is who a project's forge integration acts as in a repository
+// ("" = the primary): the account the factory's own merge requests are
+// opened by.
+func (e *Engine) ForgeUser(ctx context.Context, projectID, repo string) (string, error) {
+	res, err := e.resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	defer res.release()
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	forge := res.forgeFor(repo)
+	if forge == nil {
+		return "", fmt.Errorf("repository %q has no forge", repo)
+	}
+	return forge.Whoami(ctx)
+}
+
 // ErrEnvCapacity refuses new tickets at the §14 environment cap (HTTP 409).
 var ErrEnvCapacity = errors.New("environment capacity reached")
 

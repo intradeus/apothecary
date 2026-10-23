@@ -4,7 +4,7 @@
 -- tickets of the project, one run each — or fires on a cron schedule for one
 -- ticket. internal/automation watches them from the daemon; the last poll,
 -- the last firing and the last error are kept here for the workshop to show.
-CREATE TABLE automations (
+CREATE TABLE IF NOT EXISTS automations (
     id             text PRIMARY KEY,
     project_id     text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name           text NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE automations (
     created_at     timestamptz NOT NULL,
     updated_at     timestamptz NOT NULL
 );
-CREATE INDEX automations_project_idx ON automations (project_id);
+CREATE INDEX IF NOT EXISTS automations_project_idx ON automations (project_id);
 
 -- A ticket an automation imported remembers which one, so a later poll that
 -- finds the same issue can tell "mine, still without a run" (a crash between

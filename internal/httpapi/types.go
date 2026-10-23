@@ -334,10 +334,12 @@ type FlowBindingRequest struct {
 
 // AutomationRequest creates or replaces an automation: a way a run begins
 // without a person pressing Start. kind is tracker_query (poll source_id
-// with query, import what it finds, one run each) or cron (schedule, five
-// fields in UTC, a new run of ticket_id each firing). flow + phase (an
-// entrypoint; empty = the flow's first) + params say what each firing
-// creates. enabled defaults to true.
+// with query, import what it finds, one run each), cron (schedule, five
+// fields in UTC, a new run of ticket_id each firing) or forge_mr (watch
+// repo's open merge requests, a run on each one someone else opened, once).
+// flow + phase (an entrypoint of the kind the automation creates; empty =
+// the flow's first) + params say what each firing creates. enabled
+// defaults to true.
 type AutomationRequest struct {
 	Name     string            `json:"name"`
 	Kind     string            `json:"kind"`
@@ -345,6 +347,7 @@ type AutomationRequest struct {
 	Query    string            `json:"query,omitempty"`
 	Schedule string            `json:"schedule,omitempty"`
 	TicketID string            `json:"ticket_id,omitempty"`
+	Repo     string            `json:"repo,omitempty"`
 	Flow     string            `json:"flow"`
 	Phase    string            `json:"phase,omitempty"`
 	Params   map[string]string `json:"params,omitempty"`

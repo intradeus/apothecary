@@ -136,6 +136,12 @@ export default {
 	'workshop.automations.colLast': 'Last',
 	'workshop.automations.kindTracker': 'tracker query',
 	'workshop.automations.kindCron': 'schedule',
+	'workshop.automations.kindMR': 'merge requests',
+	'workshop.automations.repo': 'Repository',
+	'workshop.automations.repoPrimary': 'the primary repository',
+	'workshop.automations.repoHelp':
+		'Every merge request someone else opens here gets a ticket and one run, at an entrypoint on mr_opened — drafts once they are marked ready; the integration’s own (the factory’s) never.',
+	'workshop.automations.mrSummary': 'merge requests others open in {repo}',
 	'workshop.automations.polled': 'polled {ago}',
 	'workshop.automations.fired': 'fired {ago}',
 	'workshop.automations.never': 'never ran',

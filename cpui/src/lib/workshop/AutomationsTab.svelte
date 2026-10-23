@@ -52,11 +52,20 @@
 	const ticketTitle = (id: string) => (tickets ?? []).find((tk) => tk.id === id)?.title ?? id;
 	const sourceName = (id: string) => sources.find((s) => s.id === id)?.name ?? id;
 	const kindLabel = (k: AutomationKind) =>
-		k === 'cron' ? t('workshop.automations.kindCron') : t('workshop.automations.kindTracker');
+		k === 'cron'
+			? t('workshop.automations.kindCron')
+			: k === 'forge_mr'
+				? t('workshop.automations.kindMR')
+				: t('workshop.automations.kindTracker');
 	const KINDS = $derived<{ value: AutomationKind; label: string }[]>([
 		{ value: 'tracker_query', label: t('workshop.automations.kindTracker') },
-		{ value: 'cron', label: t('workshop.automations.kindCron') }
+		{ value: 'cron', label: t('workshop.automations.kindCron') },
+		{ value: 'forge_mr', label: t('workshop.automations.kindMR') }
 	]);
+	// The repositories a forge_mr automation may watch: the primary, then
+	// the extras by name.
+	const repoNames = $derived(['', ...(project.repos ?? []).map((r) => r.name)]);
+	const repoLabel = (r: string) => (r ? r : t('workshop.automations.repoPrimary'));
 
 	// --- the form ---
 	let open = $state(false);
@@ -91,6 +100,7 @@
 			query: a.query,
 			schedule: a.schedule,
 			ticketId: a.ticketId,
+			repo: a.repo,
 			flow: a.flow,
 			enabled: a.enabled
 		};
@@ -108,6 +118,7 @@
 			query: a.query,
 			schedule: a.schedule,
 			ticketId: a.ticketId,
+			repo: a.repo,
 			flow: a.flow,
 			phase: a.phase,
 			params: a.params,
@@ -120,13 +131,16 @@
 		busy = true;
 		formError = '';
 		const d: AutomationDraft = { ...draft, flow: flowName, phase: phase || undefined, params };
-		if (d.kind === 'tracker_query') {
-			d.schedule = undefined;
-			d.ticketId = undefined;
-		} else {
+		// Only what the kind takes travels.
+		if (d.kind !== 'tracker_query') {
 			d.sourceId = undefined;
 			d.query = undefined;
 		}
+		if (d.kind !== 'cron') {
+			d.schedule = undefined;
+			d.ticketId = undefined;
+		}
+		if (d.kind !== 'forge_mr') d.repo = undefined;
 		try {
 			const saved = editing
 				? await api.automations.update(project.id, editing.id, d)
@@ -220,6 +234,8 @@
 					<span class="mono small fires">
 						{#if a.kind === 'cron'}
 							{a.schedule} · {ticketTitle(a.ticketId ?? '')}
+						{:else if a.kind === 'forge_mr'}
+							{t('workshop.automations.mrSummary', { repo: repoLabel(a.repo ?? '') })}
 						{:else}
 							{sourceName(a.sourceId ?? '')}{a.query ? ` · ${a.query}` : ''}
 						{/if}
@@ -303,6 +319,14 @@
 					<input id="au-query" class="mono" bind:value={draft.query} />
 					<span class="help">{t('workshop.automations.queryHelp')}</span>
 				</div>
+			{:else if draft.kind === 'forge_mr'}
+				<div class="field">
+					<label for="au-repo">{t('workshop.automations.repo')}</label>
+					<select id="au-repo" bind:value={draft.repo}>
+						{#each repoNames as r (r)}<option value={r || undefined}>{repoLabel(r)}</option>{/each}
+					</select>
+					<span class="help">{t('workshop.automations.repoHelp')}</span>
+				</div>
 			{:else}
 				<div class="field">
 					<label for="au-schedule">{t('workshop.automations.schedule')}</label>
@@ -336,7 +360,15 @@
 					fallbackLabel={t('workshop.automations.defaultFlow', { flow: project.defaultFlow })}
 				/>
 			</div>
-			<StartRunOptions projectId={project.id} {flowName} bind:phase bind:params idPrefix="au" />
+			<StartRunOptions
+				projectId={project.id}
+				{flowName}
+				bind:phase
+				bind:params
+				entries={draft.kind === 'forge_mr' ? 'mr' : 'fresh'}
+				askMR={false}
+				idPrefix="au"
+			/>
 			<Toggle
 				checked={draft.enabled}
 				label={t('workshop.automations.startEnabled')}
