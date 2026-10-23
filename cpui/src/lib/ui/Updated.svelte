@@ -3,6 +3,7 @@
 	// "updated 2s ago" caption for polled data (DESIGN 4.17), or "paused"
 	// when the tab was hidden and nothing has landed since.
 	import { onMount } from 'svelte';
+	import StableText from './StableText.svelte';
 
 	let { at, paused = false }: { at: number | null; paused?: boolean } = $props();
 
@@ -12,15 +13,26 @@
 		return () => clearInterval(h);
 	});
 	const secs = $derived(at ? Math.max(0, Math.round((now - at) / 1000)) : null);
+	// Polls land every few seconds, so the caption cycles "just now" → "3s ago"
+	// → "just now"; reserve the widest wording so the header doesn't twitch.
+	const reserve = $derived([
+		t('ui.updated.now'),
+		t('ui.updated.ago', { secs: 88 }),
+		t('ui.updated.paused'),
+		t('ui.updated.connecting')
+	]);
 </script>
 
 <span class="up" title={at ? new Date(at).toLocaleTimeString(undefined, { hour12: false }) : ''}>
 	{#if paused}
-		<span class="d paused"></span>{t('ui.updated.paused')}
+		<span class="d paused"></span><StableText text={t('ui.updated.paused')} {reserve} />
 	{:else if secs === null}
-		<span class="d pulse"></span>{t('ui.updated.connecting')}
+		<span class="d pulse"></span><StableText text={t('ui.updated.connecting')} {reserve} />
 	{:else}
-		<span class="d"></span>{secs < 2 ? t('ui.updated.now') : t('ui.updated.ago', { secs })}
+		<span class="d"></span><StableText
+			text={secs < 2 ? t('ui.updated.now') : t('ui.updated.ago', { secs })}
+			{reserve}
+		/>
 	{/if}
 </span>
 

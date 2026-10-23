@@ -91,4 +91,11 @@ export interface SignalSpec {
 	/** A run fact the signal depends on ('merge_request'), so a flow cannot
 	 *  wait on something that can never happen. */
 	needs?: string;
+	/** Begins a reaction phase (`on:`) rather than ending a wait or answering
+	 *  a gate — the two uses are exclusive. */
+	trigger: boolean;
+	/** May begin the run: allowed as the first phase's `on:`. */
+	entry: boolean;
+	/** A trigger that fires on activity, so its phase may take a quiet_for. */
+	debounced: boolean;
 }

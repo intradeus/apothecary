@@ -1,8 +1,10 @@
 <script lang="ts">
 	// The flow's terminals (DESIGN 7.8): serif italic pills on content glass.
-	//  - start (brand, solid): the entry marker; its handle drags onto a stage
-	//    to make that stage the entry. A reaction phase draws one per phase,
-	//    violet and dashed, naming the signal that starts it.
+	//  - start (brand, solid): the entry's beginning — the phase every run
+	//    begins with — naming what begins it; its handle drags onto a stage
+	//    to make that stage the entry. Each reaction phase draws its own
+	//    beginning (data.entry false), violet and dashed, naming its signal:
+	//    one beginning per phase, one phase per beginning.
 	//  - done (grn, dashed) and abort (ros, dashed): where runs end.
 	//  - debug (amb, dashed): the stop that comes back — a human fixes the
 	//    workspace, then the stage that sent the run here runs again. Drawn
@@ -19,9 +21,9 @@
 	type Tone = 'start' | 'trigger' | 'done' | 'abort' | 'debug';
 	const tone = $derived<Tone>(
 		type === 'start'
-			? data?.label
-				? 'trigger'
-				: 'start'
+			? data?.entry
+				? 'start'
+				: 'trigger'
 			: type === 'abort'
 				? 'abort'
 				: type === 'debug'

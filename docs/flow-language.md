@@ -129,13 +129,18 @@ is created (§6).
 ### Phases: the whole life of a ticket
 
 A flow written with top-level `stages:` ends when its stages reach `done`. A flow
-written with `phases:` describes the ticket's **whole life**: what the ticket
-starts, and how the run reacts to what happens to its merge request afterwards.
+written with `phases:` describes the ticket's **whole life**: what a run begins
+with, and how it reacts to what happens to its merge request afterwards.
+
+**One beginning, one phase.** A phase is a beginning (`on:`) and the stages it
+runs — every phase has exactly one, and every beginning belongs to exactly one
+phase. A beginning is a signal from the registry (§3): a *trigger* the forge
+raises, or `manual`, the one a person gives.
 
 ```yaml
 phases:
   - id: deliver
-    on: ticket                                   # the entry: what a filed ticket starts
+    on: manual                                   # the entry: a person starts a run for a ticket
     stages: [ plan … create_mr ]
   - id: conflicts
     on: { signal: mr_conflicts, confirm: true }  # the target moved; ask before spending
@@ -143,14 +148,22 @@ phases:
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1h, max: 10 }
     stages: [ load, fix, …, reply, post ]
+  - id: polish
+    on: { signal: manual, max: 3 }               # only when someone starts it from the run page
+    stages: [ tidy, push ]
 ```
 
-- **The entry** is the first phase and the only one `on: ticket`. It runs like a
-  stages-only flow. When it reaches `done` with merge requests open, the run is
-  **in review** (`in_review`) — or, if it opened none, it completes.
+- **The entry** is the first phase: what every run begins with. Its beginning
+  must be able to begin a run — `manual` today: someone starts a run for a
+  ticket (a tracker event, *a ticket assigned*, is the planned other one). It
+  runs like a stages-only flow. When it reaches `done` with merge requests
+  open, the run is **in review** (`in_review`) — or, if it opened none, it
+  completes.
 - **Every other phase is a reaction.** Its `on:` is the whole decision of when
   it runs; the order phases are written in is *not* a sequence. A conflict can
-  be fixed before, after or between two review rounds, any number of times.
+  be fixed before, after or between two review rounds, any number of times. A
+  reaction `on: manual` never begins on its own: it is a phase a person starts
+  from the run page while a merge request is open.
 - **One phase at a time.** A phase run works on **one merge request** — its
   *subject* (on a multi-repo run, one checkout's). Triggers are evaluated only
   while no phase runs; several holding at once are taken subject by subject
@@ -164,10 +177,13 @@ phases:
 
 | field | meaning |
 |---|---|
-| `signal` | `ticket` (the entry), or a *trigger* signal: `mr_conflicts`, `mr_review_settled` |
+| `signal` | what begins the phase: `manual`, or a *trigger* signal — `mr_conflicts`, `mr_review_settled`. The entry's must be able to begin a run (`manual`); a reaction's must react to a merge request, or be `manual` |
 | `quiet_for` | for a signal that fires on activity (`mr_review_settled`): start only once nothing new happened for this long (≥ 1m). Comments arriving mean someone is reviewing; the phase fixes the whole batch when they stop |
-| `confirm` | ask a human first: the trigger raises an inbox decision (*Run it* / *Not now*) and the phase starts on yes. Nothing is spent until then |
-| `max` | phase runs allowed per merge request (default 10); `-1` only with `confirm` — every run then costs a human decision |
+| `confirm` | ask a human first: the trigger raises an inbox decision (*Run it* / *Not now*) and the phase starts on yes. Nothing is spent until then. Not with `manual` — nothing fires to confirm; the person starting the phase is the decision |
+| `max` | phase runs allowed per merge request (default 10), starts by hand included; `-1` only with `confirm` — every run then costs a human decision. Not on the entry: a run begins once |
+
+`ticket`, the entry's spelling before `manual`, is still read as `manual`; the
+editor writes `manual` back.
 
 **No re-fire on the same fact.** Each trigger occurrence has a key — for
 `mr_conflicts` the (target tip, head) pair, for `mr_review_settled` the newest
@@ -186,7 +202,8 @@ entry. Each phase run's edges start with fresh counters (`max` is per round);
 
 A human can also start any reaction phase from the run page while the run is in
 review (`POST /api/runs/{id}/phases/{phase}/start?repo=`), whether or not its
-trigger holds; its `max` still applies.
+trigger holds; its `max` still applies. A phase `on: manual` is one that begins
+no other way.
 
 ### Run context
 
@@ -453,17 +470,19 @@ hanging forever on something that cannot happen.
 |---|---|---|---|
 | `mr_closed` | `forge` | a merge request | the run's MR is closed *without* being merged |
 
-Two signals are **triggers**: they start a reaction phase (§1 *Phases*) and
-cannot be waited on or answer a gate.
+Three signals are **beginnings**: they begin a phase (§1 *Phases*) and cannot
+be waited on or answer a gate. `manual` may begin the run itself (the entry) as
+well as a reaction; the two forge *triggers* begin reactions only.
 
 | signal | requires | needs | holds when |
 |---|---|---|---|
+| `manual` | — | — | never on its own: a person begins the phase — the entry by starting a run for a ticket, a reaction from the run page |
 | `mr_conflicts` | `forge` | a merge request | the forge reports the merge request cannot merge cleanly into its target (a forge still computing is *not* a conflict) |
 | `mr_review_settled` | `forge` | a merge request | it has pending review threads — unresolved, last word a reviewer's — and the newest of those comments is older than `quiet_for` |
 
 Three related concepts, kept distinct: an **action** does something now, a
-**wait** blocks until something happens, and a **trigger** starts a phase when
-something happened to the merge request.
+**wait** blocks until something happens, and a **beginning** starts a phase —
+when something happened to the merge request, or when a person says so.
 
 ### Timeouts
 
@@ -761,12 +780,13 @@ a project's agent library — became parse errors.)
 **Parse errors** (the document) — refuse it. Unknown fields and values, fields
 that do not apply to a stage's type, unknown action slugs, unbound required
 action inputs, malformed edges, `each_repo` outside a command, success cycles,
-unreachable stages, and for phases: an entry that is not the first phase or
-not the only `on: ticket`, an unknown or non-trigger signal, `quiet_for`/
-`confirm`/`max` where they do not apply, a route leaving its phase,
+unreachable stages, and for phases: a first phase whose beginning cannot begin
+a run (a forge trigger), a reaction whose beginning cannot begin one (an ending
+signal), an unknown signal, `quiet_for`/`confirm`/`max` where they do not apply
+(`confirm` on `manual`, `max` on the entry), a route leaving its phase,
 `create_mr` outside the entry, a subject action (`sync_target`,
 `load_review_comments`, `reply_review_comments`) outside a reaction phase,
-`each_repo` inside one, a reaction to a merge request the entry never opens,
+`each_repo` inside one, a reaction phase when the entry opens no merge request,
 a `rebase` without a `push_branch` in its phase; `max: -1`
 without a gate on the link — and every **contract** violation: an agent a stage
 names but the flow does not declare, an input the agent does not declare, a
@@ -1003,8 +1023,10 @@ Additive, no grammar break:
   picker, the dataflow view) follows from the signature.
 - **A signal** — one `signalspec` registry entry plus a poller. `wait` and a
   gate's `auto_approve`/`auto_reject` pick it up for free; a *trigger* signal
-  (one more registry flag and a predicate in the idle poller) starts a phase
-  instead — reacting to CI failing on the merge request would be one.
+  (the `Trigger` flag and a predicate in the idle poller) begins a reaction
+  phase instead — reacting to CI failing on the merge request would be one —
+  and an *entry* signal (the `Entry` flag) may begin the run: the seam for a
+  tracker event.
 - **A sentinel** — one constant plus one resolution case. The `$NAME` rule
   already tells authors it is engine-provided.
 - **An output type** — like `verdict`: a value on an output's `type` plus the
@@ -1021,8 +1043,9 @@ Deliberately *not* in this version, each a real change rather than a patch:
 - **Starting a run from an outside event** (a labelled issue, a schedule).
   Phases react to what happens to a run's *own* merge request; creating a run
   needs a subscription path, a rule mapping an event to a ticket and project,
-  idempotency, and an auth model. The `on:` of an entry phase is where it would
-  go.
+  idempotency, and an auth model. The `on:` of the entry phase is where it goes:
+  a registry signal with the `Entry` flag (*a ticket assigned*) in place of
+  `manual` — starting by hand stays possible, as it does for every phase.
 - **Parallel stages or phases** — the engine advances one cursor, so phase runs
   on two merge requests take turns. Fan-out/join would be an engine rework
   (state machine, replay, budgets), not a grammar patch.

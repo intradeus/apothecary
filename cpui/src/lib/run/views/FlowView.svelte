@@ -42,7 +42,7 @@
 					<StageFlask status={r.status} />
 					<span class="txt">
 						<span class="id mono ell">{r.id}</span>
-						<span class="st ell">{r.line || ' '}</span>
+						<span class="st ell tick">{r.line || ' '}</span>
 					</span>
 				</button>
 				<span class="conn"></span>
@@ -62,7 +62,7 @@
 				</div>
 				<button class="rowbtn stage card {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
 					<span class="id mono ell">{r.id}</span>
-					<span class="st ell">{r.line || ' '}</span>
+					<span class="st ell tick">{r.line || ' '}</span>
 				</button>
 			</div>
 		{/each}

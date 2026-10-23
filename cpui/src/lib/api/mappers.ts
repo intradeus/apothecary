@@ -532,7 +532,10 @@ export function toSignalSpec(w: Wire.Signal) {
 		title: w.title ?? '',
 		description: w.description,
 		requires: w.requires,
-		needs: w.needs
+		needs: w.needs,
+		trigger: w.trigger ?? false,
+		entry: w.entry ?? false,
+		debounced: w.debounced ?? false
 	};
 }
 

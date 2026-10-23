@@ -47,7 +47,9 @@
 			? t('run.review.trigger.conflicts')
 			: p.signal === 'mr_review_settled'
 				? t('run.review.trigger.quiet', { minutes: Math.round((p.quietForS ?? 0) / 60) })
-				: t('run.review.trigger.on', { signal: p.signal });
+				: p.signal === 'manual'
+					? t('run.review.trigger.manual')
+					: t('run.review.trigger.on', { signal: p.signal });
 
 	onMount(() => {
 		load();

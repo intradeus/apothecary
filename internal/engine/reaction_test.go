@@ -233,7 +233,7 @@ agents:
       - { name: replies, type: review_replies, path: artifacts/replies.yaml }
 phases:
   - id: deliver
-    on: ticket
+    on: manual
     stages:
       - { id: build, type: agent, agent: builder }
       - { id: commit, type: command, run: "git add -A && git commit -m build" }

@@ -646,7 +646,7 @@ func TestDebugLeaf(t *testing.T) {
 	// (like done/abort) is in every phase.
 	phased := header + commonAgents + `phases:
   - id: deliver
-    on: ticket
+    on: manual
     stages:
       - { id: build, type: agent, agent: b, on_fail: debug }
       - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
@@ -819,7 +819,7 @@ func TestThenChainDepthCapped(t *testing.T) {
 // one namespace, routes kept inside their phase.
 const phasedDoc = header + `phases:
   - id: deliver
-    on: ticket
+    on: manual
     stages:
       - { id: build, type: command, run: x }
       - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
@@ -868,32 +868,32 @@ func TestPhasedFlowParses(t *testing.T) {
 }
 
 func TestPhaseValidationErrors(t *testing.T) {
-	entry := header + "phases:\n  - id: deliver\n    on: ticket\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
+	entry := header + "phases:\n  - id: deliver\n    on: manual\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
 	cases := []struct{ name, doc, substr string }{
 		{"stages and phases", entry + "stages:\n  - { id: s, type: command, run: x }\n", "either top-level stages"},
 		{"entry not first", header + "phases:\n  - { id: c, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "first phase is the entry"},
-		{"two entries", entry + "  - { id: again, on: ticket, stages: [{ id: s, type: command, run: x }] }\n", "only the first phase"},
+		{"confirm on manual", entry + "  - { id: m, on: { signal: manual, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "confirm does not apply"},
 		{"ending signal", entry + "  - { id: m, on: mr_merged, stages: [{ id: s, type: command, run: x }] }\n", "ends the run"},
 		{"unknown signal", entry + "  - { id: m, on: mr_ghost, stages: [{ id: s, type: command, run: x }] }\n", "unknown signal"},
 		{"quiet on conflicts", entry + "  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, stages: [{ id: s, type: command, run: x }] }\n", "quiet_for applies only"},
 		{"quiet too short", entry + "  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, stages: [{ id: s, type: command, run: x }] }\n", "at least 1m"},
 		{"unlimited without confirm", entry + "  - { id: m, on: { signal: mr_conflicts, max: -1 }, stages: [{ id: s, type: command, run: x }] }\n", "requires confirm"},
-		{"options on ticket", header + "phases:\n  - { id: d, on: { signal: ticket, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "do not apply"},
+		{"max on the entry", header + "phases:\n  - { id: d, on: { signal: manual, max: 2 }, stages: [{ id: s, type: command, run: x }] }\n", "does not apply to the entry"},
 		{"unknown trigger key", entry + "  - { id: m, on: { signal: mr_conflicts, when: now }, stages: [{ id: s, type: command, run: x }] }\n", "field when not found"},
 		{"empty phase", entry + "  - { id: m, on: mr_conflicts, stages: [] }\n", "at least one stage"},
 		{"duplicate phase", entry + "  - { id: deliver, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "duplicate phase id"},
 		{"duplicate stage across phases", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n", "one namespace"},
 		{"route leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n", "stay inside it"},
 		{"edge leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n", "stay inside it"},
-		{"create_mr in a reaction", header + "phases:\n  - { id: d, on: ticket, stages: [{ id: b, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n", "belongs to the entry phase"},
+		{"create_mr in a reaction", header + "phases:\n  - { id: d, on: manual, stages: [{ id: b, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n", "belongs to the entry phase"},
 		{"each_repo in a reaction", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, each_repo: true }] }\n", "each_repo does not apply"},
-		{"subject action in the entry", header + "phases:\n  - { id: d, on: ticket, stages: [{ id: s, type: action, action: sync_target }] }\n", "belongs in a reaction phase"},
+		{"subject action in the entry", header + "phases:\n  - { id: d, on: manual, stages: [{ id: s, type: action, action: sync_target }] }\n", "belongs in a reaction phase"},
 		{"subject action without phases", header + "stages:\n  - { id: s, type: action, action: sync_target }\n", "declare phases"},
-		{"reaction without an MR", header + "phases:\n  - { id: d, on: ticket, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n", "opens none"},
+		{"reaction without an MR", header + "phases:\n  - { id: d, on: manual, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n", "opens none"},
 		{"rebase without a leased push", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n", "push_branch"},
 		{"bad strategy", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: squash } }] }\n", "not one of merge | rebase"},
-		{"trigger on a gate", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: g, type: human_gate, auto_approve: mr_conflicts }\n", "starts a phase"},
-		{"trigger on a wait", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_review_settled }\n", "starts a phase"},
+		{"trigger on a gate", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: g, type: human_gate, auto_approve: mr_conflicts }\n", "begins a phase"},
+		{"trigger on a wait", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_review_settled }\n", "begins a phase"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -973,9 +973,34 @@ func TestTrackerActionBindings(t *testing.T) {
 		t.Errorf("link after create_mr: err %v warnings %v", err, f.Warnings)
 	}
 	phased := "name: tk\nversion: 3\ndefaults: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
-		"  - { id: deliver, on: ticket, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
+		"  - { id: deliver, on: manual, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
 		"  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n"
 	if f, err := Parse("t.yaml", []byte(phased)); err != nil || needsMR(f) != 0 {
 		t.Errorf("link in a reaction phase: err %v warnings %v", err, f.Warnings)
+	}
+}
+
+// A phase has one beginning, and a person can give it: `manual` begins the
+// entry (a run started for a ticket) and may begin a reaction phase that only
+// the run page starts. `ticket`, the entry's spelling before manual, still
+// reads as it.
+func TestManualBeginnings(t *testing.T) {
+	doc := header + "phases:\n" +
+		"  - { id: deliver, on: ticket, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
+		"  - { id: polish, on: { signal: manual, max: 3 }, stages: [{ id: shine, type: command, run: x }] }\n"
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := f.Phases[0]
+	if !entry.Entry() || entry.On.Signal != TriggerManual || entry.On.Max != 1 {
+		t.Errorf("entry = %+v", entry.On)
+	}
+	polish := f.Phase("polish")
+	if polish.Entry() || polish.On.Signal != TriggerManual || polish.On.Max != 3 || polish.On.Confirm {
+		t.Errorf("polish = %+v", polish.On)
+	}
+	if got := f.Reactions(); len(got) != 1 || got[0].ID != "polish" {
+		t.Errorf("reactions = %+v", got)
 	}
 }

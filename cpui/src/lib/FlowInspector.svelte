@@ -17,6 +17,10 @@
 		ABORT,
 		DEBUG,
 		DONE,
+		START,
+		TRIGGER_MANUAL,
+		chainSummary,
+		routableFrom,
 		EDGE_KINDS,
 		SENTINEL_CHANGED,
 		SENTINEL_DECISION,
@@ -85,6 +89,31 @@
 	const waitSig = $derived(
 		stage?.type === 'wait' ? signals.find((g) => g.slug === stage.for) : undefined
 	);
+	// A trigger starts a phase; it can neither end a wait nor answer a gate
+	// (the parser refuses it there), so the two pickers never offer the other's.
+	const waitable = $derived(signals.filter((g) => !g.trigger && !g.entry));
+	const triggers = $derived(signals.filter((g) => g.trigger));
+	// What may begin the run: the entry's choices (manual today).
+	const entrySignals = $derived(signals.filter((g) => g.entry));
+
+	const phaseSel = $derived(
+		selection?.kind === 'phase' ? doc.phases?.find((p) => p.id === selection.id) : undefined
+	);
+	const phaseSig = $derived(
+		phaseSel ? signals.find((g) => g.slug === phaseSel.on.signal) : undefined
+	);
+
+	// renamePhase renames a phase and every stage that belongs to it.
+	function renamePhase(oldId: string, newId: string) {
+		newId = newId.trim();
+		const ph = doc.phases?.find((p) => p.id === oldId);
+		if (!ph || !newId || newId === oldId || !/^[a-z][a-z0-9_-]*$/.test(newId)) return;
+		if (doc.phases?.some((p) => p.id === newId)) return;
+		ph.id = newId;
+		for (const s of doc.stages) if (s.phase === oldId) s.phase = newId;
+		onchange();
+		onselect({ kind: 'phase', id: newId });
+	}
 
 	// Bindings are one form everywhere (FLOWLANG §4), so there is one editor:
 	// read a name's value, write it back preserving order.
@@ -138,7 +167,9 @@
 			? `s:${selection.id}`
 			: selection?.kind === 'edge'
 				? `e:${selection.stage}:${selection.edge}`
-				: 'flow'
+				: selection?.kind === 'phase'
+					? `p:${selection.id}`
+					: 'flow'
 	);
 	const xf = () => ({ duration: ms('--dur-fade', 160) });
 	const ADD: StageKind[] = ['agent', 'command', 'human_gate', 'action', 'wait'];
@@ -162,7 +193,13 @@
 
 	function renameStage(oldId: string, newId: string) {
 		newId = newId.trim();
-		if (!newId || newId === oldId || newId === DONE || newId === ABORT || newId === DEBUG) return;
+		if (
+			!newId ||
+			newId === oldId ||
+			[DONE, ABORT, DEBUG, START].includes(newId) ||
+			!/^[a-z][a-z0-9_-]*$/.test(newId)
+		)
+			return;
 		if (doc.stages.some((s) => s.id === newId)) return;
 		for (const s of doc.stages) {
 			if (s.id === oldId) s.id = newId;
@@ -207,8 +244,14 @@
 		onselect(null);
 	}
 
+	// A new edge starts somewhere legal: a stage of the same phase (a route
+	// may not leave it). A failure or timeout retries the stage itself; a
+	// gate's rejection goes back to whatever leads into the gate.
 	function addEdge(s: NonNullable<typeof stage>, kind: EdgeKind) {
-		setEdge(s, kind, { to: doc.stages[0]?.id ?? '', max: 3 });
+		const mine = routableFrom(doc, s);
+		const feeder = mine.find((x) => x.on_success === s.id && x.id !== s.id);
+		const to = s.type === 'human_gate' ? (feeder ?? mine.find((x) => x.id !== s.id))?.id : s.id;
+		setEdge(s, kind, to ? { to, max: 3 } : { to: DEBUG });
 		onchange();
 		onselect({ kind: 'edge', stage: s.id, edge: kind });
 	}
@@ -278,7 +321,8 @@
 		let last = e;
 		while (last.then) last = last.then;
 		if (last.to === ABORT || last.to === DEBUG || last.max === -1) return; // nothing follows abort/debug/unlimited
-		last.then = { to: doc.stages[0]?.id ?? '', max: 3 };
+		// The usual fallback once retries are spent: a human with the workspace.
+		last.then = { to: DEBUG };
 		onchange();
 	}
 
@@ -566,7 +610,7 @@
 								}}
 							>
 								<option value="">—</option>
-								{#each signals as sig (sig.slug)}
+								{#each waitable as sig (sig.slug)}
 									<option value={sig.slug} disabled={sig.slug === s.auto_reject}>{sig.title}</option
 									>
 								{/each}
@@ -583,7 +627,7 @@
 								}}
 							>
 								<option value="">—</option>
-								{#each signals as sig (sig.slug)}
+								{#each waitable as sig (sig.slug)}
 									<option value={sig.slug} disabled={sig.slug === s.auto_approve}
 										>{sig.title}</option
 									>
@@ -683,7 +727,7 @@
 							}}
 						>
 							<option value="">—</option>
-							{#each signals as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
+							{#each waitable as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
 						</select>
 						<div class="help">{t('flow.insp.waitHelp')}</div>
 					</div>
@@ -739,7 +783,8 @@
 					<label for="st-succ">{t('flow.insp.onSuccess')}</label>
 					<select id="st-succ" bind:value={s.on_success} {onchange}>
 						<option value={DONE}>{t('flow.insp.doneOption')}</option>
-						{#each stageIds.filter((id) => id !== s.id) as id (id)}<option value={id}>{id}</option
+						{#each routableFrom(doc, s).filter((x) => x.id !== s.id) as x (x.id)}<option
+								value={x.id}>{x.id}</option
 							>{/each}
 					</select>
 				</div>
@@ -752,9 +797,11 @@
 							>
 						{:else}
 							<button
-								class="btn-sm btn-sel"
+								class="btn-sm btn-sel hue-{EDGE_HUE[kind]}"
+								title={t('flow.insp.editEdge')}
 								onclick={() => onselect({ kind: 'edge', stage: s.id, edge: kind })}
-								>{kind} {I.forward}</button
+								>{kind}
+								{I.forward} <span class="mono">{chainSummary(edgeOf(s, kind))}</span></button
 							>
 						{/if}
 					{/each}
@@ -796,7 +843,8 @@
 									value={link.to}
 									onchange={(ev) => retarget(s.type, link, ev.currentTarget.value)}
 								>
-									{#each stageIds as id (id)}<option value={id}>{id}</option>{/each}
+									{#each routableFrom(doc, s) as x (x.id)}<option value={x.id}>{x.id}</option
+										>{/each}
 									<option value={ABORT}>{t('flow.insp.abortOption')}</option>
 									<option value={DEBUG}>{t('flow.insp.debugOption')}</option>
 								</select>
@@ -851,6 +899,127 @@
 						>
 					</div>
 					<div class="help">{t('flow.insp.linksHelp')}</div>
+				{/if}
+			{:else if phaseSel}
+				{@const ph = phaseSel}
+				{@const entry = doc.phases?.[0]?.id === ph.id}
+				{@const choices = entry ? entrySignals : triggers}
+				<div class="ih">
+					<span class="pill sm mono t-vio">{t('flow.insp.phaseKind')}</span>
+					<span class="mono iid ell">{ph.id}</span>
+					{#if entry}<span class="pill sm flat sq t-brand" title={t('flow.node.entryTitle')}
+							>{t('flow.node.entry')}</span
+						>{/if}
+					<span class="spacer"></span>
+					<span class="fnt tiny"
+						>{t('flow.insp.phaseStages', {
+							count: doc.stages.filter((x) => x.phase === ph.id).length
+						})}</span
+					>
+				</div>
+				<div class="field">
+					<label for="ph-id">{t('flow.insp.id')}</label>
+					<input
+						id="ph-id"
+						class="mono"
+						value={ph.id}
+						onchange={(e) => renamePhase(ph.id, e.currentTarget.value)}
+					/>
+					<div class="help">{t('flow.insp.phaseRenameHelp')}</div>
+				</div>
+				<div class="field">
+					<label for="ph-desc">{t('flow.insp.description')}</label>
+					<input
+						id="ph-desc"
+						value={ph.description ?? ''}
+						oninput={(e) => {
+							ph.description = e.currentTarget.value || undefined;
+							onchange();
+						}}
+					/>
+				</div>
+				<div class="field">
+					<label for="ph-on">{t('flow.insp.trigger')}</label>
+					<select
+						id="ph-on"
+						value={ph.on.signal}
+						onchange={(e) => {
+							ph.on.signal = e.currentTarget.value;
+							// quiet_for only means something to a signal that fires on activity.
+							if (!choices.find((g) => g.slug === ph.on.signal)?.debounced)
+								ph.on.quiet_for = undefined;
+							// Nothing fires on manual, so there is nothing to confirm.
+							if (ph.on.signal === TRIGGER_MANUAL) {
+								ph.on.confirm = undefined;
+								if (ph.on.max === -1) ph.on.max = undefined;
+							}
+							onchange();
+						}}
+					>
+						{#each choices as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
+						{#if !choices.some((g) => g.slug === ph.on.signal)}
+							<option value={ph.on.signal}>{ph.on.signal}</option>
+						{/if}
+					</select>
+					<div class="help">
+						{entry ? t('flow.insp.phaseEntryHelp') : (phaseSig?.description ?? '')}
+					</div>
+				</div>
+				{#if !entry}
+					{#if phaseSig?.debounced}
+						<div class="field">
+							<label for="ph-quiet">{t('flow.insp.quietFor')}</label>
+							<OptionalDuration
+								id="ph-quiet"
+								label={t('flow.insp.quietFor')}
+								bind:value={ph.on.quiet_for}
+								empty={t('flow.insp.noQuiet')}
+								fallback="1h"
+								{onchange}
+							/>
+							<div class="help">{t('flow.insp.quietForHelp')}</div>
+						</div>
+					{/if}
+					{#if ph.on.signal !== TRIGGER_MANUAL}
+						<Toggle
+							checked={ph.on.confirm ?? false}
+							label={t('flow.insp.confirm')}
+							title={t('flow.insp.confirmTitle')}
+							onchange={(v) => {
+								ph.on.confirm = v || undefined;
+								// Unlimited runs need a human deciding each one.
+								if (!v && ph.on.max === -1) ph.on.max = undefined;
+								onchange();
+							}}
+						/>
+						{#if ph.on.confirm}
+							<Toggle
+								checked={ph.on.max === -1}
+								label={t('flow.insp.noLimit')}
+								title={t('flow.insp.phaseUnlimitedTitle')}
+								onchange={(v) => {
+									ph.on.max = v ? -1 : undefined;
+									onchange();
+								}}
+							/>
+						{/if}
+					{/if}
+					<div class="field">
+						<label for="ph-max">{t('flow.insp.phaseMax')}</label>
+						{#if ph.on.max === -1}
+							<div class="mono unl">{t('flow.insp.unlimited')}</div>
+						{:else}
+							<OptionalNumber
+								id="ph-max"
+								label={t('flow.insp.phaseMax')}
+								bind:value={ph.on.max}
+								empty={t('flow.insp.phaseMaxDefault')}
+								fallback={10}
+								{onchange}
+							/>
+						{/if}
+						<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
+					</div>
 				{/if}
 			{:else}
 				<div class="ih">

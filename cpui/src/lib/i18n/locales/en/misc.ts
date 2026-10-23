@@ -400,10 +400,16 @@ export default {
 	'flow.node.entry': 'entry',
 	'flow.node.unbound': 'unbound',
 	// FlowGraph
-	'flow.graph.triggerLabel': '{phase}: on {trigger}',
+	// One beginning per phase: its marker names the phase and what begins it.
+	'flow.graph.beginLabel': '{phase}: on {trigger}',
+	'flow.graph.beginLabelPlain': 'on {trigger}',
+	'flow.graph.entryTitle':
+		'The entry: the phase every run begins with, when a person starts a run for a ticket — drag this handle onto a stage to start the flow there',
 	'flow.graph.triggerTitle':
-		"Phase {phase} starts when {signal} holds for one of the run's merge requests — drag onto a stage of this phase to start it there",
-	'flow.graph.debugReturn': 'then {stage} again',
+		"Phase {phase} begins when {signal} holds for one of the run's merge requests — drag onto a stage of this phase to start it there",
+	'flow.graph.manualTitle':
+		'Phase {phase} begins only when a person starts it from the run page, while a merge request is open — drag onto a stage of this phase to start it there',
+	'flow.graph.debugReturn': 'again',
 	'flow.graph.arrangeTitle': 'Auto-arrange along the success chain',
 	'flow.graph.arrangeAria': 'Auto-arrange',
 	// FlowInspector
@@ -420,6 +426,25 @@ export default {
 	'flow.insp.id': 'Id',
 	'flow.insp.renameHelp': 'Renaming updates every reference.',
 	'flow.insp.phase': 'Phase',
+	'flow.insp.phaseKind': 'phase',
+	'flow.insp.phaseStages_one': '{count} stage',
+	'flow.insp.phaseStages_other': '{count} stages',
+	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the phase with it.',
+	'flow.insp.phaseEntryHelp':
+		'The entry: the phase every run begins with. A person begins it by starting a run for a ticket; it runs once, so quiet, confirm and max do not apply.',
+	'flow.insp.trigger': 'Begins on',
+	'flow.insp.quietFor': 'Quiet for',
+	'flow.insp.noQuiet': 'start as soon as it holds',
+	'flow.insp.quietForHelp':
+		'Start only once nothing new happened for this long (at least 1m): comments arriving mean someone is still reviewing.',
+	'flow.insp.confirm': 'Ask first',
+	'flow.insp.confirmTitle':
+		'Raise an inbox decision (Run it / Not now) before the phase starts; nothing is spent until then',
+	'flow.insp.phaseUnlimitedTitle': 'Every run is already a human decision, so no cap is needed',
+	'flow.insp.phaseMax': 'Runs per merge request',
+	'flow.insp.phaseMaxDefault': 'default · 10',
+	'flow.insp.phaseMaxHelp': 'How many times this phase may run for one merge request.',
+	'flow.insp.editEdge': 'Edit this edge',
 	'flow.insp.phaseOption': '{id} — on {trigger}',
 	'flow.insp.phaseHelp': "Its routes stay inside it; the phase's last stage ends it.",
 	'flow.insp.agent': 'Agent',

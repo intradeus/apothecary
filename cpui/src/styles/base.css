@@ -144,6 +144,10 @@ hr {
 	text-overflow: ellipsis;
 	min-width: 0;
 }
+.tick {
+	/* A value re-rendered on a clock: equal-width digits so it doesn't shimmy. */
+	font-variant-numeric: tabular-nums;
+}
 .num {
 	font-family: var(--mono);
 	font-variant-numeric: tabular-nums;

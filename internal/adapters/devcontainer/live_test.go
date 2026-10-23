@@ -46,6 +46,7 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/builtin"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/wsimage"
@@ -139,7 +140,15 @@ func TestLiveLifecycle(t *testing.T) {
 	a := New(cfg)
 	defer a.Close()
 
-	id, err := a.Provision(ctx, ports.EnvSpec{RunID: "LIVETEST1", RepoURL: "file://" + repo, Project: project})
+	// EgressDomains mirrors a project created with the offered defaults
+	// (builtin.EgressDefaults, copied into ExtraDomains by the project form):
+	// the gateway filters the devcontainer BUILD too, and without the OS
+	// package repos the injected code-server feature's apt-get stalls for
+	// minutes against a deny verdict before the build limps on without it.
+	id, err := a.Provision(ctx, ports.EnvSpec{
+		RunID: "LIVETEST1", RepoURL: "file://" + repo, Project: project,
+		EgressDomains: builtin.EgressDefaults(),
+	})
 	must(err)
 	defer func() {
 		if err := a.Destroy(context.WithoutCancel(ctx), id); err != nil {

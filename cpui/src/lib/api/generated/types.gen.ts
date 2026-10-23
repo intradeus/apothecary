@@ -657,6 +657,7 @@ export type Settings = {
 export type Signal = {
 	debounced?: boolean;
 	description?: string;
+	entry?: boolean;
 	needs?: string;
 	requires?: string;
 	slug: string;

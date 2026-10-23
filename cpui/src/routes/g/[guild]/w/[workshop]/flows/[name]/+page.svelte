@@ -192,6 +192,13 @@
 		}
 		const s = doc.stages.find((x) => x.id === source);
 		if (!s) return;
+		// A phase's routes stay inside it (the parser refuses the rest): a drop
+		// onto another phase's stage is explained, not applied.
+		const dest = doc.stages.find((x) => x.id === target);
+		if (dest && (dest.phase ?? '') !== (s.phase ?? '')) {
+			notice = { tone: 'info', text: t('page.flow.crossPhase', { from: s.id, to: dest.id }) };
+			return;
+		}
 		if (handle === 'success') {
 			// success never aborts or parks
 			if (target !== s.id && target !== ABORT && target !== DEBUG) s.on_success = target;

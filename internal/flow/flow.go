@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/signalspec"
 )
 
 // CurrentVersion is the grammar this build speaks. Every document declares
@@ -224,28 +225,37 @@ type Stage struct {
 	Line int
 }
 
-// TriggerTicket is the entry trigger: the phase a filed ticket starts.
-const TriggerTicket = "ticket"
+// TriggerManual is the beginning a person gives (signalspec.Manual): the
+// entry's today — someone starts a run for a ticket — and a reaction phase's
+// when only the run page should start it. Named here because the parser and
+// the engine speak of it by role.
+const TriggerManual = signalspec.Manual
 
 // DefaultPhaseMax bounds how many times a reaction phase may run for one
 // merge request when the trigger does not say.
 const DefaultPhaseMax = 10
 
-// Phase is one named sequence of stages (PLAN6). The entry phase (On.Signal
-// == TriggerTicket) is what a ticket starts; every other phase is a
-// reaction its signal starts while the run's merge requests are open. Its
-// stages are Flow.Stages[First..Last], contiguous in document order.
+// Phase is one beginning and the stages it runs (PLAN6): `on:` says what
+// begins it, and a phase has exactly one. The entry phase is the first,
+// what a run begins with; every other phase is a reaction, begun by its
+// signal while the run's merge requests are open (or by a person, on
+// manual). Its stages are Flow.Stages[First..Last], contiguous in document
+// order.
 type Phase struct {
 	ID          string
 	Description string
 	On          Trigger
 	First, Last int
 	Line        int
+	// entry marks the first phase — a role the parser assigns by position,
+	// not a signal: manual begins reactions too.
+	entry bool
 }
 
-// Trigger is what starts a phase.
+// Trigger is what begins a phase: a signalspec slug flagged Entry (for the
+// first phase) or Trigger (for a reaction), and the options shaping it.
 type Trigger struct {
-	// Signal is TriggerTicket for the entry, else a signalspec slug.
+	// Signal is TriggerManual or a forge trigger (mr_conflicts, …).
 	Signal string
 	// QuietFor debounces a signal that fires on activity (review comments):
 	// the phase starts once nothing new happened for this long.
@@ -257,8 +267,8 @@ type Trigger struct {
 	Max int
 }
 
-// Entry reports whether this is the ticket's phase.
-func (p *Phase) Entry() bool { return p.On.Signal == TriggerTicket }
+// Entry reports whether this is the run's first phase.
+func (p *Phase) Entry() bool { return p.entry }
 
 // Input returns the stage's named binding for name, or nil.
 func (s *Stage) Input(name string) *IOBinding {

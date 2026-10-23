@@ -130,7 +130,7 @@ export interface DocStage {
 	phase?: string;
 }
 
-/** A phase's `on:` (PLAN6): `ticket` for the entry, else a forge signal. */
+/** A phase's `on:` (PLAN6): what begins it — `manual`, or a forge trigger. */
 export interface DocTrigger {
 	signal: string;
 	quiet_for?: string;
@@ -138,14 +138,21 @@ export interface DocTrigger {
 	max?: number;
 }
 
-/** A phase header; its stages are the flat list's stages tagged with it. */
+/** A phase header: one beginning (`on`) and, tagged with its id, the flat
+ *  list's stages it runs. */
 export interface DocPhase {
 	id: string;
 	description?: string;
 	on: DocTrigger;
 }
 
-export const TRIGGER_TICKET = 'ticket';
+// TRIGGER_MANUAL is the beginning a person gives (the registry's `manual`):
+// the entry's — someone starts a run for a ticket — and a reaction phase's
+// when only the run page should start it.
+export const TRIGGER_MANUAL = 'manual';
+// LEGACY_TRIGGER_TICKET is the entry's `on:` before manual: read as manual,
+// never written back (docToYaml emits what the editor holds).
+const LEGACY_TRIGGER_TICKET = 'ticket';
 
 // One declared input of an agent: what the stage binds by name.
 export interface DocAgentInput {
@@ -197,17 +204,65 @@ type WireDoc = Omit<FlowDoc, 'stages' | 'phases'> & {
 
 // normalizeDoc turns the server's document into the editor's: a phased
 // flow's stages flattened in phase order, each tagged with its phase.
+//
+// It also makes every stage's success target explicit. The YAML may leave
+// `on_success` out ("next stage in document order"); the graph resolves that
+// sugar when it draws, but a form bound to the raw field read the absence as
+// "done" — the canvas and the sidebar disagreed. docToYaml writes it explicitly
+// anyway, so materializing it here changes no saved document.
 export function normalizeDoc(raw: unknown): FlowDoc {
 	const w = raw as WireDoc;
-	if (!w.phases?.length) return { ...(w as FlowDoc), stages: w.stages ?? [] };
-	const stages: DocStage[] = [];
-	const phases: DocPhase[] = [];
-	for (const ph of w.phases) {
-		const { stages: inner, ...head } = ph;
-		phases.push(head);
-		for (const st of inner ?? []) stages.push({ ...st, phase: ph.id });
+	let doc: FlowDoc;
+	if (!w.phases?.length) doc = { ...(w as FlowDoc), stages: w.stages ?? [] };
+	else {
+		const stages: DocStage[] = [];
+		const phases: DocPhase[] = [];
+		for (const ph of w.phases) {
+			const { stages: inner, ...head } = ph;
+			if (head.on.signal === LEGACY_TRIGGER_TICKET)
+				head.on = { ...head.on, signal: TRIGGER_MANUAL };
+			phases.push(head);
+			for (const st of inner ?? []) stages.push({ ...st, phase: ph.id });
+		}
+		doc = { ...(w as FlowDoc), stages, phases };
 	}
-	return { ...(w as FlowDoc), stages, phases };
+	doc.stages.forEach((s, i) => (s.on_success = effectiveSuccess(doc, i)));
+	return doc;
+}
+
+/** The stages a stage may route to: its own phase's (a phase's routes stay
+ *  inside it — FLOWLANG §1; every stage in an unphased flow). */
+export function routableFrom(doc: FlowDoc, s: DocStage): DocStage[] {
+	return stagesOf(doc, s.phase);
+}
+
+/** "fix ×2 · then debug": an edge chain in a few words, for the sidebar. */
+export function chainSummary(e: DocEdge | undefined): string {
+	return chainLinks(e)
+		.map((l, depth) => {
+			const head = depth > 0 ? 'then ' : '';
+			if (l.to === ABORT || l.to === DEBUG) return head + l.to;
+			return `${head}${l.to} ×${l.max === -1 ? '∞' : (l.max ?? '?')}`;
+		})
+		.join(' · ');
+}
+
+// pruneCrossPhase removes every route that leaves its stage's phase — what a
+// stage moved to another phase leaves behind, both its own routes out and the
+// routes into it. A cut success route ends the phase (done); a cut chain link
+// drops out with its fallbacks spliced up (pruneEdgeTarget).
+export function pruneCrossPhase(doc: FlowDoc) {
+	const phaseOf = new Map(doc.stages.map((s) => [s.id, s.phase ?? '']));
+	const away = (s: DocStage, to: string) =>
+		to !== DONE && to !== ABORT && to !== DEBUG && phaseOf.get(to) !== (s.phase ?? '');
+	for (const s of doc.stages) {
+		if (s.on_success && away(s, s.on_success)) s.on_success = DONE;
+		for (const kind of EDGE_KINDS) {
+			let e = edgeOf(s, kind);
+			for (const l of chainLinks(e)) if (away(s, l.to)) e = pruneEdgeTarget(e, l.to);
+			setEdge(s, kind, e);
+		}
+	}
 }
 
 /** The stages of one phase, in document order ('' = an unphased flow). */
@@ -270,8 +325,14 @@ export function setEntry(doc: FlowDoc, id: string): boolean {
 	return true;
 }
 
-// movePhase reassigns a stage to another phase, at the end of its block.
+// movePhase reassigns a stage to another phase, at the end of its block, and
+// cuts the routes that would now cross a phase boundary (a parse error).
 export function movePhase(doc: FlowDoc, id: string, phase: string) {
+	placeInPhase(doc, id, phase);
+	pruneCrossPhase(doc);
+}
+
+function placeInPhase(doc: FlowDoc, id: string, phase: string) {
 	const i = doc.stages.findIndex((s) => s.id === id);
 	if (i < 0 || doc.stages[i].phase === phase) return;
 	const [s] = doc.stages.splice(i, 1);
@@ -461,6 +522,21 @@ const BAND_GAP = 140;
 const LANE_INDENT = 120;
 const GUESS: NodeSize = { width: 220, height: 120 };
 const GUESS_TERMINAL: NodeSize = { width: 110, height: 44 };
+const LEAF_GAP = 14;
+
+/** One labelled control link leaving a stage: every link of every edge
+ *  chain, in edge-kind then chain order. Its index is the label's row under
+ *  the stage — FlowGraph draws, autoLayout reserves, from this one list. */
+export function edgeLinks(s: DocStage): { kind: EdgeKind; link: DocEdge; depth: number }[] {
+	return EDGE_KINDS.flatMap((kind) =>
+		chainLinks(edgeOf(s, kind)).map((link, depth) => ({ kind, link, depth }))
+	);
+}
+
+/** Edge-label rows under a stage (FlowLabeledEdge): the gap above the first
+ *  row and each row's height. */
+export const LABEL_PAD = 6;
+export const LABEL_ROW = 20;
 
 /** The layout key of a stage's debug leaf (one per stage that escalates to
  *  debug: the leaf is that stage's pause, not a shared terminal). */
@@ -498,18 +574,21 @@ export function autoLayout(
 		const onChain: DocStage[] = [];
 		const offChain: DocStage[] = [];
 		for (const s of phaseOrder(doc, phase)) (chain.has(s.id) ? onChain : offChain).push(s);
-		// Under a row, a strip holds the debug leaves of its stages that
-		// escalate there — each beside its own stage. Returns the row's new
-		// bottom edge.
+		// Under a row: first the label rows of its stages' failure edges (each
+		// label hangs under the handle it leaves from), then a strip for the
+		// debug leaves of the stages that escalate there — each beside its own
+		// stage. Returns the row's new bottom edge.
 		const leaves = (row: DocStage[], bottom: number): number => {
+			const lines = Math.max(0, ...row.map((s) => edgeLinks(s).length));
+			const under = lines ? bottom + LABEL_PAD + lines * LABEL_ROW : bottom;
 			let h = 0;
 			for (const s of row) {
 				if (!parksOnDebug(s)) continue;
 				const key = debugKey(s.id);
-				pos[key] = { x: pos[s.id].x + 24, y: bottom + GAP_Y / 2 };
+				pos[key] = { x: pos[s.id].x + 24, y: under + LEAF_GAP };
 				h = Math.max(h, size(key, GUESS_TERMINAL).height);
 			}
-			return h ? bottom + GAP_Y / 2 + h : bottom;
+			return h ? under + LEAF_GAP + h : under;
 		};
 		// Row 0: the chain. Row 1, below the tallest chain node: the rest.
 		let x = 0;

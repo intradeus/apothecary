@@ -32,7 +32,7 @@ agents:
       - { name: mr, path: artifacts/mr.md }
 phases:
   - id: deliver
-    on: ticket
+    on: manual
     stages:
       - { id: build, type: agent, agent: builder }
       - { id: redact, type: agent, agent: redactor }
@@ -173,7 +173,7 @@ func TestPhasedRunWaitsInReviewAndCompletesOnMerge(t *testing.T) {
 		t.Fatalf("view = idle %v phase %q mrs %d", v.Idle, v.Phase, len(v.MRs))
 	}
 	starts := phaseStarts(ph.events(t, runID))
-	if len(starts) != 1 || starts[0].Phase != "deliver" || starts[0].By != "ticket" {
+	if len(starts) != 1 || starts[0].Phase != "deliver" || starts[0].By != "human" {
 		t.Errorf("phase_started = %+v", starts)
 	}
 	ph.forge.SetMRState(1, ports.MRMerged)
@@ -199,7 +199,7 @@ func TestPhasedRunWithoutAnMRCompletes(t *testing.T) {
 version: 3
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 phases:
-  - { id: deliver, on: ticket, stages: [{ id: s, type: command, run: "true" }] }
+  - { id: deliver, on: manual, stages: [{ id: s, type: command, run: "true" }] }
 `
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "T"}, "phased", testProject)
@@ -420,5 +420,27 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	}
 	if n := len(phaseStarts(h2.events(t, runID))); n != 1 {
 		t.Errorf("phase starts = %d, want 1", n)
+	}
+}
+
+// A reaction phase on manual never begins on its own: the idle loop skips
+// it, a person starts it from the run page, and its max counts those starts.
+func TestManualPhaseStartsOnlyByHand(t *testing.T) {
+	doc := phasedFlowDoc + "  - id: polish\n    on: { signal: manual, max: 1 }\n    stages:\n      - { id: shine, type: command, run: \"./shine.sh\" }\n"
+	ph := newPhasedHarness(t, doc)
+	runID := ph.start(t)
+	if starts := phaseStarts(ph.events(t, runID)); len(starts) != 1 {
+		t.Fatalf("starts = %+v (a manual phase must not begin on its own)", starts)
+	}
+	if err := ph.e.StartPhase(runID, "polish", ""); err != nil {
+		t.Fatal(err)
+	}
+	ph.waitPhaseRuns(t, runID, "polish", 1)
+	ph.waitState(t, runID, run.InReview)
+	if execs := ph.execsOf("./shine.sh"); len(execs) != 1 {
+		t.Errorf("shine ran %d times", len(execs))
+	}
+	if err := ph.e.StartPhase(runID, "polish", ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "max") {
+		t.Errorf("second start past max: %v", err)
 	}
 }

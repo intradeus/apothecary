@@ -1468,6 +1468,8 @@ components:
           type: boolean
         description:
           type: string
+        entry:
+          type: boolean
         needs:
           type: string
         requires:

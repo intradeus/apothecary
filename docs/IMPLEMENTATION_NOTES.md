@@ -2826,3 +2826,85 @@ The flow canvas is the one surface drawn opaque (`--xy-background-color:
 var(--solidBg)`, the theme's "glass made opaque" token): the sigils turning
 behind the shell read through a transparent canvas and fought the edges and
 labels. Everything else keeps its glass.
+
+Edge labels sit by their source, not at the path midpoint (`FlowLabeledEdge`,
+edge type `labeled`). xyflow centres a label on its path, so a retry loop's
+label landed on the node it loops around and every edge leaving a stage put
+its label in the same crowded middle. Now each failure link's label hangs
+under the handle it leaves from, one row per link of that stage
+(`flowdoc.edgeLinks` — the single list both FlowGraph's numbering and
+autoLayout's reservation read), and `autoLayout` leaves those rows free under
+every row of nodes, above the debug-leaf strip. A link to `debug` no longer
+spells out `→ debug`: its leaf sits right below. A leaf's return edge carries
+a short "↻ again" to the right of the leaf.
+
+## Flow editor review: where the sidebar disagreed with the canvas
+
+A pass over the graph editor against the document model, checked in a headless
+browser against the dev daemon. What was wrong, and what changed:
+
+- **Implicit success read as "done".** YAML may omit `on_success` (next stage
+  in document order). The canvas resolved that sugar; the inspector's select
+  bound the raw field and showed `done` — `load` and `post` in the default
+  flow's review phase. `normalizeDoc` now materializes every success target;
+  `docToYaml` already wrote them explicitly, so no saved document changes.
+- **Pickers offered illegal targets.** On-success and edge-target lists
+  listed every stage, but a route may not leave its phase (a parse error at
+  save). They now list the stage's own phase (`routableFrom`). Dropping an
+  edge on another phase's stage on the canvas is refused with a notice
+  instead of applied; moving a stage to another phase cuts the routes that
+  would cross (`pruneCrossPhase`).
+- **Trigger signals in wait and gate pickers.** `mr_conflicts` and
+  `mr_review_settled` start phases and are refused as a `wait` or an
+  auto-answer; the UI's signal type never carried `trigger`/`debounced`. It
+  does now, and those pickers offer only waitable signals.
+- **Phases had no editor.** A phase's trigger, `quiet_for`, `confirm`, `max`,
+  description and id were reachable only through YAML. Clicking a phase's
+  trigger marker (or the entry marker in a phased flow) now opens a phase
+  view enforcing the parser's rules: quiet_for only for a debounced signal,
+  unlimited runs only with confirm, the entry's trigger fixed to `ticket`.
+- **Edges were opaque in the stage view.** A defined edge showed as a bare
+  `on_fail →` chip; it now spells the chain (`on_fail → fix_commit_msg ×1 ·
+  then debug`).
+- **Defaults that broke phased flows.** A new edge pointed at the document's
+  first stage (usually another phase); it now retries the stage itself (a
+  gate's rejection goes back to the stage feeding it). A new fallback link is
+  `debug`, the usual last resort. Renaming refuses `start` and non-slug ids,
+  as the parser does.
+
+Still YAML-only, deliberately not built in this pass: the flow's `agents:`
+block (prompts, contracts, read_only/allow_bash), and adding or deleting
+phases.
+
+## One beginning per phase: `on: manual`
+
+A phase is one beginning and the stages it runs, and the three places that
+said so disagreed. The YAML had `on: ticket` on the entry — a noun, a magic
+string outside the signal registry — and a trigger signal on each reaction;
+the canvas drew a solid "start" pill for the entry that named neither its
+phase nor what begins it, and violet "phase: on signal" markers for reactions;
+the inspector told the entry it "has no trigger to set". A flow without phases
+had no beginning at all.
+
+Now every beginning is a registry signal. `manual` (`signalspec.Manual`,
+flagged `Trigger` and `Entry`) is the one a person gives: it never holds on
+its own. The entry is `on: manual` — someone starts a run for a ticket — and a
+reaction phase may be `on: manual` too: a phase only the run page starts
+(`max` counts those starts; `confirm` is refused, nothing fires to confirm).
+The forge triggers keep `Trigger` only; `Entry` is the seam for a tracker
+event (*a ticket assigned*) to begin a run, as FLOWLANG §10 foresaw. The
+entry is the first phase by position (`Phase.entry`, set by the parser), no
+longer "the one on ticket", since manual begins reactions too. `ticket` is
+still read, as `manual`, and the editor writes `manual` back: no version
+bump, every saved flow parses.
+
+The canvas draws one marker per phase, the entry included — "deliver: on
+manual", "conflicts: on mr_conflicts (confirm)" — solid for the entry and
+dashed for reactions, each pointing at its phase's first stage; a flow
+without phases shows "on manual". The inspector's phase panel is one form:
+*Begins on* offers the entry the signals flagged `Entry` and a reaction those
+flagged `Trigger`, and shows `quiet_for`, `confirm` and `max` only where the
+chosen signal takes them. `GET /api/signals` carries `entry`; the run page's
+review card names a manual phase "only when you start it". The entry's
+`phase_started` records `by: human` (it was `ticket`); the timeline reads
+`by` only for reaction starts.

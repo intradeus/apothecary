@@ -15,6 +15,7 @@
 	import FlowStageNode from '$lib/FlowStageNode.svelte';
 	import FlowTerminalNode from '$lib/flow/FlowTerminalNode.svelte';
 	import FitOnInit from '$lib/flow/FitOnInit.svelte';
+	import FlowLabeledEdge from '$lib/flow/FlowLabeledEdge.svelte';
 	import { EDGE_HUE } from '$lib/ui/hues';
 	import { ms } from '$lib/ui/motion';
 	import { I } from '$lib/ui/icons';
@@ -27,8 +28,10 @@
 		parksOnDebug,
 		DONE,
 		START,
+		TRIGGER_MANUAL,
 		EDGE_KINDS,
 		chainLinks,
+		edgeLinks,
 		deriveDataLinks,
 		effectiveSuccess,
 		edgeOf,
@@ -43,7 +46,10 @@
 	} from '$lib/flowdoc';
 
 	export type Selection =
-		{ kind: 'stage'; id: string } | { kind: 'edge'; stage: string; edge: string } | null;
+		| { kind: 'stage'; id: string }
+		| { kind: 'edge'; stage: string; edge: string }
+		| { kind: 'phase'; id: string }
+		| null;
 
 	let {
 		doc,
@@ -82,6 +88,9 @@
 		debug: FlowTerminalNode,
 		start: FlowTerminalNode
 	};
+	// Control edges carry their label by the source (FlowLabeledEdge), so
+	// labels never land on nodes or on each other.
+	const edgeTypes = { labeled: FlowLabeledEdge };
 
 	// Edges and handles (DESIGN 3.6): success solid green; failure edges
 	// dashed and animated in their hue; a "then" fallback is the same hue
@@ -91,6 +100,9 @@
 	const hued = (h: string) => `--eh: var(--${h}); --eh-ln: var(--${h}Ln)`;
 	// "on_fail" reads "fail" on the canvas.
 	const word = (kind: string) => kind.replace(/^on_/, '');
+	// A stage's debug leaf on the canvas. Declared before rebuild(), which
+	// runs during setup (untrack below): a const used earlier is a TDZ crash.
+	const debugNodeID = (stage: string) => `__debug:${stage}`;
 
 	let nodes = $state.raw<Node[]>([]);
 	let edges = $state.raw<Edge[]>([]);
@@ -152,8 +164,10 @@
 			if (ids.has(id)) ghosts.delete(id);
 			else ns.push(g);
 		}
-		// Reaction phases (PLAN6): a marker per phase naming what starts it,
-		// pointing at the phase's first stage.
+		// One beginning per phase (1 entrypoint = 1 phase): a marker naming the
+		// phase and what begins it, pointing at the phase's first stage. The
+		// entry's is `__start` (layout key START) — the phase every run begins
+		// with, drawn solid; a reaction's is `__trigger:<phase>`, dashed.
 		const triggers = (doc.phases ?? []).slice(1);
 		for (const ph of triggers) {
 			const first = phaseEntry(doc, ph.id);
@@ -163,21 +177,36 @@
 				type: 'start',
 				position: layout[`trigger:${ph.id}`] ?? { x: at.x - 220, y: at.y },
 				data: {
-					label: t('flow.graph.triggerLabel', { phase: ph.id, trigger: triggerLabel(ph.on) }),
-					title: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal })
+					entry: false,
+					label: t('flow.graph.beginLabel', { phase: ph.id, trigger: triggerLabel(ph.on) }),
+					title:
+						ph.on.signal === TRIGGER_MANUAL
+							? t('flow.graph.manualTitle', { phase: ph.id })
+							: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal })
 				}
 			});
 		}
 		// The entry marker: its edge points at stages[0]; dragging that edge
 		// onto another stage makes it the entry (moves it to document front).
+		// A flow without phases is one entry phase, begun by hand.
 		const entryPos = doc.stages.length
 			? (layout[doc.stages[0].id] ?? { x: 0, y: 0 })
 			: { x: 0, y: 0 };
+		const entryPhase = doc.phases?.[0];
 		ns.push({
 			id: '__start',
 			type: 'start',
 			position: layout[START] ?? { x: entryPos.x - 170, y: entryPos.y },
-			data: {}
+			data: {
+				entry: true,
+				label: entryPhase
+					? t('flow.graph.beginLabel', {
+							phase: entryPhase.id,
+							trigger: triggerLabel(entryPhase.on)
+						})
+					: t('flow.graph.beginLabelPlain', { trigger: TRIGGER_MANUAL }),
+				title: t('flow.graph.entryTitle')
+			}
 		});
 		ns.push({
 			id: '__done',
@@ -263,33 +292,36 @@
 				class: 'e-success',
 				style: hued(EDGE_HUE.success)
 			});
-			for (const kind of EDGE_KINDS) {
-				// One rendered edge per chain link; deeper links are the "then"
-				// fallbacks and label their position in the chain.
-				chainLinks(edgeOf(s, kind)).forEach((link, depth) => {
-					// The edge lands on the exact dot that receives its content, when the
-					// target bound one: the picture shows where the rationale goes.
-					const dot = fed.get(`${link.to}|${feedSentinelFor(kind)}`);
-					es.push({
-						id: `${kind}|${s.id}|${depth}`,
-						source: s.id,
-						sourceHandle: kind,
-						target: link.to === ABORT ? '__abort' : link.to === DEBUG ? debugNodeID(s.id) : link.to,
-						targetHandle: dot ? `in:${dot}` : undefined,
-						type: 'smoothstep',
-						// "fail ×3": the word as well as the hue, so colour is never the
-						// only signal; "then#1" marks a fallback link.
-						label:
-							link.to === ABORT || link.to === DEBUG
+			// One rendered edge per chain link; deeper links are the "then"
+			// fallbacks and label their position in the chain. The link's index
+			// in edgeLinks is its label's row under the stage.
+			edgeLinks(s).forEach(({ kind, link, depth }, row) => {
+				// The edge lands on the exact dot that receives its content, when the
+				// target bound one: the picture shows where the rationale goes.
+				const dot = fed.get(`${link.to}|${feedSentinelFor(kind)}`);
+				es.push({
+					id: `${kind}|${s.id}|${depth}`,
+					source: s.id,
+					sourceHandle: kind,
+					target: link.to === ABORT ? '__abort' : link.to === DEBUG ? debugNodeID(s.id) : link.to,
+					targetHandle: dot ? `in:${dot}` : undefined,
+					type: 'labeled',
+					data: { row },
+					// "fail ×3": the word as well as the hue, so colour is never the
+					// only signal; "then#1" marks a fallback link. A debug link
+					// names no target: its leaf sits right under the stage.
+					label:
+						link.to === DEBUG
+							? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''}`
+							: link.to === ABORT
 								? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ${I.forward} ${link.to}`
 								: `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
-						labelStyle: hued(EDGE_HUE[kind]),
-						animated: true,
-						class: depth > 0 ? 'e-dash e-then' : 'e-dash',
-						style: hued(EDGE_HUE[kind])
-					});
+					labelStyle: hued(EDGE_HUE[kind]),
+					animated: true,
+					class: depth > 0 ? 'e-dash e-then' : 'e-dash',
+					style: hued(EDGE_HUE[kind])
 				});
-			}
+			});
 			// The way back from the stage's debug leaf: the human has fixed the
 			// workspace, and the same stage runs again.
 			if (parksOnDebug(s)) {
@@ -297,8 +329,9 @@
 					id: `debugreturn|${s.id}`,
 					source: debugNodeID(s.id),
 					target: s.id,
-					type: 'smoothstep',
-					label: `${I.retry} ${t('flow.graph.debugReturn', { stage: s.id })}`,
+					type: 'labeled',
+					data: { anchor: 'right' },
+					label: `${I.retry} ${t('flow.graph.debugReturn')}`,
 					labelStyle: hued('amb'),
 					class: 'e-dash e-then',
 					style: hued('amb')
@@ -354,9 +387,6 @@
 		return out;
 	}
 
-	// A stage's debug leaf on the canvas.
-	const debugNodeID = (stage: string) => `__debug:${stage}`;
-
 	const nodeKey = (id: string) =>
 		id === '__done'
 			? DONE
@@ -376,6 +406,7 @@
 		bind:nodes
 		bind:edges
 		{nodeTypes}
+		{edgeTypes}
 		colorMode={prefs.themeDef.scheme}
 		fitView
 		fitViewOptions={{ padding: 0.12, maxZoom: 1.1 }}
@@ -389,9 +420,13 @@
 			onselect(
 				node.id.startsWith('__debug:')
 					? { kind: 'stage', id: node.id.slice('__debug:'.length) }
-					: node.id.startsWith('__')
-						? null
-						: { kind: 'stage', id: node.id }
+					: node.id.startsWith('__trigger:')
+						? { kind: 'phase', id: node.id.slice('__trigger:'.length) }
+						: node.id === '__start' && doc.phases?.length
+							? { kind: 'phase', id: doc.phases[0].id }
+							: node.id.startsWith('__')
+								? null
+								: { kind: 'stage', id: node.id }
 			)}
 		onedgeclick={({ edge }) => {
 			const [kind, stage] = edge.id.split('|');
@@ -508,8 +543,13 @@
 		stroke-width: var(--edge-w-hover);
 		filter: drop-shadow(0 0 var(--glow-xs) var(--eh, var(--brand)));
 	}
-	/* Edge labels: "fail ×3" as a mono pill in the edge's hue. */
-	.graph-wrap :global(.svelte-flow__edge-label) {
+	/* Edge labels: "fail ×3" as a mono pill in the edge's hue. FlowLabeledEdge
+	 * centres a transparent box at its anchor and the pill inside shifts back
+	 * by half its own width, so the label starts at the anchor. */
+	.graph-wrap :global(.e-lbl-pill) {
+		display: inline-block;
+		transform: translateX(50%);
+		background: var(--xy-edge-label-background-color);
 		font-family: var(--mono);
 		font-size: var(--fs-id);
 		font-weight: 600;

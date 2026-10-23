@@ -62,3 +62,25 @@ func TestMRMerged(t *testing.T) {
 		}
 	}
 }
+
+// Manual is the one beginning a person gives: it may begin the run (the
+// entry) and a reaction phase, needs nothing of the project, and never fires
+// on its own — so it is not debounced. The forge triggers begin reactions
+// only.
+func TestManual(t *testing.T) {
+	sig := Get(Manual)
+	if sig == nil {
+		t.Fatalf("%s is not registered", Manual)
+	}
+	if !sig.Entry || !sig.Trigger {
+		t.Errorf("entry %v trigger %v, want both", sig.Entry, sig.Trigger)
+	}
+	if sig.Requires != "" || sig.Needs != "" || sig.Debounced {
+		t.Errorf("manual needs nothing: %+v", sig)
+	}
+	for _, slug := range []string{MRConflicts, MRReviewSettled} {
+		if s := Get(slug); s.Entry || !s.Trigger {
+			t.Errorf("%s: entry %v trigger %v", slug, s.Entry, s.Trigger)
+		}
+	}
+}

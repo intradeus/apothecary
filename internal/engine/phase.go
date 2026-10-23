@@ -1,9 +1,10 @@
 package engine
 
 // Phases (PLAN6): a flow describes a ticket's whole life. The entry phase is
-// what the ticket starts; when it ends with merge requests open the run is
-// idle, and each reaction phase runs when its trigger holds for one merge
-// request — its subject — one phase run at a time, in this run, in this
+// what a run begins with (on manual: a person started it for a ticket); when
+// it ends with merge requests open the run is idle, and each reaction phase
+// runs when its trigger holds for one merge request — its subject — or when
+// a person starts it, one phase run at a time, in this run, in this
 // workspace. The run ends from its merge requests: all merged completes it,
 // one closed abandons it.
 
@@ -66,7 +67,13 @@ func (x *exec) entryPhaseStarted() error {
 	if !rs.fl.Phased() || rs.phase != "" || rs.idle {
 		return nil
 	}
-	p := &event.PhaseStarted{Phase: rs.fl.Phases[0].ID, By: flow.TriggerTicket}
+	// Who began it: a person, when the entry is on manual (a run started
+	// for a ticket); a signal, once an entry can begin on a tracker event.
+	by := "human"
+	if rs.fl.Phases[0].On.Signal != flow.TriggerManual {
+		by = "signal"
+	}
+	p := &event.PhaseStarted{Phase: rs.fl.Phases[0].ID, By: by}
 	if err := x.append(p); err != nil {
 		return err
 	}
@@ -291,6 +298,9 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 // whether it holds, the occurrence key, and a sentence for a human.
 func (x *exec) triggerHolds(ph *flow.Phase, o mrObservation) (bool, string, string) {
 	switch ph.On.Signal {
+	case signalspec.Manual:
+		// Never holds on its own: a person begins the phase (manualStart).
+		return false, "", ""
 	case signalspec.MRConflicts:
 		if o.status.Mergeable != ports.MergeConflicts {
 			return false, "", ""

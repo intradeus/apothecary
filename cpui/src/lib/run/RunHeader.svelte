@@ -239,7 +239,7 @@
 		<div class="bt"><span>{t('run.header.batch')}</span><span class="mono">Nº</span></div>
 		<div class="bid">{shortId(run.id, '')}</div>
 		<div
-			class="bb"
+			class="bb tick"
 			title={t('run.header.started', {
 				at: fmtAbs(run.createdAt),
 				ago: ago(run.createdAt, rs.now)

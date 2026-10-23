@@ -181,6 +181,7 @@ export default {
 	'run.review.trigger.conflicts': 'when it conflicts with its target',
 	'run.review.trigger.quiet': 'when review comments go quiet for {minutes}m',
 	'run.review.trigger.on': 'on {signal}',
+	'run.review.trigger.manual': 'only when you start it',
 	'run.review.afterConfirm': ', after you confirm',
 	'run.review.usage': '{used}/{max} runs',
 	'run.review.spent': 'This phase reached its max for this merge request',
