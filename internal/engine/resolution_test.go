@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"apothecary/internal/adapters/fake"
@@ -43,5 +44,43 @@ func TestResolutionRunnerSelection(t *testing.T) {
 	}
 	if !solo.harnessInSet("opencode") || solo.harnessInSet("codex") {
 		t.Error("solo set membership wrong")
+	}
+}
+
+const phaseSignalDoc = `name: sig
+version: 4
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+phases:
+  - id: deliver
+    on: run_start
+    stages:
+      - { id: build, type: command, run: "true" }
+  - id: polish
+    on: manual
+    stages:
+      - { id: tidy, type: command, run: "true" }
+  - id: conflicts
+    on: { signal: mr_conflicts, start: manual }
+    stages:
+      - { id: fix, type: command, run: "true" }
+`
+
+// A phase that opens on a forge signal needs the forge, like a wait stage
+// does; run_start and manual phases need nothing. Checked on the flow's
+// refs, which PreflightProject and run creation share.
+func TestFlowRefsCheckPhaseSignals(t *testing.T) {
+	fl := mustFlow(t, phaseSignalDoc)
+	h := newHarness(t, fl)
+	if err := h.e.preflightFlowRefs(h.res, fl); err != nil {
+		t.Fatalf("with a forge: %v", err)
+	}
+	h.res.Forge = nil
+	err := h.e.preflightFlowRefs(h.res, fl)
+	if err == nil || !strings.Contains(err.Error(), `phase "conflicts"`) || !strings.Contains(err.Error(), "forge") {
+		t.Fatalf("without a forge: err = %v", err)
+	}
+	noFire := mustFlow(t, strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1))
+	if err := h.e.preflightFlowRefs(h.res, noFire); err != nil {
+		t.Errorf("manual phases without a forge: %v", err)
 	}
 }

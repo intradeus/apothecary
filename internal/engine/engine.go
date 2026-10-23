@@ -1391,6 +1391,18 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	} else if !dc {
 		return fmt.Errorf("preflight: repo has no .devcontainer/devcontainer.json — apothecary runs the repo's own devcontainer")
 	}
+	// A phase that opens on a signal needs whoever raises it, like a wait
+	// stage does: the run would otherwise sit armed on an event nothing can
+	// observe. run_start and manual phases need nothing.
+	for i := range fl.Phases {
+		ph := &fl.Phases[i]
+		if !ph.Fires() {
+			continue
+		}
+		if err := res.signalAvailable(ph.On.Signal); err != nil {
+			return fmt.Errorf("preflight: phase %q: %w", ph.ID, err)
+		}
+	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
@@ -2594,6 +2606,15 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 }
 
 func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
+	for i := range fl.Phases {
+		ph := &fl.Phases[i]
+		if !ph.Fires() {
+			continue
+		}
+		if err := res.signalAvailable(ph.On.Signal); err != nil {
+			return fmt.Errorf("phase %q: %w", ph.ID, err)
+		}
+	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
