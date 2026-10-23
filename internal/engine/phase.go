@@ -428,7 +428,7 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	fl, err := e.pinnedFlow(ctx, v.ProjectID, v.FlowName, v.FlowHash)
+	fl, err := e.runFlow(ctx, v)
 	if err != nil {
 		return nil, err
 	}

@@ -196,6 +196,15 @@ type RunCreated struct {
 	TicketSourceKind string `json:"ticket_source_kind,omitempty"`
 	TicketSourceKey  string `json:"ticket_source_key,omitempty"`
 	TicketSourceURL  string `json:"ticket_source_url,omitempty"`
+	// Phase is the entrypoint the run began at (FLOWLANG §1). Params are the
+	// parameter values it runs with — every declared one, resolved at
+	// creation from the flow's defaults, the project's bindings and this
+	// attempt's overrides — so recovery resolves the pinned document to the
+	// same flow whatever changed since. By is who created it: human, or
+	// automation.
+	Phase  string            `json:"phase,omitempty"`
+	Params map[string]string `json:"params,omitempty"`
+	By     string            `json:"by,omitempty"`
 }
 
 // Checkout is one repository a run checks out.

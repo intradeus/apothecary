@@ -77,6 +77,13 @@ type RunInput struct {
 	// "" reuses the original run's source branch.
 	SourceBranch  string
 	AttachmentIDs []string
+	// Phase is the entrypoint the run begins at ("" = the flow's first);
+	// Params override the project's parameter bindings for this attempt; By
+	// records who created the run on run_created ("" = a person,
+	// "automation" for a watcher).
+	Phase  string
+	Params map[string]string
+	By     string
 }
 
 // Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
@@ -153,6 +160,7 @@ type Engine struct {
 	store    event.Store
 	resolver Resolver
 	flows    flow.Source
+	bindings FlowBindings // nil = no project bindings
 	settings SettingsSource
 	channels []ports.NotificationChannel
 
@@ -928,12 +936,21 @@ func (e *Engine) appendAndEmit(ctx context.Context, runID string, ps ...event.Pa
 	return nil
 }
 
-// CreateRun performs §1 preflight against the project's resolved
-// configuration and, if it passes, appends run_created and starts the run's
-// writer goroutine. flowName "" means the project's default flow. Preflight
-// failures refuse the run naming the exact missing item — no events are
-// written.
+// CreateRun is CreateRunWith at the flow's first entrypoint, with the
+// project's parameter bindings and nothing overridden.
 func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID string) (string, error) {
+	return e.CreateRunWith(ctx, t, flowName, projectID, RunInput{})
+}
+
+// CreateRunWith performs §1 preflight against the project's resolved
+// configuration and, if it passes, appends run_created and starts the run's
+// writer goroutine. flowName "" means the project's default flow; in.Phase
+// the entrypoint to begin at ("" = the flow's first) and in.Params this
+// attempt's parameter overrides, on top of the project's bindings. The flow
+// is resolved with those values before preflight, so a bound harness, model
+// or run_ref is checked exactly like a literal one. Preflight failures
+// refuse the run naming the exact missing item — no events are written.
+func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectID string, in RunInput) (string, error) {
 	if strings.TrimSpace(t.Title) == "" {
 		return "", errors.New("ticket title is required")
 	}
@@ -952,11 +969,26 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 	if err != nil {
 		return "", fmt.Errorf("flow %q: %w", flowName, err)
 	}
+	phase, err := entrypointOf(fl, in.Phase)
+	if err != nil {
+		return "", err
+	}
+	params, err := e.resolveParams(ctx, fl, projectID, in.Params)
+	if err != nil {
+		return "", fmt.Errorf("preflight: parameters: %w", err)
+	}
+	if fl, err = fl.Resolve(params); err != nil {
+		return "", fmt.Errorf("preflight: parameters: %w", err)
+	}
 	if err := e.preflight(ctx, res, fl); err != nil {
 		return "", err
 	}
 	if err := e.preflightTicket(ctx, res, fl, t); err != nil {
 		return "", err
+	}
+	by := in.By
+	if by == "" {
+		by = "human"
 	}
 
 	if err := e.checkEnvCapacity(ctx); err != nil {
@@ -1010,6 +1042,9 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 		TicketSourceKind:    t.SourceKind,
 		TicketSourceKey:     t.SourceKey,
 		TicketSourceURL:     t.SourceURL,
+		Phase:               phase,
+		Params:              params,
+		By:                  by,
 	}); err != nil {
 		return "", err
 	}
@@ -1167,8 +1202,25 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	if in.SourceBranch != "" {
 		sourceBranch = in.SourceBranch
 	}
+	// The attempt begins where the original did and with its parameter
+	// values — unless the flow changed (then its own first entrypoint) or
+	// the request says otherwise. Values the flow no longer declares drop.
+	next := RunInput{Phase: in.Phase, Params: map[string]string{}, By: in.By}
+	if in.Flow == "" || in.Flow == v.FlowName {
+		if next.Phase == "" {
+			next.Phase = v.BeginPhase
+		}
+		if fl, ferr := e.flows.Get(ctx, v.ProjectID, flowName); ferr == nil {
+			for k, val := range v.Params {
+				if fl.Param(k) != nil {
+					next.Params[k] = val
+				}
+			}
+		}
+	}
+	maps.Copy(next.Params, in.Params)
 	if v.TicketID != "" {
-		return e.CreateRun(ctx, Ticket{
+		return e.CreateRunWith(ctx, Ticket{
 			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
 			SourceBranch: sourceBranch,
 			RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
@@ -1179,17 +1231,17 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 			SourceKind:          v.TicketSourceKind,
 			SourceKey:           v.TicketKey,
 			SourceURL:           v.TicketURL,
-		}, flowName, v.ProjectID)
+		}, flowName, v.ProjectID, next)
 	}
 	branch := v.Branch
 	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") {
 		branch = ""
 	}
-	return e.CreateRun(ctx, Ticket{
+	return e.CreateRunWith(ctx, Ticket{
 		Title: v.TicketTitle, Goal: v.TicketGoal, Branch: branch,
 		SourceBranch: sourceBranch,
 		RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
-	}, flowName, v.ProjectID)
+	}, flowName, v.ProjectID, next)
 }
 
 // RetryRun re-enters the stage where an abandoned/failed run stalled,
@@ -1233,7 +1285,12 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 			return fmt.Errorf("run %s cannot resume: flow %q no longer has a stage %q — rerun it as a new run instead",
 				runID, v.FlowName, v.CurrentStage)
 		}
-		hash = fl.Hash
+		if _, rerr := fl.Resolve(v.Params); rerr != nil {
+			e.log.Warn("retry keeps the pinned flow version: the current one does not resolve with the run's parameters",
+				"run", runID, "flow", v.FlowName, "err", rerr)
+		} else {
+			hash = fl.Hash
+		}
 	}
 	if err := e.appendAndEmit(ctx, runID, &event.RunRetried{StageID: v.CurrentStage, FlowHash: hash}); err != nil {
 		return err
@@ -2482,6 +2539,13 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 
 	fl, err := e.flows.Get(ctx, res.ProjectID, res.DefaultFlow)
 	steps = append(steps, step("flow:"+res.DefaultFlow, err))
+	if fl != nil {
+		// The project's parameter bindings, applied: a bound harness, model
+		// or run_ref is then checked below exactly like a literal one.
+		bound, perr := e.bindFlow(ctx, fl, res.ProjectID)
+		steps = append(steps, step("parameters", perr))
+		fl = bound // nil when the bindings do not resolve
+	}
 	steps = append(steps, step("forge_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
 	for _, x := range res.ExtraRepos {
 		if f := res.Forges[x.Name]; f != nil {

@@ -571,6 +571,10 @@ export type RerunRequest = {
 	attachment_ids?: Array<string>;
 	flow?: string;
 	goal?: string;
+	params?: {
+		[key: string]: string;
+	};
+	phase?: string;
 	source_branch?: string;
 };
 
@@ -627,6 +631,7 @@ export type RunResources = {
 };
 
 export type RunView = {
+	begin_phase?: string;
 	branch?: string;
 	branch_base?: string;
 	checkouts?: Array<RunCheckout>;
@@ -640,12 +645,16 @@ export type RunView = {
 	idle?: boolean;
 	mr_url?: string;
 	mrs?: Array<RunMergeRequest>;
+	params?: {
+		[key: string]: string;
+	};
 	phase?: string;
 	phase_subject?: string;
 	project_id?: string;
 	run_goal?: string;
 	run_id: string;
 	source_branch?: string;
+	started_by?: string;
 	state: string;
 	ticket_id?: string;
 	ticket_key?: string;
@@ -722,6 +731,10 @@ export type StartRunRequest = {
 	attachment_ids?: Array<string>;
 	flow?: string;
 	goal?: string;
+	params?: {
+		[key: string]: string;
+	};
+	phase?: string;
 	source_branch?: string;
 };
 

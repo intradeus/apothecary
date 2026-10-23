@@ -90,7 +90,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	x.res = res
 	x.redact = newRedactor(res, e.RunToken(runID))
 
-	fl, err := e.pinnedFlow(bg, view.ProjectID, view.FlowName, view.FlowHash)
+	fl, err := e.runFlow(bg, view)
 	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
 		var perr *flow.Error
@@ -102,7 +102,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			// written against an older grammar). Retrying can never fix that,
 			// and leaving the run non-terminal spins it through recovery on
 			// every boot: fail honestly with the parse error a human can act on.
-			_ = x.append(&event.RunFailed{Reason: fmt.Sprintf("flow %q no longer parses: %v", view.FlowName, err)})
+			_ = x.append(&event.RunFailed{Reason: fmt.Sprintf("flow %q no longer parses, or no longer resolves with this run's parameters: %v", view.FlowName, err)})
 		default:
 			// Transient source error (DB blip): leave the run non-terminal
 			// so the next boot recovers it.

@@ -31,7 +31,11 @@ type runState struct {
 	fl           *flow.Flow
 	branch       string
 	sourceBranch string // branch this run forks off from (origin/<sourceBranch>)
-	envID        ports.EnvID
+	// begin is the entrypoint the run began at and params the parameter
+	// values it runs with (run_created).
+	begin  string
+	params map[string]string
+	envID  ports.EnvID
 	// envRequested: the run asked for its workspace once (env_requested is
 	// on the log), whatever its state is now.
 	envRequested bool
@@ -225,6 +229,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.RunCreated:
 			rs.branch = p.Branch
 			rs.sourceBranch = p.SourceBranch
+			rs.begin, rs.params = p.Phase, p.Params
 			rs.checkouts = checkoutsOf(p)
 		case *event.EnvRequested:
 			rs.envRequested = true

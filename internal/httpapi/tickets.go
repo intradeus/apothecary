@@ -308,7 +308,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	var body StartRunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
-	runID, err := s.Engine.CreateRun(r.Context(), engine.Ticket{
+	runID, err := s.Engine.CreateRunWith(r.Context(), engine.Ticket{
 		TicketID:     t.ID,
 		Title:        t.Title,
 		Goal:         t.Goal,
@@ -324,7 +324,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		SourceKind: t.SourceKind,
 		SourceKey:  t.SourceKey,
 		SourceURL:  t.SourceURL,
-	}, body.Flow, t.ProjectID)
+	}, body.Flow, t.ProjectID, engine.RunInput{Phase: body.Phase, Params: body.Params})
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())

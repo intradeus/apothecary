@@ -54,6 +54,10 @@ type RerunRequest struct {
 	Goal          string   `json:"goal,omitempty"`
 	SourceBranch  string   `json:"source_branch,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	// Phase is the entrypoint to begin at ("" = where the original began);
+	// Params override the parameter values the original ran with.
+	Phase  string            `json:"phase,omitempty"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // StartRunRequest starts one attempt on a ticket.
@@ -62,6 +66,10 @@ type StartRunRequest struct {
 	Goal          string   `json:"goal,omitempty"`
 	SourceBranch  string   `json:"source_branch,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	// Phase is the entrypoint to begin at ("" = the flow's first); Params
+	// override the workshop's parameter bindings for this attempt.
+	Phase  string            `json:"phase,omitempty"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // --- egress -----------------------------------------------------------------

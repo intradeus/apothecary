@@ -63,7 +63,12 @@ type View struct {
 	Branch           string `json:"branch,omitempty"`        // the run's actual git branch (from RunCreated)
 	BranchBase       string `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
 	SourceBranch     string `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
-	MRURL            string `json:"mr_url,omitempty"`
+	// BeginPhase is the entrypoint the run began at, Params the parameter
+	// values it runs with and StartedBy who created it (all from run_created).
+	BeginPhase string            `json:"begin_phase,omitempty"`
+	Params     map[string]string `json:"params,omitempty"`
+	StartedBy  string            `json:"started_by,omitempty"`
+	MRURL      string            `json:"mr_url,omitempty"`
 	// MRs are every merge request the run opened (a multi-repo run has one
 	// per changed repo), in creation order;
 	// MRURL is the first. Checkouts are the run's repositories. Neither is a
@@ -147,6 +152,9 @@ func Apply(v *View, e *event.Event) {
 		v.Branch = p.Branch
 		v.BranchBase = p.BranchBase
 		v.SourceBranch = p.SourceBranch
+		v.BeginPhase = p.Phase
+		v.Params = p.Params
+		v.StartedBy = p.By
 		if len(p.Checkouts) > 0 {
 			v.Checkouts = append([]event.Checkout(nil), p.Checkouts...)
 		} else {

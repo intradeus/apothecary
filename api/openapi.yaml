@@ -1255,6 +1255,12 @@ components:
           type: string
         goal:
           type: string
+        params:
+          additionalProperties:
+            type: string
+          type: object
+        phase:
+          type: string
         source_branch:
           type: string
       type: object
@@ -1397,6 +1403,8 @@ components:
       type: object
     RunView:
       properties:
+        begin_phase:
+          type: string
         branch:
           type: string
         branch_base:
@@ -1428,6 +1436,10 @@ components:
           items:
             $ref: '#/components/schemas/RunMergeRequest'
           type: array
+        params:
+          additionalProperties:
+            type: string
+          type: object
         phase:
           type: string
         phase_subject:
@@ -1439,6 +1451,8 @@ components:
         run_id:
           type: string
         source_branch:
+          type: string
+        started_by:
           type: string
         state:
           type: string
@@ -1617,6 +1631,12 @@ components:
         flow:
           type: string
         goal:
+          type: string
+        params:
+          additionalProperties:
+            type: string
+          type: object
+        phase:
           type: string
         source_branch:
           type: string

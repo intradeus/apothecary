@@ -374,7 +374,7 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	// environment, so fall through with no agents rather than refusing.
 	var agents []*agentspec.Spec
 	var stages []flow.Stage
-	if fl, ferr := e.flows.Get(ctx, res.ProjectID, res.DefaultFlow); ferr == nil {
+	if fl, ferr := e.boundFlow(ctx, res.ProjectID, res.DefaultFlow); ferr == nil {
 		agents = fl.AgentSpecs()
 		stages = fl.Stages
 	}
