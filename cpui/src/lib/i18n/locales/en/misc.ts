@@ -396,19 +396,19 @@ export default {
 	'flow.node.waitFor': 'for {signal}',
 	'flow.node.noSignal': '(no signal)',
 	'flow.node.asksHuman': 'asks a human',
-	'flow.node.entryTitle': 'The flow (or its phase) starts here',
-	'flow.node.entry': 'entry',
+	'flow.node.entryTitle': 'Its phase opens here',
+	'flow.node.entry': 'first',
 	'flow.node.unbound': 'unbound',
 	// FlowGraph
 	// One beginning per phase: its marker names the phase and what begins it.
 	'flow.graph.beginLabel': '{phase}: on {trigger}',
 	'flow.graph.beginLabelPlain': 'on {trigger}',
 	'flow.graph.entryTitle':
-		'The entry: the phase every run begins with, when a person starts a run for a ticket — drag this handle onto a stage to start the flow there',
+		'Phase {phase} is an entrypoint: a run begins here when it is created for it — drag this handle onto a stage of the phase to start it there',
 	'flow.graph.triggerTitle':
-		"Phase {phase} begins when {signal} holds for one of the run's merge requests — drag onto a stage of this phase to start it there",
+		"Phase {phase} opens when {signal} holds for one of the run's merge requests, under its start policy — drag onto a stage of this phase to start it there",
 	'flow.graph.manualTitle':
-		'Phase {phase} begins only when a person starts it from the run page, while a merge request is open — drag onto a stage of this phase to start it there',
+		'Phase {phase} opens only when a person starts it from the run page, while the run is idle — drag onto a stage of this phase to start it there',
 	'flow.graph.debugReturn': 'again',
 	'flow.graph.arrangeTitle': 'Auto-arrange along the success chain',
 	'flow.graph.arrangeAria': 'Auto-arrange',
@@ -430,20 +430,41 @@ export default {
 	'flow.insp.phaseStages_one': '{count} stage',
 	'flow.insp.phaseStages_other': '{count} stages',
 	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the phase with it.',
-	'flow.insp.phaseEntryHelp':
-		'The entry: the phase every run begins with. A person begins it by starting a run for a ticket; it runs once, so quiet, confirm and max do not apply.',
-	'flow.insp.trigger': 'Begins on',
+	'flow.insp.entrypoint': 'entrypoint',
+	'flow.insp.entrypointTitle': 'A run may begin at this phase (the start-run form offers it)',
+	'flow.insp.opensOn': 'Opens on',
+	'flow.insp.opensOn.run_start': 'a run created for it (entrypoint)',
+	'flow.insp.opensOn.manual': 'a person, from the run page',
+	'flow.insp.opensOnHelp.run_start':
+		'An entrypoint: the phase a run begins at when it is created for it. Several phases may be entrypoints; the start-run form picks one (the first by default). It may be started again by hand.',
+	'flow.insp.opensOnHelp.manual':
+		'No signal: the phase starts only when a person starts it from the run page, while the run is idle.',
+	'flow.insp.start': 'When the signal holds',
+	'flow.insp.start.auto': 'start by itself',
+	'flow.insp.start.confirm': 'ask first (an inbox decision)',
+	'flow.insp.start.manual': 'only surface it; a person starts it',
+	'flow.insp.startHelp':
+		'The start policy. A $parameter whose enum fits the three lets a workshop choose — manual rebase here, automatic there.',
 	'flow.insp.quietFor': 'Quiet for',
 	'flow.insp.noQuiet': 'start as soon as it holds',
 	'flow.insp.quietForHelp':
 		'Start only once nothing new happened for this long (at least 1m): comments arriving mean someone is still reviewing.',
-	'flow.insp.confirm': 'Ask first',
-	'flow.insp.confirmTitle':
-		'Raise an inbox decision (Run it / Not now) before the phase starts; nothing is spent until then',
-	'flow.insp.phaseUnlimitedTitle': 'Every run is already a human decision, so no cap is needed',
 	'flow.insp.phaseMax': 'Runs per merge request',
 	'flow.insp.phaseMaxDefault': 'default · 10',
-	'flow.insp.phaseMaxHelp': 'How many times this phase may run for one merge request.',
+	'flow.insp.phaseMaxHelp':
+		'How many times this phase may run for one merge request; a number or an int $parameter.',
+	'flow.insp.phaseMaxHelpHuman':
+		'How many times this phase may run for one merge request; empty = no bound, since a person decides each run.',
+	'flow.insp.when': 'Only when',
+	'flow.insp.when.none': 'always',
+	'flow.insp.when.tracker': 'the ticket has a tracker issue',
+	'flow.insp.when.notTracker': 'the ticket has no tracker issue',
+	'flow.insp.when.subject': 'the phase acts on a merge request',
+	'flow.insp.when.notSubject': 'the phase acts on no merge request',
+	'flow.insp.whenHelp':
+		'A stage whose condition does not hold completes as skipped and the chain goes on. A bool $parameter lets a workshop switch the stage off.',
+	'flow.insp.numberOrParam': 'A number, or an int $parameter.',
+	'flow.insp.durationOrParam': 'A duration (30m, 2h), or a string $parameter.',
 	'flow.insp.editEdge': 'Edit this edge',
 	'flow.insp.phaseOption': '{id} — on {trigger}',
 	'flow.insp.phaseHelp': "Its routes stay inside it; the phase's last stage ends it.",
@@ -555,16 +576,27 @@ export default {
 		'Links fire top-down: each keeps its own counter; when one is exhausted the next failure falls through. An exhausted chain abandons the run.',
 	'flow.insp.formula': 'The formula',
 	'flow.insp.nothingSelected': 'nothing selected',
-	'flow.insp.defaultHarness': 'Default harness',
-	'flow.insp.defaultHarnessHelp': 'The harness kind stages run on unless they override it.',
-	'flow.insp.defaultModel': 'Default model',
-	'flow.insp.defaultTimeout': 'Default timeout',
-	'flow.insp.noDefault': 'no default',
-	'flow.insp.defaultMaxTurns': 'Default max turns',
-	'flow.insp.budget': 'Budget',
-	'flow.insp.maxCost': 'Max cost (USD)',
-	'flow.insp.noCap': 'no cap',
-	'flow.insp.maxTotalTurns': 'Max total turns',
+	'flow.insp.params': 'Parameters',
+	'flow.insp.paramsHelp':
+		"The flow's one settings block. Each entry is declared here with its default; a workshop binds its own values without touching the document, and a run may override them.",
+	'flow.insp.knownParams': 'What the engine reads',
+	'flow.insp.engineDefault': 'engine default · {value}',
+	'flow.insp.customParams': "This flow's own",
+	'flow.insp.paramName': 'Name',
+	'flow.insp.paramDefault': 'Default',
+	'flow.insp.paramEnum': 'Allowed values',
+	'flow.insp.paramEnumPlaceholder': 'auto, confirm, manual',
+	'flow.insp.paramEnumHelp':
+		'Comma-separated; the default must be one of them. An enum within auto, confirm, manual can drive a phase\u2019s start policy.',
+	'flow.insp.paramUsed_one': 'read in {count} place',
+	'flow.insp.paramUsed_other': 'read in {count} places',
+	'flow.insp.removeParam': 'Remove',
+	'flow.insp.removeParamTitle': 'Remove parameter {name}?',
+	'flow.insp.removeParamBody':
+		'It is read in {count} place(s): {where}. Those fields will no longer resolve.',
+	'flow.insp.addParam': '+ parameter',
+	'flow.insp.paramsReadHelp':
+		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns or timeout, an action input, a phase\u2019s start or max, a stage\u2019s condition.',
 	'flow.insp.addStage': 'Add a stage',
 	'flow.insp.canvasHelp':
 		"Click a node or edge to edit it. Drag from a node's coloured handles to rewire control flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may target the abort terminal to stop the run deliberately, or the debug leaf to park it for a human and then run the stage again. The faint dashed lines are dataflow — they are derived from the artifact paths stages read and write, so you change them by editing an input or output, not by dragging.",

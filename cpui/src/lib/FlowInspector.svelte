@@ -12,13 +12,19 @@
 	import BindingRows from '$lib/flow/BindingRows.svelte';
 	import OptionalDuration from '$lib/ui/OptionalDuration.svelte';
 	import OptionalNumber from '$lib/ui/OptionalNumber.svelte';
+	import ParamsEditor from '$lib/flow/ParamsEditor.svelte';
+	import { boolParams, intParams, isParamRef, policyParams, stringParams } from '$lib/flow/params';
 	import type { ActionSpec, SignalSpec } from '$lib/domain';
 	import {
 		ABORT,
 		DEBUG,
 		DONE,
 		START,
-		TRIGGER_MANUAL,
+		MANUAL,
+		RUN_START,
+		START_POLICIES,
+		fires,
+		paramDefault,
 		chainSummary,
 		routableFrom,
 		EDGE_KINDS,
@@ -92,9 +98,10 @@
 	// A trigger starts a phase; it can neither end a wait nor answer a gate
 	// (the parser refuses it there), so the two pickers never offer the other's.
 	const waitable = $derived(signals.filter((g) => !g.trigger && !g.entry));
-	const triggers = $derived(signals.filter((g) => g.trigger));
-	// What may begin the run: the entry's choices (manual today).
-	const entrySignals = $derived(signals.filter((g) => g.entry));
+	// What opens a phase on its own: a forge trigger (manual is a person's
+	// act, offered apart).
+	const triggers = $derived(signals.filter((g) => g.trigger && g.slug !== MANUAL));
+	const WHEN_TERMS = ['tracker', 'not tracker', 'subject', 'not subject'];
 
 	const phaseSel = $derived(
 		selection?.kind === 'phase' ? doc.phases?.find((p) => p.id === selection.id) : undefined
@@ -385,6 +392,38 @@
 					</div>
 				{/if}
 
+				<div class="field">
+					<label for="st-when">{t('flow.insp.when')}</label>
+					<select
+						id="st-when"
+						value={s.when ?? ''}
+						onchange={(e) => {
+							s.when = e.currentTarget.value || undefined;
+							onchange();
+						}}
+					>
+						<option value="">{t('flow.insp.when.none')}</option>
+						<option value="tracker">{t('flow.insp.when.tracker')}</option>
+						<option value="not tracker">{t('flow.insp.when.notTracker')}</option>
+						<option value="subject">{t('flow.insp.when.subject')}</option>
+						<option value="not subject">{t('flow.insp.when.notSubject')}</option>
+						{#each boolParams(doc) as p (p)}
+							<option value={'$' + p}>${p}</option>
+							<option value={'not $' + p}>not ${p}</option>
+						{/each}
+						{#if s.when && !WHEN_TERMS.includes(s.when) && !boolParams(doc).some((p) => s.when === '$' + p || s.when === 'not $' + p)}
+							<option value={s.when}>{s.when}</option>
+						{/if}
+					</select>
+					<div class="help">{t('flow.insp.whenHelp')}</div>
+				</div>
+				<datalist id="flow-params">
+					{#each stringParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
+				</datalist>
+				<datalist id="flow-int-params">
+					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
+				</datalist>
+
 				{#if s.type === 'agent'}
 					<div class="field">
 						<label for="st-agent">{t('flow.insp.agent')}</label>
@@ -404,13 +443,14 @@
 						<label for="st-harness">{t('flow.insp.harness')}</label>
 						<input
 							id="st-harness"
+							list="flow-params"
 							bind:value={s.harness}
 							oninput={onchange}
-							placeholder={doc.defaults.harness || 'opencode'}
+							placeholder={paramDefault(doc, 'harness') || 'opencode'}
 						/>
 						<div class="help">
 							{t('flow.insp.overrideDefault', {
-								value: doc.defaults.harness || t('flow.insp.flowDefault')
+								value: paramDefault(doc, 'harness') || t('flow.insp.flowDefault')
 							})}
 						</div>
 					</div>
@@ -418,41 +458,44 @@
 						<label for="st-model">{t('flow.insp.model')}</label>
 						<input
 							id="st-model"
+							list="flow-params"
 							bind:value={s.model}
 							oninput={onchange}
-							placeholder={doc.defaults.model}
+							placeholder={paramDefault(doc, 'model')}
 						/>
 						<div class="help">
 							{t('flow.insp.overrideDefault', {
-								value: doc.defaults.model || t('flow.insp.flowDefault')
+								value: paramDefault(doc, 'model') || t('flow.insp.flowDefault')
 							})}
 						</div>
 					</div>
 					<div class="field">
 						<label for="st-turns">{t('flow.insp.maxTurns')}</label>
-						<OptionalNumber
+						<input
 							id="st-turns"
-							label={t('flow.insp.maxTurns')}
-							bind:value={s.max_turns}
-							empty={doc.defaults.max_turns
-								? t('flow.insp.flowDefaultWith', { value: doc.defaults.max_turns })
-								: t('flow.insp.flowDefault')}
-							fallback={doc.defaults.max_turns ?? 50}
-							{onchange}
+							class="mono"
+							list="flow-int-params"
+							value={s.max_turns ?? ''}
+							placeholder={paramDefault(doc, 'max_turns') ?? '50'}
+							oninput={(e) => {
+								const v = e.currentTarget.value.trim();
+								s.max_turns = v === '' ? undefined : /^\d+$/.test(v) ? Number(v) : v;
+								onchange();
+							}}
 						/>
+						<div class="help">{t('flow.insp.numberOrParam')}</div>
 					</div>
 					<div class="field">
 						<label for="st-timeout">{t('flow.insp.timeout')}</label>
-						<OptionalDuration
+						<input
 							id="st-timeout"
-							label={t('flow.insp.timeout')}
+							class="mono"
+							list="flow-params"
 							bind:value={s.timeout}
-							empty={doc.defaults.timeout
-								? t('flow.insp.flowDefaultWith', { value: doc.defaults.timeout })
-								: t('flow.insp.flowDefault')}
-							fallback={doc.defaults.timeout || '30m'}
-							{onchange}
+							oninput={onchange}
+							placeholder={paramDefault(doc, 'timeout') ?? '30m'}
 						/>
+						<div class="help">{t('flow.insp.durationOrParam')}</div>
 					</div>
 					{#if declInputs.length > 0}
 						<div class="grp">
@@ -531,6 +574,7 @@
 						<input
 							id="st-runref"
 							class="mono"
+							list="flow-params"
 							bind:value={s.run_ref}
 							oninput={onchange}
 							placeholder="verify"
@@ -902,13 +946,14 @@
 				{/if}
 			{:else if phaseSel}
 				{@const ph = phaseSel}
-				{@const entry = doc.phases?.[0]?.id === ph.id}
-				{@const choices = entry ? entrySignals : triggers}
+				{@const firing = fires(ph.on)}
+				{@const automatic = firing && (!ph.on.start || ph.on.start === 'auto')}
 				<div class="ih">
 					<span class="pill sm mono t-vio">{t('flow.insp.phaseKind')}</span>
 					<span class="mono iid ell">{ph.id}</span>
-					{#if entry}<span class="pill sm flat sq t-brand" title={t('flow.node.entryTitle')}
-							>{t('flow.node.entry')}</span
+					{#if ph.on.signal === RUN_START}<span
+							class="pill sm flat sq t-brand"
+							title={t('flow.insp.entrypointTitle')}>{t('flow.insp.entrypoint')}</span
 						>{/if}
 					<span class="spacer"></span>
 					<span class="fnt tiny"
@@ -939,33 +984,60 @@
 					/>
 				</div>
 				<div class="field">
-					<label for="ph-on">{t('flow.insp.trigger')}</label>
+					<label for="ph-on">{t('flow.insp.opensOn')}</label>
 					<select
 						id="ph-on"
 						value={ph.on.signal}
 						onchange={(e) => {
 							ph.on.signal = e.currentTarget.value;
-							// quiet_for only means something to a signal that fires on activity.
-							if (!choices.find((g) => g.slug === ph.on.signal)?.debounced)
+							if (!fires(ph.on)) {
+								// A person's act is the start: no policy, nothing to debounce.
+								ph.on.start = undefined;
 								ph.on.quiet_for = undefined;
-							// Nothing fires on manual, so there is nothing to confirm.
-							if (ph.on.signal === TRIGGER_MANUAL) {
-								ph.on.confirm = undefined;
-								if (ph.on.max === -1) ph.on.max = undefined;
+							} else if (!signals.find((g) => g.slug === ph.on.signal)?.debounced) {
+								ph.on.quiet_for = undefined;
 							}
 							onchange();
 						}}
 					>
-						{#each choices as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
-						{#if !choices.some((g) => g.slug === ph.on.signal)}
+						<option value={RUN_START}>{t('flow.insp.opensOn.run_start')}</option>
+						<option value={MANUAL}>{t('flow.insp.opensOn.manual')}</option>
+						{#each triggers as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
+						{#if firing && !triggers.some((g) => g.slug === ph.on.signal)}
 							<option value={ph.on.signal}>{ph.on.signal}</option>
 						{/if}
 					</select>
 					<div class="help">
-						{entry ? t('flow.insp.phaseEntryHelp') : (phaseSig?.description ?? '')}
+						{ph.on.signal === RUN_START
+							? t('flow.insp.opensOnHelp.run_start')
+							: ph.on.signal === MANUAL
+								? t('flow.insp.opensOnHelp.manual')
+								: (phaseSig?.description ?? '')}
 					</div>
 				</div>
-				{#if !entry}
+				{#if firing}
+					<div class="field">
+						<label for="ph-start">{t('flow.insp.start')}</label>
+						<select
+							id="ph-start"
+							value={ph.on.start ?? 'auto'}
+							onchange={(e) => {
+								const v = e.currentTarget.value;
+								ph.on.start = v === 'auto' ? undefined : v;
+								// Unlimited runs need a person deciding each one.
+								if (!ph.on.start && ph.on.max === -1) ph.on.max = undefined;
+								onchange();
+							}}
+						>
+							{#each START_POLICIES as p (p)}<option value={p}>{t(`flow.insp.start.${p}`)}</option
+								>{/each}
+							{#each policyParams(doc) as p (p)}<option value={'$' + p}>${p}</option>{/each}
+							{#if isParamRef(ph.on.start) && !policyParams(doc).includes(ph.on.start.slice(1))}
+								<option value={ph.on.start}>{ph.on.start}</option>
+							{/if}
+						</select>
+						<div class="help">{t('flow.insp.startHelp')}</div>
+					</div>
 					{#if phaseSig?.debounced}
 						<div class="field">
 							<label for="ph-quiet">{t('flow.insp.quietFor')}</label>
@@ -980,47 +1052,28 @@
 							<div class="help">{t('flow.insp.quietForHelp')}</div>
 						</div>
 					{/if}
-					{#if ph.on.signal !== TRIGGER_MANUAL}
-						<Toggle
-							checked={ph.on.confirm ?? false}
-							label={t('flow.insp.confirm')}
-							title={t('flow.insp.confirmTitle')}
-							onchange={(v) => {
-								ph.on.confirm = v || undefined;
-								// Unlimited runs need a human deciding each one.
-								if (!v && ph.on.max === -1) ph.on.max = undefined;
-								onchange();
-							}}
-						/>
-						{#if ph.on.confirm}
-							<Toggle
-								checked={ph.on.max === -1}
-								label={t('flow.insp.noLimit')}
-								title={t('flow.insp.phaseUnlimitedTitle')}
-								onchange={(v) => {
-									ph.on.max = v ? -1 : undefined;
-									onchange();
-								}}
-							/>
-						{/if}
-					{/if}
-					<div class="field">
-						<label for="ph-max">{t('flow.insp.phaseMax')}</label>
-						{#if ph.on.max === -1}
-							<div class="mono unl">{t('flow.insp.unlimited')}</div>
-						{:else}
-							<OptionalNumber
-								id="ph-max"
-								label={t('flow.insp.phaseMax')}
-								bind:value={ph.on.max}
-								empty={t('flow.insp.phaseMaxDefault')}
-								fallback={10}
-								{onchange}
-							/>
-						{/if}
-						<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
-					</div>
 				{/if}
+				<div class="field">
+					<label for="ph-max">{t('flow.insp.phaseMax')}</label>
+					<input
+						id="ph-max"
+						class="mono"
+						list="flow-int-params"
+						value={ph.on.max ?? ''}
+						placeholder={firing ? t('flow.insp.phaseMaxDefault') : t('flow.insp.unlimited')}
+						oninput={(e) => {
+							const v = e.currentTarget.value.trim();
+							ph.on.max = v === '' ? undefined : /^-?\d+$/.test(v) ? Number(v) : v;
+							onchange();
+						}}
+					/>
+					<div class="help">
+						{automatic ? t('flow.insp.phaseMaxHelp') : t('flow.insp.phaseMaxHelpHuman')}
+					</div>
+				</div>
+				<datalist id="flow-int-params">
+					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
+				</datalist>
 			{:else}
 				<div class="ih">
 					<span class="serif ttl">{t('flow.insp.formula')}</span>
@@ -1038,75 +1091,9 @@
 						}}
 					/>
 				</div>
-				<div class="field">
-					<label for="fl-harness">{t('flow.insp.defaultHarness')}</label>
-					<input
-						id="fl-harness"
-						bind:value={doc.defaults.harness}
-						oninput={onchange}
-						placeholder="opencode"
-					/>
-					<div class="help">{t('flow.insp.defaultHarnessHelp')}</div>
-				</div>
-				<div class="field">
-					<label for="fl-model">{t('flow.insp.defaultModel')}</label>
-					<input
-						id="fl-model"
-						bind:value={doc.defaults.model}
-						oninput={onchange}
-						placeholder="openrouter/anthropic/claude-sonnet-4.6"
-					/>
-				</div>
-				<div class="field">
-					<label for="fl-timeout">{t('flow.insp.defaultTimeout')}</label>
-					<OptionalDuration
-						id="fl-timeout"
-						label={t('flow.insp.defaultTimeout')}
-						bind:value={doc.defaults.timeout}
-						empty={t('flow.insp.noDefault')}
-						fallback="30m"
-						{onchange}
-					/>
-				</div>
-				<div class="field">
-					<label for="fl-turns">{t('flow.insp.defaultMaxTurns')}</label>
-					<OptionalNumber
-						id="fl-turns"
-						label={t('flow.insp.defaultMaxTurns')}
-						bind:value={doc.defaults.max_turns}
-						empty={t('flow.insp.noDefault')}
-						fallback={50}
-						{onchange}
-					/>
-				</div>
-				<div class="lbl">{t('flow.insp.budget')}</div>
-				<div class="field">
-					<label for="fl-cost">{t('flow.insp.maxCost')}</label>
-					<input
-						id="fl-cost"
-						type="number"
-						min="0"
-						step="0.5"
-						placeholder={t('flow.insp.noCap')}
-						value={doc.budget?.max_cost_usd ?? ''}
-						oninput={(e) => {
-							doc.budget.max_cost_usd =
-								e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value);
-							onchange();
-						}}
-					/>
-				</div>
-				<div class="field">
-					<label for="fl-tturns">{t('flow.insp.maxTotalTurns')}</label>
-					<OptionalNumber
-						id="fl-tturns"
-						label={t('flow.insp.maxTotalTurns')}
-						bind:value={doc.budget.max_total_turns}
-						empty={t('flow.insp.noCap')}
-						fallback={300}
-						{onchange}
-					/>
-				</div>
+				<div class="lbl">{t('flow.insp.params')}</div>
+				<div class="help">{t('flow.insp.paramsHelp')}</div>
+				<ParamsEditor {doc} {onchange} />
 				<div class="lbl">{t('flow.insp.addStage')}</div>
 				<div class="chips">
 					{#each ADD as kind (kind)}

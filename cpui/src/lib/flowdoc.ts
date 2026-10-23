@@ -13,8 +13,8 @@ export const ABORT = 'abort';
 // workspace and comes BACK to the stage that took it — a leaf on the canvas,
 // not a terminal. Like abort it carries no max/then.
 export const DEBUG = 'debug';
-// START is the entry marker's layout/link key. The entry itself is the
-// first stage in the document (DESIGN3 §2.1) — START is never serialized.
+// START is the first phase's marker layout/link key (the canvas's solid
+// beginning marker); it is never serialized.
 export const START = 'start';
 export const EDGE_KINDS = ['on_fail', 'on_reject', 'on_timeout'] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
@@ -103,7 +103,7 @@ export interface DocStage {
 	agent?: string;
 	model?: string;
 	harness?: string;
-	max_turns?: number;
+	max_turns?: number | string;
 	timeout?: string;
 	input?: StageIO;
 	output?: StageIO;
@@ -117,6 +117,10 @@ export interface DocStage {
 	/** human_gate: signals that answer the gate on the human's behalf. */
 	auto_approve?: string;
 	auto_reject?: string;
+	/** A condition (FLOWLANG §2): `tracker`, `subject`, `$bool_param`, each
+	 *  optionally negated as `not x`. A stage whose condition does not hold
+	 *  completes as skipped. */
+	when?: string;
 	/** action: a slug from the compiled-in registry (GET /api/actions). */
 	action?: string;
 	/** wait: a signal slug to block on (GET /api/signals). */
@@ -130,13 +134,17 @@ export interface DocStage {
 	phase?: string;
 }
 
-/** A phase's `on:` (PLAN6): what begins it — `manual`, or a forge trigger. */
-export interface DocTrigger {
+/** A phase's `on:` — the wait point that opens it (FLOWLANG §1): run_start
+ *  (an entrypoint a run is created at), manual (the run page only), or a
+ *  forge signal with its start policy (auto | confirm | manual, or a $param).
+ *  `max` may read an int parameter ("$name"). */
+export interface DocWait {
 	signal: string;
+	start?: string;
 	quiet_for?: string;
-	confirm?: boolean;
-	max?: number;
+	max?: number | string;
 }
+export type DocTrigger = DocWait;
 
 /** A phase header: one beginning (`on`) and, tagged with its id, the flat
  *  list's stages it runs. */
@@ -146,13 +154,34 @@ export interface DocPhase {
 	on: DocTrigger;
 }
 
-// TRIGGER_MANUAL is the beginning a person gives (the registry's `manual`):
-// the entry's — someone starts a run for a ticket — and a reaction phase's
-// when only the run page should start it.
-export const TRIGGER_MANUAL = 'manual';
-// LEGACY_TRIGGER_TICKET is the entry's `on:` before manual: read as manual,
-// never written back (docToYaml emits what the editor holds).
-const LEGACY_TRIGGER_TICKET = 'ticket';
+// RUN_START opens an entrypoint: a run is created for the phase. MANUAL opens
+// a phase from the run page only. Everything else that opens a phase is a
+// forge signal, which takes a start policy.
+export const RUN_START = 'run_start';
+export const MANUAL = 'manual';
+export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
+export type StartPolicy = (typeof START_POLICIES)[number];
+
+/** One parameter of the flow's `parameters:` block (FLOWLANG §1): its
+ *  default — whose JS type is the parameter's type: bool, int/float, string —
+ *  and optionally a description and an enum. Values come from outside the
+ *  document (the workshop's bindings, a run's overrides). */
+export interface DocParam {
+	default: boolean | number | string;
+	description?: string;
+	enum?: string[];
+}
+
+/** The six parameters the engine reads itself. harness and model are
+ *  required; the rest exist at the engine's defaults when omitted. */
+export const KNOWN_PARAMS = [
+	'harness',
+	'model',
+	'timeout',
+	'max_turns',
+	'max_cost_usd',
+	'max_total_turns'
+] as const;
 
 // One declared input of an agent: what the stage binds by name.
 export interface DocAgentInput {
@@ -187,8 +216,8 @@ export interface FlowDoc {
 	name: string;
 	version?: number;
 	description?: string;
-	parameters: { timeout?: string; harness?: string; model: string; max_turns?: number };
-	budget: { max_cost_usd?: number; max_total_turns?: number };
+	/** The flow's one settings block, in document order. */
+	parameters: Record<string, DocParam>;
 	agents?: DocAgent[];
 	stages: DocStage[];
 	/** Phased flows (PLAN6): the phase headers, the entry first. Absent for a
@@ -219,14 +248,13 @@ export function normalizeDoc(raw: unknown): FlowDoc {
 		const phases: DocPhase[] = [];
 		for (const ph of w.phases) {
 			const { stages: inner, ...head } = ph;
-			if (head.on.signal === LEGACY_TRIGGER_TICKET)
-				head.on = { ...head.on, signal: TRIGGER_MANUAL };
 			phases.push(head);
 			for (const st of inner ?? []) stages.push({ ...st, phase: ph.id });
 		}
 		doc = { ...(w as FlowDoc), stages, phases };
 	}
 	doc.stages.forEach((s, i) => (s.on_success = effectiveSuccess(doc, i)));
+	doc.parameters ??= {};
 	return doc;
 }
 
@@ -275,13 +303,27 @@ export function phaseEntry(doc: FlowDoc, phase: string | undefined): DocStage | 
 	return doc.stages.find((s) => (s.phase ?? '') === (phase ?? ''));
 }
 
-/** "on: mr_conflicts (confirm)" — a trigger in a few words. */
-export function triggerLabel(t: DocTrigger): string {
+/** "mr_conflicts (confirm)" — a phase's wait point in a few words. */
+export function triggerLabel(w: DocWait): string {
+	if (!fires(w)) return w.signal;
 	const bits: string[] = [];
-	if (t.quiet_for) bits.push(`quiet ${t.quiet_for}`);
-	if (t.confirm) bits.push('confirm');
-	if (t.max != null) bits.push(`max ${t.max}`);
-	return bits.length ? `${t.signal} (${bits.join(', ')})` : t.signal;
+	if (w.start && w.start !== 'auto') bits.push(w.start);
+	if (w.quiet_for) bits.push(`quiet ${w.quiet_for}`);
+	if (w.max != null) bits.push(`max ${w.max}`);
+	return bits.length ? `${w.signal} (${bits.join(', ')})` : w.signal;
+}
+
+/** Whether a phase's signal fires on its own — and so takes a start policy.
+ *  run_start and manual are a person's act. */
+export function fires(w: DocWait): boolean {
+	return w.signal !== RUN_START && w.signal !== MANUAL;
+}
+
+/** A parameter's default as text, or undefined when the document omits it
+ *  (a known one then runs at the engine's default). */
+export function paramDefault(doc: FlowDoc, name: string): string | undefined {
+	const p = doc.parameters?.[name];
+	return p == null ? undefined : String(p.default);
 }
 
 /** The flow's definition of an agent by name, or undefined. */
@@ -399,16 +441,19 @@ export function docToYaml(doc: FlowDoc): string {
 	const idx = new Map(doc.stages.map((s, i) => [s.id, i]));
 	const obj: Record<string, unknown> = { name: doc.name, version: doc.version ?? CURRENT_VERSION };
 	if (doc.description) obj.description = doc.description;
-	const defaults: Record<string, unknown> = {};
-	if (doc.defaults.timeout) defaults.timeout = doc.defaults.timeout;
-	if (doc.defaults.harness) defaults.harness = doc.defaults.harness;
-	defaults.model = doc.defaults.model;
-	if (doc.defaults.max_turns != null) defaults.max_turns = doc.defaults.max_turns;
-	obj.defaults = defaults;
-	const budget: Record<string, unknown> = {};
-	if (doc.budget?.max_cost_usd != null) budget.max_cost_usd = doc.budget.max_cost_usd;
-	if (doc.budget?.max_total_turns != null) budget.max_total_turns = doc.budget.max_total_turns;
-	if (Object.keys(budget).length > 0) obj.budget = budget;
+	// The one settings block, in document order: a bare default when that is
+	// all a parameter has.
+	const params: Record<string, unknown> = {};
+	for (const [name, p] of Object.entries(doc.parameters ?? {})) {
+		if (!p.description && !p.enum?.length) params[name] = p.default;
+		else {
+			const o: Record<string, unknown> = { default: p.default };
+			if (p.description) o.description = p.description;
+			if (p.enum?.length) o.enum = p.enum;
+			params[name] = o;
+		}
+	}
+	obj.parameters = params;
 	// Agents before stages: a reader meets the contracts before the wiring
 	// that binds them. Order within the list is the author's.
 	if (doc.agents?.length) {
@@ -443,6 +488,7 @@ export function docToYaml(doc: FlowDoc): string {
 	const stageYaml = (s: DocStage) => {
 		const o: Record<string, unknown> = { id: s.id, type: s.type };
 		if (s.description) o.description = s.description;
+		if (s.when) o.when = s.when;
 		if (s.agent) o.agent = s.agent;
 		if (s.model) o.model = s.model;
 		if (s.harness) o.harness = s.harness;
@@ -482,13 +528,15 @@ export function docToYaml(doc: FlowDoc): string {
 	return stringify(obj, { lineWidth: 0 });
 }
 
-// triggerYaml uses the scalar sugar when the trigger has no options.
-function triggerYaml(t: DocTrigger): unknown {
-	if (!t.quiet_for && !t.confirm && t.max == null) return t.signal;
-	const o: Record<string, unknown> = { signal: t.signal };
-	if (t.quiet_for) o.quiet_for = t.quiet_for;
-	if (t.confirm) o.confirm = true;
-	if (t.max != null) o.max = t.max;
+// triggerYaml uses the scalar sugar when the wait point has no options
+// (`on: run_start`, `on: manual`, `on: mr_conflicts`).
+function triggerYaml(w: DocWait): unknown {
+	const start = w.start && w.start !== 'auto' ? w.start : undefined;
+	if (!start && !w.quiet_for && w.max == null) return w.signal;
+	const o: Record<string, unknown> = { signal: w.signal };
+	if (start) o.start = start;
+	if (w.quiet_for) o.quiet_for = w.quiet_for;
+	if (w.max != null) o.max = w.max;
 	return o;
 }
 

@@ -15,7 +15,7 @@
 	import Transcript, { type Sending } from '../Transcript.svelte';
 	import PingDock from '../PingDock.svelte';
 	import Composer from '../Composer.svelte';
-	import ReviewCard from '../ReviewCard.svelte';
+	import PhasesCard from '../PhasesCard.svelte';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, visible, onlog }: { rs: RunStore; visible: boolean; onlog: (stage: string) => void } =
@@ -24,8 +24,10 @@
 	const items = $derived(buildTranscript(rs.events, rs.live));
 	const ping = $derived(rs.terminal ? undefined : rs.pendingPings[0]);
 	const run = $derived(rs.run);
-	const inReview = $derived(
-		!!run && !rs.terminal && run.mrs.length > 0 && (run.idle || !!run.phase)
+	// The phases card: whenever the run is idle (between phases, or parked
+	// at a wait point), and while a later phase runs on a merge request.
+	const showPhases = $derived(
+		!!run && !rs.terminal && (run.idle || (!!run.phase && run.mrs.length > 0))
 	);
 
 	let scroller = $state<HTMLDivElement | null>(null);
@@ -94,8 +96,12 @@
 				</div>
 			{/if}
 			<Transcript {items} {sending} over={rs.terminal} {onlog} onanswer={() => follow()} />
-			{#if inReview && run}
-				{#key run.idle + (run.phase ?? '')}<ReviewCard runId={rs.runId} idle={run.idle} />{/key}
+			{#if showPhases && run}
+				{#key run.idle + (run.phase ?? '')}<PhasesCard
+						runId={rs.runId}
+						idle={run.idle}
+						beginPhase={run.beginPhase ?? ''}
+					/>{/key}
 			{/if}
 		</div>
 		{#if !stick}

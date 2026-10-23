@@ -228,11 +228,12 @@ export class RunStore {
 			}
 			if (!yaml) yaml = (await api.flows.get(r.projectId, r.flowName)).yaml;
 			const doc = normalizeDoc(parseYaml(yaml));
-			// The entry phase is the recipe; reaction phases (merge request
-			// conflicts, review rounds) show once they have run.
-			const entry = doc.phases?.[0]?.id ?? '';
+			// The phase the run began at is the recipe; the other phases
+			// (conflicts, review rounds) show once they have run. A document
+			// written with top-level stages has no phases: everything is it.
+			const begun = doc.phases?.length ? r.beginPhase || doc.phases[0].id : '';
 			this.stageDefs = successOrder(doc)
-				.filter((s) => (s.phase ?? '') === entry)
+				.filter((s) => (s.phase ?? '') === begun)
 				.map((s) => ({ id: s.id, type: s.type, agent: s.agent }));
 		} catch {
 			this.stageDefs = null; // the strip falls back to what the log shows

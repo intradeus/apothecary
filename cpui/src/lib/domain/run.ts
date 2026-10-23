@@ -60,10 +60,15 @@ export interface Run {
 	/** The run's repositories, the primary first. */
 	checkouts: RunCheckout[];
 	/** The phase in progress — or the last one while idle — and the
-	 *  checkout it acts on ('' for the entry phase). */
+	 *  checkout it acts on ('' when it acts on no merge request). */
 	phase?: string;
 	phaseSubject?: string;
-	/** Between phases (in review). */
+	/** The entrypoint the run began at, the parameter values it runs with
+	 *  and who began it (run_created). */
+	beginPhase?: string;
+	params?: Record<string, string>;
+	startedBy?: string;
+	/** Idle: between phases, or parked at a wait point. */
 	idle: boolean;
 	envId?: string;
 	envStatus?: EnvStatus;
@@ -84,20 +89,40 @@ export interface RunMergeRequest {
 	iid: number;
 }
 
-/** A reaction phase of the run's flow (PLAN6), with its runs so far. */
+/** A phase of the run's flow: what opens it, its runs so far, its live run
+ *  and the signals holding for it (FLOWLANG §1). */
 export interface RunPhase {
 	id: string;
 	description?: string;
-	/** The forge signal that starts it. */
+	/** What opens it: run_start (an entrypoint), manual (the run page), or a
+	 *  forge signal. */
 	signal: string;
-	/** A human confirms each run (an inbox decision). */
-	confirm: boolean;
+	/** The policy when the signal holds: auto, confirm (an inbox decision
+	 *  first) or manual (surfaced as pending; you start it). */
+	start: 'auto' | 'confirm' | 'manual';
+	/** A run may begin at this phase. */
+	entry: boolean;
 	/** Debounce, in seconds (review comments). */
 	quietForS?: number;
 	/** Runs allowed per merge request; -1 = unlimited. */
 	max: number;
-	/** Runs so far, by checkout name. */
+	/** Runs so far, by checkout name ('' = on no merge request), and in all. */
 	runs: Record<string, number>;
+	total: number;
+	/** The phase's run in progress, or parked at a wait point. */
+	live?: { subject?: string; parkedAt?: string };
+	/** The subjects its signal held for at the last poll. */
+	holds: PhaseHold[];
+}
+
+/** One observation that a phase's signal holds for a merge request. */
+export interface PhaseHold {
+	subject: string;
+	key: string;
+	why: string;
+	/** Already started or declined for this occurrence, or runs used up. */
+	seen: boolean;
+	observedAt: string;
 }
 
 /** A merge request as the forge reports it right now (not run history). */
@@ -153,6 +178,10 @@ export interface RunInput {
 	/** Branch to fork off; empty = the project default. */
 	sourceBranch?: string;
 	attachmentIds?: string[];
+	/** The entrypoint to begin at; empty = the flow's first. */
+	phase?: string;
+	/** Parameter values overriding the workshop's bindings for this attempt. */
+	params?: Record<string, string>;
 }
 
 /** One point-in-time reading of the workspace's resource usage (the whole

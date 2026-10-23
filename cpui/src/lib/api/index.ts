@@ -77,7 +77,9 @@ const runInputBody = (o?: RunInput) => ({
 	...(o?.flow ? { flow: o.flow } : {}),
 	...(o?.goal ? { goal: o.goal } : {}),
 	...(o?.sourceBranch ? { source_branch: o.sourceBranch } : {}),
-	...(o?.attachmentIds?.length ? { attachment_ids: o.attachmentIds } : {})
+	...(o?.attachmentIds?.length ? { attachment_ids: o.attachmentIds } : {}),
+	...(o?.phase ? { phase: o.phase } : {}),
+	...(o?.params && Object.keys(o.params).length ? { params: o.params } : {})
 });
 
 // Every field always travels: the endpoint replaces the ticket, so an absent
@@ -144,14 +146,15 @@ export const runs = {
 	get: async (id: string): Promise<RunDetail> =>
 		map.toRunDetail(await unwrap(gen.getRun({ path: { id } }))),
 
-	/** The reaction phases of the run's flow, with their runs per merge request. */
+	/** Every phase of the run's flow: what opens it, its runs, its live run,
+	 *  the signals holding for it. */
 	phases: async (id: string): Promise<RunPhase[]> =>
 		many(await unwrap(gen.getRunPhases({ path: { id } })), map.toRunPhase),
 
-	/** Start a reaction phase now on one merge request ('' = the primary's);
-	 *  only while the run is in review. */
-	startPhase: (id: string, phase: string, repo = '') =>
-		unwrapVoid(gen.startPhase({ path: { id, phase }, query: { repo } })),
+	/** Start a phase now, by hand, on one checkout's merge request ('' = the
+	 *  run's single open one, else none); only while the run is idle. */
+	startPhase: (id: string, phase: string, subject = '') =>
+		unwrapVoid(gen.startPhase({ path: { id, phase }, body: subject ? { subject } : {} })),
 
 	/** Each merge request as the forge reports it now (polled by the run page). */
 	mrStatus: async (id: string): Promise<MergeRequestLive[]> =>

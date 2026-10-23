@@ -42,6 +42,46 @@ export interface FlowValidation {
 	stages?: number;
 	agents?: number;
 	doc?: FlowDoc;
+	/** The document's parameters (the engine-known six always present) and
+	 *  where they are read; its phases with the wait point's effective values. */
+	parameters: ParamDecl[];
+	refs: ParamRef[];
+	phases: PhaseSummary[];
+}
+
+/** One declared parameter of a flow (FLOWLANG §1). */
+export interface ParamDecl {
+	name: string;
+	type: 'bool' | 'int' | 'float' | 'string';
+	default: string;
+	description?: string;
+	enum?: string[];
+	/** One of the six the engine reads itself. */
+	known: boolean;
+}
+
+/** One place a document reads a parameter. */
+export interface ParamRef {
+	param: string;
+	phase?: string;
+	stage?: string;
+	field: string;
+	input?: string;
+}
+
+/** One phase of a flow with its wait point's effective values. */
+export interface PhaseSummary {
+	id: string;
+	description?: string;
+	signal: string;
+	start: 'auto' | 'confirm' | 'manual';
+	quietFor?: string;
+	max: number;
+	/** A run may begin here (on: run_start). */
+	entry: boolean;
+	/** Its runs act on one merge request. */
+	subject: boolean;
+	stages: number;
 }
 
 /** One input or output in a built-in action's signature. A 'file' carries an

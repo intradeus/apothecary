@@ -138,6 +138,9 @@ export function toRun(w: Wire.RunView): Run {
 		})),
 		phase: w.phase || undefined,
 		phaseSubject: w.phase_subject || undefined,
+		beginPhase: w.begin_phase || undefined,
+		params: w.params ?? undefined,
+		startedBy: w.started_by || undefined,
 		idle: w.idle ?? false,
 		envId: w.env_id,
 		envStatus: w.env_status as Run['envStatus'],
@@ -152,10 +155,22 @@ export function toRunPhase(w: Wire.PhaseInfo): RunPhase {
 		id: w.id,
 		description: w.description || undefined,
 		signal: w.signal,
-		confirm: w.confirm ?? false,
+		start: oneOf(['auto', 'confirm', 'manual'] as const, w.start, 'auto'),
+		entry: w.entry ?? false,
 		quietForS: w.quiet_for_s || undefined,
 		max: w.max,
-		runs: w.runs ?? {}
+		runs: w.runs ?? {},
+		total: w.total ?? 0,
+		live: w.live
+			? { subject: w.live.subject || undefined, parkedAt: w.live.parked_at || undefined }
+			: undefined,
+		holds: list(w.holds).map((h) => ({
+			subject: h.subject,
+			key: h.key,
+			why: h.why,
+			seen: h.seen ?? false,
+			observedAt: h.observed_at
+		}))
 	};
 }
 
@@ -476,7 +491,33 @@ export function toFlowValidation(w: Wire.FlowValidation): FlowValidation {
 		hash: w.hash,
 		stages: w.stages,
 		agents: w.agents,
-		doc: w.doc ? normalizeDoc(w.doc) : undefined
+		doc: w.doc ? normalizeDoc(w.doc) : undefined,
+		parameters: list(w.parameters).map((p) => ({
+			name: p.name,
+			type: oneOf(['bool', 'int', 'float', 'string'] as const, p.type, 'string'),
+			default: p.default,
+			description: p.description || undefined,
+			enum: p.enum ?? undefined,
+			known: p.known ?? false
+		})),
+		refs: list(w.refs).map((r) => ({
+			param: r.param,
+			phase: r.phase || undefined,
+			stage: r.stage || undefined,
+			field: r.field,
+			input: r.input || undefined
+		})),
+		phases: list(w.phases).map((p) => ({
+			id: p.id,
+			description: p.description || undefined,
+			signal: p.signal,
+			start: oneOf(['auto', 'confirm', 'manual'] as const, p.start, 'auto'),
+			quietFor: p.quiet_for || undefined,
+			max: p.max,
+			entry: p.entry ?? false,
+			subject: p.subject ?? false,
+			stages: p.stages
+		}))
 	};
 }
 

@@ -6,7 +6,7 @@
 	import { parse } from 'yaml';
 	import type { Flow, Project } from '$lib/domain';
 	import { to } from '$lib/guild';
-	import { normalizeDoc, type DocAgent, type FlowDoc } from '$lib/flowdoc';
+	import { normalizeDoc, type DocAgent, type FlowDoc, paramDefault } from '$lib/flowdoc';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -48,8 +48,8 @@
 						.filter((s) => s.type === 'agent' && s.agent === agent.name)
 						.map((s) => ({
 							id: s.id,
-							harness: s.harness || doc.defaults?.harness || '—',
-							model: s.model || doc.defaults?.model || '—'
+							harness: s.harness || paramDefault(doc, 'harness') || '—',
+							model: s.model || paramDefault(doc, 'model') || '—'
 						}))
 				}));
 				return { flow, doc, agents };

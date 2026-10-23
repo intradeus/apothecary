@@ -28,7 +28,8 @@
 		parksOnDebug,
 		DONE,
 		START,
-		TRIGGER_MANUAL,
+		MANUAL,
+		RUN_START,
 		EDGE_KINDS,
 		chainLinks,
 		edgeLinks,
@@ -180,9 +181,11 @@
 					entry: false,
 					label: t('flow.graph.beginLabel', { phase: ph.id, trigger: triggerLabel(ph.on) }),
 					title:
-						ph.on.signal === TRIGGER_MANUAL
-							? t('flow.graph.manualTitle', { phase: ph.id })
-							: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal })
+						ph.on.signal === RUN_START
+							? t('flow.graph.entryTitle', { phase: ph.id })
+							: ph.on.signal === MANUAL
+								? t('flow.graph.manualTitle', { phase: ph.id })
+								: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal })
 				}
 			});
 		}
@@ -204,8 +207,14 @@
 							phase: entryPhase.id,
 							trigger: triggerLabel(entryPhase.on)
 						})
-					: t('flow.graph.beginLabelPlain', { trigger: TRIGGER_MANUAL }),
-				title: t('flow.graph.entryTitle')
+					: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
+				title: entryPhase
+					? entryPhase.on.signal === RUN_START
+						? t('flow.graph.entryTitle', { phase: entryPhase.id })
+						: entryPhase.on.signal === MANUAL
+							? t('flow.graph.manualTitle', { phase: entryPhase.id })
+							: t('flow.graph.triggerTitle', { phase: entryPhase.id, signal: entryPhase.on.signal })
+					: t('flow.graph.entryTitle', { phase: 'main' })
 			}
 		});
 		ns.push({
