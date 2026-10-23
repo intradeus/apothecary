@@ -31,7 +31,6 @@
 		chainSummary,
 		routableFrom,
 		EDGE_KINDS,
-		SENTINEL_CHANGED,
 		SENTINEL_DECISION,
 		SENTINEL_FAILURE,
 		chainLinks,

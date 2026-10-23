@@ -24,7 +24,7 @@ type Spec struct {
 	AllowBash bool   `yaml:"allow_bash" json:"allow_bash,omitempty"`
 	Prompt    string `yaml:"prompt" json:"prompt"`
 	// Inputs/Outputs are the agent's declared I/O contract (DESIGN4 §1). A
-	// flow stage binds each declared input to a workspace path (or $CHANGED)
+	// flow stage binds each declared input to a workspace path (or a sentinel)
 	// and may rebind output paths; prompt assembly renders named, described
 	// sections and enforces the output paths. All optional — a spec with no
 	// decls behaves exactly as before (legacy list/string stage bindings).

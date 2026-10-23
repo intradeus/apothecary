@@ -422,7 +422,7 @@ type PingRaised struct {
 // Key is the trigger occurrence it answers (R6: never started twice for
 // one); By is signal (its trigger held) or human (a person started the run,
 // or the phase from the run page); Tip is the subject branch's head at the
-// start — what $CHANGED is measured from inside the phase.
+// start — what $DIFF_PHASE is measured from inside the phase.
 type PhaseStarted struct {
 	Phase   string `json:"phase"`
 	Subject string `json:"subject,omitempty"`

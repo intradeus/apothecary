@@ -121,7 +121,7 @@ func TestCanonicalV4(t *testing.T) {
 	if review.Edge(EdgeReject) == nil || review.Edge(EdgeReject).To != "build" || review.Edge(EdgeReject).Max != 3 {
 		t.Errorf("review.on_reject = %+v", review.Edge(EdgeReject))
 	}
-	if len(review.Inputs) != 2 || review.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelChanged}) {
+	if len(review.Inputs) != 2 || review.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelDiffTarget}) {
 		t.Errorf("review.Inputs = %+v", review.Inputs)
 	}
 
@@ -223,7 +223,7 @@ func TestReferenceFlowParses(t *testing.T) {
 func TestStageMapFormBindings(t *testing.T) {
 	doc := header + commonAgents + `stages:
   - { id: build, type: agent, agent: builder,
-      input: { plan: artifacts/plan.md, changes: $CHANGED },
+      input: { plan: artifacts/plan.md, changes: $DIFF_TARGET },
       output: { patch: artifacts/patch.md }, on_success: done }
 `
 	f, err := Parse("t.yaml", []byte(doc))
@@ -233,7 +233,7 @@ func TestStageMapFormBindings(t *testing.T) {
 	s := f.Stage("build")
 	if len(s.Inputs) != 2 ||
 		s.Inputs[0] != (IOBinding{Name: "plan", Value: "artifacts/plan.md"}) ||
-		s.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelChanged}) {
+		s.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelDiffTarget}) {
 		t.Errorf("inputs = %+v", s.Inputs)
 	}
 	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Name: "patch", Value: "artifacts/patch.md"}) {
@@ -286,7 +286,7 @@ func TestBindingShapeErrors(t *testing.T) {
 		{"agent scalar output", agent("output: artifacts/out.md"), "name what"},
 		{"command list input", header + "stages:\n  - { id: c, type: command, run: x, input: [a.md] }\n",
 			"name each entry"},
-		{"command sentinel input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $CHANGED } }\n",
+		{"command sentinel input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $DIFF_TARGET } }\n",
 			"must be a relative artifact path"},
 		{"gate scalar input", header + "stages:\n  - { id: g, type: human_gate, input: artifacts/a.md }\n",
 			"name what"},
@@ -296,12 +296,17 @@ func TestBindingShapeErrors(t *testing.T) {
 			"must be a relative artifact path"},
 		// Sentinels are scoped: a link is for a human, prompt content is not.
 		{"agent gets a link", agent("input: { mr: $MR_URL }"), "is a link for a human_gate"},
-		{"gate gets prompt content", header + "stages:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n",
+		{"gate gets prompt content", header + "stages:\n  - { id: g, type: human_gate, input: { c: $DIFF_TARGET } }\n",
 			"not something to show a human"},
-		{"gate gets uncommitted", header + "stages:\n  - { id: g, type: human_gate, input: { c: $UNCOMMITTED } }\n",
+		{"gate gets uncommitted", header + "stages:\n  - { id: g, type: human_gate, input: { c: $STATUS } }\n",
 			"not something to show a human"},
-		{"command uncommitted input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $UNCOMMITTED } }\n",
+		{"command uncommitted input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $STATUS } }\n",
 			"must be a relative artifact path"},
+		// The two git sentinels that meant different ranges by context are
+		// gone; the error names what replaced them.
+		{"retired $CHANGED", agent("input: { changes: $CHANGED }"), "use $DIFF_TARGET (what the branch changes against its target) or $DIFF_PHASE"},
+		{"retired $UNCOMMITTED", agent("input: { changes: $UNCOMMITTED }"), "use $STATUS"},
+		{"retired on a gate", header + "stages:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n", "$CHANGED is retired"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -385,7 +390,7 @@ func TestDocIOJSONForms(t *testing.T) {
 // JSON, asserting the binding object survives with its keys in order.
 func TestParseDocMapRoundTrip(t *testing.T) {
 	doc := header + commonAgents + `stages:
-  - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md, changes: $CHANGED }, on_success: done }
+  - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md, changes: $DIFF_TARGET }, on_success: done }
 `
 	d, err := ParseDoc("t.yaml", []byte(doc))
 	if err != nil {
@@ -395,7 +400,7 @@ func TestParseDocMapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"input":{"plan":"artifacts/plan.md","changes":"$CHANGED"}`) {
+	if !strings.Contains(string(b), `"input":{"plan":"artifacts/plan.md","changes":"$DIFF_TARGET"}`) {
 		t.Errorf("round-trip lost ordered map input: %s", b)
 	}
 }
@@ -1394,7 +1399,7 @@ phases:
 func TestParamSites(t *testing.T) {
 	head := "name: t\nversion: 4\nparameters: { harness: fake, model: a/b, s: text, d: 5m, n: 2, b: true, e: { default: auto, enum: [auto, confirm] }, big: { default: auto, enum: [auto, confirm, manual] } }\n" + commonAgents
 	for _, tc := range []struct{ name, doc, substr string }{
-		{"sentinel at a site", head + "stages:\n  - { id: a, type: agent, agent: b, model: $CHANGED }\n", "is a sentinel, not a parameter"},
+		{"sentinel at a site", head + "stages:\n  - { id: a, type: agent, agent: b, model: $DIFF_TARGET }\n", "is a sentinel, not a parameter"},
 		{"undeclared", head + "stages:\n  - { id: a, type: agent, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
 		{"wrong type", head + "stages:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
 		{"bool at a string site", head + "stages:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},

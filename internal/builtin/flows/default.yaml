@@ -365,7 +365,7 @@ phases:
           on_success: commit_msg,
           on_fail: { to: build, max: 2, then: debug } }
       - { id: commit_msg, type: agent, agent: committer, max_turns: 10,
-          input: { changes: $UNCOMMITTED, plan: artifacts/plan.md, failure: $FAILURE },
+          input: { changes: $STATUS, plan: artifacts/plan.md, failure: $FAILURE },
           description: "write the commit subject for the build's uncommitted work",
           on_success: commit,
           on_fail: { to: commit_msg, max: 1, then: debug } }
@@ -386,13 +386,13 @@ phases:
       # REJECT carries its comments back to the builder as feedback. Three
       # rejected rounds, and a human looks rather than the run being dropped.
       - { id: review,     type: agent, agent: reviewer, model: $review_model,
-          input: { plan: artifacts/plan.md, changes: $CHANGED, failure: $FAILURE }, max_turns: 30,
+          input: { plan: artifacts/plan.md, changes: $DIFF_TARGET, failure: $FAILURE }, max_turns: 30,
           description: "adversarial review against the plan, conventions and correctness",
           on_success: redact,
           on_reject: { to: build, max: 3, then: debug },
           on_fail: { to: review, max: 1, then: debug } }
       - { id: redact,     type: agent, agent: redactor, max_turns: 15,
-          input: { changes: $CHANGED, failure: $FAILURE },
+          input: { changes: $DIFF_TARGET, failure: $FAILURE },
           description: "write the merge request description",
           on_success: push,
           on_fail: { to: redact, max: 1, then: debug } }
@@ -453,7 +453,7 @@ phases:
           on_success: fix_commit_msg,
           on_fail: { to: fix, max: 2, then: debug } }
       - { id: fix_commit_msg, type: agent, agent: committer, max_turns: 10,
-          input: { changes: $UNCOMMITTED, plan: artifacts/plan.md, failure: $FAILURE },
+          input: { changes: $STATUS, plan: artifacts/plan.md, failure: $FAILURE },
           on_success: fix_commit,
           on_fail: { to: fix_commit_msg, max: 1, then: debug } }
       # Runs in the merge request's own checkout; the message lives in the
@@ -470,7 +470,7 @@ phases:
           on_success: reply,
           on_fail: debug }
       - { id: reply,      type: agent, agent: replier, max_turns: 15,
-          input: { comments: artifacts/review.md, changes: $CHANGED, failure: $FAILURE },
+          input: { comments: artifacts/review.md, changes: $DIFF_PHASE, failure: $FAILURE },
           description: "answer each thread with what was done",
           on_success: post,
           on_fail: { to: reply, max: 1, then: debug } }

@@ -54,8 +54,8 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 
 // assemblePrompt builds the agent prompt per the §3.2 template. The ticket
 // always forms the TASK section. Each of the stage's bound inputs renders as a
-// named, described INPUT section (FLOWLANG §4); $CHANGED is a stat + file list,
-// never the full diff.
+// named, described INPUT section (FLOWLANG §4); a git sentinel is a file
+// list, never the full diff.
 func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	rs := x.rs
 	var b strings.Builder
@@ -80,14 +80,18 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 				in.Name, inputDesc(spec, in.Name), attemptOf(iter, rs.feedAttempts), tail(rs.feed, 8<<10))
 			continue
 		}
-		if in.Value == flow.SentinelChanged {
-			fmt.Fprintf(&b, "# INPUT: %s%s\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
-				in.Name, inputDesc(spec, in.Name), x.changedFiles())
+		switch in.Value {
+		case flow.SentinelDiffTarget:
+			fmt.Fprintf(&b, "# INPUT: %s%s (git diff --name-status <target>...HEAD: what the branch changes against its target)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
+				in.Name, inputDesc(spec, in.Name), x.diffTarget())
 			continue
-		}
-		if in.Value == flow.SentinelUncommitted {
+		case flow.SentinelDiffPhase:
+			fmt.Fprintf(&b, "# INPUT: %s%s (git diff --name-status <phase start>...HEAD: what this phase committed since it began)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
+				in.Name, inputDesc(spec, in.Name), x.diffPhase())
+			continue
+		case flow.SentinelStatus:
 			fmt.Fprintf(&b, "# INPUT: %s%s (git status --short)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
-				in.Name, inputDesc(spec, in.Name), x.uncommittedFiles())
+				in.Name, inputDesc(spec, in.Name), x.statusFiles())
 			continue
 		}
 		content := "(artifact missing)"
@@ -210,45 +214,57 @@ func parseVerdict(data []byte) (*ports.Verdict, error) {
 	}
 }
 
-// changedFiles renders $CHANGED: the changed-file list of the work in
-// progress, diffed against each checkout's source branch (a run started off
-// a feature branch is diffed against that branch, not the project default:
-// PLAN5 M23). --name-status, not --stat: the agent reads the files itself,
-// so churn counts are noise that crowds the prompt.
-func (x *exec) changedFiles() string {
+// gitDiff is `git diff --name-status <base>...HEAD` in a checkout: the
+// changed-file list, never the diff itself. --name-status, not --stat: the
+// agent reads the files itself, so churn counts are noise in the prompt.
+func (x *exec) gitDiff(dir, base string) string {
 	rs := x.rs
-	diff := func(dir, baseRef string) string {
-		res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
-			Script:  fmt.Sprintf("git diff --name-status %s...HEAD", baseRef),
-			Dir:     dir,
-			Timeout: rs.fl.Defaults.Timeout,
-		})
-		if err != nil || res.ExitCode != 0 {
-			return "(no diff available)"
-		}
-		return res.Output
-	}
-	// Inside a reaction phase: what this phase run changed on its subject,
-	// measured from the branch head when it started.
-	if co := x.subjectCheckout(); co != nil {
-		if rs.phaseTip != "" {
-			return diff(co.Dir, rs.phaseTip)
-		}
-		return diff(co.Dir, "origin/"+sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch))
-	}
-	if len(rs.checkouts) <= 1 {
-		return diff(event.PrimaryCheckoutDir, "origin/"+sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))
-	}
-	return x.checkoutSections(func(co event.Checkout) string {
-		return diff(co.Dir, "origin/"+sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch))
+	res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
+		Script:  fmt.Sprintf("git diff --name-status %s...HEAD", base),
+		Dir:     dir,
+		Timeout: rs.fl.Defaults.Timeout,
 	})
+	if err != nil || res.ExitCode != 0 {
+		return "(no diff available)"
+	}
+	return res.Output
 }
 
-// uncommittedFiles renders $UNCOMMITTED: the working tree's pending changes
-// (staged, unstaged and untracked) — what a commit stage would record right
-// now, which $CHANGED cannot show since it diffs commits only. Scoped like
-// $CHANGED: the subject alone inside a reaction phase, else every checkout.
-func (x *exec) uncommittedFiles() string {
+// diffTarget renders $DIFF_TARGET: what each branch changes against its
+// target — the branch a checkout forked from, the one its merge request
+// merges into (a run started off a feature branch is diffed against that
+// branch, not the project default: PLAN5 M23). The same range in every
+// phase; inside a subject phase only the subject's checkout.
+func (x *exec) diffTarget() string {
+	rs := x.rs
+	target := func(co event.Checkout) string {
+		return "origin/" + sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch)
+	}
+	if co := x.subjectCheckout(); co != nil {
+		return x.gitDiff(co.Dir, target(*co))
+	}
+	if len(rs.checkouts) <= 1 {
+		return x.gitDiff(event.PrimaryCheckoutDir, "origin/"+sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))
+	}
+	return x.checkoutSections(func(co event.Checkout) string { return x.gitDiff(co.Dir, target(co)) })
+}
+
+// diffPhase renders $DIFF_PHASE: what this phase run committed since the
+// commit it began on — a review round's fixes, not the whole branch. A
+// phase run that began on no recorded commit (the delivery, which forked
+// the branch) counts from the target, which is the same thing there.
+func (x *exec) diffPhase() string {
+	if co := x.subjectCheckout(); co != nil && x.rs.phaseTip != "" {
+		return x.gitDiff(co.Dir, x.rs.phaseTip)
+	}
+	return x.diffTarget()
+}
+
+// statusFiles renders $STATUS: the working tree's pending changes (staged,
+// unstaged and untracked) — what a commit stage would record right now,
+// which the diffs cannot show since they compare commits. Scoped like them:
+// the subject alone inside a subject phase, else every checkout.
+func (x *exec) statusFiles() string {
 	rs := x.rs
 	status := func(dir string) string {
 		res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{

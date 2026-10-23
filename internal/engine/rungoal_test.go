@@ -126,8 +126,8 @@ func TestRerunCarriesDirection(t *testing.T) {
 	}
 }
 
-// $UNCOMMITTED renders the working tree's status — what the commit stage is
-// about to record, which $CHANGED (commits only) cannot see yet.
+// $STATUS renders the working tree's status — what the commit stage is
+// about to record, which $DIFF_TARGET (commits only) cannot see yet.
 func TestUncommittedRendersWorkingTreeStatus(t *testing.T) {
 	h := newHarness(t, mustFlow(t, `name: uncommitted
 version: 4
@@ -138,7 +138,7 @@ agents:
     inputs:
       - { name: changes, description: the uncommitted files }
 stages:
-  - { id: commit_msg, type: agent, agent: committer, input: { changes: $UNCOMMITTED } }
+  - { id: commit_msg, type: agent, agent: committer, input: { changes: $STATUS } }
 `))
 	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.HasPrefix(cmd.Script, "git status --short") {
@@ -155,5 +155,46 @@ stages:
 	prompt := lastPrompt(h)
 	if !strings.Contains(prompt, "# INPUT: changes") || !strings.Contains(prompt, "?? health.go") {
 		t.Errorf("prompt lacks the uncommitted files:\n%s", prompt)
+	}
+}
+
+// The two diffs are two ranges, the same wherever they are bound: inside a
+// reaction, $DIFF_TARGET is still the whole branch against its target and
+// $DIFF_PHASE what this round committed since the head it began on.
+func TestDiffSentinelsMeasureTheirOwnRange(t *testing.T) {
+	doc := strings.Replace(phasedFlowDoc, "  - name: redactor\n",
+		"  - name: replier\n    prompt: reply\n    inputs:\n      - { name: all }\n      - { name: round }\n  - name: redactor\n", 1)
+	doc = strings.Replace(doc, "  - id: shipped\n",
+		"  - id: answer\n    on: manual\n    stages:\n      - { id: say, type: agent, agent: replier, input: { all: $DIFF_TARGET, round: $DIFF_PHASE } }\n  - id: shipped\n", 1)
+	ph := newPhasedHarness(t, doc)
+	ph.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		switch cmd.Script {
+		case "git diff --name-status origin/main...HEAD":
+			return ports.ExecResult{Output: "M\tbranch.go\n"}, nil
+		case "git diff --name-status h1...HEAD":
+			return ports.ExecResult{Output: "M\tround.go\n"}, nil
+		}
+		return ports.ExecResult{}, nil
+	}
+	runID := ph.start(t)
+	ph.forge.SetHead(1, "h1")
+	if err := ph.e.StartPhase(runID, "answer", ""); err != nil {
+		t.Fatal(err)
+	}
+	ph.waitPhaseRuns(t, runID, "answer", 1)
+	// The harness files a subject phase's prompts under "fix".
+	var p string
+	for _, pr := range ph.promptsOf("fix") {
+		if strings.Contains(pr, "# INPUT: all") {
+			p = pr
+		}
+	}
+	if p == "" {
+		t.Fatal("the replier was never prompted")
+	}
+	all, round := strings.Index(p, "# INPUT: all"), strings.Index(p, "# INPUT: round")
+	if all < 0 || round < 0 || !strings.Contains(p[all:round], "branch.go") || !strings.Contains(p[round:], "round.go") ||
+		!strings.Contains(p, "<target>...HEAD") || !strings.Contains(p, "<phase start>...HEAD") {
+		t.Errorf("prompt:\n%s", p)
 	}
 }

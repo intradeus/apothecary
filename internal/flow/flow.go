@@ -43,10 +43,17 @@ const (
 	// is lexical: a $NAME input is resolved by the engine at stage time,
 	// anything else is a repo-relative artifact path. Adding one costs a
 	// const here plus one resolution case in the engine.
-	SentinelChanged     = "$CHANGED"     // changed-file list of the branch vs its base
-	SentinelUncommitted = "$UNCOMMITTED" // the working tree's pending changes (git status)
-	SentinelMRURL       = "$MR_URL"      // the run's merge-request link (create_mr's output)
-	SentinelWorkspace   = "$WORKSPACE"   // the workspace's access link (terminal/IDE)
+	//
+	// The git ones are named after the git they run, so each means one
+	// range wherever it is bound: DIFF_TARGET what the branch changes
+	// against its target (what the merge request merges), DIFF_PHASE what
+	// this phase run committed since the commit it began on, STATUS what a
+	// commit would record now.
+	SentinelDiffTarget = "$DIFF_TARGET" // git diff --name-status <target>...HEAD
+	SentinelDiffPhase  = "$DIFF_PHASE"  // git diff --name-status <phase start>...HEAD
+	SentinelStatus     = "$STATUS"      // git status --short: staged, unstaged, untracked
+	SentinelMRURL      = "$MR_URL"      // the run's merge-request link (create_mr's output)
+	SentinelWorkspace  = "$WORKSPACE"   // the workspace's access link (terminal/IDE)
 	// SentinelDecision and SentinelFailure carry what the edge that re-entered
 	// this stage brought with it: a rejection's rationale (verdict comments or
 	// a human's gate feedback) and a failing stage's output tail. They are

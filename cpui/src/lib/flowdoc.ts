@@ -81,10 +81,13 @@ export function feedSentinelFor(kind: EdgeKind): string {
 // Sentinels are the engine-provided input values (FLOWLANG §4). The rule is
 // lexical: a $NAME input is resolved by the engine, anything else is a
 // repo-relative artifact path.
-export const SENTINEL_CHANGED = '$CHANGED';
-// $UNCOMMITTED is the working tree's pending changes — what $CHANGED (commits
-// only) cannot see before a commit stage runs.
-export const SENTINEL_UNCOMMITTED = '$UNCOMMITTED';
+// The git ones are named after the git they run, one range each wherever
+// they are bound: what the branch changes against its target, what this
+// phase run committed since it began, and what a commit would record now
+// (staged, unstaged, untracked — which the diffs, comparing commits, miss).
+export const SENTINEL_DIFF_TARGET = '$DIFF_TARGET';
+export const SENTINEL_DIFF_PHASE = '$DIFF_PHASE';
+export const SENTINEL_STATUS = '$STATUS';
 export const SENTINEL_MR_URL = '$MR_URL';
 export const SENTINEL_WORKSPACE = '$WORKSPACE';
 // $DECISION and $FAILURE carry what the edge that re-entered a stage brought:
@@ -98,7 +101,13 @@ export const isFeedSentinel = (v: string) => v === SENTINEL_DECISION || v === SE
 /** Which sentinels each stage type may bind (mirror of the Go value rules). */
 export function sentinelsFor(type: StageKind): string[] {
 	if (type === 'agent')
-		return [SENTINEL_CHANGED, SENTINEL_UNCOMMITTED, SENTINEL_DECISION, SENTINEL_FAILURE];
+		return [
+			SENTINEL_DIFF_TARGET,
+			SENTINEL_DIFF_PHASE,
+			SENTINEL_STATUS,
+			SENTINEL_DECISION,
+			SENTINEL_FAILURE
+		];
 	if (type === 'human_gate') return [SENTINEL_WORKSPACE, SENTINEL_MR_URL];
 	return [];
 }
@@ -880,7 +889,7 @@ export interface IOPort {
 	name: string;
 	/** The bound artifact path, or a sentinel. */
 	value: string;
-	/** True when value is engine-provided ($CHANGED, $UNCOMMITTED, $MR_URL, $WORKSPACE). */
+	/** True when value is engine-provided ($DIFF_TARGET, $STATUS, $MR_URL, …). */
 	sentinel: boolean;
 	/** Declared description, when the contract carries one. */
 	description?: string;

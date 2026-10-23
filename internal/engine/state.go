@@ -91,7 +91,7 @@ type runState struct {
 	// Phases (PLAN6). phase is the phase in progress (or the last one run),
 	// subject the checkout whose merge request it acts on ("" = all: the
 	// entry); idle is true between phases. phaseTip is the subject branch's
-	// head when the phase started ($CHANGED inside it).
+	// head when the phase started ($DIFF_PHASE counts from it).
 	phase    string
 	subject  string
 	idle     bool

@@ -1711,21 +1711,36 @@ func pathValue(v string) error {
 	return nil
 }
 
+// retiredSentinel names the replacement of a sentinel this grammar no longer
+// has, or "".
+func retiredSentinel(v string) string {
+	switch v {
+	case "$CHANGED":
+		return fmt.Sprintf("$CHANGED is retired — it meant two ranges: use %s (what the branch changes against its target) or %s (what this phase run committed)", SentinelDiffTarget, SentinelDiffPhase)
+	case "$UNCOMMITTED":
+		return fmt.Sprintf("$UNCOMMITTED is retired: use %s (git status: staged, unstaged and untracked)", SentinelStatus)
+	}
+	return ""
+}
+
 // agentInputValue accepts a path or one of the sentinels an agent prompt can
-// render: the changed-file lists, and the content of the edge that re-entered
+// render: the git file lists, and the content of the edge that re-entered
 // the stage.
 func agentInputValue(v string) error {
 	switch v {
-	case SentinelChanged, SentinelUncommitted, SentinelDecision, SentinelFailure:
+	case SentinelDiffTarget, SentinelDiffPhase, SentinelStatus, SentinelDecision, SentinelFailure:
 		return nil
 	case "ticket":
 		return fmt.Errorf("the ticket is always the TASK section; remove this binding")
 	case SentinelMRURL, SentinelWorkspace:
 		return fmt.Errorf("%s is a link for a human_gate, not something an agent reads", v)
 	}
+	if msg := retiredSentinel(v); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
 	if !validArtifactPath(v) {
-		return fmt.Errorf("%q must be a relative artifact path, %s, %s, %s or %s",
-			v, SentinelChanged, SentinelUncommitted, SentinelDecision, SentinelFailure)
+		return fmt.Errorf("%q must be a relative artifact path, %s, %s, %s, %s or %s",
+			v, SentinelDiffTarget, SentinelDiffPhase, SentinelStatus, SentinelDecision, SentinelFailure)
 	}
 	return nil
 }
@@ -1739,8 +1754,11 @@ func gateInputValue(v string) error {
 		return fmt.Errorf("retired: use %s", SentinelMRURL)
 	case "workspace":
 		return fmt.Errorf("retired: use %s", SentinelWorkspace)
-	case SentinelChanged, SentinelUncommitted, SentinelDecision, SentinelFailure:
+	case SentinelDiffTarget, SentinelDiffPhase, SentinelStatus, SentinelDecision, SentinelFailure:
 		return fmt.Errorf("%s is agent-prompt content, not something to show a human", v)
+	}
+	if msg := retiredSentinel(v); msg != "" {
+		return fmt.Errorf("%s", msg)
 	}
 	if !validArtifactPath(v) {
 		return fmt.Errorf("%q must be a relative artifact path, %s or %s", v, SentinelMRURL, SentinelWorkspace)

@@ -846,7 +846,7 @@ The same anatomy, scoped to one guild:
    - **Canvas:** Svelte Flow on a transparent background over the scene, with a faint dot grid (`--ln` 1px, 20px).
      - **Nodes:** content glass, radius 14px, with a 3px top accent in the stage-type hue.
        - Head: type chip + mono id, plus an ENTRY tag (parchment outline) on the first stage, plus a detail line (agent name / command / action / signal / "gate").
-       - Rows: inputs (bound grn dot, unbound amb hollow, sentinel vio `$CHANGED`) and outputs with data dots.
+       - Rows: inputs (bound grn dot, unbound amb hollow, sentinel vio `$DIFF_TARGET`) and outputs with data dots.
      - Start / Done / Abort are serif italic pills (Done dashed grn, Abort dashed ros).
      - Handles and edges as in 3.6.
      - Bottom-left controls: zoom, fit, lock, auto-arrange. Node positions autosave silently.

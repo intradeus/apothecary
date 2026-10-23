@@ -88,7 +88,7 @@ func TestValidateBindings(t *testing.T) {
 		},
 		{
 			name:    "required input unbound",
-			stages:  "  - { id: b, type: agent, agent: builder, input: { changes: $CHANGED }, on_success: done }\n",
+			stages:  "  - { id: b, type: agent, agent: builder, input: { changes: $DIFF_TARGET }, on_success: done }\n",
 			specs:   specMap(builderTwo),
 			wantErr: `required input "plan"`,
 		},

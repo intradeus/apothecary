@@ -313,7 +313,8 @@ wait point or `done` — so two phases never touch the branch at once.
 by hand on a merge request — everything is scoped to the subject: command
 stages run in its checkout (artifacts stay in the primary's `artifacts/`, so
 address them as `$HOME/repo/artifacts/…`), `$MR_URL` is its merge request,
-`$CHANGED` is what *this phase run* changed, and agents get a `# SUBJECT`
+`$DIFF_TARGET` is its branch against its target and `$DIFF_PHASE` what *this
+phase run* committed, and agents get a `# SUBJECT`
 prompt section saying which checkout to edit (the others are read-only
 context). `each_repo` does not apply there (the parser warns). A *subject
 action* — `sync_target`, `load_review_comments`, `reply_review_comments` — in a
@@ -472,7 +473,7 @@ flow is written against, and no binding names them:
 | the parameters | the values the run was created with (§1 *Parameters*) |
 | run identity | run id and its bearer token, for the ask_human channel |
 
-A flow declares none of it because none of it varies per stage. `$CHANGED`,
+A flow declares none of it because none of it varies per stage. `$DIFF_TARGET`,
 `$WORKSPACE` and `$MR_URL` (§4) are how a stage reaches into this context
 explicitly, and those *are* declared.
 
@@ -692,7 +693,7 @@ primary stays `~/repo` and still supplies the devcontainer. What follows from
 one more checkout, without any flow change:
 
 - agents see a `# REPOSITORIES` prompt section naming each checkout and its
-  path; `$CHANGED` is grouped per repository;
+  path; `$DIFF_TARGET` and `$STATUS` are grouped per repository;
 - a command stage marked `each_repo: true` runs in each checkout in turn, so
   the default template's `commit` and `push` stages commit and push every
   repository the run touched;
@@ -942,7 +943,7 @@ Every binding, on every stage type, is `name: value`:
 ```yaml
 input:
   plan: artifacts/plan.md
-  changes: $CHANGED
+  changes: $DIFF_TARGET
 ```
 
 What differs is only how the **name** is checked, which follows from the type:
@@ -962,16 +963,18 @@ segments).
 
 | sentinel | is | bindable on |
 |---|---|---|
-| `$CHANGED` | `git diff --name-status` of the branch against **the branch this run forked from** — the changed-file list, never the full diff; on a multi-repo run, one section per checkout; in a subject phase, what this phase run changed on its subject | agent input |
-| `$UNCOMMITTED` | `git status --short` of the working tree — staged, unstaged and untracked files, i.e. what a commit stage would record right now (`$CHANGED` diffs commits only, so it cannot see this); scoped per checkout like `$CHANGED` | agent input |
+| `$DIFF_TARGET` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. The same range in every phase; on a multi-repo run one section per checkout, in a subject phase the subject's only | agent input |
+| `$DIFF_PHASE` | `git diff --name-status <phase start>...HEAD` — what **this phase run** committed since the head it began on: a review round's fixes, not the whole branch. A phase run that began on no recorded head (the delivery, which forked the branch) counts from the target | agent input |
+| `$STATUS` | `git status --short` of the working tree — staged, unstaged and untracked files, i.e. what a commit stage would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like `$DIFF_TARGET` | agent input |
 | `$DECISION` | why the last attempt was turned down: a verdict's comments, or a human's gate feedback | agent input |
 | `$FAILURE` | what the failing stage printed: the last 8 KB, with every secret the engine injected replaced by `[redacted:<kind>]` | agent input |
 | `$MR_URL` | the run's merge request link, produced by `create_mr`; the first when a multi-repo run opened several — a gate then also lists them all in its context; in a subject phase, the subject's | gate input |
 | `$WORKSPACE` | the workspace's access link (terminal, else IDE); the `debug` leaf hands it out by itself | gate input |
 
 The scoping is enforced: an agent cannot bind `$MR_URL` (a link is for a human
-to click, not for a prompt to read), and a gate cannot bind `$CHANGED` or
-`$UNCOMMITTED` (prompt content is not something to show a human).
+to click, not for a prompt to read), and a gate cannot bind a git sentinel
+(prompt content is not something to show a human). Each git sentinel is named
+after the git it runs and means that one range wherever it is bound.
 
 **`$DECISION` and `$FAILURE`** are the retry channel. They hold whatever the
 edge that re-entered this stage brought with it, so they are empty on a first
@@ -1241,6 +1244,8 @@ no legacy reading. Converting one by hand:
 | `on: { signal: mr_conflicts, confirm: true }` | `on: { signal: mr_conflicts, start: confirm }` — `auto` / `confirm` / `manual`, or `$param` |
 | a reaction `on: { signal: manual }` | `on: manual` |
 | the run ending by itself from its merge requests | an **outcome** phase: `on: mr_merged` ending with `done`, `on: mr_closed` with `then: abort` (§1 *How a run ends*) |
+| `$CHANGED` (the branch against its target in an entry phase, *this round's* changes in a subject phase) | `$DIFF_TARGET` or `$DIFF_PHASE` — one range each, wherever bound |
+| `$UNCOMMITTED` | `$STATUS` |
 | `wait_merge` + `ticket_done` closing the delivery phase (the first v4 cut) | the delivery ends with `end` once the merge request is open; the `merged` outcome moves the ticket and says `done` |
 | `on_success: done` closing a reaction phase (v3: the phase ended) | `on_success: end`, or nothing — `done` now ends the run |
 | a reaction's `max` (v3: 10 by default) | no default cap: as often as the signal brings something new |
@@ -1369,7 +1374,7 @@ phases:
       # on_reject reachable; its comments reach the builder's `rejection` input.
       # Three rejected rounds, then a human: no chain ends without a person.
       - { id: review, type: agent, agent: reviewer, model: $review_model,
-          input: { plan: artifacts/plan.md, changes: $CHANGED, failure: $FAILURE }, max_turns: 30,
+          input: { plan: artifacts/plan.md, changes: $DIFF_TARGET, failure: $FAILURE }, max_turns: 30,
           on_success: redact,
           on_reject: { to: build, max: 3, then: debug },
           on_fail: { to: review, max: 1, then: debug } }

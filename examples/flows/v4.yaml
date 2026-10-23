@@ -252,7 +252,7 @@ stages:
     agent: committer
     max_turns: 10
     input:
-      changes: $UNCOMMITTED
+      changes: $STATUS
       plan: artifacts/plan.md
       failure: $FAILURE
     on_success: commit
@@ -288,7 +288,7 @@ stages:
     max_turns: 30
     input:
       plan: artifacts/plan.md
-      changes: $CHANGED
+      changes: $DIFF_TARGET
       failure: $FAILURE
     on_success: redact
     on_fail:
@@ -303,7 +303,7 @@ stages:
     agent: redactor
     max_turns: 15
     input:
-      changes: $CHANGED
+      changes: $DIFF_TARGET
       failure: $FAILURE
     on_success: push
     on_fail:
