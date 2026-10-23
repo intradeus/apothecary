@@ -126,7 +126,7 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	// The run's whole life (PLAN6): the merge request ends it — no final
 	// gate — and the reactions are the conflict fix (asked first) and the
 	// debounced review round.
-	if !f.Phased() || f.Stage("final_gate") != nil {
+	if len(f.Phases) < 2 || f.Stage("final_gate") != nil {
 		t.Fatal("the default flow is phased and has no final gate")
 	}
 	conflicts, review := f.Phase("conflicts"), f.Phase("review_fixes")

@@ -397,10 +397,6 @@ func ValidateBindings(params []Param, bindings map[string]string) error {
 	return nil
 }
 
-// TriggerManual is the beginning a person gives from the run page
-// (signalspec.Manual): a phase on it has no signal and starts by hand only.
-const TriggerManual = signalspec.Manual
-
 // DefaultPhaseMax bounds how many times a phase opened by a firing signal may
 // run for one subject when `max` does not say.
 const DefaultPhaseMax = 10
@@ -430,11 +426,6 @@ type Wait struct {
 	Max      int
 	Timeout  time.Duration
 }
-
-// Trigger is the pre-v4 name of Wait.
-//
-// Deprecated: use Wait.
-type Trigger = Wait
 
 // Phase is one chain of stages and the wait point that opens it. Its stages
 // are Flow.Stages[First..Last], contiguous in document order. Every phase is
@@ -466,11 +457,6 @@ func (p *Phase) HasSubject() bool {
 	sig := signalspec.Get(p.On.Signal)
 	return sig != nil && sig.Needs == signalspec.NeedsMR
 }
-
-// Entry is IsEntrypoint under its pre-v4 name.
-//
-// Deprecated: use IsEntrypoint.
-func (p *Phase) Entry() bool { return p.IsEntrypoint() }
 
 // Input returns the stage's named binding for name, or nil.
 func (s *Stage) Input(name string) *IOBinding {
@@ -609,13 +595,6 @@ func (f *Flow) Beginning() *Phase {
 	return nil
 }
 
-// Phased reports whether the document declared its phases itself rather
-// than writing the one-phase shorthand.
-//
-// Deprecated: every flow is phases; the engine's remaining uses go away with
-// per-phase-run state.
-func (f *Flow) Phased() bool { return f != nil && !f.shorthand }
-
 // Phase returns the phase with the given id, or nil.
 func (f *Flow) Phase(id string) *Phase {
 	for i := range f.Phases {
@@ -626,20 +605,6 @@ func (f *Flow) Phase(id string) *Phase {
 	return nil
 }
 
-// Reactions lists the phases that are not entrypoints, in document order.
-//
-// Deprecated: walk Phases and ask IsEntrypoint / Fires.
-func (f *Flow) Reactions() []Phase {
-	var out []Phase
-	for i := range f.Phases {
-		if !f.Phases[i].IsEntrypoint() {
-			out = append(out, f.Phases[i])
-		}
-	}
-	return out
-}
-
-// Stage returns the stage with the given id, or nil.
 func (f *Flow) Stage(id string) *Stage {
 	for i := range f.Stages {
 		if f.Stages[i].ID == id {

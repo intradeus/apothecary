@@ -845,7 +845,7 @@ func TestPhasedFlowParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !f.Phased() || len(f.Phases) != 3 || len(f.Stages) != 6 {
+	if len(f.Phases) != 3 || len(f.Stages) != 6 {
 		t.Fatalf("phases %d stages %d", len(f.Phases), len(f.Stages))
 	}
 	d, c, r := f.Phases[0], f.Phases[1], f.Phases[2]
@@ -926,9 +926,6 @@ func TestShorthandDesugarsToMain(t *testing.T) {
 	}
 	if b := f.Beginning(); b == nil || b.ID != ShorthandPhase || f.Stages[0].Line != 5 || f.Phases[0].On.Max != UnlimitedMax {
 		t.Errorf("beginning %+v, line %d", b, f.Stages[0].Line)
-	}
-	if f.Phased() {
-		t.Error("the shorthand is not a document that declared phases")
 	}
 }
 
@@ -1076,9 +1073,6 @@ func TestEntrypoints(t *testing.T) {
 	deliver := f.Phase("deliver")
 	if !deliver.IsEntrypoint() || deliver.Fires() || deliver.On.Max != UnlimitedMax || deliver.On.Start != StartManual {
 		t.Errorf("deliver = %+v", deliver.On)
-	}
-	if got := f.Reactions(); len(got) != 1 || got[0].ID != "polish" {
-		t.Errorf("reactions = %+v", got)
 	}
 }
 
