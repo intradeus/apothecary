@@ -5,9 +5,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"apothecary/internal/actionspec"
 	"apothecary/internal/flow"
+	"apothecary/internal/signalspec"
 )
 
 // TestDefaultFlowBindingsClean is the wiring invariant this feature exists
@@ -305,5 +307,44 @@ func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
 		if ph := &f.Phases[i]; ph.Fires() && ph.On.Max != flow.UnlimitedMax {
 			t.Errorf("reaction %s is capped at %d runs; reactions happen as often as their signal brings something new", ph.ID, ph.On.Max)
 		}
+	}
+}
+
+// TestReviewerTemplate: the reviewer is created on someone's merge request,
+// reviews it through one block from its entrypoint and again after the
+// author's pushes, never builds or pushes, and ends with the merge request.
+func TestReviewerTemplate(t *testing.T) {
+	f := Flow("reviewer")
+	if f == nil {
+		t.Fatal("no built-in reviewer")
+	}
+	first, again := f.Phase("first_look"), f.Phase("again")
+	if first == nil || !first.IsEntrypoint() || !first.OnMR() || len(f.Entrypoints()) != 1 {
+		t.Fatalf("first_look = %+v", first)
+	}
+	if again == nil || again.On.Signal != signalspec.MRHeadMoved || again.On.QuietFor < time.Minute {
+		t.Errorf("again = %+v", again)
+	}
+	for _, id := range []string{"merged", "closed"} {
+		if ph := f.Phase(id); ph == nil || !ph.IsOutcome() || ph.Then != flow.TerminalDone {
+			t.Errorf("outcome %s = %+v", id, ph)
+		}
+	}
+	for _, id := range []string{"review.post", "rereview.post"} {
+		if st := f.Stage(id); st == nil || st.Action != actionspec.PostReview {
+			t.Errorf("stage %s = %+v", id, st)
+		}
+	}
+	for i := range f.Stages {
+		st := &f.Stages[i]
+		if st.Type == flow.StageAction && (st.Action == actionspec.PushBranch || st.Action == actionspec.CreateMR || st.Action == actionspec.MRMerge) {
+			t.Errorf("stage %s: the reviewer never pushes, opens or merges", st.ID)
+		}
+	}
+	if sp := f.Agent("pr_reviewer"); sp == nil || !sp.ReadOnly || sp.ReviewThreadsOutput() == nil {
+		t.Errorf("pr_reviewer = %+v", sp)
+	}
+	if p := f.Param("review_gate"); p == nil || p.Default != "false" {
+		t.Errorf("review_gate = %+v: a review posts by itself unless a workshop asks", p)
 	}
 }

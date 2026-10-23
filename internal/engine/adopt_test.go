@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/builtin"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -179,4 +180,37 @@ func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	if again == nil || again.MR == nil || again.MR.IID != ref.IID {
 		t.Errorf("rerun = %+v", again)
 	}
+}
+
+// The built-in reviewer template runs as written: created on a merge
+// request, it reviews it through its block, waits, and ends with it.
+func TestBuiltinReviewerTemplateRuns(t *testing.T) {
+	src, ok := builtin.FlowYAML("reviewer")
+	if !ok {
+		t.Fatal("no built-in reviewer")
+	}
+	src = strings.NewReplacer("harness: opencode", "harness: fake", "model: opencode-go/glm-5.2", "model: anthropic/claude-sonnet-4-6").Replace(src)
+	ph, _ := newReviewerHarness(t, src)
+	ref := ph.forge.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
+	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching (!1 by alice)"}, "reviewer", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ph.waitState(t, runID, run.InReview)
+	evs := ph.events(t, runID)
+	var stages []string
+	for _, e := range evs {
+		if s, ok := e.Payload.(*event.StageCompleted); ok {
+			stages = append(stages, s.StageID)
+		}
+	}
+	// The gate is off by default: skipped, the review posted.
+	if got := strings.Join(stages, " "); got != "review.read review.gate review.post" {
+		t.Errorf("stages completed: %s", got)
+	}
+	if rv := ph.forge.SnapshotMRs()[0].Reviews; len(rv) != 1 {
+		t.Fatalf("reviews = %+v", rv)
+	}
+	ph.forge.SetMRState(ref.IID, ports.MRClosed)
+	ph.waitState(t, runID, run.Completed)
 }

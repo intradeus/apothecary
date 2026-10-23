@@ -274,7 +274,11 @@ phases:
   each later phase run on it first fast-forwards to its current head, and the
   outcomes follow its fate. Each kind of entrypoint takes only its own kind
   of run: a merge request named at a `run_start` phase, or none at an
-  `mr_opened` one, is refused. A rerun stays on the merge request.
+  `mr_opened` one, is refused. A rerun stays on the merge request. The
+  built-in `reviewer` template is this shape: one `review` block (read, an
+  optional gate, `post_review`) run by its `mr_opened` entrypoint and again
+  by a reaction on `mr_head_moved`, and outcomes on `mr_merged` and
+  `mr_closed` that end the run.
 - **By hand.** `on: manual` is a phase only a person opens, from the run page
   while the run is idle. Any other phase without a live run can be started the
   same way, whether or not its signal holds; its `max` counts those starts.

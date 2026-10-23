@@ -1,0 +1,121 @@
+name: reviewer
+version: 4
+description: "review a merge request someone opened: notes on its lines and a summary, again after every push, until it merges or closes"
+# A run of this flow is created ON a merge request a person opened (on:
+# mr_opened) — from the workshop's Reviews tab, or by a forge_mr automation
+# watching the repository. It never builds and never pushes: it checks out
+# the merge request's head, reads the change, and posts a review — notes on
+# the lines they are about, a summary on top. It never approves nor requests
+# changes; that decision stays a person's.
+#
+# The run then waits. Each time the author pushes and stops for a while
+# ($rereview_quiet), it reviews again, the checkout brought to the new head
+# first, with its earlier review in hand so it says what is new rather than
+# repeating itself. The merge request merging or closing ends the run: there
+# is nothing left to review.
+parameters:
+  harness: opencode
+  model: opencode-go/glm-5.2
+  timeout: 20m
+  max_turns: 40
+  max_cost_usd: 3.0
+  max_total_turns: 160
+  review_gate:    { default: false, description: "a person reads each review before it is posted" }
+  rereview_quiet: { default: 10m, description: "how long the author's pushes must stop before a re-review" }
+agents:
+  - name: pr_reviewer
+    description: reviews a merge request someone else wrote
+    read_only: true
+    allow_bash: true
+    inputs:
+      - name: changes
+        description: the files the merge request changes against its target branch
+      - name: rejection
+        description: why a person sent the last draft of this review back
+        optional: true
+      - name: failure
+        description: why the last review file was refused
+        optional: true
+    outputs:
+      - name: review
+        type: review_threads
+        description: the review — a summary, and notes on lines of the changed files
+        path: artifacts/review.yaml
+    prompt: |
+      You review a merge request someone else wrote. The TASK section is the
+      merge request: its title and its author's description. The checkout is
+      its branch at its current head; the changes input lists the files it
+      changes against its target branch.
+
+      Method:
+      1. Read the description to learn what the change claims to do, then read
+         every changed file — the whole function or block around each change,
+         not only the changed lines — and AGENTS.md for the project's
+         conventions.
+      2. Run the project's tests or linters with bash when they settle a
+         question (does this break anything, is this covered). Never modify,
+         commit or push anything: you read and you write the review file.
+      3. Look for what matters, in this order: the change does not do what it
+         says, or breaks something that worked; unhandled errors, edge cases,
+         concurrency and security problems; missing or weak tests for what
+         changed; conventions of this codebase it ignores. Leave formatting to
+         the linters.
+      4. If the file named in the OUTPUT CONTRACT section already exists, it is
+         your review of an earlier version of this merge request: read it first.
+         Do not repeat a note the author has addressed; say so in the summary
+         instead, and keep only the notes that still apply.
+
+      Write the review file as YAML:
+
+        summary: |
+          Two or three sentences: what the change does, whether it does it, and
+          the one or two things that most need the author's attention.
+        threads:
+          - path: internal/flow/parse.go
+            line: 412
+            body: "[blocking] This error drops the line number the caller needs: ..."
+
+      Each thread is about one line of the NEW version of a changed file: path
+      relative to the repository root, line as numbered in that file now —
+      check it, a note on the wrong line is noise. Start each body with
+      [blocking], [suggestion], [question] or [nit], then say what is wrong and
+      what would fix it. At most fifteen threads: if there is more to say, say
+      it in the summary. A change with nothing worth a note gets a summary and
+      no threads — an empty review is a fine review.
+
+      If your prompt carries a rejection, a person read your last draft: do what
+      they asked. If it carries a failure, your last review file did not parse:
+      fix exactly what the failure names.
+blocks:
+  # Read the change, let a person read the review when the workshop wants
+  # one, post it. The same chain reviews the merge request as it was opened
+  # and after every push.
+  - id: review
+    description: "read the change, optionally let a person read the review, post it"
+    stages:
+      - { id: read, type: agent, agent: pr_reviewer,
+          input: { changes: $DIFF_TARGET, rejection: $DECISION, failure: $FAILURE },
+          on_fail: { to: read, max: 1, then: debug } }
+      - { id: gate, type: human_gate, when: $review_gate, input: { review: artifacts/review.yaml },
+          question: "Post this review on the merge request? Rejecting sends it back with your feedback.",
+          on_reject: { to: read, max: -1 } }
+      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml },
+          on_fail: debug }
+phases:
+  # ---- the entrypoint: a run created on the merge request ---------------
+  - id: first_look
+    on: mr_opened
+    description: "the first review, of the merge request as it was opened"
+    stages:
+      - { id: review, include: review }
+
+  # ---- a reaction: the author pushed and stopped -------------------------
+  - id: again
+    on: { signal: mr_head_moved, quiet_for: $rereview_quiet }
+    description: "the author pushed: review what the merge request is now"
+    stages:
+      - { id: rereview, include: review }
+
+  # ---- outcomes: merged or closed, nothing left to review ----------------
+  - { id: merged, on: mr_merged, then: done, description: "it merged: the review is over" }
+  - { id: closed, on: mr_closed, then: done, description: "it was closed: the review is over" }
