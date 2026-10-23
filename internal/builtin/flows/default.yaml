@@ -22,10 +22,11 @@ parameters:
 # Phases: every phase is a chain of stages opened by a wait point, its `on:`.
 # `deliver` opens when the run is created (on: run_start): plan, build,
 # review, open the merge request, then PARK on wait_merge until the merge
-# request merges (the phase goes on: the ticket is done) or is closed
-# unmerged (abort: the run is abandoned). While it is parked the run is idle,
-# and the other phases open on their own signals, one at a time, as often as
-# their `on:` says, each on the merge request the signal carries:
+# request merges — the ticket is done, and only then does the flow say
+# `done`: the run is finished — or is closed unmerged (abort: the run is
+# abandoned). While it is parked the run is idle, and the reactions open on
+# their own signals, one at a time, on the merge request the signal carries,
+# as often as it brings something new — a reaction has no run cap:
 #   conflicts     the target moved and the MR no longer merges — the engine
 #                 merges the target in; a conflict is resolved by an agent
 #                 editing the files, never by an agent running git. Opens by
@@ -33,9 +34,12 @@ parameters:
 #   review_fixes  reviewers commented, then went quiet for an hour — you pick
 #                 the threads worth fixing; those are fixed in one batch,
 #                 tested, pushed, and answered on their threads
-# Any phase can also be started by hand from the run page while the run is
-# idle, and a gate parks its phase the way a wait does: the run stays alive
-# for whatever else needs doing meanwhile.
+# A reaction never finishes the run: it closes with `end`, and the run goes
+# back to waiting for the merge. Even its dead ends — a failure with nowhere
+# to go, you giving up at its debug leaf — end only that round. Any phase can
+# also be started by hand from the run page while the run is idle, and a gate
+# parks its phase the way a wait does: the run stays alive for whatever else
+# needs doing meanwhile.
 #
 # The ticket's tracker issue follows the work in CANONICAL statuses —
 # in_progress as the run starts, in_review once the merge request is open,
@@ -47,13 +51,15 @@ parameters:
 # bookkeeping never blocks the work.
 #
 # Failure philosophy: every agent/command stage first retries itself with its
-# error fed back, then escalates to its OWN rescue gate — a human opens the
-# workspace (terminal/IDE), fixes what agents can't, and approve re-runs
-# exactly the stage that escalated (the success chain replays from there, so no
-# stage is ever skipped). Rescue gates are unlimited (max -1): the human
-# decides when to stop — rejecting one aborts the run; plan_gate rejections are
-# unlimited too (each rejection IS a human decision). Timeouts fall back to
-# on_fail unless a stage declares on_timeout.
+# error fed back, then escalates to the debug leaf (`then: debug`) — a human
+# opens the workspace (terminal/IDE), fixes what agents can't, and continue
+# re-runs exactly the stage that escalated (the success chain replays from
+# there, so no stage is ever skipped). No chain ends without a person: once
+# its retries are spent, every route reaches the debug leaf rather than
+# abandoning the run unasked. The human decides when to stop — giving up in
+# deliver abandons the run, in a reaction it ends that round; plan_gate
+# rejections are unlimited too (each rejection IS a human decision). Timeouts
+# fall back to on_fail unless a stage declares on_timeout.
 #
 # Dataflow is declared, never implied: every stage names what it consumes and
 # produces — including the retry channel. An edge only says where to go; the
@@ -372,14 +378,15 @@ phases:
       - { id: test,       type: command, run_ref: $verify,
           on_success: review,
           on_fail: { to: build, max: 5, then: debug },
-          on_timeout: { to: test, max: 1, then: { to: build, max: 2 } } }
+          on_timeout: { to: test, max: 1, then: { to: build, max: 2, then: debug } } }
       # The reviewer's verdict output is what makes on_reject reachable here; a
-      # REJECT carries its comments back to the builder as feedback.
+      # REJECT carries its comments back to the builder as feedback. Three
+      # rejected rounds, and a human looks rather than the run being dropped.
       - { id: review,     type: agent, agent: reviewer, model: $review_model,
           input: { plan: artifacts/plan.md, changes: $CHANGED, failure: $FAILURE }, max_turns: 30,
           description: "adversarial review against the plan, conventions and correctness",
           on_success: redact,
-          on_reject: { to: build, max: 3 },
+          on_reject: { to: build, max: 3, then: debug },
           on_fail: { to: review, max: 1, then: debug } }
       - { id: redact,     type: agent, agent: redactor, max_turns: 15,
           input: { changes: $CHANGED, failure: $FAILURE },
@@ -401,8 +408,9 @@ phases:
           on_success: wait_merge,
           on_fail: { to: wait_merge, max: 1 } }
       # The phase parks here — the run is in review — while the phases below
-      # react to the merge request. Merged, the phase goes on; closed unmerged,
-      # the flow says what that means: abort.
+      # react to the merge request, as many times as they need. Merged, the
+      # phase goes on to the ticket's done and the run is done; closed
+      # unmerged, the flow says what that means: abort.
       - { id: wait_merge, type: wait, for: mr_merged,
           description: "wait for the merge request to merge; a close abandons the run",
           on_fail: abort }
@@ -411,8 +419,10 @@ phases:
           on_success: done,
           on_fail: done }
 
-  # The target moved under the merge request. Nothing is spent until you
-  # confirm (inbox); declined, it is offered again only when the target moves.
+  # The target moved under the merge request. How a fix begins is the
+  # project's call ($conflicts_start): by itself, after asking in the inbox
+  # (the default), or only by hand. Declined, it is offered again only when
+  # the target moves. A round ends with `end`: back to waiting for the merge.
   - id: conflicts
     on: { signal: mr_conflicts, start: $conflicts_start }
     description: "merge the target branch in, resolve, re-test, push"
@@ -437,8 +447,10 @@ phases:
   # stopped. You pick which pending threads to fix (inbox) — a comment may be
   # wrong or already handled; those are left alone until someone writes on
   # them again — and the picked ones are fixed in one batch and answered.
+  # As many rounds as the reviewers need: a round runs only on comments no
+  # round has answered yet, and the run's budget bounds what they cost.
   - id: review_fixes
-    on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h, max: 10 }
+    on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h }
     description: "fix every pending review thread, test, push, and reply on each"
     stages:
       - { id: load,       type: action, action: load_review_comments, input: { select: human } }

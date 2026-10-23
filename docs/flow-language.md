@@ -1209,14 +1209,16 @@ phases:
       # The project's test command, by the name the project binds.
       - { id: test, type: command, run_ref: $verify,
           on_success: review,
-          on_fail: { to: build, max: 5, then: debug } }
+          on_fail: { to: build, max: 5, then: debug },
+          on_timeout: { to: test, max: 1, then: { to: build, max: 2, then: debug } } }
 
       # A different vendor reviews. The reviewer's verdict output is what makes
       # on_reject reachable; its comments reach the builder's `rejection` input.
+      # Three rejected rounds, then a human: no chain ends without a person.
       - { id: review, type: agent, agent: reviewer, model: $review_model,
           input: { plan: artifacts/plan.md, changes: $CHANGED, failure: $FAILURE }, max_turns: 30,
           on_success: redact,
-          on_reject: { to: build, max: 3 },
+          on_reject: { to: build, max: 3, then: debug },
           on_fail: { to: review, max: 1, then: debug } }
 
       - { id: push, type: action, action: push_branch, on_success: mr, on_fail: debug }
@@ -1238,7 +1240,8 @@ phases:
           on_success: done, on_fail: done }
 
   # The target moved under the merge request. How it begins is the project's
-  # call: by itself, after asking in the inbox, or only by hand.
+  # call: by itself, after asking in the inbox, or only by hand. A round ends
+  # with `end` — never `done`: the run goes back to waiting for the merge.
   - id: conflicts
     on: { signal: mr_conflicts, start: $conflicts_start }
     stages:
@@ -1251,9 +1254,10 @@ phases:
       - { id: sync_push, type: action, action: push_branch, on_success: end, on_fail: debug }
 
   # Reviewers commented, then nothing for an hour. You pick which threads to
-  # fix (inbox); they are fixed in one batch, tested, pushed, and answered.
+  # fix (inbox); they are fixed in one batch, tested, pushed, and answered —
+  # as many rounds as the reviewers need.
   - id: review_fixes
-    on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h, max: 10 }
+    on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h }
     stages:
       - { id: load, type: action, action: load_review_comments, input: { select: human } }
       - { id: fix,  type: agent, agent: builder, max_turns: 60,

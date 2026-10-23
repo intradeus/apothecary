@@ -215,3 +215,76 @@ func TestFlowSourceLayering(t *testing.T) {
 		t.Fatalf("shadowed Get(default) = %v, %v — the DB must win", f, err)
 	}
 }
+
+// TestDefaultFlowNeverDropsARunUnasked holds the default flow to its own
+// failure philosophy: every agent and command stage has a failure route, and
+// no chain runs out on its own — once its retries are spent, every edge of a
+// stage that can run again reaches a person (the debug leaf, a gate) or an
+// end the flow states (end, done, abort). An exhausted chain would otherwise
+// abandon the run without anyone being asked. And a reaction never ends the
+// run, nor is it capped.
+func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
+	f := Flow(DefaultFlowName)
+	reserved := map[string]bool{flow.TerminalEnd: true, flow.TerminalDone: true, flow.TerminalAbort: true, flow.ReservedDebug: true}
+	// A chain can only run out on a stage that runs more than once in a
+	// phase run: one on a cycle of routes. A one-shot stage's max-1 detour
+	// (a best-effort tracker move going on to the next stage) never exhausts.
+	next := map[string][]string{}
+	for i := range f.Stages {
+		st := &f.Stages[i]
+		next[st.ID] = append(next[st.ID], st.OnSuccess)
+		for _, kind := range []string{flow.EdgeFail, flow.EdgeReject, flow.EdgeTimeout} {
+			for link := st.Edge(kind); link != nil; link = link.Then {
+				next[st.ID] = append(next[st.ID], link.To)
+			}
+		}
+	}
+	onCycle := func(id string) bool {
+		seen := map[string]bool{}
+		stack := append([]string(nil), next[id]...)
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if cur == id {
+				return true
+			}
+			if seen[cur] || reserved[cur] {
+				continue
+			}
+			seen[cur] = true
+			stack = append(stack, next[cur]...)
+		}
+		return false
+	}
+	for i := range f.Stages {
+		st := &f.Stages[i]
+		if (st.Type == flow.StageAgent || st.Type == flow.StageCommand) && st.Edge(flow.EdgeFail) == nil {
+			t.Errorf("stage %s has no on_fail: its failure would be a dead end", st.ID)
+		}
+		if ph := f.Phase(st.Phase); ph != nil && ph.Fires() && st.OnSuccess == flow.TerminalDone {
+			t.Errorf("stage %s: reaction %s ends the whole run", st.ID, ph.ID)
+		}
+		if !onCycle(st.ID) {
+			continue
+		}
+		for _, kind := range []string{flow.EdgeFail, flow.EdgeReject, flow.EdgeTimeout} {
+			link := st.Edge(kind)
+			for link != nil && link.Then != nil {
+				link = link.Then
+			}
+			if link == nil {
+				continue
+			}
+			if !reserved[link.To] && link.Max != flow.UnlimitedMax {
+				if tgt := f.Stage(link.To); tgt == nil || tgt.Type != flow.StageHumanGate {
+					t.Errorf("stage %s: %s runs out after %d at %s with nowhere to go — end the chain with then: debug", st.ID, kind, link.Max, link.To)
+				}
+			}
+		}
+	}
+	for i := range f.Phases {
+		if ph := &f.Phases[i]; ph.Fires() && ph.On.Max != flow.UnlimitedMax {
+			t.Errorf("reaction %s is capped at %d runs; reactions happen as often as their signal brings something new", ph.ID, ph.On.Max)
+		}
+	}
+}
