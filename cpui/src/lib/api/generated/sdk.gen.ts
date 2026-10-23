@@ -227,6 +227,9 @@ import type {
 	ListProjectBranchesData,
 	ListProjectBranchesErrors,
 	ListProjectBranchesResponses,
+	ListProjectMrsData,
+	ListProjectMrsErrors,
+	ListProjectMrsResponses,
 	ListProjectsData,
 	ListProjectsErrors,
 	ListProjectsResponses,
@@ -1075,6 +1078,19 @@ export const listFlowVersions = <ThrowOnError extends boolean = false>(
 ): RequestResult<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError> =>
 	(options.client ?? client).get<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError>({
 		url: '/api/projects/{id}/flows/{name}/versions',
+		...options
+	});
+
+/**
+ * Open merge requests of a project's repository
+ *
+ * What a run may be created on, at an entrypoint on mr_opened: the repository's open merge requests, newest first, each with its author and head.
+ */
+export const listProjectMrs = <ThrowOnError extends boolean = false>(
+	options: Options<ListProjectMrsData, ThrowOnError>
+): RequestResult<ListProjectMrsResponses, ListProjectMrsErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListProjectMrsResponses, ListProjectMrsErrors, ThrowOnError>({
+		url: '/api/projects/{id}/mrs',
 		...options
 	});
 

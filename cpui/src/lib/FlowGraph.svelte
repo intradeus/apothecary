@@ -31,6 +31,7 @@
 		START,
 		MANUAL,
 		RUN_START,
+		MR_OPENED,
 		EDGE_KINDS,
 		chainLinks,
 		edgeLinks,
@@ -178,11 +179,13 @@
 		const markerTitle = (ph: DocPhase) =>
 			ph.on.signal === RUN_START
 				? t('flow.graph.entryTitle', { phase: ph.id })
-				: ph.on.signal === MANUAL
-					? t('flow.graph.manualTitle', { phase: ph.id })
-					: isOutcome(ph.on)
-						? t('flow.graph.outcomeTitle', { phase: ph.id, signal: ph.on.signal })
-						: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal });
+				: ph.on.signal === MR_OPENED
+					? t('flow.graph.entryMRTitle', { phase: ph.id })
+					: ph.on.signal === MANUAL
+						? t('flow.graph.manualTitle', { phase: ph.id })
+						: isOutcome(ph.on)
+							? t('flow.graph.outcomeTitle', { phase: ph.id, signal: ph.on.signal })
+							: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal });
 		const triggers = (doc.phases ?? []).slice(1);
 		for (const ph of triggers) {
 			const first = phaseEntry(doc, ph.id);

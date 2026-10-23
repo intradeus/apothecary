@@ -6,8 +6,8 @@
 	// underneath (the workshop's binding, or the run a rerun comes from)
 	// itself, so the forms that mount it only carry a flow name.
 	import { api } from '$lib/api';
-	import type { Flow, Integration, Model, ParamDecl } from '$lib/domain';
-	import { KNOWN_PARAMS } from '$lib/flowdoc';
+	import type { Flow, Integration, Model, OpenMergeRequest, ParamDecl } from '$lib/domain';
+	import { KNOWN_PARAMS, MR_OPENED } from '$lib/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 
@@ -16,6 +16,7 @@
 		flowName,
 		phase = $bindable(''),
 		params = $bindable({}),
+		mr = $bindable(0),
 		under,
 		underLabel = 'workshop',
 		idPrefix = 'sro'
@@ -28,6 +29,9 @@
 		phase: string;
 		/** Overrides for this run only; empty values never travel. */
 		params: Record<string, string>;
+		/** The merge request to create the run on (0 = none), asked for when
+		 *  the entrypoint begins runs on one (mr_opened). */
+		mr?: number;
 		/** What applies when a field is left empty: the workshop's binding
 		 *  (loaded here when absent), or the run a rerun comes from. */
 		under?: Record<string, string>;
@@ -42,6 +46,35 @@
 	let loadError = $state('');
 
 	const entrypoints = $derived((flow?.phases ?? []).filter((p) => p.entry));
+	// An entrypoint on mr_opened begins the run on a merge request someone
+	// opened: the form asks which.
+	const onMR = $derived((flow?.phases ?? []).find((p) => p.id === phase)?.signal === MR_OPENED);
+	let openMRs = $state<OpenMergeRequest[] | null>(null);
+	let mrError = $state('');
+	$effect(() => {
+		if (!onMR || !projectId) {
+			openMRs = null;
+			mr = 0;
+			return;
+		}
+		let live = true;
+		api.projects.mergeRequests(projectId).then(
+			(list) => {
+				if (!live) return;
+				openMRs = list;
+				mrError = '';
+				if (!list.some((m) => m.iid === mr)) mr = list[0]?.iid ?? 0;
+			},
+			(e: unknown) => {
+				if (!live) return;
+				openMRs = [];
+				mrError = e instanceof Error ? e.message : String(e);
+			}
+		);
+		return () => {
+			live = false;
+		};
+	});
 	const known = $derived(
 		KNOWN_PARAMS.map((n) => flow?.parameters.find((p) => p.name === n)).filter(
 			(p): p is ParamDecl => !!p
@@ -140,6 +173,27 @@
 				{/each}
 			</select>
 			<span class="help">{t('run.start.entrypointHelp')}</span>
+		</div>
+	{/if}
+	{#if onMR}
+		<div class="field">
+			<label for="{idPrefix}-mr">{t('run.start.mr')}</label>
+			{#if openMRs === null}
+				<span class="help">{t('run.start.mrLoading')}</span>
+			{:else if openMRs.length}
+				<select id="{idPrefix}-mr" bind:value={mr}>
+					{#each openMRs as m (m.iid)}
+						<option value={m.iid}
+							>!{m.iid} · {m.title} — {m.author}{m.draft
+								? ` · ${t('run.start.mrDraft')}`
+								: ''}{m.fork ? ` · ${t('run.start.mrFork')}` : ''}</option
+						>
+					{/each}
+				</select>
+				<span class="help">{t('run.start.mrHelp')}</span>
+			{:else}
+				<span class="help hue-amb">{mrError || t('run.start.mrNone')}</span>
+			{/if}
 		</div>
 	{/if}
 	<details class="adv">

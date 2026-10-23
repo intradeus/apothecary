@@ -114,6 +114,10 @@ type runState struct {
 	skipped map[string]string
 	// pushed is the tip push_branch last pushed, per repo+branch.
 	pushed map[string]string
+	// adopted is the merge request the run was created on (nil when it
+	// opens its own); followed the head its checkout was last brought to.
+	adopted  *event.AdoptedMR
+	followed string
 	// heads are the commits the run knows on its merge requests, per
 	// checkout: every tip it pushed, the head it opened or adopted a merge
 	// request at, the tip a phase run began on. A head outside them is
@@ -338,6 +342,12 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.sourceBranch = p.SourceBranch
 			rs.begin, rs.params = p.Phase, p.Params
 			rs.checkouts = checkoutsOf(p)
+			if m := p.MR; m != nil {
+				rs.adopted = m
+				if co := rs.checkout(m.Repo); co != nil {
+					rs.addMR(&event.MRCreated{Repo: m.Repo, Branch: co.Branch, Target: co.Source, MRURL: m.URL, MRIID: m.IID, Head: m.Head})
+				}
+			}
 		case *event.EnvRequested:
 			rs.envRequested = true
 		case *event.EnvReady:

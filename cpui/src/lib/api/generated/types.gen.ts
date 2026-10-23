@@ -19,6 +19,15 @@ export type Action = {
 	title: string;
 };
 
+export type AdoptedMr = {
+	author?: string;
+	head: string;
+	iid: number;
+	repo: string;
+	title?: string;
+	url: string;
+};
+
 export type AnswerAccepted = {
 	status: string;
 };
@@ -466,6 +475,20 @@ export type KindDescriptor = {
 	port: string;
 };
 
+export type MrInfo = {
+	author: string;
+	body?: string;
+	draft?: boolean;
+	fork?: boolean;
+	head: string;
+	head_ref: string;
+	ref: MrRef;
+	source: string;
+	state: string;
+	target: string;
+	title: string;
+};
+
 export type MrLive = {
 	approval?: Approval;
 	branch: string;
@@ -481,6 +504,11 @@ export type MrLive = {
 	state: string;
 	target?: string;
 	url: string;
+};
+
+export type MrRef = {
+	IID: number;
+	URL: string;
 };
 
 export type MessageAccepted = {
@@ -702,6 +730,7 @@ export type RerunRequest = {
 	attachment_ids?: Array<string>;
 	flow?: string;
 	goal?: string;
+	mr?: RunMr;
 	params?: {
 		[key: string]: string;
 	};
@@ -723,6 +752,8 @@ export type ResourceSample = {
 export type RunCheckout = {
 	branch: string;
 	dir: string;
+	fetch?: string;
+	fork?: boolean;
 	locator?: string;
 	name: string;
 	primary?: boolean;
@@ -740,7 +771,13 @@ export type RunFiles = {
 	snapshots: Array<Snapshot> | null;
 };
 
+export type RunMr = {
+	iid: number;
+	repo?: string;
+};
+
 export type RunMergeRequest = {
+	author?: string;
 	branch: string;
 	iid: number;
 	repo: string;
@@ -762,6 +799,7 @@ export type RunResources = {
 };
 
 export type RunView = {
+	adopted?: AdoptedMr;
 	begin_phase?: string;
 	branch?: string;
 	branch_base?: string;
@@ -810,6 +848,7 @@ export type Settings = {
 };
 
 export type Signal = {
+	brings?: string;
 	debounced?: boolean;
 	description?: string;
 	entry?: boolean;
@@ -868,6 +907,7 @@ export type StartRunRequest = {
 	attachment_ids?: Array<string>;
 	flow?: string;
 	goal?: string;
+	mr?: RunMr;
 	params?: {
 		[key: string]: string;
 	};
@@ -2969,6 +3009,44 @@ export type ListFlowVersionsResponses = {
 };
 
 export type ListFlowVersionsResponse = ListFlowVersionsResponses[keyof ListFlowVersionsResponses];
+
+export type ListProjectMrsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * the repository: "repo" (the default) for the primary, an extra repository's name
+		 */
+		repo?: string;
+	};
+	url: '/api/projects/{id}/mrs';
+};
+
+export type ListProjectMrsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListProjectMrsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<MrInfo> | null;
+};
+
+export type ListProjectMrsResponse = ListProjectMrsResponses[keyof ListProjectMrsResponses];
 
 export type PreflightProjectData = {
 	body?: never;

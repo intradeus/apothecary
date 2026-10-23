@@ -324,7 +324,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		SourceKind: t.SourceKind,
 		SourceKey:  t.SourceKey,
 		SourceURL:  t.SourceURL,
-	}, body.Flow, t.ProjectID, engine.RunInput{Phase: body.Phase, Params: body.Params})
+	}, body.Flow, t.ProjectID, engine.RunInput{Phase: body.Phase, Params: body.Params, MR: body.MR})
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())

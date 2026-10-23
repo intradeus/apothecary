@@ -204,6 +204,21 @@ export interface RunInput {
 	phase?: string;
 	/** Parameter values overriding the workshop's bindings for this attempt. */
 	params?: Record<string, string>;
+	/** Create the run on a merge request someone opened (an entrypoint on
+	 *  mr_opened): its number, in the primary unless repo says otherwise. */
+	mr?: { repo?: string; iid: number };
+}
+
+/** An open merge request of a project's repository, to create a run on. */
+export interface OpenMergeRequest {
+	iid: number;
+	url: string;
+	title: string;
+	author: string;
+	source: string;
+	target: string;
+	draft: boolean;
+	fork: boolean;
 }
 
 /** One point-in-time reading of the workspace's resource usage (the whole

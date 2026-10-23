@@ -609,6 +609,85 @@ func tail(s string, n int) string {
 
 var _ ports.Forge = (*Adapter)(nil)
 
+// ghPull is the pulls API's shape, as far as MRInfo needs it.
+type ghPull struct {
+	Number   int     `json:"number"`
+	HTMLURL  string  `json:"html_url"`
+	Title    string  `json:"title"`
+	Body     string  `json:"body"`
+	State    string  `json:"state"`
+	MergedAt *string `json:"merged_at"`
+	Draft    bool    `json:"draft"`
+	User     struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Head struct {
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo *struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
+	} `json:"head"`
+	Base struct {
+		Ref  string `json:"ref"`
+		Repo struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
+	} `json:"base"`
+}
+
+func (p *ghPull) info() ports.MRInfo {
+	st := ports.MROpen
+	switch {
+	case p.MergedAt != nil && *p.MergedAt != "":
+		st = ports.MRMerged
+	case p.State == "closed":
+		st = ports.MRClosed
+	}
+	return ports.MRInfo{Ref: ports.MRRef{IID: p.Number, URL: p.HTMLURL}, Title: p.Title, Body: p.Body, Author: p.User.Login,
+		State: st, Draft: p.Draft, Source: p.Head.Ref, Target: p.Base.Ref, Head: p.Head.SHA,
+		HeadRef: fmt.Sprintf("refs/pull/%d/head", p.Number),
+		Fork:    p.Head.Repo == nil || p.Head.Repo.FullName != p.Base.Repo.FullName}
+}
+
+// GetMR reads one pull request.
+func (a *Adapter) GetMR(ctx context.Context, iid int) (ports.MRInfo, error) {
+	var p ghPull
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d", a.repoPath(), iid), nil, &p); err != nil {
+		return ports.MRInfo{}, err
+	}
+	return p.info(), nil
+}
+
+// ListMRs lists the open pull requests, newest first, up to 300.
+func (a *Adapter) ListMRs(ctx context.Context) ([]ports.MRInfo, error) {
+	var out []ports.MRInfo
+	for page := 1; page <= 3; page++ {
+		var ps []ghPull
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls?state=open&sort=created&direction=desc&per_page=100&page=%d", a.repoPath(), page), nil, &ps); err != nil {
+			return nil, err
+		}
+		for i := range ps {
+			out = append(out, ps[i].info())
+		}
+		if len(ps) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Whoami is the token's login.
+func (a *Adapter) Whoami(ctx context.Context) (string, error) {
+	var u struct {
+		Login string `json:"login"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, "/user", nil, &u); err != nil {
+		return "", err
+	}
+	return u.Login, nil
+}
+
 // MergeMR merges through the pulls API, pinned to the head when asked. GitHub
 // says 405 for a pull request it will not merge (a draft, required checks or
 // reviews missing, a conflict), 409 for a head that moved, 422 for a method

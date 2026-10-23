@@ -84,6 +84,16 @@ type RunInput struct {
 	Phase  string
 	Params map[string]string
 	By     string
+	// MR creates the run on a merge request someone opened, at an
+	// entrypoint on mr_opened: Repo is the checkout it belongs to ("" =
+	// the primary), IID its number.
+	MR *RunMR
+}
+
+// RunMR names a merge request to create a run on.
+type RunMR struct {
+	Repo string `json:"repo,omitempty"`
+	IID  int    `json:"iid"`
 }
 
 // Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
@@ -977,7 +987,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if err != nil {
 		return "", fmt.Errorf("flow %q: %w", flowName, err)
 	}
-	phase, err := entrypointOf(fl, in.Phase)
+	phase, err := entrypointOf(fl, in.Phase, in.MR != nil)
 	if err != nil {
 		return "", err
 	}
@@ -1032,6 +1042,19 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	} else if err := CheckBranch(sourceBranch); err != nil {
 		return "", fmt.Errorf("source branch %q: %v", sourceBranch, err)
 	}
+	checkouts := runCheckouts(res, branch, sourceBranch)
+	var adopted *event.AdoptedMR
+	if in.MR != nil {
+		// Created on someone's merge request: the run works on its branch,
+		// checked out from the ref the forge keeps for its head.
+		var co *event.Checkout
+		if co, adopted, err = adoptMR(ctx, res, checkouts, in.MR); err != nil {
+			return "", fmt.Errorf("preflight: %w", err)
+		}
+		if co.Primary {
+			branch, base, sourceBranch = co.Branch, "", co.Source
+		}
+	}
 	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
 		TicketTitle:         t.Title,
 		TicketGoal:          t.Goal,
@@ -1042,7 +1065,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 		Branch:              branch,
 		BranchBase:          base,
 		SourceBranch:        sourceBranch,
-		Checkouts:           runCheckouts(res, branch, sourceBranch),
+		Checkouts:           checkouts,
 		ProjectID:           projectID,
 		TicketID:            t.TicketID,
 		TicketAttachmentIDs: t.TicketAttachmentIDs,
@@ -1053,6 +1076,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 		Phase:               phase,
 		Params:              params,
 		By:                  by,
+		MR:                  adopted,
 	}); err != nil {
 		return "", err
 	}
@@ -1080,6 +1104,60 @@ func runCheckouts(res *Resolution, branch, sourceBranch string) []event.Checkout
 			URL: x.URL, Locator: x.Locator, Branch: branch, Source: x.DefaultBranch})
 	}
 	return out
+}
+
+// adoptMR reads the merge request a run is being created on and points its
+// checkout at it: the branch is the merge request's own (a fork's, which
+// has none here, a local mr-<iid>), forked from nothing — its head is
+// fetched from the forge's ref — and its target is what it merges into.
+func adoptMR(ctx context.Context, res *Resolution, checkouts []event.Checkout, want *RunMR) (*event.Checkout, *event.AdoptedMR, error) {
+	repo := want.Repo
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	var co *event.Checkout
+	for i := range checkouts {
+		if checkouts[i].Name == repo {
+			co = &checkouts[i]
+		}
+	}
+	if co == nil {
+		return nil, nil, fmt.Errorf("merge request: the project has no repository %q", repo)
+	}
+	forge := res.forgeFor(repo)
+	if forge == nil {
+		return nil, nil, fmt.Errorf("merge request: repository %q has no forge", repo)
+	}
+	info, err := forge.GetMR(ctx, want.IID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("merge request !%d: %w", want.IID, err)
+	}
+	if info.State != ports.MROpen {
+		return nil, nil, fmt.Errorf("merge request %s is %s: a run is created on an open one", info.Ref.URL, info.State)
+	}
+	co.Branch, co.Source, co.Fetch, co.Fork = info.Source, info.Target, info.HeadRef, info.Fork
+	if info.Fork || CheckBranch(info.Source) != nil {
+		co.Branch = fmt.Sprintf("mr-%d", info.Ref.IID)
+	}
+	return co, &event.AdoptedMR{Repo: repo, IID: info.Ref.IID, URL: info.Ref.URL, Head: info.Head, Author: info.Author, Title: info.Title}, nil
+}
+
+// ListMRs is the open merge requests of a project's repository ("" = the
+// primary), for a person picking one to start a run on.
+func (e *Engine) ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error) {
+	res, err := e.resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer res.release()
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	forge := res.forgeFor(repo)
+	if forge == nil {
+		return nil, fmt.Errorf("repository %q has no forge", repo)
+	}
+	return forge.ListMRs(ctx)
 }
 
 // ErrEnvCapacity refuses new tickets at the §14 environment cap (HTTP 409).
@@ -1213,7 +1291,11 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	// The attempt begins where the original did and with its parameter
 	// values — unless the flow changed (then its own first entrypoint) or
 	// the request says otherwise. Values the flow no longer declares drop.
-	next := RunInput{Phase: in.Phase, Params: map[string]string{}, By: in.By}
+	next := RunInput{Phase: in.Phase, Params: map[string]string{}, By: in.By, MR: in.MR}
+	// A run created on someone's merge request is rerun on it.
+	if next.MR == nil && v.Adopted != nil {
+		next.MR = &RunMR{Repo: v.Adopted.Repo, IID: v.Adopted.IID}
+	}
 	if in.Flow == "" || in.Flow == v.FlowName {
 		if next.Phase == "" {
 			next.Phase = v.BeginPhase
@@ -1401,7 +1483,7 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	// observe. run_start and manual phases need nothing.
 	for i := range fl.Phases {
 		ph := &fl.Phases[i]
-		if !ph.Observed() {
+		if !ph.Observed() && !ph.OnMR() {
 			continue
 		}
 		if err := res.signalAvailable(ph.On.Signal); err != nil {
@@ -2630,7 +2712,7 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 	for i := range fl.Phases {
 		ph := &fl.Phases[i]
-		if !ph.Observed() {
+		if !ph.Observed() && !ph.OnMR() {
 			continue
 		}
 		if err := res.signalAvailable(ph.On.Signal); err != nil {

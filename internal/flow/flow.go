@@ -481,8 +481,19 @@ type Phase struct {
 	Line        int
 }
 
-// IsEntrypoint reports whether a run may begin at this phase (on: run_start).
-func (p *Phase) IsEntrypoint() bool { return p.On.Signal == signalspec.RunStart }
+// IsEntrypoint reports whether a run may begin at this phase: on run_start,
+// or on mr_opened (a run created on a merge request someone opened).
+func (p *Phase) IsEntrypoint() bool {
+	sig := signalspec.Get(p.On.Signal)
+	return sig != nil && sig.Entry
+}
+
+// OnMR reports whether a run begun at this phase is created on an existing
+// merge request (mr_opened) — and so needs one to be created.
+func (p *Phase) OnMR() bool {
+	sig := signalspec.Get(p.On.Signal)
+	return sig != nil && sig.Brings == signalspec.NeedsMR
+}
 
 // IsOutcome reports whether the phase ends the run: it opens on an outcome
 // signal (the merge request merged or closed), fires once, and every route
@@ -504,11 +515,15 @@ func (p *Phase) Fires() bool {
 }
 
 // HasSubject reports whether a run of this phase acts on one merge request:
-// its signal needs one. mr_merged is the exception — it holds for every
-// merge request at once, so a phase on it acts on none in particular.
+// its signal needs one, or the run was created on one (mr_opened). mr_merged
+// and mr_approved are the exceptions — they hold for every merge request at
+// once, so a phase on them acts on none in particular.
 func (p *Phase) HasSubject() bool {
 	sig := signalspec.Get(p.On.Signal)
-	return sig != nil && sig.Needs == signalspec.NeedsMR && p.On.Signal != signalspec.MRMerged
+	if sig == nil || p.On.Signal == signalspec.MRMerged || p.On.Signal == signalspec.MRApproved {
+		return false
+	}
+	return sig.Needs == signalspec.NeedsMR || sig.Brings == signalspec.NeedsMR
 }
 
 // Input returns the stage's named binding for name, or nil.

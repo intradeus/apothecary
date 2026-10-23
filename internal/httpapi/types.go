@@ -58,6 +58,9 @@ type RerunRequest struct {
 	// Params override the parameter values the original ran with.
 	Phase  string            `json:"phase,omitempty"`
 	Params map[string]string `json:"params,omitempty"`
+	// MR moves the rerun to another merge request ("" = the one the
+	// original was created on, if it was).
+	MR *engine.RunMR `json:"mr,omitempty"`
 }
 
 // StartRunRequest starts one attempt on a ticket.
@@ -70,6 +73,9 @@ type StartRunRequest struct {
 	// override the workshop's parameter bindings for this attempt.
 	Phase  string            `json:"phase,omitempty"`
 	Params map[string]string `json:"params,omitempty"`
+	// MR creates the run on a merge request someone opened, at an
+	// entrypoint on mr_opened (the first one when Phase is empty).
+	MR *engine.RunMR `json:"mr,omitempty"`
 }
 
 // --- egress -----------------------------------------------------------------

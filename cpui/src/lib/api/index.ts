@@ -16,6 +16,7 @@ import type * as Wire from './generated/types.gen';
 import { unwrap, unwrapOptional, unwrapVoid } from './client';
 import * as map from './mappers';
 import type {
+	OpenMergeRequest,
 	ActionSpec,
 	Attachment,
 	Automation,
@@ -82,7 +83,8 @@ const runInputBody = (o?: RunInput) => ({
 	...(o?.sourceBranch ? { source_branch: o.sourceBranch } : {}),
 	...(o?.attachmentIds?.length ? { attachment_ids: o.attachmentIds } : {}),
 	...(o?.phase ? { phase: o.phase } : {}),
-	...(o?.params && Object.keys(o.params).length ? { params: o.params } : {})
+	...(o?.params && Object.keys(o.params).length ? { params: o.params } : {}),
+	...(o?.mr ? { mr: { iid: o.mr.iid, ...(o.mr.repo ? { repo: o.mr.repo } : {}) } } : {})
 });
 
 // Every field always travels: the endpoint replaces the ticket, so an absent
@@ -415,6 +417,13 @@ export const projects = {
 	/** Branches of the project's repository, for the source-branch picker. */
 	branches: async (id: string): Promise<Branch[]> =>
 		many(await unwrap(gen.listProjectBranches({ path: { id } })), map.toBranch),
+	/** The repository's open merge requests, newest first: what a run may be
+	 *  created on at an entrypoint on mr_opened. */
+	mergeRequests: async (id: string, repo?: string): Promise<OpenMergeRequest[]> =>
+		many(
+			await unwrap(gen.listProjectMrs({ path: { id }, query: repo ? { repo } : undefined })),
+			map.toOpenMergeRequest
+		),
 
 	preflight: async (id: string): Promise<Preflight> =>
 		map.toPreflight(await unwrap(gen.preflightProject({ path: { id } }))),

@@ -37,6 +37,26 @@ components:
         - slug
         - title
       type: object
+    AdoptedMR:
+      properties:
+        author:
+          type: string
+        head:
+          type: string
+        iid:
+          type: integer
+        repo:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+      required:
+        - head
+        - iid
+        - repo
+        - url
+      type: object
     AnswerAccepted:
       properties:
         status:
@@ -1010,6 +1030,40 @@ components:
         - label
         - port
       type: object
+    MRInfo:
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        draft:
+          type: boolean
+        fork:
+          type: boolean
+        head:
+          type: string
+        head_ref:
+          type: string
+        ref:
+          $ref: '#/components/schemas/MRRef'
+        source:
+          type: string
+        state:
+          type: string
+        target:
+          type: string
+        title:
+          type: string
+      required:
+        - author
+        - head
+        - head_ref
+        - ref
+        - source
+        - state
+        - target
+        - title
+      type: object
     MRLive:
       properties:
         approval:
@@ -1048,6 +1102,16 @@ components:
         - repo
         - state
         - url
+      type: object
+    MRRef:
+      properties:
+        IID:
+          type: integer
+        URL:
+          type: string
+      required:
+        - IID
+        - URL
       type: object
     MessageAccepted:
       properties:
@@ -1549,6 +1613,8 @@ components:
           type: string
         goal:
           type: string
+        mr:
+          $ref: '#/components/schemas/RunMR'
         params:
           additionalProperties:
             type: string
@@ -1598,6 +1664,10 @@ components:
           type: string
         dir:
           type: string
+        fetch:
+          type: string
+        fork:
+          type: boolean
         locator:
           type: string
         name:
@@ -1644,8 +1714,19 @@ components:
         - attachments
         - snapshots
       type: object
+    RunMR:
+      properties:
+        iid:
+          type: integer
+        repo:
+          type: string
+      required:
+        - iid
+      type: object
     RunMergeRequest:
       properties:
+        author:
+          type: string
         branch:
           type: string
         iid:
@@ -1697,6 +1778,8 @@ components:
       type: object
     RunView:
       properties:
+        adopted:
+          $ref: '#/components/schemas/AdoptedMR'
         begin_phase:
           type: string
         branch:
@@ -1807,6 +1890,8 @@ components:
       type: object
     Signal:
       properties:
+        brings:
+          type: string
         debounced:
           type: boolean
         description:
@@ -1937,6 +2022,8 @@ components:
           type: string
         goal:
           type: string
+        mr:
+          $ref: '#/components/schemas/RunMR'
         params:
           additionalProperties:
             type: string
@@ -4239,6 +4326,46 @@ paths:
       summary: A flow's version history within its project
       tags:
         - flows
+  /api/projects/{id}/mrs:
+    get:
+      description: 'What a run may be created on, at an entrypoint on mr_opened: the repository''s open merge requests, newest first, each with its author and head.'
+      operationId: listProjectMRs
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 'the repository: "repo" (the default) for the primary, an extra repository''s name'
+          in: query
+          name: repo
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/MRInfo'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Open merge requests of a project's repository
+      tags:
+        - projects
   /api/projects/{id}/preflight:
     post:
       operationId: preflightProject

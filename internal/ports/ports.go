@@ -434,6 +434,27 @@ type Approval struct {
 	By       []string `json:"by,omitempty"`
 }
 
+// MRInfo is a merge request as the forge lists it: what a run created on
+// it needs to check it out and say whose it is.
+type MRInfo struct {
+	Ref    MRRef   `json:"ref"`
+	Title  string  `json:"title"`
+	Body   string  `json:"body,omitempty"`
+	Author string  `json:"author"`
+	State  MRState `json:"state"`
+	Draft  bool    `json:"draft,omitempty"`
+	// Source and Target are its branches; Head its head commit.
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Head   string `json:"head"`
+	// HeadRef is where its head can be fetched from in this repository, a
+	// fork's included: refs/pull/<n>/head, refs/merge-requests/<iid>/head.
+	HeadRef string `json:"head_ref"`
+	// Fork: its branch lives in another repository — readable through
+	// HeadRef, not a branch here anyone can push to.
+	Fork bool `json:"fork,omitempty"`
+}
+
 // Merge methods: a merge commit, one squashed commit, or the branch's
 // commits rebased onto the target.
 const (
@@ -906,6 +927,13 @@ type Forge interface {
 	ReplyThread(ctx context.Context, mr MRRef, threadID, body string) error
 	// ResolveThread marks a thread resolved.
 	ResolveThread(ctx context.Context, mr MRRef, threadID string) error
+	// GetMR reads one merge request of the bound repository; ListMRs its
+	// open ones, newest first (bounded: a few hundred).
+	GetMR(ctx context.Context, iid int) (MRInfo, error)
+	ListMRs(ctx context.Context) ([]MRInfo, error)
+	// Whoami is the account the integration acts as: its username, so the
+	// factory can tell its own merge requests from others'.
+	Whoami(ctx context.Context) (string, error)
 	// MergeMR merges the merge request. A merge the forge declines is an
 	// *ErrMergeRefused; any other error is the forge not answering.
 	MergeMR(ctx context.Context, mr MRRef, opts MergeOptions) error

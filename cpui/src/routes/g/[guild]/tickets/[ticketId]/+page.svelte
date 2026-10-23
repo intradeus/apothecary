@@ -39,6 +39,7 @@
 	let flow = $state(''); // per-run flow; empty = project default
 	let runPhase = $state(''); // the entrypoint to begin at; '' = the flow's first
 	let runParams = $state<Record<string, string>>({}); // parameter overrides for THIS run
+	let runMR = $state(0); // the merge request to create the run on, for an mr_opened entrypoint
 	let sourceBranch = $state(''); // branch to fork this run off from; '' until branches load
 	let branches = $state<Branch[]>([]);
 	let branchesErr = $state(''); // forge unreachable ⇒ fall back to project default
@@ -114,7 +115,8 @@
 				sourceBranch: sourceBranch.trim() || undefined,
 				attachmentIds,
 				phase: runPhase || undefined,
-				params: Object.keys(runParams).length ? runParams : undefined
+				params: Object.keys(runParams).length ? runParams : undefined,
+				mr: runMR ? { iid: runMR } : undefined
 			});
 			void fleet.refresh();
 			toast(t('page.ticket.runStarted', { id: shortId(runId) }), {
@@ -282,6 +284,7 @@
 								flowName={flow.trim() || project.defaultFlow}
 								bind:phase={runPhase}
 								bind:params={runParams}
+								bind:mr={runMR}
 								idPrefix="tk"
 							/>
 						{/if}

@@ -46,6 +46,10 @@ type Signal struct {
 	// Needs names a run fact the signal depends on, so a flow that waits for
 	// something that can never happen is caught rather than hanging.
 	Needs string `json:"needs,omitempty"`
+	// Brings names a run fact a run created at a phase on this signal has
+	// from its creation: mr_opened's runs are created on a merge request,
+	// so nothing has to open one for the run to act on it.
+	Brings string `json:"brings,omitempty"`
 	// Trigger marks a signal that opens a phase (PLAN6) rather than
 	// answering a gate or ending a wait: it describes something to react to
 	// while the merge request is open, not an outcome. Manual carries it
@@ -73,6 +77,10 @@ const (
 	// Manual is the beginning a person gives from the run page; it never
 	// fires on its own, and a phase on it starts no other way.
 	Manual = "manual"
+	// MROpened is the other entrypoint: a run is created for the phase on a
+	// merge request someone opened — a person names it, or the forge_mr
+	// automation does — and acts on that merge request from the start.
+	MROpened = "mr_opened"
 
 	MRMerged   = "mr_merged"
 	MRClosed   = "mr_closed"
@@ -102,6 +110,13 @@ var registry = []Signal{{
 	Title:       "Started by hand",
 	Description: "Never fires on its own: a person starts the phase from the run page while the run is idle, and it starts no other way.",
 	Trigger:     true,
+}, {
+	Slug:        MROpened,
+	Title:       "Run started on a merge request",
+	Description: "A run is created for this phase on a merge request someone opened — a person names it on the start-run form, or the forge_mr automation picks it. The run works on that merge request's branch, the merge request is the phase's subject, and the run's outcomes follow it. An entrypoint, like run_start.",
+	Requires:    RequiresForge,
+	Brings:      NeedsMR,
+	Entry:       true,
 }, {
 	Slug:        MRMerged,
 	Title:       "Merge request merged",

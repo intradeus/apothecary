@@ -445,6 +445,76 @@ func tail(s string, n int) string {
 
 var _ ports.Forge = (*Adapter)(nil)
 
+// glMR is the merge requests API's shape, as far as MRInfo needs it.
+type glMR struct {
+	IID             int    `json:"iid"`
+	WebURL          string `json:"web_url"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	State           string `json:"state"`
+	Draft           bool   `json:"draft"`
+	SourceBranch    string `json:"source_branch"`
+	TargetBranch    string `json:"target_branch"`
+	SHA             string `json:"sha"`
+	SourceProjectID int    `json:"source_project_id"`
+	TargetProjectID int    `json:"target_project_id"`
+	Author          struct {
+		Username string `json:"username"`
+	} `json:"author"`
+}
+
+func (m *glMR) info() ports.MRInfo {
+	st := ports.MROpen
+	switch m.State {
+	case "merged":
+		st = ports.MRMerged
+	case "closed":
+		st = ports.MRClosed
+	}
+	return ports.MRInfo{Ref: ports.MRRef{IID: m.IID, URL: m.WebURL}, Title: m.Title, Body: m.Description, Author: m.Author.Username,
+		State: st, Draft: m.Draft, Source: m.SourceBranch, Target: m.TargetBranch, Head: m.SHA,
+		HeadRef: fmt.Sprintf("refs/merge-requests/%d/head", m.IID),
+		Fork:    m.SourceProjectID != 0 && m.SourceProjectID != m.TargetProjectID}
+}
+
+// GetMR reads one merge request.
+func (a *Adapter) GetMR(ctx context.Context, iid int) (ports.MRInfo, error) {
+	var m glMR
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), iid), nil, &m); err != nil {
+		return ports.MRInfo{}, err
+	}
+	return m.info(), nil
+}
+
+// ListMRs lists the open merge requests, newest first, up to 300.
+func (a *Adapter) ListMRs(ctx context.Context) ([]ports.MRInfo, error) {
+	var out []ports.MRInfo
+	for page := 1; page <= 3; page++ {
+		var ms []glMR
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests?state=opened&order_by=created_at&sort=desc&per_page=100&page=%d", a.path(), page), nil, &ms); err != nil {
+			return nil, err
+		}
+		for i := range ms {
+			out = append(out, ms[i].info())
+		}
+		if len(ms) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Whoami is the token's username.
+func (a *Adapter) Whoami(ctx context.Context) (string, error) {
+	var u struct {
+		Username string `json:"username"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, "/user", nil, &u); err != nil {
+		return "", err
+	}
+	return u.Username, nil
+}
+
 // MergeMR merges through the merge requests API, pinned to the head when
 // asked. GitLab merges by the project's merge method (merge commit,
 // semi-linear, fast-forward): squash is per merge, a rebase is not — a

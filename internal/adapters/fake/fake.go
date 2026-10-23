@@ -430,6 +430,10 @@ type MR struct {
 	MergedWith    string
 	BranchDeleted bool
 	MergeRefusal  string
+	// Author is who opened it ("" = the integration itself); Fork marks a
+	// merge request from another repository.
+	Author string
+	Fork   bool
 	// DiffLines, when set, are the lines of each file a review note may go
 	// on (nil: any line); Reviews what PostReview posted.
 	DiffLines map[string][]int
@@ -466,6 +470,69 @@ type Forge struct {
 	ChecksCalls int
 	// NewHead is the head commit a newly created merge request reports.
 	NewHead string
+	// User is who Whoami says the integration is (default "apothecary").
+	User string
+}
+
+// AddOpenMR scripts a merge request someone else opened (test control): it
+// gets the next iid, a head and a fetchable ref.
+func (f *Forge) AddOpenMR(author, title, source, target, head string) ports.MRRef {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	ref := ports.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
+	f.MRs = append(f.MRs, &MR{Ref: ref, Branch: source, Target: target, Title: title, Author: author, State: ports.MROpen, HeadSHA: head})
+	return ref
+}
+
+func (f *Forge) info(m *MR) ports.MRInfo {
+	author := m.Author
+	if author == "" {
+		author = f.whoami()
+	}
+	return ports.MRInfo{Ref: m.Ref, Title: m.Title, Body: m.Body, Author: author, State: m.State, Draft: m.Draft,
+		Source: m.Branch, Target: m.Target, Head: m.HeadSHA, HeadRef: fmt.Sprintf("refs/merge-requests/%d/head", m.Ref.IID), Fork: m.Fork}
+}
+
+func (f *Forge) whoami() string {
+	if f.User == "" {
+		return "apothecary"
+	}
+	return f.User
+}
+
+func (f *Forge) GetMR(_ context.Context, iid int) (ports.MRInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MRStateErr != nil {
+		return ports.MRInfo{}, f.MRStateErr
+	}
+	m := f.mr(iid)
+	if m == nil {
+		return ports.MRInfo{}, fmt.Errorf("mr !%d not found", iid)
+	}
+	return f.info(m), nil
+}
+
+func (f *Forge) ListMRs(_ context.Context) ([]ports.MRInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MRStateErr != nil {
+		return nil, f.MRStateErr
+	}
+	var out []ports.MRInfo
+	for i := len(f.MRs) - 1; i >= 0; i-- {
+		if m := f.MRs[i]; m.State == ports.MROpen {
+			out = append(out, f.info(m))
+		}
+	}
+	return out, nil
+}
+
+func (f *Forge) Whoami(context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.whoami(), nil
 }
 
 func (f *Forge) CheckAccess(_ context.Context, _ ports.RepoRef) error {

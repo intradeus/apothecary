@@ -91,7 +91,33 @@ func (x *exec) beginRun() error {
 		rs.phaseRuns[phaseRunKey(begin, "")]++
 		return nil
 	}
+	// A run created on someone's merge request begins on it: the merge
+	// request is the phase's subject, at the head it was created at.
+	if m := rs.adopted; m != nil {
+		if ph := rs.fl.Phase(begin); ph != nil && ph.OnMR() {
+			return x.beginPhase(begin, m.Repo, "", by, m.Head)
+		}
+	}
 	return x.beginPhase(begin, "", "", by, "")
+}
+
+// followAdopted brings the checkout of a merge request the run was created
+// on to the head its phase run began on: someone else's branch moves under
+// the run, and a reviewer reads what is there now. Fast-forward only — a
+// checkout the run committed on that diverged is left as it is. Once per
+// head; best effort (the stage sees whatever the checkout holds).
+func (x *exec) followAdopted() {
+	rs := x.rs
+	co := x.subjectCheckout()
+	if co == nil || co.Fetch == "" || rs.phaseTip == "" || rs.followed == rs.phaseTip {
+		return
+	}
+	rs.followed = rs.phaseTip
+	res, err := x.gitIn(co.Dir, fmt.Sprintf("git fetch origin %s && git merge --ff-only FETCH_HEAD", shellQuote(co.Fetch)))
+	if err != nil || res.ExitCode != 0 {
+		x.e.log.Warn("could not bring the merge request's checkout to its head", "run", rs.runID, "repo", co.Name,
+			"head", rs.phaseTip, "err", err, "out", tail(res.Output, 512))
+	}
 }
 
 // phaseDone ends the phase in progress (FLOWLANG §3 end): the run goes

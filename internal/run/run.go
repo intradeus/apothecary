@@ -75,6 +75,8 @@ type View struct {
 	// read-model column: they are reduced from events on the detail path.
 	MRs       []MRView         `json:"mrs,omitempty"`
 	Checkouts []event.Checkout `json:"checkouts,omitempty"`
+	// Adopted is the merge request the run was created on, if it was.
+	Adopted *event.AdoptedMR `json:"adopted,omitempty"`
 	// Phase is the phase in progress — or the last one, while Idle — and
 	// PhaseSubject the checkout it acts on ("" for the entry phase). Not
 	// read-model columns.
@@ -120,6 +122,9 @@ type MRView struct {
 	Target string `json:"target,omitempty"`
 	URL    string `json:"url"`
 	IID    int    `json:"iid"`
+	// Author is set on a merge request someone else opened, which the run
+	// was created on.
+	Author string `json:"author,omitempty"`
 }
 
 // Reduce projects a run's ordered event slice into its read-model row.
@@ -164,6 +169,18 @@ func Apply(v *View, e *event.Event) {
 		} else {
 			v.Checkouts = []event.Checkout{{Name: event.PrimaryCheckoutName, Dir: event.PrimaryCheckoutDir,
 				URL: p.RepoURL, Branch: p.Branch, Source: p.SourceBranch, Primary: true}}
+		}
+		// A run created on someone's merge request has it from the start.
+		if m := p.MR; m != nil {
+			v.Adopted = m
+			for _, co := range v.Checkouts {
+				if co.Name == m.Repo {
+					v.MRs = append(v.MRs, MRView{Repo: m.Repo, Branch: co.Branch, Target: co.Source, URL: m.URL, IID: m.IID, Author: m.Author})
+				}
+			}
+			if len(v.MRs) > 0 {
+				v.MRURL = v.MRs[0].URL
+			}
 		}
 		v.CreatedAt = e.TS
 	case *event.EnvRequested:

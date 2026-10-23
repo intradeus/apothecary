@@ -212,6 +212,23 @@ type RunCreated struct {
 	Phase  string            `json:"phase,omitempty"`
 	Params map[string]string `json:"params,omitempty"`
 	By     string            `json:"by,omitempty"`
+	// MR is the merge request someone opened that the run was created on
+	// (an entrypoint on mr_opened): the run works on its branch, and it is
+	// the run's merge request from the start. Nil for a run that opens its
+	// own.
+	MR *AdoptedMR `json:"mr,omitempty"`
+}
+
+// AdoptedMR is a merge request a run was created on: which checkout it is
+// in (its Checkout says the branch and the ref its head is fetched from),
+// and what the forge said of it then.
+type AdoptedMR struct {
+	Repo   string `json:"repo"`
+	IID    int    `json:"iid"`
+	URL    string `json:"url"`
+	Head   string `json:"head"`
+	Author string `json:"author,omitempty"`
+	Title  string `json:"title,omitempty"`
 }
 
 // Checkout is one repository a run checks out.
@@ -229,6 +246,12 @@ type Checkout struct {
 	Branch  string `json:"branch"`
 	Source  string `json:"source"`
 	Primary bool   `json:"primary,omitempty"`
+	// Fetch is the ref the branch starts from instead of forking Source:
+	// the head of a merge request the run was created on, from the ref its
+	// forge keeps for it (a fork's included). Fork marks one from another
+	// repository: readable, with no branch here to push to.
+	Fetch string `json:"fetch,omitempty"`
+	Fork  bool   `json:"fork,omitempty"`
 }
 
 // PrimaryCheckoutName / PrimaryCheckoutDir name the devcontainer's own repo.

@@ -201,6 +201,9 @@ func waitsOnMerge(st *Stage) bool {
 // trigger that needs a merge request no stage of the flow opens.
 func phaseShapeWarnings(f *Flow) []string {
 	opensMR := false
+	for i := range f.Phases {
+		opensMR = opensMR || f.Phases[i].OnMR() // its runs are created on one
+	}
 	for i := range f.Stages {
 		if st := &f.Stages[i]; st.Type == StageAction {
 			if act := actionspec.Get(st.Action); act != nil && act.Provides == actionspec.ProvidesMR {
@@ -247,6 +250,10 @@ func definitelyProduced(f *Flow, consumer *Stage, path string) bool {
 // definitelyHasMR reports whether every route to st passes through the
 // action that opens the run's merge request.
 func definitelyHasMR(f *Flow, st *Stage) bool {
+	// A run created on a merge request has it from the start.
+	if ph := f.Phase(st.Phase); ph != nil && ph.OnMR() {
+		return true
+	}
 	return everyRouteSatisfies(f, st, func(s *Stage) bool {
 		if s.Type != StageAction || s.When != nil {
 			return false

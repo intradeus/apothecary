@@ -262,6 +262,19 @@ phases:
   the start-run form, an automation — and the first in document order is the
   default. A run can only be created at an entrypoint; its first
   `phase_started` records who began it (`by: human`, or the automation).
+- **On someone's merge request.** A phase `on: mr_opened` is the other kind
+  of entrypoint: the run is created *on* a merge request someone opened — a
+  person names it on the start-run form (the open ones are listed), or a
+  `forge_mr` automation picks it. The run works on that merge request's
+  branch, checked out from the ref its forge keeps for the head
+  (`refs/pull/<n>/head`, `refs/merge-requests/<iid>/head` — a fork's too,
+  on a local `mr-<iid>` there is no pushing to). The merge request is the
+  run's from the start: the entry phase acts on it as its subject (no
+  `create_mr`, no `when: subject` needed), `$DIFF_TARGET` is what it merges,
+  each later phase run on it first fast-forwards to its current head, and the
+  outcomes follow its fate. Each kind of entrypoint takes only its own kind
+  of run: a merge request named at a `run_start` phase, or none at an
+  `mr_opened` one, is refused. A rerun stays on the merge request.
 - **By hand.** `on: manual` is a phase only a person opens, from the run page
   while the run is idle. Any other phase without a live run can be started the
   same way, whether or not its signal holds; its `max` counts those starts.
@@ -468,7 +481,7 @@ flow is written against, and no binding names them:
 | the ticket | title + goal — always the prompt's `# TASK` section |
 | the run goal | extra direction for *this* attempt, its own prompt section |
 | the repository | the project's repo, cloned into the workspace — plus, for a multi-repo project, its *additional* repositories beside it (`~/repos/<name>`), each on the same branch name |
-| the branch | the ticket's base branch (`apothecary/<slug>` unless the ticket names one) with the run's id tail appended, forked from the run's source branch |
+| the branch | the ticket's base branch (`apothecary/<slug>` unless the ticket names one) with the run's id tail appended, forked from the run's source branch — or, for a run created on a merge request someone opened, that merge request's own branch |
 | the workspace | one checkout shared by every agent and command stage |
 | the parameters | the values the run was created with (§1 *Parameters*) |
 | run identity | run id and its bearer token, for the ask_human channel |
@@ -753,13 +766,14 @@ three are **outcomes**: a phase `on:` one of them opens once and ends the run
 that never opens a merge request fails with `input_missing` and says so,
 rather than parking forever on something that cannot happen.
 
-Seven more signals are **beginnings**: they open a phase (§1 *Phases*), any
+Eight more signals are **beginnings**: they open a phase (§1 *Phases*), any
 number of times, and cannot be waited on or answer a gate. Each forge one
 fires per merge request, once per occurrence (the key in brackets).
 
 | signal | requires | needs | holds when |
 |---|---|---|---|
-| `run_start` | — | — | a run is created for the phase — by a person, or by an automation. The entrypoint's only possible source |
+| `run_start` | — | — | a run is created for the phase — by a person, or by an automation. An entrypoint |
+| `mr_opened` | `forge` | — (it *brings* one) | a run is created for the phase on a merge request someone opened — a person names it, or a `forge_mr` automation picks it. An entrypoint whose phase acts on that merge request from the start |
 | `manual` | — | — | never on its own: a person starts the phase from the run page |
 | `mr_conflicts` | `forge` | a merge request | the forge reports the merge request cannot merge cleanly into its target (a forge still computing is *not* a conflict). Fires per merge request |
 | `mr_review_settled` | `forge` | a merge request | it has pending review threads — unresolved, last word a reviewer's — and the newest of those comments is older than `quiet_for`. Fires per merge request |
@@ -1136,7 +1150,7 @@ Three levels, separated by what each one can know.
 not apply to a stage's type, unknown action slugs, unbound required action
 inputs, an action's "exactly one" group bound twice or not at all, malformed
 edges, `each_repo` outside a command, success cycles, unreachable stages, and
-for phases and wait points: no `run_start` phase; a head whose signal is not
+for phases and wait points: no entrypoint (`run_start` or `mr_opened`); a head whose signal is not
 `run_start`, `manual`, a firing signal or an outcome signal; a `wait` on a
 signal that opens phases, or a gate auto-answered by one; `start` or
 `quiet_for` on `run_start` or `manual`; `quiet_for` on a signal that does not

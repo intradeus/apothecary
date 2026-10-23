@@ -2005,7 +2005,7 @@ func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStag
 		if err != nil {
 			return fail("on: %v", err)
 		}
-		if on.Signal == signalspec.RunStart {
+		if sig := signalspec.Get(on.Signal); sig != nil && sig.Entry {
 			entrypoints++
 		}
 		if rp.Then != "" {
@@ -2032,7 +2032,7 @@ func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStag
 		}
 	}
 	if entrypoints == 0 {
-		return nil, nil, p.errf(p.keyLine("phases"), "no phase begins a run: at least one must open `on: %s` (an entrypoint a run is created at)", signalspec.RunStart)
+		return nil, nil, p.errf(p.keyLine("phases"), "no phase begins a run: at least one must open `on: %s` (an entrypoint a run is created at) or `on: %s` (one created on a merge request someone opened)", signalspec.RunStart, signalspec.MROpened)
 	}
 	return phases, stages, nil
 }

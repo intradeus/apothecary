@@ -189,6 +189,10 @@ export interface DocPhase {
 // a phase from the run page only. Everything else that opens a phase is a
 // forge signal, which takes a start policy.
 export const RUN_START = 'run_start';
+// MR_OPENED is the other entrypoint: a run created on a merge request someone
+// opened, which its phase acts on from the start.
+export const MR_OPENED = 'mr_opened';
+export const isEntrySignal = (s: string) => s === RUN_START || s === MR_OPENED;
 export const MANUAL = 'manual';
 export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
 /** The signals whose phase is an OUTCOME — it opens once and ends the run.
@@ -460,7 +464,7 @@ export function triggerLabel(w: DocWait): string {
 /** Whether a phase's signal fires on its own — and so takes a start policy.
  *  run_start and manual are a person's act. */
 export function fires(w: DocWait): boolean {
-	return w.signal !== RUN_START && w.signal !== MANUAL;
+	return !isEntrySignal(w.signal) && w.signal !== MANUAL;
 }
 
 /** A parameter's default as text, or undefined when the document omits it

@@ -233,6 +233,9 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 					}
 				}
 			}
+			if needsWorkspace(st) {
+				x.followAdopted()
+			}
 			switch st.Type {
 			case flow.StageAgent:
 				err = x.stageAgent(st)
@@ -2074,6 +2077,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		RepoURL:      res.RepoRef.URL,
 		SourceBranch: sourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
 		Branch:       x.rs.branch,
+		Fetch:        x.primaryFetch(),
 		AgentsMDPath: res.AgentsMDPath,
 		ProviderEnv:  res.ProviderEnv,
 		GitUser:      res.GitUser,

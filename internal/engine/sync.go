@@ -164,6 +164,9 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 		cos = []event.Checkout{*co}
 	}
 	for _, co := range cos {
+		if co.Fork {
+			return x.actionFail(st, event.ReasonInputInvalid, fmt.Sprintf("%s: the merge request comes from a fork — there is no branch here to push to", co.Name))
+		}
 		tip, code, err := func() (string, int, error) {
 			res, err := x.gitIn(co.Dir, "git rev-parse HEAD")
 			return strings.TrimSpace(res.Output), res.ExitCode, err

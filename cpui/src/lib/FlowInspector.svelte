@@ -25,6 +25,8 @@
 		START,
 		MANUAL,
 		RUN_START,
+		MR_OPENED,
+		isEntrySignal,
 		START_POLICIES,
 		fires,
 		paramDefault,
@@ -1013,7 +1015,7 @@
 				<div class="ih">
 					<span class="pill sm mono t-vio">{t('flow.insp.phaseKind')}</span>
 					<span class="mono iid ell">{ph.id}</span>
-					{#if ph.on.signal === RUN_START}<span
+					{#if isEntrySignal(ph.on.signal)}<span
 							class="pill sm flat sq t-brand"
 							title={t('flow.insp.entrypointTitle')}>{t('flow.insp.entrypoint')}</span
 						>{:else if phaseSig?.outcome}<span
@@ -1075,6 +1077,7 @@
 						}}
 					>
 						<option value={RUN_START}>{t('flow.insp.opensOn.run_start')}</option>
+						<option value={MR_OPENED}>{t('flow.insp.opensOn.mr_opened')}</option>
 						<option value={MANUAL}>{t('flow.insp.opensOn.manual')}</option>
 						{#each triggers as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
 						<optgroup label={t('flow.insp.opensOn.outcomes')}>
@@ -1087,9 +1090,11 @@
 					<div class="help">
 						{ph.on.signal === RUN_START
 							? t('flow.insp.opensOnHelp.run_start')
-							: ph.on.signal === MANUAL
-								? t('flow.insp.opensOnHelp.manual')
-								: (phaseSig?.description ?? '')}
+							: ph.on.signal === MR_OPENED
+								? t('flow.insp.opensOnHelp.mr_opened')
+								: ph.on.signal === MANUAL
+									? t('flow.insp.opensOnHelp.manual')
+									: (phaseSig?.description ?? '')}
 					</div>
 				</div>
 				{#if firing}

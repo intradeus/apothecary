@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"apothecary/internal/engine"
+	"apothecary/internal/ports"
 	"apothecary/internal/sidecar"
 )
 
@@ -68,6 +69,20 @@ func (s *Server) getRunMRStatus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// listProjectMRs lists a repository's open merge requests, to start a run
+// on one.
+func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
+	out, err := s.Engine.ListMRs(r.Context(), r.PathValue("id"), r.URL.Query().Get("repo"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if out == nil {
+		out = []ports.MRInfo{}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

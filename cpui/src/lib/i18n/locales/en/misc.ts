@@ -416,6 +416,8 @@ export default {
 		"Phase {phase} opens when {signal} holds for one of the run's merge requests, under its start policy — drag onto a stage of this phase to start it there",
 	'flow.graph.manualTitle':
 		'Phase {phase} opens only when a person starts it from the run page, while the run is idle — drag onto a stage of this phase to start it there',
+	'flow.graph.entryMRTitle':
+		'Phase {phase} is an entrypoint for a run created on a merge request someone opened: the phase acts on it from the start — drag onto a stage of this phase to start it there',
 	'flow.graph.outcomeTitle':
 		'Phase {phase} is an outcome: it opens once, when {signal} holds, and ends the run — drag onto a stage of this phase to start it there',
 	'flow.graph.debugReturn': 'again',
@@ -453,6 +455,9 @@ export default {
 	'flow.insp.opensOn': 'Opens on',
 	'flow.insp.opensOn.run_start': 'a run created for it (entrypoint)',
 	'flow.insp.opensOn.manual': 'a person, from the run page',
+	'flow.insp.opensOn.mr_opened': 'a run created on someone’s merge request (entrypoint)',
+	'flow.insp.opensOnHelp.mr_opened':
+		'An entrypoint for a run created on a merge request someone opened — named on the start-run form, or picked by a forge_mr automation. The phase acts on it from the start: it is the phase’s subject, $DIFF_TARGET is what it merges, and later phases follow its pushes.',
 	'flow.insp.opensOn.outcomes': 'and ends the run on…',
 	'flow.insp.then': 'Then',
 	'flow.insp.then.done': 'the run is done',

@@ -143,6 +143,13 @@ export default {
 	'run.rerun.back': 'Back to {id}',
 	'run.start.entrypoint': 'Begin at',
 	'run.start.entrypointHelp': 'The flow has several entrypoints; the run begins at this phase.',
+	'run.start.mr': 'Merge request',
+	'run.start.mrHelp':
+		'This entrypoint works on a merge request someone opened: the run checks out its branch and acts on it.',
+	'run.start.mrLoading': 'Listing open merge requests…',
+	'run.start.mrNone': 'The repository has no open merge request to start on.',
+	'run.start.mrDraft': 'draft',
+	'run.start.mrFork': 'from a fork',
 	'run.start.advanced': 'Advanced · parameters',
 	'run.start.advancedHelp':
 		'Override the workshop’s values for this run only. An empty field keeps what applies underneath.',
@@ -198,6 +205,7 @@ export default {
 	'run.phases.phaseStarted': 'Phase {phase} started',
 	'run.phases.phaseFailed': 'Phase {phase} could not start.',
 	'run.phases.entrypoint': 'entrypoint',
+	'run.phases.entrypointMR': 'entrypoint · on a merge request someone opened',
 	'run.phases.began': 'this run began here',
 	'run.phases.byHand': 'only when you start it',
 	'run.phases.on': 'on {signal}',

@@ -210,7 +210,18 @@ func (x *exec) extraCheckouts() []ExtraCheckout {
 		if co.Primary {
 			continue
 		}
-		out = append(out, ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source})
+		out = append(out, ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source, Fetch: co.Fetch})
 	}
 	return out
+}
+
+// primaryFetch is the ref the primary's branch starts from when the run was
+// created on a merge request in it ("" = it forks its source).
+func (x *exec) primaryFetch() string {
+	for _, co := range x.rs.checkouts {
+		if co.Primary {
+			return co.Fetch
+		}
+	}
+	return ""
 }

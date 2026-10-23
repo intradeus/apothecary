@@ -208,3 +208,35 @@ func TestBlocksRoundTripTheDocument(t *testing.T) {
 		t.Errorf("include stage = %+v", inc)
 	}
 }
+
+// An entrypoint on mr_opened begins a run created on a merge request
+// someone opened: it acts on that merge request from the start, so a
+// subject action needs no guard and nothing has to open one.
+func TestEntrypointOnAMergeRequest(t *testing.T) {
+	doc := header + `phases:
+  - id: first_look
+    on: mr_opened
+    stages:
+      - { id: read, type: command, run: x, output: { review: artifacts/review.yaml } }
+      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+      - { id: wait_merge, type: wait, for: mr_merged, on_fail: done }
+  - { id: merged, on: mr_merged, then: done }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ph := f.Phase("first_look")
+	if !ph.IsEntrypoint() || !ph.OnMR() || !ph.HasSubject() || ph.Fires() || ph.On.Start != StartManual {
+		t.Errorf("first_look = %+v", ph)
+	}
+	if b := f.Beginning(); b == nil || b.ID != "first_look" {
+		t.Errorf("beginning = %+v", b)
+	}
+	for _, w := range f.Warnings {
+		t.Errorf("warning: %s", w)
+	}
+	if f.Phase("merged").HasSubject() {
+		t.Error("mr_merged holds for every merge request: no subject")
+	}
+}

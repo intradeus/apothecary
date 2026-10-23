@@ -38,6 +38,7 @@ import type {
 	LiveDelta,
 	MergeRequestLive,
 	CheckState,
+	OpenMergeRequest,
 	Model,
 	ParamDecl,
 	PhaseSummary,
@@ -178,6 +179,19 @@ export function toRunPhase(w: Wire.PhaseInfo): RunPhase {
 			seen: h.seen ?? false,
 			observedAt: h.observed_at
 		}))
+	};
+}
+
+export function toOpenMergeRequest(w: Wire.MrInfo): OpenMergeRequest {
+	return {
+		iid: w.ref.IID,
+		url: w.ref.URL,
+		title: w.title,
+		author: w.author,
+		source: w.source,
+		target: w.target,
+		draft: w.draft ?? false,
+		fork: w.fork ?? false
 	};
 }
 

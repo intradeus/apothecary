@@ -69,6 +69,7 @@
 	/** "on conflicts with its target · asks you first" — the wait point in a few words. */
 	const opens = (p: RunPhase) => {
 		if (p.signal === 'run_start') return t('run.phases.entrypoint');
+		if (p.signal === 'mr_opened') return t('run.phases.entrypointMR');
 		if (p.signal === 'manual') return t('run.phases.byHand');
 		const signal = titles[p.signal] ?? p.signal;
 		if (p.outcome) {
