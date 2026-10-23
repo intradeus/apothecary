@@ -17,6 +17,7 @@ import { unwrap, unwrapOptional, unwrapVoid } from './client';
 import * as map from './mappers';
 import type {
 	OpenMergeRequest,
+	ReviewRow,
 	ActionSpec,
 	Attachment,
 	Automation,
@@ -419,6 +420,30 @@ export const projects = {
 		many(await unwrap(gen.listProjectBranches({ path: { id } })), map.toBranch),
 	/** The repository's open merge requests, newest first: what a run may be
 	 *  created on at an entrypoint on mr_opened. */
+	/** The Reviews tab's rows: each open merge request and its review. */
+	reviews: async (id: string, repo?: string): Promise<ReviewRow[]> =>
+		many(
+			await unwrap(gen.listReviews({ path: { id }, query: repo ? { repo } : undefined })),
+			map.toReviewRow
+		),
+	/** Start a review of a merge request: its ticket found or made, a run of
+	 *  the flow created on it. */
+	startReview: async (
+		id: string,
+		iid: number,
+		opts?: { flow?: string; repo?: string }
+	): Promise<{ runId: string; ticketId: string }> => {
+		const r = await unwrap(
+			gen.startReview({
+				path: { id, iid: String(iid) },
+				body: {
+					...(opts?.flow ? { flow: opts.flow } : {}),
+					...(opts?.repo ? { repo: opts.repo } : {})
+				}
+			})
+		);
+		return { runId: r.run_id, ticketId: r.ticket_id };
+	},
 	mergeRequests: async (id: string, repo?: string): Promise<OpenMergeRequest[]> =>
 		many(
 			await unwrap(gen.listProjectMrs({ path: { id }, query: repo ? { repo } : undefined })),

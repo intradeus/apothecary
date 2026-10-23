@@ -233,6 +233,9 @@ import type {
 	ListProjectsData,
 	ListProjectsErrors,
 	ListProjectsResponses,
+	ListReviewsData,
+	ListReviewsErrors,
+	ListReviewsResponses,
 	ListRunsData,
 	ListRunsErrors,
 	ListRunsResponses,
@@ -290,6 +293,9 @@ import type {
 	StartPhaseData,
 	StartPhaseErrors,
 	StartPhaseResponses,
+	StartReviewData,
+	StartReviewErrors,
+	StartReviewResponses,
 	StartTicketRunData,
 	StartTicketRunErrors,
 	StartTicketRunResponses,
@@ -1095,6 +1101,23 @@ export const listProjectMrs = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * Start a review of a merge request
+ *
+ * Finds or makes the merge request's ticket and creates a run on the merge request at the flow's mr_opened entrypoint (the built-in reviewer unless the body names another). 409 while a review of it is already running.
+ */
+export const startReview = <ThrowOnError extends boolean = false>(
+	options: Options<StartReviewData, ThrowOnError>
+): RequestResult<StartReviewResponses, StartReviewErrors, ThrowOnError> =>
+	(options.client ?? client).post<StartReviewResponses, StartReviewErrors, ThrowOnError>({
+		url: '/api/projects/{id}/mrs/{iid}/review',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
  * Check a project is ready to run, step by step
  */
 export const preflightProject = <ThrowOnError extends boolean = false>(
@@ -1102,6 +1125,19 @@ export const preflightProject = <ThrowOnError extends boolean = false>(
 ): RequestResult<PreflightProjectResponses, PreflightProjectErrors, ThrowOnError> =>
 	(options.client ?? client).post<PreflightProjectResponses, PreflightProjectErrors, ThrowOnError>({
 		url: '/api/projects/{id}/preflight',
+		...options
+	});
+
+/**
+ * Open merge requests and the review of each
+ *
+ * The Reviews tab: each open merge request of the repository, whether the factory itself opened it, and the review done of it here — its ticket and that ticket's newest run.
+ */
+export const listReviews = <ThrowOnError extends boolean = false>(
+	options: Options<ListReviewsData, ThrowOnError>
+): RequestResult<ListReviewsResponses, ListReviewsErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListReviewsResponses, ListReviewsErrors, ThrowOnError>({
+		url: '/api/projects/{id}/reviews',
 		...options
 	});
 

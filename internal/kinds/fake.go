@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"apothecary/internal/adapters/fake"
@@ -47,8 +48,20 @@ func (fakeAccount) EgressDomains() []string         { return nil }
 
 func (FakeForge) Account(Config) (ForgeAccount, error) { return fakeAccount{}, nil }
 
-func (FakeForge) Forge(Config, ports.RepoRef) (ports.Forge, error) {
-	return &fake.Forge{}, nil
+// fakeForges keeps one fake forge per repository locator for the life of
+// the process, so what a run opens on it is still there when the next
+// resolution asks — the way a real forge would remember it.
+var fakeForges sync.Map // locator -> *fake.Forge
+
+func (FakeForge) Forge(_ Config, repo ports.RepoRef) (ports.Forge, error) {
+	return FakeForgeOf(repo.Locator), nil
+}
+
+// FakeForgeOf is the fake forge of a repository locator (tests script
+// merge requests on it).
+func FakeForgeOf(locator string) *fake.Forge {
+	f, _ := fakeForges.LoadOrStore(locator, &fake.Forge{})
+	return f.(*fake.Forge)
 }
 
 // --- provisioner ------------------------------------------------------------

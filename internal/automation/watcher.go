@@ -165,7 +165,7 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 	if !errors.Is(err, tickets.ErrDuplicate) {
 		return confstore.Ticket{}, false, err
 	}
-	existing, found, err := w.existing(ctx, a.ProjectID, key)
+	existing, found, err := w.Tickets.FindByKey(ctx, a.ProjectID, key)
 	if err != nil || !found || existing.AutomationID != a.ID {
 		return confstore.Ticket{}, false, err
 	}
@@ -177,19 +177,6 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 		return confstore.Ticket{}, false, nil
 	}
 	return existing, true, nil
-}
-
-func (w *Watcher) existing(ctx context.Context, projectID, key string) (confstore.Ticket, bool, error) {
-	all, err := w.Conf.ListTickets(ctx)
-	if err != nil {
-		return confstore.Ticket{}, false, err
-	}
-	for _, t := range all {
-		if t.ProjectID == projectID && strings.EqualFold(t.SourceKey, key) {
-			return t, true, nil
-		}
-	}
-	return confstore.Ticket{}, false, nil
 }
 
 // pollMRs lists the repository's open merge requests and creates a run on
@@ -241,7 +228,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 // ticketForMR is the ticket a merge request's run belongs to: made now, or
 // this automation's earlier one still without a run.
 func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr ports.MRInfo) (confstore.Ticket, bool, error) {
-	existing, found, err := w.existing(ctx, a.ProjectID, mr.Ref.URL)
+	existing, found, err := w.Tickets.FindByKey(ctx, a.ProjectID, mr.Ref.URL)
 	if err != nil {
 		return confstore.Ticket{}, false, err
 	}
@@ -255,20 +242,8 @@ func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr po
 		}
 		return existing, true, nil
 	}
-	goal := strings.TrimSpace(mr.Body)
-	if goal != "" {
-		goal += "\n\n"
-	}
-	goal += fmt.Sprintf("Merge request %s by %s: %s → %s.", mr.Ref.URL, mr.Author, mr.Source, mr.Target)
-	t, err := w.Conf.CreateTicket(ctx, confstore.Ticket{
-		ProjectID: a.ProjectID, Title: fmt.Sprintf("%s (!%d by %s)", mr.Title, mr.Ref.IID, mr.Author), Goal: goal,
-		SourceKind: confstore.TicketKindMR, SourceKey: mr.Ref.URL, SourceURL: mr.Ref.URL, AutomationID: a.ID,
-	})
-	if err != nil {
-		return confstore.Ticket{}, false, err
-	}
-	w.log().Info("automation made a ticket for a merge request", "automation", a.ID, "name", a.Name, "ticket", t.ID, "mr", mr.Ref.URL)
-	return t, true, nil
+	t, err := w.Tickets.CreateForMR(ctx, a.ProjectID, a.ID, mr)
+	return t, err == nil, err
 }
 
 // startOn creates the run of a merge request's ticket, on that merge request.

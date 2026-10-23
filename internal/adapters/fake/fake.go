@@ -474,6 +474,15 @@ type Forge struct {
 	User string
 }
 
+// Reset forgets every merge request and scripted failure (test control, for
+// a forge shared across tests).
+func (f *Forge) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.MRs, f.nextID, f.ChecksCalls, f.NewHead, f.User = nil, 0, 0, "", ""
+	f.AccessErr, f.CreateErr, f.MRStateErr, f.FindErr, f.ThreadsErr, f.ReplyErr = nil, nil, nil, nil, nil, nil
+}
+
 // AddOpenMR scripts a merge request someone else opened (test control): it
 // gets the next iid, a head and a fetchable ref.
 func (f *Forge) AddOpenMR(author, title, source, target, head string) ports.MRRef {

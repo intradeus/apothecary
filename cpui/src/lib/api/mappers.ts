@@ -39,6 +39,7 @@ import type {
 	MergeRequestLive,
 	CheckState,
 	OpenMergeRequest,
+	ReviewRow,
 	Model,
 	ParamDecl,
 	PhaseSummary,
@@ -179,6 +180,23 @@ export function toRunPhase(w: Wire.PhaseInfo): RunPhase {
 			seen: h.seen ?? false,
 			observedAt: h.observed_at
 		}))
+	};
+}
+
+export function toReviewRow(w: Wire.ReviewRow): ReviewRow {
+	return {
+		mr: toOpenMergeRequest(w.mr),
+		mine: w.mine ?? false,
+		ticketId: w.ticket_id || undefined,
+		run: w.run
+			? {
+					id: w.run.id,
+					state: w.run.state as RunState,
+					flow: w.run.flow,
+					createdAt: w.run.created_at
+				}
+			: undefined,
+		runs: w.runs ?? 0
 	};
 }
 

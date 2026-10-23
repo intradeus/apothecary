@@ -751,6 +751,35 @@ export type ResourceSample = {
 	pids: number;
 };
 
+export type ReviewRequest = {
+	flow?: string;
+	params?: {
+		[key: string]: string;
+	};
+	phase?: string;
+	repo?: string;
+};
+
+export type ReviewRow = {
+	mine?: boolean;
+	mr: MrInfo;
+	run?: ReviewRun;
+	runs?: number;
+	ticket_id?: string;
+};
+
+export type ReviewRun = {
+	created_at: string;
+	flow: string;
+	id: string;
+	state: string;
+};
+
+export type ReviewStarted = {
+	run_id: string;
+	ticket_id: string;
+};
+
 export type RunCheckout = {
 	branch: string;
 	dir: string;
@@ -3050,6 +3079,44 @@ export type ListProjectMrsResponses = {
 
 export type ListProjectMrsResponse = ListProjectMrsResponses[keyof ListProjectMrsResponses];
 
+export type StartReviewData = {
+	body: ReviewRequest;
+	path: {
+		id: string;
+		iid: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/mrs/{iid}/review';
+};
+
+export type StartReviewErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StartReviewResponses = {
+	/**
+	 * Created
+	 */
+	201: ReviewStarted;
+};
+
+export type StartReviewResponse = StartReviewResponses[keyof StartReviewResponses];
+
 export type PreflightProjectData = {
 	body?: never;
 	path: {
@@ -3086,6 +3153,44 @@ export type PreflightProjectResponses = {
 };
 
 export type PreflightProjectResponse = PreflightProjectResponses[keyof PreflightProjectResponses];
+
+export type ListReviewsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * the repository: "repo" (the default) for the primary, an extra repository's name
+		 */
+		repo?: string;
+	};
+	url: '/api/projects/{id}/reviews';
+};
+
+export type ListReviewsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListReviewsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<ReviewRow> | null;
+};
+
+export type ListReviewsResponse = ListReviewsResponses[keyof ListReviewsResponses];
 
 export type ListRunsData = {
 	body?: never;
