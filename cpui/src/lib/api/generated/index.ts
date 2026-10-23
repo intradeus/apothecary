@@ -439,6 +439,7 @@ export type {
 	PauseRunErrors,
 	PauseRunResponses,
 	PhaseInfo,
+	PhaseLive,
 	PingFile,
 	PingFiles,
 	PingHold,

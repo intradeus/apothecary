@@ -926,8 +926,12 @@ components:
           type: boolean
         description:
           type: string
+        entry:
+          type: boolean
         id:
           type: string
+        live:
+          $ref: '#/components/schemas/PhaseLive'
         max:
           type: integer
         quiet_for_s:
@@ -939,11 +943,24 @@ components:
           type: object
         signal:
           type: string
+        start:
+          type: string
+        total:
+          type: integer
       required:
         - id
         - max
         - runs
         - signal
+        - start
+        - total
+      type: object
+    PhaseLive:
+      properties:
+        parked_at:
+          type: string
+        subject:
+          type: string
       type: object
     PingFile:
       properties:

@@ -222,6 +222,18 @@ func Apply(v *View, e *event.Event) {
 		if len(v.MRs) > 0 {
 			v.State = InReview
 		}
+	case *event.PhaseParked:
+		// Parked at a wait point: idle for every other phase, and in review
+		// when a merge request is what it waits on.
+		v.Idle = true
+		if len(v.MRs) > 0 && v.State == Running {
+			v.State = InReview
+		}
+	case *event.PhaseResumed:
+		v.Phase, v.PhaseSubject, v.Idle = p.Phase, p.Subject, false
+		if v.State == InReview || v.State == WaitingOnHuman {
+			v.State = Running
+		}
 	case *event.PhaseDeclined:
 		if v.Idle && v.State == WaitingOnHuman {
 			v.State = InReview

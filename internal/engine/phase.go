@@ -1,12 +1,13 @@
 package engine
 
-// Phases (PLAN6): a flow describes a ticket's whole life. The entry phase is
-// what a run begins with (on manual: a person started it for a ticket); when
-// it ends with merge requests open the run is idle, and each reaction phase
-// runs when its trigger holds for one merge request — its subject — or when
-// a person starts it, one phase run at a time, in this run, in this
-// workspace. The run ends from its merge requests: all merged completes it,
-// one closed abandons it.
+// Phases (PLAN6, FLOWLANG §1): a flow is chains of stages, each opened by a
+// wait point. A run begins at an entrypoint (on: run_start — the one its
+// creation named); when a phase run ends or parks at a wait point mid-chain
+// the run is idle, and the idle loop is the one scheduler: a firing phase
+// opens when its signal holds for one merge request (its subject), under its
+// start policy; a person starts any phase from the run page; one phase run
+// holds the workspace at a time. The run ends from its merge requests: all
+// merged completes it, one closed abandons it.
 
 import (
 	"context"
@@ -30,19 +31,18 @@ type phaseStartReq struct {
 	ack            chan error
 }
 
-// StartPhase asks an idle run to start a reaction phase on one of its merge
-// requests (repo "" = the primary's). Refused unless the run is idle.
-func (e *Engine) StartPhase(runID, phase, repo string) error {
-	if repo == "" {
-		repo = event.PrimaryCheckoutName
-	}
+// StartPhase asks an idle run to start a phase by hand: on the named
+// checkout's merge request, or (subject "") on the run's single open one,
+// else on none. Refused unless the run is idle, or when a run of that phase
+// is parked at a wait point.
+func (e *Engine) StartPhase(runID, phase, subject string) error {
 	e.mu.Lock()
 	h, ok := e.handles[runID]
 	e.mu.Unlock()
 	if !ok || !h.idle.Load() {
 		return fmt.Errorf("%w: the run is not between phases", ErrPhaseNotStartable)
 	}
-	req := phaseStartReq{phase: phase, subject: repo, ack: make(chan error, 1)}
+	req := phaseStartReq{phase: phase, subject: subject, ack: make(chan error, 1)}
 	t := time.NewTimer(10 * time.Second)
 	defer t.Stop()
 	select {
@@ -60,23 +60,26 @@ func (e *Engine) StartPhase(runID, phase, repo string) error {
 	}
 }
 
-// entryPhaseStarted records the entry phase once, so a phased run's timeline
-// opens with it like every later phase.
-func (x *exec) entryPhaseStarted() error {
+// beginRun opens the run's first phase — the entrypoint its creation named
+// (run_created) — through the same path every other phase start takes.
+// Replay decides: a log that already holds a phase_started has begun.
+func (x *exec) beginRun() error {
 	rs := x.rs
-	if !rs.fl.Phased() || rs.phase != "" || rs.idle {
+	if !rs.fl.Phased() || rs.phase != "" || rs.idle || rs.done {
 		return nil
 	}
-	// Who began it: a person, who created the run for this entrypoint.
-	p := &event.PhaseStarted{Phase: rs.fl.Phases[0].ID, By: "human"}
-	if err := x.append(p); err != nil {
-		return err
+	begin := rs.begin
+	if begin == "" {
+		begin = rs.fl.Beginning().ID
 	}
-	// Not rs.startPhase: the cursor is wherever replay put it (a run that
-	// predates this event may already be mid-entry).
-	rs.phase = p.Phase
-	rs.phaseRuns[phaseRunKey(p.Phase, "")]++
-	return nil
+	if rs.fl.Phase(begin) == nil {
+		return x.fail(fmt.Sprintf("flow %q changed: the run's beginning phase %q no longer exists in it", rs.fl.Name, begin))
+	}
+	by := rs.view.StartedBy
+	if by == "" {
+		by = "human"
+	}
+	return x.beginPhase(begin, "", "", by, "")
 }
 
 // phaseDone ends the phase in progress: the run goes idle — or completes,
@@ -169,6 +172,7 @@ func (x *exec) idle() error {
 func (x *exec) evaluateIdle(st *idler) error {
 	rs := x.rs
 	obs, err := x.observe(st)
+	x.lastObs = obs
 	if err != nil {
 		if errors.Is(err, context.Canceled) || x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
@@ -227,7 +231,10 @@ func (x *exec) evaluateIdle(st *idler) error {
 		if o.status.State != ports.MROpen {
 			continue
 		}
-		for _, ph := range rs.fl.Reactions() {
+		for _, ph := range rs.fl.Phases {
+			if !ph.Fires() || rs.parked[ph.ID] != nil {
+				continue
+			}
 			if ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max {
 				continue
 			}
@@ -252,7 +259,7 @@ func (x *exec) evaluateIdle(st *idler) error {
 func (x *exec) observe(st *idler) ([]mrObservation, error) {
 	rs := x.rs
 	needThreads := false
-	for _, ph := range rs.fl.Reactions() {
+	for _, ph := range rs.fl.Phases {
 		if ph.On.Signal == signalspec.MRReviewSettled {
 			needThreads = true
 		}
@@ -355,30 +362,66 @@ func (x *exec) beginPhase(phase, subject, key, by, tip string) error {
 	return nil
 }
 
-// manualStart starts a phase a human asked for, from the idle loop.
+// manualStart starts a phase a human asked for, from the idle loop: any
+// phase without a live run, on the named checkout's merge request, else on
+// the run's single open one, else on none.
 func (x *exec) manualStart(req phaseStartReq) error {
 	rs := x.rs
 	ph := rs.fl.Phase(req.phase)
-	if ph == nil || ph.Entry() {
-		return fmt.Errorf("%w: no reaction phase %q in this flow", ErrPhaseNotStartable, req.phase)
+	if ph == nil {
+		return fmt.Errorf("%w: no phase %q in this flow", ErrPhaseNotStartable, req.phase)
 	}
-	co := rs.checkout(req.subject)
-	if co == nil || rs.mrFor(co.Name, co.Branch) == nil {
-		return fmt.Errorf("%w: no merge request for repository %q", ErrPhaseNotStartable, req.subject)
+	if pr := rs.parked[ph.ID]; pr != nil {
+		return fmt.Errorf("%w: phase %q is parked at %s", ErrPhaseNotStartable, ph.ID, pr.parkedAt)
 	}
-	if ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, co.Name)] >= ph.On.Max {
-		return fmt.Errorf("%w: phase %q already ran %d times on %s (max)", ErrPhaseNotStartable, ph.ID, ph.On.Max, co.Name)
+	var subject string
+	var mr *mrRecord
+	if req.subject != "" {
+		co := rs.checkout(req.subject)
+		if co == nil || rs.mrFor(co.Name, co.Branch) == nil {
+			return fmt.Errorf("%w: no merge request for repository %q", ErrPhaseNotStartable, req.subject)
+		}
+		subject, mr = co.Name, rs.mrFor(co.Name, co.Branch)
+	} else if open := x.openMRs(); len(open) == 1 {
+		subject, mr = open[0].Repo, open[0]
 	}
-	mr := rs.mrFor(co.Name, co.Branch)
+	if ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, subject)] >= ph.On.Max {
+		on := "with no merge request"
+		if subject != "" {
+			on = "on " + subject
+		}
+		return fmt.Errorf("%w: phase %q already ran %d times %s (max)", ErrPhaseNotStartable, ph.ID, ph.On.Max, on)
+	}
 	var tip string
-	if forge := x.res.forgeFor(co.Name); forge != nil {
-		if st, err := forge.MRStatus(x.ctx, mr.Ref); err == nil {
-			tip = st.HeadSHA
+	if mr != nil {
+		if forge := x.res.forgeFor(subject); forge != nil {
+			if st, err := forge.MRStatus(x.ctx, mr.Ref); err == nil {
+				tip = st.HeadSHA
+			}
 		}
 	}
 	// A human's start is its own occurrence: it never consumes the key a
 	// signal would fire for, and no signal key blocks it.
-	return x.beginPhase(ph.ID, co.Name, "", "human", tip)
+	return x.beginPhase(ph.ID, subject, "", "human", tip)
+}
+
+// openMRs lists the run's merge requests the last poll saw open — every
+// recorded one before the first poll.
+func (x *exec) openMRs() []*mrRecord {
+	if x.lastObs == nil {
+		out := make([]*mrRecord, 0, len(x.rs.mrs))
+		for i := range x.rs.mrs {
+			out = append(out, &x.rs.mrs[i])
+		}
+		return out
+	}
+	var out []*mrRecord
+	for _, o := range x.lastObs {
+		if o.status.State == ports.MROpen {
+			out = append(out, o.mr)
+		}
+	}
+	return out
 }
 
 // subjectSection tells a reaction phase's agent which merge request it is
@@ -400,22 +443,39 @@ func (x *exec) subjectSection() string {
 	return b.String()
 }
 
-// PhaseInfo is one reaction phase of a run's flow, per merge request: what
-// starts it and how many of its runs are left (the run page's buttons).
+// PhaseInfo is one phase of a run's flow: what opens it, its start policy,
+// how many of its runs are left per merge request, and its live run if any
+// (the run page's buttons).
 type PhaseInfo struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
 	Signal      string `json:"signal"`
-	Confirm     bool   `json:"confirm,omitempty"`
+	// Start is the policy applied when the signal holds (auto, confirm,
+	// manual); Confirm mirrors start == confirm for the run page's labels.
+	Start   string `json:"start"`
+	Confirm bool   `json:"confirm,omitempty"`
+	// Entry marks a phase a run may begin at (on: run_start).
+	Entry bool `json:"entry,omitempty"`
 	// QuietFor is the debounce in seconds (review comments).
 	QuietFor int `json:"quiet_for_s,omitempty"`
 	// Max is the runs allowed per merge request (-1 = unlimited).
-	Max  int            `json:"max"`
-	Runs map[string]int `json:"runs"` // by checkout name
+	Max int `json:"max"`
+	// Runs counts the phase's runs by checkout name ("" = on no merge
+	// request); Total sums them.
+	Runs  map[string]int `json:"runs"`
+	Total int            `json:"total"`
+	// Live is the phase's run in progress or parked at a wait point.
+	Live *PhaseLive `json:"live,omitempty"`
 }
 
-// RunPhases lists the reaction phases of the run's pinned flow with how many
-// times each ran on each merge request. Empty for a flow without phases.
+// PhaseLive describes a phase's live run.
+type PhaseLive struct {
+	Subject  string `json:"subject,omitempty"`
+	ParkedAt string `json:"parked_at,omitempty"`
+}
+
+// RunPhases lists every phase of the run's pinned flow with how many times
+// each ran on each merge request and which one is live.
 func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, error) {
 	evs, err := e.store.Events(ctx, runID, 0)
 	if err != nil {
@@ -432,9 +492,10 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 	if err != nil {
 		return nil, err
 	}
+	rs := replay(evs, fl)
 	runs := map[string]map[string]int{}
 	for _, ev := range evs {
-		if p, ok := ev.Payload.(*event.PhaseStarted); ok && p.Subject != "" {
+		if p, ok := ev.Payload.(*event.PhaseStarted); ok {
 			if runs[p.Phase] == nil {
 				runs[p.Phase] = map[string]int{}
 			}
@@ -442,13 +503,26 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 		}
 	}
 	out := []PhaseInfo{}
-	for _, ph := range fl.Reactions() {
+	for i := range fl.Phases {
+		ph := &fl.Phases[i]
 		r := runs[ph.ID]
 		if r == nil {
 			r = map[string]int{}
 		}
-		out = append(out, PhaseInfo{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Confirm: ph.On.Start == flow.StartConfirm,
-			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r})
+		total := 0
+		for _, n := range r {
+			total += n
+		}
+		info := PhaseInfo{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Start: string(ph.On.Start),
+			Confirm: ph.On.Start == flow.StartConfirm, Entry: ph.IsEntrypoint(),
+			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r, Total: total}
+		switch {
+		case rs.parked[ph.ID] != nil:
+			info.Live = &PhaseLive{Subject: rs.parked[ph.ID].subject, ParkedAt: rs.parked[ph.ID].parkedAt}
+		case !rs.done && !rs.idle && rs.phase == ph.ID:
+			info.Live = &PhaseLive{Subject: rs.subject}
+		}
+		out = append(out, info)
 	}
 	return out, nil
 }

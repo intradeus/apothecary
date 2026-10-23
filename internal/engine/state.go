@@ -103,6 +103,11 @@ type runState struct {
 	// pushed is the tip push_branch last pushed, per repo+branch.
 	pushed map[string]string
 
+	// parked holds the phase runs stopped at a wait point mid-chain, by
+	// phase: everything scoped to the run (park / unpark), while another
+	// phase may hold runState's own fields. At most one live run per phase.
+	parked map[string]*phaseRun
+
 	// openPings are raised-but-unanswered pings to re-register on recovery.
 	openPings []*event.PingRaised
 	// gateAnswer is set when a gate's ping was answered but the crash hit
@@ -170,6 +175,60 @@ func agentPingType(t string) bool {
 
 func triggerKey(phase, subject, key string) string { return phase + "\x00" + subject + "\x00" + key }
 func phaseRunKey(phase, subject string) string     { return phase + "\x00" + subject }
+
+// phaseRun is what is scoped to one phase run: where it stands and what it
+// carries. The active run's lives in runState's own fields; a parked run's
+// is kept here until it resumes. Stage-keyed maps (iters, edgeCounts,
+// sessions, …) stay shared: stage ids are one namespace across phases.
+type phaseRun struct {
+	phase, subject, tip string
+	pos                 int
+	ph                  phase
+	feed, feedSentinel  string
+	feedAttempts        int
+	lastFailure         *event.StageFailed
+	gateAnswer          *event.PingAnswered
+	roundThreads        []string
+	roundLoaded         bool
+	selectPing          *event.PingRaised
+	// parkedAt is the stage the run waits at (a wait or a gate).
+	parkedAt string
+}
+
+// park stores the active phase run as parked at stage and leaves the run
+// idle. Shared by replay and the live park so they cannot disagree.
+func (rs *runState) park(stage string) {
+	if rs.parked == nil {
+		rs.parked = map[string]*phaseRun{}
+	}
+	rs.parked[rs.phase] = &phaseRun{
+		phase: rs.phase, subject: rs.subject, tip: rs.phaseTip, pos: rs.pos, ph: rs.ph,
+		feed: rs.feed, feedSentinel: rs.feedSentinel, feedAttempts: rs.feedAttempts,
+		lastFailure: rs.lastFailure, gateAnswer: rs.gateAnswer,
+		roundThreads: rs.roundThreads, roundLoaded: rs.roundLoaded, selectPing: rs.selectPing,
+		parkedAt: stage,
+	}
+	rs.idle = true
+}
+
+// unpark makes the parked run of phase the active one again. False when
+// no run of that phase is parked.
+func (rs *runState) unpark(phase string) bool {
+	pr := rs.parked[phase]
+	if pr == nil {
+		return false
+	}
+	delete(rs.parked, phase)
+	rs.phase, rs.subject, rs.phaseTip, rs.pos, rs.ph = pr.phase, pr.subject, pr.tip, pr.pos, pr.ph
+	rs.feed, rs.feedSentinel, rs.feedAttempts = pr.feed, pr.feedSentinel, pr.feedAttempts
+	rs.lastFailure, rs.gateAnswer = pr.lastFailure, pr.gateAnswer
+	rs.roundThreads, rs.roundLoaded, rs.selectPing = pr.roundThreads, pr.roundLoaded, pr.selectPing
+	rs.idle = false
+	return true
+}
+
+// anyParked reports whether some phase run waits at a wait point.
+func (rs *runState) anyParked() bool { return len(rs.parked) > 0 }
 
 // startPhase moves the cursor to a phase's first stage, fresh: its edge
 // counters reset (R7 — a review round's retries are per round), the feed
@@ -325,6 +384,10 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.startPhase(p, fl)
 		case *event.PhaseCompleted:
 			rs.idle = true
+		case *event.PhaseParked:
+			rs.park(p.StageID)
+		case *event.PhaseResumed:
+			rs.unpark(p.Phase)
 		case *event.BranchPushed:
 			rs.pushed[p.Repo+"\x00"+p.Branch] = p.Tip
 		case *event.ReviewCommentsLoaded:

@@ -54,6 +54,11 @@ const (
 	TypePhaseStarted   Type = "phase_started"
 	TypePhaseCompleted Type = "phase_completed"
 	TypePhaseDeclined  Type = "phase_declined"
+	// A phase run parking at a wait point mid-chain (a wait or a gate) and
+	// picking up again: between the two the run is idle and other phases
+	// may run.
+	TypePhaseParked  Type = "phase_parked"
+	TypePhaseResumed Type = "phase_resumed"
 	// Review rounds and target syncs (PLAN6 M31/M32).
 	TypeReviewCommentsLoaded Type = "review_comments_loaded"
 	TypeReviewRepliesPosted  Type = "review_replies_posted"
@@ -428,6 +433,23 @@ type PhaseCompleted struct {
 
 // PhaseDeclined: a human said no to starting a confirm phase for this
 // trigger occurrence; it is not offered again until the key changes.
+// PhaseParked: the phase run stopped at a wait point mid-chain — StageID,
+// a wait or a gate — and gave the workspace back; the run is idle until it
+// resumes, and other phases may run meanwhile. PhaseResumed: the wait point
+// settled (its signal held, a human answered, it timed out) and the phase
+// run goes on from that stage.
+type PhaseParked struct {
+	Phase   string `json:"phase"`
+	Subject string `json:"subject,omitempty"`
+	StageID string `json:"stage_id"`
+}
+
+type PhaseResumed struct {
+	Phase   string `json:"phase"`
+	Subject string `json:"subject,omitempty"`
+	StageID string `json:"stage_id"`
+}
+
 type PhaseDeclined struct {
 	Phase   string `json:"phase"`
 	Subject string `json:"subject,omitempty"`
@@ -694,6 +716,8 @@ func (*SnapshotCaptured) EventType() Type { return TypeSnapshotCaptured }
 func (*MRCreated) EventType() Type        { return TypeMRCreated }
 func (*PhaseStarted) EventType() Type     { return TypePhaseStarted }
 func (*PhaseCompleted) EventType() Type   { return TypePhaseCompleted }
+func (*PhaseParked) EventType() Type      { return TypePhaseParked }
+func (*PhaseResumed) EventType() Type     { return TypePhaseResumed }
 func (*PhaseDeclined) EventType() Type    { return TypePhaseDeclined }
 func (*ReviewCommentsLoaded) EventType() Type {
 	return TypeReviewCommentsLoaded

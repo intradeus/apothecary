@@ -43,6 +43,9 @@ type exec struct {
 	// invocation, so it is done lazily before the first stage that needs the
 	// workspace — never for a human_gate.
 	envEnsured bool
+	// lastObs is the idle loop's latest poll of the run's merge requests:
+	// what a hand start picks its subject from. Nil before the first poll.
+	lastObs []mrObservation
 	// redact scrubs engine-injected secrets out of everything that leaves the
 	// workspace (PLAN5 M21). Built once per loop from the resolution.
 	redact *redactor
@@ -145,7 +148,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 	e.mu.Unlock()
 
-	if err := x.entryPhaseStarted(); err != nil {
+	if err := x.beginRun(); err != nil {
 		x.exit(err)
 		return
 	}

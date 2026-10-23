@@ -434,13 +434,22 @@ export type OutputSig = {
 export type PhaseInfo = {
 	confirm?: boolean;
 	description?: string;
+	entry?: boolean;
 	id: string;
+	live?: PhaseLive;
 	max: number;
 	quiet_for_s?: number;
 	runs: {
 		[key: string]: number;
 	} | null;
 	signal: string;
+	start: string;
+	total: number;
+};
+
+export type PhaseLive = {
+	parked_at?: string;
+	subject?: string;
 };
 
 export type PingFile = {

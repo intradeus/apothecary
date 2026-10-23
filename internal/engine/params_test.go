@@ -8,6 +8,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"apothecary/internal/event"
 )
 
 // staticBindings is a FlowBindings that answers the same values for every
@@ -117,8 +119,21 @@ func TestRunBeginsAtTheRequestedEntrypoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.e.Wait(id)
-	if v := h.view(t, id); v.BeginPhase != "quick" {
-		t.Errorf("begin_phase = %q", v.BeginPhase)
+	if v := h.view(t, id); v.BeginPhase != "quick" || v.State != "completed" {
+		t.Errorf("begin_phase = %q state %s", v.BeginPhase, v.State)
+	}
+	started := map[string]bool{}
+	var starts []*event.PhaseStarted
+	for _, ev := range h.events(t, id) {
+		switch p := ev.Payload.(type) {
+		case *event.StageStarted:
+			started[p.StageID] = true
+		case *event.PhaseStarted:
+			starts = append(starts, p)
+		}
+	}
+	if !started["fast"] || started["test"] || len(starts) != 1 || starts[0].Phase != "quick" || starts[0].By != "human" {
+		t.Errorf("stages started %v, phase starts %+v", started, starts)
 	}
 	if _, err := h.e.CreateRunWith(ctx, Ticket{Title: "q"}, "knobs", testProject, RunInput{Phase: "nope"}); err == nil || !strings.Contains(err.Error(), "is not an entrypoint") {
 		t.Errorf("unknown phase: err = %v", err)

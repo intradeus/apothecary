@@ -359,13 +359,15 @@ func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
 	}
 }
 
-// A human can start a reaction phase from the idle run; not while a phase
-// runs, not for a phase or repository the run does not have.
+// A human can start any phase from the idle run — on the single open merge
+// request when none is named — not while a phase runs, not for a phase or
+// repository the run does not have. An entrypoint may be started again: its
+// create_mr finds the merge request already open.
 func TestStartPhaseByHand(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
-	if err := ph.e.StartPhase(runID, "deliver", ""); !errors.Is(err, ErrPhaseNotStartable) {
-		t.Errorf("entry phase by hand: %v", err)
+	if err := ph.e.StartPhase(runID, "ghost", ""); !errors.Is(err, ErrPhaseNotStartable) {
+		t.Errorf("unknown phase: %v", err)
 	}
 	if err := ph.e.StartPhase(runID, "conflicts", "ghost"); !errors.Is(err, ErrPhaseNotStartable) {
 		t.Errorf("unknown repo: %v", err)
@@ -375,8 +377,29 @@ func TestStartPhaseByHand(t *testing.T) {
 	}
 	ph.waitPhaseRuns(t, runID, "conflicts", 1)
 	starts := phaseStarts(ph.events(t, runID))
-	if last := starts[len(starts)-1]; last.By != "human" || last.Phase != "conflicts" {
+	if last := starts[len(starts)-1]; last.By != "human" || last.Phase != "conflicts" || last.Subject != "repo" {
 		t.Errorf("start = %+v", last)
+	}
+	if err := ph.e.StartPhase(runID, "deliver", ""); err != nil {
+		t.Fatalf("entrypoint by hand: %v", err)
+	}
+	ph.waitPhaseRuns(t, runID, "deliver", 2)
+	if n := len(ph.view(t, runID).MRs); n != 1 {
+		t.Errorf("merge requests = %d, want the one already open", n)
+	}
+	infos, err := ph.e.RunPhases(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]PhaseInfo{}
+	for _, p := range infos {
+		byID[p.ID] = p
+	}
+	if d := byID["deliver"]; !d.Entry || d.Total != 2 || d.Start != "manual" || d.Live != nil {
+		t.Errorf("deliver = %+v", d)
+	}
+	if c := byID["conflicts"]; c.Entry || c.Total != 1 || c.Runs["repo"] != 1 || c.Start != "confirm" || !c.Confirm {
+		t.Errorf("conflicts = %+v", c)
 	}
 }
 
