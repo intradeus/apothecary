@@ -156,7 +156,8 @@ export type DocPhase = {
 	description?: string;
 	id: string;
 	on: DocWait;
-	stages: Array<DocStage> | null;
+	stages?: Array<DocStage>;
+	then?: string;
 };
 
 export type DocStage = {
@@ -512,12 +513,14 @@ export type PhaseInfo = {
 	id: string;
 	live?: PhaseLive;
 	max: number;
+	outcome?: boolean;
 	quiet_for_s?: number;
 	runs: {
 		[key: string]: number;
 	} | null;
 	signal: string;
 	start: string;
+	then?: string;
 	total: number;
 };
 
@@ -531,11 +534,13 @@ export type PhaseSummary = {
 	entry?: boolean;
 	id: string;
 	max: number;
+	outcome?: boolean;
 	quiet_for?: string;
 	signal: string;
 	stages: number;
 	start: string;
 	subject?: boolean;
+	then?: string;
 };
 
 export type PingFile = {
@@ -780,6 +785,7 @@ export type Signal = {
 	description?: string;
 	entry?: boolean;
 	needs?: string;
+	outcome?: boolean;
 	requires?: string;
 	slug: string;
 	title: string;

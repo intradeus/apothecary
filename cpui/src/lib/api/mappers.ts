@@ -161,6 +161,8 @@ export function toRunPhase(w: Wire.PhaseInfo): RunPhase {
 		signal: w.signal,
 		start: oneOf(['auto', 'confirm', 'manual'] as const, w.start, 'auto'),
 		entry: w.entry ?? false,
+		outcome: w.outcome ?? false,
+		then: w.then || undefined,
 		quietForS: w.quiet_for_s || undefined,
 		max: w.max,
 		runs: w.runs ?? {},
@@ -534,6 +536,8 @@ function toPhaseSummary(p: Wire.PhaseSummary): PhaseSummary {
 		quietFor: p.quiet_for || undefined,
 		max: p.max,
 		entry: p.entry ?? false,
+		outcome: p.outcome ?? false,
+		then: p.then === 'done' || p.then === 'abort' ? p.then : undefined,
 		subject: p.subject ?? false,
 		stages: p.stages
 	};
@@ -626,6 +630,7 @@ export function toSignalSpec(w: Wire.Signal) {
 		needs: w.needs,
 		trigger: w.trigger ?? false,
 		entry: w.entry ?? false,
+		outcome: w.outcome ?? false,
 		debounced: w.debounced ?? false
 	};
 }

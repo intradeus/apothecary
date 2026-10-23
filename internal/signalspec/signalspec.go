@@ -8,12 +8,15 @@
 //	type: human_gate, auto_approve/auto_reject — the signal answers the gate for you
 //
 // A phase's `on:` (FLOWLANG §1) names a signal too: the wait point that
-// opens it. Those carry Trigger (may open a phase while the merge request is
-// open) or Entry (may begin the run itself). `manual` is the one Trigger that
-// never fires on its own — a person gives it from the run page — and
-// `run_start` the one Entry: a run is created for the phase, by a person or
-// an automation. A signal with neither flag is waitable: a wait stage parks
-// on it, a gate's auto-answer takes it.
+// opens it. Those carry Trigger (may open a REACTION while the merge request
+// is open, any number of times), Outcome (may open an OUTCOME, once: the
+// phase ends the run) or Entry (may begin the run itself). `manual` is the
+// one Trigger that never fires on its own — a person gives it from the run
+// page — and `run_start` the one Entry: a run is created for the phase, by a
+// person or an automation. A signal that is not a Trigger or an Entry is
+// waitable: a wait stage parks on it, a gate's auto-answer takes it — the
+// outcome signals among them, so a flow may park on the merge instead of
+// ending on it.
 //
 // The second is why both exist rather than only `wait`: a final gate is a race
 // (a human clicks approve, OR they merge and apothecary notices), and the
@@ -51,6 +54,10 @@ type Signal struct {
 	// Entry marks a signal that begins the run itself: a phase on it is an
 	// entrypoint a run is created at. RunStart is the one today.
 	Entry bool `json:"entry,omitempty"`
+	// Outcome marks a signal that ends the run: a phase on it is an outcome
+	// — it fires once, with the start policies a trigger takes, and must end
+	// the run (done or abort). Still waitable: a wait stage may park on it.
+	Outcome bool `json:"outcome,omitempty"`
 	// Debounced marks a trigger that fires on activity and so accepts a
 	// quiet_for: the phase starts once the activity has stopped.
 	Debounced bool `json:"debounced,omitempty"`
@@ -94,15 +101,17 @@ var registry = []Signal{{
 }, {
 	Slug:        MRMerged,
 	Title:       "Merge request merged",
-	Description: "Fires when the run's merge request is merged on the forge.",
+	Description: "Holds once every merge request the run opened is merged on the forge. A phase on it is an outcome: it fires once and ends the run; a wait stage may park on it instead.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
+	Outcome:     true,
 }, {
 	Slug:        MRClosed,
 	Title:       "Merge request closed unmerged",
-	Description: "Fires when the run's merge request is closed without being merged — someone decided against it on the forge.",
+	Description: "Holds as soon as one of the run's merge requests is closed without being merged — someone decided against it on the forge. A phase on it is an outcome, acting on the closed merge request.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
+	Outcome:     true,
 }, {
 	Slug:        MRConflicts,
 	Title:       "Merge request conflicts with its target",

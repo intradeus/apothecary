@@ -458,12 +458,28 @@ type Phase struct {
 	ID          string
 	Description string
 	On          Wait
-	First, Last int
+	// Then is what a stage-less OUTCOME does when its signal holds:
+	// TerminalDone or TerminalAbort. Empty for a phase with stages, whose
+	// last stage ends the run.
+	Then        string
+	First, Last int // the phase's stages; Last < First for a then-phase
 	Line        int
 }
 
 // IsEntrypoint reports whether a run may begin at this phase (on: run_start).
 func (p *Phase) IsEntrypoint() bool { return p.On.Signal == signalspec.RunStart }
+
+// IsOutcome reports whether the phase ends the run: it opens on an outcome
+// signal (the merge request merged or closed), fires once, and every route
+// in it ends the run.
+func (p *Phase) IsOutcome() bool {
+	sig := signalspec.Get(p.On.Signal)
+	return sig != nil && sig.Outcome
+}
+
+// Observed reports whether the engine watches a signal to open this phase:
+// a reaction's trigger or an outcome's signal, as opposed to a person's act.
+func (p *Phase) Observed() bool { return p.Fires() || p.IsOutcome() }
 
 // Fires reports whether the phase opens on a signal the engine observes (a
 // trigger other than manual).
@@ -473,10 +489,11 @@ func (p *Phase) Fires() bool {
 }
 
 // HasSubject reports whether a run of this phase acts on one merge request:
-// its signal needs one.
+// its signal needs one. mr_merged is the exception — it holds for every
+// merge request at once, so a phase on it acts on none in particular.
 func (p *Phase) HasSubject() bool {
 	sig := signalspec.Get(p.On.Signal)
-	return sig != nil && sig.Needs == signalspec.NeedsMR
+	return sig != nil && sig.Needs == signalspec.NeedsMR && p.On.Signal != signalspec.MRMerged
 }
 
 // Input returns the stage's named binding for name, or nil.
@@ -633,6 +650,31 @@ func (f *Flow) Stage(id string) *Stage {
 		}
 	}
 	return nil
+}
+
+// EndsRun reports whether some route of the flow ends the run: a stage
+// routing to done, or an outcome `then: done`. A flow with none is refused
+// (FLOWLANG §3): it would say nothing about when the work is finished.
+func (f *Flow) EndsRun() bool {
+	for i := range f.Phases {
+		if f.Phases[i].Then == TerminalDone {
+			return true
+		}
+	}
+	for i := range f.Stages {
+		s := &f.Stages[i]
+		if s.OnSuccess == TerminalDone {
+			return true
+		}
+		for _, e := range s.Edges {
+			for link := e; link != nil; link = link.Then {
+				if link.To == TerminalDone {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Index returns the position of the stage id in execution order, or -1.

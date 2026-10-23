@@ -500,8 +500,8 @@ func TestValidationErrors(t *testing.T) {
 
 		{"abort edge with then", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, then: { to: s, max: 1 } } }\n",
 			"then does not apply", 5},
-		{"on_success abort", header + "stages:\n  - { id: s, type: command, run: x, on_success: abort }\n",
-			`on_success cannot be "abort"`, 5},
+		{"no route ends the run", header + "stages:\n  - { id: s, type: command, run: x, on_success: abort }\n",
+			"no route ends the run", 4},
 		{"reserved debug id", header + "stages:\n  - { id: debug, type: command, run: x }\n",
 			"reserved", 5},
 		{"debug edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: debug, max: 2 } }\n",
@@ -673,6 +673,9 @@ func TestDebugLeaf(t *testing.T) {
     on: { signal: mr_review_settled }
     stages:
       - { id: fix, type: agent, agent: b, on_fail: { to: fix, max: 1, then: debug } }
+  - id: shipped
+    on: mr_merged
+    then: done
 `
 	if _, err := Parse("t.yaml", []byte(phased)); err != nil {
 		t.Fatalf("debug inside phases: %v", err)
@@ -753,13 +756,13 @@ func TestAbortAndThenChains(t *testing.T) {
 // TestExplicitSuccessGraph covers DESIGN3 §2.1: sugar defaults, explicit
 // overrides, and mid-flow termination.
 func TestExplicitSuccessGraph(t *testing.T) {
-	// Sugar: absent on_success chains document order; the last stage ends
-	// the phase (end) — only an explicit done ends the run.
+	// Sugar: absent on_success chains document order; the last stage of the
+	// shorthand's one phase ends the run (done) — nothing could follow it.
 	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x }\n  - { id: b, type: command, run: x }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Stages[0].OnSuccess != "b" || f.Stages[1].OnSuccess != TerminalEnd {
+	if f.Stages[0].OnSuccess != "b" || f.Stages[1].OnSuccess != TerminalDone {
 		t.Errorf("sugar chain = %q, %q", f.Stages[0].OnSuccess, f.Stages[1].OnSuccess)
 	}
 
@@ -774,7 +777,7 @@ func TestExplicitSuccessGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Stages[0].OnSuccess != "c" || f.Stages[1].OnSuccess != TerminalDone || f.Stages[2].OnSuccess != TerminalEnd {
+	if f.Stages[0].OnSuccess != "c" || f.Stages[1].OnSuccess != TerminalDone || f.Stages[2].OnSuccess != TerminalDone {
 		t.Errorf("targets = %q %q %q", f.Stages[0].OnSuccess, f.Stages[1].OnSuccess, f.Stages[2].OnSuccess)
 	}
 	if f.Stages[0].Edge(EdgeFail) == nil || f.Stages[0].Edge(EdgeFail).To != "b" {
@@ -853,6 +856,9 @@ const phasedDoc = header + `phases:
     stages:
       - { id: load, type: action, action: load_review_comments }
       - { id: fix, type: command, run: x, input: { comments: artifacts/review.md } }
+  - id: shipped
+    on: mr_merged
+    then: done
 `
 
 func TestPhasedFlowParses(t *testing.T) {
@@ -860,12 +866,16 @@ func TestPhasedFlowParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Phases) != 3 || len(f.Stages) != 6 {
+	if len(f.Phases) != 4 || len(f.Stages) != 6 {
 		t.Fatalf("phases %d stages %d", len(f.Phases), len(f.Stages))
 	}
-	d, c, r := f.Phases[0], f.Phases[1], f.Phases[2]
+	d, c, r, o := f.Phases[0], f.Phases[1], f.Phases[2], f.Phases[3]
 	if !d.IsEntrypoint() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
 		t.Errorf("spans: %+v %+v %+v", d, c, r)
+	}
+	// A then-phase spans no stages: its start is the run's end.
+	if !o.IsOutcome() || o.Then != TerminalDone || o.First != 6 || o.Last != 5 || o.On.Start != StartAuto || o.Fires() || o.HasSubject() || !o.Observed() {
+		t.Errorf("outcome: %+v", o)
 	}
 	if c.On.Start != StartConfirm || c.On.Max != UnlimitedMax || r.On.Start != StartAuto || r.On.QuietFor != time.Hour || r.On.Max != 3 {
 		t.Errorf("wait points: %+v %+v", c.On, r.On)
@@ -892,7 +902,8 @@ func TestPhasedFlowParses(t *testing.T) {
 }
 
 func TestPhaseValidationErrors(t *testing.T) {
-	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
+	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"  - { id: shipped, on: mr_merged, then: done }\n"
 	cases := []struct{ name, doc, substr string }{
 		{"stages and phases", entry + "stages:\n  - { id: s, type: command, run: x }\n", "either top-level stages"},
 		{"no entrypoint", header + "phases:\n  - { id: c, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "no phase begins a run"},
@@ -900,14 +911,21 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"start on manual", entry + "  - { id: m, on: { signal: manual, start: confirm }, stages: [{ id: s, type: command, run: x }] }\n", "start does not apply"},
 		{"start on run_start", header + "phases:\n  - { id: d, on: { signal: run_start, start: auto }, stages: [{ id: s, type: command, run: x }] }\n", "start does not apply"},
 		{"bad start", entry + "  - { id: m, on: { signal: mr_conflicts, start: later }, stages: [{ id: s, type: command, run: x }] }\n", `start "later" must be`},
-		{"waitable signal opens nothing", entry + "  - { id: m, on: mr_merged, stages: [{ id: s, type: command, run: x }] }\n", "something to wait for"},
+		{"then on a trigger", entry + "  - { id: m, on: mr_conflicts, then: done }\n", "then is for an outcome phase"},
+		{"then and stages", entry + "  - { id: m, on: mr_closed, then: abort, stages: [{ id: s, type: command, run: x }] }\n", "stages or then, not both"},
+		{"bad then", entry + "  - { id: m, on: mr_closed, then: finish }\n", `then "finish" must be`},
+		{"max on an outcome", entry + "  - { id: m, on: { signal: mr_closed, max: 2 }, then: abort }\n", "max does not apply to an outcome"},
+		{"quiet_for on an outcome", entry + "  - { id: m, on: { signal: mr_closed, quiet_for: 1h }, then: abort }\n", "quiet_for applies only"},
+		{"end inside an outcome", entry + "  - { id: m, on: mr_closed, stages: [{ id: s, type: command, run: x, on_success: end }] }\n", `phase "m" is an outcome and ends the run`},
+		{"end on an outcome's edge", entry + "  - { id: m, on: mr_closed, stages: [{ id: s, type: command, run: x, on_fail: end }] }\n", `on_fail: phase "m" is an outcome and ends the run`},
+		{"no route ends the run", header + "phases:\n  - { id: d, on: run_start, stages: [{ id: s, type: command, run: x }] }\n", "no route ends the run"},
 		{"unknown signal", entry + "  - { id: m, on: mr_ghost, stages: [{ id: s, type: command, run: x }] }\n", "unknown signal"},
 		{"quiet on conflicts", entry + "  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, stages: [{ id: s, type: command, run: x }] }\n", "quiet_for applies only"},
 		{"quiet too short", entry + "  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, stages: [{ id: s, type: command, run: x }] }\n", "at least 1m"},
 		{"max zero", entry + "  - { id: m, on: { signal: mr_conflicts, max: 0 }, stages: [{ id: s, type: command, run: x }] }\n", "max must be >= 1"},
 		{"confirm is not grammar", entry + "  - { id: m, on: { signal: mr_conflicts, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "field confirm not found"},
 		{"unknown trigger key", entry + "  - { id: m, on: { signal: mr_conflicts, when: now }, stages: [{ id: s, type: command, run: x }] }\n", "field when not found"},
-		{"empty phase", entry + "  - { id: m, on: mr_conflicts, stages: [] }\n", "at least one stage"},
+		{"empty phase", entry + "  - { id: m, on: mr_conflicts, stages: [] }\n", "a phase needs stages"},
 		{"duplicate phase", entry + "  - { id: deliver, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "duplicate phase id"},
 		{"duplicate stage across phases", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n", "one namespace"},
 		{"route leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n", "stay inside it"},
@@ -958,7 +976,8 @@ func TestPhaseShapeWarnings(t *testing.T) {
 	}
 	doc := header + "phases:\n" +
 		"  - { id: d, on: run_start, stages: [{ id: s, type: action, action: sync_target }, { id: p, type: action, action: push_branch }] }\n" +
-		"  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x, each_repo: true }, { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n"
+		"  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x, each_repo: true }, { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
+		"  - { id: shipped, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
@@ -966,7 +985,7 @@ func TestPhaseShapeWarnings(t *testing.T) {
 	if !warned(f, `"sync_target" acts on the merge request`) || !warned(f, "each_repo is ignored") || warned(f, "needs a merge request no stage opens") {
 		t.Errorf("warnings = %v", f.Warnings)
 	}
-	noMR := header + "phases:\n  - { id: d, on: run_start, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n"
+	noMR := header + "phases:\n  - { id: d, on: run_start, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n  - { id: shipped, on: mr_merged, then: done }\n"
 	if f, err := Parse("t.yaml", []byte(noMR)); err != nil || !warned(f, "needs a merge request no stage opens") {
 		t.Errorf("err %v warnings %v", err, f.Warnings)
 	}
@@ -996,7 +1015,7 @@ func TestEdgeToEndOrDone(t *testing.T) {
 	if f.Stage("d").OnSuccess != "e" || f.Stage("e").OnSuccess != TerminalDone {
 		t.Errorf("on_success: d %q e %q", f.Stage("d").OnSuccess, f.Stage("e").OnSuccess)
 	}
-	g, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x, on_success: end }\n"))
+	g, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x, on_success: end, on_fail: done }\n"))
 	if err != nil || g.Stage("a").OnSuccess != TerminalEnd {
 		t.Errorf("on_success: end = %v, %v", g, err)
 	}
@@ -1061,7 +1080,8 @@ func TestEndingWarnings(t *testing.T) {
 // A phase runs as often as its signal brings a new fact: unbounded unless
 // the flow caps it, whatever its start policy.
 func TestPhaseRunsAreUnboundedByDefault(t *testing.T) {
-	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
+	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"  - { id: shipped, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(entry+
 		"  - { id: a, on: mr_conflicts, stages: [{ id: s1, type: command, run: x }] }\n"+
 		"  - { id: b, on: { signal: mr_review_settled, quiet_for: 1h, max: -1 }, stages: [{ id: s2, type: command, run: x }] }\n"+
@@ -1172,9 +1192,56 @@ func TestTrackerActionBindings(t *testing.T) {
 	}
 	phased := "name: tk\nversion: 4\nparameters: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
 		"  - { id: deliver, on: run_start, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
-		"  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n"
+		"  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n" +
+		"  - { id: shipped, on: mr_merged, then: done }\n"
 	if f, err := Parse("t.yaml", []byte(phased)); err != nil || needsMR(f) != 0 {
 		t.Errorf("link in a reaction phase: err %v warnings %v", err, f.Warnings)
+	}
+}
+
+// Outcomes (FLOWLANG §1): a phase on mr_merged or mr_closed ends the run. It
+// takes a start policy like a trigger, no max or quiet_for, and fires once;
+// with stages, its last stage's implicit success is done; with none, `then`
+// says done or abort. on_success may say abort anywhere; the outcome signals
+// stay waitable; and a flow needs some route to done.
+func TestOutcomes(t *testing.T) {
+	doc := header + "phases:\n" +
+		"  - { id: d, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }, { id: w, type: wait, for: mr_closed, on_fail: end }] }\n" +
+		"  - id: merged\n    on: { signal: mr_merged, start: confirm }\n    stages:\n      - { id: tidy, type: command, run: x }\n      - { id: last, type: command, run: x, on_fail: abort }\n" +
+		"  - { id: closed, on: mr_closed, then: abort }\n" +
+		"  - { id: giveup, on: manual, stages: [{ id: g, type: command, run: x, on_success: abort, on_fail: done }] }\n"
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, closed := f.Phase("merged"), f.Phase("closed")
+	if !merged.IsOutcome() || !merged.Observed() || merged.Fires() || merged.HasSubject() || merged.On.Start != StartConfirm || merged.On.Max != UnlimitedMax || merged.Then != "" {
+		t.Errorf("merged = %+v", merged)
+	}
+	if f.Stage("tidy").OnSuccess != "last" || f.Stage("last").OnSuccess != TerminalDone {
+		t.Errorf("an outcome's chain: tidy→%s last→%s", f.Stage("tidy").OnSuccess, f.Stage("last").OnSuccess)
+	}
+	if !closed.IsOutcome() || !closed.HasSubject() || closed.Then != TerminalAbort || closed.On.Start != StartAuto || closed.First != 4 || closed.Last != 3 { // no stages of its own; g follows at 4
+		t.Errorf("closed = %+v", closed)
+	}
+	if f.Stage("g").OnSuccess != TerminalAbort || f.Stage("w").WaitFor != "mr_closed" || !f.EndsRun() {
+		t.Errorf("g→%s w waits on %s ends %v", f.Stage("g").OnSuccess, f.Stage("w").WaitFor, f.EndsRun())
+	}
+	for _, w := range f.Warnings {
+		if strings.Contains(w, "ends the whole run") {
+			t.Errorf("an outcome ending the run is not a slip: %s", w)
+		}
+	}
+	// The done rule counts a then: done, an on_success: done and an edge to done.
+	for _, tc := range []struct{ name, tail string }{
+		{"then", "  - { id: o, on: mr_merged, then: done }\n"},
+		{"on_success", "  - { id: o, on: manual, stages: [{ id: s, type: command, run: x, on_success: done }] }\n"},
+		{"edge", "  - { id: o, on: manual, stages: [{ id: s, type: command, run: x, on_fail: done }] }\n"},
+	} {
+		base := header + "phases:\n  - { id: d, on: run_start, stages: [{ id: b, type: command, run: x }] }\n"
+		if f, err := Parse("t.yaml", []byte(base+tc.tail)); err != nil || !f.EndsRun() {
+			t.Errorf("%s: err %v", tc.name, err)
+		}
 	}
 }
 
@@ -1185,7 +1252,8 @@ func TestEntrypoints(t *testing.T) {
 	doc := header + "phases:\n" +
 		"  - { id: polish, on: { signal: manual, max: 3 }, stages: [{ id: shine, type: command, run: x }] }\n" +
 		"  - { id: deliver, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
-		"  - { id: quick, on: run_start, stages: [{ id: mr2, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n"
+		"  - { id: quick, on: run_start, stages: [{ id: mr2, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
+		"  - { id: shipped, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
@@ -1237,6 +1305,9 @@ phases:
     on: { signal: mr_conflicts, start: $mode }
     stages:
       - { id: sync, type: action, action: sync_target }
+  - id: shipped
+    on: mr_merged
+    then: done
 `
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
@@ -1349,7 +1420,8 @@ func TestParamSites(t *testing.T) {
 		"      - { id: c, type: command, run: \"echo $HOME\", run_ref: $s, timeout: $d }\n"
 	ok = strings.Replace(ok, "run: \"echo $HOME\", run_ref: $s", "run: \"echo $HOME\"", 1)
 	ok += "      - { id: w, type: wait, for: mr_merged }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
-		"  - id: cf\n    on: { signal: mr_conflicts, start: $big, max: $n, quiet_for: $d }\n    stages: [{ id: x, type: command, run: x }]\n"
+		"  - id: cf\n    on: { signal: mr_conflicts, start: $big, max: $n, quiet_for: $d }\n    stages: [{ id: x, type: command, run: x }]\n" +
+		"  - { id: shipped, on: mr_merged, then: done }\n"
 	ok = strings.Replace(ok, "start: $big, max: $n, quiet_for: $d", "start: $big, max: $n", 1)
 	f, err := Parse("t.yaml", []byte(ok))
 	if err != nil {
@@ -1396,6 +1468,9 @@ parameters:
     on: { signal: mr_conflicts, start: $mode, max: -1 }
     stages:
       - { id: s, type: action, action: sync_target }
+  - id: shipped
+    on: mr_merged
+    then: done
 `
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
@@ -1495,7 +1570,8 @@ func TestWhen(t *testing.T) {
 func TestDocJSONShapes(t *testing.T) {
 	doc := "name: t\nversion: 4\nparameters:\n  harness: fake\n  model: a/b\n  turns: 3\n  cost: 1.5\n  gate: true\n  mode: { default: a, enum: [a, b], description: pick }\n" + commonAgents +
 		"phases:\n  - id: d\n    on: run_start\n    stages:\n      - { id: s, type: agent, agent: b, max_turns: $turns, when: $gate }\n" +
-		"  - id: c\n    on: { signal: mr_conflicts, max: $turns }\n    stages: [{ id: x, type: command, run: x }]\n"
+		"  - id: c\n    on: { signal: mr_conflicts, max: $turns }\n    stages: [{ id: x, type: command, run: x }]\n" +
+		"  - { id: o, on: mr_merged, then: done }\n"
 	d, err := ParseDoc("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
@@ -1507,6 +1583,7 @@ func TestDocJSONShapes(t *testing.T) {
 	for _, want := range []string{
 		`"parameters":{"harness":{"default":"fake"},"model":{"default":"a/b"},"turns":{"default":3},"cost":{"default":1.5},"gate":{"default":true},"mode":{"default":"a","description":"pick","enum":["a","b"]}}`,
 		`"max_turns":"$turns"`, `"when":"$gate"`, `"on":{"signal":"run_start"}`, `"on":{"signal":"mr_conflicts","max":"$turns"}`,
+		`{"id":"o","on":{"signal":"mr_merged"},"then":"done"}`,
 	} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("json missing %s:\n%s", want, b)

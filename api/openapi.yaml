@@ -329,12 +329,12 @@ components:
         stages:
           items:
             $ref: '#/components/schemas/DocStage'
-          nullable: true
           type: array
+        then:
+          type: string
       required:
         - id
         - "on"
-        - stages
       type: object
     DocStage:
       properties:
@@ -1105,6 +1105,8 @@ components:
           $ref: '#/components/schemas/PhaseLive'
         max:
           type: integer
+        outcome:
+          type: boolean
         quiet_for_s:
           type: integer
         runs:
@@ -1115,6 +1117,8 @@ components:
         signal:
           type: string
         start:
+          type: string
+        then:
           type: string
         total:
           type: integer
@@ -1143,6 +1147,8 @@ components:
           type: string
         max:
           type: integer
+        outcome:
+          type: boolean
         quiet_for:
           type: string
         signal:
@@ -1153,6 +1159,8 @@ components:
           type: string
         subject:
           type: boolean
+        then:
+          type: string
       required:
         - id
         - max
@@ -1740,6 +1748,8 @@ components:
           type: boolean
         needs:
           type: string
+        outcome:
+          type: boolean
         requires:
           type: string
         slug:

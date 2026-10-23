@@ -63,11 +63,15 @@ phases:
     on: { signal: mr_conflicts, start: manual }
     stages:
       - { id: fix, type: command, run: "true" }
+  - id: shipped
+    on: mr_merged
+    then: done
 `
 
-// A phase that opens on a forge signal needs the forge, like a wait stage
-// does; run_start and manual phases need nothing. Checked on the flow's
-// refs, which PreflightProject and run creation share.
+// A phase that opens on a forge signal — a reaction's trigger, an outcome —
+// needs the forge, like a wait stage does; run_start and manual phases need
+// nothing. Checked on the flow's refs, which PreflightProject and run
+// creation share.
 func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	fl := mustFlow(t, phaseSignalDoc)
 	h := newHarness(t, fl)
@@ -79,7 +83,13 @@ func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `phase "conflicts"`) || !strings.Contains(err.Error(), "forge") {
 		t.Fatalf("without a forge: err = %v", err)
 	}
-	noFire := mustFlow(t, strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1))
+	onlyOutcome := mustFlow(t, strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1))
+	if err := h.e.preflightFlowRefs(h.res, onlyOutcome); err == nil || !strings.Contains(err.Error(), `phase "shipped"`) {
+		t.Errorf("an outcome without a forge: err = %v", err)
+	}
+	noFire := mustFlow(t, strings.Replace(strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1),
+		"  - id: shipped\n    on: mr_merged\n    then: done\n",
+		"  - id: finish\n    on: manual\n    stages:\n      - { id: wrap, type: command, run: \"true\", on_success: done }\n", 1))
 	if err := h.e.preflightFlowRefs(h.res, noFire); err != nil {
 		t.Errorf("manual phases without a forge: %v", err)
 	}

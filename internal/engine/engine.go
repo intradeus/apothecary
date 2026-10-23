@@ -1401,7 +1401,7 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	// observe. run_start and manual phases need nothing.
 	for i := range fl.Phases {
 		ph := &fl.Phases[i]
-		if !ph.Fires() {
+		if !ph.Observed() {
 			continue
 		}
 		if err := res.signalAvailable(ph.On.Signal); err != nil {
@@ -2630,7 +2630,7 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 	for i := range fl.Phases {
 		ph := &fl.Phases[i]
-		if !ph.Fires() {
+		if !ph.Observed() {
 			continue
 		}
 		if err := res.signalAvailable(ph.On.Signal); err != nil {

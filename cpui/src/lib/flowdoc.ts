@@ -163,6 +163,9 @@ export interface DocPhase {
 	id: string;
 	description?: string;
 	on: DocTrigger;
+	/** An OUTCOME with nothing to do but end the run: `then: done` or
+	 *  `then: abort` in place of stages. */
+	then?: string;
 }
 
 // RUN_START opens an entrypoint: a run is created for the phase. MANUAL opens
@@ -171,6 +174,13 @@ export interface DocPhase {
 export const RUN_START = 'run_start';
 export const MANUAL = 'manual';
 export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
+/** The signals whose phase is an OUTCOME — it opens once and ends the run.
+ *  Mirrors signalspec's Outcome flag: the registry (GET /api/signals) is the
+ *  truth and the pickers read it; this list only shapes what the document
+ *  model cannot ask the server for — the implicit `done` of an outcome's
+ *  last stage. */
+export const OUTCOME_SIGNALS = ['mr_merged', 'mr_closed'];
+export const isOutcome = (w: DocWait) => OUTCOME_SIGNALS.includes(w.signal);
 export type StartPolicy = (typeof START_POLICIES)[number];
 
 /** One parameter of the flow's `parameters:` block (FLOWLANG §1): its
@@ -350,7 +360,11 @@ export function effectiveSuccess(doc: FlowDoc, i: number): string {
 	const s = doc.stages[i];
 	if (s.on_success) return s.on_success;
 	const next = doc.stages[i + 1];
-	return !next || (next.phase ?? '') !== (s.phase ?? '') ? END : next.id;
+	if (next && (next.phase ?? '') === (s.phase ?? '')) return next.id;
+	// The phase's last stage ends the phase — unless nothing could follow:
+	// the shorthand's one phase and an outcome end the run.
+	const ph = doc.phases?.find((p) => p.id === s.phase);
+	return !doc.phases?.length || (ph && isOutcome(ph.on)) ? DONE : END;
 }
 
 export function edgeOf(s: DocStage, kind: EdgeKind): DocEdge | undefined {
@@ -530,7 +544,10 @@ export function docToYaml(doc: FlowDoc): string {
 			const o: Record<string, unknown> = { id: ph.id };
 			if (ph.description) o.description = ph.description;
 			o.on = triggerYaml(ph.on);
-			o.stages = ordered.filter((s) => s.phase === ph.id).map(stageYaml);
+			// A stage-less outcome says `then`; any stage makes it a chain.
+			const own = ordered.filter((s) => s.phase === ph.id);
+			if (ph.then && !own.length) o.then = ph.then;
+			else o.stages = own.map(stageYaml);
 			return o;
 		});
 	} else {

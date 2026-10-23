@@ -136,6 +136,25 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	if f.Agent("replier").ReviewRepliesOutput() == nil {
 		t.Error("the replier must declare a review_replies output, or bad replies reach the forge")
 	}
+	// The run ends in an outcome: merged finishes it (the ticket's done is
+	// best effort), closed unmerged sends the ticket back and abandons it.
+	merged, closed := f.Phase("merged"), f.Phase("closed")
+	if merged == nil || !merged.IsOutcome() || closed == nil || !closed.IsOutcome() {
+		t.Fatalf("outcomes: merged %+v closed %+v", merged, closed)
+	}
+	if st := f.Stage("ticket_done"); st == nil || st.Phase != "merged" || st.OnSuccess != flow.TerminalDone ||
+		st.Edge(flow.EdgeFail) == nil || st.Edge(flow.EdgeFail).To != flow.TerminalDone {
+		t.Errorf("ticket_done = %+v, want best effort inside the merged outcome", st)
+	}
+	if st := f.Stage("ticket_back"); st == nil || st.Phase != "closed" || st.OnSuccess != flow.TerminalAbort ||
+		st.Edge(flow.EdgeFail) == nil || st.Edge(flow.EdgeFail).To != flow.TerminalAbort {
+		t.Errorf("ticket_back = %+v, want the closed outcome to abandon the run either way", st)
+	}
+	for i := range f.Stages {
+		if s := &f.Stages[i]; s.Type == flow.StageWait {
+			t.Errorf("stage %s: the default parks on nothing — its outcomes end the run", s.ID)
+		}
+	}
 	// Every human_gate says what it is asking: a gate with no question would
 	// park the run on an unexplained decision.
 	for i := range f.Stages {

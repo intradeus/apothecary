@@ -453,8 +453,11 @@ export function describe(e: RunEvent): Described {
 				tone: 'ok'
 			};
 		case 'run_abandoned':
+			// An outcome's `then: abort` names no stage: the flow ended the run.
 			return {
-				text: t('run.event.abandoned', { stage: String(p.stalled_at), reason: String(p.reason) }),
+				text: p.stalled_at
+					? t('run.event.abandoned', { stage: String(p.stalled_at), reason: String(p.reason) })
+					: t('run.event.abandonedBy', { reason: String(p.reason) }),
 				tone: 'bad'
 			};
 		case 'run_failed':

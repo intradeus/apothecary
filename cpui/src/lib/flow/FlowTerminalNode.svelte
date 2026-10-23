@@ -4,7 +4,8 @@
 	//    begins with — naming what begins it; its handle drags onto a stage
 	//    to make that stage the entry. Each reaction phase draws its own
 	//    beginning (data.entry false), violet and dashed, naming its signal:
-	//    one beginning per phase, one phase per beginning.
+	//    one beginning per phase, one phase per beginning. An outcome's
+	//    (data.outcome) is green: the phase opens once and ends the run.
 	//  - end (tea, dashed): a phase is over and the run goes back to waiting —
 	//    where most chains close, a reaction's always.
 	//  - done (grn, dashed) and abort (ros, dashed): where the RUN ends.
@@ -20,12 +21,14 @@
 
 	let { type, data }: NodeProps = $props();
 
-	type Tone = 'start' | 'trigger' | 'end' | 'done' | 'abort' | 'debug';
+	type Tone = 'start' | 'trigger' | 'outcome' | 'end' | 'done' | 'abort' | 'debug';
 	const tone = $derived<Tone>(
 		type === 'start'
 			? data?.entry
 				? 'start'
-				: 'trigger'
+				: data?.outcome
+					? 'outcome'
+					: 'trigger'
 			: type === 'abort'
 				? 'abort'
 				: type === 'debug'
@@ -37,6 +40,7 @@
 	const HUE: Record<Tone, Hue> = {
 		start: 'brand',
 		trigger: 'vio',
+		outcome: 'grn',
 		end: 'tea',
 		done: 'grn',
 		abort: 'ros',
@@ -45,6 +49,7 @@
 	const GLYPH: Record<Tone, string> = {
 		start: I.play,
 		trigger: I.play,
+		outcome: I.play,
 		end: I.loop,
 		done: I.ok,
 		abort: I.bad,
@@ -53,14 +58,14 @@
 	const TITLE: Record<Tone, () => string> = {
 		start: () => t('flow.term.start'),
 		trigger: () => '',
+		outcome: () => '',
 		end: () => t('flow.term.end'),
 		done: () => t('flow.term.done'),
 		abort: () => t('flow.term.abort'),
 		debug: () => t('flow.term.debug')
 	};
-	const label = $derived(
-		tone === 'start' || tone === 'trigger' ? ((data?.label as string | undefined) ?? 'start') : tone
-	);
+	const marker = $derived(tone === 'start' || tone === 'trigger' || tone === 'outcome');
+	const label = $derived(marker ? ((data?.label as string | undefined) ?? 'start') : tone);
 	const title = $derived((data?.title as string | undefined) ?? TITLE[tone]());
 	const handle = '--xy-handle-background-color: var(--h)';
 </script>
@@ -70,7 +75,7 @@
 		<Handle type="target" position={Position.Left} style={handle} />
 	{/if}
 	<span class="l">{label}</span><span class="g">{GLYPH[tone]}</span>
-	{#if tone === 'start' || tone === 'trigger' || tone === 'debug'}
+	{#if marker || tone === 'debug'}
 		<Handle type="source" position={Position.Right} style={handle} />
 	{/if}
 </div>
@@ -100,7 +105,8 @@
 		font-size: var(--fs-title);
 		line-height: 1.1;
 	}
-	.trigger .l {
+	.trigger .l,
+	.outcome .l {
 		font-size: var(--fs-aside);
 	}
 	.g {

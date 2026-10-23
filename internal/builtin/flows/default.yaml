@@ -21,12 +21,10 @@ parameters:
   review_start:    { default: auto, enum: [auto, confirm, manual], description: "how a review-fix round begins" }
 # Phases: every phase is a chain of stages opened by a wait point, its `on:`.
 # `deliver` opens when the run is created (on: run_start): plan, build,
-# review, open the merge request, then PARK on wait_merge until the merge
-# request merges — the ticket is done, and only then does the flow say
-# `done`: the run is finished — or is closed unmerged (abort: the run is
-# abandoned). While it is parked the run is idle, and the reactions open on
-# their own signals, one at a time, on the merge request the signal carries,
-# as often as it brings something new — a reaction has no run cap:
+# review, open the merge request — and ends: the run is in review. From there
+# the run is idle, and the REACTIONS open on their own signals, one at a
+# time, on the merge request the signal carries, as often as it brings
+# something new — a reaction has no run cap:
 #   conflicts     the target moved and the MR no longer merges — the engine
 #                 merges the target in; a conflict is resolved by an agent
 #                 editing the files, never by an agent running git. Opens by
@@ -35,11 +33,16 @@ parameters:
 #                 the threads worth fixing; those are fixed in one batch,
 #                 tested, pushed, and answered on their threads
 # A reaction never finishes the run: it closes with `end`, and the run goes
-# back to waiting for the merge. Even its dead ends — a failure with nowhere
-# to go, you giving up at its debug leaf — end only that round. Any phase can
-# also be started by hand from the run page while the run is idle, and a gate
-# parks its phase the way a wait does: the run stays alive for whatever else
-# needs doing meanwhile.
+# back to waiting. Even its dead ends — a failure with nowhere to go, you
+# giving up at its debug leaf — end only that round. The run ends in an
+# OUTCOME: a phase that opens once, on what became of the merge request:
+#   merged        every merge request merged — the ticket is done, and so is
+#                 the run (done)
+#   closed        a merge request closed unmerged — the ticket goes back to
+#                 its to-do, and the run is abandoned (abort)
+# Any phase can also be started by hand from the run page while the run is
+# idle, and a gate parks its phase the way a wait does: the run stays alive
+# for whatever else needs doing meanwhile.
 #
 # The ticket's tracker issue follows the work in CANONICAL statuses —
 # in_progress as the run starts, in_review once the merge request is open,
@@ -401,23 +404,13 @@ phases:
           on_fail: debug }
       # The merge request opens, and the issue moves to its in-review status
       # right after. A tracker hiccup is not worth stopping for: best effort.
+      # Then the phase ends and the run is in review: the reactions below
+      # keep the merge request healthy, and the outcomes end the run.
       - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },
           on_success: in_review }
       - { id: in_review,  type: action, action: ticket_transition, input: { to: in_review },
           description: "move the ticket's tracker issue to its in-review status",
-          on_success: wait_merge,
-          on_fail: { to: wait_merge, max: 1 } }
-      # The phase parks here — the run is in review — while the phases below
-      # react to the merge request, as many times as they need. Merged, the
-      # phase goes on to the ticket's done and the run is done; closed
-      # unmerged, the flow says what that means: abort.
-      - { id: wait_merge, type: wait, for: mr_merged,
-          description: "wait for the merge request to merge; a close abandons the run",
-          on_fail: abort }
-      - { id: ticket_done, type: action, action: ticket_transition, input: { to: done },
-          description: "move the ticket's tracker issue to its done status",
-          on_success: done,
-          on_fail: done }
+          on_fail: end }
 
   # The target moved under the merge request. How a fix begins is the
   # project's call ($conflicts_start): by itself, after asking in the inbox
@@ -483,3 +476,25 @@ phases:
           on_fail: { to: reply, max: 1, then: debug } }
       - { id: post,       type: action, action: reply_review_comments, input: { replies: artifacts/replies.yaml },
           on_success: end }
+
+  # ---- outcomes: once, and the run is over --------------------------------
+  # Merged: the ticket is done, and so is the run. The tracker is best
+  # effort here too — a hiccup moving the issue never un-finishes the work.
+  - id: merged
+    on: mr_merged
+    description: "every merge request merged — the ticket is done, the run is done"
+    stages:
+      - { id: ticket_done, type: action, action: ticket_transition, input: { to: done },
+          description: "move the ticket's tracker issue to its done status",
+          on_fail: done }
+
+  # Closed unmerged: someone decided against the change on the forge. The
+  # ticket goes back to its to-do for a person to pick up, and the run is
+  # abandoned — the decision was theirs, so nobody is asked again.
+  - id: closed
+    on: mr_closed
+    description: "a merge request closed unmerged — the ticket goes back to to-do, the run is abandoned"
+    stages:
+      - { id: ticket_back, type: action, action: ticket_transition, input: { to: todo },
+          description: "move the ticket's tracker issue back to its to-do status",
+          on_success: abort, on_fail: abort }

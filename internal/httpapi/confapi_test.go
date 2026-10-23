@@ -534,7 +534,7 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 	projectID := x.wizard(t)
 	base := "/api/projects/" + projectID
 	doc := "name: knobs\nversion: 4\nparameters: { harness: fake, model: a/b, mode: { default: confirm, enum: [auto, confirm, manual] } }\nagents: []\n" +
-		"phases:\n  - id: main\n    on: run_start\n    stages:\n      - { id: s, type: command, run: x }\n" +
+		"phases:\n  - id: main\n    on: run_start\n    stages:\n      - { id: s, type: command, run: x, on_success: done }\n" +
 		"  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n"
 	type described struct {
 		Name       string `json:"name"`
@@ -683,7 +683,8 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	doc := "name: p\nversion: 4\nparameters:\n  harness: fake\n  model: a/b\n  mode: { default: confirm, enum: [auto, confirm, manual] }\n  turns: 3\n" +
 		"agents:\n  - { name: b, prompt: build }\n" +
 		"phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: agent, agent: b, max_turns: $turns }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
-		"  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n"
+		"  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n" +
+		"  - { id: shipped, on: mr_merged, then: done }\n"
 	var vr struct {
 		OK         bool     `json:"ok"`
 		Errors     []string `json:"errors"`
@@ -701,6 +702,8 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 			Start   string `json:"start"`
 			Max     int    `json:"max"`
 			Entry   bool   `json:"entry"`
+			Outcome bool   `json:"outcome"`
+			Then    string `json:"then"`
 			Subject bool   `json:"subject"`
 			Stages  int    `json:"stages"`
 		} `json:"phases"`
@@ -712,8 +715,9 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	if len(vr.Parameters) != 8 || vr.Parameters[0].Name != "harness" || !vr.Parameters[0].Known || vr.Parameters[2].Name != "mode" || vr.Parameters[3].Type != "int" {
 		t.Errorf("parameters = %+v", vr.Parameters)
 	}
-	if len(vr.Refs) != 2 || len(vr.Phases) != 2 || !vr.Phases[0].Entry || vr.Phases[0].Signal != "run_start" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
-		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != -1 {
+	if len(vr.Refs) != 2 || len(vr.Phases) != 3 || !vr.Phases[0].Entry || vr.Phases[0].Signal != "run_start" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
+		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != -1 ||
+		!vr.Phases[2].Outcome || vr.Phases[2].Then != "done" || vr.Phases[2].Stages != 0 || vr.Phases[2].Start != "auto" || vr.Phases[2].Subject {
 		t.Errorf("refs = %+v phases = %+v", vr.Refs, vr.Phases)
 	}
 	// Bound values: a legal one changes the summary, an illegal one is an error.

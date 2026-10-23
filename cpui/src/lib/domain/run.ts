@@ -102,6 +102,10 @@ export interface RunPhase {
 	start: 'auto' | 'confirm' | 'manual';
 	/** A run may begin at this phase. */
 	entry: boolean;
+	/** The phase ends the run: it opens once, when its signal holds. `then`
+	 *  is what a stage-less outcome does (done or abort). */
+	outcome: boolean;
+	then?: string;
 	/** Debounce, in seconds (review comments). */
 	quietForS?: number;
 	/** Runs allowed per merge request; -1 = unlimited. */

@@ -391,6 +391,8 @@ type PhaseSummary struct {
 	QuietFor    string `json:"quiet_for,omitempty"`
 	Max         int    `json:"max"`
 	Entry       bool   `json:"entry,omitempty"`
+	Outcome     bool   `json:"outcome,omitempty"`
+	Then        string `json:"then,omitempty"`
 	Subject     bool   `json:"subject,omitempty"`
 	Stages      int    `json:"stages"`
 }
@@ -401,7 +403,7 @@ func phaseSummaries(f *flow.Flow) []PhaseSummary {
 	for i := range f.Phases {
 		ph := &f.Phases[i]
 		ps := PhaseSummary{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Start: string(ph.On.Start),
-			Max: ph.On.Max, Entry: ph.IsEntrypoint(), Subject: ph.HasSubject(), Stages: ph.Last - ph.First + 1}
+			Max: ph.On.Max, Entry: ph.IsEntrypoint(), Outcome: ph.IsOutcome(), Then: ph.Then, Subject: ph.HasSubject(), Stages: ph.Last - ph.First + 1}
 		if ph.On.QuietFor > 0 {
 			ps.QuietFor = ph.On.QuietFor.String()
 		}

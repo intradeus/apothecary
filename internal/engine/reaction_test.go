@@ -258,6 +258,9 @@ phases:
       - { id: reply, type: agent, agent: replier, input: { comments: artifacts/review.md, failure: $FAILURE },
           on_fail: { to: reply, max: 1 } }
       - { id: post, type: action, action: reply_review_comments, input: { replies: artifacts/replies.yaml } }
+  - id: shipped
+    on: mr_merged
+    then: done
 `
 
 type reactionHarness struct {

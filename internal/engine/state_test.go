@@ -19,7 +19,7 @@ phases:
       - { id: build, type: command, run: "true" }
       - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
       - { id: merged, type: wait, for: mr_merged }
-      - { id: after, type: command, run: "true" }
+      - { id: after, type: command, run: "true", on_success: done }
   - id: conflicts
     on: mr_conflicts
     stages:

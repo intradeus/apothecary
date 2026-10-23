@@ -70,11 +70,25 @@
 	const opens = (p: RunPhase) => {
 		if (p.signal === 'run_start') return t('run.phases.entrypoint');
 		if (p.signal === 'manual') return t('run.phases.byHand');
+		const signal = titles[p.signal] ?? p.signal;
+		if (p.outcome) {
+			// An outcome opens once and ends the run: done, or abandoned.
+			const ends =
+				p.then === 'abort'
+					? t('run.phases.abandonsOn', { signal })
+					: t('run.phases.endsOn', { signal });
+			return `${ends} · ${t(`run.phases.start.${p.start}`)}`;
+		}
 		const quiet = p.quietForS
 			? t('run.phases.quiet', { minutes: Math.round(p.quietForS / 60) })
 			: '';
-		return `${t('run.phases.on', { signal: titles[p.signal] ?? p.signal })}${quiet} · ${t(`run.phases.start.${p.start}`)}`;
+		return `${t('run.phases.on', { signal })}${quiet} · ${t(`run.phases.start.${p.start}`)}`;
 	};
+	/** "2/∞ runs" — or, for an outcome, that it happens once. */
+	const usage = (p: RunPhase) =>
+		p.outcome
+			? t('run.phases.once')
+			: t('run.phases.usage', { used: p.total, max: p.max === -1 ? '∞' : p.max });
 	const pending = (p: RunPhase) => p.holds.filter((h) => !h.seen);
 	const spent = (p: RunPhase) =>
 		p.max !== -1 &&
@@ -128,10 +142,7 @@
 							>{/if}
 					</div>
 					<span class="mut ell"
-						>{opens(p)} · {t('run.phases.usage', {
-							used: p.total,
-							max: p.max === -1 ? '∞' : p.max
-						})}{#if p.live}
+						>{opens(p)} · {usage(p)}{#if p.live}
 							· <span class="tx"
 								>{p.live.parkedAt
 									? t('run.phases.parkedAt', { stage: p.live.parkedAt })

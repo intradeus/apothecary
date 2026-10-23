@@ -93,6 +93,7 @@ phases:
       - { id: sync, type: action, action: sync_target, when: subject }
       - { id: load, type: action, action: load_review_comments, on_fail: end }
       - { id: shine, type: command, run: "./shine.sh" }
+  - { id: shipped, on: mr_merged, then: done }
 `
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "T"}, "subj", testProject)

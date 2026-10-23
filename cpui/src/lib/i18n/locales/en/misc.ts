@@ -414,6 +414,8 @@ export default {
 		"Phase {phase} opens when {signal} holds for one of the run's merge requests, under its start policy — drag onto a stage of this phase to start it there",
 	'flow.graph.manualTitle':
 		'Phase {phase} opens only when a person starts it from the run page, while the run is idle — drag onto a stage of this phase to start it there',
+	'flow.graph.outcomeTitle':
+		'Phase {phase} is an outcome: it opens once, when {signal} holds, and ends the run — drag onto a stage of this phase to start it there',
 	'flow.graph.debugReturn': 'again',
 	'flow.graph.arrangeTitle': 'Auto-arrange along the success chain',
 	'flow.graph.arrangeAria': 'Auto-arrange',
@@ -437,9 +439,20 @@ export default {
 	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the phase with it.',
 	'flow.insp.entrypoint': 'entrypoint',
 	'flow.insp.entrypointTitle': 'A run may begin at this phase (the start-run form offers it)',
+	'flow.insp.outcome': 'outcome',
+	'flow.insp.outcomeTitle': 'This phase ends the run: it opens once, when its signal holds',
+	'flow.insp.phaseThen': 'then: {then}',
 	'flow.insp.opensOn': 'Opens on',
 	'flow.insp.opensOn.run_start': 'a run created for it (entrypoint)',
 	'flow.insp.opensOn.manual': 'a person, from the run page',
+	'flow.insp.opensOn.outcomes': 'and ends the run on…',
+	'flow.insp.then': 'Then',
+	'flow.insp.then.done': 'the run is done',
+	'flow.insp.then.abort': 'the run is abandoned',
+	'flow.insp.phaseThenHelp':
+		'An outcome with nothing to do but end the run. Add stages to do something first — the ticket’s done, a last message — and the last of them ends the run instead.',
+	'flow.insp.outcomeStagesHelp':
+		'An outcome’s chain ends the run: its last stage says done unless it routes to abort. `end` has no place here — there is nothing to go back to.',
 	'flow.insp.opensOnHelp.run_start':
 		'An entrypoint: the phase a run begins at when it is created for it. Several phases may be entrypoints; the start-run form picks one (the first by default). It may be started again by hand.',
 	'flow.insp.opensOnHelp.manual':

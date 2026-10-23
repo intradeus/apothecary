@@ -39,10 +39,12 @@
 		edgeOf,
 		phaseEntry,
 		triggerLabel,
+		isOutcome,
 		feedDots,
 		feedSentinelFor,
 		type ActionContract,
 		type AgentContract,
+		type DocPhase,
 		type FlowDoc,
 		type NodeSize
 	} from '$lib/flowdoc';
@@ -171,6 +173,16 @@
 		// phase and what begins it, pointing at the phase's first stage. The
 		// entry's is `__start` (layout key START) — the phase every run begins
 		// with, drawn solid; a reaction's is `__trigger:<phase>`, dashed.
+		// An outcome's marker (data.outcome) is the same beginning in the hue
+		// of the run's ends: the phase opens once and ends the run.
+		const markerTitle = (ph: DocPhase) =>
+			ph.on.signal === RUN_START
+				? t('flow.graph.entryTitle', { phase: ph.id })
+				: ph.on.signal === MANUAL
+					? t('flow.graph.manualTitle', { phase: ph.id })
+					: isOutcome(ph.on)
+						? t('flow.graph.outcomeTitle', { phase: ph.id, signal: ph.on.signal })
+						: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal });
 		const triggers = (doc.phases ?? []).slice(1);
 		for (const ph of triggers) {
 			const first = phaseEntry(doc, ph.id);
@@ -181,13 +193,9 @@
 				position: layout[`trigger:${ph.id}`] ?? { x: at.x - 220, y: at.y },
 				data: {
 					entry: false,
+					outcome: isOutcome(ph.on),
 					label: t('flow.graph.beginLabel', { phase: ph.id, trigger: triggerLabel(ph.on) }),
-					title:
-						ph.on.signal === RUN_START
-							? t('flow.graph.entryTitle', { phase: ph.id })
-							: ph.on.signal === MANUAL
-								? t('flow.graph.manualTitle', { phase: ph.id })
-								: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal })
+					title: markerTitle(ph)
 				}
 			});
 		}
@@ -210,13 +218,7 @@
 							trigger: triggerLabel(entryPhase.on)
 						})
 					: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
-				title: entryPhase
-					? entryPhase.on.signal === RUN_START
-						? t('flow.graph.entryTitle', { phase: entryPhase.id })
-						: entryPhase.on.signal === MANUAL
-							? t('flow.graph.manualTitle', { phase: entryPhase.id })
-							: t('flow.graph.triggerTitle', { phase: entryPhase.id, signal: entryPhase.on.signal })
-					: t('flow.graph.entryTitle', { phase: 'main' })
+				title: entryPhase ? markerTitle(entryPhase) : t('flow.graph.entryTitle', { phase: 'main' })
 			}
 		});
 		// The two ends: end (this phase is over, the run goes back to waiting)
@@ -228,11 +230,12 @@
 			position: layout[END] ?? { x: doc.stages.length * 240, y: 0 },
 			data: {}
 		});
-		const reachesDone = doc.stages.some(
-			(s) =>
-				s.on_success === DONE ||
-				EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DONE))
-		);
+		const reachesDone =
+			doc.stages.some(
+				(s) =>
+					s.on_success === DONE ||
+					EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DONE))
+			) || (doc.phases ?? []).some((p) => p.then === DONE);
 		if (reachesDone) {
 			ns.push({
 				id: '__done',
@@ -242,9 +245,12 @@
 			});
 		}
 		// The abort terminal renders only when some edge targets it.
-		const hasAbort = doc.stages.some((s) =>
-			EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === ABORT))
-		);
+		const hasAbort =
+			doc.stages.some(
+				(s) =>
+					s.on_success === ABORT ||
+					EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === ABORT))
+			) || (doc.phases ?? []).some((p) => p.then === ABORT);
 		if (hasAbort) {
 			ns.push({
 				id: '__abort',
@@ -298,14 +304,22 @@
 		}
 		for (const ph of triggers) {
 			const first = phaseEntry(doc, ph.id);
-			if (first)
+			// A stage-less outcome's marker points straight at the run's end.
+			const target = first
+				? first.id
+				: ph.then === DONE
+					? '__done'
+					: ph.then === ABORT
+						? '__abort'
+						: '';
+			if (target)
 				es.push({
 					id: `entry|__trigger:${ph.id}`,
 					source: `__trigger:${ph.id}`,
-					target: first.id,
+					target,
 					type: 'smoothstep',
 					class: 'e-dash',
-					style: hued('vio')
+					style: hued(isOutcome(ph.on) ? 'grn' : 'vio')
 				});
 		}
 		doc.stages.forEach((s, i) => {
@@ -314,7 +328,14 @@
 				id: `success|${s.id}`,
 				source: s.id,
 				sourceHandle: 'success',
-				target: target === END ? '__end' : target === DONE ? '__done' : target,
+				target:
+					target === END
+						? '__end'
+						: target === DONE
+							? '__done'
+							: target === ABORT
+								? '__abort'
+								: target,
 				type: 'smoothstep',
 				class: 'e-success',
 				style: hued(EDGE_HUE.success)

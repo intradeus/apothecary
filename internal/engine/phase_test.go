@@ -47,6 +47,9 @@ phases:
     stages:
       - { id: fix, type: agent, agent: builder, input: { failure: $FAILURE }, on_fail: { to: fix, max: 1 } }
       - { id: post, type: command, run: "./post.sh" }
+  - id: shipped
+    on: mr_merged
+    then: done
 `
 
 // offsetClock is wall time plus a manually advanced offset: quiet periods
@@ -217,11 +220,12 @@ func TestParkedWaitFailsWhenTheMRIsClosed(t *testing.T) {
 	}
 }
 
-// Without a wait on the merge request the run completes as soon as nothing
-// reacts — here the moment deliver ends, since only a manual phase follows.
+// The run completes as soon as nothing is armed — here the moment deliver
+// ends, since every other phase (the reactions, the outcome) starts by hand.
 func TestRunCompletesWhenNothingIsArmed(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "on: { signal: mr_conflicts, start: confirm }", "on: manual", 1)
 	doc = strings.Replace(doc, "on: { signal: mr_review_settled, quiet_for: 1h, max: 2 }", "on: manual", 1)
+	doc = strings.Replace(doc, "on: mr_merged\n    then: done", "on: { signal: mr_merged, start: manual }\n    then: done", 1)
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
@@ -457,26 +461,29 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 	}
 	var starts, parked int
 	for _, e := range h2.events(t, runID) {
-		switch e.Payload.(type) {
+		switch p := e.Payload.(type) {
 		case *event.PhaseStarted:
-			starts++
+			if p.Phase == "deliver" {
+				starts++
+			}
 		case *event.PhaseParked:
 			parked++
 		}
 	}
 	if starts != 1 || parked != 1 {
-		t.Errorf("phase starts = %d parked = %d, want 1 and 1", starts, parked)
+		t.Errorf("deliver starts = %d parked = %d, want 1 and 1", starts, parked)
 	}
 }
 
-// An entry phase that opens no merge request has nothing to react to: the
-// run completes as a flow without phases would.
+// An entry phase that opens no merge request has nothing to react to and
+// no outcome to wait for: the run completes as a flow without phases would.
 func TestPhasedRunWithoutAnMRCompletes(t *testing.T) {
 	doc := `name: phased
 version: 4
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 phases:
   - { id: deliver, on: run_start, stages: [{ id: s, type: command, run: "true" }] }
+  - { id: shipped, on: mr_merged, then: done }
 `
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "T"}, "phased", testProject)
@@ -718,8 +725,8 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	if st := h2.view(t, runID).State; st != run.Completed {
 		t.Fatalf("state after restart + merge = %s", st)
 	}
-	if n := len(phaseStarts(h2.events(t, runID))); n != 1 {
-		t.Errorf("phase starts = %d, want 1", n)
+	if starts := phaseStarts(h2.events(t, runID)); len(starts) != 2 || starts[0].Phase != "deliver" || starts[1].Phase != "shipped" {
+		t.Errorf("phase starts = %+v, want deliver once, then the merged outcome", starts)
 	}
 }
 

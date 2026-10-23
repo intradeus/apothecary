@@ -101,8 +101,9 @@
 	// (the parser refuses it there), so the two pickers never offer the other's.
 	const waitable = $derived(signals.filter((g) => !g.trigger && !g.entry));
 	// What opens a phase on its own: a forge trigger (manual is a person's
-	// act, offered apart).
+	// act, offered apart) — or an outcome, which opens once and ends the run.
 	const triggers = $derived(signals.filter((g) => g.trigger && g.slug !== MANUAL));
+	const outcomes = $derived(signals.filter((g) => g.outcome));
 	const WHEN_TERMS = ['tracker', 'not tracker', 'subject', 'not subject'];
 
 	const phaseSel = $derived(
@@ -110,6 +111,9 @@
 	);
 	const phaseSig = $derived(
 		phaseSel ? signals.find((g) => g.slug === phaseSel.on.signal) : undefined
+	);
+	const phaseStageCount = $derived(
+		phaseSel ? doc.stages.filter((x) => x.phase === phaseSel.id).length : 0
 	);
 
 	// renamePhase renames a phase and every stage that belongs to it.
@@ -966,12 +970,15 @@
 					{#if ph.on.signal === RUN_START}<span
 							class="pill sm flat sq t-brand"
 							title={t('flow.insp.entrypointTitle')}>{t('flow.insp.entrypoint')}</span
+						>{:else if phaseSig?.outcome}<span
+							class="pill sm flat sq t-grn"
+							title={t('flow.insp.outcomeTitle')}>{t('flow.insp.outcome')}</span
 						>{/if}
 					<span class="spacer"></span>
 					<span class="fnt tiny"
-						>{t('flow.insp.phaseStages', {
-							count: doc.stages.filter((x) => x.phase === ph.id).length
-						})}</span
+						>{phaseSig?.outcome && !phaseStageCount
+							? t('flow.insp.phaseThen', { then: ph.then ?? DONE })
+							: t('flow.insp.phaseStages', { count: phaseStageCount })}</span
 					>
 				</div>
 				<div class="field">
@@ -1002,12 +1009,21 @@
 						value={ph.on.signal}
 						onchange={(e) => {
 							ph.on.signal = e.currentTarget.value;
+							const sig = signals.find((g) => g.slug === ph.on.signal);
 							if (!fires(ph.on)) {
 								// A person's act is the start: no policy, nothing to debounce.
 								ph.on.start = undefined;
 								ph.on.quiet_for = undefined;
-							} else if (!signals.find((g) => g.slug === ph.on.signal)?.debounced) {
+							} else if (!sig?.debounced) {
 								ph.on.quiet_for = undefined;
+							}
+							if (sig?.outcome) {
+								// An outcome fires once and ends the run: no cap, and a
+								// stage-less one needs its `then`.
+								ph.on.max = undefined;
+								if (!phaseStageCount) ph.then ??= DONE;
+							} else {
+								ph.then = undefined;
 							}
 							onchange();
 						}}
@@ -1015,7 +1031,10 @@
 						<option value={RUN_START}>{t('flow.insp.opensOn.run_start')}</option>
 						<option value={MANUAL}>{t('flow.insp.opensOn.manual')}</option>
 						{#each triggers as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
-						{#if firing && !triggers.some((g) => g.slug === ph.on.signal)}
+						<optgroup label={t('flow.insp.opensOn.outcomes')}>
+							{#each outcomes as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
+						</optgroup>
+						{#if firing && !triggers.some((g) => g.slug === ph.on.signal) && !outcomes.some((g) => g.slug === ph.on.signal)}
 							<option value={ph.on.signal}>{ph.on.signal}</option>
 						{/if}
 					</select>
@@ -1063,22 +1082,44 @@
 						</div>
 					{/if}
 				{/if}
-				<div class="field">
-					<label for="ph-max">{t('flow.insp.phaseMax')}</label>
-					<input
-						id="ph-max"
-						class="mono"
-						list="flow-int-params"
-						value={ph.on.max ?? ''}
-						placeholder={t('flow.insp.unlimited')}
-						oninput={(e) => {
-							const v = e.currentTarget.value.trim();
-							ph.on.max = v === '' ? undefined : /^-?\d+$/.test(v) ? Number(v) : v;
-							onchange();
-						}}
-					/>
-					<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
-				</div>
+				{#if phaseSig?.outcome}
+					{#if !phaseStageCount}
+						<div class="field">
+							<label for="ph-then">{t('flow.insp.then')}</label>
+							<select
+								id="ph-then"
+								value={ph.then ?? DONE}
+								onchange={(e) => {
+									ph.then = e.currentTarget.value;
+									onchange();
+								}}
+							>
+								<option value={DONE}>{t('flow.insp.then.done')}</option>
+								<option value={ABORT}>{t('flow.insp.then.abort')}</option>
+							</select>
+							<div class="help">{t('flow.insp.phaseThenHelp')}</div>
+						</div>
+					{:else}
+						<div class="help">{t('flow.insp.outcomeStagesHelp')}</div>
+					{/if}
+				{:else}
+					<div class="field">
+						<label for="ph-max">{t('flow.insp.phaseMax')}</label>
+						<input
+							id="ph-max"
+							class="mono"
+							list="flow-int-params"
+							value={ph.on.max ?? ''}
+							placeholder={t('flow.insp.unlimited')}
+							oninput={(e) => {
+								const v = e.currentTarget.value.trim();
+								ph.on.max = v === '' ? undefined : /^-?\d+$/.test(v) ? Number(v) : v;
+								onchange();
+							}}
+						/>
+						<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
+					</div>
+				{/if}
 				<datalist id="flow-int-params">
 					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
 				</datalist>

@@ -128,12 +128,12 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 // from it (done, abort) stops every one of them for good — almost always a
 // slip for `end`, which goes back to waiting. And a phase that opens a merge
 // request, then reaches done with nothing waiting for the merge, completes
-// the run the moment the merge request exists: the phases that react to it
-// never get to run.
+// the run the moment the merge request exists: the phases that react to it,
+// and the outcomes that would end it, never get to run.
 func endingWarnings(f *Flow) []string {
 	reacts := false
 	for i := range f.Phases {
-		reacts = reacts || f.Phases[i].HasSubject()
+		reacts = reacts || f.Phases[i].Observed()
 	}
 	var warns []string
 	for pi := range f.Phases {
@@ -159,8 +159,8 @@ func endingWarnings(f *Flow) []string {
 			}
 		}
 		if reacts && doneAfterMR && !waits {
-			warns = append(warns, fmt.Sprintf("phase %q opens a merge request and ends the run (%s) without waiting for it: the run completes as soon as the merge request exists, and the phases reacting to it never run — park on a %s stage for %s first",
-				ph.ID, TerminalDone, StageWait, signalspec.MRMerged))
+			warns = append(warns, fmt.Sprintf("phase %q opens a merge request and ends the run (%s) without waiting for it: the run completes as soon as the merge request exists, and the phases watching it never run — end the phase (%s) and let an outcome (on: %s) end the run, or park on a %s stage for %s first",
+				ph.ID, TerminalDone, TerminalEnd, signalspec.MRMerged, StageWait, signalspec.MRMerged))
 		}
 	}
 	return warns

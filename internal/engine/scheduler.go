@@ -240,20 +240,32 @@ func (x *exec) pingDelivered(pingID string) []string {
 	return nil
 }
 
-// anyArmed reports whether some firing phase may still open on its own: its
-// policy is automatic (auto or confirm), it is not parked, and it has runs
-// left on an open merge request — or a confirmation for it is still open.
+// anyArmed reports whether some observed phase may still open on its own:
+// its policy is automatic (auto or confirm), it is not parked, and — a
+// reaction — it has runs left on an open merge request, or — an outcome
+// that has not fired — a merge request is still open for its end to come;
+// or a confirmation for it is still open.
 func (x *exec) anyArmed(obs []mrObservation) bool {
 	rs := x.rs
+	anyOpen := false
+	for _, o := range obs {
+		anyOpen = anyOpen || o.status.State == ports.MROpen
+	}
 	for i := range rs.fl.Phases {
 		ph := &rs.fl.Phases[i]
-		if !ph.Fires() || ph.On.Start == flow.StartManual || rs.parked[ph.ID] != nil {
+		if !ph.Observed() || ph.On.Start == flow.StartManual || rs.parked[ph.ID] != nil {
 			continue
 		}
 		for _, cp := range rs.confirms {
 			if cp.Phase == ph.ID && rs.answeredPings[cp.PingID] == nil {
 				return true
 			}
+		}
+		if ph.IsOutcome() {
+			if anyOpen && !rs.phaseEverRan(ph.ID) {
+				return true
+			}
+			continue
 		}
 		for _, o := range obs {
 			if o.status.State != ports.MROpen {

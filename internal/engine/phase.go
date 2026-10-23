@@ -119,14 +119,25 @@ func (x *exec) runDone() error {
 	return x.complete()
 }
 
+// runAbort is the flow abandoning the run from a success: an outcome's
+// `then: abort`, or `on_success: abort` (FLOWLANG §3).
+func (x *exec) runAbort() error {
+	rs := x.rs
+	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject}); err != nil {
+		return err
+	}
+	return x.abandon(rs.abortAt, "", rs.abortReason)
+}
+
 // deadEnd is where a failure has nowhere left to go: no edge for it, its
 // chain exhausted, or a person giving up at the debug leaf. In an entrypoint
-// phase that ends the run — it is abandoned. Any other phase — a reaction, a
-// phase started by hand — is one round of something the run may do any
-// number of times: the round ends, its phase_completed saying why, and the
-// run goes back to waiting (FLOWLANG §3).
+// or an outcome that ends the run — it is abandoned: the delivery failed, or
+// its end did. Any other phase — a reaction, a phase started by hand — is
+// one round of something the run may do any number of times: the round
+// ends, its phase_completed saying why, and the run goes back to waiting
+// (FLOWLANG §3).
 func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
-	if x.inEntrypoint() {
+	if x.endsRunAtDeadEnd() {
 		return x.abandon(st.ID, edgeKind, reason)
 	}
 	x.e.log.Info("phase ended at a dead end; the run goes back to waiting",
@@ -136,11 +147,11 @@ func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
 	return nil
 }
 
-// inEntrypoint reports whether the phase in progress is one a run begins at,
-// where a dead end ends the run rather than the round.
-func (x *exec) inEntrypoint() bool {
+// endsRunAtDeadEnd reports whether the phase in progress is one whose dead
+// end ends the run rather than the round: an entrypoint or an outcome.
+func (x *exec) endsRunAtDeadEnd() bool {
 	ph := x.rs.fl.Phase(x.rs.phase)
-	return ph == nil || ph.IsEntrypoint()
+	return ph == nil || ph.IsEntrypoint() || ph.IsOutcome()
 }
 
 // subjectCheckout is the checkout a reaction phase acts on, or nil (the
@@ -274,6 +285,36 @@ func (x *exec) evaluateIdle(st *idler) error {
 
 	holds := map[string][]TriggerHold{}
 	defer x.e.holds.set(rs.runID, holds)
+
+	// Outcomes first: an end that holds beats any reaction. Merged is every
+	// merge request merged, with no subject; closed is any one closed
+	// unmerged, that one being the subject. Each fires once (FLOWLANG §1).
+	for i := range rs.fl.Phases {
+		ph := &rs.fl.Phases[i]
+		if !ph.IsOutcome() || rs.parked[ph.ID] != nil {
+			continue
+		}
+		if held, _, _ := x.waitState(ph.On.Signal, obs); !held {
+			continue
+		}
+		subject, link, key, why := outcomeOf(ph, obs)
+		seen := rs.triggerSeen[triggerKey(ph.ID, subject, key)]
+		holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: subject, Key: key, Why: why, Seen: seen, At: x.e.clock()})
+		if seen {
+			continue
+		}
+		switch ph.On.Start {
+		case flow.StartManual:
+			continue
+		case flow.StartConfirm:
+			if err := x.askToStart(ph, subject, link, key, why); err != nil {
+				return err
+			}
+			continue
+		}
+		return x.beginPhase(ph.ID, subject, key, "signal", "")
+	}
+
 	for _, o := range obs {
 		if o.status.State != ports.MROpen {
 			continue
@@ -299,7 +340,7 @@ func (x *exec) evaluateIdle(st *idler) error {
 				// the run page (manualStart).
 				continue
 			case flow.StartConfirm:
-				if err := x.askToStart(ph, o, key, why); err != nil {
+				if err := x.askToStart(ph, o.mr.Repo, o.mr.Ref.URL, key, why); err != nil {
 					return err
 				}
 				continue
@@ -308,6 +349,27 @@ func (x *exec) evaluateIdle(st *idler) error {
 		}
 	}
 	return x.endCheck(obs)
+}
+
+// outcomeOf names what an outcome fires on: the subject (the closed merge
+// request's checkout; none for a merge), a link for the human, the
+// occurrence key, and a sentence.
+func outcomeOf(ph *flow.Phase, obs []mrObservation) (subject, link, key, why string) {
+	switch ph.On.Signal {
+	case signalspec.MRClosed:
+		for _, o := range obs {
+			if o.status.State == ports.MRClosed {
+				return o.mr.Repo, o.mr.Ref.URL, "closed:" + o.mr.Repo,
+					fmt.Sprintf("The merge request %s was closed without being merged.", o.mr.Ref.URL)
+			}
+		}
+	case signalspec.MRMerged:
+		if len(obs) > 0 {
+			link = obs[0].mr.Ref.URL
+		}
+		return "", link, "merged", "Every merge request merged."
+	}
+	return "", "", ph.On.Signal, ""
 }
 
 // observe polls every merge request's status, and its threads when a
@@ -382,25 +444,28 @@ func (x *exec) triggerHolds(ph *flow.Phase, o mrObservation) (bool, string, stri
 }
 
 // askToStart raises a phase_confirm ping, once per (phase, subject, key).
-func (x *exec) askToStart(ph *flow.Phase, o mrObservation, key, why string) error {
+func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error {
 	rs := x.rs
 	for _, cp := range rs.confirms {
-		if cp.Phase == ph.ID && cp.Subject == o.mr.Repo && (cp.TriggerKey == key || rs.answeredPings[cp.PingID] == nil) {
+		if cp.Phase == ph.ID && cp.Subject == subject && (cp.TriggerKey == key || rs.answeredPings[cp.PingID] == nil) {
 			return nil // already asked (or a question about it is still open)
 		}
 	}
 	q := fmt.Sprintf("%s Run phase %q on it?", why, ph.ID)
+	if ph.IsOutcome() {
+		q = fmt.Sprintf("%s Run phase %q and end the run?", why, ph.ID)
+	}
 	if ph.Description != "" {
 		q += " (" + ph.Description + ")"
 	}
 	p := &Ping{ID: x.e.newID(), RunID: rs.runID, Type: event.PingPhaseConfirm, Question: q,
-		Link: o.mr.Ref.URL, RaisedAt: x.e.clock(), AnswerKind: event.AnswerDecision, Phase: ph.ID,
+		Link: link, RaisedAt: x.e.clock(), AnswerKind: event.AnswerDecision, Phase: ph.ID,
 		done: make(chan struct{})}
 	x.e.mu.Lock()
 	x.e.pings[p.ID] = p
 	x.e.mu.Unlock()
 	raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: q, Link: p.Link, AnswerKind: event.AnswerDecision,
-		Phase: ph.ID, Subject: o.mr.Repo, TriggerKey: key}
+		Phase: ph.ID, Subject: subject, TriggerKey: key}
 	if err := x.append(raised); err != nil {
 		return err
 	}
@@ -511,8 +576,12 @@ type PhaseInfo struct {
 	// manual); Confirm mirrors start == confirm for the run page's labels.
 	Start   string `json:"start"`
 	Confirm bool   `json:"confirm,omitempty"`
-	// Entry marks a phase a run may begin at (on: run_start).
-	Entry bool `json:"entry,omitempty"`
+	// Entry marks a phase a run may begin at (on: run_start). Outcome marks
+	// one that ends the run; Then is what a stage-less outcome does (done or
+	// abort).
+	Entry   bool   `json:"entry,omitempty"`
+	Outcome bool   `json:"outcome,omitempty"`
+	Then    string `json:"then,omitempty"`
 	// QuietFor is the debounce in seconds (review comments).
 	QuietFor int `json:"quiet_for_s,omitempty"`
 	// Max is the runs allowed per merge request (-1 = unlimited).
@@ -574,7 +643,7 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 			total += n
 		}
 		info := PhaseInfo{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Start: string(ph.On.Start),
-			Confirm: ph.On.Start == flow.StartConfirm, Entry: ph.IsEntrypoint(),
+			Confirm: ph.On.Start == flow.StartConfirm, Entry: ph.IsEntrypoint(), Outcome: ph.IsOutcome(), Then: ph.Then,
 			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r, Total: total,
 			Holds: e.holds.of(runID, ph.ID)}
 		switch {

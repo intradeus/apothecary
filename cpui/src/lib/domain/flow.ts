@@ -94,6 +94,10 @@ export interface PhaseSummary {
 	max: number;
 	/** A run may begin here (on: run_start). */
 	entry: boolean;
+	/** It ends the run (on: mr_merged / mr_closed); `then` is what a
+	 *  stage-less outcome does. */
+	outcome: boolean;
+	then?: 'done' | 'abort';
 	/** Its runs act on one merge request. */
 	subject: boolean;
 	stages: number;
@@ -154,6 +158,9 @@ export interface SignalSpec {
 	trigger: boolean;
 	/** May begin the run: allowed as the first phase's `on:`. */
 	entry: boolean;
+	/** Ends the run: a phase on it is an OUTCOME — it opens once, when the
+	 *  signal holds, and every route in it ends the run. Still waitable. */
+	outcome: boolean;
 	/** A trigger that fires on activity, so its phase may take a quiet_for. */
 	debounced: boolean;
 }

@@ -32,11 +32,11 @@ phases:
   - id: deliver
     on: run_start
     stages:
-      - { id: test, type: command, run_ref: $verify }
+      - { id: test, type: command, run_ref: $verify, on_success: done }
   - id: quick
     on: run_start
     stages:
-      - { id: fast, type: command, run_ref: $verify }
+      - { id: fast, type: command, run_ref: $verify, on_success: done }
 `
 
 func TestParamsResolvedAtCreation(t *testing.T) {

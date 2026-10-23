@@ -75,7 +75,10 @@ type DocPhase struct {
 	ID          string     `yaml:"id" json:"id"`
 	Description string     `yaml:"description" json:"description,omitempty"`
 	On          DocWait    `yaml:"on" json:"on"`
-	Stages      []DocStage `yaml:"stages" json:"stages"`
+	Stages      []DocStage `yaml:"stages" json:"stages,omitempty"`
+	// Then: an outcome with nothing to do but end the run — `then: done` or
+	// `then: abort` in place of stages.
+	Then string `yaml:"then" json:"then,omitempty"`
 }
 
 // DocWait is a phase's `on:` — the wait point that opens it: a bare slug
@@ -977,13 +980,17 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 
 	// The success chain is explicit in the model (DESIGN3 §2.1); absent
 	// on_success is YAML sugar for "next stage in document order", and the
-	// last stage of a phase ends the PHASE (end) — never the run: only an
-	// explicit `done` says the run is finished. After this loop every stage
-	// has a concrete target.
+	// last stage of a phase ends the PHASE (end) — never the run, unless
+	// nothing could follow: the one phase of the shorthand, and an outcome,
+	// end the run (done) when their chain is over. After this loop every
+	// stage has a concrete target.
 	for i := range f.Stages {
 		if f.Stages[i].OnSuccess == "" {
 			if i == len(f.Stages)-1 || f.Stages[i+1].Phase != f.Stages[i].Phase {
 				f.Stages[i].OnSuccess = TerminalEnd
+				if ph := f.Phase(f.Stages[i].Phase); f.shorthand || (ph != nil && ph.IsOutcome()) {
+					f.Stages[i].OnSuccess = TerminalDone
+				}
 			} else {
 				f.Stages[i].OnSuccess = f.Stages[i+1].ID
 			}
@@ -1604,11 +1611,11 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		s.When = w
 	}
 
-	if raw.OnSuccess == TerminalAbort || raw.OnSuccess == ReservedDebug {
-		return fail("on_success cannot be %q — only an edge (on_fail/on_reject/on_timeout) may target it", raw.OnSuccess)
+	if raw.OnSuccess == ReservedDebug {
+		return fail("on_success cannot be %q — only an edge (on_fail/on_reject/on_timeout) parks for a human", ReservedDebug)
 	}
-	if raw.OnSuccess != "" && raw.OnSuccess != TerminalEnd && raw.OnSuccess != TerminalDone && !slugRe.MatchString(raw.OnSuccess) {
-		return fail("on_success %q must be a stage id, %q (the phase ends) or %q (the run is done)", raw.OnSuccess, TerminalEnd, TerminalDone)
+	if raw.OnSuccess != "" && !routeTerminal(raw.OnSuccess) && !slugRe.MatchString(raw.OnSuccess) {
+		return fail("on_success %q must be a stage id, %q (the phase ends), %q (the run is done) or %q (the run is abandoned)", raw.OnSuccess, TerminalEnd, TerminalDone, TerminalAbort)
 	}
 	s.OnSuccess = raw.OnSuccess
 
@@ -1857,7 +1864,9 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	reached := map[string]bool{}
 	var queue []string
 	for _, ph := range f.Phases {
-		queue = append(queue, f.Stages[ph.First].ID)
+		if ph.First <= ph.Last { // a then-phase has no stages
+			queue = append(queue, f.Stages[ph.First].ID)
+		}
 	}
 	for len(queue) > 0 {
 		id := queue[0]
@@ -1924,8 +1933,11 @@ func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStag
 			return fail("duplicate phase id (first declared at line %d)", prev)
 		}
 		seen[rp.ID] = line
-		if len(rp.Stages) == 0 {
-			return fail("a phase needs at least one stage")
+		if len(rp.Stages) == 0 && rp.Then == "" {
+			return fail("a phase needs stages — or, for an outcome that only ends the run, `then: %s` or `then: %s`", TerminalDone, TerminalAbort)
+		}
+		if len(rp.Stages) > 0 && rp.Then != "" {
+			return fail("stages or then, not both: a phase with stages ends the run from its last stage")
 		}
 		on, err := p.buildWait(&rp.On, rp.ID)
 		if err != nil {
@@ -1934,7 +1946,15 @@ func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStag
 		if on.Signal == signalspec.RunStart {
 			entrypoints++
 		}
-		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, First: len(stages), Last: len(stages) + len(rp.Stages) - 1, Line: line}
+		if rp.Then != "" {
+			if rp.Then != TerminalDone && rp.Then != TerminalAbort {
+				return fail("then %q must be %s (the run completes) or %s (the run is abandoned)", rp.Then, TerminalDone, TerminalAbort)
+			}
+			if sig := signalspec.Get(on.Signal); sig == nil || !sig.Outcome {
+				return fail("then is for an outcome phase (on: %s): a phase that does work has stages", outcomeSlugs())
+			}
+		}
+		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, Then: rp.Then, First: len(stages), Last: len(stages) + len(rp.Stages) - 1, Line: line}
 		phases = append(phases, ph)
 		stages = append(stages, rp.Stages...)
 		var lines []int
@@ -1967,22 +1987,22 @@ func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 		return paramSite{phase: phaseID, field: field, typ: typ, values: values}
 	}
 	if w.Signal == "" {
-		return w, fmt.Errorf("signal is required: %s (an entrypoint), %s (started by hand), or a trigger (%s)",
-			signalspec.RunStart, signalspec.Manual, triggerSlugs())
+		return w, fmt.Errorf("signal is required: %s (an entrypoint), %s (started by hand), a trigger (%s) or an outcome (%s)",
+			signalspec.RunStart, signalspec.Manual, triggerSlugs(), outcomeSlugs())
 	}
 	sig := signalspec.Get(w.Signal)
 	if sig == nil {
-		return w, fmt.Errorf("unknown signal %q (%s, %s, or a trigger: %s)", w.Signal, signalspec.RunStart, signalspec.Manual, triggerSlugs())
+		return w, fmt.Errorf("unknown signal %q (%s, %s, a trigger: %s, or an outcome: %s)", w.Signal, signalspec.RunStart, signalspec.Manual, triggerSlugs(), outcomeSlugs())
 	}
 	fires := sig.Trigger && w.Signal != signalspec.Manual
-	if !fires && !sig.Entry && w.Signal != signalspec.Manual {
-		return w, fmt.Errorf("signal %q is something to wait for, not something that opens a phase (a %s stage waits on it; a phase opens on %s, %s or a trigger: %s)",
-			w.Signal, StageWait, signalspec.RunStart, signalspec.Manual, triggerSlugs())
+	if !fires && !sig.Outcome && !sig.Entry && w.Signal != signalspec.Manual {
+		return w, fmt.Errorf("signal %q is something to wait for, not something that opens a phase (a %s stage waits on it; a phase opens on %s, %s, a trigger: %s, or an outcome: %s)",
+			w.Signal, StageWait, signalspec.RunStart, signalspec.Manual, triggerSlugs(), outcomeSlugs())
 	}
-	// The policy: only a signal that fires has one. For run_start and
-	// manual a person's act is the start.
+	// The policy: only a signal the engine observes has one — a trigger or
+	// an outcome. For run_start and manual a person's act is the start.
 	if raw.Start != "" {
-		if !fires {
+		if !fires && !sig.Outcome {
 			return w, fmt.Errorf("start does not apply to %q — nothing fires to decide about: a person's act is the start", w.Signal)
 		}
 		v, via, err := p.lookup(raw.Start, site("start", ParamString, []string{string(StartAuto), string(StartConfirm), string(StartManual)}))
@@ -1995,7 +2015,7 @@ func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 		default:
 			return w, fmt.Errorf("start %q%s must be %s, %s or %s", v, via, StartAuto, StartConfirm, StartManual)
 		}
-	} else if fires {
+	} else if fires || sig.Outcome {
 		w.Start = StartAuto
 	}
 	if raw.QuietFor != "" {
@@ -2019,6 +2039,9 @@ func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 	// happens as often as its signal brings a NEW fact (an occurrence key
 	// never fires twice), and the run's budget bounds what that may cost.
 	if raw.Max != nil {
+		if sig.Outcome {
+			return w, fmt.Errorf("max does not apply to an outcome: it fires once, and the run ends")
+		}
 		n, via, err := p.lookupInt(raw.Max, site("max", ParamInt, nil))
 		if err != nil {
 			return w, fmt.Errorf("max: %v", err)
@@ -2036,6 +2059,17 @@ func triggerSlugs() string {
 	var out []string
 	for _, s := range signalspec.Registry() {
 		if s.Trigger && s.Slug != signalspec.Manual {
+			out = append(out, s.Slug)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// outcomeSlugs lists the signals that end the run when a phase opens on them.
+func outcomeSlugs() string {
+	var out []string
+	for _, s := range signalspec.Registry() {
+		if s.Outcome {
 			out = append(out, s.Slug)
 		}
 	}
@@ -2093,6 +2127,35 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 		if rebase > 0 && !leased {
 			return p.errf(rebase, "phase %q: strategy rebase rewrites the branch — publish it with a push_branch stage in this phase (a push leased against what the run last saw), not a plain git push", ph.ID)
 		}
+	}
+	// An outcome ends the run: nothing in it may end only the phase.
+	for pi := range f.Phases {
+		ph := &f.Phases[pi]
+		if !ph.IsOutcome() {
+			continue
+		}
+		for i := ph.First; i <= ph.Last; i++ {
+			s := &f.Stages[i]
+			if s.OnSuccess == TerminalEnd {
+				return p.errf(s.Line, "stage %q: phase %q is an outcome and ends the run — route to %q or %q, not %q", s.ID, ph.ID, TerminalDone, TerminalAbort, TerminalEnd)
+			}
+			for kind, e := range s.Edges {
+				for link := e; link != nil; link = link.Then {
+					if link.To == TerminalEnd {
+						return p.errf(s.Line, "stage %q: %s: phase %q is an outcome and ends the run — route to %q or %q, not %q", s.ID, kind, ph.ID, TerminalDone, TerminalAbort, TerminalEnd)
+					}
+				}
+			}
+		}
+	}
+	// At least one route ends the run (FLOWLANG §3): a flow that only ever
+	// ends phases says nothing about when the work is finished.
+	if !f.EndsRun() {
+		line := p.keyLine("phases")
+		if f.shorthand {
+			line = p.keyLine("stages")
+		}
+		return p.errf(line, "no route ends the run: route a stage to %q, or add an outcome phase (on: %s, then: %s)", TerminalDone, signalspec.MRMerged, TerminalDone)
 	}
 	return nil
 }

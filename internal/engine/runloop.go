@@ -177,7 +177,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			// idle loop decides what follows — a parked phase resuming,
 			// another phase opening, or the run's end (endCheck).
 			end := x.phaseDone
-			if rs.endsRun {
+			switch {
+			case rs.abortsRun:
+				end = x.runAbort
+			case rs.endsRun:
 				end = x.runDone
 			}
 			if err := end(); err != nil {
@@ -338,9 +341,13 @@ func (x *exec) append(ps ...event.Payload) error {
 // phase's end; done does the same and marks the run done.
 func (x *exec) advance(st *flow.Stage) {
 	switch st.OnSuccess {
-	case flow.TerminalEnd, flow.TerminalDone:
+	case flow.TerminalEnd, flow.TerminalDone, flow.TerminalAbort:
 		x.rs.pos = len(x.rs.fl.Stages)
 		x.rs.endsRun = st.OnSuccess == flow.TerminalDone
+		x.rs.abortsRun = st.OnSuccess == flow.TerminalAbort
+		if x.rs.abortsRun {
+			x.rs.abortAt, x.rs.abortReason = st.ID, "aborted by flow: on_success at stage "+st.ID
+		}
 	default:
 		x.rs.pos = x.rs.fl.Index(st.OnSuccess) // parse-validated: always >= 0
 	}
@@ -1618,7 +1625,7 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 	if x.openDecision(st, PingDebug) == nil {
 		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: tail(rs.feed, 4<<10),
 			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerDecision,
-			Phase: rs.phase, EndsPhase: !x.inEntrypoint()}
+			Phase: rs.phase, EndsPhase: !x.endsRunAtDeadEnd()}
 		if err := x.raiseDecision(p); err != nil {
 			return err
 		}
@@ -1728,7 +1735,7 @@ func (x *exec) stageAction(st *flow.Stage) error {
 // endPhase routes straight to the phase's end (the run loop records it).
 func (x *exec) endPhase() {
 	x.rs.pos = len(x.rs.fl.Stages)
-	x.rs.endsRun = false
+	x.rs.endsRun, x.rs.abortsRun = false, false
 	x.rs.ph = phStart
 }
 

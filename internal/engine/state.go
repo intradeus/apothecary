@@ -45,10 +45,15 @@ type runState struct {
 	ph  phase
 	// endsRun: the cursor past the last stage means the RUN is done — the
 	// flow routed to `done` — and not only the phase (`end`, or the chain
-	// ran out). endReason, when set, is why a phase ended early: a dead end
-	// outside an entrypoint, recorded on its phase_completed.
-	endsRun   bool
-	endReason string
+	// ran out); abortsRun: the flow routed to `abort` from a success (an
+	// outcome's `then: abort`, `on_success: abort`), abortAt/abortReason
+	// saying where and why. endReason, when set, is why a phase ended early:
+	// a dead end outside an entrypoint, recorded on its phase_completed.
+	endsRun     bool
+	abortsRun   bool
+	abortAt     string
+	abortReason string
+	endReason   string
 
 	iters      map[string]int // stage id -> times started
 	edgeCounts map[string]int // "from|kind|depth" -> times that chain link was taken
@@ -188,6 +193,16 @@ func agentPingType(t string) bool {
 func triggerKey(phase, subject, key string) string { return phase + "\x00" + subject + "\x00" + key }
 func phaseRunKey(phase, subject string) string     { return phase + "\x00" + subject }
 
+// phaseEverRan reports whether the phase ran at all, on any subject.
+func (rs *runState) phaseEverRan(phase string) bool {
+	for k, n := range rs.phaseRuns {
+		if n > 0 && strings.HasPrefix(k, phase+"\x00") {
+			return true
+		}
+	}
+	return false
+}
+
 // phaseRun is what is scoped to one phase run: where it stands and what it
 // carries. The active run's lives in runState's own fields; a parked run's
 // is kept here until it resumes. Stage-keyed maps (iters, edgeCounts,
@@ -239,7 +254,7 @@ func (rs *runState) unpark(phase string) bool {
 	rs.feed, rs.feedSentinel, rs.feedAttempts = pr.feed, pr.feedSentinel, pr.feedAttempts
 	rs.lastFailure, rs.gateAnswer = pr.lastFailure, pr.gateAnswer
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = pr.roundThreads, pr.roundLoaded, pr.selectPing
-	rs.endsRun, rs.endReason = false, ""
+	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.idle = false
 	return true
 }
@@ -253,7 +268,7 @@ func (rs *runState) anyParked() bool { return len(rs.parked) > 0 }
 func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	rs.phase, rs.subject, rs.phaseTip, rs.idle = p.Phase, p.Subject, p.Tip, false
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = nil, false, nil
-	rs.endsRun, rs.endReason = false, ""
+	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
 	if p.Key != "" {
 		rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
@@ -277,6 +292,13 @@ func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	rs.pos, rs.ph = ph.First, phStart
 	rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
 	rs.lastFailure, rs.gateAnswer = nil, nil
+	if ph.Then != "" {
+		// A then-phase has no stages: its start is its end — the run's.
+		rs.pos = len(fl.Stages)
+		rs.endsRun = ph.Then == flow.TerminalDone
+		rs.abortsRun = ph.Then == flow.TerminalAbort
+		rs.abortAt, rs.abortReason = "", fmt.Sprintf("aborted by flow: outcome %s", ph.ID)
+	}
 }
 
 // replay folds a run's event history into runState. fl may be nil when the
@@ -426,7 +448,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.startPhase(p, fl)
 		case *event.PhaseCompleted:
 			rs.idle = true
-			rs.endsRun, rs.endReason = false, ""
+			rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 		case *event.PhaseParked:
 			rs.park(p.StageID, p.PingID, ev.TS)
 		case *event.PhaseResumed:
