@@ -604,7 +604,13 @@ func TestObservedPortsEndpoint(t *testing.T) {
 		}
 	}
 
-	tok := map[string]string{"Authorization": "Bearer " + x.e.RunToken(runID)}
+	// The run loop mints the token as it starts, which can trail the
+	// creation response: wait for it rather than race it.
+	var token string
+	for deadline := time.Now().Add(5 * time.Second); token == "" && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		token = x.e.RunToken(runID)
+	}
+	tok := map[string]string{"Authorization": "Bearer " + token}
 	resp, _ := x.do(t, "POST", "/api/runs/"+runID+"/observed-ports",
 		map[string]any{"ports": []map[string]any{{"port": 3000, "process": "node"}, {"port": 0}}}, tok)
 	if resp.StatusCode != http.StatusNoContent {

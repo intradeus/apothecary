@@ -144,9 +144,15 @@ func (h *harness) automation(t *testing.T, a confstore.Automation) confstore.Aut
 	if a.Flow == "" {
 		a.Flow = builtin.DefaultFlowName
 	}
-	// The rule is created at the clock's time, so a cron counts from there.
 	created, err := h.conf.CreateAutomation(context.Background(), a)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// The store stamps the wall clock; a schedule counts from when the rule
+	// was made, so pin that to the watcher's clock — otherwise the test
+	// depends on the time of day it runs at.
+	created.CreatedAt, created.UpdatedAt = h.now, h.now
+	if err := h.conf.DB().UpsertAutomation(context.Background(), created); err != nil {
 		t.Fatal(err)
 	}
 	return created
