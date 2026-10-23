@@ -19,22 +19,32 @@ parameters:
   plan_gate:       { default: true, description: "stop for a human to approve the plan before building" }
   conflicts_start: { default: confirm, enum: [auto, confirm, manual], description: "how a conflict fix begins: by itself, after asking, or by hand from the run page" }
   review_start:    { default: auto, enum: [auto, confirm, manual], description: "how a review-fix round begins" }
-# Phases: `deliver` is what the ticket starts — plan, build, review, open the
-# merge request. The run then stays in review until the merge request merges
-# (completed) or is closed (abandoned). Meanwhile the other phases react to
-# it, one at a time, in any order, as often as their triggers say:
+# Phases: every phase is a chain of stages opened by a wait point, its `on:`.
+# `deliver` opens when the run is created (on: run_start): plan, build,
+# review, open the merge request, then PARK on wait_merge until the merge
+# request merges (the phase goes on: the ticket is done) or is closed
+# unmerged (abort: the run is abandoned). While it is parked the run is idle,
+# and the other phases open on their own signals, one at a time, as often as
+# their `on:` says, each on the merge request the signal carries:
 #   conflicts     the target moved and the MR no longer merges — the engine
-#                 merges the target in once you confirm; a conflict is resolved
-#                 by an agent editing the files, never by an agent running git
+#                 merges the target in; a conflict is resolved by an agent
+#                 editing the files, never by an agent running git. Opens by
+#                 itself, after asking, or only by hand: $conflicts_start
 #   review_fixes  reviewers commented, then went quiet for an hour — you pick
 #                 the threads worth fixing; those are fixed in one batch,
 #                 tested, pushed, and answered on their threads
+# Any phase can also be started by hand from the run page while the run is
+# idle, and a gate parks its phase the way a wait does: the run stays alive
+# for whatever else needs doing meanwhile.
 #
-# The ticket's tracker issue follows the work: "In Progress" as the run
-# starts, "In Review" once the branch is pushed and the merge request is
-# about to open. Both are tracker actions on the integration the ticket was
-# imported from — a ticket written by hand has no issue, and the two stages
-# skip. Spell the statuses the way your workflow does.
+# The ticket's tracker issue follows the work in CANONICAL statuses —
+# in_progress as the run starts, in_review once the merge request is open,
+# done once it merges — which the ticket's tracker translates: a Jira
+# integration through its status map ("done = Ready for prod" for a team
+# whose Done is a deploy away), GitHub Issues by closing the issue. A status
+# the tracker has no word for skips the stage, and a ticket written by hand
+# has no issue at all, so those stages skip too. All three are best effort:
+# bookkeeping never blocks the work.
 #
 # Failure philosophy: every agent/command stage first retries itself with its
 # error fed back, then escalates to its OWN rescue gate — a human opens the
@@ -325,8 +335,8 @@ phases:
       # The issue moves first — before any workspace exists; the move needs
       # none, so it lands seconds in. A tracker hiccup routes straight on to
       # the plan: bookkeeping never blocks the work.
-      - { id: in_progress, type: action, action: ticket_transition, input: { to: "In Progress" },
-          description: "move the ticket's tracker issue to In Progress",
+      - { id: in_progress, type: action, action: ticket_transition, input: { to: in_progress },
+          description: "move the ticket's tracker issue to its in-progress status",
           on_success: plan,
           on_fail: { to: plan, max: 1 } }
       # Agent stages bind their agents' declared inputs by name; outputs come from
@@ -382,12 +392,12 @@ phases:
       - { id: push,       type: action, action: push_branch,
           on_success: mr,
           on_fail: debug }
-      # The merge request opens, and the issue moves to In Review right after.
-      # A tracker hiccup is not worth stopping for: the move is best effort.
+      # The merge request opens, and the issue moves to its in-review status
+      # right after. A tracker hiccup is not worth stopping for: best effort.
       - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },
           on_success: in_review }
-      - { id: in_review,  type: action, action: ticket_transition, input: { to: "In Review" },
-          description: "move the ticket's tracker issue to In Review",
+      - { id: in_review,  type: action, action: ticket_transition, input: { to: in_review },
+          description: "move the ticket's tracker issue to its in-review status",
           on_success: wait_merge,
           on_fail: { to: wait_merge, max: 1 } }
       # The phase parks here — the run is in review — while the phases below
@@ -396,8 +406,8 @@ phases:
       - { id: wait_merge, type: wait, for: mr_merged,
           description: "wait for the merge request to merge; a close abandons the run",
           on_fail: abort }
-      - { id: ticket_done, type: action, action: ticket_transition, input: { to: "Done" },
-          description: "move the ticket's tracker issue to Done",
+      - { id: ticket_done, type: action, action: ticket_transition, input: { to: done },
+          description: "move the ticket's tracker issue to its done status",
           on_success: done,
           on_fail: done }
 

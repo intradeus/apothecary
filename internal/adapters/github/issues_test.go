@@ -130,6 +130,33 @@ func TestIssuesTransitionOpenClosedOnly(t *testing.T) {
 	}
 }
 
+// Canonical statuses on an issue: done closes, todo reopens, and the rest
+// have no GitHub word — unsupported, which the engine skips.
+func TestIssuesTransitionToCanonical(t *testing.T) {
+	srv, writes, _ := issuesStub(t)
+	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})
+	ctx := context.Background()
+	if err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	patches := writes["PATCH /repos/lu/greeter/issues/5"]
+	if len(patches) != 1 || patches[0]["state"] != "closed" || patches[0]["state_reason"] != "completed" {
+		t.Errorf("patches = %+v", patches)
+	}
+	// The stub's issue reads open, so todo is already there: no call.
+	if err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusTodo); err != nil {
+		t.Fatal(err)
+	}
+	if len(writes["PATCH /repos/lu/greeter/issues/5"]) != 1 {
+		t.Error("an already-open issue was patched")
+	}
+	var unsupported *ports.ErrStatusUnsupported
+	err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusInReview)
+	if !errors.As(err, &unsupported) || ports.StatusNames(unsupported.Supported) != "todo, done" || !strings.Contains(err.Error(), "GitHub Issues has no status") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestIssuesFieldsAndLink(t *testing.T) {
 	srv, writes, _ := issuesStub(t)
 	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})

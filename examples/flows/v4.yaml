@@ -5,7 +5,9 @@ version: 4
 # order" sugar), and rescue gates hoisted after the success chain. Its job is
 # schema coverage: abort terminals, then-chains, on_timeout, unlimited links,
 # a gate whose rejection loops back into the build (which binds $DECISION for
-# it), and signals answering a gate both ways.
+# it), signals answering a gate both ways, and the ticket's tracker issue
+# moved in canonical statuses (in_progress as the run starts, done once the
+# merge request merges) — moves that skip on a ticket without a tracker.
 description: expanded-form reference flow (editor output shape)
 parameters:
   timeout: 30m
@@ -203,6 +205,15 @@ agents:
       file named in the OUTPUT CONTRACT.
 
 stages:
+  - id: in_progress
+    type: action
+    action: ticket_transition
+    input:
+      to: in_progress
+    on_success: plan
+    on_fail:
+      to: plan
+      max: 1
   - id: plan
     type: agent
     agent: planner
@@ -319,7 +330,14 @@ stages:
     input: { mr: $MR_URL }
     auto_approve: mr_merged
     auto_reject: mr_closed
-    on_success: done
+    on_success: ticket_done
     on_reject:
       to: build
       max: -1
+  - id: ticket_done
+    type: action
+    action: ticket_transition
+    input:
+      to: done
+    on_success: done
+    on_fail: done

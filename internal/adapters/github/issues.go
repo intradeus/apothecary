@@ -200,6 +200,22 @@ func (s *Issues) OpenAttachment(context.Context, ports.SourceAttachment) (io.Rea
 
 var issueStates = []string{"open", "closed"}
 
+// issueStatusMap is what the canonical statuses mean for an issue: todo is
+// open, done is closed, and nothing else has a word (Projects v2 columns are
+// not reachable through the issue itself).
+var issueStatusMap = map[ports.TicketStatus]string{ports.StatusTodo: "open", ports.StatusDone: "closed"}
+
+// TransitionTo reopens (todo) or closes (done) the issue; every other
+// canonical status is unsupported — the engine skips the stage.
+func (s *Issues) TransitionTo(ctx context.Context, key string, to ports.TicketStatus) error {
+	state, ok := issueStatusMap[to]
+	if !ok {
+		return &ports.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "GitHub Issues",
+			Supported: []ports.TicketStatus{ports.StatusTodo, ports.StatusDone}}
+	}
+	return s.Transition(ctx, key, state)
+}
+
 // Transition: an issue is open or closed, nothing else. Anything else a flow
 // asks for is unreachable, and the error says what is.
 func (s *Issues) Transition(ctx context.Context, key, status string) error {

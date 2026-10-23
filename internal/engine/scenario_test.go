@@ -189,6 +189,11 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 		Envp:         h.envp,
 		Runner:       h.runner,
 		Forge:        h.forge,
+		// The daemon always wires a tracker writer; whether a scenario's
+		// ticket has a tracker to write to is the ticket's business (a
+		// ticket without one skips those stages). trackerHarness swaps in
+		// the tracker it asserts on.
+		TicketWriter: func(context.Context, string) (ports.TicketWriter, error) { return newTracker(), nil },
 	}
 	h.settings = &varSettings{L: Limits{}.withDefaults()}
 	cfg := Config{MRPollInterval: 5 * time.Millisecond}
@@ -356,8 +361,10 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 	}
 	evs := h.events(t, runID)
 
-	if got := countType(evs, event.TypeStageStarted); got != 11 {
-		t.Errorf("stage_started count = %d, want 11", got)
+	// 14 = the 11 working stages plus the three tracker moves, which skip on
+	// a ticket written by hand (started and completed, nothing called).
+	if got := countType(evs, event.TypeStageStarted); got != 14 {
+		t.Errorf("stage_started count = %d, want 14", got)
 	}
 	rc, ok := findPayload[*event.RunCompleted](evs)
 	if !ok {

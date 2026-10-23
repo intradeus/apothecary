@@ -67,6 +67,51 @@ type TicketSource interface {
 	OpenAttachment(ctx context.Context, a SourceAttachment) (io.ReadCloser, error)
 }
 
+// TicketStatus is a CANONICAL status: one of the few states of a piece of
+// work that every tracker has some word for. A flow names these
+// (ticket_transition's `to`), so the same flow moves a Jira issue to
+// "In Progress" and reopens a GitHub issue without spelling either; each
+// adapter maps them to its tracker's own vocabulary — Jira through the
+// integration's status map, GitHub Issues through its two states — and says
+// which ones it has no word for (*ErrStatusUnsupported), which the engine
+// turns into a skipped stage rather than a failure. A tracker's literal
+// status name still travels through Transition when a flow wants exactly
+// that word.
+type TicketStatus string
+
+const (
+	StatusTodo       TicketStatus = "todo"
+	StatusInProgress TicketStatus = "in_progress"
+	StatusInReview   TicketStatus = "in_review"
+	StatusDone       TicketStatus = "done"
+	StatusBlocked    TicketStatus = "blocked"
+)
+
+// CanonicalStatuses lists every TicketStatus, in lifecycle order.
+func CanonicalStatuses() []TicketStatus {
+	return []TicketStatus{StatusTodo, StatusInProgress, StatusInReview, StatusDone, StatusBlocked}
+}
+
+// ParseTicketStatus reads a canonical status name; ok is false for anything
+// else (a tracker's own status name belongs to Transition, not here).
+func ParseTicketStatus(s string) (TicketStatus, bool) {
+	for _, st := range CanonicalStatuses() {
+		if string(st) == strings.TrimSpace(s) {
+			return st, true
+		}
+	}
+	return "", false
+}
+
+// StatusNames renders statuses for a message ("todo, done").
+func StatusNames(list []TicketStatus) string {
+	names := make([]string, len(list))
+	for i, st := range list {
+		names[i] = string(st)
+	}
+	return strings.Join(names, ", ")
+}
+
 // TicketLink is one outbound link attached to a tracker issue (the run's
 // merge request, typically).
 type TicketLink struct {
@@ -82,7 +127,9 @@ type TicketLink struct {
 // cannot be the target of a tracker action, and run creation says so.
 //
 // Everything here speaks the tracker's OWN vocabulary (a status name, a
-// field's display name, markdown that the adapter renders to vendor markup).
+// field's display name, markdown that the adapter renders to vendor markup)
+// — except TransitionTo, which takes a canonical TicketStatus and lets the
+// adapter find the tracker's word for it, so one flow fits every tracker.
 // No vendor types cross the boundary; what the engine needs to explain a
 // refusal travels as the typed errors below, so a flow's $FAILURE can say
 // "not reachable from X; reachable: A, B" without parsing vendor text.
@@ -96,6 +143,11 @@ type TicketWriter interface {
 	// on the tracker's status or transition names). Already there ⇒ no-op.
 	// Not reachable from the current status ⇒ *ErrStatusUnreachable.
 	Transition(ctx context.Context, key, status string) error
+	// TransitionTo moves the issue to the tracker's own status for a
+	// canonical one. The tracker has no status for it ⇒ *ErrStatusUnsupported
+	// (the engine skips the stage); it has one but the workflow does not
+	// allow the move from here ⇒ *ErrStatusUnreachable, as Transition.
+	TransitionTo(ctx context.Context, key string, to TicketStatus) error
 	// Comment posts markdown as a new comment.
 	Comment(ctx context.Context, key, body string) error
 	// Comments lists the issue's comment bodies, oldest first, rendered to
@@ -127,6 +179,30 @@ func (e *ErrStatusUnreachable) Error() string {
 		return fmt.Sprintf("%s: status %q is not reachable from %q (no transition is available)", e.Key, e.To, e.From)
 	}
 	return fmt.Sprintf("%s: status %q is not reachable from %q; reachable: %s", e.Key, e.To, e.From, strings.Join(e.Reachable, ", "))
+}
+
+// ErrStatusUnsupported: the tracker has no status that means the canonical
+// one a flow named — GitHub Issues knows nothing of "in review". Supported
+// lists the canonical statuses it does have a word for, so a flow author
+// can tell "this tracker cannot say it" from "the workflow forbids it"
+// (ErrStatusUnreachable). Kind names the tracker for the message.
+type ErrStatusUnsupported struct {
+	Key       string
+	Status    TicketStatus
+	Kind      string
+	Supported []TicketStatus
+}
+
+func (e *ErrStatusUnsupported) Error() string {
+	kind := e.Kind
+	if kind == "" {
+		kind = "the tracker"
+	}
+	msg := fmt.Sprintf("%s: %s has no status for %q", e.Key, kind, string(e.Status))
+	if len(e.Supported) > 0 {
+		msg += "; it has: " + StatusNames(e.Supported)
+	}
+	return msg
 }
 
 // ErrFieldUnknown: no field of the tracker matches the name a flow wrote.

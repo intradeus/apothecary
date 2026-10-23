@@ -16,3 +16,9 @@ no copies here to drift.
 Before running the flow on a project: set a `verify` command on the
 project, and check the review stage's model pin is routable by your
 harness auth (or change/remove it).
+
+The two tracker stages (`in_progress`, `ticket_done`) move the ticket's
+tracker issue in canonical statuses that the ticket's tracker translates
+(Jira through its integration's status map, GitHub Issues by closing the
+issue); on a ticket written by hand, or a status the tracker has no word
+for, they skip.

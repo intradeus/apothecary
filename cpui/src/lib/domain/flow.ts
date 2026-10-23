@@ -111,8 +111,11 @@ export interface ActionSpec {
 	description?: string;
 	/** Integration port the project must have configured (e.g. 'forge'). */
 	requires?: string;
-	/** At most one stage per flow may use it. */
+	/** At most one stage per phase may use it. */
 	single: boolean;
+	/** Inputs of which a stage binds exactly one (ticket_transition's
+	 *  to / status, ticket_set_field's value / text). */
+	exactlyOne?: string[];
 	/** Acts on an external service only (the ticket tracker): needs no
 	 *  workspace unless a file input is bound. */
 	remote: boolean;

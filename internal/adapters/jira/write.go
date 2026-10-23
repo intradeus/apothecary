@@ -81,6 +81,72 @@ func (c *Client) Transition(ctx context.Context, key, status string) error {
 	return err
 }
 
+// DefaultStatusMap is what a canonical status means on a Jira with the
+// stock software workflow: To Do → In Progress → In Review → Done. There is
+// no stock "blocked" column, so blocked is unsupported until the
+// integration maps it.
+func DefaultStatusMap() map[ports.TicketStatus]string {
+	return map[ports.TicketStatus]string{
+		ports.StatusTodo:       "To Do",
+		ports.StatusInProgress: "In Progress",
+		ports.StatusInReview:   "In Review",
+		ports.StatusDone:       "Done",
+	}
+}
+
+// ParseStatusMap reads the integration's status map text — canonical=status
+// pairs separated by commas or newlines ("done=Ready for prod, blocked=On
+// hold") — laid over DefaultStatusMap: a listed status replaces the default
+// word for it, and an empty value ("in_review=") removes the default, so a
+// flow's `to: in_review` skips on a workflow that has no review column.
+// Empty text is the defaults.
+func ParseStatusMap(text string) (map[ports.TicketStatus]string, error) {
+	m := DefaultStatusMap()
+	for part := range strings.SplitSeq(strings.ReplaceAll(text, "\n", ","), ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, value, ok := strings.Cut(part, "=")
+		if !ok {
+			return nil, fmt.Errorf("jira: status map entry %q is not canonical=status", part)
+		}
+		st, known := ports.ParseTicketStatus(name)
+		if !known {
+			return nil, fmt.Errorf("jira: status map names %q; the canonical statuses are %s", strings.TrimSpace(name), ports.StatusNames(ports.CanonicalStatuses()))
+		}
+		if value = strings.TrimSpace(value); value == "" {
+			delete(m, st)
+		} else {
+			m[st] = value
+		}
+	}
+	return m, nil
+}
+
+// supportedStatuses lists the canonical statuses the map has a word for,
+// in lifecycle order.
+func (c *Client) supportedStatuses() []ports.TicketStatus {
+	var out []ports.TicketStatus
+	for _, st := range ports.CanonicalStatuses() {
+		if c.cfg.StatusMap[st] != "" {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// TransitionTo moves the issue to the workflow status the integration maps
+// the canonical one to (Config.StatusMap); a canonical status with no word
+// on this site is unsupported, which the engine skips rather than fails.
+func (c *Client) TransitionTo(ctx context.Context, key string, to ports.TicketStatus) error {
+	name := c.cfg.StatusMap[to]
+	if name == "" {
+		return &ports.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "Jira", Supported: c.supportedStatuses()}
+	}
+	return c.Transition(ctx, key, name)
+}
+
 func containsFold(list []string, s string) bool {
 	for _, v := range list {
 		if strings.EqualFold(v, s) {

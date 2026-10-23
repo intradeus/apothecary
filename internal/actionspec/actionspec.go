@@ -114,6 +114,9 @@ type Action struct {
 	Outputs []OutputSig `json:"outputs,omitempty"`
 }
 
+// Statuses lists the canonical ticket statuses in lifecycle order.
+var Statuses = []string{StatusTodo, StatusInProgress, StatusInReview, StatusDone, StatusBlocked}
+
 // Action slugs and the port kinds they require.
 const (
 	CreateMR            = "create_mr"
@@ -141,6 +144,16 @@ const (
 	// Sync strategies (sync_target's strategy input).
 	StrategyMerge  = "merge"
 	StrategyRebase = "rebase"
+
+	// Canonical ticket statuses (ticket_transition's `to`): the flow's words
+	// for where the work is, which the ticket's tracker translates into its
+	// own. They mirror ports.CanonicalStatuses — the registry stays free of
+	// the ports package, and a test holds the two lists equal.
+	StatusTodo       = "todo"
+	StatusInProgress = "in_progress"
+	StatusInReview   = "in_review"
+	StatusDone       = "done"
+	StatusBlocked    = "blocked"
 
 	RequiresForge = "forge"
 	// RequiresTracker: the ticket's tracker must be writable — a ticketsource
@@ -227,14 +240,19 @@ var registry = []Action{{
 }, {
 	Slug:        TicketTransition,
 	Title:       "Move the ticket",
-	Description: "Moves the ticket's tracker issue to the named status (\"In Progress\", \"Done\" — the tracker's own words, matched case-insensitively). Already there: nothing happens. Not reachable from the current status: the stage fails with the statuses that are, for on_fail to route. A ticket written by hand (no tracker issue) skips the stage.",
+	Description: "Moves the ticket's tracker issue. `to` names a canonical status (todo, in_progress, in_review, done, blocked) that the ticket's tracker translates into its own — Jira through the integration's status map, GitHub Issues to open/closed — so one flow fits every tracker; a status this tracker has no word for skips the stage with a note. `status` names the tracker's own status or transition verbatim (matched case-insensitively). Exactly one of the two. Already there: nothing happens. Not reachable from the current status: the stage fails with the statuses that are, for on_fail to route. A ticket written by hand (no tracker issue) skips the stage.",
 	Requires:    RequiresTracker,
 	Remote:      true,
+	ExactlyOne:  []string{"to", "status"},
 	Inputs: []InputSig{{
 		Name:        "to",
-		Description: "the status to move the issue to, as the tracker names it",
+		Description: "a canonical status, translated by the ticket's tracker; one it has no word for skips the stage. Exactly one of to / status",
+		Kind:        KindEnum,
+		Values:      Statuses,
+	}, {
+		Name:        "status",
+		Description: "the tracker's own status (or transition) name, verbatim. Exactly one of to / status",
 		Kind:        KindText,
-		Required:    true,
 	}},
 }, {
 	Slug:        TicketComment,

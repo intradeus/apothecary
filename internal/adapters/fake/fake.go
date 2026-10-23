@@ -689,7 +689,9 @@ func (c *Channel) Sent() []ports.Notification {
 //
 // It also implements the write side (ports.TicketWriter), so engine scenarios
 // can script a flow's tracker actions: Reachable says which statuses a
-// Transition may reach from each one (nil = any), KnownFields which field
+// Transition may reach from each one (nil = any), StatusMap which of its
+// statuses each canonical one means (nil = the stock Jira words: To Do, In
+// Progress, In Review, Done; blocked unsupported), KnownFields which field
 // names exist (nil = any), and every write lands in FieldValues/Posted/Linked
 // and is logged to Calls ("transition DEV-1 In Progress") for assertions.
 // WriteErr fails every write when set; Err fails everything.
@@ -700,6 +702,7 @@ type TicketSource struct {
 	Err     error // returned by every method when set
 
 	Reachable   map[string][]string
+	StatusMap   map[ports.TicketStatus]string
 	KnownFields []string
 	FieldValues map[string]map[string]string
 	Posted      map[string][]string
@@ -819,6 +822,34 @@ func (s *TicketSource) Transition(_ context.Context, key, status string) error {
 	s.record("transition %s %s", t.Key, target)
 	t.Status = target
 	return nil
+}
+
+// DefaultStatusMap is the fake's stock vocabulary (StatusMap nil).
+var DefaultStatusMap = map[ports.TicketStatus]string{
+	ports.StatusTodo:       "To Do",
+	ports.StatusInProgress: "In Progress",
+	ports.StatusInReview:   "In Review",
+	ports.StatusDone:       "Done",
+}
+
+// TransitionTo moves the ticket to the status StatusMap gives the canonical
+// one; unmapped is unsupported, like a tracker with no such column.
+func (s *TicketSource) TransitionTo(ctx context.Context, key string, to ports.TicketStatus) error {
+	m := s.StatusMap
+	if m == nil {
+		m = DefaultStatusMap
+	}
+	name := m[to]
+	if name == "" {
+		var supported []ports.TicketStatus
+		for _, st := range ports.CanonicalStatuses() {
+			if m[st] != "" {
+				supported = append(supported, st)
+			}
+		}
+		return &ports.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "the fake tracker", Supported: supported}
+	}
+	return s.Transition(ctx, key, name)
 }
 
 func (s *TicketSource) Comment(_ context.Context, key, body string) error {

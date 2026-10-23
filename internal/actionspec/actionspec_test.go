@@ -1,6 +1,7 @@
 package actionspec
 
 import (
+	"apothecary/internal/ports"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -42,8 +43,10 @@ func TestRegistryIntegrity(t *testing.T) {
 				}
 			case KindEnum:
 				// A literal choice needs its choices, and a default among them
-				// when the stage may leave it unbound.
-				if len(in.Values) == 0 || (!in.Required && !slices.Contains(in.Values, in.Default)) {
+				// when the stage may leave it unbound — unless leaving it
+				// unbound is choosing its exactly-one sibling.
+				optional := !in.Required && !slices.Contains(a.ExactlyOne, in.Name)
+				if len(in.Values) == 0 || (optional && !slices.Contains(in.Values, in.Default)) {
 					t.Errorf("action %q enum input %q: values %v, default %q", a.Slug, in.Name, in.Values, in.Default)
 				}
 			default:
@@ -136,8 +139,26 @@ func TestTrackerActions(t *testing.T) {
 			t.Errorf("%s must be usable anywhere in a flow (single=%v subject=%v)", slug, a.Single, a.Subject)
 		}
 	}
-	if to := Get(TicketTransition).Input("to"); to == nil || to.Kind != KindText || !to.Required {
-		t.Errorf("ticket_transition.to = %+v, want a required text input", to)
+	tr := Get(TicketTransition)
+	if to := tr.Input("to"); to == nil || to.Kind != KindEnum || to.Required || !slices.Equal(to.Values, Statuses) || to.Default != "" {
+		t.Errorf("ticket_transition.to = %+v, want an optional enum over the canonical statuses with no default", to)
+	}
+	if st := tr.Input("status"); st == nil || st.Kind != KindText || st.Required {
+		t.Errorf("ticket_transition.status = %+v, want an optional text input", st)
+	}
+	if !slices.Equal(tr.ExactlyOne, []string{"to", "status"}) {
+		t.Errorf("ticket_transition.exactly_one = %v, want to / status", tr.ExactlyOne)
+	}
+	// The registry's statuses ARE the port's: a flow's `to` is what every
+	// adapter's TransitionTo understands, in the same order.
+	canonical := ports.CanonicalStatuses()
+	if len(canonical) != len(Statuses) {
+		t.Fatalf("statuses = %v, ports = %v", Statuses, canonical)
+	}
+	for i, st := range canonical {
+		if string(st) != Statuses[i] {
+			t.Errorf("status %d = %q, ports %q", i, Statuses[i], st)
+		}
 	}
 	if body := Get(TicketComment).Input("body"); body == nil || body.Kind != KindFile || !body.Required || body.DefaultPath == "" {
 		t.Errorf("ticket_comment.body = %+v, want a required file input with a conventional path", body)

@@ -13,6 +13,7 @@ parameters:
   max_total_turns: 300
   verify: { default: verify, description: "the project command that runs the tests" }
   review_model: { default: openai/gpt-5, description: "the reviewer's model" }
+  ticket_status: { default: done, enum: [done, in_review], description: "where the tracker issue goes once the merge request merges" }
 agents:
   - name: planner
     description: explores the repository and writes the implementation plan
@@ -198,6 +199,12 @@ agents:
       file named in the OUTPUT CONTRACT.
 
 stages:
+  # A tracker action needs no workspace: the issue moves seconds in. `to` is
+  # a canonical status the ticket's tracker translates into its own word; a
+  # ticket written by hand (no tracker issue) skips the stage, and so does a
+  # tracker with no word for it.
+  - { id: in_progress, type: action, action: ticket_transition, input: { to: in_progress },
+      on_fail: { to: plan, max: 1 } }
   # No output: the planner's contract already says where its plan goes.
   - { id: plan,       type: agent, agent: planner, max_turns: 25,
       description: write the implementation plan,
@@ -232,6 +239,10 @@ stages:
       on_success: push,
       on_reject: abort }
   - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  # `status` is the tracker's own word, verbatim — for a column no canonical
+  # status covers.
+  - { id: in_review,  type: action, action: ticket_transition, input: { status: "In Review" },
+      on_fail: { to: final_gate, max: 1 } }
   # A gate the forge can answer either way — and an explicit on_reject, because
   # a rejection with nowhere to go abandons the run. (`type: wait` is covered by
   # TestWaitStage and the engine's wait scenarios; putting one here would make
@@ -239,3 +250,7 @@ stages:
   - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
       auto_approve: mr_merged, auto_reject: mr_closed,
       on_reject: abort }
+  # Where the issue goes once merged is the project's call: an enum parameter
+  # read at an enum input (its values within the input's).
+  - { id: ticket_done, type: action, action: ticket_transition, input: { to: $ticket_status },
+      on_fail: done }

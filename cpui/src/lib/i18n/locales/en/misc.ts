@@ -528,6 +528,7 @@ export default {
 	'flow.insp.needsMR': 'Needs a merge request: place it after a create_mr, or in a reaction phase.',
 	'flow.insp.textPlaceholder': 'as the tracker spells it',
 	'flow.insp.textInputHelp': 'A literal written in the flow, not a file.',
+	'flow.insp.exactlyOne': 'Bind exactly one of {names}.',
 	'flow.insp.produces': 'Produces <span class="mono">{name}</span>',
 	'flow.insp.producesSentinel':
 		', available to later stages as <span class="mono">{sentinel}</span>',

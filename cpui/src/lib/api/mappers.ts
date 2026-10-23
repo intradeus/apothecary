@@ -560,6 +560,7 @@ export function toActionSpec(w: Wire.Action): ActionSpec {
 		description: w.description,
 		requires: w.requires,
 		single: w.single ?? false,
+		exactlyOne: w.exactly_one?.length ? list(w.exactly_one) : undefined,
 		remote: w.remote ?? false,
 		needs: w.needs,
 		inputs: list(w.inputs).map(toActionInput),

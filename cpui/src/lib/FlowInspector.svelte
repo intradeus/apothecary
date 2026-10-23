@@ -715,6 +715,11 @@
 						{#if actionSig.needs === 'merge_request'}
 							<div class="help">{t('flow.insp.needsMR')}</div>
 						{/if}
+						{#if actionSig.exactlyOne?.length}
+							<div class="help">
+								{t('flow.insp.exactlyOne', { names: actionSig.exactlyOne.join(' / ') })}
+							</div>
+						{/if}
 						{#each actionSig.inputs ?? [] as d (d.name)}
 							<div class="io-bind card-in field">
 								<label for="act-{d.name}"
@@ -733,6 +738,7 @@
 											onchange();
 										}}
 									>
+										{#if !d.required && !d.defaultValue}<option value="">—</option>{/if}
 										{#each d.values ?? [] as v (v)}<option value={v}>{v}</option>{/each}
 									</select>
 								{:else if d.kind === 'text'}

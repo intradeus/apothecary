@@ -19,7 +19,7 @@ type Jira struct{}
 const jiraHelp = `Import: apothecary copies an issue's summary, description and attachments into a ticket — a copy taken once; editing the ticket never travels back.
 
 Write-back happens ONLY when a flow runs a tracker action on a ticket imported from here — each one a stage the flow's author placed:
-• ticket_transition — moves the issue (status names as your workflow spells them; a move the workflow does not allow fails the stage naming the ones it does).
+• ticket_transition — moves the issue: "to" names a canonical status (todo, in_progress, in_review, done, blocked) translated through the status map below, "status" a status or transition as your workflow spells it. A move the workflow does not allow fails the stage naming the ones it does; a canonical status this site has no word for skips the stage.
 • ticket_comment — posts a markdown artifact as a comment, ending with a short apothecary trailer (run + stage).
 • ticket_set_field — writes one field by its DISPLAY NAME ("Feature flags"): text, paragraph, number, select, labels, components, versions, priority. Replace or append (comma-separated items merged).
 • ticket_link — attaches the run's merge request(s) as remote issue links.
@@ -104,17 +104,26 @@ func (Jira) Descriptor() Descriptor {
 				Name: "api_version", Label: "API version", Default: "3",
 				Help: "3 for Cloud, 2 for Data Center / Server.",
 			},
+			{
+				Name: "status_map", Label: "Status map (optional)", Placeholder: "done=Ready for prod, blocked=On hold",
+				Help: "Which workflow status each canonical status a flow names (todo, in_progress, in_review, done, blocked) means on this site, as canonical=status pairs. Unlisted ones keep the stock words — To Do, In Progress, In Review, Done; blocked has none. An empty value (in_review=) removes one, and a flow's \"to: in_review\" then skips here.",
+			},
 		},
 	}
 }
 
 func (Jira) New(cfg Config) (ports.TicketSource, error) {
+	statuses, err := jiraadapter.ParseStatusMap(cfg.Str("status_map", ""))
+	if err != nil {
+		return nil, err
+	}
 	return jiraadapter.New(jiraadapter.Config{
 		BaseURL:    cfg.Str("base_url", ""),
 		Email:      cfg.Str("email", ""),
 		Token:      cfg.Secrets["api_token"],
 		JQL:        cfg.Str("jql", ""),
 		APIVersion: cfg.Str("api_version", "3"),
+		StatusMap:  statuses,
 	}), nil
 }
 

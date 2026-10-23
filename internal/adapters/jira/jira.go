@@ -43,6 +43,11 @@ type Config struct {
 	JQL string
 	// APIVersion is "3" (Cloud, ADF descriptions) or "2" (Data Center).
 	APIVersion string
+	// StatusMap is the workflow status (or transition name) each canonical
+	// status means on this site — what TransitionTo moves to. A canonical
+	// status missing from the map is one this Jira has no word for
+	// (ErrStatusUnsupported). Nil = DefaultStatusMap.
+	StatusMap map[ports.TicketStatus]string
 }
 
 type Client struct {
@@ -67,6 +72,9 @@ func New(cfg Config) *Client {
 	cfg.Token = strings.TrimSpace(cfg.Token)
 	if cfg.APIVersion == "" {
 		cfg.APIVersion = "3"
+	}
+	if cfg.StatusMap == nil {
+		cfg.StatusMap = DefaultStatusMap()
 	}
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
 }

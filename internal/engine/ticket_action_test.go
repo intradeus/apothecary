@@ -43,7 +43,7 @@ const transitionFirstDoc = `name: tk
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: kick, type: action, action: ticket_transition, input: { to: "in progress" } }
+  - { id: kick, type: action, action: ticket_transition, input: { to: in_progress } }
   - { id: build, type: agent, agent: builder }
 `
 
@@ -85,7 +85,7 @@ func TestModelCheckSurvivesALeadingRemoteStage(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: zen/glm-5.1 }
 stages:
-  - { id: kick, type: action, action: ticket_transition, input: { to: "In Progress" } }
+  - { id: kick, type: action, action: ticket_transition, input: { to: in_progress } }
   - { id: build, type: agent, agent: builder }
 `
 	h, _ := trackerHarness(t, doc)
@@ -124,7 +124,7 @@ const routedDoc = `name: routed
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
-  - { id: kick, type: action, action: ticket_transition, input: { to: "%s" }, on_success: build, on_fail: { to: build, max: 1 } }
+  - { id: kick, type: action, action: ticket_transition, input: { to: %s }, on_success: build, on_fail: { to: build, max: 1 } }
   - { id: build, type: agent, agent: builder }
 `
 
@@ -133,7 +133,7 @@ stages:
 // on_fail — here straight to the next stage, which is how "best effort" is
 // written.
 func TestTicketTransitionUnreachableRoutesOnFail(t *testing.T) {
-	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "Done"))
+	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "done"))
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "routed", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestTicketTransitionUnreachableRoutesOnFail(t *testing.T) {
 		t.Errorf("an unreachable move was recorded as a call: %v", tracker.Calls)
 	}
 	// With no on_fail the stage failure ends the run.
-	h2, _ := trackerHarness(t, strings.Replace(transitionFirstDoc, `"in progress"`, `"Done"`, 1))
+	h2, _ := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", "to: done", 1))
 	runID2, err := h2.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestTicketTransitionUnreachableRoutesOnFail(t *testing.T) {
 // A tracker that is down is infra — but still routable, never terminal: the
 // work must not depend on Jira being up.
 func TestTrackerTransportErrorIsRoutable(t *testing.T) {
-	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "In Progress"))
+	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "in_progress"))
 	tracker.WriteErr = errors.New("jira: 503 service unavailable")
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "routed", testProject)
 	if err != nil {
@@ -178,6 +178,88 @@ func TestTrackerTransportErrorIsRoutable(t *testing.T) {
 	}
 	if sf, ok := findPayload[*event.StageFailed](evs); !ok || sf.Reason != event.ReasonInfra || !strings.Contains(sf.Error, "503") {
 		t.Errorf("stage_failed = %+v", sf)
+	}
+}
+
+// A canonical status is the flow's word; the tracker's is the adapter's.
+// The fake translates in_progress to whatever its map says — here a
+// workflow that calls it "Doing" — so one flow fits workflows that differ.
+func TestCanonicalStatusIsMappedForTheTracker(t *testing.T) {
+	h, tracker := trackerHarness(t, transitionFirstDoc)
+	tracker.StatusMap = map[ports.TicketStatus]string{ports.StatusTodo: "To Do", ports.StatusInProgress: "Doing"}
+	tracker.Reachable = map[string][]string{"To Do": {"Doing"}}
+	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	if got := strings.Join(tracker.Calls, "; "); got != "transition DEV-1 Doing" {
+		t.Errorf("tracker calls = %q", got)
+	}
+}
+
+// A tracker with no word for the status — GitHub Issues knows open and
+// closed — skips the stage with the reason, like a ticket with no tracker:
+// the flow is not wrong, this tracker just cannot say it. Nothing fails,
+// nothing is called.
+func TestUnsupportedCanonicalStatusSkipsTheStage(t *testing.T) {
+	h, tracker := trackerHarness(t, transitionFirstDoc)
+	tracker.Tickets[0].Status = "open"
+	tracker.StatusMap = map[ports.TicketStatus]string{ports.StatusTodo: "open", ports.StatusDone: "closed"}
+	tracker.Reachable = nil
+	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	evs := h.events(t, runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
+	}
+	sc, ok := findPayload[*event.StageCompleted](evs)
+	if !ok || sc.StageID != "kick" || !sc.Skipped || !strings.Contains(sc.Note, `has no status for "in_progress"`) || !strings.Contains(sc.Note, "todo, done") {
+		t.Errorf("first completion = %+v, want the move skipped with the tracker's vocabulary in the note", sc)
+	}
+	if countType(evs, event.TypeStageFailed) != 0 || len(tracker.Calls) != 0 {
+		t.Errorf("an unsupported status failed or called: %v / %v", eventTypes(evs), tracker.Calls)
+	}
+}
+
+// `status:` is the tracker's own word, taken verbatim: it moves the issue
+// when the workflow allows, and an unreachable one still fails the stage
+// (input_invalid) — a literal is never skipped.
+func TestLiteralStatusMovesOrFails(t *testing.T) {
+	h, tracker := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", `status: "in progress"`, 1))
+	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	if got := strings.Join(tracker.Calls, "; "); got != "transition DEV-1 In Progress" {
+		t.Errorf("tracker calls = %q", got)
+	}
+
+	h2, tracker2 := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", `status: "Ready for prod"`, 1))
+	runID2, err := h2.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2.e.Wait(runID2)
+	evs := h2.events(t, runID2)
+	if v := h2.view(t, runID2); v.State != run.Abandoned {
+		t.Fatalf("state = %s, want abandoned: %v", v.State, eventTypes(evs))
+	}
+	if sf, ok := findPayload[*event.StageFailed](evs); !ok || sf.Reason != event.ReasonInputInvalid || !strings.Contains(sf.Error, `"Ready for prod" is not reachable`) {
+		t.Errorf("stage_failed = %+v", sf)
+	}
+	if len(tracker2.Calls) != 0 {
+		t.Errorf("an unreachable literal was recorded as a call: %v", tracker2.Calls)
 	}
 }
 
@@ -461,7 +543,7 @@ parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build,  type: agent, agent: builder }
   - { id: gate,   type: human_gate, question: "Merge?", on_success: finish, on_reject: abort }
-  - { id: finish, type: action, action: ticket_transition, input: { to: Done } }
+  - { id: finish, type: action, action: ticket_transition, input: { to: done } }
 `
 	h, tracker := trackerHarness(t, doc)
 	tracker.Tickets[0].Status = "In Review"

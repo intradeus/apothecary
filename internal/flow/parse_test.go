@@ -77,8 +77,8 @@ func TestCanonicalV4(t *testing.T) {
 		t.Errorf("budget = %+v", f.Budget)
 	}
 
-	ids := []string{"plan", "plan_gate", "build", "commit_msg", "commit", "test", "review",
-		"redact", "push", "debug_push", "mr", "final_gate"}
+	ids := []string{"in_progress", "plan", "plan_gate", "build", "commit_msg", "commit", "test", "review",
+		"redact", "push", "debug_push", "mr", "in_review", "final_gate", "ticket_done"}
 	if len(f.Stages) != len(ids) {
 		t.Fatalf("got %d stages, want %d", len(f.Stages), len(ids))
 	}
@@ -153,8 +153,22 @@ func TestCanonicalV4(t *testing.T) {
 		t.Errorf("debug_push.Inputs = %+v, want %s", dbg.Inputs, SentinelWorkspace)
 	}
 
-	if f.Index("plan") != 0 || f.Index("final_gate") != len(ids)-1 || f.Index("nope") != -1 {
+	if f.Index("in_progress") != 0 || f.Index("ticket_done") != len(ids)-1 || f.Index("nope") != -1 {
 		t.Error("Index misbehaves")
+	}
+	// The tracker stages: a canonical status, the tracker's own word, and a
+	// canonical one read from an enum parameter.
+	if in := f.Stage("in_progress").Input("to"); in == nil || in.Value != "in_progress" {
+		t.Errorf("in_progress.to = %+v", in)
+	}
+	if in := f.Stage("in_review").Input("status"); in == nil || in.Value != "In Review" {
+		t.Errorf("in_review.status = %+v", in)
+	}
+	if in := f.Stage("ticket_done").Input("to"); in == nil || in.Value != "done" {
+		t.Errorf("ticket_done.to = %+v", in)
+	}
+	if p := f.Param("ticket_status"); p == nil || p.Known || strings.Join(p.Enum, ",") != "done,in_review" {
+		t.Errorf("ticket_status = %+v", p)
 	}
 }
 
@@ -981,14 +995,16 @@ func TestCommandTimeout(t *testing.T) {
 	wantErr(t, header+"stages:\n  - { id: s, type: command, run: x, timeout: soon }\n", "invalid timeout", 5)
 }
 
-// Tracker actions: a text input is the tracker's vocabulary (only blankness
-// is a parse error, and quoting is the author's choice), ticket_set_field
-// takes its value from an artifact OR the flow, and ticket_link warns when
-// no merge request precedes it.
+// Tracker actions: ticket_transition names a canonical status (`to`, an enum
+// the tracker translates — readable from an enum parameter within it) OR
+// the tracker's own word (`status`, a text input: only blankness is a parse
+// error, and quoting is the author's choice), exactly one; ticket_set_field
+// takes its value from an artifact OR the flow; ticket_link warns when no
+// merge request precedes it.
 func TestTrackerActionBindings(t *testing.T) {
 	head := "name: tk\nversion: 4\nparameters: { harness: fake, model: fake/m }\nagents: []\nstages:\n"
-	plain := head + "  - { id: s, type: action, action: ticket_transition, input: { to: In Progress } }\n"
-	quoted := head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"In Progress\" } }\n"
+	plain := head + "  - { id: s, type: action, action: ticket_transition, input: { status: In Progress } }\n"
+	quoted := head + "  - { id: s, type: action, action: ticket_transition, input: { status: \"In Progress\" } }\n"
 	fp, err := Parse("t.yaml", []byte(plain))
 	if err != nil {
 		t.Fatal(err)
@@ -997,12 +1013,38 @@ func TestTrackerActionBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if in := fp.Stages[0].Input("to"); in == nil || in.Value != "In Progress" || in.Value != fq.Stages[0].Input("to").Value {
+	if in := fp.Stages[0].Input("status"); in == nil || in.Value != "In Progress" || in.Value != fq.Stages[0].Input("status").Value {
 		t.Errorf("plain/quoted text bindings differ: %+v vs %+v", fp.Stages[0].Inputs, fq.Stages[0].Inputs)
 	}
+	canon, err := Parse("t.yaml", []byte(head+"  - { id: s, type: action, action: ticket_transition, input: { to: in_review } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in := canon.Stages[0].Input("to"); in == nil || in.Value != "in_review" || canon.Stages[0].Input("status") != nil {
+		t.Errorf("canonical binding = %+v", canon.Stages[0].Inputs)
+	}
+	// The canonical status may come from an enum parameter within the
+	// statuses — a project decides where its issues go once merged.
+	withParam := strings.Replace(head, "model: fake/m", "model: fake/m, final: { default: done, enum: [done, in_review] }", 1)
+	viaParam, err := Parse("t.yaml", []byte(withParam+"  - { id: s, type: action, action: ticket_transition, input: { to: $final } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in := viaParam.Stages[0].Input("to"); in == nil || in.Value != "done" {
+		t.Errorf("to via $final = %+v", viaParam.Stages[0].Inputs)
+	}
+	if bound, err := viaParam.Resolve(map[string]string{"final": "in_review"}); err != nil || bound.Stages[0].Input("to").Value != "in_review" {
+		t.Errorf("to via $final bound = %+v, %v", bound, err)
+	}
 	for _, tc := range []struct{ doc, substr string }{
-		{head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"  \" } }\n", `input "to": a value is required`},
-		{head + "  - { id: s, type: action, action: ticket_transition }\n", `requires input "to"`},
+		{head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"In Progress\" } }\n", `input "to": "In Progress" is not one of todo | in_progress | in_review | done | blocked`},
+		{head + "  - { id: s, type: action, action: ticket_transition, input: { status: \"  \" } }\n", `input "status": a value is required`},
+		{head + "  - { id: s, type: action, action: ticket_transition }\n", `takes exactly one of to / status`},
+		{head + "  - { id: s, type: action, action: ticket_transition, input: { to: done, status: Done } }\n", `takes exactly one of to / status`},
+		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { default: done }", 1) +
+			"  - { id: s, type: action, action: ticket_transition, input: { to: $wide } }\n", `parameter "wide" needs an enum within todo | in_progress`},
+		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { default: done, enum: [done, closed] }", 1) +
+			"  - { id: s, type: action, action: ticket_transition, input: { to: $wide } }\n", `parameter "wide" allows "closed", which this field does not`},
 		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team } }\n", "exactly one of value"},
 		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, value: artifacts/t.txt, text: Platform } }\n", "exactly one of value"},
 		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, text: Platform, mode: merge } }\n", "not one of replace | append"},

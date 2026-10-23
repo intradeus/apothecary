@@ -9,9 +9,16 @@ package engine
 //
 // Every call runs engine-side like the forge's, so no tracker credential ever
 // reaches a workspace; and none of these needs the workspace unless a file
-// input is bound (actionspec.Action.Remote, needsWorkspace) — "In Progress"
-// lands seconds after the run starts, and "Done" after the final gate never
-// re-provisions a reaped workspace.
+// input is bound (actionspec.Action.Remote, needsWorkspace) — the in-progress
+// move lands seconds after the run starts, and the done move after a parked
+// wait never re-provisions a reaped workspace.
+//
+// A move names a CANONICAL status (`to: in_progress`, ports.TicketStatus)
+// that the ticket's tracker translates into its own vocabulary — the same
+// flow moves a Jira issue to "In Progress" and leaves a GitHub issue open —
+// or the tracker's literal status (`status: "Ready for prod"`). A canonical
+// status the tracker has no word for is not a failure: the stage completes
+// as SKIPPED with the reason, like a ticket without a tracker.
 //
 // Failures are OUTCOME failures (actionFail → on_fail, else the run is
 // abandoned): a status the tracker cannot reach, a field it cannot write, a
@@ -70,13 +77,19 @@ func (x *exec) tracker(st *flow.Stage) (tg trackerTarget, routed bool, err error
 	return trackerTarget{w: w, key: rs.view.TicketKey}, false, nil
 }
 
-// trackerFail routes a tracker error: a typed refusal (status unreachable,
-// field unknown or unwritable) is the flow's literal not fitting the tracker
-// — input_invalid; anything else is the tracker itself — infra, still
-// routable. A cancelled run is neither.
+// trackerFail routes a tracker error: a canonical status the tracker has no
+// word for skips the stage (the flow fits, this tracker cannot say it); a
+// typed refusal (status unreachable, field unknown or unwritable) is the
+// flow's literal not fitting the tracker — input_invalid; anything else is
+// the tracker itself — infra, still routable. A cancelled run is none of
+// these.
 func (x *exec) trackerFail(st *flow.Stage, err error) (bool, error) {
 	if x.ctx.Err() != nil {
 		return true, context.Cause(x.ctx)
+	}
+	var noWord *ports.ErrStatusUnsupported
+	if errors.As(err, &noWord) {
+		return x.actionSkip(st, st.Action+": "+err.Error())
 	}
 	reason := event.ReasonInfra
 	var unreachable *ports.ErrStatusUnreachable
@@ -88,15 +101,24 @@ func (x *exec) trackerFail(st *flow.Stage, err error) (bool, error) {
 	return x.actionFail(st, reason, st.Action+": "+err.Error())
 }
 
-// actionTicketTransition moves the issue. Idempotent by nature: the adapter
-// reads the current status first, and "already there" is a no-op.
+// actionTicketTransition moves the issue — to a canonical status the tracker
+// translates (`to`) or to its literal one (`status`); the parser holds the
+// stage to exactly one. Idempotent by nature: the adapter reads the current
+// status first, and "already there" is a no-op.
 func (x *exec) actionTicketTransition(st *flow.Stage) (bool, error) {
 	tg, routed, err := x.tracker(st)
 	if routed {
 		return true, err
 	}
-	to := strings.TrimSpace(inputOr(st, "to", ""))
-	if err := tg.w.Transition(x.ctx, tg.key, to); err != nil {
+	var to string
+	if in := st.Input("to"); in != nil {
+		to = strings.TrimSpace(in.Value)
+		err = tg.w.TransitionTo(x.ctx, tg.key, ports.TicketStatus(to))
+	} else {
+		to = strings.TrimSpace(inputOr(st, "status", ""))
+		err = tg.w.Transition(x.ctx, tg.key, to)
+	}
+	if err != nil {
 		return x.trackerFail(st, err)
 	}
 	x.e.log.Info("ticket moved", "run", x.rs.runID, "stage", st.ID, "ticket", tg.key, "to", to)
