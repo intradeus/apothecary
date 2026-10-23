@@ -18,7 +18,7 @@ import type {
 	Ticket
 } from '$lib/domain';
 import { fleet } from '$lib/fleet.svelte';
-import { normalizeDoc, successOrder } from '$lib/flowdoc';
+import { expandDoc, normalizeDoc, successOrder } from '$lib/flowdoc';
 import { isTerminal } from '$lib/format';
 import { toast } from '$lib/ui/toast.svelte';
 import { t } from '$lib/i18n/index.svelte';
@@ -227,7 +227,8 @@ export class RunStore {
 				/* not versioned: fall back to the current document */
 			}
 			if (!yaml) yaml = (await api.flows.get(r.projectId, r.flowName)).yaml;
-			const doc = normalizeDoc(parseYaml(yaml));
+			// The run's events name a block's stages by their expanded ids.
+			const doc = expandDoc(normalizeDoc(parseYaml(yaml)));
 			// The phase the run began at is the recipe; the other phases
 			// (conflicts, review rounds) show once they have run. A document
 			// written with top-level stages has no phases: everything is it.

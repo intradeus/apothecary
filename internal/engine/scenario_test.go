@@ -120,12 +120,18 @@ func withAgents(doc string, specs map[string]*agentspec.Spec) string {
 	if err != nil {
 		panic(err)
 	}
-	// Ahead of a phased document's phases, else ahead of its stages.
-	i := strings.Index(doc, "\nphases:")
-	if i >= 0 {
-		i++
-	} else if i = strings.Index(doc, "stages:"); i < 0 {
-		return doc
+	// Ahead of the document's blocks, else its phases, else its stages.
+	i := -1
+	for _, key := range []string{"\nblocks:", "\nphases:"} {
+		if i = strings.Index(doc, key); i >= 0 {
+			i++
+			break
+		}
+	}
+	if i < 0 {
+		if i = strings.Index(doc, "stages:"); i < 0 {
+			return doc
+		}
 	}
 	return doc[:i] + string(y) + doc[i:]
 }

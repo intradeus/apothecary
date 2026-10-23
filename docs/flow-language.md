@@ -72,6 +72,7 @@ parameters:                # the flow's ONE settings block (below): every entry 
   max_total_turns: 300
   verify: verify           #   the flow's own knobs, read where $verify appears
 agents: [...]              # the agents this flow runs — definitions, not references
+blocks: [...]              # optional: chains of stages written once, included where needed (below)
 phases: [...]              # chains of stages, each opened by a wait point (below) — or, instead:
 stages: [...]              # the shorthand: one phase, `main`, opened when a run is created
 ```
@@ -381,6 +382,72 @@ and says `done` without waiting for it while other phases watch it — the run
 would complete before they could. The budget abandons the run; so does a dead
 end in an entrypoint or an outcome (§3).
 
+### Blocks: chains written once
+
+Some chains recur: commit and test after every change an agent makes; plan,
+build, review, publish in both a feature and a bugfix. A **block** is such a
+chain, written once under `blocks:` — like a phase with no `on:`: nothing
+opens it, a stage that `include:`s it runs it in its place.
+
+```yaml
+blocks:
+  - id: ship
+    description: "commit what the agent left and run the tests"
+    stages:
+      - { id: commit, type: command, each_repo: true, run: "git add -A && git commit -F artifacts/commit.md",
+          on_fail: debug }
+      - { id: test,   type: command, run_ref: $verify,
+          on_fail: fail,                                # the include's on_fail
+          on_timeout: { to: test, max: 1, then: fail } }
+  - id: make
+    stages:
+      - { id: build,  type: agent, agent: builder, input: { failure: $FAILURE },
+          on_fail: { to: build, max: 2, then: debug } }
+      - { id: ship,   include: ship, on_fail: { to: build, max: 5, then: debug } }
+      - { id: review, type: agent, agent: reviewer, on_reject: { to: build, max: 3, then: debug } }
+
+phases:
+  - id: deliver
+    on: run_start
+    stages:
+      - { id: plan, type: agent, agent: planner }
+      - { id: make, include: make }                     # runs make.build, make.ship.commit, …
+  - id: review_fixes
+    on: mr_review_settled
+    stages:
+      - { id: address,  type: agent, agent: builder }
+      - { id: fix_ship, include: ship, on_fail: { to: address, max: 3, then: debug } }
+```
+
+An include **expands in place** when the document is parsed; the engine, the
+events and the run page only ever see ordinary stages:
+
+- **Ids.** A block's stages take the include's id and a dot in front:
+  `make.build`, `make.ship.test`, `fix_ship.commit`. A hand-written id cannot
+  contain a dot, so an expansion never collides with a stage, and the same
+  block runs under different ids wherever it is included.
+- **Routes inside a block** name the block's own stages and includes, and
+  stay inside it. A block is left two ways: through its **last stage**, whose
+  success (written or implicit) is the include's `on_success` — the next
+  stage, by default — or through **`fail`**, a reserved edge target that means
+  *the include's `on_fail`*. That chain is spliced in where `fail` is said, so
+  each stage saying it counts its own `max`; an include with no `on_fail` makes
+  `fail` a dead end (§3). `fail` takes no `max` or `then`, and it exists only
+  inside a block.
+- **Routes outside** name an include by its id, which is a route target: its
+  first stage. Nothing routes into the middle of an include.
+- **An include** takes `id`, `include`, `description`, `on_success` and
+  `on_fail` — nothing else: it has no type of its own, and it fails as a
+  whole. Its `on_fail` may itself say `fail` when the include sits in a block:
+  it is then the enclosing include's.
+- **Nesting.** Blocks may include blocks, at most **3** levels deep; a block
+  that includes itself, directly or not, is refused. A block nothing includes
+  is never checked — the parser warns.
+
+Everything else applies to the expanded stages as if they had been written
+out: one live run per phase, `create_mr` once per phase, the reachability and
+contract checks, the stage limit (counted after expansion).
+
 ### Run context
 
 A run supplies these without any declaration; they are the ambient facts every
@@ -405,7 +472,7 @@ explicitly, and those *are* declared.
 ## §2 Stages
 
 ```yaml
-- id: build                # required, slug, unique; `end`/`done`/`abort`/`debug`/`start` reserved
+- id: build                # required, slug, unique; `end`/`done`/`abort`/`debug`/`start`/`fail` reserved
   type: agent              # agent | command | human_gate | action | wait
   description: "..."       # optional note; documentation only, reaches no prompt
   when: $plan_gate         # optional condition (below); false ⇒ the stage completes as skipped
@@ -822,7 +889,7 @@ you click. Like
 `abort` it takes no `max` or `then`: it is unlimited by nature, bounded by
 human attention, and nothing can follow it but the stage itself. It is
 written `then: debug` at the end of a retry chain, or `on_fail: debug` on its
-own. Stage ids may not shadow `end`, `done`, `abort`, `debug` or `start`. Because the leaf is that stage's pause rather than a place runs go
+own. Stage ids may not shadow `end`, `done`, `abort`, `debug`, `start` or `fail`. Because the leaf is that stage's pause rather than a place runs go
 to, the editor draws one per stage that escalates to it, beside the stage,
 with the return edge — never a shared sink.
 
@@ -1048,7 +1115,13 @@ phase; a success chain that reaches none of `end`, `done`, `abort`;
 `create_mr` twice in one phase; a `rebase`
 without a `push_branch` in its phase; `timeout` on a gate or an action; `max`
 or `then` on a link to `end`, `done`, `abort` or `debug`; `max: -1` without a
-gate on the link. For parameters: an
+gate on the link. For blocks: an `include` naming no block, carrying anything
+but `id`/`description`/`on_success`/`on_fail`, or reusing an id; a block's
+route that leaves it other than by its last stage or `fail`; `fail` outside a
+block, on an `on_success`, or with `max`/`then`; a route into the middle of an
+include (a dotted target); a block that includes itself, includes nesting
+deeper than 3, an empty or duplicate block, a hand-written id with a dot. For
+parameters: an
 engine-known name declared with the wrong shape, `harness` or `model` missing,
 a default that fails its own validator (a model without a provider, a
 duration that does not parse, a ceiling at or below zero), an enum on a
@@ -1081,7 +1154,8 @@ have no subject, `each_repo` in a subject phase, a phase opened by a
 merge-request signal in a flow that opens none, a stage of a phase opened by
 a firing signal that ends the whole run (`done` or `abort` — almost always a
 slip for `end`), and a phase that opens a merge request and says `done`
-without waiting for it while other phases watch it — reactions, outcomes.
+without waiting for it while other phases watch it — reactions, outcomes;
+and a block nothing includes, whose stages nothing has checked.
 
 **Preflight errors** (this project, this ticket) — refuse to *create a run*.
 Checked with the project's real configuration on the **resolved** flow, so a
@@ -1386,6 +1460,11 @@ over one workspace. Additive, no grammar break:
   the merge request, a tracker status, a schedule: each is one signal. A
   signal that needs its own options (which status, which cron) is the one seam
   left open: a per-signal option block on `on:`, not built yet.
+- **A block** — a chain several phases share is a `blocks:` entry and an
+  `include:` where it runs; the parser writes it out, so nothing downstream
+  changes. A block with parameters of its own (an include passing values in)
+  would be the next step, not built: today a block reads the flow's
+  parameters like any stage.
 - **A stage type** — a new kind of work is one `type` value and one executor
   case under the workspace mutex. The parser's field table, the dataflow
   checks and the editor follow.

@@ -247,6 +247,21 @@ components:
         - name
         - yaml
       type: object
+    DocBlock:
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        stages:
+          items:
+            $ref: '#/components/schemas/DocStage'
+          nullable: true
+          type: array
+      required:
+        - id
+        - stages
+      type: object
     DocEdge:
       properties:
         feed:
@@ -356,6 +371,8 @@ components:
           type: string
         id:
           type: string
+        include:
+          type: string
         input:
           $ref: '#/components/schemas/DocIO'
         max_turns:
@@ -386,7 +403,6 @@ components:
           type: string
       required:
         - id
-        - type
       type: object
     DocWait:
       properties:
@@ -737,6 +753,10 @@ components:
         agents:
           items:
             $ref: '#/components/schemas/Spec'
+          type: array
+        blocks:
+          items:
+            $ref: '#/components/schemas/DocBlock'
           type: array
         description:
           type: string

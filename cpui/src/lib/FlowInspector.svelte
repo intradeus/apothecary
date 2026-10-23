@@ -18,6 +18,7 @@
 	import {
 		ABORT,
 		DEBUG,
+		FAIL,
 		DONE,
 		END,
 		isReservedTarget,
@@ -185,7 +186,18 @@
 					: 'flow'
 	);
 	const xf = () => ({ duration: ms('--dur-fade', 160) });
-	const ADD: StageKind[] = ['agent', 'command', 'human_gate', 'action', 'wait'];
+	// An include is offered once the document has a block to include.
+	const ADD = $derived<StageKind[]>([
+		'agent',
+		'command',
+		'human_gate',
+		'action',
+		'wait',
+		...(doc.blocks?.length ? (['include'] as const) : [])
+	]);
+	const blockSel = $derived(
+		stage?.type === 'include' ? doc.blocks?.find((b) => b.id === stage.include) : undefined
+	);
 
 	const edgeSel = $derived(
 		selection?.kind === 'edge'
@@ -209,7 +221,7 @@
 		if (
 			!newId ||
 			newId === oldId ||
-			[END, DONE, ABORT, DEBUG, START].includes(newId) ||
+			[END, DONE, ABORT, DEBUG, START, FAIL].includes(newId) ||
 			!/^[a-z][a-z0-9_-]*$/.test(newId)
 		)
 			return;
@@ -399,31 +411,33 @@
 					</div>
 				{/if}
 
-				<div class="field">
-					<label for="st-when">{t('flow.insp.when')}</label>
-					<select
-						id="st-when"
-						value={s.when ?? ''}
-						onchange={(e) => {
-							s.when = e.currentTarget.value || undefined;
-							onchange();
-						}}
-					>
-						<option value="">{t('flow.insp.when.none')}</option>
-						<option value="tracker">{t('flow.insp.when.tracker')}</option>
-						<option value="not tracker">{t('flow.insp.when.notTracker')}</option>
-						<option value="subject">{t('flow.insp.when.subject')}</option>
-						<option value="not subject">{t('flow.insp.when.notSubject')}</option>
-						{#each boolParams(doc) as p (p)}
-							<option value={'$' + p}>${p}</option>
-							<option value={'not $' + p}>not ${p}</option>
-						{/each}
-						{#if s.when && !WHEN_TERMS.includes(s.when) && !boolParams(doc).some((p) => s.when === '$' + p || s.when === 'not $' + p)}
-							<option value={s.when}>{s.when}</option>
-						{/if}
-					</select>
-					<div class="help">{t('flow.insp.whenHelp')}</div>
-				</div>
+				{#if s.type !== 'include'}
+					<div class="field">
+						<label for="st-when">{t('flow.insp.when')}</label>
+						<select
+							id="st-when"
+							value={s.when ?? ''}
+							onchange={(e) => {
+								s.when = e.currentTarget.value || undefined;
+								onchange();
+							}}
+						>
+							<option value="">{t('flow.insp.when.none')}</option>
+							<option value="tracker">{t('flow.insp.when.tracker')}</option>
+							<option value="not tracker">{t('flow.insp.when.notTracker')}</option>
+							<option value="subject">{t('flow.insp.when.subject')}</option>
+							<option value="not subject">{t('flow.insp.when.notSubject')}</option>
+							{#each boolParams(doc) as p (p)}
+								<option value={'$' + p}>${p}</option>
+								<option value={'not $' + p}>not ${p}</option>
+							{/each}
+							{#if s.when && !WHEN_TERMS.includes(s.when) && !boolParams(doc).some((p) => s.when === '$' + p || s.when === 'not $' + p)}
+								<option value={s.when}>{s.when}</option>
+							{/if}
+						</select>
+						<div class="help">{t('flow.insp.whenHelp')}</div>
+					</div>
+				{/if}
 				<datalist id="flow-params">
 					{#each stringParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
 				</datalist>
@@ -772,6 +786,38 @@
 					{:else if s.action}
 						<div class="help hue-amb">{t('flow.insp.unknownAction', { name: s.action })}</div>
 					{/if}
+				{:else if s.type === 'include'}
+					<div class="field">
+						<label for="st-block">{t('flow.insp.block')}</label>
+						<select
+							id="st-block"
+							value={s.include ?? ''}
+							onchange={(e) => {
+								s.include = e.currentTarget.value;
+								onchange();
+							}}
+						>
+							{#each doc.blocks ?? [] as b (b.id)}<option value={b.id}>{b.id}</option>{/each}
+							{#if s.include && !doc.blocks?.some((b) => b.id === s.include)}
+								<option value={s.include}>{s.include}</option>
+							{/if}
+						</select>
+						<div class="help">{t('flow.insp.blockHelp')}</div>
+					</div>
+					{#if blockSel}
+						{#if blockSel.description}<div class="help">{blockSel.description}</div>{/if}
+						<div class="grp">
+							<div class="lbl">{t('flow.insp.blockStages')}</div>
+							{#each blockSel.stages as b (b.id)}
+								<div class="blk-row">
+									<StageChip type={b.type} />
+									<span class="mono">{s.id}.{b.id}</span>
+									{#if b.include}<span class="mut small">→ {b.include}</span>{/if}
+								</div>
+							{/each}
+						</div>
+						<div class="help">{t('flow.insp.blockEditHelp')}</div>
+					{/if}
 				{:else if s.type === 'wait'}
 					<div class="field">
 						<label for="st-for">{t('flow.insp.waitFor')}</label>
@@ -841,6 +887,7 @@
 					<select id="st-succ" bind:value={s.on_success} {onchange}>
 						<option value={END}>{t('flow.insp.endOption')}</option>
 						<option value={DONE}>{t('flow.insp.doneOption')}</option>
+						<option value={ABORT}>{t('flow.insp.abortOption')}</option>
 						{#each routableFrom(doc, s).filter((x) => x.id !== s.id) as x (x.id)}<option
 								value={x.id}>{x.id}</option
 							>{/each}
@@ -1164,6 +1211,14 @@
 		display: grid;
 		padding: 12px 14px 16px;
 		font-size: var(--fs-ui);
+	}
+	/* An include's block, stage by stage, as it will run. */
+	.blk-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		padding: 2px 0;
 	}
 	/* Outgoing and incoming views share the cell while they cross-fade. */
 	.view-x {

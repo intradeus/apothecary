@@ -66,6 +66,10 @@
 			return stage.for
 				? set(t('flow.node.waitFor', { signal: stage.for }))
 				: unset(t('flow.node.waitFor', { signal: t('flow.node.noSignal') }));
+		if (stage.type === 'include')
+			return stage.include
+				? set(t('flow.node.includes', { block: stage.include }))
+				: unset(t('flow.node.noBlock'));
 		return set(stage.question || t('flow.node.asksHuman'));
 	});
 </script>
@@ -144,6 +148,14 @@
 		</div>
 	{/if}
 
+	{#if stage.type === 'include' || stage.type === 'action'}
+		<Handle
+			id="on_fail"
+			type="source"
+			position={Position.Bottom}
+			style="left: 25%; {hh('on_fail')}"
+		/>
+	{/if}
 	{#if stage.type === 'agent' || stage.type === 'command' || stage.type === 'wait'}
 		<Handle
 			id="on_fail"

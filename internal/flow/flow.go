@@ -131,12 +131,16 @@ const (
 // for a human who has the workspace, continuing re-enters the stage that took
 // the link, and giving up ends the run in an entrypoint phase and that phase
 // run in any other.
+//
+// ReservedFail exists only inside a block: an edge to it is the include's
+// on_fail, spliced in by the parser. No parsed flow carries it.
 const (
 	TerminalEnd   = "end"
 	TerminalDone  = "done"
 	TerminalAbort = "abort"
 	ReservedStart = "start"
 	ReservedDebug = "debug"
+	ReservedFail  = "fail"
 )
 
 // routeTerminal reports whether a route target is reserved rather than a
@@ -203,6 +207,10 @@ type Stage struct {
 	// Description is an optional human note on what this stage is for.
 	// Documentation only — it reaches no prompt and no decision.
 	Description string
+	// Include is the include path a block's stage was expanded from
+	// ("make.ship" for make.ship.test); empty for a stage written in its
+	// phase (FLOWLANG §1 Blocks).
+	Include string
 
 	// agent
 	Agent    string

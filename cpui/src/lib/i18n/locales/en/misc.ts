@@ -399,6 +399,8 @@ export default {
 	'flow.node.noCommand': '(no command)',
 	'flow.node.noAction': '(no action)',
 	'flow.node.waitFor': 'for {signal}',
+	'flow.node.includes': 'runs block {block}',
+	'flow.node.noBlock': 'no block chosen',
 	'flow.node.noSignal': '(no signal)',
 	'flow.node.asksHuman': 'asks a human',
 	'flow.node.entryTitle': 'Its phase opens here',
@@ -434,6 +436,12 @@ export default {
 	'flow.insp.renameHelp': 'Renaming updates every reference.',
 	'flow.insp.phase': 'Phase',
 	'flow.insp.phaseKind': 'phase',
+	'flow.insp.block': 'Block',
+	'flow.insp.blockHelp':
+		'The chain this stage runs in its place. Its stages run as {include}.{stage}; its last stage’s success is this stage’s on_success, and a `fail` inside it is this stage’s on_fail.',
+	'flow.insp.blockStages': 'Runs',
+	'flow.insp.blockEditHelp':
+		'Blocks are edited in the YAML tab, under blocks: — every stage that includes one runs the same chain.',
 	'flow.insp.phaseStages_one': '{count} stage',
 	'flow.insp.phaseStages_other': '{count} stages',
 	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the phase with it.',

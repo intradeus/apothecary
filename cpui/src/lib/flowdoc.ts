@@ -22,15 +22,21 @@ export const DEBUG = 'debug';
 // START is the first phase's marker layout/link key (the canvas's solid
 // beginning marker); it is never serialized.
 export const START = 'start';
+// FAIL exists only inside a block: an edge to it is the include's on_fail
+// (FLOWLANG §1 Blocks), spliced in where it is said.
+export const FAIL = 'fail';
 
 /** Whether a route target is reserved rather than a stage: the two ends, the
- *  deliberate stop, the debug leaf. None of them takes max or then. */
+ *  deliberate stop, the debug leaf — and, inside a block, `fail`. None of
+ *  them takes max or then. */
 export const isReservedTarget = (to: string) =>
-	to === END || to === DONE || to === ABORT || to === DEBUG;
+	to === END || to === DONE || to === ABORT || to === DEBUG || to === FAIL;
 export const EDGE_KINDS = ['on_fail', 'on_reject', 'on_timeout'] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
-export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait';
+/** 'include' is the editor's name for a stage that runs a block in its
+ *  place: the YAML gives it `include:` and no type. */
+export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait' | 'include';
 
 // CURRENT_VERSION is the grammar this build writes; every document declares
 // it, so a future break is a refusal rather than a mis-parse (FLOWLANG §1).
@@ -63,7 +69,7 @@ export function edgeKindsFor(type: StageKind): EdgeKind[] {
 	if (type === 'agent' || type === 'human_gate') out.push('on_reject');
 	// An action fails when its outcome is wrong in a fixable way (a merge
 	// that conflicts, a push the remote refuses).
-	if (type === 'action') out.push('on_fail');
+	if (type === 'action' || type === 'include') out.push('on_fail');
 	return out;
 }
 
@@ -109,6 +115,8 @@ export const ioEntries = (v?: StageIO): [string, string][] => (v ? Object.entrie
 export interface DocStage {
 	id: string;
 	type: StageKind;
+	/** include: the block this stage runs in its place. */
+	include?: string;
 	/** Optional human note; documentation only, reaches no prompt. */
 	description?: string;
 	agent?: string;
@@ -233,6 +241,16 @@ export interface DocAgent {
 	outputs?: DocAgentOutput[];
 }
 
+/** A block (FLOWLANG §1 Blocks): a chain of stages written once and run by
+ *  every stage that includes it. Its stages stay as written — their ids are
+ *  the block's own, `fail` is the include's on_fail, and a last stage without
+ *  on_success leaves by the include's success. */
+export interface DocBlock {
+	id: string;
+	description?: string;
+	stages: DocStage[];
+}
+
 export interface FlowDoc {
 	name: string;
 	version?: number;
@@ -240,17 +258,38 @@ export interface FlowDoc {
 	/** The flow's one settings block, in document order. */
 	parameters: Record<string, DocParam>;
 	agents?: DocAgent[];
+	/** Blocks, in document order; the canvas shows their includes. */
+	blocks?: DocBlock[];
 	stages: DocStage[];
 	/** Phased flows (PLAN6): the phase headers, the entry first. Absent for a
 	 *  flow written with top-level stages. */
 	phases?: DocPhase[];
 }
 
-/** The wire document, where a phased flow nests its stages. */
+/** The wire document, where a phased flow nests its stages and an include
+ *  has no type. */
 type WireDoc = Omit<FlowDoc, 'stages' | 'phases'> & {
 	stages?: DocStage[];
 	phases?: (DocPhase & { stages?: DocStage[] })[];
 };
+
+/** An edge as the editor holds it. The server's document spells every edge
+ *  as a mapping; YAML parsed here keeps the scalar sugar (`on_fail: debug`,
+ *  `then: fail`), which this unfolds. */
+function wireEdge(e: unknown): DocEdge | undefined {
+	if (e == null) return undefined;
+	if (typeof e === 'string') return { to: e };
+	const m = e as DocEdge;
+	return { ...m, then: wireEdge(m.then) };
+}
+
+/** A wire stage as the editor holds it: an include gets its kind, edges
+ *  their mapping form. */
+function tagStage(s: DocStage): DocStage {
+	const out: DocStage = { ...s, type: s.include ? 'include' : s.type };
+	for (const kind of EDGE_KINDS) if (s[kind] != null) out[kind] = wireEdge(s[kind]);
+	return out;
+}
 
 // normalizeDoc turns the server's document into the editor's: a phased
 // flow's stages flattened in phase order, each tagged with its phase.
@@ -263,20 +302,95 @@ type WireDoc = Omit<FlowDoc, 'stages' | 'phases'> & {
 export function normalizeDoc(raw: unknown): FlowDoc {
 	const w = raw as WireDoc;
 	let doc: FlowDoc;
-	if (!w.phases?.length) doc = { ...(w as FlowDoc), stages: w.stages ?? [] };
+	if (!w.phases?.length) doc = { ...(w as FlowDoc), stages: (w.stages ?? []).map(tagStage) };
 	else {
 		const stages: DocStage[] = [];
 		const phases: DocPhase[] = [];
 		for (const ph of w.phases) {
 			const { stages: inner, ...head } = ph;
 			phases.push(head);
-			for (const st of inner ?? []) stages.push({ ...st, phase: ph.id });
+			for (const st of inner ?? []) stages.push({ ...tagStage(st), phase: ph.id });
 		}
 		doc = { ...(w as FlowDoc), stages, phases };
 	}
 	doc.stages.forEach((s, i) => (s.on_success = effectiveSuccess(doc, i)));
+	// A block's stages keep their sugar: its last stage's success is
+	// whichever include runs it.
+	if (doc.blocks) doc.blocks = doc.blocks.map((b) => ({ ...b, stages: b.stages.map(tagStage) }));
 	doc.parameters ??= {};
 	return doc;
+}
+
+/** expandDoc writes every include out the way the parser does (FLOWLANG §1
+ *  Blocks): ids take the include's path (make.ship.test), a block's routes
+ *  resolve to its expanded stages, its last stage leaves by the include's
+ *  success, and `fail` becomes the include's on_fail. For what shows a run,
+ *  whose events name the expanded stages; the editor edits the unexpanded
+ *  document. The document is one the server parsed, so nothing is checked. */
+export function expandDoc(doc: FlowDoc): FlowDoc {
+	if (!doc.blocks?.length) return doc;
+	const blocks = new Map(doc.blocks.map((b) => [b.id, b]));
+	const entryOf = (name: string, prefix: string): string => {
+		const first = blocks.get(name)?.stages[0];
+		if (!first) return prefix;
+		return first.include ? entryOf(first.include, `${prefix}${first.id}.`) : prefix + first.id;
+	};
+	const top = new Map(
+		doc.stages.filter((s) => s.include).map((s) => [s.id, entryOf(s.include!, `${s.id}.`)])
+	);
+	interface Scope {
+		prefix: string;
+		local?: Map<string, string>;
+		onSuccess?: string;
+		onFail?: DocEdge;
+	}
+	const target = (sc: Scope, to: string) =>
+		isReservedTarget(to) ? to : ((sc.local ? sc.local.get(to) : top.get(to)) ?? to);
+	const edgeIn = (sc: Scope, e?: DocEdge): DocEdge | undefined => {
+		if (!e) return undefined;
+		if (e.to === FAIL) return sc.onFail && structuredClone(sc.onFail);
+		return { ...e, to: target(sc, e.to), then: edgeIn(sc, e.then) };
+	};
+	const expand = (stages: DocStage[], sc: Scope, phase?: string): DocStage[] =>
+		stages.flatMap((s, i) => {
+			let succ = s.on_success ? target(sc, s.on_success) : undefined;
+			if (!succ && i === stages.length - 1) succ = sc.onSuccess;
+			const onFail = edgeIn(sc, s.on_fail);
+			if (s.type !== 'include') {
+				return [
+					{
+						...s,
+						id: sc.prefix + s.id,
+						phase,
+						on_success: succ,
+						on_fail: onFail,
+						on_reject: edgeIn(sc, s.on_reject),
+						on_timeout: edgeIn(sc, s.on_timeout)
+					}
+				];
+			}
+			const blk = blocks.get(s.include ?? '');
+			if (!blk) return [];
+			const prefix = `${sc.prefix}${s.id}.`;
+			const local = new Map(
+				blk.stages.map((b) => [
+					b.id,
+					b.include ? entryOf(b.include, `${prefix}${b.id}.`) : prefix + b.id
+				])
+			);
+			return expand(blk.stages, { prefix, local, onSuccess: succ, onFail }, phase);
+		});
+	const phaseIds = doc.phases?.length ? doc.phases.map((p) => p.id) : [undefined];
+	const stages = phaseIds.flatMap((ph) =>
+		expand(
+			doc.stages.filter((s) => s.phase === ph),
+			{ prefix: '' },
+			ph
+		)
+	);
+	const out: FlowDoc = { ...doc, blocks: undefined, stages };
+	out.stages.forEach((s, i) => (s.on_success ??= effectiveSuccess(out, i)));
+	return out;
 }
 
 /** The stages a stage may route to: its own phase's (a phase's routes stay
@@ -510,7 +624,19 @@ export function docToYaml(doc: FlowDoc): string {
 			return o;
 		});
 	}
-	const stageYaml = (s: DocStage) => {
+	// A block's stages are written as they were (explicit=false): their
+	// success sugar depends on the include that runs them.
+	const stageYaml = (s: DocStage, explicit = true) => {
+		if (s.type === 'include') {
+			const inc: Record<string, unknown> = { id: s.id, include: s.include ?? '' };
+			if (s.description) inc.description = s.description;
+			const succ = explicit
+				? (s.on_success ?? effectiveSuccess(doc, idx.get(s.id)!))
+				: s.on_success;
+			if (succ) inc.on_success = succ;
+			if (s.on_fail) inc.on_fail = edgeToYamlValue(s.on_fail);
+			return inc;
+		}
 		const o: Record<string, unknown> = { id: s.id, type: s.type };
 		if (s.description) o.description = s.description;
 		if (s.when) o.when = s.when;
@@ -532,13 +658,23 @@ export function docToYaml(doc: FlowDoc): string {
 		if (s.auto_reject) o.auto_reject = s.auto_reject;
 		if (s.action) o.action = s.action;
 		if (s.for) o.for = s.for;
-		o.on_success = s.on_success ?? effectiveSuccess(doc, idx.get(s.id)!);
+		if (explicit) o.on_success = s.on_success ?? effectiveSuccess(doc, idx.get(s.id)!);
+		else if (s.on_success) o.on_success = s.on_success;
 		for (const kind of EDGE_KINDS) {
 			const e = edgeOf(s, kind);
 			if (e) o[kind] = edgeToYamlValue(e);
 		}
 		return o;
 	};
+	// Blocks before the phases that include them, as written.
+	if (doc.blocks?.length) {
+		obj.blocks = doc.blocks.map((b) => {
+			const o: Record<string, unknown> = { id: b.id };
+			if (b.description) o.description = b.description;
+			o.stages = b.stages.map((s) => stageYaml(s, false));
+			return o;
+		});
+	}
 	if (doc.phases?.length) {
 		obj.phases = doc.phases.map((ph) => {
 			const o: Record<string, unknown> = { id: ph.id };
@@ -547,11 +683,11 @@ export function docToYaml(doc: FlowDoc): string {
 			// A stage-less outcome says `then`; any stage makes it a chain.
 			const own = ordered.filter((s) => s.phase === ph.id);
 			if (ph.then && !own.length) o.then = ph.then;
-			else o.stages = own.map(stageYaml);
+			else o.stages = own.map((s) => stageYaml(s));
 			return o;
 		});
 	} else {
-		obj.stages = ordered.map(stageYaml);
+		obj.stages = ordered.map((s) => stageYaml(s));
 	}
 	return stringify(obj, { lineWidth: 0 });
 }
@@ -713,7 +849,8 @@ export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 		command: 'cmd',
 		human_gate: 'gate',
 		action: 'action',
-		wait: 'wait'
+		wait: 'wait',
+		include: 'include'
 	}[type];
 	let n = 1;
 	let id = `${base}_${n}`;
@@ -726,6 +863,7 @@ export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 	if (type === 'human_gate') s.question = '';
 	if (type === 'action') s.action = '';
 	if (type === 'wait') s.for = '';
+	if (type === 'include') s.include = doc.blocks?.[0]?.id ?? '';
 	return s;
 }
 
@@ -805,6 +943,9 @@ export function stageInputs(
 		case 'human_gate':
 		case 'wait':
 			return ioEntries(s.input).map(([name, value]) => port(name, value));
+		// An include binds nothing itself: its block's stages do.
+		case 'include':
+			return [];
 	}
 }
 
@@ -854,6 +995,7 @@ export function stageOutputs(
 		}
 		case 'human_gate':
 		case 'wait':
+		case 'include':
 			return [];
 	}
 }

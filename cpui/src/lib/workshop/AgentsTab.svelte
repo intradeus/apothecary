@@ -6,7 +6,7 @@
 	import { parse } from 'yaml';
 	import type { Flow, Project } from '$lib/domain';
 	import { to } from '$lib/guild';
-	import { normalizeDoc, type DocAgent, type FlowDoc, paramDefault } from '$lib/flowdoc';
+	import { expandDoc, normalizeDoc, type DocAgent, type FlowDoc, paramDefault } from '$lib/flowdoc';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -41,7 +41,8 @@
 	const parsed = $derived<FlowAgents[]>(
 		relevant.map((flow) => {
 			try {
-				const doc = normalizeDoc(parse(flow.yaml));
+				// Stages inside blocks run agents too: count them expanded.
+				const doc = expandDoc(normalizeDoc(parse(flow.yaml)));
 				const agents = (doc.agents ?? []).map((agent) => ({
 					agent,
 					stages: doc.stages

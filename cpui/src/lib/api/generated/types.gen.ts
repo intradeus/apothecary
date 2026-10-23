@@ -117,6 +117,12 @@ export type CreateFlowRequest = {
 	yaml: string;
 };
 
+export type DocBlock = {
+	description?: string;
+	id: string;
+	stages: Array<DocStage> | null;
+};
+
 export type DocEdge = {
 	feed?: string;
 	max?: number | null;
@@ -170,6 +176,7 @@ export type DocStage = {
 	for?: string;
 	harness?: string;
 	id: string;
+	include?: string;
 	input?: DocIo;
 	max_turns?: DocInt;
 	model?: string;
@@ -182,7 +189,7 @@ export type DocStage = {
 	run?: string;
 	run_ref?: string;
 	timeout?: string;
-	type: string;
+	type?: string;
 	when?: string;
 };
 
@@ -344,6 +351,7 @@ export type FlowBindingRequest = {
 
 export type FlowDoc = {
 	agents?: Array<Spec>;
+	blocks?: Array<DocBlock>;
 	description?: string;
 	name: string;
 	parameters?: DocParams;

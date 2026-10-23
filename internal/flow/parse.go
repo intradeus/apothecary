@@ -45,6 +45,10 @@ const (
 
 var slugRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
+// idPathRe matches a stage id as the parser may produce it: a slug, or an
+// include path of slugs joined by dots (make.ship.test).
+var idPathRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
+
 // Doc* mirror the YAML schema exactly (unknown fields rejected by the
 // strict decoder; pointers distinguish "absent" from explicit zeros). They
 // are exported with JSON tags as the graph editor's document model
@@ -64,10 +68,21 @@ type Doc struct {
 	// the same schema the retired library files spoke, with document order
 	// preserved for free.
 	Agents []agentspec.Spec `yaml:"agents" json:"agents,omitempty"`
+	// Blocks are chains of stages written once and included where needed
+	// (FLOWLANG §1 Blocks); the parser expands every include in place.
+	Blocks []DocBlock `yaml:"blocks" json:"blocks,omitempty"`
 	// Stages and Phases are exclusive: top-level stages are the one-phase
 	// shorthand (today's flows), phases the whole life of a ticket (PLAN6).
 	Stages []DocStage `yaml:"stages" json:"stages,omitempty"`
 	Phases []DocPhase `yaml:"phases" json:"phases,omitempty"`
+}
+
+// DocBlock is one block: a named chain of stages a stage `include:`s. Like a
+// phase without an `on:` — nothing opens it, an include runs it.
+type DocBlock struct {
+	ID          string     `yaml:"id" json:"id"`
+	Description string     `yaml:"description" json:"description,omitempty"`
+	Stages      []DocStage `yaml:"stages" json:"stages"`
 }
 
 // DocPhase is one phase: what starts it and its stages.
@@ -413,8 +428,11 @@ func (d *DocInt) UnmarshalJSON(data []byte) error {
 }
 
 type DocStage struct {
-	ID          string   `yaml:"id" json:"id"`
-	Type        string   `yaml:"type" json:"type"`
+	ID string `yaml:"id" json:"id"`
+	// Include names a block this stage runs in its place (FLOWLANG §1
+	// Blocks); such a stage has no type.
+	Include     string   `yaml:"include" json:"include,omitempty"`
+	Type        string   `yaml:"type" json:"type,omitempty"`
 	Description string   `yaml:"description" json:"description,omitempty"`
 	When        string   `yaml:"when" json:"when,omitempty"`
 	Agent       string   `yaml:"agent" json:"agent,omitempty"`
@@ -446,6 +464,12 @@ type DocStage struct {
 	Body         string `yaml:"body" json:"-"`
 	AutoComplete string `yaml:"auto_complete" json:"-"`
 	AutoAnswer   string `yaml:"auto_answer" json:"-"`
+
+	// line is the stage's source line; scope the include path it was
+	// expanded from (empty for a stage written in its phase). Set by the
+	// parser, never part of the document.
+	line  int
+	scope string
 }
 
 // retired lists the v1 spellings this stage still carries, each with the
@@ -698,7 +722,10 @@ const (
 	maxStages     = 128
 	maxAgents     = 64
 	maxChainDepth = 8
-	maxParams     = 32 // the flow's own, beyond the engine-known six
+	// maxIncludeDepth bounds how deep blocks include blocks: a phase's
+	// include expands at most this many levels.
+	maxIncludeDepth = 3
+	maxParams       = 32 // the flow's own, beyond the engine-known six
 )
 
 // Parse parses and validates a flow document with its parameters at their
@@ -790,6 +817,12 @@ func ParseDoc(filename string, data []byte) (*Doc, error) {
 type parser struct {
 	file string
 	root *yaml.Node // document mapping node, for line lookups
+	// blocks are the declared blocks by id (blockOrder in document order);
+	// topIncludes maps each include written in a phase to the expanded id
+	// of its first stage, the stage a route to the include lands on.
+	blocks      map[string]*blockDef
+	blockOrder  []string
+	topIncludes map[string]string
 	// stageLines are the source lines of the flattened stages, in order
 	// (top-level stages, or every phase's stages one phase after another).
 	stageLines []int
@@ -860,13 +893,13 @@ func (p *parser) stageLine(i int) int {
 	return p.seqLine("stages", i)
 }
 
-// phaseNodes returns the phases sequence's element nodes, or nil.
-func (p *parser) phaseNodes() []*yaml.Node {
+// seqNodes returns a top-level sequence's element nodes, or nil.
+func (p *parser) seqNodes(key string) []*yaml.Node {
 	if p.root == nil || p.root.Kind != yaml.MappingNode {
 		return nil
 	}
 	for k := 0; k+1 < len(p.root.Content); k += 2 {
-		if p.root.Content[k].Value == "phases" && p.root.Content[k+1].Kind == yaml.SequenceNode {
+		if p.root.Content[k].Value == key && p.root.Content[k+1].Kind == yaml.SequenceNode {
 			return p.root.Content[k+1].Content
 		}
 	}
@@ -947,6 +980,31 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		rawPhases = []DocPhase{{ID: ShorthandPhase, On: DocWait{Signal: signalspec.RunStart}, Stages: raw.Stages}}
 		f.shorthand = true
 	}
+	// Every stage remembers its line before blocks are expanded, which
+	// copies stages out of where they were written.
+	nodes := p.seqNodes("phases")
+	for i := range rawPhases {
+		var lines []int
+		if !f.shorthand && i < len(nodes) {
+			lines = phaseStageLines(nodes[i])
+		}
+		for j := range rawPhases[i].Stages {
+			l := p.seqLine("phases", i)
+			switch {
+			case f.shorthand:
+				l = p.seqLine("stages", j)
+			case j < len(lines):
+				l = lines[j]
+			}
+			rawPhases[i].Stages[j].line = l
+		}
+	}
+	if err = p.buildBlocks(raw.Blocks); err != nil {
+		return nil, err
+	}
+	if err = p.indexIncludes(rawPhases); err != nil {
+		return nil, err
+	}
 	var rawStages []DocStage
 	if f.Phases, rawStages, err = p.buildPhases(rawPhases, f.shorthand); err != nil {
 		return nil, err
@@ -1015,6 +1073,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		if pr := &f.Params[i]; !pr.Known && !p.used[pr.Name] {
 			warns = append(warns, fmt.Sprintf("parameter %q is declared but nothing reads it ($%s)", pr.Name, pr.Name))
 		}
+	}
+	for _, b := range p.unusedBlocks(raw.Blocks) {
+		warns = append(warns, fmt.Sprintf("block %q is never included (nothing checks its stages until something does)", b))
 	}
 	f.Warnings = warns
 	return f, nil
@@ -1311,26 +1372,10 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		return nil, p.errf(line, "stage %q: %s", id, fmt.Sprintf(format, args...))
 	}
 
-	if raw.ID == "" {
-		return fail("id is required")
-	}
-	if !slugRe.MatchString(raw.ID) {
-		return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
-	}
-	if raw.ID == TerminalEnd {
-		return fail("id %q is reserved (the end of a phase: the run goes back to waiting)", TerminalEnd)
-	}
-	if raw.ID == TerminalDone {
-		return fail("id %q is reserved (the end of the run)", TerminalDone)
-	}
-	if raw.ID == TerminalAbort {
-		return fail("id %q is reserved (the deliberate-stop edge terminal)", TerminalAbort)
-	}
-	if raw.ID == ReservedDebug {
-		return fail("id %q is reserved (the debug leaf: `then: debug` parks the run for a human and re-enters the failing stage)", ReservedDebug)
-	}
-	if raw.ID == ReservedStart {
-		return fail("id %q is reserved (the graph editor's start marker)", ReservedStart)
+	// A block's stage was checked under its own id; its expanded one (a
+	// dotted path) is the parser's.
+	if msg := idProblem(raw.ID); msg != "" && raw.scope == "" {
+		return fail("%s", msg)
 	}
 	// Retired spellings first: one actionable upgrade beats a cascade of
 	// "field does not apply to type" from a document written against v1.
@@ -1385,7 +1430,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 	}
 
-	s := &Stage{ID: raw.ID, Type: st, Line: line, Description: raw.Description}
+	s := &Stage{ID: raw.ID, Type: st, Line: line, Description: raw.Description, Include: raw.scope}
 	// site describes a field of this stage that may read a $parameter.
 	site := func(field string, typ ParamType, values []string) paramSite {
 		return paramSite{stage: raw.ID, field: field, typ: typ, values: values}
@@ -1614,7 +1659,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if raw.OnSuccess == ReservedDebug {
 		return fail("on_success cannot be %q — only an edge (on_fail/on_reject/on_timeout) parks for a human", ReservedDebug)
 	}
-	if raw.OnSuccess != "" && !routeTerminal(raw.OnSuccess) && !slugRe.MatchString(raw.OnSuccess) {
+	if raw.OnSuccess != "" && !routeTerminal(raw.OnSuccess) && !idPathRe.MatchString(raw.OnSuccess) {
 		return fail("on_success %q must be a stage id, %q (the phase ends), %q (the run is done) or %q (the run is abandoned)", raw.OnSuccess, TerminalEnd, TerminalDone, TerminalAbort)
 	}
 	s.OnSuccess = raw.OnSuccess
@@ -1904,7 +1949,6 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 // the desugared one-phase document, whose stage lines come from the
 // top-level stages sequence.
 func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStage, error) {
-	nodes := p.phaseNodes()
 	var phases []Phase
 	var stages []DocStage
 	seen := map[string]int{}
@@ -1954,22 +1998,19 @@ func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStag
 				return fail("then is for an outcome phase (on: %s): a phase that does work has stages", outcomeSlugs())
 			}
 		}
-		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, Then: rp.Then, First: len(stages), Last: len(stages) + len(rp.Stages) - 1, Line: line}
-		phases = append(phases, ph)
-		stages = append(stages, rp.Stages...)
-		var lines []int
-		if !shorthand && i < len(nodes) {
-			lines = phaseStageLines(nodes[i])
+		// The phase's stages with every include written out.
+		own, err := p.expand(rp.Stages, &expandScope{})
+		if err != nil {
+			return nil, nil, err
 		}
-		for j := range rp.Stages {
-			l := line
-			switch {
-			case shorthand:
-				l = p.seqLine("stages", j)
-			case j < len(lines):
-				l = lines[j]
-			}
-			p.stageLines = append(p.stageLines, l)
+		if len(stages)+len(own) > maxStages {
+			return nil, nil, p.errf(line, "phase %q: the flow expands to more than %d stages (blocks included)", rp.ID, maxStages)
+		}
+		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, Then: rp.Then, First: len(stages), Last: len(stages) + len(own) - 1, Line: line}
+		phases = append(phases, ph)
+		stages = append(stages, own...)
+		for j := range own {
+			p.stageLines = append(p.stageLines, own[j].line)
 		}
 	}
 	if entrypoints == 0 {

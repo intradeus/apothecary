@@ -15,7 +15,8 @@ export const STAGE_HUE: Record<string, Hue> = {
 	human_gate: 'amb',
 	gate: 'amb',
 	action: 'vio',
-	wait: 'tea'
+	wait: 'tea',
+	include: 'brand'
 };
 /** The chip word for a stage type ("human_gate" reads "gate"). */
 export const STAGE_WORD: Record<string, string> = { human_gate: 'gate' };

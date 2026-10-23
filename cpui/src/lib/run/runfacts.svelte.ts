@@ -12,7 +12,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { parse } from 'yaml';
 import { api } from '$lib/api';
-import { normalizeDoc, type StageKind } from '$lib/flowdoc';
+import { expandDoc, normalizeDoc, type StageKind } from '$lib/flowdoc';
 import type { Run, RunEvent, RunState } from '$lib/domain';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
@@ -77,7 +77,7 @@ async function loadDoc(key: string, projectId: string, hash: string) {
 	docsInflight.add(key);
 	try {
 		const v = await api.flows.version(projectId, hash);
-		const doc = normalizeDoc(parse(v.yaml));
+		const doc = expandDoc(normalizeDoc(parse(v.yaml)));
 		docs.set(key, Object.fromEntries(doc.stages.map((s) => [s.id, s.type])));
 	} catch {
 		docs.set(key, {});

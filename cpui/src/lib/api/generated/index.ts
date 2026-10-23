@@ -203,6 +203,7 @@ export type {
 	DeleteTicketErrors,
 	DeleteTicketResponse,
 	DeleteTicketResponses,
+	DocBlock,
 	DocEdge,
 	DocInt,
 	DocIo,
