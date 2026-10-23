@@ -419,8 +419,9 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 	}
 }
 
-// A gate with no signal armed is pure waiting too, so it parks the same way —
-// and answering it routes the run without anyone pressing play.
+// A gate is a wait point: the phase parks on it, the run is idle (its slot
+// free for another run) — and answering it routes the run without anyone
+// pressing play.
 func TestGateParksAndAnswerResumes(t *testing.T) {
 	doc := `name: gated
 version: 2
@@ -436,14 +437,11 @@ stages:
 	p := h.waitPing(t, "gate")
 
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && h.e.active(runID) {
+	for time.Now().Before(deadline) && !h.view(t, runID).Idle {
 		time.Sleep(2 * time.Millisecond)
 	}
-	if h.e.active(runID) {
-		t.Fatal("a gate with nothing to poll must not hold a loop")
-	}
-	if v := h.view(t, runID); v.State != run.WaitingOnHuman {
-		t.Fatalf("parked gate = %s", v.State)
+	if v := h.view(t, runID); !v.Idle || v.State != run.WaitingOnHuman {
+		t.Fatalf("parked gate = %s idle %v", v.State, v.Idle)
 	}
 
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {

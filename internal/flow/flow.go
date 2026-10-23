@@ -419,10 +419,10 @@ const (
 // one mid-chain. Signal is a registry slug — run_start (a run is created for
 // the phase), manual (a person starts it), a trigger (the forge) — or, on a
 // wait stage, a waitable one. Start is the policy applied when the signal
-// holds (a person's act for run_start and manual). QuietFor debounces a
-// signal that fires on activity. Max bounds a phase's runs per subject
-// (UnlimitedMax = no bound; 1 on a wait stage, which fires once per pass).
-// Timeout bounds a wait stage (zero = none).
+// holds (a person's act for run_start and manual; always auto on a wait
+// stage). QuietFor debounces a signal that fires on activity. Max bounds a
+// phase's runs per subject (UnlimitedMax = no bound; 1 on a wait stage, which
+// fires once per pass). Timeout bounds a wait stage (zero = none).
 type Wait struct {
 	Signal   string
 	Start    Start

@@ -161,6 +161,9 @@ type Engine struct {
 	resolver Resolver
 	flows    flow.Source
 	bindings FlowBindings // nil = no project bindings
+	// holds is the idle loop's latest observation of which phase signals
+	// hold, per run (the run page's "pending" for start: manual phases).
+	holds    holdsRegistry
 	settings SettingsSource
 	channels []ports.NotificationChannel
 
@@ -2510,6 +2513,7 @@ func (e *Engine) finish(runID string, h *runHandle) {
 	}
 	e.scheduleLocked(lim) // a slot freed; admit the next queued run
 	e.mu.Unlock()
+	e.holds.clear(runID)
 	close(h.done)
 }
 

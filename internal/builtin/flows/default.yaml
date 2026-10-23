@@ -380,20 +380,26 @@ phases:
       # rebase) is leased against it, never blind. Refused = someone else wrote to
       # the branch, which is a human's call.
       - { id: push,       type: action, action: push_branch,
-          on_success: in_review,
+          on_success: mr,
           on_fail: debug }
-      # The work is pushed and reviewed; the issue reads "In Review" as the
-      # merge request opens. It sits BEFORE create_mr so a tracker hiccup can
-      # route on to it — the phase's last stage has nowhere to route a failure
-      # but a human, and a Jira outage is not worth one.
+      # The merge request opens, and the issue moves to In Review right after.
+      # A tracker hiccup is not worth stopping for: the move is best effort.
+      - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },
+          on_success: in_review }
       - { id: in_review,  type: action, action: ticket_transition, input: { to: "In Review" },
           description: "move the ticket's tracker issue to In Review",
-          on_success: mr,
-          on_fail: { to: mr, max: 1 } }
-      # The merge request opens and the run goes into review: from here its
-      # merge request decides how the run ends, and the phases below react.
-      - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },
-          on_success: done }
+          on_success: wait_merge,
+          on_fail: { to: wait_merge, max: 1 } }
+      # The phase parks here — the run is in review — while the phases below
+      # react to the merge request. Merged, the phase goes on; closed unmerged,
+      # the flow says what that means: abort.
+      - { id: wait_merge, type: wait, for: mr_merged,
+          description: "wait for the merge request to merge; a close abandons the run",
+          on_fail: abort }
+      - { id: ticket_done, type: action, action: ticket_transition, input: { to: "Done" },
+          description: "move the ticket's tracker issue to Done",
+          on_success: done,
+          on_fail: done }
 
   # The target moved under the merge request. Nothing is spent until you
   # confirm (inbox); declined, it is offered again only when the target moves.

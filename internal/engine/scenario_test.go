@@ -1117,12 +1117,12 @@ stages:
 	}
 	h.waitPing(t, PingGate)
 
-	// The 3rd consecutive failed poll raises a blocker; further failures
-	// in the same streak stay quiet.
+	// The 3rd consecutive failed poll of the idle loop raises a blocker;
+	// further failures in the same streak stay quiet.
 	blockers := func() int {
 		n := 0
 		for _, s := range h.ch.Sent() {
-			if strings.Contains(s.Title, "cannot read mr_merged") {
+			if strings.Contains(s.Title, "Cannot reach the forge") {
 				n++
 			}
 		}

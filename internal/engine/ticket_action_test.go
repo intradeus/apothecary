@@ -274,7 +274,7 @@ func TestTicketCommentPostsTheArtifactWithATrailer(t *testing.T) {
 		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
 	}
 	posted := tracker.Posted["DEV-1"]
-	want := "Plan approved; building.\n\n— apothecary · run " + runID + " · stage post"
+	want := "Plan approved; building.\n\n— apothecary · run " + runID + "/main-1 · stage post"
 	if len(posted) != 1 || posted[0] != want {
 		t.Errorf("posted = %q, want %q", posted, want)
 	}
@@ -299,7 +299,7 @@ func TestTicketCommentReconcilesAfterCrashOrFailedAttempt(t *testing.T) {
 			fl := mustFlow(t, commentDoc)
 			h := newHarness(t, fl)
 			tracker := newTracker()
-			tracker.Posted = map[string][]string{"DEV-1": {"hello\n\n— apothecary · run r-cm · stage post"}}
+			tracker.Posted = map[string][]string{"DEV-1": {"hello\n\n— apothecary · run r-cm/main-1 · stage post"}}
 			h.res.TicketWriter = func(context.Context, string) (ports.TicketWriter, error) { return tracker, nil }
 			ctx := context.Background()
 			history := []event.Payload{

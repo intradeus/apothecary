@@ -171,19 +171,14 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			return
 		}
 		if rs.pos >= len(fl.Stages) {
-			// done: a phase ends (the run goes idle, or completes when there
-			// is no merge request to react to); a flow without phases ends.
-			if fl.Phased() {
-				if err := x.phaseDone(); err != nil {
-					x.exit(err)
-					return
-				}
-				continue
-			}
-			if err := x.complete(); err != nil {
+			// done: the phase ends; the idle loop decides what the run does
+			// next — a parked phase resuming, another phase opening, or its
+			// end (endCheck).
+			if err := x.phaseDone(); err != nil {
 				x.exit(err)
+				return
 			}
-			return
+			continue
 		}
 		st := &fl.Stages[rs.pos]
 		var err error
@@ -390,6 +385,16 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	}
 	depth := 0
 	for e := edge; e != nil; e, depth = e.Then, depth+1 {
+		if e.To == flow.TerminalDone {
+			// The phase ends here: a best-effort stage whose failure is not
+			// worth routing anywhere (FLOWLANG §3). Recorded like any link.
+			if err := x.append(&event.EdgeTaken{From: st.ID, To: flow.TerminalDone, Edge: kind, Depth: depth,
+				Feed: tail(feedContent, 8<<10)}); err != nil {
+				return err
+			}
+			x.endPhase()
+			return nil
+		}
 		if e.To == flow.TerminalAbort {
 			reason := fmt.Sprintf("aborted by flow: %s at stage %s", kind, st.ID)
 			if strings.TrimSpace(feedContent) != "" {
@@ -1481,7 +1486,6 @@ func (x *exec) stageGate(st *flow.Stage) error {
 	if rs.ph == phIn {
 		p = x.openDecision(st, PingGate)
 	}
-	started := x.e.clock()
 	if p == nil {
 		iter := rs.iters[st.ID] + 1
 		rs.iters[st.ID] = iter
@@ -1522,106 +1526,13 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		})
 	}
 
-	// auto_approve / auto_reject (§6): a signal answers the gate on the human's
-	// behalf — "they merged it instead of clicking approve", "they closed it,
-	// which is a no". The gate keeps accepting a manual answer the whole time;
-	// whichever lands first wins, which is why this lives on the gate rather
-	// than in a separate wait stage (the engine runs one stage at a time).
-	type autoAnswer struct {
-		slug   string
-		answer string
-		poll   func() (bool, error)
-	}
-	var autos []autoAnswer
-	for _, a := range []autoAnswer{{slug: st.AutoApprove, answer: "approve"}, {slug: st.AutoReject, answer: "reject"}} {
-		if poll := x.signalPoller(st, a.slug); poll != nil {
-			a.poll = poll
-			autos = append(autos, a)
-		}
-	}
-	// answerFromSignal polls each armed signal and, on the first that fired,
-	// records the answer it supplies exactly as an operator's would.
-	answerFromSignal := func() (*PingAnswer, error) {
-		for _, a := range autos {
-			fired, err := a.poll()
-			if err != nil {
-				return nil, err
-			}
-			if !fired {
-				continue
-			}
-			ans := PingAnswer{Answer: a.answer, Feedback: "auto: " + a.slug}
-			x.e.mu.Lock()
-			already := p.answered
-			if !already {
-				p.answered = true
-				p.answer = &ans
-			}
-			x.e.mu.Unlock()
-			if !already {
-				if err := x.append(&event.PingAnswered{PingID: p.ID, Answer: ans.Answer, Feedback: ans.Feedback}); err != nil {
-					return nil, err
-				}
-				close(p.done)
-			}
-			return &ans, nil
-		}
-		return nil, nil
-	}
-
-	if len(autos) == 0 {
-		// Nothing to poll and nothing to run: a gate with no signal armed is
-		// pure waiting, so park the run and give the slot back. The ping is
-		// answerable from the durable projection while the loop is gone, and
-		// replay routes the answer on re-entry (rs.gateAnswer, above) — the
-		// path crash recovery has always taken.
-		//
-		// Signal-armed gates below are the exception that keeps this honest:
-		// auto_approve/auto_reject poll an external service on a ticker, so
-		// they need a live loop and stay resident.
-		return errWaitingOnHuman
-	}
-
-	var pollC <-chan time.Time
-	if len(autos) > 0 {
-		// Poll once immediately: a signal that fired while the engine was down
-		// (or before the gate armed) answers NOW, not one interval later —
-		// recovery re-entry lands here too.
-		ans, err := answerFromSignal()
-		if err != nil {
-			return err
-		}
-		if ans != nil {
-			return x.routeGate(st, *ans, started)
-		}
-		t := time.NewTicker(x.e.cfg.MRPollInterval)
-		defer t.Stop()
-		pollC = t.C
-	}
-	for {
-		select {
-		case ar := <-x.h.answers:
-			handled, err := x.processAnswer(ar)
-			if err != nil {
-				return err
-			}
-			if handled && ar.p == p {
-				ans := ar.ans
-				ans.Feedback += attachedFilesNote(ar.p.deliveredPaths)
-				return x.routeGate(st, ans, started)
-			}
-		case <-pollC:
-			ans, err := answerFromSignal()
-			if err != nil {
-				return err
-			}
-			if ans != nil {
-				return x.routeGate(st, *ans, started)
-			}
-		case <-x.ctx.Done():
-			return context.Cause(x.ctx)
-		}
-	}
+	// A gate is a wait point (FLOWLANG §1): the phase parks on the decision
+	// and gives the workspace back, so other phases may run while a person
+	// thinks. The idle loop takes the answer — the human's, or the one a
+	// signal supplies through auto_approve / auto_reject (they merged it
+	// instead of clicking approve) — and routes it (tryResume). Recovery
+	// re-registers the open ping from the log and lands here again.
+	return x.parkAt(st, p.ID)
 }
 
 // resolveGateInput turns a gate's bound input into what the human is handed: a
@@ -1641,77 +1552,6 @@ func (x *exec) resolveGateInput(v string) string {
 	}
 	return v
 }
-
-// signalPoller returns a poll function for a signalspec slug, or nil when the
-// slug is empty or the signal cannot fire for this run yet (no MR to watch).
-// A poll reports whether the signal has fired; a hard error is an append
-// failure or run cancellation. Repeated integration failures raise ONE blocker
-// notification per streak — polling that fails silently forever reads as
-// "this is broken" from the outside, which is worse than the failure itself.
-func (x *exec) signalPoller(st *flow.Stage, slug string) func() (bool, error) {
-	if slug == "" {
-		return nil
-	}
-	rs := x.rs
-	// The MR signals are the same poll against different outcomes.
-	var want ports.MRState
-	switch slug {
-	case signalspec.MRMerged:
-		want = ports.MRMerged
-	case signalspec.MRClosed:
-		want = ports.MRClosed
-	default:
-		return nil
-	}
-	if len(rs.mrs) == 0 {
-		return nil // nothing to watch: no MR has been opened
-	}
-	fails := 0
-	// A run with several merge requests (a stack, a multi-repo change) is
-	// merged when ALL of them are, and closed as soon as ANY is closed
-	// unmerged — someone decided against part of it.
-	return func() (bool, error) {
-		allMerged, anyClosed := true, false
-		for _, mr := range rs.mrs {
-			forge := x.res.forgeFor(mr.Repo)
-			if forge == nil {
-				continue
-			}
-			status, serr := forge.MRStatus(x.ctx, mr.Ref)
-			state := status.State
-			if serr != nil {
-				if x.ctx.Err() != nil {
-					return false, context.Cause(x.ctx)
-				}
-				fails++
-				x.e.log.Warn("signal poll failed", "run", rs.runID, "signal", slug, "attempt", fails, "err", serr)
-				if fails == signalFailNotify {
-					x.e.notify(x.bg, ports.Notification{
-						RunID: rs.runID, Type: event.PingBlocker,
-						Title: fmt.Sprintf("cannot read %s (%d failed polls): %s", slug, fails, rs.view.TicketTitle),
-						Body:  serr.Error() + " — detection is blind until this recovers.",
-					})
-				}
-				return false, nil
-			}
-			if state != ports.MRMerged {
-				allMerged = false
-			}
-			if state == ports.MRClosed {
-				anyClosed = true
-			}
-		}
-		fails = 0
-		if want == ports.MRMerged {
-			return allMerged, nil
-		}
-		return anyClosed, nil
-	}
-}
-
-// signalFailNotify is the consecutive-failure count at which a signal poll
-// raises a blocker notification (once per streak).
-const signalFailNotify = 3
 
 // openDecision returns the live Ping for a still-open decision of this stage
 // and type — one runLoop re-registered from the log after a restart — or nil
@@ -1874,10 +1714,11 @@ func (x *exec) endPhase() {
 
 // --- wait stages ------------------------------------------------------------
 
-// stageWait blocks until an external signal fires (FLOWLANG §3). Like a gate it
-// parks the run on something outside it, so with no timeout it waits
-// indefinitely; a stage timeout bounds it and routes on_timeout (else on_fail).
-// Re-entry on recovery simply re-polls: waiting is idempotent.
+// stageWait is a wait point mid-chain (FLOWLANG §2): the phase parks until
+// the signal holds, and the idle loop resumes it (tryResume) — at once when
+// the signal already holds, since the loop evaluates before its first tick.
+// A signal that can never hold for this run fails the stage now instead of
+// waiting forever; a timeout is counted from the park.
 func (x *exec) stageWait(st *flow.Stage) error {
 	rs := x.rs
 	if rs.ph != phIn {
@@ -1888,52 +1729,14 @@ func (x *exec) stageWait(st *flow.Stage) error {
 		}
 		rs.ph = phIn
 	}
-	started := x.e.clock()
-
-	poll := x.signalPoller(st, st.WaitFor)
-	if poll == nil {
-		// The signal can never fire for this run — waiting forever would look
-		// like a hang, so say what is missing instead.
+	if sig := signalspec.Get(st.WaitFor); sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.mrs) == 0 {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
 			Error: fmt.Sprintf("cannot wait for %s: %s", st.WaitFor, waitPrereq(st.WaitFor))}); aerr != nil {
 			return aerr
 		}
 		return x.takeEdge(st, flow.EdgeFail, "")
 	}
-	if fired, err := poll(); err != nil {
-		return err
-	} else if fired {
-		return x.completeWait(st, started)
-	}
-
-	var deadline <-chan time.Time
-	if st.Timeout > 0 {
-		t := time.NewTimer(st.Timeout)
-		defer t.Stop()
-		deadline = t.C
-	}
-	ticker := time.NewTicker(x.e.cfg.MRPollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			fired, err := poll()
-			if err != nil {
-				return err
-			}
-			if fired {
-				return x.completeWait(st, started)
-			}
-		case <-deadline:
-			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout,
-				Error: fmt.Sprintf("%s did not fire within %s", st.WaitFor, st.Timeout)}); aerr != nil {
-				return aerr
-			}
-			return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), "")
-		case <-x.ctx.Done():
-			return context.Cause(x.ctx)
-		}
-	}
+	return x.parkAt(st, "")
 }
 
 func (x *exec) completeWait(st *flow.Stage, started time.Time) error {

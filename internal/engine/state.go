@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
@@ -107,6 +108,8 @@ type runState struct {
 	// phase: everything scoped to the run (park / unpark), while another
 	// phase may hold runState's own fields. At most one live run per phase.
 	parked map[string]*phaseRun
+	// anyStarted: some stage has started (a stage_started is on the log).
+	anyStarted bool
 
 	// openPings are raised-but-unanswered pings to re-register on recovery.
 	openPings []*event.PingRaised
@@ -191,13 +194,17 @@ type phaseRun struct {
 	roundThreads        []string
 	roundLoaded         bool
 	selectPing          *event.PingRaised
-	// parkedAt is the stage the run waits at (a wait or a gate).
+	// parkedAt is the stage the run waits at (a wait or a gate), ping the
+	// decision a gate waits on, since when it parked (a wait's timeout runs
+	// from there).
 	parkedAt string
+	ping     string
+	since    time.Time
 }
 
 // park stores the active phase run as parked at stage and leaves the run
 // idle. Shared by replay and the live park so they cannot disagree.
-func (rs *runState) park(stage string) {
+func (rs *runState) park(stage, ping string, since time.Time) {
 	if rs.parked == nil {
 		rs.parked = map[string]*phaseRun{}
 	}
@@ -206,7 +213,7 @@ func (rs *runState) park(stage string) {
 		feed: rs.feed, feedSentinel: rs.feedSentinel, feedAttempts: rs.feedAttempts,
 		lastFailure: rs.lastFailure, gateAnswer: rs.gateAnswer,
 		roundThreads: rs.roundThreads, roundLoaded: rs.roundLoaded, selectPing: rs.selectPing,
-		parkedAt: stage,
+		parkedAt: stage, ping: ping, since: since,
 	}
 	rs.idle = true
 }
@@ -309,6 +316,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 				rs.iters[p.StageID] = p.Iteration
 			}
 		case *event.StageStarted:
+			rs.anyStarted = true
 			if fl != nil {
 				rs.pos = fl.Index(p.StageID)
 			}
@@ -361,6 +369,15 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.ph = phIn
 		case *event.EdgeTaken:
 			rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
+			if p.To == flow.TerminalDone {
+				// The edge ended the phase.
+				if fl != nil {
+					rs.pos = len(fl.Stages)
+				}
+				rs.ph = phStart
+				rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
+				break
+			}
 			if p.To == flow.ReservedDebug {
 				// The debug leaf: the cursor stays on the stage that took the
 				// link, parked for a human (runloop.stageDebug).
@@ -381,11 +398,19 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.feedSentinel = flow.FeedSentinel(p.Edge)
 			rs.feedAttempts = p.Max + 1
 		case *event.PhaseStarted:
+			if rs.phase == "" && rs.anyStarted {
+				// A start recorded after the fact (beginRun on a log that had
+				// stage events but no phase start): the cursor stays where the
+				// stage events put it.
+				rs.phase, rs.subject, rs.idle = p.Phase, p.Subject, false
+				rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
+				break
+			}
 			rs.startPhase(p, fl)
 		case *event.PhaseCompleted:
 			rs.idle = true
 		case *event.PhaseParked:
-			rs.park(p.StageID)
+			rs.park(p.StageID, p.PingID, ev.TS)
 		case *event.PhaseResumed:
 			rs.unpark(p.Phase)
 		case *event.BranchPushed:

@@ -105,17 +105,13 @@ func (x *exec) actionTicketTransition(st *flow.Stage) (bool, error) {
 
 // ticketTrailer is the line a posted comment ends with: who posted it and
 // for what. It is also the comment's idempotency key — looked for on a
-// re-entry — so it names the run, the stage and (in a phased flow) the
-// phase run, the way review replies are marked, and NEVER the attempt: a
-// failed-then-retried attempt must recognise the comment it already posted.
-// Visible text rather than an HTML comment, because Jira renders comments
-// as ADF and would strip one.
+// re-entry — so it names the run, the phase run and the stage, the way
+// review replies are marked, and NEVER the attempt: a failed-then-retried
+// attempt must recognise the comment it already posted. Visible text rather
+// than an HTML comment, because Jira renders comments as ADF and would strip
+// one.
 func (x *exec) ticketTrailer(st *flow.Stage) string {
-	id := x.rs.runID
-	if x.rs.phase != "" {
-		id = x.roundID()
-	}
-	return fmt.Sprintf("— apothecary · run %s · stage %s", id, st.ID)
+	return fmt.Sprintf("— apothecary · run %s · stage %s", x.roundID(), st.ID)
 }
 
 // actionTicketComment posts the body artifact as a comment. The effect

@@ -11,6 +11,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
@@ -180,15 +181,268 @@ func TestPhasedRunWaitsInReviewAndCompletesOnMerge(t *testing.T) {
 	ph.waitState(t, runID, run.Completed)
 }
 
-// A merge request closed unmerged abandons the run (R9).
-func TestPhasedRunAbandonsWhenTheMRCloses(t *testing.T) {
-	ph := newPhasedHarness(t, phasedFlowDoc)
+// The run's end is the flow's business: a close abandons the run through
+// the wait on the merge, whose on_fail says abort.
+func TestParkedWaitFailsWhenTheMRIsClosed(t *testing.T) {
+	ph := newPhasedHarness(t, waitFlowDoc)
 	runID := ph.start(t)
 	ph.forge.SetMRState(1, ports.MRClosed)
 	v := ph.waitState(t, runID, run.Abandoned)
 	ab, _ := findPayload[*event.RunAbandoned](ph.events(t, runID))
-	if ab == nil || !strings.Contains(ab.Reason, "closed unmerged") {
+	if ab == nil || !strings.Contains(ab.Reason, "closed unmerged") || !strings.Contains(ab.Reason, "aborted by flow") {
 		t.Errorf("abandon = %+v (view %s)", ab, v.State)
+	}
+	if _, parked := findPayload[*event.PhaseParked](ph.events(t, runID)); !parked {
+		t.Error("the wait never parked")
+	}
+}
+
+// Without a wait on the merge request the run completes as soon as nothing
+// reacts — here the moment deliver ends, since only a manual phase follows.
+func TestRunCompletesWhenNothingIsArmed(t *testing.T) {
+	doc := strings.Replace(phasedFlowDoc, "on: { signal: mr_conflicts, start: confirm }", "on: manual", 1)
+	doc = strings.Replace(doc, "on: { signal: mr_review_settled, quiet_for: 1h, max: 2 }", "on: manual", 1)
+	ph := newPhasedHarness(t, doc)
+	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := ph.waitState(t, runID, run.Completed)
+	if len(v.MRs) != 1 {
+		t.Errorf("merge requests = %d", len(v.MRs))
+	}
+}
+
+// A document written with top-level stages is one phase, "main": the run
+// opens it, ends it, and completes.
+func TestStagesOnlyDocumentRunsAsOnePhase(t *testing.T) {
+	doc := "name: short\nversion: 4\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	ph := newPhasedHarness(t, doc)
+	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Short"}, "short", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ph.waitState(t, runID, run.Completed)
+	starts := phaseStarts(ph.events(t, runID))
+	done, _ := findPayload[*event.PhaseCompleted](ph.events(t, runID))
+	if len(starts) != 1 || starts[0].Phase != flow.ShorthandPhase || starts[0].By != "human" || done == nil || done.Phase != flow.ShorthandPhase {
+		t.Errorf("starts %+v completed %+v", starts, done)
+	}
+}
+
+// waitFlowDoc ends deliver with the wait on the merge: the phase parks there,
+// reactions run meanwhile, and a close routes to abort.
+var waitFlowDoc = strings.Replace(phasedFlowDoc,
+	"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+	"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n      - { id: merged, type: wait, for: mr_merged, on_fail: abort }\n      - { id: after, type: command, run: \"./after.sh\" }\n", 1)
+
+// A wait parks its phase: the run is idle and in review, a reaction runs in
+// the meantime and gives the workspace back, and the merge resumes the
+// phase, which finishes its stages before the run completes.
+func TestWaitParksAndReactionsRunMeanwhile(t *testing.T) {
+	ph := newPhasedHarness(t, waitFlowDoc)
+	runID := ph.start(t)
+	infos, err := ph.e.RunPhases(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := infos[0]; d.ID != "deliver" || d.Live == nil || d.Live.ParkedAt != "merged" {
+		t.Fatalf("deliver = %+v", d)
+	}
+	ph.forge.SetTargetSHA(1, "t1")
+	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ask := ph.waitPing(t, event.PingPhaseConfirm)
+	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	ph.waitPhaseRuns(t, runID, "conflicts", 1)
+	if n := len(ph.execsOf("./after.sh")); n != 0 {
+		t.Fatalf("the parked phase went on before the merge (%d runs of after)", n)
+	}
+	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.waitState(t, runID, run.Completed)
+	if n := len(ph.execsOf("./after.sh")); n != 1 {
+		t.Errorf("after ran %d times, want once after the merge", n)
+	}
+	var parked, resumed int
+	for _, e := range ph.events(t, runID) {
+		switch e.Payload.(type) {
+		case *event.PhaseParked:
+			parked++
+		case *event.PhaseResumed:
+			resumed++
+		}
+	}
+	if parked != 1 || resumed != 1 {
+		t.Errorf("parked %d resumed %d", parked, resumed)
+	}
+	if err := ph.e.StartPhase(runID, "deliver", ""); !errors.Is(err, ErrPhaseNotStartable) {
+		t.Errorf("start after the end: %v", err)
+	}
+}
+
+// A hand start is refused for a phase whose run is parked.
+func TestHumanStartRefusesAParkedPhase(t *testing.T) {
+	ph := newPhasedHarness(t, waitFlowDoc)
+	runID := ph.start(t)
+	if err := ph.e.StartPhase(runID, "deliver", ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "parked at merged") {
+		t.Errorf("parked phase by hand: %v", err)
+	}
+}
+
+// A wait's timeout runs from the park and routes on_fail when the stage
+// declares no on_timeout.
+func TestParkedWaitTimesOut(t *testing.T) {
+	doc := strings.Replace(waitFlowDoc, "type: wait, for: mr_merged, on_fail: abort", "type: wait, for: mr_merged, timeout: 1h, on_fail: abort", 1)
+	ph := newPhasedHarness(t, doc)
+	runID := ph.start(t)
+	ph.clock.Advance(2 * time.Hour)
+	ph.waitState(t, runID, run.Abandoned)
+	failed, _ := findPayload[*event.StageFailed](ph.events(t, runID))
+	if failed == nil || failed.StageID != "merged" || failed.Reason != event.ReasonTimeout {
+		t.Errorf("failed = %+v", failed)
+	}
+}
+
+// A gate parks its phase the same way: a reaction runs while the person
+// thinks, and a signal may answer the gate for them.
+func TestGateParksAndAReactionRunsMeanwhile(t *testing.T) {
+	doc := strings.Replace(phasedFlowDoc,
+		"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+		"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n      - { id: final, type: human_gate, question: \"Merge?\", input: { mr: $MR_URL }, auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }\n", 1)
+	ph := newPhasedHarness(t, doc)
+	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := ph.waitPing(t, event.PingGate)
+	v := ph.waitState(t, runID, run.WaitingOnHuman)
+	if !v.Idle {
+		t.Errorf("a parked gate leaves the run idle: %+v", v.State)
+	}
+	ph.forge.SetTargetSHA(1, "t1")
+	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ask := ph.waitPing(t, event.PingPhaseConfirm, gate.ID)
+	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	ph.waitPhaseRuns(t, runID, "conflicts", 1)
+	if n := len(ph.execsOf("./sync.sh")); n != 1 {
+		t.Fatalf("sync ran %d times while the gate was open", n)
+	}
+	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.waitState(t, runID, run.Completed)
+	answered := false
+	for _, e := range ph.events(t, runID) {
+		if a, ok := e.Payload.(*event.PingAnswered); ok && a.PingID == gate.ID && a.Answer == "approve" && strings.Contains(a.Feedback, "auto: mr_merged") {
+			answered = true
+		}
+	}
+	if !answered {
+		t.Error("the merge did not answer the gate")
+	}
+}
+
+// A phase with start: manual never opens by itself: its hold is surfaced
+// for the run page, and a person starts it.
+func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {
+	doc := strings.Replace(phasedFlowDoc, "on: { signal: mr_conflicts, start: confirm }", "on: { signal: mr_conflicts, start: manual }", 1)
+	ph := newPhasedHarness(t, doc)
+	runID := ph.start(t)
+	ph.forge.SetTargetSHA(1, "t1")
+	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	deadline := time.Now().Add(2 * time.Second)
+	var holds []TriggerHold
+	for time.Now().Before(deadline) && len(holds) == 0 {
+		infos, err := ph.e.RunPhases(context.Background(), runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range infos {
+			if p.ID == "conflicts" {
+				holds = p.Holds
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if len(holds) != 1 || holds[0].Subject != "repo" || holds[0].Seen || !strings.Contains(holds[0].Why, "no longer merges cleanly") {
+		t.Fatalf("holds = %+v", holds)
+	}
+	for _, p := range ph.e.PendingPings() {
+		if p.Type == event.PingPhaseConfirm {
+			t.Fatalf("a manual phase asked: %+v", p)
+		}
+	}
+	if n := len(phaseStarts(ph.events(t, runID))); n != 1 {
+		t.Fatalf("a manual phase started by itself (%d starts)", n)
+	}
+	if err := ph.e.StartPhase(runID, "conflicts", ""); err != nil {
+		t.Fatal(err)
+	}
+	ph.waitPhaseRuns(t, runID, "conflicts", 1)
+}
+
+// The start policy may come from a parameter the project binds.
+func TestStartPolicyFromAParam(t *testing.T) {
+	doc := strings.Replace(phasedFlowDoc, "parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }",
+		"parameters: { harness: fake, model: anthropic/claude-sonnet-4-6, rebase: { default: confirm, enum: [auto, confirm, manual] } }", 1)
+	doc = strings.Replace(doc, "on: { signal: mr_conflicts, start: confirm }", "on: { signal: mr_conflicts, start: $rebase }", 1)
+	ph := newPhasedHarness(t, doc)
+	ph.e.SetFlowBindings(staticBindings{"rebase": "auto"})
+	runID := ph.start(t)
+	ph.forge.SetTargetSHA(1, "t1")
+	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.waitPhaseRuns(t, runID, "conflicts", 1)
+	for _, p := range ph.e.PendingPings() {
+		if p.Type == event.PingPhaseConfirm {
+			t.Fatalf("auto asked first: %+v", p)
+		}
+	}
+	infos, err := ph.e.RunPhases(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if infos[1].Start != "auto" {
+		t.Errorf("conflicts start = %q", infos[1].Start)
+	}
+}
+
+// A restart while parked re-parks from the log: no second ping, no second
+// phase start, and the merge still resumes and completes the run.
+func TestParkedStateSurvivesARestart(t *testing.T) {
+	ph := newPhasedHarness(t, waitFlowDoc)
+	runID := ph.start(t)
+	ph.e.Shutdown()
+
+	h2 := newHarnessSource(t, ph.flows, ph.flowOf(t, "phased"))
+	h2.store, h2.envp, h2.forge = ph.store, ph.envp, ph.forge
+	h2.res.Envp, h2.res.Forge = ph.envp, ph.forge
+	h2.runner.RunFunc = ph.runner.RunFunc
+	h2.res.Runner = h2.runner
+	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
+	t.Cleanup(h2.e.Shutdown)
+	if err := h2.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ph.forge.SetMRState(1, ports.MRMerged)
+	deadline := time.Now().Add(5 * time.Second)
+	for h2.view(t, runID).State != run.Completed && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if st := h2.view(t, runID).State; st != run.Completed {
+		t.Fatalf("state after restart + merge = %s", st)
+	}
+	var starts, parked int
+	for _, e := range h2.events(t, runID) {
+		switch e.Payload.(type) {
+		case *event.PhaseStarted:
+			starts++
+		case *event.PhaseParked:
+			parked++
+		}
+	}
+	if starts != 1 || parked != 1 {
+		t.Errorf("phase starts = %d parked = %d, want 1 and 1", starts, parked)
 	}
 }
 

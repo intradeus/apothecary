@@ -536,6 +536,7 @@ export type {
 	Ticket,
 	TicketDetail,
 	TicketRequest,
+	TriggerHold,
 	UpdateFlowData,
 	UpdateFlowErrors,
 	UpdateFlowRequest,

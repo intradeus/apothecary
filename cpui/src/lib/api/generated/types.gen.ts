@@ -143,7 +143,6 @@ export type DocStage = {
 	question?: string;
 	run?: string;
 	run_ref?: string;
-	start?: string;
 	timeout?: string;
 	type: string;
 	when?: string;
@@ -435,6 +434,7 @@ export type PhaseInfo = {
 	confirm?: boolean;
 	description?: string;
 	entry?: boolean;
+	holds?: Array<TriggerHold>;
 	id: string;
 	live?: PhaseLive;
 	max: number;
@@ -791,6 +791,14 @@ export type TicketRequest = {
 	source_id: string;
 	source_key: string;
 	title: string;
+};
+
+export type TriggerHold = {
+	key: string;
+	observed_at: string;
+	seen: boolean;
+	subject: string;
+	why: string;
 };
 
 export type UpdateFlowRequest = {

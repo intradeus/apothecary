@@ -442,6 +442,8 @@ type PhaseParked struct {
 	Phase   string `json:"phase"`
 	Subject string `json:"subject,omitempty"`
 	StageID string `json:"stage_id"`
+	// PingID is the decision a parked gate waits on ("" for a wait stage).
+	PingID string `json:"ping_id,omitempty"`
 }
 
 type PhaseResumed struct {

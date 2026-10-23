@@ -429,7 +429,6 @@ type DocStage struct {
 	AutoReject  string   `yaml:"auto_reject" json:"auto_reject,omitempty"`
 	Action      string   `yaml:"action" json:"action,omitempty"`
 	For         string   `yaml:"for" json:"for,omitempty"`
-	Start       string   `yaml:"start" json:"start,omitempty"`
 	OnSuccess   string   `yaml:"on_success" json:"on_success,omitempty"`
 	OnFail      *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
 	OnReject    *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
@@ -1365,7 +1364,6 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"auto_reject", raw.AutoReject != "", []StageType{StageHumanGate}},
 		{"action", raw.Action != "", []StageType{StageAction}},
 		{"for", raw.For != "", []StageType{StageWait}},
-		{"start", raw.Start != "", []StageType{StageWait}},
 	}
 	for kind, re := range raw.edges() {
 		fields = append(fields, fieldSet{kind, re != nil, edgeKinds[kind].on})
@@ -1580,24 +1578,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			return fail("%q opens a phase, it is not something to wait for (declare a phase `on: %s`)", raw.For, raw.For)
 		}
 		// A wait stage is a wait point mid-chain: it parks the phase until
-		// the signal holds, with the same policy a phase's `on:` has — minus
-		// manual, which is what a human_gate is for.
+		// the signal holds, then continues (a person in the loop after a
+		// signal is a human_gate with auto_approve).
 		w := Wait{Signal: raw.For, Start: StartAuto, Max: 1}
-		if raw.Start != "" {
-			v, via, err := p.lookup(raw.Start, site("start", ParamString, []string{string(StartAuto), string(StartConfirm)}))
-			if err != nil {
-				return fail("start: %v", err)
-			}
-			switch Start(v) {
-			case StartAuto:
-			case StartConfirm:
-				w.Start = StartConfirm
-			case StartManual:
-				return fail("start: %s does not apply to a wait — a person continues a chain at a human_gate", StartManual)
-			default:
-				return fail("start %q%s must be %s or %s", v, via, StartAuto, StartConfirm)
-			}
-		}
 		if raw.Timeout != "" {
 			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamString, nil))
 			if err != nil {

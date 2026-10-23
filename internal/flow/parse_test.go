@@ -582,19 +582,8 @@ func TestWaitStage(t *testing.T) {
 	}
 	w := f.Stage("merged")
 	if w.Type != StageWait || w.WaitFor != "mr_merged" || w.Timeout != 24*time.Hour ||
-		w.Wait == nil || w.Wait.Signal != "mr_merged" || w.Wait.Start != StartAuto || w.Wait.Timeout != 24*time.Hour {
+		w.Wait == nil || w.Wait.Signal != "mr_merged" || w.Wait.Start != StartAuto || w.Wait.Timeout != 24*time.Hour || !w.Parks() {
 		t.Errorf("wait stage = %+v wait %+v", w, w.Wait)
-	}
-	// A wait is a wait point mid-chain: it may ask before continuing.
-	c, err := Parse("t.yaml", []byte(header+`stages:
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
-  - { id: merged, type: wait, for: mr_merged, start: confirm, on_success: done }
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Stage("merged").Wait.Start != StartConfirm {
-		t.Errorf("start = %q", c.Stage("merged").Wait.Start)
 	}
 	// A gate may be auto-answered by the same registry.
 	g, err := Parse("t.yaml", []byte(header+`stages:
@@ -617,12 +606,10 @@ func TestWaitStage(t *testing.T) {
 			`field "for" does not apply`},
 		{"auto_approve on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, auto_approve: mr_merged }\n",
 			`field "auto_approve" does not apply`},
-		{"start manual on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, start: manual }\n",
-			"does not apply to a wait"},
-		{"bad start on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, start: later }\n",
-			`start "later" must be`},
-		{"start on a command", header + "stages:\n  - { id: s, type: command, run: x, start: auto }\n",
-			`field "start" does not apply`},
+		// A wait has no start policy: a person in the loop after a signal
+		// is a gate with auto_approve.
+		{"start on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, start: confirm }\n",
+			"field start not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -1217,8 +1204,8 @@ func TestParamSites(t *testing.T) {
 		{"wrong type", head + "stages:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
 		{"bool at a string site", head + "stages:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},
 		{"param in a path", head + "stages:\n  - { id: a, type: agent, agent: b, input: { plan: $s } }\n", "must be a relative artifact path"},
-		{"enum site needs an enum", head + "stages:\n  - { id: w, type: wait, for: mr_merged, start: $s }\n", "needs an enum within"},
-		{"enum wider than the site", head + "stages:\n  - { id: w, type: wait, for: mr_merged, start: $big }\n", `allows "manual", which this field does not`},
+		{"enum site needs an enum", head + "phases:\n  - { id: d, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n  - { id: c, on: { signal: mr_conflicts, start: $s }, stages: [{ id: x, type: command, run: x }] }\n", "needs an enum within"},
+		{"enum wider than the site", head + "stages:\n  - { id: s, type: action, action: sync_target, input: { strategy: $big } }\n", `allows "auto", which this field does not`},
 		{"mixed case ref", head + "stages:\n  - { id: a, type: agent, agent: b, model: $Mixed }\n", "is not a parameter reference"},
 		{"value fails the site rule", head + "stages:\n  - { id: a, type: agent, agent: b, model: $s }\n", `model: "text" (parameter "s") is not of the form provider/model`},
 		{"duration via param", head + "stages:\n  - { id: a, type: agent, agent: b, timeout: $s }\n", `invalid timeout "text" (parameter "s")`},
@@ -1237,7 +1224,7 @@ func TestParamSites(t *testing.T) {
 		"      - { id: a, type: agent, agent: b, max_turns: $n, timeout: $d, harness: $s, model: a/c }\n" +
 		"      - { id: c, type: command, run: \"echo $HOME\", run_ref: $s, timeout: $d }\n"
 	ok = strings.Replace(ok, "run: \"echo $HOME\", run_ref: $s", "run: \"echo $HOME\"", 1)
-	ok += "      - { id: w, type: wait, for: mr_merged, start: $e }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+	ok += "      - { id: w, type: wait, for: mr_merged }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
 		"  - id: cf\n    on: { signal: mr_conflicts, start: $big, max: $n, quiet_for: $d }\n    stages: [{ id: x, type: command, run: x }]\n"
 	ok = strings.Replace(ok, "start: $big, max: $n, quiet_for: $d", "start: $big, max: $n", 1)
 	f, err := Parse("t.yaml", []byte(ok))
@@ -1248,6 +1235,15 @@ func TestParamSites(t *testing.T) {
 	if a.MaxTurns != 2 || a.Timeout != 5*time.Minute || a.Harness != "text" || c.Timeout != 5*time.Minute || c.Run != "echo $HOME" ||
 		w.Wait.Start != StartAuto || cf.On.Start != StartAuto || cf.On.Max != 2 {
 		t.Errorf("a %+v c %+v w %+v cf %+v", a, c, w.Wait, cf.On)
+	}
+	unused := false
+	for _, w := range f.Warnings {
+		if strings.Contains(w, `parameter "e" is declared but nothing reads it`) {
+			unused = true
+		}
+	}
+	if !unused {
+		t.Errorf("warnings = %v", f.Warnings)
 	}
 }
 

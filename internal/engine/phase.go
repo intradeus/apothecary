@@ -65,7 +65,7 @@ func (e *Engine) StartPhase(runID, phase, subject string) error {
 // Replay decides: a log that already holds a phase_started has begun.
 func (x *exec) beginRun() error {
 	rs := x.rs
-	if !rs.fl.Phased() || rs.phase != "" || rs.idle || rs.done {
+	if rs.phase != "" || rs.idle || rs.done {
 		return nil
 	}
 	begin := rs.begin
@@ -79,20 +79,30 @@ func (x *exec) beginRun() error {
 	if by == "" {
 		by = "human"
 	}
+	if rs.anyStarted {
+		// Stage events but no phase start (a log written by an older build,
+		// or by hand): record the start without moving the cursor replay
+		// placed — the run is already mid-phase.
+		p := &event.PhaseStarted{Phase: begin, By: by}
+		if err := x.append(p); err != nil {
+			return err
+		}
+		rs.phase = begin
+		rs.phaseRuns[phaseRunKey(begin, "")]++
+		return nil
+	}
 	return x.beginPhase(begin, "", "", by, "")
 }
 
-// phaseDone ends the phase in progress: the run goes idle — or completes,
-// when the entry phase opened no merge request to react to.
+// phaseDone ends the phase in progress: the run goes idle, and the next
+// idle tick decides what follows — a parked phase resuming, another phase
+// opening, or the run's end (endCheck).
 func (x *exec) phaseDone() error {
 	rs := x.rs
 	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject}); err != nil {
 		return err
 	}
 	rs.idle = true
-	if len(rs.mrs) == 0 {
-		return x.complete()
-	}
 	return nil
 }
 
@@ -166,9 +176,12 @@ func (x *exec) idle() error {
 	}
 }
 
-// evaluateIdle is one idle tick: ending first, then answered confirmations,
-// then the triggers — subjects in checkout order, phases in document order
-// (R4). Starts at most one phase (R3).
+// evaluateIdle is one idle tick (the scheduler): observe once, resume the
+// first parked phase run whose wait point settled, act on answered
+// confirmations, open the first firing phase whose signal holds under its
+// start policy — subjects in checkout order, phases in document order, one
+// start per tick — record every hold for the run page, and decide whether
+// the run is over.
 func (x *exec) evaluateIdle(st *idler) error {
 	rs := x.rs
 	obs, err := x.observe(st)
@@ -187,21 +200,16 @@ func (x *exec) evaluateIdle(st *idler) error {
 	}
 	st.failures = 0
 
-	allMerged, closed := true, ""
-	for _, o := range obs {
-		switch o.status.State {
-		case ports.MRClosed:
-			closed = o.mr.Ref.URL
-		case ports.MRMerged:
-		default:
-			allMerged = false
+	// Parked phase runs first, in document order: a wait point that settled
+	// resumes its phase before any other phase opens.
+	for i := range rs.fl.Phases {
+		pr := rs.parked[rs.fl.Phases[i].ID]
+		if pr == nil {
+			continue
 		}
-	}
-	if closed != "" {
-		return x.abandon(rs.view.CurrentStage, "", "merge request closed unmerged: "+closed)
-	}
-	if allMerged {
-		return x.complete()
+		if resumed, err := x.tryResume(pr, obs); resumed || err != nil {
+			return err
+		}
 	}
 
 	// A confirmation answered (here, or while another phase ran): approve
@@ -227,23 +235,34 @@ func (x *exec) evaluateIdle(st *idler) error {
 		return x.beginPhase(cp.Phase, cp.Subject, cp.TriggerKey, "signal", tip)
 	}
 
+	holds := map[string][]TriggerHold{}
+	defer x.e.holds.set(rs.runID, holds)
 	for _, o := range obs {
 		if o.status.State != ports.MROpen {
 			continue
 		}
-		for _, ph := range rs.fl.Phases {
+		for i := range rs.fl.Phases {
+			ph := &rs.fl.Phases[i]
 			if !ph.Fires() || rs.parked[ph.ID] != nil {
 				continue
 			}
-			if ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max {
+			spent := ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max
+			held, key, why := x.triggerHolds(ph, o)
+			if !held {
 				continue
 			}
-			holds, key, why := x.triggerHolds(&ph, o)
-			if !holds || rs.triggerSeen[triggerKey(ph.ID, o.mr.Repo, key)] {
+			seen := spent || rs.triggerSeen[triggerKey(ph.ID, o.mr.Repo, key)]
+			holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: o.mr.Repo, Key: key, Why: why, Seen: seen, At: x.e.clock()})
+			if seen {
 				continue
 			}
-			if ph.On.Start == flow.StartConfirm {
-				if err := x.askToStart(&ph, o, key, why); err != nil {
+			switch ph.On.Start {
+			case flow.StartManual:
+				// Surfaced, never started by itself: a person starts it from
+				// the run page (manualStart).
+				continue
+			case flow.StartConfirm:
+				if err := x.askToStart(ph, o, key, why); err != nil {
 					return err
 				}
 				continue
@@ -251,7 +270,7 @@ func (x *exec) evaluateIdle(st *idler) error {
 			return x.beginPhase(ph.ID, o.mr.Repo, key, "signal", o.status.HeadSHA)
 		}
 	}
-	return nil
+	return x.endCheck(obs)
 }
 
 // observe polls every merge request's status, and its threads when a
@@ -466,6 +485,9 @@ type PhaseInfo struct {
 	Total int            `json:"total"`
 	// Live is the phase's run in progress or parked at a wait point.
 	Live *PhaseLive `json:"live,omitempty"`
+	// Holds are the subjects the phase's signal held for at the last idle
+	// tick (what a start: manual phase offers to start by hand).
+	Holds []TriggerHold `json:"holds,omitempty"`
 }
 
 // PhaseLive describes a phase's live run.
@@ -515,7 +537,8 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 		}
 		info := PhaseInfo{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Start: string(ph.On.Start),
 			Confirm: ph.On.Start == flow.StartConfirm, Entry: ph.IsEntrypoint(),
-			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r, Total: total}
+			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r, Total: total,
+			Holds: e.holds.of(runID, ph.ID)}
 		switch {
 		case rs.parked[ph.ID] != nil:
 			info.Live = &PhaseLive{Subject: rs.parked[ph.ID].subject, ParkedAt: rs.parked[ph.ID].parkedAt}

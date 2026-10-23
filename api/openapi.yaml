@@ -296,8 +296,6 @@ components:
           type: string
         run_ref:
           type: string
-        start:
-          type: string
         timeout:
           type: string
         type:
@@ -928,6 +926,10 @@ components:
           type: string
         entry:
           type: boolean
+        holds:
+          items:
+            $ref: '#/components/schemas/TriggerHold'
+          type: array
         id:
           type: string
         live:
@@ -1771,6 +1773,26 @@ components:
         - source_id
         - source_key
         - title
+      type: object
+    TriggerHold:
+      properties:
+        key:
+          type: string
+        observed_at:
+          format: date-time
+          type: string
+        seen:
+          type: boolean
+        subject:
+          type: string
+        why:
+          type: string
+      required:
+        - key
+        - observed_at
+        - seen
+        - subject
+        - why
       type: object
     UpdateFlowRequest:
       properties:
