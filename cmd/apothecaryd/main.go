@@ -409,7 +409,7 @@ func cmdServe(args []string) error {
 const devFlowYAML = `name: dev
 version: 4
 description: dev-mode sandbox flow (fake adapters)
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
     description: plans the work

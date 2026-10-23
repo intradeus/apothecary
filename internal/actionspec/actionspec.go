@@ -85,8 +85,13 @@ type Action struct {
 	// Requires names an integration port the project must have configured for
 	// a flow using this action to start; empty = no integration needed.
 	Requires string `json:"requires,omitempty"`
-	// Single caps the action at one stage per flow (a run has one MR).
+	// Single caps the action at one stage per phase (a phase run opens one
+	// merge request).
 	Single bool `json:"single,omitempty"`
+	// ExactlyOne names inputs of which a stage binds exactly one: the value
+	// comes from an artifact OR from the flow, the way a command takes run
+	// OR run_ref.
+	ExactlyOne []string `json:"exactly_one,omitempty"`
 	// Provides names the run fact this action establishes, mirroring a
 	// signal's Needs (signalspec): the validator pairs them to catch a wait
 	// whose prerequisite no path creates.
@@ -250,6 +255,7 @@ var registry = []Action{{
 	Description: "Writes one field of the ticket's tracker issue, named as the tracker shows it (\"Feature flags\", \"labels\"). The value comes from an artifact (value) or is written in the flow (text) — exactly one. mode: replace overwrites; append merges comma-separated items into what is there (a list field grows, nothing is duplicated). A field the tracker cannot write from text fails the stage for on_fail. A ticket written by hand skips the stage.",
 	Requires:    RequiresTracker,
 	Remote:      true,
+	ExactlyOne:  []string{"value", "text"},
 	Inputs: []InputSig{{
 		Name:        "field",
 		Description: "the field's display name (or its raw id), as the tracker shows it",

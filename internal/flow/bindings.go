@@ -156,6 +156,9 @@ func inSubjectPhase(f *Flow, st *Stage) bool {
 // already run its producer at least once — or never will.
 func definitelyProduced(f *Flow, consumer *Stage, path string) bool {
 	return everyRouteSatisfies(f, consumer, func(st *Stage) bool {
+		if st.When != nil {
+			return false // a conditional producer may be skipped
+		}
 		for _, o := range effectiveOutputsOf(f, st) {
 			if o.Value == path {
 				return true
@@ -169,7 +172,7 @@ func definitelyProduced(f *Flow, consumer *Stage, path string) bool {
 // action that opens the run's merge request.
 func definitelyHasMR(f *Flow, st *Stage) bool {
 	return everyRouteSatisfies(f, st, func(s *Stage) bool {
-		if s.Type != StageAction {
+		if s.Type != StageAction || s.When != nil {
 			return false
 		}
 		act := actionspec.Get(s.Action)

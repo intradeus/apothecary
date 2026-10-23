@@ -131,7 +131,7 @@ func TestRerunCarriesDirection(t *testing.T) {
 func TestUncommittedRendersWorkingTreeStatus(t *testing.T) {
 	h := newHarness(t, mustFlow(t, `name: uncommitted
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: committer
     prompt: name it

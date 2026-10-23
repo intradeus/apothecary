@@ -7,12 +7,11 @@ version: 4
 # a gate whose rejection loops back into the build (which binds $DECISION for
 # it), and signals answering a gate both ways.
 description: expanded-form reference flow (editor output shape)
-defaults:
+parameters:
   timeout: 30m
   harness: opencode
   model: opencode-go/qwen3.7-plus
   max_turns: 50
-budget:
   max_cost_usd: 10
   max_total_turns: 300
 agents:

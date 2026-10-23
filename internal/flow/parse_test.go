@@ -11,7 +11,7 @@ import (
 // header is a minimal valid preamble; tests append stages to it.
 const header = `name: t
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 `
 
 // commonAgents is the agents block the stage-shape tests splice in: since v3
@@ -334,11 +334,11 @@ func TestRetiredSpellings(t *testing.T) {
 // refused rather than half-understood.
 func TestVersionRequired(t *testing.T) {
 	stages := "stages:\n  - { id: s, type: command, run: x }\n"
-	noVersion := "name: t\ndefaults: { harness: fake, model: a/b }\n" + stages
+	noVersion := "name: t\nparameters: { harness: fake, model: a/b }\n" + stages
 	if _, err := Parse("t.yaml", []byte(noVersion)); err == nil || !strings.Contains(err.Error(), "version is required") {
 		t.Errorf("missing version: err = %v", err)
 	}
-	future := "name: t\nversion: 99\ndefaults: { harness: fake, model: a/b }\n" + stages
+	future := "name: t\nversion: 99\nparameters: { harness: fake, model: a/b }\n" + stages
 	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 4") {
 		t.Errorf("future version: err = %v", err)
 	}
@@ -418,15 +418,15 @@ func TestValidationErrors(t *testing.T) {
 		substr string
 		line   int
 	}{
-		{"missing name", "version: 2\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing name", "version: 2\nparameters: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"flow name is required", 0},
-		{"missing harness", "name: t\nversion: 4\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
-			"defaults.harness is required", 3},
-		{"missing model", "name: t\nversion: 4\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
-			"defaults.model is required", 0},
-		{"bad model format", "name: t\nversion: 4\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing harness", "name: t\nversion: 4\nparameters: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+			"harness is required", 3},
+		{"missing model", "name: t\nversion: 4\nparameters: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
+			"model is required", 0},
+		{"bad model format", "name: t\nversion: 4\nparameters: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"provider/model", 3},
-		{"bad timeout", "name: t\nversion: 4\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad timeout", "name: t\nversion: 4\nparameters: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"invalid duration", 3},
 		{"no stages", header, "at least one stage", 0},
 		{"duplicate id", header + "stages:\n  - { id: s, type: command, run: x }\n  - { id: s, type: command, run: y }\n",
@@ -1002,7 +1002,7 @@ func TestCommandTimeout(t *testing.T) {
 // takes its value from an artifact OR the flow, and ticket_link warns when
 // no merge request precedes it.
 func TestTrackerActionBindings(t *testing.T) {
-	head := "name: tk\nversion: 4\ndefaults: { harness: fake, model: fake/m }\nagents: []\nstages:\n"
+	head := "name: tk\nversion: 4\nparameters: { harness: fake, model: fake/m }\nagents: []\nstages:\n"
 	plain := head + "  - { id: s, type: action, action: ticket_transition, input: { to: In Progress } }\n"
 	quoted := head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"In Progress\" } }\n"
 	fp, err := Parse("t.yaml", []byte(plain))
@@ -1056,7 +1056,7 @@ func TestTrackerActionBindings(t *testing.T) {
 	if f, err := Parse("t.yaml", []byte(after)); err != nil || needsMR(f) != 0 {
 		t.Errorf("link after create_mr: err %v warnings %v", err, f.Warnings)
 	}
-	phased := "name: tk\nversion: 4\ndefaults: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
+	phased := "name: tk\nversion: 4\nparameters: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
 		"  - { id: deliver, on: run_start, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
 		"  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n"
 	if f, err := Parse("t.yaml", []byte(phased)); err != nil || needsMR(f) != 0 {
@@ -1092,5 +1092,318 @@ func TestEntrypoints(t *testing.T) {
 	}
 	if got := f.Reactions(); len(got) != 1 || got[0].ID != "polish" {
 		t.Errorf("reactions = %+v", got)
+	}
+}
+
+// Parameters: the flow's one settings block. The engine-known six land in
+// Defaults and Budget (typed, validated by the rules their old homes had,
+// present even when omitted); the flow's own are typed by their defaults and
+// read where $name appears.
+func TestParametersDeclare(t *testing.T) {
+	doc := `name: t
+version: 4
+parameters:
+  harness: fake
+  model: { default: a/b, description: "the default model" }
+  max_cost_usd: 20
+  verify: { default: verify, description: "the test command" }
+  review_model: a/c
+  plan_gate: true
+  turns: 3
+  rate: 1.5
+  mode: { default: confirm, enum: [auto, confirm, manual] }
+agents:
+  - name: b
+    prompt: do b
+phases:
+  - id: deliver
+    on: run_start
+    stages:
+      - { id: build, type: agent, agent: b, model: $review_model, max_turns: $turns, when: $plan_gate }
+      - { id: test, type: command, run_ref: $verify }
+      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - id: conflicts
+    on: { signal: mr_conflicts, start: $mode }
+    stages:
+      - { id: sync, type: action, action: sync_target }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Defaults.Harness != "fake" || f.Defaults.Model != "a/b" || f.Defaults.Timeout != 30*time.Minute || f.Defaults.MaxTurns != 50 ||
+		f.Budget.MaxCostUSD != 20 || f.Budget.MaxTotalTurns != 300 {
+		t.Errorf("defaults %+v budget %+v", f.Defaults, f.Budget)
+	}
+	var names []string
+	for _, pr := range f.Params {
+		names = append(names, pr.Name)
+	}
+	want := "harness model max_cost_usd verify review_model plan_gate turns rate mode timeout max_turns max_total_turns"
+	if strings.Join(names, " ") != want {
+		t.Errorf("params = %v", names)
+	}
+	types := map[string]ParamType{"verify": ParamString, "plan_gate": ParamBool, "turns": ParamInt, "rate": ParamFloat, "mode": ParamString, "max_cost_usd": ParamFloat, "timeout": ParamString}
+	for name, typ := range types {
+		if pr := f.Param(name); pr == nil || pr.Type != typ {
+			t.Errorf("%s = %+v, want %s", name, pr, typ)
+		}
+	}
+	if pr := f.Param("timeout"); !pr.Known || pr.Default != "30m" {
+		t.Errorf("timeout = %+v", pr)
+	}
+	if pr := f.Param("mode"); len(pr.Enum) != 3 || pr.Known || f.Param("model").Description != "the default model" {
+		t.Errorf("mode = %+v", pr)
+	}
+	build, test := f.Stage("build"), f.Stage("test")
+	if build.Model != "a/c" || build.MaxTurns != 3 || build.When != nil || test.RunRef != "verify" || f.Phase("conflicts").On.Start != StartConfirm {
+		t.Errorf("resolved: build %+v test %+v conflicts %+v", build, test, f.Phase("conflicts").On)
+	}
+	refs := map[string]string{}
+	for _, r := range f.Refs {
+		refs[r.Param] = r.Phase + "/" + r.Stage + "/" + r.Field
+	}
+	if len(f.Refs) != 5 || refs["review_model"] != "deliver/build/model" || refs["plan_gate"] != "deliver/build/when" ||
+		refs["verify"] != "deliver/test/run_ref" || refs["mode"] != "conflicts//start" || refs["turns"] != "deliver/build/max_turns" {
+		t.Errorf("refs = %+v", f.Refs)
+	}
+	unused := false
+	for _, w := range f.Warnings {
+		if strings.Contains(w, `parameter "rate" is declared but nothing reads it`) {
+			unused = true
+		}
+	}
+	if !unused {
+		t.Errorf("warnings = %v", f.Warnings)
+	}
+
+	stages := "stages:\n  - { id: s, type: command, run: x }\n"
+	for _, tc := range []struct{ name, params, substr string }{
+		{"harness missing", "{ model: a/b }", "harness is required"},
+		{"bad name", "{ harness: fake, model: a/b, Bad: 1 }", "is not a parameter name"},
+		{"no default", "{ harness: fake, model: a/b, x: { description: hi } }", "default is required"},
+		{"enum on an int", "{ harness: fake, model: a/b, x: { default: 1, enum: [1, 2] } }", "enum applies to a string"},
+		{"default not in enum", "{ harness: fake, model: a/b, x: { default: c, enum: [a, b] } }", "is not one of its enum"},
+		{"known type", "{ harness: 1, model: a/b }", "harness takes a string default"},
+		{"float as int", "{ harness: fake, model: a/b, max_turns: 1.5 }", "max_turns takes a int default"},
+		{"null default", "{ harness: fake, model: a/b, x: }", "needs a default value"},
+		{"list default", "{ harness: fake, model: a/b, x: [1] }", "must be a default value or a mapping"},
+		{"unknown long-form key", "{ harness: fake, model: a/b, x: { default: 1, type: int } }", "field type not found"},
+		{"bad timeout", "{ harness: fake, model: a/b, timeout: soon }", "timeout: invalid duration"},
+		{"max_cost zero", "{ harness: fake, model: a/b, max_cost_usd: 0 }", "max_cost_usd must be > 0"},
+		{"declared twice", "{ harness: fake, model: a/b, x: 1, x: 2 }", "declared twice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse("t.yaml", []byte("name: t\nversion: 4\nparameters: "+tc.params+"\n"+stages))
+			if err == nil || !strings.Contains(err.Error(), tc.substr) {
+				t.Errorf("err = %v, want %q", err, tc.substr)
+			}
+		})
+	}
+	// defaults: and budget: are not grammar.
+	if _, err := Parse("t.yaml", []byte("name: t\nversion: 4\ndefaults: { harness: fake, model: a/b }\n"+stages)); err == nil || !strings.Contains(err.Error(), "field defaults not found") {
+		t.Errorf("defaults: err = %v", err)
+	}
+}
+
+// Where a $parameter may be read, and the checks at each site: declared, of
+// the site's type, an enum within an enum site's values, and then the site's
+// own rule on the value it yields.
+func TestParamSites(t *testing.T) {
+	head := "name: t\nversion: 4\nparameters: { harness: fake, model: a/b, s: text, d: 5m, n: 2, b: true, e: { default: auto, enum: [auto, confirm] }, big: { default: auto, enum: [auto, confirm, manual] } }\n" + commonAgents
+	for _, tc := range []struct{ name, doc, substr string }{
+		{"sentinel at a site", head + "stages:\n  - { id: a, type: agent, agent: b, model: $CHANGED }\n", "is a sentinel, not a parameter"},
+		{"undeclared", head + "stages:\n  - { id: a, type: agent, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
+		{"wrong type", head + "stages:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
+		{"bool at a string site", head + "stages:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},
+		{"param in a path", head + "stages:\n  - { id: a, type: agent, agent: b, input: { plan: $s } }\n", "must be a relative artifact path"},
+		{"enum site needs an enum", head + "stages:\n  - { id: w, type: wait, for: mr_merged, start: $s }\n", "needs an enum within"},
+		{"enum wider than the site", head + "stages:\n  - { id: w, type: wait, for: mr_merged, start: $big }\n", `allows "manual", which this field does not`},
+		{"mixed case ref", head + "stages:\n  - { id: a, type: agent, agent: b, model: $Mixed }\n", "is not a parameter reference"},
+		{"value fails the site rule", head + "stages:\n  - { id: a, type: agent, agent: b, model: $s }\n", `model: "text" (parameter "s") is not of the form provider/model`},
+		{"duration via param", head + "stages:\n  - { id: a, type: agent, agent: b, timeout: $s }\n", `invalid timeout "text" (parameter "s")`},
+		{"max_turns via param zero", "name: t\nversion: 4\nparameters: { harness: fake, model: a/b, z: 0 }\n" + commonAgents + "stages:\n  - { id: a, type: agent, agent: b, max_turns: $z }\n", `max_turns must be > 0, got 0 (parameter "z")`},
+		{"on.max via string", head + "phases:\n  - { id: d, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n  - { id: c, on: { signal: mr_conflicts, max: $s }, stages: [{ id: x, type: command, run: x }] }\n", "takes a int"},
+		{"action enum via plain string", head + "stages:\n  - { id: s, type: action, action: sync_target, input: { strategy: $s } }\n", "needs an enum within"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse("t.yaml", []byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), tc.substr) {
+				t.Errorf("err = %v, want %q", err, tc.substr)
+			}
+		})
+	}
+	ok := head + "phases:\n  - id: d\n    on: run_start\n    stages:\n" +
+		"      - { id: a, type: agent, agent: b, max_turns: $n, timeout: $d, harness: $s, model: a/c }\n" +
+		"      - { id: c, type: command, run: \"echo $HOME\", run_ref: $s, timeout: $d }\n"
+	ok = strings.Replace(ok, "run: \"echo $HOME\", run_ref: $s", "run: \"echo $HOME\"", 1)
+	ok += "      - { id: w, type: wait, for: mr_merged, start: $e }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"  - id: cf\n    on: { signal: mr_conflicts, start: $big, max: $n, quiet_for: $d }\n    stages: [{ id: x, type: command, run: x }]\n"
+	ok = strings.Replace(ok, "start: $big, max: $n, quiet_for: $d", "start: $big, max: $n", 1)
+	f, err := Parse("t.yaml", []byte(ok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, c, w, cf := f.Stage("a"), f.Stage("c"), f.Stage("w"), f.Phase("cf")
+	if a.MaxTurns != 2 || a.Timeout != 5*time.Minute || a.Harness != "text" || c.Timeout != 5*time.Minute || c.Run != "echo $HOME" ||
+		w.Wait.Start != StartAuto || cf.On.Start != StartAuto || cf.On.Max != 2 {
+		t.Errorf("a %+v c %+v w %+v cf %+v", a, c, w.Wait, cf.On)
+	}
+}
+
+// Resolve re-parses the document with bound values in place of the defaults:
+// every value-level rule runs on the binding, the hash is the document's, and
+// the receiver is untouched.
+func TestResolve(t *testing.T) {
+	doc := `name: t
+version: 4
+parameters:
+  harness: fake
+  model: a/b
+  max_cost_usd: 5
+  verify: verify
+  gate: true
+  mode: { default: confirm, enum: [auto, confirm, manual] }
+  turns: 2
+` + commonAgents + `phases:
+  - id: d
+    on: run_start
+    stages:
+      - { id: a, type: agent, agent: b, max_turns: $turns, when: $gate }
+      - { id: t, type: command, run_ref: $verify }
+      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - id: c
+    on: { signal: mr_conflicts, start: $mode, max: -1 }
+    stages:
+      - { id: s, type: action, action: sync_target }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := map[string]string{"harness": "codex", "max_cost_usd": "9", "verify": "check", "gate": "false", "mode": "manual", "turns": "7"}
+	r, err := f.Resolve(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Defaults.Harness != "codex" || r.Budget.MaxCostUSD != 9 || r.Stage("t").RunRef != "check" || r.Stage("a").MaxTurns != 7 ||
+		r.Stage("a").When == nil || r.Stage("a").When.Term != WhenNever || r.Phase("c").On.Start != StartManual || r.Hash != f.Hash || r.Bindings["mode"] != "manual" {
+		t.Errorf("resolved: defaults %+v budget %+v t %+v a %+v c %+v hash %v", r.Defaults, r.Budget, r.Stage("t"), r.Stage("a"), r.Phase("c").On, r.Hash == f.Hash)
+	}
+	if f.Stage("t").RunRef != "verify" || f.Bindings != nil || f.Defaults.Harness != "fake" {
+		t.Errorf("receiver changed: %+v", f.Stage("t"))
+	}
+	if same, err := f.Resolve(nil); err != nil || same != f {
+		t.Errorf("nothing bound should return the receiver: %v %v", same == f, err)
+	}
+	for _, tc := range []struct {
+		b      map[string]string
+		substr string
+	}{
+		{map[string]string{"nope": "1"}, `parameter "nope" is not declared`},
+		{map[string]string{"turns": "x"}, `parameter "turns" takes an integer`},
+		{map[string]string{"gate": "maybe"}, `parameter "gate" takes true or false`},
+		{map[string]string{"mode": "later"}, `parameter "mode" takes one of auto | confirm | manual`},
+		{map[string]string{"mode": "auto"}, "requires start"},
+		{map[string]string{"model": "nomodel"}, `model: "nomodel" (bound) is not of the form provider/model`},
+		{map[string]string{"max_cost_usd": "-1"}, "max_cost_usd must be > 0"},
+		{map[string]string{"turns": "0"}, `max_turns must be > 0, got 0 (parameter "turns")`},
+	} {
+		if _, err := f.Resolve(tc.b); err == nil || !strings.Contains(err.Error(), tc.substr) {
+			t.Errorf("bindings %v: err = %v, want %q", tc.b, err, tc.substr)
+		}
+		if err := ValidateBindings(f.Params, tc.b); err == nil && !strings.Contains(tc.substr, "requires start") && !strings.Contains(tc.substr, "must be > 0") && !strings.Contains(tc.substr, "provider/model") {
+			t.Errorf("ValidateBindings(%v) = nil, want an error", tc.b)
+		}
+	}
+}
+
+// when: a run fact or a bool parameter (which folds), optionally negated as
+// `not x`; a conditional producer is no longer a definite one.
+func TestWhen(t *testing.T) {
+	head := "name: t\nversion: 4\nparameters: { harness: fake, model: a/b, yes: true, no: false, s: x }\n"
+	f, err := Parse("t.yaml", []byte(head+"stages:\n"+
+		"  - { id: a, type: command, run: x, when: tracker }\n"+
+		"  - { id: b, type: command, run: x, when: not subject }\n"+
+		"  - { id: c, type: command, run: x, when: $yes }\n"+
+		"  - { id: d, type: command, run: x, when: $no }\n"+
+		"  - { id: e, type: command, run: x, when: not $no }\n"+
+		"  - { id: g, type: command, run: x, when: not $yes }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := f.Stage("a").When, f.Stage("b").When
+	if a == nil || a.Term != WhenTracker || a.Not || !a.Holds(true, false) || a.Holds(false, true) || a.String() != "tracker" {
+		t.Errorf("a = %+v", a)
+	}
+	if b == nil || b.Term != WhenSubject || !b.Not || b.Holds(false, true) || !b.Holds(true, false) || b.String() != "not subject" {
+		t.Errorf("b = %+v", b)
+	}
+	if f.Stage("c").When != nil || f.Stage("e").When != nil {
+		t.Errorf("true folds to no condition: c %+v e %+v", f.Stage("c").When, f.Stage("e").When)
+	}
+	for _, id := range []string{"d", "g"} {
+		if w := f.Stage(id).When; w == nil || w.Term != WhenNever || w.Holds(true, true) {
+			t.Errorf("%s = %+v, want never", id, w)
+		}
+	}
+	for _, tc := range []struct{ doc, substr string }{
+		{head + "stages:\n  - { id: a, type: command, run: x, when: maybe }\n", "is not a condition"},
+		{head + "stages:\n  - { id: a, type: command, run: x, when: $s }\n", "is a string, and this field takes a bool"},
+	} {
+		if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.substr) {
+			t.Errorf("err = %v, want %q", err, tc.substr)
+		}
+	}
+	cond := header + commonAgents + "stages:\n  - { id: p, type: agent, agent: builder, when: tracker }\n  - { id: c, type: command, run: x, input: { patch: artifacts/patch.md } }\n"
+	f, err = Parse("t.yaml", []byte(cond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range f.Warnings {
+		if strings.Contains(w, "not produced on every path") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a conditional producer should not count: %v", f.Warnings)
+	}
+}
+
+// The editor's document shape: parameters as an ordered object of long
+// forms with typed defaults, int fields as a number or a "$name" string.
+func TestDocJSONShapes(t *testing.T) {
+	doc := "name: t\nversion: 4\nparameters:\n  harness: fake\n  model: a/b\n  turns: 3\n  cost: 1.5\n  gate: true\n  mode: { default: a, enum: [a, b], description: pick }\n" + commonAgents +
+		"phases:\n  - id: d\n    on: run_start\n    stages:\n      - { id: s, type: agent, agent: b, max_turns: $turns, when: $gate }\n" +
+		"  - id: c\n    on: { signal: mr_conflicts, max: $turns }\n    stages: [{ id: x, type: command, run: x }]\n"
+	d, err := ParseDoc("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"parameters":{"harness":{"default":"fake"},"model":{"default":"a/b"},"turns":{"default":3},"cost":{"default":1.5},"gate":{"default":true},"mode":{"default":"a","description":"pick","enum":["a","b"]}}`,
+		`"max_turns":"$turns"`, `"when":"$gate"`, `"on":{"signal":"run_start"}`, `"on":{"signal":"mr_conflicts","max":"$turns"}`,
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("json missing %s:\n%s", want, b)
+		}
+	}
+	var back Doc
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	again, err := json.Marshal(&back)
+	if err != nil || string(again) != string(b) {
+		t.Errorf("round trip differs: %v\n%s\n%s", err, b, again)
+	}
+	// Short forms read back too.
+	var short Doc
+	if err := json.Unmarshal([]byte(`{"name":"t","version":4,"parameters":{"harness":"fake","n":2}}`), &short); err != nil || len(short.Parameters.Entries) != 2 || short.Parameters.Entries[1].Param.Default.Kind != ParamInt {
+		t.Errorf("short form: %v %+v", err, short.Parameters.Entries)
 	}
 }

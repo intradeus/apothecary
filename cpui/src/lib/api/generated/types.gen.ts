@@ -6,6 +6,7 @@ export type ClientOptions = {
 
 export type Action = {
 	description?: string;
+	exactly_one?: Array<string>;
 	inputs?: Array<InputSig>;
 	needs?: string;
 	outputs?: Array<OutputSig>;
@@ -79,18 +80,6 @@ export type CreateFlowRequest = {
 	yaml: string;
 };
 
-export type DocBudget = {
-	max_cost_usd?: number | null;
-	max_total_turns?: number | null;
-};
-
-export type DocDefaults = {
-	harness?: string;
-	max_turns?: number | null;
-	model: string;
-	timeout?: string;
-};
-
 export type DocEdge = {
 	feed?: string;
 	max?: number | null;
@@ -100,6 +89,30 @@ export type DocEdge = {
 
 export type DocIo = {
 	[key: string]: string;
+};
+
+export type DocInt = number | string;
+
+export type DocParam = {
+	default: DocParamValue;
+	description?: string;
+	enum?: Array<string>;
+};
+
+export type DocParamEntry = {
+	Line: number;
+	Name: string;
+	Param: DocParam;
+};
+
+export type DocParamValue = boolean | number | string;
+
+export type DocParams = {
+	[key: string]: {
+		default: boolean | number | string;
+		description?: string;
+		enum?: Array<string>;
+	};
 };
 
 export type DocPhase = {
@@ -120,7 +133,7 @@ export type DocStage = {
 	harness?: string;
 	id: string;
 	input?: DocIo;
-	max_turns?: number | null;
+	max_turns?: DocInt;
 	model?: string;
 	on_fail?: DocEdge;
 	on_reject?: DocEdge;
@@ -133,10 +146,11 @@ export type DocStage = {
 	start?: string;
 	timeout?: string;
 	type: string;
+	when?: string;
 };
 
 export type DocWait = {
-	max?: number | null;
+	max?: DocInt;
 	quiet_for?: string;
 	signal: string;
 	start?: string;
@@ -276,10 +290,9 @@ export type Flow = {
 
 export type FlowDoc = {
 	agents?: Array<Spec>;
-	budget: DocBudget;
-	defaults: DocDefaults;
 	description?: string;
 	name: string;
+	parameters?: DocParams;
 	phases?: Array<DocPhase>;
 	stages?: Array<DocStage>;
 	version: number;

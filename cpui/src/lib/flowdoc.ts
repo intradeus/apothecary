@@ -187,7 +187,7 @@ export interface FlowDoc {
 	name: string;
 	version?: number;
 	description?: string;
-	defaults: { timeout?: string; harness?: string; model: string; max_turns?: number };
+	parameters: { timeout?: string; harness?: string; model: string; max_turns?: number };
 	budget: { max_cost_usd?: number; max_total_turns?: number };
 	agents?: DocAgent[];
 	stages: DocStage[];

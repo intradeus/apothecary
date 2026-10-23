@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,10 +54,11 @@ type Doc struct {
 	Name string `yaml:"name" json:"name"`
 	// Version is the grammar the document is written in; it must equal
 	// CurrentVersion. Required so a break is a refusal, never a mis-parse.
-	Version     int         `yaml:"version" json:"version"`
-	Description string      `yaml:"description" json:"description,omitempty"`
-	Defaults    DocDefaults `yaml:"defaults" json:"defaults"`
-	Budget      DocBudget   `yaml:"budget" json:"budget"`
+	Version     int    `yaml:"version" json:"version"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// Parameters is the flow's one settings block (FLOWLANG §1): the six the
+	// engine reads itself and the flow's own knobs, each with its default.
+	Parameters DocParams `yaml:"parameters" json:"parameters,omitempty"`
 	// Agents are the agent definitions the flow runs (FLOWLANG §1, v3). A
 	// list rather than a mapping so the shape is exactly agentspec.Spec —
 	// the same schema the retired library files spoke, with document order
@@ -79,10 +82,10 @@ type DocPhase struct {
 // (`on: run_start`, `on: manual`, `on: mr_conflicts`) or a mapping with the
 // options.
 type DocWait struct {
-	Signal   string `yaml:"signal" json:"signal"`
-	Start    string `yaml:"start" json:"start,omitempty"`
-	QuietFor string `yaml:"quiet_for" json:"quiet_for,omitempty"`
-	Max      *int   `yaml:"max" json:"max,omitempty"`
+	Signal   string  `yaml:"signal" json:"signal"`
+	Start    string  `yaml:"start" json:"start,omitempty"`
+	QuietFor string  `yaml:"quiet_for" json:"quiet_for,omitempty"`
+	Max      *DocInt `yaml:"max" json:"max,omitempty"`
 }
 
 // UnmarshalYAML accepts the scalar sugar and the mapping form, rejecting
@@ -109,7 +112,7 @@ func (t *DocWait) UnmarshalYAML(n *yaml.Node) error {
 			case "quiet_for":
 				err = v.Decode(&t.QuietFor)
 			case "max":
-				t.Max = new(int)
+				t.Max = new(DocInt)
 				err = v.Decode(t.Max)
 			default:
 				return fmt.Errorf("line %d: field %s not found in type flow.DocWait (signal, start, quiet_for, max)", k.Line, k.Value)
@@ -123,26 +126,298 @@ func (t *DocWait) UnmarshalYAML(n *yaml.Node) error {
 	return fmt.Errorf("line %d: on must be a slug (run_start, manual or a trigger signal) or a mapping {signal, start, quiet_for, max}", n.Line)
 }
 
-type DocDefaults struct {
-	Timeout  string `yaml:"timeout" json:"timeout,omitempty"`
-	Harness  string `yaml:"harness" json:"harness,omitempty"`
-	Model    string `yaml:"model" json:"model"`
-	MaxTurns *int   `yaml:"max_turns" json:"max_turns,omitempty"`
+// DocParams is the document's `parameters:` block: an ordered mapping of
+// name to default, or to {default, description, enum}. Order is kept so the
+// editor round-trips the author's layout.
+type DocParams struct {
+	Entries []DocParamEntry
 }
 
-type DocBudget struct {
-	MaxCostUSD    *float64 `yaml:"max_cost_usd" json:"max_cost_usd,omitempty"`
-	MaxTotalTurns *int     `yaml:"max_total_turns" json:"max_total_turns,omitempty"`
+// DocParamEntry is one declared parameter, in document order.
+type DocParamEntry struct {
+	Name  string
+	Param DocParam
+	Line  int
+}
+
+// DocParam is the long form of a parameter declaration.
+type DocParam struct {
+	Default     DocParamValue `yaml:"default" json:"default"`
+	Description string        `yaml:"description" json:"description,omitempty"`
+	Enum        []string      `yaml:"enum" json:"enum,omitempty"`
+}
+
+// DocParamValue is a parameter's default as written: its YAML type is the
+// parameter's type (true → bool, 10 → int, 1.5 → float, anything else a
+// string) and Text its canonical spelling.
+type DocParamValue struct {
+	Kind ParamType
+	Text string
+	Set  bool
+}
+
+func (v *DocParamValue) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: a parameter's default is one value — true/false, a number or a string", n.Line)
+	}
+	switch n.ShortTag() {
+	case "!!bool":
+		b, err := strconv.ParseBool(n.Value)
+		if err != nil {
+			return fmt.Errorf("line %d: %q is not a bool", n.Line, n.Value)
+		}
+		*v = DocParamValue{Kind: ParamBool, Text: strconv.FormatBool(b), Set: true}
+	case "!!int":
+		i, err := strconv.ParseInt(n.Value, 0, 64)
+		if err != nil {
+			return fmt.Errorf("line %d: %q is not an integer", n.Line, n.Value)
+		}
+		*v = DocParamValue{Kind: ParamInt, Text: strconv.FormatInt(i, 10), Set: true}
+	case "!!float":
+		f, err := strconv.ParseFloat(n.Value, 64)
+		if err != nil {
+			return fmt.Errorf("line %d: %q is not a number", n.Line, n.Value)
+		}
+		*v = DocParamValue{Kind: ParamFloat, Text: strconv.FormatFloat(f, 'f', -1, 64), Set: true}
+	case "!!str":
+		*v = DocParamValue{Kind: ParamString, Text: n.Value, Set: true}
+	case "!!null":
+		return fmt.Errorf("line %d: a parameter needs a default value", n.Line)
+	default:
+		return fmt.Errorf("line %d: %q is not a parameter default (true/false, a number or a string)", n.Line, n.Value)
+	}
+	return nil
+}
+
+// MarshalJSON emits the default with its type: true, 10, 1.5 or "text".
+func (v DocParamValue) MarshalJSON() ([]byte, error) {
+	switch v.Kind {
+	case ParamBool, ParamInt, ParamFloat:
+		return []byte(v.Text), nil
+	}
+	return json.Marshal(v.Text)
+}
+
+func (v *DocParamValue) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var x any
+	if err := dec.Decode(&x); err != nil {
+		return err
+	}
+	switch t := x.(type) {
+	case bool:
+		*v = DocParamValue{Kind: ParamBool, Text: strconv.FormatBool(t), Set: true}
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			*v = DocParamValue{Kind: ParamInt, Text: strconv.FormatInt(i, 10), Set: true}
+		} else {
+			f, err := t.Float64()
+			if err != nil {
+				return err
+			}
+			*v = DocParamValue{Kind: ParamFloat, Text: strconv.FormatFloat(f, 'f', -1, 64), Set: true}
+		}
+	case string:
+		*v = DocParamValue{Kind: ParamString, Text: t, Set: true}
+	default:
+		return fmt.Errorf("a parameter default is true/false, a number or a string")
+	}
+	return nil
+}
+
+// UnmarshalYAML reads the ordered mapping, both forms, rejecting repeated
+// names and unknown keys by hand (a custom unmarshaler bypasses the
+// decoder's strictness, as for DocIO).
+func (d *DocParams) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode && n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: parameters must be a mapping of name: default, or name: {default, description, enum}", n.Line)
+	}
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		if seen[k.Value] {
+			return fmt.Errorf("line %d: parameter %q declared twice", k.Line, k.Value)
+		}
+		seen[k.Value] = true
+		e := DocParamEntry{Name: k.Value, Line: k.Line}
+		switch v.Kind {
+		case yaml.ScalarNode:
+			if err := e.Param.Default.UnmarshalYAML(v); err != nil {
+				return err
+			}
+		case yaml.MappingNode:
+			keys := map[string]bool{}
+			for j := 0; j+1 < len(v.Content); j += 2 {
+				kk, vv := v.Content[j], v.Content[j+1]
+				if keys[kk.Value] {
+					return fmt.Errorf("line %d: %q set twice", kk.Line, kk.Value)
+				}
+				keys[kk.Value] = true
+				var err error
+				switch kk.Value {
+				case "default":
+					err = e.Param.Default.UnmarshalYAML(vv)
+				case "description":
+					err = vv.Decode(&e.Param.Description)
+				case "enum":
+					err = vv.Decode(&e.Param.Enum)
+				default:
+					return fmt.Errorf("line %d: field %s not found in type flow.DocParam (default, description, enum)", kk.Line, kk.Value)
+				}
+				if err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("line %d: parameter %q must be a default value or a mapping {default, description, enum}", v.Line, k.Value)
+		}
+		d.Entries = append(d.Entries, e)
+	}
+	return nil
+}
+
+// MarshalJSON emits the block as an ordered object of long forms, one shape
+// for the editor whatever the author wrote.
+func (d DocParams) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, e := range d.Entries {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		key, err := json.Marshal(e.Name)
+		if err != nil {
+			return nil, err
+		}
+		val, err := json.Marshal(e.Param)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(key)
+		b.WriteByte(':')
+		b.Write(val)
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
+// UnmarshalJSON reads either form back, keeping key order.
+func (d *DocParams) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("parameters: expected a JSON object")
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return fmt.Errorf("parameters: expected a string key")
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return err
+		}
+		e := DocParamEntry{Name: key}
+		if t := bytes.TrimSpace(raw); len(t) > 0 && t[0] == '{' {
+			if err := json.Unmarshal(t, &e.Param); err != nil {
+				return err
+			}
+		} else if err := e.Param.Default.UnmarshalJSON(t); err != nil {
+			return err
+		}
+		d.Entries = append(d.Entries, e)
+	}
+	return nil
+}
+
+// DocInt is an integer field that may read a parameter instead:
+// `max_turns: 25` or `max_turns: $turns`.
+type DocInt struct {
+	Int int
+	Ref string // "$name" when the field reads a parameter
+}
+
+func (d *DocInt) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: expected an integer or a $parameter", n.Line)
+	}
+	switch n.ShortTag() {
+	case "!!int":
+		i, err := strconv.Atoi(n.Value)
+		if err != nil {
+			return fmt.Errorf("line %d: %q is not an integer", n.Line, n.Value)
+		}
+		d.Int = i
+	case "!!str":
+		if !strings.HasPrefix(n.Value, "$") {
+			return fmt.Errorf("line %d: %q is not an integer or a $parameter", n.Line, n.Value)
+		}
+		d.Ref = n.Value
+	default:
+		return fmt.Errorf("line %d: %q is not an integer or a $parameter", n.Line, n.Value)
+	}
+	return nil
+}
+
+// MarshalJSON emits the number, or the "$name" string when the field reads
+// a parameter.
+func (d DocInt) MarshalJSON() ([]byte, error) {
+	if d.Ref != "" {
+		return json.Marshal(d.Ref)
+	}
+	return json.Marshal(d.Int)
+}
+
+func (d *DocInt) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var x any
+	if err := dec.Decode(&x); err != nil {
+		return err
+	}
+	switch t := x.(type) {
+	case json.Number:
+		i, err := t.Int64()
+		if err != nil {
+			return fmt.Errorf("%s is not an integer", t)
+		}
+		d.Int = int(i)
+	case string:
+		if !strings.HasPrefix(t, "$") {
+			return fmt.Errorf("%q is not an integer or a $parameter", t)
+		}
+		d.Ref = t
+	default:
+		return fmt.Errorf("expected an integer or a $parameter")
+	}
+	return nil
 }
 
 type DocStage struct {
 	ID          string   `yaml:"id" json:"id"`
 	Type        string   `yaml:"type" json:"type"`
 	Description string   `yaml:"description" json:"description,omitempty"`
+	When        string   `yaml:"when" json:"when,omitempty"`
 	Agent       string   `yaml:"agent" json:"agent,omitempty"`
 	Model       string   `yaml:"model" json:"model,omitempty"`
 	Harness     string   `yaml:"harness" json:"harness,omitempty"`
-	MaxTurns    *int     `yaml:"max_turns" json:"max_turns,omitempty"`
+	MaxTurns    *DocInt  `yaml:"max_turns" json:"max_turns,omitempty"`
 	Timeout     string   `yaml:"timeout" json:"timeout,omitempty"`
 	Input       *DocIO   `yaml:"input" json:"input,omitempty"`
 	Output      *DocIO   `yaml:"output" json:"output,omitempty"`
@@ -421,11 +696,23 @@ const (
 	maxStages     = 128
 	maxAgents     = 64
 	maxChainDepth = 8
+	maxParams     = 32 // the flow's own, beyond the engine-known six
 )
 
-// Parse parses and validates a flow document. filename is used in errors only.
-func Parse(filename string, data []byte) (*Flow, error) {
-	p := &parser{file: filename}
+// Parse parses and validates a flow document with its parameters at their
+// defaults. filename is used in errors only.
+func Parse(filename string, data []byte) (*Flow, error) { return parseBound(filename, data, nil) }
+
+// ParseBound parses a flow document with parameter values bound — the
+// project's, then the run's — in place of the defaults (FLOWLANG §1). The
+// same validation runs on the bound values, so a binding that breaks a rule
+// is a *Error naming the parameter.
+func ParseBound(filename string, data []byte, bindings map[string]string) (*Flow, error) {
+	return parseBound(filename, data, bindings)
+}
+
+func parseBound(filename string, data []byte, bindings map[string]string) (*Flow, error) {
+	p := &parser{file: filename, bindings: bindings, params: map[string]*Param{}, used: map[string]bool{}}
 
 	if len(data) > maxDocBytes {
 		return nil, p.errf(1, "flow document is %d bytes; the limit is %d", len(data), maxDocBytes)
@@ -475,6 +762,10 @@ func Parse(filename string, data []byte) (*Flow, error) {
 	}
 	sum := sha256.Sum256(data)
 	f.Hash = hex.EncodeToString(sum[:])
+	f.file, f.src = filename, slices.Clone(data)
+	if len(bindings) > 0 {
+		f.Bindings = maps.Clone(bindings)
+	}
 	return f, nil
 }
 
@@ -500,6 +791,14 @@ type parser struct {
 	// stageLines are the source lines of the flattened stages, in order
 	// (top-level stages, or every phase's stages one phase after another).
 	stageLines []int
+	// bindings are the parameter values this parse applies (nil = the
+	// defaults); params the declared parameters by name, plist them in
+	// document order; used which were read; refs where (for the editor).
+	bindings map[string]string
+	params   map[string]*Param
+	plist    []Param
+	used     map[string]bool
+	refs     []ParamRef
 }
 
 func (p *parser) errf(line int, format string, args ...any) error {
@@ -625,10 +924,7 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	}
 
 	var err error
-	if f.Defaults, err = p.buildDefaults(&raw.Defaults); err != nil {
-		return nil, err
-	}
-	if f.Budget, err = p.buildBudget(&raw.Budget); err != nil {
+	if err = p.buildParameters(f, &raw.Parameters); err != nil {
 		return nil, err
 	}
 	if f.Agents, err = p.buildAgents(raw.Agents); err != nil {
@@ -671,6 +967,14 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 			f.Stages[i].Phase = ph.ID
 		}
 	}
+	// References made from stages learn their phase now that stages have one.
+	for i := range p.refs {
+		if r := &p.refs[i]; r.Stage != "" && r.Phase == "" {
+			if st := f.Stage(r.Stage); st != nil {
+				r.Phase = st.Phase
+			}
+		}
+	}
 
 	// The success chain is explicit in the model (DESIGN3 §2.1); absent
 	// on_success is YAML sugar for "next stage in document order", last
@@ -699,66 +1003,269 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if err != nil {
 		return nil, err
 	}
+	f.Params, f.Refs = p.plist, p.refs
+	for i := range f.Params {
+		if pr := &f.Params[i]; !pr.Known && !p.used[pr.Name] {
+			warns = append(warns, fmt.Sprintf("parameter %q is declared but nothing reads it ($%s)", pr.Name, pr.Name))
+		}
+	}
 	f.Warnings = warns
 	return f, nil
 }
 
-func (p *parser) buildDefaults(raw *DocDefaults) (Defaults, error) {
-	line := p.keyLine("defaults")
-	// harness + model: the FLOW owns its defaults (the project has none). Any
-	// slug is valid document-side (DESIGN2 §6.3) — whether the kind exists in
-	// the project is preflight's question at run creation, keeping flows
-	// portable data. A stage may override; unpinned stages inherit these.
-	d := Defaults{
-		Timeout:  defaultTimeout,
-		Harness:  raw.Harness,
-		Model:    raw.Model,
-		MaxTurns: defaultMaxTurns,
-	}
-	if raw.Timeout != "" {
-		t, err := time.ParseDuration(raw.Timeout)
-		if err != nil || t <= 0 {
-			return d, p.errf(line, "defaults.timeout: invalid duration %q", raw.Timeout)
+// buildParameters reads the flow's one settings block (FLOWLANG §1): the six
+// engine-known parameters, validated by the rules their old homes had and
+// landing in Defaults and Budget, and the flow's own, typed by their
+// defaults. A bound value (p.bindings) replaces the default everywhere a
+// value is checked, so a project's binding is validated exactly like the
+// author's default.
+func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
+	line := p.keyLine("parameters")
+	errf := func(at int, format string, args ...any) error {
+		if at == 0 {
+			at = line
 		}
-		d.Timeout = t
+		return p.errf(at, "parameters: "+format, args...)
 	}
-	if d.Harness == "" {
-		return d, p.errf(line, "defaults.harness is required (the harness kind stages run on unless they override it)")
-	}
-	if !slugRe.MatchString(d.Harness) {
-		return d, p.errf(line, "defaults.harness: %q is not a slug (lowercase [a-z0-9_-], starting with a letter)", raw.Harness)
-	}
-	if d.Model == "" {
-		return d, p.errf(line, "defaults.model is required (format provider/model)")
-	}
-	if !validModel(d.Model) {
-		return d, p.errf(line, "defaults.model: %q is not of the form provider/model", d.Model)
-	}
-	if raw.MaxTurns != nil {
-		if *raw.MaxTurns <= 0 {
-			return d, p.errf(line, "defaults.max_turns must be > 0, got %d", *raw.MaxTurns)
+	custom := 0
+	for i := range raw.Entries {
+		e := &raw.Entries[i]
+		if !ParamNameRe.MatchString(e.Name) {
+			return errf(e.Line, "%q is not a parameter name (lowercase [a-z0-9_], starting with a letter)", e.Name)
 		}
-		d.MaxTurns = *raw.MaxTurns
+		if !e.Param.Default.Set {
+			return errf(e.Line, "%s: default is required", e.Name)
+		}
+		pr := Param{Name: e.Name, Type: e.Param.Default.Kind, Default: e.Param.Default.Text,
+			Description: e.Param.Description, Enum: e.Param.Enum, Line: e.Line}
+		if kt, known := KnownParams[e.Name]; known {
+			pr.Known = true
+			switch {
+			case pr.Type == kt:
+			case kt == ParamFloat && pr.Type == ParamInt: // max_cost_usd: 10
+				pr.Type = kt
+			default:
+				return errf(e.Line, "%s takes a %s default, got a %s", e.Name, kt, pr.Type)
+			}
+		} else if custom++; custom > maxParams {
+			return errf(e.Line, "declares more than %d parameters of its own", maxParams)
+		}
+		if len(pr.Description) > 500 {
+			return errf(e.Line, "%s: description is longer than 500 characters", e.Name)
+		}
+		if len(pr.Enum) > 0 {
+			if pr.Type != ParamString {
+				return errf(e.Line, "%s: enum applies to a string parameter (this one is %s)", e.Name, pr.Type)
+			}
+			seen := map[string]bool{}
+			for _, v := range pr.Enum {
+				if v == "" || seen[v] {
+					return errf(e.Line, "%s: enum values must be distinct and non-empty", e.Name)
+				}
+				seen[v] = true
+			}
+			if !contains(pr.Enum, pr.Default) {
+				return errf(e.Line, "%s: default %q is not one of its enum (%s)", e.Name, pr.Default, strings.Join(pr.Enum, " | "))
+			}
+		}
+		p.plist = append(p.plist, pr)
 	}
-	return d, nil
+	// The known ones the document omitted exist all the same, at the
+	// engine's defaults — so a project can bind, say, max_cost_usd on a flow
+	// that never mentions it. harness and model have no default: a flow that
+	// does not say what runs its agents is incomplete.
+	have := map[string]bool{}
+	for _, pr := range p.plist {
+		have[pr.Name] = true
+	}
+	for _, name := range KnownParamOrder {
+		if !have[name] {
+			p.plist = append(p.plist, Param{Name: name, Type: KnownParams[name], Default: knownDefaults[name], Known: true, Line: line})
+		}
+	}
+	for i := range p.plist {
+		p.params[p.plist[i].Name] = &p.plist[i]
+	}
+	// Bound values: declared, and of their parameter's type — checked once,
+	// here, so a bad binding is one error at the block rather than a
+	// surprise at the site that reads it.
+	if err := ValidateBindings(p.plist, p.bindings); err != nil {
+		return errf(0, "%v", err)
+	}
+	// The engine-known values, validated by the rules their old homes had —
+	// in document order, so the first mistake in the document is the one
+	// reported.
+	val := func(pr *Param) (string, string) {
+		if v, ok := p.bindings[pr.Name]; ok {
+			return v, " (bound)"
+		}
+		return pr.Default, ""
+	}
+	var d Defaults
+	var b Budget
+	for i := range p.plist {
+		pr := &p.plist[i]
+		if !pr.Known {
+			continue
+		}
+		v, via := val(pr)
+		switch pr.Name {
+		case "harness":
+			if pr.Default == "" {
+				return errf(0, "harness is required (the harness kind stages run on unless they override it)")
+			}
+			if !slugRe.MatchString(v) {
+				return errf(pr.Line, "harness: %q%s is not a slug (lowercase [a-z0-9_-], starting with a letter)", v, via)
+			}
+			d.Harness = v
+		case "model":
+			if pr.Default == "" {
+				return errf(0, "model is required (format provider/model)")
+			}
+			if !validModel(v) {
+				return errf(pr.Line, "model: %q%s is not of the form provider/model", v, via)
+			}
+			d.Model = v
+		case "timeout":
+			t, err := time.ParseDuration(v)
+			if err != nil || t <= 0 {
+				return errf(pr.Line, "timeout: invalid duration %q%s", v, via)
+			}
+			d.Timeout = t
+		case "max_turns":
+			if d.MaxTurns, _ = strconv.Atoi(v); d.MaxTurns <= 0 {
+				return errf(pr.Line, "max_turns must be > 0, got %s%s", v, via)
+			}
+		case "max_cost_usd":
+			if b.MaxCostUSD, _ = strconv.ParseFloat(v, 64); b.MaxCostUSD <= 0 {
+				return errf(pr.Line, "max_cost_usd must be > 0, got %s%s", v, via)
+			}
+		case "max_total_turns":
+			if b.MaxTotalTurns, _ = strconv.Atoi(v); b.MaxTotalTurns <= 0 {
+				return errf(pr.Line, "max_total_turns must be > 0, got %s%s", v, via)
+			}
+		}
+	}
+	f.Defaults, f.Budget = d, b
+	return nil
 }
 
-func (p *parser) buildBudget(raw *DocBudget) (Budget, error) {
-	line := p.keyLine("budget")
-	b := Budget{MaxCostUSD: defaultMaxCostUSD, MaxTotalTurns: defaultMaxTotalTurns}
-	if raw.MaxCostUSD != nil {
-		if *raw.MaxCostUSD <= 0 {
-			return b, p.errf(line, "budget.max_cost_usd must be > 0, got %v", *raw.MaxCostUSD)
-		}
-		b.MaxCostUSD = *raw.MaxCostUSD
+// knownDefaults are the engine-known parameters' values when a document
+// omits them (harness and model have none: they are required).
+var knownDefaults = map[string]string{
+	"timeout":         "30m",
+	"max_turns":       strconv.Itoa(defaultMaxTurns),
+	"max_cost_usd":    strconv.FormatFloat(defaultMaxCostUSD, 'f', -1, 64),
+	"max_total_turns": strconv.Itoa(defaultMaxTotalTurns),
+}
+
+// paramSite is one place a $parameter may be read: what to record on the
+// reference and which type the site takes (an enum site also says which
+// values an enum parameter must stay within).
+type paramSite struct {
+	phase, stage, field, input string
+	typ                        ParamType
+	values                     []string
+}
+
+// lookup resolves a field's raw text: a literal is returned as is; a
+// $parameter must be declared and of the site's type (an enum site needs an
+// enum within its values), is recorded, and yields the bound value or the
+// parameter's default. via names the parameter for error messages, "" for a
+// literal.
+func (p *parser) lookup(raw string, site paramSite) (value, via string, err error) {
+	if !strings.HasPrefix(raw, "$") {
+		return raw, "", nil
 	}
-	if raw.MaxTotalTurns != nil {
-		if *raw.MaxTotalTurns <= 0 {
-			return b, p.errf(line, "budget.max_total_turns must be > 0, got %d", *raw.MaxTotalTurns)
+	if !IsParamRef(raw) {
+		if IsSentinel(raw) {
+			return "", "", fmt.Errorf("%s is a sentinel, not a parameter — parameters are $lowercase names declared under parameters", raw)
 		}
-		b.MaxTotalTurns = *raw.MaxTotalTurns
+		return "", "", fmt.Errorf("%q is not a parameter reference (parameters are $lowercase_name)", raw)
 	}
-	return b, nil
+	name := raw[1:]
+	pr := p.params[name]
+	if pr == nil {
+		return "", "", fmt.Errorf("parameter %q is not declared (declared: %s)", name, p.paramNames())
+	}
+	if pr.Type != site.typ {
+		return "", "", fmt.Errorf("parameter %q is a %s, and this field takes a %s", name, pr.Type, site.typ)
+	}
+	if site.values != nil {
+		if len(pr.Enum) == 0 {
+			return "", "", fmt.Errorf("parameter %q needs an enum within %s to be read here", name, strings.Join(site.values, " | "))
+		}
+		for _, v := range pr.Enum {
+			if !slices.Contains(site.values, v) {
+				return "", "", fmt.Errorf("parameter %q allows %q, which this field does not (%s)", name, v, strings.Join(site.values, " | "))
+			}
+		}
+	}
+	p.used[name] = true
+	p.refs = append(p.refs, ParamRef{Param: name, Phase: site.phase, Stage: site.stage, Field: site.field, Input: site.input})
+	via = fmt.Sprintf(" (parameter %q)", name)
+	if v, ok := p.bindings[name]; ok {
+		return v, via, nil
+	}
+	return pr.Default, via, nil
+}
+
+// lookupInt resolves an integer field: the literal, or an int parameter.
+func (p *parser) lookupInt(raw *DocInt, site paramSite) (int, string, error) {
+	if raw.Ref == "" {
+		return raw.Int, "", nil
+	}
+	v, via, err := p.lookup(raw.Ref, site)
+	if err != nil {
+		return 0, "", err
+	}
+	n, _ := strconv.Atoi(v) // the parameter's type guarantees it parses
+	return n, via, nil
+}
+
+// lookupDuration resolves a duration field: the literal, or a string
+// parameter; either must parse as a positive duration.
+func (p *parser) lookupDuration(raw string, site paramSite) (time.Duration, string, error) {
+	v, via, err := p.lookup(raw, site)
+	if err != nil {
+		return 0, "", err
+	}
+	t, err := time.ParseDuration(v)
+	if err != nil || t <= 0 {
+		return 0, via, fmt.Errorf("invalid %s %q%s", site.field, v, via)
+	}
+	return t, via, nil
+}
+
+// buildWhen parses a stage condition: one of the run facts, or a bool
+// parameter — which folds right here, so the engine never sees it.
+func (p *parser) buildWhen(raw string, site paramSite) (*When, error) {
+	// Negation is spelled `not x`: a leading `!` would be a YAML tag.
+	term, not := strings.CutPrefix(raw, "not ")
+	term = strings.TrimSpace(term)
+	switch {
+	case term == WhenTracker || term == WhenSubject:
+		return &When{Term: term, Not: not}, nil
+	case strings.HasPrefix(term, "$"):
+		v, _, err := p.lookup(term, site)
+		if err != nil {
+			return nil, err
+		}
+		b, _ := strconv.ParseBool(v) // the parameter's type guarantees it parses
+		if b != not {
+			return nil, nil // holds: no condition to carry
+		}
+		return &When{Term: WhenNever}, nil
+	}
+	return nil, fmt.Errorf("%q is not a condition: %s, %s or a $bool parameter, each optionally negated as `not x`", raw, WhenTracker, WhenSubject)
+}
+
+func (p *parser) paramNames() string {
+	names := make([]string, 0, len(p.plist))
+	for _, pr := range p.plist {
+		names = append(names, pr.Name)
+	}
+	return strings.Join(names, ", ")
 }
 
 // buildAgents validates the document's agent definitions (FLOWLANG §1, v3).
@@ -870,6 +1377,10 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	}
 
 	s := &Stage{ID: raw.ID, Type: st, Line: line, Description: raw.Description}
+	// site describes a field of this stage that may read a $parameter.
+	site := func(field string, typ ParamType, values []string) paramSite {
+		return paramSite{stage: raw.ID, field: field, typ: typ, values: values}
+	}
 
 	switch st {
 	case StageAgent:
@@ -882,27 +1393,39 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		s.Agent = raw.Agent
 		s.Model, s.Harness, s.MaxTurns, s.Timeout = d.Model, d.Harness, d.MaxTurns, d.Timeout
 		if raw.Model != "" {
-			if !validModel(raw.Model) {
-				return fail("model: %q is not of the form provider/model", raw.Model)
+			v, via, err := p.lookup(raw.Model, site("model", ParamString, nil))
+			if err != nil {
+				return fail("model: %v", err)
 			}
-			s.Model = raw.Model
+			if !validModel(v) {
+				return fail("model: %q%s is not of the form provider/model", v, via)
+			}
+			s.Model = v
 		}
 		if raw.Harness != "" {
-			if !slugRe.MatchString(raw.Harness) {
-				return fail("harness %q is not a slug (kind existence is checked at run creation)", raw.Harness)
+			v, via, err := p.lookup(raw.Harness, site("harness", ParamString, nil))
+			if err != nil {
+				return fail("harness: %v", err)
 			}
-			s.Harness = raw.Harness
+			if !slugRe.MatchString(v) {
+				return fail("harness %q%s is not a slug (kind existence is checked at run creation)", v, via)
+			}
+			s.Harness = v
 		}
 		if raw.MaxTurns != nil {
-			if *raw.MaxTurns <= 0 {
-				return fail("max_turns must be > 0, got %d", *raw.MaxTurns)
+			n, via, err := p.lookupInt(raw.MaxTurns, site("max_turns", ParamInt, nil))
+			if err != nil {
+				return fail("max_turns: %v", err)
 			}
-			s.MaxTurns = *raw.MaxTurns
+			if n <= 0 {
+				return fail("max_turns must be > 0, got %d%s", n, via)
+			}
+			s.MaxTurns = n
 		}
 		if raw.Timeout != "" {
-			t, err := time.ParseDuration(raw.Timeout)
-			if err != nil || t <= 0 {
-				return fail("invalid timeout %q", raw.Timeout)
+			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamString, nil))
+			if err != nil {
+				return fail("%v", err)
 			}
 			s.Timeout = t
 		}
@@ -922,14 +1445,21 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		if (raw.Run != "") == (raw.RunRef != "") {
 			return fail("exactly one of run / run_ref is required")
 		}
-		if raw.RunRef != "" && !slugRe.MatchString(raw.RunRef) {
-			return fail("run_ref %q is not a slug (key into project.commands)", raw.RunRef)
+		s.Run, s.EachRepo = raw.Run, raw.EachRepo
+		if raw.RunRef != "" {
+			v, via, err := p.lookup(raw.RunRef, site("run_ref", ParamString, nil))
+			if err != nil {
+				return fail("run_ref: %v", err)
+			}
+			if !slugRe.MatchString(v) {
+				return fail("run_ref %q%s is not a slug (key into project.commands)", v, via)
+			}
+			s.RunRef = v
 		}
-		s.Run, s.RunRef, s.EachRepo = raw.Run, raw.RunRef, raw.EachRepo
 		if raw.Timeout != "" {
-			t, err := time.ParseDuration(raw.Timeout)
-			if err != nil || t <= 0 {
-				return fail("invalid timeout %q", raw.Timeout)
+			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamString, nil))
+			if err != nil {
+				return fail("%v", err)
 			}
 			s.Timeout = t
 		}
@@ -989,19 +1519,27 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				if sig == nil {
 					return fail("input %q is not an input of action %q (%s)", pr.Name, act.Slug, act.InputNames())
 				}
-				if sig.Kind == actionspec.KindFile && !validArtifactPath(pr.Value) {
-					return fail("input %q: path %q must be a relative artifact path", pr.Name, pr.Value)
+				var values []string
+				if sig.Kind == actionspec.KindEnum {
+					values = sig.Values
 				}
-				if sig.Kind == actionspec.KindEnum && !slices.Contains(sig.Values, pr.Value) {
-					return fail("input %q: %q is not one of %s", pr.Name, pr.Value, strings.Join(sig.Values, " | "))
+				v, via, err := p.lookup(pr.Value, paramSite{stage: raw.ID, field: "input", input: pr.Name, typ: ParamString, values: values})
+				if err != nil {
+					return fail("input %q: %v", pr.Name, err)
+				}
+				if sig.Kind == actionspec.KindFile && !validArtifactPath(v) {
+					return fail("input %q: path %q%s must be a relative artifact path", pr.Name, v, via)
+				}
+				if sig.Kind == actionspec.KindEnum && !slices.Contains(sig.Values, v) {
+					return fail("input %q: %q%s is not one of %s", pr.Name, v, via, strings.Join(sig.Values, " | "))
 				}
 				// A text input is the tracker's vocabulary, not ours: only
 				// blankness is checkable here.
-				if sig.Kind == actionspec.KindText && strings.TrimSpace(pr.Value) == "" {
-					return fail("input %q: a value is required (%s)", pr.Name, sig.Description)
+				if sig.Kind == actionspec.KindText && strings.TrimSpace(v) == "" {
+					return fail("input %q: a value is required%s (%s)", pr.Name, via, sig.Description)
 				}
 				bound[pr.Name] = true
-				s.Inputs = append(s.Inputs, IOBinding{Name: pr.Name, Value: pr.Value})
+				s.Inputs = append(s.Inputs, IOBinding{Name: pr.Name, Value: v})
 			}
 		}
 		for i := range act.Inputs {
@@ -1009,10 +1547,18 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				return fail("action %q requires input %q (%s)", act.Slug, sig.Name, sig.Description)
 			}
 		}
-		// ticket_set_field takes its value from an artifact OR from the flow —
+		// An action may take a value from an artifact OR from the flow —
 		// exactly one, the way a command takes run OR run_ref.
-		if act.Slug == actionspec.TicketSetField && bound["value"] == bound["text"] {
-			return fail("action %q takes exactly one of value (an artifact holding the value) or text (the value written here)", act.Slug)
+		if group := act.ExactlyOne; len(group) > 0 {
+			n := 0
+			for _, name := range group {
+				if bound[name] {
+					n++
+				}
+			}
+			if n != 1 {
+				return fail("action %q takes exactly one of %s", act.Slug, strings.Join(group, " / "))
+			}
 		}
 		// A file an action writes is part of the dataflow like an agent's
 		// output: later stages bind it, the validator sees it produced.
@@ -1037,23 +1583,38 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		// the signal holds, with the same policy a phase's `on:` has — minus
 		// manual, which is what a human_gate is for.
 		w := Wait{Signal: raw.For, Start: StartAuto, Max: 1}
-		switch Start(raw.Start) {
-		case "", StartAuto:
-		case StartConfirm:
-			w.Start = StartConfirm
-		case StartManual:
-			return fail("start: %s does not apply to a wait — a person continues a chain at a human_gate", StartManual)
-		default:
-			return fail("start %q must be %s or %s", raw.Start, StartAuto, StartConfirm)
+		if raw.Start != "" {
+			v, via, err := p.lookup(raw.Start, site("start", ParamString, []string{string(StartAuto), string(StartConfirm)}))
+			if err != nil {
+				return fail("start: %v", err)
+			}
+			switch Start(v) {
+			case StartAuto:
+			case StartConfirm:
+				w.Start = StartConfirm
+			case StartManual:
+				return fail("start: %s does not apply to a wait — a person continues a chain at a human_gate", StartManual)
+			default:
+				return fail("start %q%s must be %s or %s", v, via, StartAuto, StartConfirm)
+			}
 		}
 		if raw.Timeout != "" {
-			t, err := time.ParseDuration(raw.Timeout)
-			if err != nil || t <= 0 {
-				return fail("invalid timeout %q", raw.Timeout)
+			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamString, nil))
+			if err != nil {
+				return fail("%v", err)
 			}
 			w.Timeout, s.Timeout = t, t
 		}
 		s.WaitFor, s.Wait = raw.For, &w
+	}
+
+	// when: a condition on any stage type.
+	if raw.When != "" {
+		w, err := p.buildWhen(raw.When, site("when", ParamBool, nil))
+		if err != nil {
+			return fail("when: %v", err)
+		}
+		s.When = w
 	}
 
 	if raw.OnSuccess == TerminalAbort || raw.OnSuccess == ReservedDebug {
@@ -1374,7 +1935,7 @@ func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStag
 		if len(rp.Stages) == 0 {
 			return fail("a phase needs at least one stage")
 		}
-		on, err := buildWait(&rp.On)
+		on, err := p.buildWait(&rp.On, rp.ID)
 		if err != nil {
 			return fail("on: %v", err)
 		}
@@ -1408,8 +1969,11 @@ func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStag
 // buildWait validates a phase's opening wait point on its own (FLOWLANG §1):
 // what it opens on and the options that apply to it. Whether the flow can
 // satisfy it (a merge request to react to) is a warning, not a rule.
-func buildWait(raw *DocWait) (Wait, error) {
+func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 	w := Wait{Signal: raw.Signal, Start: StartManual, Max: UnlimitedMax}
+	site := func(field string, typ ParamType, values []string) paramSite {
+		return paramSite{phase: phaseID, field: field, typ: typ, values: values}
+	}
 	if w.Signal == "" {
 		return w, fmt.Errorf("signal is required: %s (an entrypoint), %s (started by hand), or a trigger (%s)",
 			signalspec.RunStart, signalspec.Manual, triggerSlugs())
@@ -1429,11 +1993,15 @@ func buildWait(raw *DocWait) (Wait, error) {
 		if !fires {
 			return w, fmt.Errorf("start does not apply to %q — nothing fires to decide about: a person's act is the start", w.Signal)
 		}
-		switch Start(raw.Start) {
+		v, via, err := p.lookup(raw.Start, site("start", ParamString, []string{string(StartAuto), string(StartConfirm), string(StartManual)}))
+		if err != nil {
+			return w, fmt.Errorf("start: %v", err)
+		}
+		switch Start(v) {
 		case StartAuto, StartConfirm, StartManual:
-			w.Start = Start(raw.Start)
+			w.Start = Start(v)
 		default:
-			return w, fmt.Errorf("start %q must be %s, %s or %s", raw.Start, StartAuto, StartConfirm, StartManual)
+			return w, fmt.Errorf("start %q%s must be %s, %s or %s", v, via, StartAuto, StartConfirm, StartManual)
 		}
 	} else if fires {
 		w.Start = StartAuto
@@ -1442,12 +2010,16 @@ func buildWait(raw *DocWait) (Wait, error) {
 		if !sig.Debounced {
 			return w, fmt.Errorf("quiet_for applies only to a signal that fires on activity (%s does not)", w.Signal)
 		}
-		d, err := time.ParseDuration(raw.QuietFor)
+		v, via, err := p.lookup(raw.QuietFor, site("quiet_for", ParamString, nil))
 		if err != nil {
-			return w, fmt.Errorf("quiet_for: invalid duration %q", raw.QuietFor)
+			return w, fmt.Errorf("quiet_for: %v", err)
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return w, fmt.Errorf("quiet_for: invalid duration %q%s", v, via)
 		}
 		if d < time.Minute {
-			return w, fmt.Errorf("quiet_for must be at least 1m, got %s", raw.QuietFor)
+			return w, fmt.Errorf("quiet_for must be at least 1m, got %s%s", v, via)
 		}
 		w.QuietFor = d
 	}
@@ -1455,13 +2027,17 @@ func buildWait(raw *DocWait) (Wait, error) {
 		w.Max = DefaultPhaseMax
 	}
 	if raw.Max != nil {
-		switch {
-		case *raw.Max == UnlimitedMax && w.Start == StartAuto:
-			return w, fmt.Errorf("max -1 (unlimited) requires start: %s or %s — every run must cost a human decision", StartConfirm, StartManual)
-		case *raw.Max != UnlimitedMax && *raw.Max < 1:
-			return w, fmt.Errorf("max must be >= 1 (or -1 with start %s/%s), got %d", StartConfirm, StartManual, *raw.Max)
+		n, via, err := p.lookupInt(raw.Max, site("max", ParamInt, nil))
+		if err != nil {
+			return w, fmt.Errorf("max: %v", err)
 		}
-		w.Max = *raw.Max
+		switch {
+		case n == UnlimitedMax && w.Start == StartAuto:
+			return w, fmt.Errorf("max -1 (unlimited)%s requires start: %s or %s — every run must cost a human decision", via, StartConfirm, StartManual)
+		case n != UnlimitedMax && n < 1:
+			return w, fmt.Errorf("max must be >= 1 (or -1 with start %s/%s), got %d%s", StartConfirm, StartManual, n, via)
+		}
+		w.Max = n
 	}
 	return w, nil
 }

@@ -20,7 +20,7 @@ import (
 // hour, at most twice) react to it.
 const phasedFlowDoc = `name: phased
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
     prompt: build it
@@ -197,7 +197,7 @@ func TestPhasedRunAbandonsWhenTheMRCloses(t *testing.T) {
 func TestPhasedRunWithoutAnMRCompletes(t *testing.T) {
 	doc := `name: phased
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 phases:
   - { id: deliver, on: run_start, stages: [{ id: s, type: command, run: "true" }] }
 `

@@ -26,7 +26,7 @@ import (
 
 const loopFlowDoc = `name: loop
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
     prompt: plan the work
@@ -429,7 +429,7 @@ func TestSSEReplayAndLive(t *testing.T) {
 func TestShimProtocol(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: ping
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
     prompt: plan the work
@@ -768,7 +768,7 @@ func TestLogsEndpoint(t *testing.T) {
 func TestPingArtifact(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
     prompt: plan the work
@@ -846,7 +846,7 @@ stages:
 func TestPingHistory(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
     prompt: plan the work
@@ -1150,7 +1150,7 @@ func TestHoldForClampsGraceHold(t *testing.T) {
 func TestPingLongPollStaysLiveUntilTheRunParks(t *testing.T) {
 	x := newEnv(t, engine.Config{AskHumanHold: 150 * time.Millisecond}, `name: hold
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
     prompt: build the thing
@@ -1206,7 +1206,7 @@ stages:
 func TestSendMessageToTheRunningAgent(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: msg
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
     prompt: build the thing

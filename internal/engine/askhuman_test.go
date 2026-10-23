@@ -15,7 +15,7 @@ import (
 
 const askFlowDoc = `name: ask
 version: 2
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `
@@ -281,7 +281,7 @@ func TestAnswerWithNoSessionToResumeFailsTheAttempt(t *testing.T) {
 func TestDisobedientAgentStillPausesAndIsToldWhatItGuessed(t *testing.T) {
 	doc := `name: askout
 version: 2
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
     description: writes the plan
@@ -424,7 +424,7 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 func TestGateParksAndAnswerResumes(t *testing.T) {
 	doc := `name: gated
 version: 2
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan_gate, type: human_gate, question: "Approve?", on_success: done, on_reject: abort }
 `

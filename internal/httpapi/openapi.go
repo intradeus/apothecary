@@ -388,7 +388,40 @@ func customizeSchema(name string, t reflect.Type, tag reflect.StructTag, schema 
 		*schema = *openapi3.NewObjectSchema().WithAdditionalProperties(openapi3.NewStringSchema())
 		return nil
 	}
+	if t == reflect.TypeOf(flow.DocParamValue{}) {
+		// A parameter's default, typed: true, 10, 1.5 or "text".
+		*schema = *paramValueSchema()
+		return nil
+	}
+	if t == reflect.TypeOf(flow.DocParams{}) {
+		// An ordered name → declaration mapping, always in the long form.
+		decl := openapi3.NewObjectSchema().WithProperties(map[string]*openapi3.Schema{
+			"default":     paramValueSchema(),
+			"description": openapi3.NewStringSchema(),
+			"enum":        openapi3.NewArraySchema().WithItems(openapi3.NewStringSchema()),
+		})
+		decl.Required = []string{"default"}
+		*schema = *openapi3.NewObjectSchema().WithAdditionalProperties(decl)
+		return nil
+	}
+	if t == reflect.TypeOf(flow.DocInt{}) {
+		// An integer, or the "$name" of the parameter the field reads.
+		*schema = openapi3.Schema{OneOf: openapi3.SchemaRefs{
+			openapi3.NewIntegerSchema().NewRef(), openapi3.NewStringSchema().NewRef(),
+		}, Properties: openapi3.Schemas{}}
+		return nil
+	}
 	return nil
+}
+
+// paramValueSchema is a flow parameter's default: one of the three scalar
+// kinds a parameter may be. The empty Properties map is what makes the
+// generator export a named type as a component (it keeps only schemas with
+// one); it is omitted from the document.
+func paramValueSchema() *openapi3.Schema {
+	return &openapi3.Schema{OneOf: openapi3.SchemaRefs{
+		openapi3.NewBoolSchema().NewRef(), openapi3.NewFloat64Schema().NewRef(), openapi3.NewStringSchema().NewRef(),
+	}, Properties: openapi3.Schemas{}}
 }
 
 // --- serving ----------------------------------------------------------------

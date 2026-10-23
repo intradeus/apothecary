@@ -5,6 +5,10 @@ components:
       properties:
         description:
           type: string
+        exactly_one:
+          items:
+            type: string
+          type: array
         inputs:
           items:
             $ref: '#/components/schemas/InputSig'
@@ -161,30 +165,6 @@ components:
         - name
         - yaml
       type: object
-    DocBudget:
-      properties:
-        max_cost_usd:
-          format: double
-          nullable: true
-          type: number
-        max_total_turns:
-          nullable: true
-          type: integer
-      type: object
-    DocDefaults:
-      properties:
-        harness:
-          type: string
-        max_turns:
-          nullable: true
-          type: integer
-        model:
-          type: string
-        timeout:
-          type: string
-      required:
-        - model
-      type: object
     DocEdge:
       properties:
         feed:
@@ -202,6 +182,59 @@ components:
     DocIO:
       additionalProperties:
         type: string
+      type: object
+    DocInt:
+      oneOf:
+        - type: integer
+        - type: string
+    DocParam:
+      properties:
+        default:
+          $ref: '#/components/schemas/DocParamValue'
+        description:
+          type: string
+        enum:
+          items:
+            type: string
+          type: array
+      required:
+        - default
+      type: object
+    DocParamEntry:
+      properties:
+        Line:
+          type: integer
+        Name:
+          type: string
+        Param:
+          $ref: '#/components/schemas/DocParam'
+      required:
+        - Line
+        - Name
+        - Param
+      type: object
+    DocParamValue:
+      oneOf:
+        - type: boolean
+        - type: number
+        - type: string
+    DocParams:
+      additionalProperties:
+        properties:
+          default:
+            oneOf:
+              - type: boolean
+              - type: number
+              - type: string
+          description:
+            type: string
+          enum:
+            items:
+              type: string
+            type: array
+        required:
+          - default
+        type: object
       type: object
     DocPhase:
       properties:
@@ -244,8 +277,7 @@ components:
         input:
           $ref: '#/components/schemas/DocIO'
         max_turns:
-          nullable: true
-          type: integer
+          $ref: '#/components/schemas/DocInt'
         model:
           type: string
         on_fail:
@@ -270,6 +302,8 @@ components:
           type: string
         type:
           type: string
+        when:
+          type: string
       required:
         - id
         - type
@@ -277,8 +311,7 @@ components:
     DocWait:
       properties:
         max:
-          nullable: true
-          type: integer
+          $ref: '#/components/schemas/DocInt'
         quiet_for:
           type: string
         signal:
@@ -587,14 +620,12 @@ components:
           items:
             $ref: '#/components/schemas/Spec'
           type: array
-        budget:
-          $ref: '#/components/schemas/DocBudget'
-        defaults:
-          $ref: '#/components/schemas/DocDefaults'
         description:
           type: string
         name:
           type: string
+        parameters:
+          $ref: '#/components/schemas/DocParams'
         phases:
           items:
             $ref: '#/components/schemas/DocPhase'
@@ -606,8 +637,6 @@ components:
         version:
           type: integer
       required:
-        - budget
-        - defaults
         - name
         - version
       type: object

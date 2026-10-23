@@ -152,7 +152,7 @@ func TestProvisionLogPublishedOnBootstrapFailure(t *testing.T) {
 func TestAttemptSnapshotsSurviveRetries(t *testing.T) {
 	doc := `name: snap
 version: 2
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: plan, type: agent, agent: planner, input: { failure: $FAILURE }, on_success: check }
   - { id: check, type: command, run: verify, on_success: done,
@@ -241,7 +241,7 @@ stages:
 func TestPingAttachmentsAreSnapshotted(t *testing.T) {
 	doc := `name: ping
 version: 2
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: build, type: agent, agent: builder }
 `

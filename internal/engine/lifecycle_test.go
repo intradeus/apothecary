@@ -108,7 +108,7 @@ func TestRecoverClosesInterruptedRebuild(t *testing.T) {
 func TestCommandStageCarriesItsMarker(t *testing.T) {
 	doc := `name: c
 version: 2
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: test, type: command, run: "make test" }
 `

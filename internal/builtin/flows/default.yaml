@@ -1,9 +1,24 @@
 name: default
 version: 4
 description: "built-in default: plan-gated build with cross-vendor adversarial review, then the merge request's life: conflicts fixed on your go, review comments fixed and answered once the review goes quiet"
-defaults: { timeout: 30m, harness: opencode, model: opencode-go/qwen3.7-plus, max_turns: 50 }
-# The budget covers the whole life of the ticket, review rounds included.
-budget: { max_cost_usd: 20.0, max_total_turns: 600 }
+# The flow's one settings block: what every agent stage inherits, the run's
+# ceilings (the whole life of the ticket, review rounds included), and this
+# flow's own knobs, read where $name appears below. A project binds any of
+# them (Workshop → Flows → Configure) without touching this document, and a
+# run may override — so one flow serves a GitHub project with no tracker and
+# a GitLab + Jira one alike.
+parameters:
+  harness: opencode
+  model: opencode-go/qwen3.7-plus
+  timeout: 30m
+  max_turns: 50
+  max_cost_usd: 20.0
+  max_total_turns: 600
+  verify:          { default: verify, description: "the project command that runs the tests (project.commands)" }
+  review_model:    { default: opencode-go/glm-5.2, description: "a second vendor reviews the change" }
+  plan_gate:       { default: true, description: "stop for a human to approve the plan before building" }
+  conflicts_start: { default: confirm, enum: [auto, confirm, manual], description: "how a conflict fix begins: by itself, after asking, or by hand from the run page" }
+  review_start:    { default: auto, enum: [auto, confirm, manual], description: "how a review-fix round begins" }
 # Phases: `deliver` is what the ticket starts — plan, build, review, open the
 # merge request. The run then stays in review until the merge request merges
 # (completed) or is closed (abandoned). Meanwhile the other phases react to
@@ -321,7 +336,7 @@ phases:
           input: { rejection: $DECISION, failure: $FAILURE },
           on_success: plan_gate,
           on_fail: { to: plan, max: 2, then: debug } }
-      - { id: plan_gate,  type: human_gate, input: { plan: artifacts/plan.md },
+      - { id: plan_gate,  type: human_gate, when: $plan_gate, input: { plan: artifacts/plan.md },
           question: "Approve this implementation plan? Rejecting sends it back to the planner with your feedback.",
           on_success: build,
           on_reject: { to: plan, max: -1 } }
@@ -344,13 +359,13 @@ phases:
           input: { message: artifacts/commit.md },
           on_success: test,
           on_fail: debug }
-      - { id: test,       type: command, run_ref: verify,
+      - { id: test,       type: command, run_ref: $verify,
           on_success: review,
           on_fail: { to: build, max: 5, then: debug },
           on_timeout: { to: test, max: 1, then: { to: build, max: 2 } } }
       # The reviewer's verdict output is what makes on_reject reachable here; a
       # REJECT carries its comments back to the builder as feedback.
-      - { id: review,     type: agent, agent: reviewer, model: opencode-go/glm-5.2,
+      - { id: review,     type: agent, agent: reviewer, model: $review_model,
           input: { plan: artifacts/plan.md, changes: $CHANGED, failure: $FAILURE }, max_turns: 30,
           description: "adversarial review against the plan, conventions and correctness",
           on_success: redact,
@@ -383,7 +398,7 @@ phases:
   # The target moved under the merge request. Nothing is spent until you
   # confirm (inbox); declined, it is offered again only when the target moves.
   - id: conflicts
-    on: { signal: mr_conflicts, start: confirm }
+    on: { signal: mr_conflicts, start: $conflicts_start }
     description: "merge the target branch in, resolve, re-test, push"
     stages:
       - { id: sync,       type: action, action: sync_target, input: { strategy: merge },
@@ -395,7 +410,7 @@ phases:
           description: "remove the conflict markers, keeping both intents — no git",
           on_success: sync,
           on_fail: debug }
-      - { id: sync_test,  type: command, run_ref: verify,
+      - { id: sync_test,  type: command, run_ref: $verify,
           on_success: sync_push,
           on_fail: debug }
       - { id: sync_push,  type: action, action: push_branch,
@@ -407,7 +422,7 @@ phases:
   # wrong or already handled; those are left alone until someone writes on
   # them again — and the picked ones are fixed in one batch and answered.
   - id: review_fixes
-    on: { signal: mr_review_settled, quiet_for: 1h, max: 10 }
+    on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h, max: 10 }
     description: "fix every pending review thread, test, push, and reply on each"
     stages:
       - { id: load,       type: action, action: load_review_comments, input: { select: human } }
@@ -427,7 +442,7 @@ phases:
           input: { message: artifacts/commit.md },
           on_success: fix_test,
           on_fail: debug }
-      - { id: fix_test,   type: command, run_ref: verify,
+      - { id: fix_test,   type: command, run_ref: $verify,
           on_success: fix_push,
           on_fail: { to: fix, max: 3, then: debug } }
       - { id: fix_push,   type: action, action: push_branch,

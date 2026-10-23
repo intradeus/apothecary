@@ -13,7 +13,7 @@ import (
 
 const modelFlowDoc = `name: models
 version: 2
-defaults: { harness: fake, model: zen/glm-5.1 }
+parameters: { harness: fake, model: zen/glm-5.1 }
 stages:
   - { id: build, type: agent, agent: builder }
   - { id: review, type: agent, agent: builder, model: zen/glm-5.3 }

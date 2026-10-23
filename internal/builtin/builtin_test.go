@@ -205,7 +205,7 @@ func TestFlowSourceLayering(t *testing.T) {
 		t.Fatalf("Get(nope) err = %v, want ErrNotFound", err)
 	}
 	// A DB row with the same name shadows the built-in.
-	shadow, err := flow.Parse("default", []byte("name: default\nversion: 4\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
+	shadow, err := flow.Parse("default", []byte("name: default\nversion: 4\nparameters: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

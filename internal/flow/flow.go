@@ -5,6 +5,9 @@
 package flow
 
 import (
+	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,8 +73,19 @@ func FeedSentinel(edgeKind string) string {
 func IsFeedSentinel(v string) bool { return v == SentinelDecision || v == SentinelFailure }
 
 // IsSentinel reports whether v is an engine-provided value rather than a
-// repo-relative artifact path.
-func IsSentinel(v string) bool { return strings.HasPrefix(v, "$") }
+// repo-relative artifact path: $UPPER_CASE. A $lower_case token is a
+// parameter reference (IsParamRef), never a sentinel.
+func IsSentinel(v string) bool { return sentinelRe.MatchString(v) }
+
+// IsParamRef reports whether v reads a parameter: $name, lowercase.
+func IsParamRef(v string) bool { return paramRefRe.MatchString(v) }
+
+var (
+	sentinelRe = regexp.MustCompile(`^\$[A-Z][A-Z0-9_]*$`)
+	paramRefRe = regexp.MustCompile(`^\$[a-z][a-z0-9_]*$`)
+	// ParamNameRe is the shape of a parameter's name.
+	ParamNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+)
 
 type Defaults struct {
 	Timeout  time.Duration // per-stage wall clock; suspended while a ping is pending
@@ -224,6 +238,11 @@ type Stage struct {
 	// future kinds — DESIGN3 §2.1). Never nil after Parse.
 	Edges map[string]*Edge
 
+	// When is the stage's condition (FLOWLANG §2 when), nil = always. A
+	// stage whose condition is false completes as skipped and the chain
+	// follows on_success.
+	When *When
+
 	// Phase is the id of the phase the stage belongs to — always set, since
 	// every flow is phases (the shorthand's is ShorthandPhase).
 	Phase string
@@ -235,6 +254,148 @@ type Stage struct {
 // Parks reports whether the stage is a wait point mid-chain: a wait or a
 // gate, which stops the phase for something outside the run.
 func (s *Stage) Parks() bool { return s.Type == StageWait || s.Type == StageHumanGate }
+
+// When is a stage's condition: one term, optionally negated. A $bool
+// parameter folds at parse time into nil (true) or WhenNever (false), so the
+// engine only ever sees the two run facts.
+type When struct {
+	Term string // WhenTracker | WhenSubject | WhenNever
+	Not  bool
+}
+
+const (
+	WhenTracker = "tracker" // the run's ticket has a tracker issue to write to
+	WhenSubject = "subject" // the phase run acts on one merge request
+	WhenNever   = "never"   // a parameter said no
+)
+
+// Holds evaluates the condition against the run's facts; a nil When holds.
+func (w *When) Holds(tracker, subject bool) bool {
+	if w == nil {
+		return true
+	}
+	var v bool
+	switch w.Term {
+	case WhenTracker:
+		v = tracker
+	case WhenSubject:
+		v = subject
+	}
+	return v != w.Not
+}
+
+func (w *When) String() string {
+	if w == nil {
+		return ""
+	}
+	if w.Not {
+		return "not " + w.Term
+	}
+	return w.Term
+}
+
+// ParamType is what a parameter's default was written as, and so what its
+// bound values must parse as.
+type ParamType string
+
+const (
+	ParamBool   ParamType = "bool"
+	ParamInt    ParamType = "int"
+	ParamFloat  ParamType = "float"
+	ParamString ParamType = "string"
+)
+
+// Param is one entry of the flow's `parameters:` block (FLOWLANG §1): a knob
+// declared with its default in the document and bound from outside it — by
+// the project, then by the run. Known marks the six the engine reads itself
+// (harness, model, timeout, max_turns, max_cost_usd, max_total_turns); every
+// other one is read where $name appears.
+type Param struct {
+	Name        string    `json:"name"`
+	Type        ParamType `json:"type"`
+	Default     string    `json:"default"`
+	Description string    `json:"description,omitempty"`
+	Enum        []string  `json:"enum,omitempty"`
+	Known       bool      `json:"known,omitempty"`
+	Line        int       `json:"-"`
+}
+
+// KnownParams are the engine-read parameters and their types.
+var KnownParams = map[string]ParamType{
+	"harness": ParamString, "model": ParamString, "timeout": ParamString,
+	"max_turns": ParamInt, "max_cost_usd": ParamFloat, "max_total_turns": ParamInt,
+}
+
+// KnownParamOrder lists the engine-read parameters in display order.
+var KnownParamOrder = []string{"harness", "model", "timeout", "max_turns", "max_cost_usd", "max_total_turns"}
+
+// ParamRef is one place the document reads a parameter (derived by the
+// parser; the editor marks bound fields with it).
+type ParamRef struct {
+	Param string `json:"param"`
+	Phase string `json:"phase,omitempty"`
+	Stage string `json:"stage,omitempty"`
+	Field string `json:"field"`
+	Input string `json:"input,omitempty"`
+}
+
+// ParseParamValue checks a value against a parameter's type and enum and
+// returns its canonical text.
+func ParseParamValue(pr *Param, v string) (string, error) {
+	switch pr.Type {
+	case ParamBool:
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return "", fmt.Errorf("parameter %q takes true or false, got %q", pr.Name, v)
+		}
+		return strconv.FormatBool(b), nil
+	case ParamInt:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return "", fmt.Errorf("parameter %q takes an integer, got %q", pr.Name, v)
+		}
+		return strconv.Itoa(n), nil
+	case ParamFloat:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return "", fmt.Errorf("parameter %q takes a number, got %q", pr.Name, v)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64), nil
+	}
+	if len(pr.Enum) > 0 && !contains(pr.Enum, v) {
+		return "", fmt.Errorf("parameter %q takes one of %s, got %q", pr.Name, strings.Join(pr.Enum, " | "), v)
+	}
+	return v, nil
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateBindings checks a set of bound values against the declared
+// parameters: every key declared, every value of its parameter's type.
+func ValidateBindings(params []Param, bindings map[string]string) error {
+	for name, v := range bindings {
+		var pr *Param
+		for i := range params {
+			if params[i].Name == name {
+				pr = &params[i]
+			}
+		}
+		if pr == nil {
+			return fmt.Errorf("parameter %q is not declared by this flow", name)
+		}
+		if _, err := ParseParamValue(pr, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // TriggerManual is the beginning a person gives from the run page
 // (signalspec.Manual): a phase on it has no signal and starts by hand only.
@@ -348,9 +509,47 @@ type Flow struct {
 	// now that agents live in the document.
 	Warnings []string
 
+	// Params are the flow's parameters in document order, the six known ones
+	// always present (synthesized with the engine's defaults when the
+	// document omits them). Refs are where the document reads them. Bindings
+	// are the values this Flow was resolved with (Resolve); nil = defaults.
+	Params   []Param
+	Refs     []ParamRef
+	Bindings map[string]string
+
 	// shorthand marks a document written with top-level stages, desugared
 	// into the one phase above.
 	shorthand bool
+	// file and src are what Parse was given, kept so Resolve can re-parse
+	// the same bytes with bound values.
+	file string
+	src  []byte
+}
+
+// Param returns the declared parameter named name, or nil.
+func (f *Flow) Param(name string) *Param {
+	for i := range f.Params {
+		if f.Params[i].Name == name {
+			return &f.Params[i]
+		}
+	}
+	return nil
+}
+
+// Resolve returns the flow with bindings applied — the document re-parsed
+// with the bound values in place of the defaults, so every value-level rule
+// is re-checked and the result carries no references. The receiver is
+// unchanged; the hash is the document's. With nothing bound the receiver
+// itself is returned.
+func (f *Flow) Resolve(bindings map[string]string) (*Flow, error) {
+	if len(bindings) == 0 && len(f.Bindings) == 0 {
+		return f, nil
+	}
+	nf, err := parseBound(f.file, f.src, bindings)
+	if err != nil {
+		return nil, err
+	}
+	return nf, nil
 }
 
 // Agent returns the flow's definition of name, or nil.

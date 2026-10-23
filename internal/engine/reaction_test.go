@@ -209,7 +209,7 @@ func (g *mergeGit) snapshot() (merges, rebases int, pushes []string, paused stri
 // (load, fix, reply, post).
 const reactionFlowDoc = `name: phased
 version: 4
-defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
     prompt: build it
