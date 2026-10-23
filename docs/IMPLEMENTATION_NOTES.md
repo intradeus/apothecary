@@ -2987,5 +2987,20 @@ Single per phase and adopts an existing MR via `FindMR`, so re-running the
 delivery phase by hand is safe. Subject actions without a subject fail
 routably (`input_missing`) rather than at parse. A stale project binding is
 dropped with a warning at run creation; a stale run override refuses the run.
-The automation watcher (event- and schedule-started runs) is slice 3 of the
-same plan and lives outside the engine (`internal/automation`).
+
+**Automations** (slice 3, `internal/automation`, `confstore/automations.go`,
+`0004_automations.sql`) are the ways a run begins without a person, and they
+live outside the engine: a rule that creates a run at a `run_start` phase
+with its params, `by: automation`, the run none the wiser. `tracker_query`
+polls a ticketsource integration (the ticket factory's import path), imports
+each issue as a ticket stamped with the automation id, and starts one run
+per import; a duplicate is adopted only when it is this automation's own
+import still without a run (a crash between the two), a person's import is
+left alone. `cron` (five fields, UTC, `internal/schedule`) fires once per
+slot after the last firing — no catch-up, and the firing is marked on the
+row BEFORE the run is created, so a crash cannot fire it twice; an edit
+counts from the edit. A refused run (preflight) lands in `last_error` and
+one blocker notification per streak; the ticket stays for a person. The
+rule is validated at save the way a firing would be (the integration's
+port, the schedule, the flow, an entrypoint of it, params via `ParseBound`).
+The daemon runs a pass every two minutes.
