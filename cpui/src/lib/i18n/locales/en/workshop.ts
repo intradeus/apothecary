@@ -149,6 +149,8 @@ export default {
 	'workshop.reviews.draft': 'draft',
 	'workshop.reviews.fork': 'from a fork',
 	'workshop.reviews.mine': 'opened by the factory',
+	'workshop.reviews.mineTitle':
+		'The factory’s own merge request — its delivery run already had it reviewed. You can still ask for another review; the forge_mr automation never picks these.',
 	'workshop.reviews.notYet': 'not reviewed',
 	'workshop.reviews.lastRun_one': '{ago}',
 	'workshop.reviews.lastRun_other': '{ago} · {count} reviews',

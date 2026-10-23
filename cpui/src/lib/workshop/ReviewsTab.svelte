@@ -137,13 +137,16 @@
 				><span>{t('workshop.reviews.colReview')}</span><span></span>
 			</div>
 			{#each [...open, ...factory] as row (row.mr.iid)}
-				<div class="r rr" class:dim={row.mine}>
+				<div class="r rr">
 					<span class="mr">
 						<a class="linklike ell" href={row.mr.url} target="_blank" rel="noreferrer"
 							><span class="mono fnt">!{row.mr.iid}</span> {row.mr.title}</a
 						>
 						<span class="small fnt"
-							>{row.mr.author}{#if row.mr.draft}
+							>{row.mr.author}{#if row.mine}
+								· <span class="pill sm t-brand" title={t('workshop.reviews.mineTitle')}
+									>{t('workshop.reviews.mine')}</span
+								>{/if}{#if row.mr.draft}
 								· <span class="pill sm t-mut">{t('workshop.reviews.draft')}</span
 								>{/if}{#if row.mr.fork}
 								· <span class="pill sm t-mut">{t('workshop.reviews.fork')}</span>{/if}</span
@@ -153,9 +156,7 @@
 						>{row.mr.source} → {row.mr.target}</span
 					>
 					<span class="small state">
-						{#if row.mine}
-							<span class="fnt">{t('workshop.reviews.mine')}</span>
-						{:else if row.run}
+						{#if row.run}
 							<a href={to.run(row.run.id)} class="linklike" title={fmtAbs(row.run.createdAt)}
 								><StatusChip state={row.run.state} size="sm" /></a
 							>
@@ -170,9 +171,7 @@
 						{/if}
 					</span>
 					<span class="acts">
-						{#if row.mine}
-							<!-- the factory's own: its delivery run reviews it -->
-						{:else if row.run && !isTerminal(row.run.state)}
+						{#if row.run && !isTerminal(row.run.state)}
 							<a class="btn-sm" href={to.run(row.run.id)}>{t('workshop.reviews.follow')}</a>
 						{:else}
 							<button
@@ -211,9 +210,6 @@
 		align-items: center;
 		gap: 8px;
 		flex-wrap: wrap;
-	}
-	.dim {
-		opacity: var(--o-dim);
 	}
 	.acts {
 		display: flex;

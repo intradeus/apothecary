@@ -3358,10 +3358,11 @@ requests with a button to start a review.
   terminal; the run is created on the merge request at the flow's
   `mr_opened` entrypoint (`reviewer` by default). A ticket made by a start
   that is then refused is deleted with the refusal.
-- **UI.** A Reviews tab between Tickets and Flows: open merge requests first,
-  the factory's own greyed at the bottom with no button; a row shows the
-  newest run's state (linked) and "Review" / "Open the review" / "Review
-  again". The flow is picked among those with an `mr_opened` entrypoint,
+- **UI.** A Reviews tab between Tickets and Flows: others' merge requests
+  first, the factory's own after them — flagged "opened by the factory", but
+  reviewable like any other (the user wanted the option; only the forge_mr
+  automation never picks them); a row shows the newest run's state (linked)
+  and "Review" / "Open the review" / "Review again". The flow is picked among those with an `mr_opened` entrypoint,
   remembered per workshop in localStorage (`reviewer` when present).
   Refreshes every 30s while visible.
 - **Fake forge per locator.** The dev `fake` forge kind used to hand out a
