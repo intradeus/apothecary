@@ -281,10 +281,27 @@ export type Flow = {
 	hash?: string;
 	layout?: unknown;
 	name?: string;
+	parameters?: Array<Param>;
+	phases?: Array<PhaseSummary>;
 	project_id?: string;
 	shadows_builtin?: boolean;
 	updated_at?: string;
 	yaml?: string;
+};
+
+export type FlowBinding = {
+	flow_name: string;
+	params: {
+		[key: string]: string;
+	} | null;
+	project_id: string;
+	updated_at: string;
+};
+
+export type FlowBindingRequest = {
+	params: {
+		[key: string]: string;
+	} | null;
 };
 
 export type FlowDoc = {
@@ -2267,6 +2284,39 @@ export type StartEnvCheckResponses = {
 
 export type StartEnvCheckResponse = StartEnvCheckResponses[keyof StartEnvCheckResponses];
 
+export type ListFlowBindingsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/flow-bindings';
+};
+
+export type ListFlowBindingsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListFlowBindingsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<FlowBinding> | null;
+};
+
+export type ListFlowBindingsResponse = ListFlowBindingsResponses[keyof ListFlowBindingsResponses];
+
 export type GetFlowVersionData = {
 	body?: never;
 	path: {
@@ -2480,6 +2530,117 @@ export type UpdateFlowResponses = {
 };
 
 export type UpdateFlowResponse = UpdateFlowResponses[keyof UpdateFlowResponses];
+
+export type DeleteFlowBindingData = {
+	body?: never;
+	path: {
+		id: string;
+		name: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/flows/{name}/binding';
+};
+
+export type DeleteFlowBindingErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteFlowBindingResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteFlowBindingResponse =
+	DeleteFlowBindingResponses[keyof DeleteFlowBindingResponses];
+
+export type GetFlowBindingData = {
+	body?: never;
+	path: {
+		id: string;
+		name: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/flows/{name}/binding';
+};
+
+export type GetFlowBindingErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetFlowBindingResponses = {
+	/**
+	 * OK
+	 */
+	200: FlowBinding;
+};
+
+export type GetFlowBindingResponse = GetFlowBindingResponses[keyof GetFlowBindingResponses];
+
+export type PutFlowBindingData = {
+	body: FlowBindingRequest;
+	path: {
+		id: string;
+		name: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/flows/{name}/binding';
+};
+
+export type PutFlowBindingErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type PutFlowBindingResponses = {
+	/**
+	 * OK
+	 */
+	200: FlowBinding;
+};
+
+export type PutFlowBindingResponse = PutFlowBindingResponses[keyof PutFlowBindingResponses];
 
 export type CopyFlowData = {
 	body: CopyFlowRequest;

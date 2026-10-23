@@ -13,25 +13,32 @@ import { normalizeDoc } from '$lib/flowdoc';
 import { answerKindOf, toPingOption } from '$lib/ping';
 import type {
 	ActionIO,
-	MergeRequestLive,
-	RunPhase,
 	ActionSpec,
+	AgentToolCall,
 	Attachment,
 	Branch,
 	BuildCache,
+	ChangedFile,
+	ChangeStatus,
 	ChannelEntry,
 	EgressAuditRow,
 	EgressDenial,
 	EgressPolicy,
 	EnvCheck,
 	EnvCheckStep,
+	FileDiff,
 	Flow,
+	FlowBinding,
 	FlowValidation,
 	FlowVersion,
 	Integration,
 	KindDescriptor,
 	KindField,
+	LiveDelta,
+	MergeRequestLive,
 	Model,
+	ParamDecl,
+	PhaseSummary,
 	Ping,
 	PingFile,
 	PingPayload,
@@ -47,6 +54,7 @@ import type {
 	RunDetail,
 	RunEvent,
 	RunFiles,
+	RunPhase,
 	RunPorts,
 	RunState,
 	Settings,
@@ -55,15 +63,10 @@ import type {
 	SourceTicket,
 	Ticket,
 	UploadLimits,
-	WorkspacePolicy,
-	AgentToolCall,
-	ChangedFile,
-	ChangeStatus,
-	FileDiff,
-	LiveDelta,
 	WorkspaceChanges,
 	WorkspaceEntry,
-	WorkspaceFile
+	WorkspaceFile,
+	WorkspacePolicy
 } from '$lib/domain';
 
 // --- narrowing ---------------------------------------------------------------
@@ -469,7 +472,45 @@ export function toFlow(w: Wire.Flow): Flow {
 		layout: (w.layout as Flow['layout']) ?? undefined,
 		updatedAt: w.updated_at ?? '',
 		builtin: w.builtin ?? false,
-		shadowsBuiltin: w.shadows_builtin ?? false
+		shadowsBuiltin: w.shadows_builtin ?? false,
+		parameters: list(w.parameters).map(toParamDecl),
+		phases: list(w.phases).map(toPhaseSummary)
+	};
+}
+
+export function toFlowBinding(w: Wire.FlowBinding): FlowBinding {
+	return {
+		projectId: w.project_id ?? '',
+		flowName: w.flow_name ?? '',
+		params: { ...(w.params ?? {}) },
+		updatedAt: w.updated_at ?? ''
+	};
+}
+
+// A flow's parameters and phases are described the same way on a stored flow
+// and on a validation verdict: what a project may bind, where a run may begin.
+function toParamDecl(p: Wire.Param): ParamDecl {
+	return {
+		name: p.name,
+		type: oneOf(['bool', 'int', 'float', 'string'] as const, p.type, 'string'),
+		default: p.default,
+		description: p.description || undefined,
+		enum: p.enum ?? undefined,
+		known: p.known ?? false
+	};
+}
+
+function toPhaseSummary(p: Wire.PhaseSummary): PhaseSummary {
+	return {
+		id: p.id,
+		description: p.description || undefined,
+		signal: p.signal,
+		start: oneOf(['auto', 'confirm', 'manual'] as const, p.start, 'auto'),
+		quietFor: p.quiet_for || undefined,
+		max: p.max,
+		entry: p.entry ?? false,
+		subject: p.subject ?? false,
+		stages: p.stages
 	};
 }
 
@@ -492,14 +533,7 @@ export function toFlowValidation(w: Wire.FlowValidation): FlowValidation {
 		stages: w.stages,
 		agents: w.agents,
 		doc: w.doc ? normalizeDoc(w.doc) : undefined,
-		parameters: list(w.parameters).map((p) => ({
-			name: p.name,
-			type: oneOf(['bool', 'int', 'float', 'string'] as const, p.type, 'string'),
-			default: p.default,
-			description: p.description || undefined,
-			enum: p.enum ?? undefined,
-			known: p.known ?? false
-		})),
+		parameters: list(w.parameters).map(toParamDecl),
 		refs: list(w.refs).map((r) => ({
 			param: r.param,
 			phase: r.phase || undefined,
@@ -507,17 +541,7 @@ export function toFlowValidation(w: Wire.FlowValidation): FlowValidation {
 			field: r.field,
 			input: r.input || undefined
 		})),
-		phases: list(w.phases).map((p) => ({
-			id: p.id,
-			description: p.description || undefined,
-			signal: p.signal,
-			start: oneOf(['auto', 'confirm', 'manual'] as const, p.start, 'auto'),
-			quietFor: p.quiet_for || undefined,
-			max: p.max,
-			entry: p.entry ?? false,
-			subject: p.subject ?? false,
-			stages: p.stages
-		}))
+		phases: list(w.phases).map(toPhaseSummary)
 	};
 }
 

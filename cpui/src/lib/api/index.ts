@@ -27,6 +27,7 @@ import type {
 	EnvCheck,
 	ExposedPort,
 	Flow,
+	FlowBinding,
 	FlowLayout,
 	FlowValidation,
 	FlowVersion,
@@ -540,6 +541,33 @@ export const flows = {
 
 	remove: (projectId: string, name: string) =>
 		unwrapVoid(gen.deleteFlow({ path: { id: projectId, name } })),
+
+	/** The project's parameter bindings, one per configured flow. */
+	bindings: async (projectId: string): Promise<FlowBinding[]> =>
+		many(await unwrap(gen.listFlowBindings({ path: { id: projectId } })), map.toFlowBinding),
+
+	/** The project's values for a flow's parameters; null when it bound
+	 *  nothing (the flow runs on its declared defaults). */
+	binding: async (projectId: string, name: string): Promise<FlowBinding | null> => {
+		const w = await unwrapOptional(gen.getFlowBinding({ path: { id: projectId, name } }));
+		return w ? map.toFlowBinding(w) : null;
+	},
+
+	/** Replace the project's binding: every key a declared parameter, every
+	 *  value one it accepts; an empty value unbinds. A binding left with no
+	 *  values is removed. The document itself is untouched. */
+	bind: async (
+		projectId: string,
+		name: string,
+		params: Record<string, string>
+	): Promise<FlowBinding> =>
+		map.toFlowBinding(
+			await unwrap(gen.putFlowBinding({ path: { id: projectId, name }, body: { params } }))
+		),
+
+	/** Back to the flow's declared defaults. */
+	unbind: (projectId: string, name: string) =>
+		unwrapVoid(gen.deleteFlowBinding({ path: { id: projectId, name } })),
 
 	/** Clone a flow into another project. The copy is a new document with its
 	 *  own history: editing it never reaches back to the original. */

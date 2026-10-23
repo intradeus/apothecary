@@ -24,6 +24,11 @@ export interface Flow {
 	/** This project's own copy of a template's name; deleting it resets to the
 	 *  template. */
 	shadowsBuiltin: boolean;
+	/** The document's parameters — what a project may bind (the engine-known
+	 *  six always present) — and its phases, where a run may begin. Empty when
+	 *  the document no longer parses. */
+	parameters: ParamDecl[];
+	phases: PhaseSummary[];
 }
 
 export interface FlowVersion {
@@ -47,6 +52,16 @@ export interface FlowValidation {
 	parameters: ParamDecl[];
 	refs: ParamRef[];
 	phases: PhaseSummary[];
+}
+
+/** A project's values for a flow's parameters: laid over the document's
+ *  defaults at run creation (and under a run's own overrides), never written
+ *  into the document. A template is bindable without being copied. */
+export interface FlowBinding {
+	projectId: string;
+	flowName: string;
+	params: Record<string, string>;
+	updatedAt: string;
 }
 
 /** One declared parameter of a flow (FLOWLANG §1). */

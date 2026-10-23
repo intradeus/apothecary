@@ -318,6 +318,14 @@ type CopyFlowRequest struct {
 	Name        string `json:"name,omitempty"`
 }
 
+// FlowBindingRequest is a project's values for a flow's parameters: every
+// key a parameter the flow declares (the engine-known names included), every
+// value one it accepts; an empty value unbinds that parameter. The whole
+// binding is replaced, and one left with no values is removed.
+type FlowBindingRequest struct {
+	Params map[string]string `json:"params"`
+}
+
 // StartPhaseRequest starts a phase by hand. Subject is the checkout whose
 // merge request the phase acts on; empty picks the run's single open one, or
 // none.

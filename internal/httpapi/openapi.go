@@ -27,7 +27,7 @@ import (
 
 // SpecVersion is the documented API version. Bump it when the surface changes
 // in a way a client must notice.
-const SpecVersion = "1.0.0"
+const SpecVersion = "1.1.0"
 
 var pathParamRE = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 

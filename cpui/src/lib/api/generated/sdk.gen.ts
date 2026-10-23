@@ -53,6 +53,9 @@ import type {
 	DeleteChannelData,
 	DeleteChannelErrors,
 	DeleteChannelResponses,
+	DeleteFlowBindingData,
+	DeleteFlowBindingErrors,
+	DeleteFlowBindingResponses,
 	DeleteFlowData,
 	DeleteFlowErrors,
 	DeleteFlowResponses,
@@ -86,6 +89,9 @@ import type {
 	GetEnvCheckData,
 	GetEnvCheckErrors,
 	GetEnvCheckResponses,
+	GetFlowBindingData,
+	GetFlowBindingErrors,
+	GetFlowBindingResponses,
 	GetFlowData,
 	GetFlowErrors,
 	GetFlowResponses,
@@ -179,6 +185,9 @@ import type {
 	ListEgressDenialsData,
 	ListEgressDenialsErrors,
 	ListEgressDenialsResponses,
+	ListFlowBindingsData,
+	ListFlowBindingsErrors,
+	ListFlowBindingsResponses,
 	ListFlowsData,
 	ListFlowsErrors,
 	ListFlowsResponses,
@@ -230,6 +239,9 @@ import type {
 	PreflightProjectData,
 	PreflightProjectErrors,
 	PreflightProjectResponses,
+	PutFlowBindingData,
+	PutFlowBindingErrors,
+	PutFlowBindingResponses,
 	RaisePingData,
 	RaisePingErrors,
 	RaisePingResponses,
@@ -829,6 +841,17 @@ export const startEnvCheck = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The project's parameter bindings, one per configured flow
+ */
+export const listFlowBindings = <ThrowOnError extends boolean = false>(
+	options: Options<ListFlowBindingsData, ThrowOnError>
+): RequestResult<ListFlowBindingsResponses, ListFlowBindingsErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListFlowBindingsResponses, ListFlowBindingsErrors, ThrowOnError>({
+		url: '/api/projects/{id}/flow-bindings',
+		...options
+	});
+
+/**
  * One flow version by content hash
  */
 export const getFlowVersion = <ThrowOnError extends boolean = false>(
@@ -899,6 +922,48 @@ export const updateFlow = <ThrowOnError extends boolean = false>(
 ): RequestResult<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError>({
 		url: '/api/projects/{id}/flows/{name}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Put the project back to the flow's declared defaults
+ */
+export const deleteFlowBinding = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteFlowBindingData, ThrowOnError>
+): RequestResult<DeleteFlowBindingResponses, DeleteFlowBindingErrors, ThrowOnError> =>
+	(options.client ?? client).delete<
+		DeleteFlowBindingResponses,
+		DeleteFlowBindingErrors,
+		ThrowOnError
+	>({ url: '/api/projects/{id}/flows/{name}/binding', ...options });
+
+/**
+ * The project's values for a flow's parameters
+ *
+ * 404 when the project bound nothing: the flow runs on its declared defaults. A template is configurable without being copied.
+ */
+export const getFlowBinding = <ThrowOnError extends boolean = false>(
+	options: Options<GetFlowBindingData, ThrowOnError>
+): RequestResult<GetFlowBindingResponses, GetFlowBindingErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetFlowBindingResponses, GetFlowBindingErrors, ThrowOnError>({
+		url: '/api/projects/{id}/flows/{name}/binding',
+		...options
+	});
+
+/**
+ * Bind values to a flow's parameters for this project
+ *
+ * Replaces the binding. Every key must be a parameter the flow declares (the engine-known names included) and every value one it accepts — checked the way a run checks them; an empty value unbinds. A binding left with no values is removed. The document itself is untouched.
+ */
+export const putFlowBinding = <ThrowOnError extends boolean = false>(
+	options: Options<PutFlowBindingData, ThrowOnError>
+): RequestResult<PutFlowBindingResponses, PutFlowBindingErrors, ThrowOnError> =>
+	(options.client ?? client).put<PutFlowBindingResponses, PutFlowBindingErrors, ThrowOnError>({
+		url: '/api/projects/{id}/flows/{name}/binding',
 		...options,
 		headers: {
 			'Content-Type': 'application/json',

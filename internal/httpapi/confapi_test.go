@@ -435,6 +435,152 @@ func TestCopyFlowTemplateAPI(t *testing.T) {
 	}
 }
 
+// A project configures a flow without touching it: the binding has its own
+// endpoints, a template is configurable without being copied, and a bad
+// binding is refused naming the parameter.
+func TestFlowBindingAPI(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+	base := "/api/projects/" + projectID
+	resp, data := x.do(t, "GET", base+"/flow-bindings", nil, nil)
+	if resp.StatusCode != 200 || strings.TrimSpace(string(data)) != "[]" {
+		t.Fatalf("bindings before any = %d: %s", resp.StatusCode, data)
+	}
+	if resp, _ = x.do(t, "GET", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unbound get = %d", resp.StatusCode)
+	}
+	var b struct {
+		ProjectID string            `json:"project_id"`
+		FlowName  string            `json:"flow_name"`
+		Params    map[string]string `json:"params"`
+		UpdatedAt string            `json:"updated_at"`
+	}
+	resp, data = x.do(t, "PUT", base+"/flows/default/binding",
+		map[string]any{"params": map[string]string{"plan_gate": "false", "conflicts_start": "manual", "verify": ""}}, nil)
+	if err := json.Unmarshal(data, &b); err != nil || resp.StatusCode != 200 || b.ProjectID != projectID || b.FlowName != "default" ||
+		len(b.Params) != 2 || b.Params["plan_gate"] != "false" || b.Params["conflicts_start"] != "manual" || b.UpdatedAt == "" {
+		t.Fatalf("put = %d %v: %s", resp.StatusCode, err, data)
+	}
+	resp, data = x.do(t, "GET", base+"/flows/default/binding", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"conflicts_start":"manual"`) {
+		t.Fatalf("get = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", base+"/flow-bindings", nil, nil)
+	if resp.StatusCode != 200 || strings.Count(string(data), `"flow_name"`) != 1 {
+		t.Fatalf("list = %d: %s", resp.StatusCode, data)
+	}
+	// The template is still the template: untouched, and describing what
+	// may be bound and where a run may begin.
+	var fr struct {
+		Builtin    bool `json:"builtin"`
+		Parameters []struct {
+			Name  string `json:"name"`
+			Known bool   `json:"known"`
+		} `json:"parameters"`
+		Phases []struct {
+			ID    string `json:"id"`
+			Entry bool   `json:"entry"`
+		} `json:"phases"`
+	}
+	resp, data = x.do(t, "GET", base+"/flows/default", nil, nil)
+	if err := json.Unmarshal(data, &fr); err != nil || resp.StatusCode != 200 || !fr.Builtin || len(fr.Parameters) < 7 ||
+		fr.Parameters[0].Name != "harness" || !fr.Parameters[0].Known || len(fr.Phases) < 2 || fr.Phases[0].ID != "deliver" || !fr.Phases[0].Entry {
+		t.Fatalf("flow = %d %v: %s", resp.StatusCode, err, data)
+	}
+	// Refusals name the parameter, and leave the binding as it was.
+	for _, bad := range []map[string]string{{"nope": "x"}, {"conflicts_start": "sometimes"}, {"plan_gate": "maybe"}, {"timeout": "soon"}} {
+		resp, data = x.do(t, "PUT", base+"/flows/default/binding", map[string]any{"params": bad}, nil)
+		var name string
+		for k := range bad {
+			name = k
+		}
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), name) {
+			t.Errorf("put %v = %d: %s", bad, resp.StatusCode, data)
+		}
+	}
+	if resp, data = x.do(t, "GET", base+"/flows/default/binding", nil, nil); resp.StatusCode != 200 || !strings.Contains(string(data), `"plan_gate":"false"`) {
+		t.Errorf("binding after refusals = %d: %s", resp.StatusCode, data)
+	}
+	if resp, _ = x.do(t, "PUT", "/api/projects/nope/flows/default/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown project = %d", resp.StatusCode)
+	}
+	if resp, _ = x.do(t, "PUT", base+"/flows/nope/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown flow = %d", resp.StatusCode)
+	}
+	// Clearing every value removes the binding; so does a delete.
+	resp, data = x.do(t, "PUT", base+"/flows/default/binding", map[string]any{"params": map[string]string{"plan_gate": " "}}, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"params":{}`) {
+		t.Fatalf("clearing put = %d: %s", resp.StatusCode, data)
+	}
+	if resp, _ = x.do(t, "GET", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("after clearing = %d", resp.StatusCode)
+	}
+	if resp, _ = x.do(t, "PUT", base+"/flows/default/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != 200 {
+		t.Fatal("re-bind refused")
+	}
+	if resp, _ = x.do(t, "DELETE", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNoContent {
+		t.Errorf("delete = %d", resp.StatusCode)
+	}
+	if resp, _ = x.do(t, "DELETE", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("second delete = %d", resp.StatusCode)
+	}
+}
+
+// Every flow response — a created one, a listing's rows and templates —
+// carries the document's parameters and phases, so the workshop can offer
+// what to bind and the start form where to begin without parsing YAML.
+func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
+	x := newConfEnv(t)
+	projectID := x.wizard(t)
+	base := "/api/projects/" + projectID
+	doc := "name: knobs\nversion: 4\nparameters: { harness: fake, model: a/b, mode: { default: confirm, enum: [auto, confirm, manual] } }\nagents: []\n" +
+		"phases:\n  - id: main\n    on: run_start\n    stages:\n      - { id: s, type: command, run: x }\n" +
+		"  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n"
+	type described struct {
+		Name       string `json:"name"`
+		Builtin    bool   `json:"builtin"`
+		Parameters []struct {
+			Name string `json:"name"`
+		} `json:"parameters"`
+		Phases []struct {
+			ID     string `json:"id"`
+			Signal string `json:"signal"`
+			Start  string `json:"start"`
+			Entry  bool   `json:"entry"`
+		} `json:"phases"`
+	}
+	var fr described
+	resp, data := x.do(t, "POST", base+"/flows", map[string]any{"name": "knobs", "yaml": doc}, nil)
+	// Parameters come in document order, the omitted engine-known names
+	// synthesized after the declared ones.
+	if err := json.Unmarshal(data, &fr); err != nil || resp.StatusCode != http.StatusCreated || len(fr.Parameters) != 7 || fr.Parameters[2].Name != "mode" ||
+		len(fr.Phases) != 2 || !fr.Phases[0].Entry || fr.Phases[1].Signal != "mr_conflicts" || fr.Phases[1].Start != "confirm" {
+		t.Fatalf("create = %d %v: %s", resp.StatusCode, err, data)
+	}
+	var list []described
+	resp, data = x.do(t, "GET", base+"/flows", nil, nil)
+	if err := json.Unmarshal(data, &list); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("list = %d %v: %s", resp.StatusCode, err, data)
+	}
+	seen := map[string]bool{}
+	for _, f := range list {
+		seen[f.Name] = true
+		switch f.Name {
+		case "knobs":
+			if f.Builtin || len(f.Parameters) != 7 || len(f.Phases) != 2 {
+				t.Errorf("knobs in listing = %+v", f)
+			}
+		case "default":
+			if !f.Builtin || len(f.Parameters) < 7 || len(f.Phases) < 2 || f.Phases[0].ID != "deliver" {
+				t.Errorf("default template in listing = %+v", f)
+			}
+		}
+	}
+	if !seen["knobs"] || !seen["default"] {
+		t.Errorf("listing = %+v", list)
+	}
+}
+
 // TestFlowValidateReportsErrorsHonestly: since v3 a flow carries its agents,
 // so a binding that violates a contract is a parse ERROR — ok:false with the
 // reason in `errors`. Advisory findings stay in `warnings` with ok:true.

@@ -27,6 +27,32 @@ type flowResp struct {
 	confstore.FlowRow
 	Builtin        bool `json:"builtin,omitempty"`
 	ShadowsBuiltin bool `json:"shadows_builtin,omitempty"`
+	// Parameters and Phases describe the document (flow v4): what a project
+	// may bind, and where a run may begin. Absent when the document no
+	// longer parses.
+	Parameters []flow.Param   `json:"parameters,omitempty"`
+	Phases     []PhaseSummary `json:"phases,omitempty"`
+}
+
+// describeFlow presents a row with what a project configures and where a run
+// may begin: the document's parameters and phases. A row whose document no
+// longer parses is served without them — the editor shows the parse error,
+// and the rest of the listing stays usable.
+func describeFlow(row confstore.FlowRow, isBuiltin bool) flowResp {
+	out := flowResp{FlowRow: row, Builtin: isBuiltin, ShadowsBuiltin: !isBuiltin && builtin.Flow(row.Name) != nil}
+	f := builtin.Flow(row.Name)
+	if !isBuiltin {
+		parsed, err := flow.Parse(row.Name, []byte(row.YAML))
+		if err != nil {
+			return out
+		}
+		f = parsed
+	}
+	if f == nil {
+		return out
+	}
+	out.Parameters, out.Phases = f.Params, phaseSummaries(f)
+	return out
 }
 
 // builtinFlowRow presents a compiled-in template as a row. projectID is the
@@ -388,7 +414,7 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 	have := map[string]bool{}
 	for _, row := range rows {
 		have[row.Name] = true
-		out = append(out, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
+		out = append(out, describeFlow(row, false))
 	}
 	if projectID != "" {
 		// A built-in is a template until this project saves it, at which
@@ -398,7 +424,7 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			row, _ := builtinFlowRow(projectID, name)
-			out = append(out, flowResp{FlowRow: row, Builtin: true})
+			out = append(out, describeFlow(row, true))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -416,7 +442,7 @@ func (s *Server) listBuiltinFlows(w http.ResponseWriter, r *http.Request) {
 	out := make([]flowResp, 0, len(builtin.FlowNames()))
 	for _, name := range builtin.FlowNames() {
 		row, _ := builtinFlowRow("", name)
-		out = append(out, flowResp{FlowRow: row, Builtin: true})
+		out = append(out, describeFlow(row, true))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -439,7 +465,7 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
+	writeJSON(w, http.StatusCreated, describeFlow(row, false))
 }
 
 // copyFlow clones a flow into another project — how a good flow spreads now
@@ -460,7 +486,7 @@ func (s *Server) copyFlow(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
+	writeJSON(w, http.StatusCreated, describeFlow(row, false))
 }
 
 // copyFlowTemplate adopts a compiled-in template into a project. Templates
@@ -482,7 +508,7 @@ func (s *Server) copyFlowTemplate(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
+	writeJSON(w, http.StatusCreated, describeFlow(row, false))
 }
 
 func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
@@ -492,7 +518,7 @@ func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
 		// Not saved here yet: serve the built-in template this project would
 		// run, marked as such so the editor offers "save to this project".
 		if brow, ok := builtinFlowRow(projectID, name); ok {
-			writeJSON(w, http.StatusOK, flowResp{FlowRow: brow, Builtin: true})
+			writeJSON(w, http.StatusOK, describeFlow(brow, true))
 			return
 		}
 	}
@@ -500,7 +526,7 @@ func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(name) != nil})
+	writeJSON(w, http.StatusOK, describeFlow(row, false))
 }
 
 func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +539,7 @@ func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, flowResp{FlowRow: row, ShadowsBuiltin: builtin.Flow(row.Name) != nil})
+	writeJSON(w, http.StatusOK, describeFlow(row, false))
 }
 
 func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
@@ -525,6 +551,55 @@ func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "flow "+name+" is the built-in template; this project has no copy to delete")
 			return
 		}
+		confErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- flow bindings ----------------------------------------------------------
+//
+// A project configures a flow without touching it: its values for the
+// document's parameters live beside the flow (confstore.FlowBinding), laid
+// over the defaults at run creation. A template is configurable without
+// being copied.
+
+func (s *Server) listFlowBindings(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Conf.ListFlowBindings(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []confstore.FlowBinding{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (s *Server) getFlowBinding(w http.ResponseWriter, r *http.Request) {
+	b, err := s.Conf.GetFlowBinding(r.Context(), r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
+func (s *Server) putFlowBinding(w http.ResponseWriter, r *http.Request) {
+	var body FlowBindingRequest
+	if !readJSON(w, r, &body) {
+		return
+	}
+	b, err := s.Conf.PutFlowBinding(r.Context(), r.PathValue("id"), r.PathValue("name"), body.Params)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
+func (s *Server) deleteFlowBinding(w http.ResponseWriter, r *http.Request) {
+	if err := s.Conf.DeleteFlowBinding(r.Context(), r.PathValue("id"), r.PathValue("name")); err != nil {
 		confErr(w, err)
 		return
 	}
