@@ -213,9 +213,11 @@
 		gap: 2px;
 		overflow: hidden;
 	}
+	/* A tab is clicked far more than it is dragged: the pointer says so, and
+	   the grab shows only while one is being moved. */
 	.tab {
 		flex: none;
-		cursor: grab;
+		cursor: pointer;
 		user-select: none;
 		touch-action: none;
 		white-space: nowrap;
@@ -238,6 +240,7 @@
 	}
 	.tab.ghosted {
 		opacity: var(--o-ghost);
+		cursor: grabbing;
 	}
 	.count {
 		padding: 0 5px;
