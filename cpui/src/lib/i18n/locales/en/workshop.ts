@@ -98,12 +98,31 @@ export default {
 	'workshop.flows.emptyText':
 		'Runs use the {flow} template until this workshop authors or adopts one.',
 	'workshop.flows.templates': 'Built-in templates',
-	'workshop.flows.templatesNote': 'compiled in, owned by nobody — using one copies it here',
+	'workshop.flows.templatesNote':
+		'compiled in, owned by nobody — configure one as it is, or copy it to change its stages',
 	'workshop.flows.builtin': 'built-in',
 	'workshop.flows.fromBinary': 'from the binary',
 	'workshop.flows.view': 'View',
-	'workshop.flows.use': 'Use built-in template',
-	'workshop.flows.useTitle': 'Copy this template into the workshop as an editable flow',
+	'workshop.flows.use': 'Copy to edit…',
+	'workshop.flows.useTitle':
+		'Copy this template into the workshop as an editable flow — only needed to change its stages; Configure binds its parameters as it is',
+	'workshop.flows.configure': 'Configure…',
+	'workshop.flows.configureTitle':
+		'Bind this workshop’s values to the flow’s parameters — the document stays as it is',
+	'workshop.flows.configured': 'configured',
+	'workshop.flows.configuredTitle': 'This workshop binds some of this flow’s parameters',
+	'workshop.flows.binding.title': 'Configure {name}',
+	'workshop.flows.binding.intro':
+		'The flow declares these parameters with defaults. Values bound here are this workshop’s and never touch the document; a run may still override any of them.',
+	'workshop.flows.binding.known': 'Engine parameters',
+	'workshop.flows.binding.own': 'The flow’s own parameters',
+	'workshop.flows.binding.none': 'This flow declares no parameters of its own.',
+	'workshop.flows.binding.stale': 'No longer declared by the flow, dropped on save: {names}',
+	'workshop.flows.binding.save': 'Save',
+	'workshop.flows.binding.saving': 'Saving…',
+	'workshop.flows.binding.reset': 'Back to the flow’s defaults',
+	'workshop.flows.binding.saved': '{name} configured for this workshop',
+	'workshop.flows.binding.resetDone': '{name} is back to its defaults here',
 	'workshop.flows.createTitle': 'New flow',
 	'workshop.flows.createAction': 'Create & edit',
 	'workshop.flows.createNote':

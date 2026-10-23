@@ -1,0 +1,136 @@
+<script lang="ts">
+	// Typed inputs for a flow's declared parameters, shared by the workshop's
+	// Configure sheet and the start-run form. Each value is a string the
+	// engine parses by the parameter's type; empty means "not set here", and
+	// the label says what applies then — the layer underneath (the workshop's
+	// value on the start form), else the flow's default. The engine-known
+	// names get their pickers by name: the harness from the workshop's set,
+	// the model from what that harness lists, the timeout as a duration.
+	import type { Model, ParamDecl } from '$lib/domain';
+	import DurationInput from '$lib/ui/DurationInput.svelte';
+	import { t } from '$lib/i18n/index.svelte';
+
+	let {
+		params,
+		values,
+		under,
+		harnesses = [],
+		models = [],
+		idPrefix = 'pf',
+		onchange
+	}: {
+		params: ParamDecl[];
+		values: Record<string, string>;
+		/** The layer underneath, per name: what applies when a value is left
+		 *  empty here (the workshop's binding, on the start form). The flow's
+		 *  default applies where it says nothing. */
+		under?: Record<string, string>;
+		/** The harness kinds the workshop can run, for the harness picker. */
+		harnesses?: { kind: string; label: string }[];
+		/** What the effective harness lists, for the model field. */
+		models?: Model[];
+		idPrefix?: string;
+		onchange: (name: string, value: string) => void;
+	} = $props();
+
+	type Kind = 'bool' | 'int' | 'float' | 'enum' | 'duration' | 'harness' | 'model' | 'string';
+	function kindOf(p: ParamDecl): Kind {
+		if (p.name === 'harness') return 'harness';
+		if (p.name === 'model') return 'model';
+		if (p.type !== 'string') return p.type;
+		if (p.enum?.length) return 'enum';
+		if (p.name === 'timeout' || /^\d+(ms|s|m|h)$/.test(p.default)) return 'duration';
+		return 'string';
+	}
+	const applies = (p: ParamDecl) => under?.[p.name] ?? p.default;
+	function appliesLabel(p: ParamDecl): string {
+		const u = under?.[p.name];
+		return u !== undefined
+			? t('flow.fields.fromWorkshop', { value: u })
+			: t('flow.fields.flowDefault', { value: p.default });
+	}
+	const id = (p: ParamDecl) => `${idPrefix}-${p.name}`;
+</script>
+
+{#each params as p (p.name)}
+	{@const kind = kindOf(p)}
+	{@const v = values[p.name] ?? ''}
+	<div class="field pf">
+		<label for={id(p)}>
+			<span class="mono">{p.name}</span>
+			<span class="fnt small">{appliesLabel(p)}</span>
+		</label>
+		{#if p.description}<div class="help">{p.description}</div>{/if}
+		{#if kind === 'bool'}
+			<select id={id(p)} value={v} onchange={(e) => onchange(p.name, e.currentTarget.value)}>
+				<option value="">{t('flow.fields.unset')}</option>
+				<option value="true">true</option>
+				<option value="false">false</option>
+			</select>
+		{:else if kind === 'enum'}
+			<select id={id(p)} value={v} onchange={(e) => onchange(p.name, e.currentTarget.value)}>
+				<option value="">{t('flow.fields.unset')}</option>
+				{#each p.enum ?? [] as o (o)}<option value={o}>{o}</option>{/each}
+			</select>
+		{:else if kind === 'harness'}
+			<select id={id(p)} value={v} onchange={(e) => onchange(p.name, e.currentTarget.value)}>
+				<option value="">{t('flow.fields.unset')}</option>
+				{#each harnesses as h (h.kind)}<option value={h.kind}>{h.label}</option>{/each}
+				{#if v && !harnesses.some((h) => h.kind === v)}<option value={v}>{v}</option>{/if}
+			</select>
+		{:else if kind === 'model'}
+			<input
+				id={id(p)}
+				list="{id(p)}-list"
+				value={v}
+				placeholder={applies(p)}
+				autocomplete="off"
+				oninput={(e) => onchange(p.name, e.currentTarget.value.trim())}
+			/>
+			<datalist id="{id(p)}-list">
+				{#each models as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
+			</datalist>
+		{:else if kind === 'duration'}
+			<div class="dur">
+				<DurationInput
+					id={id(p)}
+					label={p.name}
+					bind:value={() => v, (nv) => onchange(p.name, nv)}
+				/>
+				{#if v}<button type="button" class="btn-sm" onclick={() => onchange(p.name, '')}
+						>{t('flow.fields.clear')}</button
+					>{/if}
+			</div>
+		{:else if kind === 'int' || kind === 'float'}
+			<input
+				id={id(p)}
+				type="number"
+				step={kind === 'float' ? 'any' : '1'}
+				value={v}
+				placeholder={applies(p)}
+				oninput={(e) => onchange(p.name, e.currentTarget.value.trim())}
+			/>
+		{:else}
+			<input
+				id={id(p)}
+				value={v}
+				placeholder={applies(p)}
+				oninput={(e) => onchange(p.name, e.currentTarget.value)}
+			/>
+		{/if}
+	</div>
+{/each}
+
+<style>
+	.pf label {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.dur {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+</style>

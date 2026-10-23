@@ -2,8 +2,10 @@
 	import { t, th } from '$lib/i18n/index.svelte';
 	// Workshop flows tab (DESIGN 7.7): this workshop's own flows, then the
 	// built-in templates it has not adopted. New flow, Copy into another
-	// workshop, and "Use" a template (adopt a copy) — everything the old
-	// cross-project /flows page did, scoped to one workshop.
+	// workshop, Configure (bind this workshop's values to a flow's
+	// parameters — a template as it is, no copy needed), and "Copy to edit" a
+	// template — everything the old cross-project /flows page did, scoped to
+	// one workshop.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import type { Flow, Project } from '$lib/domain';
@@ -11,6 +13,7 @@
 	import { to } from '$lib/guild';
 	import { ago, fmtAbs } from '$lib/format';
 	import CopyFlow from '$lib/CopyFlow.svelte';
+	import FlowBindingSheet from '$lib/workshop/FlowBindingSheet.svelte';
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
 	import { flowSkeleton } from '$lib/flow/skeleton';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -33,6 +36,21 @@
 
 	let creating = $state(false);
 	let copying = $state<{ flow: Flow; target?: string } | null>(null);
+	let configuring = $state<Flow | null>(null);
+	// Which flows this workshop has bound parameters on — a pill, nothing
+	// more: the sheet reports its own errors.
+	let configured = $state<Set<string>>(new Set());
+	async function loadBindings() {
+		try {
+			configured = new Set((await api.flows.bindings(project.id)).map((b) => b.flowName));
+		} catch {
+			configured = new Set();
+		}
+	}
+	$effect(() => {
+		void project.id;
+		void loadBindings();
+	});
 	const projects = $derived(fleet.projects.length ? fleet.projects : [project]);
 	const projectName = (id: string) => fleet.projectById.get(id)?.name ?? project.name;
 
@@ -82,11 +100,20 @@
 									title={t('workshop.flows.fromTemplateTitle')}
 									>{t('workshop.flows.fromTemplate')}</span
 								>{/if}
+							{#if configured.has(f.name)}<span
+									class="pill sm t-brand"
+									title={t('workshop.flows.configuredTitle')}>{t('workshop.flows.configured')}</span
+								>{/if}
 						</span>
 						<span><span class="tag">@{f.hash.slice(0, 8)}</span></span>
 						<span class="num mono fnt" title={fmtAbs(f.updatedAt)}>{ago(f.updatedAt)}</span>
 						<span class="acts over-stretch">
 							<a class="btn btn-sm" href={to.flow(project.id, f.name)}>{t('workshop.flows.edit')}</a
+							>
+							<button
+								class="btn-sm"
+								title={t('workshop.flows.configureTitle')}
+								onclick={() => (configuring = f)}>{t('workshop.flows.configure')}</button
 							>
 							<button
 								class="btn-sm"
@@ -128,6 +155,10 @@
 							{#if tpl.name === project.defaultFlow}<span class="pill sm t-brand"
 									>{t('workshop.flows.default')}</span
 								>{/if}
+							{#if configured.has(tpl.name)}<span
+									class="pill sm t-brand"
+									title={t('workshop.flows.configuredTitle')}>{t('workshop.flows.configured')}</span
+								>{/if}
 						</span>
 						<span><span class="tag">@{tpl.hash.slice(0, 8)}</span></span>
 						<span class="num fnt small">{t('workshop.flows.fromBinary')}</span>
@@ -137,6 +168,11 @@
 							>
 							<button
 								class="btn-sm btn-sel"
+								title={t('workshop.flows.configureTitle')}
+								onclick={() => (configuring = tpl)}>{t('workshop.flows.configure')}</button
+							>
+							<button
+								class="btn-sm"
 								title={t('workshop.flows.useTitle')}
 								onclick={() => (copying = { flow: tpl, target: project.id })}
 								>{t('workshop.flows.use')}</button
@@ -159,6 +195,24 @@
 	>
 		<p>{@html th('workshop.flows.createNote', { name: project.name })}</p>
 	</NameFlowDialog>
+{/if}
+
+{#if configuring}
+	{@const name = configuring.name}
+	<FlowBindingSheet
+		{project}
+		flow={configuring}
+		onclose={() => (configuring = null)}
+		onsaved={(b) => {
+			configuring = null;
+			toast(
+				b
+					? t('workshop.flows.binding.saved', { name })
+					: t('workshop.flows.binding.resetDone', { name })
+			);
+			void loadBindings();
+		}}
+	/>
 {/if}
 
 {#if copying}

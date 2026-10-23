@@ -529,6 +529,10 @@ export default {
 	'flow.insp.textPlaceholder': 'as the tracker spells it',
 	'flow.insp.textInputHelp': 'A literal written in the flow, not a file.',
 	'flow.insp.exactlyOne': 'Bind exactly one of {names}.',
+	'flow.fields.unset': '— not set here',
+	'flow.fields.flowDefault': 'flow default: {value}',
+	'flow.fields.fromWorkshop': 'workshop: {value}',
+	'flow.fields.clear': 'Clear',
 	'flow.insp.produces': 'Produces <span class="mono">{name}</span>',
 	'flow.insp.producesSentinel':
 		', available to later stages as <span class="mono">{sentinel}</span>',
