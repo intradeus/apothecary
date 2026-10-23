@@ -484,6 +484,70 @@ func (s *Store) DeleteFlow(ctx context.Context, projectID, name string) error {
 	return nil // versions stay: immutable forever (§7)
 }
 
+// --- flow bindings ----------------------------------------------------------
+
+func (s *Store) PutFlowBinding(ctx context.Context, b confstore.FlowBinding) error {
+	params, err := json.Marshal(b.Params)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO flow_bindings (project_id, flow_name, params, updated_at) VALUES ($1,$2,$3,$4)
+		ON CONFLICT (project_id, flow_name) DO UPDATE SET params=$3, updated_at=$4`,
+		b.ProjectID, b.FlowName, params, b.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetFlowBinding(ctx context.Context, projectID, flowName string) (confstore.FlowBinding, error) {
+	var b confstore.FlowBinding
+	var params []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT project_id, flow_name, params, updated_at FROM flow_bindings WHERE project_id=$1 AND flow_name=$2`,
+		projectID, flowName).
+		Scan(&b.ProjectID, &b.FlowName, &params, &b.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return b, fmt.Errorf("flow binding %s: %w", flowName, confstore.ErrNotFound)
+	}
+	if err != nil {
+		return b, err
+	}
+	err = json.Unmarshal(params, &b.Params)
+	return b, err
+}
+
+func (s *Store) ListFlowBindings(ctx context.Context, projectID string) ([]confstore.FlowBinding, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT project_id, flow_name, params, updated_at FROM flow_bindings WHERE project_id=$1 ORDER BY flow_name`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.FlowBinding
+	for rows.Next() {
+		var b confstore.FlowBinding
+		var params []byte
+		if err := rows.Scan(&b.ProjectID, &b.FlowName, &params, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(params, &b.Params); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteFlowBinding(ctx context.Context, projectID, flowName string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM flow_bindings WHERE project_id=$1 AND flow_name=$2`, projectID, flowName)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("flow binding %s: %w", flowName, confstore.ErrNotFound)
+	}
+	return nil
+}
+
 func (s *Store) GetFlowVersion(ctx context.Context, projectID, hash string) (confstore.FlowVersion, error) {
 	var v confstore.FlowVersion
 	err := s.pool.QueryRow(ctx,

@@ -206,6 +206,9 @@ func cmdServe(args []string) error {
 	// Flows resolve DB-first with the compiled-in defaults underneath
 	// (internal/builtin): an empty database still runs the "default" flow.
 	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
+	// A project's parameter bindings are laid over a flow's defaults at run
+	// creation; the config store holds them beside the flow.
+	e.SetFlowBindings(conf)
 	if boot.OtelEndpoint != "" {
 		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {

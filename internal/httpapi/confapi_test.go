@@ -69,6 +69,7 @@ func newConfEnv(t *testing.T) *confEnv {
 	store := event.NewMemStore()
 	chreg := channels.NewRegistry()
 	e := engine.New(engine.Config{}, store, resolver, conf.FlowSource(), resolve.Settings{Conf: conf}, nil)
+	e.SetFlowBindings(conf)
 	t.Cleanup(e.Shutdown)
 
 	srv := New(e, store, chreg, "")

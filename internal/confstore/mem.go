@@ -19,6 +19,7 @@ type Mem struct {
 	tickets      map[string]Ticket
 	flows        map[string]FlowRow
 	versions     map[string]FlowVersion
+	bindings     map[string]FlowBinding
 	settings     map[string]string
 
 	// BlockingRuns lists non-archived runs of a project (blocks project
@@ -36,6 +37,7 @@ func NewMem() *Mem {
 		tickets:      map[string]Ticket{},
 		flows:        map[string]FlowRow{},
 		versions:     map[string]FlowVersion{},
+		bindings:     map[string]FlowBinding{},
 		settings:     map[string]string{},
 	}
 }
@@ -160,6 +162,12 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 		}
 	}
 	delete(m.projects, id)
+	// Bindings go with the project (pg: ON DELETE CASCADE).
+	for key, b := range m.bindings {
+		if b.ProjectID == id {
+			delete(m.bindings, key)
+		}
+	}
 	return nil
 }
 
@@ -302,6 +310,52 @@ func (m *Mem) ListFlowVersions(_ context.Context, projectID, name string) ([]Flo
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
+}
+
+func (m *Mem) PutFlowBinding(_ context.Context, b FlowBinding) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.projects[b.ProjectID]; !ok {
+		return fmt.Errorf("binding of flow %s references a missing project: %w", b.FlowName, ErrInvalid)
+	}
+	b.Params = maps.Clone(b.Params)
+	m.bindings[flowKey(b.ProjectID, b.FlowName)] = b
+	return nil
+}
+
+func (m *Mem) GetFlowBinding(_ context.Context, projectID, flowName string) (FlowBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.bindings[flowKey(projectID, flowName)]
+	if !ok {
+		return FlowBinding{}, notFound("flow binding", flowName)
+	}
+	b.Params = maps.Clone(b.Params)
+	return b, nil
+}
+
+func (m *Mem) ListFlowBindings(_ context.Context, projectID string) ([]FlowBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []FlowBinding
+	for _, b := range m.bindings {
+		if b.ProjectID == projectID {
+			b.Params = maps.Clone(b.Params)
+			out = append(out, b)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].FlowName < out[j].FlowName })
+	return out, nil
+}
+
+func (m *Mem) DeleteFlowBinding(_ context.Context, projectID, flowName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.bindings[flowKey(projectID, flowName)]; !ok {
+		return notFound("flow binding", flowName)
+	}
+	delete(m.bindings, flowKey(projectID, flowName))
+	return nil
 }
 
 // flowKey scopes a flow (and a version) to its project.

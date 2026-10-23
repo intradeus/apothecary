@@ -496,8 +496,20 @@ func (s *Service) ListFlows(ctx context.Context, projectID string) ([]FlowRow, e
 	return s.db.ListFlows(ctx, projectID)
 }
 
+// DeleteFlow removes the project's document. Its binding goes with it —
+// unless a built-in template of that name is underneath: then the delete
+// is a reset to the template, which the project keeps configured.
 func (s *Service) DeleteFlow(ctx context.Context, projectID, name string) error {
-	return s.db.DeleteFlow(ctx, projectID, name)
+	if err := s.db.DeleteFlow(ctx, projectID, name); err != nil {
+		return err
+	}
+	if _, template := builtin.FlowYAML(name); template {
+		return nil
+	}
+	if err := s.db.DeleteFlowBinding(ctx, projectID, name); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) FlowVersions(ctx context.Context, projectID, name string) ([]FlowVersion, error) {

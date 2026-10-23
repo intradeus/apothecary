@@ -52,10 +52,71 @@ func openConf(t *testing.T) *Store {
 	if _, err := s.pool.Exec(context.Background(),
 		// CASCADE: tickets (and through them attachments) FK projects, so a
 		// plain TRUNCATE of the subset errors.
-		`TRUNCATE projects, integrations, flows, flow_versions, settings CASCADE`); err != nil {
+		`TRUNCATE projects, integrations, flows, flow_versions, flow_bindings, settings CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// Bindings live beside the flow and die with the project: an upsert, the
+// per-project listing, a delete, and the cascade.
+func TestFlowBindingRoundtripAndCascade(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	in := confstore.StoredIntegration{
+		ID: "int1", Port: "forge", Kind: "gitlab", Name: "gl",
+		Config: map[string]any{"base_url": "https://gitlab.com"},
+		Sealed: []byte{1, 2, 3}, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.UpsertIntegration(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	p := confstore.Project{
+		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
+		Commands:    map[string]string{"verify": "make test"},
+		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetFlowBinding(ctx, p.ID, "default"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Fatalf("missing binding err = %v, want ErrNotFound", err)
+	}
+	b := confstore.FlowBinding{ProjectID: p.ID, FlowName: "default", Params: map[string]string{"harness": "fake"}, UpdatedAt: now}
+	if err := s.PutFlowBinding(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	b.Params["plan_gate"] = "false"
+	b.UpdatedAt = now.Add(time.Second)
+	if err := s.PutFlowBinding(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetFlowBinding(ctx, p.ID, "default")
+	if err != nil || len(got.Params) != 2 || got.Params["plan_gate"] != "false" || !got.UpdatedAt.Equal(b.UpdatedAt) {
+		t.Fatalf("roundtrip = %+v, %v", got, err)
+	}
+	if err := s.PutFlowBinding(ctx, confstore.FlowBinding{ProjectID: p.ID, FlowName: "knobs", Params: map[string]string{}, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListFlowBindings(ctx, p.ID)
+	if err != nil || len(list) != 2 || list[0].FlowName != "default" || list[1].FlowName != "knobs" || list[1].Params == nil {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if err := s.DeleteFlowBinding(ctx, p.ID, "knobs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteFlowBinding(ctx, p.ID, "knobs"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("second delete err = %v, want ErrNotFound", err)
+	}
+	// The project takes its bindings with it.
+	if err := s.DeleteProject(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetFlowBinding(ctx, p.ID, "default"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("binding outlived its project: %v", err)
+	}
 }
 
 func TestConfCRUDRoundtrip(t *testing.T) {

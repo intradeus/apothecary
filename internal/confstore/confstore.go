@@ -182,6 +182,19 @@ type FlowVersion struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// FlowBinding is a project's values for a flow's parameters (flow v4
+// `parameters:`): what the project bound in Workshop → Flows → Configure,
+// laid over the document's defaults at run creation and under a run's own
+// overrides. Keyed by (project, flow name) — a built-in template has no
+// FlowRow, and binding one is the common case — and never part of the
+// flow's hash: a binding changes nothing in the document.
+type FlowBinding struct {
+	ProjectID string            `json:"project_id"`
+	FlowName  string            `json:"flow_name"`
+	Params    map[string]string `json:"params"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
 // DB is the persistence boundary. Implementations enforce the §2 delete
 // rules that need adjacent tables (project→runs, integration→projects,
 // flow→projects/runs) and return ErrNotFound/ErrReferenced/ErrConflict.
@@ -211,6 +224,14 @@ type DB interface {
 	DeleteFlow(ctx Ctx, projectID, name string) error
 	GetFlowVersion(ctx Ctx, projectID, hash string) (FlowVersion, error)
 	ListFlowVersions(ctx Ctx, projectID, name string) ([]FlowVersion, error)
+
+	// Flow bindings go with their project (deleted with it), not with the
+	// flow row: a template has none, and the Service decides what a flow's
+	// deletion means for its binding.
+	PutFlowBinding(ctx Ctx, b FlowBinding) error
+	GetFlowBinding(ctx Ctx, projectID, flowName string) (FlowBinding, error)
+	ListFlowBindings(ctx Ctx, projectID string) ([]FlowBinding, error)
+	DeleteFlowBinding(ctx Ctx, projectID, flowName string) error
 
 	GetSettings(ctx Ctx) (map[string]string, error) // key -> raw JSON value
 	PutSetting(ctx Ctx, key, value string) error
