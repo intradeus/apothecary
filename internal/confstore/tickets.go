@@ -22,12 +22,16 @@ type Ticket struct {
 	// once and edits here never travel back to the tracker, so a ticket keeps
 	// working after the integration is deleted — which is why SourceKind is
 	// stored next to the id rather than looked up through it.
-	SourceID   string    `json:"source_id,omitempty"`   // ticketsource integration
-	SourceKind string    `json:"source_kind,omitempty"` // "jira"
-	SourceKey  string    `json:"source_key,omitempty"`  // "PROJ-123"
-	SourceURL  string    `json:"source_url,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	SourceID   string `json:"source_id,omitempty"`   // ticketsource integration
+	SourceKind string `json:"source_kind,omitempty"` // "jira"
+	SourceKey  string `json:"source_key,omitempty"`  // "PROJ-123"
+	SourceURL  string `json:"source_url,omitempty"`
+	// AutomationID names the automation that imported the ticket, when one
+	// did: provenance that lets a later poll tell its own import still
+	// waiting for a run from a person's ticket.
+	AutomationID string    `json:"automation_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // CreateTicket validates and inserts a ticket. Branch-format validation is the

@@ -20,6 +20,7 @@ type Mem struct {
 	flows        map[string]FlowRow
 	versions     map[string]FlowVersion
 	bindings     map[string]FlowBinding
+	automations  map[string]Automation
 	settings     map[string]string
 
 	// BlockingRuns lists non-archived runs of a project (blocks project
@@ -38,6 +39,7 @@ func NewMem() *Mem {
 		flows:        map[string]FlowRow{},
 		versions:     map[string]FlowVersion{},
 		bindings:     map[string]FlowBinding{},
+		automations:  map[string]Automation{},
 		settings:     map[string]string{},
 	}
 }
@@ -162,10 +164,15 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 		}
 	}
 	delete(m.projects, id)
-	// Bindings go with the project (pg: ON DELETE CASCADE).
+	// Bindings and automations go with the project (pg: ON DELETE CASCADE).
 	for key, b := range m.bindings {
 		if b.ProjectID == id {
 			delete(m.bindings, key)
+		}
+	}
+	for key, a := range m.automations {
+		if a.ProjectID == id {
+			delete(m.automations, key)
 		}
 	}
 	return nil
@@ -355,6 +362,57 @@ func (m *Mem) DeleteFlowBinding(_ context.Context, projectID, flowName string) e
 		return notFound("flow binding", flowName)
 	}
 	delete(m.bindings, flowKey(projectID, flowName))
+	return nil
+}
+
+func (m *Mem) UpsertAutomation(_ context.Context, a Automation) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.projects[a.ProjectID]; !ok {
+		return fmt.Errorf("automation %s references a missing project: %w", a.ID, ErrInvalid)
+	}
+	a.Params = maps.Clone(a.Params)
+	m.automations[a.ID] = a
+	return nil
+}
+
+func (m *Mem) GetAutomation(_ context.Context, id string) (Automation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.automations[id]
+	if !ok {
+		return Automation{}, notFound("automation", id)
+	}
+	a.Params = maps.Clone(a.Params)
+	return a, nil
+}
+
+func (m *Mem) ListAutomations(_ context.Context, projectID string) ([]Automation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Automation
+	for _, a := range m.automations {
+		if projectID == "" || a.ProjectID == projectID {
+			a.Params = maps.Clone(a.Params)
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+func (m *Mem) DeleteAutomation(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.automations[id]; !ok {
+		return notFound("automation", id)
+	}
+	delete(m.automations, id)
 	return nil
 }
 

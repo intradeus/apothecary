@@ -26,6 +26,7 @@ import (
 
 	matrixadapter "apothecary/internal/adapters/matrix"
 	slackadapter "apothecary/internal/adapters/slack"
+	"apothecary/internal/automation"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
@@ -41,6 +42,7 @@ import (
 	"apothecary/internal/resolve"
 	"apothecary/internal/secrets"
 	"apothecary/internal/telemetry"
+	"apothecary/internal/tickets"
 )
 
 // version is stamped by the release build (deploy/release.sh, ldflags).
@@ -373,6 +375,29 @@ func cmdServe(args []string) error {
 			case <-t.C:
 				if err := e.IngestEgressAuditOnce(reaperCtx); err != nil {
 					log.Error("egress audit ingest failed", "err", err)
+				}
+			case <-reaperCtx.Done():
+				return
+			}
+		}
+	}()
+
+	// Automations: tracker queries polled into tickets and runs, schedules
+	// firing runs — the ways a run begins without a person (flow v4). A
+	// pass walks every enabled automation; each one's failure is recorded
+	// on it, never on the pass.
+	watcher := &automation.Watcher{
+		Engine: e, Conf: conf, Notify: chreg, Log: log,
+		Tickets: &tickets.Factory{Conf: conf, Attachments: attachments, Sources: resolver, Log: log},
+	}
+	go func() {
+		t := time.NewTicker(2 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if err := watcher.RunOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
+					log.Error("automation pass failed", "err", err)
 				}
 			case <-reaperCtx.Done():
 				return

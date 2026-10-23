@@ -52,10 +52,72 @@ func openConf(t *testing.T) *Store {
 	if _, err := s.pool.Exec(context.Background(),
 		// CASCADE: tickets (and through them attachments) FK projects, so a
 		// plain TRUNCATE of the subset errors.
-		`TRUNCATE projects, integrations, flows, flow_versions, flow_bindings, settings CASCADE`); err != nil {
+		`TRUNCATE projects, integrations, flows, flow_versions, flow_bindings, automations, settings CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// An automation row round-trips with its nullable marks and jsonb params,
+// lists per project and overall, and dies with the project; a ticket keeps
+// the automation that imported it.
+func TestAutomationRoundtripAndCascade(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	in := confstore.StoredIntegration{ID: "int1", Port: "forge", Kind: "gitlab", Name: "gl",
+		Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now}
+	if err := s.UpsertIntegration(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	p := confstore.Project{
+		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
+		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	tk := confstore.Ticket{ID: "tk1", ProjectID: p.ID, Title: "T", AutomationID: "au1", CreatedAt: now, UpdatedAt: now}
+	if err := s.UpsertTicket(ctx, tk); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetTicket(ctx, "tk1"); err != nil || got.AutomationID != "au1" {
+		t.Fatalf("ticket automation_id = %q, %v", got.AutomationID, err)
+	}
+	a := confstore.Automation{ID: "au1", ProjectID: p.ID, Name: "nightly", Kind: confstore.AutomationCron,
+		Schedule: "0 3 * * *", TicketID: "tk1", Flow: "default", Params: map[string]string{"plan_gate": "false"},
+		Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := s.UpsertAutomation(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetAutomation(ctx, "au1")
+	if err != nil || got.Params["plan_gate"] != "false" || got.LastFiredAt != nil || got.LastPolledAt != nil || !got.Enabled {
+		t.Fatalf("roundtrip = %+v, %v", got, err)
+	}
+	fired := now.Add(time.Hour)
+	got.LastFiredAt, got.LastPolledAt, got.LastError, got.Params = &fired, &fired, "boom", nil
+	if err := s.UpsertAutomation(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.GetAutomation(ctx, "au1"); err != nil || again.LastFiredAt == nil || !again.LastFiredAt.Equal(fired) || again.LastError != "boom" || again.Params != nil {
+		t.Fatalf("marked = %+v, %v", again, err)
+	}
+	if list, err := s.ListAutomations(ctx, p.ID); err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if list, err := s.ListAutomations(ctx, ""); err != nil || len(list) != 1 {
+		t.Fatalf("list all = %+v, %v", list, err)
+	}
+	if err := s.DeleteProject(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetAutomation(ctx, "au1"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("automation outlived its project: %v", err)
+	}
+	if err := s.DeleteAutomation(ctx, "au1"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("delete of nothing = %v", err)
+	}
 }
 
 // Bindings live beside the flow and die with the project: an upsert, the

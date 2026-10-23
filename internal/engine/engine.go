@@ -1463,6 +1463,22 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	return nil
 }
 
+// RunsOfTicket lists the runs created for a ticket, newest last — what an
+// automation asks before starting a run for a ticket it imported earlier.
+func (e *Engine) RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error) {
+	all, err := e.views(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []run.View
+	for _, v := range all {
+		if v.TicketID == ticketID {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
 // views is every run's read-model row: one query when the store keeps the
 // projection (run.ViewSource), else each run's log reduced — the in-memory
 // store's path, and the reference the projection is checked against.

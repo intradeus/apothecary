@@ -38,6 +38,9 @@ import type {
 	CopyFlowTemplateData,
 	CopyFlowTemplateErrors,
 	CopyFlowTemplateResponses,
+	CreateAutomationData,
+	CreateAutomationErrors,
+	CreateAutomationResponses,
 	CreateFlowData,
 	CreateFlowErrors,
 	CreateFlowResponses,
@@ -50,6 +53,9 @@ import type {
 	CreateTicketData,
 	CreateTicketErrors,
 	CreateTicketResponses,
+	DeleteAutomationData,
+	DeleteAutomationErrors,
+	DeleteAutomationResponses,
 	DeleteChannelData,
 	DeleteChannelErrors,
 	DeleteChannelResponses,
@@ -80,6 +86,9 @@ import type {
 	GetAttachmentLimitsData,
 	GetAttachmentLimitsErrors,
 	GetAttachmentLimitsResponses,
+	GetAutomationData,
+	GetAutomationErrors,
+	GetAutomationResponses,
 	GetBuildCacheData,
 	GetBuildCacheErrors,
 	GetBuildCacheResponses,
@@ -179,6 +188,9 @@ import type {
 	ListAllFlowsData,
 	ListAllFlowsErrors,
 	ListAllFlowsResponses,
+	ListAutomationsData,
+	ListAutomationsErrors,
+	ListAutomationsResponses,
 	ListChannelsData,
 	ListChannelsErrors,
 	ListChannelsResponses,
@@ -285,6 +297,9 @@ import type {
 	TestIntegrationData,
 	TestIntegrationErrors,
 	TestIntegrationResponses,
+	UpdateAutomationData,
+	UpdateAutomationErrors,
+	UpdateAutomationResponses,
 	UpdateFlowData,
 	UpdateFlowErrors,
 	UpdateFlowResponses,
@@ -754,6 +769,72 @@ export const updateProject = <ThrowOnError extends boolean = false>(
 ): RequestResult<UpdateProjectResponses, UpdateProjectErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateProjectResponses, UpdateProjectErrors, ThrowOnError>({
 		url: '/api/projects/{id}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * The project's automations: how runs begin without a person
+ */
+export const listAutomations = <ThrowOnError extends boolean = false>(
+	options: Options<ListAutomationsData, ThrowOnError>
+): RequestResult<ListAutomationsResponses, ListAutomationsErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListAutomationsResponses, ListAutomationsErrors, ThrowOnError>({
+		url: '/api/projects/{id}/automations',
+		...options
+	});
+
+/**
+ * Create an automation
+ *
+ * Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves, the phase is one of its entrypoints, the params are ones it accepts.
+ */
+export const createAutomation = <ThrowOnError extends boolean = false>(
+	options: Options<CreateAutomationData, ThrowOnError>
+): RequestResult<CreateAutomationResponses, CreateAutomationErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateAutomationResponses, CreateAutomationErrors, ThrowOnError>({
+		url: '/api/projects/{id}/automations',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Delete an automation (the tickets it imported stay)
+ */
+export const deleteAutomation = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteAutomationData, ThrowOnError>
+): RequestResult<DeleteAutomationResponses, DeleteAutomationErrors, ThrowOnError> =>
+	(options.client ?? client).delete<
+		DeleteAutomationResponses,
+		DeleteAutomationErrors,
+		ThrowOnError
+	>({ url: '/api/projects/{id}/automations/{aid}', ...options });
+
+/**
+ * One automation, with what the watcher last did with it
+ */
+export const getAutomation = <ThrowOnError extends boolean = false>(
+	options: Options<GetAutomationData, ThrowOnError>
+): RequestResult<GetAutomationResponses, GetAutomationErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetAutomationResponses, GetAutomationErrors, ThrowOnError>({
+		url: '/api/projects/{id}/automations/{aid}',
+		...options
+	});
+
+/**
+ * Replace an automation (its last poll, firing and error are kept)
+ */
+export const updateAutomation = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateAutomationData, ThrowOnError>
+): RequestResult<UpdateAutomationResponses, UpdateAutomationErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateAutomationResponses, UpdateAutomationErrors, ThrowOnError>({
+		url: '/api/projects/{id}/automations/{aid}',
 		...options,
 		headers: {
 			'Content-Type': 'application/json',

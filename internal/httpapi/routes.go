@@ -85,6 +85,7 @@ const (
 	tagProjects     = "projects"
 	tagIntegrations = "integrations"
 	tagFlows        = "flows"
+	tagAutomations  = "automations"
 	tagChannels     = "channels"
 	tagSystem       = "system"
 )
@@ -444,6 +445,23 @@ func (s *Server) routes() []Route {
 			Summary: "Copy a flow into another project",
 			Handler: s.copyFlow, Body: CopyFlowRequest{}, Returns: flowResp{},
 			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "GET", Path: "/api/projects/{id}/automations", ID: "listAutomations", Tag: tagAutomations,
+			Summary: "The project's automations: how runs begin without a person",
+			Handler: s.listAutomations, Returns: []confstore.Automation{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/projects/{id}/automations", ID: "createAutomation", Tag: tagAutomations,
+			Summary: "Create an automation",
+			Doc:     "Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves, the phase is one of its entrypoints, the params are ones it accepts.",
+			Handler: s.createAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{},
+			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "GET", Path: "/api/projects/{id}/automations/{aid}", ID: "getAutomation", Tag: tagAutomations,
+			Summary: "One automation, with what the watcher last did with it",
+			Handler: s.getAutomation, Returns: confstore.Automation{}, Enabled: haveConf},
+		{Method: "PUT", Path: "/api/projects/{id}/automations/{aid}", ID: "updateAutomation", Tag: tagAutomations,
+			Summary: "Replace an automation (its last poll, firing and error are kept)",
+			Handler: s.updateAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{}, Enabled: haveConf},
+		{Method: "DELETE", Path: "/api/projects/{id}/automations/{aid}", ID: "deleteAutomation", Tag: tagAutomations,
+			Summary: "Delete an automation (the tickets it imported stay)",
+			Handler: s.deleteAutomation, Status: http.StatusNoContent, Enabled: haveConf},
 		{Method: "GET", Path: "/api/projects/{id}/flow-bindings", ID: "listFlowBindings", Tag: tagFlows,
 			Summary: "The project's parameter bindings, one per configured flow",
 			Handler: s.listFlowBindings, Returns: []confstore.FlowBinding{}, Enabled: haveConf},

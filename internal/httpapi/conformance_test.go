@@ -74,6 +74,8 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		{method: "GET", path: "/api/integrations", want: 200},
 		{method: "GET", path: "/api/flows", want: 200},
 		{method: "GET", path: "/api/projects/" + testProject + "/flow-bindings", want: 200},
+		{method: "GET", path: "/api/projects/" + testProject + "/automations", want: 200},
+		{method: "POST", path: "/api/projects/" + testProject + "/automations", body: map[string]any{"name": "x", "kind": "nope", "flow": "default"}, want: 400},
 		{method: "GET", path: "/api/projects/" + testProject + "/flows/default/binding", want: 404},
 		{method: "PUT", path: "/api/projects/" + testProject + "/flows/default/binding", body: map[string]any{"params": map[string]string{"nope": "x"}}, want: 400},
 		{method: "GET", path: "/api/actions", want: 200},

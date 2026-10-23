@@ -45,6 +45,43 @@ export type AttachmentList = {
 	attachments: Array<Attachment> | null;
 };
 
+export type Automation = {
+	created_at: string;
+	enabled: boolean;
+	flow: string;
+	id: string;
+	kind: string;
+	last_error?: string;
+	last_fired_at?: string;
+	last_polled_at?: string;
+	name: string;
+	params?: {
+		[key: string]: string;
+	};
+	phase?: string;
+	project_id: string;
+	query?: string;
+	schedule?: string;
+	source_id?: string;
+	ticket_id?: string;
+	updated_at: string;
+};
+
+export type AutomationRequest = {
+	enabled?: boolean | null;
+	flow: string;
+	kind: string;
+	name: string;
+	params?: {
+		[key: string]: string;
+	};
+	phase?: string;
+	query?: string;
+	schedule?: string;
+	source_id?: string;
+	ticket_id?: string;
+};
+
 export type BranchInfo = {
 	default: boolean;
 	name: string;
@@ -808,6 +845,7 @@ export type TestResult = {
 };
 
 export type Ticket = {
+	automation_id?: string;
 	base_branch: string;
 	created_at: string;
 	goal: string;
@@ -823,6 +861,7 @@ export type Ticket = {
 
 export type TicketDetail = {
 	attachment_ids: Array<string> | null;
+	automation_id?: string;
 	base_branch?: string;
 	created_at?: string;
 	goal?: string;
@@ -2061,6 +2100,186 @@ export type UpdateProjectResponses = {
 };
 
 export type UpdateProjectResponse = UpdateProjectResponses[keyof UpdateProjectResponses];
+
+export type ListAutomationsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/automations';
+};
+
+export type ListAutomationsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListAutomationsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Automation> | null;
+};
+
+export type ListAutomationsResponse = ListAutomationsResponses[keyof ListAutomationsResponses];
+
+export type CreateAutomationData = {
+	body: AutomationRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/automations';
+};
+
+export type CreateAutomationErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CreateAutomationResponses = {
+	/**
+	 * Created
+	 */
+	201: Automation;
+};
+
+export type CreateAutomationResponse = CreateAutomationResponses[keyof CreateAutomationResponses];
+
+export type DeleteAutomationData = {
+	body?: never;
+	path: {
+		id: string;
+		aid: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/automations/{aid}';
+};
+
+export type DeleteAutomationErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteAutomationResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteAutomationResponse = DeleteAutomationResponses[keyof DeleteAutomationResponses];
+
+export type GetAutomationData = {
+	body?: never;
+	path: {
+		id: string;
+		aid: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/automations/{aid}';
+};
+
+export type GetAutomationErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetAutomationResponses = {
+	/**
+	 * OK
+	 */
+	200: Automation;
+};
+
+export type GetAutomationResponse = GetAutomationResponses[keyof GetAutomationResponses];
+
+export type UpdateAutomationData = {
+	body: AutomationRequest;
+	path: {
+		id: string;
+		aid: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/automations/{aid}';
+};
+
+export type UpdateAutomationErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateAutomationResponses = {
+	/**
+	 * OK
+	 */
+	200: Automation;
+};
+
+export type UpdateAutomationResponse = UpdateAutomationResponses[keyof UpdateAutomationResponses];
 
 export type ListProjectBranchesData = {
 	body?: never;

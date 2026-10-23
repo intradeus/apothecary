@@ -97,6 +97,88 @@ components:
       required:
         - attachments
       type: object
+    Automation:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        enabled:
+          type: boolean
+        flow:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        last_error:
+          type: string
+        last_fired_at:
+          format: date-time
+          type: string
+        last_polled_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        params:
+          additionalProperties:
+            type: string
+          type: object
+        phase:
+          type: string
+        project_id:
+          type: string
+        query:
+          type: string
+        schedule:
+          type: string
+        source_id:
+          type: string
+        ticket_id:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - created_at
+        - enabled
+        - flow
+        - id
+        - kind
+        - name
+        - project_id
+        - updated_at
+      type: object
+    AutomationRequest:
+      properties:
+        enabled:
+          nullable: true
+          type: boolean
+        flow:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        params:
+          additionalProperties:
+            type: string
+          type: object
+        phase:
+          type: string
+        query:
+          type: string
+        schedule:
+          type: string
+        source_id:
+          type: string
+        ticket_id:
+          type: string
+      required:
+        - flow
+        - kind
+        - name
+      type: object
     BranchInfo:
       properties:
         default:
@@ -1798,6 +1880,8 @@ components:
       type: object
     Ticket:
       properties:
+        automation_id:
+          type: string
         base_branch:
           type: string
         created_at:
@@ -1838,6 +1922,8 @@ components:
             type: string
           nullable: true
           type: array
+        automation_id:
+          type: string
         base_branch:
           type: string
         created_at:
@@ -3194,6 +3280,197 @@ paths:
       summary: Replace a project
       tags:
         - projects
+  /api/projects/{id}/automations:
+    get:
+      operationId: listAutomations
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Automation'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: 'The project''s automations: how runs begin without a person'
+      tags:
+        - automations
+    post:
+      description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves, the phase is one of its entrypoints, the params are ones it accepts.'
+      operationId: createAutomation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutomationRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Automation'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Create an automation
+      tags:
+        - automations
+  /api/projects/{id}/automations/{aid}:
+    delete:
+      operationId: deleteAutomation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: aid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Delete an automation (the tickets it imported stay)
+      tags:
+        - automations
+    get:
+      operationId: getAutomation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: aid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Automation'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: One automation, with what the watcher last did with it
+      tags:
+        - automations
+    put:
+      operationId: updateAutomation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: aid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutomationRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Automation'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Replace an automation (its last poll, firing and error are kept)
+      tags:
+        - automations
   /api/projects/{id}/branches:
     get:
       operationId: listProjectBranches
@@ -5535,6 +5812,7 @@ servers:
   - description: the engine, same origin as the UI
     url: /
 tags:
+  - name: automations
   - name: channels
   - name: egress
   - name: files

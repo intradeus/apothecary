@@ -233,6 +233,14 @@ type DB interface {
 	ListFlowBindings(ctx Ctx, projectID string) ([]FlowBinding, error)
 	DeleteFlowBinding(ctx Ctx, projectID, flowName string) error
 
+	// Automations go with their project (deleted with it).
+	UpsertAutomation(ctx Ctx, a Automation) error
+	GetAutomation(ctx Ctx, id string) (Automation, error)
+	// ListAutomations returns one project's, or every project's when
+	// projectID is empty (the watcher's pass), by creation time.
+	ListAutomations(ctx Ctx, projectID string) ([]Automation, error)
+	DeleteAutomation(ctx Ctx, id string) error
+
 	GetSettings(ctx Ctx) (map[string]string, error) // key -> raw JSON value
 	PutSetting(ctx Ctx, key, value string) error
 }
