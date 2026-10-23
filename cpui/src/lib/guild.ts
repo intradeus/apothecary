@@ -52,7 +52,8 @@ const q = (params: Record<string, string | undefined>) => {
 	return str ? `?${str}` : '';
 };
 
-export type WorkshopTab = 'overview' | 'runs' | 'tickets' | 'flows' | 'agents' | 'health';
+export type WorkshopTab =
+	'overview' | 'runs' | 'tickets' | 'flows' | 'automations' | 'agents' | 'health';
 export type SystemSection =
 	'integrations' | 'channels' | 'members' | 'limits' | 'reaper' | 'storage';
 

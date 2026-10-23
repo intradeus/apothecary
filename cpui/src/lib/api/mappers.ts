@@ -16,6 +16,7 @@ import type {
 	ActionSpec,
 	AgentToolCall,
 	Attachment,
+	Automation,
 	Branch,
 	BuildCache,
 	ChangedFile,
@@ -475,6 +476,28 @@ export function toFlow(w: Wire.Flow): Flow {
 		shadowsBuiltin: w.shadows_builtin ?? false,
 		parameters: list(w.parameters).map(toParamDecl),
 		phases: list(w.phases).map(toPhaseSummary)
+	};
+}
+
+export function toAutomation(w: Wire.Automation): Automation {
+	return {
+		id: w.id ?? '',
+		projectId: w.project_id ?? '',
+		name: w.name ?? '',
+		kind: oneOf(['tracker_query', 'cron'] as const, w.kind, 'tracker_query'),
+		sourceId: w.source_id || undefined,
+		query: w.query || undefined,
+		schedule: w.schedule || undefined,
+		ticketId: w.ticket_id || undefined,
+		flow: w.flow ?? '',
+		phase: w.phase || undefined,
+		params: { ...(w.params ?? {}) },
+		enabled: w.enabled ?? false,
+		lastPolledAt: w.last_polled_at || undefined,
+		lastFiredAt: w.last_fired_at || undefined,
+		lastError: w.last_error || undefined,
+		createdAt: w.created_at ?? '',
+		updatedAt: w.updated_at ?? ''
 	};
 }
 

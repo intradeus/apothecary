@@ -23,11 +23,20 @@
 	import RunsTab from '$lib/workshop/RunsTab.svelte';
 	import TicketsTab from '$lib/workshop/TicketsTab.svelte';
 	import FlowsTab from '$lib/workshop/FlowsTab.svelte';
+	import AutomationsTab from '$lib/workshop/AutomationsTab.svelte';
 	import AgentsTab from '$lib/workshop/AgentsTab.svelte';
 	import HealthTab from '$lib/workshop/HealthTab.svelte';
 
 	const projectId = $derived(page.params.workshop!);
-	const TABS: WorkshopTab[] = ['overview', 'runs', 'tickets', 'flows', 'agents', 'health'];
+	const TABS: WorkshopTab[] = [
+		'overview',
+		'runs',
+		'tickets',
+		'flows',
+		'automations',
+		'agents',
+		'health'
+	];
 	const tab = $derived.by<WorkshopTab>(() => {
 		const q = page.url.searchParams.get('tab') as WorkshopTab | null;
 		return q && TABS.includes(q) ? q : 'overview';
@@ -94,6 +103,7 @@
 		runs: t('page.runs.title'),
 		tickets: t('page.tickets.title'),
 		flows: t('page.workshops.flows'),
+		automations: t('page.workshop.tabAutomations'),
 		agents: t('page.workshop.tabAgents'),
 		health: t('page.workshop.tabHealth')
 	});
@@ -229,6 +239,8 @@
 				<TicketsTab {project} {tickets} error={ticketsError} onretry={loadTickets} />
 			{:else if tab === 'flows'}
 				<FlowsTab {project} {flows} error={flowsError} onreload={loadFlows} />
+			{:else if tab === 'automations'}
+				<AutomationsTab {project} {tickets} {integrations} />
 			{:else if tab === 'agents'}
 				<AgentsTab {project} {flows} error={flowsError} onretry={loadFlows} />
 			{:else if tab === 'health'}

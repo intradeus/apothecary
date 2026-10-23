@@ -11,6 +11,7 @@ export * from './ticket';
 export * from './project';
 export * from './files';
 export * from './flow';
+export * from './automation';
 export * from './integration';
 export * from './egress';
 export * from './settings';

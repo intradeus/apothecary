@@ -18,6 +18,8 @@ import * as map from './mappers';
 import type {
 	ActionSpec,
 	Attachment,
+	Automation,
+	AutomationDraft,
 	Branch,
 	BuildCache,
 	ChannelEntry,
@@ -26,6 +28,7 @@ import type {
 	EgressPolicy,
 	EnvCheck,
 	ExposedPort,
+	FileDiff,
 	Flow,
 	FlowBinding,
 	FlowLayout,
@@ -34,6 +37,8 @@ import type {
 	Integration,
 	IntegrationDraft,
 	KindDescriptor,
+	LiveDelta,
+	MergeRequestLive,
 	Model,
 	Ping,
 	PingPayload,
@@ -43,10 +48,12 @@ import type {
 	Repo,
 	ResourceSample,
 	Run,
+	RunCheckout,
 	RunDetail,
 	RunEvent,
 	RunFiles,
 	RunInput,
+	RunPhase,
 	RunPorts,
 	Settings,
 	SignalSpec,
@@ -54,11 +61,6 @@ import type {
 	Ticket,
 	TicketDraft,
 	UploadLimits,
-	FileDiff,
-	LiveDelta,
-	RunCheckout,
-	MergeRequestLive,
-	RunPhase,
 	WorkspaceChanges,
 	WorkspaceEntry,
 	WorkspaceFile
@@ -661,6 +663,46 @@ export const system = {
 
 /** Everything, grouped. Import the group you need — `api.runs.list()` reads
  *  better at a call site than a flat namespace of sixty functions. */
+// Automations: how runs begin without a person. Validated by the server
+// the way a firing would be, so a refusal names what the watcher could not
+// run.
+function automationBody(d: AutomationDraft): Wire.AutomationRequest {
+	return {
+		name: d.name,
+		kind: d.kind,
+		flow: d.flow,
+		enabled: d.enabled,
+		...(d.sourceId ? { source_id: d.sourceId } : {}),
+		...(d.query ? { query: d.query } : {}),
+		...(d.schedule ? { schedule: d.schedule } : {}),
+		...(d.ticketId ? { ticket_id: d.ticketId } : {}),
+		...(d.phase ? { phase: d.phase } : {}),
+		...(d.params && Object.keys(d.params).length ? { params: d.params } : {})
+	};
+}
+
+export const automations = {
+	list: async (projectId: string): Promise<Automation[]> =>
+		many(await unwrap(gen.listAutomations({ path: { id: projectId } })), map.toAutomation),
+
+	create: async (projectId: string, d: AutomationDraft): Promise<Automation> =>
+		map.toAutomation(
+			await unwrap(gen.createAutomation({ path: { id: projectId }, body: automationBody(d) }))
+		),
+
+	/** Replaces the rule; the watcher's last poll, firing and error are kept. */
+	update: async (projectId: string, id: string, d: AutomationDraft): Promise<Automation> =>
+		map.toAutomation(
+			await unwrap(
+				gen.updateAutomation({ path: { id: projectId, aid: id }, body: automationBody(d) })
+			)
+		),
+
+	/** The tickets and runs it created stay. */
+	remove: (projectId: string, id: string) =>
+		unwrapVoid(gen.deleteAutomation({ path: { id: projectId, aid: id } }))
+};
+
 export const api = {
 	runs,
 	workspace,
@@ -670,6 +712,7 @@ export const api = {
 	projects,
 	integrations,
 	flows,
+	automations,
 	files,
 	system
 };
