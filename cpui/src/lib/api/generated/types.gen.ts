@@ -105,7 +105,7 @@ export type DocIo = {
 export type DocPhase = {
 	description?: string;
 	id: string;
-	on: DocTrigger;
+	on: DocWait;
 	stages: Array<DocStage> | null;
 };
 
@@ -130,15 +130,16 @@ export type DocStage = {
 	question?: string;
 	run?: string;
 	run_ref?: string;
+	start?: string;
 	timeout?: string;
 	type: string;
 };
 
-export type DocTrigger = {
-	confirm?: boolean;
+export type DocWait = {
 	max?: number | null;
 	quiet_for?: string;
 	signal: string;
+	start?: string;
 };
 
 export type EditorConfig = {

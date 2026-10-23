@@ -1,6 +1,6 @@
-name: v2
-version: 3
-description: canonical v2 flow — agent/command/gate/action stages, every sentinel, output rebinding
+name: canonical
+version: 4
+description: canonical v4 flow — agent/command/gate/action stages, every sentinel, output rebinding
 # The flow owns its default harness + model (DESIGN2 §6.3); a stage may
 # override either. A project running this flow must have a harness of the
 # named kind (checked at run creation), keeping the flow portable data.

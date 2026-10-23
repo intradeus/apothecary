@@ -10,7 +10,7 @@ import (
 
 // header is a minimal valid preamble; tests append stages to it.
 const header = `name: t
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 `
 
@@ -56,14 +56,14 @@ func wantErr(t *testing.T, doc, substr string, line int) {
 	}
 }
 
-// TestCanonicalV2 locks the fixture that exercises every v2 construct: all
-// four stage types, all three binding forms, both sentinels, output rebinding.
-func TestCanonicalV3(t *testing.T) {
-	f, err := Load("testdata/v3.yaml")
+// TestCanonicalV4 locks the fixture that exercises every stage construct: all
+// stage types, the binding forms, every sentinel, output rebinding.
+func TestCanonicalV4(t *testing.T) {
+	f, err := Load("testdata/v4.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Name != "v2" {
+	if f.Name != "canonical" {
 		t.Errorf("name = %q", f.Name)
 	}
 	if len(f.Hash) != 64 {
@@ -162,7 +162,7 @@ func TestCanonicalV3(t *testing.T) {
 // the graph editor emits): abort terminals, on_timeout, then-chains, unlimited
 // links and the debug leaf as every stage's rescue.
 func TestReferenceFlowParses(t *testing.T) {
-	f, err := Load("../../examples/flows/v3.yaml")
+	f, err := Load("../../examples/flows/v4.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestVersionRequired(t *testing.T) {
 		t.Errorf("missing version: err = %v", err)
 	}
 	future := "name: t\nversion: 99\ndefaults: { harness: fake, model: a/b }\n" + stages
-	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 3") {
+	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 4") {
 		t.Errorf("future version: err = %v", err)
 	}
 }
@@ -420,13 +420,13 @@ func TestValidationErrors(t *testing.T) {
 	}{
 		{"missing name", "version: 2\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"flow name is required", 0},
-		{"missing harness", "name: t\nversion: 3\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing harness", "name: t\nversion: 4\ndefaults: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"defaults.harness is required", 3},
-		{"missing model", "name: t\nversion: 3\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing model", "name: t\nversion: 4\ndefaults: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"defaults.model is required", 0},
-		{"bad model format", "name: t\nversion: 3\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad model format", "name: t\nversion: 4\ndefaults: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"provider/model", 3},
-		{"bad timeout", "name: t\nversion: 3\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad timeout", "name: t\nversion: 4\ndefaults: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
 			"invalid duration", 3},
 		{"no stages", header, "at least one stage", 0},
 		{"duplicate id", header + "stages:\n  - { id: s, type: command, run: x }\n  - { id: s, type: command, run: y }\n",
@@ -479,8 +479,8 @@ func TestValidationErrors(t *testing.T) {
 			"reserved", 5},
 		{"reserved start id", header + "stages:\n  - { id: start, type: command, run: x }\n",
 			"reserved", 5},
-		{"edge to done", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: done, max: 1 } }\n",
-			"only on_success may complete the run", 5},
+		{"edge to done with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: done, max: 1 } }\n",
+			"max does not apply", 5},
 		{"abort edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, max: 2 } }\n",
 			"max does not apply", 5},
 
@@ -581,8 +581,20 @@ func TestWaitStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := f.Stage("merged")
-	if w.Type != StageWait || w.WaitFor != "mr_merged" || w.Timeout != 24*time.Hour {
-		t.Errorf("wait stage = %+v", w)
+	if w.Type != StageWait || w.WaitFor != "mr_merged" || w.Timeout != 24*time.Hour ||
+		w.Wait == nil || w.Wait.Signal != "mr_merged" || w.Wait.Start != StartAuto || w.Wait.Timeout != 24*time.Hour {
+		t.Errorf("wait stage = %+v wait %+v", w, w.Wait)
+	}
+	// A wait is a wait point mid-chain: it may ask before continuing.
+	c, err := Parse("t.yaml", []byte(header+`stages:
+  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
+  - { id: merged, type: wait, for: mr_merged, start: confirm, on_success: done }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Stage("merged").Wait.Start != StartConfirm {
+		t.Errorf("start = %q", c.Stage("merged").Wait.Start)
 	}
 	// A gate may be auto-answered by the same registry.
 	g, err := Parse("t.yaml", []byte(header+`stages:
@@ -605,6 +617,12 @@ func TestWaitStage(t *testing.T) {
 			`field "for" does not apply`},
 		{"auto_approve on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, auto_approve: mr_merged }\n",
 			`field "auto_approve" does not apply`},
+		{"start manual on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, start: manual }\n",
+			"does not apply to a wait"},
+		{"bad start on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, start: later }\n",
+			`start "later" must be`},
+		{"start on a command", header + "stages:\n  - { id: s, type: command, run: x, start: auto }\n",
+			`field "start" does not apply`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -646,7 +664,7 @@ func TestDebugLeaf(t *testing.T) {
 	// (like done/abort) is in every phase.
 	phased := header + commonAgents + `phases:
   - id: deliver
-    on: manual
+    on: run_start
     stages:
       - { id: build, type: agent, agent: b, on_fail: debug }
       - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
@@ -780,7 +798,7 @@ func TestYAMLHardening(t *testing.T) {
 		},
 		{
 			name:   "a second document is refused",
-			doc:    header + stages + "---\nname: other\nversion: 3\n",
+			doc:    header + stages + "---\nname: other\nversion: 4\n",
 			substr: "one document",
 		},
 		{
@@ -815,16 +833,16 @@ func TestThenChainDepthCapped(t *testing.T) {
 	}
 }
 
-// A phased flow (PLAN6): the entry phase first, reactions after, stage ids
-// one namespace, routes kept inside their phase.
+// A phased flow (PLAN6): an entrypoint, two firing phases, stage ids one
+// namespace, routes kept inside their phase.
 const phasedDoc = header + `phases:
   - id: deliver
-    on: manual
+    on: run_start
     stages:
       - { id: build, type: command, run: x }
       - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
   - id: conflicts
-    on: { signal: mr_conflicts, confirm: true }
+    on: { signal: mr_conflicts, start: confirm }
     stages:
       - { id: sync, type: action, action: sync_target, input: { strategy: merge }, on_success: sync_test }
       - { id: sync_test, type: command, run: x }
@@ -844,11 +862,14 @@ func TestPhasedFlowParses(t *testing.T) {
 		t.Fatalf("phases %d stages %d", len(f.Phases), len(f.Stages))
 	}
 	d, c, r := f.Phases[0], f.Phases[1], f.Phases[2]
-	if !d.Entry() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
+	if !d.IsEntrypoint() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
 		t.Errorf("spans: %+v %+v %+v", d, c, r)
 	}
-	if !c.On.Confirm || c.On.Max != DefaultPhaseMax || r.On.QuietFor != time.Hour || r.On.Max != 3 {
-		t.Errorf("triggers: %+v %+v", c.On, r.On)
+	if c.On.Start != StartConfirm || c.On.Max != DefaultPhaseMax || r.On.Start != StartAuto || r.On.QuietFor != time.Hour || r.On.Max != 3 {
+		t.Errorf("wait points: %+v %+v", c.On, r.On)
+	}
+	if !c.Fires() || !c.HasSubject() || d.Fires() || d.HasSubject() {
+		t.Errorf("fires/subject: deliver %v/%v conflicts %v/%v", d.Fires(), d.HasSubject(), c.Fires(), c.HasSubject())
 	}
 	// Absent on_success: next stage in the phase, the phase's last stage = done.
 	if f.Stage("build").OnSuccess != "mr" || f.Stage("mr").OnSuccess != TerminalDone || f.Stage("sync_test").OnSuccess != TerminalDone {
@@ -868,32 +889,33 @@ func TestPhasedFlowParses(t *testing.T) {
 }
 
 func TestPhaseValidationErrors(t *testing.T) {
-	entry := header + "phases:\n  - id: deliver\n    on: manual\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
+	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
 	cases := []struct{ name, doc, substr string }{
 		{"stages and phases", entry + "stages:\n  - { id: s, type: command, run: x }\n", "either top-level stages"},
-		{"entry not first", header + "phases:\n  - { id: c, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "first phase is the entry"},
-		{"confirm on manual", entry + "  - { id: m, on: { signal: manual, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "confirm does not apply"},
-		{"ending signal", entry + "  - { id: m, on: mr_merged, stages: [{ id: s, type: command, run: x }] }\n", "ends the run"},
+		{"no entrypoint", header + "phases:\n  - { id: c, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "no phase begins a run"},
+		{"missing on", header + "phases:\n  - { id: d, stages: [{ id: s, type: command, run: x }] }\n", "signal is required"},
+		{"start on manual", entry + "  - { id: m, on: { signal: manual, start: confirm }, stages: [{ id: s, type: command, run: x }] }\n", "start does not apply"},
+		{"start on run_start", header + "phases:\n  - { id: d, on: { signal: run_start, start: auto }, stages: [{ id: s, type: command, run: x }] }\n", "start does not apply"},
+		{"bad start", entry + "  - { id: m, on: { signal: mr_conflicts, start: later }, stages: [{ id: s, type: command, run: x }] }\n", `start "later" must be`},
+		{"waitable signal opens nothing", entry + "  - { id: m, on: mr_merged, stages: [{ id: s, type: command, run: x }] }\n", "something to wait for"},
 		{"unknown signal", entry + "  - { id: m, on: mr_ghost, stages: [{ id: s, type: command, run: x }] }\n", "unknown signal"},
 		{"quiet on conflicts", entry + "  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, stages: [{ id: s, type: command, run: x }] }\n", "quiet_for applies only"},
 		{"quiet too short", entry + "  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, stages: [{ id: s, type: command, run: x }] }\n", "at least 1m"},
-		{"unlimited without confirm", entry + "  - { id: m, on: { signal: mr_conflicts, max: -1 }, stages: [{ id: s, type: command, run: x }] }\n", "requires confirm"},
-		{"max on the entry", header + "phases:\n  - { id: d, on: { signal: manual, max: 2 }, stages: [{ id: s, type: command, run: x }] }\n", "does not apply to the entry"},
+		{"unlimited with auto start", entry + "  - { id: m, on: { signal: mr_conflicts, max: -1 }, stages: [{ id: s, type: command, run: x }] }\n", "requires start"},
+		{"max zero", entry + "  - { id: m, on: { signal: mr_conflicts, max: 0 }, stages: [{ id: s, type: command, run: x }] }\n", "max must be >= 1"},
+		{"confirm is not grammar", entry + "  - { id: m, on: { signal: mr_conflicts, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "field confirm not found"},
 		{"unknown trigger key", entry + "  - { id: m, on: { signal: mr_conflicts, when: now }, stages: [{ id: s, type: command, run: x }] }\n", "field when not found"},
 		{"empty phase", entry + "  - { id: m, on: mr_conflicts, stages: [] }\n", "at least one stage"},
 		{"duplicate phase", entry + "  - { id: deliver, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "duplicate phase id"},
 		{"duplicate stage across phases", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n", "one namespace"},
 		{"route leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n", "stay inside it"},
 		{"edge leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n", "stay inside it"},
-		{"create_mr in a reaction", header + "phases:\n  - { id: d, on: manual, stages: [{ id: b, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n", "belongs to the entry phase"},
-		{"each_repo in a reaction", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, each_repo: true }] }\n", "each_repo does not apply"},
-		{"subject action in the entry", header + "phases:\n  - { id: d, on: manual, stages: [{ id: s, type: action, action: sync_target }] }\n", "belongs in a reaction phase"},
-		{"subject action without phases", header + "stages:\n  - { id: s, type: action, action: sync_target }\n", "declare phases"},
-		{"reaction without an MR", header + "phases:\n  - { id: d, on: manual, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n", "opens none"},
+		{"two create_mr in one phase", header + "phases:\n  - { id: d, on: run_start, stages: [{ id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }, { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n", "per phase"},
 		{"rebase without a leased push", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n", "push_branch"},
 		{"bad strategy", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: squash } }] }\n", "not one of merge | rebase"},
-		{"trigger on a gate", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: g, type: human_gate, auto_approve: mr_conflicts }\n", "begins a phase"},
-		{"trigger on a wait", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_review_settled }\n", "begins a phase"},
+		{"trigger on a gate", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: g, type: human_gate, auto_approve: mr_conflicts }\n", "opens a phase"},
+		{"trigger on a wait", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_review_settled }\n", "opens a phase"},
+		{"run_start on a wait", header + "stages:\n  - { id: w, type: wait, for: run_start }\n", "opens a phase"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -905,12 +927,74 @@ func TestPhaseValidationErrors(t *testing.T) {
 	}
 }
 
-// The shorthand keeps today's model exactly: no phases, no phase on stages.
-func TestTopLevelStagesAreNotPhased(t *testing.T) {
+// The shorthand is one phase: top-level stages desugar to ShorthandPhase,
+// opened by run_start, so the engine has one execution mode.
+func TestShorthandDesugarsToMain(t *testing.T) {
 	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x }\n"))
-	if err != nil || f.Phased() || f.Stages[0].Phase != "" {
-		t.Fatalf("err %v phased %v", err, f != nil && f.Phased())
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(f.Phases) != 1 || f.Phases[0].ID != ShorthandPhase || !f.Phases[0].IsEntrypoint() || f.Stages[0].Phase != ShorthandPhase {
+		t.Fatalf("phases = %+v, stage phase %q", f.Phases, f.Stages[0].Phase)
+	}
+	if b := f.Beginning(); b == nil || b.ID != ShorthandPhase || f.Stages[0].Line != 5 || f.Phases[0].On.Max != UnlimitedMax {
+		t.Errorf("beginning %+v, line %d", b, f.Stages[0].Line)
+	}
+	if f.Phased() {
+		t.Error("the shorthand is not a document that declared phases")
+	}
+}
+
+// Phase shape is advice, not a rule: a subject action outside a phase opened
+// for a merge request, each_repo inside one, and a trigger that needs a merge
+// request no stage opens all warn — and create_mr may live in any phase.
+func TestPhaseShapeWarnings(t *testing.T) {
+	warned := func(f *Flow, substr string) bool {
+		for _, w := range f.Warnings {
+			if strings.Contains(w, substr) {
+				return true
+			}
+		}
+		return false
+	}
+	doc := header + "phases:\n" +
+		"  - { id: d, on: run_start, stages: [{ id: s, type: action, action: sync_target }, { id: p, type: action, action: push_branch }] }\n" +
+		"  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x, each_repo: true }, { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n"
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !warned(f, `"sync_target" acts on the merge request`) || !warned(f, "each_repo is ignored") || warned(f, "needs a merge request no stage opens") {
+		t.Errorf("warnings = %v", f.Warnings)
+	}
+	noMR := header + "phases:\n  - { id: d, on: run_start, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n"
+	if f, err := Parse("t.yaml", []byte(noMR)); err != nil || !warned(f, "needs a merge request no stage opens") {
+		t.Errorf("err %v warnings %v", err, f.Warnings)
+	}
+}
+
+// An edge may end the phase: `on_fail: done` is the best-effort stage whose
+// failure is not worth routing anywhere.
+func TestEdgeToDone(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x, on_fail: done }\n  - { id: b, type: command, run: x, on_fail: { to: done } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if e := f.Stage(id).Edges[EdgeFail]; e == nil || e.To != TerminalDone || e.Max != 0 || e.Then != nil {
+			t.Errorf("%s on_fail = %+v", id, e)
+		}
+	}
+	wantErr(t, header+"stages:\n  - { id: a, type: command, run: x, on_fail: { to: done, then: { to: a, max: 1 } } }\n", "then does not apply", 5)
+}
+
+// A command may bound its script.
+func TestCommandTimeout(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x, timeout: 5m }\n"))
+	if err != nil || f.Stages[0].Timeout != 5*time.Minute {
+		t.Fatalf("err %v timeout %v", err, f.Stages[0].Timeout)
+	}
+	wantErr(t, header+"stages:\n  - { id: s, type: command, run: x, timeout: soon }\n", "invalid timeout", 5)
 }
 
 // Tracker actions: a text input is the tracker's vocabulary (only blankness
@@ -918,7 +1002,7 @@ func TestTopLevelStagesAreNotPhased(t *testing.T) {
 // takes its value from an artifact OR the flow, and ticket_link warns when
 // no merge request precedes it.
 func TestTrackerActionBindings(t *testing.T) {
-	head := "name: tk\nversion: 3\ndefaults: { harness: fake, model: fake/m }\nagents: []\nstages:\n"
+	head := "name: tk\nversion: 4\ndefaults: { harness: fake, model: fake/m }\nagents: []\nstages:\n"
 	plain := head + "  - { id: s, type: action, action: ticket_transition, input: { to: In Progress } }\n"
 	quoted := head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"In Progress\" } }\n"
 	fp, err := Parse("t.yaml", []byte(plain))
@@ -972,33 +1056,39 @@ func TestTrackerActionBindings(t *testing.T) {
 	if f, err := Parse("t.yaml", []byte(after)); err != nil || needsMR(f) != 0 {
 		t.Errorf("link after create_mr: err %v warnings %v", err, f.Warnings)
 	}
-	phased := "name: tk\nversion: 3\ndefaults: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
-		"  - { id: deliver, on: manual, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
+	phased := "name: tk\nversion: 4\ndefaults: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
+		"  - { id: deliver, on: run_start, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
 		"  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n"
 	if f, err := Parse("t.yaml", []byte(phased)); err != nil || needsMR(f) != 0 {
 		t.Errorf("link in a reaction phase: err %v warnings %v", err, f.Warnings)
 	}
 }
 
-// A phase has one beginning, and a person can give it: `manual` begins the
-// entry (a run started for a ticket) and may begin a reaction phase that only
-// the run page starts. `ticket`, the entry's spelling before manual, still
-// reads as it.
-func TestManualBeginnings(t *testing.T) {
+// Entrypoints are explicit: a run begins at a phase `on: run_start` (several
+// allowed; the first is the default), a phase `on: manual` starts by hand
+// from the run page only, and neither takes a start policy.
+func TestEntrypoints(t *testing.T) {
 	doc := header + "phases:\n" +
-		"  - { id: deliver, on: ticket, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
-		"  - { id: polish, on: { signal: manual, max: 3 }, stages: [{ id: shine, type: command, run: x }] }\n"
+		"  - { id: polish, on: { signal: manual, max: 3 }, stages: [{ id: shine, type: command, run: x }] }\n" +
+		"  - { id: deliver, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
+		"  - { id: quick, on: run_start, stages: [{ id: mr2, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := f.Phases[0]
-	if !entry.Entry() || entry.On.Signal != TriggerManual || entry.On.Max != 1 {
-		t.Errorf("entry = %+v", entry.On)
+	if got := f.Entrypoints(); len(got) != 2 || got[0].ID != "deliver" || got[1].ID != "quick" {
+		t.Errorf("entrypoints = %+v", got)
+	}
+	if b := f.Beginning(); b == nil || b.ID != "deliver" {
+		t.Errorf("beginning = %+v", b)
 	}
 	polish := f.Phase("polish")
-	if polish.Entry() || polish.On.Signal != TriggerManual || polish.On.Max != 3 || polish.On.Confirm {
+	if polish.IsEntrypoint() || polish.Fires() || polish.HasSubject() || polish.On.Max != 3 || polish.On.Start != StartManual {
 		t.Errorf("polish = %+v", polish.On)
+	}
+	deliver := f.Phase("deliver")
+	if !deliver.IsEntrypoint() || deliver.Fires() || deliver.On.Max != UnlimitedMax || deliver.On.Start != StartManual {
+		t.Errorf("deliver = %+v", deliver.On)
 	}
 	if got := f.Reactions(); len(got) != 1 || got[0].ID != "polish" {
 		t.Errorf("reactions = %+v", got)

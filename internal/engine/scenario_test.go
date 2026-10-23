@@ -98,7 +98,7 @@ func mustFlowWith(t *testing.T, doc string, specs map[string]*agentspec.Spec) *f
 
 // withAgents renders specs as a v3 `agents:` block ahead of `stages:`.
 func withAgents(doc string, specs map[string]*agentspec.Spec) string {
-	doc = strings.Replace(doc, "version: 2", "version: 3", 1)
+	doc = strings.Replace(doc, "version: 2", "version: 4", 1)
 	if strings.Contains(doc, "\nagents:") {
 		return doc
 	}
@@ -296,8 +296,8 @@ stages:
 
 // --- scenarios --------------------------------------------------------------
 
-func TestHappyPathFullV3Flow(t *testing.T) {
-	v1, err := flow.Load("../flow/testdata/v3.yaml")
+func TestHappyPathFullV4Flow(t *testing.T) {
+	v1, err := flow.Load("../flow/testdata/v4.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestHappyPathFullV3Flow(t *testing.T) {
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login", Goal: "Users must log in"}, "v2", testProject)
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login", Goal: "Users must log in"}, "canonical", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

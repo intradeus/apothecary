@@ -24,7 +24,7 @@ import (
 // v1FlowDoc is this suite's user-created flow (the product ships none):
 // gated build ending in an MR — enough to drive both human gates.
 const v1FlowDoc = `name: v1
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
@@ -248,7 +248,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// Flow validate: line-precise errors verbatim.
 	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{
-		"yaml": "name: bad\nversion: 3\ndefaults: { harness: fake, model: nope }\nstages: []\n",
+		"yaml": "name: bad\nversion: 4\ndefaults: { harness: fake, model: nope }\nstages: []\n",
 	}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "provider/model") {
 		t.Fatalf("validate = %d: %s", resp.StatusCode, data)
@@ -370,7 +370,7 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 
 	// Saving under the template's name creates this project's own copy.
-	override := "name: default\nversion: 3\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	override := "name: default\nversion: 4\ndefaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
 	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/flows/default", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
@@ -466,7 +466,7 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 	}
 
 	// Binding an input the agent does not declare: refused, not advised.
-	code, vr := post("name: w\nversion: 3\ndefaults: { harness: fake, model: a/b }\n" + agents +
+	code, vr := post("name: w\nversion: 4\ndefaults: { harness: fake, model: a/b }\n" + agents +
 		"stages:\n  - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
@@ -477,7 +477,7 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 
 	// on_reject on an agent that declares no verdict can never fire: also an
 	// error now that the contract is in the document.
-	code, vr = post("name: r\nversion: 3\ndefaults: { harness: fake, model: a/b }\n" + agents +
+	code, vr = post("name: r\nversion: 4\ndefaults: { harness: fake, model: a/b }\n" + agents +
 		"stages:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/p.md }, on_success: j }\n" +
 		"  - { id: j, type: agent, agent: plain, on_success: done, on_reject: { to: b, max: 1 } }\n")
 	if code != 200 || vr.OK {
@@ -489,7 +489,7 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 
 	// A legal-but-suspicious document still validates, with the finding as a
 	// warning: nothing produces the path the builder reads.
-	code, vr = post("name: ok\nversion: 3\ndefaults: { harness: fake, model: a/b }\n" + agents +
+	code, vr = post("name: ok\nversion: 4\ndefaults: { harness: fake, model: a/b }\n" + agents +
 		"stages:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/nobody.md }, on_success: done }\n")
 	if code != 200 || !vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:true", code, vr.OK)

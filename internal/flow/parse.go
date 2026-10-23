@@ -71,23 +71,24 @@ type Doc struct {
 type DocPhase struct {
 	ID          string     `yaml:"id" json:"id"`
 	Description string     `yaml:"description" json:"description,omitempty"`
-	On          DocTrigger `yaml:"on" json:"on"`
+	On          DocWait    `yaml:"on" json:"on"`
 	Stages      []DocStage `yaml:"stages" json:"stages"`
 }
 
-// DocTrigger is a phase's `on:` — a bare signal (`on: manual`,
-// `on: mr_conflicts`) or a mapping with the trigger's options.
-type DocTrigger struct {
+// DocWait is a phase's `on:` — the wait point that opens it: a bare slug
+// (`on: run_start`, `on: manual`, `on: mr_conflicts`) or a mapping with the
+// options.
+type DocWait struct {
 	Signal   string `yaml:"signal" json:"signal"`
+	Start    string `yaml:"start" json:"start,omitempty"`
 	QuietFor string `yaml:"quiet_for" json:"quiet_for,omitempty"`
-	Confirm  bool   `yaml:"confirm" json:"confirm,omitempty"`
 	Max      *int   `yaml:"max" json:"max,omitempty"`
 }
 
 // UnmarshalYAML accepts the scalar sugar and the mapping form, rejecting
 // unknown and repeated keys by hand (a custom unmarshaler bypasses the
 // decoder's strictness, as for DocEdge).
-func (t *DocTrigger) UnmarshalYAML(n *yaml.Node) error {
+func (t *DocWait) UnmarshalYAML(n *yaml.Node) error {
 	switch n.Kind {
 	case yaml.ScalarNode:
 		return n.Decode(&t.Signal)
@@ -103,15 +104,15 @@ func (t *DocTrigger) UnmarshalYAML(n *yaml.Node) error {
 			switch k.Value {
 			case "signal":
 				err = v.Decode(&t.Signal)
+			case "start":
+				err = v.Decode(&t.Start)
 			case "quiet_for":
 				err = v.Decode(&t.QuietFor)
-			case "confirm":
-				err = v.Decode(&t.Confirm)
 			case "max":
 				t.Max = new(int)
 				err = v.Decode(t.Max)
 			default:
-				return fmt.Errorf("line %d: field %s not found in type flow.DocTrigger (signal, quiet_for, confirm, max)", k.Line, k.Value)
+				return fmt.Errorf("line %d: field %s not found in type flow.DocWait (signal, start, quiet_for, max)", k.Line, k.Value)
 			}
 			if err != nil {
 				return err
@@ -119,7 +120,7 @@ func (t *DocTrigger) UnmarshalYAML(n *yaml.Node) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("line %d: on must be a signal name or a mapping {signal, quiet_for, confirm, max}", n.Line)
+	return fmt.Errorf("line %d: on must be a slug (run_start, manual or a trigger signal) or a mapping {signal, start, quiet_for, max}", n.Line)
 }
 
 type DocDefaults struct {
@@ -153,6 +154,7 @@ type DocStage struct {
 	AutoReject  string   `yaml:"auto_reject" json:"auto_reject,omitempty"`
 	Action      string   `yaml:"action" json:"action,omitempty"`
 	For         string   `yaml:"for" json:"for,omitempty"`
+	Start       string   `yaml:"start" json:"start,omitempty"`
 	OnSuccess   string   `yaml:"on_success" json:"on_success,omitempty"`
 	OnFail      *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
 	OnReject    *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
@@ -618,11 +620,6 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	case CurrentVersion:
 	case 0:
 		return nil, p.errf(1, "version is required (this build speaks version %d)", CurrentVersion)
-	case 2:
-		// The v2→v3 break: agents moved from the per-project library into
-		// the document. Answer with the upgrade, not a bare version refusal.
-		return nil, p.errf(p.keyLine("version"), "flow version 2 is retired: agents now live in the flow — add an %q block defining every agent the stages name (name, prompt, inputs, outputs), then set version: %d",
-			"agents", CurrentVersion)
 	default:
 		return nil, p.errf(p.keyLine("version"), "unsupported flow version %d (this build speaks version %d)", raw.Version, CurrentVersion)
 	}
@@ -638,21 +635,23 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		return nil, err
 	}
 
-	// Flatten: top-level stages, or every phase's stages in document order.
-	// Stage ids are one namespace across the document.
-	rawStages := raw.Stages
-	if len(raw.Phases) > 0 {
-		if len(raw.Stages) > 0 {
-			return nil, p.errf(p.keyLine("stages"), "a flow declares either top-level stages (one phase) or phases, not both — move these stages into the entry phase (`on: %s`)", TriggerManual)
-		}
-		if f.Phases, rawStages, err = p.buildPhases(raw.Phases); err != nil {
-			return nil, err
-		}
-	} else {
-		p.stageLines = nil
+	// Every flow is phases. Top-level stages are the one-phase shorthand: a
+	// phase named ShorthandPhase opened by run_start, which is exactly what
+	// the engine runs — there is no second execution mode.
+	rawPhases := raw.Phases
+	if len(rawPhases) > 0 && len(raw.Stages) > 0 {
+		return nil, p.errf(p.keyLine("stages"), "a flow declares either top-level stages (one phase) or phases, not both — move these stages into a phase (`on: %s`)", signalspec.RunStart)
 	}
-	if len(rawStages) == 0 {
-		return nil, p.errf(p.keyLine("stages"), "flow must declare at least one stage")
+	if len(rawPhases) == 0 {
+		if len(raw.Stages) == 0 {
+			return nil, p.errf(p.keyLine("stages"), "flow must declare at least one stage")
+		}
+		rawPhases = []DocPhase{{ID: ShorthandPhase, On: DocWait{Signal: signalspec.RunStart}, Stages: raw.Stages}}
+		f.shorthand = true
+	}
+	var rawStages []DocStage
+	if f.Phases, rawStages, err = p.buildPhases(rawPhases, f.shorthand); err != nil {
+		return nil, err
 	}
 	ids := map[string]int{} // id -> stage index, for uniqueness + edge targets
 	for i := range rawStages {
@@ -814,7 +813,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		return fail("id %q is reserved (the debug leaf: `then: debug` parks the run for a human and re-enters the failing stage)", ReservedDebug)
 	}
 	if raw.ID == ReservedStart {
-		return fail("id %q is reserved (the entry marker; the entry is the first stage)", ReservedStart)
+		return fail("id %q is reserved (the graph editor's start marker)", ReservedStart)
 	}
 	// Retired spellings first: one actionable upgrade beats a cascade of
 	// "field does not apply to type" from a document written against v1.
@@ -845,9 +844,10 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"model", raw.Model != "", []StageType{StageAgent}},
 		{"harness", raw.Harness != "", []StageType{StageAgent}},
 		{"max_turns", raw.MaxTurns != nil, []StageType{StageAgent}},
-		// A wait stage may bound how long it blocks; absent, it waits forever
-		// (like a gate — both park on something outside the run).
-		{"timeout", raw.Timeout != "", []StageType{StageAgent, StageWait}},
+		// A wait stage may bound how long it waits; absent, it waits forever
+		// (like a gate — both park on something outside the run). A command
+		// bounds its script.
+		{"timeout", raw.Timeout != "", []StageType{StageAgent, StageCommand, StageWait}},
 		{"input", raw.Input != nil, []StageType{StageAgent, StageCommand, StageHumanGate, StageAction}},
 		{"output", raw.Output != nil, []StageType{StageAgent, StageCommand}},
 		{"run", raw.Run != "", []StageType{StageCommand}},
@@ -858,6 +858,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"auto_reject", raw.AutoReject != "", []StageType{StageHumanGate}},
 		{"action", raw.Action != "", []StageType{StageAction}},
 		{"for", raw.For != "", []StageType{StageWait}},
+		{"start", raw.Start != "", []StageType{StageWait}},
 	}
 	for kind, re := range raw.edges() {
 		fields = append(fields, fieldSet{kind, re != nil, edgeKinds[kind].on})
@@ -962,7 +963,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				return fail("unknown %s signal %q (%s)", f.field, f.slug, signalspec.Slugs())
 			}
 			if sig := signalspec.Get(f.slug); sig != nil && (sig.Trigger || sig.Entry) {
-				return fail("%s: %q begins a phase, it does not answer a gate (declare a phase `on: %s`)", f.field, f.slug, f.slug)
+				return fail("%s: %q opens a phase, it does not answer a gate (declare a phase `on: %s`)", f.field, f.slug, f.slug)
 			}
 		}
 		if raw.AutoApprove != "" && raw.AutoApprove == raw.AutoReject {
@@ -1023,22 +1024,36 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 
 	case StageWait:
 		if raw.For == "" {
-			return fail("for is required (%s)", signalspec.Slugs())
+			return fail("for is required (%s)", waitableSlugs())
 		}
-		if signalspec.Get(raw.For) == nil {
-			return fail("unknown signal %q (%s)", raw.For, signalspec.Slugs())
+		sig := signalspec.Get(raw.For)
+		if sig == nil {
+			return fail("unknown signal %q (%s)", raw.For, waitableSlugs())
 		}
-		if sig := signalspec.Get(raw.For); sig.Trigger || sig.Entry {
-			return fail("%q begins a phase, it is not something to wait for (declare a phase `on: %s`)", raw.For, raw.For)
+		if sig.Trigger || sig.Entry {
+			return fail("%q opens a phase, it is not something to wait for (declare a phase `on: %s`)", raw.For, raw.For)
 		}
-		s.WaitFor = raw.For
+		// A wait stage is a wait point mid-chain: it parks the phase until
+		// the signal holds, with the same policy a phase's `on:` has — minus
+		// manual, which is what a human_gate is for.
+		w := Wait{Signal: raw.For, Start: StartAuto, Max: 1}
+		switch Start(raw.Start) {
+		case "", StartAuto:
+		case StartConfirm:
+			w.Start = StartConfirm
+		case StartManual:
+			return fail("start: %s does not apply to a wait — a person continues a chain at a human_gate", StartManual)
+		default:
+			return fail("start %q must be %s or %s", raw.Start, StartAuto, StartConfirm)
+		}
 		if raw.Timeout != "" {
 			t, err := time.ParseDuration(raw.Timeout)
 			if err != nil || t <= 0 {
 				return fail("invalid timeout %q", raw.Timeout)
 			}
-			s.Timeout = t
+			w.Timeout, s.Timeout = t, t
 		}
+		s.WaitFor, s.Wait = raw.For, &w
 	}
 
 	if raw.OnSuccess == TerminalAbort || raw.OnSuccess == ReservedDebug {
@@ -1166,7 +1181,15 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 		return fail("to is required")
 	}
 	if raw.To == TerminalDone {
-		return fail("%q is not a valid edge target (only on_success may complete the run)", TerminalDone)
+		// Ending the phase from an edge — a "best effort" stage whose failure
+		// is not worth routing anywhere. Like abort, nothing follows.
+		switch {
+		case raw.Max != nil:
+			return fail("max does not apply when to is %q (the phase ends)", TerminalDone)
+		case raw.Then != nil:
+			return fail("then does not apply when to is %q (nothing runs after the phase ends)", TerminalDone)
+		}
+		return &Edge{To: TerminalDone}, nil
 	}
 	if raw.To == TerminalAbort {
 		// The deliberate stop: taken on first arrival, has no fallback.
@@ -1213,13 +1236,14 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 
 // validateFlow holds the cross-stage rules (DESIGN3 §2.1: explicit graph).
 func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
-	// Actions marked Single may appear once per flow (a run has one MR).
-	singleAt := map[string]int{}
+	// Actions marked Single may appear once per phase (a phase run opens one
+	// merge request).
+	singleAt := map[string]int{} // action|phase -> line
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		for kind, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {
-				if link.To == TerminalAbort || link.To == ReservedDebug {
+				if link.To == TerminalDone || link.To == TerminalAbort || link.To == ReservedDebug {
 					continue
 				}
 				if _, ok := ids[link.To]; !ok {
@@ -1243,10 +1267,11 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		}
 		if s.Type == StageAction {
 			if act := actionspec.Get(s.Action); act != nil && act.Single {
-				if prev, dup := singleAt[s.Action]; dup {
-					return p.errf(s.Line, "stage %q: at most one %q action is allowed per flow (first at line %d)", s.ID, s.Action, prev)
+				key := s.Action + "|" + s.Phase
+				if prev, dup := singleAt[key]; dup {
+					return p.errf(s.Line, "stage %q: at most one %q action is allowed per phase (first at line %d)", s.ID, s.Action, prev)
 				}
-				singleAt[s.Action] = s.Line
+				singleAt[key] = s.Line
 			}
 		}
 
@@ -1274,11 +1299,10 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		}
 	}
 
-	// Reachability: every stage reachable from an entry (the first stage,
-	// or each phase's first stage) via on_success or any edge — an orphaned
-	// stage would never execute.
+	// Reachability: every stage reachable from its phase's first stage via
+	// on_success or any edge — an orphaned stage would never execute.
 	reached := map[string]bool{}
-	queue := []string{f.Stages[0].ID}
+	var queue []string
 	for _, ph := range f.Phases {
 		queue = append(queue, f.Stages[ph.First].ID)
 	}
@@ -1295,7 +1319,7 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		}
 		for _, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {
-				if link.To != TerminalAbort && link.To != ReservedDebug {
+				if link.To != TerminalDone && link.To != TerminalAbort && link.To != ReservedDebug {
 					queue = append(queue, link.To)
 				}
 			}
@@ -1303,27 +1327,33 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	}
 	for i := range f.Stages {
 		if !reached[f.Stages[i].ID] {
-			entry := f.Stages[0].ID
+			first := f.Stages[i].ID
 			if ph := f.Phase(f.Stages[i].Phase); ph != nil {
-				entry = f.Stages[ph.First].ID
+				first = f.Stages[ph.First].ID
 			}
-			return p.errf(f.Stages[i].Line, "stage %q is unreachable from the entry stage %q", f.Stages[i].ID, entry)
+			return p.errf(f.Stages[i].Line, "stage %q is unreachable from the first stage of its phase (%q)", f.Stages[i].ID, first)
 		}
 	}
 	return nil
 }
 
 // buildPhases validates the phases' own fields and flattens their stages,
-// recording each phase's span and every stage's source line.
-func (p *parser) buildPhases(raw []DocPhase) ([]Phase, []DocStage, error) {
+// recording each phase's span and every stage's source line. shorthand marks
+// the desugared one-phase document, whose stage lines come from the
+// top-level stages sequence.
+func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStage, error) {
 	nodes := p.phaseNodes()
 	var phases []Phase
 	var stages []DocStage
 	seen := map[string]int{}
 	p.stageLines = nil
+	entrypoints := 0
 	for i := range raw {
 		rp := &raw[i]
 		line := p.seqLine("phases", i)
+		if shorthand {
+			line = p.keyLine("stages")
+		}
 		fail := func(format string, args ...any) ([]Phase, []DocStage, error) {
 			id := rp.ID
 			if id == "" {
@@ -1344,121 +1374,127 @@ func (p *parser) buildPhases(raw []DocPhase) ([]Phase, []DocStage, error) {
 		if len(rp.Stages) == 0 {
 			return fail("a phase needs at least one stage")
 		}
-		// The first phase is the entry — by position, one rule.
-		on, err := buildTrigger(&rp.On, i == 0)
+		on, err := buildWait(&rp.On)
 		if err != nil {
 			return fail("on: %v", err)
 		}
-		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, First: len(stages), Last: len(stages) + len(rp.Stages) - 1, Line: line, entry: i == 0}
+		if on.Signal == signalspec.RunStart {
+			entrypoints++
+		}
+		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, First: len(stages), Last: len(stages) + len(rp.Stages) - 1, Line: line}
 		phases = append(phases, ph)
 		stages = append(stages, rp.Stages...)
 		var lines []int
-		if i < len(nodes) {
+		if !shorthand && i < len(nodes) {
 			lines = phaseStageLines(nodes[i])
 		}
 		for j := range rp.Stages {
 			l := line
-			if j < len(lines) {
+			switch {
+			case shorthand:
+				l = p.seqLine("stages", j)
+			case j < len(lines):
 				l = lines[j]
 			}
 			p.stageLines = append(p.stageLines, l)
 		}
 	}
+	if entrypoints == 0 {
+		return nil, nil, p.errf(p.keyLine("phases"), "no phase begins a run: at least one must open `on: %s` (an entrypoint a run is created at)", signalspec.RunStart)
+	}
 	return phases, stages, nil
 }
 
-// legacyTriggerTicket is the entry's `on:` before manual (flows saved by
-// earlier builds): read as manual, never written back.
-const legacyTriggerTicket = "ticket"
-
-// buildTrigger validates a phase's `on:` on its own: the signal must be able
-// to begin this kind of phase (Entry for the first, Trigger for a reaction)
-// and the options must apply to it. Whether the flow can satisfy it (a merge
-// request to react to) is validatePhases' question.
-func buildTrigger(raw *DocTrigger, entry bool) (Trigger, error) {
-	t := Trigger{Signal: raw.Signal, Confirm: raw.Confirm, Max: DefaultPhaseMax}
-	if t.Signal == legacyTriggerTicket {
-		t.Signal = TriggerManual
+// buildWait validates a phase's opening wait point on its own (FLOWLANG §1):
+// what it opens on and the options that apply to it. Whether the flow can
+// satisfy it (a merge request to react to) is a warning, not a rule.
+func buildWait(raw *DocWait) (Wait, error) {
+	w := Wait{Signal: raw.Signal, Start: StartManual, Max: UnlimitedMax}
+	if w.Signal == "" {
+		return w, fmt.Errorf("signal is required: %s (an entrypoint), %s (started by hand), or a trigger (%s)",
+			signalspec.RunStart, signalspec.Manual, triggerSlugs())
 	}
-	if t.Signal == "" {
-		return t, fmt.Errorf("signal is required (one of: %s)", beginningSlugs(entry))
-	}
-	sig := signalspec.Get(t.Signal)
+	sig := signalspec.Get(w.Signal)
 	if sig == nil {
-		return t, fmt.Errorf("unknown signal %q (one of: %s)", t.Signal, beginningSlugs(entry))
+		return w, fmt.Errorf("unknown signal %q (%s, %s, or a trigger: %s)", w.Signal, signalspec.RunStart, signalspec.Manual, triggerSlugs())
 	}
-	switch {
-	case entry && sig.Trigger && !sig.Entry:
-		return t, fmt.Errorf("the first phase is the entry, and %q reacts to a merge request — it begins on one of: %s", t.Signal, beginningSlugs(true))
-	case !entry && sig.Entry && !sig.Trigger:
-		return t, fmt.Errorf("%q begins the run, not a reaction phase (reactions begin on one of: %s)", t.Signal, beginningSlugs(false))
-	case !sig.Trigger && !sig.Entry:
-		return t, fmt.Errorf("signal %q ends the run, it does not begin a phase (beginnings: %s)", t.Signal, beginningSlugs(entry))
+	fires := sig.Trigger && w.Signal != signalspec.Manual
+	if !fires && !sig.Entry && w.Signal != signalspec.Manual {
+		return w, fmt.Errorf("signal %q is something to wait for, not something that opens a phase (a %s stage waits on it; a phase opens on %s, %s or a trigger: %s)",
+			w.Signal, StageWait, signalspec.RunStart, signalspec.Manual, triggerSlugs())
 	}
-	if t.Signal == TriggerManual && raw.Confirm {
-		return t, fmt.Errorf("confirm does not apply to %q — nothing fires to confirm; the person starting the phase is the decision", TriggerManual)
+	// The policy: only a signal that fires has one. For run_start and
+	// manual a person's act is the start.
+	if raw.Start != "" {
+		if !fires {
+			return w, fmt.Errorf("start does not apply to %q — nothing fires to decide about: a person's act is the start", w.Signal)
+		}
+		switch Start(raw.Start) {
+		case StartAuto, StartConfirm, StartManual:
+			w.Start = Start(raw.Start)
+		default:
+			return w, fmt.Errorf("start %q must be %s, %s or %s", raw.Start, StartAuto, StartConfirm, StartManual)
+		}
+	} else if fires {
+		w.Start = StartAuto
 	}
 	if raw.QuietFor != "" {
 		if !sig.Debounced {
-			return t, fmt.Errorf("quiet_for applies only to a signal that fires on activity (%s does not)", t.Signal)
+			return w, fmt.Errorf("quiet_for applies only to a signal that fires on activity (%s does not)", w.Signal)
 		}
 		d, err := time.ParseDuration(raw.QuietFor)
 		if err != nil {
-			return t, fmt.Errorf("quiet_for: invalid duration %q", raw.QuietFor)
+			return w, fmt.Errorf("quiet_for: invalid duration %q", raw.QuietFor)
 		}
 		if d < time.Minute {
-			return t, fmt.Errorf("quiet_for must be at least 1m, got %s", raw.QuietFor)
+			return w, fmt.Errorf("quiet_for must be at least 1m, got %s", raw.QuietFor)
 		}
-		t.QuietFor = d
+		w.QuietFor = d
 	}
-	if entry {
-		if raw.Max != nil {
-			return t, fmt.Errorf("max does not apply to the entry — a run begins once")
-		}
-		t.Max = 1
-		return t, nil
+	if fires {
+		w.Max = DefaultPhaseMax
 	}
 	if raw.Max != nil {
 		switch {
-		case *raw.Max == UnlimitedMax && !raw.Confirm:
-			return t, fmt.Errorf("max -1 (unlimited) requires confirm: true — every run must cost a human decision")
+		case *raw.Max == UnlimitedMax && w.Start == StartAuto:
+			return w, fmt.Errorf("max -1 (unlimited) requires start: %s or %s — every run must cost a human decision", StartConfirm, StartManual)
 		case *raw.Max != UnlimitedMax && *raw.Max < 1:
-			return t, fmt.Errorf("max must be >= 1 (or -1 with confirm), got %d", *raw.Max)
+			return w, fmt.Errorf("max must be >= 1 (or -1 with start %s/%s), got %d", StartConfirm, StartManual, *raw.Max)
 		}
-		t.Max = *raw.Max
+		w.Max = *raw.Max
 	}
-	return t, nil
+	return w, nil
 }
 
-// beginningSlugs lists the signals that may begin the entry, or a reaction.
-func beginningSlugs(entry bool) string {
+// triggerSlugs lists the signals that open a phase when they hold.
+func triggerSlugs() string {
 	var out []string
 	for _, s := range signalspec.Registry() {
-		if (entry && s.Entry) || (!entry && s.Trigger) {
+		if s.Trigger && s.Slug != signalspec.Manual {
 			out = append(out, s.Slug)
 		}
 	}
 	return strings.Join(out, ", ")
 }
 
-// validatePhases checks what spans stages: a phase's routes stay inside it,
-// a reaction acts on one merge request (no each_repo, no new one), and the
-// entry opens the merge request every reaction needs.
-func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
-	if !f.Phased() {
-		for i := range f.Stages {
-			if s := &f.Stages[i]; s.Type == StageAction {
-				if act := actionspec.Get(s.Action); act != nil && act.Subject {
-					return p.errf(s.Line, "stage %q: %q acts on the merge request a reaction phase was started for — declare phases (an `on: %s` entry, then a reaction phase holding this stage)", s.ID, s.Action, TriggerManual)
-				}
-			}
+// waitableSlugs lists the signals a wait stage or a gate's auto-answer may
+// take: those that open no phase.
+func waitableSlugs() string {
+	var out []string
+	for _, s := range signalspec.Registry() {
+		if !s.Trigger && !s.Entry {
+			out = append(out, s.Slug)
 		}
-		return nil
 	}
+	return strings.Join(out, "|")
+}
+
+// validatePhases checks what spans stages: a phase's routes stay inside it,
+// and a rebase is published by a leased push.
+func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 	same := func(from *Stage, to string) bool {
 		return to == TerminalDone || to == TerminalAbort || to == ReservedDebug || f.Stages[ids[to]].Phase == from.Phase
 	}
-	entryOpensMR := false
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		if !same(s, s.OnSuccess) {
@@ -1472,24 +1508,6 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 						s.ID, kind, link.To, f.Stages[ids[link.To]].Phase)
 				}
 			}
-		}
-		entry := s.Phase == f.Phases[0].ID
-		if s.Type == StageAction {
-			if act := actionspec.Get(s.Action); act != nil && act.Provides == actionspec.ProvidesMR {
-				if !entry {
-					return p.errf(s.Line, "stage %q: %q opens the run's merge request, which belongs to the entry phase %q — a reaction works on a merge request that already exists",
-						s.ID, s.Action, f.Phases[0].ID)
-				}
-				entryOpensMR = true
-			}
-		}
-		if entry && s.Type == StageAction {
-			if act := actionspec.Get(s.Action); act != nil && act.Subject {
-				return p.errf(s.Line, "stage %q: %q acts on the merge request a reaction phase was started for — it belongs in a reaction phase, not the entry", s.ID, s.Action)
-			}
-		}
-		if !entry && s.EachRepo {
-			return p.errf(s.Line, "stage %q: each_repo does not apply in a reaction phase — a reaction works on one merge request's checkout", s.ID)
 		}
 	}
 	// A rebase rewrites the branch: only a leased push may publish it.
@@ -1510,12 +1528,6 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 		if rebase > 0 && !leased {
 			return p.errf(rebase, "phase %q: strategy rebase rewrites the branch — publish it with a push_branch stage in this phase (a push leased against what the run last saw), not a plain git push", ph.ID)
 		}
-	}
-	// A reaction runs on an open merge request whatever begins it — a manual
-	// one too (the run page offers it per merge request).
-	if reactions := f.Reactions(); len(reactions) > 0 && !entryOpensMR {
-		return p.errf(reactions[0].Line, "phase %q is a reaction: it runs on a merge request, but the entry phase %q opens none (add a create_mr action)",
-			reactions[0].ID, f.Phases[0].ID)
 	}
 	return nil
 }

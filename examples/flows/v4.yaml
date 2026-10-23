@@ -1,5 +1,5 @@
 name: reference
-version: 3
+version: 4
 # The fully-expanded reference flow: what the graph editor emits — one key per
 # line, an explicit on_success on every stage (never the "next in document
 # order" sugar), and rescue gates hoisted after the success chain. Its job is

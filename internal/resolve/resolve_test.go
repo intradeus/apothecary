@@ -19,7 +19,7 @@ import (
 )
 
 const testFlowDoc = `name: v1
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder

@@ -103,18 +103,51 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 		// subject merge request exists by definition.
 		if st.Type == StageAction {
 			if act := actionspec.Get(st.Action); act != nil && act.Needs == actionspec.NeedsMR &&
-				!inReaction(f, st) && !definitelyHasMR(f, st) {
+				!inSubjectPhase(f, st) && !definitelyHasMR(f, st) {
 				warnf("%q needs a merge request that is not opened on every path reaching this stage", st.Action)
 			}
+			// A subject action outside a phase opened for a merge request has
+			// one only when the phase was started on one by hand.
+			if act := actionspec.Get(st.Action); act != nil && act.Subject && !inSubjectPhase(f, st) {
+				warnf("%q acts on the merge request a phase is opened for, and phase %q is not (it opens on %s) — it has one only when started on one by hand; guard the stage with `when: subject` or route on_fail",
+					st.Action, st.Phase, f.Phase(st.Phase).On.Signal)
+			}
+		}
+		if st.EachRepo && inSubjectPhase(f, st) {
+			warnf("each_repo is ignored in phase %q: a phase opened for one merge request runs in its checkout only", st.Phase)
 		}
 	}
+	warns = append(warns, phaseShapeWarnings(f)...)
 	return warns, nil
 }
 
-// inReaction reports whether st belongs to a reaction phase (any phase but
-// the entry), where the run acts on an existing merge request.
-func inReaction(f *Flow, st *Stage) bool {
-	return f.Phased() && st.Phase != f.Phases[0].ID
+// phaseShapeWarnings: what a phase opens on versus what the flow does — a
+// trigger that needs a merge request no stage of the flow opens.
+func phaseShapeWarnings(f *Flow) []string {
+	opensMR := false
+	for i := range f.Stages {
+		if st := &f.Stages[i]; st.Type == StageAction {
+			if act := actionspec.Get(st.Action); act != nil && act.Provides == actionspec.ProvidesMR {
+				opensMR = true
+			}
+		}
+	}
+	var warns []string
+	for i := range f.Phases {
+		if ph := &f.Phases[i]; ph.HasSubject() && !opensMR {
+			warns = append(warns, fmt.Sprintf("phase %q opens on %s, which needs a merge request no stage opens (add a %s action)",
+				ph.ID, ph.On.Signal, actionspec.CreateMR))
+		}
+	}
+	return warns
+}
+
+// inSubjectPhase reports whether st belongs to a phase opened for one merge
+// request (its signal needs one), where that merge request exists by
+// definition.
+func inSubjectPhase(f *Flow, st *Stage) bool {
+	ph := f.Phase(st.Phase)
+	return ph != nil && ph.HasSubject()
 }
 
 // definitelyProduced reports whether every route from the entry to consumer
@@ -186,19 +219,25 @@ func everyRouteSatisfies(f *Flow, target *Stage, ok func(*Stage) bool) bool {
 		}
 		return true
 	}
-	// A reaction phase starts after the entry phase has run to its end, so
-	// what the entry phase does counts as done for every route inside it
-	// (an approximation for warnings: any entry stage satisfying ok).
-	if ph := f.Phase(target.Phase); ph != nil && !ph.Entry() {
-		before := false
-		for i := f.Phases[0].First; i <= f.Phases[0].Last; i++ {
+	// Phases run in any order, any number of times, so what every OTHER
+	// phase does counts as done for the routes inside the target's (an
+	// approximation for warnings: any stage of another phase satisfying ok).
+	ph := f.Phase(target.Phase)
+	if ph == nil {
+		return walk(&f.Stages[0], map[string]bool{}, false)
+	}
+	before := false
+	for _, other := range f.Phases {
+		if other.ID == ph.ID {
+			continue
+		}
+		for i := other.First; i <= other.Last; i++ {
 			if ok(&f.Stages[i]) {
 				before = true
 			}
 		}
-		return walk(&f.Stages[ph.First], map[string]bool{}, before)
 	}
-	return walk(&f.Stages[0], map[string]bool{}, false)
+	return walk(&f.Stages[ph.First], map[string]bool{}, before)
 }
 
 // effectiveOutputsOf is EffectiveOutputs with the flow's own agent lookup.

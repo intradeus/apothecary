@@ -23,7 +23,7 @@ export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait';
 
 // CURRENT_VERSION is the grammar this build writes; every document declares
 // it, so a future break is a refusal rather than a mis-parse (FLOWLANG §1).
-export const CURRENT_VERSION = 3;
+export const CURRENT_VERSION = 4;
 
 // An edge is a chain: when a link's max is exhausted the next failure
 // falls through to `then` (retry-then-escalate). A link with to: abort

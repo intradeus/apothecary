@@ -63,24 +63,27 @@ func TestMRMerged(t *testing.T) {
 	}
 }
 
-// Manual is the one beginning a person gives: it may begin the run (the
-// entry) and a reaction phase, needs nothing of the project, and never fires
-// on its own — so it is not debounced. The forge triggers begin reactions
-// only.
-func TestManual(t *testing.T) {
-	sig := Get(Manual)
-	if sig == nil {
-		t.Fatalf("%s is not registered", Manual)
+// Beginnings: run_start is the one Entry (a run is created for the phase),
+// manual the Trigger that never fires (a person starts the phase from the
+// run page); neither needs anything of the project nor is debounced. The
+// forge triggers open phases only.
+func TestBeginnings(t *testing.T) {
+	rs := Get(RunStart)
+	if rs == nil || !rs.Entry || rs.Trigger || rs.Requires != "" || rs.Needs != "" || rs.Debounced {
+		t.Errorf("run_start = %+v, want Entry only", rs)
 	}
-	if !sig.Entry || !sig.Trigger {
-		t.Errorf("entry %v trigger %v, want both", sig.Entry, sig.Trigger)
-	}
-	if sig.Requires != "" || sig.Needs != "" || sig.Debounced {
-		t.Errorf("manual needs nothing: %+v", sig)
+	m := Get(Manual)
+	if m == nil || m.Entry || !m.Trigger || m.Requires != "" || m.Needs != "" || m.Debounced {
+		t.Errorf("manual = %+v, want Trigger only", m)
 	}
 	for _, slug := range []string{MRConflicts, MRReviewSettled} {
 		if s := Get(slug); s.Entry || !s.Trigger {
 			t.Errorf("%s: entry %v trigger %v", slug, s.Entry, s.Trigger)
+		}
+	}
+	for _, slug := range []string{MRMerged, MRClosed} {
+		if s := Get(slug); s.Entry || s.Trigger {
+			t.Errorf("%s is waitable, got entry %v trigger %v", slug, s.Entry, s.Trigger)
 		}
 	}
 }

@@ -53,7 +53,7 @@ func TestBuiltinFlowsBindCleanly(t *testing.T) {
 // human copies to start from, so a stale one teaches the wrong grammar.
 // (The built-in default is covered above; these are the two on disk.)
 func TestShippedFlowsBindCleanly(t *testing.T) {
-	for _, path := range []string{"../../examples/flows/v3.yaml", "../flow/testdata/v3.yaml"} {
+	for _, path := range []string{"../../examples/flows/v4.yaml", "../flow/testdata/v4.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			f, err := flow.Load(path)
 			if err != nil {
@@ -130,7 +130,7 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 		t.Fatal("the default flow is phased and has no final gate")
 	}
 	conflicts, review := f.Phase("conflicts"), f.Phase("review_fixes")
-	if conflicts == nil || !conflicts.On.Confirm || review == nil || review.On.QuietFor == 0 {
+	if conflicts == nil || conflicts.On.Start != flow.StartConfirm || review == nil || review.On.QuietFor == 0 {
 		t.Errorf("reactions: conflicts %+v review %+v", conflicts, review)
 	}
 	if f.Agent("replier").ReviewRepliesOutput() == nil {
@@ -205,7 +205,7 @@ func TestFlowSourceLayering(t *testing.T) {
 		t.Fatalf("Get(nope) err = %v, want ErrNotFound", err)
 	}
 	// A DB row with the same name shadows the built-in.
-	shadow, err := flow.Parse("default", []byte("name: default\nversion: 3\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
+	shadow, err := flow.Parse("default", []byte("name: default\nversion: 4\ndefaults: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -130,7 +130,7 @@ func TestRerunCarriesDirection(t *testing.T) {
 // about to record, which $CHANGED (commits only) cannot see yet.
 func TestUncommittedRendersWorkingTreeStatus(t *testing.T) {
 	h := newHarness(t, mustFlow(t, `name: uncommitted
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: committer

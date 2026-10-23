@@ -20,7 +20,7 @@ func TestFlowsAreOwnedPerProject(t *testing.T) {
 	b := seedNamedProject(t, svc, "p2")
 
 	const shape = `name: verify
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 stages:
   - { id: check, type: command, run: %q }

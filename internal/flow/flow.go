@@ -13,14 +13,14 @@ import (
 )
 
 // CurrentVersion is the grammar this build speaks. Every document declares
-// its version, so a future break gets a clean refusal ("this build speaks
-// version 3") instead of mis-parsing an unfamiliar shape.
+// its version, so a break gets a clean refusal ("this build speaks version
+// 4") instead of mis-parsing an unfamiliar shape.
 //
-// v3 (PLAN5 M26) moved agents INTO the flow: a document now carries the
-// definitions of every agent it runs, so a flow is self-contained and its
-// contracts are checked at parse time rather than against a per-project
-// library the parser cannot see.
-const CurrentVersion = 3
+// v4 made every phase an equal chain opened by a wait point (`on:`), with
+// explicit entrypoints (`on: run_start`) in place of a positional entry, and
+// moved the flow's settings into one `parameters:` block a project binds.
+// There is no legacy mapping: a document of any other version is refused.
+const CurrentVersion = 4
 
 type StageType string
 
@@ -31,13 +31,11 @@ const (
 	// StageAction invokes one of apothecary's built-in integrations
 	// (actionspec): create the merge request, and whatever follows.
 	StageAction StageType = "action"
-	// StageWait blocks until an external signal fires (signalspec).
+	// StageWait parks the phase until an external signal holds (signalspec).
 	StageWait StageType = "wait"
 )
 
 const (
-	HarnessOpencode = "opencode"
-
 	// Sentinels are the engine-provided input values (FLOWLANG §4). The rule
 	// is lexical: a $NAME input is resolved by the engine at stage time,
 	// anything else is a repo-relative artifact path. Adding one costs a
@@ -98,21 +96,26 @@ const (
 	EdgeTimeout = "on_timeout"
 )
 
-// TerminalDone is the reserved on_success target that completes the run.
-// TerminalAbort is the reserved EDGE target that deliberately stops the run
-// (projected as abandoned, mirroring the frontend's Abort verb) — the
-// explicit form of "no edge / edge exhausted". ReservedStart is the graph
-// editor's entry-marker key (the entry IS the first stage in the document;
-// "start" is never a routing target). ReservedDebug is the debug leaf: a
-// reserved EDGE target that is NOT a terminal — the run parks for a human
-// who has the workspace, and continuing re-enters the stage that took the
-// link (abandoning ends the run). Stage ids may shadow none of them.
+// TerminalDone is the reserved target that finishes the PHASE: on_success's
+// natural end, and an edge's for a stage whose failure is not worth routing
+// anywhere ("best effort"). TerminalAbort is the reserved EDGE target that
+// deliberately stops the run (projected as abandoned, mirroring the
+// frontend's Abort verb) — the explicit form of "no edge / edge exhausted".
+// ReservedStart is the graph editor's marker key ("start" is never a routing
+// target). ReservedDebug is the debug leaf: a reserved EDGE target that is
+// NOT a terminal — the run parks for a human who has the workspace, and
+// continuing re-enters the stage that took the link (abandoning ends the
+// run). Stage ids may shadow none of them.
 const (
 	TerminalDone  = "done"
 	TerminalAbort = "abort"
 	ReservedStart = "start"
 	ReservedDebug = "debug"
 )
+
+// ShorthandPhase is the phase a document written with top-level stages
+// desugars to: one chain opened by run_start.
+const ShorthandPhase = "main"
 
 // UnlimitedMax marks a link that never exhausts (max: -1). It is only
 // valid when a human_gate sits on the link — as its TARGET (each firing
@@ -122,15 +125,16 @@ const (
 // finite max — flow budgets cannot bound cost-free retries (a failing
 // command consumes no turns and no dollars; a broken harness can fail in
 // milliseconds). The debug leaf is unlimited by nature and takes no max.
+// On a phase's wait point it means "no bound on the phase's runs".
 const UnlimitedMax = -1
 
 // Edge is a recoverable redirect (on_fail / on_reject / on_timeout). Each
 // link carries its own cumulative max; when a link is exhausted the NEXT
 // failure falls through to Then (retry-then-escalate chains). An exhausted
-// chain abandons the run. To may be TerminalAbort: taking that link stops
-// the run deliberately, or ReservedDebug: the run parks for a human and
-// comes back to this stage on continue (neither takes max/then — there is
-// no target stage).
+// chain abandons the run. To may be TerminalDone: the phase ends there,
+// TerminalAbort: taking that link stops the run deliberately, or
+// ReservedDebug: the run parks for a human and comes back to this stage on
+// continue (none of the three takes max/then — there is no target stage).
 //
 // An edge does not say what it carries: the content it brings is always
 // available to its target as $DECISION or $FAILURE (FeedSentinel), and the
@@ -205,70 +209,107 @@ type Stage struct {
 	// action
 	Action string // a slug registered in actionspec
 
-	// wait
-	WaitFor string // a slug registered in signalspec
+	// wait: the mid-chain wait point (its signal, policy and timeout).
+	// WaitFor mirrors Wait.Signal for the engine's current readers.
+	Wait    *Wait
+	WaitFor string
 
 	// OnSuccess is the explicit success target: a stage id or TerminalDone.
 	// Parse always fills it (YAML sugar: absent = next stage in document
-	// order, last stage = done), so the runtime model is fully explicit.
+	// order, last stage of the phase = done), so the runtime model is fully
+	// explicit.
 	OnSuccess string
 
 	// Edges are the recoverable redirects by kind (EdgeFail, EdgeReject,
 	// future kinds — DESIGN3 §2.1). Never nil after Parse.
 	Edges map[string]*Edge
 
-	// Phase is the id of the phase the stage belongs to ("" in a flow
-	// written with top-level stages: one implicit ticket phase).
+	// Phase is the id of the phase the stage belongs to — always set, since
+	// every flow is phases (the shorthand's is ShorthandPhase).
 	Phase string
 
 	// Line is the stage's line in the source YAML, for error reporting.
 	Line int
 }
 
-// TriggerManual is the beginning a person gives (signalspec.Manual): the
-// entry's today — someone starts a run for a ticket — and a reaction phase's
-// when only the run page should start it. Named here because the parser and
-// the engine speak of it by role.
+// Parks reports whether the stage is a wait point mid-chain: a wait or a
+// gate, which stops the phase for something outside the run.
+func (s *Stage) Parks() bool { return s.Type == StageWait || s.Type == StageHumanGate }
+
+// TriggerManual is the beginning a person gives from the run page
+// (signalspec.Manual): a phase on it has no signal and starts by hand only.
 const TriggerManual = signalspec.Manual
 
-// DefaultPhaseMax bounds how many times a reaction phase may run for one
-// merge request when the trigger does not say.
+// DefaultPhaseMax bounds how many times a phase opened by a firing signal may
+// run for one subject when `max` does not say.
 const DefaultPhaseMax = 10
 
-// Phase is one beginning and the stages it runs (PLAN6): `on:` says what
-// begins it, and a phase has exactly one. The entry phase is the first,
-// what a run begins with; every other phase is a reaction, begun by its
-// signal while the run's merge requests are open (or by a person, on
-// manual). Its stages are Flow.Stages[First..Last], contiguous in document
-// order.
+// Start is a wait point's policy: what happens when its signal holds.
+type Start string
+
+const (
+	StartAuto    Start = "auto"    // proceed as soon as the signal holds
+	StartConfirm Start = "confirm" // raise a decision ping first; proceed on yes
+	StartManual  Start = "manual"  // never proceed on its own: a person does, the signal is advice
+)
+
+// Wait is a wait point: where a chain stops for something outside the run
+// (FLOWLANG §1). A phase's `on:` is its opening wait point; a wait stage is
+// one mid-chain. Signal is a registry slug — run_start (a run is created for
+// the phase), manual (a person starts it), a trigger (the forge) — or, on a
+// wait stage, a waitable one. Start is the policy applied when the signal
+// holds (a person's act for run_start and manual). QuietFor debounces a
+// signal that fires on activity. Max bounds a phase's runs per subject
+// (UnlimitedMax = no bound; 1 on a wait stage, which fires once per pass).
+// Timeout bounds a wait stage (zero = none).
+type Wait struct {
+	Signal   string
+	Start    Start
+	QuietFor time.Duration
+	Max      int
+	Timeout  time.Duration
+}
+
+// Trigger is the pre-v4 name of Wait.
+//
+// Deprecated: use Wait.
+type Trigger = Wait
+
+// Phase is one chain of stages and the wait point that opens it. Its stages
+// are Flow.Stages[First..Last], contiguous in document order. Every phase is
+// equal: an entrypoint (on: run_start) opens when a run is created for it, a
+// manual phase when a person starts it from the run page, a firing phase when
+// its signal holds for one of the run's merge requests — one phase run at a
+// time, in one workspace.
 type Phase struct {
 	ID          string
 	Description string
-	On          Trigger
+	On          Wait
 	First, Last int
 	Line        int
-	// entry marks the first phase — a role the parser assigns by position,
-	// not a signal: manual begins reactions too.
-	entry bool
 }
 
-// Trigger is what begins a phase: a signalspec slug flagged Entry (for the
-// first phase) or Trigger (for a reaction), and the options shaping it.
-type Trigger struct {
-	// Signal is TriggerManual or a forge trigger (mr_conflicts, …).
-	Signal string
-	// QuietFor debounces a signal that fires on activity (review comments):
-	// the phase starts once nothing new happened for this long.
-	QuietFor time.Duration
-	// Confirm asks a human before the phase starts (an inbox decision).
-	Confirm bool
-	// Max bounds the phase's runs per merge request; UnlimitedMax only with
-	// Confirm (a human decides every run).
-	Max int
+// IsEntrypoint reports whether a run may begin at this phase (on: run_start).
+func (p *Phase) IsEntrypoint() bool { return p.On.Signal == signalspec.RunStart }
+
+// Fires reports whether the phase opens on a signal the engine observes (a
+// trigger other than manual).
+func (p *Phase) Fires() bool {
+	sig := signalspec.Get(p.On.Signal)
+	return sig != nil && sig.Trigger && p.On.Signal != signalspec.Manual
 }
 
-// Entry reports whether this is the run's first phase.
-func (p *Phase) Entry() bool { return p.entry }
+// HasSubject reports whether a run of this phase acts on one merge request:
+// its signal needs one.
+func (p *Phase) HasSubject() bool {
+	sig := signalspec.Get(p.On.Signal)
+	return sig != nil && sig.Needs == signalspec.NeedsMR
+}
+
+// Entry is IsEntrypoint under its pre-v4 name.
+//
+// Deprecated: use IsEntrypoint.
+func (p *Phase) Entry() bool { return p.IsEntrypoint() }
 
 // Input returns the stage's named binding for name, or nil.
 func (s *Stage) Input(name string) *IOBinding {
@@ -294,9 +335,8 @@ type Flow struct {
 	// run pins prompts along with the rest of the document.
 	Agents []agentspec.Spec
 	Stages []Stage
-	// Phases is nil for a flow written with top-level stages (one implicit
-	// ticket phase, today's semantics exactly). Otherwise the entry phase is
-	// Phases[0] and its stages come first.
+	// Phases is never empty after Parse: a document written with top-level
+	// stages is one phase, ShorthandPhase, opened by run_start.
 	Phases []Phase
 
 	// Hash is the SHA-256 (hex) of the raw flow file.
@@ -307,6 +347,10 @@ type Flow struct {
 	// Never block a save or a run — everything that breaks is a parse error
 	// now that agents live in the document.
 	Warnings []string
+
+	// shorthand marks a document written with top-level stages, desugared
+	// into the one phase above.
+	shorthand bool
 }
 
 // Agent returns the flow's definition of name, or nil.
@@ -344,8 +388,34 @@ func (f *Flow) AgentSpecs() []*agentspec.Spec {
 	return out
 }
 
-// Phased reports whether the flow declares phases.
-func (f *Flow) Phased() bool { return f != nil && len(f.Phases) > 0 }
+// Entrypoints lists the phases a run may begin at, in document order.
+func (f *Flow) Entrypoints() []*Phase {
+	var out []*Phase
+	for i := range f.Phases {
+		if f.Phases[i].IsEntrypoint() {
+			out = append(out, &f.Phases[i])
+		}
+	}
+	return out
+}
+
+// Beginning is the phase a run begins at when its creation names none: the
+// first entrypoint in document order (Parse guarantees one exists).
+func (f *Flow) Beginning() *Phase {
+	for i := range f.Phases {
+		if f.Phases[i].IsEntrypoint() {
+			return &f.Phases[i]
+		}
+	}
+	return nil
+}
+
+// Phased reports whether the document declared its phases itself rather
+// than writing the one-phase shorthand.
+//
+// Deprecated: every flow is phases; the engine's remaining uses go away with
+// per-phase-run state.
+func (f *Flow) Phased() bool { return f != nil && !f.shorthand }
 
 // Phase returns the phase with the given id, or nil.
 func (f *Flow) Phase(id string) *Phase {
@@ -357,12 +427,17 @@ func (f *Flow) Phase(id string) *Phase {
 	return nil
 }
 
-// Reactions are the phases a signal starts, in document order.
+// Reactions lists the phases that are not entrypoints, in document order.
+//
+// Deprecated: walk Phases and ask IsEntrypoint / Fires.
 func (f *Flow) Reactions() []Phase {
-	if !f.Phased() {
-		return nil
+	var out []Phase
+	for i := range f.Phases {
+		if !f.Phases[i].IsEntrypoint() {
+			out = append(out, f.Phases[i])
+		}
 	}
-	return f.Phases[1:]
+	return out
 }
 
 // Stage returns the stage with the given id, or nil.

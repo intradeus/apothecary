@@ -186,7 +186,7 @@ export type {
 	DocIo,
 	DocPhase,
 	DocStage,
-	DocTrigger,
+	DocWait,
 	DownloadAttachmentData,
 	DownloadAttachmentErrors,
 	DownloadAttachmentResponse,

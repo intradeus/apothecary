@@ -1,5 +1,5 @@
 name: default
-version: 3
+version: 4
 description: "built-in default: plan-gated build with cross-vendor adversarial review, then the merge request's life: conflicts fixed on your go, review comments fixed and answered once the review goes quiet"
 defaults: { timeout: 30m, harness: opencode, model: opencode-go/qwen3.7-plus, max_turns: 50 }
 # The budget covers the whole life of the ticket, review rounds included.
@@ -304,7 +304,7 @@ agents:
 
 phases:
   - id: deliver
-    on: manual
+    on: run_start
     description: "plan, build, review and open the merge request"
     stages:
       # The issue moves first — before any workspace exists; the move needs
@@ -383,7 +383,7 @@ phases:
   # The target moved under the merge request. Nothing is spent until you
   # confirm (inbox); declined, it is offered again only when the target moves.
   - id: conflicts
-    on: { signal: mr_conflicts, confirm: true }
+    on: { signal: mr_conflicts, start: confirm }
     description: "merge the target branch in, resolve, re-test, push"
     stages:
       - { id: sync,       type: action, action: sync_target, input: { strategy: merge },

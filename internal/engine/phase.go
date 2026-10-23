@@ -67,13 +67,8 @@ func (x *exec) entryPhaseStarted() error {
 	if !rs.fl.Phased() || rs.phase != "" || rs.idle {
 		return nil
 	}
-	// Who began it: a person, when the entry is on manual (a run started
-	// for a ticket); a signal, once an entry can begin on a tracker event.
-	by := "human"
-	if rs.fl.Phases[0].On.Signal != flow.TriggerManual {
-		by = "signal"
-	}
-	p := &event.PhaseStarted{Phase: rs.fl.Phases[0].ID, By: by}
+	// Who began it: a person, who created the run for this entrypoint.
+	p := &event.PhaseStarted{Phase: rs.fl.Phases[0].ID, By: "human"}
 	if err := x.append(p); err != nil {
 		return err
 	}
@@ -240,7 +235,7 @@ func (x *exec) evaluateIdle(st *idler) error {
 			if !holds || rs.triggerSeen[triggerKey(ph.ID, o.mr.Repo, key)] {
 				continue
 			}
-			if ph.On.Confirm {
+			if ph.On.Start == flow.StartConfirm {
 				if err := x.askToStart(&ph, o, key, why); err != nil {
 					return err
 				}
@@ -452,7 +447,7 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 		if r == nil {
 			r = map[string]int{}
 		}
-		out = append(out, PhaseInfo{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Confirm: ph.On.Confirm,
+		out = append(out, PhaseInfo{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Confirm: ph.On.Start == flow.StartConfirm,
 			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r})
 	}
 	return out, nil

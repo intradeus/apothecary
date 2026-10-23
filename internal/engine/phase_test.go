@@ -19,7 +19,7 @@ import (
 // request; conflicts (confirmed by a human) and review_fixes (after a quiet
 // hour, at most twice) react to it.
 const phasedFlowDoc = `name: phased
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
@@ -32,13 +32,13 @@ agents:
       - { name: mr, path: artifacts/mr.md }
 phases:
   - id: deliver
-    on: manual
+    on: run_start
     stages:
       - { id: build, type: agent, agent: builder }
       - { id: redact, type: agent, agent: redactor }
       - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
   - id: conflicts
-    on: { signal: mr_conflicts, confirm: true }
+    on: { signal: mr_conflicts, start: confirm }
     stages:
       - { id: fix_conflicts, type: command, run: "./sync.sh" }
   - id: review_fixes
@@ -196,10 +196,10 @@ func TestPhasedRunAbandonsWhenTheMRCloses(t *testing.T) {
 // run completes as a flow without phases would.
 func TestPhasedRunWithoutAnMRCompletes(t *testing.T) {
 	doc := `name: phased
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 phases:
-  - { id: deliver, on: manual, stages: [{ id: s, type: command, run: "true" }] }
+  - { id: deliver, on: run_start, stages: [{ id: s, type: command, run: "true" }] }
 `
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "T"}, "phased", testProject)
@@ -310,7 +310,7 @@ func TestReviewPhaseWaitsForAQuietReview(t *testing.T) {
 // Triggers holding together run one after the other in document order: the
 // conflict first, then the review round (R3, R4).
 func TestSimultaneousTriggersRunInDocumentOrder(t *testing.T) {
-	ph := newPhasedHarness(t, strings.Replace(phasedFlowDoc, "confirm: true", "confirm: false", 1))
+	ph := newPhasedHarness(t, strings.Replace(phasedFlowDoc, "start: confirm", "start: auto", 1))
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestSimultaneousTriggersRunInDocumentOrder(t *testing.T) {
 // Two merge requests are two subjects: each phase run acts on its own
 // checkout, and they take turns, the primary first (R3, R12).
 func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
-	doc := strings.Replace(phasedFlowDoc, "confirm: true", "confirm: false", 1)
+	doc := strings.Replace(phasedFlowDoc, "start: confirm", "start: auto", 1)
 	doc = strings.Replace(doc, "      - { id: build, type: agent, agent: builder }\n",
 		"      - { id: build, type: agent, agent: builder }\n      - { id: commit, type: command, each_repo: true, run: \"git add -A && git commit -m x\" }\n", 1)
 	ph := newPhasedHarness(t, doc)

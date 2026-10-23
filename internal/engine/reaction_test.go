@@ -208,7 +208,7 @@ func (g *mergeGit) snapshot() (merges, rebases int, pushes []string, paused stri
 // conflict fix (engine merge, resolver for conflicts) and a review round
 // (load, fix, reply, post).
 const reactionFlowDoc = `name: phased
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
@@ -233,7 +233,7 @@ agents:
       - { name: replies, type: review_replies, path: artifacts/replies.yaml }
 phases:
   - id: deliver
-    on: manual
+    on: run_start
     stages:
       - { id: build, type: agent, agent: builder }
       - { id: commit, type: command, run: "git add -A && git commit -m build" }
@@ -241,7 +241,7 @@ phases:
       - { id: redact, type: agent, agent: redactor }
       - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
   - id: conflicts
-    on: { signal: mr_conflicts, confirm: true }
+    on: { signal: mr_conflicts, start: confirm }
     stages:
       - { id: sync, type: action, action: sync_target, input: { strategy: STRATEGY }, on_success: sync_test,
           on_fail: { to: resolve, max: 2, then: debug } }

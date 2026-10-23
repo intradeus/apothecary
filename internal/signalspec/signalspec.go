@@ -7,10 +7,13 @@
 //	type: wait, for: mr_merged      — block until the signal fires
 //	type: human_gate, auto_answer:  — the signal approves the gate for you
 //
-// A phase's `on:` (FLOWLANG §1) names a signal too: what begins it. Those
-// carry Trigger (may begin a reaction phase, while the merge request is
-// open) or Entry (may begin the run itself); `manual` is the one beginning
-// that never fires on its own — a person gives it.
+// A phase's `on:` (FLOWLANG §1) names a signal too: the wait point that
+// opens it. Those carry Trigger (may open a phase while the merge request is
+// open) or Entry (may begin the run itself). `manual` is the one Trigger that
+// never fires on its own — a person gives it from the run page — and
+// `run_start` the one Entry: a run is created for the phase, by a person or
+// an automation. A signal with neither flag is waitable: a wait stage parks
+// on it, a gate's auto-answer takes it.
 //
 // The second is why both exist rather than only `wait`: a final gate is a race
 // (a human clicks approve, OR they merge and apothecary notices), and the
@@ -40,13 +43,13 @@ type Signal struct {
 	// Needs names a run fact the signal depends on, so a flow that waits for
 	// something that can never happen is caught rather than hanging.
 	Needs string `json:"needs,omitempty"`
-	// Trigger marks a signal that begins a reaction phase (PLAN6) rather than
+	// Trigger marks a signal that opens a phase (PLAN6) rather than
 	// answering a gate or ending a wait: it describes something to react to
-	// while the merge request is open, not an outcome.
+	// while the merge request is open, not an outcome. Manual carries it
+	// too, as the trigger that never fires on its own.
 	Trigger bool `json:"trigger,omitempty"`
-	// Entry marks a signal that may begin the run itself: the first phase's
-	// `on:`. Manual is the one today; a tracker event (a ticket assigned)
-	// would be another.
+	// Entry marks a signal that begins the run itself: a phase on it is an
+	// entrypoint a run is created at. RunStart is the one today.
 	Entry bool `json:"entry,omitempty"`
 	// Debounced marks a trigger that fires on activity and so accepts a
 	// quiet_for: the phase starts once the activity has stopped.
@@ -55,9 +58,13 @@ type Signal struct {
 
 // Signal slugs, the port kinds they require, and the run facts they need.
 const (
-	// Manual is the beginning a person gives; it never fires on its own. The
-	// entry begins on it when someone starts a run for a ticket; a reaction
-	// phase on it begins only from the run page.
+	// RunStart is the entrypoint's beginning: a run is created for the phase
+	// (a person starts one from a ticket, or an automation does). A flow
+	// opens at least one phase on it; several are allowed, and the creator
+	// picks.
+	RunStart = "run_start"
+	// Manual is the beginning a person gives from the run page; it never
+	// fires on its own, and a phase on it starts no other way.
 	Manual = "manual"
 
 	MRMerged = "mr_merged"
@@ -75,11 +82,15 @@ const (
 )
 
 var registry = []Signal{{
+	Slug:        RunStart,
+	Title:       "Run started",
+	Description: "A run is created for this phase — a person starts one from a ticket, or an automation does. Marks the phase as an entrypoint; a flow has at least one, and the start-run form picks among several.",
+	Entry:       true,
+}, {
 	Slug:        Manual,
 	Title:       "Started by hand",
-	Description: "Never fires on its own: a person begins the phase. The entry begins when someone starts a run for a ticket; a reaction phase on manual runs only when someone starts it from the run page.",
+	Description: "Never fires on its own: a person starts the phase from the run page while the run is idle, and it starts no other way.",
 	Trigger:     true,
-	Entry:       true,
 }, {
 	Slug:        MRMerged,
 	Title:       "Merge request merged",

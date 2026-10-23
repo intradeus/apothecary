@@ -123,7 +123,7 @@ func gitPerDir(gits map[string]*fakeGit) func(*fake.Env, ports.Command) (ports.E
 }
 
 const multiRepoFlowDoc = `name: multi
-version: 3
+version: 4
 defaults: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
