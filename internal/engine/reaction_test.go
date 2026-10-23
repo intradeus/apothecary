@@ -247,7 +247,7 @@ phases:
           on_fail: { to: resolve, max: 2, then: debug } }
       - { id: resolve, type: agent, agent: resolver, input: { conflict: $FAILURE }, on_success: sync }
       - { id: sync_test, type: command, run: "./verify.sh" }
-      - { id: sync_push, type: action, action: push_branch, on_success: done, on_fail: debug }
+      - { id: sync_push, type: action, action: push_branch, on_success: end, on_fail: debug }
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1m }
     stages:

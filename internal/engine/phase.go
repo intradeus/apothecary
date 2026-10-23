@@ -94,16 +94,53 @@ func (x *exec) beginRun() error {
 	return x.beginPhase(begin, "", "", by, "")
 }
 
-// phaseDone ends the phase in progress: the run goes idle, and the next
-// idle tick decides what follows — a parked phase resuming, another phase
-// opening, or the run's end (endCheck).
+// phaseDone ends the phase in progress (FLOWLANG §3 end): the run goes
+// idle, and the next idle tick decides what follows — a parked phase
+// resuming, another phase opening, or the run's end (endCheck). A phase that
+// ended at a dead end says why.
 func (x *exec) phaseDone() error {
+	rs := x.rs
+	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject, Reason: rs.endReason}); err != nil {
+		return err
+	}
+	rs.endReason = ""
+	rs.idle = true
+	return nil
+}
+
+// runDone is the flow's own end of the run (FLOWLANG §3 done): the phase
+// finishes and the run completes with it, whatever else is parked or armed —
+// their open questions are withdrawn with the run.
+func (x *exec) runDone() error {
 	rs := x.rs
 	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject}); err != nil {
 		return err
 	}
-	rs.idle = true
+	return x.complete()
+}
+
+// deadEnd is where a failure has nowhere left to go: no edge for it, its
+// chain exhausted, or a person giving up at the debug leaf. In an entrypoint
+// phase that ends the run — it is abandoned. Any other phase — a reaction, a
+// phase started by hand — is one round of something the run may do any
+// number of times: the round ends, its phase_completed saying why, and the
+// run goes back to waiting (FLOWLANG §3).
+func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
+	if x.inEntrypoint() {
+		return x.abandon(st.ID, edgeKind, reason)
+	}
+	x.e.log.Info("phase ended at a dead end; the run goes back to waiting",
+		"run", x.rs.runID, "phase", x.rs.phase, "stage", st.ID, "reason", reason)
+	x.endPhase()
+	x.rs.endReason = reason
 	return nil
+}
+
+// inEntrypoint reports whether the phase in progress is one a run begins at,
+// where a dead end ends the run rather than the round.
+func (x *exec) inEntrypoint() bool {
+	ph := x.rs.fl.Phase(x.rs.phase)
+	return ph == nil || ph.IsEntrypoint()
 }
 
 // subjectCheckout is the checkout a reaction phase acts on, or nil (the
@@ -357,7 +394,8 @@ func (x *exec) askToStart(ph *flow.Phase, o mrObservation, key, why string) erro
 		q += " (" + ph.Description + ")"
 	}
 	p := &Ping{ID: x.e.newID(), RunID: rs.runID, Type: event.PingPhaseConfirm, Question: q,
-		Link: o.mr.Ref.URL, RaisedAt: x.e.clock(), AnswerKind: event.AnswerDecision, done: make(chan struct{})}
+		Link: o.mr.Ref.URL, RaisedAt: x.e.clock(), AnswerKind: event.AnswerDecision, Phase: ph.ID,
+		done: make(chan struct{})}
 	x.e.mu.Lock()
 	x.e.pings[p.ID] = p
 	x.e.mu.Unlock()

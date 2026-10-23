@@ -5,6 +5,12 @@
 // the graph is a view, never a second format.
 import { stringify } from 'yaml';
 
+// The two ends (FLOWLANG §3). END finishes a PHASE: its chain is over and the
+// run goes back to waiting — a phase's last stage ends this way, and a
+// reaction, which may run any number of times, always does. DONE finishes the
+// RUN, now, whatever else is parked or armed: said where the work is truly
+// finished (the default flow says it once the merge request merged).
+export const END = 'end';
 export const DONE = 'done';
 // ABORT is the reserved edge target that deliberately stops the run
 // (projected as abandoned) — the explicit twin of DONE.
@@ -16,6 +22,11 @@ export const DEBUG = 'debug';
 // START is the first phase's marker layout/link key (the canvas's solid
 // beginning marker); it is never serialized.
 export const START = 'start';
+
+/** Whether a route target is reserved rather than a stage: the two ends, the
+ *  deliberate stop, the debug leaf. None of them takes max or then. */
+export const isReservedTarget = (to: string) =>
+	to === END || to === DONE || to === ABORT || to === DEBUG;
 export const EDGE_KINDS = ['on_fail', 'on_reject', 'on_timeout'] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
@@ -269,7 +280,7 @@ export function chainSummary(e: DocEdge | undefined): string {
 	return chainLinks(e)
 		.map((l, depth) => {
 			const head = depth > 0 ? 'then ' : '';
-			if (l.to === ABORT || l.to === DEBUG) return head + l.to;
+			if (isReservedTarget(l.to)) return head + l.to;
 			return `${head}${l.to} ×${l.max === -1 ? '∞' : (l.max ?? '?')}`;
 		})
 		.join(' · ');
@@ -277,14 +288,14 @@ export function chainSummary(e: DocEdge | undefined): string {
 
 // pruneCrossPhase removes every route that leaves its stage's phase — what a
 // stage moved to another phase leaves behind, both its own routes out and the
-// routes into it. A cut success route ends the phase (done); a cut chain link
+// routes into it. A cut success route ends the phase (end); a cut chain link
 // drops out with its fallbacks spliced up (pruneEdgeTarget).
 export function pruneCrossPhase(doc: FlowDoc) {
 	const phaseOf = new Map(doc.stages.map((s) => [s.id, s.phase ?? '']));
 	const away = (s: DocStage, to: string) =>
-		to !== DONE && to !== ABORT && to !== DEBUG && phaseOf.get(to) !== (s.phase ?? '');
+		!isReservedTarget(to) && phaseOf.get(to) !== (s.phase ?? '');
 	for (const s of doc.stages) {
-		if (s.on_success && away(s, s.on_success)) s.on_success = DONE;
+		if (s.on_success && away(s, s.on_success)) s.on_success = END;
 		for (const kind of EDGE_KINDS) {
 			let e = edgeOf(s, kind);
 			for (const l of chainLinks(e)) if (away(s, l.to)) e = pruneEdgeTarget(e, l.to);
@@ -332,14 +343,14 @@ export function agentOf(doc: FlowDoc, name: string): DocAgent | undefined {
 }
 
 // effectiveSuccess resolves the YAML sugar for display: explicit target, or
-// next stage in document order, or done.
-// In a phased flow, "next" never crosses into another phase: a phase's last
-// stage ends it.
+// next stage in document order, or the end of the phase. "Next" never crosses
+// into another phase, and an implicit end is never the run's: only an
+// explicit `done` says the run is finished.
 export function effectiveSuccess(doc: FlowDoc, i: number): string {
 	const s = doc.stages[i];
 	if (s.on_success) return s.on_success;
 	const next = doc.stages[i + 1];
-	return !next || (next.phase ?? '') !== (s.phase ?? '') ? DONE : next.id;
+	return !next || (next.phase ?? '') !== (s.phase ?? '') ? END : next.id;
 }
 
 export function edgeOf(s: DocStage, kind: EdgeKind): DocEdge | undefined {
@@ -427,7 +438,7 @@ function phaseOrder(doc: FlowDoc, phase: string | undefined): DocStage[] {
 		seen.add(cur.id);
 		out.push(cur);
 		const next = effectiveSuccess(doc, doc.stages.indexOf(cur));
-		if (next === DONE) break;
+		if (next === END || next === DONE) break;
 		cur = byId.get(next);
 	}
 	for (const s of mine) if (!seen.has(s.id)) out.push(s);
@@ -545,17 +556,18 @@ function nonEmptyIO(v?: StageIO): boolean {
 	return v != null && Object.keys(v).length > 0;
 }
 
-// edgeToYamlValue serializes one chain link (recursing into then). An abort
-// or debug link uses the parser's scalar sugar: `on_reject: abort`, `then: debug`.
+// edgeToYamlValue serializes one chain link (recursing into then). A link to
+// a reserved target uses the parser's scalar sugar: `on_fail: end`,
+// `on_reject: abort`, `then: debug`.
 function edgeToYamlValue(e: DocEdge): unknown {
-	if (e.to === ABORT || e.to === DEBUG) return e.to;
+	if (isReservedTarget(e.to)) return e.to;
 	const eo: Record<string, unknown> = { to: e.to, max: e.max };
 	if (e.then) eo.then = edgeToYamlValue(e.then);
 	return eo;
 }
 
 /** A node's rendered size, as Svelte Flow measured it. FlowGraph reports them
- *  keyed the way `layout` is: stage ids, START/DONE/ABORT, `trigger:<phase>`
+ *  keyed the way `layout` is: stage ids, START/END/DONE/ABORT, `trigger:<phase>`
  *  and `debug:<stage>`. */
 export interface NodeSize {
 	width: number;
@@ -615,7 +627,7 @@ export function autoLayout(
 	bands.forEach((phase, band) => {
 		const chain = new Set<string>();
 		let cur = phaseEntry(doc, phase)?.id;
-		while (cur && cur !== DONE && !chain.has(cur)) {
+		while (cur && cur !== END && cur !== DONE && !chain.has(cur)) {
 			chain.add(cur);
 			cur = effectiveSuccess(doc, byId.get(cur)!);
 		}
@@ -664,13 +676,13 @@ export function autoLayout(
 		}
 		y0 = (offChain.length ? leaves(offChain, y1 + laneH) : leaves(onChain, y0 + rowH)) + BAND_GAP;
 	});
-	// Terminals: the entry marker left of the first stage; done and abort
-	// stacked right of everything (abort draws only when an edge targets it,
-	// but a position costs nothing). Debug is no terminal — its leaves sit by
-	// their stages, above.
+	// Terminals: the entry marker left of the first stage; end, done and
+	// abort stacked right of everything (done and abort draw only when a
+	// route reaches them, but a position costs nothing). Debug is no terminal
+	// — its leaves sit by their stages, above.
 	pos[START] = { x: -(size(START, GUESS_TERMINAL).width + GAP_X), y: 0 };
 	let ty = 0;
-	for (const key of [DONE, ABORT]) {
+	for (const key of [END, DONE, ABORT]) {
 		pos[key] = { x: right, y: ty };
 		ty += size(key, GUESS_TERMINAL).height + GAP_Y;
 	}
@@ -690,7 +702,7 @@ export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 	let id = `${base}_${n}`;
 	const ids = new Set(doc.stages.map((s) => s.id));
 	while (ids.has(id)) id = `${base}_${++n}`;
-	const s: DocStage = { id, type, on_success: DONE };
+	const s: DocStage = { id, type, on_success: END };
 	if (doc.phases?.length) s.phase = doc.phases[0].id;
 	if (type === 'agent') s.agent = '';
 	if (type === 'command') s.run_ref = '';

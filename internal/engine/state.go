@@ -43,6 +43,12 @@ type runState struct {
 
 	pos int
 	ph  phase
+	// endsRun: the cursor past the last stage means the RUN is done — the
+	// flow routed to `done` — and not only the phase (`end`, or the chain
+	// ran out). endReason, when set, is why a phase ended early: a dead end
+	// outside an entrypoint, recorded on its phase_completed.
+	endsRun   bool
+	endReason string
 
 	iters      map[string]int // stage id -> times started
 	edgeCounts map[string]int // "from|kind|depth" -> times that chain link was taken
@@ -233,6 +239,7 @@ func (rs *runState) unpark(phase string) bool {
 	rs.feed, rs.feedSentinel, rs.feedAttempts = pr.feed, pr.feedSentinel, pr.feedAttempts
 	rs.lastFailure, rs.gateAnswer = pr.lastFailure, pr.gateAnswer
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = pr.roundThreads, pr.roundLoaded, pr.selectPing
+	rs.endsRun, rs.endReason = false, ""
 	rs.idle = false
 	return true
 }
@@ -246,6 +253,7 @@ func (rs *runState) anyParked() bool { return len(rs.parked) > 0 }
 func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	rs.phase, rs.subject, rs.phaseTip, rs.idle = p.Phase, p.Subject, p.Tip, false
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = nil, false, nil
+	rs.endsRun, rs.endReason = false, ""
 	rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
 	if p.Key != "" {
 		rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
@@ -377,11 +385,12 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.ph = phIn
 		case *event.EdgeTaken:
 			rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
-			if p.To == flow.TerminalDone {
-				// The edge ended the phase.
+			if p.To == flow.TerminalEnd || p.To == flow.TerminalDone {
+				// The edge ended the phase — or, with done, the run.
 				if fl != nil {
 					rs.pos = len(fl.Stages)
 				}
+				rs.endsRun = p.To == flow.TerminalDone
 				rs.ph = phStart
 				rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
 				break
@@ -417,6 +426,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.startPhase(p, fl)
 		case *event.PhaseCompleted:
 			rs.idle = true
+			rs.endsRun, rs.endReason = false, ""
 		case *event.PhaseParked:
 			rs.park(p.StageID, p.PingID, ev.TS)
 		case *event.PhaseResumed:

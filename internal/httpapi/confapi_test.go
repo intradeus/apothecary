@@ -713,7 +713,7 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 		t.Errorf("parameters = %+v", vr.Parameters)
 	}
 	if len(vr.Refs) != 2 || len(vr.Phases) != 2 || !vr.Phases[0].Entry || vr.Phases[0].Signal != "run_start" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
-		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != 10 {
+		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != -1 {
 		t.Errorf("refs = %+v phases = %+v", vr.Refs, vr.Phases)
 	}
 	// Bound values: a legal one changes the summary, an illegal one is an error.

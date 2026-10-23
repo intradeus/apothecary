@@ -325,10 +325,10 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 				files, _ = json.Marshal(p.Files)
 			}
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, options, answer_kind, status, raised_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11)
+				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, options, answer_kind, phase, ends_phase, status, raised_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13)
 				ON CONFLICT (ping_id) DO NOTHING`,
-				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, opts, p.Kind(), evs[i].TS); err != nil {
+				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, opts, p.Kind(), p.Phase, p.EndsPhase, evs[i].TS); err != nil {
 				return err
 			}
 		case *event.PingAnswered:
@@ -652,7 +652,7 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 		limit = 100
 	}
 	q := `SELECT ping_id, run_id, type, stage_id, question, context, files, link,
-	             options, answer_kind, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
+	             options, answer_kind, phase, ends_phase, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
 	      FROM pings`
 	args := []any{}
 	if status != "" && status != "all" {
@@ -680,7 +680,7 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 func (s *Store) GetPing(ctx context.Context, id string) (run.PingView, error) {
 	v, err := scanPing(s.pool.QueryRow(ctx, `
 		SELECT ping_id, run_id, type, stage_id, question, context, files, link,
-		       options, answer_kind, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
+		       options, answer_kind, phase, ends_phase, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
 		FROM pings WHERE ping_id=$1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.PingView{}, fmt.Errorf("ping %s: %w", id, ErrPingNotFound)
@@ -696,7 +696,7 @@ func scanPing(row pgx.Row) (run.PingView, error) {
 	var opts, files, ansIDs []byte
 	var link sql.NullString
 	err := row.Scan(&v.PingID, &v.RunID, &v.Type, &v.StageID, &v.Question, &v.Context,
-		&files, &link, &opts, &v.AnswerKind, &v.Status, &v.Answer, &v.Feedback, &ansIDs, &v.RaisedAt, &v.AnsweredAt)
+		&files, &link, &opts, &v.AnswerKind, &v.Phase, &v.EndsPhase, &v.Status, &v.Answer, &v.Feedback, &ansIDs, &v.RaisedAt, &v.AnsweredAt)
 	if err == nil {
 		if len(opts) > 0 {
 			_ = json.Unmarshal(opts, &v.Options)

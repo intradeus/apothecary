@@ -321,7 +321,12 @@ type Ping struct {
 	// AnswerKind is the shape of the answer this ping takes (event.Answer*):
 	// what the UI renders and the one thing validation reads.
 	AnswerKind string
-	RaisedAt   time.Time
+	// Phase is the phase the ping belongs to; EndsPhase, on a debug ping,
+	// says giving up ends that phase run rather than the run (the card
+	// words its button by it).
+	Phase     string
+	EndsPhase bool
+	RaisedAt  time.Time
 
 	key            string      // the raiser's idempotency key (RaisePing)
 	answered       bool        // guarded by Engine.mu
@@ -2242,7 +2247,8 @@ func (e *Engine) PendingPings() []*Ping {
 		out = append(out, &Ping{
 			ID: v.PingID, RunID: v.RunID, Type: v.Type, Question: v.Question,
 			Context: v.Context, Files: v.Files, Link: v.Link, StageID: v.StageID,
-			Options: v.Options, AnswerKind: v.AnswerKind, RaisedAt: v.RaisedAt,
+			Options: v.Options, AnswerKind: v.AnswerKind, Phase: v.Phase, EndsPhase: v.EndsPhase,
+			RaisedAt: v.RaisedAt,
 		})
 	}
 	return out

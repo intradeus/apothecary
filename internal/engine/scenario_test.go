@@ -1469,6 +1469,10 @@ func TestDebugLeaf(t *testing.T) {
 	if p.StageID != "test" || !strings.HasSuffix(p.Link, "/terminal") || !strings.Contains(p.Context, "segfault") || p.Question != "test failed" {
 		t.Errorf("ping = stage %q link %q question %q context %q; want the failing stage, the terminal link, its output", p.StageID, p.Link, p.Question, p.Context)
 	}
+	// The entrypoint's debug leaf: giving up there abandons the run.
+	if p.Phase != flow.ShorthandPhase || p.EndsPhase {
+		t.Errorf("ping phase %q ends_phase %v, want the entrypoint's, abandoning the run", p.Phase, p.EndsPhase)
+	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve", Feedback: "fixed a stale lockfile"}); err != nil {
 		t.Fatal(err)
 	}

@@ -41,6 +41,13 @@ export interface Ping {
 	answerKind: AnswerKind;
 	/** The answer choices of a choice or multi ping. */
 	options: PingOption[];
+	/** The phase the ping belongs to (a confirmation's phase to start, the
+	 *  debug leaf's phase). */
+	phase?: string;
+	/** On a debug ping: giving up ends that phase run and the run goes back
+	 *  to waiting — the phase is no entrypoint. False: giving up abandons the
+	 *  run. */
+	endsPhase: boolean;
 	answer?: string;
 	feedback?: string;
 	answerAttachmentIds: string[];

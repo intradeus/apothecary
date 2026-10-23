@@ -247,6 +247,8 @@ export function toPing(w: Wire.PingView): Ping {
 		primaryRef: w.payload_ref,
 		answerKind: answerKindOf(w.answer_kind, w.type, w.options),
 		options: list(w.options).map(toPingOption),
+		phase: w.phase || undefined,
+		endsPhase: w.ends_phase ?? false,
 		answer: w.answer,
 		feedback: w.feedback,
 		answerAttachmentIds: list(w.answer_attachment_ids),

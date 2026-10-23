@@ -27,6 +27,7 @@
 		debugKey,
 		parksOnDebug,
 		DONE,
+		END,
 		START,
 		MANUAL,
 		RUN_START,
@@ -84,6 +85,7 @@
 
 	const nodeTypes = {
 		stage: FlowStageNode,
+		end: FlowTerminalNode,
 		done: FlowTerminalNode,
 		abort: FlowTerminalNode,
 		debug: FlowTerminalNode,
@@ -217,12 +219,28 @@
 					: t('flow.graph.entryTitle', { phase: 'main' })
 			}
 		});
+		// The two ends: end (this phase is over, the run goes back to waiting)
+		// closes most chains, so it is always drawn; done (the run is done)
+		// only when some route reaches it — like abort, below.
 		ns.push({
-			id: '__done',
-			type: 'done',
-			position: layout[DONE] ?? { x: doc.stages.length * 240, y: 0 },
+			id: '__end',
+			type: 'end',
+			position: layout[END] ?? { x: doc.stages.length * 240, y: 0 },
 			data: {}
 		});
+		const reachesDone = doc.stages.some(
+			(s) =>
+				s.on_success === DONE ||
+				EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DONE))
+		);
+		if (reachesDone) {
+			ns.push({
+				id: '__done',
+				type: 'done',
+				position: layout[DONE] ?? { x: doc.stages.length * 240, y: 80 },
+				data: {}
+			});
+		}
 		// The abort terminal renders only when some edge targets it.
 		const hasAbort = doc.stages.some((s) =>
 			EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === ABORT))
@@ -296,7 +314,7 @@
 				id: `success|${s.id}`,
 				source: s.id,
 				sourceHandle: 'success',
-				target: target === DONE ? '__done' : target,
+				target: target === END ? '__end' : target === DONE ? '__done' : target,
 				type: 'smoothstep',
 				class: 'e-success',
 				style: hued(EDGE_HUE.success)
@@ -312,7 +330,16 @@
 					id: `${kind}|${s.id}|${depth}`,
 					source: s.id,
 					sourceHandle: kind,
-					target: link.to === ABORT ? '__abort' : link.to === DEBUG ? debugNodeID(s.id) : link.to,
+					target:
+						link.to === ABORT
+							? '__abort'
+							: link.to === DEBUG
+								? debugNodeID(s.id)
+								: link.to === END
+									? '__end'
+									: link.to === DONE
+										? '__done'
+										: link.to,
 					targetHandle: dot ? `in:${dot}` : undefined,
 					type: 'labeled',
 					data: { row },
@@ -322,7 +349,7 @@
 					label:
 						link.to === DEBUG
 							? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''}`
-							: link.to === ABORT
+							: link.to === ABORT || link.to === END || link.to === DONE
 								? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ${I.forward} ${link.to}`
 								: `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
 					labelStyle: hued(EDGE_HUE[kind]),
@@ -368,13 +395,15 @@
 		const h = conn.sourceHandle ?? '';
 		if (h.startsWith('in:') || h.startsWith('out:')) return;
 		const target =
-			conn.target === '__done'
-				? DONE
-				: conn.target === '__abort'
-					? ABORT
-					: conn.target.startsWith('__debug:')
-						? DEBUG
-						: conn.target;
+			conn.target === '__end'
+				? END
+				: conn.target === '__done'
+					? DONE
+					: conn.target === '__abort'
+						? ABORT
+						: conn.target.startsWith('__debug:')
+							? DEBUG
+							: conn.target;
 		if (conn.source === '__start' || conn.source.startsWith('__trigger:')) {
 			onlink(START, 'entry', target); // re-point the (phase's) entry
 			return;
@@ -397,17 +426,19 @@
 	}
 
 	const nodeKey = (id: string) =>
-		id === '__done'
-			? DONE
-			: id === '__abort'
-				? ABORT
-				: id.startsWith('__debug:')
-					? debugKey(id.slice('__debug:'.length))
-					: id === '__start'
-						? START
-						: id.startsWith('__trigger:')
-							? id.slice(2)
-							: id;
+		id === '__end'
+			? END
+			: id === '__done'
+				? DONE
+				: id === '__abort'
+					? ABORT
+					: id.startsWith('__debug:')
+						? debugKey(id.slice('__debug:'.length))
+						: id === '__start'
+							? START
+							: id.startsWith('__trigger:')
+								? id.slice(2)
+								: id;
 </script>
 
 <div class="graph-wrap">

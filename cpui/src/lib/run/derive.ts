@@ -59,6 +59,8 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				// else the first file. With a file, PingCard offers review.
 				primaryRef: (p.link as string | undefined) || files?.[0],
 				options: ((p.options as unknown[] | undefined) ?? []).map(toPingOption),
+				phase: (p.phase as string | undefined) || undefined,
+				endsPhase: p.ends_phase === true,
 				stageId: p.stage_id as string | undefined,
 				raisedAt: e.ts,
 				seq: e.seq,
@@ -402,7 +404,14 @@ export function describe(e: RunEvent): Described {
 				tone: 'info'
 			};
 		case 'phase_completed':
-			return { text: t('run.event.phaseDone', { phase: String(p.phase) }), tone: 'ok' };
+			// A phase that ended at a dead end says why; the run went back to
+			// waiting either way.
+			return p.reason
+				? {
+						text: t('run.event.phaseEnded', { phase: String(p.phase), reason: String(p.reason) }),
+						tone: 'warn'
+					}
+				: { text: t('run.event.phaseDone', { phase: String(p.phase) }), tone: 'ok' };
 		case 'phase_declined':
 			return { text: t('run.event.phaseDeclined', { phase: String(p.phase) }), tone: 'warn' };
 		case 'review_comments_loaded': {

@@ -404,10 +404,15 @@ type PingRaised struct {
 	AnswerKind string `json:"answer_kind,omitempty"`
 	// Phase, Subject and TriggerKey identify what a phase_confirm ping asks
 	// to start: which phase, on which checkout's merge request, for which
-	// occurrence of its trigger.
+	// occurrence of its trigger. A debug ping carries Phase too: the phase
+	// it parks.
 	Phase      string `json:"phase,omitempty"`
 	Subject    string `json:"subject,omitempty"`
 	TriggerKey string `json:"trigger_key,omitempty"`
+	// EndsPhase, on a debug ping: giving up ends that phase run and the run
+	// goes back to waiting — the phase is no entrypoint (FLOWLANG §3). False:
+	// giving up abandons the run.
+	EndsPhase bool `json:"ends_phase,omitempty"`
 }
 
 // PhaseStarted: a phase run begins. Subject is the checkout whose merge
@@ -429,6 +434,10 @@ type PhaseStarted struct {
 type PhaseCompleted struct {
 	Phase   string `json:"phase"`
 	Subject string `json:"subject,omitempty"`
+	// Reason is why the phase ended early, when it did: a dead end outside an
+	// entrypoint — a failure with nowhere to go, a person giving up at the
+	// debug leaf (FLOWLANG §3). Empty: its chain reached its end.
+	Reason string `json:"reason,omitempty"`
 }
 
 // PhaseDeclined: a human said no to starting a confirm phase for this

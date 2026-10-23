@@ -142,6 +142,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
 				Context: op.Context, Files: op.Files, Link: op.Link, StageID: op.StageID,
 				Options: op.Options, AnswerKind: op.Kind(), key: op.Key,
+				Phase: op.Phase, EndsPhase: op.EndsPhase,
 				RaisedAt: e.clock(), done: make(chan struct{}),
 			}
 		}
@@ -171,10 +172,15 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			return
 		}
 		if rs.pos >= len(fl.Stages) {
-			// done: the phase ends; the idle loop decides what the run does
-			// next — a parked phase resuming, another phase opening, or its
-			// end (endCheck).
-			if err := x.phaseDone(); err != nil {
+			// The chain is over. After `done` the run completes, whatever
+			// else is parked or armed; otherwise only the phase ends, and the
+			// idle loop decides what follows — a parked phase resuming,
+			// another phase opening, or the run's end (endCheck).
+			end := x.phaseDone
+			if rs.endsRun {
+				end = x.runDone
+			}
+			if err := end(); err != nil {
 				x.exit(err)
 				return
 			}
@@ -328,11 +334,14 @@ func (x *exec) append(ps ...event.Payload) error {
 }
 
 // advance follows the stage's explicit on_success target (DESIGN3 §2.1):
-// done parks pos past the end, which the run loop reads as completion.
+// end parks pos past the last stage, which the run loop reads as the
+// phase's end; done does the same and marks the run done.
 func (x *exec) advance(st *flow.Stage) {
-	if st.OnSuccess == flow.TerminalDone {
+	switch st.OnSuccess {
+	case flow.TerminalEnd, flow.TerminalDone:
 		x.rs.pos = len(x.rs.fl.Stages)
-	} else {
+		x.rs.endsRun = st.OnSuccess == flow.TerminalDone
+	default:
 		x.rs.pos = x.rs.fl.Index(st.OnSuccess) // parse-validated: always >= 0
 	}
 	x.rs.ph = phStart
@@ -366,8 +375,9 @@ func (x *exec) fail(reason string) error {
 // on_reject, on_timeout — the registry lives in the flow package). The
 // edge is a chain: each link carries its own cumulative max, and a full
 // link falls through to its then fallback (retry-then-escalate). A link
-// targeting the abort terminal stops the run deliberately; an absent edge
-// or an exhausted chain abandons it (§2, §3).
+// targeting end finishes the phase, done the run, abort abandons the run;
+// an absent edge or an exhausted chain is a dead end (deadEnd: the run is
+// abandoned in an entrypoint phase, the round ends in any other — §3).
 func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
 	// The feed becomes an abandon reason and rs.feed (which an agent reads as
@@ -385,18 +395,20 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 				reason += ": " + tail(strings.TrimSpace(feedContent), 2<<10)
 			}
 		}
-		return x.abandon(st.ID, "", reason)
+		return x.deadEnd(st, "", reason)
 	}
 	depth := 0
 	for e := edge; e != nil; e, depth = e.Then, depth+1 {
-		if e.To == flow.TerminalDone {
-			// The phase ends here: a best-effort stage whose failure is not
-			// worth routing anywhere (FLOWLANG §3). Recorded like any link.
-			if err := x.append(&event.EdgeTaken{From: st.ID, To: flow.TerminalDone, Edge: kind, Depth: depth,
+		if e.To == flow.TerminalEnd || e.To == flow.TerminalDone {
+			// The phase ends here — a best-effort stage whose failure is not
+			// worth routing anywhere — or, with done, the run (FLOWLANG §3).
+			// Recorded like any link.
+			if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Depth: depth,
 				Feed: tail(feedContent, 8<<10)}); err != nil {
 				return err
 			}
 			x.endPhase()
+			rs.endsRun = e.To == flow.TerminalDone
 			return nil
 		}
 		if e.To == flow.TerminalAbort {
@@ -445,7 +457,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		rs.feedAttempts = e.Max + 1
 		return nil
 	}
-	return x.abandon(st.ID, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(edge)))
+	return x.deadEnd(st, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(edge)))
 }
 
 // chainMax renders a chain's budget for the abandon reason: "5" for a
@@ -1580,7 +1592,8 @@ func (x *exec) raiseDecision(p *Ping) error {
 	x.e.pings[p.ID] = p
 	x.e.mu.Unlock()
 	return x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
-		Files: p.Files, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind})
+		Files: p.Files, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind,
+		Phase: p.Phase, EndsPhase: p.EndsPhase})
 }
 
 // --- the debug leaf --------------------------------------------------------
@@ -1590,9 +1603,10 @@ func (x *exec) raiseDecision(p *Ping) error {
 // the ping belongs to st — and nothing is spent while they look. The engine
 // composes no prose: the ping carries which stage, what it printed and where
 // the workspace is, and the card is the UI's. Continue re-enters st as a
-// fresh attempt (the cursor never left it); abandon ends the run. Like a
-// gate it never provisions: ensureEnv runs lazily when st re-enters, and
-// re-seeds what a human may have changed.
+// fresh attempt (the cursor never left it); giving up is a dead end — it
+// abandons the run in an entrypoint phase and ends the round in any other.
+// Like a gate it never provisions: ensureEnv runs lazily when st re-enters,
+// and re-seeds what a human may have changed.
 func (x *exec) stageDebug(st *flow.Stage) error {
 	rs := x.rs
 	// Recovery: answered pre-crash, routing unrecorded.
@@ -1603,7 +1617,8 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 	}
 	if x.openDecision(st, PingDebug) == nil {
 		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: tail(rs.feed, 4<<10),
-			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerDecision}
+			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerDecision,
+			Phase: rs.phase, EndsPhase: !x.inEntrypoint()}
 		if err := x.raiseDecision(p); err != nil {
 			return err
 		}
@@ -1631,7 +1646,7 @@ func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
 	if fb := strings.TrimSpace(ans.Feedback); fb != "" {
 		reason += ": " + tail(fb, 2<<10)
 	}
-	return x.abandon(st.ID, "", reason)
+	return x.deadEnd(st, "", reason)
 }
 
 func (x *exec) routeGate(st *flow.Stage, ans PingAnswer, started time.Time) error {
@@ -1713,6 +1728,7 @@ func (x *exec) stageAction(st *flow.Stage) error {
 // endPhase routes straight to the phase's end (the run loop records it).
 func (x *exec) endPhase() {
 	x.rs.pos = len(x.rs.fl.Stages)
+	x.rs.endsRun = false
 	x.rs.ph = phStart
 }
 

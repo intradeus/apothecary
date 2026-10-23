@@ -128,7 +128,8 @@ export default {
 	'flow.binding.add': 'Add',
 	'flow.binding.keyPlaceholder': 'name',
 	'flow.term.start': 'The entry — drag this handle onto a stage to start the flow there',
-	'flow.term.done': 'The run completes',
+	'flow.term.end': 'This phase is over — the run goes back to waiting',
+	'flow.term.done': 'The run is done',
 	'flow.term.abort': 'The run stops deliberately',
 	'flow.term.debug':
 		'A stop, not an end: the run parks for a human to fix the workspace, then goes back into the stage that sent it here',
@@ -371,6 +372,10 @@ export default {
 	'ping.notNowHelp':
 		'Not now: it is offered again only when the situation changes (the target moves, new comments arrive).',
 	'ping.debugReasonPlaceholder': 'Why stop here? Recorded as the reason the run was abandoned.',
+	'ping.debugEndPlaceholder':
+		'Why stop here? Recorded as the reason {phase} ended; the run goes back to waiting.',
+	'ping.endPhase': 'End {phase} — the run keeps waiting',
+	'ping.endPhaseOpen': 'Give up this round…',
 	'ping.changesPlaceholder': 'What should change? Required — the run takes it as feedback.',
 	'ping.continueRerun': 'Continue — re-run {stage}',
 	'ping.approve': 'Approve',
@@ -450,11 +455,8 @@ export default {
 	'flow.insp.quietForHelp':
 		'Start only once nothing new happened for this long (at least 1m): comments arriving mean someone is still reviewing.',
 	'flow.insp.phaseMax': 'Runs per merge request',
-	'flow.insp.phaseMaxDefault': 'default · 10',
 	'flow.insp.phaseMaxHelp':
-		'How many times this phase may run for one merge request; a number or an int $parameter.',
-	'flow.insp.phaseMaxHelpHuman':
-		'How many times this phase may run for one merge request; empty = no bound, since a person decides each run.',
+		'Empty: as often as its signal brings something new — a phase never fires twice for the same fact, and the run’s budget bounds the cost. A number (or an int $parameter) caps its runs per merge request.',
 	'flow.insp.when': 'Only when',
 	'flow.insp.when.none': 'always',
 	'flow.insp.when.tracker': 'the ticket has a tracker issue',
@@ -553,7 +555,10 @@ export default {
 	'flow.insp.descPlaceholder': 'implement the approved plan',
 	'flow.insp.descHelp': 'Optional note on what this stage is for.',
 	'flow.insp.onSuccess': 'On success',
-	'flow.insp.doneOption': 'done (complete the run)',
+	'flow.insp.endOption': 'end — this phase is over; the run goes back to waiting',
+	'flow.insp.doneOption': 'done — the run is done (completes now)',
+	'flow.insp.endsHelp':
+		'end closes this phase and keeps the run alive for whatever else waits; done completes the run, whatever else waits. A reaction ends with end.',
 	'flow.insp.timeoutsHelp':
 		'Timeouts route via on_timeout when declared, else fall back to on_fail.',
 	'flow.insp.from': 'from',

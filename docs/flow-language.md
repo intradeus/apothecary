@@ -51,8 +51,8 @@ is one of a few things:
 | **wait point** | Where a chain stops for something outside the run. It has a **source** (a signal from the registry, `run_start`, a person, a timer), a **policy** (`auto`: proceed when the source holds; `confirm`: raise a decision first; `manual`: only a person proceeds, the event is advice), an optional **subject** the event carries (which merge request), an occurrence **key** (the same fact never fires twice), a run bound (`max`), optionally a debounce (`quiet_for`) and a `timeout`, and **outcomes**: proceed, declined, can no longer happen, timed out, rejected with feedback. A wait point releases the workspace — unless it is one that owns it: an agent's `ask_human` turn (§9), the `debug` leaf (§3). |
 | **its spellings** | A phase's `on:` is its opening wait point. `type: wait` is one mid-chain, on a signal. `type: human_gate` is one mid-chain whose first source is a person, with `auto_approve` / `auto_reject` as extra signal sources. The confirmation ping in the inbox and the Run button on the run page are the `confirm` and `manual` policies of the same thing. |
 | **phase** | A sequential chain of stages opened by a wait point. A phase has at most one **live run** at a time — active, or parked at a wait point inside it; each phase run owns its cursor, its edge counters, its feed and its tip. |
-| **scheduler** | The engine's idle loop. Each tick: observe the sources (the forge, timers, answered pings), then walk every wait point in document order — parked ones and unopened phase heads alike — and resume or open the first whose event is ready under its policy. That phase run takes the workspace and runs work stages until its next wait point or `done`. One start per tick. |
-| **run end** | The run **completes** when no phase run is active, none is parked, and no phase head is **armed** — policy `auto` or `confirm`, its source live for a subject (an open merge request, for forge signals), runs left. `abort` or the budget abandons it. There is no end rule to configure: the default flow stays alive until the merge request merges because its last stages say so (§1 *How a run ends*). |
+| **scheduler** | The engine's idle loop. Each tick: observe the sources (the forge, timers, answered pings), then walk every wait point in document order — parked ones and unopened phase heads alike — and resume or open the first whose event is ready under its policy. That phase run takes the workspace and runs work stages until its next wait point or the end of its chain. One start per tick. |
+| **run end** | Two ends, said apart. `end` finishes a **phase**: its chain is over and the run goes back to waiting. `done` finishes the **run**, whatever else waits. Without a `done`, the run **completes** when no phase run is active, none is parked, and no phase head is **armed** — policy `auto` or `confirm`, its source live for a subject (an open merge request, for forge signals), runs left. `abort` or the budget abandons it. A dead end — a failure with nowhere to go — abandons the run only in an entrypoint phase; in any other it ends that round (§3). The default flow says `done` once the merge request merged, and its reactions end with `end` (§1 *How a run ends*). |
 | **extension points** | A new thing to react to is one signal plus its poller: it works at phase heads and mid-chain, under every policy, with subjects, and the scheduler does not change. A new kind of work is a stage type and an executor. A new human interaction is a gate variant. A new way to begin runs is an automation outside the run, creating one at a `run_start` phase. Parallelism is deliberately absent: the mutex is the design (§10). |
 
 ---
@@ -219,8 +219,8 @@ parameter nothing reads.
 
 **Resolution.** Binding is a re-parse of the pinned bytes with the values, so
 parse-time and resolve-time validation are one code path. A binding that
-breaks a rule — `max: -1` with `start: $p` bound to `auto`, a `run_ref` that
-is no command slug, a model without a provider — is refused where it is bound:
+breaks a rule — a `run_ref` that is no command slug, a model without a
+provider, a duration that does not parse — is refused where it is bound:
 in the workshop's sheet, or at run creation as `preflight: parameters: …`.
 Never discovered mid-run. A project binding naming a parameter the flow no
 longer declares is dropped with a warning; a run override naming one refuses
@@ -243,7 +243,7 @@ phases:
     on: { signal: mr_conflicts, start: $conflicts_start } # the target moved; by itself, after asking, or by hand
     stages: [ sync, resolve, sync_test, sync_push ]
   - id: review_fixes
-    on: { signal: mr_review_settled, start: auto, quiet_for: 1h, max: 10 }
+    on: { signal: mr_review_settled, start: auto, quiet_for: 1h }
     stages: [ load, fix, …, reply, post ]
   - id: polish
     on: manual                                           # only when someone starts it from the run page
@@ -262,7 +262,10 @@ phases:
   `mr_review_settled`) opens its phase on the merge request the event carries,
   under its `start` policy. The order phases are written in is *not* a
   sequence: a conflict can be fixed before, after or between two review rounds,
-  as often as its `max` allows.
+  as often as the signal brings something new. Such a phase is a *reaction*:
+  it never finishes the run. Its chain closes with `end` and the run goes
+  back to waiting; a failure in it with nowhere to go ends that round, not the
+  run (§3).
 
 `on:` is a signal name, or a mapping:
 
@@ -271,7 +274,7 @@ phases:
 | `signal` | what the phase waits for: `run_start`, `manual`, or a firing signal |
 | `start` | the policy when the signal holds: `auto` (default) opens the phase; `confirm` raises an inbox decision (*Run it* / *Not now*) first, and nothing is spent until yes; `manual` never opens the phase by itself — the run page shows the hold, with a Run button. A `$param` whose enum sits within the three. Only with a firing signal: for `run_start` and `manual` the event *is* a person's act |
 | `quiet_for` | for a signal that fires on activity (`mr_review_settled`): only once nothing new happened for this long (≥ 1m). Comments arriving mean someone is reviewing; the phase fixes the whole batch when they stop |
-| `max` | runs of the phase per subject (a merge request; the subject-less bucket otherwise), starts by hand included. Default 10 with a firing signal, unlimited (`-1`) otherwise; `-1` with a firing signal requires a `start` other than `auto` — every run then costs a human decision |
+| `max` | an optional cap on the phase's runs per subject (a merge request; the subject-less bucket otherwise), starts by hand included. Unbounded by default, whatever the policy: an occurrence never fires twice (below), and the run's budget bounds what the rounds may cost. `-1` says unbounded explicitly |
 
 **No re-fire on the same fact.** Each occurrence of a firing signal has a key —
 for `mr_conflicts` the (target tip, head) pair, for `mr_review_settled` the
@@ -300,7 +303,10 @@ action* — `sync_target`, `load_review_comments`, `reply_review_comments` — i
 phase run that has no subject fails routably with `input_missing`: guard it
 with `when: subject` (§2) or route `on_fail`; the parser warns where that can
 happen. Each phase run's edges start with fresh counters (`max` is per run of
-the phase); the budget is the whole life's. `abort` still abandons the run.
+the phase); the budget is the whole life's. A dead end in such a phase — a
+failure with nowhere to go, a person giving up at the debug leaf — ends that
+phase run and the run goes back to waiting; `abort` and `done` still end the
+run itself.
 
 The run page starts a phase by hand with
 `POST /api/runs/{id}/phases/{phase}/start`, naming in its body the checkout
@@ -309,13 +315,23 @@ while the run is idle and the phase has no live run.
 
 ### How a run ends
 
-A run **completes** when nothing is left to do and nothing is waiting: no
-phase run active, none parked, and no phase head *armed* — a phase with runs
-left whose signal is live for an open merge request under `auto` or `confirm`,
-or whose confirmation is still open in the inbox. There is no `end:` key and
-no hidden rule about merge requests. The default flow stays alive until the
-merge request merges because its delivery phase parks on a `wait` and routes a
-close to `abort`:
+Two terminals end things, and they are not the same thing (§3):
+
+- **`end`** finishes a **phase**. Its chain is over and the run goes back to
+  waiting: a parked phase resumes when its event comes, another phase opens on
+  its signal. A phase's last stage ends this way unless it says otherwise, and
+  a reaction, which may run any number of times, always does.
+- **`done`** finishes the **run**: it completes now, whatever else is parked or
+  armed, and their open questions are withdrawn. It is said where the work is
+  truly finished.
+
+Without a `done`, a run **completes** when nothing is left to do and nothing
+is waiting: no phase run active, none parked, and no phase head *armed* — a
+phase with runs left whose signal is live for an open merge request under
+`auto` or `confirm`, or whose confirmation is still open in the inbox. There
+is no `end:` key and no hidden rule about merge requests. The default flow
+stays alive until the merge request merges because its delivery phase parks on
+a `wait`, says `done` after the merge, and routes a close to `abort`:
 
 ```yaml
 - { id: mr,          type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: in_review }
@@ -325,9 +341,13 @@ close to `abort`:
 - { id: ticket_done, type: action, action: ticket_transition, input: { to: done }, on_success: done, on_fail: done }
 ```
 
-A flow that opens a merge request and never waits on it completes as soon as
-nothing reacts — the parser warns about that shape. `abort`, an exhausted
-retry chain, and the budget abandon the run (§3).
+Its reactions end with `end`: a conflict fixed, a review round answered, and
+the run goes back to waiting for the merge. The parser warns about the two
+slips this invites: a reaction that ends the whole run (`done` or `abort` in a
+phase opened by a firing signal), and a phase that opens a merge request and
+says `done` without waiting for it while other phases react to it — the run
+would complete before they could. `abort` and the budget abandon the run; so
+does a dead end in an entrypoint phase (§3).
 
 ### Run context
 
@@ -353,7 +373,7 @@ explicitly, and those *are* declared.
 ## §2 Stages
 
 ```yaml
-- id: build                # required, slug, unique; `done`/`abort`/`debug`/`start` reserved
+- id: build                # required, slug, unique; `end`/`done`/`abort`/`debug`/`start` reserved
   type: agent              # agent | command | human_gate | action | wait
   description: "..."       # optional note; documentation only, reaches no prompt
   when: $plan_gate         # optional condition (below); false ⇒ the stage completes as skipped
@@ -684,24 +704,25 @@ both" needs no grammar of its own.
 ## §3 Control flow
 
 ```yaml
-on_success: build            # a stage id, or `done`
+on_success: build            # a stage id, `end` or `done`
+on_success: done             # the run is done
 on_fail:    { to: build, max: 5, then: debug }
 on_reject:  { to: build, max: 3 }
 on_timeout: { to: test,  max: 1 }
 on_reject:  abort            # scalar sugar for the deliberate stop
 on_fail:    debug            # scalar sugar for the debug leaf
-on_fail:    done             # best effort: the phase ends either way
+on_fail:    end              # best effort: the phase ends either way
 ```
 
 **`on_success`** is a plain target with no counter. Absent, it means "the next
-stage in document order"; on a phase's last stage, `done`. Every stage's
-success chain must reach `done` — a success-only cycle is a parse error,
-because nothing would bound it (a failing command costs no turns and no
-dollars).
+stage in document order"; on a phase's last stage, `end` — never the run's
+end: only an explicit `done` says that. Every stage's success chain must reach
+`end` or `done` — a success-only cycle is a parse error, because nothing would
+bound it (a failing command costs no turns and no dollars).
 
 **Edges** are the recoverable redirects. Each carries its own `max`, and when a
 link is exhausted the *next* failure falls through to its `then` — retry, then
-escalate. An exhausted chain with no `then` abandons the run.
+escalate. An exhausted chain with no `then` is a dead end (below).
 
 **What `max` counts.** A counter belongs to one *link* — the triple
 (source stage, edge kind, position in the `then` chain) — and counts how many
@@ -730,11 +751,20 @@ as a sentinel, and the target binds it like any other input (§4) — or ignores
 it. That is the single declaration: *where it goes* lives with the stage that
 reads it, next to everything else that stage reads.
 
-**Terminals.** `done` finishes the **phase**: the run completes once nothing
-else is parked or armed (§1 *How a run ends*). Any edge may target it — a
-failure edge to `done` is "best effort" — and such a link takes no `max` or
-`then`. `abort` deliberately abandons the run; an abort link takes no `max`,
-`feed` or `then` either.
+**Terminals.** `end` finishes the **phase**: its chain is over and the run
+goes back to waiting (§1 *How a run ends*). `done` finishes the **run**: it
+completes now, whatever else is parked or armed. `abort` deliberately abandons
+the run. Any edge may target any of them — a failure edge to `end` is "best
+effort", the phase ends either way — and such a link takes no `max`, `feed` or
+`then`.
+
+**Dead ends.** A failure with nowhere to go — no edge for it, or its chain
+exhausted — or a person giving up at the debug leaf is a dead end. In an
+entrypoint phase it abandons the run: the delivery failed. In any other phase
+— a reaction, a phase started by hand — it ends that round only: its
+`phase_completed` records why, and the run goes back to waiting, because a
+reaction may happen again and the delivery it reacts around is still waiting
+for its merge request.
 
 **The `debug` leaf** is the third reserved edge target, and not a terminal: the
 run comes back from it. Taking a `debug` link parks the phase for a human who
@@ -743,11 +773,12 @@ with what it printed and the workspace link — and nothing is spent while they
 look. Unlike a gate it **holds the workspace**: no other phase runs while a
 person has the checkout. *Continue* re-enters that same stage as a fresh
 attempt (the success chain replays from there, so no stage is skipped);
-*abandon* ends the run. Like `abort` it takes no `max` or `then`: it is
-unlimited by nature, bounded by human attention, and nothing can follow it but
-the stage itself. It is written `then: debug` at the end of a retry chain, or
-`on_fail: debug` on its own. Stage ids may not shadow `done`, `abort`, `debug`
-or `start`. Because the leaf is that stage's pause rather than a place runs go
+*giving up* is a dead end — the run is abandoned in an entrypoint phase, the
+round ends in any other, and the inbox card says which before you click. Like
+`abort` it takes no `max` or `then`: it is unlimited by nature, bounded by
+human attention, and nothing can follow it but the stage itself. It is
+written `then: debug` at the end of a retry chain, or `on_fail: debug` on its
+own. Stage ids may not shadow `end`, `done`, `abort`, `debug` or `start`. Because the leaf is that stage's pause rather than a place runs go
 to, the editor draws one per stage that escalates to it, beside the stage,
 with the return edge — never a shared sink.
 
@@ -756,8 +787,8 @@ capability (`resume` accepts the last two):
 
 | state | reached by |
 |---|---|
-| `completed` | every phase run finished, nothing parked, nothing armed (§1 *How a run ends*) |
-| `abandoned` | a deliberate stop — the flow's `abort` terminal, a person pressing abort — or an exhausted retry chain / spent budget |
+| `completed` | the flow said `done`, or every phase run finished with nothing parked and nothing armed (§1 *How a run ends*) |
+| `abandoned` | a deliberate stop — the flow's `abort` terminal, a person pressing abort — or a dead end in an entrypoint phase, or a spent budget |
 | `failed` | the engine's own fault: infrastructure, an unresolvable project, a flow that no longer parses or no longer resolves with the run's parameters |
 
 Aborting is abandonment, not failure: a person saying "stop" is a decision, and
@@ -925,7 +956,8 @@ and command stage first retries itself with its error fed back, then escalates
 to the `debug` leaf (`then: debug`). A human opens the workspace, fixes what the
 agents could not, and continuing re-runs exactly the stage that escalated — the
 success chain replays from there, so no stage is skipped. The leaf is unlimited:
-the human decides when to stop, and abandoning there ends the run.
+the human decides when to stop, and giving up there is a dead end (§3) — the
+run is abandoned in an entrypoint phase, the round ends in any other.
 
 Budget exhaustion and cancellation are **run-level** outcomes, not stage
 failures: exceeding `max_cost_usd` or `max_total_turns` abandons the run, and
@@ -964,10 +996,11 @@ for phases and wait points: no `run_start` phase; a head whose signal is not
 `run_start`, `manual` or a firing signal; a `wait` on a signal that opens
 phases, or a gate auto-answered by one; `start` or `quiet_for` on `run_start`
 or `manual`; `quiet_for` on a signal that does not fire on activity, or under
-1m; `max` 0, or `-1` under `start: auto`; a route leaving its phase;
-`create_mr` twice in one phase; a `rebase` without a `push_branch` in its
-phase; `timeout` on a gate or an action; `max` or `then` on a link to `done`,
-`abort` or `debug`; `max: -1` without a gate on the link. For parameters: an
+1m; a phase `max` of 0; a route leaving its phase; a success chain that
+reaches neither `end` nor `done`; `create_mr` twice in one phase; a `rebase`
+without a `push_branch` in its phase; `timeout` on a gate or an action; `max`
+or `then` on a link to `end`, `done`, `abort` or `debug`; `max: -1` without a
+gate on the link. For parameters: an
 engine-known name declared with the wrong shape, `harness` or `model` missing,
 a default that fails its own validator (a model without a provider, a
 duration that does not parse, a ceiling at or below zero), an enum on a
@@ -983,8 +1016,8 @@ any of these.
 
 **Resolve-time errors** (the document with values) — the same rules, re-run
 over the pinned bytes with a project's binding or a run's overrides laid in:
-`max: -1` under a start policy bound to `auto`, a `run_ref` bound to something
-that is no command slug, a value outside its enum or of the wrong type, a name
+a `run_ref` bound to something that is no command slug, a model without a
+provider, a value outside its enum or of the wrong type, a name
 the flow does not declare (dropped with a warning in a project binding;
 refused in a run override). Refused where the value is bound — the workshop's
 Configure sheet, run creation — with the parameter named.
@@ -997,8 +1030,10 @@ among them), a feed sentinel no edge can fill, a `wait` on a signal — or a
 `ticket_link` — whose prerequisite merge request isn't opened on every route
 reaching it, a parameter nothing reads, a subject action in a phase that may
 have no subject, `each_repo` in a subject phase, a phase opened by a
-merge-request signal in a flow that opens none, and a `create_mr` that no
-`wait` ever waits on (the run will complete as soon as nothing reacts).
+merge-request signal in a flow that opens none, a stage of a phase opened by
+a firing signal that ends the whole run (`done` or `abort` — almost always a
+slip for `end`), and a phase that opens a merge request and says `done`
+without waiting for it while other phases react to it.
 
 **Preflight errors** (this project, this ticket) — refuse to *create a run*.
 Checked with the project's real configuration on the **resolved** flow, so a
@@ -1053,7 +1088,9 @@ no legacy reading. Converting one by hand:
 | the entry phase `on: manual` (or `on: ticket`), the first by position | `on: run_start`, anywhere in the list; several allowed |
 | `on: { signal: mr_conflicts, confirm: true }` | `on: { signal: mr_conflicts, start: confirm }` — `auto` / `confirm` / `manual`, or `$param` |
 | a reaction `on: { signal: manual }` | `on: manual` |
-| the run ending by itself from its merge requests | a `wait` on `mr_merged` with `on_fail: abort` as the delivery phase's last stages; `done` just finishes the phase |
+| the run ending by itself from its merge requests | a `wait` on `mr_merged` with `on_fail: abort` as the delivery phase's last stages, then `done` |
+| `on_success: done` closing a reaction phase (v3: the phase ended) | `on_success: end`, or nothing — `done` now ends the run |
+| a reaction's `max` (v3: 10 by default) | no default cap: as often as the signal brings something new |
 | `ticket_transition` `to: "In Progress"` | `to: in_progress` (canonical, translated by the tracker) — or `status: "In Progress"` for the tracker's own word |
 | `POST …/phases/{phase}/start?repo=` | a `subject` in the request body |
 | `max` forbidden on the entry, forced to 1 | `max` defaults to unlimited on `run_start` and `manual`: a person may begin the phase again |
@@ -1211,7 +1248,7 @@ phases:
           input: { plan: artifacts/plan.md, conflict: $FAILURE },
           on_success: sync, on_fail: debug }
       - { id: sync_test, type: command, run_ref: $verify, on_success: sync_push, on_fail: debug }
-      - { id: sync_push, type: action, action: push_branch, on_success: done, on_fail: debug }
+      - { id: sync_push, type: action, action: push_branch, on_success: end, on_fail: debug }
 
   # Reviewers commented, then nothing for an hour. You pick which threads to
   # fix (inbox); they are fixed in one batch, tested, pushed, and answered.

@@ -107,6 +107,10 @@
 
 	/** The debug leaf carries facts, not prose: the card is the wording. */
 	const debug = $derived(ping.type === 'debug');
+	// Giving up at a reaction's debug leaf ends that round, not the run: the
+	// engine says which on the ping, and the buttons say what will happen.
+	const endsRound = $derived(debug && ping.endsPhase);
+	const phaseName = $derived(ping.phase ?? '');
 	const aside = $derived(
 		ping.type === 'gate'
 			? t('ping.aside.gate')
@@ -248,7 +252,11 @@
 					<textarea
 						bind:value={note}
 						rows="3"
-						placeholder={debug ? t('ping.debugReasonPlaceholder') : t('ping.changesPlaceholder')}
+						placeholder={debug
+							? endsRound
+								? t('ping.debugEndPlaceholder', { phase: phaseName })
+								: t('ping.debugReasonPlaceholder')
+							: t('ping.changesPlaceholder')}
 						onkeydown={(e) => keys(e, () => note.trim() && !off && submit('reject'))}></textarea>
 				{/if}
 				<div class="acts">
@@ -265,14 +273,22 @@
 							disabled={off || !note.trim()}
 							aria-busy={busyOn('reject')}
 							onclick={() => submit('reject')}
-							>{debug ? t('ping.abandonRun') : t('ping.sendChanges')}</button
+							>{debug
+								? endsRound
+									? t('ping.endPhase', { phase: phaseName })
+									: t('ping.abandonRun')
+								: t('ping.sendChanges')}</button
 						>
 						<button class="btn-ghost btn-sm" onclick={() => (noteOpen = false)}
 							>{t('common.cancel')}</button
 						>
 					{:else}
 						<button class="btn-hot-outline btn-md" disabled={off} onclick={() => (noteOpen = true)}
-							>{debug ? t('ping.abandon') : t('ping.requestChanges')}</button
+							>{debug
+								? endsRound
+									? t('ping.endPhaseOpen')
+									: t('ping.abandon')
+								: t('ping.requestChanges')}</button
 						>
 					{/if}
 					{@render attachBtn()}

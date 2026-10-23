@@ -753,12 +753,13 @@ func TestAbortAndThenChains(t *testing.T) {
 // TestExplicitSuccessGraph covers DESIGN3 §2.1: sugar defaults, explicit
 // overrides, and mid-flow termination.
 func TestExplicitSuccessGraph(t *testing.T) {
-	// Sugar: absent on_success chains document order; last -> done.
+	// Sugar: absent on_success chains document order; the last stage ends
+	// the phase (end) — only an explicit done ends the run.
 	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x }\n  - { id: b, type: command, run: x }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Stages[0].OnSuccess != "b" || f.Stages[1].OnSuccess != TerminalDone {
+	if f.Stages[0].OnSuccess != "b" || f.Stages[1].OnSuccess != TerminalEnd {
 		t.Errorf("sugar chain = %q, %q", f.Stages[0].OnSuccess, f.Stages[1].OnSuccess)
 	}
 
@@ -773,7 +774,7 @@ func TestExplicitSuccessGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Stages[0].OnSuccess != "c" || f.Stages[1].OnSuccess != TerminalDone || f.Stages[2].OnSuccess != TerminalDone {
+	if f.Stages[0].OnSuccess != "c" || f.Stages[1].OnSuccess != TerminalDone || f.Stages[2].OnSuccess != TerminalEnd {
 		t.Errorf("targets = %q %q %q", f.Stages[0].OnSuccess, f.Stages[1].OnSuccess, f.Stages[2].OnSuccess)
 	}
 	if f.Stages[0].Edge(EdgeFail) == nil || f.Stages[0].Edge(EdgeFail).To != "b" {
@@ -866,14 +867,15 @@ func TestPhasedFlowParses(t *testing.T) {
 	if !d.IsEntrypoint() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
 		t.Errorf("spans: %+v %+v %+v", d, c, r)
 	}
-	if c.On.Start != StartConfirm || c.On.Max != DefaultPhaseMax || r.On.Start != StartAuto || r.On.QuietFor != time.Hour || r.On.Max != 3 {
+	if c.On.Start != StartConfirm || c.On.Max != UnlimitedMax || r.On.Start != StartAuto || r.On.QuietFor != time.Hour || r.On.Max != 3 {
 		t.Errorf("wait points: %+v %+v", c.On, r.On)
 	}
 	if !c.Fires() || !c.HasSubject() || d.Fires() || d.HasSubject() {
 		t.Errorf("fires/subject: deliver %v/%v conflicts %v/%v", d.Fires(), d.HasSubject(), c.Fires(), c.HasSubject())
 	}
-	// Absent on_success: next stage in the phase, the phase's last stage = done.
-	if f.Stage("build").OnSuccess != "mr" || f.Stage("mr").OnSuccess != TerminalDone || f.Stage("sync_test").OnSuccess != TerminalDone {
+	// Absent on_success: next stage in the phase; the phase's last stage ends
+	// the PHASE (end), never the run.
+	if f.Stage("build").OnSuccess != "mr" || f.Stage("mr").OnSuccess != TerminalEnd || f.Stage("sync_test").OnSuccess != TerminalEnd {
 		t.Errorf("on_success: build→%s mr→%s sync_test→%s", f.Stage("build").OnSuccess, f.Stage("mr").OnSuccess, f.Stage("sync_test").OnSuccess)
 	}
 	if f.Stage("load").Phase != "review_fixes" || len(f.Stage("load").Outputs) != 1 || f.Stage("load").Outputs[0].Value != "artifacts/review.md" {
@@ -902,7 +904,6 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"unknown signal", entry + "  - { id: m, on: mr_ghost, stages: [{ id: s, type: command, run: x }] }\n", "unknown signal"},
 		{"quiet on conflicts", entry + "  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, stages: [{ id: s, type: command, run: x }] }\n", "quiet_for applies only"},
 		{"quiet too short", entry + "  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, stages: [{ id: s, type: command, run: x }] }\n", "at least 1m"},
-		{"unlimited with auto start", entry + "  - { id: m, on: { signal: mr_conflicts, max: -1 }, stages: [{ id: s, type: command, run: x }] }\n", "requires start"},
 		{"max zero", entry + "  - { id: m, on: { signal: mr_conflicts, max: 0 }, stages: [{ id: s, type: command, run: x }] }\n", "max must be >= 1"},
 		{"confirm is not grammar", entry + "  - { id: m, on: { signal: mr_conflicts, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "field confirm not found"},
 		{"unknown trigger key", entry + "  - { id: m, on: { signal: mr_conflicts, when: now }, stages: [{ id: s, type: command, run: x }] }\n", "field when not found"},
@@ -973,17 +974,104 @@ func TestPhaseShapeWarnings(t *testing.T) {
 
 // An edge may end the phase: `on_fail: done` is the best-effort stage whose
 // failure is not worth routing anywhere.
-func TestEdgeToDone(t *testing.T) {
-	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x, on_fail: done }\n  - { id: b, type: command, run: x, on_fail: { to: done } }\n"))
+// Two ends, said apart: `end` finishes the phase (the run goes back to
+// waiting), `done` finishes the run. Either may close a success chain or an
+// edge, in its scalar or mapping form, and neither takes max or then; both
+// are reserved ids.
+func TestEdgeToEndOrDone(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(header+"stages:\n"+
+		"  - { id: a, type: command, run: x, on_fail: done }\n"+
+		"  - { id: b, type: command, run: x, on_fail: { to: done } }\n"+
+		"  - { id: c, type: command, run: x, on_fail: end }\n"+
+		"  - { id: d, type: command, run: x, on_fail: { to: end } }\n"+
+		"  - { id: e, type: command, run: x, on_success: done }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"a", "b"} {
-		if e := f.Stage(id).Edges[EdgeFail]; e == nil || e.To != TerminalDone || e.Max != 0 || e.Then != nil {
-			t.Errorf("%s on_fail = %+v", id, e)
+	for id, want := range map[string]string{"a": TerminalDone, "b": TerminalDone, "c": TerminalEnd, "d": TerminalEnd} {
+		if e := f.Stage(id).Edges[EdgeFail]; e == nil || e.To != want || e.Max != 0 || e.Then != nil {
+			t.Errorf("%s on_fail = %+v, want to %s", id, e, want)
 		}
 	}
+	if f.Stage("d").OnSuccess != "e" || f.Stage("e").OnSuccess != TerminalDone {
+		t.Errorf("on_success: d %q e %q", f.Stage("d").OnSuccess, f.Stage("e").OnSuccess)
+	}
+	g, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x, on_success: end }\n"))
+	if err != nil || g.Stage("a").OnSuccess != TerminalEnd {
+		t.Errorf("on_success: end = %v, %v", g, err)
+	}
 	wantErr(t, header+"stages:\n  - { id: a, type: command, run: x, on_fail: { to: done, then: { to: a, max: 1 } } }\n", "then does not apply", 5)
+	wantErr(t, header+"stages:\n  - { id: a, type: command, run: x, on_fail: { to: end, max: 2 } }\n", `max does not apply when to is "end" (the phase ends)`, 5)
+	wantErr(t, header+"stages:\n  - { id: end, type: command, run: x }\n", `id "end" is reserved`, 5)
+	wantErr(t, header+"stages:\n  - { id: a, type: command, run: x, on_success: finish }\n", `on_success target "finish" does not exist`, 5)
+}
+
+// The run's end written where it does not belong is warned about, never
+// refused: a phase opened by a firing signal may run any number of times, so
+// ending the whole run from it (done, abort) is almost always a slip for
+// end; and a delivery that opens a merge request and says done without
+// waiting for it leaves the reactions nothing to react to.
+func TestEndingWarnings(t *testing.T) {
+	deliver := func(tail string) string {
+		return header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n" +
+			"      - { id: build, type: command, run: x, output: { mr: artifacts/mr.md } }\n" +
+			"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" + tail
+	}
+	conflicts := func(push string) string {
+		return "  - id: conflicts\n    on: mr_conflicts\n    stages:\n" +
+			"      - { id: sync, type: action, action: sync_target }\n" + push
+	}
+	warnings := func(doc string) string {
+		t.Helper()
+		f, err := Parse("t.yaml", []byte(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(f.Warnings, "\n")
+	}
+	wait := "      - { id: wait_merge, type: wait, for: mr_merged, on_fail: abort }\n" +
+		"      - { id: ticket_done, type: command, run: x, on_success: done }\n"
+
+	// The default shape: deliver parks on the merge and says done after it;
+	// the reaction ends with end. Nothing to warn about.
+	if w := warnings(deliver(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: end }\n")); w != "" {
+		t.Errorf("clean flow warned: %s", w)
+	}
+	// A reaction that ends the run, on success or on failure.
+	w := warnings(deliver(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: done, on_fail: abort }\n"))
+	if !strings.Contains(w, `stage "push": phase "conflicts" opens on mr_conflicts and may run any number of times, but this stage ends the whole run (done, abort)`) {
+		t.Errorf("reaction ending the run: %s", w)
+	}
+	// A delivery that is done as soon as the merge request exists.
+	w = warnings(deliver("      - { id: note, type: command, run: x, on_success: done }\n") + conflicts(""))
+	if !strings.Contains(w, `phase "deliver" opens a merge request and ends the run (done) without waiting for it`) {
+		t.Errorf("done without a wait: %s", w)
+	}
+	// A gate the merge answers is a wait too; and without reactions there is
+	// nothing to miss.
+	gate := "      - { id: final, type: human_gate, auto_approve: mr_merged, on_success: done, on_reject: abort }\n"
+	if w := warnings(deliver(gate) + conflicts("")); strings.Contains(w, "without waiting") {
+		t.Errorf("a merge-answered gate is a wait: %s", w)
+	}
+	if w := warnings(header + "stages:\n  - { id: b, type: command, run: x, output: { mr: artifacts/mr.md } }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }\n"); strings.Contains(w, "without waiting") {
+		t.Errorf("no reaction phase, nothing to miss: %s", w)
+	}
+}
+
+// A phase runs as often as its signal brings a new fact: unbounded unless
+// the flow caps it, whatever its start policy.
+func TestPhaseRunsAreUnboundedByDefault(t *testing.T) {
+	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n"
+	f, err := Parse("t.yaml", []byte(entry+
+		"  - { id: a, on: mr_conflicts, stages: [{ id: s1, type: command, run: x }] }\n"+
+		"  - { id: b, on: { signal: mr_review_settled, quiet_for: 1h, max: -1 }, stages: [{ id: s2, type: command, run: x }] }\n"+
+		"  - { id: c, on: { signal: mr_review_settled, max: 3 }, stages: [{ id: s3, type: command, run: x }] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, b, c := f.Phase("a"), f.Phase("b"), f.Phase("c"); a.On.Max != UnlimitedMax || b.On.Max != UnlimitedMax || b.On.Start != StartAuto || c.On.Max != 3 {
+		t.Errorf("max: a %d b %d (start %s) c %d", a.On.Max, b.On.Max, b.On.Start, c.On.Max)
+	}
 }
 
 // A command may bound its script.
@@ -1336,7 +1424,6 @@ parameters:
 		{map[string]string{"turns": "x"}, `parameter "turns" takes an integer`},
 		{map[string]string{"gate": "maybe"}, `parameter "gate" takes true or false`},
 		{map[string]string{"mode": "later"}, `parameter "mode" takes one of auto | confirm | manual`},
-		{map[string]string{"mode": "auto"}, "requires start"},
 		{map[string]string{"model": "nomodel"}, `model: "nomodel" (bound) is not of the form provider/model`},
 		{map[string]string{"max_cost_usd": "-1"}, "max_cost_usd must be > 0"},
 		{map[string]string{"turns": "0"}, `max_turns must be > 0, got 0 (parameter "turns")`},
@@ -1344,7 +1431,7 @@ parameters:
 		if _, err := f.Resolve(tc.b); err == nil || !strings.Contains(err.Error(), tc.substr) {
 			t.Errorf("bindings %v: err = %v, want %q", tc.b, err, tc.substr)
 		}
-		if err := ValidateBindings(f.Params, tc.b); err == nil && !strings.Contains(tc.substr, "requires start") && !strings.Contains(tc.substr, "must be > 0") && !strings.Contains(tc.substr, "provider/model") {
+		if err := ValidateBindings(f.Params, tc.b); err == nil && !strings.Contains(tc.substr, "must be > 0") && !strings.Contains(tc.substr, "provider/model") {
 			t.Errorf("ValidateBindings(%v) = nil, want an error", tc.b)
 		}
 	}

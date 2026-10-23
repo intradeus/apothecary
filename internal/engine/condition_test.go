@@ -91,7 +91,7 @@ phases:
     on: manual
     stages:
       - { id: sync, type: action, action: sync_target, when: subject }
-      - { id: load, type: action, action: load_review_comments, on_fail: done }
+      - { id: load, type: action, action: load_review_comments, on_fail: end }
       - { id: shine, type: command, run: "./shine.sh" }
 `
 	ph := newPhasedHarness(t, doc)
@@ -133,7 +133,7 @@ phases:
 		t.Errorf("load did not fail routably: %v", eventTypes(evs))
 	}
 	if n := len(ph2.execsOf("./shine.sh")); n != 0 {
-		t.Errorf("shine ran after on_fail: done (%d)", n)
+		t.Errorf("shine ran after on_fail: end (%d)", n)
 	}
 	if v := ph2.view(t, runID2); v.State != run.WaitingOnHuman {
 		t.Errorf("state after the polish round = %s (the gate is still open)", v.State)

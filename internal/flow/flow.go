@@ -110,22 +110,44 @@ const (
 	EdgeTimeout = "on_timeout"
 )
 
-// TerminalDone is the reserved target that finishes the PHASE: on_success's
-// natural end, and an edge's for a stage whose failure is not worth routing
-// anywhere ("best effort"). TerminalAbort is the reserved EDGE target that
-// deliberately stops the run (projected as abandoned, mirroring the
-// frontend's Abort verb) — the explicit form of "no edge / edge exhausted".
+// The reserved routing targets (FLOWLANG §3). Stage ids may shadow none.
+//
+// TerminalEnd ends the PHASE: its chain is over, and the run goes back to
+// waiting — a parked phase resumes when its event comes, another phase opens
+// on its signal, or the run completes once nothing is parked or armed. It is
+// on_success's natural end (a phase's last stage), and an edge's for a stage
+// whose failure is not worth routing anywhere ("best effort"). A phase that
+// can run many times — a reaction — ends this way.
+//
+// TerminalDone ends the RUN: it completes now, whatever else is parked or
+// armed (their open questions are withdrawn). It is said where the work is
+// truly finished — the default flow says it once the merge request merged.
+//
+// TerminalAbort deliberately abandons the run (mirroring the frontend's Abort
+// verb).
+//
 // ReservedStart is the graph editor's marker key ("start" is never a routing
-// target). ReservedDebug is the debug leaf: a reserved EDGE target that is
-// NOT a terminal — the run parks for a human who has the workspace, and
-// continuing re-enters the stage that took the link (abandoning ends the
-// run). Stage ids may shadow none of them.
+// target). ReservedDebug is the debug leaf: NOT a terminal — the phase parks
+// for a human who has the workspace, continuing re-enters the stage that took
+// the link, and giving up ends the run in an entrypoint phase and that phase
+// run in any other.
 const (
+	TerminalEnd   = "end"
 	TerminalDone  = "done"
 	TerminalAbort = "abort"
 	ReservedStart = "start"
 	ReservedDebug = "debug"
 )
+
+// routeTerminal reports whether a route target is reserved rather than a
+// stage: the two ends, the deliberate stop, or the debug leaf.
+func routeTerminal(to string) bool {
+	switch to {
+	case TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug:
+		return true
+	}
+	return false
+}
 
 // ShorthandPhase is the phase a document written with top-level stages
 // desugars to: one chain opened by run_start.
@@ -139,16 +161,18 @@ const ShorthandPhase = "main"
 // finite max — flow budgets cannot bound cost-free retries (a failing
 // command consumes no turns and no dollars; a broken harness can fail in
 // milliseconds). The debug leaf is unlimited by nature and takes no max.
-// On a phase's wait point it means "no bound on the phase's runs".
+// On a phase's wait point it means "no bound on the phase's runs" — the
+// default: a reaction happens as often as its signal brings a new fact.
 const UnlimitedMax = -1
 
 // Edge is a recoverable redirect (on_fail / on_reject / on_timeout). Each
 // link carries its own cumulative max; when a link is exhausted the NEXT
 // failure falls through to Then (retry-then-escalate chains). An exhausted
-// chain abandons the run. To may be TerminalDone: the phase ends there,
-// TerminalAbort: taking that link stops the run deliberately, or
-// ReservedDebug: the run parks for a human and comes back to this stage on
-// continue (none of the three takes max/then — there is no target stage).
+// chain is a dead end: it abandons the run in an entrypoint phase, and ends
+// that phase run in any other. To may be TerminalEnd: the phase ends there,
+// TerminalDone: the run completes, TerminalAbort: the run is abandoned, or
+// ReservedDebug: the phase parks for a human and comes back to this stage on
+// continue (none of the four takes max/then — there is no target stage).
 //
 // An edge does not say what it carries: the content it brings is always
 // available to its target as $DECISION or $FAILURE (FeedSentinel), and the
@@ -228,10 +252,10 @@ type Stage struct {
 	Wait    *Wait
 	WaitFor string
 
-	// OnSuccess is the explicit success target: a stage id or TerminalDone.
-	// Parse always fills it (YAML sugar: absent = next stage in document
-	// order, last stage of the phase = done), so the runtime model is fully
-	// explicit.
+	// OnSuccess is the explicit success target: a stage id, TerminalEnd or
+	// TerminalDone. Parse always fills it (YAML sugar: absent = next stage in
+	// document order, last stage of the phase = end), so the runtime model is
+	// fully explicit.
 	OnSuccess string
 
 	// Edges are the recoverable redirects by kind (EdgeFail, EdgeReject,
@@ -397,10 +421,6 @@ func ValidateBindings(params []Param, bindings map[string]string) error {
 	return nil
 }
 
-// DefaultPhaseMax bounds how many times a phase opened by a firing signal may
-// run for one subject when `max` does not say.
-const DefaultPhaseMax = 10
-
 // Start is a wait point's policy: what happens when its signal holds.
 type Start string
 
@@ -417,8 +437,9 @@ const (
 // wait stage, a waitable one. Start is the policy applied when the signal
 // holds (a person's act for run_start and manual; always auto on a wait
 // stage). QuietFor debounces a signal that fires on activity. Max bounds a
-// phase's runs per subject (UnlimitedMax = no bound; 1 on a wait stage, which
-// fires once per pass). Timeout bounds a wait stage (zero = none).
+// phase's runs per subject (UnlimitedMax, the default, = no bound; 1 on a
+// wait stage, which fires once per pass). Timeout bounds a wait stage (zero =
+// none).
 type Wait struct {
 	Signal   string
 	Start    Start

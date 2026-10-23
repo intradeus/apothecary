@@ -1235,6 +1235,8 @@ components:
           type: string
         context:
           type: string
+        ends_phase:
+          type: boolean
         feedback:
           type: string
         files:
@@ -1248,6 +1250,8 @@ components:
             $ref: '#/components/schemas/PingOption'
           type: array
         payload_ref:
+          type: string
+        phase:
           type: string
         ping_id:
           type: string

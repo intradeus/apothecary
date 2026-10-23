@@ -195,6 +195,8 @@ type pingJSON struct {
 	PayloadRef string         `json:"payload_ref,omitempty"`
 	Options    []event.Option `json:"options,omitempty"`
 	AnswerKind string         `json:"answer_kind"`
+	Phase      string         `json:"phase,omitempty"`
+	EndsPhase  bool           `json:"ends_phase,omitempty"`
 	Status     string         `json:"status"`
 	RaisedAt   time.Time      `json:"raised_at"`
 }
@@ -203,7 +205,8 @@ func toPingJSON(p *engine.Ping) pingJSON {
 	return pingJSON{
 		PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID, Question: p.Question,
 		Context: p.Context, Files: p.Files, Link: p.Link, PayloadRef: p.Primary(),
-		Options: p.Options, AnswerKind: p.AnswerKind, Status: "pending", RaisedAt: p.RaisedAt,
+		Options: p.Options, AnswerKind: p.AnswerKind, Phase: p.Phase, EndsPhase: p.EndsPhase,
+		Status: "pending", RaisedAt: p.RaisedAt,
 	}
 }
 

@@ -571,11 +571,13 @@ export type PingView = {
 	answer_kind: string;
 	answered_at?: string;
 	context?: string;
+	ends_phase?: boolean;
 	feedback?: string;
 	files?: Array<string>;
 	link?: string;
 	options?: Array<PingOption>;
 	payload_ref?: string;
+	phase?: string;
 	ping_id: string;
 	question: string;
 	raised_at: string;

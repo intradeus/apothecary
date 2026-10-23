@@ -546,7 +546,7 @@ func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("line %d: edge must be a mapping, %q or %q", n.Line, TerminalAbort, ReservedDebug)
+	return fmt.Errorf("line %d: edge must be a mapping, or one of %q, %q, %q, %q", n.Line, TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug)
 }
 
 // IOPair is one named binding in a stage's map-form input/output. Line is
@@ -976,13 +976,14 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	}
 
 	// The success chain is explicit in the model (DESIGN3 §2.1); absent
-	// on_success is YAML sugar for "next stage in document order", last
-	// stage = done — the last stage of its phase, in a phased flow. After
-	// this loop every stage has a concrete target.
+	// on_success is YAML sugar for "next stage in document order", and the
+	// last stage of a phase ends the PHASE (end) — never the run: only an
+	// explicit `done` says the run is finished. After this loop every stage
+	// has a concrete target.
 	for i := range f.Stages {
 		if f.Stages[i].OnSuccess == "" {
 			if i == len(f.Stages)-1 || f.Stages[i+1].Phase != f.Stages[i].Phase {
-				f.Stages[i].OnSuccess = TerminalDone
+				f.Stages[i].OnSuccess = TerminalEnd
 			} else {
 				f.Stages[i].OnSuccess = f.Stages[i+1].ID
 			}
@@ -1309,8 +1310,11 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if !slugRe.MatchString(raw.ID) {
 		return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
 	}
+	if raw.ID == TerminalEnd {
+		return fail("id %q is reserved (the end of a phase: the run goes back to waiting)", TerminalEnd)
+	}
 	if raw.ID == TerminalDone {
-		return fail("id %q is reserved (the on_success terminal)", TerminalDone)
+		return fail("id %q is reserved (the end of the run)", TerminalDone)
 	}
 	if raw.ID == TerminalAbort {
 		return fail("id %q is reserved (the deliberate-stop edge terminal)", TerminalAbort)
@@ -1603,8 +1607,8 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if raw.OnSuccess == TerminalAbort || raw.OnSuccess == ReservedDebug {
 		return fail("on_success cannot be %q — only an edge (on_fail/on_reject/on_timeout) may target it", raw.OnSuccess)
 	}
-	if raw.OnSuccess != "" && raw.OnSuccess != TerminalDone && !slugRe.MatchString(raw.OnSuccess) {
-		return fail("on_success %q must be a stage id or %q", raw.OnSuccess, TerminalDone)
+	if raw.OnSuccess != "" && raw.OnSuccess != TerminalEnd && raw.OnSuccess != TerminalDone && !slugRe.MatchString(raw.OnSuccess) {
+		return fail("on_success %q must be a stage id, %q (the phase ends) or %q (the run is done)", raw.OnSuccess, TerminalEnd, TerminalDone)
 	}
 	s.OnSuccess = raw.OnSuccess
 
@@ -1716,7 +1720,7 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 		// An edge no longer says what it carries: its kind decides that, and
 		// the TARGET stage binds the content as an input.
 		where := fmt.Sprintf("on stage %q", raw.To)
-		if raw.To == TerminalAbort || raw.To == ReservedDebug || raw.To == "" {
+		if routeTerminal(raw.To) || raw.To == "" {
 			where = "on the target stage"
 		}
 		return fail("%q is retired: bind %s as an input %s instead", "feed", FeedSentinel(kind), where)
@@ -1724,16 +1728,21 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 	if raw.To == "" {
 		return fail("to is required")
 	}
-	if raw.To == TerminalDone {
+	if raw.To == TerminalEnd || raw.To == TerminalDone {
 		// Ending the phase from an edge — a "best effort" stage whose failure
-		// is not worth routing anywhere. Like abort, nothing follows.
+		// is not worth routing anywhere — or the run itself. Like abort,
+		// nothing follows.
+		what := "the phase ends"
+		if raw.To == TerminalDone {
+			what = "the run is done"
+		}
 		switch {
 		case raw.Max != nil:
-			return fail("max does not apply when to is %q (the phase ends)", TerminalDone)
+			return fail("max does not apply when to is %q (%s)", raw.To, what)
 		case raw.Then != nil:
-			return fail("then does not apply when to is %q (nothing runs after the phase ends)", TerminalDone)
+			return fail("then does not apply when to is %q (nothing runs after: %s)", raw.To, what)
 		}
-		return &Edge{To: TerminalDone}, nil
+		return &Edge{To: raw.To}, nil
 	}
 	if raw.To == TerminalAbort {
 		// The deliberate stop: taken on first arrival, has no fallback.
@@ -1787,7 +1796,7 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		s := &f.Stages[i]
 		for kind, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {
-				if link.To == TerminalDone || link.To == TerminalAbort || link.To == ReservedDebug {
+				if routeTerminal(link.To) {
 					continue
 				}
 				if _, ok := ids[link.To]; !ok {
@@ -1804,7 +1813,7 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 				}
 			}
 		}
-		if s.OnSuccess != TerminalDone {
+		if !routeTerminal(s.OnSuccess) {
 			if _, ok := ids[s.OnSuccess]; !ok {
 				return p.errf(s.Line, "stage %q: on_success target %q does not exist", s.ID, s.OnSuccess)
 			}
@@ -1821,22 +1830,22 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 
 	}
 
-	// Success-DAG rule: every stage's on_success chain must reach done. A
-	// success-only cycle through command stages would consume no turns and
-	// no cost — no budget would ever bound it; loops belong to edge kinds
-	// carrying max (on_fail/on_reject).
+	// Success-DAG rule: every stage's on_success chain must reach an end (end
+	// or done). A success-only cycle through command stages would consume no
+	// turns and no cost — no budget would ever bound it; loops belong to
+	// edge kinds carrying max (on_fail/on_reject).
 	for i := range f.Stages {
 		seen := map[string]bool{}
 		cur := &f.Stages[i]
 		var path []string
 		for {
 			if seen[cur.ID] {
-				return p.errf(f.Stages[i].Line, "success cycle: %s -> %s — the on_success chain must reach %q (use on_fail/on_reject for loops; they carry max)",
-					strings.Join(path, " -> "), cur.ID, TerminalDone)
+				return p.errf(f.Stages[i].Line, "success cycle: %s -> %s — the on_success chain must reach %q or %q (use on_fail/on_reject for loops; they carry max)",
+					strings.Join(path, " -> "), cur.ID, TerminalEnd, TerminalDone)
 			}
 			seen[cur.ID] = true
 			path = append(path, cur.ID)
-			if cur.OnSuccess == TerminalDone {
+			if routeTerminal(cur.OnSuccess) {
 				break
 			}
 			cur = &f.Stages[ids[cur.OnSuccess]]
@@ -1858,12 +1867,12 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 		}
 		reached[id] = true
 		s := &f.Stages[ids[id]]
-		if s.OnSuccess != TerminalDone {
+		if !routeTerminal(s.OnSuccess) {
 			queue = append(queue, s.OnSuccess)
 		}
 		for _, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {
-				if link.To != TerminalDone && link.To != TerminalAbort && link.To != ReservedDebug {
+				if !routeTerminal(link.To) {
 					queue = append(queue, link.To)
 				}
 			}
@@ -2006,19 +2015,16 @@ func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 		}
 		w.QuietFor = d
 	}
-	if fires {
-		w.Max = DefaultPhaseMax
-	}
+	// Runs per subject are unbounded unless the flow caps them: a reaction
+	// happens as often as its signal brings a NEW fact (an occurrence key
+	// never fires twice), and the run's budget bounds what that may cost.
 	if raw.Max != nil {
 		n, via, err := p.lookupInt(raw.Max, site("max", ParamInt, nil))
 		if err != nil {
 			return w, fmt.Errorf("max: %v", err)
 		}
-		switch {
-		case n == UnlimitedMax && w.Start == StartAuto:
-			return w, fmt.Errorf("max -1 (unlimited)%s requires start: %s or %s — every run must cost a human decision", via, StartConfirm, StartManual)
-		case n != UnlimitedMax && n < 1:
-			return w, fmt.Errorf("max must be >= 1 (or -1 with start %s/%s), got %d%s", StartConfirm, StartManual, n, via)
+		if n != UnlimitedMax && n < 1 {
+			return w, fmt.Errorf("max must be >= 1, or -1 for no bound (the default), got %d%s", n, via)
 		}
 		w.Max = n
 	}
@@ -2052,13 +2058,13 @@ func waitableSlugs() string {
 // and a rebase is published by a leased push.
 func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 	same := func(from *Stage, to string) bool {
-		return to == TerminalDone || to == TerminalAbort || to == ReservedDebug || f.Stages[ids[to]].Phase == from.Phase
+		return routeTerminal(to) || f.Stages[ids[to]].Phase == from.Phase
 	}
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		if !same(s, s.OnSuccess) {
 			return p.errf(s.Line, "stage %q: on_success %q is in phase %q — a phase's routes stay inside it (end it with %q)",
-				s.ID, s.OnSuccess, f.Stages[ids[s.OnSuccess]].Phase, TerminalDone)
+				s.ID, s.OnSuccess, f.Stages[ids[s.OnSuccess]].Phase, TerminalEnd)
 		}
 		for kind, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {

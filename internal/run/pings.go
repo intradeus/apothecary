@@ -26,9 +26,15 @@ type PingView struct {
 	Options    []event.Option `json:"options,omitempty"`
 	// AnswerKind is the shape of the answer the ping takes (event.Answer*).
 	AnswerKind string `json:"answer_kind"`
-	Status     string `json:"status"` // pending|answered|withdrawn (run ended unanswered)
-	Answer     string `json:"answer,omitempty"`
-	Feedback   string `json:"feedback,omitempty"`
+	// Phase is the phase the ping belongs to (a confirmation's phase to
+	// start, the debug leaf's phase); EndsPhase, on a debug ping, says giving
+	// up ends that phase run and the run goes back to waiting, rather than
+	// abandoning the run.
+	Phase     string `json:"phase,omitempty"`
+	EndsPhase bool   `json:"ends_phase,omitempty"`
+	Status    string `json:"status"` // pending|answered|withdrawn (run ended unanswered)
+	Answer    string `json:"answer,omitempty"`
+	Feedback  string `json:"feedback,omitempty"`
 	// AnswerAttachmentIDs are the files the human attached to the answer
 	// (projected from ping_answered).
 	AnswerAttachmentIDs []string   `json:"answer_attachment_ids,omitempty"`
@@ -59,7 +65,7 @@ func ReducePings(evs []event.Event) []PingView {
 				PingID: p.PingID, RunID: evs[i].RunID, Type: p.Type, StageID: p.StageID,
 				Question: p.Question, Context: p.Context,
 				Files: p.Files, Link: p.Link, PayloadRef: Primary(p.Files, p.Link),
-				Options: p.Options, AnswerKind: p.Kind(),
+				Options: p.Options, AnswerKind: p.Kind(), Phase: p.Phase, EndsPhase: p.EndsPhase,
 				Status: "pending", RaisedAt: evs[i].TS,
 			})
 		case *event.PingAnswered:

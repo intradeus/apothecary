@@ -2,6 +2,7 @@ package flow
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"apothecary/internal/actionspec"
@@ -118,7 +119,82 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 		}
 	}
 	warns = append(warns, phaseShapeWarnings(f)...)
+	warns = append(warns, endingWarnings(f)...)
 	return warns, nil
+}
+
+// endingWarnings: the run's end written where it does not belong. A phase
+// opened by a firing signal may run any number of times; ending the whole run
+// from it (done, abort) stops every one of them for good — almost always a
+// slip for `end`, which goes back to waiting. And a phase that opens a merge
+// request, then reaches done with nothing waiting for the merge, completes
+// the run the moment the merge request exists: the phases that react to it
+// never get to run.
+func endingWarnings(f *Flow) []string {
+	reacts := false
+	for i := range f.Phases {
+		reacts = reacts || f.Phases[i].HasSubject()
+	}
+	var warns []string
+	for pi := range f.Phases {
+		ph := &f.Phases[pi]
+		opened, waits, doneAfterMR := false, false, false
+		for i := ph.First; i <= ph.Last; i++ {
+			st := &f.Stages[i]
+			ends := runEndsOf(st)
+			if ph.Fires() && len(ends) > 0 {
+				warns = append(warns, fmt.Sprintf("stage %q: phase %q opens on %s and may run any number of times, but this stage ends the whole run (%s) — end the phase with %q to go back to waiting",
+					st.ID, ph.ID, ph.On.Signal, strings.Join(ends, ", "), TerminalEnd))
+			}
+			if st.Type == StageAction {
+				if act := actionspec.Get(st.Action); act != nil && act.Provides == actionspec.ProvidesMR {
+					opened = true
+				}
+			}
+			if waitsOnMerge(st) {
+				waits = true
+			}
+			if opened && slices.Contains(ends, TerminalDone) {
+				doneAfterMR = true
+			}
+		}
+		if reacts && doneAfterMR && !waits {
+			warns = append(warns, fmt.Sprintf("phase %q opens a merge request and ends the run (%s) without waiting for it: the run completes as soon as the merge request exists, and the phases reacting to it never run — park on a %s stage for %s first",
+				ph.ID, TerminalDone, StageWait, signalspec.MRMerged))
+		}
+	}
+	return warns
+}
+
+// runEndsOf lists the run-ending targets (done, abort) a stage routes to, in
+// a stable order: on_success first, then each edge kind's chain.
+func runEndsOf(st *Stage) []string {
+	var ends []string
+	add := func(to string) {
+		if (to == TerminalDone || to == TerminalAbort) && !slices.Contains(ends, to) {
+			ends = append(ends, to)
+		}
+	}
+	add(st.OnSuccess)
+	for _, kind := range []string{EdgeFail, EdgeReject, EdgeTimeout} {
+		for link := st.Edges[kind]; link != nil; link = link.Then {
+			add(link.To)
+		}
+	}
+	return ends
+}
+
+// waitsOnMerge reports whether a stage waits for the merge request's fate: a
+// wait on mr_merged/mr_closed, or a gate either of them answers.
+func waitsOnMerge(st *Stage) bool {
+	merge := func(s string) bool { return s == signalspec.MRMerged || s == signalspec.MRClosed }
+	switch st.Type {
+	case StageWait:
+		return merge(st.WaitFor)
+	case StageHumanGate:
+		return merge(st.AutoApprove) || merge(st.AutoReject)
+	}
+	return false
 }
 
 // phaseShapeWarnings: what a phase opens on versus what the flow does — a
@@ -203,7 +279,7 @@ func everyRouteSatisfies(f *Flow, target *Stage, ok func(*Stage) bool) bool {
 		defer delete(seen, st.ID)
 
 		next := func(id string) bool {
-			if id == TerminalDone || id == TerminalAbort || id == ReservedDebug {
+			if routeTerminal(id) {
 				// A terminal never reaches the target; the debug leaf only
 				// re-enters st, which is already on this walk.
 				return true

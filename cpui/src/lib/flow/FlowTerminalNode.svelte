@@ -5,7 +5,9 @@
 	//    to make that stage the entry. Each reaction phase draws its own
 	//    beginning (data.entry false), violet and dashed, naming its signal:
 	//    one beginning per phase, one phase per beginning.
-	//  - done (grn, dashed) and abort (ros, dashed): where runs end.
+	//  - end (tea, dashed): a phase is over and the run goes back to waiting —
+	//    where most chains close, a reaction's always.
+	//  - done (grn, dashed) and abort (ros, dashed): where the RUN ends.
 	//  - debug (amb, dashed): the stop that comes back — a human fixes the
 	//    workspace, then the stage that sent the run here runs again. Drawn
 	//    once per stage that escalates to it, beside that stage, so its source
@@ -18,7 +20,7 @@
 
 	let { type, data }: NodeProps = $props();
 
-	type Tone = 'start' | 'trigger' | 'done' | 'abort' | 'debug';
+	type Tone = 'start' | 'trigger' | 'end' | 'done' | 'abort' | 'debug';
 	const tone = $derived<Tone>(
 		type === 'start'
 			? data?.entry
@@ -28,11 +30,14 @@
 				? 'abort'
 				: type === 'debug'
 					? 'debug'
-					: 'done'
+					: type === 'end'
+						? 'end'
+						: 'done'
 	);
 	const HUE: Record<Tone, Hue> = {
 		start: 'brand',
 		trigger: 'vio',
+		end: 'tea',
 		done: 'grn',
 		abort: 'ros',
 		debug: 'amb'
@@ -40,6 +45,7 @@
 	const GLYPH: Record<Tone, string> = {
 		start: I.play,
 		trigger: I.play,
+		end: I.loop,
 		done: I.ok,
 		abort: I.bad,
 		debug: I.retry
@@ -47,6 +53,7 @@
 	const TITLE: Record<Tone, () => string> = {
 		start: () => t('flow.term.start'),
 		trigger: () => '',
+		end: () => t('flow.term.end'),
 		done: () => t('flow.term.done'),
 		abort: () => t('flow.term.abort'),
 		debug: () => t('flow.term.debug')
@@ -59,7 +66,7 @@
 </script>
 
 <div class="term {tone} h-{HUE[tone]}" {title}>
-	{#if tone === 'done' || tone === 'abort' || tone === 'debug'}
+	{#if tone === 'end' || tone === 'done' || tone === 'abort' || tone === 'debug'}
 		<Handle type="target" position={Position.Left} style={handle} />
 	{/if}
 	<span class="l">{label}</span><span class="g">{GLYPH[tone]}</span>

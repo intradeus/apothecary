@@ -19,6 +19,8 @@
 		ABORT,
 		DEBUG,
 		DONE,
+		END,
+		isReservedTarget,
 		START,
 		MANUAL,
 		RUN_START,
@@ -203,7 +205,7 @@
 		if (
 			!newId ||
 			newId === oldId ||
-			[DONE, ABORT, DEBUG, START].includes(newId) ||
+			[END, DONE, ABORT, DEBUG, START].includes(newId) ||
 			!/^[a-z][a-z0-9_-]*$/.test(newId)
 		)
 			return;
@@ -242,7 +244,7 @@
 		if (!ok) return;
 		doc.stages = doc.stages.filter((s) => s.id !== id);
 		for (const s of doc.stages) {
-			if (s.on_success === id) s.on_success = DONE;
+			if (s.on_success === id) s.on_success = END;
 			for (const kind of EDGE_KINDS) {
 				setEdge(s, kind, pruneEdgeTarget(edgeOf(s, kind), id));
 			}
@@ -270,11 +272,12 @@
 		sourceType === 'human_gate' || targetsGate(to);
 
 	// retarget switches one chain link's target, normalizing the link's other
-	// fields: abort and debug links carry no max/feed/then; stage links need a
-	// max, and -1 survives only while a gate remains on the link.
+	// fields: links to a reserved target (end, done, abort, debug) carry no
+	// max/then; stage links need a max, and -1 survives only while a gate
+	// remains on the link.
 	function retarget(sourceType: StageKind, link: DocEdge, to: string) {
 		link.to = to;
-		if (to === ABORT || to === DEBUG) {
+		if (isReservedTarget(to)) {
 			link.max = undefined;
 			link.then = undefined;
 		} else if (link.max == null || (link.max === -1 && !unlimitedOK(sourceType, to))) {
@@ -327,7 +330,7 @@
 	function appendLink(e: DocEdge) {
 		let last = e;
 		while (last.then) last = last.then;
-		if (last.to === ABORT || last.to === DEBUG || last.max === -1) return; // nothing follows abort/debug/unlimited
+		if (isReservedTarget(last.to) || last.max === -1) return; // nothing follows a reserved target or an unlimited link
 		// The usual fallback once retries are spent: a human with the workspace.
 		last.then = { to: DEBUG };
 		onchange();
@@ -832,11 +835,13 @@
 				<div class="field">
 					<label for="st-succ">{t('flow.insp.onSuccess')}</label>
 					<select id="st-succ" bind:value={s.on_success} {onchange}>
+						<option value={END}>{t('flow.insp.endOption')}</option>
 						<option value={DONE}>{t('flow.insp.doneOption')}</option>
 						{#each routableFrom(doc, s).filter((x) => x.id !== s.id) as x (x.id)}<option
 								value={x.id}>{x.id}</option
 							>{/each}
 					</select>
+					<div class="help">{t('flow.insp.endsHelp')}</div>
 				</div>
 
 				<div class="chips">
@@ -895,11 +900,13 @@
 								>
 									{#each routableFrom(doc, s) as x (x.id)}<option value={x.id}>{x.id}</option
 										>{/each}
+									<option value={END}>{t('flow.insp.endOption')}</option>
+									<option value={DONE}>{t('flow.insp.doneOption')}</option>
 									<option value={ABORT}>{t('flow.insp.abortOption')}</option>
 									<option value={DEBUG}>{t('flow.insp.debugOption')}</option>
 								</select>
 							</div>
-							{#if link.to !== ABORT && link.to !== DEBUG}
+							{#if !isReservedTarget(link.to)}
 								{@const canUnlimit = unlimitedOK(s.type, link.to)}
 								{#if canUnlimit}
 									<Toggle
@@ -939,7 +946,7 @@
 						</div>
 					{/each}
 					<div class="row">
-						{#if links[links.length - 1].to !== ABORT && links[links.length - 1].to !== DEBUG && links[links.length - 1].max !== -1}
+						{#if !isReservedTarget(links[links.length - 1].to) && links[links.length - 1].max !== -1}
 							<button class="btn-sm" onclick={() => appendLink(e)}
 								>{I.add} {t('flow.insp.thenFallback')}</button
 							>
@@ -953,7 +960,6 @@
 			{:else if phaseSel}
 				{@const ph = phaseSel}
 				{@const firing = fires(ph.on)}
-				{@const automatic = firing && (!ph.on.start || ph.on.start === 'auto')}
 				<div class="ih">
 					<span class="pill sm mono t-vio">{t('flow.insp.phaseKind')}</span>
 					<span class="mono iid ell">{ph.id}</span>
@@ -1030,8 +1036,6 @@
 							onchange={(e) => {
 								const v = e.currentTarget.value;
 								ph.on.start = v === 'auto' ? undefined : v;
-								// Unlimited runs need a person deciding each one.
-								if (!ph.on.start && ph.on.max === -1) ph.on.max = undefined;
 								onchange();
 							}}
 						>
@@ -1066,16 +1070,14 @@
 						class="mono"
 						list="flow-int-params"
 						value={ph.on.max ?? ''}
-						placeholder={firing ? t('flow.insp.phaseMaxDefault') : t('flow.insp.unlimited')}
+						placeholder={t('flow.insp.unlimited')}
 						oninput={(e) => {
 							const v = e.currentTarget.value.trim();
 							ph.on.max = v === '' ? undefined : /^-?\d+$/.test(v) ? Number(v) : v;
 							onchange();
 						}}
 					/>
-					<div class="help">
-						{automatic ? t('flow.insp.phaseMaxHelp') : t('flow.insp.phaseMaxHelpHuman')}
-					</div>
+					<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
 				</div>
 				<datalist id="flow-int-params">
 					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}

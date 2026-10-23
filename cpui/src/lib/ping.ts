@@ -66,6 +66,10 @@ export interface PingLike {
 	// Optional: shown in the card head when present.
 	stageId?: string;
 	raisedAt?: string;
+	// The phase the ping belongs to; on a debug ping, endsPhase says giving
+	// up ends that phase run, not the run.
+	phase?: string;
+	endsPhase?: boolean;
 }
 
 /** A ping whose primary payload is a captured document (a plan), reviewed in
