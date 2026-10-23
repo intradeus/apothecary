@@ -30,8 +30,14 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	// Which checkouts still need a merge request — reconciling first, before
 	// anything is read or created: after a crash in the record window the
 	// forge may already have it.
+	// In a phase opened for one merge request, only its checkout; otherwise
+	// every checkout of the run.
+	checkouts := rs.checkouts
+	if co := x.subjectCheckout(); co != nil {
+		checkouts = []event.Checkout{*co}
+	}
 	var todo []event.Checkout
-	for _, co := range rs.checkouts {
+	for _, co := range checkouts {
 		forge := x.res.forgeFor(co.Name)
 		if forge == nil {
 			continue // context-only extra repo
@@ -49,14 +55,16 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 				continue
 			}
 		}
-		if rs.actionPending[st.ID] {
+		// Adopt what the forge already has — after a crash in the record
+		// window, or a merge request a person opened for the branch — rather
+		// than open a second one.
+		{
 			ref, found, ferr := forge.FindMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source)
 			if ferr != nil {
 				return x.infraFail(st, "cannot tell whether the merge request was already created: "+ferr.Error())
 			}
 			if found {
-				x.e.log.Info("adopted an existing merge request after an interrupted create",
-					"run", rs.runID, "stage", st.ID, "repo", co.Name, "mr", ref.URL)
+				x.e.log.Info("adopted an existing merge request", "run", rs.runID, "stage", st.ID, "repo", co.Name, "mr", ref.URL)
 				created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID}
 				if err := x.append(created); err != nil {
 					return true, err

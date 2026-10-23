@@ -37,7 +37,7 @@ const markersScript = `files=$(git diff --name-only --diff-filter=U); if [ -n "$
 func (x *exec) actionSyncTarget(st *flow.Stage) (bool, error) {
 	co := x.subjectCheckout()
 	if co == nil {
-		return x.infraFail(st, fmt.Sprintf("stage %s: sync_target runs in a reaction phase on a merge request; this phase run has none", st.ID))
+		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
 	strategy := actionspec.StrategyMerge
 	if in := st.Input("strategy"); in != nil && in.Value != "" {

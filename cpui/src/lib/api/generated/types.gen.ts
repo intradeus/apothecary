@@ -654,6 +654,7 @@ export type RunView = {
 	idle?: boolean;
 	mr_url?: string;
 	mrs?: Array<RunMergeRequest>;
+	open_pings?: Array<string>;
 	params?: {
 		[key: string]: string;
 	};

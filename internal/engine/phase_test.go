@@ -144,6 +144,26 @@ func (ph *phasedHarness) waitPhaseRuns(t *testing.T, runID, phase string, n int)
 	t.Fatalf("phase %s did not complete %d time(s); events: %v", phase, n, eventTypes(ph.events(t, runID)))
 }
 
+// waitPhaseCompleted waits until phase has completed n times, whatever the
+// run's state reads (a gate parked elsewhere keeps it waiting_on_human).
+func (ph *phasedHarness) waitPhaseCompleted(t *testing.T, runID, phase string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		got := 0
+		for _, e := range ph.events(t, runID) {
+			if c, ok := e.Payload.(*event.PhaseCompleted); ok && c.Phase == phase {
+				got++
+			}
+		}
+		if got >= n {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("phase %s did not complete %d time(s); events: %v", phase, n, eventTypes(ph.events(t, runID)))
+}
+
 func phaseStarts(evs []event.Event) []*event.PhaseStarted {
 	var out []*event.PhaseStarted
 	for _, e := range evs {
@@ -326,9 +346,12 @@ func TestGateParksAndAReactionRunsMeanwhile(t *testing.T) {
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
 	}
-	ph.waitPhaseRuns(t, runID, "conflicts", 1)
+	ph.waitPhaseCompleted(t, runID, "conflicts", 1)
 	if n := len(ph.execsOf("./sync.sh")); n != 1 {
 		t.Fatalf("sync ran %d times while the gate was open", n)
+	}
+	if v := ph.view(t, runID); v.State != run.WaitingOnHuman || !v.Idle {
+		t.Errorf("after the reaction, the open gate keeps the run waiting: %s idle %v", v.State, v.Idle)
 	}
 	ph.forge.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)

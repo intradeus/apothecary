@@ -7,6 +7,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -72,11 +73,22 @@ func (x *exec) checkReviewReplies(st *flow.Stage) string {
 	return ""
 }
 
+// errNoSubject: a subject action in a phase run that acts on no merge
+// request — routable (on_fail), unlike a forge that cannot be reached.
+var errNoSubject = errors.New("no merge request subject")
+
+// noSubjectMsg explains a subject action's failure in a subject-less phase
+// run: the phase was opened for no merge request (started by hand with none
+// open, or opened by run_start), so there is nothing for it to act on.
+func noSubjectMsg(st *flow.Stage) string {
+	return fmt.Sprintf("%s: %s acts on the merge request a phase is opened for, and this phase run has none — guard the stage with `when: subject`, or start the phase on a merge request", errNoSubject, st.Action)
+}
+
 // subjectForge is the forge and merge request a subject action acts on.
 func (x *exec) subjectForge(st *flow.Stage) (ports.Forge, *mrRecord, error) {
 	mr := x.subjectMR()
 	if mr == nil {
-		return nil, nil, fmt.Errorf("stage %s: %s runs in a reaction phase on a merge request; this phase run has none", st.ID, st.Action)
+		return nil, nil, fmt.Errorf("%w: %s", errNoSubject, noSubjectMsg(st))
 	}
 	forge := x.res.forgeFor(mr.Repo)
 	if forge == nil {
@@ -93,6 +105,9 @@ func (x *exec) subjectForge(st *flow.Stage) (ports.Forge, *mrRecord, error) {
 func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 	rs := x.rs
 	forge, mr, err := x.subjectForge(st)
+	if errors.Is(err, errNoSubject) {
+		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
+	}
 	if err != nil {
 		return x.infraFail(st, err.Error())
 	}
@@ -292,6 +307,9 @@ func quoteBlock(s string) string {
 func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	rs := x.rs
 	forge, mr, err := x.subjectForge(st)
+	if errors.Is(err, errNoSubject) {
+		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
+	}
 	if err != nil {
 		return x.infraFail(st, err.Error())
 	}

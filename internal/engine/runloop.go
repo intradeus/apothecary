@@ -190,6 +190,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			err = x.routeAfterComplete(st)
 		} else if rs.ph == phAfterFail && st.Type != flow.StageAction {
 			err = x.routeAfterFail(st)
+		} else if skip, note := x.stageCondition(st); skip && rs.ph == phStart {
+			// A condition that does not hold: the stage completes as
+			// skipped before anything is provisioned (FLOWLANG §2 when).
+			err = x.skipStage(st, note)
 		} else {
 			// Ensure the workspace lazily, right before a stage that uses it —
 			// and NEVER for a stage that only parks on something outside the

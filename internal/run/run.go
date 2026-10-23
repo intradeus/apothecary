@@ -81,7 +81,11 @@ type View struct {
 	Phase        string `json:"phase,omitempty"`
 	PhaseSubject string `json:"phase_subject,omitempty"`
 	Idle         bool   `json:"idle,omitempty"`
-	EnvID        string `json:"env_id,omitempty"`
+	// OpenPings are the pings raised and not yet answered: what keeps an
+	// idle run reading waiting_on_human when a phase run is parked on a
+	// decision while another phase ran.
+	OpenPings []string `json:"open_pings,omitempty"`
+	EnvID     string   `json:"env_id,omitempty"`
 	// EnvStatus is the reconciled LIVE container status (running/starting/
 	// stopped/absent) — NOT a projected column and never set by Apply. The
 	// read path fills it from the engine's reconciler so the workspace badge
@@ -182,7 +186,14 @@ func Apply(v *View, e *event.Event) {
 		}
 	case *event.PingRaised:
 		v.State = WaitingOnHuman
+		v.OpenPings = append(v.OpenPings, p.PingID)
 	case *event.PingAnswered:
+		for i, id := range v.OpenPings {
+			if id == p.PingID {
+				v.OpenPings = append(v.OpenPings[:i], v.OpenPings[i+1:]...)
+				break
+			}
+		}
 		// An answer puts a run back to work — unless it has no loop to put
 		// back: a parked run keeps waiting until something wakes it, and a
 		// run a human paused keeps its pause. Claiming "running" for either
@@ -219,14 +230,21 @@ func Apply(v *View, e *event.Event) {
 		}
 	case *event.PhaseCompleted:
 		v.Idle = true
-		if len(v.MRs) > 0 {
+		switch {
+		case len(v.OpenPings) > 0:
+			v.State = WaitingOnHuman // a decision still open (a parked gate)
+		case len(v.MRs) > 0:
 			v.State = InReview
 		}
 	case *event.PhaseParked:
-		// Parked at a wait point: idle for every other phase, and in review
-		// when a merge request is what it waits on.
+		// Parked at a wait point: idle for every other phase; waiting on a
+		// person when a decision is open, in review when a merge request
+		// is what it waits on.
 		v.Idle = true
-		if len(v.MRs) > 0 && v.State == Running {
+		switch {
+		case len(v.OpenPings) > 0:
+			v.State = WaitingOnHuman
+		case len(v.MRs) > 0 && v.State == Running:
 			v.State = InReview
 		}
 	case *event.PhaseResumed:

@@ -1455,6 +1455,10 @@ components:
           items:
             $ref: '#/components/schemas/RunMergeRequest'
           type: array
+        open_pings:
+          items:
+            type: string
+          type: array
         params:
           additionalProperties:
             type: string

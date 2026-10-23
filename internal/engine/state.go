@@ -110,6 +110,9 @@ type runState struct {
 	parked map[string]*phaseRun
 	// anyStarted: some stage has started (a stage_started is on the log).
 	anyStarted bool
+	// elided marks stages whose last start was a skip (a condition that did
+	// not hold): they never touched the workspace.
+	elided map[string]bool
 
 	// openPings are raised-but-unanswered pings to re-register on recovery.
 	openPings []*event.PingRaised
@@ -283,6 +286,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		agentCursor:   map[string]string{},
 		triggerSeen:   map[string]bool{},
 		phaseRuns:     map[string]int{},
+		elided:        map[string]bool{},
 		pushed:        map[string]string{},
 		skipped:       map[string]string{},
 	}
@@ -317,6 +321,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			}
 		case *event.StageStarted:
 			rs.anyStarted = true
+			delete(rs.elided, p.StageID)
 			if fl != nil {
 				rs.pos = fl.Index(p.StageID)
 			}
@@ -329,6 +334,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			delete(rs.pausedAsks, p.StageID)
 		case *event.StageCompleted:
 			rs.ph = phAfterComplete
+			if p.Skipped {
+				rs.elided[p.StageID] = true
+			}
 			// A completed stage settled whatever intent it recorded: a later
 			// run of the same action (a second review round) starts clean.
 			delete(rs.actionPending, p.StageID)
@@ -557,7 +565,7 @@ func (rs *runState) anyWorkspaceStageStarted() bool {
 		return true
 	}
 	for i := range rs.fl.Stages {
-		if st := &rs.fl.Stages[i]; needsWorkspace(st) && rs.iters[st.ID] > 0 {
+		if st := &rs.fl.Stages[i]; needsWorkspace(st) && rs.iters[st.ID] > 0 && !rs.elided[st.ID] {
 			return true
 		}
 	}
