@@ -74,12 +74,16 @@ const (
 	// fires on its own, and a phase on it starts no other way.
 	Manual = "manual"
 
-	MRMerged = "mr_merged"
-	MRClosed = "mr_closed"
+	MRMerged   = "mr_merged"
+	MRClosed   = "mr_closed"
+	MRApproved = "mr_approved"
 
 	// Phase triggers.
 	MRConflicts     = "mr_conflicts"
 	MRReviewSettled = "mr_review_settled"
+	CIFailed        = "ci_failed"
+	MRMergeable     = "mr_mergeable"
+	MRHeadMoved     = "mr_head_moved"
 
 	RequiresForge = "forge"
 
@@ -113,6 +117,13 @@ var registry = []Signal{{
 	Needs:       NeedsMR,
 	Outcome:     true,
 }, {
+	Slug:        MRApproved,
+	Title:       "Merge request approved",
+	Description: "Holds once every merge request of the run is approved — by at least one reviewer, with no request for changes outstanding (GitHub), or with its approval rules met (GitLab) — or merged. A phase on it is an outcome, for a team whose work is done at approval; a wait stage may park on it instead.",
+	Requires:    RequiresForge,
+	Needs:       NeedsMR,
+	Outcome:     true,
+}, {
 	Slug:        MRConflicts,
 	Title:       "Merge request conflicts with its target",
 	Description: "Holds while the forge reports the merge request cannot merge cleanly into its target. Once per (target tip, head) pair: a declined or finished fix is not offered again until either moves.",
@@ -123,6 +134,28 @@ var registry = []Signal{{
 	Slug:        MRReviewSettled,
 	Title:       "Review comments settled",
 	Description: "Holds when the merge request has unresolved review threads whose last word is a reviewer's, and the newest of those comments is older than quiet_for: someone reviewed, then stopped.",
+	Requires:    RequiresForge,
+	Needs:       NeedsMR,
+	Trigger:     true,
+	Debounced:   true,
+}, {
+	Slug:        CIFailed,
+	Title:       "CI failed",
+	Description: "Holds while a CI check on the merge request's head commit has failed (GitHub check runs and commit statuses, GitLab's head pipeline). Once per head and set of failed checks: a push, or another check failing, is a new occurrence.",
+	Requires:    RequiresForge,
+	Needs:       NeedsMR,
+	Trigger:     true,
+}, {
+	Slug:        MRMergeable,
+	Title:       "Merge request can be merged",
+	Description: "Holds while the forge says it would merge the merge request now: no conflict, its required approvals and checks in, not a draft. The forge's own verdict, so the project's rules decide. Once per head.",
+	Requires:    RequiresForge,
+	Needs:       NeedsMR,
+	Trigger:     true,
+}, {
+	Slug:        MRHeadMoved,
+	Title:       "Someone pushed to the merge request",
+	Description: "Holds while the merge request's head is a commit the run did not push, open the merge request at, or already act on — someone else pushed. With quiet_for, only once the head has stood still that long. Once per head.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
 	Trigger:     true,

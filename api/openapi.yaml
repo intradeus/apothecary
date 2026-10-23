@@ -57,6 +57,17 @@ components:
       required:
         - answer
       type: object
+    Approval:
+      properties:
+        approved:
+          type: boolean
+        by:
+          items:
+            type: string
+          type: array
+      required:
+        - approved
+      type: object
     Attachment:
       properties:
         created_at:
@@ -215,6 +226,18 @@ components:
         - id
         - kind
       type: object
+    Check:
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+        url:
+          type: string
+      required:
+        - name
+        - state
+      type: object
     CheckStep:
       properties:
         detail:
@@ -226,6 +249,22 @@ components:
       required:
         - id
         - status
+      type: object
+    Checks:
+      properties:
+        head:
+          type: string
+        items:
+          items:
+            $ref: '#/components/schemas/Check'
+          nullable: true
+          type: array
+        state:
+          type: string
+      required:
+        - head
+        - items
+        - state
       type: object
     CopyFlowRequest:
       properties:
@@ -973,8 +1012,14 @@ components:
       type: object
     MRLive:
       properties:
+        approval:
+          $ref: '#/components/schemas/Approval'
         branch:
           type: string
+        checks:
+          $ref: '#/components/schemas/Checks'
+        draft:
+          type: boolean
         error:
           type: string
         head_sha:
@@ -984,6 +1029,8 @@ components:
           type: string
         mergeable:
           type: string
+        mergeable_now:
+          type: boolean
         pending_threads:
           type: integer
         repo:

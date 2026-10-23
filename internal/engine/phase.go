@@ -172,19 +172,68 @@ func (x *exec) subjectMR() *mrRecord {
 	return x.rs.mrFor(co.Name, co.Branch)
 }
 
-// mrObservation is one poll of one merge request.
+// mrObservation is one poll of one merge request. threads, checks and
+// approval are read only when the flow has a signal that needs them (nil
+// otherwise); headSince is when this poll's head was first seen.
 type mrObservation struct {
-	mr      *mrRecord
-	status  ports.MRStatus
-	threads []ports.ReviewThread // nil unless fetched this tick
+	mr        *mrRecord
+	status    ports.MRStatus
+	threads   []ports.ReviewThread
+	checks    *ports.Checks
+	approval  *ports.Approval
+	headSince time.Time
 }
 
 // idler is the idle loop's memory between ticks: what is not run history
 // (the forge is the source of truth for it) and so lives only in the loop.
+// Everything is per merge request (checkout + branch).
 type idler struct {
 	threadsAt map[string]time.Time
 	threads   map[string][]ports.ReviewThread
+	checks    map[string]polled[ports.Checks]
+	approvals map[string]polled[ports.Approval]
+	heads     map[string]polled[string]
 	failures  int
+}
+
+// polled is a value read from the forge and when.
+type polled[T any] struct {
+	v  T
+	at time.Time
+}
+
+func newIdler() *idler {
+	return &idler{threadsAt: map[string]time.Time{}, threads: map[string][]ports.ReviewThread{},
+		checks: map[string]polled[ports.Checks]{}, approvals: map[string]polled[ports.Approval]{}, heads: map[string]polled[string]{}}
+}
+
+// forgeReads says which of a merge request's facts beyond its status the
+// flow's signals read — on phase heads, wait stages and gates alike — so an
+// idle run asks the forge for nothing it will not look at.
+type forgeReads struct{ threads, checks, approval bool }
+
+func readsOf(fl *flow.Flow) forgeReads {
+	var r forgeReads
+	note := func(slug string) {
+		switch slug {
+		case signalspec.MRReviewSettled:
+			r.threads = true
+		case signalspec.CIFailed:
+			r.checks = true
+		case signalspec.MRApproved:
+			r.approval = true
+		}
+	}
+	for i := range fl.Phases {
+		note(fl.Phases[i].On.Signal)
+	}
+	for i := range fl.Stages {
+		st := &fl.Stages[i]
+		note(st.WaitFor)
+		note(st.AutoApprove)
+		note(st.AutoReject)
+	}
+	return r
 }
 
 // idle runs while the run sits between phases: it polls the forge for the
@@ -200,7 +249,7 @@ func (x *exec) idle() error {
 	x.e.scheduleLocked(lim)
 	x.e.mu.Unlock()
 
-	st := &idler{threadsAt: map[string]time.Time{}, threads: map[string][]ports.ReviewThread{}}
+	st := newIdler()
 	if err := x.evaluateIdle(st); err != nil || !rs.idle || rs.done {
 		return err
 	}
@@ -368,6 +417,11 @@ func outcomeOf(ph *flow.Phase, obs []mrObservation) (subject, link, key, why str
 			link = obs[0].mr.Ref.URL
 		}
 		return "", link, "merged", "Every merge request merged."
+	case signalspec.MRApproved:
+		if len(obs) > 0 {
+			link = obs[0].mr.Ref.URL
+		}
+		return "", link, "approved", "Every merge request is approved."
 	}
 	return "", "", ph.On.Signal, ""
 }
@@ -376,16 +430,12 @@ func outcomeOf(ph *flow.Phase, obs []mrObservation) (subject, link, key, why str
 // debounced trigger needs them and they are due.
 func (x *exec) observe(st *idler) ([]mrObservation, error) {
 	rs := x.rs
-	needThreads := false
-	for _, ph := range rs.fl.Phases {
-		if ph.On.Signal == signalspec.MRReviewSettled {
-			needThreads = true
-		}
-	}
+	reads := readsOf(rs.fl)
 	every := x.e.cfg.ThreadPollInterval
 	if every <= 0 {
 		every = time.Minute
 	}
+	now := x.e.clock()
 	out := make([]mrObservation, 0, len(rs.mrs))
 	for i := range rs.mrs {
 		mr := &rs.mrs[i]
@@ -397,9 +447,39 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", mr.Ref.URL, err)
 		}
-		o := mrObservation{mr: mr, status: status}
-		if needThreads && status.State == ports.MROpen {
-			k := mr.Repo + "\x00" + mr.Branch
+		k := mr.Repo + "\x00" + mr.Branch
+		if h, ok := st.heads[k]; !ok || h.v != status.HeadSHA {
+			st.heads[k] = polled[string]{status.HeadSHA, now}
+		}
+		o := mrObservation{mr: mr, status: status, headSince: st.heads[k].at}
+		if reads.checks && status.State == ports.MROpen {
+			// A head's checks are asked for when the head is new, while they
+			// run, and otherwise at the thread cadence (a re-run turns them).
+			c, ok := st.checks[k]
+			stale := !ok || c.v.Head != status.HeadSHA || c.v.State == ports.CheckPending || now.Sub(c.at) >= every ||
+				(c.v.State == ports.ChecksNone && now.Sub(o.headSince) < every)
+			if stale {
+				checks, err := forge.MRChecks(x.ctx, mr.Ref, status.HeadSHA)
+				if err != nil {
+					return nil, fmt.Errorf("%s checks: %w", mr.Ref.URL, err)
+				}
+				st.checks[k] = polled[ports.Checks]{checks, now}
+			}
+			v := st.checks[k].v
+			o.checks = &v
+		}
+		if reads.approval && status.State == ports.MROpen {
+			if a, ok := st.approvals[k]; !ok || now.Sub(a.at) >= every {
+				ap, err := forge.MRApproval(x.ctx, mr.Ref)
+				if err != nil {
+					return nil, fmt.Errorf("%s approval: %w", mr.Ref.URL, err)
+				}
+				st.approvals[k] = polled[ports.Approval]{ap, now}
+			}
+			v := st.approvals[k].v
+			o.approval = &v
+		}
+		if reads.threads && status.State == ports.MROpen {
 			if last, ok := st.threadsAt[k]; !ok || x.e.clock().Sub(last) >= every {
 				threads, err := forge.MRThreads(x.ctx, mr.Ref)
 				if err != nil {
@@ -439,8 +519,39 @@ func (x *exec) triggerHolds(ph *flow.Phase, o mrObservation) (bool, string, stri
 		}
 		return true, newest.ID, fmt.Sprintf("%d review thread(s) on %s are waiting, the last comment %s ago.",
 			len(pending), o.mr.Ref.URL, x.e.clock().Sub(newest.CreatedAt).Round(time.Minute))
+	case signalspec.CIFailed:
+		// The checks of the head this poll saw, failed: one occurrence per
+		// head and set of failed checks.
+		if o.checks == nil || o.checks.Head != o.status.HeadSHA || o.checks.State != ports.CheckFailure {
+			return false, "", ""
+		}
+		failed := o.checks.Failed()
+		return true, o.status.HeadSHA + ":" + strings.Join(failed, ","),
+			fmt.Sprintf("CI failed on %s: %s.", o.mr.Ref.URL, strings.Join(failed, ", "))
+	case signalspec.MRMergeable:
+		if !o.status.MergeableNow {
+			return false, "", ""
+		}
+		return true, o.status.HeadSHA, fmt.Sprintf("The forge says %s can be merged now.", o.mr.Ref.URL)
+	case signalspec.MRHeadMoved:
+		head := o.status.HeadSHA
+		if head == "" || x.rs.knownHead(o.mr.Repo, head) {
+			return false, "", ""
+		}
+		if q := ph.On.QuietFor; q > 0 && x.e.clock().Sub(o.headSince) < q {
+			return false, "", ""
+		}
+		return true, head, fmt.Sprintf("Someone pushed to %s: its head is now %s, a commit this run did not push.", o.mr.Ref.URL, shortSHA(head))
 	}
 	return false, "", ""
+}
+
+// shortSHA is a commit id as people read it.
+func shortSHA(sha string) string {
+	if len(sha) > 10 {
+		return sha[:10]
+	}
+	return sha
 }
 
 // askToStart raises a phase_confirm ping, once per (phase, subject, key).

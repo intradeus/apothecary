@@ -187,7 +187,7 @@ export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
  *  truth and the pickers read it; this list only shapes what the document
  *  model cannot ask the server for — the implicit `done` of an outcome's
  *  last stage. */
-export const OUTCOME_SIGNALS = ['mr_merged', 'mr_closed'];
+export const OUTCOME_SIGNALS = ['mr_merged', 'mr_closed', 'mr_approved'];
 export const isOutcome = (w: DocWait) => OUTCOME_SIGNALS.includes(w.signal);
 export type StartPolicy = (typeof START_POLICIES)[number];
 

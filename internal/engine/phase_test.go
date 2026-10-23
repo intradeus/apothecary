@@ -179,7 +179,7 @@ func phaseStarts(evs []event.Event) []*event.PhaseStarted {
 
 func (ph *phasedHarness) execsOf(script string) []ports.Command {
 	var out []ports.Command
-	for _, c := range ph.envp.ExecCalls {
+	for _, c := range ph.envp.Execs() {
 		if strings.Contains(c.Cmd.Script, script) {
 			out = append(out, c.Cmd)
 		}

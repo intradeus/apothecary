@@ -194,6 +194,18 @@ func (x *exec) waitState(slug string, obs []mrObservation) (holds, impossible bo
 		if allMerged {
 			return false, true, "every merge request merged"
 		}
+	case signalspec.MRApproved:
+		// Approved or merged, every one: a merge is past approval. A close
+		// means it will never be.
+		if closed != "" {
+			return false, true, "merge request closed unmerged: " + closed
+		}
+		for _, o := range obs {
+			if o.status.State == ports.MROpen && (o.approval == nil || !o.approval.Approved) {
+				return false, false, ""
+			}
+		}
+		return true, false, ""
 	}
 	return false, false, ""
 }

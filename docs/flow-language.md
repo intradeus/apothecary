@@ -273,15 +273,16 @@ phases:
   it never finishes the run. Its chain closes with `end` and the run goes
   back to waiting; a failure in it with nowhere to go ends that round, not the
   run (§3).
-- **Outcomes.** A phase on `mr_merged` or `mr_closed` (§2 *wait*) opens
+- **Outcomes.** A phase on `mr_merged`, `mr_closed` or `mr_approved` (§2 *wait*) opens
   **once**, when the merge request's fate is known, and **ends the run**: its
   last stage says `done` (the default inside an outcome) or `abort` — or, with
   nothing to do, the phase says `then: done` / `then: abort` in place of
   stages. It takes a `start` policy like a reaction (`confirm` asks "…and end
   the run?"), no `max`, no `quiet_for`. `mr_merged` holds once *every* merge
   request merged, with no subject; `mr_closed` as soon as one is closed
-  unmerged, that one being the subject. An open merge request keeps an
-  outcome armed — which is what keeps the run waiting in review.
+  unmerged, that one being the subject; `mr_approved` once every merge
+  request is approved (or merged), with no subject. An open merge request
+  keeps an outcome armed — which is what keeps the run waiting in review.
 
 `on:` is a signal name, or a mapping:
 
@@ -361,6 +362,14 @@ as many times as they need, while the outcomes wait for its fate:
   stages:
     - { id: ticket_back, type: action, action: ticket_transition, input: { to: todo },
         on_success: abort, on_fail: abort }
+```
+
+A team whose work is finished when a reviewer approves — the merge is
+someone else's job — says so with a third outcome; the first one to hold ends
+the run:
+
+```yaml
+- { id: approved, on: mr_approved, then: done }   # every merge request approved
 ```
 
 Inside an outcome nothing may route to `end`: there is nothing to go back to.
@@ -726,22 +735,24 @@ request at all), or when `timeout` passes (`on_timeout`, else `on_fail`). A
 parked wait survives a restart: the engine replays to the park and resumes
 polling, raising nothing twice.
 
-Registry (`GET /api/signals`). Two signals are **waitable** — a `wait` parks on
-them, a gate's `auto_approve` / `auto_reject` takes them — and the same two
-are **outcomes**: a phase `on:` one of them opens once and ends the run (§1
-*Phases*):
+Registry (`GET /api/signals`). Three signals are **waitable** — a `wait` parks
+on them, a gate's `auto_approve` / `auto_reject` takes them — and the same
+three are **outcomes**: a phase `on:` one of them opens once and ends the run
+(§1 *Phases*):
 
 | signal | requires | needs | holds when |
 |---|---|---|---|
 | `mr_merged` | `forge` | a merge request | every merge request the run opened is merged on the forge |
 | `mr_closed` | `forge` | a merge request | one of them is closed *without* being merged |
+| `mr_approved` | `forge` | a merge request | every one is approved or merged. Approved: on GitHub, someone's latest review approves and nobody's latest requests changes; on GitLab, the approval rules are met by at least one approval (a project without rules reports "approved" with nobody's — that is not an approval). Can no longer hold once one is closed |
 
 `needs` is a prerequisite *within the run*: waiting for `mr_merged` in a flow
 that never opens a merge request fails with `input_missing` and says so,
 rather than parking forever on something that cannot happen.
 
-Four more signals are **beginnings**: they open a phase (§1 *Phases*), any
-number of times, and cannot be waited on or answer a gate.
+Seven more signals are **beginnings**: they open a phase (§1 *Phases*), any
+number of times, and cannot be waited on or answer a gate. Each forge one
+fires per merge request, once per occurrence (the key in brackets).
 
 | signal | requires | needs | holds when |
 |---|---|---|---|
@@ -749,6 +760,9 @@ number of times, and cannot be waited on or answer a gate.
 | `manual` | — | — | never on its own: a person starts the phase from the run page |
 | `mr_conflicts` | `forge` | a merge request | the forge reports the merge request cannot merge cleanly into its target (a forge still computing is *not* a conflict). Fires per merge request |
 | `mr_review_settled` | `forge` | a merge request | it has pending review threads — unresolved, last word a reviewer's — and the newest of those comments is older than `quiet_for`. Fires per merge request |
+| `ci_failed` | `forge` | a merge request | a CI check on its head commit failed — GitHub check runs and commit statuses, GitLab's head pipeline (its failed jobs named; one allowed to fail is not a failure). Cancelled and skipped checks are neutral. [head + the failed checks: a push, or another check failing, is a new occurrence] |
+| `mr_mergeable` | `forge` | a merge request | the forge would merge it now: no conflict, its required approvals and checks in, not a draft — GitHub's `mergeable_state` clean, GitLab's merge status `mergeable`. The project's own rules decide; the run's merge requests are opened as drafts, so this waits for a person to mark one ready. [head] |
+| `mr_head_moved` | `forge` | a merge request | its head is a commit the run does not know — not one it pushed (`push_branch`), opened or adopted the merge request at, or already began a phase on: someone else pushed. With `quiet_for`, once the head has stood still that long. [head] |
 
 Four related concepts, kept distinct: an **action** does something now, a
 **wait** parks until something happens, a **beginning** opens a phase — when

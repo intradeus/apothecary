@@ -228,6 +228,7 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 		DetailedMergeStatus string `json:"detailed_merge_status"`
 		SHA                 string `json:"sha"`
 		TargetBranch        string `json:"target_branch"`
+		Draft               bool   `json:"draft"`
 	}
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID), nil, &out); err != nil {
 		return ports.MRStatus{}, err
@@ -239,6 +240,10 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 	case "closed":
 		st.State = ports.MRClosed
 	}
+	// "mergeable" is GitLab saying every check it applies passed: approvals,
+	// pipeline, resolved discussions, not a draft, no conflict.
+	st.Draft = out.Draft
+	st.MergeableNow = st.State == ports.MROpen && out.DetailedMergeStatus == "mergeable"
 	if st.Mergeable == ports.MergeConflicts && out.TargetBranch != "" {
 		var br struct {
 			Commit struct {
@@ -251,6 +256,91 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 		st.TargetSHA = br.Commit.ID
 	}
 	return st, nil
+}
+
+// MRChecks reads the merge request's head pipeline — the one GitLab runs for
+// its head commit — and, when it failed, which jobs did (a job allowed to
+// fail is not a failure). A head pipeline for an older commit means the new
+// head's has not been reported yet: pending.
+func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
+	out := ports.Checks{Head: head}
+	var m struct {
+		HeadPipeline *struct {
+			ID     int    `json:"id"`
+			SHA    string `json:"sha"`
+			Status string `json:"status"`
+			WebURL string `json:"web_url"`
+		} `json:"head_pipeline"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID), nil, &m); err != nil {
+		return out, err
+	}
+	p := m.HeadPipeline
+	if p == nil {
+		return out, nil
+	}
+	pipe := ports.Check{Name: "pipeline", State: pipelineState(p.Status), URL: p.WebURL}
+	if head != "" && p.SHA != head {
+		pipe.State = ports.CheckPending
+	}
+	out.Items = []ports.Check{pipe}
+	if pipe.State == ports.CheckFailure {
+		var jobs []struct {
+			Name         string `json:"name"`
+			WebURL       string `json:"web_url"`
+			AllowFailure bool   `json:"allow_failure"`
+		}
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pipelines/%d/jobs?scope[]=failed&per_page=100", a.path(), p.ID), nil, &jobs); err != nil {
+			return out, err
+		}
+		var failed []ports.Check
+		for _, j := range jobs {
+			if !j.AllowFailure {
+				failed = append(failed, ports.Check{Name: j.Name, State: ports.CheckFailure, URL: j.WebURL})
+			}
+		}
+		if len(failed) > 0 {
+			out.Items = failed
+		}
+	}
+	out.State = ports.AggregateChecks(out.Items)
+	return out, nil
+}
+
+// pipelineState maps a GitLab pipeline status onto a check state.
+func pipelineState(status string) ports.CheckState {
+	switch status {
+	case "success":
+		return ports.CheckSuccess
+	case "failed":
+		return ports.CheckFailure
+	case "canceled", "skipped", "manual":
+		return ports.CheckNeutral
+	}
+	return ports.CheckPending // created, waiting_for_resource, preparing, pending, running, scheduled
+}
+
+// MRApproval reads the merge request's approval state. A project without
+// approval rules reports approved with nobody's approval; that is not an
+// approval, so at least one person must have given one.
+func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approval, error) {
+	var out struct {
+		Approved   bool `json:"approved"`
+		ApprovedBy []struct {
+			User struct {
+				Username string `json:"username"`
+			} `json:"user"`
+		} `json:"approved_by"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d/approvals", a.path(), mr.IID), nil, &out); err != nil {
+		return ports.Approval{}, err
+	}
+	var ap ports.Approval
+	for _, b := range out.ApprovedBy {
+		ap.By = append(ap.By, b.User.Username)
+	}
+	ap.Approved = out.Approved && len(ap.By) > 0
+	return ap, nil
 }
 
 // mergeableOf reads GitLab's merge status. has_conflicts is only meaningful

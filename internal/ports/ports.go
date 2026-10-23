@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"sort"
 	"strings"
 	"time"
 )
@@ -353,6 +354,84 @@ type MRStatus struct {
 	// MergeConflicts: a conflict is one (target tip, head) pair, so a fix a
 	// human declined is offered again only once either side moves.
 	TargetSHA string
+	// MergeableNow is the forge's own verdict that it would merge the merge
+	// request right now: no conflict, its required approvals and checks in,
+	// not a draft (GitHub's mergeable_state clean, GitLab's detailed merge
+	// status mergeable). Draft is whether it is still marked a draft.
+	MergeableNow bool
+	Draft        bool
+}
+
+// CheckState is a CI check's state on a commit, or the aggregate over all of
+// a commit's checks.
+type CheckState string
+
+const (
+	// ChecksNone: nothing reported for the commit (aggregate only).
+	ChecksNone   CheckState = ""
+	CheckPending CheckState = "pending"
+	CheckSuccess CheckState = "success"
+	CheckFailure CheckState = "failure"
+	// CheckNeutral is a check that neither passes nor fails the commit:
+	// skipped, cancelled, neutral, waiting for a person to start it.
+	CheckNeutral CheckState = "neutral"
+)
+
+// Check is one CI check reported on a commit: a GitHub check run or commit
+// status, a GitLab pipeline or one of its failed jobs.
+type Check struct {
+	Name  string     `json:"name"`
+	State CheckState `json:"state"`
+	URL   string     `json:"url,omitempty"`
+}
+
+// Checks are a merge request head's CI checks and what they add up to.
+type Checks struct {
+	Head  string     `json:"head"`
+	State CheckState `json:"state"`
+	Items []Check    `json:"items"`
+}
+
+// AggregateChecks adds checks up: failure if any failed, else pending if
+// any is still running, else success if any passed, else none.
+func AggregateChecks(items []Check) CheckState {
+	var pending, success bool
+	for _, c := range items {
+		switch c.State {
+		case CheckFailure:
+			return CheckFailure
+		case CheckPending:
+			pending = true
+		case CheckSuccess:
+			success = true
+		}
+	}
+	switch {
+	case pending:
+		return CheckPending
+	case success:
+		return CheckSuccess
+	}
+	return ChecksNone
+}
+
+// Failed lists the failed checks' names, sorted: what one failure of a head
+// is (a check failing later on the same head is a new one).
+func (c Checks) Failed() []string {
+	var out []string
+	for _, it := range c.Items {
+		if it.State == CheckFailure {
+			out = append(out, it.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Approval is whether a merge request is approved, and by whom.
+type Approval struct {
+	Approved bool     `json:"approved"`
+	By       []string `json:"by,omitempty"`
 }
 
 // ReviewThread is one review conversation on a merge request: an inline
@@ -694,6 +773,13 @@ type Forge interface {
 	// merging it: whether it conflicts with its target, its head commit and
 	// its target branch. One call on every forge.
 	MRStatus(ctx context.Context, mr MRRef) (MRStatus, error)
+	// MRChecks lists the CI checks reported on head (the merge request's
+	// head commit, as MRStatus returned it) with their aggregate state.
+	MRChecks(ctx context.Context, mr MRRef, head string) (Checks, error)
+	// MRApproval says whether the merge request is approved: by at least one
+	// reviewer with no request for changes outstanding (GitHub), or with its
+	// approval rules met by at least one approval (GitLab).
+	MRApproval(ctx context.Context, mr MRRef) (Approval, error)
 	// MRThreads lists the merge request's review threads: inline discussions
 	// and review comments, system notes dropped. Resolved threads included
 	// (Resolved=true) — the caller decides what is pending.

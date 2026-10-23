@@ -29,6 +29,11 @@ export type AnswerPingRequest = {
 	feedback?: string;
 };
 
+export type Approval = {
+	approved: boolean;
+	by?: Array<string>;
+};
+
 export type Attachment = {
 	created_at: string;
 	filename: string;
@@ -100,10 +105,22 @@ export type ChannelEntry = {
 	kind: string;
 };
 
+export type Check = {
+	name: string;
+	state: string;
+	url?: string;
+};
+
 export type CheckStep = {
 	detail?: string;
 	id: string;
 	status: string;
+};
+
+export type Checks = {
+	head: string;
+	items: Array<Check> | null;
+	state: string;
 };
 
 export type CopyFlowRequest = {
@@ -450,11 +467,15 @@ export type KindDescriptor = {
 };
 
 export type MrLive = {
+	approval?: Approval;
 	branch: string;
+	checks?: Checks;
+	draft?: boolean;
 	error?: string;
 	head_sha?: string;
 	last_comment_at?: string;
 	mergeable: string;
+	mergeable_now?: boolean;
 	pending_threads: number;
 	repo: string;
 	state: string;

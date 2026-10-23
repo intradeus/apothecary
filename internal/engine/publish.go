@@ -25,6 +25,18 @@ import (
 // closes it by asking the forge what the branch already has (PLAN5 M20). A
 // reconciliation that cannot reach the forge fails the stage rather than
 // guessing: a duplicate MR is worse than a retry.
+// mrHead is the merge request's head commit as the forge reports it now, or
+// "" when it cannot be asked (best effort: it only keeps the run from taking
+// its own commit for someone else's push).
+func (x *exec) mrHead(forge ports.Forge, ref ports.MRRef) string {
+	st, err := forge.MRStatus(x.ctx, ref)
+	if err != nil {
+		x.e.log.Warn("could not read the new merge request's head", "run", x.rs.runID, "mr", ref.URL, "err", err)
+		return ""
+	}
+	return st.HeadSHA
+}
+
 func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	rs := x.rs
 	// Which checkouts still need a merge request — reconciling first, before
@@ -65,7 +77,8 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 			}
 			if found {
 				x.e.log.Info("adopted an existing merge request", "run", rs.runID, "stage", st.ID, "repo", co.Name, "mr", ref.URL)
-				created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID}
+				created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID,
+					Head: x.mrHead(forge, ref)}
 				if err := x.append(created); err != nil {
 					return true, err
 				}
@@ -103,13 +116,15 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		rs.actionPending[st.ID] = true
 	}
 	for _, co := range todo {
-		ref, err := x.res.forgeFor(co.Name).CreateDraftMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source, title, string(body))
+		forge := x.res.forgeFor(co.Name)
+		ref, err := forge.CreateDraftMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source, title, string(body))
 		if err != nil {
 			return x.infraFail(st, "forge MR creation failed: "+err.Error())
 		}
 		// mr_created is what makes the $MR_URL sentinel and the merge signals
 		// work downstream, and what makes this action idempotent.
-		created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID}
+		created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID,
+			Head: x.mrHead(forge, ref)}
 		if err := x.append(created); err != nil {
 			return true, err
 		}

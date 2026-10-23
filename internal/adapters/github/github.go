@@ -233,6 +233,7 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 		MergedAt       *string `json:"merged_at"`
 		Mergeable      *bool   `json:"mergeable"`
 		MergeableState string  `json:"mergeable_state"`
+		Draft          bool    `json:"draft"`
 		Head           struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
@@ -257,6 +258,12 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 	case pr.MergeableState == "dirty":
 		st.Mergeable = ports.MergeConflicts
 	}
+	// clean (and has_hooks, clean with pre-receive hooks) is GitHub saying
+	// every requirement is met; unstable merges too, but with checks red or
+	// running, which is not "ready".
+	st.Draft = pr.Draft
+	st.MergeableNow = st.State == ports.MROpen && !pr.Draft && pr.Mergeable != nil && *pr.Mergeable &&
+		(pr.MergeableState == "clean" || pr.MergeableState == "has_hooks")
 	if st.Mergeable == ports.MergeConflicts && pr.Base.Ref != "" {
 		var br struct {
 			Commit struct {
@@ -269,6 +276,116 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 		st.TargetSHA = br.Commit.SHA
 	}
 	return st, nil
+}
+
+// MRChecks reads both kinds of CI result GitHub keeps on a commit: check
+// runs (Actions and apps) and commit statuses (older integrations). A check
+// re-run keeps its name; the newest run of a name is the one that counts.
+func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
+	out := ports.Checks{Head: head}
+	if head == "" {
+		return out, nil
+	}
+	var runs struct {
+		CheckRuns []struct {
+			ID         int64  `json:"id"`
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
+		} `json:"check_runs"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/commits/%s/check-runs?per_page=100", a.repoPath(), url.PathEscape(head)), nil, &runs); err != nil {
+		return out, err
+	}
+	newest := map[string]int{}
+	for _, r := range runs.CheckRuns {
+		state := ports.CheckPending
+		if r.Status == "completed" {
+			switch r.Conclusion {
+			case "success":
+				state = ports.CheckSuccess
+			case "failure", "timed_out", "action_required":
+				state = ports.CheckFailure
+			default: // neutral, cancelled, skipped, stale
+				state = ports.CheckNeutral
+			}
+		}
+		c := ports.Check{Name: r.Name, State: state, URL: r.HTMLURL}
+		if i, seen := newest[r.Name]; seen {
+			if r.ID > runs.CheckRuns[i].ID {
+				out.Items[i] = c
+			}
+			continue
+		}
+		newest[r.Name] = len(out.Items)
+		out.Items = append(out.Items, c)
+	}
+	var combined struct {
+		Statuses []struct {
+			Context   string `json:"context"`
+			State     string `json:"state"`
+			TargetURL string `json:"target_url"`
+		} `json:"statuses"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/commits/%s/status", a.repoPath(), url.PathEscape(head)), nil, &combined); err != nil {
+		return out, err
+	}
+	for _, s := range combined.Statuses {
+		state := ports.CheckPending
+		switch s.State {
+		case "success":
+			state = ports.CheckSuccess
+		case "failure", "error":
+			state = ports.CheckFailure
+		}
+		out.Items = append(out.Items, ports.Check{Name: s.Context, State: state, URL: s.TargetURL})
+	}
+	out.State = ports.AggregateChecks(out.Items)
+	return out, nil
+}
+
+// MRApproval reads the pull request's reviews: each reviewer's latest
+// decision counts (a comment decides nothing, a dismissal undoes one). It is
+// approved when someone approves and nobody still requests changes.
+func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approval, error) {
+	latest := map[string]string{}
+	var order []string
+	for page := 1; page <= 10; page++ {
+		var reviews []struct {
+			State string `json:"state"`
+			User  struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		}
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100&page=%d", a.repoPath(), mr.IID, page), nil, &reviews); err != nil {
+			return ports.Approval{}, err
+		}
+		for _, r := range reviews {
+			switch r.State {
+			case "APPROVED", "CHANGES_REQUESTED", "DISMISSED":
+				if _, seen := latest[r.User.Login]; !seen {
+					order = append(order, r.User.Login)
+				}
+				latest[r.User.Login] = r.State
+			}
+		}
+		if len(reviews) < 100 {
+			break
+		}
+	}
+	var out ports.Approval
+	blocked := false
+	for _, who := range order {
+		switch latest[who] {
+		case "APPROVED":
+			out.By = append(out.By, who)
+		case "CHANGES_REQUESTED":
+			blocked = true
+		}
+	}
+	out.Approved = len(out.By) > 0 && !blocked
+	return out, nil
 }
 
 // graphqlURL is the GraphQL endpoint beside the REST base: api.github.com →

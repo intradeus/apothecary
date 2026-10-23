@@ -116,11 +116,11 @@ func TestForge(t *testing.T) {
 		t.Fatalf("create MR = %+v, %v", ref, err)
 	}
 	if st, _ := f.MRStatus(ctx, ref); st.State != ports.MROpen {
-		t.Errorf("state = %s", st)
+		t.Errorf("state = %s", st.State)
 	}
 	f.SetMRState(ref.IID, ports.MRMerged)
 	if st, _ := f.MRStatus(ctx, ref); st.State != ports.MRMerged {
-		t.Errorf("state after merge = %s", st)
+		t.Errorf("state after merge = %s", st.State)
 	}
 }
 

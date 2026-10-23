@@ -114,6 +114,11 @@ type runState struct {
 	skipped map[string]string
 	// pushed is the tip push_branch last pushed, per repo+branch.
 	pushed map[string]string
+	// heads are the commits the run knows on its merge requests, per
+	// checkout: every tip it pushed, the head it opened or adopted a merge
+	// request at, the tip a phase run began on. A head outside them is
+	// someone else's push (mr_head_moved).
+	heads map[string]bool
 
 	// parked holds the phase runs stopped at a wait point mid-chain, by
 	// phase: everything scoped to the run (park / unpark), while another
@@ -270,6 +275,7 @@ func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = nil, false, nil
 	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
+	rs.noteHead(p.Subject, p.Tip)
 	if p.Key != "" {
 		rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
 	}
@@ -318,6 +324,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		phaseRuns:     map[string]int{},
 		elided:        map[string]bool{},
 		pushed:        map[string]string{},
+		heads:         map[string]bool{},
 		skipped:       map[string]string{},
 	}
 	raised := map[string]*event.PingRaised{}
@@ -455,6 +462,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.unpark(p.Phase)
 		case *event.BranchPushed:
 			rs.pushed[p.Repo+"\x00"+p.Branch] = p.Tip
+			rs.noteHead(p.Repo, p.Tip)
 		case *event.ReviewCommentsLoaded:
 			rs.roundThreads, rs.roundLoaded = append([]string(nil), p.ThreadIDs...), true
 			for id, last := range p.Skipped {
@@ -672,11 +680,26 @@ func (rs *runState) checkoutDirs() []string {
 	return dirs
 }
 
+// noteHead records a commit the run knows on a checkout's branch.
+func (rs *runState) noteHead(repo, sha string) {
+	if sha == "" {
+		return
+	}
+	if rs.heads == nil {
+		rs.heads = map[string]bool{}
+	}
+	rs.heads[repo+"\x00"+sha] = true
+}
+
+// knownHead reports whether sha is a commit the run knows on repo's branch.
+func (rs *runState) knownHead(repo, sha string) bool { return rs.heads[repo+"\x00"+sha] }
+
 func (rs *runState) addMR(p *event.MRCreated) {
 	repo := p.Repo
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
 	}
+	rs.noteHead(repo, p.Head)
 	for i := range rs.mrs {
 		if rs.mrs[i].Repo == repo && rs.mrs[i].Branch == p.Branch {
 			rs.mrs[i].Ref = ports.MRRef{IID: p.MRIID, URL: p.MRURL}

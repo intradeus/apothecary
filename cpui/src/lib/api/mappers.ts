@@ -37,6 +37,7 @@ import type {
 	KindField,
 	LiveDelta,
 	MergeRequestLive,
+	CheckState,
 	Model,
 	ParamDecl,
 	PhaseSummary,
@@ -191,9 +192,26 @@ export function toMergeRequestLive(w: Wire.MrLive): MergeRequestLive {
 		headSha: w.head_sha || undefined,
 		pendingThreads: w.pending_threads,
 		lastCommentAt: w.last_comment_at ? new Date(w.last_comment_at) : undefined,
+		mergeableNow: w.mergeable_now ?? false,
+		draft: w.draft ?? false,
+		checks: w.checks
+			? {
+					head: w.checks.head,
+					state: checkState(w.checks.state),
+					items: list(w.checks.items).map((c) => ({
+						name: c.name,
+						state: checkState(c.state),
+						url: c.url || undefined
+					}))
+				}
+			: undefined,
+		approval: w.approval ? { approved: w.approval.approved, by: w.approval.by ?? [] } : undefined,
 		error: w.error || undefined
 	};
 }
+
+const checkState = (s: string): CheckState =>
+	oneOf(['pending', 'success', 'failure', 'neutral'] as const, s, '' as CheckState);
 
 export function toRunEvent(w: Wire.Event): RunEvent {
 	return {

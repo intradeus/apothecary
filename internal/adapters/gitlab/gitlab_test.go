@@ -288,3 +288,82 @@ func TestAccountListBranches(t *testing.T) {
 		t.Errorf("branches = %+v", branches)
 	}
 }
+
+func TestMRStatusMergeableNowAndDraft(t *testing.T) {
+	for _, tc := range []struct {
+		body       string
+		now, draft bool
+	}{
+		{`{"state":"opened","detailed_merge_status":"mergeable","sha":"abc","target_branch":"main"}`, true, false},
+		{`{"state":"opened","detailed_merge_status":"not_approved","sha":"abc","target_branch":"main"}`, false, false},
+		{`{"state":"opened","detailed_merge_status":"draft_status","draft":true,"sha":"abc","target_branch":"main"}`, false, true},
+		{`{"state":"merged","detailed_merge_status":"mergeable","sha":"abc","target_branch":"main"}`, false, false},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.body)) })
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		st, err := a.MRStatus(context.Background(), ports.MRRef{IID: 4})
+		ts.Close()
+		if err != nil || st.MergeableNow != tc.now || st.Draft != tc.draft {
+			t.Errorf("%s: now %v draft %v, %v", tc.body, st.MergeableNow, st.Draft, err)
+		}
+	}
+}
+
+// The head pipeline is the head's CI; a failed one names its failed jobs
+// (allowed failures aside), an older commit's is not the head's yet.
+func TestMRChecks(t *testing.T) {
+	for _, tc := range []struct {
+		name, mr string
+		state    ports.CheckState
+		items    []string
+	}{
+		{"none", `{"head_pipeline":null}`, ports.ChecksNone, nil},
+		{"running", `{"head_pipeline":{"id":9,"sha":"h1","status":"running","web_url":"https://gl/p/9"}}`, ports.CheckPending, []string{"pipeline"}},
+		{"passed", `{"head_pipeline":{"id":9,"sha":"h1","status":"success"}}`, ports.CheckSuccess, []string{"pipeline"}},
+		{"stale", `{"head_pipeline":{"id":8,"sha":"h0","status":"success"}}`, ports.CheckPending, []string{"pipeline"}},
+		{"failed", `{"head_pipeline":{"id":9,"sha":"h1","status":"failed"}}`, ports.CheckFailure, []string{"rspec"}},
+		{"manual", `{"head_pipeline":{"id":9,"sha":"h1","status":"manual"}}`, ports.ChecksNone, []string{"pipeline"}},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.mr)) })
+		mux.HandleFunc("GET /api/v4/projects/7/pipelines/9/jobs", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`[{"name":"rspec","web_url":"https://gl/j/1"},{"name":"flaky","allow_failure":true}]`))
+		})
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		c, err := a.MRChecks(context.Background(), ports.MRRef{IID: 4}, "h1")
+		ts.Close()
+		var names []string
+		for _, it := range c.Items {
+			names = append(names, it.Name)
+		}
+		if err != nil || c.State != tc.state || strings.Join(names, ",") != strings.Join(tc.items, ",") {
+			t.Errorf("%s: %+v, %v", tc.name, c, err)
+		}
+	}
+}
+
+// A project without approval rules reports approved with nobody's approval:
+// that is not one.
+func TestMRApproval(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		ok   bool
+	}{
+		{`{"approved":true,"approved_by":[]}`, false},
+		{`{"approved":true,"approved_by":[{"user":{"username":"rev"}}]}`, true},
+		{`{"approved":false,"approved_by":[{"user":{"username":"rev"}}]}`, false},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4/approvals", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.body)) })
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		ap, err := a.MRApproval(context.Background(), ports.MRRef{IID: 4})
+		ts.Close()
+		if err != nil || ap.Approved != tc.ok {
+			t.Errorf("%s: %+v, %v", tc.body, ap, err)
+		}
+	}
+}

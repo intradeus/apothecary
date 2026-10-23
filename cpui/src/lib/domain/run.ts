@@ -142,7 +142,25 @@ export interface MergeRequestLive {
 	/** Unresolved threads whose last word is a reviewer's. */
 	pendingThreads: number;
 	lastCommentAt?: Date;
+	/** The forge would merge it now: no conflict, required approvals and
+	 *  checks in, not a draft. */
+	mergeableNow: boolean;
+	draft: boolean;
+	/** The head commit's CI, for an open one. */
+	checks?: MergeRequestChecks;
+	/** Its reviews' verdict, for an open one. */
+	approval?: { approved: boolean; by: string[] };
 	error?: string;
+}
+
+/** A CI check's state, or the aggregate over a head's checks ('' = none
+ *  reported). 'neutral' neither passes nor fails: skipped, cancelled. */
+export type CheckState = '' | 'pending' | 'success' | 'failure' | 'neutral';
+
+export interface MergeRequestChecks {
+	head: string;
+	state: CheckState;
+	items: { name: string; state: CheckState; url?: string }[];
 }
 
 export interface RunCheckout {

@@ -110,6 +110,13 @@ func (p *EnvProvisioner) get(id ports.EnvID) (*Env, error) {
 	return e, nil
 }
 
+// Execs is a copy of the exec log, safe to read while runs execute.
+func (p *EnvProvisioner) Execs() []ExecCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]ExecCall(nil), p.ExecCalls...)
+}
+
 func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Command) (ports.ExecResult, error) {
 	e, err := p.get(id)
 	if err != nil {
@@ -411,6 +418,12 @@ type MR struct {
 	Mergeable ports.Mergeable
 	HeadSHA   string
 	TargetSHA string
+	// MergeableNow and Draft are MRStatus's forge verdict; Checks what
+	// MRChecks reports for the head; ApprovedBy who approved (MRApproval).
+	MergeableNow bool
+	Draft        bool
+	Checks       []ports.Check
+	ApprovedBy   []string
 	// Threads are the review threads MRThreads reports; replies and
 	// resolutions land here.
 	Threads []ports.ReviewThread
@@ -438,6 +451,11 @@ type Forge struct {
 
 	MRs    []*MR
 	nextID int
+	// ChecksCalls counts MRChecks calls (the engine fetches checks only when
+	// a flow reads them).
+	ChecksCalls int
+	// NewHead is the head commit a newly created merge request reports.
+	NewHead string
 }
 
 func (f *Forge) CheckAccess(_ context.Context, _ ports.RepoRef) error {
@@ -461,7 +479,7 @@ func (f *Forge) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, tar
 	}
 	f.nextID++
 	ref := ports.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
-	f.MRs = append(f.MRs, &MR{Ref: ref, Repo: repo, Branch: branch, Target: target, Title: title, Body: body, State: ports.MROpen})
+	f.MRs = append(f.MRs, &MR{Ref: ref, Repo: repo, Branch: branch, Target: target, Title: title, Body: body, State: ports.MROpen, HeadSHA: f.NewHead})
 	return ref, nil
 }
 
@@ -518,11 +536,41 @@ func (f *Forge) MRStatus(_ context.Context, mr ports.MRRef) (ports.MRStatus, err
 	if mg == "" {
 		mg = ports.MergeClean
 	}
-	st := ports.MRStatus{State: m.State, Mergeable: mg, HeadSHA: m.HeadSHA, Target: m.Target}
+	st := ports.MRStatus{State: m.State, Mergeable: mg, HeadSHA: m.HeadSHA, Target: m.Target,
+		MergeableNow: m.MergeableNow && m.State == ports.MROpen, Draft: m.Draft}
 	if mg == ports.MergeConflicts {
 		st.TargetSHA = m.TargetSHA
 	}
 	return st, nil
+}
+
+func (f *Forge) MRChecks(_ context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MRStateErr != nil {
+		return ports.Checks{}, f.MRStateErr
+	}
+	m := f.mr(mr.IID)
+	if m == nil {
+		return ports.Checks{}, fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	out := ports.Checks{Head: head, Items: append([]ports.Check(nil), m.Checks...)}
+	out.State = ports.AggregateChecks(out.Items)
+	f.ChecksCalls++
+	return out, nil
+}
+
+func (f *Forge) MRApproval(_ context.Context, mr ports.MRRef) (ports.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MRStateErr != nil {
+		return ports.Approval{}, f.MRStateErr
+	}
+	m := f.mr(mr.IID)
+	if m == nil {
+		return ports.Approval{}, fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	return ports.Approval{Approved: len(m.ApprovedBy) > 0, By: append([]string(nil), m.ApprovedBy...)}, nil
 }
 
 func (f *Forge) MRThreads(_ context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
@@ -589,6 +637,42 @@ func (f *Forge) SetMergeable(iid int, mg ports.Mergeable, headSHA string) {
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
 		m.Mergeable, m.HeadSHA = mg, headSHA
+	}
+}
+
+// SetHead scripts the merge request's head commit (someone pushed).
+func (f *Forge) SetHead(iid int, sha string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.HeadSHA = sha
+	}
+}
+
+// SetChecks scripts the CI checks MRChecks reports.
+func (f *Forge) SetChecks(iid int, checks ...ports.Check) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.Checks = checks
+	}
+}
+
+// SetMergeableNow scripts the forge's "it can be merged now" verdict.
+func (f *Forge) SetMergeableNow(iid int, now bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.MergeableNow = now
+	}
+}
+
+// SetApprovedBy scripts who approved the merge request (none: unapproved).
+func (f *Forge) SetApprovedBy(iid int, who ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.ApprovedBy = who
 	}
 }
 

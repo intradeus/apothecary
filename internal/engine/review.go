@@ -58,6 +58,13 @@ type MRLive struct {
 	PendingThreads int             `json:"pending_threads"`
 	// LastCommentAt is the newest pending reviewer comment (zero: none).
 	LastCommentAt *time.Time `json:"last_comment_at,omitempty"`
+	// MergeableNow is the forge's verdict that it would merge now; Draft
+	// whether it is still a draft; Checks the head's CI; Approval its
+	// reviews' verdict. Checks and Approval are read for an open one only.
+	MergeableNow bool            `json:"mergeable_now,omitempty"`
+	Draft        bool            `json:"draft,omitempty"`
+	Checks       *ports.Checks   `json:"checks,omitempty"`
+	Approval     *ports.Approval `json:"approval,omitempty"`
 	// Error is what the forge said when it could not be asked.
 	Error string `json:"error,omitempty"`
 }
@@ -95,8 +102,23 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 				return
 			}
 			l.State, l.Mergeable, l.HeadSHA = st.State, st.Mergeable, st.HeadSHA
+			l.MergeableNow, l.Draft = st.MergeableNow, st.Draft
 			if st.Target != "" {
 				l.Target = st.Target
+			}
+			if st.State == ports.MROpen {
+				checks, err := forge.MRChecks(ctx, ref, st.HeadSHA)
+				if err != nil {
+					l.Error = err.Error()
+					return
+				}
+				l.Checks = &checks
+				ap, err := forge.MRApproval(ctx, ref)
+				if err != nil {
+					l.Error = err.Error()
+					return
+				}
+				l.Approval = &ap
 			}
 			threads, err := forge.MRThreads(ctx, ref)
 			if err != nil {

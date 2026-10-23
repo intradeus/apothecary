@@ -613,6 +613,10 @@ type MRCreated struct {
 	// the repo's default, on older runs).
 	Repo   string `json:"repo,omitempty"`
 	Target string `json:"target,omitempty"`
+	// Head is the merge request's head commit when the run opened (or
+	// adopted) it: a commit the run knows, so finding it there later is not
+	// someone else's push ("" when the forge could not be asked).
+	Head string `json:"head,omitempty"`
 }
 
 type RunCompleted struct {

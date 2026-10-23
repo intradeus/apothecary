@@ -199,6 +199,7 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 			return true, err
 		}
 		rs.pushed[co.Name+"\x00"+co.Branch] = tip
+		rs.noteHead(co.Name, tip)
 	}
 	return false, nil
 }

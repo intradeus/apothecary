@@ -311,3 +311,87 @@ func TestMRThreadsRepliesAndResolve(t *testing.T) {
 		t.Errorf("a review body has nothing to resolve: %v", err)
 	}
 }
+
+func TestMRStatusMergeableNowAndDraft(t *testing.T) {
+	for _, tc := range []struct {
+		body       string
+		now, draft bool
+	}{
+		{`{"state":"open","mergeable":true,"mergeable_state":"clean","draft":false,"head":{"sha":"h"},"base":{"ref":"main"}}`, true, false},
+		{`{"state":"open","mergeable":true,"mergeable_state":"has_hooks","head":{"sha":"h"},"base":{"ref":"main"}}`, true, false},
+		{`{"state":"open","mergeable":true,"mergeable_state":"unstable","head":{"sha":"h"},"base":{"ref":"main"}}`, false, false},
+		{`{"state":"open","mergeable":false,"mergeable_state":"blocked","head":{"sha":"h"},"base":{"ref":"main"}}`, false, false},
+		{`{"state":"open","mergeable":true,"mergeable_state":"draft","draft":true,"head":{"sha":"h"},"base":{"ref":"main"}}`, false, true},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/lu/greeter/pulls/5", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.body)) })
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		st, err := a.MRStatus(context.Background(), ports.MRRef{IID: 5})
+		ts.Close()
+		if err != nil || st.MergeableNow != tc.now || st.Draft != tc.draft {
+			t.Errorf("%s: now %v draft %v, %v", tc.body, st.MergeableNow, st.Draft, err)
+		}
+	}
+}
+
+// Check runs and commit statuses both count; a re-run's newest result is
+// the one that does.
+func TestMRChecks(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/lu/greeter/commits/h1/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"check_runs":[
+		  {"id":2,"name":"test","status":"completed","conclusion":"success","html_url":"https://gh/run/2"},
+		  {"id":1,"name":"test","status":"completed","conclusion":"failure","html_url":"https://gh/run/1"},
+		  {"id":3,"name":"lint","status":"in_progress","conclusion":null},
+		  {"id":4,"name":"docs","status":"completed","conclusion":"skipped"}]}`))
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/commits/h1/status", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"statuses":[{"context":"ci/legacy","state":"error","target_url":"https://ci/9"}]}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	c, err := a.MRChecks(context.Background(), ports.MRRef{IID: 5}, "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]ports.CheckState{"test": ports.CheckSuccess, "lint": ports.CheckPending, "docs": ports.CheckNeutral, "ci/legacy": ports.CheckFailure}
+	if len(c.Items) != len(want) || c.State != ports.CheckFailure || c.Head != "h1" {
+		t.Fatalf("checks = %+v", c)
+	}
+	for _, it := range c.Items {
+		if want[it.Name] != it.State {
+			t.Errorf("%s = %s, want %s", it.Name, it.State, want[it.Name])
+		}
+	}
+	if f := c.Failed(); len(f) != 1 || f[0] != "ci/legacy" {
+		t.Errorf("failed = %v", f)
+	}
+}
+
+// Each reviewer's latest decision counts; a comment decides nothing, a
+// dismissal undoes an approval, one request for changes blocks.
+func TestMRApproval(t *testing.T) {
+	for _, tc := range []struct {
+		reviews string
+		ok      bool
+		by      int
+	}{
+		{`[]`, false, 0},
+		{`[{"state":"APPROVED","user":{"login":"a"}},{"state":"COMMENTED","user":{"login":"a"}}]`, true, 1},
+		{`[{"state":"APPROVED","user":{"login":"a"}},{"state":"CHANGES_REQUESTED","user":{"login":"b"}}]`, false, 1},
+		{`[{"state":"CHANGES_REQUESTED","user":{"login":"b"}},{"state":"APPROVED","user":{"login":"b"}}]`, true, 1},
+		{`[{"state":"APPROVED","user":{"login":"a"}},{"state":"DISMISSED","user":{"login":"a"}}]`, false, 0},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/lu/greeter/pulls/5/reviews", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.reviews)) })
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		ap, err := a.MRApproval(context.Background(), ports.MRRef{IID: 5})
+		ts.Close()
+		if err != nil || ap.Approved != tc.ok || len(ap.By) != tc.by {
+			t.Errorf("%s: %+v, %v", tc.reviews, ap, err)
+		}
+	}
+}
