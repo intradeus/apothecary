@@ -133,6 +133,15 @@ export default {
 	'run.rerun.start': 'Start new run',
 	'run.rerun.started': 'New run {id} started',
 	'run.rerun.back': 'Back to {id}',
+	'run.start.entrypoint': 'Begin at',
+	'run.start.entrypointHelp': 'The flow has several entrypoints; the run begins at this phase.',
+	'run.start.advanced': 'Advanced · parameters',
+	'run.start.advancedHelp':
+		'Override the workshop’s values for this run only. An empty field keeps what applies underneath.',
+	'run.start.advancedHelpRun':
+		'Override what the run you are starting from used, for the new run only. An empty field keeps that value.',
+	'run.start.overrides': '{count} overridden',
+	'run.start.loadError': 'Couldn’t load the flow’s parameters: {error}',
 
 	// Run page
 	'run.page.closed': 'closed',

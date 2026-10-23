@@ -532,6 +532,7 @@ export default {
 	'flow.fields.unset': '— not set here',
 	'flow.fields.flowDefault': 'flow default: {value}',
 	'flow.fields.fromWorkshop': 'workshop: {value}',
+	'flow.fields.fromRun': 'this run: {value}',
 	'flow.fields.clear': 'Clear',
 	'flow.insp.produces': 'Produces <span class="mono">{name}</span>',
 	'flow.insp.producesSentinel':

@@ -14,6 +14,7 @@
 		params,
 		values,
 		under,
+		underLabel = 'workshop',
 		harnesses = [],
 		models = [],
 		idPrefix = 'pf',
@@ -25,6 +26,8 @@
 		 *  empty here (the workshop's binding, on the start form). The flow's
 		 *  default applies where it says nothing. */
 		under?: Record<string, string>;
+		/** Whose values `under` are, for the label. */
+		underLabel?: 'workshop' | 'run';
 		/** The harness kinds the workshop can run, for the harness picker. */
 		harnesses?: { kind: string; label: string }[];
 		/** What the effective harness lists, for the model field. */
@@ -45,9 +48,10 @@
 	const applies = (p: ParamDecl) => under?.[p.name] ?? p.default;
 	function appliesLabel(p: ParamDecl): string {
 		const u = under?.[p.name];
-		return u !== undefined
-			? t('flow.fields.fromWorkshop', { value: u })
-			: t('flow.fields.flowDefault', { value: p.default });
+		if (u === undefined) return t('flow.fields.flowDefault', { value: p.default });
+		return underLabel === 'run'
+			? t('flow.fields.fromRun', { value: u })
+			: t('flow.fields.fromWorkshop', { value: u });
 	}
 	const id = (p: ParamDecl) => `${idPrefix}-${p.name}`;
 </script>

@@ -1,7 +1,9 @@
 <script lang="ts">
 	// "New run from this…" (DESIGN 4.5): the same ticket as a fresh run — new
-	// workspace, new branch — with direction for the attempt, files and a
-	// flow. The current run is untouched.
+	// workspace, new branch — with direction for the attempt, files, a flow,
+	// the entrypoint to begin at and parameter overrides (what this run used
+	// is the layer underneath: the engine carries it forward). The current
+	// run is untouched.
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { shortId } from '$lib/format';
@@ -9,8 +11,10 @@
 	import { I } from '$lib/ui/icons';
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import FlowSelect from '$lib/FlowSelect.svelte';
+	import StartRunOptions from './StartRunOptions.svelte';
 	import type { RunStore } from './store.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
+	import { untrack } from 'svelte';
 
 	let {
 		rs,
@@ -20,9 +24,20 @@
 
 	let goal = $state('');
 	let flow = $state('');
+	let phase = $state('');
+	let params = $state<Record<string, string>>({});
 	let files = $state<File[]>([]);
 	let busy = $state(false);
 	let error = $state('');
+
+	// Each opening starts from where this run began, with no overrides.
+	$effect(() => {
+		if (!open) return;
+		untrack(() => {
+			phase = rs.run?.beginPhase ?? '';
+			params = {};
+		});
+	});
 
 	async function start() {
 		error = '';
@@ -33,7 +48,9 @@
 			const id = await api.runs.rerun(rs.runId, {
 				flow: flow.trim() || undefined,
 				goal: goal.trim() || undefined,
-				attachmentIds
+				attachmentIds,
+				phase: phase || undefined,
+				params: Object.keys(params).length ? params : undefined
 			});
 			void fleet.refresh();
 			open = false;
@@ -73,6 +90,17 @@
 				<input id="nr-flow" class="mono" bind:value={flow} placeholder={rs.run?.flowName} />
 			{/if}
 		</div>
+		{#if rs.run?.projectId}
+			<StartRunOptions
+				projectId={rs.run.projectId}
+				flowName={flow.trim() || rs.run.flowName}
+				bind:phase
+				bind:params
+				under={rs.run.params ?? {}}
+				underLabel="run"
+				idPrefix="nr"
+			/>
+		{/if}
 		{#if error}<div class="err">{error}</div>{/if}
 	</div>
 	{#snippet footer()}

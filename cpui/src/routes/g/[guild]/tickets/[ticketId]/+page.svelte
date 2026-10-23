@@ -25,6 +25,7 @@
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
 	import RunTable from '$lib/run/RunTable.svelte';
+	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
 	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
 
 	const ticketId = $derived(page.params.ticketId ?? '');
@@ -36,6 +37,8 @@
 	let editing = $state(false);
 
 	let flow = $state(''); // per-run flow; empty = project default
+	let runPhase = $state(''); // the entrypoint to begin at; '' = the flow's first
+	let runParams = $state<Record<string, string>>({}); // parameter overrides for THIS run
 	let sourceBranch = $state(''); // branch to fork this run off from; '' until branches load
 	let branches = $state<Branch[]>([]);
 	let branchesErr = $state(''); // forge unreachable ⇒ fall back to project default
@@ -109,7 +112,9 @@
 				flow: flow.trim() || undefined,
 				goal: runGoal.trim() || undefined,
 				sourceBranch: sourceBranch.trim() || undefined,
-				attachmentIds
+				attachmentIds,
+				phase: runPhase || undefined,
+				params: Object.keys(runParams).length ? runParams : undefined
 			});
 			void fleet.refresh();
 			toast(t('page.ticket.runStarted', { id: shortId(runId) }), {
@@ -271,6 +276,15 @@
 								})}
 							/>
 						</div>
+						{#if project}
+							<StartRunOptions
+								projectId={ticket.projectId}
+								flowName={flow.trim() || project.defaultFlow}
+								bind:phase={runPhase}
+								bind:params={runParams}
+								idPrefix="tk"
+							/>
+						{/if}
 						<div class="field">
 							<label for="source-branch">{t('page.ticket.sourceBranch')}</label>
 							{#if branches.length}
