@@ -865,6 +865,13 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		return x.takeEdge(st, flow.EdgeFail, msg)
 	}
+	// So is a review_threads output, before post_review reads it.
+	if msg := x.checkReviewThreads(st); msg != "" {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, msg)
+	}
 
 	completed := &event.StageCompleted{
 		StageID:    st.ID,
@@ -1701,6 +1708,10 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		routed, err = x.actionSyncTarget(st)
 	case actionspec.PushBranch:
 		routed, err = x.actionPushBranch(st)
+	case actionspec.MRMerge:
+		routed, err = x.actionMRMerge(st)
+	case actionspec.PostReview:
+		routed, err = x.actionPostReview(st)
 	case actionspec.TicketTransition:
 		routed, err = x.actionTicketTransition(st)
 	case actionspec.TicketComment:

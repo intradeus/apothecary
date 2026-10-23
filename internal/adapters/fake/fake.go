@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -424,6 +425,15 @@ type MR struct {
 	Draft        bool
 	Checks       []ports.Check
 	ApprovedBy   []string
+	// MergedWith is the method MergeMR merged with, BranchDeleted whether it
+	// removed the branch; MergeRefusal, when set, refuses every merge.
+	MergedWith    string
+	BranchDeleted bool
+	MergeRefusal  string
+	// DiffLines, when set, are the lines of each file a review note may go
+	// on (nil: any line); Reviews what PostReview posted.
+	DiffLines map[string][]int
+	Reviews   []ports.Review
 	// Threads are the review threads MRThreads reports; replies and
 	// resolutions land here.
 	Threads []ports.ReviewThread
@@ -560,6 +570,58 @@ func (f *Forge) MRChecks(_ context.Context, mr ports.MRRef, head string) (ports.
 	return out, nil
 }
 
+// MergeMR merges unless refused, a draft, or the head moved past the pin.
+func (f *Forge) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MRStateErr != nil {
+		return f.MRStateErr
+	}
+	m := f.mr(mr.IID)
+	switch {
+	case m == nil:
+		return fmt.Errorf("mr !%d not found", mr.IID)
+	case m.MergeRefusal != "":
+		return &ports.ErrMergeRefused{Reason: m.MergeRefusal}
+	case m.State != ports.MROpen:
+		return &ports.ErrMergeRefused{Reason: "it is " + string(m.State)}
+	case m.Draft:
+		return &ports.ErrMergeRefused{Reason: "it is a draft"}
+	case opts.Head != "" && opts.Head != m.HeadSHA:
+		return &ports.ErrMergeRefused{Reason: "its head moved since " + opts.Head}
+	}
+	m.State, m.MergedWith, m.BranchDeleted = ports.MRMerged, opts.Method, opts.DeleteBranch
+	return nil
+}
+
+// PostReview records the review, its notes split by DiffLines, once per ID.
+func (f *Forge) PostReview(_ context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ReplyErr != nil {
+		return ports.ReviewPosted{}, f.ReplyErr
+	}
+	m := f.mr(mr.IID)
+	if m == nil {
+		return ports.ReviewPosted{}, fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	for _, r := range m.Reviews {
+		if r.ID == rev.ID {
+			return ports.ReviewPosted{Already: true}, nil
+		}
+	}
+	var out ports.ReviewPosted
+	for _, n := range rev.Notes {
+		if lines, ok := m.DiffLines[n.Path]; m.DiffLines == nil || (ok && slices.Contains(lines, n.Line)) {
+			out.Inline++
+		} else {
+			out.Folded++
+		}
+	}
+	m.Reviews = append(m.Reviews, rev)
+	return out, nil
+}
+
 func (f *Forge) MRApproval(_ context.Context, mr ports.MRRef) (ports.Approval, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -664,6 +726,15 @@ func (f *Forge) SetMergeableNow(iid int, now bool) {
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
 		m.MergeableNow = now
+	}
+}
+
+// SetMergeRefusal scripts a reason MergeMR declines with ("" merges).
+func (f *Forge) SetMergeRefusal(iid int, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.MergeRefusal = reason
 	}
 }
 

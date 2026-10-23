@@ -189,3 +189,19 @@ func TestTrackerActions(t *testing.T) {
 		t.Errorf("ticket_link json lacks needs:\n%s", b)
 	}
 }
+
+// mr_merge's methods are the port's: the registry stays free of ports, and
+// this holds the two equal.
+func TestMergeMethodsMirrorThePort(t *testing.T) {
+	act := Get(MRMerge)
+	if act == nil || !act.Subject || !act.Remote || act.Requires != RequiresForge {
+		t.Fatalf("mr_merge = %+v", act)
+	}
+	want := []string{ports.MergeMethodMerge, ports.MergeMethodSquash, ports.MergeMethodRebase}
+	if got := act.Input("method").Values; !slices.Equal(got, want) {
+		t.Errorf("methods = %v, want %v", got, want)
+	}
+	if pr := Get(PostReview); pr == nil || !pr.Subject || pr.Input("review") == nil || !pr.Input("review").Required {
+		t.Errorf("post_review = %+v", pr)
+	}
+}

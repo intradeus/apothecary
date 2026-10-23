@@ -608,3 +608,119 @@ func tail(s string, n int) string {
 }
 
 var _ ports.Forge = (*Adapter)(nil)
+
+// MergeMR merges through the pulls API, pinned to the head when asked. GitHub
+// says 405 for a pull request it will not merge (a draft, required checks or
+// reviews missing, a conflict), 409 for a head that moved, 422 for a method
+// the repository does not allow. Deleting the branch is a second call, and
+// one already gone (the repository deletes merged branches) is fine.
+func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
+	method := opts.Method
+	if method == "" {
+		method = ports.MergeMethodMerge
+	}
+	body := map[string]any{"merge_method": method}
+	if opts.Head != "" {
+		body["sha"] = opts.Head
+	}
+	code, err := a.api(ctx, http.MethodPut, fmt.Sprintf("%s/pulls/%d/merge", a.repoPath(), mr.IID), body, nil)
+	if err != nil {
+		switch code {
+		case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
+			return &ports.ErrMergeRefused{Reason: err.Error()}
+		}
+		return err
+	}
+	if !opts.DeleteBranch {
+		return nil
+	}
+	var pr struct {
+		Head struct {
+			Ref  string `json:"ref"`
+			Repo *struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
+		} `json:"head"`
+		Base struct {
+			Repo struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
+		} `json:"base"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d", a.repoPath(), mr.IID), nil, &pr); err != nil {
+		return err
+	}
+	if pr.Head.Repo == nil || pr.Head.Repo.FullName != pr.Base.Repo.FullName || pr.Head.Ref == "" {
+		return nil // a fork's branch is not this repository's to delete
+	}
+	code, err = a.api(ctx, http.MethodDelete, fmt.Sprintf("%s/git/refs/heads/%s", a.repoPath(), pr.Head.Ref), nil, nil)
+	if err != nil && code != http.StatusNotFound && code != http.StatusUnprocessableEntity {
+		return err
+	}
+	return nil
+}
+
+// PostReview posts one review — GitHub's batch of a body and line comments,
+// all or nothing — after checking the marker is not already on one of the
+// pull request's reviews. A note goes on its line only when that line is in
+// the diff (GitHub refuses the whole review otherwise); the rest join the
+// body. Always a COMMENT review: approving is a person's call.
+func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
+	marker := ports.ReviewMarker(rev.ID, "review")
+	for page := 1; page <= 10; page++ {
+		var reviews []struct {
+			Body string `json:"body"`
+		}
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100&page=%d", a.repoPath(), mr.IID, page), nil, &reviews); err != nil {
+			return ports.ReviewPosted{}, err
+		}
+		for _, r := range reviews {
+			if strings.Contains(r.Body, marker) {
+				return ports.ReviewPosted{Already: true}, nil
+			}
+		}
+		if len(reviews) < 100 {
+			break
+		}
+	}
+	files := map[string]map[int]int{}
+	for page := 1; page <= 30; page++ {
+		var fs []struct {
+			Filename string `json:"filename"`
+			Patch    string `json:"patch"`
+		}
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/files?per_page=100&page=%d", a.repoPath(), mr.IID, page), nil, &fs); err != nil {
+			return ports.ReviewPosted{}, err
+		}
+		for _, f := range fs {
+			files[f.Filename] = ports.DiffLines(f.Patch)
+		}
+		if len(fs) < 100 {
+			break
+		}
+	}
+	comments := []map[string]any{}
+	var folded []ports.ReviewNote
+	for i, n := range rev.Notes {
+		if _, ok := files[n.Path][n.Line]; !ok {
+			folded = append(folded, n)
+			continue
+		}
+		comments = append(comments, map[string]any{"path": n.Path, "line": n.Line, "side": "RIGHT",
+			"body": strings.TrimSpace(n.Body) + "\n\n" + ports.ReviewMarker(rev.ID, fmt.Sprintf("note-%d", i))})
+	}
+	var parts []string
+	for _, p := range []string{strings.TrimSpace(rev.Summary), ports.FoldedNotes(folded)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	body := map[string]any{"body": strings.Join(append(parts, marker), "\n\n"), "event": "COMMENT", "comments": comments}
+	if rev.Head != "" {
+		body["commit_id"] = rev.Head
+	}
+	if _, err := a.api(ctx, http.MethodPost, fmt.Sprintf("%s/pulls/%d/reviews", a.repoPath(), mr.IID), body, nil); err != nil {
+		return ports.ReviewPosted{}, err
+	}
+	return ports.ReviewPosted{Inline: len(comments), Folded: len(folded)}, nil
+}

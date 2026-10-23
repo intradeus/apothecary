@@ -434,6 +434,120 @@ type Approval struct {
 	By       []string `json:"by,omitempty"`
 }
 
+// Merge methods: a merge commit, one squashed commit, or the branch's
+// commits rebased onto the target.
+const (
+	MergeMethodMerge  = "merge"
+	MergeMethodSquash = "squash"
+	MergeMethodRebase = "rebase"
+)
+
+// MergeOptions is how MergeMR merges.
+type MergeOptions struct {
+	Method string
+	// Head pins the merge: the forge merges only while the head is still
+	// this commit ("" = whatever it is), so nothing pushed after the
+	// decision is merged unseen.
+	Head string
+	// DeleteBranch removes the merge request's branch once merged.
+	DeleteBranch bool
+}
+
+// ErrMergeRefused is a merge the forge declined — not mergeable now, still a
+// draft, the head moved, a method it does not offer. An outcome a flow
+// routes (on_fail), unlike a forge it cannot reach.
+type ErrMergeRefused struct{ Reason string }
+
+func (e *ErrMergeRefused) Error() string { return "the forge refused the merge: " + e.Reason }
+
+// ReviewNote is one comment of a review, on a line of the change: Path is
+// the file, Line its line in the new version.
+type ReviewNote struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Body string `json:"body"`
+}
+
+// Review is what PostReview posts: a summary and notes on lines of the
+// merge request's diff. It never approves nor requests changes — that
+// decision stays a person's. ID names it in the marker every part carries,
+// so a retry after a crash finds what is posted and posts only the rest.
+type Review struct {
+	// Head is the commit the review read ("" = the merge request's head).
+	Head    string
+	Summary string
+	Notes   []ReviewNote
+	ID      string
+}
+
+// ReviewPosted says what PostReview did: notes posted on their line, notes
+// whose line is not in the diff (folded into the summary, quoted with their
+// place), and whether everything was already there.
+type ReviewPosted struct {
+	Inline  int  `json:"inline"`
+	Folded  int  `json:"folded"`
+	Already bool `json:"already,omitempty"`
+}
+
+// ReviewMarker is embedded (an HTML comment, invisible when rendered) in
+// every part of a review the factory posts — the summary, each note — so
+// the part is recognisable as the factory's and a retry posts nothing twice.
+func ReviewMarker(reviewID, part string) string {
+	return fmt.Sprintf("<!-- apothecary review=%s part=%s -->", reviewID, part)
+}
+
+// DiffLines reads one file's unified diff and returns the lines a note may
+// anchor to, on the new side: new line → old line (0 for an added line, the
+// old number for an unchanged one shown as context).
+func DiffLines(patch string) map[int]int {
+	out := map[int]int{}
+	oldN, newN := 0, 0
+	for _, l := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(l, "@@") {
+			var a, b, c, d int
+			if n, _ := fmt.Sscanf(l, "@@ -%d,%d +%d,%d @@", &a, &b, &c, &d); n == 4 {
+				oldN, newN = a, c
+			} else if n, _ := fmt.Sscanf(l, "@@ -%d +%d,%d @@", &a, &c, &d); n == 3 {
+				oldN, newN = a, c
+			} else if n, _ := fmt.Sscanf(l, "@@ -%d,%d +%d @@", &a, &b, &c); n == 3 {
+				oldN, newN = a, c
+			} else if n, _ := fmt.Sscanf(l, "@@ -%d +%d @@", &a, &c); n == 2 {
+				oldN, newN = a, c
+			}
+			continue
+		}
+		if newN == 0 || l == "" {
+			continue
+		}
+		switch l[0] {
+		case '+':
+			out[newN] = 0
+			newN++
+		case '-':
+			oldN++
+		case ' ':
+			out[newN] = oldN
+			oldN++
+			newN++
+		}
+	}
+	return out
+}
+
+// FoldedNotes renders notes that could not go on their line as a list the
+// summary carries, each quoted with its place.
+func FoldedNotes(notes []ReviewNote) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("**On lines outside this change:**\n")
+	for _, n := range notes {
+		fmt.Fprintf(&b, "\n- `%s:%d` — %s", n.Path, n.Line, strings.ReplaceAll(strings.TrimSpace(n.Body), "\n", "\n  "))
+	}
+	return b.String()
+}
+
 // ReviewThread is one review conversation on a merge request: an inline
 // discussion on a line, or a review's top-level body.
 type ReviewThread struct {
@@ -460,8 +574,11 @@ func ReplyMarker(runID, threadID string) string {
 	return fmt.Sprintf("<!-- apothecary run=%s thread=%s -->", runID, threadID)
 }
 
-// IsFactoryReply reports whether a comment body carries a ReplyMarker.
-func IsFactoryReply(body string) bool { return strings.Contains(body, "<!-- apothecary run=") }
+// IsFactoryReply reports whether a comment body carries a ReplyMarker or a
+// ReviewMarker: the factory wrote it, so it is never a reviewer's word.
+func IsFactoryReply(body string) bool {
+	return strings.Contains(body, "<!-- apothecary run=") || strings.Contains(body, "<!-- apothecary review=")
+}
 
 // MarkerThread returns the thread id a factory reply's marker names, or "".
 func MarkerThread(body string) string {
@@ -789,6 +906,14 @@ type Forge interface {
 	ReplyThread(ctx context.Context, mr MRRef, threadID, body string) error
 	// ResolveThread marks a thread resolved.
 	ResolveThread(ctx context.Context, mr MRRef, threadID string) error
+	// MergeMR merges the merge request. A merge the forge declines is an
+	// *ErrMergeRefused; any other error is the forge not answering.
+	MergeMR(ctx context.Context, mr MRRef, opts MergeOptions) error
+	// PostReview posts a review: its notes on their lines of the diff — one
+	// whose line is not in the diff joins the summary (FoldedNotes) — and the
+	// summary. Every part carries ReviewMarker(rev.ID, …); parts already on
+	// the merge request are not posted again.
+	PostReview(ctx context.Context, mr MRRef, rev Review) (ReviewPosted, error)
 }
 
 // Notification is the one-way fan-out payload; the CPUI inbox is canonical,

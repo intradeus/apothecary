@@ -33,6 +33,8 @@ var registry = map[Type]func() Payload{
 	TypePhaseDeclined:        func() Payload { return &PhaseDeclined{} },
 	TypeReviewCommentsLoaded: func() Payload { return &ReviewCommentsLoaded{} },
 	TypeReviewRepliesPosted:  func() Payload { return &ReviewRepliesPosted{} },
+	TypeReviewPosted:         func() Payload { return &ReviewPosted{} },
+	TypeMRMerged:             func() Payload { return &MRMerged{} },
 	TypeTargetSynced:         func() Payload { return &TargetSynced{} },
 	TypeBranchPushed:         func() Payload { return &BranchPushed{} },
 	TypeRunCompleted:         func() Payload { return &RunCompleted{} },

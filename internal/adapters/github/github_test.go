@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -393,5 +394,95 @@ func TestMRApproval(t *testing.T) {
 		if err != nil || ap.Approved != tc.ok || len(ap.By) != tc.by {
 			t.Errorf("%s: %+v, %v", tc.reviews, ap, err)
 		}
+	}
+}
+
+// A merge pins the head and names the method; GitHub declining is a refusal
+// the flow routes; the branch goes only when asked, and only the repo's own.
+func TestMergeMR(t *testing.T) {
+	var merged map[string]any
+	var deleted []string
+	refuse := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /repos/lu/greeter/pulls/5/merge", func(w http.ResponseWriter, r *http.Request) {
+		if refuse != 0 {
+			w.WriteHeader(refuse)
+			_, _ = w.Write([]byte(`{"message":"Pull Request is not mergeable"}`))
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&merged)
+		_, _ = w.Write([]byte(`{"merged":true}`))
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/pulls/5", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"head":{"ref":"apo/x","repo":{"full_name":"lu/greeter"}},"base":{"repo":{"full_name":"lu/greeter"}}}`))
+	})
+	mux.HandleFunc("DELETE /repos/lu/greeter/git/refs/heads/apo/x", func(w http.ResponseWriter, r *http.Request) {
+		deleted = append(deleted, r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	ctx := context.Background()
+	if err := a.MergeMR(ctx, ports.MRRef{IID: 5}, ports.MergeOptions{Method: ports.MergeMethodSquash, Head: "h1", DeleteBranch: true}); err != nil {
+		t.Fatal(err)
+	}
+	if merged["merge_method"] != "squash" || merged["sha"] != "h1" || len(deleted) != 1 {
+		t.Errorf("merge body %v, deleted %v", merged, deleted)
+	}
+	for _, code := range []int{405, 409, 422} {
+		refuse = code
+		var refused *ports.ErrMergeRefused
+		if err := a.MergeMR(ctx, ports.MRRef{IID: 5}, ports.MergeOptions{}); !errors.As(err, &refused) {
+			t.Errorf("%d: err = %v, want a refusal", code, err)
+		}
+	}
+	refuse = 500
+	var refused *ports.ErrMergeRefused
+	if err := a.MergeMR(ctx, ports.MRRef{IID: 5}, ports.MergeOptions{}); err == nil || errors.As(err, &refused) {
+		t.Errorf("500: err = %v, want the forge failing, not a refusal", err)
+	}
+}
+
+// One COMMENT review: notes in the diff go on their lines, marked; the rest
+// join the body; a review already carrying the marker is not posted again.
+func TestPostReview(t *testing.T) {
+	var posted []map[string]any
+	existing := `[]`
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/lu/greeter/pulls/5/reviews", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(existing)) })
+	mux.HandleFunc("GET /repos/lu/greeter/pulls/5/files", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"filename":"a.go","patch":"@@ -1,2 +1,3 @@\n package a\n+func x() {}\n ok"}]`))
+	})
+	mux.HandleFunc("POST /repos/lu/greeter/pulls/5/reviews", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		posted = append(posted, b)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	rev := ports.Review{ID: "run/p-1/post", Head: "h1", Summary: "Looks reasonable.", Notes: []ports.ReviewNote{
+		{Path: "a.go", Line: 2, Body: "name it"}, {Path: "a.go", Line: 40, Body: "far away"}, {Path: "b.go", Line: 1, Body: "untouched file"}}}
+	res, err := a.PostReview(context.Background(), ports.MRRef{IID: 5}, rev)
+	if err != nil || res.Inline != 1 || res.Folded != 2 || len(posted) != 1 {
+		t.Fatalf("res %+v err %v posted %d", res, err, len(posted))
+	}
+	b := posted[0]
+	body, _ := b["body"].(string)
+	comments, _ := b["comments"].([]any)
+	if b["event"] != "COMMENT" || b["commit_id"] != "h1" || len(comments) != 1 ||
+		!strings.Contains(body, "Looks reasonable.") || !strings.Contains(body, "`a.go:40` — far away") ||
+		!strings.Contains(body, ports.ReviewMarker(rev.ID, "review")) {
+		t.Errorf("review = %v", b)
+	}
+	if c := comments[0].(map[string]any); c["line"] != float64(2) || c["side"] != "RIGHT" || !strings.Contains(c["body"].(string), ports.ReviewMarker(rev.ID, "note-0")) {
+		t.Errorf("comment = %v", c)
+	}
+	existing = `[{"body":"Looks reasonable.\n\n` + strings.ReplaceAll(ports.ReviewMarker(rev.ID, "review"), `"`, `\"`) + `"}]`
+	res, err = a.PostReview(context.Background(), ports.MRRef{IID: 5}, rev)
+	if err != nil || !res.Already || len(posted) != 1 {
+		t.Errorf("retry: res %+v err %v posted %d", res, err, len(posted))
 	}
 }

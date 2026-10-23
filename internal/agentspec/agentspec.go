@@ -65,11 +65,29 @@ type OutputDecl struct {
 // OutputTypeReviewReplies is a review round's answers (PLAN6 M31): a YAML
 // list of {thread, reply, resolve}, validated when the stage ends against
 // the threads the round loaded, before anything is posted.
+//
+// OutputTypeReviewThreads is a review of a merge request, for post_review:
+// YAML {summary, threads: [{path, line, body}]}, validated when the stage
+// ends.
 const (
 	OutputTypeFile          = ""
 	OutputTypeVerdict       = "verdict"
 	OutputTypeReviewReplies = "review_replies"
+	OutputTypeReviewThreads = "review_threads"
 )
+
+// ReviewThreadsOutput returns the spec's review_threads-typed output, or nil.
+func (s *Spec) ReviewThreadsOutput() *OutputDecl {
+	if s == nil {
+		return nil
+	}
+	for i := range s.Outputs {
+		if s.Outputs[i].Type == OutputTypeReviewThreads {
+			return &s.Outputs[i]
+		}
+	}
+	return nil
+}
 
 // ReviewRepliesOutput returns the spec's review_replies-typed output, or nil.
 func (s *Spec) ReviewRepliesOutput() *OutputDecl {
@@ -164,7 +182,7 @@ func ValidateIO(inputs []InputDecl, outputs []OutputDecl) error {
 	}
 	seenOut := make(map[string]bool, len(outputs))
 	seenPath := make(map[string]bool, len(outputs))
-	verdicts, replies := 0, 0
+	verdicts, replies, reviews := 0, 0, 0
 	for _, out := range outputs {
 		if !validSlug(out.Name) {
 			return fmt.Errorf("output name must match [a-z0-9][a-z0-9._-]* (lowercase slug), got %q", out.Name)
@@ -185,8 +203,13 @@ func ValidateIO(inputs []InputDecl, outputs []OutputDecl) error {
 			if replies > 1 {
 				return fmt.Errorf("output %q: an agent may declare at most one %s output", out.Name, OutputTypeReviewReplies)
 			}
+		case OutputTypeReviewThreads:
+			reviews++
+			if reviews > 1 {
+				return fmt.Errorf("output %q: an agent may declare at most one %s output", out.Name, OutputTypeReviewThreads)
+			}
 		default:
-			return fmt.Errorf("output %q: unknown type %q (%q, %q or %q)", out.Name, out.Type, OutputTypeFile, OutputTypeVerdict, OutputTypeReviewReplies)
+			return fmt.Errorf("output %q: unknown type %q (%q, %q, %q or %q)", out.Name, out.Type, OutputTypeFile, OutputTypeVerdict, OutputTypeReviewReplies, OutputTypeReviewThreads)
 		}
 		if len(out.Description) > descMax {
 			return fmt.Errorf("output %q: description exceeds %d characters", out.Name, descMax)

@@ -105,10 +105,11 @@ type Action struct {
 	// input_missing when it is absent at run time.
 	Needs string `json:"needs,omitempty"`
 	// Remote marks an action whose effect lands on an external service only
-	// (the ticket tracker): it needs no workspace unless one of its FILE
-	// inputs is bound, so the engine runs it without provisioning one — a
-	// "move to In Progress" lands seconds after the run starts, and a "Done"
-	// after the final gate never re-provisions a reaped workspace.
+	// (the ticket tracker, a merge on the forge): it needs no workspace
+	// unless one of its FILE inputs is bound, so the engine runs it without
+	// provisioning one — a "move to In Progress" lands seconds after the run
+	// starts, and a "Done" after the final gate never re-provisions a reaped
+	// workspace.
 	Remote  bool        `json:"remote,omitempty"`
 	Inputs  []InputSig  `json:"inputs,omitempty"`
 	Outputs []OutputSig `json:"outputs,omitempty"`
@@ -124,6 +125,8 @@ const (
 	ReplyReviewComments = "reply_review_comments"
 	SyncTarget          = "sync_target"
 	PushBranch          = "push_branch"
+	MRMerge             = "mr_merge"
+	PostReview          = "post_review"
 
 	// Tracker actions: write back to the ticket's issue tracker (the
 	// ticketsource integration the ticket was imported from). Skipped on a
@@ -144,6 +147,14 @@ const (
 	// Sync strategies (sync_target's strategy input).
 	StrategyMerge  = "merge"
 	StrategyRebase = "rebase"
+
+	// Merge methods (mr_merge's method input; they mirror the ports
+	// package's, a test holds them equal) and what becomes of the branch.
+	MethodMerge  = "merge"
+	MethodSquash = "squash"
+	MethodRebase = "rebase"
+	BranchKeep   = "keep"
+	BranchDelete = "delete"
 
 	// Canonical ticket statuses (ticket_transition's `to`): the flow's words
 	// for where the work is, which the ticket's tracker translates into its
@@ -302,6 +313,39 @@ var registry = []Action{{
 	Requires:    RequiresTracker,
 	Remote:      true,
 	Needs:       NeedsMR,
+}, {
+	Slug:        MRMerge,
+	Title:       "Merge the merge request",
+	Description: "Merges the phase's merge request on the forge — only at the head the phase began on, so nothing pushed after the decision is merged unseen. The forge's own rules apply: a merge it declines (a draft, checks or approvals missing, the head moved, a method it does not offer) fails the stage with its reason, for on_fail to route. After a crash the merge request's state says whether it already happened. Needs no workspace.",
+	Requires:    RequiresForge,
+	Subject:     true,
+	Remote:      true,
+	Inputs: []InputSig{{
+		Name:        "method",
+		Description: "merge (a merge commit), squash (one commit) or rebase (the branch's commits on top of the target; GitHub only — GitLab merges by the project's merge method)",
+		Kind:        KindEnum,
+		Values:      []string{MethodMerge, MethodSquash, MethodRebase},
+		Default:     MethodMerge,
+	}, {
+		Name:        "branch",
+		Description: "keep the merge request's branch, or delete it once merged",
+		Kind:        KindEnum,
+		Values:      []string{BranchKeep, BranchDelete},
+		Default:     BranchKeep,
+	}},
+}, {
+	Slug:        PostReview,
+	Title:       "Post a review",
+	Description: "Posts a review on the phase's merge request from a review file (a review_threads-typed agent output): a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place. Never approves nor requests changes — that decision stays a person's. Every part is marked, so a retry after a crash posts only what is missing.",
+	Requires:    RequiresForge,
+	Subject:     true,
+	Inputs: []InputSig{{
+		Name:        "review",
+		Description: "the review (a review_threads-typed agent output)",
+		Kind:        KindFile,
+		Required:    true,
+		DefaultPath: "artifacts/review.yaml",
+	}},
 }}
 
 // Registry returns every registered action (a copy: callers may sort it).

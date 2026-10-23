@@ -62,6 +62,8 @@ const (
 	// Review rounds and target syncs (PLAN6 M31/M32).
 	TypeReviewCommentsLoaded Type = "review_comments_loaded"
 	TypeReviewRepliesPosted  Type = "review_replies_posted"
+	TypeReviewPosted         Type = "review_posted"
+	TypeMRMerged             Type = "mr_merged"
 	TypeTargetSynced         Type = "target_synced"
 	TypeBranchPushed         Type = "branch_pushed"
 	TypeRunCompleted         Type = "run_completed"
@@ -479,6 +481,27 @@ type ReviewCommentsLoaded struct {
 	Skipped map[string]string `json:"skipped,omitempty"`
 }
 
+// ReviewPosted: post_review put a review on the subject merge request —
+// Inline notes on their lines, Folded ones (lines outside the change) in
+// the summary; Already when a retry found it all posted.
+type ReviewPosted struct {
+	StageID string `json:"stage_id,omitempty"`
+	Subject string `json:"subject"`
+	Inline  int    `json:"inline"`
+	Folded  int    `json:"folded,omitempty"`
+	Already bool   `json:"already,omitempty"`
+}
+
+// MRMerged: mr_merge merged the subject merge request at Head with Method.
+// A merge by a person is not an event — the forge observation sees it.
+type MRMerged struct {
+	StageID       string `json:"stage_id,omitempty"`
+	Repo          string `json:"repo"`
+	Method        string `json:"method"`
+	Head          string `json:"head,omitempty"`
+	BranchDeleted bool   `json:"branch_deleted,omitempty"`
+}
+
 // ReviewRepliesPosted: the round's replies are on the forge.
 type ReviewRepliesPosted struct {
 	StageID   string   `json:"stage_id,omitempty"`
@@ -738,6 +761,8 @@ func (*ReviewCommentsLoaded) EventType() Type {
 	return TypeReviewCommentsLoaded
 }
 func (*ReviewRepliesPosted) EventType() Type { return TypeReviewRepliesPosted }
+func (*ReviewPosted) EventType() Type        { return TypeReviewPosted }
+func (*MRMerged) EventType() Type            { return TypeMRMerged }
 func (*TargetSynced) EventType() Type        { return TypeTargetSynced }
 func (*BranchPushed) EventType() Type        { return TypeBranchPushed }
 func (*RunCompleted) EventType() Type        { return TypeRunCompleted }

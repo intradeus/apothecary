@@ -422,6 +422,25 @@ export function describe(e: RunEvent): Described {
 			const n = Array.isArray(p.thread_ids) ? p.thread_ids.length : 0;
 			return { text: t('run.event.threadsReplied', { count: n }), tone: 'ok' };
 		}
+		case 'review_posted': {
+			const inline = Number(p.inline ?? 0);
+			const folded = Number(p.folded ?? 0);
+			return {
+				text: p.already
+					? t('run.event.reviewAlready')
+					: t('run.event.reviewPosted', { count: inline + folded }) +
+						(folded ? ` · ${t('run.event.reviewFolded', { count: folded })}` : ''),
+				tone: 'ok'
+			};
+		}
+		case 'mr_merged':
+			return {
+				text: t('run.event.mrMerged', {
+					method: String(p.method),
+					head: String(p.head ?? '').slice(0, 8)
+				}),
+				tone: 'ok'
+			};
 		case 'branch_pushed':
 			return {
 				text: t('run.event.pushed', {

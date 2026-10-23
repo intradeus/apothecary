@@ -522,6 +522,12 @@ func ReviewRepliesPath(st *Stage, spec *agentspec.Spec) string {
 	return typedOutputPath(st, spec, spec.ReviewRepliesOutput())
 }
 
+// ReviewThreadsPath is the effective path of the agent's review_threads
+// output, or "" when it declares none.
+func ReviewThreadsPath(st *Stage, spec *agentspec.Spec) string {
+	return typedOutputPath(st, spec, spec.ReviewThreadsOutput())
+}
+
 func typedOutputPath(st *Stage, spec *agentspec.Spec, d *agentspec.OutputDecl) string {
 	if d == nil {
 		return ""

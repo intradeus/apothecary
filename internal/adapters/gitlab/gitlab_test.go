@@ -3,6 +3,7 @@ package gitlab
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -365,5 +366,100 @@ func TestMRApproval(t *testing.T) {
 		if err != nil || ap.Approved != tc.ok {
 			t.Errorf("%s: %+v, %v", tc.body, ap, err)
 		}
+	}
+}
+
+// GitLab squashes per merge and removes the branch on request; a rebase is
+// the project's merge method, not a per-merge choice, so it is refused.
+func TestMergeMR(t *testing.T) {
+	var body map[string]any
+	code := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /api/v4/projects/7/merge_requests/4/merge", func(w http.ResponseWriter, r *http.Request) {
+		if code != 0 {
+			w.WriteHeader(code)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"state":"merged"}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	ctx := context.Background()
+	if err := a.MergeMR(ctx, ports.MRRef{IID: 4}, ports.MergeOptions{Method: ports.MergeMethodSquash, Head: "h1", DeleteBranch: true}); err != nil {
+		t.Fatal(err)
+	}
+	if body["squash"] != true || body["sha"] != "h1" || body["should_remove_source_branch"] != true {
+		t.Errorf("merge body = %v", body)
+	}
+	var refused *ports.ErrMergeRefused
+	if err := a.MergeMR(ctx, ports.MRRef{IID: 4}, ports.MergeOptions{Method: ports.MergeMethodRebase}); !errors.As(err, &refused) {
+		t.Errorf("rebase: err = %v", err)
+	}
+	for _, c := range []int{405, 406, 409} {
+		code = c
+		if err := a.MergeMR(ctx, ports.MRRef{IID: 4}, ports.MergeOptions{}); !errors.As(err, &refused) {
+			t.Errorf("%d: err = %v, want a refusal", c, err)
+		}
+	}
+}
+
+// Each note is a discussion on its line (an unchanged line needs its old
+// number too), the summary a note carrying the ones outside the change, and
+// a part already on the merge request is not posted again.
+func TestPostReview(t *testing.T) {
+	var discussions []map[string]any
+	var notes []string
+	existing := `[]`
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4/discussions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "1" {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(existing))
+	})
+	mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"diff_refs":{"base_sha":"b","head_sha":"h","start_sha":"s"}}`))
+	})
+	mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4/diffs", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"old_path":"a.go","new_path":"a.go","diff":"@@ -1,2 +1,3 @@\n package a\n+func x() {}\n ok"}]`))
+	})
+	mux.HandleFunc("POST /api/v4/projects/7/merge_requests/4/discussions", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		discussions = append(discussions, b)
+		_, _ = w.Write([]byte(`{"id":"d1"}`))
+	})
+	mux.HandleFunc("POST /api/v4/projects/7/merge_requests/4/notes", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		notes = append(notes, b["body"].(string))
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	rev := ports.Review{ID: "run/p-1/post", Summary: "Overall fine.", Notes: []ports.ReviewNote{
+		{Path: "a.go", Line: 2, Body: "added line"}, {Path: "a.go", Line: 3, Body: "context line"}, {Path: "a.go", Line: 90, Body: "elsewhere"}}}
+	res, err := a.PostReview(context.Background(), ports.MRRef{IID: 4}, rev)
+	if err != nil || res.Inline != 2 || res.Folded != 1 || len(discussions) != 2 || len(notes) != 1 {
+		t.Fatalf("res %+v err %v discussions %d notes %d", res, err, len(discussions), len(notes))
+	}
+	p0, p1 := discussions[0]["position"].(map[string]any), discussions[1]["position"].(map[string]any)
+	if p0["new_line"] != float64(2) || p0["old_line"] != nil || p1["new_line"] != float64(3) || p1["old_line"] != float64(2) || p0["head_sha"] != "h" {
+		t.Errorf("positions = %v / %v", p0, p1)
+	}
+	if !strings.Contains(notes[0], "Overall fine.") || !strings.Contains(notes[0], "`a.go:90` — elsewhere") || !strings.Contains(notes[0], ports.ReviewMarker(rev.ID, "summary")) {
+		t.Errorf("summary = %q", notes[0])
+	}
+	// A retry after the first note landed: only the rest is posted.
+	enc := func(s string) string { b, _ := json.Marshal(s); return string(b) }
+	existing = `[{"id":"d1","notes":[{"id":1,"body":` + enc("added line\n\n"+ports.ReviewMarker(rev.ID, "note-0")) + `,"author":{"username":"bot"}}]}]`
+	discussions, notes = nil, nil
+	res, err = a.PostReview(context.Background(), ports.MRRef{IID: 4}, rev)
+	if err != nil || res.Already || len(discussions) != 1 || len(notes) != 1 {
+		t.Errorf("retry: res %+v err %v discussions %d notes %d", res, err, len(discussions), len(notes))
 	}
 }

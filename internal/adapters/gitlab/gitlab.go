@@ -444,3 +444,134 @@ func tail(s string, n int) string {
 }
 
 var _ ports.Forge = (*Adapter)(nil)
+
+// MergeMR merges through the merge requests API, pinned to the head when
+// asked. GitLab merges by the project's merge method (merge commit,
+// semi-linear, fast-forward): squash is per merge, a rebase is not — a
+// project wanting a linear history sets fast-forward, so `rebase` is
+// refused here rather than quietly merged another way. 405/406 are GitLab
+// declining (a draft, a pipeline or approvals missing, a conflict), 409 a
+// head that moved.
+func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
+	if opts.Method == ports.MergeMethodRebase {
+		return &ports.ErrMergeRefused{Reason: "GitLab merges by the project's merge method — set it to fast-forward for a linear history, and merge with method merge or squash"}
+	}
+	body := map[string]any{"squash": opts.Method == ports.MergeMethodSquash, "should_remove_source_branch": opts.DeleteBranch}
+	if opts.Head != "" {
+		body["sha"] = opts.Head
+	}
+	code, err := a.api(ctx, http.MethodPut, fmt.Sprintf("%s/merge_requests/%d/merge", a.path(), mr.IID), body, nil)
+	if err != nil {
+		switch code {
+		case http.StatusMethodNotAllowed, http.StatusNotAcceptable, http.StatusConflict, http.StatusUnprocessableEntity:
+			return &ports.ErrMergeRefused{Reason: err.Error()}
+		}
+		return err
+	}
+	return nil
+}
+
+// PostReview posts each note as a discussion on its line and the summary as
+// a note — GitLab has no batch for both — skipping every part whose marker
+// is already on the merge request, so a retry posts only what is missing. A
+// note whose line is not in the diff, or that GitLab will not anchor, joins
+// the summary.
+func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
+	threads, err := a.MRThreads(ctx, mr)
+	if err != nil {
+		return ports.ReviewPosted{}, err
+	}
+	var existing []string
+	for _, t := range threads {
+		for _, c := range t.Comments {
+			existing = append(existing, c.Body)
+		}
+	}
+	posted := func(marker string) bool {
+		for _, b := range existing {
+			if strings.Contains(b, marker) {
+				return true
+			}
+		}
+		return false
+	}
+	var m struct {
+		DiffRefs struct {
+			BaseSHA  string `json:"base_sha"`
+			HeadSHA  string `json:"head_sha"`
+			StartSHA string `json:"start_sha"`
+		} `json:"diff_refs"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID), nil, &m); err != nil {
+		return ports.ReviewPosted{}, err
+	}
+	type diffFile struct {
+		oldPath string
+		lines   map[int]int
+	}
+	files := map[string]diffFile{}
+	for page := 1; page <= 30; page++ {
+		var ds []struct {
+			OldPath string `json:"old_path"`
+			NewPath string `json:"new_path"`
+			Diff    string `json:"diff"`
+		}
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d/diffs?per_page=100&page=%d", a.path(), mr.IID, page), nil, &ds); err != nil {
+			return ports.ReviewPosted{}, err
+		}
+		for _, d := range ds {
+			files[d.NewPath] = diffFile{oldPath: d.OldPath, lines: ports.DiffLines(d.Diff)}
+		}
+		if len(ds) < 100 {
+			break
+		}
+	}
+	var out ports.ReviewPosted
+	already := true
+	var folded []ports.ReviewNote
+	for i, n := range rev.Notes {
+		marker := ports.ReviewMarker(rev.ID, fmt.Sprintf("note-%d", i))
+		f, ok := files[n.Path]
+		old, inDiff := f.lines[n.Line]
+		if !ok || !inDiff {
+			folded = append(folded, n)
+			continue
+		}
+		if posted(marker) {
+			out.Inline++
+			continue
+		}
+		already = false
+		pos := map[string]any{"position_type": "text", "base_sha": m.DiffRefs.BaseSHA, "start_sha": m.DiffRefs.StartSHA,
+			"head_sha": m.DiffRefs.HeadSHA, "new_path": n.Path, "old_path": f.oldPath, "new_line": n.Line}
+		if old > 0 {
+			pos["old_line"] = old
+		}
+		code, err := a.api(ctx, http.MethodPost, fmt.Sprintf("%s/merge_requests/%d/discussions", a.path(), mr.IID),
+			map[string]any{"body": strings.TrimSpace(n.Body) + "\n\n" + marker, "position": pos}, nil)
+		if err != nil {
+			if code == http.StatusBadRequest || code == http.StatusUnprocessableEntity {
+				folded = append(folded, n) // GitLab would not anchor it there
+				continue
+			}
+			return ports.ReviewPosted{}, err
+		}
+		out.Inline++
+	}
+	out.Folded = len(folded)
+	var parts []string
+	for _, p := range []string{strings.TrimSpace(rev.Summary), ports.FoldedNotes(folded)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if marker := ports.ReviewMarker(rev.ID, "summary"); len(parts) > 0 && !posted(marker) {
+		already = false
+		if _, err := a.api(ctx, http.MethodPost, fmt.Sprintf("%s/merge_requests/%d/notes", a.path(), mr.IID),
+			map[string]any{"body": strings.Join(append(parts, marker), "\n\n")}, nil); err != nil {
+			return ports.ReviewPosted{}, err
+		}
+	}
+	out.Already = already
+	return out, nil
+}
