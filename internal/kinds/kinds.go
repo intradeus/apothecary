@@ -253,7 +253,7 @@ func (r *Registry) RegisterTicketSource(k TicketSourceKind) {
 func (r *Registry) Forge(kind string) (ForgeKind, error) {
 	k, ok := r.forges[kind]
 	if !ok {
-		return nil, fmt.Errorf("unknown forge kind %q", kind)
+		return nil, fmt.Errorf("unknown repository kind %q", kind)
 	}
 	return k, nil
 }

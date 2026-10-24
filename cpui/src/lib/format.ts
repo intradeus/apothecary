@@ -4,7 +4,18 @@
 // wanted to format a timestamp imported the transport layer to get it.
 
 import type { RunState } from '$lib/domain';
-import { i18n, t } from '$lib/i18n/index.svelte';
+import { i18n, t, type MessageKey } from '$lib/i18n/index.svelte';
+
+/** The word for an integration port (or a spec's `requires`) in UI text:
+ *  `forge` is the code's name for what people call the repository. */
+export const portLabel = (port: string) => (port in PORT_WORDS ? t(PORT_WORDS[port]) : port);
+const PORT_WORDS: Record<string, MessageKey> = {
+	forge: 'port.forge',
+	provisioner: 'port.provisioner',
+	harness: 'port.harness',
+	ticketsource: 'port.ticketsource',
+	tracker: 'port.tracker'
+};
 
 /** Tab grouping for the runs list. Exhaustive over RunState, so adding a
  *  state without classifying it is a type error. Active = still moving or

@@ -51,7 +51,7 @@ is one of a few things:
 | **wait point** | Where a chain stops for something outside the run. It has a **source** (a signal from the registry, `run_start`, a person, a timer), a **policy** (`auto`: proceed when the source holds; `confirm`: raise a decision first; `manual`: only a person proceeds, the event is advice), an optional **subject** the event carries (which merge request), an occurrence **key** (the same fact never fires twice), a run bound (`max`), optionally a debounce (`quiet_for`) and a `timeout`, and **outcomes**: proceed, declined, can no longer happen, timed out, rejected with feedback. A wait point releases the workspace — unless it is one that owns it: an agent's `ask_human` turn (§9), the `debug` leaf (§3). |
 | **its spellings** | A phase's `on:` is its opening wait point. `type: wait` is one mid-chain, on a signal. `type: human_gate` is one mid-chain whose first source is a person, with `auto_approve` / `auto_reject` as extra signal sources. The confirmation ping in the inbox and the Run button on the run page are the `confirm` and `manual` policies of the same thing. |
 | **phase** | A sequential chain of stages opened by a wait point. A phase has at most one **live run** at a time — active, or parked at a wait point inside it; each phase run owns its cursor, its edge counters, its feed and its tip. |
-| **scheduler** | The engine's idle loop. Each tick: observe the sources (the forge, timers, answered pings), then walk every wait point in document order — parked ones and unopened phase heads alike — and resume or open the first whose event is ready under its policy. That phase run takes the workspace and runs work stages until its next wait point or the end of its chain. One start per tick. |
+| **scheduler** | The engine's idle loop. Each tick: observe the sources (the repositories, timers, answered pings), then walk every wait point in document order — parked ones and unopened phase heads alike — and resume or open the first whose event is ready under its policy. That phase run takes the workspace and runs work stages until its next wait point or the end of its chain. One start per tick. |
 | **run end** | Two ends, said apart. `end` finishes a **phase**: its chain is over and the run goes back to waiting. `done` finishes the **run**, whatever else waits; `abort` abandons it. A flow must have some route to `done` (§3). A run normally ends in an **outcome**: a phase on what became of the merge request (`mr_merged`, `mr_closed`) that opens once and ends the run — the default's `merged` moves the ticket to done and says `done`, its `closed` says `abort`. Without one the run **completes** when no phase run is active, none is parked, and no phase head is **armed** — an outcome that has not fired while a merge request is open; a reaction with policy `auto` or `confirm`, its signal live for an open merge request, runs left. A dead end — a failure with nowhere to go — abandons the run in an entrypoint or an outcome; in any other phase it ends that round (§3). |
 | **extension points** | A new thing to react to is one signal plus its poller: it works at phase heads and mid-chain, under every policy, with subjects, and the scheduler does not change. A new kind of work is a stage type and an executor. A new human interaction is a gate variant. A new way to begin runs is an automation outside the run, creating one at a `run_start` phase. Parallelism is deliberately absent: the mutex is the design (§10). |
 
@@ -265,8 +265,8 @@ phases:
 - **On someone's merge request.** A phase `on: mr_opened` is the other kind
   of entrypoint: the run is created *on* a merge request someone opened — a
   person names it on the start-run form (the open ones are listed), or a
-  `forge_mr` automation picks it. The run works on that merge request's
-  branch, checked out from the ref its forge keeps for the head
+  merge-request automation picks it. The run works on that merge request's
+  branch, checked out from the ref its repository keeps for the head
   (`refs/pull/<n>/head`, `refs/merge-requests/<iid>/head` — a fork's too,
   on a local `mr-<iid>` there is no pushing to). The merge request is the
   run's from the start: the entry phase acts on it as its subject (no
@@ -630,17 +630,19 @@ keeps that visible. See §10 for why general AND/OR gates are not the answer.
 
 Actions are apothecary's built-in integrations. Unlike agents they are compiled
 in, so an unknown `action:` is a **parse** error and its input names are checked
-immediately. Registry (`GET /api/actions`):
+immediately. Registry (`GET /api/actions`); *requires* names the integration
+the project must have — a repository (GitLab, GitHub; the API calls that
+port `forge`) or a tracker:
 
 | action | requires | inputs | outputs | notes |
 |---|---|---|---|---|
-| `create_mr` | `forge` | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per phase; the body's first `# ` heading becomes the MR title. On a multi-repo run: one merge request per repository the run changed, each onto the branch that checkout forked from. A merge request the branch already has is adopted, never duplicated — so a phase that opens one may safely be run again by hand |
+| `create_mr` | repository | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per phase; the body's first `# ` heading becomes the MR title. On a multi-repo run: one merge request per repository the run changed, each onto the branch that checkout forked from. A merge request the branch already has is adopted, never duplicated — so a phase that opens one may safely be run again by hand |
 | `push_branch` | — | — | — | pushes the run's branch (every checkout's, or the subject's in a subject phase). A branch it pushed before is force-pushed **leased** against the tip it recorded — in a subject phase, at worst the head when the phase started — never blind; a first push is plain. Refused = someone else wrote to the branch: `on_fail` |
 | `sync_target` | — | `strategy` (`merge` \| `rebase`, default `merge`) | — | a *subject action*. Takes the subject's target branch in, in the engine: a no-op when already contained; a conflict leaves the merge (or rebase) **paused** in the working tree and fails the stage with the files named. Whoever resolves it edits those files — no git — and the retried stage checks no marker is left and continues. `rebase` needs a `push_branch` in the same phase |
-| `load_review_comments` | `forge` | `select` (`human` \| `all`, default `human`) | `review` (file → `artifacts/review.md`) | a subject action. Writes the subject's **pending** threads (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): file, line, diff hunk, comments, thread id. With `select: human` a person first picks which threads to fix (an inbox checklist; the phase parks); unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. A re-entry rewrites the same set |
-| `reply_review_comments` | `forge` | `replies` (file, required) | — | a subject action. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the forge and nothing is posted twice |
-| `post_review` | `forge` | `review` (file, required) | — | a subject action. Posts a `review_threads` file as a review: a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker, so a retry posts only what is missing, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
-| `mr_merge` | `forge` | `method` (`merge` \| `squash` \| `rebase`, default `merge`), `branch` (`keep` \| `delete`, default `keep`) | — | a subject action, needing no workspace. Merges the subject merge request at the head the phase began on — pushed after the decision, it is not merged. The forge's rules apply: a merge it declines (a draft, checks or approvals missing, the head moved) fails the stage with its reason, for `on_fail`. `rebase` is GitHub's; GitLab merges by the project's merge method (fast-forward for a linear history), so it refuses it. The merge is what the `merged` outcome then sees |
+| `load_review_comments` | repository | `select` (`human` \| `all`, default `human`) | `review` (file → `artifacts/review.md`) | a subject action. Writes the subject's **pending** threads (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): file, line, diff hunk, comments, thread id. With `select: human` a person first picks which threads to fix (an inbox checklist; the phase parks); unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. A re-entry rewrites the same set |
+| `reply_review_comments` | repository | `replies` (file, required) | — | a subject action. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice |
+| `post_review` | repository | `review` (file, required) | — | a subject action. Posts a `review_threads` file as a review: a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker, so a retry posts only what is missing, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
+| `mr_merge` | repository | `method` (`merge` \| `squash` \| `rebase`, default `merge`), `branch` (`keep` \| `delete`, default `keep`) | — | a subject action, needing no workspace. Merges the subject merge request at the head the phase began on — pushed after the decision, it is not merged. The repository's rules apply: a merge it declines (a draft, checks or approvals missing, the head moved) fails the stage with its reason, for `on_fail`. `rebase` is GitHub's; GitLab merges by the project's merge method (fast-forward for a linear history), so it refuses it. The merge is what the `merged` outcome then sees |
 | `ticket_transition` | `tracker` | `to` (enum: `todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`) **or** `status` (text), exactly one | — | moves the ticket's tracker issue. `to` is a **canonical** status the ticket's tracker translates into its own vocabulary — Jira through the integration's status map (the stock words by default; `done=Ready for prod` for a team whose Done is a deploy away), GitHub Issues to open/closed — and a status the tracker has no word for **skips** the stage with a note. `status` is the tracker's own status or transition name, verbatim (case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
 | `ticket_comment` | `tracker` | `body` (file, required → `artifacts/ticket_comment.md`) | — | posts the markdown artifact as a comment, ending with a short trailer naming the run, the phase run and the stage — also how a crash between posting and recording is reconciled, so nothing is posted twice |
 | `ticket_set_field` | `tracker` | `field` (text, required); `value` (file) **or** `text` (text), exactly one; `mode` (`replace` \| `append`, default `replace`) | — | writes one field by its display name (`"Feature flags"`, `labels`). `append` merges comma-separated items into the current value (a union: re-applying changes nothing). A field the tracker has no name for, or cannot write from text, fails the stage with `input_invalid` |
@@ -687,7 +689,7 @@ outcome's move never re-provisions a workspace the reaper took.
 agent that reads the diff for the flags it introduced and writes them,
 comma-separated — and the field name is the author's, written in the flow
 where the graph shows it. "Done once the merge request is accepted" is not a
-hook but an outcome phase (§1): it opens once the forge merges, and the move
+hook but an outcome phase (§1): it opens once the merge request merges, and the move
 is its stage. `status: "Ready for prod"` is the one Jira
 spelling written into this flow; `to: done` with the project's status map
 bound to the same word would keep the flow portable.
@@ -696,7 +698,7 @@ bound to the same word would keep the flow portable.
 `on_fail`, taken when its *outcome* is wrong in a way an agent, a retry or a
 human can fix — a merge that conflicts, a push the remote refused, a subject
 action with nothing to act on — with the reason as `$FAILURE`. Its
-infrastructure errors (the forge unreachable, the workspace gone) stay
+infrastructure errors (the repository unreachable, the workspace gone) stay
 terminal, and an action without `on_fail` fails the run on any error. Adding
 an action is one registry entry, one executor, and (if it needs an
 integration) a `requires` string that run creation asserts.
@@ -704,7 +706,7 @@ integration) a `requires` string that run creation asserts.
 ### Several repositories
 
 A project may list **additional repositories** beside its primary (name, URL,
-default branch, an optional forge locator). A run clones each at
+default branch, an optional locator — its id on GitLab or GitHub). A run clones each at
 `~/repos/<name>` on the same branch name, forked from its default branch; the
 primary stays `~/repo` and still supplies the devcontainer. What follows from
 one more checkout, without any flow change:
@@ -730,9 +732,9 @@ selector when a run has more than one checkout.
 the engine records an `action_started` intent event *before* the call. If the
 process dies between the effect landing and its completion event, recovery sees
 that intent alone and **reconciles** rather than re-running: `create_mr` asks
-the forge what the run's branch already has (the branch is unique per run, so
+the repository what the run's branch already has (the branch is unique per run, so
 it is the idempotency key) and adopts an existing merge request instead of
-opening a second one. A reconciliation that cannot reach the forge fails the
+opening a second one. A reconciliation that cannot reach the repository fails the
 stage rather than guessing — a duplicate MR is worse than a retry.
 
 ### wait
@@ -762,28 +764,28 @@ three are **outcomes**: a phase `on:` one of them opens once and ends the run
 
 | signal | requires | needs | holds when |
 |---|---|---|---|
-| `mr_merged` | `forge` | a merge request | every merge request the run opened is merged on the forge |
-| `mr_closed` | `forge` | a merge request | one of them is closed *without* being merged |
-| `mr_approved` | `forge` | a merge request | every one is approved or merged. Approved: on GitHub, someone's latest review approves and nobody's latest requests changes; on GitLab, the approval rules are met by at least one approval (a project without rules reports "approved" with nobody's — that is not an approval). Can no longer hold once one is closed |
+| `mr_merged` | repository | a merge request | every merge request the run opened is merged |
+| `mr_closed` | repository | a merge request | one of them is closed *without* being merged |
+| `mr_approved` | repository | a merge request | every one is approved or merged. Approved: on GitHub, someone's latest review approves and nobody's latest requests changes; on GitLab, the approval rules are met by at least one approval (a project without rules reports "approved" with nobody's — that is not an approval). Can no longer hold once one is closed |
 
 `needs` is a prerequisite *within the run*: waiting for `mr_merged` in a flow
 that never opens a merge request fails with `input_missing` and says so,
 rather than parking forever on something that cannot happen.
 
 Eight more signals are **beginnings**: they open a phase (§1 *Phases*), any
-number of times, and cannot be waited on or answer a gate. Each forge one
-fires per merge request, once per occurrence (the key in brackets).
+number of times, and cannot be waited on or answer a gate. Each one on a
+merge request fires per merge request, once per occurrence (the key in brackets).
 
 | signal | requires | needs | holds when |
 |---|---|---|---|
 | `run_start` | — | — | a run is created for the phase — by a person, or by an automation. An entrypoint |
-| `mr_opened` | `forge` | — (it *brings* one) | a run is created for the phase on a merge request someone opened — a person names it, or a `forge_mr` automation picks it. An entrypoint whose phase acts on that merge request from the start |
+| `mr_opened` | repository | — (it *brings* one) | a run is created for the phase on a merge request someone opened — a person names it, or a merge-request automation picks it. An entrypoint whose phase acts on that merge request from the start |
 | `manual` | — | — | never on its own: a person starts the phase from the run page |
-| `mr_conflicts` | `forge` | a merge request | the forge reports the merge request cannot merge cleanly into its target (a forge still computing is *not* a conflict). Fires per merge request |
-| `mr_review_settled` | `forge` | a merge request | it has pending review threads — unresolved, last word a reviewer's — and the newest of those comments is older than `quiet_for`. Fires per merge request |
-| `ci_failed` | `forge` | a merge request | a CI check on its head commit failed — GitHub check runs and commit statuses, GitLab's head pipeline (its failed jobs named; one allowed to fail is not a failure). Cancelled and skipped checks are neutral. [head + the failed checks: a push, or another check failing, is a new occurrence] |
-| `mr_mergeable` | `forge` | a merge request | the forge would merge it now: no conflict, its required approvals and checks in, not a draft — GitHub's `mergeable_state` clean, GitLab's merge status `mergeable`. The project's own rules decide; the run's merge requests are opened as drafts, so this waits for a person to mark one ready. [head] |
-| `mr_head_moved` | `forge` | a merge request | its head is a commit the run does not know — not one it pushed (`push_branch`), opened or adopted the merge request at, or already began a phase on: someone else pushed. With `quiet_for`, once the head has stood still that long. [head] |
+| `mr_conflicts` | repository | a merge request | the repository reports the merge request cannot merge cleanly into its target (one still computing is *not* a conflict). Fires per merge request |
+| `mr_review_settled` | repository | a merge request | it has pending review threads — unresolved, last word a reviewer's — and the newest of those comments is older than `quiet_for`. Fires per merge request |
+| `ci_failed` | repository | a merge request | a CI check on its head commit failed — GitHub check runs and commit statuses, GitLab's head pipeline (its failed jobs named; one allowed to fail is not a failure). Cancelled and skipped checks are neutral. [head + the failed checks: a push, or another check failing, is a new occurrence] |
+| `mr_mergeable` | repository | a merge request | the repository would merge it now: no conflict, its required approvals and checks in, not a draft — GitHub's `mergeable_state` clean, GitLab's merge status `mergeable`. The project's own rules decide; the run's merge requests are opened as drafts, so this waits for a person to mark one ready. [head] |
+| `mr_head_moved` | repository | a merge request | its head is a commit the run does not know — not one it pushed (`push_branch`), opened or adopted the merge request at, or already began a phase on: someone else pushed. With `quiet_for`, once the head has stood still that long. [head] |
 
 Four related concepts, kept distinct: an **action** does something now, a
 **wait** parks until something happens, a **beginning** opens a phase — when
@@ -1063,7 +1065,7 @@ an `on_reject` edge at all (a parse error).
 checked when the stage ends — every `thread` one of the round's, none twice,
 every `reply` non-empty (an empty list is valid) — so a reply to an unknown
 thread fails *that* stage with `output_invalid`, its reason as `$FAILURE`,
-before anything reaches the forge. `reply_review_comments` posts it.
+before anything reaches the repository. `reply_review_comments` posts it.
 
 **A `review_threads` output** is a review of the merge request, for
 `post_review`:
@@ -1077,7 +1079,7 @@ threads:                                              # optional, at most 50
 Checked when the stage ends — every thread on a repository-relative path, a
 line from 1 (in the changed file), a non-empty body — the same way: a bad one
 fails the stage, its reason as `$FAILURE`. Whether a line is in the change is
-the forge's business at posting time, not a failure (below).
+the repository's business at posting time, not a failure (below).
 
 ### What the editor draws
 
@@ -1107,7 +1109,7 @@ A stage failure records a reason, then follows an edge:
 | `input_invalid` | a value the flow wrote means nothing where it lands — a status the tracker cannot reach, a field it has no name for or cannot write from text; or a parked wait's signal can no longer hold. Wiring again, but the input is there |
 | `output_contract` | the stage finished without writing what it declared (its outputs are cleared before each fresh attempt, so a stale file cannot satisfy it) |
 | `output_invalid` | a declared output exists but does not hold what its type promises — a malformed verdict |
-| `infra` | provisioning, forge or other infrastructure failure |
+| `infra` | provisioning, repository or other infrastructure failure |
 
 A stage that **skips** — its `when` does not hold, a tracker action with no
 tracker or no word for the status — is not a failure: it completes with
@@ -1214,7 +1216,7 @@ bound value is held to the same rules as a literal: `run_ref`s exist in its
 commands, the harness — the flow's, the binding's or a stage's — is in the
 project's set, every agent stage's model is one its harness lists (when the
 list can be fetched), an action's required integration is configured, every
-phase that opens on a signal has whoever raises it (a forge), the repo has a
+phase that opens on a signal has whoever raises it (a repository integration), the repo has a
 devcontainer and an `AGENTS.md` — and, for a ticket imported from a tracker,
 that its integration can write when the flow has a tracker action (a ticket
 written by hand passes; those stages skip). The same checks answer
@@ -1436,7 +1438,7 @@ phases:
 
   # Outcomes: once, and the run is over. Merged, the ticket is done and so is
   # the run; closed unmerged, the ticket goes back and the run is abandoned —
-  # someone decided on the forge, nobody is asked again.
+  # someone decided against it, nobody is asked again.
   - id: merged
     on: mr_merged
     stages:
@@ -1526,7 +1528,7 @@ over one workspace. Additive, no grammar break:
 - **An automation** — a new way to *begin* runs lives outside the run: a rule
   (a tracker query, a schedule, the merge requests others open) that creates
   a run at one of a flow's entrypoints of the matching kind — `run_start`, or
-  `mr_opened` for `forge_mr` — with its parameters, recorded as
+  `mr_opened` for one watching merge requests — with its parameters, recorded as
   `phase_started{by: automation}`. The flow is untouched.
 - **An action** — one `actionspec` registry entry, one executor case, one
   `requires` port string. Everything else (parsing, binding, the editor's

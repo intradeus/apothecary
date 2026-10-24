@@ -119,7 +119,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		forge := x.res.forgeFor(co.Name)
 		ref, err := forge.CreateDraftMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source, title, string(body))
 		if err != nil {
-			return x.infraFail(st, "forge MR creation failed: "+err.Error())
+			return x.infraFail(st, "opening the merge request failed: "+err.Error())
 		}
 		// mr_created is what makes the $MR_URL sentinel and the merge signals
 		// work downstream, and what makes this action idempotent.

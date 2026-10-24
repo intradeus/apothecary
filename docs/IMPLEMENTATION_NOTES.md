@@ -3430,3 +3430,30 @@ what changed:
   `builder` / `artifacts/plan.md` / `verify` / "implementation plan"
   placeholders — all made neutral. `in_review` keeps its label: the
   projection sets it only when the run has open merge requests.
+
+## "Repository", not "forge", wherever a person reads it
+
+2026-10-24, the user: "forge means nothing to no one" — stick to
+repositories. *Forge* (the industry word for GitHub/GitLab as hosts) stays
+the code's name for that integration port — `ports.Forge`, port value
+`forge`, `forge_id`, the `forge_mr` automation kind, the `forge` value of a
+spec's `requires` — because those are stored values and API fields, and
+renaming them buys no reader anything. Everything a person reads says
+repository instead:
+
+- **UI**: the workshop's Forge tab is the **Repositories** tab (`?tab=repos`,
+  `ReposTab.svelte`); the Integrations group is *Repositories* (GitLab,
+  GitHub); the project form picks a *repository account*; run-page messages
+  ("repository unreachable", "happens on the repository"). Port names are
+  never printed raw any more: `portLabel()` (`format.ts`) turns `forge` into
+  "repository" on the workshop chips, the new-workshop page's missing list
+  and the flow editor's "needs a … integration".
+- **Engine messages that reach the UI**: preflight ("repository access", the
+  health step `forge_access` → `repo_access`), "no integration reaches
+  repository …", "needs a repository integration (GitLab, GitHub)", the
+  unreachable notification, merge refusals, the automation's last error.
+- **Signal and action descriptions** (the flow editor shows them), the
+  flow-language doc (its *requires* column says repository, with one note
+  that the API calls the port `forge`), the template comments, README.
+- The `forge_mr` automation is called a *merge-request automation* in text;
+  its stored kind value is unchanged.

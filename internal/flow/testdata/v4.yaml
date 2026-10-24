@@ -243,7 +243,7 @@ stages:
   # status covers.
   - { id: in_review,  type: action, action: ticket_transition, input: { status: "In Review" },
       on_fail: { to: final_gate, max: 1 } }
-  # A gate the forge can answer either way — and an explicit on_reject, because
+  # A gate the repository can answer either way — and an explicit on_reject, because
   # a rejection with nowhere to go abandons the run. (`type: wait` is covered by
   # TestWaitStage and the engine's wait scenarios; putting one here would make
   # this fixture's end-to-end walk wait on a signal that must not fire.)

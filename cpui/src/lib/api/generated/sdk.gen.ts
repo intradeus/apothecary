@@ -615,7 +615,7 @@ export const listIntegrationModels = <ThrowOnError extends boolean = false>(
 	>({ url: '/api/integrations/{id}/models', ...options });
 
 /**
- * Repositories a forge integration can see
+ * Repositories a repository integration (GitLab, GitHub) can see
  */
 export const listIntegrationRepos = <ThrowOnError extends boolean = false>(
 	options: Options<ListIntegrationReposData, ThrowOnError>
@@ -1298,7 +1298,7 @@ export const sendRunMessage = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Each merge request as the forge reports it now: mergeability and pending review threads
+ * Each merge request as its repository reports it now: mergeability and pending review threads
  */
 export const getRunMrStatus = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunMrStatusData, ThrowOnError>

@@ -1,10 +1,10 @@
 <script lang="ts">
-	// Workshop forge tab: what the forge brings in — the repository's open
-	// merge requests — and the runs done on each. Any flow of the workshop
+	// Workshop repositories tab: what the repository integration brings in —
+	// the repository's open merge requests — and the runs done on each. Any flow of the workshop
 	// that can begin on a merge request (an entrypoint on mr_opened) starts
 	// on one from here; which flow, and so what the run does, is the
 	// person's pick. A merge request's runs are filed under its own ticket,
-	// the same one a forge_mr automation would use.
+	// the same one a merge-request automation would use.
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
@@ -73,8 +73,8 @@
 		busy = row.mr.iid;
 		try {
 			const started = await api.projects.startRunOnMR(project.id, row.mr.iid, { flow, phase });
-			toast(t('workshop.forge.started', { flow, iid: row.mr.iid }), {
-				action: { label: t('workshop.forge.openRun'), run: () => void goto(to.run(started.runId)) }
+			toast(t('workshop.repos.started', { flow, iid: row.mr.iid }), {
+				action: { label: t('workshop.repos.openRun'), run: () => void goto(to.run(started.runId)) }
 			});
 			await load();
 		} catch (e) {
@@ -86,15 +86,15 @@
 </script>
 
 <div class="row nowrap">
-	<p class="lede grow">{t('workshop.forge.lede')}</p>
+	<p class="lede grow">{t('workshop.repos.lede')}</p>
 </div>
 
 {#if flows && !starts.length}
-	<div class="help hue-amb">{t('workshop.forge.noFlow')}</div>
+	<div class="help hue-amb">{t('workshop.repos.noFlow')}</div>
 {/if}
 
 {#if error && !rows}
-	<ErrorCard cause={t('workshop.forge.loadError')} detail={error} onretry={load} />
+	<ErrorCard cause={t('workshop.repos.loadError')} detail={error} onretry={load} />
 {:else if !rows}
 	<Skeleton pane lines={4} />
 {:else if !rows.length}
@@ -102,21 +102,21 @@
 		<div class="pane-body">
 			<EmptyState
 				compact
-				title={t('workshop.forge.emptyTitle')}
-				text={t('workshop.forge.emptyText')}
+				title={t('workshop.repos.emptyTitle')}
+				text={t('workshop.repos.emptyText')}
 			/>
 		</div>
 	</section>
 {:else}
 	<section class="c pane">
 		<div class="pane-head">
-			<h2>{t('workshop.forge.title')}</h2>
+			<h2>{t('workshop.repos.title')}</h2>
 			<span class="count">{rows.length}</span>
 		</div>
 		<div class="rows">
 			<div class="r head fr">
-				<span>{t('workshop.forge.colMR')}</span><span>{t('workshop.forge.colBranch')}</span><span
-					>{t('workshop.forge.colRuns')}</span
+				<span>{t('workshop.repos.colMR')}</span><span>{t('workshop.repos.colBranch')}</span><span
+					>{t('workshop.repos.colRuns')}</span
 				><span></span>
 			</div>
 			{#each rows as row (row.mr.iid)}
@@ -127,12 +127,12 @@
 						>
 						<span class="small fnt"
 							>{row.mr.author}{#if row.mine}
-								· <span class="pill sm t-brand" title={t('workshop.forge.mineTitle')}
-									>{t('workshop.forge.mine')}</span
+								· <span class="pill sm t-brand" title={t('workshop.repos.mineTitle')}
+									>{t('workshop.repos.mine')}</span
 								>{/if}{#if row.mr.draft}
-								· <span class="pill sm t-mut">{t('workshop.forge.draft')}</span
+								· <span class="pill sm t-mut">{t('workshop.repos.draft')}</span
 								>{/if}{#if row.mr.fork}
-								· <span class="pill sm t-mut">{t('workshop.forge.fork')}</span>{/if}</span
+								· <span class="pill sm t-mut">{t('workshop.repos.fork')}</span>{/if}</span
 						>
 					</span>
 					<span class="mono small ell" title="{row.mr.source} → {row.mr.target}"
@@ -146,11 +146,11 @@
 							<span class="fnt ell"
 								>{row.run.flow} · {ago(row.run.createdAt)}{#if row.ticketId && row.runs > 1}
 									· <a class="linklike" href={to.ticket(row.ticketId)}
-										>{t('workshop.forge.allRuns', { count: row.runs })}</a
+										>{t('workshop.repos.allRuns', { count: row.runs })}</a
 									>{/if}</span
 							>
 						{:else}
-							<span class="fnt">{t('workshop.forge.noRun')}</span>
+							<span class="fnt">{t('workshop.repos.noRun')}</span>
 						{/if}
 					</span>
 					<span class="acts">
@@ -158,8 +158,8 @@
 							class="btn-sm"
 							disabled={!starts.length || busy !== null}
 							aria-busy={busy === row.mr.iid}
-							title={starts.length ? '' : t('workshop.forge.noFlow')}
-							onclick={(ev) => pick(row, ev)}>{I.play} {t('workshop.forge.start')}</button
+							title={starts.length ? '' : t('workshop.repos.noFlow')}
+							onclick={(ev) => pick(row, ev)}>{I.play} {t('workshop.repos.start')}</button
 						>
 					</span>
 				</div>
@@ -170,7 +170,7 @@
 
 <Popover {anchor} bind:open={pickOpen} placement="below-end">
 	<div class="pickbox">
-		<span class="mut fnt small">{t('workshop.forge.pick', { iid: pickFor?.mr.iid ?? '' })}</span>
+		<span class="mut fnt small">{t('workshop.repos.pick', { iid: pickFor?.mr.iid ?? '' })}</span>
 		{#each starts as s (s.flow + '|' + s.phase)}
 			<button class="opt" onclick={() => pickFor && start(pickFor, s.flow, s.phase)}>
 				<span class="mono">{s.label}</span>

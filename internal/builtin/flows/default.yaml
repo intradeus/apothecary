@@ -488,7 +488,7 @@ phases:
           description: "move the ticket's tracker issue to its done status",
           on_fail: done }
 
-  # Closed unmerged: someone decided against the change on the forge. The
+  # Closed unmerged: someone decided against the change. The
   # ticket goes back to its to-do for a person to pick up, and the run is
   # abandoned — the decision was theirs, so nobody is asked again.
   - id: closed

@@ -92,7 +92,7 @@ func (x *exec) subjectForge(st *flow.Stage) (ports.Forge, *mrRecord, error) {
 	}
 	forge := x.res.forgeFor(mr.Repo)
 	if forge == nil {
-		return nil, nil, fmt.Errorf("stage %s: repository %s has no forge", st.ID, mr.Repo)
+		return nil, nil, fmt.Errorf("stage %s: no integration reaches repository %s", st.ID, mr.Repo)
 	}
 	return forge, mr, nil
 }

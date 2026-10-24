@@ -174,7 +174,7 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	a.Schedule, a.TicketID = strings.TrimSpace(a.Schedule), strings.TrimSpace(a.TicketID)
 	a.Repo = strings.TrimSpace(a.Repo)
 	if a.Repo != "" && a.Kind != AutomationForgeMR {
-		return invalidf("only a forge_mr automation watches a repository")
+		return invalidf("only a merge-request automation (forge_mr) watches a repository")
 	}
 	switch a.Kind {
 	case AutomationTrackerQuery:
@@ -210,7 +210,7 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 		}
 	case AutomationForgeMR:
 		if a.SourceID != "" || a.Query != "" || a.Schedule != "" || a.TicketID != "" {
-			return invalidf("a forge_mr automation takes only a repo (\"\" = the primary)")
+			return invalidf("a merge-request automation (forge_mr) takes only a repo (\"\" = the primary)")
 		}
 		if a.Repo == "repo" {
 			a.Repo = ""

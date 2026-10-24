@@ -80,7 +80,7 @@ func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	}
 	h.res.Forge = nil
 	err := h.e.preflightFlowRefs(h.res, fl)
-	if err == nil || !strings.Contains(err.Error(), `phase "conflicts"`) || !strings.Contains(err.Error(), "forge") {
+	if err == nil || !strings.Contains(err.Error(), `phase "conflicts"`) || !strings.Contains(err.Error(), "repository integration") {
 		t.Fatalf("without a forge: err = %v", err)
 	}
 	onlyOutcome := mustFlow(t, strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1))

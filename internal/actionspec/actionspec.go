@@ -222,7 +222,7 @@ var registry = []Action{{
 }, {
 	Slug:        ReplyReviewComments,
 	Title:       "Reply to review comments",
-	Description: "Posts the replies file — one reply per loaded thread, optionally resolving it — on the merge request. Each reply carries an invisible marker, so a crash between two posts is reconciled from the forge and nothing is posted twice.",
+	Description: "Posts the replies file — one reply per loaded thread, optionally resolving it — on the merge request. Each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice.",
 	Requires:    RequiresForge,
 	Subject:     true,
 	Inputs: []InputSig{{
@@ -316,7 +316,7 @@ var registry = []Action{{
 }, {
 	Slug:        MRMerge,
 	Title:       "Merge the merge request",
-	Description: "Merges the phase's merge request on the forge — only at the head the phase began on, so nothing pushed after the decision is merged unseen. The forge's own rules apply: a merge it declines (a draft, checks or approvals missing, the head moved, a method it does not offer) fails the stage with its reason, for on_fail to route. After a crash the merge request's state says whether it already happened. Needs no workspace.",
+	Description: "Merges the phase's merge request — only at the head the phase began on, so nothing pushed after the decision is merged unseen. The repository's own rules apply: a merge it declines (a draft, checks or approvals missing, the head moved, a method it does not offer) fails the stage with its reason, for on_fail to route. After a crash the merge request's state says whether it already happened. Needs no workspace.",
 	Requires:    RequiresForge,
 	Subject:     true,
 	Remote:      true,

@@ -30,7 +30,7 @@ func RegisterFakes(r *Registry) {
 type FakeForge struct{}
 
 func (FakeForge) Descriptor() Descriptor {
-	return Descriptor{Port: "forge", Kind: "fake", Label: "Fake forge (dev)"}
+	return Descriptor{Port: "forge", Kind: "fake", Label: "Fake repositories (dev)"}
 }
 
 type fakeAccount struct{}

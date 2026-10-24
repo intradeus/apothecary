@@ -176,7 +176,7 @@ func (r *Resolution) actionAvailable(st *flow.Stage) error {
 		return nil
 	case actionspec.RequiresForge:
 		if r.Forge == nil {
-			return fmt.Errorf("action %q needs a forge integration, which this project has not configured", act.Slug)
+			return fmt.Errorf("action %q needs a repository integration (GitLab, GitHub), which this project has not configured", act.Slug)
 		}
 	case actionspec.RequiresTracker:
 		// Per ticket, not per project: whether THIS ticket's tracker can be
@@ -234,7 +234,7 @@ func (r *Resolution) signalAvailable(slug string) error {
 		return nil
 	case signalspec.RequiresForge:
 		if r.Forge == nil {
-			return fmt.Errorf("signal %q needs a forge integration, which this project has not configured", sig.Slug)
+			return fmt.Errorf("signal %q needs a repository integration (GitLab, GitHub), which this project has not configured", sig.Slug)
 		}
 	default:
 		return fmt.Errorf("signal %q requires %q, which this build cannot verify", sig.Slug, sig.Requires)

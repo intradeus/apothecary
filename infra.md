@@ -37,7 +37,7 @@ flowchart TB
         redis["compose sibling: redis"]
     end
 
-    internet(["🌐 Internet<br/>model providers · registries · git forge"])
+    internet(["🌐 Internet<br/>model providers · registries · git hosting"])
 
     %% control plane
     human -->|"REST: tickets/runs/projects,<br/>egress-rule, egress-audit, SSE events"| apod

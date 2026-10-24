@@ -106,7 +106,7 @@ export default {
 	'run.mr.notOpenedRepo': '{name}: not opened yet',
 	'run.mr.requests': 'Merge requests',
 	'run.mrStatus.mergedSuffix': 'merged',
-	'run.mrStatus.unreachable': 'forge unreachable',
+	'run.mrStatus.unreachable': 'repository unreachable',
 	'run.mrStatus.merged': 'merged',
 	'run.mrStatus.conflicts': 'conflicts',
 	'run.mrStatus.conflictsWith': 'conflicts with {target}',
@@ -205,10 +205,10 @@ export default {
 	'run.phases.sub':
 		"The flow's phases, each opened by its own wait point — a signal, or you. One runs at a time; an outcome ends the run when its signal holds.",
 	'run.phases.beganHere': 'began here',
-	'run.phases.onTheForge': 'happens on the forge',
+	'run.phases.onTheRepo': 'happens on the repository',
 	'run.phases.outcomeTitle':
 		'An outcome opens by itself when its signal holds, and ends the run. To stop the run yourself, use Abort.',
-	'run.phases.forgeError': 'The forge could not be read.',
+	'run.phases.repoError': 'The repository could not be read.',
 	'run.phases.phaseStarted': 'Phase {phase} started',
 	'run.phases.phaseFailed': 'Phase {phase} could not start.',
 	'run.phases.entrypoint': 'entrypoint',

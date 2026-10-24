@@ -42,7 +42,7 @@
 		try {
 			[mrs, phases] = await Promise.all([api.runs.mrStatus(runId), api.runs.phases(runId)]);
 		} catch (e) {
-			cause = t('run.phases.forgeError');
+			cause = t('run.phases.repoError');
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
@@ -163,7 +163,7 @@
 						<!-- An outcome happens on the forge; starting one by hand would
 						     end the run from a button beside the ones that do not. -->
 						<span class="fnt small" title={t('run.phases.outcomeTitle')}
-							>{t('run.phases.onTheForge')}</span
+							>{t('run.phases.onTheRepo')}</span
 						>
 					{:else}
 						<button

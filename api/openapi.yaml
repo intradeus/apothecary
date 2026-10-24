@@ -3070,7 +3070,7 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: Repositories a forge integration can see
+      summary: Repositories a repository integration (GitLab, GitHub) can see
       tags:
         - integrations
   /api/integrations/{id}/test:
@@ -5059,7 +5059,7 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: 'Each merge request as the forge reports it now: mergeability and pending review threads'
+      summary: 'Each merge request as its repository reports it now: mergeability and pending review threads'
       tags:
         - runs
   /api/runs/{id}/observed-ports:

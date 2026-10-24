@@ -479,7 +479,7 @@ type MergeOptions struct {
 // routes (on_fail), unlike a forge it cannot reach.
 type ErrMergeRefused struct{ Reason string }
 
-func (e *ErrMergeRefused) Error() string { return "the forge refused the merge: " + e.Reason }
+func (e *ErrMergeRefused) Error() string { return "the repository refused the merge: " + e.Reason }
 
 // ReviewNote is one comment of a review, on a line of the change: Path is
 // the file, Line its line in the new version.

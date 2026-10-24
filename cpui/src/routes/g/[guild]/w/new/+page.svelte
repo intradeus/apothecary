@@ -7,6 +7,7 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { currentGuild, to } from '$lib/guild';
 	import { t } from '$lib/i18n/index.svelte';
+	import { portLabel } from '$lib/format';
 	import ProjectForm from '$lib/ProjectForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -63,7 +64,7 @@
 			title={t('page.newWorkshop.integrationsFirst')}
 			text={t('page.newWorkshop.integrationsText', {
 				count: missing.length,
-				list: missing.join(', ')
+				list: missing.map(portLabel).join(', ')
 			})}
 		>
 			<a class="btn btn-primary" href={to.system('integrations')}

@@ -736,7 +736,7 @@ func (f *Forge) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body st
 		return f.ReplyErr
 	}
 	if f.ReplyFailAfter > 0 && f.replies >= f.ReplyFailAfter {
-		return fmt.Errorf("forge unavailable")
+		return fmt.Errorf("repository unavailable")
 	}
 	m := f.mr(mr.IID)
 	if m == nil {

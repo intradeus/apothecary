@@ -24,7 +24,7 @@
 	import TicketsTab from '$lib/workshop/TicketsTab.svelte';
 	import FlowsTab from '$lib/workshop/FlowsTab.svelte';
 	import AutomationsTab from '$lib/workshop/AutomationsTab.svelte';
-	import ForgeTab from '$lib/workshop/ForgeTab.svelte';
+	import ReposTab from '$lib/workshop/ReposTab.svelte';
 	import AgentsTab from '$lib/workshop/AgentsTab.svelte';
 	import HealthTab from '$lib/workshop/HealthTab.svelte';
 
@@ -33,7 +33,7 @@
 		'overview',
 		'runs',
 		'tickets',
-		'forge',
+		'repos',
 		'flows',
 		'automations',
 		'agents',
@@ -104,7 +104,7 @@
 		overview: t('page.workshop.tabOverview'),
 		runs: t('page.runs.title'),
 		tickets: t('page.tickets.title'),
-		forge: t('page.workshop.tabForge'),
+		repos: t('page.workshop.tabRepos'),
 		flows: t('page.workshops.flows'),
 		automations: t('page.workshop.tabAutomations'),
 		agents: t('page.workshop.tabAgents'),
@@ -240,8 +240,8 @@
 				<RunsTab {project} {runs} />
 			{:else if tab === 'tickets'}
 				<TicketsTab {project} {tickets} error={ticketsError} onretry={loadTickets} />
-			{:else if tab === 'forge'}
-				<ForgeTab {project} {flows} />
+			{:else if tab === 'repos'}
+				<ReposTab {project} {flows} />
 			{:else if tab === 'flows'}
 				<FlowsTab {project} {flows} error={flowsError} onreload={loadFlows} />
 			{:else if tab === 'automations'}

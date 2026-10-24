@@ -90,7 +90,7 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 		out[i] = MRLive{Repo: mr.Repo, Branch: mr.Branch, URL: mr.URL, Target: mr.Target}
 		forge := res.forgeFor(mr.Repo)
 		if forge == nil {
-			out[i].Error = "no forge for this repository"
+			out[i].Error = "no integration reaches this repository"
 			continue
 		}
 		wg.Add(1)

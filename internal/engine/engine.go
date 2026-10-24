@@ -1126,7 +1126,7 @@ func adoptMR(ctx context.Context, res *Resolution, checkouts []event.Checkout, w
 	}
 	forge := res.forgeFor(repo)
 	if forge == nil {
-		return nil, nil, fmt.Errorf("merge request: repository %q has no forge", repo)
+		return nil, nil, fmt.Errorf("merge request: no integration reaches repository %q", repo)
 	}
 	info, err := forge.GetMR(ctx, want.IID)
 	if err != nil {
@@ -1155,7 +1155,7 @@ func (e *Engine) ListMRs(ctx context.Context, projectID, repo string) ([]ports.M
 	}
 	forge := res.forgeFor(repo)
 	if forge == nil {
-		return nil, fmt.Errorf("repository %q has no forge", repo)
+		return nil, fmt.Errorf("no integration reaches repository %q", repo)
 	}
 	return forge.ListMRs(ctx)
 }
@@ -1172,7 +1172,7 @@ func (e *Engine) MR(ctx context.Context, projectID, repo string, iid int) (ports
 	}
 	forge := res.forgeFor(repo)
 	if forge == nil {
-		return ports.MRInfo{}, fmt.Errorf("repository %q has no forge", repo)
+		return ports.MRInfo{}, fmt.Errorf("no integration reaches repository %q", repo)
 	}
 	return forge.GetMR(ctx, iid)
 }
@@ -1191,7 +1191,7 @@ func (e *Engine) ForgeUser(ctx context.Context, projectID, repo string) (string,
 	}
 	forge := res.forgeFor(repo)
 	if forge == nil {
-		return "", fmt.Errorf("repository %q has no forge", repo)
+		return "", fmt.Errorf("no integration reaches repository %q", repo)
 	}
 	return forge.Whoami(ctx)
 }
@@ -1488,12 +1488,12 @@ func hasDevcontainer(ctx context.Context, res *Resolution) (bool, error) {
 
 func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) error {
 	if err := res.Forge.CheckAccess(ctx, res.RepoRef); err != nil {
-		return fmt.Errorf("preflight: forge access: %w", err)
+		return fmt.Errorf("preflight: repository access: %w", err)
 	}
 	for _, x := range res.ExtraRepos {
 		if f := res.Forges[x.Name]; f != nil {
 			if err := f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator}); err != nil {
-				return fmt.Errorf("preflight: forge access to repo %s: %w", x.Name, err)
+				return fmt.Errorf("preflight: repository access to repo %s: %w", x.Name, err)
 			}
 		}
 	}
@@ -2702,10 +2702,10 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 		steps = append(steps, step("parameters", perr))
 		fl = bound // nil when the bindings do not resolve
 	}
-	steps = append(steps, step("forge_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
+	steps = append(steps, step("repo_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
 	for _, x := range res.ExtraRepos {
 		if f := res.Forges[x.Name]; f != nil {
-			steps = append(steps, step("forge_access:"+x.Name,
+			steps = append(steps, step("repo_access:"+x.Name,
 				f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})))
 		}
 	}

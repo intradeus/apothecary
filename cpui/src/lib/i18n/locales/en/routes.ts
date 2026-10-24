@@ -78,7 +78,7 @@ export default {
 	'page.workshops.loadError': 'Couldn’t load workshops',
 	'page.workshops.empty': 'An empty workshop',
 	'page.workshops.emptyText':
-		'A workshop ties a repository to the forge, provisioner and harness its runs use.',
+		'A workshop ties a repository to the provisioner and harness its runs use.',
 	'page.workshops.setupIntegrations': 'Set up integrations',
 	'page.workshops.quiet': 'quiet',
 	'page.workshops.pingsAwaiting': 'pings awaiting you',
@@ -95,7 +95,7 @@ export default {
 	'page.system.integrations.title': 'Integrations',
 	'page.system.integrations.accent': 'the guild trusts',
 	'page.system.integrations.sub':
-		'Credentialed connections: forges, provisioners, harnesses and trackers. Secrets are write-only — stored encrypted, shown only as a mask.',
+		'Credentialed connections: repositories, provisioners, harnesses and trackers. Secrets are write-only — stored encrypted, shown only as a mask.',
 	'page.system.channels.label': 'Channels',
 	'page.system.channels.title': 'Channels',
 	'page.system.channels.accent': 'that echo the inbox',
@@ -208,8 +208,8 @@ export default {
 		'Workspaces that may exist at once, live or stopped. At the cap, new runs are refused until a run is archived or reaped.',
 	'page.limits.envsNow_one': 'Now: {count} environment standing',
 	'page.limits.envsNow_other': 'Now: {count} environments standing',
-	'page.integrations.forge': 'Forge',
-	'page.integrations.forgeSub': 'code hosting: repositories, branches, merge requests',
+	'page.integrations.forge': 'Repositories',
+	'page.integrations.forgeSub': 'GitLab, GitHub: where the code lives — branches, merge requests',
 	'page.integrations.provisioner': 'Provisioner',
 	'page.integrations.provisionerSub': 'where workspaces are built and run',
 	'page.integrations.harness': 'Harness',
@@ -308,7 +308,7 @@ export default {
 	'page.workshop.tabOverview': 'Overview',
 	'page.workshop.tabAgents': 'Agents',
 	'page.workshop.tabAutomations': 'Automations',
-	'page.workshop.tabForge': 'Forge',
+	'page.workshop.tabRepos': 'Repositories',
 	'page.workshop.tabHealth': 'Health',
 	'page.workshop.deleteTitle': 'Delete {name}?',
 	'page.workshop.deleteBody':

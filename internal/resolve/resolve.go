@@ -95,11 +95,11 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	}
 	account, err := forgeKind.Account(kindConfig(forgeInt))
 	if err != nil {
-		return nil, fmt.Errorf("forge %s: %w", forgeInt.Name, err)
+		return nil, fmt.Errorf("repository integration %s: %w", forgeInt.Name, err)
 	}
 	forge, err := forgeKind.Forge(kindConfig(forgeInt), repoRef)
 	if err != nil {
-		return nil, unresolvable(fmt.Errorf("forge %s: %v", forgeInt.Name, err))
+		return nil, unresolvable(fmt.Errorf("repository integration %s: %v", forgeInt.Name, err))
 	}
 	// Extra repos ride the same forge account; each one with a locator gets
 	// its own bound port (that is what opens its merge requests). One
@@ -113,7 +113,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		}
 		f, err := forgeKind.Forge(kindConfig(forgeInt), ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})
 		if err != nil {
-			return nil, unresolvable(fmt.Errorf("forge %s, repo %s: %v", forgeInt.Name, x.Name, err))
+			return nil, unresolvable(fmt.Errorf("repository integration %s, repo %s: %v", forgeInt.Name, x.Name, err))
 		}
 		forges[x.Name] = f
 	}
@@ -578,7 +578,7 @@ func (r *Resolver) ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, 
 		return nil, err
 	}
 	if in.Port != confstore.PortForge {
-		return nil, fmt.Errorf("integration %s is port %s; repo listing needs a forge", in.Name, in.Port)
+		return nil, fmt.Errorf("integration %s is port %s; repo listing needs a repository integration", in.Name, in.Port)
 	}
 	fk, err := r.reg.Forge(in.Kind)
 	if err != nil {

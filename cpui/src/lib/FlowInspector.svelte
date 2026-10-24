@@ -5,6 +5,7 @@
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import Stepper from '$lib/ui/Stepper.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
+	import { portLabel } from '$lib/format';
 	import { EDGE_HUE, STAGE_HUE, STAGE_WORD } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
 	import { ms } from '$lib/ui/motion';
@@ -731,7 +732,7 @@
 							<div class="help">{t('flow.insp.tracker')}</div>
 						{:else if actionSig.requires}
 							<div class="help">
-								{@html th('flow.insp.needsIntegration', { kind: actionSig.requires })}
+								{@html th('flow.insp.needsIntegration', { kind: portLabel(actionSig.requires) })}
 							</div>
 						{/if}
 						{#if actionSig.needs === 'merge_request'}
@@ -839,7 +840,7 @@
 						{#if waitSig.description}<div class="help">{waitSig.description}</div>{/if}
 						{#if waitSig.requires}
 							<div class="help">
-								{@html th('flow.insp.needsIntegration', { kind: waitSig.requires })}
+								{@html th('flow.insp.needsIntegration', { kind: portLabel(waitSig.requires) })}
 							</div>
 						{/if}
 					{:else if s.for}

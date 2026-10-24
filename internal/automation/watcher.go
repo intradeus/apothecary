@@ -194,7 +194,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 	}
 	me, err := w.Engine.ForgeUser(ctx, a.ProjectID, a.Repo)
 	if err != nil {
-		return false, fmt.Errorf("forge account: %w", err)
+		return false, fmt.Errorf("repository account: %w", err)
 	}
 	var errs []string
 	fired := false

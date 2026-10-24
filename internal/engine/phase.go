@@ -314,10 +314,10 @@ func (x *exec) evaluateIdle(st *idler) error {
 			return context.Cause(x.ctx)
 		}
 		st.failures++
-		x.e.log.Warn("idle: forge poll failed", "run", rs.runID, "err", err, "streak", st.failures)
+		x.e.log.Warn("idle: repository poll failed", "run", rs.runID, "err", err, "streak", st.failures)
 		if st.failures == 3 {
 			x.e.notify(x.bg, ports.Notification{RunID: rs.runID, Type: event.PingBlocker,
-				Title: "Cannot reach the forge to watch this run's merge requests", Body: err.Error()})
+				Title: "Cannot reach the repository to watch this run's merge requests", Body: err.Error()})
 		}
 		return nil
 	}
@@ -558,7 +558,7 @@ func (x *exec) triggerHolds(ph *flow.Phase, o mrObservation) (bool, string, stri
 		if !o.status.MergeableNow {
 			return false, "", ""
 		}
-		return true, o.status.HeadSHA, fmt.Sprintf("The forge says %s can be merged now.", o.mr.Ref.URL)
+		return true, o.status.HeadSHA, fmt.Sprintf("The repository says %s can be merged now.", o.mr.Ref.URL)
 	case signalspec.MRHeadMoved:
 		head := o.status.HeadSHA
 		if head == "" || x.rs.knownHead(o.mr.Repo, head) {

@@ -1135,7 +1135,7 @@ stages:
 	blockers := func() int {
 		n := 0
 		for _, s := range h.ch.Sent() {
-			if strings.Contains(s.Title, "Cannot reach the forge") {
+			if strings.Contains(s.Title, "Cannot reach the repository") {
 				n++
 			}
 		}

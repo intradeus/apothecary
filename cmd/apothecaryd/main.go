@@ -143,7 +143,7 @@ func registry(dev bool) *kinds.Registry {
 
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	dev := fs.Bool("dev", false, "register fake kinds and seed a dev project (no real workspace/opencode/forge)")
+	dev := fs.Bool("dev", false, "register fake kinds and seed a dev project (no real workspace, opencode or repository host)")
 	_ = fs.Parse(args)
 
 	log := slog.Default()
@@ -170,7 +170,7 @@ func cmdServe(args []string) error {
 	// No built-in flows: flows are user-defined, created in the UI (Lu,
 	// post-M8). Only -dev seeds one, for its fake sandbox.
 	if *dev {
-		log.Warn("dev mode: fake kinds registered (no real workspaces, harness, or forge)")
+		log.Warn("dev mode: fake kinds registered (no real workspaces, harness, or repository host)")
 		if err := seedDevProject(ctx, conf); err != nil {
 			return fmt.Errorf("seed dev project: %w", err)
 		}

@@ -113,21 +113,21 @@ var registry = []Signal{{
 }, {
 	Slug:        MROpened,
 	Title:       "Run started on a merge request",
-	Description: "A run is created for this phase on a merge request someone opened — a person names it on the start-run form, or the forge_mr automation picks it. The run works on that merge request's branch, the merge request is the phase's subject, and the run's outcomes follow it. An entrypoint, like run_start.",
+	Description: "A run is created for this phase on a merge request someone opened — a person names it on the start-run form, or a merge-request automation picks it. The run works on that merge request's branch, the merge request is the phase's subject, and the run's outcomes follow it. An entrypoint, like run_start.",
 	Requires:    RequiresForge,
 	Brings:      NeedsMR,
 	Entry:       true,
 }, {
 	Slug:        MRMerged,
 	Title:       "Merge request merged",
-	Description: "Holds once every merge request the run opened is merged on the forge. A phase on it is an outcome: it fires once and ends the run; a wait stage may park on it instead.",
+	Description: "Holds once every merge request the run opened is merged. A phase on it is an outcome: it fires once and ends the run; a wait stage may park on it instead.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
 	Outcome:     true,
 }, {
 	Slug:        MRClosed,
 	Title:       "Merge request closed unmerged",
-	Description: "Holds as soon as one of the run's merge requests is closed without being merged — someone decided against it on the forge. A phase on it is an outcome, acting on the closed merge request.",
+	Description: "Holds as soon as one of the run's merge requests is closed without being merged — someone decided against it. A phase on it is an outcome, acting on the closed merge request.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
 	Outcome:     true,
@@ -141,7 +141,7 @@ var registry = []Signal{{
 }, {
 	Slug:        MRConflicts,
 	Title:       "Merge request conflicts with its target",
-	Description: "Holds while the forge reports the merge request cannot merge cleanly into its target. Once per (target tip, head) pair: a declined or finished fix is not offered again until either moves.",
+	Description: "Holds while the repository reports the merge request cannot merge cleanly into its target. Once per (target tip, head) pair: a declined or finished fix is not offered again until either moves.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
 	Trigger:     true,
@@ -163,7 +163,7 @@ var registry = []Signal{{
 }, {
 	Slug:        MRMergeable,
 	Title:       "Merge request can be merged",
-	Description: "Holds while the forge says it would merge the merge request now: no conflict, its required approvals and checks in, not a draft. The forge's own verdict, so the project's rules decide. Once per head.",
+	Description: "Holds while the repository says it would merge the merge request now: no conflict, its required approvals and checks in, not a draft. The repository's own verdict, so the project's rules decide. Once per head.",
 	Requires:    RequiresForge,
 	Needs:       NeedsMR,
 	Trigger:     true,

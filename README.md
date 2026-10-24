@@ -5,7 +5,7 @@ request comes out.** AI agents and deterministic gates alternate along a
 flow you define, inside disposable sandboxed workspaces, with humans at
 exactly two touchpoints — plan approval and final review.
 
-- **Configured entirely in the UI.** Forge accounts, workspace
+- **Configured entirely in the UI.** Repository accounts, workspace
   provisioning, the coding agent and its model auth, projects, flows —
   all live in the database, encrypted where secret. The daemon boots from
   five environment variables.
@@ -39,7 +39,7 @@ exactly two touchpoints — plan approval and final review.
   `docker compose` Coder works fine) and a **long-lived API token** for it
   (see [Configure](#configure-all-in-the-ui) — a `coder login` session token
   works but expires, silently stalling provisioning).
-- A **forge account**: GitLab PAT (`api` scope, Developer+ on the target
+- A **repository account**: GitLab PAT (`api` scope, Developer+ on the target
   project) or GitHub PAT (`repo` scope, or fine-grained Contents:RW +
   Pull requests:RW).
 - **Model auth for your coding agent**: an opencode `auth.json` (API keys
@@ -76,7 +76,7 @@ automatically. Database migrations apply at boot.
 ## Configure (all in the UI)
 
 1. **Integrations** — add and **Test** each:
-   - *Forge*: GitLab or GitHub + token.
+   - *Repositories*: GitLab or GitHub + token.
    - *Provisioner*: Coder URL + **API token** (+ template name, default
      `apothecary` — the engine manages the template's content for you).
 
@@ -183,7 +183,7 @@ automatically. Database migrations apply at boot.
    from the skeleton; the editor validates with line-precise errors, and
    the *Available models* panel lists the exact `provider/model` strings
    your harness can route).
-3. **Projects** — New project: pick the forge → *Browse repositories* →
+3. **Projects** — New project: pick the repository account → *Browse repositories* →
    set commands (`setup` is optional; `verify` is what test stages run) →
    pick provisioner + harness → add toolchain **presets** to the
    Dockerfile fragment (Go, Python, Node, JVM, C toolchain) → default
@@ -193,7 +193,7 @@ automatically. Database migrations apply at boot.
    the agent should only read. The primary's devcontainer must carry their
    toolchains.
 4. **Preflight**, then **Envcheck** on the project page. Preflight checks
-   the configuration without building anything — forge access, AGENTS.md,
+   the configuration without building anything — repository access, AGENTS.md,
    the devcontainer, the flow's references, and that every agent stage's
    model is one the harness's credentials can reach. Envcheck provisions a
    throwaway workspace and proves the whole contract — image, egress
