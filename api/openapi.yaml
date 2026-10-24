@@ -1117,6 +1117,63 @@ components:
         - IID
         - URL
       type: object
+    MRRow:
+      properties:
+        mine:
+          type: boolean
+        mr:
+          $ref: '#/components/schemas/MRInfo'
+        run:
+          $ref: '#/components/schemas/MRRun'
+        runs:
+          type: integer
+        ticket_id:
+          type: string
+      required:
+        - mr
+      type: object
+    MRRun:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        flow:
+          type: string
+        id:
+          type: string
+        phase:
+          type: string
+        state:
+          type: string
+      required:
+        - created_at
+        - flow
+        - id
+        - state
+      type: object
+    MRRunRequest:
+      properties:
+        flow:
+          type: string
+        params:
+          additionalProperties:
+            type: string
+          type: object
+        phase:
+          type: string
+        repo:
+          type: string
+      type: object
+    MRRunStarted:
+      properties:
+        run_id:
+          type: string
+        ticket_id:
+          type: string
+      required:
+        - run_id
+        - ticket_id
+      type: object
     MessageAccepted:
       properties:
         message_id:
@@ -1661,61 +1718,6 @@ components:
         - net_rx
         - net_tx
         - pids
-      type: object
-    ReviewRequest:
-      properties:
-        flow:
-          type: string
-        params:
-          additionalProperties:
-            type: string
-          type: object
-        phase:
-          type: string
-        repo:
-          type: string
-      type: object
-    ReviewRow:
-      properties:
-        mine:
-          type: boolean
-        mr:
-          $ref: '#/components/schemas/MRInfo'
-        run:
-          $ref: '#/components/schemas/ReviewRun'
-        runs:
-          type: integer
-        ticket_id:
-          type: string
-      required:
-        - mr
-      type: object
-    ReviewRun:
-      properties:
-        created_at:
-          format: date-time
-          type: string
-        flow:
-          type: string
-        id:
-          type: string
-        state:
-          type: string
-      required:
-        - created_at
-        - flow
-        - id
-        - state
-      type: object
-    ReviewStarted:
-      properties:
-        run_id:
-          type: string
-        ticket_id:
-          type: string
-      required:
-        - run_id
-        - ticket_id
       type: object
     RunCheckout:
       properties:
@@ -4387,7 +4389,7 @@ paths:
         - flows
   /api/projects/{id}/mrs:
     get:
-      description: 'What a run may be created on, at an entrypoint on mr_opened: the repository''s open merge requests, newest first, each with its author and head.'
+      description: 'The repository''s open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket''s newest run. What a run may be created on, at a flow''s mr_opened entrypoint.'
       operationId: listProjectMRs
       parameters:
         - in: path
@@ -4406,7 +4408,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/MRInfo'
+                  $ref: '#/components/schemas/MRRow'
                 nullable: true
                 type: array
           description: OK
@@ -4422,13 +4424,13 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: Open merge requests of a project's repository
+      summary: Open merge requests of a project's repository, with the runs on each
       tags:
         - projects
-  /api/projects/{id}/mrs/{iid}/review:
+  /api/projects/{id}/mrs/{iid}/runs:
     post:
-      description: Finds or makes the merge request's ticket and creates a run on the merge request at the flow's mr_opened entrypoint (the built-in reviewer unless the body names another). 409 while a review of it is already running.
-      operationId: startReview
+      description: Finds or makes the merge request's ticket and creates a run on the merge request at the flow's mr_opened entrypoint (the project's default flow unless the body names another). 409 while a run of the same flow on it is going.
+      operationId: startMRRun
       parameters:
         - in: path
           name: id
@@ -4444,14 +4446,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ReviewRequest'
+              $ref: '#/components/schemas/MRRunRequest'
         required: true
       responses:
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewStarted'
+                $ref: '#/components/schemas/MRRunStarted'
           description: Created
         "400":
           content:
@@ -4469,7 +4471,7 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: Start a review of a merge request
+      summary: Start a run of a flow on a merge request
       tags:
         - projects
   /api/projects/{id}/preflight:
@@ -4505,46 +4507,6 @@ paths:
             application/json: {}
           description: error
       summary: Check a project is ready to run, step by step
-      tags:
-        - projects
-  /api/projects/{id}/reviews:
-    get:
-      description: 'The Reviews tab: each open merge request of the repository, whether the factory itself opened it, and the review done of it here — its ticket and that ticket''s newest run.'
-      operationId: listReviews
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-        - description: 'the repository: "repo" (the default) for the primary, an extra repository''s name'
-          in: query
-          name: repo
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/ReviewRow'
-                nullable: true
-                type: array
-          description: OK
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      summary: Open merge requests and the review of each
       tags:
         - projects
   /api/runs:

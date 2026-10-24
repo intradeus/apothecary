@@ -17,7 +17,7 @@ import { unwrap, unwrapOptional, unwrapVoid } from './client';
 import * as map from './mappers';
 import type {
 	OpenMergeRequest,
-	ReviewRow,
+	MergeRequestRow,
 	ActionSpec,
 	Attachment,
 	Automation,
@@ -420,35 +420,31 @@ export const projects = {
 		many(await unwrap(gen.listProjectBranches({ path: { id } })), map.toBranch),
 	/** The repository's open merge requests, newest first: what a run may be
 	 *  created on at an entrypoint on mr_opened. */
-	/** The Reviews tab's rows: each open merge request and its review. */
-	reviews: async (id: string, repo?: string): Promise<ReviewRow[]> =>
+	mergeRequests: async (id: string, repo?: string): Promise<MergeRequestRow[]> =>
 		many(
-			await unwrap(gen.listReviews({ path: { id }, query: repo ? { repo } : undefined })),
-			map.toReviewRow
+			await unwrap(gen.listProjectMrs({ path: { id }, query: repo ? { repo } : undefined })),
+			map.toMergeRequestRow
 		),
-	/** Start a review of a merge request: its ticket found or made, a run of
-	 *  the flow created on it. */
-	startReview: async (
+	/** Start a run of a flow on a merge request: its ticket found or made, the
+	 *  run created at the flow's mr_opened entrypoint. */
+	startRunOnMR: async (
 		id: string,
 		iid: number,
-		opts?: { flow?: string; repo?: string }
+		opts?: { flow?: string; phase?: string; repo?: string; params?: Record<string, string> }
 	): Promise<{ runId: string; ticketId: string }> => {
 		const r = await unwrap(
-			gen.startReview({
+			gen.startMrRun({
 				path: { id, iid: String(iid) },
 				body: {
 					...(opts?.flow ? { flow: opts.flow } : {}),
-					...(opts?.repo ? { repo: opts.repo } : {})
+					...(opts?.phase ? { phase: opts.phase } : {}),
+					...(opts?.repo ? { repo: opts.repo } : {}),
+					...(opts?.params && Object.keys(opts.params).length ? { params: opts.params } : {})
 				}
 			})
 		);
 		return { runId: r.run_id, ticketId: r.ticket_id };
 	},
-	mergeRequests: async (id: string, repo?: string): Promise<OpenMergeRequest[]> =>
-		many(
-			await unwrap(gen.listProjectMrs({ path: { id }, query: repo ? { repo } : undefined })),
-			map.toOpenMergeRequest
-		),
 
 	preflight: async (id: string): Promise<Preflight> =>
 		map.toPreflight(await unwrap(gen.preflightProject({ path: { id } }))),

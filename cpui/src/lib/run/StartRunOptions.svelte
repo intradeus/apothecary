@@ -72,8 +72,9 @@
 		}
 		let live = true;
 		api.projects.mergeRequests(projectId).then(
-			(list) => {
+			(rows) => {
 				if (!live) return;
+				const list = rows.map((r) => r.mr);
 				openMRs = list;
 				mrError = '';
 				if (!list.some((m) => m.iid === mr)) mr = list[0]?.iid ?? 0;

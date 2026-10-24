@@ -309,7 +309,7 @@ export default {
 	'page.workshop.tabOverview': 'Overview',
 	'page.workshop.tabAgents': 'Agents',
 	'page.workshop.tabAutomations': 'Automations',
-	'page.workshop.tabReviews': 'Reviews',
+	'page.workshop.tabForge': 'Forge',
 	'page.workshop.tabHealth': 'Health',
 	'page.workshop.deleteTitle': 'Delete {name}?',
 	'page.workshop.deleteBody':

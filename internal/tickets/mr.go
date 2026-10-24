@@ -4,8 +4,9 @@ package tickets
 // opened belongs to a ticket of its own — the merge request's title and
 // description, keyed by its URL, with no tracker behind it (tracker actions
 // skip). The forge_mr automation makes them as it finds merge requests; the
-// Reviews tab when a person starts a review. Both find the same ticket for
-// the same merge request, so neither reviews it twice by accident.
+// workshop's Forge tab when a person starts a run on one. Both find the same
+// ticket for the same merge request, so a merge request's runs, however
+// begun, are filed together.
 
 import (
 	"context"

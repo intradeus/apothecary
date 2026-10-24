@@ -513,6 +513,36 @@ export type MrRef = {
 	URL: string;
 };
 
+export type MrRow = {
+	mine?: boolean;
+	mr: MrInfo;
+	run?: MrRun;
+	runs?: number;
+	ticket_id?: string;
+};
+
+export type MrRun = {
+	created_at: string;
+	flow: string;
+	id: string;
+	phase?: string;
+	state: string;
+};
+
+export type MrRunRequest = {
+	flow?: string;
+	params?: {
+		[key: string]: string;
+	};
+	phase?: string;
+	repo?: string;
+};
+
+export type MrRunStarted = {
+	run_id: string;
+	ticket_id: string;
+};
+
 export type MessageAccepted = {
 	message_id: string;
 };
@@ -749,35 +779,6 @@ export type ResourceSample = {
 	net_rx: number;
 	net_tx: number;
 	pids: number;
-};
-
-export type ReviewRequest = {
-	flow?: string;
-	params?: {
-		[key: string]: string;
-	};
-	phase?: string;
-	repo?: string;
-};
-
-export type ReviewRow = {
-	mine?: boolean;
-	mr: MrInfo;
-	run?: ReviewRun;
-	runs?: number;
-	ticket_id?: string;
-};
-
-export type ReviewRun = {
-	created_at: string;
-	flow: string;
-	id: string;
-	state: string;
-};
-
-export type ReviewStarted = {
-	run_id: string;
-	ticket_id: string;
 };
 
 export type RunCheckout = {
@@ -3074,22 +3075,22 @@ export type ListProjectMrsResponses = {
 	/**
 	 * OK
 	 */
-	200: Array<MrInfo> | null;
+	200: Array<MrRow> | null;
 };
 
 export type ListProjectMrsResponse = ListProjectMrsResponses[keyof ListProjectMrsResponses];
 
-export type StartReviewData = {
-	body: ReviewRequest;
+export type StartMrRunData = {
+	body: MrRunRequest;
 	path: {
 		id: string;
 		iid: string;
 	};
 	query?: never;
-	url: '/api/projects/{id}/mrs/{iid}/review';
+	url: '/api/projects/{id}/mrs/{iid}/runs';
 };
 
-export type StartReviewErrors = {
+export type StartMrRunErrors = {
 	/**
 	 * error
 	 */
@@ -3108,14 +3109,14 @@ export type StartReviewErrors = {
 	503: unknown;
 };
 
-export type StartReviewResponses = {
+export type StartMrRunResponses = {
 	/**
 	 * Created
 	 */
-	201: ReviewStarted;
+	201: MrRunStarted;
 };
 
-export type StartReviewResponse = StartReviewResponses[keyof StartReviewResponses];
+export type StartMrRunResponse = StartMrRunResponses[keyof StartMrRunResponses];
 
 export type PreflightProjectData = {
 	body?: never;
@@ -3153,44 +3154,6 @@ export type PreflightProjectResponses = {
 };
 
 export type PreflightProjectResponse = PreflightProjectResponses[keyof PreflightProjectResponses];
-
-export type ListReviewsData = {
-	body?: never;
-	path: {
-		id: string;
-	};
-	query?: {
-		/**
-		 * the repository: "repo" (the default) for the primary, an extra repository's name
-		 */
-		repo?: string;
-	};
-	url: '/api/projects/{id}/reviews';
-};
-
-export type ListReviewsErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type ListReviewsResponses = {
-	/**
-	 * OK
-	 */
-	200: Array<ReviewRow> | null;
-};
-
-export type ListReviewsResponse = ListReviewsResponses[keyof ListReviewsResponses];
 
 export type ListRunsData = {
 	body?: never;

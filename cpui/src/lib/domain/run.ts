@@ -209,14 +209,14 @@ export interface RunInput {
 	mr?: { repo?: string; iid: number };
 }
 
-/** One row of the Reviews tab: an open merge request, whether the factory
- *  itself opened it, and the review done of it here — its ticket and that
- *  ticket's newest run. */
-export interface ReviewRow {
+/** An open merge request of a project's repository with the runs done on
+ *  it: whether the factory itself opened it, its ticket and that ticket's
+ *  newest run. */
+export interface MergeRequestRow {
 	mr: OpenMergeRequest;
 	mine: boolean;
 	ticketId?: string;
-	run?: { id: string; state: RunState; flow: string; createdAt: string };
+	run?: { id: string; state: RunState; flow: string; phase?: string; createdAt: string };
 	runs: number;
 }
 

@@ -2,7 +2,7 @@ name: reviewer
 version: 4
 description: "review a merge request someone opened: notes on its lines and a summary, again after every push, until it merges or closes"
 # A run of this flow is created ON a merge request a person opened (on:
-# mr_opened) — from the workshop's Reviews tab, or by a forge_mr automation
+# mr_opened) — from the workshop's Forge tab, or by a forge_mr automation
 # watching the repository. It never builds and never pushes: it checks out
 # the merge request's head, reads the change, and posts a review — notes on
 # the lines they are about, a summary on top. It never approves nor requests
