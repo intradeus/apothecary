@@ -315,7 +315,7 @@ func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
 }
 
 // TestReviewerTemplate: the reviewer is started on someone's merge request,
-// reviews it through one block from its main chain and again after the
+// reviews it through one sequence from its main chain and again after the
 // author's pushes, never builds or pushes, and ends with the merge request.
 func TestReviewerTemplate(t *testing.T) {
 	f := Flow("reviewer")

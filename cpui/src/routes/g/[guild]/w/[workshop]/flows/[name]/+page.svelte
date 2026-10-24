@@ -12,7 +12,7 @@
 	import { currentGuild, to } from '$lib/guild';
 	import { ago, fmtAbs } from '$lib/format';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import FlowGraph, { type BlockView, type Selection } from '$lib/FlowGraph.svelte';
+	import FlowGraph, { type SequenceView, type Selection } from '$lib/FlowGraph.svelte';
 	import FlowInspector from '$lib/FlowInspector.svelte';
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
@@ -43,7 +43,7 @@
 		effectiveSuccess,
 		setEdge,
 		setEntry,
-		type DocBlock,
+		type DocSequence,
 		type DocEdge,
 		type DocStage,
 		type EdgeKind,
@@ -282,55 +282,58 @@
 		rev++;
 	}
 
-	// ---- an include's block, opened beside the flow ----------------------
-	// Selecting an include opens the block it runs in a pane of its own, its
-	// chain drawn like a flow; selecting anything else (or the empty canvas)
-	// closes it. An include inside the block opens that block in its place —
-	// `nested` is the path of include ids below the selected one.
+	// ---- a sequence stage's sequence, opened beside the flow --------------
+	// Selecting a sequence stage opens the sequence it runs in a pane of its
+	// own, its chain drawn like a flow; selecting anything else (or the empty
+	// canvas) closes it. A sequence stage inside the sequence opens that
+	// sequence in its place — `nested` is the path of sequence stage ids
+	// below the selected one.
 	interface Level {
-		include: DocStage;
-		block: DocBlock;
-		view: BlockView;
+		stage: DocStage;
+		sequence: DocSequence;
+		view: SequenceView;
 	}
 	let nested = $state<{ root: string; path: string[] }>({ root: '', path: [] });
 	const failOf = (e: DocEdge | undefined, outer?: string) => {
 		const to = chainLinks(e)[0]?.to;
 		return to === FAIL ? outer : to;
 	};
+	const sequenceOf = (st: DocStage | undefined) =>
+		st?.type === 'sequence' ? doc?.sequences?.find((q) => q.id === st.sequence) : undefined;
 	const levels = $derived.by((): Level[] => {
 		const sel = selection;
 		if (!doc || tab !== 'graph' || sel?.kind !== 'stage') return [];
 		const i = doc.stages.findIndex((s) => s.id === sel.id);
-		const inc = doc.stages[i];
-		const blk = inc?.type === 'include' ? doc.blocks?.find((b) => b.id === inc.include) : undefined;
-		if (!blk) return [];
+		const st = doc.stages[i];
+		const seq = sequenceOf(st);
+		if (!seq) return [];
 		const out: Level[] = [
 			{
-				include: inc,
-				block: blk,
+				stage: st,
+				sequence: seq,
 				view: {
-					id: blk.id,
-					description: blk.description,
+					id: seq.id,
+					description: seq.description,
 					exit: effectiveSuccess(doc, i),
-					fail: failOf(inc.on_fail)
+					fail: failOf(st.on_fail)
 				}
 			}
 		];
-		for (const id of nested.root === inc.id ? nested.path : []) {
+		for (const id of nested.root === st.id ? nested.path : []) {
 			const up = out[out.length - 1];
-			const j = up.block.stages.findIndex((s) => s.id === id);
-			const s = up.block.stages[j];
-			const b = s?.type === 'include' ? doc.blocks?.find((x) => x.id === s.include) : undefined;
-			if (!b) break;
+			const j = up.sequence.stages.findIndex((s) => s.id === id);
+			const s = up.sequence.stages[j];
+			const q = sequenceOf(s);
+			if (!q) break;
 			out.push({
-				include: s,
-				block: b,
+				stage: s,
+				sequence: q,
 				view: {
-					id: b.id,
-					description: b.description,
-					// Its success is the next stage of the block around it — or
-					// that block's own way out.
-					exit: s.on_success ?? up.block.stages[j + 1]?.id ?? up.view.exit,
+					id: q.id,
+					description: q.description,
+					// Its success is the next stage of the sequence around it — or
+					// that sequence's own way out.
+					exit: s.on_success ?? up.sequence.stages[j + 1]?.id ?? up.view.exit,
 					fail: failOf(s.on_fail, up.view.fail)
 				}
 			});
@@ -338,37 +341,37 @@
 		return out;
 	});
 	const open = $derived(levels.at(-1));
-	// The open block as a document of its own: the flow's agents, parameters
-	// and blocks, the block's stages.
-	const blockDoc = $derived<FlowDoc | null>(
-		doc && open ? { ...doc, phases: undefined, stages: open.block.stages } : null
+	// The open sequence as a document of its own: the flow's agents,
+	// parameters and sequences, the sequence's stages.
+	const sequenceDoc = $derived<FlowDoc | null>(
+		doc && open ? { ...doc, phases: undefined, stages: open.sequence.stages } : null
 	);
-	let blockLayout = $state<Record<string, { x: number; y: number }>>({});
-	let blockRev = $state(0);
+	let sequenceLayout = $state<Record<string, { x: number; y: number }>>({});
+	let sequenceRev = $state(0);
 	$effect(() => {
-		if (!blockDoc) return;
-		blockLayout = columnLayout(blockDoc);
-		untrack(() => blockRev++);
+		if (!sequenceDoc) return;
+		sequenceLayout = columnLayout(sequenceDoc);
+		untrack(() => sequenceRev++);
 	});
-	function onBlockMeasured(sizes: Record<string, NodeSize>) {
-		if (!blockDoc) return;
-		blockLayout = columnLayout(blockDoc, sizes);
-		blockRev++;
+	function onSequenceMeasured(sizes: Record<string, NodeSize>) {
+		if (!sequenceDoc) return;
+		sequenceLayout = columnLayout(sequenceDoc, sizes);
+		sequenceRev++;
 	}
-	function onBlockSelect(sel: Selection) {
+	function onSequenceSelect(sel: Selection) {
 		if (sel?.kind !== 'stage' || !open || !levels.length) return;
-		const s = open.block.stages.find((x) => x.id === sel.id);
-		if (s?.type !== 'include' || !doc?.blocks?.some((b) => b.id === s.include)) return;
+		const s = open.sequence.stages.find((x) => x.id === sel.id);
+		if (!sequenceOf(s)) return;
 		nested = {
-			root: levels[0].include.id,
-			path: [...levels.slice(1).map((l) => l.include.id), s.id]
+			root: levels[0].stage.id,
+			path: [...levels.slice(1).map((l) => l.stage.id), s!.id]
 		};
 	}
-	/** Back to the block at `depth` (0 = the selected include's). */
+	/** Back to the sequence at `depth` (0 = the selected sequence stage's). */
 	const backTo = (depth: number) =>
 		(nested = {
-			root: levels[0].include.id,
-			path: levels.slice(1, depth + 1).map((l) => l.include.id)
+			root: levels[0].stage.id,
+			path: levels.slice(1, depth + 1).map((l) => l.stage.id)
 		});
 	// Opening or closing the pane resizes the flow's canvas: it fits again.
 	let mainRefit = $state(0);
@@ -754,10 +757,10 @@
 							{@html th('page.flow.hint')}
 						</div>
 					</div>
-					{#if open && blockDoc}
+					{#if open && sequenceDoc}
 						<section
-							class="pane block"
-							aria-label={t('page.flow.blockPane', { block: open.block.id })}
+							class="pane seq"
+							aria-label={t('page.flow.sequencePane', { sequence: open.sequence.id })}
 							in:slide={{ from: 'right', distance: 32 }}
 						>
 							<header class="bh">
@@ -765,35 +768,35 @@
 									{#each levels as l, d (d)}
 										{#if d > 0}<span class="fnt">›</span>{/if}
 										{#if d < levels.length - 1}
-											<button class="rowbtn" onclick={() => backTo(d)}>{l.block.id}</button>
+											<button class="rowbtn" onclick={() => backTo(d)}>{l.sequence.id}</button>
 										{:else}
-											<span class="cur">{l.block.id}</span>
+											<span class="cur">{l.sequence.id}</span>
 										{/if}
 									{/each}
 								</nav>
 								<span class="fnt small ell grow"
-									>{open.block.description ??
-										t('page.flow.blockRunsAs', { include: levels[0].include.id })}</span
+									>{open.sequence.description ??
+										t('page.flow.sequenceRunsAs', { stage: levels[0].stage.id })}</span
 								>
 								<button
 									class="btn-icon"
-									title={t('page.flow.blockClose')}
-									aria-label={t('page.flow.blockClose')}
+									title={t('page.flow.sequenceClose')}
+									aria-label={t('page.flow.sequenceClose')}
 									onclick={() => (selection = null)}>{I.close}</button
 								>
 							</header>
-							{#key levels.map((l) => l.block.id).join('/')}
+							{#key levels.map((l) => l.sequence.id).join('/')}
 								<FlowGraph
-									doc={blockDoc}
-									layout={blockLayout}
-									rev={blockRev}
-									block={open.view}
+									doc={sequenceDoc}
+									layout={sequenceLayout}
+									rev={sequenceRev}
+									sequence={open.view}
 									readonly
 									legible={0.2}
-									onselect={onBlockSelect}
+									onselect={onSequenceSelect}
 									onmove={() => {}}
 									onlink={() => {}}
-									onmeasured={onBlockMeasured}
+									onmeasured={onSequenceMeasured}
 									agents={doc.agents ?? []}
 									{actions}
 								/>
@@ -963,8 +966,8 @@
 		border: 1px solid var(--cLn);
 		overflow: hidden;
 	}
-	/* The flow, and — while an include is selected — the block it runs, side
-	 * by side. */
+	/* The flow, and — while a sequence stage is selected — the sequence it
+	 * runs, side by side. */
 	.split {
 		display: flex;
 		height: 100%;
@@ -980,7 +983,7 @@
 		flex: 1;
 		min-height: 0;
 	}
-	.pane.block {
+	.pane.seq {
 		flex: 0 0 55%;
 		border-left: 1px solid var(--cLn);
 	}
@@ -1082,7 +1085,7 @@
 		.split {
 			flex-direction: column;
 		}
-		.pane.block {
+		.pane.seq {
 			flex-basis: 50%;
 			border-left: none;
 			border-top: 1px solid var(--cLn);

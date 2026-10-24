@@ -9,7 +9,7 @@
 		stageOutputs,
 		type ActionContract,
 		type AgentContract,
-		type DocBlock,
+		type DocSequence,
 		type DocStage
 	} from '$lib/flowdoc';
 
@@ -22,11 +22,11 @@
 	const leaving = $derived(Boolean(data.leaving));
 	const agents = $derived((data.agents ?? []) as AgentContract[]);
 	const actions = $derived((data.actions ?? []) as ActionContract[]);
-	// An include says what it runs: its block's chain, and its description on
-	// hover. Clicking it opens the block beside the flow.
-	const block = $derived(
-		stage.type === 'include'
-			? ((data.blocks ?? []) as DocBlock[]).find((b) => b.id === stage.include)
+	// A sequence stage says what it runs: its sequence's chain, and its
+	// description on hover. Clicking it opens the sequence beside the flow.
+	const sequence = $derived(
+		stage.type === 'sequence'
+			? ((data.sequences ?? []) as DocSequence[]).find((q) => q.id === stage.sequence)
 			: undefined
 	);
 
@@ -74,12 +74,12 @@
 			return stage.for
 				? set(t('flow.node.waitFor', { signal: stage.for }))
 				: unset(t('flow.node.waitFor', { signal: t('flow.node.noSignal') }));
-		if (stage.type === 'include')
-			return !stage.include
-				? unset(t('flow.node.noBlock'))
-				: block
-					? set(`${block.id}: ${block.stages.map((b) => b.id).join(' → ')}`)
-					: unset(t('flow.node.includes', { block: stage.include }));
+		if (stage.type === 'sequence')
+			return !stage.sequence
+				? unset(t('flow.node.noSequence'))
+				: sequence
+					? set(`${sequence.id}: ${sequence.stages.map((q) => q.id).join(' → ')}`)
+					: unset(t('flow.node.unknownSequence', { sequence: stage.sequence }));
 		return set(stage.question || t('flow.node.asksHuman'));
 	});
 </script>
@@ -109,8 +109,8 @@
 	<div
 		class="meta"
 		class:unset={detail.unset}
-		title={block
-			? [block.description, t('flow.node.openBlock')].filter(Boolean).join(' — ')
+		title={sequence
+			? [sequence.description, t('flow.node.openSequence')].filter(Boolean).join(' — ')
 			: undefined}
 	>
 		{detail.text}
@@ -166,7 +166,7 @@
 		</div>
 	{/if}
 
-	{#if stage.type === 'include' || stage.type === 'action'}
+	{#if stage.type === 'sequence' || stage.type === 'action'}
 		<Handle
 			id="on_fail"
 			type="source"

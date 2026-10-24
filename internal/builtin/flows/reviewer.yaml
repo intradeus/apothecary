@@ -87,7 +87,7 @@ agents:
       If your prompt carries a rejection, a person read your last draft: do what
       they asked. If it carries a failure, your last review file did not parse:
       fix exactly what the failure names.
-blocks:
+sequences:
   # Read the change, let a person read the review when the workshop wants
   # one, post it. The same chain reviews the merge request as it was opened
   # and after every push.
@@ -104,14 +104,14 @@ blocks:
           on_fail: debug }
 # The first review, of the merge request as it was opened.
 main:
-  - { id: review, include: review }
+  - { id: review, sequence: review }
 watchers:
   # The author pushed and stopped: review what the merge request is now.
   - id: again
     on: { signal: mr_head_moved, quiet_for: $rereview_quiet }
     description: "the author pushed: review what the merge request is now"
     stages:
-      - { id: rereview, include: review }
+      - { id: rereview, sequence: review }
 outcomes:
   # Merged or closed: nothing left to review.
   - { id: merged, on: mr_merged, then: done, description: "it merged: the review is over" }

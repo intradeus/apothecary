@@ -243,17 +243,17 @@
 					: 'flow'
 	);
 	const xf = () => ({ duration: ms('--dur-fade', 160) });
-	// An include is offered once the document has a block to include.
+	// A sequence stage is offered once the document has a sequence to run.
 	const ADD = $derived<StageKind[]>([
 		'agent',
 		'command',
 		'human_gate',
 		'action',
 		'wait',
-		...(doc.blocks?.length ? (['include'] as const) : [])
+		...(doc.sequences?.length ? (['sequence'] as const) : [])
 	]);
-	const blockSel = $derived(
-		stage?.type === 'include' ? doc.blocks?.find((b) => b.id === stage.include) : undefined
+	const sequenceSel = $derived(
+		stage?.type === 'sequence' ? doc.sequences?.find((q) => q.id === stage.sequence) : undefined
 	);
 
 	const edgeSel = $derived(
@@ -473,7 +473,7 @@
 					</div>
 				{/if}
 
-				{#if s.type !== 'include'}
+				{#if s.type !== 'sequence'}
 					<div class="field">
 						<label for="st-when">{t('flow.insp.when')}</label>
 						<select
@@ -848,37 +848,37 @@
 					{:else if s.action}
 						<div class="help hue-amb">{t('flow.insp.unknownAction', { name: s.action })}</div>
 					{/if}
-				{:else if s.type === 'include'}
+				{:else if s.type === 'sequence'}
 					<div class="field">
-						<label for="st-block">{t('flow.insp.block')}</label>
+						<label for="st-sequence">{t('flow.insp.sequence')}</label>
 						<select
-							id="st-block"
-							value={s.include ?? ''}
+							id="st-sequence"
+							value={s.sequence ?? ''}
 							onchange={(e) => {
-								s.include = e.currentTarget.value;
+								s.sequence = e.currentTarget.value;
 								onchange();
 							}}
 						>
-							{#each doc.blocks ?? [] as b (b.id)}<option value={b.id}>{b.id}</option>{/each}
-							{#if s.include && !doc.blocks?.some((b) => b.id === s.include)}
-								<option value={s.include}>{s.include}</option>
+							{#each doc.sequences ?? [] as q (q.id)}<option value={q.id}>{q.id}</option>{/each}
+							{#if s.sequence && !doc.sequences?.some((q) => q.id === s.sequence)}
+								<option value={s.sequence}>{s.sequence}</option>
 							{/if}
 						</select>
-						<div class="help">{t('flow.insp.blockHelp')}</div>
+						<div class="help">{t('flow.insp.sequenceHelp')}</div>
 					</div>
-					{#if blockSel}
-						{#if blockSel.description}<div class="help">{blockSel.description}</div>{/if}
+					{#if sequenceSel}
+						{#if sequenceSel.description}<div class="help">{sequenceSel.description}</div>{/if}
 						<div class="grp">
-							<div class="lbl">{t('flow.insp.blockStages')}</div>
-							{#each blockSel.stages as b (b.id)}
-								<div class="blk-row">
-									<StageChip type={b.type} />
-									<span class="mono">{s.id}.{b.id}</span>
-									{#if b.include}<span class="mut small">→ {b.include}</span>{/if}
+							<div class="lbl">{t('flow.insp.sequenceStages')}</div>
+							{#each sequenceSel.stages as q (q.id)}
+								<div class="seq-row">
+									<StageChip type={q.type} />
+									<span class="mono">{s.id}.{q.id}</span>
+									{#if q.sequence}<span class="mut small">→ {q.sequence}</span>{/if}
 								</div>
 							{/each}
 						</div>
-						<div class="help">{t('flow.insp.blockEditHelp')}</div>
+						<div class="help">{t('flow.insp.sequenceEditHelp')}</div>
 					{/if}
 				{:else if s.type === 'wait'}
 					<div class="field">
@@ -1304,8 +1304,8 @@
 		padding: 12px 14px 16px;
 		font-size: var(--fs-ui);
 	}
-	/* An include's block, stage by stage, as it will run. */
-	.blk-row {
+	/* A sequence stage's sequence, stage by stage, as it will run. */
+	.seq-row {
 		display: flex;
 		align-items: center;
 		gap: 8px;

@@ -306,21 +306,6 @@ components:
         - name
         - yaml
       type: object
-    DocBlock:
-      properties:
-        description:
-          type: string
-        id:
-          type: string
-        stages:
-          items:
-            $ref: '#/components/schemas/DocStage'
-          nullable: true
-          type: array
-      required:
-        - id
-        - stages
-      type: object
     DocEdge:
       properties:
         feed:
@@ -392,6 +377,21 @@ components:
           - default
         type: object
       type: object
+    DocSequence:
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        stages:
+          items:
+            $ref: '#/components/schemas/DocStage'
+          nullable: true
+          type: array
+      required:
+        - id
+        - stages
+      type: object
     DocStage:
       properties:
         action:
@@ -411,8 +411,6 @@ components:
         harness:
           type: string
         id:
-          type: string
-        include:
           type: string
         input:
           $ref: '#/components/schemas/DocIO'
@@ -435,6 +433,8 @@ components:
         run:
           type: string
         run_ref:
+          type: string
+        sequence:
           type: string
         timeout:
           type: string
@@ -466,7 +466,7 @@ components:
           type: string
         "on":
           $ref: '#/components/schemas/DocWait'
-        run:
+        sequence:
           type: string
         stages:
           items:
@@ -817,10 +817,6 @@ components:
           items:
             $ref: '#/components/schemas/Spec'
           type: array
-        blocks:
-          items:
-            $ref: '#/components/schemas/DocBlock'
-          type: array
         description:
           type: string
         main:
@@ -837,6 +833,10 @@ components:
           $ref: '#/components/schemas/DocParams'
         run_start:
           type: string
+        sequences:
+          items:
+            $ref: '#/components/schemas/DocSequence'
+          type: array
         version:
           type: integer
         watchers:

@@ -73,7 +73,7 @@ parameters:                # the flow's ONE settings block (below): every entry 
   max_total_turns: 300
   verify: verify           #   the flow's own knobs, read where $verify appears
 agents: [...]              # the agents this flow runs — definitions, not references
-blocks: [...]              # optional: chains of stages written once, included where needed (below)
+sequences: [...]           # optional: chains of stages written once, run where a stage names them (below)
 main: [...]                # the chain a run starts with (below)
 watchers: [...]            # optional: chains run on what happens to the merge requests while the run is open
 outcomes: [...]            # optional: what ends the run, each firing once
@@ -294,10 +294,10 @@ one namespace, and `main` is taken.
   needed), `$DIFF_TARGET` is what it merges, each later chain on it first
   fast-forwards to its current head, and the outcomes follow its fate. A
   rerun stays on the merge request. The built-in `reviewer` is this shape: one
-  `review` block (read, an optional gate, `post_review`) run by its main chain
+  `review` sequence (read, an optional gate, `post_review`) run by its main chain
   and again by the watcher `again` on `mr_head_moved`, and outcomes on
   `mr_merged` and `mr_closed`. `conflict-resolver` is the same shape around a
-  `settle` block — `sync_target`, the `resolver` agent on a conflict, the
+  `settle` sequence — `sync_target`, the `resolver` agent on a conflict, the
   project's tests, `push_branch` to the merge request's own branch, leased
   against the head the chain began on — run by its main chain and again by a
   watcher on `mr_conflicts` (`start: $again_start`, `confirm` by default). A
@@ -324,10 +324,11 @@ one namespace, and `main` is taken.
   has it, that one being the subject (`mr_closed`: someone closed it
   unmerged). An open merge request keeps an outcome armed — which is what
   keeps the run waiting in review.
-- **`run: X`** stands for a chain of one stage that includes the block `X`
-  (*Blocks*, below), named after its watcher or outcome: `{ id: again, on:
-  mr_head_moved, run: review }` runs `again.read`, `again.post`, …. The main
-  chain is a block too: a watcher with `run: main` runs it again.
+- **`sequence: X`** on a watcher or an outcome stands for a chain of one
+  stage that runs the sequence `X` (*Sequences*, below), named after its
+  watcher or outcome: `{ id: again, on: mr_head_moved, sequence: review }`
+  runs `again.read`, `again.post`, …. The main chain is a sequence too: a
+  watcher with `sequence: main` runs it again.
 
 `on:` is a signal name, or a mapping:
 
@@ -444,70 +445,72 @@ and says `done` without waiting for it while watchers or outcomes watch it —
 the run would complete before they could. The budget abandons the run; so
 does a dead end in the main chain or an outcome (§3).
 
-### Blocks: chains written once
+### Sequences: chains written once
 
 Some chains recur: commit and test after every change an agent makes; plan,
-build, review, publish in both a feature and a bugfix. A **block** is such a
-chain, written once under `blocks:` — like a watcher with no `on:`: nothing
-opens it, a stage that `include:`s it runs it in its place.
+build, review, publish in both a feature and a bugfix. A **sequence** is such
+a chain, written once under `sequences:` — like a watcher with no `on:`:
+nothing opens it; a **sequence stage**, one that names it with `sequence:`,
+runs it in its place.
 
 ```yaml
-blocks:
+sequences:
   - id: ship
     description: "commit what the agent left and run the tests"
     stages:
       - { id: commit, type: command, each_repo: true, run: "git add -A && git commit -F artifacts/commit.md",
           on_fail: debug }
       - { id: test,   type: command, run_ref: $verify,
-          on_fail: fail,                                # the include's on_fail
+          on_fail: fail,                                # the sequence stage's on_fail
           on_timeout: { to: test, max: 1, then: fail } }
   - id: make
     stages:
       - { id: build,  type: agent, agent: builder, input: { failure: $FAILURE },
           on_fail: { to: build, max: 2, then: debug } }
-      - { id: ship,   include: ship, on_fail: { to: build, max: 5, then: debug } }
+      - { id: ship,   sequence: ship, on_fail: { to: build, max: 5, then: debug } }
       - { id: review, type: agent, agent: reviewer, on_reject: { to: build, max: 3, then: debug } }
 
 main:
   - { id: plan, type: agent, agent: planner }
-  - { id: make, include: make }                         # runs make.build, make.ship.commit, …
+  - { id: make, sequence: make }                        # runs make.build, make.ship.commit, …
 watchers:
   - id: review_fixes
     on: mr_review_settled
     stages:
       - { id: address,  type: agent, agent: builder }
-      - { id: fix_ship, include: ship, on_fail: { to: address, max: 3, then: debug } }
+      - { id: fix_ship, sequence: ship, on_fail: { to: address, max: 3, then: debug } }
 ```
 
-A watcher or an outcome that does nothing but run a block says so with
-`run:` — `{ id: again, on: mr_head_moved, run: review }` is a chain of one
-include, `{ id: again, include: review }`. The main chain is a block named
-`main` other chains can run: `run: main` runs the whole of it again.
+A watcher or an outcome that does nothing but run a sequence says so with
+`sequence:` itself — `{ id: again, on: mr_head_moved, sequence: review }` is a
+chain of one sequence stage, `{ id: again, sequence: review }`. The main chain
+is a sequence named `main` other chains can run: `sequence: main` runs the
+whole of it again.
 
-An include **expands in place** when the document is parsed; the engine, the
-events and the run page only ever see ordinary stages:
+A sequence stage **expands in place** when the document is parsed; the
+engine, the events and the run page only ever see ordinary stages:
 
-- **Ids.** A block's stages take the include's id and a dot in front:
-  `make.build`, `make.ship.test`, `fix_ship.commit`. A hand-written id cannot
-  contain a dot, so an expansion never collides with a stage, and the same
-  block runs under different ids wherever it is included.
-- **Routes inside a block** name the block's own stages and includes, and
-  stay inside it. A block is left two ways: through its **last stage**, whose
-  success (written or implicit) is the include's `on_success` — the next
-  stage, by default — or through **`fail`**, a reserved edge target that means
-  *the include's `on_fail`*. That chain is spliced in where `fail` is said, so
-  each stage saying it counts its own `max`; an include with no `on_fail` makes
-  `fail` a dead end (§3). `fail` takes no `max` or `then`, and it exists only
-  inside a block.
-- **Routes outside** name an include by its id, which is a route target: its
-  first stage. Nothing routes into the middle of an include.
-- **An include** takes `id`, `include`, `description`, `on_success` and
-  `on_fail` — nothing else: it has no type of its own, and it fails as a
-  whole. Its `on_fail` may itself say `fail` when the include sits in a block:
-  it is then the enclosing include's.
-- **Nesting.** Blocks may include blocks, at most **3** levels deep; a block
-  that includes itself, directly or not, is refused. A block nothing includes
-  is never checked — the parser warns.
+- **Ids.** A sequence's stages take the sequence stage's id and a dot in
+  front: `make.build`, `make.ship.test`, `fix_ship.commit`. A hand-written id
+  cannot contain a dot, so an expansion never collides with a stage, and the
+  same sequence runs under different ids wherever a stage runs it.
+- **Routes inside a sequence** name the sequence's own stages, and stay
+  inside it. A sequence is left two ways: through its **last stage**, whose
+  success (written or implicit) is the sequence stage's `on_success` — the
+  next stage, by default — or through **`fail`**, a reserved edge target that
+  means *the sequence stage's `on_fail`*. That chain is spliced in where
+  `fail` is said, so each stage saying it counts its own `max`; a sequence
+  stage with no `on_fail` makes `fail` a dead end (§3). `fail` takes no `max`
+  or `then`, and it exists only inside a sequence.
+- **Routes outside** name a sequence stage by its id, which is a route
+  target: its first stage. Nothing routes into the middle of a sequence.
+- **A sequence stage** takes `id`, `sequence`, `description`, `on_success`
+  and `on_fail` — nothing else: it has no type of its own, and it fails as a
+  whole. Its `on_fail` may itself say `fail` when the sequence stage sits in
+  a sequence: it is then the enclosing sequence stage's.
+- **Nesting.** Sequences may run sequences, at most **3** levels deep; a
+  sequence that runs itself, directly or not, is refused. A sequence nothing
+  runs is never checked — the parser warns.
 
 Everything else applies to the expanded stages as if they had been written
 out: one live run per chain, `create_mr` once per chain, the reachability and
@@ -1213,12 +1216,15 @@ no route to `done` anywhere; a route leaving its chain; a success chain that
 reaches none of `end`, `done`, `abort`; `create_mr` twice in one chain; a
 `rebase` without a `push_branch` in its chain; `timeout` on a gate or an action; `max`
 or `then` on a link to `end`, `done`, `abort` or `debug`; `max: -1` without a
-gate on the link. For blocks: an `include` naming no block, carrying anything
-but `id`/`description`/`on_success`/`on_fail`, or reusing an id; a block's
-route that leaves it other than by its last stage or `fail`; `fail` outside a
-block, on an `on_success`, or with `max`/`then`; a route into the middle of an
-include (a dotted target); a block that includes itself, includes nesting
-deeper than 3, an empty or duplicate block, a hand-written id with a dot. For
+gate on the link. For sequences: a sequence stage naming no sequence, carrying
+anything but `id`/`description`/`on_success`/`on_fail`, or reusing an id; a
+sequence's route that leaves it other than by its last stage or `fail`;
+`fail` outside a sequence, on an `on_success`, or with `max`/`then`; a route
+into the middle of a sequence (a dotted target); a sequence that runs itself,
+sequences nesting deeper than 3, an empty or duplicate sequence, a sequence
+named `main`, a hand-written id with a dot; a watcher or an outcome with both
+`sequence` and `stages`; the retired `blocks:`, `include:` and a watcher's
+`run:` (each named with its new spelling). For
 parameters: an
 engine-known name declared with the wrong shape, `harness` or `model` missing,
 a default that fails its own validator (a model without a provider, a
@@ -1253,7 +1259,7 @@ merge-request signal in a flow that opens no merge request (and is not
 started on one), a stage of a watcher opened by a signal that ends the whole
 run (`done` or `abort` — almost always a slip for `end`), and a main chain
 that opens a merge request and says `done` without waiting for it while
-watchers or outcomes watch it; and a block nothing includes, whose stages
+watchers or outcomes watch it; and a sequence nothing runs, whose stages
 nothing has checked.
 
 **Preflight errors** (this project, this ticket) — refuse to *create a run*.
@@ -1309,7 +1315,7 @@ Converting one by hand:
 |---|---|
 | `phases:` (v4) | the sections: `main:` — the chain a run starts with, a list of stages — `watchers:` and `outcomes:` (§1) |
 | top-level `stages:` (v4's shorthand, one phase `main`) | `main:` |
-| a phase `on: run_start` — an entrypoint, several allowed (v4) | the `main` chain, one per flow: a person or an automation starts the run, and a chain shared with another flow is a block (§1 *Blocks*) |
+| a phase `on: run_start` — an entrypoint, several allowed (v4) | the `main` chain, one per flow: a person or an automation starts the run, and a chain shared with another is a sequence (§1 *Sequences*) |
 | a phase `on: mr_opened` (v4) | `run_start: merge_request`, the chain under `main:` |
 | a reaction phase, on a firing signal or `manual` (v4) | a watcher, under `watchers:` |
 | an outcome phase, on `mr_merged`, `mr_closed` or `mr_approved` (v4) | an outcome, under `outcomes:` — on any observed signal |
@@ -1327,6 +1333,8 @@ Converting one by hand:
 | a reaction's `max` (v3: 10 by default) | no default cap: a watcher runs as often as the signal brings something new |
 | `ticket_transition` `to: "In Progress"` | `to: in_progress` (canonical, translated by the tracker) — or `status: "In Progress"` for the tracker's own word |
 | `POST …/phases/{phase}/start?repo=` | a `subject` in the request body |
+| `blocks:` and a stage's `include:` (v4, early v5) | `sequences:` and a stage's `sequence:` — the same chains under one word |
+| a watcher's or an outcome's `run: X` (early v5) | `sequence: X` — `run:` is a command's script |
 
 Older spellings the parser still answers by name rather than with a bare
 "unknown field":
@@ -1570,10 +1578,11 @@ over one workspace. Additive, no grammar break:
   the merge request, a tracker status, a schedule: each is one signal. A
   signal that needs its own options (which status, which cron) is the one seam
   left open: a per-signal option block on `on:`, not built yet.
-- **A block** — a chain several phases share is a `blocks:` entry and an
-  `include:` where it runs; the parser writes it out, so nothing downstream
-  changes. A block with parameters of its own (an include passing values in)
-  would be the next step, not built: today a block reads the flow's
+- **A sequence** — a chain several others share is a `sequences:` entry and
+  a `sequence:` where it runs; the parser writes it out, so nothing
+  downstream changes. A sequence with parameters of its own (a sequence
+  stage passing values in) would be the next step, not built: today a
+  sequence reads the flow's
   parameters like any stage.
 - **A stage type** — a new kind of work is one `type` value and one executor
   case under the workspace mutex. The parser's field table, the dataflow
@@ -1599,8 +1608,8 @@ over one workspace. Additive, no grammar break:
   raise site. Parsing, validation, routing and the `edge_taken` event
   generalize.
 - **Another flow's chains** — a future `use:` would declare another flow of
-  the project once and run its `main` or a block of it in place, expanded at
-  parse time like a block; nothing in the scheduler changes.
+  the project once and run its `main` or a sequence of it in place, expanded
+  at parse time like a sequence; nothing in the scheduler changes.
 - **A grammar break** — bump `CurrentVersion`. Every document states its
   version, so old text is refused with a message rather than mis-read (v4 did
   exactly this when wait points and parameters replaced the fixed envelope,

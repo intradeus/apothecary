@@ -12,21 +12,21 @@ import (
 	"apothecary/internal/run"
 )
 
-// A block runs as its expanded stages: the events name them by their
-// include path, and `fail` leaves the block by the include's on_fail — here
-// back to build, whose second pass gets through.
-func TestIncludedBlockRunsAsItsStages(t *testing.T) {
-	doc := `name: blk
+// A sequence runs as its expanded stages: the events name them by their
+// sequence path, and `fail` leaves the sequence by the sequence stage's
+// on_fail — here back to build, whose second pass gets through.
+func TestSequenceRunsAsItsStages(t *testing.T) {
+	doc := `name: seq
 version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-blocks:
+sequences:
   - id: check
     stages:
       - { id: lint, type: command, run: "./lint.sh" }
       - { id: test, type: command, run: "./test.sh", on_fail: fail }
 main:
   - { id: build, type: command, run: "./build.sh" }
-  - { id: check, include: check, on_fail: { to: build, max: 1 } }
+  - { id: check, sequence: check, on_fail: { to: build, max: 1 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	var tests atomic.Int32
@@ -36,7 +36,7 @@ main:
 		}
 		return ports.ExecResult{}, nil
 	}
-	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "blocks"}, "blk", testProject)
+	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "sequences"}, "seq", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

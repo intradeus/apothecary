@@ -45,8 +45,8 @@ const (
 
 var slugRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
-// idPathRe matches a stage id as the parser may produce it: a slug, or an
-// include path of slugs joined by dots (make.ship.test).
+// idPathRe matches a stage id as the parser may produce it: a slug, or a
+// sequence path of slugs joined by dots (make.ship.test).
 var idPathRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
 
 // Doc* mirror the YAML schema exactly (unknown fields rejected by the
@@ -68,9 +68,10 @@ type Doc struct {
 	// the same schema the retired library files spoke, with document order
 	// preserved for free.
 	Agents []agentspec.Spec `yaml:"agents" json:"agents,omitempty"`
-	// Blocks are chains of stages written once and included where needed
-	// (FLOWLANG §1 Blocks); the parser expands every include in place.
-	Blocks []DocBlock `yaml:"blocks" json:"blocks,omitempty"`
+	// Sequences are chains of stages written once and run wherever a stage
+	// names them (FLOWLANG §1 Sequences); the parser expands every sequence
+	// stage in place.
+	Sequences []DocSequence `yaml:"sequences" json:"sequences,omitempty"`
 	// RunStart is what the flow's runs are started on (FLOWLANG §1): a
 	// ticket, the default, or a merge request someone opened. A person or an
 	// automation starts a run — nothing the flow listens for does.
@@ -81,31 +82,36 @@ type Doc struct {
 	Main     []DocStage   `yaml:"main" json:"main,omitempty"`
 	Watchers []DocWatcher `yaml:"watchers" json:"watchers,omitempty"`
 	Outcomes []DocWatcher `yaml:"outcomes" json:"outcomes,omitempty"`
-	// v4's keys, read only to point a v4 document at their v5 spelling.
+	// Retired keys, read only to point a document at their v5 spelling.
 	LegacyStages yaml.Node `yaml:"stages" json:"-"`
 	LegacyPhases yaml.Node `yaml:"phases" json:"-"`
+	LegacyBlocks yaml.Node `yaml:"blocks" json:"-"`
 }
 
-// DocBlock is one block: a named chain of stages a stage `include:`s, or a
-// watcher `run:`s. Nothing opens it; an include runs it in place.
-type DocBlock struct {
+// DocSequence is one sequence: a named chain of stages a stage — or a
+// watcher, or an outcome — runs with `sequence:`. Nothing opens it; the
+// stage that names it runs it in place.
+type DocSequence struct {
 	ID          string     `yaml:"id" json:"id"`
 	Description string     `yaml:"description" json:"description,omitempty"`
 	Stages      []DocStage `yaml:"stages" json:"stages"`
 }
 
 // DocWatcher is one watcher or one outcome (FLOWLANG §1): the signal it is
-// on, and the chain it runs — its own stages, or `run:` naming a block (or
-// `main`, the main chain) to run in place. An outcome's `then:` says how the
-// run ends after its chain: done (the default) or abort; an outcome with
-// nothing to do but end the run says only that.
+// on, and the chain it runs — its own stages, or `sequence:` naming a
+// sequence (or `main`, the main chain) to run in place. An outcome's `then:`
+// says how the run ends after its chain: done (the default) or abort; an
+// outcome with nothing to do but end the run says only that.
 type DocWatcher struct {
 	ID          string     `yaml:"id" json:"id"`
 	Description string     `yaml:"description" json:"description,omitempty"`
 	On          DocWait    `yaml:"on" json:"on"`
-	Run         string     `yaml:"run" json:"run,omitempty"`
+	Sequence    string     `yaml:"sequence" json:"sequence,omitempty"`
 	Stages      []DocStage `yaml:"stages" json:"stages,omitempty"`
 	Then        string     `yaml:"then" json:"then,omitempty"`
+	// LegacyRun is `run:`, the name sequence: had for a day; read only to
+	// say so (run: is a command's script).
+	LegacyRun string `yaml:"run" json:"-"`
 }
 
 // phaseSrc is one phase as the parser assembles it from the document's
@@ -452,9 +458,9 @@ func (d *DocInt) UnmarshalJSON(data []byte) error {
 
 type DocStage struct {
 	ID string `yaml:"id" json:"id"`
-	// Include names a block this stage runs in its place (FLOWLANG §1
-	// Blocks); such a stage has no type.
-	Include     string   `yaml:"include" json:"include,omitempty"`
+	// Sequence names a sequence this stage runs in its place (FLOWLANG §1
+	// Sequences): a sequence stage, which has no type.
+	Sequence    string   `yaml:"sequence" json:"sequence,omitempty"`
 	Type        string   `yaml:"type" json:"type,omitempty"`
 	Description string   `yaml:"description" json:"description,omitempty"`
 	When        string   `yaml:"when" json:"when,omitempty"`
@@ -487,10 +493,11 @@ type DocStage struct {
 	Body         string `yaml:"body" json:"-"`
 	AutoComplete string `yaml:"auto_complete" json:"-"`
 	AutoAnswer   string `yaml:"auto_answer" json:"-"`
+	Include      string `yaml:"include" json:"-"`
 
-	// line is the stage's source line; scope the include path it was
-	// expanded from (empty for a stage written in its phase). Set by the
-	// parser, never part of the document.
+	// line is the stage's source line; scope the path of sequence stages it
+	// was expanded through (empty for a stage written in its chain). Set by
+	// the parser, never part of the document.
 	line  int
 	scope string
 }
@@ -517,6 +524,9 @@ func (r *DocStage) retired() []string {
 	}
 	if r.AutoAnswer != "" {
 		msgs = append(msgs, `"auto_answer" is retired: say which answer it supplies — "auto_approve" or "auto_reject"`)
+	}
+	if r.Include != "" {
+		msgs = append(msgs, fmt.Sprintf(`"include" is retired: a stage runs a sequence with "sequence" (sequence: %s)`, r.Include))
 	}
 	return msgs
 }
@@ -745,10 +755,10 @@ const (
 	maxStages     = 128
 	maxAgents     = 64
 	maxChainDepth = 8
-	// maxIncludeDepth bounds how deep blocks include blocks: a phase's
-	// include expands at most this many levels.
-	maxIncludeDepth = 3
-	maxParams       = 32 // the flow's own, beyond the engine-known six
+	// maxSequenceDepth bounds how deep sequences run sequences: a chain's
+	// sequence stage expands at most this many levels.
+	maxSequenceDepth = 3
+	maxParams        = 32 // the flow's own, beyond the engine-known six
 )
 
 // Parse parses and validates a flow document with its parameters at their
@@ -842,12 +852,12 @@ func ParseDoc(filename string, data []byte) (*Doc, error) {
 type parser struct {
 	file string
 	root *yaml.Node // document mapping node, for line lookups
-	// blocks are the declared blocks by id (blockOrder in document order);
-	// topIncludes maps each include written in a phase to the expanded id
-	// of its first stage, the stage a route to the include lands on.
-	blocks      map[string]*blockDef
-	blockOrder  []string
-	topIncludes map[string]string
+	// sequences are the declared sequences by id (sequenceOrder in document
+	// order); topSequences maps each sequence stage written in a chain to the
+	// expanded id of its first stage, the stage a route to it lands on.
+	sequences     map[string]*sequenceDef
+	sequenceOrder []string
+	topSequences  map[string]string
 	// stageLines are the source lines of the flattened stages, in order
 	// (top-level stages, or every phase's stages one phase after another).
 	stageLines []int
@@ -992,6 +1002,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if raw.LegacyStages.Kind != 0 {
 		return nil, p.errf(p.keyLine("stages"), "stages: is v4's shorthand — write the chain under `main:`")
 	}
+	if raw.LegacyBlocks.Kind != 0 {
+		return nil, p.errf(p.keyLine("blocks"), "blocks: is now sequences: — the same list under its new name; a stage runs one with sequence:")
+	}
 	switch raw.RunStart {
 	case "", StartsOnTicket:
 		f.StartsOn = StartsOnTicket
@@ -1015,21 +1028,21 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The main chain is a block too, so a watcher can run it again
-	// (`run: main`): its stages, as written.
-	blocks := raw.Blocks
-	for i := range blocks {
-		if blocks[i].ID == MainPhase {
-			return nil, p.errf(p.seqLine("blocks", i), "block %q: the name is the flow's main chain (a watcher runs it with `run: %s`) — name the block otherwise", MainPhase, MainPhase)
+	// The main chain is a sequence too, so a watcher can run it again
+	// (`sequence: main`): its stages, as written.
+	sequences := raw.Sequences
+	for i := range sequences {
+		if sequences[i].ID == MainPhase {
+			return nil, p.errf(p.seqLine("sequences", i), "sequence %q: the name is the flow's main chain (a watcher runs it with `sequence: %s`) — name the sequence otherwise", MainPhase, MainPhase)
 		}
 	}
 	if len(srcs) > 0 && srcs[0].kind == PhaseMain {
-		blocks = append(slices.Clone(blocks), DocBlock{ID: MainPhase, Description: "the main chain", Stages: slices.Clone(srcs[0].stages)})
+		sequences = append(slices.Clone(sequences), DocSequence{ID: MainPhase, Description: "the main chain", Stages: slices.Clone(srcs[0].stages)})
 	}
-	if err = p.buildBlocks(blocks); err != nil {
+	if err = p.buildSequences(sequences); err != nil {
 		return nil, err
 	}
-	if err = p.indexIncludes(srcs); err != nil {
+	if err = p.indexSequenceStages(srcs); err != nil {
 		return nil, err
 	}
 	var rawStages []DocStage
@@ -1107,8 +1120,8 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 			warns = append(warns, fmt.Sprintf("parameter %q is declared but nothing reads it ($%s)", pr.Name, pr.Name))
 		}
 	}
-	for _, b := range p.unusedBlocks(raw.Blocks) {
-		warns = append(warns, fmt.Sprintf("block %q is never included (nothing checks its stages until something does)", b))
+	for _, name := range p.unusedSequences(raw.Sequences) {
+		warns = append(warns, fmt.Sprintf("sequence %q is never run (nothing checks its stages until something does)", name))
 	}
 	f.Warnings = warns
 	return f, nil
@@ -1405,7 +1418,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		return nil, p.errf(line, "stage %q: %s", id, fmt.Sprintf(format, args...))
 	}
 
-	// A block's stage was checked under its own id; its expanded one (a
+	// A sequence's stage was checked under its own id; its expanded one (a
 	// dotted path) is the parser's.
 	if msg := idProblem(raw.ID); msg != "" && raw.scope == "" {
 		return fail("%s", msg)
@@ -1461,7 +1474,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 	}
 
-	s := &Stage{ID: raw.ID, Type: st, Line: line, Description: raw.Description, Include: raw.scope}
+	s := &Stage{ID: raw.ID, Type: st, Line: line, Description: raw.Description, Sequence: raw.scope}
 	// site describes a field of this stage that may read a $parameter.
 	site := func(field string, typ ParamType, values []string) paramSite {
 		return paramSite{stage: raw.ID, field: field, typ: typ, values: values}
@@ -1995,15 +2008,12 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	return nil
 }
 
-// buildPhases validates the phases' own fields and flattens their stages,
-// recording each phase's span and every stage's source line. shorthand marks
-// the desugared one-phase document, whose stage lines come from the
-// top-level stages sequence.
 // phaseSources assembles the document's sections into phases: the main
 // chain (MainPhase, opened by run_start), then each watcher, then each
-// outcome. A watcher's or an outcome's `run: X` is a chain of one include of
-// X, named after the watcher. Every stage remembers its line before blocks
-// are expanded, which copies stages out of where they were written.
+// outcome. A watcher's or an outcome's `sequence: X` is a chain of one
+// sequence stage running X, named after the watcher. Every stage remembers
+// its line before sequences are expanded, which copies stages out of where
+// they were written.
 func (p *parser) phaseSources(raw *Doc, f *Flow) ([]phaseSrc, error) {
 	var out []phaseSrc
 	switch {
@@ -2029,10 +2039,12 @@ func (p *parser) phaseSources(raw *Doc, f *Flow) ([]phaseSrc, error) {
 			w := &sec.list[i]
 			ps := phaseSrc{id: w.ID, description: w.Description, kind: sec.kind, on: w.On, then: w.Then, line: p.seqLine(sec.key, i)}
 			switch {
-			case w.Run != "" && len(w.Stages) > 0:
-				return nil, p.errf(ps.line, "%s %q: run or stages, not both — run names a chain to run in place, stages are the watcher's own", sec.kind, w.ID)
-			case w.Run != "":
-				ps.stages = []DocStage{{ID: w.ID, Include: w.Run, line: ps.line}}
+			case w.LegacyRun != "":
+				return nil, p.errf(ps.line, "%s %q: run: is retired here — a %s runs a sequence with sequence: %s (run is a command's script)", sec.kind, w.ID, sec.kind, w.LegacyRun)
+			case w.Sequence != "" && len(w.Stages) > 0:
+				return nil, p.errf(ps.line, "%s %q: sequence or stages, not both — sequence names a chain to run in place, stages are the %s's own", sec.kind, w.ID, sec.kind)
+			case w.Sequence != "":
+				ps.stages = []DocStage{{ID: w.ID, Sequence: w.Sequence, line: ps.line}}
 			default:
 				ps.stages = slices.Clone(w.Stages)
 				var lines []int
@@ -2053,7 +2065,7 @@ func (p *parser) phaseSources(raw *Doc, f *Flow) ([]phaseSrc, error) {
 }
 
 // buildPhases turns the phase sources into phases and their stages, every
-// include written out. Watcher and outcome ids are one namespace.
+// sequence written out. Watcher and outcome ids are one namespace.
 func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, error) {
 	var phases []Phase
 	var stages []DocStage
@@ -2101,7 +2113,7 @@ func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, err
 				return fail("then is an outcome's — a watcher's chain ends with %q and the run goes back to waiting", TerminalEnd)
 			}
 			if len(rp.stages) == 0 {
-				return fail("a watcher needs a chain: stages, or run: a block (or %s) to run in place", MainPhase)
+				return fail("a watcher needs a chain: stages, or sequence: a sequence (or %s) to run in place", MainPhase)
 			}
 		case PhaseOutcome:
 			if rp.then != "" && rp.then != TerminalDone && rp.then != TerminalAbort {
@@ -2111,13 +2123,13 @@ func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, err
 				return fail("an outcome needs a chain or `then: %s` / `then: %s` — what ends the run", TerminalDone, TerminalAbort)
 			}
 		}
-		// The phase's stages with every include written out.
+		// The phase's stages with every sequence written out.
 		own, err := p.expand(rp.stages, &expandScope{})
 		if err != nil {
 			return nil, nil, err
 		}
 		if len(stages)+len(own) > maxStages {
-			return fail("the flow expands to more than %d stages (blocks included)", maxStages)
+			return fail("the flow expands to more than %d stages (sequences written out)", maxStages)
 		}
 		then := rp.then
 		if rp.kind == PhaseOutcome && then == "" {

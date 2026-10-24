@@ -938,12 +938,15 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"unknown trigger key", w("  - { id: m, on: { signal: mr_conflicts, when: now }, " + cmd + " }\n"), "field when not found"},
 		{"empty watcher", w("  - { id: m, on: mr_conflicts, stages: [] }\n"), "a watcher needs a chain"},
 		{"empty outcome", o("  - { id: m, on: mr_closed }\n"), "an outcome needs a chain"},
-		{"run and stages", w("  - { id: m, on: mr_conflicts, run: main, " + cmd + " }\n"), "run or stages, not both"},
-		{"run of nothing", w("  - { id: m, on: mr_conflicts, run: nope }\n"), `include "nope": no block of that name`},
+		{"sequence and stages", w("  - { id: m, on: mr_conflicts, sequence: main, " + cmd + " }\n"), "sequence or stages, not both"},
+		{"sequence of nothing", w("  - { id: m, on: mr_conflicts, sequence: nope }\n"), `sequence "nope": no sequence of that name`},
+		{"a watcher's run is retired", w("  - { id: m, on: mr_conflicts, run: main }\n"), "a watcher runs a sequence with sequence: main"},
 		{"duplicate watcher", w("  - { id: shipped, on: mr_conflicts, " + cmd + " }\n"), "watchers and outcomes are one namespace"},
 		{"watcher named main", w("  - { id: main, on: mr_conflicts, " + cmd + " }\n"), `id "main" is the main chain's`},
-		{"block named main", header + "blocks:\n  - { id: main, " + cmd + " }\nmain:\n  - { id: s, type: command, run: x }\n", "the name is the flow's main chain"},
-		{"main runs itself", header + "main:\n  - { id: s, type: command, run: x }\n  - { id: again, include: main }\n", "includes itself"},
+		{"sequence named main", header + "sequences:\n  - { id: main, " + cmd + " }\nmain:\n  - { id: s, type: command, run: x }\n", "the name is the flow's main chain"},
+		{"main runs itself", header + "main:\n  - { id: s, type: command, run: x }\n  - { id: again, sequence: main }\n", "runs itself"},
+		{"blocks is retired", header + "blocks:\n  - { id: b, " + cmd + " }\nmain:\n  - { id: s, type: command, run: x }\n", "blocks: is now sequences:"},
+		{"include is retired", header + "sequences:\n  - { id: b, " + cmd + " }\nmain:\n  - { id: s, include: b }\n", `"include" is retired: a stage runs a sequence with "sequence" (sequence: b)`},
 		{"duplicate stage across chains", w("  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n"), "one namespace"},
 		{"route leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n"), "stay inside it"},
 		{"edge leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n"), "stay inside it"},
@@ -1001,14 +1004,14 @@ func TestMainChain(t *testing.T) {
 	}
 }
 
-// A watcher or an outcome may run a block — or the main chain — in place:
-// `run: X` is one include of X, named after the watcher.
-func TestRunAChain(t *testing.T) {
+// A watcher or an outcome may run a sequence — or the main chain — in place:
+// `sequence: X` is one sequence stage running X, named after the watcher.
+func TestRunASequence(t *testing.T) {
 	doc := header + "run_start: merge_request\n" +
-		"blocks:\n  - { id: tidy, stages: [{ id: fmt, type: command, run: x }] }\n" +
+		"sequences:\n  - { id: tidy, stages: [{ id: fmt, type: command, run: x }] }\n" +
 		"main:\n  - { id: sync, type: action, action: sync_target }\n  - { id: push, type: action, action: push_branch }\n" +
-		"watchers:\n  - { id: again, on: mr_conflicts, run: main }\n  - { id: neat, on: manual, run: tidy }\n" +
-		"outcomes:\n  - { id: merged, on: mr_merged, then: done }\n  - { id: closed, on: mr_closed, run: tidy, then: abort }\n"
+		"watchers:\n  - { id: again, on: mr_conflicts, sequence: main }\n  - { id: neat, on: manual, sequence: tidy }\n" +
+		"outcomes:\n  - { id: merged, on: mr_merged, then: done }\n  - { id: closed, on: mr_closed, sequence: tidy, then: abort }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
@@ -1021,7 +1024,7 @@ func TestRunAChain(t *testing.T) {
 	if got := strings.Join(ids, " "); got != want {
 		t.Errorf("stages = %s\n want %s", got, want)
 	}
-	if !f.StartsOnMR() || !f.Main().OnMR() || f.Stage("again.sync").Include != "again" {
+	if !f.StartsOnMR() || !f.Main().OnMR() || f.Stage("again.sync").Sequence != "again" {
 		t.Errorf("starts on %s, main %+v", f.StartsOn, f.Main())
 	}
 	for _, w := range f.Warnings {

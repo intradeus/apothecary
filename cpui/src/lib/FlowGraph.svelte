@@ -50,7 +50,7 @@
 		feedSentinelFor,
 		type ActionContract,
 		type AgentContract,
-		type DocBlock,
+		type DocSequence,
 		type DocPhase,
 		type FlowDoc,
 		type NodeSize
@@ -62,9 +62,9 @@
 		| { kind: 'phase'; id: string }
 		| null;
 
-	/** A block drawn on its own: its stages as `doc.stages`, and where its
+	/** A sequence drawn on its own: its stages as `doc.stages`, and where its
 	 *  two ways out lead — the including stage's success and its on_fail. */
-	export interface BlockView {
+	export interface SequenceView {
 		id: string;
 		description?: string;
 		exit: string;
@@ -82,7 +82,7 @@
 		onmeasured,
 		agents = [],
 		actions = [],
-		block,
+		sequence,
 		readonly = false,
 		refit = 0,
 		legible
@@ -103,9 +103,9 @@
 		// or action declares. Optional — without them only explicit bindings show.
 		agents?: AgentContract[];
 		actions?: ActionContract[];
-		/** Draw a block instead of a flow: its chain from a marker named
+		/** Draw a sequence instead of a flow: its chain from a marker named
 		 *  after it to its two exits, never to the run's ends. */
-		block?: BlockView;
+		sequence?: SequenceView;
 		/** Nothing to rewire: handles do not connect. */
 		readonly?: boolean;
 		/** Each change fits the view again, animated (the canvas resized). */
@@ -150,11 +150,13 @@
 	let known: Set<string> | null = null;
 	const ghosts = new Map<string, Node>();
 
-	// Where a stage's success leads. In a block, a stage without one goes on
-	// to the next, and the last leaves the block (EXIT) — not the phase.
+	// Where a stage's success leads. In a sequence, a stage without one goes on
+	// to the next, and the last leaves the sequence (EXIT) — not the phase.
 	const EXIT = '__exit';
 	const successOf = (i: number) =>
-		block ? (doc.stages[i].on_success ?? doc.stages[i + 1]?.id ?? EXIT) : effectiveSuccess(doc, i);
+		sequence
+			? (doc.stages[i].on_success ?? doc.stages[i + 1]?.id ?? EXIT)
+			: effectiveSuccess(doc, i);
 
 	function rebuild() {
 		const ids = new Set(doc.stages.map((s) => s.id));
@@ -214,7 +216,7 @@
 				entry: i === 0 || phaseEntry(doc, s.phase)?.id === s.id,
 				agents,
 				actions,
-				blocks: doc.blocks ?? ([] as DocBlock[]),
+				sequences: doc.sequences ?? ([] as DocSequence[]),
 				fresh: !renamed && added.includes(s.id)
 			}
 		}));
@@ -263,32 +265,32 @@
 		}
 		// The main chain's marker: its edge points at its first stage, and
 		// dragging that edge onto another stage of it starts it there. A flow
-		// that only watches has none; a block drawn on its own has its own.
+		// that only watches has none; a sequence drawn on its own has its own.
 		const entryPos = doc.stages.length
 			? (layout[doc.stages[0].id] ?? { x: 0, y: 0 })
 			: { x: 0, y: 0 };
 		const runsOn = t(`flow.graph.runStart.${doc.run_start ?? 'ticket'}`);
-		if (block || mainPhase || !doc.phases?.length)
+		if (sequence || mainPhase || !doc.phases?.length)
 			ns.push({
 				id: '__start',
 				type: 'start',
 				position: layout[START] ?? { x: entryPos.x - 170, y: entryPos.y },
 				data: {
 					entry: true,
-					label: block
-						? t('flow.graph.blockLabel', { block: block.id })
+					label: sequence
+						? t('flow.graph.sequenceLabel', { sequence: sequence.id })
 						: mainPhase
 							? t('flow.graph.mainLabel', { on: runsOn })
 							: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
-					title: block
-						? (block.description ?? t('flow.graph.blockTitle', { block: block.id }))
+					title: sequence
+						? (sequence.description ?? t('flow.graph.sequenceTitle', { sequence: sequence.id }))
 						: t('flow.graph.mainTitle', { on: runsOn })
 				}
 			});
 		// The sections' labels, heading the marker column where the main
 		// chain, the watchers and the outcomes begin — once there is more
 		// than one chain to tell apart.
-		if (!block && showsSections(doc)) {
+		if (!sequence && showsSections(doc)) {
 			for (const kind of PHASE_KINDS) {
 				const first = doc.phases!.find((p) => p.kind === kind);
 				if (!first) continue;
@@ -308,16 +310,16 @@
 				});
 			}
 		}
-		// A block's two ways out, where the run goes on from the stage that
-		// includes it: its success, and `fail` (its on_fail) when a stage
+		// A sequence's two ways out, where the run goes on from the stage that
+		// runs it: its success, and `fail` (its on_fail) when a stage
 		// routes there.
-		if (block) {
+		if (sequence) {
 			const at = layout[END] ?? { x: doc.stages.length * 240, y: 0 };
 			ns.push({
 				id: EXIT,
 				type: 'exit',
 				position: at,
-				data: { label: t('flow.graph.blockExit', { to: block.exit }) }
+				data: { label: t('flow.graph.sequenceExit', { to: sequence.exit }) }
 			});
 			const fails = doc.stages.some((s) =>
 				EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === FAIL))
@@ -327,14 +329,14 @@
 					id: '__fail',
 					type: 'failexit',
 					position: layout[DONE] ?? { x: at.x, y: at.y + 80 },
-					data: { label: t('flow.graph.blockFail', { to: block.fail ?? FAIL }) }
+					data: { label: t('flow.graph.sequenceFail', { to: sequence.fail ?? FAIL }) }
 				});
 		}
 		// The two ends: end (this phase is over, the run goes back to waiting)
 		// closes most chains, so it is always drawn — in a flow; done (the run
 		// is done) only when some route reaches it — like abort, below.
 		const reachesEnd =
-			!block ||
+			!sequence ||
 			doc.stages.some(
 				(s) =>
 					s.on_success === END ||
@@ -410,7 +412,7 @@
 				class: 'e-data'
 			});
 		}
-		if (doc.stages.length && (block || mainPhase || !doc.phases?.length)) {
+		if (doc.stages.length && (sequence || mainPhase || !doc.phases?.length)) {
 			es.push({
 				id: 'entry|__start',
 				source: '__start',
@@ -447,7 +449,7 @@
 				sourceHandle: 'success',
 				target:
 					target === END
-						? block
+						? sequence
 							? EXIT
 							: '__end'
 						: target === DONE

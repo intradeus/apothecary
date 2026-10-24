@@ -22,21 +22,21 @@ export const DEBUG = 'debug';
 // START is the main chain's marker layout/link key (the canvas's solid
 // beginning marker); it is never serialized.
 export const START = 'start';
-// FAIL exists only inside a block: an edge to it is the include's on_fail
-// (FLOWLANG §1 Blocks), spliced in where it is said.
+// FAIL exists only inside a sequence: an edge to it is the sequence stage's
+// on_fail (FLOWLANG §1 Sequences), spliced in where it is said.
 export const FAIL = 'fail';
 
 /** Whether a route target is reserved rather than a stage: the two ends, the
- *  deliberate stop, the debug leaf — and, inside a block, `fail`. None of
+ *  deliberate stop, the debug leaf — and, inside a sequence, `fail`. None of
  *  them takes max or then. */
 export const isReservedTarget = (to: string) =>
 	to === END || to === DONE || to === ABORT || to === DEBUG || to === FAIL;
 export const EDGE_KINDS = ['on_fail', 'on_reject', 'on_timeout'] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
-/** 'include' is the editor's name for a stage that runs a block in its
- *  place: the YAML gives it `include:` and no type. */
-export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait' | 'include';
+/** 'sequence' is the editor's name for a stage that runs a sequence in its
+ *  place: the YAML gives it `sequence:` and no type. */
+export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait' | 'sequence';
 
 // CURRENT_VERSION is the grammar this build writes; every document declares
 // it, so a future break is a refusal rather than a mis-parse (FLOWLANG §1).
@@ -69,7 +69,7 @@ export function edgeKindsFor(type: StageKind): EdgeKind[] {
 	if (type === 'agent' || type === 'human_gate') out.push('on_reject');
 	// An action fails when its outcome is wrong in a fixable way (a merge
 	// that conflicts, a push the remote refuses).
-	if (type === 'action' || type === 'include') out.push('on_fail');
+	if (type === 'action' || type === 'sequence') out.push('on_fail');
 	return out;
 }
 
@@ -124,8 +124,8 @@ export const ioEntries = (v?: StageIO): [string, string][] => (v ? Object.entrie
 export interface DocStage {
 	id: string;
 	type: StageKind;
-	/** include: the block this stage runs in its place. */
-	include?: string;
+	/** sequence: the sequence this stage runs in its place. */
+	sequence?: string;
 	/** Optional human note; documentation only, reaches no prompt. */
 	description?: string;
 	agent?: string;
@@ -194,7 +194,7 @@ export interface DocPhase {
 	then?: string;
 }
 
-/** The main chain's id — and the block other chains run it by. */
+/** The main chain's id — and the sequence other chains run it by. */
 export const MAIN = 'main';
 // RUN_START is how the main chain opens: a person or an automation starts a
 // run. MANUAL opens a watcher from the run page only. Every other signal is
@@ -258,11 +258,11 @@ export interface DocAgent {
 	outputs?: DocAgentOutput[];
 }
 
-/** A block (FLOWLANG §1 Blocks): a chain of stages written once and run by
- *  every stage that includes it. Its stages stay as written — their ids are
- *  the block's own, `fail` is the include's on_fail, and a last stage without
- *  on_success leaves by the include's success. */
-export interface DocBlock {
+/** A sequence (FLOWLANG §1 Sequences): a chain of stages written once and run
+ *  by every stage that names it. Its stages stay as written — their ids are
+ *  the sequence's own, `fail` is the sequence stage's on_fail, and a last
+ *  stage without on_success leaves by the sequence stage's success. */
+export interface DocSequence {
 	id: string;
 	description?: string;
 	stages: DocStage[];
@@ -277,29 +277,30 @@ export interface FlowDoc {
 	/** The flow's one settings block, in document order. */
 	parameters: Record<string, DocParam>;
 	agents?: DocAgent[];
-	/** Blocks, in document order; the canvas shows their includes. */
-	blocks?: DocBlock[];
+	/** Sequences, in document order; the canvas shows the stages that run
+	 *  them. */
+	sequences?: DocSequence[];
 	/** Every chain's stages, in section order, each tagged with its phase. */
 	stages: DocStage[];
 	/** The chains' headers, in section order: the main chain (a flow that
 	 *  only watches has none), the watchers, the outcomes. Absent for a
-	 *  block drawn on its own. */
+	 *  sequence drawn on its own. */
 	phases?: DocPhase[];
 }
 
 /** A watcher or an outcome as the document writes it: `on` may be the bare
- *  signal, and `run: X` stands for a chain of one stage including X. */
+ *  signal, and `sequence: X` stands for a chain of one stage running X. */
 interface WireWatcher {
 	id: string;
 	description?: string;
 	on: DocWait | string;
-	run?: string;
+	sequence?: string;
 	stages?: DocStage[];
 	then?: string;
 }
 
-/** The wire document: a section per kind of chain, and includes with no
- *  type. */
+/** The wire document: a section per kind of chain, and sequence stages with
+ *  no type. */
 type WireDoc = Omit<FlowDoc, 'stages' | 'phases'> & {
 	main?: DocStage[];
 	watchers?: WireWatcher[];
@@ -316,18 +317,18 @@ function wireEdge(e: unknown): DocEdge | undefined {
 	return { ...m, then: wireEdge(m.then) };
 }
 
-/** A wire stage as the editor holds it: an include gets its kind, edges
- *  their mapping form. */
+/** A wire stage as the editor holds it: a sequence stage gets its kind,
+ *  edges their mapping form. */
 function tagStage(s: DocStage): DocStage {
-	const out: DocStage = { ...s, type: s.include ? 'include' : s.type };
+	const out: DocStage = { ...s, type: s.sequence ? 'sequence' : s.type };
 	for (const kind of EDGE_KINDS) if (s[kind] != null) out[kind] = wireEdge(s[kind]);
 	return out;
 }
 
 // normalizeDoc turns the server's document — or a pinned one parsed here —
 // into the editor's: every chain's stages flattened in section order, each
-// tagged with its phase, and `run: X` read the way the parser reads it, as a
-// chain of one stage that includes X, named after its watcher.
+// tagged with its phase, and `sequence: X` read the way the parser reads it,
+// as a chain of one stage that runs X, named after its watcher.
 //
 // It also makes every stage's success target explicit. The YAML may leave
 // `on_success` out ("next stage in document order"); the graph resolves that
@@ -343,9 +344,9 @@ export function normalizeDoc(raw: unknown): FlowDoc {
 		for (const st of main) stages.push({ ...tagStage(st), phase: MAIN });
 	}
 	const section = (list: WireWatcher[] | undefined, kind: PhaseKind) => {
-		for (const { stages: inner, run, on, ...head } of list ?? []) {
+		for (const { stages: inner, sequence, on, ...head } of list ?? []) {
 			phases.push({ ...head, kind, on: typeof on === 'string' ? { signal: on } : { ...on } });
-			const chain = run ? [{ id: head.id, include: run } as DocStage] : (inner ?? []);
+			const chain = sequence ? [{ id: head.id, sequence } as DocStage] : (inner ?? []);
 			for (const st of chain) stages.push({ ...tagStage(st), phase: head.id });
 		}
 	};
@@ -353,9 +354,10 @@ export function normalizeDoc(raw: unknown): FlowDoc {
 	section(outcomes, 'outcome');
 	const doc: FlowDoc = { ...(w as FlowDoc), stages, phases };
 	doc.stages.forEach((s, i) => (s.on_success = effectiveSuccess(doc, i)));
-	// A block's stages keep their sugar: its last stage's success is
-	// whichever include runs it.
-	if (doc.blocks) doc.blocks = doc.blocks.map((b) => ({ ...b, stages: b.stages.map(tagStage) }));
+	// A sequence's stages keep their sugar: its last stage's success is
+	// whichever sequence stage runs it.
+	if (doc.sequences)
+		doc.sequences = doc.sequences.map((q) => ({ ...q, stages: q.stages.map(tagStage) }));
 	// A parameter may be written as its bare default (`harness: opencode`):
 	// the editor always holds the long form.
 	doc.parameters = Object.fromEntries(
@@ -367,22 +369,23 @@ export function normalizeDoc(raw: unknown): FlowDoc {
 	return doc;
 }
 
-/** expandDoc writes every include out the way the parser does (FLOWLANG §1
- *  Blocks): ids take the include's path (make.ship.test), a block's routes
- *  resolve to its expanded stages, its last stage leaves by the include's
- *  success, and `fail` becomes the include's on_fail. For what shows a run,
+/** expandDoc writes every sequence stage out the way the parser does
+ *  (FLOWLANG §1 Sequences): ids take its path (make.ship.test), a sequence's
+ *  routes resolve to its expanded stages, its last stage leaves by the
+ *  sequence stage's success, and `fail` becomes the sequence stage's
+ *  on_fail. For what shows a run,
  *  whose events name the expanded stages; the editor edits the unexpanded
  *  document. The document is one the server parsed, so nothing is checked. */
 export function expandDoc(doc: FlowDoc): FlowDoc {
-	if (!doc.blocks?.length) return doc;
-	const blocks = new Map(doc.blocks.map((b) => [b.id, b]));
+	if (!doc.sequences?.length) return doc;
+	const sequences = new Map(doc.sequences.map((q) => [q.id, q]));
 	const entryOf = (name: string, prefix: string): string => {
-		const first = blocks.get(name)?.stages[0];
+		const first = sequences.get(name)?.stages[0];
 		if (!first) return prefix;
-		return first.include ? entryOf(first.include, `${prefix}${first.id}.`) : prefix + first.id;
+		return first.sequence ? entryOf(first.sequence, `${prefix}${first.id}.`) : prefix + first.id;
 	};
 	const top = new Map(
-		doc.stages.filter((s) => s.include).map((s) => [s.id, entryOf(s.include!, `${s.id}.`)])
+		doc.stages.filter((s) => s.sequence).map((s) => [s.id, entryOf(s.sequence!, `${s.id}.`)])
 	);
 	interface Scope {
 		prefix: string;
@@ -402,7 +405,7 @@ export function expandDoc(doc: FlowDoc): FlowDoc {
 			let succ = s.on_success ? target(sc, s.on_success) : undefined;
 			if (!succ && i === stages.length - 1) succ = sc.onSuccess;
 			const onFail = edgeIn(sc, s.on_fail);
-			if (s.type !== 'include') {
+			if (s.type !== 'sequence') {
 				return [
 					{
 						...s,
@@ -415,16 +418,16 @@ export function expandDoc(doc: FlowDoc): FlowDoc {
 					}
 				];
 			}
-			const blk = blocks.get(s.include ?? '');
-			if (!blk) return [];
+			const seq = sequences.get(s.sequence ?? '');
+			if (!seq) return [];
 			const prefix = `${sc.prefix}${s.id}.`;
 			const local = new Map(
-				blk.stages.map((b) => [
-					b.id,
-					b.include ? entryOf(b.include, `${prefix}${b.id}.`) : prefix + b.id
+				seq.stages.map((q) => [
+					q.id,
+					q.sequence ? entryOf(q.sequence, `${prefix}${q.id}.`) : prefix + q.id
 				])
 			);
-			return expand(blk.stages, { prefix, local, onSuccess: succ, onFail }, phase);
+			return expand(seq.stages, { prefix, local, onSuccess: succ, onFail }, phase);
 		});
 	const phaseIds = doc.phases?.length ? doc.phases.map((p) => p.id) : [undefined];
 	const stages = phaseIds.flatMap((ph) =>
@@ -434,7 +437,7 @@ export function expandDoc(doc: FlowDoc): FlowDoc {
 			ph
 		)
 	);
-	const out: FlowDoc = { ...doc, blocks: undefined, stages };
+	const out: FlowDoc = { ...doc, sequences: undefined, stages };
 	out.stages.forEach((s, i) => (s.on_success ??= effectiveSuccess(out, i)));
 	return out;
 }
@@ -547,7 +550,7 @@ export function setEdge(s: DocStage, kind: EdgeKind, e: DocEdge | undefined) {
 // to the front of the document (the entry IS stages[0]); docToYaml already
 // serializes entry-first. Returns true when the entry actually changed.
 // In a phased flow the stage becomes the entry of ITS phase (moved to the
-// front of that phase's block).
+// front of that phase's stages).
 export function setEntry(doc: FlowDoc, id: string): boolean {
 	const i = doc.stages.findIndex((s) => s.id === id);
 	if (i < 0) return false;
@@ -558,7 +561,7 @@ export function setEntry(doc: FlowDoc, id: string): boolean {
 	return true;
 }
 
-// movePhase reassigns a stage to another phase, at the end of its block, and
+// movePhase reassigns a stage to another phase, at the end of its stages, and
 // cuts the routes that would now cross a phase boundary (a parse error).
 export function movePhase(doc: FlowDoc, id: string, phase: string) {
 	placeInPhase(doc, id, phase);
@@ -677,18 +680,18 @@ export function docToYaml(doc: FlowDoc): string {
 			return o;
 		});
 	}
-	// A block's stages are written as they were (explicit=false): their
-	// success sugar depends on the include that runs them.
+	// A sequence's stages are written as they were (explicit=false): their
+	// success sugar depends on the sequence stage that runs them.
 	const stageYaml = (s: DocStage, explicit = true) => {
-		if (s.type === 'include') {
-			const inc: Record<string, unknown> = { id: s.id, include: s.include ?? '' };
-			if (s.description) inc.description = s.description;
+		if (s.type === 'sequence') {
+			const seq: Record<string, unknown> = { id: s.id, sequence: s.sequence ?? '' };
+			if (s.description) seq.description = s.description;
 			const succ = explicit
 				? (s.on_success ?? effectiveSuccess(doc, idx.get(s.id)!))
 				: s.on_success;
-			if (succ) inc.on_success = succ;
-			if (s.on_fail) inc.on_fail = edgeToYamlValue(s.on_fail);
-			return inc;
+			if (succ) seq.on_success = succ;
+			if (s.on_fail) seq.on_fail = edgeToYamlValue(s.on_fail);
+			return seq;
 		}
 		const o: Record<string, unknown> = { id: s.id, type: s.type };
 		if (s.description) o.description = s.description;
@@ -719,9 +722,9 @@ export function docToYaml(doc: FlowDoc): string {
 		}
 		return o;
 	};
-	// Blocks before the chains that include them, as written.
-	if (doc.blocks?.length) {
-		obj.blocks = doc.blocks.map((b) => {
+	// Sequences before the chains that run them, as written.
+	if (doc.sequences?.length) {
+		obj.sequences = doc.sequences.map((b) => {
 			const o: Record<string, unknown> = { id: b.id };
 			if (b.description) o.description = b.description;
 			o.stages = b.stages.map((s) => stageYaml(s, false));
@@ -743,8 +746,8 @@ export function docToYaml(doc: FlowDoc): string {
 				const own = chainOf(ph);
 				// An outcome with no chain is nothing but its `then`.
 				if (kind === 'outcome' && (ph.then || !own.length)) o.then = ph.then ?? DONE;
-				const run = runOf(ph, own);
-				if (run) o.run = run;
+				const sequence = sequenceOf(ph, own);
+				if (sequence) o.sequence = sequence;
 				else if (own.length) o.stages = own.map((s) => stageYaml(s));
 				return o;
 			});
@@ -755,16 +758,22 @@ export function docToYaml(doc: FlowDoc): string {
 	return stringify(obj, { lineWidth: 0 });
 }
 
-// runOf is the block a chain is written as `run: X` for: a chain of one
-// include named after its phase, leaving the way the chain ends on its own
-// — exactly what the parser reads `run: X` as.
-function runOf(ph: DocPhase, own: DocStage[]): string | undefined {
+// sequenceOf is the sequence a chain is written as `sequence: X` for: a
+// chain of one sequence stage named after its phase, leaving the way the
+// chain ends on its own — exactly what the parser reads `sequence: X` as.
+function sequenceOf(ph: DocPhase, own: DocStage[]): string | undefined {
 	if (own.length !== 1) return undefined;
 	const [s] = own;
 	const ends = ph.kind === 'outcome' ? (ph.then ?? DONE) : END;
-	if (s.type !== 'include' || s.id !== ph.id || s.on_fail || s.description || s.on_success !== ends)
+	if (
+		s.type !== 'sequence' ||
+		s.id !== ph.id ||
+		s.on_fail ||
+		s.description ||
+		s.on_success !== ends
+	)
 		return undefined;
-	return s.include;
+	return s.sequence;
 }
 
 // triggerYaml uses the scalar sugar when the wait point has no options
@@ -1000,11 +1009,11 @@ export function placeChain(
 	for (const k of below) if (layout[k]) layout[k] = { x: layout[k].x, y: layout[k].y + took };
 }
 
-// columnLayout stacks a block's stages top to bottom, in document order —
-// a block is a short chain, read best down a narrow pane beside its flow.
+// columnLayout stacks a sequence's stages top to bottom, in document order —
+// a sequence is a short chain, read best down a narrow pane beside its flow.
 // The marker sits above the first stage, each stage's debug leaf to its
-// right, and the block's two exits (keys END and DONE, which a block view
-// draws as its ways out) under the last stage.
+// right, and the sequence's two exits (keys END and DONE, which a sequence
+// view draws as its ways out) under the last stage.
 export function columnLayout(
 	doc: FlowDoc,
 	sizes: Record<string, NodeSize> = {}
@@ -1079,7 +1088,7 @@ export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 		human_gate: 'gate',
 		action: 'action',
 		wait: 'wait',
-		include: 'include'
+		sequence: 'seq'
 	}[type];
 	let n = 1;
 	let id = `${base}_${n}`;
@@ -1092,7 +1101,7 @@ export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 	if (type === 'human_gate') s.question = '';
 	if (type === 'action') s.action = '';
 	if (type === 'wait') s.for = '';
-	if (type === 'include') s.include = doc.blocks?.[0]?.id ?? '';
+	if (type === 'sequence') s.sequence = doc.sequences?.[0]?.id ?? '';
 	return s;
 }
 
@@ -1172,8 +1181,8 @@ export function stageInputs(
 		case 'human_gate':
 		case 'wait':
 			return ioEntries(s.input).map(([name, value]) => port(name, value));
-		// An include binds nothing itself: its block's stages do.
-		case 'include':
+		// A sequence stage binds nothing itself: its sequence's stages do.
+		case 'sequence':
 			return [];
 	}
 }
@@ -1224,7 +1233,7 @@ export function stageOutputs(
 		}
 		case 'human_gate':
 		case 'wait':
-		case 'include':
+		case 'sequence':
 			return [];
 	}
 }

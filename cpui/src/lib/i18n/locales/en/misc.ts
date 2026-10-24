@@ -131,8 +131,8 @@ export default {
 	'flow.term.start': 'Where the chain begins — drag this handle onto a stage to start it there',
 	'flow.term.end': 'This chain is over — the run goes back to waiting',
 	'flow.term.done': 'The run is done',
-	'flow.term.exit': 'The block is over: the run goes on from the stage that includes it',
-	'flow.term.failexit': 'fail: the block leaves by the including stage’s on_fail',
+	'flow.term.exit': 'The sequence is over: the run goes on from the stage that runs it',
+	'flow.term.failexit': 'fail: the sequence leaves by its stage’s on_fail',
 	'flow.term.abort': 'The run stops deliberately',
 	'flow.term.debug':
 		'A stop, not an end: the run parks for a human to fix the workspace, then goes back into the stage that sent it here',
@@ -401,9 +401,9 @@ export default {
 	'flow.node.noCommand': '(no command)',
 	'flow.node.noAction': '(no action)',
 	'flow.node.waitFor': 'for {signal}',
-	'flow.node.includes': 'runs block {block} (not in this flow)',
-	'flow.node.openBlock': 'click to open the block beside the flow',
-	'flow.node.noBlock': 'no block chosen',
+	'flow.node.unknownSequence': 'runs sequence {sequence} (not in this flow)',
+	'flow.node.openSequence': 'click to open the sequence beside the flow',
+	'flow.node.noSequence': 'no sequence chosen',
 	'flow.node.noSignal': '(no signal)',
 	'flow.node.asksHuman': 'asks a human',
 	'flow.node.entryTitle': 'Its chain begins here',
@@ -426,10 +426,11 @@ export default {
 	'flow.graph.sectionTitle.watcher':
 		'Chains that run on what happens to the merge requests while the run is open — one at a time, in its workspace',
 	'flow.graph.sectionTitle.outcome': 'What ends the run: each fires once',
-	'flow.graph.blockLabel': 'block {block}',
-	'flow.graph.blockTitle': 'The block {block}: its stages run in the including stage’s place',
-	'flow.graph.blockExit': 'back · {to}',
-	'flow.graph.blockFail': 'fail · {to}',
+	'flow.graph.sequenceLabel': 'sequence {sequence}',
+	'flow.graph.sequenceTitle':
+		'The sequence {sequence}: its stages run in place of the stage that runs it',
+	'flow.graph.sequenceExit': 'back · {to}',
+	'flow.graph.sequenceFail': 'fail · {to}',
 	'flow.graph.triggerTitle':
 		"Watcher {phase} runs its chain on each new {signal} on one of the run's merge requests, under its start policy — drag onto a stage of the chain to start it there",
 	'flow.graph.manualTitle':
@@ -487,12 +488,12 @@ export default {
 	'flow.insp.deleteChainBody_other':
 		'<b>{id}</b> and the {count} stages of its chain are removed from this draft.',
 	'flow.insp.deleteChainEmpty': '<b>{id}</b> is removed from this draft.',
-	'flow.insp.block': 'Block',
-	'flow.insp.blockHelp':
-		'The chain this stage runs in its place. Its stages run as {include}.{stage}; its last stage’s success is this stage’s on_success, and a `fail` inside it is this stage’s on_fail.',
-	'flow.insp.blockStages': 'Runs',
-	'flow.insp.blockEditHelp':
-		'Blocks are edited in the YAML tab, under blocks: — every stage that includes one runs the same chain.',
+	'flow.insp.sequence': 'Sequence',
+	'flow.insp.sequenceHelp':
+		'The chain this stage runs in its place. Its stages run with this stage’s id in front (review.read, review.post); its last stage’s success is this stage’s on_success, and a `fail` inside it is this stage’s on_fail.',
+	'flow.insp.sequenceStages': 'Runs',
+	'flow.insp.sequenceEditHelp':
+		'Sequences are edited in the YAML tab, under sequences: — every stage that names one runs the same chain.',
 	'flow.insp.phaseStages_one': '{count} stage',
 	'flow.insp.phaseStages_other': '{count} stages',
 	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the chain with it.',

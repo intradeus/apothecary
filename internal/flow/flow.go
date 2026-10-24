@@ -141,8 +141,8 @@ const (
 // the link, and giving up ends the run in the main chain or an outcome, and
 // a watcher's round in a watcher.
 //
-// ReservedFail exists only inside a block: an edge to it is the include's
-// on_fail, spliced in by the parser. No parsed flow carries it.
+// ReservedFail exists only inside a sequence: an edge to it is the sequence
+// stage's on_fail, spliced in by the parser. No parsed flow carries it.
 const (
 	TerminalEnd   = "end"
 	TerminalDone  = "done"
@@ -163,7 +163,7 @@ func routeTerminal(to string) bool {
 }
 
 // MainPhase is the id of a flow's main chain, the phase every run begins
-// with. It is also the name other chains include it by (`run: main`).
+// with. It is also the name other chains run it by (`sequence: main`).
 const MainPhase = "main"
 
 // What a run is started on (FLOWLANG §1 run_start): a ticket — the run
@@ -238,10 +238,10 @@ type Stage struct {
 	// Description is an optional human note on what this stage is for.
 	// Documentation only — it reaches no prompt and no decision.
 	Description string
-	// Include is the include path a block's stage was expanded from
+	// Sequence is the path of sequence stages a stage was expanded through
 	// ("make.ship" for make.ship.test); empty for a stage written in its
-	// phase (FLOWLANG §1 Blocks).
-	Include string
+	// chain (FLOWLANG §1 Sequences).
+	Sequence string
 
 	// agent
 	Agent    string

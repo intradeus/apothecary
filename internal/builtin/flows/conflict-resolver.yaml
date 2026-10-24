@@ -64,7 +64,7 @@ agents:
         your resolution broke.
       - Leave no marker behind: the engine checks, and hands the files back
         while any remain.
-blocks:
+sequences:
   # Take the target in, settle what conflicts, test, push. The same chain
   # brings the merge request up to date when the run begins and each time it
   # conflicts again.
@@ -85,18 +85,18 @@ blocks:
           on_success: push,
           on_fail: debug }
       - { id: push, type: action, action: push_branch,
-          description: "push to the merge request's branch, leased against the head the phase began on",
+          description: "push to the merge request's branch, leased against the head the chain began on",
           on_fail: debug }
 # Bring the merge request up to date with its target.
 main:
-  - { id: settle, include: settle }
+  - { id: settle, sequence: settle }
 watchers:
   # The target moved and it conflicts again.
   - id: again
     on: { signal: mr_conflicts, start: $again_start }
     description: "the target moved and the merge request conflicts again"
     stages:
-      - { id: resettle, include: settle }
+      - { id: resettle, sequence: settle }
 outcomes:
   # Merged or closed: nothing left to settle.
   - { id: merged, on: mr_merged, then: done, description: "it merged: the run is over" }

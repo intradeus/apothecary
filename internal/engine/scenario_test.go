@@ -120,8 +120,8 @@ func withAgents(doc string, specs map[string]*agentspec.Spec) string {
 	if err != nil {
 		panic(err)
 	}
-	// Ahead of the document's blocks, else its first chain.
-	for _, key := range []string{"\nblocks:", "\nmain:", "\nwatchers:", "\noutcomes:"} {
+	// Ahead of the document's sequences, else its first chain.
+	for _, key := range []string{"\nsequences:", "\nmain:", "\nwatchers:", "\noutcomes:"} {
 		if i := strings.Index(doc, key); i >= 0 {
 			return doc[:i+1] + string(y) + doc[i+1:]
 		}

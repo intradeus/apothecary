@@ -391,9 +391,9 @@ export default {
 	'page.flow.builtinCallout':
 		'<b>Built-in template.</b> It ships with the engine and stays available. Saving creates an editable copy in this workshop under the same name; deleting that copy later resets to this template.',
 	'page.flow.wrong': 'Something went wrong',
-	'page.flow.blockPane': 'Block {block}',
-	'page.flow.blockClose': 'Close the block (Esc)',
-	'page.flow.blockRunsAs': 'runs in place of {include}',
+	'page.flow.sequencePane': 'Sequence {sequence}',
+	'page.flow.sequenceClose': 'Close the sequence (Esc)',
+	'page.flow.sequenceRunsAs': 'runs in place of {stage}',
 	'page.flow.hint':
 		'<span class="kbd">⌫</span> delete selection · <span class="kbd">⌘S</span> save · drag handles to rewire',
 	'page.flow.yamlLabel': 'Flow YAML',
