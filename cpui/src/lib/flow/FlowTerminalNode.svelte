@@ -13,6 +13,9 @@
 	//    workspace, then the stage that sent the run here runs again. Drawn
 	//    once per stage that escalates to it, beside that stage, so its source
 	//    handle carries the return edge.
+	//  - exit (grn) and failexit (ros), in a block's view only: the ways out
+	//    of the block, back to the stage that includes it — its success, and
+	//    `fail` (its on_fail). data.label names where each one goes.
 	// One component for all of them; the node type picks the tone.
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import type { Hue } from '$lib/ui/hues';
@@ -21,7 +24,8 @@
 
 	let { type, data }: NodeProps = $props();
 
-	type Tone = 'start' | 'trigger' | 'outcome' | 'end' | 'done' | 'abort' | 'debug';
+	type Tone =
+		'start' | 'trigger' | 'outcome' | 'end' | 'done' | 'abort' | 'debug' | 'exit' | 'failexit';
 	const tone = $derived<Tone>(
 		type === 'start'
 			? data?.entry
@@ -29,13 +33,11 @@
 				: data?.outcome
 					? 'outcome'
 					: 'trigger'
-			: type === 'abort'
-				? 'abort'
-				: type === 'debug'
-					? 'debug'
-					: type === 'end'
-						? 'end'
-						: 'done'
+			: type === 'abort' || type === 'debug' || type === 'end' || type === 'exit'
+				? type
+				: type === 'failexit'
+					? 'failexit'
+					: 'done'
 	);
 	const HUE: Record<Tone, Hue> = {
 		start: 'brand',
@@ -44,7 +46,9 @@
 		end: 'tea',
 		done: 'grn',
 		abort: 'ros',
-		debug: 'amb'
+		debug: 'amb',
+		exit: 'grn',
+		failexit: 'ros'
 	};
 	const GLYPH: Record<Tone, string> = {
 		start: I.play,
@@ -53,7 +57,9 @@
 		end: I.loop,
 		done: I.ok,
 		abort: I.bad,
-		debug: I.retry
+		debug: I.retry,
+		exit: I.forward,
+		failexit: I.forward
 	};
 	const TITLE: Record<Tone, () => string> = {
 		start: () => t('flow.term.start'),
@@ -62,16 +68,18 @@
 		end: () => t('flow.term.end'),
 		done: () => t('flow.term.done'),
 		abort: () => t('flow.term.abort'),
-		debug: () => t('flow.term.debug')
+		debug: () => t('flow.term.debug'),
+		exit: () => t('flow.term.exit'),
+		failexit: () => t('flow.term.failexit')
 	};
 	const marker = $derived(tone === 'start' || tone === 'trigger' || tone === 'outcome');
-	const label = $derived(marker ? ((data?.label as string | undefined) ?? 'start') : tone);
+	const label = $derived((data?.label as string | undefined) ?? (marker ? 'start' : tone));
 	const title = $derived((data?.title as string | undefined) ?? TITLE[tone]());
 	const handle = '--xy-handle-background-color: var(--h)';
 </script>
 
 <div class="term {tone} h-{HUE[tone]}" {title}>
-	{#if tone === 'end' || tone === 'done' || tone === 'abort' || tone === 'debug'}
+	{#if !marker}
 		<Handle type="target" position={Position.Left} style={handle} />
 	{/if}
 	<span class="l">{label}</span><span class="g">{GLYPH[tone]}</span>

@@ -19,7 +19,7 @@ export const STAGE_HUE: Record<string, Hue> = {
 	include: 'brand'
 };
 /** The chip word for a stage type ("human_gate" reads "gate"). */
-export const STAGE_WORD: Record<string, string> = { human_gate: 'gate' };
+export const STAGE_WORD: Record<string, string> = { human_gate: 'gate', include: 'block' };
 
 /** Flow edge kinds (DESIGN 3.6). */
 export const EDGE_HUE: Record<string, Hue> = {

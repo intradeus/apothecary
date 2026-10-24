@@ -3,7 +3,7 @@
 	// Versions, Clone, Delete… / Reset, Save), then the canvas beside a 340px
 	// inspector. All document logic lives in flowdoc / FlowGraph /
 	// FlowInspector; this page wires them up.
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
@@ -12,7 +12,7 @@
 	import { currentGuild, to } from '$lib/guild';
 	import { ago, fmtAbs } from '$lib/format';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import FlowGraph, { type Selection } from '$lib/FlowGraph.svelte';
+	import FlowGraph, { type BlockView, type Selection } from '$lib/FlowGraph.svelte';
 	import FlowInspector from '$lib/FlowInspector.svelte';
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
@@ -30,15 +30,21 @@
 	import {
 		ABORT,
 		chainLinks,
+		columnLayout,
 		DEBUG,
 		autoLayout,
 		type NodeSize,
 		docToYaml,
 		DONE,
+		FAIL,
 		START,
 		edgeOf,
+		effectiveSuccess,
 		setEdge,
 		setEntry,
+		type DocBlock,
+		type DocEdge,
+		type DocStage,
 		type EdgeKind,
 		type FlowDoc
 	} from '$lib/flowdoc';
@@ -263,6 +269,104 @@
 		rev++;
 	}
 
+	// ---- an include's block, opened beside the flow ----------------------
+	// Selecting an include opens the block it runs in a pane of its own, its
+	// chain drawn like a flow; selecting anything else (or the empty canvas)
+	// closes it. An include inside the block opens that block in its place —
+	// `nested` is the path of include ids below the selected one.
+	interface Level {
+		include: DocStage;
+		block: DocBlock;
+		view: BlockView;
+	}
+	let nested = $state<{ root: string; path: string[] }>({ root: '', path: [] });
+	const failOf = (e: DocEdge | undefined, outer?: string) => {
+		const to = chainLinks(e)[0]?.to;
+		return to === FAIL ? outer : to;
+	};
+	const levels = $derived.by((): Level[] => {
+		const sel = selection;
+		if (!doc || tab !== 'graph' || sel?.kind !== 'stage') return [];
+		const i = doc.stages.findIndex((s) => s.id === sel.id);
+		const inc = doc.stages[i];
+		const blk = inc?.type === 'include' ? doc.blocks?.find((b) => b.id === inc.include) : undefined;
+		if (!blk) return [];
+		const out: Level[] = [
+			{
+				include: inc,
+				block: blk,
+				view: {
+					id: blk.id,
+					description: blk.description,
+					exit: effectiveSuccess(doc, i),
+					fail: failOf(inc.on_fail)
+				}
+			}
+		];
+		for (const id of nested.root === inc.id ? nested.path : []) {
+			const up = out[out.length - 1];
+			const j = up.block.stages.findIndex((s) => s.id === id);
+			const s = up.block.stages[j];
+			const b = s?.type === 'include' ? doc.blocks?.find((x) => x.id === s.include) : undefined;
+			if (!b) break;
+			out.push({
+				include: s,
+				block: b,
+				view: {
+					id: b.id,
+					description: b.description,
+					// Its success is the next stage of the block around it — or
+					// that block's own way out.
+					exit: s.on_success ?? up.block.stages[j + 1]?.id ?? up.view.exit,
+					fail: failOf(s.on_fail, up.view.fail)
+				}
+			});
+		}
+		return out;
+	});
+	const open = $derived(levels.at(-1));
+	// The open block as a document of its own: the flow's agents, parameters
+	// and blocks, the block's stages.
+	const blockDoc = $derived<FlowDoc | null>(
+		doc && open ? { ...doc, phases: undefined, stages: open.block.stages } : null
+	);
+	let blockLayout = $state<Record<string, { x: number; y: number }>>({});
+	let blockRev = $state(0);
+	$effect(() => {
+		if (!blockDoc) return;
+		blockLayout = columnLayout(blockDoc);
+		untrack(() => blockRev++);
+	});
+	function onBlockMeasured(sizes: Record<string, NodeSize>) {
+		if (!blockDoc) return;
+		blockLayout = columnLayout(blockDoc, sizes);
+		blockRev++;
+	}
+	function onBlockSelect(sel: Selection) {
+		if (sel?.kind !== 'stage' || !open || !levels.length) return;
+		const s = open.block.stages.find((x) => x.id === sel.id);
+		if (s?.type !== 'include' || !doc?.blocks?.some((b) => b.id === s.include)) return;
+		nested = {
+			root: levels[0].include.id,
+			path: [...levels.slice(1).map((l) => l.include.id), s.id]
+		};
+	}
+	/** Back to the block at `depth` (0 = the selected include's). */
+	const backTo = (depth: number) =>
+		(nested = {
+			root: levels[0].include.id,
+			path: levels.slice(1, depth + 1).map((l) => l.include.id)
+		});
+	// Opening or closing the pane resizes the flow's canvas: it fits again.
+	let mainRefit = $state(0);
+	let wasOpen = false;
+	$effect(() => {
+		const isOpen = levels.length > 0;
+		if (isOpen === wasOpen) return;
+		wasOpen = isOpen;
+		untrack(() => mainRefit++);
+	});
+
 	async function validate() {
 		validating = true;
 		try {
@@ -441,8 +545,12 @@
 			void save();
 			return;
 		}
-		if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 		const el = e.target as HTMLElement | null;
+		if (e.key === 'Escape' && levels.length && !el?.closest('input, textarea, select')) {
+			selection = null;
+			return;
+		}
+		if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 		if (el?.closest('input, textarea, select, [contenteditable]')) return;
 		if (tab === 'graph' && selection) {
 			e.preventDefault();
@@ -614,20 +722,71 @@
 	{:else if flow}
 		<div class="canvas" class:yaml={tab === 'yaml'}>
 			{#if tab === 'graph' && doc}
-				<FlowGraph
-					{doc}
-					{layout}
-					{rev}
-					onselect={(s) => (selection = s)}
-					{onmove}
-					{onlink}
-					onarrange={autoArrange}
-					{onmeasured}
-					agents={doc?.agents ?? []}
-					{actions}
-				/>
-				<div class="hint fnt">
-					{@html th('page.flow.hint')}
+				<div class="split">
+					<div class="pane">
+						<FlowGraph
+							{doc}
+							{layout}
+							{rev}
+							onselect={(s) => (selection = s)}
+							{onmove}
+							{onlink}
+							onarrange={autoArrange}
+							{onmeasured}
+							agents={doc?.agents ?? []}
+							{actions}
+							refit={mainRefit}
+						/>
+						<div class="hint fnt">
+							{@html th('page.flow.hint')}
+						</div>
+					</div>
+					{#if open && blockDoc}
+						<section
+							class="pane block"
+							aria-label={t('page.flow.blockPane', { block: open.block.id })}
+							in:slide={{ from: 'right', distance: 32 }}
+						>
+							<header class="bh">
+								<nav class="crumbs mono">
+									{#each levels as l, d (d)}
+										{#if d > 0}<span class="fnt">›</span>{/if}
+										{#if d < levels.length - 1}
+											<button class="rowbtn" onclick={() => backTo(d)}>{l.block.id}</button>
+										{:else}
+											<span class="cur">{l.block.id}</span>
+										{/if}
+									{/each}
+								</nav>
+								<span class="fnt small ell grow"
+									>{open.block.description ??
+										t('page.flow.blockRunsAs', { include: levels[0].include.id })}</span
+								>
+								<button
+									class="btn-icon"
+									title={t('page.flow.blockClose')}
+									aria-label={t('page.flow.blockClose')}
+									onclick={() => (selection = null)}>{I.close}</button
+								>
+							</header>
+							{#key levels.map((l) => l.block.id).join('/')}
+								<FlowGraph
+									doc={blockDoc}
+									layout={blockLayout}
+									rev={blockRev}
+									block={open.view}
+									readonly
+									legible={0.2}
+									onselect={onBlockSelect}
+									onmove={() => {}}
+									onlink={() => {}}
+									onmeasured={onBlockMeasured}
+									agents={doc.agents ?? []}
+									{actions}
+								/>
+							{/key}
+						</section>
+					{/if}
 				</div>
 			{:else}
 				<textarea
@@ -791,6 +950,45 @@
 		border: 1px solid var(--cLn);
 		overflow: hidden;
 	}
+	/* The flow, and — while an include is selected — the block it runs, side
+	 * by side. */
+	.split {
+		display: flex;
+		height: 100%;
+	}
+	.pane {
+		position: relative;
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.pane :global(.graph-wrap) {
+		flex: 1;
+		min-height: 0;
+	}
+	.pane.block {
+		flex: 0 0 55%;
+		border-left: 1px solid var(--cLn);
+	}
+	.bh {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 6px 8px 6px 12px;
+		border-bottom: 1px solid var(--ln);
+		background: var(--cBg);
+	}
+	.crumbs {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: var(--fs-label);
+	}
+	.crumbs .cur {
+		color: var(--tx);
+		font-weight: 600;
+	}
 	.canvas.yaml {
 		background: var(--cBg);
 		backdrop-filter: var(--cBf);
@@ -867,6 +1065,14 @@
 		}
 		.side {
 			width: 100%;
+		}
+		.split {
+			flex-direction: column;
+		}
+		.pane.block {
+			flex-basis: 50%;
+			border-left: none;
+			border-top: 1px solid var(--cLn);
 		}
 	}
 </style>

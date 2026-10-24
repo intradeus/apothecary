@@ -9,6 +9,7 @@
 		stageOutputs,
 		type ActionContract,
 		type AgentContract,
+		type DocBlock,
 		type DocStage
 	} from '$lib/flowdoc';
 
@@ -21,6 +22,13 @@
 	const leaving = $derived(Boolean(data.leaving));
 	const agents = $derived((data.agents ?? []) as AgentContract[]);
 	const actions = $derived((data.actions ?? []) as ActionContract[]);
+	// An include says what it runs: its block's chain, and its description on
+	// hover. Clicking it opens the block beside the flow.
+	const block = $derived(
+		stage.type === 'include'
+			? ((data.blocks ?? []) as DocBlock[]).find((b) => b.id === stage.include)
+			: undefined
+	);
 
 	// Dataflow ports: one dot per artifact the stage reads (left) and writes
 	// (right). Distinct from the colored control handles: these are NOT
@@ -67,9 +75,11 @@
 				? set(t('flow.node.waitFor', { signal: stage.for }))
 				: unset(t('flow.node.waitFor', { signal: t('flow.node.noSignal') }));
 		if (stage.type === 'include')
-			return stage.include
-				? set(t('flow.node.includes', { block: stage.include }))
-				: unset(t('flow.node.noBlock'));
+			return !stage.include
+				? unset(t('flow.node.noBlock'))
+				: block
+					? set(`${block.id}: ${block.stages.map((b) => b.id).join(' → ')}`)
+					: unset(t('flow.node.includes', { block: stage.include }));
 		return set(stage.question || t('flow.node.asksHuman'));
 	});
 </script>
@@ -96,7 +106,15 @@
 			style="top: 20px; {hh('success')}"
 		/>
 	</div>
-	<div class="meta" class:unset={detail.unset}>{detail.text}</div>
+	<div
+		class="meta"
+		class:unset={detail.unset}
+		title={block
+			? [block.description, t('flow.node.openBlock')].filter(Boolean).join(' — ')
+			: undefined}
+	>
+		{detail.text}
+	</div>
 
 	{#if inputs.length || outputs.length}
 		<div class="ports">

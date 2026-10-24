@@ -28,6 +28,7 @@
 		parksOnDebug,
 		DONE,
 		END,
+		FAIL,
 		START,
 		MANUAL,
 		RUN_START,
@@ -45,6 +46,7 @@
 		feedSentinelFor,
 		type ActionContract,
 		type AgentContract,
+		type DocBlock,
 		type DocPhase,
 		type FlowDoc,
 		type NodeSize
@@ -56,6 +58,15 @@
 		| { kind: 'phase'; id: string }
 		| null;
 
+	/** A block drawn on its own: its stages as `doc.stages`, and where its
+	 *  two ways out lead — the including stage's success and its on_fail. */
+	export interface BlockView {
+		id: string;
+		description?: string;
+		exit: string;
+		fail?: string;
+	}
+
 	let {
 		doc,
 		layout,
@@ -66,7 +77,11 @@
 		onarrange,
 		onmeasured,
 		agents = [],
-		actions = []
+		actions = [],
+		block,
+		readonly = false,
+		refit = 0,
+		legible
 	}: {
 		doc: FlowDoc;
 		layout: Record<string, { x: number; y: number }>;
@@ -84,6 +99,16 @@
 		// or action declares. Optional — without them only explicit bindings show.
 		agents?: AgentContract[];
 		actions?: ActionContract[];
+		/** Draw a block instead of a flow: its chain from a marker named
+		 *  after it to its two exits, never to the run's ends. */
+		block?: BlockView;
+		/** Nothing to rewire: handles do not connect. */
+		readonly?: boolean;
+		/** Each change fits the view again, animated (the canvas resized). */
+		refit?: number;
+		/** The smallest zoom a fit may land on before it anchors on the
+		 *  entry instead (FitOnInit's default when unset). */
+		legible?: number;
 	} = $props();
 
 	const nodeTypes = {
@@ -92,7 +117,9 @@
 		done: FlowTerminalNode,
 		abort: FlowTerminalNode,
 		debug: FlowTerminalNode,
-		start: FlowTerminalNode
+		start: FlowTerminalNode,
+		exit: FlowTerminalNode,
+		failexit: FlowTerminalNode
 	};
 	// Control edges carry their label by the source (FlowLabeledEdge), so
 	// labels never land on nodes or on each other.
@@ -117,6 +144,12 @@
 	// materialises) from what just left (a ghost dematerialises, then goes).
 	let known: Set<string> | null = null;
 	const ghosts = new Map<string, Node>();
+
+	// Where a stage's success leads. In a block, a stage without one goes on
+	// to the next, and the last leaves the block (EXIT) — not the phase.
+	const EXIT = '__exit';
+	const successOf = (i: number) =>
+		block ? (doc.stages[i].on_success ?? doc.stages[i + 1]?.id ?? EXIT) : effectiveSuccess(doc, i);
 
 	function rebuild() {
 		const ids = new Set(doc.stages.map((s) => s.id));
@@ -163,6 +196,7 @@
 				entry: i === 0 || phaseEntry(doc, s.phase)?.id === s.id,
 				agents,
 				actions,
+				blocks: doc.blocks ?? ([] as DocBlock[]),
 				fresh: !renamed && added.includes(s.id)
 			}
 		}));
@@ -215,24 +249,60 @@
 			position: layout[START] ?? { x: entryPos.x - 170, y: entryPos.y },
 			data: {
 				entry: true,
-				label: entryPhase
-					? t('flow.graph.beginLabel', {
-							phase: entryPhase.id,
-							trigger: triggerLabel(entryPhase.on)
-						})
-					: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
-				title: entryPhase ? markerTitle(entryPhase) : t('flow.graph.entryTitle', { phase: 'main' })
+				label: block
+					? t('flow.graph.blockLabel', { block: block.id })
+					: entryPhase
+						? t('flow.graph.beginLabel', {
+								phase: entryPhase.id,
+								trigger: triggerLabel(entryPhase.on)
+							})
+						: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
+				title: block
+					? (block.description ?? t('flow.graph.blockTitle', { block: block.id }))
+					: entryPhase
+						? markerTitle(entryPhase)
+						: t('flow.graph.entryTitle', { phase: 'main' })
 			}
 		});
+		// A block's two ways out, where the run goes on from the stage that
+		// includes it: its success, and `fail` (its on_fail) when a stage
+		// routes there.
+		if (block) {
+			const at = layout[END] ?? { x: doc.stages.length * 240, y: 0 };
+			ns.push({
+				id: EXIT,
+				type: 'exit',
+				position: at,
+				data: { label: t('flow.graph.blockExit', { to: block.exit }) }
+			});
+			const fails = doc.stages.some((s) =>
+				EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === FAIL))
+			);
+			if (fails)
+				ns.push({
+					id: '__fail',
+					type: 'failexit',
+					position: layout[DONE] ?? { x: at.x, y: at.y + 80 },
+					data: { label: t('flow.graph.blockFail', { to: block.fail ?? FAIL }) }
+				});
+		}
 		// The two ends: end (this phase is over, the run goes back to waiting)
-		// closes most chains, so it is always drawn; done (the run is done)
-		// only when some route reaches it — like abort, below.
-		ns.push({
-			id: '__end',
-			type: 'end',
-			position: layout[END] ?? { x: doc.stages.length * 240, y: 0 },
-			data: {}
-		});
+		// closes most chains, so it is always drawn — in a flow; done (the run
+		// is done) only when some route reaches it — like abort, below.
+		const reachesEnd =
+			!block ||
+			doc.stages.some(
+				(s) =>
+					s.on_success === END ||
+					EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === END))
+			);
+		if (reachesEnd)
+			ns.push({
+				id: '__end',
+				type: 'end',
+				position: layout[END] ?? { x: doc.stages.length * 240, y: 0 },
+				data: {}
+			});
 		const reachesDone =
 			doc.stages.some(
 				(s) =>
@@ -326,14 +396,16 @@
 				});
 		}
 		doc.stages.forEach((s, i) => {
-			const target = effectiveSuccess(doc, i);
+			const target = successOf(i);
 			es.push({
 				id: `success|${s.id}`,
 				source: s.id,
 				sourceHandle: 'success',
 				target:
 					target === END
-						? '__end'
+						? block
+							? EXIT
+							: '__end'
 						: target === DONE
 							? '__done'
 							: target === ABORT
@@ -357,13 +429,15 @@
 					target:
 						link.to === ABORT
 							? '__abort'
-							: link.to === DEBUG
-								? debugNodeID(s.id)
-								: link.to === END
-									? '__end'
-									: link.to === DONE
-										? '__done'
-										: link.to,
+							: link.to === FAIL
+								? '__fail'
+								: link.to === DEBUG
+									? debugNodeID(s.id)
+									: link.to === END
+										? '__end'
+										: link.to === DONE
+											? '__done'
+											: link.to,
 					targetHandle: dot ? `in:${dot}` : undefined,
 					type: 'labeled',
 					data: { row },
@@ -373,7 +447,7 @@
 					label:
 						link.to === DEBUG
 							? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''}`
-							: link.to === ABORT || link.to === END || link.to === DONE
+							: link.to === ABORT || link.to === END || link.to === DONE || link.to === FAIL
 								? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ${I.forward} ${link.to}`
 								: `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ×${link.max === -1 ? '∞' : (link.max ?? '?')}`,
 					labelStyle: hued(EDGE_HUE[kind]),
@@ -410,7 +484,7 @@
 	});
 
 	function handleConnect(conn: Connection) {
-		if (!conn.source || !conn.target) return;
+		if (readonly || !conn.source || !conn.target) return;
 		// A debug leaf's own handle carries the drawn return edge only.
 		if (conn.source.startsWith('__debug:')) return;
 		// Dataflow dots are not rewireable: an artifact path is what connects two
@@ -474,6 +548,7 @@
 		colorMode={prefs.themeDef.scheme}
 		fitView
 		fitViewOptions={{ padding: 0.12, maxZoom: 1.1 }}
+		nodesConnectable={!readonly}
 		minZoom={0.15}
 		deleteKey={null}
 		onconnect={handleConnect}
@@ -513,7 +588,7 @@
 		}}
 		onpaneclick={() => onselect(null)}
 	>
-		<FitOnInit onmeasured={() => onmeasured?.(measuredSizes())} />
+		<FitOnInit {refit} {legible} onmeasured={() => onmeasured?.(measuredSizes())} />
 		<Background variant={BackgroundVariant.Dots} gap={gridGap} size={1.2} />
 		<Controls position="bottom-left" class="lg-pop fg-ctl">
 			{#snippet after()}

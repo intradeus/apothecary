@@ -855,6 +855,31 @@ export function autoLayout(
 	return pos;
 }
 
+// columnLayout stacks a block's stages top to bottom, in document order —
+// a block is a short chain, read best down a narrow pane beside its flow.
+// The marker sits above the first stage, each stage's debug leaf to its
+// right, and the block's two exits (keys END and DONE, which a block view
+// draws as its ways out) under the last stage.
+export function columnLayout(
+	doc: FlowDoc,
+	sizes: Record<string, NodeSize> = {}
+): Record<string, { x: number; y: number }> {
+	const size = (key: string, guess = GUESS) => sizes[key] ?? guess;
+	const pos: Record<string, { x: number; y: number }> = {};
+	pos[START] = { x: 0, y: -(size(START, GUESS_TERMINAL).height + GAP_Y / 2) };
+	let y = 0;
+	for (const s of doc.stages) {
+		const { width, height } = size(s.id);
+		pos[s.id] = { x: 0, y };
+		if (parksOnDebug(s)) pos[debugKey(s.id)] = { x: width + GAP_X, y: y + height / 2 };
+		const labels = edgeLinks(s).length;
+		y += height + GAP_Y / 2 + (labels ? LABEL_PAD + labels * LABEL_ROW : 0);
+	}
+	pos[END] = { x: 0, y };
+	pos[DONE] = { x: size(END, GUESS_TERMINAL).width + GAP_X, y };
+	return pos;
+}
+
 // freshStage builds a new stage of the given type with a unique id.
 export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 	const base = {

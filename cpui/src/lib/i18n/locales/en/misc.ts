@@ -131,6 +131,8 @@ export default {
 	'flow.term.start': 'The entry — drag this handle onto a stage to start the flow there',
 	'flow.term.end': 'This phase is over — the run goes back to waiting',
 	'flow.term.done': 'The run is done',
+	'flow.term.exit': 'The block is over: the run goes on from the stage that includes it',
+	'flow.term.failexit': 'fail: the block leaves by the including stage’s on_fail',
 	'flow.term.abort': 'The run stops deliberately',
 	'flow.term.debug':
 		'A stop, not an end: the run parks for a human to fix the workspace, then goes back into the stage that sent it here',
@@ -399,7 +401,8 @@ export default {
 	'flow.node.noCommand': '(no command)',
 	'flow.node.noAction': '(no action)',
 	'flow.node.waitFor': 'for {signal}',
-	'flow.node.includes': 'runs block {block}',
+	'flow.node.includes': 'runs block {block} (not in this flow)',
+	'flow.node.openBlock': 'click to open the block beside the flow',
 	'flow.node.noBlock': 'no block chosen',
 	'flow.node.noSignal': '(no signal)',
 	'flow.node.asksHuman': 'asks a human',
@@ -410,6 +413,10 @@ export default {
 	// One beginning per phase: its marker names the phase and what begins it.
 	'flow.graph.beginLabel': '{phase}: on {trigger}',
 	'flow.graph.beginLabelPlain': 'on {trigger}',
+	'flow.graph.blockLabel': 'block {block}',
+	'flow.graph.blockTitle': 'The block {block}: its stages run in the including stage’s place',
+	'flow.graph.blockExit': 'back · {to}',
+	'flow.graph.blockFail': 'fail · {to}',
 	'flow.graph.entryTitle':
 		'Phase {phase} is an entrypoint: a run begins here when it is created for it — drag this handle onto a stage of the phase to start it there',
 	'flow.graph.triggerTitle':

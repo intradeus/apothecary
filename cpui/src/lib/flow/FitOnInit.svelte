@@ -5,19 +5,23 @@
 	//
 	// A long flow fitted whole is unreadable, so below a legible zoom it
 	// anchors on the entry (left edge) at that zoom instead, keeping the
-	// fitted vertical centre.
+	// fitted vertical centre. Each change of `refit` fits again, animated —
+	// the canvas changed size (a pane opened or closed beside it).
 	import { useNodesInitialized, useSvelteFlow } from '@xyflow/svelte';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
+	import { ms } from '$lib/ui/motion';
 
 	let {
 		padding = 0.12,
 		maxZoom = 1.1,
 		legible = 0.55,
+		refit = 0,
 		onmeasured
 	}: {
 		padding?: number;
 		maxZoom?: number;
 		legible?: number;
+		refit?: number;
 		/** Called once the nodes have sizes, BEFORE the fit — a layout guessed
 		 *  without them can be redone first, and the fit sees the result. */
 		onmeasured?: () => void;
@@ -27,23 +31,35 @@
 	const flow = useSvelteFlow();
 	let done = false;
 
+	async function fit(duration?: number) {
+		await flow.fitView({ padding, maxZoom, duration });
+		const vp = flow.getViewport();
+		if (vp.zoom >= legible) return;
+		const b = flow.getNodesBounds(flow.getNodes());
+		const midY = b.y + b.height / 2;
+		const screenMidY = vp.y + midY * vp.zoom;
+		await flow.setViewport(
+			{ x: 40 - b.x * legible, y: screenMidY - midY * legible, zoom: legible },
+			{ duration }
+		);
+	}
+
 	$effect(() => {
 		if (done || !initialized.current) return;
 		done = true;
 		void (async () => {
 			onmeasured?.();
 			await tick();
-			await flow.fitView({ padding, maxZoom });
-			const vp = flow.getViewport();
-			if (vp.zoom >= legible) return;
-			const b = flow.getNodesBounds(flow.getNodes());
-			const midY = b.y + b.height / 2;
-			const screenMidY = vp.y + midY * vp.zoom;
-			await flow.setViewport({
-				x: 40 - b.x * legible,
-				y: screenMidY - midY * legible,
-				zoom: legible
-			});
+			await fit();
 		})();
+	});
+
+	// The canvas resizes on the frame after the pane beside it changes; the
+	// flow reads its new size on the next one. Fit after both.
+	let fitted = untrack(() => refit);
+	$effect(() => {
+		if (refit === fitted) return;
+		fitted = refit;
+		requestAnimationFrame(() => requestAnimationFrame(() => void fit(ms('--dur-spring', 450))));
 	});
 </script>
