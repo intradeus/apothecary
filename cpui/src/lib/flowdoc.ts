@@ -330,7 +330,14 @@ export function normalizeDoc(raw: unknown): FlowDoc {
 	// A block's stages keep their sugar: its last stage's success is
 	// whichever include runs it.
 	if (doc.blocks) doc.blocks = doc.blocks.map((b) => ({ ...b, stages: b.stages.map(tagStage) }));
-	doc.parameters ??= {};
+	// A parameter may be written as its bare default (`harness: opencode`):
+	// the editor always holds the long form.
+	doc.parameters = Object.fromEntries(
+		Object.entries(doc.parameters ?? {}).map(([name, p]) => [
+			name,
+			p !== null && typeof p === 'object' ? p : { default: p as DocParam['default'] }
+		])
+	);
 	return doc;
 }
 

@@ -140,33 +140,13 @@ export const PRESETS = {
 				]
 			)
 	},
+	// One window holding every view: the layout for a single screen of
+	// attention — and the one a phone always gets (DeskState.compact).
 	focus: {
 		get label() {
 			return t('desk.preset.focus');
 		},
-		make: () =>
-			split(
-				'col',
-				[0.16, 0.84],
-				[
-					leaf(['flow']),
-					leaf([
-						'session',
-						'pings',
-						'phases',
-						'timeline',
-						'changes',
-						'files',
-						'terminal',
-						'logs',
-						'record',
-						'egress',
-						'ports',
-						'resources',
-						'vitals'
-					])
-				]
-			)
+		make: () => leaf([...VIEWS], 'session')
 	},
 	dock: {
 		get label() {

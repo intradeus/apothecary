@@ -6,6 +6,10 @@
 // Every discrete layout change (split, move, hide, preset, maximise) also
 // sets `motion`, which tells the desk to spring the windows from where they
 // are to their new rects; a gutter drag tracks 1:1 with motion off.
+//
+// On a narrow screen the desk is `compact`: the focus layout — one window,
+// every view a tab — held in memory only. The saved layout is left alone and
+// comes back as it was once the screen is wide again.
 
 import { t } from '$lib/i18n/index.svelte';
 import { ms } from '$lib/ui/motion';
@@ -82,6 +86,10 @@ export class DeskState {
 	menuOpen = $state(false);
 	/** The leaf rects of the last layout pass (for hit-testing and showView). */
 	rects: LeafRect[] = [];
+	/** A narrow screen: one window, tabs to switch, nothing to arrange. */
+	compact = $state(false);
+	/** The saved layout, set aside while compact. */
+	#wide: { tree: Tree; preset: LayoutId } | null = null;
 
 	constructor() {
 		const s = load();
@@ -125,9 +133,34 @@ export class DeskState {
 		this.#write(t, 'custom');
 	}
 
+	/** Switch to (or back from) the one-window layout of a narrow screen.
+	 *  The view in front stays in front; with none focused yet, the focus
+	 *  layout opens on its own (the session). */
+	setCompact(on: boolean) {
+		if (on === this.compact) return;
+		// The view in front: the focused window's, if one was focused yet.
+		const front = leavesOf(this.tree).find((l) => l.id === this.focus)?.act;
+		this.compact = on;
+		this.max = null;
+		this.motion = '';
+		if (on) {
+			this.#wide = { tree: this.tree, preset: this.preset };
+			const f = PRESETS.focus.make();
+			this.tree = front && f.tabs.includes(front) ? { ...f, act: front } : f;
+			this.preset = 'focus';
+			this.focus = (this.tree as { id: string }).id;
+		} else if (this.#wide) {
+			this.tree = this.#wide.tree;
+			this.preset = this.#wide.preset;
+			this.#wide = null;
+			if (front && this.leafOf(front)) this.reveal(front);
+		}
+	}
+
 	#write(t: Tree, preset: LayoutId) {
 		this.tree = norm(t);
 		this.preset = preset;
+		if (this.compact) return; // the phone's layout is not the saved one
 		try {
 			localStorage.setItem(KEY, JSON.stringify({ tree: this.tree, preset }));
 		} catch {

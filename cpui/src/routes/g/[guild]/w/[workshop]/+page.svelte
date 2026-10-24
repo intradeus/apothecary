@@ -17,6 +17,7 @@
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
 	import { indicator } from '$lib/ui/motion';
+	import { keepInView } from '$lib/ui/inview';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
 	import WorkshopBadge from '$lib/workshop/WorkshopBadge.svelte';
 	import OverviewTab from '$lib/workshop/OverviewTab.svelte';
@@ -214,7 +215,7 @@
 	</div>
 </Popover>
 
-<nav class="tabs wt" aria-label={t('page.workshop.sections')} use:indicator>
+<nav class="tabs wt" aria-label={t('page.workshop.sections')} use:indicator use:keepInView>
 	{#each TABS as tb (tb)}
 		<a
 			href={to.workshop(projectId, tb)}
@@ -281,6 +282,18 @@
 	}
 	.wt > a {
 		padding: 5px 11px;
+	}
+	@media (max-width: 760px) {
+		.wt {
+			margin: 0 12px;
+			mask-image: linear-gradient(
+				to right,
+				transparent,
+				#000 12px,
+				#000 calc(100% - 12px),
+				transparent
+			);
+		}
 	}
 	.wt .count {
 		padding: 0 5px;

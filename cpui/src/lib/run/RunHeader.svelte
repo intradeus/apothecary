@@ -264,16 +264,17 @@
 	<div class="mid">
 		<div class="crow">
 			<Breadcrumbs {crumbs} />
-			<button
-				bind:this={splitBtn}
-				class="btn-sel layout"
-				title={t('run.header.layouts')}
-				aria-expanded={desk.menuOpen}
-				onclick={() => (desk.menuOpen = !desk.menuOpen)}
-			>
-				<span class="lg-ic"><span></span><span></span><span></span></span>{desk.label}
-				{I.menu}
-			</button>
+			<!-- A narrow screen has one window: no layout to pick. -->
+			{#if !desk.compact}<button
+					bind:this={splitBtn}
+					class="btn-sel layout"
+					title={t('run.header.layouts')}
+					aria-expanded={desk.menuOpen}
+					onclick={() => (desk.menuOpen = !desk.menuOpen)}
+				>
+					<span class="lg-ic"><span></span><span></span><span></span></span>{desk.label}
+					{I.menu}
+				</button>{/if}
 		</div>
 		<div class="trow">
 			<h1>

@@ -34,6 +34,14 @@
 	// svelte-ignore state_referenced_locally
 	const rs = new RunStore(runId);
 	const desk = new DeskState();
+
+	// A phone (or any page this narrow) gets the focus layout — one window,
+	// every view a tab — and the page itself scrolls: the header scrolls away
+	// and the window keeps a full screen of height.
+	let pageW = $state(0);
+	let pageH = $state(0);
+	const compact = $derived(pageW > 0 && pageW <= 760);
+	$effect(() => desk.setCompact(compact));
 	onMount(() => rs.start());
 
 	let unknownDismissed = $state(false);
@@ -116,7 +124,13 @@
 	>
 </svelte:head>
 
-<div class="runpage">
+<div
+	class="runpage"
+	class:compact
+	bind:clientWidth={pageW}
+	bind:clientHeight={pageH}
+	style:--desk-h="{Math.max(320, pageH - 22)}px"
+>
 	{#if rs.run}
 		<RunHeader {rs} {desk} {onretried} />
 
@@ -223,5 +237,14 @@
 	}
 	.pad {
 		padding: 22px;
+	}
+	.compact {
+		overflow-y: auto;
+		overscroll-behavior-y: contain;
+	}
+	.compact > :global(.desk) {
+		flex: none;
+		height: var(--desk-h);
+		margin: 8px 8px 10px;
 	}
 </style>

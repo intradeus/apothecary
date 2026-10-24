@@ -256,4 +256,27 @@
 		gap: 6px;
 		justify-content: flex-end;
 	}
+	/* A phone: the name (and its pills) on a line of its own, version and
+	   age under it, the actions last — the columns are gone. */
+	@media (max-width: 760px) {
+		.fr {
+			grid-template-columns: auto minmax(0, 1fr);
+			row-gap: 6px;
+		}
+		.fr.head {
+			display: none;
+		}
+		.nm {
+			grid-column: 1 / -1;
+			flex-wrap: wrap;
+		}
+		.fr > .num {
+			text-align: left;
+		}
+		.acts {
+			grid-column: 1 / -1;
+			justify-content: flex-start;
+			flex-wrap: wrap;
+		}
+	}
 </style>

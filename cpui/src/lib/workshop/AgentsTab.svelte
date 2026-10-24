@@ -229,6 +229,15 @@
 		gap: 5px;
 		min-width: 0;
 	}
+	/* Stage and harness keep their words whole; the model gives way. */
+	.use > * {
+		flex: none;
+		white-space: nowrap;
+	}
+	.use > .ell {
+		flex: 0 1 auto;
+		min-width: 0;
+	}
 	.port {
 		display: inline-flex;
 		align-items: center;

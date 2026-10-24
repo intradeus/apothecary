@@ -8,10 +8,15 @@
 	// Motion: the rect springs to wherever the layout puts it (the desk turns
 	// that on for discrete changes only); a new window materialises, a hidden
 	// one scales and fades back out; the selected tab's bead slides.
+	//
+	// Compact (a phone): the only window. Its tabs are tapped, not dragged,
+	// and the row scrolls sideways under a swipe, keeping the selected tab in
+	// view; nothing to split, maximise or hide.
 	import type { TransitionConfig } from 'svelte/transition';
 	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/ui/icons';
 	import { bump, indicator, ms, spring } from '$lib/ui/motion';
+	import { keepInView } from '$lib/ui/inview';
 	import { token } from '$lib/ui/tokens';
 	import { VIEW_LABEL, type Leaf, type ViewId } from './tree';
 	import type { ViewMeta } from './Desk.svelte';
@@ -35,7 +40,8 @@
 		onsplit,
 		onmax,
 		onclose,
-		onclosetab
+		onclosetab,
+		compact = false
 	}: {
 		leaf: Leaf;
 		x: number;
@@ -58,10 +64,11 @@
 		onmax: () => void;
 		onclose: () => void;
 		onclosetab: (v: ViewId) => void;
+		compact?: boolean;
 	} = $props();
 
 	const multi = $derived(leaf.tabs.length > 1);
-	const hint = $derived(w > 420 ? (meta(leaf.act).hint ?? '') : '');
+	const hint = $derived(w > 420 && !compact ? (meta(leaf.act).hint ?? '') : '');
 	const stop = (e: Event) => e.stopPropagation();
 	const num = (c: ViewMeta['count']) => (typeof c === 'number' ? c : Number(c) || 0);
 
@@ -87,6 +94,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <section
 	class="leaf c"
+	class:compact
 	class:focused
 	class:spring={motion === 'spring'}
 	class:bounce={motion === 'bounce'}
@@ -98,7 +106,7 @@
 	transition:windowMotion={appear}
 >
 	<div class="strip">
-		<div class="tabrow" role="tablist" use:indicator>
+		<div class="tabrow" role="tablist" use:indicator use:keepInView>
 			{#each leaf.tabs as v (v)}
 				{@const m = meta(v)}
 				<div
@@ -108,8 +116,9 @@
 					role="tab"
 					tabindex="0"
 					aria-selected={v === leaf.act}
-					title={t('desk.tab.drag')}
-					onpointerdown={(e) => ontabdown(v, e)}
+					title={compact ? VIEW_LABEL[v] : t('desk.tab.drag')}
+					onpointerdown={(e) => !compact && ontabdown(v, e)}
+					onclick={() => compact && onactivate(v)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onactivate(v)}
 				>
 					{VIEW_LABEL[v]}
@@ -121,55 +130,55 @@
 							use:bump={num(m.count)}>{m.count}</span
 						>
 					{/if}
-					<span
-						class="x"
-						role="button"
-						tabindex="-1"
-						title={t('desk.tab.hide')}
-						aria-label={t('desk.tab.hideNamed', { name: VIEW_LABEL[v] })}
-						onpointerdown={stop}
-						onclick={(e) => {
-							e.stopPropagation();
-							onclosetab(v);
-						}}
-						onkeydown={(e) => e.key === 'Enter' && onclosetab(v)}>{I.close}</span
-					>
+					{#if !compact}<span
+							class="x"
+							role="button"
+							tabindex="-1"
+							title={t('desk.tab.hide')}
+							aria-label={t('desk.tab.hideNamed', { name: VIEW_LABEL[v] })}
+							onpointerdown={stop}
+							onclick={(e) => {
+								e.stopPropagation();
+								onclosetab(v);
+							}}
+							onkeydown={(e) => e.key === 'Enter' && onclosetab(v)}>{I.close}</span
+						>{/if}
 				</div>
 			{/each}
 		</div>
 		{#if hint}<span class="hint tiny fnt ell">{hint}</span>{/if}
-		<div class="ctl">
-			<button
-				class="btn-icon"
-				class:dim={!multi}
-				title={multi ? t('desk.leaf.splitRight') : t('desk.leaf.splitRightNeeds')}
-				aria-label={t('desk.leaf.splitRight')}
-				onpointerdown={stop}
-				onclick={() => multi && onsplit('right')}>{I.splitRight}</button
-			>
-			<button
-				class="btn-icon"
-				class:dim={!multi}
-				title={multi ? t('desk.leaf.splitDown') : t('desk.leaf.splitDownNeeds')}
-				aria-label={t('desk.leaf.splitDown')}
-				onpointerdown={stop}
-				onclick={() => multi && onsplit('bottom')}>{I.splitDown}</button
-			>
-			<button
-				class="btn-icon"
-				title={maxed ? t('desk.leaf.restore') : t('desk.leaf.maximise')}
-				aria-label={maxed ? t('desk.leaf.restore') : t('desk.leaf.maximise')}
-				onpointerdown={stop}
-				onclick={onmax}>{maxed ? I.restore : I.maximise}</button
-			>
-			<button
-				class="btn-icon big"
-				title={t('desk.leaf.hideThis')}
-				aria-label={t('desk.leaf.hideThis')}
-				onpointerdown={stop}
-				onclick={onclose}>{I.close}</button
-			>
-		</div>
+		{#if !compact}<div class="ctl">
+				<button
+					class="btn-icon"
+					class:dim={!multi}
+					title={multi ? t('desk.leaf.splitRight') : t('desk.leaf.splitRightNeeds')}
+					aria-label={t('desk.leaf.splitRight')}
+					onpointerdown={stop}
+					onclick={() => multi && onsplit('right')}>{I.splitRight}</button
+				>
+				<button
+					class="btn-icon"
+					class:dim={!multi}
+					title={multi ? t('desk.leaf.splitDown') : t('desk.leaf.splitDownNeeds')}
+					aria-label={t('desk.leaf.splitDown')}
+					onpointerdown={stop}
+					onclick={() => multi && onsplit('bottom')}>{I.splitDown}</button
+				>
+				<button
+					class="btn-icon"
+					title={maxed ? t('desk.leaf.restore') : t('desk.leaf.maximise')}
+					aria-label={maxed ? t('desk.leaf.restore') : t('desk.leaf.maximise')}
+					onpointerdown={stop}
+					onclick={onmax}>{maxed ? I.restore : I.maximise}</button
+				>
+				<button
+					class="btn-icon big"
+					title={t('desk.leaf.hideThis')}
+					aria-label={t('desk.leaf.hideThis')}
+					onpointerdown={stop}
+					onclick={onclose}>{I.close}</button
+				>
+			</div>{/if}
 	</div>
 </section>
 
@@ -205,13 +214,20 @@
 		padding: 0 5px 0 6px;
 		border-bottom: 1px solid var(--cLn);
 	}
+	/* More tabs than room: the row scrolls sideways, without a bar. */
 	.tabrow {
 		flex: 1 1 auto;
 		min-width: 0;
 		display: flex;
 		align-items: center;
 		gap: 2px;
-		overflow: hidden;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+		overscroll-behavior-x: contain;
+	}
+	.tabrow::-webkit-scrollbar {
+		display: none;
 	}
 	/* A tab is clicked far more than it is dragged: the pointer says so, and
 	   the grab shows only while one is being moved. */
@@ -237,6 +253,24 @@
 	.tab.on {
 		color: var(--tx);
 		font-weight: 600;
+	}
+	/* A finger swipes the row and taps a tab; there is no drag to start. */
+	.compact .tab {
+		touch-action: pan-x;
+		padding: 5px 12px;
+	}
+	.compact .strip {
+		padding: 0 4px;
+	}
+	/* Its ends fade: there is more to swipe to. */
+	.compact .tabrow {
+		mask-image: linear-gradient(
+			to right,
+			transparent,
+			#000 14px,
+			#000 calc(100% - 14px),
+			transparent
+		);
 	}
 	.tab.ghosted {
 		opacity: var(--o-ghost);

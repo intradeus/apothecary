@@ -348,6 +348,7 @@
 			onmax={() => desk.toggleMax(r.n.id)}
 			onclose={() => desk.closeLeaf(r.n.id)}
 			onclosetab={(v) => desk.closeView(v)}
+			compact={desk.compact}
 		/>
 	{/each}
 

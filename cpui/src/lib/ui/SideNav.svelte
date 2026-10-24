@@ -20,6 +20,7 @@
 	// bead springs between items as the selection moves (ui/motion
 	// `indicator`). Below 1000px it becomes a horizontal scroller.
 	import { indicator } from './motion';
+	import { keepInView } from './inview';
 	import { I } from './icons';
 
 	let {
@@ -40,7 +41,7 @@
 
 <nav class="sn lg" aria-label={label ?? t('ui.sidenav.label')}>
 	{#if title}<div class="t">{title}</div>{/if}
-	<div class="list" use:indicator>
+	<div class="list" use:indicator use:keepInView>
 		{#each items as it (it.id)}
 			{#snippet inner()}
 				{#if it.step !== undefined}
@@ -183,9 +184,24 @@
 		.t {
 			display: none;
 		}
+		/* A row of whole labels that scrolls, never squeezed ones. */
 		.list {
 			flex-direction: row;
 			overflow-x: auto;
+			scrollbar-width: none;
+			mask-image: linear-gradient(
+				to right,
+				transparent,
+				#000 10px,
+				#000 calc(100% - 10px),
+				transparent
+			);
+		}
+		.list::-webkit-scrollbar {
+			display: none;
+		}
+		.si {
+			flex: none;
 		}
 		.sub {
 			display: none;

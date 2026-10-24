@@ -64,4 +64,20 @@
 	a:hover {
 		color: var(--tx);
 	}
+	/* A phone: the line wraps — title and actions first, the description
+	   under them in full — instead of pushing the actions off the edge. */
+	@media (max-width: 760px) {
+		.sh {
+			flex-wrap: wrap;
+			row-gap: 4px;
+		}
+		.sub {
+			order: 9;
+			flex: 1 1 100%;
+			white-space: normal;
+		}
+		.rule {
+			background: none;
+		}
+	}
 </style>
