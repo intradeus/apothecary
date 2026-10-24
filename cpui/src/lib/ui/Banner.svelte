@@ -43,13 +43,16 @@
 		>
 	{/if}
 	{#if children}{@render children()}{/if}
-	<span class="spacer"></span>
-	{#if action && onaction}
-		<button class={tone === 'ros' ? 'btn-danger-solid' : 'btn-primary'} onclick={onaction}
-			>{action}</button
-		>
+	{#if (action && onaction) || ondismiss}
+		<span class="acts">
+			{#if action && onaction}
+				<button class={tone === 'ros' ? 'btn-danger-solid' : 'btn-primary'} onclick={onaction}
+					>{action}</button
+				>
+			{/if}
+			{#if ondismiss}<button class="btn-ghost" onclick={ondismiss}>{t('ui.dismiss')}</button>{/if}
+		</span>
 	{/if}
-	{#if ondismiss}<button class="btn-ghost" onclick={ondismiss}>{t('ui.dismiss')}</button>{/if}
 </div>
 
 <style>
@@ -117,7 +120,27 @@
 	.more {
 		color: var(--mut);
 	}
-	.spacer {
-		flex: 1;
+	.acts {
+		margin-left: auto;
+		flex: none;
+		display: flex;
+		gap: 6px;
+	}
+	/* A phone: the alert on top, the hosts under it, the buttons last —
+	   never pushed off the edge. */
+	@media (max-width: 760px) {
+		.bn {
+			flex-wrap: wrap;
+			row-gap: 6px;
+			padding: 7px 7px 7px 9px;
+		}
+		.aside {
+			white-space: normal;
+			min-width: 0;
+		}
+		.items {
+			flex: 1 1 100%;
+			padding-left: 28px;
+		}
 	}
 </style>

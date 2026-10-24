@@ -239,6 +239,7 @@
 		padding: 22px;
 	}
 	.compact {
+		overflow-x: hidden;
 		overflow-y: auto;
 		overscroll-behavior-y: contain;
 	}

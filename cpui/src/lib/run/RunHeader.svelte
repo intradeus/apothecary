@@ -277,7 +277,7 @@
 				</button>{/if}
 		</div>
 		<div class="trow">
-			<h1>
+			<h1 title={run.title}>
 				{plain}{#if accent}{' '}<span class="accent">{accent}</span>{/if}
 			</h1>
 			<StatusChip state={run.state} suffix />
@@ -603,10 +603,17 @@
 		gap: 12px;
 		min-width: 0;
 	}
+	/* Three lines at most — a merge request's title and its author's handle
+	   can run long; the whole of it is the tooltip. */
 	h1 {
 		min-width: 0;
 		font-size: var(--fs-empty);
 		overflow-wrap: anywhere;
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
+		overflow: hidden;
 	}
 	h1 .accent {
 		font-size: var(--fs-display);
@@ -685,6 +692,59 @@
 		}
 		.rh {
 			grid-template-columns: minmax(0, 1fr);
+			padding: 10px 12px 8px;
+			gap: 10px;
+		}
+		/* A smaller title, the state under it rather than squeezed beside
+		   it. */
+		.trow {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 6px;
+		}
+		h1 {
+			font-size: var(--fs-section);
+			line-height: 1.25;
+		}
+		h1 .accent {
+			font-size: var(--fs-mark);
+		}
+		/* Run, workspace and merge requests as one card, a row each: what it
+		   is on the left, what can be done on the right. */
+		.groups {
+			flex-direction: column;
+			gap: 0;
+		}
+		.groups > :global(.gg) {
+			flex-direction: row;
+			align-items: center;
+			flex-wrap: wrap;
+			gap: 6px 10px;
+			padding: 7px 8px 7px 12px;
+			border-radius: 0;
+		}
+		.groups > :global(.gg + .gg) {
+			margin-top: -1px;
+		}
+		.groups > :global(.gg:first-child) {
+			border-top-left-radius: var(--r-group);
+			border-top-right-radius: var(--r-group);
+		}
+		.groups > :global(.gg:last-child) {
+			border-bottom-left-radius: var(--r-group);
+			border-bottom-right-radius: var(--r-group);
+		}
+		.groups > :global(.gg .lbl) {
+			min-width: 0;
+		}
+		/* The workspace's id gives its room to the buttons. */
+		.groups :global(.ws .id) {
+			display: none;
+		}
+		.groups > :global(.gg .btns) {
+			margin-left: auto;
+			flex-wrap: wrap;
+			justify-content: flex-end;
 		}
 	}
 	/* The devcontainer config moved on since the build: the rebuild is due. */
