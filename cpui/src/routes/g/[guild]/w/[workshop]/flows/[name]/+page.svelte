@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Flow editor (DESIGN 7.8): header (name @hash, Graph | YAML, Validate,
-	// Versions, Clone, Delete… / Reset, Save), then the canvas beside a 340px
+	// Versions, Clone, Delete… / Reset, Save), then the canvas beside a 450px
 	// inspector. All document logic lives in flowdoc / FlowGraph /
 	// FlowInspector; this page wires them up.
 	import { onMount, untrack } from 'svelte';
@@ -88,6 +88,13 @@
 	let showVersions = $state(false);
 	let cloning = $state(false);
 	let inspector = $state<ReturnType<typeof FlowInspector> | null>(null);
+	let side = $state<HTMLElement | null>(null);
+	// A new selection opens its panel from the top, wherever the last one
+	// was scrolled to (the flow panel's agent and sequence chips sit low).
+	$effect(() => {
+		void selection;
+		untrack(() => side?.scrollTo({ top: 0 }));
+	});
 
 	// The workshop that owns this flow. A flow's stages name that workshop's
 	// commands and its agents know that repository, so the editor is always
@@ -911,7 +918,7 @@
 				</div>
 			</aside>
 		{:else if tab === 'graph' && doc}
-			<aside class="side lg" in:slide={{ from: 'right', distance: 24 }}>
+			<aside class="side lg" bind:this={side} in:slide={{ from: 'right', distance: 24 }}>
 				<FlowInspector
 					bind:this={inspector}
 					{doc}
@@ -1096,9 +1103,11 @@
 		padding: 14px 18px;
 		tab-size: 2;
 	}
+	/* Wider than a form's side column: the inspector edits whole agents —
+	 * prompts included — and sequences. */
 	.side {
 		flex: none;
-		width: var(--aside-w);
+		width: 450px;
 		border-radius: var(--r-pane);
 		overflow: auto;
 	}

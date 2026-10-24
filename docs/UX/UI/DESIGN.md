@@ -842,7 +842,7 @@ The same anatomy, scoped to one guild:
    - Validate, which shows a result popover: stage count, hash, errors (ros), binding warnings (amb)
    - Save (primary, disabled until dirty, with an "Unsaved changes" amber dot)
    - Clone, Delete… or "Reset to built-in"
-2. **Body:** row [canvas 1fr | inspector 340px].
+2. **Body:** row [canvas 1fr | inspector 450px].
    - **Canvas:** Svelte Flow on a transparent background over the scene, with a faint dot grid (`--ln` 1px, 20px).
      - **Nodes:** content glass, radius 14px, with a 3px top accent in the stage-type hue.
        - Head: type chip + mono id, plus an ENTRY tag (parchment outline) on the first stage, plus a detail line (agent name / command / action / signal / "gate" / the sequence it runs).
