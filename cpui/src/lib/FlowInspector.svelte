@@ -3,13 +3,13 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import StageChip from '$lib/ui/StageChip.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
-	import Stepper from '$lib/ui/Stepper.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { portLabel } from '$lib/format';
 	import { EDGE_HUE, STAGE_HUE, STAGE_WORD } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
 	import { ms } from '$lib/ui/motion';
 	import { fade } from 'svelte/transition';
+	import { untrack } from 'svelte';
 	import BindingRows from '$lib/flow/BindingRows.svelte';
 	import OptionalDuration from '$lib/ui/OptionalDuration.svelte';
 	import OptionalNumber from '$lib/ui/OptionalNumber.svelte';
@@ -57,7 +57,6 @@
 		stagesOf,
 		fires,
 		paramDefault,
-		chainSummary,
 		routableFrom,
 		EDGE_KINDS,
 		SENTINEL_DECISION,
@@ -89,11 +88,20 @@
 	// validated against the project only at run creation (preflight). `agents`
 	// is an OPTIONAL hint list (built-ins ∪ a project's authored agents) used
 	// only to render binding fields from declared I/O — never a constraint.
+	//
+	// Moving between panels comes in two kinds: `onselect` puts another
+	// selection in the current one's place (a rename, a delete); `onopen`
+	// goes from this panel into another — a stage's agent, a sequence's
+	// stage — and the page remembers where from: `back` is that selection
+	// (null: the flow panel), offered at the top of every panel.
 	let {
 		doc,
 		selection,
 		onchange,
 		onselect,
+		onopen = (sel) => onselect(sel),
+		back,
+		onback,
 		agents = [],
 		actions = [],
 		signals = []
@@ -101,11 +109,19 @@
 		doc: FlowDoc;
 		selection: Selection;
 		onchange: () => void;
-		onselect: (sel: Selection) => void;
+		onselect: (sel: Selection, how?: 'rename') => void;
+		onopen?: (sel: Selection) => void;
+		back?: Selection;
+		onback?: () => void;
 		agents?: DocAgent[];
 		actions?: ActionSpec[];
 		signals?: SignalSpec[];
 	} = $props();
+
+	// Where a delete leaves the inspector: back where it came from, or the
+	// panel given.
+	const leave = (fallback: Selection) =>
+		back !== undefined && onback ? onback() : onselect(fallback);
 
 	// A stage or an edge inside a sequence is edited in its sequence: its id,
 	// its routes and its neighbours are the sequence's own.
@@ -120,9 +136,26 @@
 	// The stages a stage may route to: its sequence's, or its chain's.
 	const routable = (s: DocStage) => (scopeSeq ? scopeSeq.stages : routableFrom(doc, s));
 
+	// An edge is edited in its stage's routes: selecting one shows the stage
+	// with that route picked out.
 	const stage = $derived(
-		selection?.kind === 'stage' ? scopeStages.find((s) => s.id === selection.id) : undefined
+		selection?.kind === 'stage'
+			? scopeStages.find((s) => s.id === selection.id)
+			: selection?.kind === 'edge'
+				? scopeStages.find((s) => s.id === selection.stage)
+				: undefined
 	);
+	const focusRoute = $derived(selection?.kind === 'edge' ? selection.edge : undefined);
+	let routesEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const kind = focusRoute;
+		if (!kind || !routesEl) return;
+		untrack(() =>
+			routesEl
+				?.querySelector(`[data-route="${kind}"]`)
+				?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+		);
+	});
 
 	// The declared I/O of the selected stage's agent, when known. feedback is
 	// excluded from bindable inputs — it is filled by edge feed:, not a stage.
@@ -177,7 +210,7 @@
 		ph.id = newId;
 		for (const s of doc.stages) if (s.phase === oldId) s.phase = newId;
 		onchange();
-		onselect({ kind: 'phase', id: newId });
+		onselect({ kind: 'phase', id: newId }, 'rename');
 		return true;
 	}
 	// The field of a rename the document refused shows the name in force.
@@ -203,7 +236,7 @@
 	function addChain(kind: 'watcher' | 'outcome') {
 		const ph = kind === 'watcher' ? addWatcher(doc) : addOutcome(doc);
 		onchange();
-		onselect({ kind: 'phase', id: ph.id });
+		onopen({ kind: 'phase', id: ph.id });
 	}
 
 	async function deletePhase(ph: DocPhase) {
@@ -226,7 +259,7 @@
 		if (!ok) return;
 		removePhase(doc, ph.id);
 		onchange();
-		onselect(null);
+		leave(null);
 	}
 
 	// What a watcher or an outcome runs: stages of its own, or a sequence in
@@ -255,7 +288,7 @@
 	function newMainChain() {
 		addMainChain(doc);
 		onchange();
-		onselect({ kind: 'phase', id: MAIN });
+		onopen({ kind: 'phase', id: MAIN });
 	}
 
 	// ---- agents: the flow carries their definitions (FLOWLANG §1) ----------
@@ -265,7 +298,7 @@
 	function newAgent(name?: string) {
 		const a = addAgent(doc, name);
 		onchange();
-		onselect({ kind: 'agent', name: a.name });
+		onopen({ kind: 'agent', name: a.name });
 	}
 	function renameAgentTo(from: string, to: string): boolean {
 		to = to.trim();
@@ -273,7 +306,7 @@
 			return false;
 		renameAgent(doc, from, to);
 		onchange();
-		onselect({ kind: 'agent', name: to });
+		onselect({ kind: 'agent', name: to }, 'rename');
 		return true;
 	}
 	async function deleteAgent(name: string) {
@@ -292,7 +325,7 @@
 		doc.agents = doc.agents?.filter((a) => a.name !== name);
 		if (!doc.agents?.length) doc.agents = undefined;
 		onchange();
-		onselect(null);
+		leave(null);
 	}
 	// A port is one declared input or output: a slug unique on its agent.
 	const portName = (taken: { name: string }[], base: string) => {
@@ -342,7 +375,7 @@
 	function newSequence() {
 		const q = addSequence(doc);
 		onchange();
-		onselect({ kind: 'sequence', id: q.id });
+		onopen({ kind: 'sequence', id: q.id });
 	}
 	function renameSequenceTo(from: string, to: string): boolean {
 		to = to.trim();
@@ -356,7 +389,7 @@
 			return false;
 		renameSequence(doc, from, to);
 		onchange();
-		onselect({ kind: 'sequence', id: to });
+		onselect({ kind: 'sequence', id: to }, 'rename');
 		return true;
 	}
 	async function deleteSequence(q: DocSequence) {
@@ -372,7 +405,7 @@
 		if (!ok) return;
 		removeSequence(doc, q.id);
 		onchange();
-		onselect(null);
+		leave(null);
 	}
 	// What a sequence stage may run: the flow's sequences, and the main chain
 	// for the chains that are not it — never the sequence it is written in.
@@ -445,7 +478,7 @@
 		selection?.kind === 'stage'
 			? `s:${selection.sequence ?? ''}:${selection.id}`
 			: selection?.kind === 'edge'
-				? `e:${selection.sequence ?? ''}:${selection.stage}:${selection.edge}`
+				? `s:${selection.sequence ?? ''}:${selection.stage}`
 				: selection?.kind === 'phase'
 					? `p:${selection.id}`
 					: selection?.kind === 'agent'
@@ -476,28 +509,19 @@
 		stage?.type === 'sequence' ? doc.sequences?.find((q) => q.id === stage.sequence) : undefined
 	);
 
-	const edgeSel = $derived(
-		selection?.kind === 'edge'
-			? {
-					stage: scopeStages.find((s) => s.id === selection.stage),
-					kind: selection.edge as EdgeKind
-				}
-			: undefined
-	);
-
 	// A stage is added at the end of a chain or a sequence, wired in after
 	// its last stage; the flow panel adds to the main chain (or the first
 	// chain there is).
 	function addToChain(type: StageKind, phase: string) {
 		const s = appendStage(doc, type, phase);
 		onchange();
-		onselect({ kind: 'stage', id: s.id });
+		onopen({ kind: 'stage', id: s.id });
 	}
 	function addToSequence(type: StageKind, id: string) {
 		const s = appendSequenceStage(doc, type, id);
 		if (!s) return;
 		onchange();
-		onselect({ kind: 'stage', id: s.id, sequence: id });
+		onopen({ kind: 'stage', id: s.id, sequence: id });
 	}
 	function addStage(type: StageKind) {
 		const phase = mainPhase?.id ?? doc.phases?.[0]?.id;
@@ -525,7 +549,7 @@
 			}
 		}
 		onchange();
-		onselect({ kind: 'stage', id: newId, ...inSeq });
+		onselect({ kind: 'stage', id: newId, ...inSeq }, 'rename');
 		return true;
 	}
 
@@ -561,10 +585,10 @@
 		if (seq) seq.stages = rest;
 		else doc.stages = rest;
 		onchange();
-		onselect(seq ? { kind: 'sequence', id: seq.id } : null);
+		leave(seq ? { kind: 'sequence', id: seq.id } : null);
 	}
 
-	// A new edge starts somewhere legal: a stage of the same phase (a route
+	// A new route starts somewhere legal: a stage of the same chain (a route
 	// may not leave it). A failure or timeout retries the stage itself; a
 	// gate's rejection goes back to whatever leads into the gate.
 	function addEdge(s: NonNullable<typeof stage>, kind: EdgeKind) {
@@ -573,7 +597,6 @@
 		const to = s.type === 'human_gate' ? (feeder ?? mine.find((x) => x.id !== s.id))?.id : s.id;
 		setEdge(s, kind, to ? { to, max: 3 } : { to: DEBUG });
 		onchange();
-		onselect({ kind: 'edge', stage: s.id, edge: kind, ...inSeq });
 	}
 
 	const targetsGate = (id: string) => scopeStages.find((x) => x.id === id)?.type === 'human_gate';
@@ -614,19 +637,6 @@
 		else if (seqSel) void deleteSequence(seqSel);
 	}
 
-	const maxHelp = (depth: number, then: unknown, canUnlimit: boolean) => {
-		const abandon = depth === 0 && !then;
-		return t(
-			abandon
-				? canUnlimit
-					? 'flow.insp.maxHelpAbandonUnl'
-					: 'flow.insp.maxHelpAbandon'
-				: canUnlimit
-					? 'flow.insp.maxHelpUnl'
-					: 'flow.insp.maxHelp'
-		);
-	};
-
 	// What an action output produces: its name, then whichever of sentinel,
 	// path and description it declares.
 	const producesHtml = (d: {
@@ -651,22 +661,66 @@
 		onchange();
 	}
 
-	// dropLink removes the chain's last link (the whole edge if it is alone).
-	function dropLink(s: NonNullable<typeof stage>, kind: EdgeKind, e: DocEdge) {
-		const links = chainLinks(e);
-		if (links.length === 1) {
-			setEdge(s, kind, undefined);
-			onselect({ kind: 'stage', id: s.id, ...inSeq });
-		} else {
-			links[links.length - 2].then = undefined;
-		}
+	// removeLink takes one link out of a route, the links after it moving up
+	// (the route goes with its only link).
+	function removeLink(s: DocStage, kind: EdgeKind, depth: number) {
+		const links = chainLinks(edgeOf(s, kind));
+		if (depth === 0) setEdge(s, kind, links[0]?.then);
+		else links[depth - 1].then = links[depth].then;
 		onchange();
 	}
+	// A link's limit: how many times it may send the run to its target
+	// (a whole number from 1), or none — a human decides each time.
+	function setMax(link: DocEdge, text: string) {
+		const n = Number(text);
+		if (text.trim() === '' || !Number.isInteger(n) || n < 1) return;
+		link.max = n;
+		onchange();
+	}
+	function setUnlimited(link: DocEdge, on: boolean) {
+		link.max = on ? -1 : 3;
+		if (on) link.then = undefined;
+		onchange();
+	}
+
+	// What the back button names: the panel `back` opens.
+	const backLabel = $derived.by(() => {
+		const b = back;
+		if (b === undefined) return '';
+		if (b === null) return t('flow.insp.formula');
+		switch (b.kind) {
+			case 'stage':
+				return t('flow.insp.backStage', { id: b.sequence ? `${b.sequence} › ${b.id}` : b.id });
+			case 'edge':
+				return t('flow.insp.backStage', {
+					id: b.sequence ? `${b.sequence} › ${b.stage}` : b.stage
+				});
+			case 'phase': {
+				const ph = doc.phases?.find((p) => p.id === b.id);
+				return ph?.kind === 'main'
+					? t('flow.insp.chainMain')
+					: t(ph?.kind === 'outcome' ? 'flow.insp.backOutcome' : 'flow.insp.backWatcher', {
+							id: b.id
+						});
+			}
+			case 'agent':
+				return t('flow.insp.backAgent', { name: b.name });
+			case 'sequence':
+				return t('flow.insp.backSequence', { id: b.id });
+		}
+	});
 </script>
 
 <div class="insp form-dense">
 	{#key viewKey}
 		<div class="view-x" in:fade={xf()} out:fade={xf()}>
+			{#if back !== undefined && onback}
+				<button
+					class="btn-sm btn-ghost back"
+					title={t('flow.insp.back', { what: backLabel })}
+					onclick={onback}>{I.back} {backLabel}</button
+				>
+			{/if}
 			{#if stage}
 				{@const s = stage}
 				{@const only = scopeSeq?.stages.length === 1}
@@ -701,7 +755,7 @@
 						<div class="row">
 							<span class="mono">{q.id}</span>
 							<span class="fnt small ell grow">{q.description ?? ''}</span>
-							<button class="btn-sm" onclick={() => onselect({ kind: 'sequence', id: q.id })}
+							<button class="btn-sm" onclick={() => onopen({ kind: 'sequence', id: q.id })}
 								>{t('flow.insp.editSequence')}</button
 							>
 						</div>
@@ -784,7 +838,7 @@
 						{#if agentDecl}
 							{@const name = agentDecl.name}
 							<div class="chips">
-								<button class="btn-sm" onclick={() => onselect({ kind: 'agent', name })}
+								<button class="btn-sm" onclick={() => onopen({ kind: 'agent', name })}
 									>{t('flow.insp.editAgent', { name })}</button
 								>
 							</div>
@@ -1168,7 +1222,7 @@
 						{#if sequenceSel}
 							{@const id = sequenceSel.id}
 							<div class="chips">
-								<button class="btn-sm" onclick={() => onselect({ kind: 'sequence', id })}
+								<button class="btn-sm" onclick={() => onopen({ kind: 'sequence', id })}
 									>{t('flow.insp.editSequence')}</button
 								>
 							</div>
@@ -1252,154 +1306,142 @@
 					<div class="help">{t('flow.insp.descHelp')}</div>
 				</div>
 
-				<div class="field">
-					<label for="st-succ">{t('flow.insp.onSuccess')}</label>
-					<select
-						id="st-succ"
-						value={s.on_success ?? ''}
-						onchange={(e) => {
-							s.on_success = e.currentTarget.value || undefined;
-							onchange();
-						}}
-					>
-						{#if scopeSeq}
-							<!-- In a sequence, saying nothing goes on to the next stage — or,
-							     from the last, out by the sequence stage's success. -->
-							<option value=""
-								>{scopeSeq.stages.at(-1)?.id === s.id
-									? t('flow.insp.leaveOption')
-									: t('flow.insp.nextOption', {
-											next: scopeSeq.stages[scopeSeq.stages.indexOf(s) + 1]?.id ?? ''
-										})}</option
+				<!-- Every way out of the stage, one row each in the same shape: its
+				     kind, where it goes — and for a failure route, how many times,
+				     then what. -->
+				<div class="routes" bind:this={routesEl}>
+					<div class="lbl">{t('flow.insp.routes')}</div>
+					<div class="route" class:hl={focusRoute === 'success'} data-route="success">
+						<div class="link">
+							<span class="rk mono t-{EDGE_HUE.success}" title={t('flow.insp.successTitle')}
+								>success</span
 							>
-						{/if}
-						<option value={END}>{t('flow.insp.endOption')}</option>
-						<option value={DONE}>{t('flow.insp.doneOption')}</option>
-						<option value={ABORT}>{t('flow.insp.abortOption')}</option>
-						{#each routable(s).filter((x) => x.id !== s.id) as x (x.id)}<option value={x.id}
-								>{x.id}</option
-							>{/each}
-					</select>
-					<div class="help">
-						{t(scopeSeq ? 'flow.insp.endsHelpSequence' : 'flow.insp.endsHelp')}
+							<select
+								id="st-succ"
+								class="to"
+								aria-label={t('flow.insp.successTitle')}
+								value={s.on_success ?? ''}
+								onchange={(e) => {
+									s.on_success = e.currentTarget.value || undefined;
+									onchange();
+								}}
+							>
+								{#if scopeSeq}
+									<!-- In a sequence, saying nothing goes on to the next stage —
+									     or, from the last, out by the sequence stage's success. -->
+									<option value=""
+										>{scopeSeq.stages.at(-1)?.id === s.id
+											? t('flow.insp.leaveOption')
+											: t('flow.insp.nextOption', {
+													next: scopeSeq.stages[scopeSeq.stages.indexOf(s) + 1]?.id ?? ''
+												})}</option
+									>
+								{/if}
+								{#each routable(s).filter((x) => x.id !== s.id) as x (x.id)}<option value={x.id}
+										>{x.id}</option
+									>{/each}
+								<option value={END}>{t('flow.insp.endOption')}</option>
+								<option value={DONE}>{t('flow.insp.doneOption')}</option>
+								<option value={ABORT}>{t('flow.insp.abortOption')}</option>
+							</select>
+						</div>
 					</div>
-				</div>
-
-				<div class="chips">
 					{#each edgeKindsFor(s.type) as kind (kind)}
-						{#if !edgeOf(s, kind)}
+						{@const e = edgeOf(s, kind)}
+						{#if e}
+							{@const links = chainLinks(e)}
+							{@const last = links[links.length - 1]}
+							<div class="route" class:hl={focusRoute === kind} data-route={kind}>
+								{#each links as link, depth (depth)}
+									<div class="link">
+										<span
+											class="rk mono t-{EDGE_HUE[kind]}"
+											class:then={depth > 0}
+											title={t('flow.insp.routeCarries', {
+												kind,
+												sentinel: feedSentinelFor(kind)
+											})}>{depth > 0 ? 'then' : kind}</span
+										>
+										<select
+											id="rt-{kind}-{depth}"
+											class="to"
+											aria-label={depth > 0 ? `${kind} · then #${depth}` : kind}
+											value={link.to}
+											onchange={(ev) => retarget(s.type, link, ev.currentTarget.value)}
+										>
+											{#each routable(s) as x (x.id)}<option value={x.id}>{x.id}</option>{/each}
+											{#if scopeSeq}
+												<option value={FAIL}>{t('flow.insp.failOption')}</option>
+											{/if}
+											<option value={END}>{t('flow.insp.endOption')}</option>
+											<option value={DONE}>{t('flow.insp.doneOption')}</option>
+											<option value={ABORT}>{t('flow.insp.abortOption')}</option>
+											<option value={DEBUG}>{t('flow.insp.debugOption')}</option>
+										</select>
+										{#if !isReservedTarget(link.to)}
+											{#if link.max === -1}
+												<button
+													class="btn-sm btn-sel unl"
+													title={t('flow.insp.limitAgain')}
+													onclick={() => setUnlimited(link, false)}>∞</button
+												>
+											{:else}
+												<span class="x" aria-hidden="true">×</span>
+												<input
+													id="rt-{kind}-{depth}-max"
+													class="mono max"
+													type="number"
+													min="1"
+													aria-label={t('flow.insp.max')}
+													title={t('flow.insp.maxTitle')}
+													value={link.max ?? 1}
+													oninput={(ev) => setMax(link, ev.currentTarget.value)}
+												/>
+												{#if unlimitedOK(s.type, link.to)}
+													<button
+														class="btn-sm unl"
+														aria-label={t('flow.insp.noLimit')}
+														title={targetsGate(link.to)
+															? t('flow.insp.noLimitTitleGate')
+															: t('flow.insp.noLimitTitle')}
+														onclick={() => setUnlimited(link, true)}>∞</button
+													>
+												{/if}
+											{/if}
+										{/if}
+										<button
+											class="btn-icon"
+											title={t('flow.insp.removeLink')}
+											aria-label={t('flow.insp.removeLink')}
+											onclick={() => removeLink(s, kind, depth)}>{I.close}</button
+										>
+									</div>
+								{/each}
+								{#if !isReservedTarget(last.to) && last.max !== -1}
+									<button class="btn-sm btn-ghost add-then" onclick={() => appendLink(e)}
+										>{I.add} {t('flow.insp.thenLink')}</button
+									>
+								{/if}
+							</div>
+						{/if}
+					{/each}
+					<div class="chips">
+						{#each edgeKindsFor(s.type).filter((k) => !edgeOf(s, k)) as kind (kind)}
 							<button class="btn-sm hue-{EDGE_HUE[kind]}" onclick={() => addEdge(s, kind)}
 								>{I.add} {kind}</button
 							>
-						{:else}
-							<button
-								class="btn-sm btn-sel hue-{EDGE_HUE[kind]}"
-								title={t('flow.insp.editEdge')}
-								onclick={() => onselect({ kind: 'edge', stage: s.id, edge: kind, ...inSeq })}
-								>{kind}
-								{I.forward} <span class="mono">{chainSummary(edgeOf(s, kind))}</span></button
-							>
-						{/if}
-					{/each}
-				</div>
-				{#if s.type === 'agent' || s.type === 'command'}
-					<div class="help">{t('flow.insp.timeoutsHelp')}</div>
-				{/if}
-			{:else if edgeSel?.stage}
-				{@const s = edgeSel.stage}
-				{@const kind = edgeSel.kind}
-				{@const e = edgeOf(s, kind)}
-				{#if e}
-					{@const links = chainLinks(e)}
-					<div class="ih">
-						<span class="pill sm mono t-{EDGE_HUE[kind]}">{kind}</span>
-						<span class="mut small">{t('flow.insp.from')}</span>
-						<span class="mono iid ell">{s.id}</span>
-						<span class="spacer"></span>
-						<button
-							class="btn-danger btn-sm"
-							title={t('flow.insp.removeEdgeTitle')}
-							onclick={() => {
-								setEdge(s, kind, undefined);
-								onchange();
-								onselect({ kind: 'stage', id: s.id, ...inSeq });
-							}}>{t('flow.insp.removeEdge')}</button
-						>
+						{/each}
 					</div>
 					<div class="help">
-						{@html th('flow.insp.edgeCarries', { sentinel: feedSentinelFor(kind) })}
+						{t(scopeSeq ? 'flow.insp.endsHelpSequence' : 'flow.insp.endsHelp')}
 					</div>
-					{#each links as link, depth (depth)}
-						<div class="link" class:fallback={depth > 0}>
-							{#if depth > 0}<div class="help">{t('flow.insp.thenHelp')}</div>{/if}
-							<div class="field">
-								<label for="ed-to-{depth}">{t('flow.insp.to')}</label>
-								<select
-									id="ed-to-{depth}"
-									value={link.to}
-									onchange={(ev) => retarget(s.type, link, ev.currentTarget.value)}
-								>
-									{#each routable(s) as x (x.id)}<option value={x.id}>{x.id}</option>{/each}
-									{#if scopeSeq}
-										<option value={FAIL}>{t('flow.insp.failOption')}</option>
-									{/if}
-									<option value={END}>{t('flow.insp.endOption')}</option>
-									<option value={DONE}>{t('flow.insp.doneOption')}</option>
-									<option value={ABORT}>{t('flow.insp.abortOption')}</option>
-									<option value={DEBUG}>{t('flow.insp.debugOption')}</option>
-								</select>
-							</div>
-							{#if !isReservedTarget(link.to)}
-								{@const canUnlimit = unlimitedOK(s.type, link.to)}
-								{#if canUnlimit}
-									<Toggle
-										checked={link.max === -1}
-										label={t('flow.insp.noLimit')}
-										title={targetsGate(link.to)
-											? t('flow.insp.noLimitTitleGate')
-											: t('flow.insp.noLimitTitle')}
-										onchange={(v) => {
-											link.max = v ? -1 : 3;
-											if (link.max === -1) link.then = undefined;
-											onchange();
-										}}
-									/>
-								{/if}
-								<div class="field">
-									<label for="ed-max-{depth}">{t('flow.insp.max')}</label>
-									{#if link.max === -1}
-										<div class="mono unl">{t('flow.insp.unlimited')}</div>
-									{:else}
-										<Stepper
-											id="ed-max-{depth}"
-											label={t('flow.insp.max')}
-											min={1}
-											bind:value={
-												() => link.max ?? 1,
-												(v) => {
-													link.max = v;
-													onchange();
-												}
-											}
-										/>
-									{/if}
-									<div class="help">{maxHelp(depth, link.then, canUnlimit)}</div>
-								</div>
-							{/if}
-						</div>
-					{/each}
-					<div class="row">
-						{#if !isReservedTarget(links[links.length - 1].to) && links[links.length - 1].max !== -1}
-							<button class="btn-sm" onclick={() => appendLink(e)}
-								>{I.add} {t('flow.insp.thenFallback')}</button
-							>
-						{/if}
-						<button class="btn-sm btn-ghost" onclick={() => dropLink(s, kind, e)}
-							>{t('flow.insp.removeLast')}</button
-						>
-					</div>
-					<div class="help">{t('flow.insp.linksHelp')}</div>
-				{/if}
+					{#if edgeKindsFor(s.type).length}
+						<div class="help">{t('flow.insp.routesHelp')}</div>
+					{/if}
+					{#if edgeKindsFor(s.type).includes('on_timeout')}
+						<div class="help">{t('flow.insp.timeoutsHelp')}</div>
+					{/if}
+				</div>
 			{:else if phaseSel}
 				{@const ph = phaseSel}
 				{@const firing = fires(ph.on)}
@@ -1784,7 +1826,7 @@
 					<div class="lbl">{t('flow.insp.runBy')}</div>
 					{#if used.length}
 						<div class="chips">
-							{#each used as u (u.label)}<button class="btn-sm mono" onclick={() => onselect(u.sel)}
+							{#each used as u (u.label)}<button class="btn-sm mono" onclick={() => onopen(u.sel)}
 									>{u.label}</button
 								>{/each}
 						</div>
@@ -1837,7 +1879,7 @@
 						<div class="seq-line">
 							<button
 								class="rowbtn seq-row"
-								onclick={() => onselect({ kind: 'stage', id: x.id, sequence: q.id })}
+								onclick={() => onopen({ kind: 'stage', id: x.id, sequence: q.id })}
 							>
 								<StageChip type={x.type} />
 								<span class="mono">{x.id}</span>
@@ -1880,9 +1922,8 @@
 					<div class="lbl">{t('flow.insp.runBy')}</div>
 					{#if users.length}
 						<div class="chips">
-							{#each users as u (u.label)}<button
-									class="btn-sm mono"
-									onclick={() => onselect(u.sel)}>{u.label}</button
+							{#each users as u (u.label)}<button class="btn-sm mono" onclick={() => onopen(u.sel)}
+									>{u.label}</button
 								>{/each}
 						</div>
 					{:else}
@@ -1926,7 +1967,7 @@
 				<div class="chips">
 					{#each doc.agents ?? [] as a (a.name)}<button
 							class="btn-sm mono"
-							onclick={() => onselect({ kind: 'agent', name: a.name })}>{a.name}</button
+							onclick={() => onopen({ kind: 'agent', name: a.name })}>{a.name}</button
 						>{/each}
 					<button class="btn-sm" onclick={() => newAgent()}
 						>{I.add} {t('flow.insp.addAgent')}</button
@@ -1937,7 +1978,7 @@
 				<div class="chips">
 					{#each doc.sequences ?? [] as q (q.id)}<button
 							class="btn-sm mono"
-							onclick={() => onselect({ kind: 'sequence', id: q.id })}>{q.id}</button
+							onclick={() => onopen({ kind: 'sequence', id: q.id })}>{q.id}</button
 						>{/each}
 					<button class="btn-sm" onclick={newSequence}>{I.add} {t('flow.insp.addSequence')}</button>
 				</div>
@@ -2030,6 +2071,68 @@
 	.lbl-in {
 		font-size: var(--fs-label, inherit);
 	}
+	/* The way back to the panel this one was opened from. */
+	.back {
+		align-self: flex-start;
+		margin: -4px 0 -2px -6px;
+		color: var(--mut);
+	}
+	/* A stage's routes: one row per link, each in its route's hue. */
+	.routes {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.route {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 6px 8px;
+		border-radius: var(--r-row);
+		border: 1px solid var(--ln);
+		transition:
+			border-color var(--dur-fade) var(--ease-out),
+			box-shadow var(--dur-fade) var(--ease-out);
+	}
+	/* The route an edge picked on the canvas. */
+	.route.hl {
+		border-color: var(--brandLn);
+		box-shadow: 0 0 0 3px var(--brandBg);
+	}
+	.link {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+	.rk {
+		flex: none;
+		width: 84px;
+		font-size: var(--fs-id);
+		font-weight: 600;
+	}
+	.rk.then {
+		padding-left: 12px;
+		opacity: 0.75;
+	}
+	.to {
+		flex: 1;
+		min-width: 0;
+	}
+	.x {
+		color: var(--mut);
+	}
+	.max {
+		width: 56px;
+	}
+	.unl {
+		min-width: 28px;
+		padding-inline: 6px;
+	}
+	.add-then {
+		align-self: flex-start;
+		margin-left: 84px;
+	}
 	/* Outgoing and incoming views share the cell while they cross-fade. */
 	.view-x {
 		grid-area: 1 / 1;
@@ -2069,18 +2172,5 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-	}
-	.link {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	.link.fallback {
-		border-left: 2px dashed var(--ln2);
-		padding-left: 10px;
-	}
-	.unl {
-		padding: 5px 0;
-		color: var(--mut);
 	}
 </style>

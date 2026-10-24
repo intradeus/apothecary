@@ -90,9 +90,11 @@
 	let inspector = $state<ReturnType<typeof FlowInspector> | null>(null);
 	let side = $state<HTMLElement | null>(null);
 	// A new selection opens its panel from the top, wherever the last one
-	// was scrolled to (the flow panel's agent and sequence chips sit low).
+	// was scrolled to (the flow panel's agent and sequence chips sit low) —
+	// but an edge opens its stage on the route it picked, which the
+	// inspector scrolls to.
 	$effect(() => {
-		void selection;
+		if (selection?.kind === 'edge') return;
 		untrack(() => side?.scrollTo({ top: 0 }));
 	});
 
@@ -366,9 +368,89 @@
 	});
 	const open = $derived(levels.at(-1));
 
+	// ---- where a panel was opened from ---------------------------------------
+	// Opening one panel from another — a stage's agent, a sequence's stage —
+	// leaves a trail, and every panel offers the way back to the one before.
+	// Selecting on the canvas starts afresh.
+	let trail = $state<Selection[]>([]);
+	function openPanel(sel: Selection) {
+		trail = [...trail, selection];
+		select(sel, true);
+	}
+	// Whether a selection still names something (a delete leaves the trail
+	// pointing at nothing).
+	function exists(sel: Selection): boolean {
+		if (!sel || !doc) return true;
+		const inScope = (seq?: string) =>
+			seq ? doc!.sequences?.find((q) => q.id === seq)?.stages : doc!.stages;
+		switch (sel.kind) {
+			case 'stage':
+				return !!inScope(sel.sequence)?.some((s) => s.id === sel.id);
+			case 'edge':
+				return !!inScope(sel.sequence)?.some((s) => s.id === sel.stage);
+			case 'phase':
+				return !!doc.phases?.some((p) => p.id === sel.id);
+			case 'agent':
+				return !!doc.agents?.some((a) => a.name === sel.name);
+			case 'sequence':
+				return !!doc.sequences?.some((q) => q.id === sel.id);
+		}
+	}
+	function goBack() {
+		let rest = trail;
+		while (rest.length) {
+			const prev = rest[rest.length - 1];
+			rest = rest.slice(0, -1);
+			if (exists(prev)) {
+				trail = rest;
+				select(prev, true);
+				return;
+			}
+		}
+		trail = [];
+		select(null);
+	}
+	// A rename renames what the trail remembers too: the panel renamed, and
+	// a sequence's stages under its new name.
+	function renamed(from: Selection, to: Selection) {
+		if (!from || !to || from.kind !== to.kind) return;
+		trail = trail.map((t): Selection => {
+			if (!t) return t;
+			if (from.kind === 'sequence' && to.kind === 'sequence') {
+				if (t.kind === 'sequence' && t.id === from.id) return { ...t, id: to.id };
+				if ((t.kind === 'stage' || t.kind === 'edge') && t.sequence === from.id)
+					return { ...t, sequence: to.id };
+			}
+			if (
+				from.kind === 'agent' &&
+				to.kind === 'agent' &&
+				t.kind === 'agent' &&
+				t.name === from.name
+			)
+				return { ...t, name: to.name };
+			if (from.kind === 'phase' && to.kind === 'phase' && t.kind === 'phase' && t.id === from.id)
+				return { ...t, id: to.id };
+			if (from.kind === 'stage' && to.kind === 'stage') {
+				if (t.kind === 'stage' && t.sequence === from.sequence && t.id === from.id)
+					return { ...t, id: to.id };
+				if (t.kind === 'edge' && t.sequence === from.sequence && t.stage === from.id)
+					return { ...t, stage: to.id };
+			}
+			return t;
+		});
+	}
+	// What the inspector asks for: another selection in this one's place,
+	// the trail kept (renamed along with it).
+	function replace(sel: Selection, how?: 'rename') {
+		if (how === 'rename') renamed(selection, sel);
+		select(sel, true);
+	}
+
 	// select is every selection's way in — the canvas, the pane, the
-	// inspector — so the pane follows it.
-	function select(sel: Selection) {
+	// inspector — so the pane follows it. From the canvas (`keep` unset) it
+	// starts the trail afresh.
+	function select(sel: Selection, keep = false) {
+		if (!keep) trail = [];
 		selection = sel;
 		if (!doc) return;
 		if (sel?.kind === 'stage' && !sel.sequence) {
@@ -428,6 +510,7 @@
 	// marker, the ways out and the empty canvas select the sequence itself.
 	function onSequenceSelect(sel: Selection) {
 		if (!open || !pane) return;
+		trail = [];
 		const seq = open.sequence.id;
 		if (sel?.kind === 'stage') {
 			selection = { kind: 'stage', id: sel.id, sequence: seq };
@@ -927,7 +1010,10 @@
 					{actions}
 					{signals}
 					onchange={markChanged}
-					onselect={select}
+					onselect={replace}
+					onopen={openPanel}
+					back={trail.length ? trail[trail.length - 1] : undefined}
+					onback={goBack}
 				/>
 			</aside>
 		{/if}

@@ -857,7 +857,7 @@ The same anatomy, scoped to one guild:
    - **Inspector** (control glass) — everything the YAML can say:
      - With nothing selected: description, what runs start on, parameters (the six the engine reads, each with an optional description and allowed values, then the flow's own), the agents and the sequences (one chip each, + agent / + sequence), + main chain (when there is none) / + watcher / + outcome, and a stage of each kind for the main chain.
      - Chain marker selected: the main chain — what runs start on; a watcher or an outcome — id, description, its signal (or *by hand*, for a watcher), start policy (or an enum `$param`), quiet for (debounced signals), runs per merge request (watcher) or then (outcome), and **Runs**: its own stages or a sequence (`sequence: X`). Each panel adds a stage of each kind to its chain, wired after the last.
-     - Stage selected: id (rename updates every reference), its chain (or the sequence it is in), condition, description, success target, add on_fail / on_timeout / on_reject, plus per-type fields:
+     - Stage selected: id (rename updates every reference), its chain (or the sequence it is in), condition, description, per-type fields, and its **routes** — one row per link, all in the same shape: the route's kind in its hue (`success`, `on_fail`, `on_timeout`, `on_reject`; `then` for a fallback), where it goes and, for a failure link to a stage, ×N (or ∞ where a person decides: from a gate, or to one); "+ then" adds a fallback, × removes a link, "+ on_timeout" a route the stage has none of yet. Per-type fields:
        - agent: name autocomplete, *Edit agent* (or *Declare agent* for a name the flow lacks), overrides, input bindings, output paths, verdict note
        - command: run_ref or literal script, timeout, reads, writes, **each_repo** toggle
        - gate: question, shows (artifact / `$WORKSPACE` / `$MR_URL`), auto-approve / auto-reject signals
@@ -865,10 +865,11 @@ The same anatomy, scoped to one guild:
        - wait: signal picker, timeout (empty = ∞)
        - sequence: what it runs (a sequence, or `main` from another chain), *Edit sequence*
      - Inside a sequence, a stage routes to the sequence's stages, the ends, and `fail` (the sequence stage's on_fail); saying nothing goes on to the next stage, or out.
-     - Edge selected: a chain of links (target + max ×N / ∞), "then" fallbacks, remove last / remove edge.
+     - Edge selected (on the canvas, or by its label): its stage, that route picked out and scrolled to.
      - Agent selected: name, description, read-only, allow shell, prompt, inputs (name, description, optional), outputs (name, path, type, description), the stages that run it, delete.
      - Sequence selected: id, description, its stages (reorder ↑ ↓), add a stage of each kind, the stages that run it, delete (once nothing does).
      - Delete what is selected: inspector button **or** ⌫ / Del key. A rename the document refuses puts the field back.
+     - **Back**: a panel opened from another — *Edit agent*, *Edit sequence*, a sequence's stage, *Run by*, the flow panel's chips, a stage just added — offers "← stage build" (or agent, sequence, watcher, *The formula*) at its top, as many steps back as it was opened through; renames carry along, deleted panels are skipped. Selecting on the canvas starts afresh.
    - **Versions:** a drawer from the header (list, current marked, "Load into editor").
    - Leaving with unsaved changes triggers a confirm modal.
 

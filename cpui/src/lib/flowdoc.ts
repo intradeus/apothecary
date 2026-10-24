@@ -448,17 +448,6 @@ export function routableFrom(doc: FlowDoc, s: DocStage): DocStage[] {
 	return stagesOf(doc, s.phase);
 }
 
-/** "fix ×2 · then debug": an edge chain in a few words, for the sidebar. */
-export function chainSummary(e: DocEdge | undefined): string {
-	return chainLinks(e)
-		.map((l, depth) => {
-			const head = depth > 0 ? 'then ' : '';
-			if (isReservedTarget(l.to)) return head + l.to;
-			return `${head}${l.to} ×${l.max === -1 ? '∞' : (l.max ?? '?')}`;
-		})
-		.join(' · ');
-}
-
 // pruneCrossPhase removes every route that leaves its stage's phase — what a
 // stage moved to another phase leaves behind, both its own routes out and the
 // routes into it. A cut success route ends the phase (end); a cut chain link

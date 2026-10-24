@@ -592,7 +592,7 @@
 									: link.to,
 					targetHandle: dot ? `in:${dot}` : undefined,
 					type: 'labeled',
-					data: { row },
+					data: { row, pick: () => onselect({ kind: 'edge', stage: s.id, edge: kind }) },
 					// "fail ×3": the word as well as the hue, so colour is never the
 					// only signal; "then#1" marks a fallback link. A debug link
 					// names no target: its leaf sits right under the stage.
@@ -616,7 +616,7 @@
 					source: debugNodeID(s.id),
 					target: s.id,
 					type: 'labeled',
-					data: { anchor: 'right' },
+					data: { anchor: 'right', pick: () => onselect({ kind: 'stage', id: s.id }) },
 					label: `${I.retry} ${t('flow.graph.debugReturn')}`,
 					labelStyle: hued('amb'),
 					class: 'e-dash e-then',
@@ -959,6 +959,10 @@
 	 * centres a transparent box at its anchor and the pill inside shifts back
 	 * by half its own width, so the label starts at the anchor. */
 	.graph-wrap :global(.e-lbl-pill) {
+		appearance: none;
+		margin: 0;
+		line-height: inherit;
+		cursor: pointer;
 		display: inline-block;
 		transform: translateX(50%);
 		background: var(--xy-edge-label-background-color);
