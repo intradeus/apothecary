@@ -42,6 +42,7 @@ export default {
 	'runview.flow.reading': 'Reading the flow…',
 	'runview.flow.no_stages': 'No stages yet.',
 	'runview.flow.done': 'done',
+	'runview.flow.phase': 'phase',
 	'runview.flow.formula': 'The formula',
 	'runview.vitals.cpu': 'CPU',
 	'runview.vitals.memory': 'Memory',

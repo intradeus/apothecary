@@ -40,8 +40,11 @@ export class RunStore {
 	ticket = $state<Ticket | null>(null);
 	/** The workshop's name (the fleet's copy may not have landed yet). */
 	projectName = $state('');
-	/** The pinned recipe's stages, in order; null until loaded (or unknown). */
+	/** The pinned recipe's stages, every phase's, in order; null until loaded
+	 *  (or unknown). */
 	stageDefs = $state<StageDef[] | null>(null);
+	/** The pinned recipe has a stage that opens a merge request. */
+	opensMRs = $state(false);
 	denials = $state<EgressDenial[]>([]);
 	dismissed = $state<Set<string>>(new Set());
 	exposed = $state<{ port: number; url: string }[]>([]);
@@ -232,13 +235,14 @@ export class RunStore {
 			if (!yaml) yaml = (await api.flows.get(r.projectId, r.flowName)).yaml;
 			// The run's events name a block's stages by their expanded ids.
 			const doc = expandDoc(normalizeDoc(parseYaml(yaml)));
-			// The phase the run began at is the recipe; the other phases
-			// (conflicts, review rounds) show once they have run. A document
-			// written with top-level stages has no phases: everything is it.
-			const begun = doc.phases?.length ? r.beginPhase || doc.phases[0].id : '';
-			this.stageDefs = successOrder(doc)
-				.filter((s) => (s.phase ?? '') === begun)
-				.map((s) => ({ id: s.id, type: s.type, agent: s.agent }));
+			// Which phases the strip shows is the view's call (shownStages).
+			this.stageDefs = successOrder(doc).map((s) => ({
+				id: s.id,
+				type: s.type,
+				agent: s.agent,
+				phase: doc.phases?.length ? s.phase : undefined
+			}));
+			this.opensMRs = doc.stages.some((s) => s.type === 'action' && s.action === 'create_mr');
 		} catch {
 			this.stageDefs = null; // the strip falls back to what the log shows
 		}

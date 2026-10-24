@@ -208,7 +208,7 @@ export default {
 	'workshop.flows.createTitle': 'New flow',
 	'workshop.flows.createAction': 'Create & edit',
 	'workshop.flows.createNote':
-		'Starts from a minimal skeleton — one builder stage — in <b>{name}</b>.',
+		'Starts from a minimal skeleton — one agent stage — in <b>{name}</b>.',
 	'workshop.flows.sourceBuiltin': 'the built-in template',
 	'workshop.flows.created': 'Flow {name} created',
 	'workshop.flows.copied': 'Copied as {name} into {project}',

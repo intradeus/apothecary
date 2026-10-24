@@ -1,17 +1,29 @@
 <script lang="ts">
 	// The recipe and where the run is in it (DESIGN §6 Flow, 3.4): a stage
 	// strip when the window is wide and short, a vertical recipe list when it
-	// is tall and narrow. Clicking a stage opens its log.
+	// is tall and narrow, grouped by phase once more than one has run.
+	// Clicking a stage opens its log.
 	import { t } from '$lib/i18n/index.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
-	import { stageRows } from '../derive';
+	import { shownStages, stageRows } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, w, h, onstage }: { rs: RunStore; w: number; h: number; onstage: (id: string) => void } =
 		$props();
 
-	const rows = $derived(stageRows(rs.stageDefs ?? [], rs.events, rs.run, rs.now));
+	const rows = $derived(
+		stageRows(
+			shownStages(rs.stageDefs ?? [], rs.events, rs.run?.beginPhase ?? ''),
+			rs.events,
+			rs.run,
+			rs.now
+		)
+	);
+	const grouped = $derived(new Set(rows.map((r) => r.phase ?? '')).size > 1);
+	/** The phase a row opens, when the view is grouped and it is the first of it. */
+	const opens = (i: number) =>
+		grouped && (i === 0 || rows[i - 1].phase !== rows[i].phase) ? (rows[i].phase ?? '') : '';
 	const horizontal = $derived(w > h * 2.2);
 	const hash = $derived(rs.run?.flowHash ? `@${rs.run.flowHash.slice(0, 6)}` : '');
 	const finished = $derived(rs.run?.state === 'completed');
@@ -36,7 +48,8 @@
 		</div>{/if}
 {:else if horizontal}
 	<div class="strip">
-		{#each rows as r (r.id)}
+		{#each rows as r, i (r.id)}
+			{#if opens(i)}<span class="ph mono fnt" title={t('runview.flow.phase')}>{opens(i)}</span>{/if}
 			<div class="cell">
 				<button class="rowbtn stage spill {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
 					<StageFlask status={r.status} />
@@ -55,6 +68,9 @@
 		<div class="title serif">{t('runview.flow.formula')}</div>
 		<div class="sub mono fnt">{rs.run?.flowName ?? ''} {hash}</div>
 		{#each rows as r, i (r.id)}
+			{#if opens(i)}<div class="vph mono fnt" title={t('runview.flow.phase')}>
+					{opens(i)}
+				</div>{/if}
 			<div class="vrow">
 				<div class="rail">
 					<StageFlask status={r.status} />
@@ -79,6 +95,16 @@
 		padding: 6px 8px;
 		overflow-x: auto;
 		overflow-y: hidden;
+	}
+	.ph {
+		flex: none;
+		font-size: var(--fs-meta);
+		padding: 0 8px 0 4px;
+		white-space: nowrap;
+	}
+	.vph {
+		font-size: var(--fs-meta);
+		padding: 8px 0 4px;
 	}
 	.cell {
 		display: flex;

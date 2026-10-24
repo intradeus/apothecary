@@ -10,15 +10,16 @@
 		clearDraft,
 		commentId,
 		composeFeedback,
+		isMarkdown,
 		loadDraft,
-		planBlocks,
+		docBlocks,
 		rangeAt,
 		saveDraft,
 		textOffset,
 		type CommentAnchor,
-		type PlanBlock,
+		type DocBlock,
 		type ReviewComment
-	} from '$lib/planreview';
+	} from '$lib/docreview';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -36,7 +37,7 @@
 	// review as its note.
 	const isGate = $derived(ping.answerKind === 'decision');
 
-	let blocks = $state<PlanBlock[]>([]);
+	let blocks = $state<DocBlock[]>([]);
 	let path = $state('');
 	let error = $state('');
 	let loading = $state(true);
@@ -47,7 +48,7 @@
 
 	// The composer pops up where a selection was released. It is deliberately
 	// sticky: only Add/Save or Close dismiss it — clicking away (to scroll, to
-	// re-read the plan, to pick a file) must never throw away what was typed.
+	// re-read the document, to pick a file) must never throw away what was typed.
 	interface Composer {
 		anchor: CommentAnchor | null;
 		quote: string;
@@ -70,7 +71,7 @@
 	});
 	let composerEl = $state<HTMLTextAreaElement | null>(null);
 	let hovered = $state<number | null>(null);
-	let planEl = $state<HTMLDivElement | null>(null);
+	let docEl = $state<HTMLDivElement | null>(null);
 	// Rendered blocks by index, for anchoring and highlighting. Deliberately
 	// not reactive: they are read on demand (selection, scroll, paint).
 	const blockEls: HTMLElement[] = [];
@@ -89,14 +90,14 @@
 			const { files: fs } = await api.pings.payload(ping.id);
 			const primary = fs[0];
 			if (!primary) {
-				error = t('plan.noFiles');
+				error = t('doc.noFiles');
 			} else if (!primary.captured || !primary.snapshotId) {
-				error = t('plan.notCaptured', { path: primary.path });
+				error = t('doc.notCaptured', { path: primary.path });
 			} else {
 				path = primary.path;
 				const res = await fetch(api.files.snapshotUrl(primary.snapshotId));
-				if (!res.ok) throw new Error(t('plan.docUnavailable', { status: res.status }));
-				blocks = planBlocks(await res.text());
+				if (!res.ok) throw new Error(t('doc.docUnavailable', { status: res.status }));
+				blocks = docBlocks(await res.text(), primary.path);
 			}
 			extraFiles = fs.slice(1);
 		} catch (e) {
@@ -144,9 +145,9 @@
 
 	function captureSelection() {
 		const sel = window.getSelection();
-		if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !planEl) return;
+		if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !docEl) return;
 		const range = sel.getRangeAt(0);
-		if (!planEl.contains(range.commonAncestorContainer)) return;
+		if (!docEl.contains(range.commonAncestorContainer)) return;
 		const quote = sel.toString().trim();
 		if (quote.length < 2) return;
 		// Never clobber a composer that already holds work.
@@ -164,8 +165,8 @@
 		};
 	}
 
-	// Listeners live on the document (a drag can be released outside the plan)
-	// and are attached imperatively so the plan stays a plain, non-interactive
+	// Listeners live on the document (a drag can be released outside the document)
+	// and are attached imperatively so the document stays a plain, non-interactive
 	// region as far as a11y is concerned.
 	$effect(() => {
 		const onUp = () => setTimeout(captureSelection, 0); // let the selection settle
@@ -188,8 +189,8 @@
 
 	// ---- highlighting -------------------------------------------------------
 
-	const PENDING = 'apo-plan-pending';
-	const ACTIVE = 'apo-plan-active';
+	const PENDING = 'apo-doc-pending';
+	const ACTIVE = 'apo-doc-active';
 	type HighlightRegistry = { set(k: string, v: object): void; delete(k: string): void };
 	type HighlightCtor = new (...ranges: Range[]) => object;
 
@@ -299,9 +300,9 @@
 		const c = comments[i];
 		if (
 			!(await confirmDialog({
-				title: t('plan.deleteTitle'),
-				body: th('plan.deleteBody'),
-				action: t('plan.deleteAction')
+				title: t('doc.deleteTitle'),
+				body: th('doc.deleteBody'),
+				action: t('doc.deleteAction')
 			}))
 		)
 			return;
@@ -336,6 +337,7 @@
 
 	const feedback = () =>
 		composeFeedback(
+			path,
 			comments,
 			files.map((f) => f.name)
 		);
@@ -379,9 +381,9 @@
 		if (
 			comments.length > 0 &&
 			!(await confirmDialog({
-				title: t('plan.approveTitle'),
-				body: th('plan.approveBody', { count: comments.length }),
-				action: t('plan.approveAnyway'),
+				title: t('doc.approveTitle'),
+				body: th('doc.approveBody', { count: comments.length }),
+				action: t('doc.approveAnyway'),
 				tone: 'warn'
 			}))
 		)
@@ -420,8 +422,8 @@
 
 <div class="wb">
 	<!-- Outline -->
-	<nav class="outline c pane" aria-label={t('plan.outlineLabel')}>
-		<div class="pane-head"><h2>{t('plan.outline')}</h2></div>
+	<nav class="outline c pane" aria-label={t('doc.outlineLabel')}>
+		<div class="pane-head"><h2>{t('doc.outline')}</h2></div>
 		{#if loading}
 			<div class="pane-body"><Skeleton lines={5} height={10} /></div>
 		{:else if outline.length}
@@ -440,7 +442,7 @@
 				{/each}
 			</div>
 		{:else}
-			<div class="empty-line">{t('plan.noHeadings')}</div>
+			<div class="empty-line">{t('doc.noHeadings')}</div>
 		{/if}
 	</nav>
 
@@ -457,9 +459,9 @@
 			{:else if error && blocks.length === 0}
 				<div class="paper"><ErrorCard cause={error} /></div>
 			{:else if blocks.length === 0}
-				<div class="paper fnt">{t('plan.empty')}</div>
+				<div class="paper fnt">{t('doc.empty')}</div>
 			{:else}
-				<div class="paper" bind:this={planEl}>
+				<div class="paper" class:listing={!isMarkdown(path)} bind:this={docEl}>
 					{#each blocks as b, i (i)}
 						<div
 							class="block"
@@ -482,14 +484,14 @@
 	<!-- Review sidebar -->
 	<aside class="side lg pane">
 		<div class="pane-head">
-			<h2>{t('plan.review')}</h2>
+			<h2>{t('doc.review')}</h2>
 			<span class="count hot" class:gone={!comments.length} use:bump={comments.length}
 				>{comments.length}</span
 			>
 		</div>
 		<div class="sscroll">
 			<details class="card-in ask">
-				<summary class="disclosure">{t('plan.theAsk')}</summary>
+				<summary class="disclosure">{t('doc.theAsk')}</summary>
 				<Markdown src={ping.question} quiet />
 			</details>
 
@@ -505,20 +507,20 @@
 						transition:materialize={{ origin: 'top center', y: 6 }}
 					>
 						<div class="ch">
-							<button class="rowbtn jump" title={t('plan.scrollTo')} onclick={() => reveal(c)}>
+							<button class="rowbtn jump" title={t('doc.scrollTo')} onclick={() => reveal(c)}>
 								<span class="ell"
-									>§ {c.heading || t('plan.top')} ·
+									>{#if c.heading}§ {c.heading} ·{/if}
 									<span class="mono">L{c.startLine}–{c.endLine}</span></span
 								>
 							</button>
 							<button class="btn-ghost btn-sm" onclick={() => editComment(i)}
-								>{t('plan.edit')}</button
+								>{t('doc.edit')}</button
 							>
 							<button
 								class="btn-icon"
 								onclick={() => removeComment(i)}
-								aria-label={t('plan.deleteComment')}
-								title={t('plan.deleteComment')}>{I.close}</button
+								aria-label={t('doc.deleteComment')}
+								title={t('doc.deleteComment')}>{I.close}</button
 							>
 						</div>
 						<blockquote class="mono">{trunc(c.quote, 120)}</blockquote>
@@ -528,11 +530,11 @@
 						{/if}
 					</div>
 				{:else}
-					<p class="note">{@html th('plan.hint')}</p>
+					<p class="note">{@html th('doc.hint')}</p>
 				{/each}
 			</div>
 
-			<AttachFiles bind:files label={t('plan.attachReview')} compact />
+			<AttachFiles bind:files label={t('doc.attachReview')} compact />
 			{#if error && blocks.length > 0}<div class="err">{error}</div>{/if}
 		</div>
 
@@ -543,7 +545,7 @@
 						class="btn-primary"
 						disabled={busy}
 						aria-busy={busy && sending === 'approve'}
-						onclick={approve}>{t('plan.approve')}</button
+						onclick={approve}>{t('doc.approve')}</button
 					>
 					<button
 						class="btn-sel"
@@ -551,7 +553,7 @@
 						aria-busy={busy && sending === 'reject'}
 						onclick={requestChanges}
 					>
-						{t('plan.requestChanges', { count: comments.length })}
+						{t('doc.requestChanges', { count: comments.length })}
 					</button>
 				</div>
 			{:else if ping.answerKind === 'choice' && ping.options.length}
@@ -566,7 +568,7 @@
 						>
 					{/each}
 				</div>
-				<p class="cap">{t('plan.pickHint')}</p>
+				<p class="cap">{t('doc.pickHint')}</p>
 			{:else}
 				<div class="acts">
 					<button
@@ -575,15 +577,15 @@
 						aria-busy={busy}
 						onclick={sendReview}
 					>
-						{t('plan.sendReview', { count: comments.length })}
+						{t('doc.sendReview', { count: comments.length })}
 					</button>
 				</div>
 			{/if}
 			<p class="cap">
 				{#if comments.length && savedAt}
-					<span class="hue-grn">{I.ok} {t('plan.draftSaved')}</span>{t('plan.draftKept')}
+					<span class="hue-grn">{I.ok} {t('doc.draftSaved')}</span>{t('doc.draftKept')}
 				{:else}
-					{t('plan.draftsKept')}
+					{t('doc.draftsKept')}
 				{/if}
 			</p>
 		</footer>
@@ -591,7 +593,7 @@
 </div>
 
 <!-- The floating composer: sticky (only Add/Save, Close or Esc dismiss it, so
-     clicking away to re-read the plan never throws away what was typed), and
+     clicking away to re-read the document never throws away what was typed), and
      it materialises where the selection was released. -->
 <Popover
 	open={composer !== null}
@@ -605,11 +607,11 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="composer"
-			aria-label={composer.editing !== null ? t('plan.editComment') : t('plan.addComment')}
+			aria-label={composer.editing !== null ? t('doc.editComment') : t('doc.addComment')}
 			onkeydown={onComposerKey}
 		>
 			<div class="cmh">
-				<span class="ell">§ {composer.heading || t('plan.top')}</span>
+				<span class="ell">{composer.heading ? `§ ${composer.heading}` : ''}</span>
 				<span class="mono fnt">L{composer.startLine}–{composer.endLine}</span>
 			</div>
 			<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>
@@ -617,18 +619,18 @@
 				bind:this={composerEl}
 				bind:value={composer.text}
 				rows="3"
-				placeholder={t('plan.commentPlaceholder')}></textarea>
-			<AttachFiles bind:files={composer.files} label={t('plan.attach')} compact />
+				placeholder={t('doc.commentPlaceholder')}></textarea>
+			<AttachFiles bind:files={composer.files} label={t('doc.attach')} compact />
 			<div class="cmf">
 				<button class="btn-primary" onclick={commitComment} disabled={!composer.text.trim()}>
-					{composer.editing !== null ? t('plan.save') : t('plan.add')}
+					{composer.editing !== null ? t('doc.save') : t('doc.add')}
 				</button>
-				<button class="btn-ghost" onclick={closeComposer}>{t('plan.close')}</button>
+				<button class="btn-ghost" onclick={closeComposer}>{t('doc.close')}</button>
 				<span class="spacer"></span>
 				<span class="help"
 					><span class="kbd">⌘↵</span>
-					{t('plan.addHint')} · <span class="kbd">esc</span>
-					{t('plan.closeHint')}</span
+					{t('doc.addHint')} · <span class="kbd">esc</span>
+					{t('doc.closeHint')}</span
 				>
 			</div>
 		</div>
@@ -690,6 +692,20 @@
 		margin: 0 -8px 2px;
 		transition: background var(--dur-fade) var(--ease-out);
 	}
+	/* A file shown as written: its runs of lines read as one listing. */
+	.listing .block {
+		margin-bottom: 0;
+	}
+	.listing .block :global(pre) {
+		margin: 0;
+		border-radius: 0;
+	}
+	.listing .block:first-child :global(pre) {
+		border-radius: var(--r-tag) var(--r-tag) 0 0;
+	}
+	.listing .block:last-child :global(pre) {
+		border-radius: 0 0 var(--r-tag) var(--r-tag);
+	}
 	.block.commented {
 		box-shadow: inset 3px 0 0 var(--brand);
 	}
@@ -701,10 +717,10 @@
 	/* Exact-selection highlights. ::highlight() isn't attached to an element,
      so it can't be scoped — hence :global. Falls back to the block tint above
      where the Custom Highlight API is missing. */
-	:global(::highlight(apo-plan-pending)) {
+	:global(::highlight(apo-doc-pending)) {
 		background: color-mix(in oklch, var(--brand) 32%, transparent);
 	}
-	:global(::highlight(apo-plan-active)) {
+	:global(::highlight(apo-doc-active)) {
 		background: color-mix(in oklch, var(--brand) 26%, transparent);
 	}
 

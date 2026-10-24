@@ -31,7 +31,7 @@ export default {
 	'run.header.retryStage': 'Retry {stage}',
 	'run.header.theFailedStage': 'the failed stage',
 	'run.header.retryTitle':
-		'Re-run {stage} in the same workspace — keeps the plan, build and commits; only retries what failed',
+		'Re-run {stage} in the same workspace — keeps its files and commits; only retries what failed',
 	'run.header.rerun': 'New run from this…',
 	'run.header.rerunTitle':
 		'A fresh run of the same ticket: new workspace, new branch — with direction, files and a flow of your choosing',
@@ -102,6 +102,7 @@ export default {
 	'run.mr.none': 'No merge request yet',
 	'run.mr.title': 'Merge request',
 	'run.mr.notOpened': 'Not opened yet',
+	'run.mr.adopted': 'The merge request this run works on: {title}, by {author}',
 	'run.mr.notOpenedRepo': '{name}: not opened yet',
 	'run.mr.requests': 'Merge requests',
 	'run.mrStatus.mergedSuffix': 'merged',
@@ -202,11 +203,11 @@ export default {
 	// Review card
 	'run.phases.title': 'Phases',
 	'run.phases.sub':
-		"The flow's phases, each opened by its own wait point — a signal from the forge, or you. One runs at a time; an outcome — the merge request merged or closed — ends the run.",
+		"The flow's phases, each opened by its own wait point — a signal, or you. One runs at a time; an outcome ends the run when its signal holds.",
 	'run.phases.beganHere': 'began here',
 	'run.phases.onTheForge': 'happens on the forge',
 	'run.phases.outcomeTitle':
-		'An outcome opens by itself when the merge request merges or closes, and ends the run. To stop the run yourself, use Abort.',
+		'An outcome opens by itself when its signal holds, and ends the run. To stop the run yourself, use Abort.',
 	'run.phases.forgeError': 'The forge could not be read.',
 	'run.phases.phaseStarted': 'Phase {phase} started',
 	'run.phases.phaseFailed': 'Phase {phase} could not start.',
@@ -277,7 +278,7 @@ export default {
 	'run.terminal.sessionClosed': 'session closed',
 
 	// Composer
-	'run.composer.placeholder': 'Whisper to the builder…',
+	'run.composer.placeholder': 'Whisper to the agent…',
 	'run.composer.aria': 'Message the agent',
 	'run.composer.keyQueue': 'send, queued',
 	'run.composer.keyNow': 'send now, interrupts',
@@ -328,7 +329,7 @@ export default {
 	'run.transcript.viewLog': 'View log',
 	'run.transcript.truncated': 'truncated',
 	'run.transcript.thinking': 'Thinking',
-	'run.transcript.recipe': 'The recipe',
+	'run.transcript.checklist': 'Checklist',
 	'run.transcript.planProgress': '{done} of {total}',
 	'run.transcript.interrupt': 'interrupt',
 	'run.transcript.delivered': 'you · delivered {at}',
@@ -383,9 +384,9 @@ export default {
 	'run.event.parkedDebug': '{stage} failed — parked for debugging',
 	'run.event.ping': 'ping [{type}]: {question}',
 	'run.event.answered': 'answered: {answer}',
-	'run.event.approve': 'review verdict: APPROVE',
-	'run.event.reject_one': 'review verdict: REJECT ({count} comment)',
-	'run.event.reject_other': 'review verdict: REJECT ({count} comments)',
+	'run.event.approve': 'verdict: approve',
+	'run.event.reject_one': 'verdict: changes requested ({count} comment)',
+	'run.event.reject_other': 'verdict: changes requested ({count} comments)',
 	'run.event.phaseOn': 'phase {phase} on {subject} ({how})',
 	'run.event.theMr': 'the merge request',
 	'run.event.byHand': 'started by hand',

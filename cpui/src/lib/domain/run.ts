@@ -57,6 +57,8 @@ export interface Run {
 	/** Every merge request the run opened: one per changed repo of a
 	 *  multi-repo task. mrUrl is the first. */
 	mrs: RunMergeRequest[];
+	/** The merge request someone opened that this run was created on. */
+	adopted?: { repo: string; iid: number; url: string; author?: string; title?: string };
 	/** The run's repositories, the primary first. */
 	checkouts: RunCheckout[];
 	/** The phase in progress — or the last one while idle — and the

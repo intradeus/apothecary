@@ -144,7 +144,7 @@
 	{:else if it.kind === 'plan'}
 		<div class="plan card-in">
 			<div class="ph">
-				<span class="pt serif">{t('run.transcript.recipe')}</span>
+				<span class="pt serif">{t('run.transcript.checklist')}</span>
 				<span class="pm"
 					>{t('run.transcript.planProgress', {
 						done: planDone(it.entries),

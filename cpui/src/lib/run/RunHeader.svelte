@@ -199,21 +199,32 @@
 	const canRebuild = $derived(
 		!!run.envId && run.state !== 'archived' && (rs.terminal || run.state === 'paused')
 	);
-	// One slot per checkout: an opened MR links out, the rest are "not yet".
+	// The run's merge requests: the one it was created on, the ones it
+	// opened and — only when its flow opens merge requests — a "not yet" slot
+	// for each checkout still without one. A run that has none and whose flow
+	// opens none shows no slot at all.
 	const mrSlots = $derived.by(() => {
-		const n = Math.max(run.checkouts.length, run.mrs.length, 1);
+		const n = Math.max(rs.opensMRs ? run.checkouts.length : 0, run.mrs.length, 1);
 		const slots: { label: string; url?: string; title: string }[] = [];
 		const seen = new Set<string>();
+		const a = run.adopted;
+		if (a)
+			slots.push({
+				label: `!${a.iid} ${I.external}`,
+				url: a.url,
+				title: t('run.mr.adopted', { title: a.title || `!${a.iid}`, author: a.author ?? '?' })
+			});
 		const name = (i: number) => (n > 1 ? t('run.mr.slot', { i: i + 1, n }) : t('run.mr.one'));
 		run.mrs.forEach((mr, i) => {
 			seen.add(mr.repo);
+			if (mr.url === a?.url) return;
 			slots.push({
 				label: `${name(i)} ${I.external}`,
 				url: mr.url,
 				title: `${mr.repo !== 'repo' ? mr.repo + ': ' : ''}${mr.branch}${mr.target ? ' → ' + mr.target : ''}`
 			});
 		});
-		for (const c of run.checkouts) {
+		for (const c of rs.opensMRs ? run.checkouts : []) {
 			const key = c.primary ? 'repo' : c.name;
 			if (seen.has(key) || seen.has(c.name) || slots.length >= n) continue;
 			slots.push({
@@ -228,7 +239,7 @@
 				url: run.mrUrl,
 				title: run.branch ?? t('run.mr.title')
 			});
-		if (!slots.length)
+		if (!slots.length && rs.opensMRs)
 			slots.push({ label: `${t('run.mr.one')} ${I.none}`, title: t('run.mr.notOpened') });
 		return slots;
 	});
@@ -400,25 +411,28 @@
 			>
 		</GlassGroup>
 
-		<GlassGroup>
-			{#snippet label()}
-				<span>{t('run.mr.requests')}</span>
-				{#each mrShown as mr (mr.repo + mr.branch)}<MrStatus {mr} repo={mrLive.length > 1} />{/each}
-			{/snippet}
-			{#each mrSlots as m, i (i)}
-				{#if m.url}
-					<a
-						class="btn {i === 0 ? 'btn-primary' : ''}"
-						href={m.url}
-						target="_blank"
-						rel="noreferrer"
-						title={m.title}>{m.label}</a
-					>
-				{:else}
-					<span class="btn btn-notyet" title={m.title}>{m.label}</span>
-				{/if}
-			{/each}
-		</GlassGroup>
+		{#if mrSlots.length}<GlassGroup>
+				{#snippet label()}
+					<span>{t('run.mr.requests')}</span>
+					{#each mrShown as mr (mr.repo + mr.branch)}<MrStatus
+							{mr}
+							repo={mrLive.length > 1}
+						/>{/each}
+				{/snippet}
+				{#each mrSlots as m, i (i)}
+					{#if m.url}
+						<a
+							class="btn {i === 0 ? 'btn-primary' : ''}"
+							href={m.url}
+							target="_blank"
+							rel="noreferrer"
+							title={m.title}>{m.label}</a
+						>
+					{:else}
+						<span class="btn btn-notyet" title={m.title}>{m.label}</span>
+					{/if}
+				{/each}
+			</GlassGroup>{/if}
 	</div>
 </header>
 

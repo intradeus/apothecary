@@ -254,7 +254,6 @@ export default {
 	'page.ping.goneText': 'It may have been withdrawn, or the link is wrong.',
 	'page.ping.backToInbox': 'Back to the inbox',
 	'page.ping.review': 'Review',
-	'page.ping.accent': 'the recipe',
 	'page.ping.raised': 'raised {ago}',
 	'page.ping.waiting': 'waiting on you',
 	'page.ping.openRun': 'Open run',

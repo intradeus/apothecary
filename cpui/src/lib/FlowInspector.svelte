@@ -454,7 +454,7 @@
 							list="agent-names"
 							bind:value={s.agent}
 							oninput={onchange}
-							placeholder="builder"
+							placeholder={agents[0]?.name ?? ''}
 						/>
 						<datalist id="agent-names">
 							{#each agents as a (a.name)}<option value={a.name}></option>{/each}
@@ -537,7 +537,7 @@
 								<input
 									id="in-{d.name}"
 									list="agent-sentinels"
-									placeholder="artifacts/plan.md"
+									placeholder="artifacts/…"
 									value={val}
 									oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
 								/>
@@ -599,7 +599,7 @@
 							list="flow-params"
 							bind:value={s.run_ref}
 							oninput={onchange}
-							placeholder="verify"
+							placeholder={t('flow.insp.runRefPlaceholder')}
 						/>
 						<div class="help">{t('flow.insp.commandHelp')}</div>
 					</div>
@@ -656,7 +656,7 @@
 					<BindingRows
 						stage={s}
 						field="input"
-						valuePlaceholder="artifacts/plan.md"
+						valuePlaceholder="artifacts/…"
 						addLabel={t('flow.insp.addShows')}
 						{onchange}
 					/>

@@ -1,4 +1,4 @@
-<!-- A ping by id (DESIGN 7.5). A pending ping with a document opens the plan
+<!-- A ping by id (DESIGN 7.5). A pending ping with a file opens the document
      review workbench; any other pending ping opens the inbox with it
      selected; an answered one shows what was answered — and the document
      "as reviewed", from its raise-time snapshot, long after the workspace is
@@ -12,8 +12,9 @@
 	import { ago, fmtAbs, shortId } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import { answerMeta, isDocumentPing } from '$lib/ping';
+	import { asMarkdown } from '$lib/docreview';
 	import type { Ping, PingFile } from '$lib/domain';
-	import PlanReview from '$lib/PlanReview.svelte';
+	import DocReview from '$lib/DocReview.svelte';
 	import Inbox from '$lib/inbox/Inbox.svelte';
 	import DocHead from '$lib/inbox/DocHead.svelte';
 	import AgentFiles from '$lib/inbox/AgentFiles.svelte';
@@ -73,6 +74,10 @@
 		{ label: ping ? shortId(ping.id, 'p_') : '…', mono: true }
 	]);
 	const verdict = $derived(ping ? answerMeta(ping) : answerMeta({}));
+	// The title's accent names the file under review, when there is one.
+	const reviewing = $derived(
+		(ping?.primaryRef ?? ping?.files[0] ?? reviewed?.path ?? '').split('/').pop() ?? ''
+	);
 </script>
 
 <svelte:head><title>{t('page.ping.docTitle')}</title></svelte:head>
@@ -89,7 +94,7 @@
 {:else if ping.status === 'pending' && !isDocumentPing(ping)}
 	<Inbox initial={ping.id} />
 {:else}
-	<PageHeader {crumbs} title={t('page.ping.review')} accent={t('page.ping.accent')}>
+	<PageHeader {crumbs} title={t('page.ping.review')} accent={reviewing || undefined}>
 		{#snippet chip()}<PingPill type={ping!.type} />{/snippet}
 		{#snippet meta()}
 			{#if run}<a href={to.run(run.id)}>{run.title}</a>{:else}<a href={to.run(ping!.runId)}
@@ -107,7 +112,7 @@
 	</PageHeader>
 
 	{#if ping.status === 'pending'}
-		<PlanReview
+		<DocReview
 			{ping}
 			onanswered={() => {
 				const runId = ping!.runId;
@@ -150,7 +155,9 @@
 			{#if reviewed}
 				<section class="c pane">
 					<DocHead path={reviewed.path} raisedAt={ping.raisedAt} reviewed />
-					<div class="paper doc"><Markdown src={reviewed.text} doc /></div>
+					<div class="paper doc">
+						<Markdown src={asMarkdown(reviewed.text, reviewed.path)} doc />
+					</div>
 				</section>
 			{/if}
 			<AgentFiles files={answeredFiles.slice(1)} label={t('page.ping.alsoAttached')} />

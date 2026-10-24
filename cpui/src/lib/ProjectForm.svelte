@@ -91,7 +91,7 @@
 		{ key: 'setup', value: init?.commands?.setup ?? '' },
 		...(init
 			? initCommands.filter(([k]) => k !== 'setup').map(([key, value]) => ({ key, value }))
-			: [{ key: 'verify', value: '' }])
+			: [{ key: '', value: '' }])
 	]);
 	const dupKeys = $derived.by(() => {
 		const seen = new Set<string>();

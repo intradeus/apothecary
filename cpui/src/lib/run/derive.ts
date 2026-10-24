@@ -105,6 +105,21 @@ export interface StageDef {
 	/** agent | command | human_gate | action | wait (or '' when unknown). */
 	type: string;
 	agent?: string;
+	/** The phase it belongs to; absent for a document without phases. */
+	phase?: string;
+}
+
+/** The stages a run's strip shows: the phase it began at, then every other
+ *  phase in the order it first started — no phase is the flow's "main" one.
+ *  A document without phases shows all of its stages. */
+export function shownStages(defs: StageDef[], events: RunEvent[], begun: string): StageDef[] {
+	if (!defs.some((d) => d.phase)) return defs;
+	const order = [begun || defs[0].phase!];
+	for (const e of events) {
+		const ph = e.type === 'phase_started' ? String(e.payload.phase ?? '') : '';
+		if (ph && !order.includes(ph)) order.push(ph);
+	}
+	return order.flatMap((ph) => defs.filter((d) => d.phase === ph));
 }
 
 export interface StageRow extends StageDef {

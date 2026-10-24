@@ -135,6 +135,15 @@ export function toRun(w: Wire.RunView): Run {
 			url: m.url,
 			iid: m.iid
 		})),
+		adopted: w.adopted
+			? {
+					repo: w.adopted.repo,
+					iid: w.adopted.iid,
+					url: w.adopted.url,
+					author: w.adopted.author,
+					title: w.adopted.title
+				}
+			: undefined,
 		checkouts: list(w.checkouts).map((c) => ({
 			name: c.name,
 			dir: c.dir,

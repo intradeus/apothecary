@@ -23,7 +23,8 @@ export default {
 	'fmt.ageH': '{n}h',
 	'fmt.ageD': '{n}d',
 	// ping helpers
-	'ping.cta.review': 'Review plan',
+	'ping.cta.review': 'Review',
+	'ping.cta.reviewFile': 'Review {name}',
 	'ping.cta.decide': 'Decide',
 	'ping.cta.answer': 'Answer',
 	'ping.verdict.withdrawn': 'Withdrawn',
@@ -356,7 +357,7 @@ export default {
 	// PingCard
 	'ping.aside.gate': 'the bench awaits your seal',
 	'ping.aside.debug': 'the bench is yours — mend it, then continue',
-	'ping.aside.agent': 'a note from the builder',
+	'ping.aside.agent': 'a note from the agent',
 	'ping.withdrawn': 'withdrawn',
 	'ping.answeredAgo': 'answered {ago} —',
 	'ping.answered': 'answered —',
@@ -369,8 +370,7 @@ export default {
 	'ping.selectNone': 'Select none',
 	'ping.runIt': 'Run it',
 	'ping.notNow': 'Not now',
-	'ping.notNowHelp':
-		'Not now: it is offered again only when the situation changes (the target moves, new comments arrive).',
+	'ping.notNowHelp': 'Not now: it is offered again only when what it reacts to changes.',
 	'ping.debugReasonPlaceholder': 'Why stop here? Recorded as the reason the run was abandoned.',
 	'ping.debugEndPlaceholder':
 		'Why stop here? Recorded as the reason {phase} ended; the run goes back to waiting.',
@@ -534,7 +534,7 @@ export default {
 	'flow.insp.nameLabelHelp':
 		'The name is a label — it documents what each file is for and titles its dot in the graph.',
 	'flow.insp.question': 'Question',
-	'flow.insp.questionPlaceholder': 'Approve this implementation plan?',
+	'flow.insp.questionPlaceholder': 'Approve and continue?',
 	'flow.insp.questionHelp':
 		'What the human is being asked; approve continues, reject follows on_reject.',
 	'flow.insp.shows': 'Shows',
@@ -578,7 +578,8 @@ export default {
 	'flow.insp.unrecognizedAction':
 		"Not declared by this stage's action — run creation will refuse it.",
 	'flow.insp.description': 'Description',
-	'flow.insp.descPlaceholder': 'implement the approved plan',
+	'flow.insp.runRefPlaceholder': 'a project command, or $parameter',
+	'flow.insp.descPlaceholder': 'what this stage is for',
 	'flow.insp.descHelp': 'Optional note on what this stage is for.',
 	'flow.insp.onSuccess': 'On success',
 	'flow.insp.endOption': 'end — this phase is over; the run goes back to waiting',
@@ -638,46 +639,45 @@ export default {
 	'flow.insp.canvasHelp':
 		"Click a node or edge to edit it. Drag from a node's coloured handles to rewire control flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may target the abort terminal to stop the run deliberately, or the debug leaf to park it for a human and then run the stage again. The faint dashed lines are dataflow — they are derived from the artifact paths stages read and write, so you change them by editing an input or output, not by dragging.",
 	// PlanReview
-	'plan.noFiles': 'this ping has no attached files',
-	'plan.notCaptured': '{path} was not captured when the ping was raised',
-	'plan.docUnavailable': 'document unavailable ({status})',
-	'plan.deleteTitle': 'Delete this comment?',
-	'plan.deleteBody':
+	'doc.noFiles': 'this ping has no attached files',
+	'doc.notCaptured': '{path} was not captured when the ping was raised',
+	'doc.docUnavailable': 'document unavailable ({status})',
+	'doc.deleteTitle': 'Delete this comment?',
+	'doc.deleteBody':
 		'The comment is removed from your <b>review draft</b>. Nothing has been sent to the run yet.',
-	'plan.deleteAction': 'Delete comment',
-	'plan.approveTitle': 'Approve and discard your comments?',
-	'plan.approveBody_one':
+	'doc.deleteAction': 'Delete comment',
+	'doc.approveTitle': 'Approve and discard your comments?',
+	'doc.approveBody_one':
 		'You have <b>{count} unsent comment</b>. Approving lets the <b>run</b> continue as is and discards them. To send them, use Request changes instead.',
-	'plan.approveBody_other':
+	'doc.approveBody_other':
 		'You have <b>{count} unsent comments</b>. Approving lets the <b>run</b> continue as is and discards them. To send them, use Request changes instead.',
-	'plan.approveAnyway': 'Approve anyway',
-	'plan.outlineLabel': 'Document outline',
-	'plan.outline': 'Outline',
-	'plan.noHeadings': 'No headings in this document.',
-	'plan.empty': 'The document is empty.',
-	'plan.review': 'Review',
-	'plan.theAsk': 'The ask',
-	'plan.scrollTo': 'Scroll to this section',
-	'plan.top': '(top)',
-	'plan.edit': 'Edit',
-	'plan.deleteComment': 'Delete comment',
-	'plan.hint':
+	'doc.approveAnyway': 'Approve anyway',
+	'doc.outlineLabel': 'Document outline',
+	'doc.outline': 'Outline',
+	'doc.noHeadings': 'No headings in this document.',
+	'doc.empty': 'The document is empty.',
+	'doc.review': 'Review',
+	'doc.theAsk': 'The ask',
+	'doc.scrollTo': 'Scroll to this section',
+	'doc.edit': 'Edit',
+	'doc.deleteComment': 'Delete comment',
+	'doc.hint':
 		'<strong>Select any text</strong> in the document — a comment box opens where you let go. All comments go back together as one feedback prompt.',
-	'plan.attachReview': 'Attach files to your review',
-	'plan.approve': 'Approve',
-	'plan.requestChanges': 'Request changes ({count})',
-	'plan.pickHint': 'Your pick answers the agent; comments ride along as the note.',
-	'plan.sendReview': 'Send review ({count})',
-	'plan.draftSaved': 'Draft saved',
-	'plan.draftKept': ' · kept in this browser; attachments must be re-picked',
-	'plan.draftsKept': 'Drafts are kept in this browser; attachments must be re-picked.',
-	'plan.editComment': 'Edit comment',
-	'plan.addComment': 'Add comment',
-	'plan.commentPlaceholder': 'What should change here?',
-	'plan.attach': 'Attach',
-	'plan.save': 'Save',
-	'plan.add': 'Add',
-	'plan.close': 'Close',
-	'plan.addHint': 'add',
-	'plan.closeHint': 'close'
+	'doc.attachReview': 'Attach files to your review',
+	'doc.approve': 'Approve',
+	'doc.requestChanges': 'Request changes ({count})',
+	'doc.pickHint': 'Your pick answers the agent; comments ride along as the note.',
+	'doc.sendReview': 'Send review ({count})',
+	'doc.draftSaved': 'Draft saved',
+	'doc.draftKept': ' · kept in this browser; attachments must be re-picked',
+	'doc.draftsKept': 'Drafts are kept in this browser; attachments must be re-picked.',
+	'doc.editComment': 'Edit comment',
+	'doc.addComment': 'Add comment',
+	'doc.commentPlaceholder': 'What should change here?',
+	'doc.attach': 'Attach',
+	'doc.save': 'Save',
+	'doc.add': 'Add',
+	'doc.close': 'Close',
+	'doc.addHint': 'add',
+	'doc.closeHint': 'close'
 } as const;

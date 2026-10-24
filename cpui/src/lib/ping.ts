@@ -72,17 +72,21 @@ export interface PingLike {
 	endsPhase?: boolean;
 }
 
-/** A ping whose primary payload is a captured document (a plan), reviewed in
- *  the document workbench rather than answered inline. */
+/** A ping whose primary payload is a captured file (a document, a YAML
+ *  file, code), reviewed in the document workbench rather than answered
+ *  inline. */
 export const isDocumentPing = (p: Pick<PingLike, 'files' | 'link' | 'primaryRef'>) =>
 	!p.link && !!(p.files?.length || p.primaryRef);
 
-/** The call to action a ping row offers (DESIGN 7.2): a plan to review, a
- *  decision to make, or a question to answer. */
+/** The call to action a ping row offers (DESIGN 7.2): a file to review
+ *  (named), a decision to make, or a question to answer. */
 export function pingCta(
 	p: Pick<PingLike, 'type' | 'answerKind' | 'files' | 'link' | 'primaryRef'>
 ): string {
-	if (isDocumentPing(p)) return t('ping.cta.review');
+	if (isDocumentPing(p)) {
+		const name = (p.primaryRef ?? p.files?.[0] ?? '').split('/').pop();
+		return name ? t('ping.cta.reviewFile', { name }) : t('ping.cta.review');
+	}
 	if (p.type === 'permission' || p.answerKind === 'decision') return t('ping.cta.decide');
 	return t('ping.cta.answer');
 }
