@@ -1524,8 +1524,6 @@ components:
           type: string
         default_flow:
           type: string
-        forge_id:
-          type: string
         harness_ids:
           items:
             type: string
@@ -1539,6 +1537,8 @@ components:
           type: string
         repo:
           $ref: '#/components/schemas/RepoConfig'
+        repo_account_id:
+          type: string
         repos:
           items:
             $ref: '#/components/schemas/ExtraRepo'
@@ -1552,12 +1552,12 @@ components:
         - commands
         - created_at
         - default_flow
-        - forge_id
         - harness_ids
         - id
         - name
         - provisioner_id
         - repo
+        - repo_account_id
         - updated_at
         - workspace
       type: object
@@ -1570,8 +1570,6 @@ components:
           type: object
         default_flow:
           type: string
-        forge_id:
-          type: string
         harness_ids:
           items:
             type: string
@@ -1583,6 +1581,8 @@ components:
           type: string
         repo:
           $ref: '#/components/schemas/RepoConfig'
+        repo_account_id:
+          type: string
         repos:
           items:
             $ref: '#/components/schemas/ExtraRepo'
@@ -1592,11 +1592,11 @@ components:
       required:
         - commands
         - default_flow
-        - forge_id
         - harness_ids
         - name
         - provisioner_id
         - repo
+        - repo_account_id
         - workspace
       type: object
     RaisePingRequest:

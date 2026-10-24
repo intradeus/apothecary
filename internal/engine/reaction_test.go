@@ -309,12 +309,12 @@ func newReactionHarness(t *testing.T, strategy string) *reactionHarness {
 	return rh
 }
 
-// conflict makes the forge report a conflict against a moved target.
+// conflict makes the repository host report a conflict against a moved target.
 func (rh *reactionHarness) conflict(t *testing.T) {
 	t.Helper()
 	tip := rh.git.advanceTarget("main")
-	rh.forge.SetTargetSHA(1, tip)
-	rh.forge.SetMergeable(1, ports.MergeConflicts, "head")
+	rh.repoHost.SetTargetSHA(1, tip)
+	rh.repoHost.SetMergeable(1, ports.MergeConflicts, "head")
 }
 
 // pick answers the round's thread selection with the given thread ids
@@ -398,8 +398,8 @@ func TestConflictPhaseMergesAndTheResolverSettlesIt(t *testing.T) {
 func TestSyncWithNothingToTakeIn(t *testing.T) {
 	rh := newReactionHarness(t, "merge")
 	runID := rh.start(t)
-	rh.forge.SetTargetSHA(1, "c0") // the forge says conflict, but main has not moved
-	rh.forge.SetMergeable(1, ports.MergeConflicts, "head")
+	rh.repoHost.SetTargetSHA(1, "c0") // the repository host says conflict, but main has not moved
+	rh.repoHost.SetMergeable(1, ports.MergeConflicts, "head")
 	rh.approveConflictFix(t)
 	rh.waitPhaseRuns(t, runID, "conflicts", 1)
 	merges, _, pushes, _ := rh.git.snapshot()
@@ -458,8 +458,8 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 	pushedTip := rh.git.remote[branch]
 	rh.git.mu.Unlock()
 	tip := rh.git.advanceTarget("main")
-	rh.forge.SetTargetSHA(1, tip)
-	rh.forge.SetMergeable(1, ports.MergeConflicts, pushedTip)
+	rh.repoHost.SetTargetSHA(1, tip)
+	rh.repoHost.SetMergeable(1, ports.MergeConflicts, pushedTip)
 	rh.approveConflictFix(t)
 	rh.waitPhaseRuns(t, runID, "conflicts", 1)
 	_, rebases, pushes, _ := rh.git.snapshot()
@@ -474,10 +474,10 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 	stranger := rh.git.remote[branch]
 	rh.git.mu.Unlock()
 	tip2 := rh.git.advanceTarget("main")
-	rh.forge.SetTargetSHA(1, tip2)
-	// The forge's head is still the one the run pushed: the stranger's commit
-	// is exactly what the lease must protect.
-	rh.forge.SetMergeable(1, ports.MergeConflicts, pushedTip)
+	rh.repoHost.SetTargetSHA(1, tip2)
+	// The repository host's head is still the one the run pushed: the
+	// stranger's commit is exactly what the lease must protect.
+	rh.repoHost.SetMergeable(1, ports.MergeConflicts, pushedTip)
 	first := rh.waitPing(t, event.PingPhaseConfirm)
 	if err := rh.e.AnswerPing(first.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -503,8 +503,8 @@ func TestReviewRoundFixesAndReplies(t *testing.T) {
 	}
 	runID := rh.start(t)
 	t0 := rh.clock.Now()
-	rh.forge.AddComment(1, "d1", "a.go", "rev", "rename this", t0)
-	rh.forge.AddComment(1, "d2", "b.go", "rev", "needs a test", t0)
+	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "rename this", t0)
+	rh.repoHost.AddComment(1, "d2", "b.go", "rev", "needs a test", t0)
 	rh.clock.Advance(2 * time.Minute)
 	rh.pick(t, "d1", "d2")
 	rh.waitPhaseRuns(t, runID, "review_fixes", 1)
@@ -514,7 +514,7 @@ func TestReviewRoundFixesAndReplies(t *testing.T) {
 	if len(review) != 1 || !strings.Contains(review[0], "Thread `d1`") || !strings.Contains(review[0], "needs a test") {
 		t.Fatalf("the fixer was given: %q", review)
 	}
-	threads := rh.forge.SnapshotThreads(1)
+	threads := rh.repoHost.SnapshotThreads(1)
 	for _, th := range threads {
 		last := th.Comments[len(th.Comments)-1]
 		if !ports.IsFactoryReply(last.Body) {
@@ -548,7 +548,7 @@ func TestRepliesNamingAnUnknownThreadFailTheStage(t *testing.T) {
 		return "- { thread: d1, reply: done }\n"
 	}
 	runID := rh.start(t)
-	rh.forge.AddComment(1, "d1", "a.go", "rev", "rename", rh.clock.Now())
+	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	rh.pick(t, "d1")
 	rh.waitPhaseRuns(t, runID, "review_fixes", 1)
@@ -561,31 +561,31 @@ func TestRepliesNamingAnUnknownThreadFailTheStage(t *testing.T) {
 	if invalid == nil || invalid.Reason != event.ReasonOutputInvalid || !strings.Contains(invalid.Error, `"ghost"`) {
 		t.Fatalf("reply failure = %+v", invalid)
 	}
-	for _, th := range rh.forge.SnapshotThreads(1) {
+	for _, th := range rh.repoHost.SnapshotThreads(1) {
 		if len(th.Comments) != 2 {
 			t.Errorf("thread %s: %d comments, want the review + one reply", th.ID, len(th.Comments))
 		}
 	}
 }
 
-// A crash between two replies: the run fails on the forge error; trying
-// again posts only the reply that is missing.
+// A crash between two replies: the run fails on the repository host error;
+// trying again posts only the reply that is missing.
 func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
 	rh := newReactionHarness(t, "merge")
 	rh.replies = func() string { return "- { thread: d1, reply: one }\n- { thread: d2, reply: two }\n" }
-	rh.forge.ReplyFailAfter = 1
+	rh.repoHost.ReplyFailAfter = 1
 	runID := rh.start(t)
-	rh.forge.AddComment(1, "d1", "a.go", "rev", "a", rh.clock.Now())
-	rh.forge.AddComment(1, "d2", "b.go", "rev", "b", rh.clock.Now())
+	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "a", rh.clock.Now())
+	rh.repoHost.AddComment(1, "d2", "b.go", "rev", "b", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	rh.pick(t, "d1", "d2")
 	rh.waitState(t, runID, run.Failed)
-	rh.forge.ReplyFailAfter = 0
+	rh.repoHost.ReplyFailAfter = 0
 	if err := rh.e.RetryRun(context.Background(), runID); err != nil {
 		t.Fatal(err)
 	}
 	rh.waitPhaseRuns(t, runID, "review_fixes", 1)
-	for _, th := range rh.forge.SnapshotThreads(1) {
+	for _, th := range rh.repoHost.SnapshotThreads(1) {
 		var replies int
 		for _, c := range th.Comments {
 			if ports.IsFactoryReply(c.Body) {
@@ -606,8 +606,8 @@ func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
 	rh.replies = func() string { return "- { thread: d1, reply: done }\n" }
 	runID := rh.start(t)
 	t0 := rh.clock.Now()
-	rh.forge.AddComment(1, "d1", "a.go", "rev", "rename this", t0)
-	rh.forge.AddComment(1, "d2", "b.go", "rev", "this is wrong, actually", t0)
+	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "rename this", t0)
+	rh.repoHost.AddComment(1, "d2", "b.go", "rev", "this is wrong, actually", t0)
 	rh.clock.Advance(2 * time.Minute)
 	offered := rh.pick(t, "d1")
 	if len(offered) != 2 || !strings.Contains(offered[1], "b.go:1 — rev: this is wrong") {
@@ -625,7 +625,7 @@ func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
 		t.Errorf("review_comments_loaded = %+v", loaded)
 	}
 	// A new comment elsewhere: the next round offers it, not the skipped d2.
-	rh.forge.AddComment(1, "d3", "c.go", "rev", "one more", rh.clock.Now())
+	rh.repoHost.AddComment(1, "d3", "c.go", "rev", "one more", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	rh.replies = func() string { return "- { thread: d3, reply: done }\n" }
 	offered = rh.pick(t, "d3")
@@ -634,7 +634,7 @@ func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
 	}
 	rh.waitPhaseRuns(t, runID, "review_fixes", 2)
 	// The reviewer insists on d2: it is offered again.
-	rh.forge.AddComment(1, "d2", "b.go", "rev", "no really, please change it", rh.clock.Now())
+	rh.repoHost.AddComment(1, "d2", "b.go", "rev", "no really, please change it", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	offered = rh.pick(t)
 	if len(offered) != 1 || !strings.HasPrefix(offered[0], "d2 — ") {
@@ -646,7 +646,7 @@ func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
 func TestReviewRoundWithNothingSelectedEndsAtOnce(t *testing.T) {
 	rh := newReactionHarness(t, "merge")
 	runID := rh.start(t)
-	rh.forge.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
+	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	before := len(rh.promptsOf("fix"))
 	rh.pick(t)
@@ -673,7 +673,7 @@ func TestReviewRoundWithNothingSelectedEndsAtOnce(t *testing.T) {
 func TestSelectionAnswerIsValidated(t *testing.T) {
 	rh := newReactionHarness(t, "merge")
 	rh.start(t)
-	rh.forge.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
+	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	p := rh.waitPing(t, event.PingSelect)
 	for _, bad := range []string{"", "d9", "approve"} {

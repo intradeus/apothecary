@@ -68,29 +68,29 @@ phases:
     then: done
 `
 
-// A phase that opens on a forge signal — a reaction's trigger, an outcome —
-// needs the forge, like a wait stage does; run_start and manual phases need
-// nothing. Checked on the flow's refs, which PreflightProject and run
-// creation share.
+// A phase that opens on a repository host signal — a reaction's trigger, an
+// outcome — needs the repository host, like a wait stage does; run_start and
+// manual phases need nothing. Checked on the flow's refs, which
+// PreflightProject and run creation share.
 func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	fl := mustFlow(t, phaseSignalDoc)
 	h := newHarness(t, fl)
 	if err := h.e.preflightFlowRefs(h.res, fl); err != nil {
-		t.Fatalf("with a forge: %v", err)
+		t.Fatalf("with a repository host: %v", err)
 	}
-	h.res.Forge = nil
+	h.res.RepoHost = nil
 	err := h.e.preflightFlowRefs(h.res, fl)
 	if err == nil || !strings.Contains(err.Error(), `phase "conflicts"`) || !strings.Contains(err.Error(), "repository integration") {
-		t.Fatalf("without a forge: err = %v", err)
+		t.Fatalf("without a repository host: err = %v", err)
 	}
 	onlyOutcome := mustFlow(t, strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1))
 	if err := h.e.preflightFlowRefs(h.res, onlyOutcome); err == nil || !strings.Contains(err.Error(), `phase "shipped"`) {
-		t.Errorf("an outcome without a forge: err = %v", err)
+		t.Errorf("an outcome without a repository host: err = %v", err)
 	}
 	noFire := mustFlow(t, strings.Replace(strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1),
 		"  - id: shipped\n    on: mr_merged\n    then: done\n",
 		"  - id: finish\n    on: manual\n    stages:\n      - { id: wrap, type: command, run: \"true\", on_success: done }\n", 1))
 	if err := h.e.preflightFlowRefs(h.res, noFire); err != nil {
-		t.Errorf("manual phases without a forge: %v", err)
+		t.Errorf("manual phases without a repository host: %v", err)
 	}
 }

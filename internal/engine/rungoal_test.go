@@ -177,7 +177,7 @@ func TestDiffSentinelsMeasureTheirOwnRange(t *testing.T) {
 		return ports.ExecResult{}, nil
 	}
 	runID := ph.start(t)
-	ph.forge.SetHead(1, "h1")
+	ph.repoHost.SetHead(1, "h1")
 	if err := ph.e.StartPhase(runID, "answer", ""); err != nil {
 		t.Fatal(err)
 	}

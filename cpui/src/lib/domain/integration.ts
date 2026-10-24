@@ -4,7 +4,7 @@
 /** Model auth is harness-owned, so there is no provider port. 'ticketsource'
  *  is the read-only tracker tickets are imported from; unlike the others it is
  *  not referenced by a project — it is picked per import. */
-export type Port = 'forge' | 'provisioner' | 'harness' | 'ticketsource';
+export type Port = 'repository' | 'provisioner' | 'harness' | 'ticketsource';
 
 export interface Integration {
 	id: string;

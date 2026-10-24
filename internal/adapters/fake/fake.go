@@ -405,7 +405,7 @@ func (r *AgentRunner) Resume(ctx context.Context, env ports.EnvID, s ports.Sessi
 	return res, err
 }
 
-// --- Forge ------------------------------------------------------------------
+// --- RepoHost ---------------------------------------------------------------
 
 type MR struct {
 	Ref    ports.MRRef
@@ -419,8 +419,9 @@ type MR struct {
 	Mergeable ports.Mergeable
 	HeadSHA   string
 	TargetSHA string
-	// MergeableNow and Draft are MRStatus's forge verdict; Checks what
-	// MRChecks reports for the head; ApprovedBy who approved (MRApproval).
+	// MergeableNow and Draft are MRStatus's repository host verdict; Checks
+	// what MRChecks reports for the head; ApprovedBy who approved
+	// (MRApproval).
 	MergeableNow bool
 	Draft        bool
 	Checks       []ports.Check
@@ -443,7 +444,7 @@ type MR struct {
 	Threads []ports.ReviewThread
 }
 
-type Forge struct {
+type RepoHost struct {
 	mu sync.Mutex
 	// AccessErr fails CheckAccess when set.
 	AccessErr error
@@ -475,8 +476,8 @@ type Forge struct {
 }
 
 // Reset forgets every merge request and scripted failure (test control, for
-// a forge shared across tests).
-func (f *Forge) Reset() {
+// a repository host shared across tests).
+func (f *RepoHost) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.MRs, f.nextID, f.ChecksCalls, f.NewHead, f.User = nil, 0, 0, "", ""
@@ -485,7 +486,7 @@ func (f *Forge) Reset() {
 
 // AddOpenMR scripts a merge request someone else opened (test control): it
 // gets the next iid, a head and a fetchable ref.
-func (f *Forge) AddOpenMR(author, title, source, target, head string) ports.MRRef {
+func (f *RepoHost) AddOpenMR(author, title, source, target, head string) ports.MRRef {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.nextID++
@@ -494,7 +495,7 @@ func (f *Forge) AddOpenMR(author, title, source, target, head string) ports.MRRe
 	return ref
 }
 
-func (f *Forge) info(m *MR) ports.MRInfo {
+func (f *RepoHost) info(m *MR) ports.MRInfo {
 	author := m.Author
 	if author == "" {
 		author = f.whoami()
@@ -503,14 +504,14 @@ func (f *Forge) info(m *MR) ports.MRInfo {
 		Source: m.Branch, Target: m.Target, Head: m.HeadSHA, HeadRef: fmt.Sprintf("refs/merge-requests/%d/head", m.Ref.IID), Fork: m.Fork}
 }
 
-func (f *Forge) whoami() string {
+func (f *RepoHost) whoami() string {
 	if f.User == "" {
 		return "apothecary"
 	}
 	return f.User
 }
 
-func (f *Forge) GetMR(_ context.Context, iid int) (ports.MRInfo, error) {
+func (f *RepoHost) GetMR(_ context.Context, iid int) (ports.MRInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -523,7 +524,7 @@ func (f *Forge) GetMR(_ context.Context, iid int) (ports.MRInfo, error) {
 	return f.info(m), nil
 }
 
-func (f *Forge) ListMRs(_ context.Context) ([]ports.MRInfo, error) {
+func (f *RepoHost) ListMRs(_ context.Context) ([]ports.MRInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -538,23 +539,23 @@ func (f *Forge) ListMRs(_ context.Context) ([]ports.MRInfo, error) {
 	return out, nil
 }
 
-func (f *Forge) Whoami(context.Context) (string, error) {
+func (f *RepoHost) Whoami(context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.whoami(), nil
 }
 
-func (f *Forge) CheckAccess(_ context.Context, _ ports.RepoRef) error {
+func (f *RepoHost) CheckAccess(_ context.Context, _ ports.RepoRef) error {
 	return f.AccessErr
 }
 
-func (f *Forge) FileExists(_ context.Context, _ ports.RepoRef, path string) (bool, error) {
+func (f *RepoHost) FileExists(_ context.Context, _ ports.RepoRef, path string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return !f.MissingFiles[path], nil
 }
 
-func (f *Forge) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
+func (f *RepoHost) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.CreateErr != nil {
@@ -571,7 +572,7 @@ func (f *Forge) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, tar
 
 // FindMR reports the open MR for a branch, as the reconciliation path needs
 // after a crash between creating one and recording it.
-func (f *Forge) FindMR(_ context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
+func (f *RepoHost) FindMR(_ context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.FindErr != nil {
@@ -589,7 +590,7 @@ func (f *Forge) FindMR(_ context.Context, repo ports.RepoRef, branch, target str
 }
 
 // SnapshotMRs returns a locked copy of the merge requests opened so far.
-func (f *Forge) SnapshotMRs() []MR {
+func (f *RepoHost) SnapshotMRs() []MR {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]MR, 0, len(f.MRs))
@@ -599,7 +600,7 @@ func (f *Forge) SnapshotMRs() []MR {
 	return out
 }
 
-func (f *Forge) mr(iid int) *MR {
+func (f *RepoHost) mr(iid int) *MR {
 	for _, m := range f.MRs {
 		if m.Ref.IID == iid {
 			return m
@@ -608,7 +609,7 @@ func (f *Forge) mr(iid int) *MR {
 	return nil
 }
 
-func (f *Forge) MRStatus(_ context.Context, mr ports.MRRef) (ports.MRStatus, error) {
+func (f *RepoHost) MRStatus(_ context.Context, mr ports.MRRef) (ports.MRStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -630,7 +631,7 @@ func (f *Forge) MRStatus(_ context.Context, mr ports.MRRef) (ports.MRStatus, err
 	return st, nil
 }
 
-func (f *Forge) MRChecks(_ context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
+func (f *RepoHost) MRChecks(_ context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -647,7 +648,7 @@ func (f *Forge) MRChecks(_ context.Context, mr ports.MRRef, head string) (ports.
 }
 
 // MergeMR merges unless refused, a draft, or the head moved past the pin.
-func (f *Forge) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
+func (f *RepoHost) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -671,7 +672,7 @@ func (f *Forge) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOptio
 }
 
 // PostReview records the review, its notes split by DiffLines, once per ID.
-func (f *Forge) PostReview(_ context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
+func (f *RepoHost) PostReview(_ context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ReplyErr != nil {
@@ -698,7 +699,7 @@ func (f *Forge) PostReview(_ context.Context, mr ports.MRRef, rev ports.Review) 
 	return out, nil
 }
 
-func (f *Forge) MRApproval(_ context.Context, mr ports.MRRef) (ports.Approval, error) {
+func (f *RepoHost) MRApproval(_ context.Context, mr ports.MRRef) (ports.Approval, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -711,7 +712,7 @@ func (f *Forge) MRApproval(_ context.Context, mr ports.MRRef) (ports.Approval, e
 	return ports.Approval{Approved: len(m.ApprovedBy) > 0, By: append([]string(nil), m.ApprovedBy...)}, nil
 }
 
-func (f *Forge) MRThreads(_ context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
+func (f *RepoHost) MRThreads(_ context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ThreadsErr != nil {
@@ -729,7 +730,7 @@ func (f *Forge) MRThreads(_ context.Context, mr ports.MRRef) ([]ports.ReviewThre
 	return out, nil
 }
 
-func (f *Forge) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body string) error {
+func (f *RepoHost) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ReplyErr != nil {
@@ -753,7 +754,7 @@ func (f *Forge) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body st
 	return fmt.Errorf("thread %s not found", threadID)
 }
 
-func (f *Forge) ResolveThread(_ context.Context, mr ports.MRRef, threadID string) error {
+func (f *RepoHost) ResolveThread(_ context.Context, mr ports.MRRef, threadID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := f.mr(mr.IID)
@@ -770,7 +771,7 @@ func (f *Forge) ResolveThread(_ context.Context, mr ports.MRRef, threadID string
 }
 
 // SetMergeable scripts what MRStatus reports about merging (test control).
-func (f *Forge) SetMergeable(iid int, mg ports.Mergeable, headSHA string) {
+func (f *RepoHost) SetMergeable(iid int, mg ports.Mergeable, headSHA string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -779,7 +780,7 @@ func (f *Forge) SetMergeable(iid int, mg ports.Mergeable, headSHA string) {
 }
 
 // SetHead scripts the merge request's head commit (someone pushed).
-func (f *Forge) SetHead(iid int, sha string) {
+func (f *RepoHost) SetHead(iid int, sha string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -788,7 +789,7 @@ func (f *Forge) SetHead(iid int, sha string) {
 }
 
 // SetChecks scripts the CI checks MRChecks reports.
-func (f *Forge) SetChecks(iid int, checks ...ports.Check) {
+func (f *RepoHost) SetChecks(iid int, checks ...ports.Check) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -796,8 +797,8 @@ func (f *Forge) SetChecks(iid int, checks ...ports.Check) {
 	}
 }
 
-// SetMergeableNow scripts the forge's "it can be merged now" verdict.
-func (f *Forge) SetMergeableNow(iid int, now bool) {
+// SetMergeableNow scripts the repository host's "it can be merged now" verdict.
+func (f *RepoHost) SetMergeableNow(iid int, now bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -806,7 +807,7 @@ func (f *Forge) SetMergeableNow(iid int, now bool) {
 }
 
 // SetMergeRefusal scripts a reason MergeMR declines with ("" merges).
-func (f *Forge) SetMergeRefusal(iid int, reason string) {
+func (f *RepoHost) SetMergeRefusal(iid int, reason string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -815,7 +816,7 @@ func (f *Forge) SetMergeRefusal(iid int, reason string) {
 }
 
 // SetApprovedBy scripts who approved the merge request (none: unapproved).
-func (f *Forge) SetApprovedBy(iid int, who ...string) {
+func (f *RepoHost) SetApprovedBy(iid int, who ...string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -824,7 +825,7 @@ func (f *Forge) SetApprovedBy(iid int, who ...string) {
 }
 
 // SetTargetSHA scripts the target branch tip reported with a conflict.
-func (f *Forge) SetTargetSHA(iid int, sha string) {
+func (f *RepoHost) SetTargetSHA(iid int, sha string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -834,7 +835,7 @@ func (f *Forge) SetTargetSHA(iid int, sha string) {
 
 // AddComment adds a reviewer comment to a thread, creating the thread when
 // it does not exist (test control).
-func (f *Forge) AddComment(iid int, threadID, path, author, body string, at time.Time) {
+func (f *RepoHost) AddComment(iid int, threadID, path, author, body string, at time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := f.mr(iid)
@@ -853,7 +854,7 @@ func (f *Forge) AddComment(iid int, threadID, path, author, body string, at time
 }
 
 // SnapshotThreads returns a copy of an MR's threads (assertions).
-func (f *Forge) SnapshotThreads(iid int) []ports.ReviewThread {
+func (f *RepoHost) SnapshotThreads(iid int) []ports.ReviewThread {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := f.mr(iid)
@@ -870,7 +871,7 @@ func (f *Forge) SnapshotThreads(iid int) []ports.ReviewThread {
 
 // SetMRStateErr injects/clears an MRState failure while the engine is
 // polling (race-safe test control).
-func (f *Forge) SetMRStateErr(err error) {
+func (f *RepoHost) SetMRStateErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.MRStateErr = err
@@ -878,7 +879,7 @@ func (f *Forge) SetMRStateErr(err error) {
 
 // SetMRState transitions an MR (test control, e.g. simulating a merge for
 // signal polling).
-func (f *Forge) SetMRState(iid int, s ports.MRState) {
+func (f *RepoHost) SetMRState(iid int, s ports.MRState) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, m := range f.MRs {
@@ -1222,7 +1223,7 @@ func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a ports.Source
 var (
 	_ ports.EnvProvisioner      = (*EnvProvisioner)(nil)
 	_ ports.AgentRunner         = (*AgentRunner)(nil)
-	_ ports.Forge               = (*Forge)(nil)
+	_ ports.RepoHost            = (*RepoHost)(nil)
 	_ ports.NotificationChannel = (*Channel)(nil)
 	_ ports.TicketSource        = (*TicketSource)(nil)
 	_ ports.TicketWriter        = (*TicketSource)(nil)

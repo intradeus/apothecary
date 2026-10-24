@@ -33,8 +33,8 @@ type Resolution struct {
 	GitUser string
 	GitPass string
 	// GitName/GitEmail are the commit author identity stamped in the
-	// workspace's `git config user.*` (§11 step 3), configured per forge
-	// integration; either empty ⇒ bootstrap keeps its built-in default.
+	// workspace's `git config user.*` (§11 step 3), configured per repository
+	// host integration; either empty ⇒ bootstrap keeps its built-in default.
 	GitName  string
 	GitEmail string
 	// ProviderEnv is the merged env-var map of the project's provider
@@ -46,7 +46,8 @@ type Resolution struct {
 	// engine knows it injected — never written anywhere from here.
 	HarnessSecrets []string
 	// EgressDomains is the derived egress allowlist (allow mode): repo host ∪
-	// harness/forge contributions ∪ registry defaults ∪ project extras.
+	// harness/repository host contributions ∪ registry defaults ∪ project
+	// extras.
 	EgressDomains []string
 	// EgressMode ("allow"|"deny", default allow) and EgressDenylist drive the
 	// per-project gateway posture; the escape-hatch CIDRs/ports permit specific
@@ -97,12 +98,12 @@ type Resolution struct {
 	// since any set member may run. Empty ⇒ just HarnessBinary.
 	HarnessBinaries []string
 
-	// ExtraRepos are the project's additional repositories (multi-repo
-	// tasks): cloned beside the primary, branched like it, each published as
-	// its own merge request when a run changes it. Forges holds a forge port
-	// per extra repo that has a locator, keyed by name.
+	// ExtraRepos are the project's additional repositories (multi-repo tasks):
+	// cloned beside the primary, branched like it, each published as its own
+	// merge request when a run changes it. RepoHosts holds a RepoHost port per
+	// extra repo that has a locator, keyed by name.
 	ExtraRepos []ExtraRepo
-	Forges     map[string]ports.Forge
+	RepoHosts  map[string]ports.RepoHost
 
 	Envp   ports.EnvProvisioner
 	Runner ports.AgentRunner
@@ -110,8 +111,8 @@ type Resolution struct {
 	// A stage pinning `harness: <kind>` runs on Runners[kind]; unpinned stages
 	// use Runner (the default). nil in single-harness setups (fakes) — the
 	// engine falls back to Runner.
-	Runners map[string]ports.AgentRunner
-	Forge   ports.Forge
+	Runners  map[string]ports.AgentRunner
+	RepoHost ports.RepoHost
 	// TicketWriter resolves the write side of a ticketsource integration — a
 	// tracker action's target — by integration id: the TICKET's (recorded at
 	// import), not the project's. nil = this build cannot write back (fakes
@@ -145,14 +146,14 @@ type ExtraRepo struct {
 	DefaultBranch string
 }
 
-// forgeFor returns the forge port bound to a checkout: the project's for the
-// primary, the per-repo one for an extra that has a locator, nil for an
-// extra that is context only.
-func (r *Resolution) forgeFor(repo string) ports.Forge {
+// repoHostFor returns the repository host port bound to a checkout: the
+// project's for the primary, the per-repo one for an extra that has a locator,
+// nil for an extra that is context only.
+func (r *Resolution) repoHostFor(repo string) ports.RepoHost {
 	if repo == "" || repo == event.PrimaryCheckoutName {
-		return r.Forge
+		return r.RepoHost
 	}
-	return r.Forges[repo]
+	return r.RepoHosts[repo]
 }
 
 func (r *Resolution) release() {
@@ -174,8 +175,8 @@ func (r *Resolution) actionAvailable(st *flow.Stage) error {
 	switch act.Requires {
 	case "":
 		return nil
-	case actionspec.RequiresForge:
-		if r.Forge == nil {
+	case actionspec.RequiresRepository:
+		if r.RepoHost == nil {
 			return fmt.Errorf("action %q needs a repository integration (GitLab, GitHub), which this project has not configured", act.Slug)
 		}
 	case actionspec.RequiresTracker:
@@ -232,8 +233,8 @@ func (r *Resolution) signalAvailable(slug string) error {
 	switch sig.Requires {
 	case "":
 		return nil
-	case signalspec.RequiresForge:
-		if r.Forge == nil {
+	case signalspec.RequiresRepository:
+		if r.RepoHost == nil {
 			return fmt.Errorf("signal %q needs a repository integration (GitLab, GitHub), which this project has not configured", sig.Slug)
 		}
 	default:

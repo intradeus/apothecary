@@ -29,13 +29,13 @@ import (
 const By = "automation"
 
 // Engine is the slice of the engine a pass needs: create a run, tell
-// whether a ticket has one, and — for forge_mr — list a repository's open
-// merge requests and who the forge integration is.
+// whether a ticket has one, and — for merge_request — list a repository's open
+// merge requests and who the repository host integration is.
 type Engine interface {
 	CreateRunWith(ctx context.Context, t engine.Ticket, flowName, projectID string, in engine.RunInput) (string, error)
 	RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error)
 	ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error)
-	ForgeUser(ctx context.Context, projectID, repo string) (string, error)
+	RepoHostUser(ctx context.Context, projectID, repo string) (string, error)
 }
 
 type Watcher struct {
@@ -98,7 +98,7 @@ func (w *Watcher) pass(ctx context.Context, a confstore.Automation) {
 		fired, err = w.pollTracker(ctx, a)
 	case confstore.AutomationCron:
 		fired, err = w.tick(ctx, a)
-	case confstore.AutomationForgeMR:
+	case confstore.AutomationMergeRequest:
 		fired, err = w.pollMRs(ctx, a)
 	default:
 		err = fmt.Errorf("unknown automation kind %q", a.Kind)
@@ -192,7 +192,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 	if err != nil {
 		return false, fmt.Errorf("list merge requests: %w", err)
 	}
-	me, err := w.Engine.ForgeUser(ctx, a.ProjectID, a.Repo)
+	me, err := w.Engine.RepoHostUser(ctx, a.ProjectID, a.Repo)
 	if err != nil {
 		return false, fmt.Errorf("repository account: %w", err)
 	}

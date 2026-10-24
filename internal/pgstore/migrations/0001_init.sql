@@ -13,7 +13,7 @@
 -- Secrets are secretbox-sealed JSON; config is plain jsonb.
 CREATE TABLE integrations (
     id         text PRIMARY KEY,
-    port       text NOT NULL,             -- forge|provisioner|harness|ticketsource
+    port       text NOT NULL,             -- repository|provisioner|harness|ticketsource
     kind       text NOT NULL,
     name       text NOT NULL,
     config     jsonb NOT NULL DEFAULT '{}',
@@ -23,8 +23,9 @@ CREATE TABLE integrations (
     UNIQUE (port, name)
 );
 
--- The forge/provisioner FKs make integration deletion fail while a project
--- references it; the API maps the violation to 409 naming the projects.
+-- The repo_account/provisioner FKs make integration deletion fail while a
+-- project references it; the API maps the violation to 409 naming the
+-- projects.
 -- harnesses is the SET of available harness integration ids (the flow owns
 -- the default harness); DeleteIntegration guards it with a `harnesses ? id`
 -- scan. repo is the primary repository (the devcontainer's), repos the
@@ -34,18 +35,18 @@ CREATE TABLE integrations (
 -- without a flows row. UpsertProject only lands while the flow resolves, and
 -- DeleteFlow only deletes while no project references the name.
 CREATE TABLE projects (
-    id             text PRIMARY KEY,
-    name           text NOT NULL UNIQUE,
-    forge_id       text NOT NULL REFERENCES integrations(id),
-    provisioner_id text NOT NULL REFERENCES integrations(id),
-    harnesses      jsonb NOT NULL DEFAULT '[]'::jsonb,
-    repo           jsonb NOT NULL,
-    repos          jsonb NOT NULL DEFAULT '[]'::jsonb,
-    commands       jsonb NOT NULL DEFAULT '{}',
-    workspace      jsonb NOT NULL DEFAULT '{}',
-    default_flow   text NOT NULL,
-    created_at     timestamptz NOT NULL,
-    updated_at     timestamptz NOT NULL
+    id              text PRIMARY KEY,
+    name            text NOT NULL UNIQUE,
+    repo_account_id text NOT NULL REFERENCES integrations(id),
+    provisioner_id  text NOT NULL REFERENCES integrations(id),
+    harnesses       jsonb NOT NULL DEFAULT '[]'::jsonb,
+    repo            jsonb NOT NULL,
+    repos           jsonb NOT NULL DEFAULT '[]'::jsonb,
+    commands        jsonb NOT NULL DEFAULT '{}',
+    workspace       jsonb NOT NULL DEFAULT '{}',
+    default_flow    text NOT NULL,
+    created_at      timestamptz NOT NULL,
+    updated_at      timestamptz NOT NULL
 );
 
 -- Flows belong to a project: (project_id, name) is the identity. The

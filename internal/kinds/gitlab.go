@@ -10,13 +10,13 @@ import (
 	"apothecary/internal/ports"
 )
 
-// GitLab is the forge/gitlab kind (DESIGN2 §4.1): base_url + PAT, numeric
-// project id as RepoRef.Locator.
+// GitLab is the repository host/gitlab kind (DESIGN2 §4.1): base_url + PAT,
+// numeric project id as RepoRef.Locator.
 type GitLab struct{}
 
 func (GitLab) Descriptor() Descriptor {
 	return Descriptor{
-		Port: "forge", Kind: "gitlab", Label: "GitLab",
+		Port: "repository", Kind: "gitlab", Label: "GitLab",
 		Fields: []Field{
 			{Name: "base_url", Label: "Base URL", Default: "https://gitlab.com", Required: true},
 			{Name: "token", Label: "Personal access token (api scope, Developer+)", Secret: true, Required: true},
@@ -34,7 +34,7 @@ type gitlabAccount struct {
 	gitEmail string
 }
 
-func (GitLab) Account(cfg Config) (ForgeAccount, error) {
+func (GitLab) Account(cfg Config) (RepoAccount, error) {
 	base := cfg.Str("base_url", "https://gitlab.com")
 	return &gitlabAccount{
 		acc:      gitlabadapter.NewAccount(base, cfg.Secrets["token"]),
@@ -90,7 +90,7 @@ func (a *gitlabAccount) EgressDomains() []string {
 	return nil
 }
 
-func (GitLab) Forge(cfg Config, repo ports.RepoRef) (ports.Forge, error) {
+func (GitLab) RepoHost(cfg Config, repo ports.RepoRef) (ports.RepoHost, error) {
 	id, err := strconv.Atoi(repo.Locator)
 	if err != nil {
 		return nil, fmt.Errorf("gitlab: repo locator must be the numeric project id, got %q", repo.Locator)
@@ -102,4 +102,4 @@ func (GitLab) Forge(cfg Config, repo ports.RepoRef) (ports.Forge, error) {
 	}), nil
 }
 
-var _ ForgeKind = GitLab{}
+var _ RepoHostKind = GitLab{}

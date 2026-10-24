@@ -32,7 +32,7 @@ func TestAutomationValidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forge, _ := svc.GetProject(ctx, p.ID)
+	repoHost, _ := svc.GetProject(ctx, p.ID)
 	for _, tc := range []struct {
 		name string
 		a    Automation
@@ -41,7 +41,7 @@ func TestAutomationValidates(t *testing.T) {
 		{"no name", Automation{Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "default"}, "needs a name"},
 		{"bad kind", Automation{Name: "x", Kind: "webhook", Flow: "default"}, `kind "webhook"`},
 		{"no source", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "default"}, "needs source_id"},
-		{"wrong port", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: forge.ForgeID, Flow: "default"}, "not a ticket source"},
+		{"wrong port", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: repoHost.RepoAccountID, Flow: "default"}, "not a ticket source"},
 		{"query with schedule", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Schedule: "0 9 * * *", Flow: "default"}, "takes no schedule"},
 		{"bad schedule", Automation{Name: "x", Kind: AutomationCron, Schedule: "soon", TicketID: tk.ID, Flow: "default"}, "five fields"},
 		{"no ticket", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", Flow: "default"}, "needs ticket_id"},

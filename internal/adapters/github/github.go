@@ -1,4 +1,4 @@
-// Package github adapts the Forge port to the GitHub REST API v3
+// Package github adapts the RepoHost port to the GitHub REST API v3
 // (DESIGN2 §12): Bearer PAT auth, no vendor SDK, no GitHub types across
 // the port boundary. RepoRef.Locator is "owner/repo". "Draft MR" maps to a
 // native draft pull request — no title prefix (deviation from the GitLab
@@ -607,7 +607,7 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-var _ ports.Forge = (*Adapter)(nil)
+var _ ports.RepoHost = (*Adapter)(nil)
 
 // ghPull is the pulls API's shape, as far as MRInfo needs it.
 type ghPull struct {

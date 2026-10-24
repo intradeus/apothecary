@@ -1,9 +1,9 @@
 package github
 
-// Issues adapts the ticketsource port — read side for the import picker,
-// write side (ports.TicketWriter) for a flow's tracker actions — to GitHub
-// Issues, reusing the forge adapter's authenticated client. An issue's key is
-// "owner/repo#123": GitHub has no site-wide key, so the repository is part
+// Issues adapts the ticketsource port — read side for the import picker, write
+// side (ports.TicketWriter) for a flow's tracker actions — to GitHub Issues,
+// reusing the repository host adapter's authenticated client. An issue's key
+// is "owner/repo#123": GitHub has no site-wide key, so the repository is part
 // of the identity. GitHub issues have two states and no custom fields; what
 // the write port cannot express is refused by name (Projects v2 columns are
 // not reachable through the issue itself).

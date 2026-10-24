@@ -40,7 +40,7 @@
 	const init = untrack(() => $state.snapshot(existing) as Project | null);
 	const initFlows = untrack(() => flows);
 	const byPort = (port: string) => untrack(() => integrations).filter((i) => i.port === port);
-	const forges = byPort('forge');
+	const repoAccounts = byPort('repository');
 	const provisioners = byPort('provisioner');
 	const harnesses = byPort('harness');
 	const flowNames = initFlows.map((f) => f.name);
@@ -48,7 +48,7 @@
 	const templateFlows = initFlows.filter((f) => f.builtin);
 
 	let name = $state(init?.name ?? '');
-	let forgeId = $state(init?.forgeId ?? forges[0]?.id ?? '');
+	let repoAccountId = $state(init?.repoAccountId ?? repoAccounts[0]?.id ?? '');
 	let provisionerId = $state(init?.provisionerId ?? provisioners[0]?.id ?? '');
 	// The workshop's SET of available harness integrations — no default. The
 	// FLOW names the harness kind (defaults.harness / a stage override); the
@@ -209,7 +209,7 @@
 		repoError = '';
 		repos = null;
 		try {
-			repos = await api.integrations.repos(forgeId);
+			repos = await api.integrations.repos(repoAccountId);
 		} catch (e) {
 			repoError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -272,7 +272,7 @@
 		}
 		return {
 			name: name.trim(),
-			forgeId,
+			repoAccountId,
 			provisionerId,
 			harnessIds: harnessSet(),
 			repo: {
@@ -325,7 +325,7 @@
 			id: 'repository',
 			n: 1,
 			label: t('form.project.step.repository'),
-			done: !!forgeId && !!repoURL.trim() && !!locator.trim(),
+			done: !!repoAccountId && !!repoURL.trim() && !!locator.trim(),
 			sub: repoURL
 				? repoURL.replace(/^https?:\/\//, '').replace(/\.git$/, '')
 				: t('form.project.step.repoSub')
@@ -401,23 +401,23 @@
 			<div class="pane-body stack">
 				<div class="grid2">
 					<div class="field">
-						<label for="p-forge">{t('form.project.forge')}</label>
+						<label for="p-repo-account">{t('form.project.repoAccount')}</label>
 						<div class="row nowrap">
-							<select id="p-forge" bind:value={forgeId} required>
-								{#each forges as f (f.id)}<option value={f.id}>{intLabel(f)}</option>{/each}
+							<select id="p-repo-account" bind:value={repoAccountId} required>
+								{#each repoAccounts as f (f.id)}<option value={f.id}>{intLabel(f)}</option>{/each}
 							</select>
 							<button
 								type="button"
 								class="btn-sel"
 								onclick={loadRepos}
-								disabled={!forgeId || loadingRepos}
+								disabled={!repoAccountId || loadingRepos}
 								aria-busy={loadingRepos}
 								>{loadingRepos ? t('form.project.loading') : t('form.project.browse')}</button
 							>
 						</div>
-						{#if forges.length === 0}
+						{#if repoAccounts.length === 0}
 							<div class="err">
-								{@html th('form.project.noForge', { href: to.system('integrations') })}
+								{@html th('form.project.noRepoAccount', { href: to.system('integrations') })}
 							</div>
 						{/if}
 					</div>

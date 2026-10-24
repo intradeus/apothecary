@@ -1,11 +1,11 @@
 package httpapi
 
 // A project repository's merge requests as a source of runs, the way the
-// tracker's issues are tickets: each open merge request with the runs done
-// on it — through its ticket, the one a forge_mr automation would use too —
-// and a way to start a run of any flow that can begin on one (an entrypoint
-// on mr_opened). Which flow — a review, a rebase, anything — is the
-// person's pick; nothing here knows one from another.
+// tracker's issues are tickets: each open merge request with the runs done on
+// it — through its ticket, the one a merge_request automation would use too —
+// and a way to start a run of any flow that can begin on one (an entrypoint on
+// mr_opened). Which flow — a review, a rebase, anything — is the person's
+// pick; nothing here knows one from another.
 
 import (
 	"encoding/json"
@@ -21,12 +21,12 @@ import (
 	"apothecary/internal/run"
 )
 
-// MRRow is one open merge request: what the forge says of it, whether the
-// factory itself opened it, and the runs done on it here.
+// MRRow is one open merge request: what the repository host says of it,
+// whether the factory itself opened it, and the runs done on it here.
 type MRRow struct {
 	MR ports.MRInfo `json:"mr"`
-	// Mine: the forge integration's own account opened it (the factory's
-	// own runs did).
+	// Mine: the repository host integration's own account opened it (the
+	// factory's own runs did).
 	Mine bool `json:"mine,omitempty"`
 	// TicketID is the merge request's ticket, once a run was started on it
 	// or an automation picked it; Run its newest run, Runs how many it has.
@@ -69,9 +69,9 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Who the factory is on this forge: best effort — without it no row is
-	// marked as the factory's own.
-	me, _ := s.Engine.ForgeUser(ctx, projectID, repo)
+	// Who the factory is on this repository host: best effort — without it no
+	// row is marked as the factory's own.
+	me, _ := s.Engine.RepoHostUser(ctx, projectID, repo)
 	byKey := map[string]string{}
 	if s.Conf != nil {
 		all, err := s.Conf.ListTickets(ctx)

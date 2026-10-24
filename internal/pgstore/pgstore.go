@@ -89,6 +89,12 @@ func (s *Store) Close() { s.pool.Close() }
 // or fresh — never re-runs it, so an edit to the file reaches only databases
 // created after the edit. Every schema change since the squash is its own
 // NNNN_name.sql, idempotent where a fresh database already has the result.
+//
+// One deliberate exception: on 2026-10-24 the repository port and the
+// project column that names its integration (repo_account_id) were renamed
+// in place, in 0001 and 0006, and the freeze re-taken. A database created
+// before that does not match the code; it is reset (the project is
+// unreleased), not migrated.
 const preSquashHead = 25
 
 // migration is one embedded migrations/NNNN_name.sql file.

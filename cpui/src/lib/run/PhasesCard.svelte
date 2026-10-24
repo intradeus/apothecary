@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The flow's phases (FLOWLANG §1): what opens each one — an entrypoint, a
-	// forge signal under its start policy, or you — how often it ran, which
+	// repository signal under its start policy, or you — how often it ran, which
 	// one is live or parked, and which signals hold right now. Any phase
 	// without a live run can be started by hand while the run is idle.
 	import { onMount } from 'svelte';
@@ -160,7 +160,7 @@
 					{#if ended}
 						<!-- the run is over: nothing to start -->
 					{:else if p.outcome}
-						<!-- An outcome happens on the forge; starting one by hand would
+						<!-- An outcome happens on the repository; starting one by hand would
 						     end the run from a button beside the ones that do not. -->
 						<span class="fnt small" title={t('run.phases.outcomeTitle')}
 							>{t('run.phases.onTheRepo')}</span

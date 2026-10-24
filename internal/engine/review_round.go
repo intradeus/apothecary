@@ -3,7 +3,7 @@ package engine
 // Review rounds (PLAN6 M31): load the subject merge request's pending
 // threads for the fixing agent, validate the replier's answers when its
 // stage ends, and post them — each carrying a marker, so a crash between
-// two posts is reconciled from the forge and nothing is posted twice.
+// two posts is reconciled from the repository host and nothing is posted twice.
 
 import (
 	"encoding/json"
@@ -73,8 +73,8 @@ func (x *exec) checkReviewReplies(st *flow.Stage) string {
 	return ""
 }
 
-// errNoSubject: a subject action in a phase run that acts on no merge
-// request — routable (on_fail), unlike a forge that cannot be reached.
+// errNoSubject: a subject action in a phase run that acts on no merge request
+// — routable (on_fail), unlike a repository host that cannot be reached.
 var errNoSubject = errors.New("no merge request subject")
 
 // noSubjectMsg explains a subject action's failure in a subject-less phase
@@ -84,17 +84,18 @@ func noSubjectMsg(st *flow.Stage) string {
 	return fmt.Sprintf("%s: %s acts on the merge request a phase is opened for, and this phase run has none — guard the stage with `when: subject`, or start the phase on a merge request", errNoSubject, st.Action)
 }
 
-// subjectForge is the forge and merge request a subject action acts on.
-func (x *exec) subjectForge(st *flow.Stage) (ports.Forge, *mrRecord, error) {
+// subjectRepoHost is the repository host and merge request a subject action
+// acts on.
+func (x *exec) subjectRepoHost(st *flow.Stage) (ports.RepoHost, *mrRecord, error) {
 	mr := x.subjectMR()
 	if mr == nil {
 		return nil, nil, fmt.Errorf("%w: %s", errNoSubject, noSubjectMsg(st))
 	}
-	forge := x.res.forgeFor(mr.Repo)
-	if forge == nil {
+	repoHost := x.res.repoHostFor(mr.Repo)
+	if repoHost == nil {
 		return nil, nil, fmt.Errorf("stage %s: no integration reaches repository %s", st.ID, mr.Repo)
 	}
-	return forge, mr, nil
+	return repoHost, mr, nil
 }
 
 // actionLoadReviewComments writes the round's threads for the fixing agent.
@@ -104,14 +105,14 @@ func (x *exec) subjectForge(st *flow.Stage) (ports.Forge, *mrRecord, error) {
 // re-entry rewrites the same set, so one round fixes what it started with.
 func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 	rs := x.rs
-	forge, mr, err := x.subjectForge(st)
+	repoHost, mr, err := x.subjectRepoHost(st)
 	if errors.Is(err, errNoSubject) {
 		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
 	if err != nil {
 		return x.infraFail(st, err.Error())
 	}
-	threads, err := forge.MRThreads(x.ctx, mr.Ref)
+	threads, err := repoHost.MRThreads(x.ctx, mr.Ref)
 	if err != nil {
 		return x.infraFail(st, "listing review threads: "+err.Error())
 	}
@@ -306,7 +307,7 @@ func quoteBlock(s string) string {
 // skipped — a duplicate reply on a reviewer's thread is worse than a retry.
 func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	rs := x.rs
-	forge, mr, err := x.subjectForge(st)
+	repoHost, mr, err := x.subjectRepoHost(st)
 	if errors.Is(err, errNoSubject) {
 		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
@@ -327,7 +328,7 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	}
 	done := map[string]bool{}
 	if rs.actionPending[st.ID] {
-		threads, err := forge.MRThreads(x.ctx, mr.Ref)
+		threads, err := repoHost.MRThreads(x.ctx, mr.Ref)
 		if err != nil {
 			return x.infraFail(st, "cannot tell which replies were already posted: "+err.Error())
 		}
@@ -348,13 +349,13 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	for _, r := range replies {
 		if !done[r.Thread] {
 			body := strings.TrimSpace(r.Reply) + "\n\n" + ports.ReplyMarker(x.roundID(), r.Thread)
-			if err := forge.ReplyThread(x.ctx, mr.Ref, r.Thread, body); err != nil {
+			if err := repoHost.ReplyThread(x.ctx, mr.Ref, r.Thread, body); err != nil {
 				return x.infraFail(st, fmt.Sprintf("replying to thread %s: %v", r.Thread, err))
 			}
 		}
 		posted = append(posted, r.Thread)
 		if r.Resolve {
-			if err := forge.ResolveThread(x.ctx, mr.Ref, r.Thread); err != nil {
+			if err := repoHost.ResolveThread(x.ctx, mr.Ref, r.Thread); err != nil {
 				return x.infraFail(st, fmt.Sprintf("resolving thread %s: %v", r.Thread, err))
 			}
 			resolved = append(resolved, r.Thread)

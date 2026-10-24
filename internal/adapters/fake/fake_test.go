@@ -94,9 +94,9 @@ func TestAgentRunnerScripting(t *testing.T) {
 	}
 }
 
-func TestForge(t *testing.T) {
+func TestRepoHost(t *testing.T) {
 	ctx := context.Background()
-	f := &Forge{}
+	f := &RepoHost{}
 
 	if err := f.CheckAccess(ctx, ports.RepoRef{}); err != nil {
 		t.Fatal(err)

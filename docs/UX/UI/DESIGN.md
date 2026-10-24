@@ -824,7 +824,7 @@ The same anatomy, scoped to one guild:
 
 ### 7.7 Workshop overview: `/g/:guild/w/:workshop`
 
-1. Header: vial + name + repo URL (mono) + forge / provisioner / harness chips; "Edit setup" secondary, Delete… (blocked until all runs are archived, with an explanation).
+1. Header: vial + name + repo URL (mono) + repository / provisioner / harness chips; "Edit setup" secondary, Delete… (blocked until all runs are archived, with an explanation).
 2. A tab strip: **Overview · Runs · Tickets · Flows · Agents · Health**.
    - **Overview:** the live runs cards (as 7.2) and a read-only summary (repositories incl. additional repos, commands, default flow, egress mode + lists).
    - **Flows:** a list with "default" and "from template" chips, hash and updated; New flow, Copy, "Use built-in template". Built-in templates in their own group.
@@ -868,7 +868,7 @@ The same anatomy, scoped to one guild:
 A stepped form with a left step-rail and section anchors: **1 Repository → 2 Workshop → 3 Execution → 4 Workspace**. Sticky footer: Cancel / Save (primary). A "Run envcheck after saving" toggle.
 
 1. **Repository:**
-   - forge account select
+   - repository account select
    - "Browse repositories" (searchable list; each row has "Use" and "+ extra")
    - URL, locator, default branch, AGENTS.md path
    - additional repos as an editable table (name, URL, locator: empty = read-only, branch), with the note "cloned to ~/repos/\<name\>, one MR each"
@@ -885,7 +885,7 @@ A stepped form with a left step-rail and section anchors: **1 Repository → 2 W
 Layout: row [section nav 220px | content]. The section nav is a vertical list in the sidebar nav style:
 **Integrations · Channels · Members & roles · Limits · Reaper · Storage**.
 
-- **Integrations:** four groups (Forge, Provisioner, Harness, Ticket source), each with "+ Add \<kind\>" buttons for its kinds.
+- **Integrations:** four groups (Repositories, Provisioner, Harness, Ticket source), each with "+ Add \<kind\>" buttons for its kinds.
   - **Integration card** (content glass): name, kind chip, config summary (secrets masked), **persisted test result** chip (✓ ok / ✕ error + "tested 3h ago"), Test (secondary), Edit (inline expand), Delete….
   - Forms are generated from descriptors: a "How to set this up" help panel, then fields (text / secret / JSON secret).
   - A skeleton list shows while loading.

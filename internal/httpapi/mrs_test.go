@@ -32,11 +32,11 @@ phases:
 func TestMergeRequestsListAndStartARun(t *testing.T) {
 	x := newConfEnv(t)
 	pid := x.wizard(t)
-	forge := kinds.FakeForgeOf("1")
-	forge.Reset()
-	t.Cleanup(forge.Reset)
-	forge.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	forge.AddOpenMR("apothecary", "The factory's own", "apothecary/x", "main", "b1")
+	repoHost := kinds.FakeRepoHostOf("1")
+	repoHost.Reset()
+	t.Cleanup(repoHost.Reset)
+	repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
+	repoHost.AddOpenMR("apothecary", "The factory's own", "apothecary/x", "main", "b1")
 	if resp, data := x.do(t, "POST", "/api/projects/"+pid+"/flows", map[string]any{"name": "on-mr", "yaml": mrFlowYAML}, nil); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("save flow = %d: %s", resp.StatusCode, data)
 	}

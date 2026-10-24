@@ -38,8 +38,8 @@ func TestMRMerged(t *testing.T) {
 	if sig == nil {
 		t.Fatalf("%s is not registered", MRMerged)
 	}
-	if sig.Requires != RequiresForge {
-		t.Errorf("requires = %q, want %q", sig.Requires, RequiresForge)
+	if sig.Requires != RequiresRepository {
+		t.Errorf("requires = %q, want %q", sig.Requires, RequiresRepository)
 	}
 	// Needs is what lets the engine say "you never opened an MR" instead of
 	// waiting forever on something that can never happen.
@@ -56,7 +56,7 @@ func TestMRMerged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"slug":"mr_merged"`, `"requires":"forge"`, `"title":`} {
+	for _, want := range []string{`"slug":"mr_merged"`, `"requires":"repository"`, `"title":`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("json missing %s: %s", want, b)
 		}
@@ -66,7 +66,7 @@ func TestMRMerged(t *testing.T) {
 // Beginnings: run_start is the one Entry (a run is created for the phase),
 // manual the Trigger that never fires (a person starts the phase from the
 // run page); neither needs anything of the project nor is debounced. The
-// forge triggers open phases only.
+// repository host triggers open phases only.
 func TestBeginnings(t *testing.T) {
 	rs := Get(RunStart)
 	if rs == nil || !rs.Entry || rs.Trigger || rs.Requires != "" || rs.Needs != "" || rs.Debounced {

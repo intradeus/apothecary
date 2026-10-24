@@ -285,13 +285,13 @@ func mustSeedProjectAndTicket(t *testing.T, s *Store, ticketID string) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if err := s.UpsertIntegration(ctx, confstore.StoredIntegration{
-		ID: "fint1", Port: "forge", Kind: "gitlab", Name: "gl-files",
+		ID: "fint1", Port: "repository", Kind: "gitlab", Name: "gl-files",
 		Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpsertProject(ctx, confstore.Project{
-		ID: "fprj1", Name: "files-prj", ForgeID: "fint1", ProvisionerID: "fint1",
+		ID: "fprj1", Name: "files-prj", RepoAccountID: "fint1", ProvisionerID: "fint1",
 		HarnessIDs: []string{"fint1"}, DefaultFlow: builtin.DefaultFlowName,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {

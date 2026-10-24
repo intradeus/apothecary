@@ -208,8 +208,9 @@ export default {
 		'Workspaces that may exist at once, live or stopped. At the cap, new runs are refused until a run is archived or reaped.',
 	'page.limits.envsNow_one': 'Now: {count} environment standing',
 	'page.limits.envsNow_other': 'Now: {count} environments standing',
-	'page.integrations.forge': 'Repositories',
-	'page.integrations.forgeSub': 'GitLab, GitHub: where the code lives — branches, merge requests',
+	'page.integrations.repository': 'Repositories',
+	'page.integrations.repositorySub':
+		'GitLab, GitHub: where the code lives — branches, merge requests',
 	'page.integrations.provisioner': 'Provisioner',
 	'page.integrations.provisionerSub': 'where workspaces are built and run',
 	'page.integrations.harness': 'Harness',

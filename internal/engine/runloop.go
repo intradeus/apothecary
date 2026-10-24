@@ -1950,7 +1950,7 @@ func (x *exec) ensureEnv() error {
 		EgressAllowedPorts:   x.res.EgressAllowedPorts,
 		CodeServerExtensions: x.res.CodeServerExtensions,
 		// For clone-first provisioners (devcontainer): the engine-side
-		// checkout needs the forge credential before the env exists.
+		// checkout needs the repository host credential before the env exists.
 		GitUser: x.res.GitUser,
 		GitPass: x.res.GitPass,
 	}

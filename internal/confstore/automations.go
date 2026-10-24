@@ -9,7 +9,7 @@ package confstore
 //     project — once — and starts a run for each;
 //   - cron fires on a schedule (five-field cron, UTC) for one ticket, a new
 //     run each time;
-//   - forge_mr watches a repository's open merge requests and creates a run
+//   - merge_request watches a repository's open merge requests and creates a run
 //     on each one someone else opened — once — at an mr_opened entrypoint,
 //     each with a ticket of its own.
 //
@@ -29,14 +29,14 @@ import (
 const (
 	AutomationTrackerQuery = "tracker_query"
 	AutomationCron         = "cron"
-	AutomationForgeMR      = "forge_mr"
+	AutomationMergeRequest = "merge_request"
 )
 
 // AutomationKinds lists the kinds, for messages and the API.
-var AutomationKinds = []string{AutomationTrackerQuery, AutomationCron, AutomationForgeMR}
+var AutomationKinds = []string{AutomationTrackerQuery, AutomationCron, AutomationMergeRequest}
 
-// TicketKindMR is the source kind of a ticket a forge_mr automation made for
-// a merge request: its key and URL are the merge request's, and it has no
+// TicketKindMR is the source kind of a ticket a merge_request automation made
+// for a merge request: its key and URL are the merge request's, and it has no
 // tracker (no source id), so tracker actions skip.
 const TicketKindMR = "merge_request"
 
@@ -52,8 +52,8 @@ type Automation struct {
 	// cron: the five-field schedule (UTC) and the ticket each firing runs.
 	Schedule string `json:"schedule,omitempty"`
 	TicketID string `json:"ticket_id,omitempty"`
-	// forge_mr: the repository watched ("" = the project's primary, else an
-	// extra repository's name).
+	// merge_request: the repository watched ("" = the project's primary, else
+	// an extra repository's name).
 	Repo string `json:"repo,omitempty"`
 	// What a firing creates: a run of Flow beginning at Phase ("" = the
 	// flow's first entrypoint) with Params laid over the project's binding.
@@ -173,8 +173,8 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	a.SourceID, a.Query = strings.TrimSpace(a.SourceID), strings.TrimSpace(a.Query)
 	a.Schedule, a.TicketID = strings.TrimSpace(a.Schedule), strings.TrimSpace(a.TicketID)
 	a.Repo = strings.TrimSpace(a.Repo)
-	if a.Repo != "" && a.Kind != AutomationForgeMR {
-		return invalidf("only a merge-request automation (forge_mr) watches a repository")
+	if a.Repo != "" && a.Kind != AutomationMergeRequest {
+		return invalidf("only a merge-request automation (merge_request) watches a repository")
 	}
 	switch a.Kind {
 	case AutomationTrackerQuery:
@@ -208,9 +208,9 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 		if a.SourceID != "" || a.Query != "" {
 			return invalidf("a cron automation takes no source_id or query")
 		}
-	case AutomationForgeMR:
+	case AutomationMergeRequest:
 		if a.SourceID != "" || a.Query != "" || a.Schedule != "" || a.TicketID != "" {
-			return invalidf("a merge-request automation (forge_mr) takes only a repo (\"\" = the primary)")
+			return invalidf("a merge-request automation (merge_request) takes only a repo (\"\" = the primary)")
 		}
 		if a.Repo == "repo" {
 			a.Repo = ""
@@ -244,9 +244,9 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 		return invalidf("flow %q does not parse: %v", a.Flow, err)
 	}
 	// The entrypoint must begin the kind of run the automation creates: on
-	// a merge request (forge_mr), or a fresh one.
+	// a merge request (merge_request), or a fresh one.
 	a.Phase = strings.TrimSpace(a.Phase)
-	onMR := a.Kind == AutomationForgeMR
+	onMR := a.Kind == AutomationMergeRequest
 	var names []string
 	fits := false
 	for _, ph := range f.Entrypoints() {

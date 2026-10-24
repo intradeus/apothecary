@@ -507,7 +507,7 @@ stages:
 		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
 	}
 	links := tracker.Linked["DEV-1"]
-	if len(links) != 1 || links[0].URL != h.forge.MRs[0].Ref.URL || !strings.HasPrefix(links[0].Title, "Merge request: ") {
+	if len(links) != 1 || links[0].URL != h.repoHost.MRs[0].Ref.URL || !strings.HasPrefix(links[0].Title, "Merge request: ") {
 		t.Errorf("links = %+v", links)
 	}
 

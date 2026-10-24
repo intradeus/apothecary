@@ -45,7 +45,7 @@ func TestMergedOutcomeRunsItsStagesAndEndsTheRun(t *testing.T) {
 	if m, c := byID["merged"], byID["closed"]; !m.Outcome || m.Then != "" || m.Max != -1 || !c.Outcome || c.Then != "abort" {
 		t.Errorf("phases: merged %+v closed %+v", m, c)
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	if n := len(ph.execsOf("./ticket_done.sh")); n != 1 {
 		t.Errorf("ticket_done ran %d times, want once after the merge", n)
@@ -65,7 +65,7 @@ func TestMergedOutcomeRunsItsStagesAndEndsTheRun(t *testing.T) {
 func TestClosedOutcomeAbandonsTheRunOnTheSpot(t *testing.T) {
 	ph := newPhasedHarness(t, outcomeFlowDoc)
 	runID := ph.start(t)
-	ph.forge.SetMRState(1, ports.MRClosed)
+	ph.repoHost.SetMRState(1, ports.MRClosed)
 	ph.waitState(t, runID, run.Abandoned)
 	evs := ph.events(t, runID)
 	ab, _ := findPayload[*event.RunAbandoned](evs)
@@ -92,7 +92,7 @@ func TestOutcomeAsksFirstUnderConfirm(t *testing.T) {
 	doc := strings.Replace(outcomeFlowDoc, "on: mr_merged", "on: { signal: mr_merged, start: confirm }", 1)
 	ph := newPhasedHarness(t, doc)
 	runID := ph.start(t)
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if ask.Phase != "merged" || !strings.Contains(ask.Question, "end the run?") || !strings.Contains(ask.Question, "Every merge request merged") {
 		t.Errorf("confirm ping = %+v", ask)
@@ -112,7 +112,7 @@ func TestDecliningAnOutcomeLeavesTheRunToEnd(t *testing.T) {
 	doc := strings.Replace(outcomeFlowDoc, "on: mr_merged", "on: { signal: mr_merged, start: confirm }", 1)
 	ph := newPhasedHarness(t, doc)
 	runID := ph.start(t)
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "reject", Feedback: "the ticket stays open"}); err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestADeadEndInAnOutcomeAbandonsTheRun(t *testing.T) {
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
 	runID := ph.start(t)
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Abandoned)
 	ab, _ := findPayload[*event.RunAbandoned](ph.events(t, runID))
 	if ab == nil || ab.StalledAt != "ticket_done" {

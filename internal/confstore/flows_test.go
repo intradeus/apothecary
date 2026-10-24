@@ -202,11 +202,11 @@ func seedNamedProject(t *testing.T, svc *Service, name string) Project {
 		}
 		return in
 	}
-	forge := mk(PortForge, "gitlab", "gl", map[string]string{"token": "glpat-supersecret99"})
+	repoHost := mk(PortRepository, "gitlab", "gl", map[string]string{"token": "glpat-supersecret99"})
 	prov := mk(PortProvisioner, "devcontainer", "dc", map[string]string{"token": "coder-tok"})
 	harness := mk(PortHarness, "opencode", "oc", map[string]string{"auth_json": `{"openrouter":{"type":"api","key":"sk-or-abc"}}`})
 	p, err := svc.CreateProject(ctx, Project{
-		Name: name, ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
+		Name: name, RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/" + name + ".git", Locator: "43"},
 		DefaultFlow: builtin.DefaultFlowName,
 	})

@@ -102,7 +102,7 @@ const ticketBody = (t: TicketDraft): Wire.TicketRequest => ({
 
 const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 	name: p.name,
-	forge_id: p.forgeId,
+	repo_account_id: p.repoAccountId,
 	provisioner_id: p.provisionerId,
 	harness_ids: p.harnessIds,
 	repo: {
@@ -162,7 +162,7 @@ export const runs = {
 	startPhase: (id: string, phase: string, subject = '') =>
 		unwrapVoid(gen.startPhase({ path: { id, phase }, body: subject ? { subject } : {} })),
 
-	/** Each merge request as the forge reports it now (polled by the run page). */
+	/** Each merge request as its repository host reports it now (polled by the run page). */
 	mrStatus: async (id: string): Promise<MergeRequestLive[]> =>
 		many(await unwrap(gen.getRunMrStatus({ path: { id } })), map.toMergeRequestLive),
 

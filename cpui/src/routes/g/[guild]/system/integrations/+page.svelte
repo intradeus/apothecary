@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Integrations (DESIGN 7.10): four groups — forge, provisioner, harness,
+	// Integrations (DESIGN 7.10): four groups — repositories, provisioner, harness,
 	// ticket source — each with "+ Add <kind>" per registered kind and a card
 	// per configured integration. Forms come from the engine's descriptors.
 	import { onMount } from 'svelte';
@@ -21,7 +21,11 @@
 	// Model auth is harness-owned (the harness's auth_json carries model
 	// credentials), so there is no "model provider" group.
 	const GROUPS: { port: Port; title: string; sub: string }[] = $derived([
-		{ port: 'forge', title: t('page.integrations.forge'), sub: t('page.integrations.forgeSub') },
+		{
+			port: 'repository',
+			title: t('page.integrations.repository'),
+			sub: t('page.integrations.repositorySub')
+		},
 		{
 			port: 'provisioner',
 			title: t('page.integrations.provisioner'),
@@ -69,7 +73,10 @@
 	const usedBy = (i: Integration) =>
 		fleet.projects
 			.filter(
-				(p) => p.forgeId === i.id || p.provisionerId === i.id || (p.harnessIds ?? []).includes(i.id)
+				(p) =>
+					p.repoAccountId === i.id ||
+					p.provisionerId === i.id ||
+					(p.harnessIds ?? []).includes(i.id)
 			)
 			.map((p) => p.name);
 </script>

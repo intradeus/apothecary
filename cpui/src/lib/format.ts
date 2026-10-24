@@ -6,11 +6,10 @@
 import type { RunState } from '$lib/domain';
 import { i18n, t, type MessageKey } from '$lib/i18n/index.svelte';
 
-/** The word for an integration port (or a spec's `requires`) in UI text:
- *  `forge` is the code's name for what people call the repository. */
+/** The word for an integration port (or a spec's `requires`) in UI text. */
 export const portLabel = (port: string) => (port in PORT_WORDS ? t(PORT_WORDS[port]) : port);
 const PORT_WORDS: Record<string, MessageKey> = {
-	forge: 'port.forge',
+	repository: 'port.repository',
 	provisioner: 'port.provisioner',
 	harness: 'port.harness',
 	ticketsource: 'port.ticketsource',

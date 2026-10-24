@@ -12,32 +12,32 @@ import (
 	"apothecary/internal/ports"
 )
 
-// Fake kinds back `serve -dev` and tests: the whole config plane works
-// against them with no Coder/harness/forge. The fake harness honors §3.2
-// output contracts by parsing the prompt's OUTPUT CONTRACT section (moved
-// here from the v1 devAdapters in cmd/apothecaryd).
+// Fake kinds back `serve -dev` and tests: the whole config plane works against
+// them with no Coder/harness/repository host. The fake harness honors §3.2
+// output contracts by parsing the prompt's OUTPUT CONTRACT section (moved here
+// from the v1 devAdapters in cmd/apothecaryd).
 
 // RegisterFakes registers one "fake" kind per port.
 func RegisterFakes(r *Registry) {
-	r.RegisterForge(FakeForge{})
+	r.RegisterRepoHost(FakeRepoHost{})
 	r.RegisterProvisioner(FakeProvisioner{})
 	r.RegisterHarness(FakeHarness{})
 	r.RegisterTicketSource(FakeTicketSource{})
 }
 
-// --- forge ------------------------------------------------------------------
+// --- RepoHost ---------------------------------------------------------------
 
-type FakeForge struct{}
+type FakeRepoHost struct{}
 
-func (FakeForge) Descriptor() Descriptor {
-	return Descriptor{Port: "forge", Kind: "fake", Label: "Fake repositories (dev)"}
+func (FakeRepoHost) Descriptor() Descriptor {
+	return Descriptor{Port: "repository", Kind: "fake", Label: "Fake repositories (dev)"}
 }
 
 type fakeAccount struct{}
 
 func (fakeAccount) Test(context.Context) error { return nil }
 func (fakeAccount) ListRepos(context.Context) ([]RepoInfo, error) {
-	return []RepoInfo{{Name: "dev/fake-repo", URL: "https://forge.local/dev/fake-repo.git", Locator: "1", DefaultBranch: "main"}}, nil
+	return []RepoInfo{{Name: "dev/fake-repo", URL: "https://git.local/dev/fake-repo.git", Locator: "1", DefaultBranch: "main"}}, nil
 }
 func (fakeAccount) ListBranches(context.Context, string) ([]BranchInfo, error) {
 	return []BranchInfo{{Name: "main", Default: true}, {Name: "develop"}}, nil
@@ -46,22 +46,22 @@ func (fakeAccount) GitCredential() (string, string) { return "", "" }
 func (fakeAccount) GitIdentity() (string, string)   { return "", "" }
 func (fakeAccount) EgressDomains() []string         { return nil }
 
-func (FakeForge) Account(Config) (ForgeAccount, error) { return fakeAccount{}, nil }
+func (FakeRepoHost) Account(Config) (RepoAccount, error) { return fakeAccount{}, nil }
 
-// fakeForges keeps one fake forge per repository locator for the life of
-// the process, so what a run opens on it is still there when the next
-// resolution asks — the way a real forge would remember it.
-var fakeForges sync.Map // locator -> *fake.Forge
+// fakeRepoHosts keeps one fake repository host per repository locator for the
+// life of the process, so what a run opens on it is still there when the next
+// resolution asks — the way a real repository host would remember it.
+var fakeRepoHosts sync.Map // locator -> *fake.RepoHost
 
-func (FakeForge) Forge(_ Config, repo ports.RepoRef) (ports.Forge, error) {
-	return FakeForgeOf(repo.Locator), nil
+func (FakeRepoHost) RepoHost(_ Config, repo ports.RepoRef) (ports.RepoHost, error) {
+	return FakeRepoHostOf(repo.Locator), nil
 }
 
-// FakeForgeOf is the fake forge of a repository locator (tests script
-// merge requests on it).
-func FakeForgeOf(locator string) *fake.Forge {
-	f, _ := fakeForges.LoadOrStore(locator, &fake.Forge{})
-	return f.(*fake.Forge)
+// FakeRepoHostOf is the fake repository host of a repository locator (tests
+// script merge requests on it).
+func FakeRepoHostOf(locator string) *fake.RepoHost {
+	f, _ := fakeRepoHosts.LoadOrStore(locator, &fake.RepoHost{})
+	return f.(*fake.RepoHost)
 }
 
 // --- provisioner ------------------------------------------------------------

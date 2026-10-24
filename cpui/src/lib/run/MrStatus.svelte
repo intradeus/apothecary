@@ -1,6 +1,6 @@
 <script lang="ts">
-	// One merge request as the forge sees it right now: does it merge
-	// cleanly — or would the forge merge it now — is it merged, what its CI
+	// One merge request as its repository host sees it right now: does it merge
+	// cleanly — or would the host merge it now — is it merged, what its CI
 	// says, is it approved, are reviewers waiting. The header shows it short;
 	// the phases card spells it out (`long`).
 	import type { MergeRequestLive } from '$lib/domain';

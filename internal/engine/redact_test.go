@@ -16,7 +16,7 @@ func TestRedactorScrubsInjectedSecrets(t *testing.T) {
 	r := newRedactor(res, "run-token-abcdef")
 
 	out := r.scrub("fatal: authentication failed for " +
-		"https://oauth2:glpat-SUPERSECRETVALUE@forge.local/g/p.git\n" +
+		"https://oauth2:glpat-SUPERSECRETVALUE@git.local/g/p.git\n" +
 		"env ANTHROPIC_API_KEY=sk-ant-abcdefghij\nAuthorization: Bearer run-token-abcdef\n")
 
 	for _, secret := range []string{"glpat-SUPERSECRETVALUE", "sk-ant-abcdefghij", "run-token-abcdef"} {

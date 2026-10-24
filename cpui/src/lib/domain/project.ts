@@ -4,7 +4,7 @@
 export interface Project {
 	id: string;
 	name: string;
-	forgeId: string;
+	repoAccountId: string;
 	provisionerId: string;
 	/** The available harness integrations (no default — the flow names the
 	 *  harness kind). One integration per kind. */

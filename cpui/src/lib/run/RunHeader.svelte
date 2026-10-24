@@ -99,7 +99,7 @@
 		return ok;
 	}
 
-	// What the forge says about the run's merge requests right now, polled
+	// What the repository host says about the run's merge requests right now, polled
 	// while the run is alive; an observation, not part of the run's record.
 	let mrLive = $state<MergeRequestLive[]>([]);
 	const hasMr = $derived(run.mrs.length > 0 || !!run.mrUrl);
@@ -108,7 +108,7 @@
 		try {
 			mrLive = await api.runs.mrStatus(run.id);
 		} catch {
-			// The header must not break on a forge hiccup; the next poll retries.
+			// The header must not break on a repository host hiccup; the next poll retries.
 		}
 	}
 	onMount(() => {

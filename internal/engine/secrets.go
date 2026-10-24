@@ -17,9 +17,9 @@ import (
 // What the engine DOES own is the other end: a workspace deliberately outlives
 // its run (completed envs wait for the reaper; abandoned/failed ones are kept
 // indefinitely for inspection, and "Open editor" gives a human a terminal in
-// them). A dead run has no business still holding a live forge token and live
-// model keys, so reaching a terminal state wipes them. A resumed run re-enters
-// the same workspace, so ensureEnv puts them back.
+// them). A dead run has no business still holding a live repository host token
+// and live model keys, so reaching a terminal state wipes them. A resumed run
+// re-enters the same workspace, so ensureEnv puts them back.
 //
 // This bounds exposure; it is not a boundary. While a run is live the agent
 // legitimately has the credentials and can read them — that is the case

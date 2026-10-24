@@ -136,7 +136,7 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 		t.Errorf("reactions: conflicts %+v review %+v", conflicts, review)
 	}
 	if f.Agent("replier").ReviewRepliesOutput() == nil {
-		t.Error("the replier must declare a review_replies output, or bad replies reach the forge")
+		t.Error("the replier must declare a review_replies output, or bad replies reach the repository")
 	}
 	// The run ends in an outcome: merged finishes it (the ticket's done is
 	// best effort), closed unmerged sends the ticket back and abandons it.

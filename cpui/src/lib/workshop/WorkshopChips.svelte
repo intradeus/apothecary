@@ -13,7 +13,7 @@
 	const missing = (id: string) => !!integrations && !byId.has(id);
 
 	const chips = $derived([
-		{ k: 'forge', ids: [project.forgeId] },
+		{ k: 'repository', ids: [project.repoAccountId] },
 		{ k: 'provisioner', ids: [project.provisionerId] },
 		{ k: 'harness', ids: project.harnessIds ?? [] }
 	]);

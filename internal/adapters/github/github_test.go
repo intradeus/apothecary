@@ -440,7 +440,7 @@ func TestMergeMR(t *testing.T) {
 	refuse = 500
 	var refused *ports.ErrMergeRefused
 	if err := a.MergeMR(ctx, ports.MRRef{IID: 5}, ports.MergeOptions{}); err == nil || errors.As(err, &refused) {
-		t.Errorf("500: err = %v, want the forge failing, not a refusal", err)
+		t.Errorf("500: err = %v, want the repository host failing, not a refusal", err)
 	}
 }
 

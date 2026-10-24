@@ -16,7 +16,7 @@ import (
 // Ports an integration can implement. The provider port was removed
 // post-M8: the harness owns model auth (see IMPLEMENTATION_NOTES).
 const (
-	PortForge       = "forge"
+	PortRepository  = "repository"
 	PortProvisioner = "provisioner"
 	PortHarness     = "harness"
 	// PortTicketSource is the read-only issue tracker tickets are imported
@@ -26,7 +26,7 @@ const (
 	PortTicketSource = "ticketsource"
 )
 
-var ValidPorts = []string{PortForge, PortProvisioner, PortHarness, PortTicketSource}
+var ValidPorts = []string{PortRepository, PortProvisioner, PortHarness, PortTicketSource}
 
 var (
 	ErrNotFound = errors.New("not found")
@@ -69,11 +69,11 @@ type RepoConfig struct {
 	AgentsMDPath  string `json:"agents_md_path"`
 }
 
-// ExtraRepo is an additional repository a project's runs check out beside
-// the primary one (projects.repos). The primary repo supplies the
-// devcontainer; extras are cloned as siblings (~/repos/<name>) on the same
-// forge account, branched like the primary, and get their own merge request
-// when a run changes them. A locator is what lets the forge open that MR;
+// ExtraRepo is an additional repository a project's runs check out beside the
+// primary one (projects.repos). The primary repo supplies the devcontainer;
+// extras are cloned as siblings (~/repos/<name>) on the same repository host
+// account, branched like the primary, and get their own merge request when a
+// run changes them. A locator is what lets the repository host open that MR;
 // without one the repo is context only (cloned, never published).
 type ExtraRepo struct {
 	// Name is the checkout directory under ~/repos and how flows, agents and
@@ -135,7 +135,7 @@ type EditorConfig struct {
 type Project struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
-	ForgeID       string `json:"forge_id"`
+	RepoAccountID string `json:"repo_account_id"`
 	ProvisionerID string `json:"provisioner_id"`
 	// HarnessIDs is the project's set of AVAILABLE harness integrations (for
 	// auth + image layers) — the project has NO default harness. The FLOW

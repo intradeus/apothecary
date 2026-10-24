@@ -7,11 +7,11 @@ package engine
 // ticket written by hand has none: those stages complete as SKIPPED, visibly
 // (stage_completed{skipped, note}), and the run goes on down on_success.
 //
-// Every call runs engine-side like the forge's, so no tracker credential ever
-// reaches a workspace; and none of these needs the workspace unless a file
-// input is bound (actionspec.Action.Remote, needsWorkspace) — the in-progress
-// move lands seconds after the run starts, and the done move after a parked
-// wait never re-provisions a reaped workspace.
+// Every call runs engine-side like the repository host's, so no tracker
+// credential ever reaches a workspace; and none of these needs the workspace
+// unless a file input is bound (actionspec.Action.Remote, needsWorkspace) —
+// the in-progress move lands seconds after the run starts, and the done move
+// after a parked wait never re-provisions a reaped workspace.
 //
 // A move names a CANONICAL status (`to: in_progress`, ports.TicketStatus)
 // that the ticket's tracker translates into its own vocabulary — the same

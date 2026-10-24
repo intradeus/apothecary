@@ -1,11 +1,11 @@
 package tickets
 
-// Tickets for merge requests: a run created on a merge request someone
-// opened belongs to a ticket of its own — the merge request's title and
-// description, keyed by its URL, with no tracker behind it (tracker actions
-// skip). The forge_mr automation makes them as it finds merge requests; the
-// workshop's Forge tab when a person starts a run on one. Both find the same
-// ticket for the same merge request, so a merge request's runs, however
+// Tickets for merge requests: a run created on a merge request someone opened
+// belongs to a ticket of its own — the merge request's title and description,
+// keyed by its URL, with no tracker behind it (tracker actions skip). The
+// merge_request automation makes them as it finds merge requests; the
+// workshop's Repositories tab when a person starts a run on one. Both find the
+// same ticket for the same merge request, so a merge request's runs, however
 // begun, are filed together.
 
 import (

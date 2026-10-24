@@ -12,24 +12,24 @@ import (
 )
 
 // actionCreateMR opens the run's draft merge requests: one per checkout that
-// has a forge port and changes to publish — the primary always, an extra repo
-// when its branch is ahead of its source. Each targets the branch the
-// checkout forked from, so a run started off another run's branch stacks on
-// it. Idempotent via rs.mrs, rehydrated from mr_created on replay: re-entering
-// after a crash never opens a second MR for a branch.
+// has a repository host port and changes to publish — the primary always, an
+// extra repo when its branch is ahead of its source. Each targets the branch
+// the checkout forked from, so a run started off another run's branch stacks
+// on it. Idempotent via rs.mrs, rehydrated from mr_created on replay:
+// re-entering after a crash never opens a second MR for a branch.
 //
-// The narrow window the events alone cannot cover is a crash BETWEEN a forge
-// call returning and mr_created being appended — the MR exists, the run has
-// no record of it, and re-running would open a duplicate. The action_started
-// intent marker makes that window visible, and the FindMR reconciliation
-// closes it by asking the forge what the branch already has (PLAN5 M20). A
-// reconciliation that cannot reach the forge fails the stage rather than
-// guessing: a duplicate MR is worse than a retry.
-// mrHead is the merge request's head commit as the forge reports it now, or
-// "" when it cannot be asked (best effort: it only keeps the run from taking
-// its own commit for someone else's push).
-func (x *exec) mrHead(forge ports.Forge, ref ports.MRRef) string {
-	st, err := forge.MRStatus(x.ctx, ref)
+// The narrow window the events alone cannot cover is a crash BETWEEN a
+// repository host call returning and mr_created being appended — the MR
+// exists, the run has no record of it, and re-running would open a duplicate.
+// The action_started intent marker makes that window visible, and the FindMR
+// reconciliation closes it by asking the repository host what the branch
+// already has (PLAN5 M20). A reconciliation that cannot reach the repository
+// host fails the stage rather than guessing: a duplicate MR is worse than a
+// retry. mrHead is the merge request's head commit as the repository host
+// reports it now, or "" when it cannot be asked (best effort: it only keeps
+// the run from taking its own commit for someone else's push).
+func (x *exec) mrHead(repoHost ports.RepoHost, ref ports.MRRef) string {
+	st, err := repoHost.MRStatus(x.ctx, ref)
 	if err != nil {
 		x.e.log.Warn("could not read the new merge request's head", "run", x.rs.runID, "mr", ref.URL, "err", err)
 		return ""
@@ -41,7 +41,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	rs := x.rs
 	// Which checkouts still need a merge request — reconciling first, before
 	// anything is read or created: after a crash in the record window the
-	// forge may already have it.
+	// repository host may already have it.
 	// In a phase opened for one merge request, only its checkout; otherwise
 	// every checkout of the run.
 	checkouts := rs.checkouts
@@ -50,8 +50,8 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	}
 	var todo []event.Checkout
 	for _, co := range checkouts {
-		forge := x.res.forgeFor(co.Name)
-		if forge == nil {
+		repoHost := x.res.repoHostFor(co.Name)
+		if repoHost == nil {
 			continue // context-only extra repo
 		}
 		if rs.mrFor(co.Name, co.Branch) != nil {
@@ -67,18 +67,18 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 				continue
 			}
 		}
-		// Adopt what the forge already has — after a crash in the record
-		// window, or a merge request a person opened for the branch — rather
-		// than open a second one.
+		// Adopt what the repository host already has — after a crash in the
+		// record window, or a merge request a person opened for the branch —
+		// rather than open a second one.
 		{
-			ref, found, ferr := forge.FindMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source)
+			ref, found, ferr := repoHost.FindMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source)
 			if ferr != nil {
 				return x.infraFail(st, "cannot tell whether the merge request was already created: "+ferr.Error())
 			}
 			if found {
 				x.e.log.Info("adopted an existing merge request", "run", rs.runID, "stage", st.ID, "repo", co.Name, "mr", ref.URL)
 				created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID,
-					Head: x.mrHead(forge, ref)}
+					Head: x.mrHead(repoHost, ref)}
 				if err := x.append(created); err != nil {
 					return true, err
 				}
@@ -116,15 +116,15 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		rs.actionPending[st.ID] = true
 	}
 	for _, co := range todo {
-		forge := x.res.forgeFor(co.Name)
-		ref, err := forge.CreateDraftMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source, title, string(body))
+		repoHost := x.res.repoHostFor(co.Name)
+		ref, err := repoHost.CreateDraftMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source, title, string(body))
 		if err != nil {
 			return x.infraFail(st, "opening the merge request failed: "+err.Error())
 		}
 		// mr_created is what makes the $MR_URL sentinel and the merge signals
 		// work downstream, and what makes this action idempotent.
 		created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID,
-			Head: x.mrHead(forge, ref)}
+			Head: x.mrHead(repoHost, ref)}
 		if err := x.append(created); err != nil {
 			return true, err
 		}
@@ -134,9 +134,9 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	return false, nil
 }
 
-// infraFail is a failure retrying cannot fix without a human — the forge
-// unreachable, the workspace gone: terminal, as create_mr's forge errors
-// always were. Returns routed=true.
+// infraFail is a failure retrying cannot fix without a human — the repository
+// host unreachable, the workspace gone: terminal, as create_mr's repository
+// host errors always were. Returns routed=true.
 func (x *exec) infraFail(st *flow.Stage, msg string) (bool, error) {
 	if x.ctx.Err() != nil {
 		return true, context.Cause(x.ctx)
@@ -152,8 +152,8 @@ func (x *exec) gitIn(dir, script string) (ports.ExecResult, error) {
 	return x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{Script: script, Dir: dir, Timeout: x.rs.fl.Defaults.Timeout})
 }
 
-// repoRefFor is the forge reference of a checkout: the project's for the
-// primary, the extra repo's own for the rest.
+// repoRefFor is the repository host reference of a checkout: the project's for
+// the primary, the extra repo's own for the rest.
 func (x *exec) repoRefFor(co event.Checkout) ports.RepoRef {
 	if co.Primary {
 		return x.res.RepoRef

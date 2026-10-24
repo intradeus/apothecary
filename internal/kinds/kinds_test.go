@@ -16,13 +16,13 @@ import (
 
 func TestRegistryValidAndDescriptors(t *testing.T) {
 	r := NewRegistry()
-	r.RegisterForge(GitLab{})
-	r.RegisterForge(GitHub{})
+	r.RegisterRepoHost(GitLab{})
+	r.RegisterRepoHost(GitHub{})
 	r.RegisterProvisioner(Devcontainer{})
 	r.RegisterHarness(Opencode{})
 	r.RegisterHarness(Codex{})
 	for _, ok := range [][2]string{
-		{"forge", "gitlab"}, {"forge", "github"}, {"provisioner", "devcontainer"},
+		{"repository", "gitlab"}, {"repository", "github"}, {"provisioner", "devcontainer"},
 		{"harness", "opencode"}, {"harness", "codex"},
 	} {
 		if !r.Valid(ok[0], ok[1]) {
@@ -295,7 +295,7 @@ func TestCodexKindCapabilities(t *testing.T) {
 	}
 }
 
-func TestGitHubForgeKind(t *testing.T) {
+func TestGitHubRepoHostKind(t *testing.T) {
 	gh := GitHub{}
 	acc, err := gh.Account(Config{Secrets: map[string]string{"token": "ghp-x"}})
 	if err != nil {
@@ -308,15 +308,15 @@ func TestGitHubForgeKind(t *testing.T) {
 	if d := acc.EgressDomains(); len(d) != 3 || d[0] != "github.com" {
 		t.Errorf("egress = %v", d)
 	}
-	if _, err := gh.Forge(Config{}, ports.RepoRef{Locator: "no-slash"}); err == nil {
+	if _, err := gh.RepoHost(Config{}, ports.RepoRef{Locator: "no-slash"}); err == nil {
 		t.Error("bad github locator accepted")
 	}
-	if _, err := gh.Forge(Config{}, ports.RepoRef{Locator: "lu/greeter"}); err != nil {
+	if _, err := gh.RepoHost(Config{}, ports.RepoRef{Locator: "lu/greeter"}); err != nil {
 		t.Errorf("owner/repo locator refused: %v", err)
 	}
 }
 
-func TestGitLabForgeKind(t *testing.T) {
+func TestGitLabRepoHostKind(t *testing.T) {
 	gl := GitLab{}
 	acc, err := gl.Account(Config{
 		Values:  map[string]any{"base_url": "https://gitlab.example.com"},
@@ -332,10 +332,10 @@ func TestGitLabForgeKind(t *testing.T) {
 	if d := acc.EgressDomains(); len(d) != 1 || d[0] != "gitlab.example.com" {
 		t.Errorf("egress = %v", d)
 	}
-	if _, err := gl.Forge(Config{}, ports.RepoRef{Locator: "not-a-number"}); err == nil {
+	if _, err := gl.RepoHost(Config{}, ports.RepoRef{Locator: "not-a-number"}); err == nil {
 		t.Error("non-numeric gitlab locator accepted")
 	}
-	if _, err := gl.Forge(Config{}, ports.RepoRef{Locator: "42"}); err != nil {
+	if _, err := gl.RepoHost(Config{}, ports.RepoRef{Locator: "42"}); err != nil {
 		t.Errorf("numeric locator refused: %v", err)
 	}
 }

@@ -54,15 +54,15 @@
 	const kindLabel = (k: AutomationKind) =>
 		k === 'cron'
 			? t('workshop.automations.kindCron')
-			: k === 'forge_mr'
+			: k === 'merge_request'
 				? t('workshop.automations.kindMR')
 				: t('workshop.automations.kindTracker');
 	const KINDS = $derived<{ value: AutomationKind; label: string }[]>([
 		{ value: 'tracker_query', label: t('workshop.automations.kindTracker') },
 		{ value: 'cron', label: t('workshop.automations.kindCron') },
-		{ value: 'forge_mr', label: t('workshop.automations.kindMR') }
+		{ value: 'merge_request', label: t('workshop.automations.kindMR') }
 	]);
-	// The repositories a forge_mr automation may watch: the primary, then
+	// The repositories a merge_request automation may watch: the primary, then
 	// the extras by name.
 	const repoNames = $derived(['', ...(project.repos ?? []).map((r) => r.name)]);
 	const repoLabel = (r: string) => (r ? r : t('workshop.automations.repoPrimary'));
@@ -140,7 +140,7 @@
 			d.schedule = undefined;
 			d.ticketId = undefined;
 		}
-		if (d.kind !== 'forge_mr') d.repo = undefined;
+		if (d.kind !== 'merge_request') d.repo = undefined;
 		try {
 			const saved = editing
 				? await api.automations.update(project.id, editing.id, d)
@@ -234,7 +234,7 @@
 					<span class="mono small fires">
 						{#if a.kind === 'cron'}
 							{a.schedule} · {ticketTitle(a.ticketId ?? '')}
-						{:else if a.kind === 'forge_mr'}
+						{:else if a.kind === 'merge_request'}
 							{t('workshop.automations.mrSummary', { repo: repoLabel(a.repo ?? '') })}
 						{:else}
 							{sourceName(a.sourceId ?? '')}{a.query ? ` · ${a.query}` : ''}
@@ -319,7 +319,7 @@
 					<input id="au-query" class="mono" bind:value={draft.query} />
 					<span class="help">{t('workshop.automations.queryHelp')}</span>
 				</div>
-			{:else if draft.kind === 'forge_mr'}
+			{:else if draft.kind === 'merge_request'}
 				<div class="field">
 					<label for="au-repo">{t('workshop.automations.repo')}</label>
 					<select id="au-repo" bind:value={draft.repo}>
@@ -365,7 +365,7 @@
 				{flowName}
 				bind:phase
 				bind:params
-				entries={draft.kind === 'forge_mr' ? 'mr' : 'fresh'}
+				entries={draft.kind === 'merge_request' ? 'mr' : 'fresh'}
 				askMR={false}
 				idPrefix="au"
 			/>

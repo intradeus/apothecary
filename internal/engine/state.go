@@ -59,7 +59,7 @@ type runState struct {
 	edgeCounts map[string]int // "from|kind|depth" -> times that chain link was taken
 	// actionPending marks action stages whose intent was recorded but whose
 	// effect was never confirmed (PLAN5 M20) — the crash window between a
-	// forge call returning and its event being appended.
+	// repository host call returning and its event being appended.
 	actionPending map[string]bool
 	sessions      map[string]ports.SessionID // stage id -> last recorded harness session
 
@@ -506,9 +506,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			}
 		case *event.ActionStarted:
 			// Intent recorded, effect not yet confirmed. Cleared by the
-			// action's completion event below; anything still set after
-			// replay means a crash landed in that window, so the executor
-			// must reconcile with the forge instead of re-running blind.
+			// action's completion event below; anything still set after replay
+			// means a crash landed in that window, so the executor must
+			// reconcile with the repository host instead of re-running blind.
 			rs.actionPending[p.StageID] = true
 		case *event.MRCreated:
 			rs.addMR(p)
@@ -647,7 +647,7 @@ func needsWorkspace(st *flow.Stage) bool {
 }
 
 // mrRecord is one merge request the run opened: which checkout and branch,
-// onto what, and the forge's handle.
+// onto what, and the repository host's handle.
 type mrRecord struct {
 	Repo   string
 	Branch string

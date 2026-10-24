@@ -8,7 +8,7 @@ import (
 	"strconv"
 )
 
-// Account is the account-level GitLab client (DESIGN2 §4 ForgeAccount):
+// Account is the account-level GitLab client (DESIGN2 §4 RepoAccount):
 // token probe and repo browsing for the project wizard. Project-bound
 // operations live on Adapter.
 type Account struct {

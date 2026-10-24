@@ -244,10 +244,10 @@ export default {
 	'form.project.stepsLabel': 'Setup steps',
 	'form.project.repoHead': 'Repository',
 	'form.project.repoSub': 'where the code lives, and the account that reaches it',
-	'form.project.forge': 'Repository account',
+	'form.project.repoAccount': 'Repository account',
 	'form.project.loading': 'Loading…',
 	'form.project.browse': 'Browse repositories',
-	'form.project.noForge':
+	'form.project.noRepoAccount':
 		'No repository integration (GitLab, GitHub) yet — add one under <a class="link" href="{href}">Integrations</a> first.',
 	'form.project.listFail': 'Couldn’t list repositories',
 	'form.project.filterRepos': 'Filter {count} repositories',
@@ -549,7 +549,7 @@ export default {
 		'The gate keeps accepting a manual answer the whole time; whichever lands first wins.',
 	'flow.insp.action': 'Action',
 	'flow.insp.actionHelp': 'A built-in apothecary integration.',
-	'port.forge': 'repository',
+	'port.repository': 'repository',
 	'port.provisioner': 'provisioner',
 	'port.harness': 'harness',
 	'port.ticketsource': 'tracker',

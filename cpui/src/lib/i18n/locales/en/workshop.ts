@@ -226,7 +226,7 @@ export default {
 	'workshop.overview.primary': 'primary',
 	'workshop.overview.locator': 'locator',
 	'workshop.overview.guide': 'guide',
-	'workshop.overview.forge': 'repository account',
+	'workshop.overview.repoAccount': 'repository account',
 	'workshop.overview.readOnly': 'read-only',
 	'workshop.overview.clonedTo':
 		'Cloned to <code>~/repos/&lt;name&gt;</code> beside the primary, one merge request each.',

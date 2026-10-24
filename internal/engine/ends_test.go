@@ -30,8 +30,8 @@ func failSync(ph *phasedHarness) {
 // conflictRound puts the merge request in conflict and confirms the round.
 func conflictRound(t *testing.T, ph *phasedHarness) {
 	t.Helper()
-	ph.forge.SetTargetSHA(1, "t1")
-	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetTargetSHA(1, "t1")
+	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -72,8 +72,8 @@ func TestDoneEndsTheRunWhileReactionsAreArmed(t *testing.T) {
 	if c := lastCompletion(evs, "deliver"); c == nil || c.Reason != "" {
 		t.Errorf("deliver's completion = %+v", c)
 	}
-	if len(ph.forge.MRs) != 1 {
-		t.Errorf("merge requests = %d", len(ph.forge.MRs))
+	if len(ph.repoHost.MRs) != 1 {
+		t.Errorf("merge requests = %d", len(ph.repoHost.MRs))
 	}
 }
 
@@ -97,7 +97,7 @@ func TestADeadEndInAReactionEndsTheRound(t *testing.T) {
 	if infos, err := ph.e.RunPhases(context.Background(), runID); err != nil || infos[0].Live == nil || infos[0].Live.ParkedAt != "merged" {
 		t.Fatalf("deliver after the failed round = %+v, %v; want it still parked on the merge", infos, err)
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	if n := len(ph.execsOf("./after.sh")); n != 1 {
 		t.Errorf("after ran %d times, want once after the merge", n)
@@ -132,6 +132,6 @@ func TestGivingUpAtAReactionsDebugLeafEndsTheRound(t *testing.T) {
 	if _, abandoned := findPayload[*event.RunAbandoned](evs); abandoned {
 		t.Fatal("giving up on a reaction abandoned the run")
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 }

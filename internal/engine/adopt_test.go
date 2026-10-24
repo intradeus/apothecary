@@ -1,9 +1,9 @@
 package engine
 
-// Runs created on a merge request someone opened (an entrypoint on
-// mr_opened): the run works on that merge request's branch, from the head
-// the forge keeps a ref for, acts on it from its first phase, reads the
-// author's later pushes, and ends with it.
+// Runs created on a merge request someone opened (an entrypoint on mr_opened):
+// the run works on that merge request's branch, from the head the repository
+// host keeps a ref for, acts on it from its first phase, reads the author's
+// later pushes, and ends with it.
 
 import (
 	"context"
@@ -81,7 +81,7 @@ func hasScript(scripts []string, substr string) bool {
 
 func TestRunOnSomeonesMergeRequest(t *testing.T) {
 	ph, scripts := newReviewerHarness(t, reviewerFlowDoc)
-	ref := ph.forge.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
+	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
 	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Review caching"}, "rev", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
@@ -107,22 +107,22 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 	if !hasScript(scripts(), "git diff --name-status origin/main...HEAD") {
 		t.Error("$DIFF_TARGET was not measured against the merge request's target")
 	}
-	if rv := ph.forge.SnapshotMRs()[0].Reviews; len(rv) != 1 || rv[0].Summary != "Reads well." {
+	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 1 || rv[0].Summary != "Reads well." {
 		t.Fatalf("reviews = %+v", rv)
 	}
 
 	// The author pushes: the run reads the new head — fast-forwarded to it
 	// first — and reviews again. Its own adoption head was known: one
 	// re-review only.
-	ph.forge.SetHead(ref.IID, "a2")
+	ph.repoHost.SetHead(ref.IID, "a2")
 	ph.waitPhaseRuns(t, runID, "again", 1)
 	if !hasScript(scripts(), "git fetch origin 'refs/merge-requests/1/head' && git merge --ff-only FETCH_HEAD") {
 		t.Error("the re-review did not bring the checkout to the new head")
 	}
-	if rv := ph.forge.SnapshotMRs()[0].Reviews; len(rv) != 2 || rv[0].ID == rv[1].ID {
+	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 2 || rv[0].ID == rv[1].ID {
 		t.Fatalf("reviews after the push = %+v", rv)
 	}
-	ph.forge.SetMRState(ref.IID, ports.MRMerged)
+	ph.repoHost.SetMRState(ref.IID, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 }
 
@@ -131,16 +131,16 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	ctx := context.Background()
 	ph, _ := newReviewerHarness(t, reviewerFlowDoc)
-	ref := ph.forge.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
+	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
 	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{}); err == nil || !strings.Contains(err.Error(), "begins runs on a merge request someone opened: name one") {
 		t.Errorf("no merge request: %v", err)
 	}
-	ph.forge.SetMRState(ref.IID, ports.MRClosed)
+	ph.repoHost.SetMRState(ref.IID, ports.MRClosed)
 	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{MR: &RunMR{IID: ref.IID}}); err == nil || !strings.Contains(err.Error(), "is closed") {
 		t.Errorf("closed merge request: %v", err)
 	}
 	ph2 := newPhasedHarness(t, phasedFlowDoc)
-	other := ph2.forge.AddOpenMR("bob", "Fix", "fix/x", "main", "b1")
+	other := ph2.repoHost.AddOpenMR("bob", "Fix", "fix/x", "main", "b1")
 	if _, err := ph2.e.CreateRunWith(ctx, Ticket{Title: "T"}, "phased", testProject, RunInput{MR: &RunMR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a run on a merge request") {
 		t.Errorf("flow with run_start only: %v", err)
 	}
@@ -149,15 +149,15 @@ func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	}
 }
 
-// A fork's merge request is read through the forge's ref on a local branch
-// of its own; there is nothing here to push it to. A rerun stays on it.
+// A fork's merge request is read through the repository host's ref on a local
+// branch of its own; there is nothing here to push it to. A rerun stays on it.
 func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	doc := strings.Replace(reviewerFlowDoc,
 		"      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n",
 		"      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n      - { id: push, type: action, action: push_branch }\n", 1)
 	ph, _ := newReviewerHarness(t, doc)
-	ref := ph.forge.AddOpenMR("eve", "From my fork", "main", "main", "f1")
-	ph.forge.MRs[0].Fork = true
+	ref := ph.repoHost.AddOpenMR("eve", "From my fork", "main", "main", "f1")
+	ph.repoHost.MRs[0].Fork = true
 	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Fork"}, "rev", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestBuiltinReviewerTemplateRuns(t *testing.T) {
 	}
 	src = strings.NewReplacer("harness: opencode", "harness: fake", "model: opencode-go/glm-5.2", "model: anthropic/claude-sonnet-4-6").Replace(src)
 	ph, _ := newReviewerHarness(t, src)
-	ref := ph.forge.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
+	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
 	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching (!1 by alice)"}, "reviewer", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
@@ -208,9 +208,9 @@ func TestBuiltinReviewerTemplateRuns(t *testing.T) {
 	if got := strings.Join(stages, " "); got != "review.read review.gate review.post" {
 		t.Errorf("stages completed: %s", got)
 	}
-	if rv := ph.forge.SnapshotMRs()[0].Reviews; len(rv) != 1 {
+	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 1 {
 		t.Fatalf("reviews = %+v", rv)
 	}
-	ph.forge.SetMRState(ref.IID, ports.MRClosed)
+	ph.repoHost.SetMRState(ref.IID, ports.MRClosed)
 	ph.waitState(t, runID, run.Completed)
 }

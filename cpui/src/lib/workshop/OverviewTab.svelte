@@ -111,8 +111,8 @@
 					<dd class="mono">{project.repo.locator || '—'}</dd>
 					<dt>{t('workshop.overview.guide')}</dt>
 					<dd class="mono">{project.repo.agentsMdPath || '—'}</dd>
-					<dt>{t('workshop.overview.forge')}</dt>
-					<dd>{intName(project.forgeId)}</dd>
+					<dt>{t('workshop.overview.repoAccount')}</dt>
+					<dd>{intName(project.repoAccountId)}</dd>
 				</dl>
 				{#each project.repos ?? [] as r (r.name)}
 					<div class="repo">

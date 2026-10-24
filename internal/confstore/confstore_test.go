@@ -43,11 +43,11 @@ func seedProject(t *testing.T, svc *Service) Project {
 		}
 		return in
 	}
-	forge := mk(PortForge, "gitlab", "gl", map[string]string{"token": "glpat-supersecret99"})
+	repoHost := mk(PortRepository, "gitlab", "gl", map[string]string{"token": "glpat-supersecret99"})
 	prov := mk(PortProvisioner, "devcontainer", "dc", map[string]string{"token": "coder-tok"})
 	harness := mk(PortHarness, "opencode", "oc", map[string]string{"auth_json": `{"openrouter":{"type":"api","key":"sk-or-abc"}}`})
 	p, err := svc.CreateProject(ctx, Project{
-		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
+		Name: "p1", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:      RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
 		Workspace: WorkspaceConfig{},
 		// A project starts on the built-in template: its own flows cannot
@@ -97,7 +97,7 @@ func TestUpdateIntegrationSecretMerge(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
 	in, err := svc.CreateIntegration(ctx, Integration{
-		Port: PortForge, Kind: "gitlab", Name: "gl",
+		Port: PortRepository, Kind: "gitlab", Name: "gl",
 		Secrets: map[string]string{"token": "old-token", "extra": "keep-me"},
 	})
 	if err != nil {
@@ -125,12 +125,12 @@ func TestUpdateIntegrationSecretMerge(t *testing.T) {
 func TestProjectValidation(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
+	repoHost, _ := svc.CreateIntegration(ctx, Integration{Port: PortRepository, Kind: "gitlab", Name: "gl"})
 	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "devcontainer", Name: "c"})
 	harness, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
 
 	base := Project{
-		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
+		Name: "p", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{},
 		DefaultFlow: builtin.DefaultFlowName,
@@ -149,7 +149,7 @@ func TestProjectValidation(t *testing.T) {
 
 	// Wrong-port reference is refused naming the field.
 	bad := base
-	bad.HarnessIDs = []string{forge.ID}
+	bad.HarnessIDs = []string{repoHost.ID}
 	if _, err := svc.CreateProject(ctx, bad); err == nil || !strings.Contains(err.Error(), "harness_id") {
 		t.Errorf("wrong-port ref err = %v", err)
 	}
@@ -171,14 +171,14 @@ func TestProjectValidation(t *testing.T) {
 func TestProjectHarnessSet(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	forge, _ := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "gl"})
+	repoHost, _ := svc.CreateIntegration(ctx, Integration{Port: PortRepository, Kind: "gitlab", Name: "gl"})
 	prov, _ := svc.CreateIntegration(ctx, Integration{Port: PortProvisioner, Kind: "devcontainer", Name: "c"})
 	oc, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc"})
 	cx, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "codex", Name: "cx"})
 	oc2, _ := svc.CreateIntegration(ctx, Integration{Port: PortHarness, Kind: "opencode", Name: "oc2"})
 
 	base := Project{
-		Name: "p", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{oc.ID},
+		Name: "p", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{oc.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{},
 		DefaultFlow: builtin.DefaultFlowName,
@@ -225,7 +225,7 @@ func TestProjectHarnessSet(t *testing.T) {
 	// A non-harness integration in the set is refused, naming the field.
 	wrong := base
 	wrong.Name = "wrong"
-	wrong.HarnessIDs = []string{oc.ID, forge.ID}
+	wrong.HarnessIDs = []string{oc.ID, repoHost.ID}
 	if _, err := svc.CreateProject(ctx, wrong); err == nil || !strings.Contains(err.Error(), "harness_ids") {
 		t.Errorf("wrong-port set err = %v", err)
 	}
@@ -237,7 +237,7 @@ func TestDeleteRules(t *testing.T) {
 	p := seedProject(t, svc)
 
 	// Integration referenced by the project: 409-shaped error naming it.
-	if err := svc.DeleteIntegration(ctx, p.ForgeID); !errors.Is(err, ErrReferenced) || !strings.Contains(err.Error(), "p1") {
+	if err := svc.DeleteIntegration(ctx, p.RepoAccountID); !errors.Is(err, ErrReferenced) || !strings.Contains(err.Error(), "p1") {
 		t.Errorf("delete referenced integration = %v", err)
 	}
 
@@ -270,7 +270,7 @@ func TestDeleteRules(t *testing.T) {
 	if _, err := svc.FlowVersion(ctx, p.ID, row.Hash); err != nil {
 		t.Errorf("flow versions must be immutable forever: %v", err)
 	}
-	if err := svc.DeleteIntegration(ctx, p.ForgeID); err != nil {
+	if err := svc.DeleteIntegration(ctx, p.RepoAccountID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -320,15 +320,15 @@ func TestSettingsDefaultsAndValidation(t *testing.T) {
 
 func TestKindValidation(t *testing.T) {
 	svc, _ := newSvc(t)
-	svc.KindValid = func(port, kind string) bool { return kind == "gitlab" && port == PortForge }
+	svc.KindValid = func(port, kind string) bool { return kind == "gitlab" && port == PortRepository }
 	ctx := context.Background()
-	if _, err := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitea", Name: "x"}); err == nil {
+	if _, err := svc.CreateIntegration(ctx, Integration{Port: PortRepository, Kind: "gitea", Name: "x"}); err == nil {
 		t.Error("unknown kind accepted")
 	}
 	if _, err := svc.CreateIntegration(ctx, Integration{Port: "sideways", Kind: "gitlab", Name: "x"}); err == nil {
 		t.Error("unknown port accepted")
 	}
-	if _, err := svc.CreateIntegration(ctx, Integration{Port: PortForge, Kind: "gitlab", Name: "ok"}); err != nil {
+	if _, err := svc.CreateIntegration(ctx, Integration{Port: PortRepository, Kind: "gitlab", Name: "ok"}); err != nil {
 		t.Errorf("valid kind refused: %v", err)
 	}
 }

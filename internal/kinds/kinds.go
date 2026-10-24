@@ -94,31 +94,31 @@ type BranchInfo struct {
 	Default bool   `json:"default"`
 }
 
-// ForgeAccount is the account-level forge client: token probe, repo
+// RepoAccount is the account-level repository host client: token probe, repo
 // browsing, git credentials and egress contribution.
-type ForgeAccount interface {
+type RepoAccount interface {
 	Test(ctx context.Context) error
 	ListRepos(ctx context.Context) ([]RepoInfo, error)
 	// ListBranches returns the branches of the repo named by locator (the
-	// forge-kind identifier from RepoInfo.Locator), for the source-branch
-	// picker. Newest-activity first where the forge supports it.
+	// host-specific identifier from RepoInfo.Locator), for the source-branch
+	// picker. Newest-activity first where the repository host supports it.
 	ListBranches(ctx context.Context, locator string) ([]BranchInfo, error)
 	// GitCredential is the (user, password) pair for the §11 step 3
 	// credential-store entry; empty user+pass = public repos only.
 	GitCredential() (user, pass string)
-	// GitIdentity is the author name+email stamped on the agent's commits
-	// (§11 step 3 `git config user.*`). Configured per forge integration so
-	// commits carry the human operator's identity, not a generic bot. Either
-	// empty ⇒ bootstrap keeps its built-in default for that field.
+	// GitIdentity is the author name+email stamped on the agent's commits (§11
+	// step 3 `git config user.*`). Configured per repository host integration
+	// so commits carry the human operator's identity, not a generic bot.
+	// Either empty ⇒ bootstrap keeps its built-in default for that field.
 	GitIdentity() (name, email string)
 	EgressDomains() []string
 }
 
-// ForgeKind constructs the account client and project-bound Forge port.
-type ForgeKind interface {
+// RepoHostKind constructs the account client and project-bound RepoHost port.
+type RepoHostKind interface {
 	Descriptor() Descriptor
-	Account(cfg Config) (ForgeAccount, error)
-	Forge(cfg Config, repo ports.RepoRef) (ports.Forge, error)
+	Account(cfg Config) (RepoAccount, error)
+	RepoHost(cfg Config, repo ports.RepoRef) (ports.RepoHost, error)
 }
 
 // Provisioner is the EnvProvisioner port plus lifecycle/probe surface.
@@ -228,7 +228,7 @@ type TicketSourceKind interface {
 // --- registry ---------------------------------------------------------------
 
 type Registry struct {
-	forges        map[string]ForgeKind
+	repoHosts     map[string]RepoHostKind
 	provisioners  map[string]ProvisionerKind
 	harnesses     map[string]HarnessKind
 	ticketSources map[string]TicketSourceKind
@@ -236,22 +236,22 @@ type Registry struct {
 
 func NewRegistry() *Registry {
 	return &Registry{
-		forges:        map[string]ForgeKind{},
+		repoHosts:     map[string]RepoHostKind{},
 		provisioners:  map[string]ProvisionerKind{},
 		harnesses:     map[string]HarnessKind{},
 		ticketSources: map[string]TicketSourceKind{},
 	}
 }
 
-func (r *Registry) RegisterForge(k ForgeKind)             { r.forges[k.Descriptor().Kind] = k }
+func (r *Registry) RegisterRepoHost(k RepoHostKind)       { r.repoHosts[k.Descriptor().Kind] = k }
 func (r *Registry) RegisterProvisioner(k ProvisionerKind) { r.provisioners[k.Descriptor().Kind] = k }
 func (r *Registry) RegisterHarness(k HarnessKind)         { r.harnesses[k.Descriptor().Kind] = k }
 func (r *Registry) RegisterTicketSource(k TicketSourceKind) {
 	r.ticketSources[k.Descriptor().Kind] = k
 }
 
-func (r *Registry) Forge(kind string) (ForgeKind, error) {
-	k, ok := r.forges[kind]
+func (r *Registry) RepoHost(kind string) (RepoHostKind, error) {
+	k, ok := r.repoHosts[kind]
 	if !ok {
 		return nil, fmt.Errorf("unknown repository kind %q", kind)
 	}
@@ -286,8 +286,8 @@ func (r *Registry) TicketSource(kind string) (TicketSourceKind, error) {
 // confstore.Service.KindValid.
 func (r *Registry) Valid(port, kind string) bool {
 	switch port {
-	case "forge":
-		_, ok := r.forges[kind]
+	case "repository":
+		_, ok := r.repoHosts[kind]
 		return ok
 	case "provisioner":
 		_, ok := r.provisioners[kind]
@@ -305,7 +305,7 @@ func (r *Registry) Valid(port, kind string) bool {
 // Descriptors lists every registered kind, stably ordered (GET /api/kinds).
 func (r *Registry) Descriptors() []Descriptor {
 	var out []Descriptor
-	for _, k := range r.forges {
+	for _, k := range r.repoHosts {
 		out = append(out, k.Descriptor())
 	}
 	for _, k := range r.provisioners {

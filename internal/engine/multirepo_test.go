@@ -142,17 +142,18 @@ stages:
 `
 
 // A project with extra repositories: every checkout is cloned and branched,
-// each_repo commands run in each, and a merge request opens for each repo
-// the run changed — on that repo's forge, onto that repo's default branch.
+// each_repo commands run in each, and a merge request opens for each repo the
+// run changed — on that repo's repository host, onto that repo's default
+// branch.
 func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 	h := newHarness(t, mustFlow(t, multiRepoFlowDoc))
-	apiForge := &fake.Forge{}
+	apiRepoHost := &fake.RepoHost{}
 	h.res.ExtraRepos = []ExtraRepo{
 		{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"},
 		{Name: "docs", URL: "https://gitlab.local/g/docs.git", Locator: "3", DefaultBranch: "main"},
 		{Name: "vendor", URL: "https://gitlab.local/g/vendor.git", DefaultBranch: "main"}, // context only
 	}
-	h.res.Forges = map[string]ports.Forge{"api": apiForge, "docs": &fake.Forge{}}
+	h.res.RepoHosts = map[string]ports.RepoHost{"api": apiRepoHost, "docs": &fake.RepoHost{}}
 	gits := map[string]*fakeGit{"repo": newFakeGit("main"), "repos/api": newFakeGit("develop"),
 		"repos/docs": newFakeGit("main"), "repos/vendor": newFakeGit("main")}
 	gits["repos/docs"].noChanges = true // the run touched nothing there
@@ -192,9 +193,9 @@ func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 	if len(v.Checkouts) != 4 || v.Checkouts[1].Dir != "repos/api" || v.Checkouts[1].Source != "develop" {
 		t.Errorf("checkouts = %+v", v.Checkouts)
 	}
-	// One MR for the primary (onto main), one for api (onto develop, on
-	// api's own forge); none for docs (unchanged) or vendor (no locator).
-	primary, api := h.forge.SnapshotMRs(), apiForge.SnapshotMRs()
+	// One MR for the primary (onto main), one for api (onto develop, on api's
+	// own repository host); none for docs (unchanged) or vendor (no locator).
+	primary, api := h.repoHost.SnapshotMRs(), apiRepoHost.SnapshotMRs()
 	if len(primary) != 1 || primary[0].Target != "main" || len(api) != 1 || api[0].Target != "develop" {
 		t.Fatalf("MRs: primary %+v api %+v; failures: %s", primary, api, failures(h.events(t, runID)))
 	}
@@ -205,12 +206,12 @@ func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 		t.Errorf("gate context = %q", gate.Context)
 	}
 	// Done only when BOTH merged.
-	h.forge.SetMRState(primary[0].Ref.IID, ports.MRMerged)
+	h.repoHost.SetMRState(primary[0].Ref.IID, ports.MRMerged)
 	time.Sleep(30 * time.Millisecond)
 	if st := h.view(t, runID).State; st != run.WaitingOnHuman {
 		t.Fatalf("state after one merge = %s", st)
 	}
-	apiForge.SetMRState(api[0].Ref.IID, ports.MRMerged)
+	apiRepoHost.SetMRState(api[0].Ref.IID, ports.MRMerged)
 	h.e.Wait(runID)
 	if st := h.view(t, runID).State; st != run.Completed {
 		t.Errorf("final state = %s", st)
@@ -231,8 +232,8 @@ func failures(evs []event.Event) string {
 	return strings.Join(out, " | ")
 }
 
-// The run page's live view: the forge's mergeability and pending review
-// threads per merge request, nothing recorded.
+// The run page's live view: the repository host's mergeability and pending
+// review threads per merge request, nothing recorded.
 func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 	h := newHarness(t, mustFlow(t, multiRepoFlowDoc))
 	h.envp.ExecFunc = gitPerDir(map[string]*fakeGit{"repo": newFakeGit("main")})
@@ -249,12 +250,12 @@ func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 	h.waitPing(t, PingGate)
 	before := len(h.events(t, runID))
 	t0 := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
-	h.forge.SetMergeable(1, ports.MergeConflicts, "abc")
-	h.forge.AddComment(1, "d1", "a.go", "rev", "rename", t0)
-	h.forge.AddComment(1, "d2", "b.go", "rev", "add a test", t0.Add(time.Minute))
+	h.repoHost.SetMergeable(1, ports.MergeConflicts, "abc")
+	h.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", t0)
+	h.repoHost.AddComment(1, "d2", "b.go", "rev", "add a test", t0.Add(time.Minute))
 	// d3 was answered by the factory: not pending.
-	h.forge.AddComment(1, "d3", "c.go", "rev", "typo", t0)
-	h.forge.AddComment(1, "d3", "c.go", "factory", "fixed "+ports.ReplyMarker(runID, "d3"), t0.Add(2*time.Minute))
+	h.repoHost.AddComment(1, "d3", "c.go", "rev", "typo", t0)
+	h.repoHost.AddComment(1, "d3", "c.go", "factory", "fixed "+ports.ReplyMarker(runID, "d3"), t0.Add(2*time.Minute))
 	got, err := h.e.MRStatuses(context.Background(), runID)
 	if err != nil {
 		t.Fatal(err)

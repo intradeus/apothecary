@@ -89,9 +89,9 @@ type EnvSpec struct {
 	// would otherwise drop (e.g. an external managed database).
 	EgressAllowedCIDRs []string
 	EgressAllowedPorts []int
-	// GitUser/GitPass are the forge git credential (see type comment).
-	// Empty for public repos; adapters without an engine-side source step
-	// (coder) ignore them.
+	// GitUser/GitPass are the repository host git credential (see type
+	// comment). Empty for public repos; adapters without an engine-side source
+	// step (coder) ignore them.
 	GitUser string
 	GitPass string
 }
@@ -310,11 +310,11 @@ type AgentStopper interface {
 	StopAgent(ctx context.Context, env EnvID) error
 }
 
-// RepoRef identifies a project repo at its forge.
+// RepoRef identifies a project repo at its repository host.
 type RepoRef struct {
 	URL           string
 	DefaultBranch string
-	// Locator is the forge-kind-specific repo identifier (DESIGN2 §5):
+	// Locator is the host-specific repo identifier (GitLab, GitHub) (DESIGN2 §5):
 	// GitLab's numeric project id as a string, GitHub's "owner/repo".
 	// Filled by the repo picker; adapters parse their own locator.
 	Locator string
@@ -333,9 +333,9 @@ const (
 	MRClosed MRState = "closed"
 )
 
-// Mergeable is what the forge says about merging a merge request into its
-// target. Unknown is "still computing" (GitHub's mergeable:null, GitLab's
-// checking/unchecked) and must never be read as a conflict.
+// Mergeable is what the repository host says about merging a merge request
+// into its target. Unknown is "still computing" (GitHub's mergeable:null,
+// GitLab's checking/unchecked) and must never be read as a conflict.
 type Mergeable string
 
 const (
@@ -354,10 +354,11 @@ type MRStatus struct {
 	// MergeConflicts: a conflict is one (target tip, head) pair, so a fix a
 	// human declined is offered again only once either side moves.
 	TargetSHA string
-	// MergeableNow is the forge's own verdict that it would merge the merge
-	// request right now: no conflict, its required approvals and checks in,
-	// not a draft (GitHub's mergeable_state clean, GitLab's detailed merge
-	// status mergeable). Draft is whether it is still marked a draft.
+	// MergeableNow is the repository host's own verdict that it would merge
+	// the merge request right now: no conflict, its required approvals and
+	// checks in, not a draft (GitHub's mergeable_state clean, GitLab's
+	// detailed merge status mergeable). Draft is whether it is still marked a
+	// draft.
 	MergeableNow bool
 	Draft        bool
 }
@@ -434,8 +435,8 @@ type Approval struct {
 	By       []string `json:"by,omitempty"`
 }
 
-// MRInfo is a merge request as the forge lists it: what a run created on
-// it needs to check it out and say whose it is.
+// MRInfo is a merge request as the repository host lists it: what a run
+// created on it needs to check it out and say whose it is.
 type MRInfo struct {
 	Ref    MRRef   `json:"ref"`
 	Title  string  `json:"title"`
@@ -466,17 +467,17 @@ const (
 // MergeOptions is how MergeMR merges.
 type MergeOptions struct {
 	Method string
-	// Head pins the merge: the forge merges only while the head is still
-	// this commit ("" = whatever it is), so nothing pushed after the
+	// Head pins the merge: the repository host merges only while the head is
+	// still this commit ("" = whatever it is), so nothing pushed after the
 	// decision is merged unseen.
 	Head string
 	// DeleteBranch removes the merge request's branch once merged.
 	DeleteBranch bool
 }
 
-// ErrMergeRefused is a merge the forge declined — not mergeable now, still a
-// draft, the head moved, a method it does not offer. An outcome a flow
-// routes (on_fail), unlike a forge it cannot reach.
+// ErrMergeRefused is a merge the repository host declined — not mergeable now,
+// still a draft, the head moved, a method it does not offer. An outcome a flow
+// routes (on_fail), unlike a repository host it cannot reach.
 type ErrMergeRefused struct{ Reason string }
 
 func (e *ErrMergeRefused) Error() string { return "the repository refused the merge: " + e.Reason }
@@ -893,7 +894,7 @@ type Sidecar interface {
 	Sidecar(ctx context.Context, env EnvID) (PortConn, error)
 }
 
-type Forge interface {
+type RepoHost interface {
 	// CheckAccess verifies token validity, project reachability and scopes (§1 preflight).
 	CheckAccess(ctx context.Context, repo RepoRef) error
 	FileExists(ctx context.Context, repo RepoRef, path string) (bool, error)
@@ -903,13 +904,13 @@ type Forge interface {
 	CreateDraftMR(ctx context.Context, repo RepoRef, branch, target, title, body string) (MRRef, error)
 	// FindMR locates an already-open merge request from branch onto target.
 	// The engine reconciles with it after a crash between creating an MR on
-	// the forge and recording it (PLAN5 M20): the branch is unique per run,
-	// so it is a natural idempotency key and needs no stored token. ok=false
-	// means "no such MR", which is distinct from an error.
+	// the repository host and recording it (PLAN5 M20): the branch is unique
+	// per run, so it is a natural idempotency key and needs no stored token.
+	// ok=false means "no such MR", which is distinct from an error.
 	FindMR(ctx context.Context, repo RepoRef, branch, target string) (ref MRRef, ok bool, err error)
-	// MRStatus is the merge request's state plus what the forge knows about
-	// merging it: whether it conflicts with its target, its head commit and
-	// its target branch. One call on every forge.
+	// MRStatus is the merge request's state plus what the repository host
+	// knows about merging it: whether it conflicts with its target, its head
+	// commit and its target branch. One call on every repository host.
 	MRStatus(ctx context.Context, mr MRRef) (MRStatus, error)
 	// MRChecks lists the CI checks reported on head (the merge request's
 	// head commit, as MRStatus returned it) with their aggregate state.
@@ -934,8 +935,9 @@ type Forge interface {
 	// Whoami is the account the integration acts as: its username, so the
 	// factory can tell its own merge requests from others'.
 	Whoami(ctx context.Context) (string, error)
-	// MergeMR merges the merge request. A merge the forge declines is an
-	// *ErrMergeRefused; any other error is the forge not answering.
+	// MergeMR merges the merge request. A merge the repository host declines
+	// is an
+	// *ErrMergeRefused; any other error is the repository host not answering.
 	MergeMR(ctx context.Context, mr MRRef, opts MergeOptions) error
 	// PostReview posts a review: its notes on their lines of the diff — one
 	// whose line is not in the diff joins the summary (FoldedNotes) — and the

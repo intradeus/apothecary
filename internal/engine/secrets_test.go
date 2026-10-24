@@ -16,8 +16,9 @@ import (
 const fakeAuthPath = "/home/vscode/.local/share/opencode/auth.json"
 
 func withHarnessAuth(h *harness) {
-	// A forge credential, so the git-credentials assertions are about a file
-	// bootstrap actually writes (the base harness configures no git auth).
+	// A repository host credential, so the git-credentials assertions are
+	// about a file bootstrap actually writes (the base harness configures no
+	// git auth).
 	h.res.GitUser, h.res.GitPass = "oauth2", "glpat-SECRETVALUE"
 	h.res.SeedAuth = func(ctx context.Context, env ports.EnvID) error {
 		return h.envp.WriteFile(ctx, env, fakeAuthPath, []byte(`{"k":"sk-secret"}`), 0o600)

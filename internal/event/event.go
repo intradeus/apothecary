@@ -36,9 +36,9 @@ const (
 	TypeVerdictReceived Type = "verdict_received"
 	// TypeActionStarted records the INTENT to perform an action's external
 	// side effect, appended before the call (PLAN5 M20). A crash between the
-	// effect landing on the forge and its completion event leaves this on its
-	// own — which is exactly the signal recovery needs to reconcile rather
-	// than blindly re-run and duplicate.
+	// effect landing on the repository host and its completion event leaves
+	// this on its own — which is exactly the signal recovery needs to
+	// reconcile rather than blindly re-run and duplicate.
 	TypeActionStarted Type = "action_started"
 	// TypeSnapshotCaptured links one engine-captured snapshot — a stage
 	// attempt's declared output, its log, or a ping file (what the agent
@@ -221,7 +221,7 @@ type RunCreated struct {
 
 // AdoptedMR is a merge request a run was created on: which checkout it is
 // in (its Checkout says the branch and the ref its head is fetched from),
-// and what the forge said of it then.
+// and what the repository host said of it then.
 type AdoptedMR struct {
 	Repo   string `json:"repo"`
 	IID    int    `json:"iid"`
@@ -246,10 +246,10 @@ type Checkout struct {
 	Branch  string `json:"branch"`
 	Source  string `json:"source"`
 	Primary bool   `json:"primary,omitempty"`
-	// Fetch is the ref the branch starts from instead of forking Source:
-	// the head of a merge request the run was created on, from the ref its
-	// forge keeps for it (a fork's included). Fork marks one from another
-	// repository: readable, with no branch here to push to.
+	// Fetch is the ref the branch starts from instead of forking Source: the
+	// head of a merge request the run was created on, from the ref its
+	// repository host keeps for it (a fork's included). Fork marks one from
+	// another repository: readable, with no branch here to push to.
 	Fetch string `json:"fetch,omitempty"`
 	Fork  bool   `json:"fork,omitempty"`
 }
@@ -515,8 +515,8 @@ type ReviewPosted struct {
 	Already bool   `json:"already,omitempty"`
 }
 
-// MRMerged: mr_merge merged the subject merge request at Head with Method.
-// A merge by a person is not an event — the forge observation sees it.
+// MRMerged: mr_merge merged the subject merge request at Head with Method. A
+// merge by a person is not an event — the repository host observation sees it.
 type MRMerged struct {
 	StageID       string `json:"stage_id,omitempty"`
 	Repo          string `json:"repo"`
@@ -525,7 +525,7 @@ type MRMerged struct {
 	BranchDeleted bool   `json:"branch_deleted,omitempty"`
 }
 
-// ReviewRepliesPosted: the round's replies are on the forge.
+// ReviewRepliesPosted: the round's replies are on the repository host.
 type ReviewRepliesPosted struct {
 	StageID   string   `json:"stage_id,omitempty"`
 	Subject   string   `json:"subject,omitempty"`
@@ -661,7 +661,7 @@ type MRCreated struct {
 	Target string `json:"target,omitempty"`
 	// Head is the merge request's head commit when the run opened (or
 	// adopted) it: a commit the run knows, so finding it there later is not
-	// someone else's push ("" when the forge could not be asked).
+	// someone else's push ("" when the repository host could not be asked).
 	Head string `json:"head,omitempty"`
 }
 

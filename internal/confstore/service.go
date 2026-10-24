@@ -306,7 +306,7 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	// commands.setup is OPTIONAL in v2 (DESIGN2 §8 decision): absent means
 	// bootstrap step 6 is skipped.
 	refs := []struct{ id, port, field string }{
-		{p.ForgeID, PortForge, "forge_id"},
+		{p.RepoAccountID, PortRepository, "repo_account_id"},
 		{p.ProvisionerID, PortProvisioner, "provisioner_id"},
 	}
 	for _, r := range refs {

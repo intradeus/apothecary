@@ -1,9 +1,10 @@
 package engine
 
-// The merge request's two forge-side acts beyond opening it: mr_merge
-// merges it, at the head the phase began on; post_review puts a review on
-// it from an agent's review_threads output. Both act on the phase's subject
-// and record their intent first, so a crash is reconciled from the forge.
+// The merge request's two acts on the repository host beyond opening it:
+// mr_merge merges it, at the head the phase began on; post_review puts a
+// review on it from an agent's review_threads output. Both act on the phase's
+// subject and record their intent first, so a crash is reconciled from the
+// repository host.
 
 import (
 	"errors"
@@ -85,7 +86,7 @@ func (x *exec) checkReviewThreads(st *flow.Stage) string {
 // stage, so a retry after a crash posts only what is missing.
 func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 	rs := x.rs
-	forge, mr, err := x.subjectForge(st)
+	repoHost, mr, err := x.subjectRepoHost(st)
 	if errors.Is(err, errNoSubject) {
 		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
@@ -114,7 +115,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		}
 		rs.actionPending[st.ID] = true
 	}
-	res, err := forge.PostReview(x.ctx, mr.Ref, ports.Review{Head: rs.phaseTip, Summary: summary, Notes: notes, ID: x.roundID() + "/" + st.ID})
+	res, err := repoHost.PostReview(x.ctx, mr.Ref, ports.Review{Head: rs.phaseTip, Summary: summary, Notes: notes, ID: x.roundID() + "/" + st.ID})
 	if err != nil {
 		return x.infraFail(st, "posting the review: "+err.Error())
 	}
@@ -125,12 +126,12 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 	return false, nil
 }
 
-// actionMRMerge merges the subject merge request, pinned to the head the
-// phase began on. A merge the forge declines is the stage's failure, for
+// actionMRMerge merges the subject merge request, pinned to the head the phase
+// began on. A merge the repository host declines is the stage's failure, for
 // on_fail; after a crash, a merge request already merged is this merge.
 func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 	rs := x.rs
-	forge, mr, err := x.subjectForge(st)
+	repoHost, mr, err := x.subjectRepoHost(st)
 	if errors.Is(err, errNoSubject) {
 		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
@@ -147,7 +148,7 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 	}
 	merged := &event.MRMerged{StageID: st.ID, Repo: mr.Repo, Method: method, Head: rs.phaseTip, BranchDeleted: deleteBranch}
 	if rs.actionPending[st.ID] {
-		status, err := forge.MRStatus(x.ctx, mr.Ref)
+		status, err := repoHost.MRStatus(x.ctx, mr.Ref)
 		if err != nil {
 			return x.infraFail(st, "cannot tell whether the merge already happened: "+err.Error())
 		}
@@ -164,7 +165,7 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 		}
 		rs.actionPending[st.ID] = true
 	}
-	err = forge.MergeMR(x.ctx, mr.Ref, ports.MergeOptions{Method: method, Head: rs.phaseTip, DeleteBranch: deleteBranch})
+	err = repoHost.MergeMR(x.ctx, mr.Ref, ports.MergeOptions{Method: method, Head: rs.phaseTip, DeleteBranch: deleteBranch})
 	var refused *ports.ErrMergeRefused
 	if errors.As(err, &refused) {
 		delete(rs.actionPending, st.ID)

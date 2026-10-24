@@ -50,7 +50,7 @@ func attachmentPaths(atts []filestore.Attachment) []string {
 // workspace exists (envID == ""): ensureEnv re-delivers on the
 // ready/recovery path.
 //
-// Files land 0444 read-only: the human's words must not be forgeable in
+// Files land 0444 read-only: the human's words must not be rewritten in
 // place by a prompt-injected agent that then "quotes" them. Re-delivery
 // removes the old copy first, since the workspace user cannot overwrite a
 // read-only file.

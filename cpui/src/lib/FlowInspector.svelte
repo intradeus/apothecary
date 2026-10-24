@@ -103,7 +103,7 @@
 	// A trigger starts a phase; it can neither end a wait nor answer a gate
 	// (the parser refuses it there), so the two pickers never offer the other's.
 	const waitable = $derived(signals.filter((g) => !g.trigger && !g.entry));
-	// What opens a phase on its own: a forge trigger (manual is a person's
+	// What opens a phase on its own: a repository trigger (manual is a person's
 	// act, offered apart) — or an outcome, which opens once and ends the run.
 	const triggers = $derived(signals.filter((g) => g.trigger && g.slug !== MANUAL));
 	const outcomes = $derived(signals.filter((g) => g.outcome));

@@ -200,7 +200,7 @@ func TestPhasedRunWaitsInReviewAndCompletesOnMerge(t *testing.T) {
 	if len(starts) != 1 || starts[0].Phase != "deliver" || starts[0].By != "human" {
 		t.Errorf("phase_started = %+v", starts)
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 }
 
@@ -209,7 +209,7 @@ func TestPhasedRunWaitsInReviewAndCompletesOnMerge(t *testing.T) {
 func TestParkedWaitFailsWhenTheMRIsClosed(t *testing.T) {
 	ph := newPhasedHarness(t, waitFlowDoc)
 	runID := ph.start(t)
-	ph.forge.SetMRState(1, ports.MRClosed)
+	ph.repoHost.SetMRState(1, ports.MRClosed)
 	v := ph.waitState(t, runID, run.Abandoned)
 	ab, _ := findPayload[*event.RunAbandoned](ph.events(t, runID))
 	if ab == nil || !strings.Contains(ab.Reason, "closed unmerged") || !strings.Contains(ab.Reason, "aborted by flow") {
@@ -273,8 +273,8 @@ func TestWaitParksAndReactionsRunMeanwhile(t *testing.T) {
 	if d := infos[0]; d.ID != "deliver" || d.Live == nil || d.Live.ParkedAt != "merged" {
 		t.Fatalf("deliver = %+v", d)
 	}
-	ph.forge.SetTargetSHA(1, "t1")
-	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetTargetSHA(1, "t1")
+	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestWaitParksAndReactionsRunMeanwhile(t *testing.T) {
 	if n := len(ph.execsOf("./after.sh")); n != 0 {
 		t.Fatalf("the parked phase went on before the merge (%d runs of after)", n)
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	if n := len(ph.execsOf("./after.sh")); n != 1 {
 		t.Errorf("after ran %d times, want once after the merge", n)
@@ -344,8 +344,8 @@ func TestGateParksAndAReactionRunsMeanwhile(t *testing.T) {
 	if !v.Idle {
 		t.Errorf("a parked gate leaves the run idle: %+v", v.State)
 	}
-	ph.forge.SetTargetSHA(1, "t1")
-	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetTargetSHA(1, "t1")
+	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm, gate.ID)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -357,7 +357,7 @@ func TestGateParksAndAReactionRunsMeanwhile(t *testing.T) {
 	if v := ph.view(t, runID); v.State != run.WaitingOnHuman || !v.Idle {
 		t.Errorf("after the reaction, the open gate keeps the run waiting: %s idle %v", v.State, v.Idle)
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	answered := false
 	for _, e := range ph.events(t, runID) {
@@ -376,8 +376,8 @@ func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "on: { signal: mr_conflicts, start: confirm }", "on: { signal: mr_conflicts, start: manual }", 1)
 	ph := newPhasedHarness(t, doc)
 	runID := ph.start(t)
-	ph.forge.SetTargetSHA(1, "t1")
-	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetTargetSHA(1, "t1")
+	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
 	deadline := time.Now().Add(2 * time.Second)
 	var holds []TriggerHold
 	for time.Now().Before(deadline) && len(holds) == 0 {
@@ -417,8 +417,8 @@ func TestStartPolicyFromAParam(t *testing.T) {
 	ph := newPhasedHarness(t, doc)
 	ph.e.SetFlowBindings(staticBindings{"rebase": "auto"})
 	runID := ph.start(t)
-	ph.forge.SetTargetSHA(1, "t1")
-	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetTargetSHA(1, "t1")
+	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
 	ph.waitPhaseRuns(t, runID, "conflicts", 1)
 	for _, p := range ph.e.PendingPings() {
 		if p.Type == event.PingPhaseConfirm {
@@ -442,8 +442,8 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 	ph.e.Shutdown()
 
 	h2 := newHarnessSource(t, ph.flows, ph.flowOf(t, "phased"))
-	h2.store, h2.envp, h2.forge = ph.store, ph.envp, ph.forge
-	h2.res.Envp, h2.res.Forge = ph.envp, ph.forge
+	h2.store, h2.envp, h2.repoHost = ph.store, ph.envp, ph.repoHost
+	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
 	h2.runner.RunFunc = ph.runner.RunFunc
 	h2.res.Runner = h2.runner
 	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
@@ -451,7 +451,7 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	deadline := time.Now().Add(5 * time.Second)
 	for h2.view(t, runID).State != run.Completed && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
@@ -499,8 +499,8 @@ phases:
 func TestConflictPhaseIsConfirmedOncePerConflict(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
-	ph.forge.SetTargetSHA(1, "t1")
-	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetTargetSHA(1, "t1")
+	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if !strings.Contains(ask.Question, "no longer merges cleanly") || ask.Link == "" {
 		t.Errorf("confirm ping = %+v", ask)
@@ -515,7 +515,8 @@ func TestConflictPhaseIsConfirmedOncePerConflict(t *testing.T) {
 	if n := len(ph.execsOf("./sync.sh")); n != 1 {
 		t.Fatalf("sync ran %d times", n)
 	}
-	// Same conflict still reported (the forge has not recomputed): no new ask.
+	// Same conflict still reported (the repository host has not recomputed):
+	// no new ask.
 	time.Sleep(50 * time.Millisecond)
 	for _, p := range ph.e.PendingPings() {
 		if p.Type == event.PingPhaseConfirm {
@@ -523,7 +524,7 @@ func TestConflictPhaseIsConfirmedOncePerConflict(t *testing.T) {
 		}
 	}
 	// main moves: a new conflict, asked again — declined this time.
-	ph.forge.SetTargetSHA(1, "t2")
+	ph.repoHost.SetTargetSHA(1, "t2")
 	ask2 := ph.waitPing(t, event.PingPhaseConfirm, ask.ID)
 	if err := ph.e.AnswerPing(ask2.ID, PingAnswer{Answer: "reject", Feedback: "later"}); err != nil {
 		t.Fatal(err)
@@ -537,7 +538,7 @@ func TestConflictPhaseIsConfirmedOncePerConflict(t *testing.T) {
 		}
 	}
 	// It moves again: asked again.
-	ph.forge.SetTargetSHA(1, "t3")
+	ph.repoHost.SetTargetSHA(1, "t3")
 	ph.waitPing(t, event.PingPhaseConfirm, ask.ID, ask2.ID)
 	if n := len(ph.execsOf("./sync.sh")); n != 1 {
 		t.Errorf("a declined conflict ran the phase (%d runs)", n)
@@ -550,9 +551,9 @@ func TestReviewPhaseWaitsForAQuietReview(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
 	t0 := ph.clock.Now()
-	ph.forge.AddComment(1, "d1", "a.go", "rev", "rename", t0)
-	ph.forge.AddComment(1, "d2", "b.go", "rev", "add a test", t0.Add(10*time.Minute))
-	ph.forge.AddComment(1, "d1", "a.go", "rev", "and the caller", t0.Add(50*time.Minute))
+	ph.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", t0)
+	ph.repoHost.AddComment(1, "d2", "b.go", "rev", "add a test", t0.Add(10*time.Minute))
+	ph.repoHost.AddComment(1, "d1", "a.go", "rev", "and the caller", t0.Add(50*time.Minute))
 	ph.clock.Advance(55 * time.Minute) // 5 minutes after the last comment
 	time.Sleep(60 * time.Millisecond)
 	if n := len(phaseStarts(ph.events(t, runID))); n != 1 {
@@ -576,11 +577,11 @@ func TestReviewPhaseWaitsForAQuietReview(t *testing.T) {
 	}
 	// A new comment, quiet again: round 2, whose on_fail budget is fresh.
 	ph.failFix.Store(1)
-	ph.forge.AddComment(1, "d3", "c.go", "rev", "one more", ph.clock.Now())
+	ph.repoHost.AddComment(1, "d3", "c.go", "rev", "one more", ph.clock.Now())
 	ph.clock.Advance(61 * time.Minute)
 	ph.waitPhaseRuns(t, runID, "review_fixes", 2)
 	// max: 2 — a third burst is not acted on.
-	ph.forge.AddComment(1, "d4", "d.go", "rev", "last", ph.clock.Now())
+	ph.repoHost.AddComment(1, "d4", "d.go", "rev", "last", ph.clock.Now())
 	ph.clock.Advance(61 * time.Minute)
 	time.Sleep(60 * time.Millisecond)
 	if n := len(phaseStarts(ph.events(t, runID))); n != 3 {
@@ -601,8 +602,8 @@ func TestSimultaneousTriggersRunInDocumentOrder(t *testing.T) {
 	}
 	// Both hold before the run even goes idle.
 	waitEvent[*event.MRCreated](t, ph.harness, runID)
-	ph.forge.SetMergeable(1, ports.MergeConflicts, "h1")
-	ph.forge.AddComment(1, "d1", "a.go", "rev", "rename", ph.clock.Now())
+	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", ph.clock.Now())
 	ph.clock.Advance(2 * time.Hour)
 	ph.waitPhaseRuns(t, runID, "review_fixes", 1)
 	starts := phaseStarts(ph.events(t, runID))
@@ -618,16 +619,16 @@ func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
 	doc = strings.Replace(doc, "      - { id: build, type: agent, agent: builder }\n",
 		"      - { id: build, type: agent, agent: builder }\n      - { id: commit, type: command, each_repo: true, run: \"git add -A && git commit -m x\" }\n", 1)
 	ph := newPhasedHarness(t, doc)
-	apiForge := &fake.Forge{}
+	apiRepoHost := &fake.RepoHost{}
 	ph.res.ExtraRepos = []ExtraRepo{{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"}}
-	ph.res.Forges = map[string]ports.Forge{"api": apiForge}
+	ph.res.RepoHosts = map[string]ports.RepoHost{"api": apiRepoHost}
 	ph.envp.ExecFunc = gitPerDir(map[string]*fakeGit{"repo": newFakeGit("main"), "repos/api": newFakeGit("develop")})
 	runID := ph.start(t)
-	if n := len(apiForge.SnapshotMRs()); n != 1 {
+	if n := len(apiRepoHost.SnapshotMRs()); n != 1 {
 		t.Fatalf("api MRs = %d", n)
 	}
-	apiForge.SetMergeable(1, ports.MergeConflicts, "a1")
-	ph.forge.AddComment(1, "d1", "a.go", "rev", "rename", ph.clock.Now())
+	apiRepoHost.SetMergeable(1, ports.MergeConflicts, "a1")
+	ph.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", ph.clock.Now())
 	ph.clock.Advance(2 * time.Hour)
 	ph.waitPhaseRuns(t, runID, "conflicts", 1)
 	ph.waitPhaseRuns(t, runID, "review_fixes", 1)
@@ -708,8 +709,8 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	ph.e.Shutdown()
 
 	h2 := newHarnessSource(t, ph.flows, ph.flowOf(t, "phased"))
-	h2.store, h2.envp, h2.forge = ph.store, ph.envp, ph.forge
-	h2.res.Envp, h2.res.Forge = ph.envp, ph.forge
+	h2.store, h2.envp, h2.repoHost = ph.store, ph.envp, ph.repoHost
+	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
 	h2.runner.RunFunc = ph.runner.RunFunc
 	h2.res.Runner = h2.runner
 	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
@@ -717,7 +718,7 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	deadline := time.Now().Add(5 * time.Second)
 	for h2.view(t, runID).State != run.Completed && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)

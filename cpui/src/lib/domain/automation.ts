@@ -4,7 +4,7 @@
 // schedule for one ticket. The watcher's last poll, firing and error ride
 // along for the list.
 
-export type AutomationKind = 'tracker_query' | 'cron' | 'forge_mr';
+export type AutomationKind = 'tracker_query' | 'cron' | 'merge_request';
 
 export interface Automation {
 	id: string;
@@ -17,7 +17,7 @@ export interface Automation {
 	/** cron: five fields in UTC, and the ticket each firing runs. */
 	schedule?: string;
 	ticketId?: string;
-	/** forge_mr: the repository whose merge requests it watches (empty = the
+	/** merge_request: the repository whose merge requests it watches (empty = the
 	 *  primary). */
 	repo?: string;
 	flow: string;

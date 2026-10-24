@@ -145,7 +145,7 @@ func TestInitMigrationIsFrozen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const frozen = "7cb275a590866bb54af5ae9f0b9a4d92b40c0b2456dca427477d4035c5d229d1"
+	const frozen = "fe4b5c7327c81f833fef5b66490ab28db7360e4cd2b2c3e9cf55c5645f35e6cc"
 	if got := hex.EncodeToString(sha256sum(data)); got != frozen {
 		t.Fatalf("0001_init.sql changed (sha256 %s, frozen %s): databases that already applied version 1 will never see the edit — put the change in a new migrations/NNNN_name.sql instead", got, frozen)
 	}

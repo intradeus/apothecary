@@ -329,8 +329,6 @@ func TestRetiredSpellings(t *testing.T) {
 			`renamed "input"`},
 		{"body", header + "stages:\n  - { id: m, type: action, action: create_mr, body: artifacts/mr.md }\n",
 			"with input: {body: <path>}"},
-		{"forge_mr type", header + "stages:\n  - { id: m, type: forge_mr }\n",
-			"use type: action, action: create_mr"},
 		{"feed", header + "stages:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
 			"bind $DECISION"},
 		{"auto_complete", header + "stages:\n  - { id: g, type: human_gate, auto_complete: mr_merged }\n",

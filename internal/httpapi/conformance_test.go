@@ -29,8 +29,9 @@ import (
 )
 
 // conformance walks these; each is a request the test fixture can really
-// serve. Endpoints that need a live workspace, a forge or a running agent are
-// covered by their own tests — what is checked here is the SHAPE contract.
+// serve. Endpoints that need a live workspace, a repository host or a running
+// agent are covered by their own tests — what is checked here is the SHAPE
+// contract.
 type probe struct {
 	method string
 	path   string

@@ -105,11 +105,11 @@ type Action struct {
 	// input_missing when it is absent at run time.
 	Needs string `json:"needs,omitempty"`
 	// Remote marks an action whose effect lands on an external service only
-	// (the ticket tracker, a merge on the forge): it needs no workspace
-	// unless one of its FILE inputs is bound, so the engine runs it without
-	// provisioning one — a "move to In Progress" lands seconds after the run
-	// starts, and a "Done" after the final gate never re-provisions a reaped
-	// workspace.
+	// (the ticket tracker, a merge on the repository host): it needs no
+	// workspace unless one of its FILE inputs is bound, so the engine runs it
+	// without provisioning one — a "move to In Progress" lands seconds after
+	// the run starts, and a "Done" after the final gate never re-provisions a
+	// reaped workspace.
 	Remote  bool        `json:"remote,omitempty"`
 	Inputs  []InputSig  `json:"inputs,omitempty"`
 	Outputs []OutputSig `json:"outputs,omitempty"`
@@ -166,7 +166,7 @@ const (
 	StatusDone       = "done"
 	StatusBlocked    = "blocked"
 
-	RequiresForge = "forge"
+	RequiresRepository = "repository"
 	// RequiresTracker: the ticket's tracker must be writable — a ticketsource
 	// integration whose adapter implements ports.TicketWriter. Checked per
 	// ticket at run creation (the integration is the ticket's, not the
@@ -184,7 +184,7 @@ var registry = []Action{{
 	Slug:        CreateMR,
 	Title:       "Create merge request",
 	Description: "Opens a draft merge request for the run's branch. The body artifact's first `# ` heading becomes the title (the ticket title when it has none).",
-	Requires:    RequiresForge,
+	Requires:    RequiresRepository,
 	Single:      true,
 	Provides:    ProvidesMR,
 	Inputs: []InputSig{{
@@ -204,7 +204,7 @@ var registry = []Action{{
 	Slug:        LoadReviewComments,
 	Title:       "Load review comments",
 	Description: "Writes the merge request's pending review threads — unresolved, last word a reviewer's — to a file the fixing agent reads: file, line, diff hunk, the comments in order, and the thread id a reply names. With select: human (the default) a person first picks which threads to fix in the inbox; the others are skipped until someone comments on them again, and picking none ends the round. Re-entry rewrites the same set, so one phase run fixes what it started with.",
-	Requires:    RequiresForge,
+	Requires:    RequiresRepository,
 	Subject:     true,
 	Inputs: []InputSig{{
 		Name:        "select",
@@ -223,7 +223,7 @@ var registry = []Action{{
 	Slug:        ReplyReviewComments,
 	Title:       "Reply to review comments",
 	Description: "Posts the replies file — one reply per loaded thread, optionally resolving it — on the merge request. Each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice.",
-	Requires:    RequiresForge,
+	Requires:    RequiresRepository,
 	Subject:     true,
 	Inputs: []InputSig{{
 		Name:        "replies",
@@ -317,7 +317,7 @@ var registry = []Action{{
 	Slug:        MRMerge,
 	Title:       "Merge the merge request",
 	Description: "Merges the phase's merge request — only at the head the phase began on, so nothing pushed after the decision is merged unseen. The repository's own rules apply: a merge it declines (a draft, checks or approvals missing, the head moved, a method it does not offer) fails the stage with its reason, for on_fail to route. After a crash the merge request's state says whether it already happened. Needs no workspace.",
-	Requires:    RequiresForge,
+	Requires:    RequiresRepository,
 	Subject:     true,
 	Remote:      true,
 	Inputs: []InputSig{{
@@ -337,7 +337,7 @@ var registry = []Action{{
 	Slug:        PostReview,
 	Title:       "Post a review",
 	Description: "Posts a review on the phase's merge request from a review file (a review_threads-typed agent output): a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place. Never approves nor requests changes — that decision stays a person's. Every part is marked, so a retry after a crash posts only what is missing.",
-	Requires:    RequiresForge,
+	Requires:    RequiresRepository,
 	Subject:     true,
 	Inputs: []InputSig{{
 		Name:        "review",

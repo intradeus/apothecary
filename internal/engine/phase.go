@@ -210,9 +210,9 @@ type mrObservation struct {
 	headSince time.Time
 }
 
-// idler is the idle loop's memory between ticks: what is not run history
-// (the forge is the source of truth for it) and so lives only in the loop.
-// Everything is per merge request (checkout + branch).
+// idler is the idle loop's memory between ticks: what is not run history (the
+// repository host is the source of truth for it) and so lives only in the
+// loop. Everything is per merge request (checkout + branch).
 type idler struct {
 	threadsAt map[string]time.Time
 	threads   map[string][]ports.ReviewThread
@@ -222,7 +222,7 @@ type idler struct {
 	failures  int
 }
 
-// polled is a value read from the forge and when.
+// polled is a value read from the repository host and when.
 type polled[T any] struct {
 	v  T
 	at time.Time
@@ -233,13 +233,13 @@ func newIdler() *idler {
 		checks: map[string]polled[ports.Checks]{}, approvals: map[string]polled[ports.Approval]{}, heads: map[string]polled[string]{}}
 }
 
-// forgeReads says which of a merge request's facts beyond its status the
+// repoHostReads says which of a merge request's facts beyond its status the
 // flow's signals read — on phase heads, wait stages and gates alike — so an
-// idle run asks the forge for nothing it will not look at.
-type forgeReads struct{ threads, checks, approval bool }
+// idle run asks the repository host for nothing it will not look at.
+type repoHostReads struct{ threads, checks, approval bool }
 
-func readsOf(fl *flow.Flow) forgeReads {
-	var r forgeReads
+func readsOf(fl *flow.Flow) repoHostReads {
+	var r repoHostReads
 	note := func(slug string) {
 		switch slug {
 		case signalspec.MRReviewSettled:
@@ -262,9 +262,9 @@ func readsOf(fl *flow.Flow) forgeReads {
 	return r
 }
 
-// idle runs while the run sits between phases: it polls the forge for the
-// run's ending and the reaction triggers, takes confirmation answers and
-// manual starts, and returns once a phase starts or the run ends.
+// idle runs while the run sits between phases: it polls the repository host
+// for the run's ending and the reaction triggers, takes confirmation answers
+// and manual starts, and returns once a phase starts or the run ends.
 func (x *exec) idle() error {
 	rs := x.rs
 	x.h.idle.Store(true)
@@ -465,11 +465,11 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 	out := make([]mrObservation, 0, len(rs.mrs))
 	for i := range rs.mrs {
 		mr := &rs.mrs[i]
-		forge := x.res.forgeFor(mr.Repo)
-		if forge == nil {
+		repoHost := x.res.repoHostFor(mr.Repo)
+		if repoHost == nil {
 			continue
 		}
-		status, err := forge.MRStatus(x.ctx, mr.Ref)
+		status, err := repoHost.MRStatus(x.ctx, mr.Ref)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", mr.Ref.URL, err)
 		}
@@ -485,7 +485,7 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 			stale := !ok || c.v.Head != status.HeadSHA || c.v.State == ports.CheckPending || now.Sub(c.at) >= every ||
 				(c.v.State == ports.ChecksNone && now.Sub(o.headSince) < every)
 			if stale {
-				checks, err := forge.MRChecks(x.ctx, mr.Ref, status.HeadSHA)
+				checks, err := repoHost.MRChecks(x.ctx, mr.Ref, status.HeadSHA)
 				if err != nil {
 					return nil, fmt.Errorf("%s checks: %w", mr.Ref.URL, err)
 				}
@@ -496,7 +496,7 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 		}
 		if reads.approval && status.State == ports.MROpen {
 			if a, ok := st.approvals[k]; !ok || now.Sub(a.at) >= every {
-				ap, err := forge.MRApproval(x.ctx, mr.Ref)
+				ap, err := repoHost.MRApproval(x.ctx, mr.Ref)
 				if err != nil {
 					return nil, fmt.Errorf("%s approval: %w", mr.Ref.URL, err)
 				}
@@ -507,7 +507,7 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 		}
 		if reads.threads && status.State == ports.MROpen {
 			if last, ok := st.threadsAt[k]; !ok || x.e.clock().Sub(last) >= every {
-				threads, err := forge.MRThreads(x.ctx, mr.Ref)
+				threads, err := repoHost.MRThreads(x.ctx, mr.Ref)
 				if err != nil {
 					return nil, fmt.Errorf("%s threads: %w", mr.Ref.URL, err)
 				}
@@ -653,8 +653,8 @@ func (x *exec) manualStart(req phaseStartReq) error {
 	}
 	var tip string
 	if mr != nil {
-		if forge := x.res.forgeFor(subject); forge != nil {
-			if st, err := forge.MRStatus(x.ctx, mr.Ref); err == nil {
+		if repoHost := x.res.repoHostFor(subject); repoHost != nil {
+			if st, err := repoHost.MRStatus(x.ctx, mr.Ref); err == nil {
 				tip = st.HeadSHA
 			}
 		}

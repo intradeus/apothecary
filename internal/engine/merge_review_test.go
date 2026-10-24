@@ -16,16 +16,16 @@ import (
 const automergeReaction = "  - id: automerge\n    on: mr_mergeable\n    stages:\n" +
 	"      - { id: merge, type: action, action: mr_merge, input: { method: squash, branch: delete }, on_fail: end }\n"
 
-// The forge says it can be merged: the reaction merges it — with the
+// The repository host says it can be merged: the reaction merges it — with the
 // method asked, at the head the phase began on — and the merge is the
 // outcome that ends the run.
 func TestMRMergeMergesAtThePhasesHead(t *testing.T) {
 	ph := newPhasedHarness(t, observeFlowDoc(automergeReaction))
 	runID := ph.start(t)
-	ph.forge.SetHead(1, "h1")
-	ph.forge.SetMergeableNow(1, true)
+	ph.repoHost.SetHead(1, "h1")
+	ph.repoHost.SetMergeableNow(1, true)
 	ph.waitState(t, runID, run.Completed)
-	m := ph.forge.SnapshotMRs()[0]
+	m := ph.repoHost.SnapshotMRs()[0]
 	if m.State != ports.MRMerged || m.MergedWith != ports.MergeMethodSquash || !m.BranchDeleted {
 		t.Errorf("mr = %+v", m)
 	}
@@ -41,15 +41,15 @@ func TestMRMergeMergesAtThePhasesHead(t *testing.T) {
 	t.Error("the merge did not end the run through its merged outcome")
 }
 
-// A merge the forge declines is the stage's failure, routed by on_fail —
-// here ending the round, the run back in review; the next head the forge
-// calls mergeable is merged.
+// A merge the repository host declines is the stage's failure, routed by
+// on_fail — here ending the round, the run back in review; the next head the
+// repository host calls mergeable is merged.
 func TestMRMergeRefusedRoutesOnFail(t *testing.T) {
 	ph := newPhasedHarness(t, observeFlowDoc(automergeReaction))
 	runID := ph.start(t)
-	ph.forge.SetHead(1, "h1")
-	ph.forge.SetMergeRefusal(1, "required status checks are expected")
-	ph.forge.SetMergeableNow(1, true)
+	ph.repoHost.SetHead(1, "h1")
+	ph.repoHost.SetMergeRefusal(1, "required status checks are expected")
+	ph.repoHost.SetMergeableNow(1, true)
 	ph.waitPhaseRuns(t, runID, "automerge", 1)
 	evs := ph.events(t, runID)
 	failed, _ := findPayload[*event.StageFailed](evs)
@@ -59,8 +59,8 @@ func TestMRMergeRefusedRoutesOnFail(t *testing.T) {
 	if v := ph.view(t, runID); v.State != run.InReview {
 		t.Fatalf("state = %s", v.State)
 	}
-	ph.forge.SetMergeRefusal(1, "")
-	ph.forge.SetHead(1, "h2")
+	ph.repoHost.SetMergeRefusal(1, "")
+	ph.repoHost.SetHead(1, "h2")
 	ph.waitState(t, runID, run.Completed)
 }
 
@@ -107,7 +107,7 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 	if len(prompts) != 2 || !strings.Contains(prompts[1], "line must be 1 or more") {
 		t.Errorf("the retry was not told why (%d prompts)", len(prompts))
 	}
-	reviews := ph.forge.SnapshotMRs()[0].Reviews
+	reviews := ph.repoHost.SnapshotMRs()[0].Reviews
 	if len(reviews) != 1 || reviews[0].Summary != "Fine overall." || len(reviews[0].Notes) != 1 || reviews[0].Notes[0].Path != "a.go" ||
 		!strings.HasSuffix(reviews[0].ID, "/look-1/publish_review") {
 		t.Fatalf("reviews = %+v", reviews)

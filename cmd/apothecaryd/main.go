@@ -7,7 +7,7 @@
 //	apothecaryd envcheck -project <name|id>     environment compliance check against the live workspace
 //
 // -dev registers the fake kinds and seeds a dev project so a full flow runs
-// end-to-end with no real workspace/harness/forge.
+// end-to-end with no real workspace/harness/repository host.
 package main
 
 import (
@@ -128,8 +128,8 @@ func cmdRebuild(args []string) error {
 // port.
 func registry(dev bool) *kinds.Registry {
 	reg := kinds.NewRegistry()
-	reg.RegisterForge(kinds.GitLab{})
-	reg.RegisterForge(kinds.GitHub{})
+	reg.RegisterRepoHost(kinds.GitLab{})
+	reg.RegisterRepoHost(kinds.GitHub{})
 	reg.RegisterProvisioner(kinds.Devcontainer{})
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
@@ -489,7 +489,7 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 		}
 		return in.ID, nil
 	}
-	forgeID, err := mk(confstore.PortForge, "dev-forge")
+	repoAccountID, err := mk(confstore.PortRepository, "dev-repos")
 	if err != nil {
 		return err
 	}
@@ -507,11 +507,11 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	}
 	p, err := conf.CreateProject(ctx, confstore.Project{
 		Name:          "dev",
-		ForgeID:       forgeID,
+		RepoAccountID: repoAccountID,
 		ProvisionerID: provID,
 		HarnessIDs:    []string{harnessID},
 		Repo: confstore.RepoConfig{
-			URL: "https://forge.local/dev/fake-repo.git", Locator: "1",
+			URL: "https://git.local/dev/fake-repo.git", Locator: "1",
 			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
 		},
 		Commands: map[string]string{"setup": "true", "verify": "true"},

@@ -42,7 +42,7 @@
 	let runMR = $state(0); // the merge request to create the run on, for an mr_opened entrypoint
 	let sourceBranch = $state(''); // branch to fork this run off from; '' until branches load
 	let branches = $state<Branch[]>([]);
-	let branchesErr = $state(''); // forge unreachable ⇒ fall back to project default
+	let branchesErr = $state(''); // repository host unreachable ⇒ fall back to project default
 	let runGoal = $state(''); // direction for THIS attempt (additive to the ticket goal)
 	let runFiles = $state<File[]>([]);
 	let starting = $state(false);

@@ -2,10 +2,10 @@
 // adapter set. It is the only place kinds and confstore meet the engine —
 // harness capabilities are flattened into the port-typed Resolution.
 //
-// Provisioner instances are cached per (integration id, updated_at,
-// template) and refcounted by active resolutions: a config edit makes new
-// resolutions construct a fresh instance while in-flight runs keep theirs;
-// the stale instance closes when its last run releases it. Forge, harness
+// Provisioner instances are cached per (integration id, updated_at, template)
+// and refcounted by active resolutions: a config edit makes new resolutions
+// construct a fresh instance while in-flight runs keep theirs; the stale
+// instance closes when its last run releases it. The repository host, harness
 // and provider adapters are stateless HTTP/exec wrappers and are simply
 // constructed per resolution.
 package resolve
@@ -88,34 +88,34 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		Locator:       p.Repo.Locator,
 	}
 
-	// Forge: account client (credentials + egress) and project-bound port.
-	forgeInt, forgeKind, err := r.forgeKind(ctx, p.ForgeID)
+	// RepoHost: account client (credentials + egress) and project-bound port.
+	repoHostInt, repoHostKind, err := r.repoHostKind(ctx, p.RepoAccountID)
 	if err != nil {
 		return nil, err
 	}
-	account, err := forgeKind.Account(kindConfig(forgeInt))
+	account, err := repoHostKind.Account(kindConfig(repoHostInt))
 	if err != nil {
-		return nil, fmt.Errorf("repository integration %s: %w", forgeInt.Name, err)
+		return nil, fmt.Errorf("repository integration %s: %w", repoHostInt.Name, err)
 	}
-	forge, err := forgeKind.Forge(kindConfig(forgeInt), repoRef)
+	repoHost, err := repoHostKind.RepoHost(kindConfig(repoHostInt), repoRef)
 	if err != nil {
-		return nil, unresolvable(fmt.Errorf("repository integration %s: %v", forgeInt.Name, err))
+		return nil, unresolvable(fmt.Errorf("repository integration %s: %v", repoHostInt.Name, err))
 	}
-	// Extra repos ride the same forge account; each one with a locator gets
-	// its own bound port (that is what opens its merge requests). One
-	// without is context only: cloned, never published.
+	// Extra repos ride the same repository host account; each one with a
+	// locator gets its own bound port (that is what opens its merge requests).
+	// One without is context only: cloned, never published.
 	var extras []engine.ExtraRepo
-	forges := map[string]ports.Forge{}
+	repoHosts := map[string]ports.RepoHost{}
 	for _, x := range p.Repos {
 		extras = append(extras, engine.ExtraRepo{Name: x.Name, URL: x.URL, Locator: x.Locator, DefaultBranch: x.DefaultBranch})
 		if x.Locator == "" {
 			continue
 		}
-		f, err := forgeKind.Forge(kindConfig(forgeInt), ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})
+		f, err := repoHostKind.RepoHost(kindConfig(repoHostInt), ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})
 		if err != nil {
-			return nil, unresolvable(fmt.Errorf("repository integration %s, repo %s: %v", forgeInt.Name, x.Name, err))
+			return nil, unresolvable(fmt.Errorf("repository integration %s, repo %s: %v", repoHostInt.Name, x.Name, err))
 		}
-		forges[x.Name] = f
+		repoHosts[x.Name] = f
 	}
 
 	// Provisioner: cached + refcounted (see package comment).
@@ -241,7 +241,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
 		ExtraRepos:   extras,
-		Forges:       forges,
+		RepoHosts:    repoHosts,
 		HarnessKind:  defaultKind,
 		HarnessKinds: kindList,
 		Models: func(ctx context.Context, kind string) ([]string, error) {
@@ -276,7 +276,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		Envp:            prov,
 		Runner:          harness,
 		Runners:         runners,
-		Forge:           forge,
+		RepoHost:        repoHost,
 		// The write side of a ticket's tracker, by integration id (the
 		// ticket's, not the project's): what a tracker action calls.
 		TicketWriter: r.TicketWriter,
@@ -317,12 +317,12 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	return res, nil
 }
 
-func (r *Resolver) forgeKind(ctx context.Context, id string) (confstore.Integration, kinds.ForgeKind, error) {
-	in, err := r.integration(ctx, id, confstore.PortForge)
+func (r *Resolver) repoHostKind(ctx context.Context, id string) (confstore.Integration, kinds.RepoHostKind, error) {
+	in, err := r.integration(ctx, id, confstore.PortRepository)
 	if err != nil {
 		return confstore.Integration{}, nil, err
 	}
-	fk, err := r.reg.Forge(in.Kind)
+	fk, err := r.reg.RepoHost(in.Kind)
 	if err != nil {
 		return confstore.Integration{}, nil, unresolvable(err)
 	}
@@ -531,8 +531,8 @@ func (r *Resolver) testHarness(ctx context.Context, in confstore.Integration) ([
 func (r *Resolver) testIntegration(ctx context.Context, in confstore.Integration) error {
 	id := in.ID
 	switch in.Port {
-	case confstore.PortForge:
-		fk, err := r.reg.Forge(in.Kind)
+	case confstore.PortRepository:
+		fk, err := r.reg.RepoHost(in.Kind)
 		if err != nil {
 			return err
 		}
@@ -570,17 +570,17 @@ func (r *Resolver) testIntegration(ctx context.Context, in confstore.Integration
 	return fmt.Errorf("integration %s: unknown port %q", id, in.Port)
 }
 
-// ListRepos serves the project wizard's repo picker for a forge
+// ListRepos serves the project wizard's repo picker for a repository host
 // integration (§10).
 func (r *Resolver) ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error) {
 	in, err := r.conf.GetIntegration(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if in.Port != confstore.PortForge {
+	if in.Port != confstore.PortRepository {
 		return nil, fmt.Errorf("integration %s is port %s; repo listing needs a repository integration", in.Name, in.Port)
 	}
-	fk, err := r.reg.Forge(in.Kind)
+	fk, err := r.reg.RepoHost(in.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -592,15 +592,15 @@ func (r *Resolver) ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, 
 }
 
 // ListBranches serves the source-branch picker for a project: the branches of
-// the project's own repo, fetched through its forge integration. Project-
-// scoped (not integration-scoped) so the caller needs only the project id —
-// the forge id and repo locator are resolved here.
+// the project's own repo, fetched through its repository host integration.
+// Project- scoped (not integration-scoped) so the caller needs only the
+// project id — the repository host id and repo locator are resolved here.
 func (r *Resolver) ListBranches(ctx context.Context, projectID string) ([]kinds.BranchInfo, error) {
 	p, err := r.conf.GetProject(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	in, fk, err := r.forgeKind(ctx, p.ForgeID)
+	in, fk, err := r.repoHostKind(ctx, p.RepoAccountID)
 	if err != nil {
 		return nil, err
 	}

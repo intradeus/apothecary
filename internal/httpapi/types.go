@@ -335,7 +335,7 @@ type FlowBindingRequest struct {
 // AutomationRequest creates or replaces an automation: a way a run begins
 // without a person pressing Start. kind is tracker_query (poll source_id
 // with query, import what it finds, one run each), cron (schedule, five
-// fields in UTC, a new run of ticket_id each firing) or forge_mr (watch
+// fields in UTC, a new run of ticket_id each firing) or merge_request (watch
 // repo's open merge requests, a run on each one someone else opened, once).
 // flow + phase (an entrypoint of the kind the automation creates; empty =
 // the flow's first) + params say what each firing creates. enabled

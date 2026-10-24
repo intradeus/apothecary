@@ -80,8 +80,8 @@ func TestCreateMR(t *testing.T) {
 	if a == nil {
 		t.Fatalf("%s is not registered", CreateMR)
 	}
-	if a.Requires != RequiresForge {
-		t.Errorf("requires = %q, want %q", a.Requires, RequiresForge)
+	if a.Requires != RequiresRepository {
+		t.Errorf("requires = %q, want %q", a.Requires, RequiresRepository)
 	}
 	if !a.Single {
 		t.Error("create_mr must be single: a run has one merge request")
@@ -112,7 +112,7 @@ func TestJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"slug":"create_mr"`, `"requires":"forge"`, `"single":true`,
+	for _, want := range []string{`"slug":"create_mr"`, `"requires":"repository"`, `"single":true`,
 		`"name":"body"`, `"kind":"file"`, `"required":true`, `"sentinel":"$MR_URL"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("json missing %s:\n%s", want, b)
@@ -194,7 +194,7 @@ func TestTrackerActions(t *testing.T) {
 // this holds the two equal.
 func TestMergeMethodsMirrorThePort(t *testing.T) {
 	act := Get(MRMerge)
-	if act == nil || !act.Subject || !act.Remote || act.Requires != RequiresForge {
+	if act == nil || !act.Subject || !act.Remote || act.Requires != RequiresRepository {
 		t.Fatalf("mr_merge = %+v", act)
 	}
 	want := []string{ports.MergeMethodMerge, ports.MergeMethodSquash, ports.MergeMethodRebase}

@@ -305,8 +305,8 @@ type runHandle struct {
 	// agentLive is set while an agent invocation runs (messages can land).
 	agentLive atomic.Bool
 	// idle is set while the run sits between phases with its merge requests
-	// open (PLAN6): the loop only polls the forge, so it does not hold a
-	// concurrency slot.
+	// open (PLAN6): the loop only polls the repository host, so it does not
+	// hold a concurrency slot.
 	idle atomic.Bool
 	// phaseStarts carries a human's "run this phase now" to an idle loop.
 	phaseStarts chan phaseStartReq
@@ -1046,7 +1046,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	var adopted *event.AdoptedMR
 	if in.MR != nil {
 		// Created on someone's merge request: the run works on its branch,
-		// checked out from the ref the forge keeps for its head.
+		// checked out from the ref the repository host keeps for its head.
 		var co *event.Checkout
 		if co, adopted, err = adoptMR(ctx, res, checkouts, in.MR); err != nil {
 			return "", fmt.Errorf("preflight: %w", err)
@@ -1107,9 +1107,9 @@ func runCheckouts(res *Resolution, branch, sourceBranch string) []event.Checkout
 }
 
 // adoptMR reads the merge request a run is being created on and points its
-// checkout at it: the branch is the merge request's own (a fork's, which
-// has none here, a local mr-<iid>), forked from nothing — its head is
-// fetched from the forge's ref — and its target is what it merges into.
+// checkout at it: the branch is the merge request's own (a fork's, which has
+// none here, a local mr-<iid>), forked from nothing — its head is fetched from
+// the repository host's ref — and its target is what it merges into.
 func adoptMR(ctx context.Context, res *Resolution, checkouts []event.Checkout, want *RunMR) (*event.Checkout, *event.AdoptedMR, error) {
 	repo := want.Repo
 	if repo == "" {
@@ -1124,11 +1124,11 @@ func adoptMR(ctx context.Context, res *Resolution, checkouts []event.Checkout, w
 	if co == nil {
 		return nil, nil, fmt.Errorf("merge request: the project has no repository %q", repo)
 	}
-	forge := res.forgeFor(repo)
-	if forge == nil {
+	repoHost := res.repoHostFor(repo)
+	if repoHost == nil {
 		return nil, nil, fmt.Errorf("merge request: no integration reaches repository %q", repo)
 	}
-	info, err := forge.GetMR(ctx, want.IID)
+	info, err := repoHost.GetMR(ctx, want.IID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("merge request !%d: %w", want.IID, err)
 	}
@@ -1153,11 +1153,11 @@ func (e *Engine) ListMRs(ctx context.Context, projectID, repo string) ([]ports.M
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
 	}
-	forge := res.forgeFor(repo)
-	if forge == nil {
+	repoHost := res.repoHostFor(repo)
+	if repoHost == nil {
 		return nil, fmt.Errorf("no integration reaches repository %q", repo)
 	}
-	return forge.ListMRs(ctx)
+	return repoHost.ListMRs(ctx)
 }
 
 // MR reads one merge request of a project's repository ("" = the primary).
@@ -1170,17 +1170,17 @@ func (e *Engine) MR(ctx context.Context, projectID, repo string, iid int) (ports
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
 	}
-	forge := res.forgeFor(repo)
-	if forge == nil {
+	repoHost := res.repoHostFor(repo)
+	if repoHost == nil {
 		return ports.MRInfo{}, fmt.Errorf("no integration reaches repository %q", repo)
 	}
-	return forge.GetMR(ctx, iid)
+	return repoHost.GetMR(ctx, iid)
 }
 
-// ForgeUser is who a project's forge integration acts as in a repository
-// ("" = the primary): the account the factory's own merge requests are
-// opened by.
-func (e *Engine) ForgeUser(ctx context.Context, projectID, repo string) (string, error) {
+// RepoHostUser is who a project's repository host integration acts as in a
+// repository ("" = the primary): the account the factory's own merge requests
+// are opened by.
+func (e *Engine) RepoHostUser(ctx context.Context, projectID, repo string) (string, error) {
 	res, err := e.resolver.Resolve(ctx, projectID)
 	if err != nil {
 		return "", err
@@ -1189,11 +1189,11 @@ func (e *Engine) ForgeUser(ctx context.Context, projectID, repo string) (string,
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
 	}
-	forge := res.forgeFor(repo)
-	if forge == nil {
+	repoHost := res.repoHostFor(repo)
+	if repoHost == nil {
 		return "", fmt.Errorf("no integration reaches repository %q", repo)
 	}
-	return forge.Whoami(ctx)
+	return repoHost.Whoami(ctx)
 }
 
 // ErrEnvCapacity refuses new tickets at the §14 environment cap (HTTP 409).
@@ -1467,15 +1467,15 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 }
 
 // preflight refuses a run naming the exact missing item (§1, extended by
-// DESIGN2 §6.3): forge access, repo files, run_ref resolution, and the
-// harness pin check. Model strings are deliberately NOT validated against
+// DESIGN2 §6.3): repository host access, repo files, run_ref resolution, and
+// the harness pin check. Model strings are deliberately NOT validated against
 // provider kinds — harnesses route provider/model themselves (openrouter
-// serves anthropic/*), so any check would false-negative.
-// hasDevcontainer reports whether the repo carries a devcontainer config at
-// either standard path — the workspace definition apothecary requires.
+// serves anthropic/*), so any check would false-negative. hasDevcontainer
+// reports whether the repo carries a devcontainer config at either standard
+// path — the workspace definition apothecary requires.
 func hasDevcontainer(ctx context.Context, res *Resolution) (bool, error) {
 	for _, p := range []string{".devcontainer/devcontainer.json", ".devcontainer.json"} {
-		ok, err := res.Forge.FileExists(ctx, res.RepoRef, p)
+		ok, err := res.RepoHost.FileExists(ctx, res.RepoRef, p)
 		if err != nil {
 			return false, err
 		}
@@ -1487,11 +1487,11 @@ func hasDevcontainer(ctx context.Context, res *Resolution) (bool, error) {
 }
 
 func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) error {
-	if err := res.Forge.CheckAccess(ctx, res.RepoRef); err != nil {
+	if err := res.RepoHost.CheckAccess(ctx, res.RepoRef); err != nil {
 		return fmt.Errorf("preflight: repository access: %w", err)
 	}
 	for _, x := range res.ExtraRepos {
-		if f := res.Forges[x.Name]; f != nil {
+		if f := res.RepoHosts[x.Name]; f != nil {
 			if err := f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator}); err != nil {
 				return fmt.Errorf("preflight: repository access to repo %s: %w", x.Name, err)
 			}
@@ -1500,7 +1500,7 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	// AGENTS.md stays a repo file (it describes the repo); agents themselves
 	// live in the project's library since v3 — the .apothecary/agents/ repo
 	// contract is retired.
-	ok, err := res.Forge.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
+	ok, err := res.RepoHost.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
 	if err != nil {
 		return fmt.Errorf("preflight: checking %s: %w", res.AgentsMDPath, err)
 	}
@@ -2702,14 +2702,14 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 		steps = append(steps, step("parameters", perr))
 		fl = bound // nil when the bindings do not resolve
 	}
-	steps = append(steps, step("repo_access", res.Forge.CheckAccess(ctx, res.RepoRef)))
+	steps = append(steps, step("repo_access", res.RepoHost.CheckAccess(ctx, res.RepoRef)))
 	for _, x := range res.ExtraRepos {
-		if f := res.Forges[x.Name]; f != nil {
+		if f := res.RepoHosts[x.Name]; f != nil {
 			steps = append(steps, step("repo_access:"+x.Name,
 				f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})))
 		}
 	}
-	ok, ferr := res.Forge.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
+	ok, ferr := res.RepoHost.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
 	if ferr == nil && !ok {
 		ferr = fmt.Errorf("%s not found in repo", res.AgentsMDPath)
 	}

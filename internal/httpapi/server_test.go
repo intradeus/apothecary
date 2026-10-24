@@ -49,7 +49,7 @@ type env struct {
 	store    *event.MemStore
 	envp     *fake.EnvProvisioner
 	runner   *fake.AgentRunner
-	forge    *fake.Forge
+	repoHost *fake.RepoHost
 	reg      *channels.Registry
 	fakeCh   *fake.Channel
 	res      *engine.Resolution
@@ -66,12 +66,12 @@ func (v *varSettings) Limits(context.Context) (engine.Limits, error) { return v.
 func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	t.Helper()
 	x := &env{
-		store:  event.NewMemStore(),
-		envp:   fake.NewEnvProvisioner(),
-		runner: &fake.AgentRunner{},
-		forge:  &fake.Forge{},
-		reg:    channels.NewRegistry(),
-		fakeCh: &fake.Channel{},
+		store:    event.NewMemStore(),
+		envp:     fake.NewEnvProvisioner(),
+		runner:   &fake.AgentRunner{},
+		repoHost: &fake.RepoHost{},
+		reg:      channels.NewRegistry(),
+		fakeCh:   &fake.Channel{},
 	}
 	x.reg.Register("test", func(map[string]any) (ports.NotificationChannel, error) {
 		return x.fakeCh, nil
@@ -97,7 +97,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 		HarnessKind:  "fake",
 		Envp:         x.envp,
 		Runner:       x.runner,
-		Forge:        x.forge,
+		RepoHost:     x.repoHost,
 	}
 	x.settings = &varSettings{L: engine.Limits{MaxConcurrentRuns: 3, MaxEnvironments: 6}}
 	if cfg.MRPollInterval == 0 {

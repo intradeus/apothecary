@@ -1387,8 +1387,6 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	case StageAgent, StageCommand, StageHumanGate, StageAction, StageWait:
 	case "":
 		return fail("type is required")
-	case "forge_mr":
-		return fail(`type "forge_mr" is retired: use type: action, action: %s with input: {body: <path>}`, actionspec.CreateMR)
 	default:
 		return fail("unknown type %q (%s|%s|%s|%s|%s)", raw.Type,
 			StageAgent, StageCommand, StageHumanGate, StageAction, StageWait)

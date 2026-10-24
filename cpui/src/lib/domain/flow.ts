@@ -128,7 +128,7 @@ export interface ActionSpec {
 	slug: string;
 	title: string;
 	description?: string;
-	/** Integration port the project must have configured (e.g. 'forge'). */
+	/** Integration port the project must have configured (e.g. 'repository'). */
 	requires?: string;
 	/** At most one stage per phase may use it. */
 	single: boolean;

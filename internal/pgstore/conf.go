@@ -95,7 +95,7 @@ func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
 	var refs []string
 	rows, err := s.pool.Query(ctx, `
 		SELECT name FROM projects
-		WHERE forge_id=$1 OR provisioner_id=$1 OR harnesses ? $1
+		WHERE repo_account_id=$1 OR provisioner_id=$1 OR harnesses ? $1
 		ORDER BY name`, id)
 	if err != nil {
 		return err
@@ -165,22 +165,22 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	// built-in) nothing is inserted, no conflict fires, and RowsAffected
 	// reads 0.
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO projects (id, name, forge_id, provisioner_id,
+		INSERT INTO projects (id, name, repo_account_id, provisioner_id,
 		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos)
 		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13
 		WHERE EXISTS (SELECT 1 FROM flows WHERE project_id=$1 AND name=$8) OR $8 = ANY($12)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$2, forge_id=$3, provisioner_id=$4,
+			name=$2, repo_account_id=$3, provisioner_id=$4,
 			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11, repos=$13`,
-		p.ID, p.Name, p.ForgeID, p.ProvisionerID,
+		p.ID, p.Name, p.RepoAccountID, p.ProvisionerID,
 		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt, harnesses,
 		builtin.FlowNames(), repos)
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
 	}
 	if isFK(err) {
-		// FK backstop: a referenced integration (forge/provisioner) vanished
-		// between the service-layer validation and this write.
+		// FK backstop: a referenced integration (repository host/provisioner)
+		// vanished between the service-layer validation and this write.
 		return fmt.Errorf("project %s references a missing flow or integration: %w", p.Name, confstore.ErrInvalid)
 	}
 	if err != nil {
@@ -195,7 +195,7 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 func scanProject(row pgx.Row) (confstore.Project, error) {
 	var p confstore.Project
 	var repo, cmds, ws, harnesses, repos []byte
-	err := row.Scan(&p.ID, &p.Name, &p.ForgeID, &p.ProvisionerID,
+	err := row.Scan(&p.ID, &p.Name, &p.RepoAccountID, &p.ProvisionerID,
 		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses, &repos)
 	if err != nil {
 		return p, err
@@ -222,7 +222,7 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 	return p, nil
 }
 
-const projectCols = `id, name, forge_id, provisioner_id,
+const projectCols = `id, name, repo_account_id, provisioner_id,
 	repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos`
 
 func (s *Store) GetProject(ctx context.Context, id string) (confstore.Project, error) {

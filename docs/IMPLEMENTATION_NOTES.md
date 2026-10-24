@@ -51,7 +51,7 @@ boring choice, recorded here). Newest at the bottom.
 - `AgentSpec{Agent, Harness, Model, MaxTurns}` — resolved values from the
   flow, agent name resolves workspace-side (§5.2).
 - `RepoRef{URL, DefaultBranch, ProjectID}` — ProjectID is the GitLab-side id
-  from config (§13); other forges may ignore it.
+  from config (§13); other repository hosts may ignore it.
 - Fake `AgentRunner` hooks receive the stage context so tests can emulate a
   harness being killed on timeout/abort.
 
@@ -373,7 +373,7 @@ Verified against opencode 1.17.8 (pinned in the image):
   (project.workspace.template override), since coder adapters bind their
   template at construction. Generations are refcounted by live
   resolutions; a config edit stales the old instance, closed on last
-  release (locked by a resolve test). Forge/harness/provider adapters are
+  release (locked by a resolve test). Repository host/harness/provider adapters are
   stateless and constructed per resolution.
 - **M7 requires `workspace.template` on every project** — the §8 image
   pipeline lands in M9; until then the §8.4 custom-template path is the
@@ -444,7 +444,7 @@ Verified against opencode 1.17.8 (pinned in the image):
   typed keys are sent, so an untouched field keeps its value (§3 merge).
   Clearing a secret from the UI is deliberately unsupported (edge case;
   the API's `""`-deletes semantics remain curl-able).
-- **The project wizard is one sectioned form**, not a stepper: forge pick →
+- **The project wizard is one sectioned form**, not a stepper: repository host pick →
   Browse repositories (ListRepos → click fills url/locator/branch/name) →
   commands as free key/value rows (setup optional and labeled so) →
   adapter picks → workspace (template required with an M9 note, fragment
@@ -486,7 +486,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
   fake provider, resolver provider resolution, `projects.provider_ids`
   (migration `0003_drop_providers.sql` drops the column and deletes
   `port='provider'` rows), confstore `PortProvider`, and the UI section.
-  Valid ports are forge|provisioner|harness.
+  Valid ports are repository|provisioner|harness.
 - `Resolution.ProviderEnv` / bootstrap's provider.env **mechanism stays**
   (unfed, writes an empty file): it is the natural slot for a future
   harness kind that authenticates via env var (codex + OPENAI_API_KEY) —
@@ -602,7 +602,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
   endpoint. The make-not-found first attempt was itself the composability
   working: the stripped base genuinely lacks what fragments don't add.
 
-## GitHub forge + codex harness (M10, DESIGN2 §12–§13)
+## GitHub repository host + codex harness (M10, DESIGN2 §12–§13)
 
 - **Neither adapter touched the engine** — two `Register*` lines in
   cmd/apothecaryd (the M10 port proof). The descriptor-driven UI picked both
@@ -663,7 +663,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
   tracks the working tree (`:dev`) — the right default for a single-repo
   self-hosted install with no registry (this repo has no git remote).
 - **README.md** is the M11 install path: prerequisites (docker, external
-  Coder, forge PAT, harness auth, target repo with AGENTS.md +
+  Coder, repository host PAT, harness auth, target repo with AGENTS.md +
   .apothecary/agents), compose install with keygen, the UI configuration
   walkthrough ending in envcheck + first ticket, upgrade notes
   (migrations at boot; base image + template are content-addressed and
@@ -826,10 +826,10 @@ per-project, versioned, UI-edited library. As designed, with these notes:
   marker protocol) is deleted. Adapters write their base config
   (ask_human MCP) even for zero specs; "no agents" is preflight's
   problem, not the adapter's.
-- `ports.Forge` gained `ListDir`/`ReadFile` (gitlab tree/files APIs,
+- `ports.RepoHost` gained `ListDir`/`ReadFile` (gitlab tree/files APIs,
   github contents API, fake in-memory) solely for the one-time
   `POST /api/projects/{id}/agents/import-repo`; existing names are
-  skipped, never overwritten. The fake forge ships one importable
+  skipped, never overwritten. The fake repository host ships one importable
   `sample.yaml` so the path is exercisable in dev.
 - `stage_started` now carries `agent` + `agent_hash` — the analytics
   join key between outcomes and prompt versions.
@@ -984,7 +984,7 @@ The M12 one-time `.apothecary/agents/` repo import is deleted end to end
 (user decision: the project is unreleased, no legacy to migrate): the
 Agents-panel button, `POST /api/projects/{id}/agents/import-repo`,
 `IntegrationOps.RepoAgentFiles`, the resolver implementation, and the
-`Forge.ListDir`/`ReadFile` port methods added solely for it (gitlab,
+`RepoHost.ListDir`/`ReadFile` port methods added solely for it (gitlab,
 github, fake adapters). `agentspec.Parse` stays (name-rule + spec
 parsing). Reference agent prompts now live in `artifacts/agents/*.md`
 (+ `artifacts/flows/v2.yaml`, the expanded-form reference flow), with the
@@ -1085,7 +1085,7 @@ Live bug: `git push` (a flow command stage) timed out 133s against
 gitlab.com in proxy mode. Cause: only bootstrap steps and agent runs
 sourced proxy.env; command stages ran raw via Envp.Exec and went DIRECT,
 hitting the firewall DROP (dropped packets → long timeout, not a proxy
-403). The allowlist was fine — gitlab.com is contributed by the forge
+403). The allowlist was fine — gitlab.com is contributed by the repository host
 account's EgressDomains (github: github.com/api/codeload; gitlab: the
 base_url host) and unioned into every run. Fix: coder.Exec sources
 proxy.env for EVERY workspace command (one chokepoint — bootstrap,
@@ -1491,7 +1491,7 @@ Decisions worth recording:
   integration. *(Amended: the read port stays as it is; write-back arrived
   later as an optional capability a flow opts into stage by stage — see
   "Tracker actions" below.)*
-- **Not a project reference.** Unlike forge/provisioner/harness, a ticket
+- **Not a project reference.** Unlike repository host/provisioner/harness, a ticket
   source is picked *per import* on the ticket form, never bound to a project.
   A tracker outage can therefore only fail an import — it can never stall a
   run, and `confstore.validateProject` gained nothing.
@@ -2360,7 +2360,7 @@ any of the publication.
 ### The model
 
 A project may list **additional repositories** beside its primary
-(`Project.repos`: name, URL, default branch, optional forge locator;
+(`Project.repos`: name, URL, default branch, optional repository host locator;
 migration `0024_project_repos`). A run records a **checkout** per repository
 in `run_created` — the primary at `~/repo`, the extras at `~/repos/<name>` —
 all on the same branch name, each forked from its own default branch. Runs
@@ -2384,10 +2384,10 @@ From there:
 - **`create_mr`** opens one draft merge request per repository the run
   **changed** (`git rev-list --count origin/<source>..HEAD > 0`; an untouched
   extra gets none), each onto the branch that checkout forked from. It
-  reconciles per checkout through the forge (`FindMR`) *before* reading the
+  reconciles per checkout through the repository host (`FindMR`) *before* reading the
   body, so a crash in the record window never duplicates one; `mr_created`
   now carries `repo` and `target`. A repository listed **without a locator**
-  has no forge and is **context-only**: cloned for the agent to read, never
+  has no repository host and is **context-only**: cloned for the agent to read, never
   published;
 - the **gate** lists every merge request in its context (`$MR_URL` stays the
   first); `mr_merged` fires when *all* are merged and `mr_closed` when *any*
@@ -2450,9 +2450,9 @@ requests merge (completed) or one is closed (abandoned). The grammar change is
 additive (`phases:` beside `stages:`, still version 3); flows with top-level
 stages behave exactly as before.
 
-### Forge facts (M28)
+### Repository host facts (M28)
 
-`Forge.MRState` became `MRStatus` — state, mergeability (`clean | conflicts |
+`RepoHost.MRState` became `MRStatus` — state, mergeability (`clean | conflicts |
 unknown`), head sha, target branch and, only when conflicting, the target's
 tip (one extra branch lookup) — and the port gained `MRThreads`, `ReplyThread`
 and `ResolveThread`. GitLab is all REST (discussions; `detailed_merge_status`
@@ -2479,7 +2479,7 @@ observation, never recorded).
   A phase start resets the edge counters of that phase's stages — `max` is per
   round — while the budget stays run-wide.
 - **Idle** is not a phase: when a phase reaches `done` the loop enters
-  `idle()`, which polls the forge on the existing `MRPollInterval` (threads on
+  `idle()`, which polls the repository host on the existing `MRPollInterval` (threads on
   `ThreadPollInterval`, default 4× — a heavier call), takes confirmation
   answers and manual starts, and returns when a phase starts or the run ends.
   It is resident like a signal-armed gate but **does not hold a concurrency
@@ -2487,7 +2487,7 @@ observation, never recorded).
   the loop goes idle). A phase starting from idle does not wait for a slot, so
   the cap can be exceeded by phases briefly — they are short, and blocking a
   conflict fix behind unrelated tickets would be worse.
-- **Triggers** are pure functions of forge facts, evaluated per merge request
+- **Triggers** are pure functions of repository host facts, evaluated per merge request
   in checkout order, then per phase in document order. `mr_conflicts` keys on
   `(target tip, head)`; `mr_review_settled` holds when the newest pending
   reviewer comment is older than `quiet_for`, keyed on that comment. No cursor
@@ -2896,7 +2896,7 @@ flagged `Trigger` and `Entry`) is the one a person gives: it never holds on
 its own. The entry is `on: manual` — someone starts a run for a ticket — and a
 reaction phase may be `on: manual` too: a phase only the run page starts
 (`max` counts those starts; `confirm` is refused, nothing fires to confirm).
-The forge triggers keep `Trigger` only; `Entry` is the seam for a tracker
+The repository host triggers keep `Trigger` only; `Entry` is the seam for a tracker
 event (*a ticket assigned*) to begin a run, as FLOWLANG §10 foresaw. The
 entry is the first phase by position (`Phase.entry`, set by the parser), no
 longer "the one on ticket", since manual begins reactions too. `ticket` is
@@ -3050,7 +3050,7 @@ others — an **outcome**, opened by the merge request's fate:
 - **`signalspec.Outcome`** on `mr_merged` and `mr_closed`. Both stay
   waitable (a `wait` may still park on them); a phase `on:` one of them is an
   outcome (`flow.Phase.IsOutcome`; `Observed()` = fires or outcome, which is
-  what preflight's forge check and the end rule read). It takes `start`
+  what preflight's repository host check and the end rule read). It takes `start`
   (auto/confirm/manual) like a trigger, no `max` (it fires once), no
   `quiet_for`.
 - **`then`** (`DocPhase.Then`, `Phase.Then`): a stage-less outcome says
@@ -3141,18 +3141,18 @@ once under `blocks:` and run by a stage that `include:`s it.
 - Not done: blocks as bands on the canvas (edit in place), parameters passed
   into a block.
 
-## Flow v4: forge observation — CI, approvals, the merge verdict, others' pushes
+## Flow v4: repository observation — CI, approvals, the merge verdict, others' pushes
 
 Second pass, step 3 (2026-10-24). Four signals, each one registry entry and
 one predicate in the idle loop; the scheduler, the policies and the
 occurrence keys did not change.
 
-- **Port.** `MRStatus` stays one forge call and gains what that call already
+- **Port.** `MRStatus` stays one repository host call and gains what that call already
   carries: `MergeableNow` (GitHub `mergeable_state` clean/has_hooks and not a
   draft; GitLab `detailed_merge_status == mergeable`) and `Draft`. Checks and
   approvals are two new methods, `MRChecks(mr, head)` and `MRApproval(mr)`,
   so a flow that reads neither never pays for them (`readsOf` scans phase
-  heads, wait stages and gate auto-answers; `fake.Forge.ChecksCalls` holds
+  heads, wait stages and gate auto-answers; `fake.RepoHost.ChecksCalls` holds
   the line in a test). Plan deviation: no `UpdatedAt` — nothing needed it.
 - **Checks.** GitHub: check runs (newest run of a name wins) plus combined
   commit statuses; GitLab: the head pipeline (pending when it is an older
@@ -3185,20 +3185,20 @@ occurrence keys did not change.
 
 ## Flow v4: mr_merge and post_review
 
-Second pass, step 4 (2026-10-24): the two forge-side acts the modeled flows
+Second pass, step 4 (2026-10-24): the two host-side acts the modeled flows
 need beyond opening a merge request — auto-merge (a reaction on
 `mr_mergeable`) and the reviewer flow.
 
 - **Port.** `MergeMR(mr, {Method, Head, DeleteBranch})` and `PostReview(mr,
-  {Head, Summary, Notes, ID})`. A merge the forge declines is a typed
+  {Head, Summary, Notes, ID})`. A merge the repository host declines is a typed
   `*ErrMergeRefused` (GitHub 405/409/422, GitLab 405/406/409/422) that the
   engine turns into a routable `input_invalid` failure; anything else is the
-  forge not answering (infra, terminal). GitLab refuses `rebase` outright:
+  repository host not answering (infra, terminal). GitLab refuses `rebase` outright:
   it merges by the project's merge method, and quietly merging another way
   would be worse than saying so.
 - **Pinned head.** `mr_merge` passes the phase's starting tip (`phaseTip`) as
-  the head to merge — the head the forge called mergeable, or the head a
-  person started the phase on. A push after the decision makes the forge
+  the head to merge — the head the repository host called mergeable, or the head a
+  person started the phase on. A push after the decision makes the repository host
   refuse; `mr_mergeable` fires again for the new head. Templates should
   route that `on_fail: end` rather than to a person.
 - **Reconciling.** Both record `action_started` first. `mr_merge` re-entered
@@ -3257,11 +3257,11 @@ Second pass, step 5 (first half), 2026-10-24: what the reviewer flow needs.
   `definitelyHasMR` and `phaseShapeWarnings`); run creation holds the kinds
   apart (`entrypointOf(fl, name, onMR)`: an MR at a `run_start` phase, or
   none at an `mr_opened` one, is refused; the default entrypoint is the
-  first of the kind asked for). Preflight checks its forge like an observed
+  first of the kind asked for). Preflight checks its repository host like an observed
   signal's. `HasSubject` now also excludes `mr_approved` (it holds for every
   merge request, like `mr_merged` — a slip from step 3).
 - **Port.** `GetMR`, `ListMRs` (open, newest first, ≤ 300), `Whoami` (for
-  the automation). `MRInfo.HeadRef` is the forge's own ref for the head
+  the automation). `MRInfo.HeadRef` is the repository host's own ref for the head
   (`refs/pull/<n>/head`, `refs/merge-requests/<iid>/head`), which works for
   forks too; `Fork` = head repository ≠ base.
 - **Creation** (`adoptMR`): the merge request must be open; its checkout's
@@ -3287,15 +3287,15 @@ Second pass, step 5 (first half), 2026-10-24: what the reviewer flow needs.
   the entrypoint; a rerun stays on the merge request (refused once it is no
   longer open).
 
-## Automations: forge_mr — a run on each merge request others open
+## Automations: merge_request — a run on each merge request others open
 
 Second pass, step 5 (second half), 2026-10-24.
 
-- **Kind `forge_mr`** watches one repository (`repo`, "" = the primary;
+- **Kind `merge_request`** watches one repository (`repo`, "" = the primary;
   migration 0006 adds the column and widens the kind check). Each pass lists
   the open merge requests (newest first, the watcher's limit) and, for each
   one that is not a draft and not opened by the integration's own account
-  (`Engine.ForgeUser` → `Whoami`: the factory's own runs' merge requests),
+  (`Engine.RepoHostUser` → `Whoami`: the factory's own runs' merge requests),
   makes a ticket — title "<title> (!<iid> by <author>)", goal the
   description and a line naming the merge request, `source_kind
   merge_request`, key and URL the merge request's, no source id, so no
@@ -3305,7 +3305,7 @@ Second pass, step 5 (second half), 2026-10-24.
   without a run (a crash between the two) is adopted; a person's ticket for
   the same merge request is theirs. A draft is picked once it is marked
   ready.
-- **Entrypoint kinds are validated per automation kind**: forge_mr needs an
+- **Entrypoint kinds are validated per automation kind**: merge_request needs an
   `mr_opened` entrypoint, tracker_query and cron a `run_start` one (the
   first of the kind when `phase` is empty). The workshop form offers only
   those (`StartRunOptions entries=…`) and never asks for a merge request
@@ -3347,12 +3347,12 @@ which needs a flow to start.
 requests with a button to start a review.
 
 - **API.** `GET /api/projects/{id}/reviews?repo=` — each open merge request
-  (`ports.MRInfo`), `mine` when the forge integration's own account opened it
+  (`ports.MRInfo`), `mine` when the repository host integration's own account opened it
   (the factory's runs), the merge request's ticket (looked up by its URL in
   one ticket scan) and that ticket's newest run with the run count. `POST
   /api/projects/{id}/mrs/{iid}/review {flow?, phase?, params?, repo?}` — the
   merge request must be open; its ticket is found or made
-  (`tickets.Factory.ForMR`, shared with the forge_mr automation through
+  (`tickets.Factory.ForMR`, shared with the merge_request automation through
   `FindByKey`/`CreateForMR`, so a person and the automation file reviews
   under the same ticket); 409 while one of the ticket's runs is not
   terminal; the run is created on the merge request at the flow's
@@ -3360,26 +3360,26 @@ requests with a button to start a review.
   that is then refused is deleted with the refusal.
 - **UI.** A Reviews tab between Tickets and Flows: others' merge requests
   first, the factory's own after them — flagged "opened by the factory", but
-  reviewable like any other (the user wanted the option; only the forge_mr
+  reviewable like any other (the user wanted the option; only the merge_request
   automation never picks them); a row shows the newest run's state (linked)
   and "Review" / "Open the review" / "Review again". The flow is picked among those with an `mr_opened` entrypoint,
   remembered per workshop in localStorage (`reviewer` when present).
   Refreshes every 30s while visible.
-- **Fake forge per locator.** The dev `fake` forge kind used to hand out a
-  new, empty forge on every resolution; it now keeps one per repository
-  locator for the process (`kinds.FakeForgeOf`), which is what made the API
+- **Fake repository host per locator.** The dev `fake` repository host kind used to hand out a
+  new, empty repository host on every resolution; it now keeps one per repository
+  locator for the process (`kinds.FakeRepoHostOf`), which is what made the API
   test possible — and the dev world now remembers its merge requests.
-  Tests sharing it reset it (`fake.Forge.Reset`).
+  Tests sharing it reset it (`fake.RepoHost.Reset`).
 - Not done: a repository picker for extra repositories, CI state per row
-  (one more forge read per merge request per refresh).
+  (one more repository host read per merge request per refresh).
 
-## Forge tab replaces the Reviews tab: the UI stays flow-agnostic
+## Repositories tab replaces the Reviews tab: the UI stays flow-agnostic
 
 2026-10-24, the user: "Review is a flow… flows shouldn't have distinctions in
 the UI… the UI should be as abstract as possible." The Reviews tab (above)
 was built around one template. It is gone; in its place:
 
-- **Forge tab** (Workshop → Forge, beside Tickets): what the forge
+- **Repositories tab** (Workshop → Repositories, beside Tickets): what the repository host
   integration brings in — the repository's open merge requests — the way
   Tickets shows what the tracker does. Each row: the merge request (its
   author; draft, fork, "opened by the factory"), its branches, its newest
@@ -3399,7 +3399,7 @@ was built around one template. It is gone; in its place:
 
 ## The rest of the UI, audited for flow-agnosticism
 
-Same rule as the Forge tab: nothing in the UI assumes one particular flow,
+Same rule as the Repositories tab: nothing in the UI assumes one particular flow,
 its stage ids, its agent names or its artifacts. What the audit found and
 what changed:
 
@@ -3431,29 +3431,34 @@ what changed:
   placeholders — all made neutral. `in_review` keeps its label: the
   projection sets it only when the run has open merge requests.
 
-## "Repository", not "forge", wherever a person reads it
+## "Repository" everywhere — in the UI, the code and the schema
 
-2026-10-24, the user: "forge means nothing to no one" — stick to
-repositories. *Forge* (the industry word for GitHub/GitLab as hosts) stays
-the code's name for that integration port — `ports.Forge`, port value
-`forge`, `forge_id`, the `forge_mr` automation kind, the `forge` value of a
-spec's `requires` — because those are stored values and API fields, and
-renaming them buys no reader anything. Everything a person reads says
-repository instead:
+2026-10-24: the old name of the repository port meant nothing to anyone, said
+the user, first for the UI and then "a full rewrite — migrations, internal…".
+It is gone from the repo:
 
-- **UI**: the workshop's Forge tab is the **Repositories** tab (`?tab=repos`,
-  `ReposTab.svelte`); the Integrations group is *Repositories* (GitLab,
-  GitHub); the project form picks a *repository account*; run-page messages
-  ("repository unreachable", "happens on the repository"). Port names are
-  never printed raw any more: `portLabel()` (`format.ts`) turns `forge` into
-  "repository" on the workshop chips, the new-workshop page's missing list
-  and the flow editor's "needs a … integration".
-- **Engine messages that reach the UI**: preflight ("repository access", the
-  health step `forge_access` → `repo_access`), "no integration reaches
-  repository …", "needs a repository integration (GitLab, GitHub)", the
-  unreachable notification, merge refusals, the automation's last error.
-- **Signal and action descriptions** (the flow editor shows them), the
-  flow-language doc (its *requires* column says repository, with one note
-  that the API calls the port `forge`), the template comments, README.
-- The `forge_mr` automation is called a *merge-request automation* in text;
-  its stored kind value is unchanged.
+- **Vocabulary.** People read *repository*: the workshop's **Repositories**
+  tab (`?tab=repos`, `ReposTab.svelte`), the Integrations group, the project's
+  *repository account*, run-page and engine messages ("no integration reaches
+  repository …", "needs a repository integration (GitLab, GitHub)", health
+  step `repo_access`). `portLabel()` (`format.ts`) prints ports, never raw.
+- **Code.** The port is `ports.RepoHost` (`res.RepoHost`, `RepoHosts` per
+  extra repo, `repoHostFor`); kinds are `RepoHostKind` / `RepoAccount` /
+  `RegisterRepoHost`; fakes `fake.RepoHost`, `kinds.FakeRepoHost(Of)`; the
+  account's user `RepoHostUser`. A host-neutral word where *repo* alone would
+  be ambiguous: `RepoRef` is one repository, `RepoHost` the service holding
+  them.
+- **Stored and API values.** Port value `repository` (integrations.port, a
+  spec's `requires`); the project column and field `repo_account_id`
+  (`repoAccountId` in the UI); the automation kind `merge_request` (its
+  constant `AutomationMergeRequest`). The parser no longer names the retired
+  stage type that opened a merge request — a stray one gets "unknown type".
+- **Migrations edited in place.** `0001_init.sql` (the column, comments) and
+  `0006_merge_request_automations.sql` (renamed; the kind check) carry the new
+  names and `TestInitMigrationIsFrozen` holds the new hash. That breaks the
+  freeze's promise on purpose (noted at `preSquashHead`): a database created
+  before this edit does not match the code. The project is unreleased, so such
+  a database is reset (`task dev:db:reset`) or upgraded once by hand — renaming
+  the column and its foreign key, rewriting the port and kind values, and
+  re-adding the kind check — never by a migration that would keep the old
+  names in the repo.

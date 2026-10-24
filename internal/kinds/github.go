@@ -9,13 +9,13 @@ import (
 	"apothecary/internal/ports"
 )
 
-// GitHub is the forge/github kind (DESIGN2 §12): Bearer PAT, Locator is
-// "owner/repo", draft PRs are native (no title prefix).
+// GitHub is the repository host/github kind (DESIGN2 §12): Bearer PAT, Locator
+// is "owner/repo", draft PRs are native (no title prefix).
 type GitHub struct{}
 
 func (GitHub) Descriptor() Descriptor {
 	return Descriptor{
-		Port: "forge", Kind: "github", Label: "GitHub",
+		Port: "repository", Kind: "github", Label: "GitHub",
 		Fields: []Field{
 			{Name: "base_url", Label: "API base URL", Default: "https://api.github.com", Required: true},
 			{Name: "token", Label: "Personal access token (repo scope, or fine-grained Contents:RW + Pull requests:RW)", Secret: true, Required: true},
@@ -32,7 +32,7 @@ type githubAccount struct {
 	gitEmail string
 }
 
-func (GitHub) Account(cfg Config) (ForgeAccount, error) {
+func (GitHub) Account(cfg Config) (RepoAccount, error) {
 	return &githubAccount{
 		acc:      githubadapter.NewAccount(cfg.Str("base_url", "https://api.github.com"), cfg.Secrets["token"]),
 		token:    cfg.Secrets["token"],
@@ -82,7 +82,7 @@ func (a *githubAccount) EgressDomains() []string {
 	return []string{"github.com", "api.github.com", "codeload.github.com"}
 }
 
-func (GitHub) Forge(cfg Config, repo ports.RepoRef) (ports.Forge, error) {
+func (GitHub) RepoHost(cfg Config, repo ports.RepoRef) (ports.RepoHost, error) {
 	locator := strings.TrimSuffix(strings.TrimSpace(repo.Locator), ".git")
 	if strings.Contains(locator, "://") || strings.Count(locator, "/") != 1 ||
 		strings.HasPrefix(locator, "/") || strings.HasSuffix(locator, "/") {
@@ -97,4 +97,4 @@ func (GitHub) Forge(cfg Config, repo ports.RepoRef) (ports.Forge, error) {
 	}), nil
 }
 
-var _ ForgeKind = GitHub{}
+var _ RepoHostKind = GitHub{}

@@ -31,7 +31,7 @@ type fakeEngine struct {
 	}
 	runs map[string][]run.View
 	next int
-	// MRs is what ListMRs reports (forge_mr).
+	// MRs is what ListMRs reports (merge_request).
 	MRs []ports.MRInfo
 }
 
@@ -67,7 +67,7 @@ func (f *fakeEngine) ListMRs(context.Context, string, string) ([]ports.MRInfo, e
 	return append([]ports.MRInfo(nil), f.MRs...), nil
 }
 
-func (f *fakeEngine) ForgeUser(context.Context, string, string) (string, error) {
+func (f *fakeEngine) RepoHostUser(context.Context, string, string) (string, error) {
 	return "apothecary", nil
 }
 
@@ -122,12 +122,12 @@ func newHarness(t *testing.T) *harness {
 		}
 		return in
 	}
-	forge := mk(confstore.PortForge, "f")
+	repoHost := mk(confstore.PortRepository, "f")
 	prov := mk(confstore.PortProvisioner, "p")
 	hs := mk(confstore.PortHarness, "h")
 	source := mk(confstore.PortTicketSource, "tracker")
 	p, err := conf.CreateProject(ctx, confstore.Project{
-		Name: "p1", ForgeID: forge.ID, ProvisionerID: prov.ID, HarnessIDs: []string{hs.ID},
+		Name: "p1", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{hs.ID},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
 		DefaultFlow: builtin.DefaultFlowName,
 	})
@@ -365,10 +365,10 @@ phases:
   - { id: closed, on: mr_closed, then: done }
 `
 
-// forge_mr creates a run on each merge request someone else opened, once:
+// merge_request creates a run on each merge request someone else opened, once:
 // drafts wait, the integration's own are never picked, and each gets a
 // ticket of its own keyed by the merge request.
-func TestForgeMRStartsOnOthersMergeRequestsOnce(t *testing.T) {
+func TestMergeRequestAutomationStartsOnOthersMergeRequestsOnce(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {
@@ -379,7 +379,7 @@ func TestForgeMRStartsOnOthersMergeRequestsOnce(t *testing.T) {
 			Title: fmt.Sprintf("change %d", iid), Author: author, State: ports.MROpen, Draft: draft, Source: "feature", Target: "main"}
 	}
 	h.eng.MRs = []ports.MRInfo{mr(5, "bob", true), mr(4, "alice", false), mr(3, "apothecary", false)}
-	a := h.automation(t, confstore.Automation{Name: "review others", Kind: confstore.AutomationForgeMR, Flow: "rev", Enabled: true})
+	a := h.automation(t, confstore.Automation{Name: "review others", Kind: confstore.AutomationMergeRequest, Flow: "rev", Enabled: true})
 	h.pass(t)
 	if n := h.eng.count(); n != 1 {
 		t.Fatalf("runs = %d, want one (alice's)", n)
@@ -411,15 +411,15 @@ func TestAutomationEntrypointKinds(t *testing.T) {
 	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, err := h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "x", Kind: confstore.AutomationForgeMR, Flow: builtin.DefaultFlowName})
+	_, err := h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "x", Kind: confstore.AutomationMergeRequest, Flow: builtin.DefaultFlowName})
 	if err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a run on a merge request") {
-		t.Errorf("forge_mr on the default flow: %v", err)
+		t.Errorf("merge_request on the default flow: %v", err)
 	}
 	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "y", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Flow: "rev"})
 	if err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a fresh run") {
 		t.Errorf("tracker_query on a reviewer flow: %v", err)
 	}
-	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "z", Kind: confstore.AutomationForgeMR, Flow: "rev", Repo: "ghost"})
+	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "z", Kind: confstore.AutomationMergeRequest, Flow: "rev", Repo: "ghost"})
 	if err == nil || !strings.Contains(err.Error(), `no repository "ghost"`) {
 		t.Errorf("unknown repo: %v", err)
 	}

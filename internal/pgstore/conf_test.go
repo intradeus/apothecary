@@ -22,14 +22,14 @@ func TestProjectDefaultFlowBuiltin(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	in := confstore.StoredIntegration{
-		ID: "int1", Port: "forge", Kind: "gitlab", Name: "gl",
+		ID: "int1", Port: "repository", Kind: "gitlab", Name: "gl",
 		Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertIntegration(ctx, in); err != nil {
 		t.Fatal(err)
 	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {
@@ -65,13 +65,13 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 	s := openConf(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	in := confstore.StoredIntegration{ID: "int1", Port: "forge", Kind: "gitlab", Name: "gl",
+	in := confstore.StoredIntegration{ID: "int1", Port: "repository", Kind: "gitlab", Name: "gl",
 		Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now}
 	if err := s.UpsertIntegration(ctx, in); err != nil {
 		t.Fatal(err)
 	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
 	}
@@ -103,14 +103,15 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 	if again, err := s.GetAutomation(ctx, "au1"); err != nil || again.LastFiredAt == nil || !again.LastFiredAt.Equal(fired) || again.LastError != "boom" || again.Params != nil {
 		t.Fatalf("marked = %+v, %v", again, err)
 	}
-	// A forge_mr automation passes the kind check (0006) and keeps its repo.
-	mrw := confstore.Automation{ID: "au2", ProjectID: p.ID, Name: "review others", Kind: confstore.AutomationForgeMR,
+	// A merge_request automation passes the kind check (0006) and keeps its
+	// repo.
+	mrw := confstore.Automation{ID: "au2", ProjectID: p.ID, Name: "review others", Kind: confstore.AutomationMergeRequest,
 		Repo: "api", Flow: "rev", Enabled: true, CreatedAt: now, UpdatedAt: now}
 	if err := s.UpsertAutomation(ctx, mrw); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.GetAutomation(ctx, "au2"); err != nil || got.Repo != "api" || got.Kind != confstore.AutomationForgeMR {
-		t.Fatalf("forge_mr roundtrip = %+v, %v", got, err)
+	if got, err := s.GetAutomation(ctx, "au2"); err != nil || got.Repo != "api" || got.Kind != confstore.AutomationMergeRequest {
+		t.Fatalf("merge_request roundtrip = %+v, %v", got, err)
 	}
 	if err := s.DeleteAutomation(ctx, "au2"); err != nil {
 		t.Fatal(err)
@@ -139,7 +140,7 @@ func TestFlowBindingRoundtripAndCascade(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	in := confstore.StoredIntegration{
-		ID: "int1", Port: "forge", Kind: "gitlab", Name: "gl",
+		ID: "int1", Port: "repository", Kind: "gitlab", Name: "gl",
 		Config: map[string]any{"base_url": "https://gitlab.com"},
 		Sealed: []byte{1, 2, 3}, CreatedAt: now, UpdatedAt: now,
 	}
@@ -147,7 +148,7 @@ func TestFlowBindingRoundtripAndCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
@@ -199,7 +200,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	in := confstore.StoredIntegration{
-		ID: "int1", Port: "forge", Kind: "gitlab", Name: "gl",
+		ID: "int1", Port: "repository", Kind: "gitlab", Name: "gl",
 		Config: map[string]any{"base_url": "https://gitlab.com"},
 		Sealed: []byte{1, 2, 3}, CreatedAt: now, UpdatedAt: now,
 	}
@@ -222,7 +223,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	// on the built-in template, which is the only thing that can resolve
 	// before it has flows of its own.
 	p := confstore.Project{
-		ID: "prj1", Name: "web", ForgeID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		Workspace:   confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},

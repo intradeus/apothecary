@@ -1,8 +1,9 @@
 package engine
 
-// The forge observations behind ci_failed, mr_mergeable, mr_head_moved and
-// the mr_approved outcome: what each holds on, its occurrence key, and that
-// the idle loop asks the forge only for what the flow reads.
+// The repository host observations behind ci_failed, mr_mergeable,
+// mr_head_moved and the mr_approved outcome: what each holds on, its
+// occurrence key, and that the idle loop asks the repository host only for
+// what the flow reads.
 
 import (
 	"context"
@@ -44,13 +45,13 @@ func settle() { time.Sleep(60 * time.Millisecond) }
 func TestCIFailedOpensOncePerHeadAndFailure(t *testing.T) {
 	ph := newPhasedHarness(t, observeFlowDoc("  - id: ci_fix\n    on: ci_failed\n    stages:\n      - { id: patch, type: command, run: \"./ci_fix.sh\" }\n"))
 	runID := ph.start(t)
-	ph.forge.SetHead(1, "h1")
-	ph.forge.SetChecks(1, ports.Check{Name: "lint", State: ports.CheckSuccess}, ports.Check{Name: "test", State: ports.CheckPending})
+	ph.repoHost.SetHead(1, "h1")
+	ph.repoHost.SetChecks(1, ports.Check{Name: "lint", State: ports.CheckSuccess}, ports.Check{Name: "test", State: ports.CheckPending})
 	settle()
 	if n := ph.runsOf("./ci_fix.sh"); n != 0 {
 		t.Fatalf("ci_fix ran %d times while the checks were still running", n)
 	}
-	ph.forge.SetChecks(1, ports.Check{Name: "lint", State: ports.CheckSuccess}, ports.Check{Name: "test", State: ports.CheckFailure})
+	ph.repoHost.SetChecks(1, ports.Check{Name: "lint", State: ports.CheckSuccess}, ports.Check{Name: "test", State: ports.CheckFailure})
 	ph.waitRuns(t, "./ci_fix.sh", 1)
 	starts := phaseStarts(ph.events(t, runID))
 	if last := starts[len(starts)-1]; last.Phase != "ci_fix" || last.Key != "h1:test" || last.Subject != "repo" {
@@ -61,11 +62,11 @@ func TestCIFailedOpensOncePerHeadAndFailure(t *testing.T) {
 		t.Fatalf("the same failure opened ci_fix %d times", n)
 	}
 	// Another check failing on the same head is a new failure.
-	ph.forge.SetChecks(1, ports.Check{Name: "lint", State: ports.CheckFailure}, ports.Check{Name: "test", State: ports.CheckFailure})
+	ph.repoHost.SetChecks(1, ports.Check{Name: "lint", State: ports.CheckFailure}, ports.Check{Name: "test", State: ports.CheckFailure})
 	ph.waitRuns(t, "./ci_fix.sh", 2)
 	// A neutral (cancelled, skipped) check is no failure.
-	ph.forge.SetHead(1, "h2")
-	ph.forge.SetChecks(1, ports.Check{Name: "test", State: ports.CheckNeutral}, ports.Check{Name: "lint", State: ports.CheckSuccess})
+	ph.repoHost.SetHead(1, "h2")
+	ph.repoHost.SetChecks(1, ports.Check{Name: "test", State: ports.CheckNeutral}, ports.Check{Name: "lint", State: ports.CheckSuccess})
 	settle()
 	if n := ph.runsOf("./ci_fix.sh"); n != 2 {
 		t.Errorf("a cancelled check opened ci_fix (%d runs)", n)
@@ -75,14 +76,14 @@ func TestCIFailedOpensOncePerHeadAndFailure(t *testing.T) {
 	}
 }
 
-// A flow that reads no check never makes the forge list them.
+// A flow that reads no check never makes the repository host list them.
 func TestChecksAreReadOnlyWhenAFlowNeedsThem(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	ph.start(t)
 	settle()
-	ph.forge.SetHead(1, "h1")
+	ph.repoHost.SetHead(1, "h1")
 	settle()
-	if n := ph.forge.ChecksCalls; n != 0 {
+	if n := ph.repoHost.ChecksCalls; n != 0 {
 		t.Errorf("MRChecks called %d times for a flow with no ci_failed", n)
 	}
 }
@@ -90,20 +91,20 @@ func TestChecksAreReadOnlyWhenAFlowNeedsThem(t *testing.T) {
 func TestMergeableOpensOncePerHead(t *testing.T) {
 	ph := newPhasedHarness(t, observeFlowDoc("  - id: automerge\n    on: { signal: mr_mergeable, start: auto }\n    stages:\n      - { id: merge, type: command, run: \"./merge.sh\" }\n"))
 	runID := ph.start(t)
-	ph.forge.SetHead(1, "h1")
+	ph.repoHost.SetHead(1, "h1")
 	settle()
 	if n := ph.runsOf("./merge.sh"); n != 0 {
-		t.Fatalf("merged before the forge allowed it (%d)", n)
+		t.Fatalf("merged before the repository host allowed it (%d)", n)
 	}
-	ph.forge.SetMergeableNow(1, true)
+	ph.repoHost.SetMergeableNow(1, true)
 	ph.waitRuns(t, "./merge.sh", 1)
 	settle()
 	if n := ph.runsOf("./merge.sh"); n != 1 {
 		t.Fatalf("one head opened automerge %d times", n)
 	}
-	ph.forge.SetHead(1, "h2")
+	ph.repoHost.SetHead(1, "h2")
 	ph.waitRuns(t, "./merge.sh", 2)
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 }
 
@@ -112,7 +113,7 @@ func TestMergeableOpensOncePerHead(t *testing.T) {
 // known; a new head opens the phase once it has stood still for quiet_for.
 func TestHeadMovedIsSomeoneElsesPush(t *testing.T) {
 	ph := newPhasedHarness(t, observeFlowDoc("  - id: again\n    on: { signal: mr_head_moved, quiet_for: 10m }\n    stages:\n      - { id: rereview, type: command, run: \"./rereview.sh\" }\n"))
-	ph.forge.NewHead = "own1"
+	ph.repoHost.NewHead = "own1"
 	runID := ph.start(t)
 	created, _ := findPayload[*event.MRCreated](ph.events(t, runID))
 	if created == nil || created.Head != "own1" {
@@ -122,7 +123,7 @@ func TestHeadMovedIsSomeoneElsesPush(t *testing.T) {
 	if n := ph.runsOf("./rereview.sh"); n != 0 {
 		t.Fatalf("the run's own head opened the phase (%d)", n)
 	}
-	ph.forge.SetHead(1, "theirs1")
+	ph.repoHost.SetHead(1, "theirs1")
 	settle()
 	if n := ph.runsOf("./rereview.sh"); n != 0 {
 		t.Fatalf("opened before the head stood still for quiet_for (%d)", n)
@@ -139,7 +140,7 @@ func TestHeadMovedIsSomeoneElsesPush(t *testing.T) {
 		t.Fatalf("the same push opened the phase %d times", n)
 	}
 	// Back to a head the run knows: nothing.
-	ph.forge.SetHead(1, "own1")
+	ph.repoHost.SetHead(1, "own1")
 	ph.clock.Advance(11 * time.Minute)
 	settle()
 	if n := ph.runsOf("./rereview.sh"); n != 1 {
@@ -181,7 +182,7 @@ func TestApprovedOutcomeEndsTheRun(t *testing.T) {
 	if v := ph.view(t, runID); v.State != run.InReview {
 		t.Fatalf("state before any approval = %s", v.State)
 	}
-	ph.forge.SetApprovedBy(1, "rev")
+	ph.repoHost.SetApprovedBy(1, "rev")
 	ph.waitState(t, runID, run.Completed)
 	starts := phaseStarts(ph.events(t, runID))
 	if last := starts[len(starts)-1]; last.Phase != "approved" || last.Key != "approved" || last.Subject != "" {
@@ -194,26 +195,26 @@ func TestWaitForApproval(t *testing.T) {
 	doc := strings.Replace(waitFlowDoc, "type: wait, for: mr_merged, on_fail: abort", "type: wait, for: mr_approved, on_fail: abort", 1)
 	ph := newPhasedHarness(t, doc)
 	runID := ph.start(t)
-	ph.forge.SetApprovedBy(1, "rev")
+	ph.repoHost.SetApprovedBy(1, "rev")
 	ph.waitRuns(t, "./after.sh", 1)
-	ph.forge.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 
 	ph2 := newPhasedHarness(t, doc)
 	runID2 := ph2.start(t)
-	ph2.forge.SetMRState(1, ports.MRClosed)
+	ph2.repoHost.SetMRState(1, ports.MRClosed)
 	ph2.waitState(t, runID2, run.Abandoned)
 }
 
 // The run page's live status carries the head's checks, the approval and
-// the forge's merge verdict.
+// the repository host's merge verdict.
 func TestMRStatusesCarryChecksAndApproval(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
-	ph.forge.SetHead(1, "h1")
-	ph.forge.SetChecks(1, ports.Check{Name: "test", State: ports.CheckFailure, URL: "https://ci/1"})
-	ph.forge.SetApprovedBy(1, "rev")
-	ph.forge.SetMergeableNow(1, true)
+	ph.repoHost.SetHead(1, "h1")
+	ph.repoHost.SetChecks(1, ports.Check{Name: "test", State: ports.CheckFailure, URL: "https://ci/1"})
+	ph.repoHost.SetApprovedBy(1, "rev")
+	ph.repoHost.SetMergeableNow(1, true)
 	live, err := ph.e.MRStatuses(context.Background(), runID)
 	if err != nil || len(live) != 1 {
 		t.Fatalf("live = %+v, %v", live, err)

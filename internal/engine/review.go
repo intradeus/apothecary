@@ -10,9 +10,9 @@ import (
 
 // pendingThreads are the review threads still waiting on the factory: not
 // resolved, and whose latest comment is not a factory reply (so a reviewer
-// spoke after our last reply, or we never replied). Derived from the forge
-// alone — no cursor is stored, so nothing can drift from what the reviewer
-// sees.
+// spoke after our last reply, or we never replied). Derived from the
+// repository host alone — no cursor is stored, so nothing can drift from what
+// the reviewer sees.
 func pendingThreads(threads []ports.ReviewThread) []ports.ReviewThread {
 	var out []ports.ReviewThread
 	for _, t := range threads {
@@ -45,8 +45,8 @@ func newestPending(pending []ports.ReviewThread) (ports.ReviewComment, bool) {
 	return newest, found
 }
 
-// MRLive is a merge request as the forge reports it right now: the run
-// page's view of mergeability and review activity.
+// MRLive is a merge request as the repository host reports it right now: the
+// run page's view of mergeability and review activity.
 type MRLive struct {
 	Repo           string          `json:"repo"`
 	Branch         string          `json:"branch"`
@@ -58,19 +58,19 @@ type MRLive struct {
 	PendingThreads int             `json:"pending_threads"`
 	// LastCommentAt is the newest pending reviewer comment (zero: none).
 	LastCommentAt *time.Time `json:"last_comment_at,omitempty"`
-	// MergeableNow is the forge's verdict that it would merge now; Draft
-	// whether it is still a draft; Checks the head's CI; Approval its
+	// MergeableNow is the repository host's verdict that it would merge now;
+	// Draft whether it is still a draft; Checks the head's CI; Approval its
 	// reviews' verdict. Checks and Approval are read for an open one only.
 	MergeableNow bool            `json:"mergeable_now,omitempty"`
 	Draft        bool            `json:"draft,omitempty"`
 	Checks       *ports.Checks   `json:"checks,omitempty"`
 	Approval     *ports.Approval `json:"approval,omitempty"`
-	// Error is what the forge said when it could not be asked.
+	// Error is what the repository host said when it could not be asked.
 	Error string `json:"error,omitempty"`
 }
 
-// MRStatuses asks the forge about each of the run's merge requests. It is an
-// observation for display, not run history: nothing is recorded.
+// MRStatuses asks the repository host about each of the run's merge requests.
+// It is an observation for display, not run history: nothing is recorded.
 func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error) {
 	v, err := e.runView(ctx, runID)
 	if err != nil {
@@ -88,15 +88,15 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 	var wg sync.WaitGroup
 	for i, mr := range v.MRs {
 		out[i] = MRLive{Repo: mr.Repo, Branch: mr.Branch, URL: mr.URL, Target: mr.Target}
-		forge := res.forgeFor(mr.Repo)
-		if forge == nil {
+		repoHost := res.repoHostFor(mr.Repo)
+		if repoHost == nil {
 			out[i].Error = "no integration reaches this repository"
 			continue
 		}
 		wg.Add(1)
 		go func(l *MRLive, ref ports.MRRef) {
 			defer wg.Done()
-			st, err := forge.MRStatus(ctx, ref)
+			st, err := repoHost.MRStatus(ctx, ref)
 			if err != nil {
 				l.Error = err.Error()
 				return
@@ -107,20 +107,20 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 				l.Target = st.Target
 			}
 			if st.State == ports.MROpen {
-				checks, err := forge.MRChecks(ctx, ref, st.HeadSHA)
+				checks, err := repoHost.MRChecks(ctx, ref, st.HeadSHA)
 				if err != nil {
 					l.Error = err.Error()
 					return
 				}
 				l.Checks = &checks
-				ap, err := forge.MRApproval(ctx, ref)
+				ap, err := repoHost.MRApproval(ctx, ref)
 				if err != nil {
 					l.Error = err.Error()
 					return
 				}
 				l.Approval = &ap
 			}
-			threads, err := forge.MRThreads(ctx, ref)
+			threads, err := repoHost.MRThreads(ctx, ref)
 			if err != nil {
 				l.Error = err.Error()
 				return

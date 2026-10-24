@@ -102,7 +102,7 @@ const PING_TYPES: PingType[] = [
 	'permission'
 ];
 const PING_STATUSES: PingStatus[] = ['pending', 'answered', 'withdrawn'];
-const PORTS: Port[] = ['forge', 'provisioner', 'harness', 'ticketsource'];
+const PORTS: Port[] = ['repository', 'provisioner', 'harness', 'ticketsource'];
 const SNAPSHOT_KINDS: SnapshotKind[] = ['output', 'log', 'ping_file'];
 
 const oneOf = <T extends string>(allowed: T[], v: string | undefined, fallback: T): T =>
@@ -407,7 +407,7 @@ export function toProject(w: Wire.Project): Project {
 	return {
 		id: w.id ?? '',
 		name: w.name ?? '',
-		forgeId: w.forge_id ?? '',
+		repoAccountId: w.repo_account_id ?? '',
 		provisionerId: w.provisioner_id ?? '',
 		harnessIds: list(w.harness_ids),
 		repo: {
@@ -548,7 +548,7 @@ export function toAutomation(w: Wire.Automation): Automation {
 		id: w.id ?? '',
 		projectId: w.project_id ?? '',
 		name: w.name ?? '',
-		kind: oneOf(['tracker_query', 'cron', 'forge_mr'] as const, w.kind, 'tracker_query'),
+		kind: oneOf(['tracker_query', 'cron', 'merge_request'] as const, w.kind, 'tracker_query'),
 		sourceId: w.source_id || undefined,
 		query: w.query || undefined,
 		schedule: w.schedule || undefined,
@@ -701,7 +701,7 @@ export function toSignalSpec(w: Wire.Signal) {
 export function toIntegration(w: Wire.Integration): Integration {
 	return {
 		id: w.id ?? '',
-		port: oneOf(PORTS, w.port, 'forge'),
+		port: oneOf(PORTS, w.port, 'repository'),
 		kind: w.kind ?? '',
 		name: w.name ?? '',
 		config: w.config ?? {},
@@ -725,7 +725,7 @@ function toKindField(w: Wire.Field): KindField {
 
 export function toKindDescriptor(w: Wire.KindDescriptor): KindDescriptor {
 	return {
-		port: oneOf(PORTS, w.port, 'forge'),
+		port: oneOf(PORTS, w.port, 'repository'),
 		kind: w.kind ?? '',
 		label: w.label ?? '',
 		help: w.help,

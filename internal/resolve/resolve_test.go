@@ -71,7 +71,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 	}
 	p, err := svc.CreateProject(ctx, confstore.Project{
 		Name:          "p1",
-		ForgeID:       mk(confstore.PortForge, "fake", "f", nil),
+		RepoAccountID: mk(confstore.PortRepository, "fake", "f", nil),
 		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c", nil),
 		HarnessIDs:    []string{mk(confstore.PortHarness, "fake", "h", nil)},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
@@ -150,7 +150,7 @@ func TestResolveMultiHarness(t *testing.T) {
 	alt := mk(confstore.PortHarness, "alt", "h2")
 	p, err := svc.CreateProject(ctx, confstore.Project{
 		Name:          "multi",
-		ForgeID:       mk(confstore.PortForge, "fake", "f"),
+		RepoAccountID: mk(confstore.PortRepository, "fake", "f"),
 		ProvisionerID: mk(confstore.PortProvisioner, "counting", "c"),
 		HarnessIDs:    []string{def, alt},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
@@ -199,7 +199,7 @@ func TestResolveFillsResolution(t *testing.T) {
 			t.Errorf("egress %v missing %s", res.EgressDomains, want)
 		}
 	}
-	if res.Envp == nil || res.Runner == nil || res.Forge == nil {
+	if res.Envp == nil || res.Runner == nil || res.RepoHost == nil {
 		t.Error("adapters missing")
 	}
 	// The full port chain works: provision + run through the resolution.
@@ -304,7 +304,7 @@ func TestUnresolvableMapping(t *testing.T) {
 		return in.ID
 	}
 	p2, err := svc.CreateProject(ctx, confstore.Project{
-		Name: "p2", ForgeID: mk(confstore.PortForge, "f2"),
+		Name: "p2", RepoAccountID: mk(confstore.PortRepository, "f2"),
 		ProvisionerID: mk(confstore.PortProvisioner, "c2"), HarnessIDs: []string{ghost.ID},
 		Repo:        confstore.RepoConfig{URL: "https://x.example/g/p.git"},
 		Workspace:   confstore.WorkspaceConfig{},
@@ -321,22 +321,22 @@ func TestUnresolvableMapping(t *testing.T) {
 func TestIntegrationOps(t *testing.T) {
 	r, _, p, _, _ := setup(t)
 	ctx := context.Background()
-	if _, err := r.TestIntegration(ctx, p.ForgeID); err != nil {
-		t.Errorf("forge test = %v", err)
+	if _, err := r.TestIntegration(ctx, p.RepoAccountID); err != nil {
+		t.Errorf("repository host test = %v", err)
 	}
 	if _, err := r.TestIntegration(ctx, p.HarnessIDs[0]); err != nil {
 		t.Errorf("harness test = %v", err)
 	}
-	repos, err := r.ListRepos(ctx, p.ForgeID)
+	repos, err := r.ListRepos(ctx, p.RepoAccountID)
 	if err != nil || len(repos) == 0 {
 		t.Fatalf("ListRepos = %v, %v", repos, err)
 	}
 	if _, err := r.ListRepos(ctx, p.HarnessIDs[0]); err == nil {
-		t.Error("ListRepos on a non-forge must refuse")
+		t.Error("ListRepos on a non-repository integration must refuse")
 	}
 }
 
-var _ = fake.Forge{} // keep the fake import for future scenarios
+var _ = fake.RepoHost{} // keep the fake import for future scenarios
 
 // A ticketsource integration's write side is the same adapter, asserted for
 // the capability; one without it is refused by name.

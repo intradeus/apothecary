@@ -122,7 +122,7 @@ func (x *confEnv) wizard(t *testing.T) string {
 		_ = json.Unmarshal(data, &out)
 		return out.ID
 	}
-	forgeID := mk("forge", "f", map[string]string{"token": "glpat-PLANTED-forge-token"})
+	repoAccountID := mk("repository", "f", map[string]string{"token": "glpat-PLANTED-repo-token"})
 	provID := mk("provisioner", "c", nil)
 	// Model auth is harness-owned: the second planted secret rides in
 	// auth_json, exercising the real credential path.
@@ -131,7 +131,7 @@ func (x *confEnv) wizard(t *testing.T) string {
 	})
 
 	// Repo picker.
-	resp, data := x.do(t, "GET", "/api/integrations/"+forgeID+"/repos", nil, nil)
+	resp, data := x.do(t, "GET", "/api/integrations/"+repoAccountID+"/repos", nil, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("repos = %d: %s", resp.StatusCode, data)
 	}
@@ -142,7 +142,7 @@ func (x *confEnv) wizard(t *testing.T) string {
 	}
 
 	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
-		"name": "web", "forge_id": forgeID, "provisioner_id": provID,
+		"name": "web", "repo_account_id": repoAccountID, "provisioner_id": provID,
 		"harness_ids": []string{harnessID},
 		"repo": map[string]string{
 			"url": repos[0].URL, "locator": repos[0].Locator, "default_branch": repos[0].DefaultBranch,
@@ -186,7 +186,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// GET /api/kinds serves descriptors for the generic forms.
 	resp, data := x.do(t, "GET", "/api/kinds", nil, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), `"port":"forge"`) {
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"port":"repository"`) {
 		t.Fatalf("kinds = %d: %s", resp.StatusCode, data)
 	}
 
@@ -206,22 +206,22 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 	// stored secret still decrypts.
 	var list []integrationJSON
 	_ = json.Unmarshal(data, &list)
-	var forgeID string
+	var repoAccountID string
 	for _, in := range list {
-		if in.Port == "forge" {
-			forgeID = in.ID
+		if in.Port == "repository" {
+			repoAccountID = in.ID
 		}
 	}
-	resp, data = x.do(t, "PUT", "/api/integrations/"+forgeID, map[string]any{"name": "renamed"}, nil)
+	resp, data = x.do(t, "PUT", "/api/integrations/"+repoAccountID, map[string]any{"name": "renamed"}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("update = %d: %s", resp.StatusCode, data)
 	}
-	in, err := x.conf.GetIntegration(t.Context(), forgeID)
-	if err != nil || in.Secrets["token"] != "glpat-PLANTED-forge-token" {
+	in, err := x.conf.GetIntegration(t.Context(), repoAccountID)
+	if err != nil || in.Secrets["token"] != "glpat-PLANTED-repo-token" {
 		t.Fatalf("secret lost on update: %v %v", in.Secrets, err)
 	}
 
-	// Preflight passes against the fake forge.
+	// Preflight passes against the fake repository host.
 	resp, data = x.do(t, "POST", "/api/projects/"+projectID+"/preflight", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"ok":true`) {
 		t.Fatalf("preflight = %d: %s", resp.StatusCode, data)
@@ -275,7 +275,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 	}
 
 	// Delete rules surface as 409s naming the referrer.
-	resp, data = x.do(t, "DELETE", "/api/integrations/"+forgeID, nil, nil)
+	resp, data = x.do(t, "DELETE", "/api/integrations/"+repoAccountID, nil, nil)
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), "web") {
 		t.Fatalf("referenced delete = %d: %s", resp.StatusCode, data)
 	}
@@ -308,7 +308,7 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 	}
 	x.e.Wait(runID)
 
-	planted := []string{"glpat-PLANTED-forge-token", "sk-PLANTED-provider-key"}
+	planted := []string{"glpat-PLANTED-repo-token", "sk-PLANTED-provider-key"}
 	scan := func(where string, blob []byte) {
 		for _, s := range planted {
 			if strings.Contains(string(blob), s) {
@@ -667,7 +667,7 @@ func TestActionRegistryRoute(t *testing.T) {
 	if mr == nil {
 		t.Fatalf("no %s in %+v", actionspec.CreateMR, acts)
 	}
-	if mr.Title == "" || mr.Requires != actionspec.RequiresForge || len(mr.Inputs) != 1 ||
+	if mr.Title == "" || mr.Requires != actionspec.RequiresRepository || len(mr.Inputs) != 1 ||
 		mr.Inputs[0].Name != "body" || !mr.Inputs[0].Required {
 		t.Errorf("create_mr = %+v", mr)
 	}

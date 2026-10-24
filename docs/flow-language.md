@@ -631,8 +631,7 @@ keeps that visible. See §10 for why general AND/OR gates are not the answer.
 Actions are apothecary's built-in integrations. Unlike agents they are compiled
 in, so an unknown `action:` is a **parse** error and its input names are checked
 immediately. Registry (`GET /api/actions`); *requires* names the integration
-the project must have — a repository (GitLab, GitHub; the API calls that
-port `forge`) or a tracker:
+the project must have — a repository (GitLab, GitHub) or a tracker:
 
 | action | requires | inputs | outputs | notes |
 |---|---|---|---|---|
@@ -1278,7 +1277,6 @@ Older spellings the parser still answers by name rather than with a bare
 
 | old | now |
 |---|---|
-| `type: forge_mr` + `body:` | `type: action, action: create_mr, input: {body: …}` |
 | `ping: plan_approval\|final_review\|manual_debug` | `question:` free text |
 | `payload:` on a gate | `input: {name: …}` |
 | `auto_complete:` | `auto_approve:` (or a `wait` stage to just park on it) |

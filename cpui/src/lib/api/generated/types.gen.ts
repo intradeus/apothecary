@@ -703,12 +703,12 @@ export type Project = {
 	} | null;
 	created_at: string;
 	default_flow: string;
-	forge_id: string;
 	harness_ids: Array<string> | null;
 	id: string;
 	name: string;
 	provisioner_id: string;
 	repo: RepoConfig;
+	repo_account_id: string;
 	repos?: Array<ExtraRepo>;
 	updated_at: string;
 	workspace: WorkspaceConfig;
@@ -719,11 +719,11 @@ export type ProjectRequest = {
 		[key: string]: string;
 	} | null;
 	default_flow: string;
-	forge_id: string;
 	harness_ids: Array<string> | null;
 	name: string;
 	provisioner_id: string;
 	repo: RepoConfig;
+	repo_account_id: string;
 	repos?: Array<ExtraRepo>;
 	workspace: WorkspaceConfig;
 };

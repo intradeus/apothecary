@@ -164,7 +164,7 @@ export interface DocStage {
 
 /** A phase's `on:` — the wait point that opens it (FLOWLANG §1): run_start
  *  (an entrypoint a run is created at), manual (the run page only), or a
- *  forge signal with its start policy (auto | confirm | manual, or a $param).
+ *  repository signal with its start policy (auto | confirm | manual, or a $param).
  *  `max` may read an int parameter ("$name"). */
 export interface DocWait {
 	signal: string;
@@ -187,7 +187,7 @@ export interface DocPhase {
 
 // RUN_START opens an entrypoint: a run is created for the phase. MANUAL opens
 // a phase from the run page only. Everything else that opens a phase is a
-// forge signal, which takes a start policy.
+// repository signal, which takes a start policy.
 export const RUN_START = 'run_start';
 // MR_OPENED is the other entrypoint: a run created on a merge request someone
 // opened, which its phase acts on from the start.

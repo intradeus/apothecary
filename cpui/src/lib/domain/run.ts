@@ -97,7 +97,7 @@ export interface RunPhase {
 	id: string;
 	description?: string;
 	/** What opens it: run_start (an entrypoint), manual (the run page), or a
-	 *  forge signal. */
+	 *  repository signal. */
 	signal: string;
 	/** The policy when the signal holds: auto, confirm (an inbox decision
 	 *  first) or manual (surfaced as pending; you start it). */
@@ -131,20 +131,20 @@ export interface PhaseHold {
 	observedAt: string;
 }
 
-/** A merge request as the forge reports it right now (not run history). */
+/** A merge request as its repository host reports it right now (not run history). */
 export interface MergeRequestLive {
 	repo: string;
 	branch: string;
 	url: string;
 	state: 'open' | 'merged' | 'closed' | '';
-	/** 'unknown' while the forge is still computing — never a conflict. */
+	/** 'unknown' while the repository host is still computing — never a conflict. */
 	mergeable: 'clean' | 'conflicts' | 'unknown' | '';
 	target?: string;
 	headSha?: string;
 	/** Unresolved threads whose last word is a reviewer's. */
 	pendingThreads: number;
 	lastCommentAt?: Date;
-	/** The forge would merge it now: no conflict, required approvals and
+	/** The repository host would merge it now: no conflict, required approvals and
 	 *  checks in, not a draft. */
 	mergeableNow: boolean;
 	draft: boolean;

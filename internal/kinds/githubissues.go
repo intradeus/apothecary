@@ -9,8 +9,8 @@ import (
 
 // GitHubIssues is the ticketsource/github kind: tickets imported from — and,
 // when a flow runs tracker actions, written back to — GitHub Issues. Same
-// token shape as the forge kind; a separate integration because the account
-// a team tracks issues under is not always the one that pushes code.
+// token shape as the repository host kind; a separate integration because the
+// account a team tracks issues under is not always the one that pushes code.
 type GitHubIssues struct{}
 
 const githubIssuesHelp = `Imports a GitHub issue as a ticket (title, body as markdown; GitHub issues carry no attachments as such — files in a body are plain links an agent can read). An issue's key is owner/repo#123.

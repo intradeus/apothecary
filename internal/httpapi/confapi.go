@@ -76,7 +76,8 @@ type IntegrationOps interface {
 	ListRepos(ctx context.Context, id string) ([]kinds.RepoInfo, error)
 	ListModels(ctx context.Context, id string) ([]kinds.ModelInfo, error)
 	// ListBranches lists the branches of a PROJECT's repo (source-branch
-	// picker) — project-scoped, so it resolves the forge + locator itself.
+	// picker) — project-scoped, so it resolves the repository host + locator
+	// itself.
 	ListBranches(ctx context.Context, projectID string) ([]kinds.BranchInfo, error)
 }
 
@@ -248,7 +249,7 @@ func (s *Server) listIntegrationModels(w http.ResponseWriter, r *http.Request) {
 
 type projectBody struct {
 	Name          string `json:"name"`
-	ForgeID       string `json:"forge_id"`
+	RepoAccountID string `json:"repo_account_id"`
 	ProvisionerID string `json:"provisioner_id"`
 	// HarnessIDs is the project's set of available harness integrations (no
 	// default — the flow names the harness kind).
@@ -263,7 +264,7 @@ type projectBody struct {
 
 func (b projectBody) toProject() confstore.Project {
 	return confstore.Project{
-		Name: b.Name, ForgeID: b.ForgeID, ProvisionerID: b.ProvisionerID,
+		Name: b.Name, RepoAccountID: b.RepoAccountID, ProvisionerID: b.ProvisionerID,
 		HarnessIDs: b.HarnessIDs, Repo: b.Repo, Repos: b.Repos,
 		Commands: b.Commands, Workspace: b.Workspace, DefaultFlow: b.DefaultFlow,
 	}

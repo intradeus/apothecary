@@ -38,15 +38,16 @@ type BootstrapSpec struct {
 	// provider.env (DESIGN2 §6.2, still step 2).
 	SeedAuth func(ctx context.Context, env ports.EnvID) error
 	// GitUser/GitPass form the credential-store entry for the repo host
-	// (§11 step 3: the token never lands in .git/config); forge-kind
+	// (§11 step 3: the token never lands in .git/config); host-kind
 	// specific (gitlab "oauth2", github "x-access-token"). Both empty =
 	// public repo.
 	GitUser string
 	GitPass string
 
 	// GitName/GitEmail set the commit author identity (§11 step 3 `git config
-	// user.*`), sourced from the forge integration. Either empty falls back to
-	// the built-in "Apothecary"/"apothecary@local" default for that field.
+	// user.*`), sourced from the repository host integration. Either empty
+	// falls back to the built-in "Apothecary"/"apothecary@local" default for
+	// that field.
 	GitName  string
 	GitEmail string
 
@@ -118,7 +119,7 @@ func WriteWorkspaceSecrets(ctx context.Context, envp ports.EnvProvisioner, id po
 	}
 	if spec.GitPass != "" {
 		// One store entry per distinct host: every repo of the run rides the
-		// same forge account.
+		// same repository host account.
 		urls := []string{spec.RepoURL}
 		for _, x := range spec.Extras {
 			urls = append(urls, x.URL)
@@ -255,9 +256,10 @@ func agentConfigScript(agentsMDPath string) string {
 	return script
 }
 
-// gitConfigScript stamps the commit author identity. name/email come from
-// the forge integration; each empty field falls back to the generic default
-// so a run always has a valid identity (a commit with no user.email fails).
+// gitConfigScript stamps the commit author identity. name/email come from the
+// repository host integration; each empty field falls back to the generic
+// default so a run always has a valid identity (a commit with no user.email
+// fails).
 func gitConfigScript(name, email string) string {
 	if name == "" {
 		name = "Apothecary"

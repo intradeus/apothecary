@@ -59,8 +59,8 @@ index.crates.io
 rubygems.org
 
 # GitHub — apothecary's OWN injected tooling (code-server, harnesses) pulls
-# from GitHub releases REGARDLESS of the project's forge, so these are useful
-# even for a GitLab-hosted repo.
+# from GitHub releases REGARDLESS of the project's repository host, so these
+# are useful even for a GitLab-hosted repo.
 github.com
 api.github.com
 codeload.github.com

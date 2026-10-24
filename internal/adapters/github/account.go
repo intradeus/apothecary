@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-// Account is the account-level GitHub client (DESIGN2 §4 ForgeAccount):
+// Account is the account-level GitHub client (DESIGN2 §4 RepoAccount):
 // token probe and repo browsing for the project wizard.
 type Account struct {
 	a *Adapter

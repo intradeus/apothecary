@@ -1,4 +1,4 @@
-// Package gitlab adapts the Forge port to the GitLab REST API v4
+// Package gitlab adapts the RepoHost port to the GitLab REST API v4
 // (DESIGN.md §0: REST, not glab). The engine holds one repo-scoped token;
 // no GitLab types cross the port boundary.
 package gitlab
@@ -75,8 +75,8 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 }
 
 // path is the bound project's API prefix. The adapter is constructed per
-// project (DESIGN2 §4: ForgeKind.Forge(cfg, repo) parses RepoRef.Locator),
-// so the RepoRef arguments carry branch/URL context only.
+// project (DESIGN2 §4: RepoHostKind.RepoHost(cfg, repo) parses
+// RepoRef.Locator), so the RepoRef arguments carry branch/URL context only.
 func (a *Adapter) path() string {
 	return fmt.Sprintf("/projects/%d", a.projectID)
 }
@@ -443,7 +443,7 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-var _ ports.Forge = (*Adapter)(nil)
+var _ ports.RepoHost = (*Adapter)(nil)
 
 // glMR is the merge requests API's shape, as far as MRInfo needs it.
 type glMR struct {

@@ -26,13 +26,13 @@ import (
 const testProject = "prj-test"
 
 type harness struct {
-	e      *Engine
-	flows  flow.MapSource
-	store  *event.MemStore
-	envp   *fake.EnvProvisioner
-	runner *fake.AgentRunner
-	forge  *fake.Forge
-	ch     *fake.Channel
+	e        *Engine
+	flows    flow.MapSource
+	store    *event.MemStore
+	envp     *fake.EnvProvisioner
+	runner   *fake.AgentRunner
+	repoHost *fake.RepoHost
+	ch       *fake.Channel
 	// res is the resolution every run gets; tests mutate it (Commands,
 	// GitPass, …) the way v1 tests mutated engine.Config.
 	res *Resolution
@@ -177,11 +177,11 @@ func newHarnessSource(t *testing.T, src flow.Source, flows ...*flow.Flow) *harne
 func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, src flow.Source, flows ...*flow.Flow) *harness {
 	t.Helper()
 	h := &harness{
-		store:  event.NewMemStore(),
-		envp:   fake.NewEnvProvisioner(),
-		runner: &fake.AgentRunner{},
-		forge:  &fake.Forge{},
-		ch:     &fake.Channel{},
+		store:    event.NewMemStore(),
+		envp:     fake.NewEnvProvisioner(),
+		runner:   &fake.AgentRunner{},
+		repoHost: &fake.RepoHost{},
+		ch:       &fake.Channel{},
 	}
 	h.res = &Resolution{
 		ProjectID:    testProject,
@@ -194,7 +194,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 		HarnessKind:  "fake",
 		Envp:         h.envp,
 		Runner:       h.runner,
-		Forge:        h.forge,
+		RepoHost:     h.repoHost,
 		// The daemon always wires a tracker writer; whether a scenario's
 		// ticket has a tracker to write to is the ticket's business (a
 		// ticket without one skips those stages). trackerHarness swaps in
@@ -358,7 +358,7 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 	if !strings.HasPrefix(fp.Link, "https://gitlab.local/mr/") || len(fp.Files) != 0 {
 		t.Errorf("final gate payload = link %q files %v, want MR URL link", fp.Link, fp.Files)
 	}
-	h.forge.SetMRState(1, ports.MRMerged)
+	h.repoHost.SetMRState(1, ports.MRMerged)
 	h.e.Wait(runID)
 
 	v := h.view(t, runID)
@@ -386,10 +386,10 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 		t.Errorf("total_cost = %v, want 0.87", rc.TotalCostUSD)
 	}
 
-	if len(h.forge.MRs) != 1 {
-		t.Fatalf("MRs = %d", len(h.forge.MRs))
+	if len(h.repoHost.MRs) != 1 {
+		t.Fatalf("MRs = %d", len(h.repoHost.MRs))
 	}
-	mr := h.forge.MRs[0]
+	mr := h.repoHost.MRs[0]
 	if mr.Title != "Add login form" {
 		t.Errorf("MR title = %q (should come from mr.md heading)", mr.Title)
 	}
@@ -1062,12 +1062,12 @@ stages:
 	h.e.cfg.MRPollInterval = time.Hour
 	ctx := context.Background()
 
-	// The MR exists on the forge and merged during the "downtime".
-	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-ac", "", "T", "body")
+	// The MR exists on the repository host and merged during the "downtime".
+	ref, err := h.repoHost.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-ac", "", "T", "body")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.forge.SetMRState(ref.IID, ports.MRMerged)
+	h.repoHost.SetMRState(ref.IID, ports.MRMerged)
 
 	// Event log of a run parked at the gate with an open final_review ping.
 	for _, p := range []event.Payload{
@@ -1103,9 +1103,10 @@ stages:
 	}
 }
 
-// TestAutoCompletePollFailureNotifies: a forge that keeps failing MRState
-// must surface ONE blocker notification (not silent warn-forever), and the
-// gate keeps working — completing automatically once the forge recovers.
+// TestAutoCompletePollFailureNotifies: a repository host that keeps failing
+// MRState must surface ONE blocker notification (not silent warn-forever), and
+// the gate keeps working — completing automatically once the repository host
+// recovers.
 func TestAutoCompletePollFailureNotifies(t *testing.T) {
 	doc := `name: acf
 version: 2
@@ -1122,7 +1123,7 @@ stages:
 			return ports.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
-	h.forge.SetMRStateErr(fmt.Errorf("gitlab GET /projects/7/merge_requests/1: 401: token expired"))
+	h.repoHost.SetMRStateErr(fmt.Errorf("gitlab GET /projects/7/merge_requests/1: 401: token expired"))
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "acf", testProject)
 	if err != nil {
@@ -1153,9 +1154,9 @@ stages:
 		t.Errorf("auto_answer blockers after streak = %d, want still 1 (no spam)", got)
 	}
 
-	// Forge recovers and the MR is merged: the run completes on its own.
-	h.forge.SetMRStateErr(nil)
-	h.forge.SetMRState(1, ports.MRMerged)
+	// RepoHost recovers and the MR is merged: the run completes on its own.
+	h.repoHost.SetMRStateErr(nil)
+	h.repoHost.SetMRState(1, ports.MRMerged)
 	h.e.Wait(runID)
 	if v := h.view(t, runID); v.State != run.Completed {
 		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
@@ -1712,7 +1713,7 @@ stages:
 // the repo's own devcontainer, there is no built fallback image.
 func TestPreflightRejectsRepoWithoutDevcontainer(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.forge.MissingFiles = map[string]bool{
+	h.repoHost.MissingFiles = map[string]bool{
 		".devcontainer/devcontainer.json": true,
 		".devcontainer.json":              true,
 	}
@@ -2205,9 +2206,9 @@ stages:
 	}
 }
 
-// TestCreateMRAction: forge_mr's replacement carries the same behaviour —
-// title from the body's heading, one mr_created event, and the $MR_URL
-// sentinel resolving for a later gate.
+// TestCreateMRAction: create_mr takes the title from the body's heading,
+// records one mr_created event, and the $MR_URL sentinel resolves for a
+// later gate.
 func TestCreateMRAction(t *testing.T) {
 	doc := `name: act
 version: 2
@@ -2239,8 +2240,8 @@ stages:
 	if v := h.view(t, runID); v.State != run.Completed {
 		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
 	}
-	if len(h.forge.MRs) != 1 || h.forge.MRs[0].Title != "Add the login form" {
-		t.Errorf("MRs = %+v", h.forge.MRs)
+	if len(h.repoHost.MRs) != 1 || h.repoHost.MRs[0].Title != "Add the login form" {
+		t.Errorf("MRs = %+v", h.repoHost.MRs)
 	}
 	if got := countType(h.events(t, runID), event.TypeMRCreated); got != 1 {
 		t.Errorf("mr_created count = %d, want 1", got)
@@ -2269,8 +2270,8 @@ stages:
 	if sf.Reason != event.ReasonInputMissing {
 		t.Errorf("reason = %q, want %q", sf.Reason, event.ReasonInputMissing)
 	}
-	if len(h.forge.MRs) != 0 {
-		t.Errorf("an MR was opened without a body: %+v", h.forge.MRs)
+	if len(h.repoHost.MRs) != 0 {
+		t.Errorf("an MR was opened without a body: %+v", h.repoHost.MRs)
 	}
 }
 
@@ -2362,7 +2363,7 @@ stages:
 	}
 
 	// The signal fires; the stage completes and the run finishes.
-	h.forge.SetMRState(1, ports.MRMerged)
+	h.repoHost.SetMRState(1, ports.MRMerged)
 	h.e.Wait(runID)
 	if v := h.view(t, runID); v.State != run.Completed {
 		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
@@ -2507,9 +2508,9 @@ stages:
 	}
 }
 
-// TestGateAutoRejectOnClosedMR: the forge can answer a gate either way. Closing
-// the MR unmerged is a "no" — before auto_reject the run sat at the gate forever
-// waiting for someone to come and click reject in apothecary.
+// TestGateAutoRejectOnClosedMR: the repository host can answer a gate either
+// way. Closing the MR unmerged is a "no" — before auto_reject the run sat at
+// the gate forever waiting for someone to come and click reject in apothecary.
 func TestGateAutoRejectOnClosedMR(t *testing.T) {
 	doc := `name: settle
 version: 2
@@ -2533,7 +2534,7 @@ stages:
 		t.Fatal(err)
 	}
 	h.waitPing(t, PingGate)
-	h.forge.SetMRState(1, ports.MRClosed)
+	h.repoHost.SetMRState(1, ports.MRClosed)
 	h.e.Wait(runID)
 
 	// Rejected, so on_reject: abort stops the run.
@@ -2631,10 +2632,10 @@ stages:
 }
 
 // TestCreateMRReconcilesAfterCrashInRecordWindow covers the crash window the
-// mr_created event alone cannot close (PLAN5 M20): the forge call returned,
-// the process died before the event was appended. Recovery must ADOPT the
-// merge request that already exists on the run's branch, not open a second
-// one — the branch is unique per run, so it is the idempotency key.
+// mr_created event alone cannot close (PLAN5 M20): the repository host call
+// returned, the process died before the event was appended. Recovery must
+// ADOPT the merge request that already exists on the run's branch, not open a
+// second one — the branch is unique per run, so it is the idempotency key.
 func TestCreateMRReconcilesAfterCrashInRecordWindow(t *testing.T) {
 	doc := `name: rec
 version: 2
@@ -2646,8 +2647,8 @@ stages:
 	h := newHarness(t, fl)
 	ctx := context.Background()
 
-	// The MR the interrupted attempt already opened on the forge.
-	ref, err := h.forge.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-rec", "", "T", "body")
+	// The MR the interrupted attempt already opened on the repository host.
+	ref, err := h.repoHost.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-rec", "", "T", "body")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2670,9 +2671,9 @@ stages:
 	}
 	h.e.Wait("r-rec")
 
-	// Exactly one MR on the forge, and the run adopted it.
-	if len(h.forge.MRs) != 1 {
-		t.Errorf("forge holds %d merge requests, want 1 — recovery opened a duplicate", len(h.forge.MRs))
+	// Exactly one MR on the repository host, and the run adopted it.
+	if len(h.repoHost.MRs) != 1 {
+		t.Errorf("the repository host holds %d merge requests, want 1 — recovery opened a duplicate", len(h.repoHost.MRs))
 	}
 	if got := countType(h.events(t, "r-rec"), event.TypeMRCreated); got != 1 {
 		t.Errorf("mr_created count = %d, want 1", got)
@@ -2682,8 +2683,8 @@ stages:
 	}
 }
 
-// A reconciliation that cannot reach the forge must NOT fall through to
-// creating one: a duplicate MR is worse than a stage a human can retry.
+// A reconciliation that cannot reach the repository host must NOT fall through
+// to creating one: a duplicate MR is worse than a stage a human can retry.
 func TestCreateMRReconcileFailureDoesNotDuplicate(t *testing.T) {
 	doc := `name: recerr
 version: 2
@@ -2693,7 +2694,7 @@ stages:
 `
 	fl := mustFlow(t, doc)
 	h := newHarness(t, fl)
-	h.forge.FindErr = fmt.Errorf("forge unreachable")
+	h.repoHost.FindErr = fmt.Errorf("repository unreachable")
 	ctx := context.Background()
 
 	for _, p := range []event.Payload{
@@ -2712,8 +2713,8 @@ stages:
 	}
 	h.e.Wait("r-recerr")
 
-	if len(h.forge.MRs) != 0 {
-		t.Errorf("created %d merge requests despite an unreadable forge", len(h.forge.MRs))
+	if len(h.repoHost.MRs) != 0 {
+		t.Errorf("created %d merge requests despite an unreadable repository host", len(h.repoHost.MRs))
 	}
 	if v := h.view(t, "r-recerr"); v.State != run.Failed {
 		t.Errorf("state = %s, want failed", v.State)

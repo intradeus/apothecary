@@ -34,7 +34,7 @@
 
 	const guild = $derived(currentGuild());
 	const missing = $derived(
-		(['forge', 'provisioner', 'harness'] as const).filter(
+		(['repository', 'provisioner', 'harness'] as const).filter(
 			(p) => !integrations.some((i) => i.port === p)
 		)
 	);
