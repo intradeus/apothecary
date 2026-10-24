@@ -12,6 +12,9 @@ import (
 	"apothecary/internal/signalspec"
 )
 
+// builderFlow is the template most of these tests check, by its name.
+const builderFlow = "builder"
+
 // TestDefaultFlowBindingsClean is the wiring invariant this feature exists
 // for: the default flow's stage bindings satisfy its agents' declared I/O
 // contract with zero warnings. Contract VIOLATIONS are parse errors since v3
@@ -19,7 +22,7 @@ import (
 // errors are clean; what is left to assert is that nothing merely suspicious
 // survives either.
 func TestDefaultFlowBindingsClean(t *testing.T) {
-	for _, w := range Flow(DefaultFlowName).Warnings {
+	for _, w := range Flow(builderFlow).Warnings {
 		t.Errorf("binding warning: %s", w)
 	}
 }
@@ -72,7 +75,7 @@ func TestShippedFlowsBindCleanly(t *testing.T) {
 // a header the engine no longer renders, nor an artifact path the flow is free
 // to rebind. What a stage is given is described in its INPUT sections.
 func TestBuiltinPromptsBindingNeutral(t *testing.T) {
-	for _, sp := range Flow(DefaultFlowName).Agents {
+	for _, sp := range Flow(builderFlow).Agents {
 		for _, stale := range []string{"PREVIOUS ATTEMPT FEEDBACK", "# ARTIFACT:", "artifacts/plan.md", "artifacts/verdict.json"} {
 			if strings.Contains(sp.Prompt, stale) {
 				t.Errorf("agent %q prompt names %q, which the flow controls — describe the input instead", sp.Name, stale)
@@ -84,9 +87,9 @@ func TestBuiltinPromptsBindingNeutral(t *testing.T) {
 // TestDefaultsParse locks the compiled-in defaults: the binary must never
 // ship a default that fails to parse (load panics on the first accessor).
 func TestDefaultsParse(t *testing.T) {
-	f := Flow(DefaultFlowName)
+	f := Flow(builderFlow)
 	if f == nil {
-		t.Fatalf("no built-in flow named %q", DefaultFlowName)
+		t.Fatalf("no built-in flow named %q", builderFlow)
 	}
 	if len(f.Agents) == 0 {
 		t.Fatal("the default flow declares no agents")
@@ -99,7 +102,7 @@ func TestDefaultsParse(t *testing.T) {
 // debug leaf — a human with the workspace, then the same stage again, so the
 // success chain replays from the failure point and never skips a stage.
 func TestDefaultFlowPhilosophy(t *testing.T) {
-	f := Flow(DefaultFlowName)
+	f := Flow(builderFlow)
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		if s.Type == flow.StageAgent && f.Agent(s.Agent) == nil {
@@ -188,7 +191,7 @@ func showsWorkspace(st *flow.Stage) bool {
 // edge loops back to must bind the matching sentinel, or the retry would run
 // blind — the agent would repeat itself with no idea why it was sent back.
 func TestDefaultFlowRetryChannelDeclared(t *testing.T) {
-	f := Flow(DefaultFlowName)
+	f := Flow(builderFlow)
 	for i := range f.Stages {
 		for kind, e := range f.Stages[i].Edges {
 			for link := e; link != nil; link = link.Then {
@@ -217,8 +220,8 @@ func TestFlowSourceLayering(t *testing.T) {
 	src := FlowSource(db)
 
 	// Empty DB: the built-in resolves.
-	f, err := src.Get(context.Background(), "prj", DefaultFlowName)
-	if err != nil || f.Name != DefaultFlowName {
+	f, err := src.Get(context.Background(), "prj", builderFlow)
+	if err != nil || f.Name != builderFlow {
 		t.Fatalf("Get(default) = %v, %v", f, err)
 	}
 	// Unknown names still miss.
@@ -230,8 +233,8 @@ func TestFlowSourceLayering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db[DefaultFlowName] = shadow
-	f, err = src.Get(context.Background(), "prj", DefaultFlowName)
+	db[builderFlow] = shadow
+	f, err = src.Get(context.Background(), "prj", builderFlow)
 	if err != nil || len(f.Stages) != 1 {
 		t.Fatalf("shadowed Get(default) = %v, %v — the DB must win", f, err)
 	}
@@ -245,7 +248,7 @@ func TestFlowSourceLayering(t *testing.T) {
 // abandon the run without anyone being asked. And a reaction never ends the
 // run, nor is it capped.
 func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
-	f := Flow(DefaultFlowName)
+	f := Flow(builderFlow)
 	reserved := map[string]bool{flow.TerminalEnd: true, flow.TerminalDone: true, flow.TerminalAbort: true, flow.ReservedDebug: true}
 	// A chain can only run out on a stage that runs more than once in a
 	// phase run: one on a cycle of routes. A one-shot stage's max-1 detour

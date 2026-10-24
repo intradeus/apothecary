@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"apothecary/internal/builtin"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -151,7 +150,7 @@ func (x *confEnv) wizard(t *testing.T) string {
 		"workspace": map[string]any{"template": "dev"},
 		// A project is created on the built-in template: flows belong to a
 		// project, so its own cannot exist before it does.
-		"default_flow": builtin.DefaultFlowName,
+		"default_flow": "builder",
 	}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create project = %d: %s", resp.StatusCode, data)

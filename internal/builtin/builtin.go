@@ -1,13 +1,15 @@
-// Package builtin holds the compiled-in defaults: the "builder" flow and the
-// suggested egress-allowlist defaults (EgressDefaults). They are embedded in
-// the binary, so a completely empty database still resolves a working
-// configuration — no seeding step, no drift, nothing to delete by accident.
-// Note the egress list is OFFERED, not enforced: a project opts in via the
-// form, unlike flows which back a resolve.
+// Package builtin holds what ships compiled in: the flow templates — every
+// flows/*.yaml, each registered under its filename — and the suggested
+// egress-allowlist defaults (EgressDefaults). They are embedded in the
+// binary, so a completely empty database still offers flows to run — no
+// seeding step, no drift, nothing to delete by accident. Note the egress
+// list is OFFERED, not enforced: a project opts in via the form, unlike
+// flows which back a resolve.
 //
-// Since FLOWLANG v3 (PLAN5 M26) the default flow carries its own agents, so
-// there is no separate built-in agent library: everything the factory runs
-// out of the box lives in flows/builder.yaml.
+// No code names a template: which flow a project runs is the project's
+// choice (default_flow, picked in the UI), and a template is found like any
+// other flow, by the name a project or a run gives. A flow carries its own
+// agents (FLOWLANG §1), so there is no separate built-in agent library.
 //
 // Layering contract (shadowing): the database always wins. A user-saved flow
 // with the same name overrides the built-in through the ordinary save path
@@ -33,10 +35,6 @@ import (
 
 //go:embed flows/*.yaml
 var flowFS embed.FS
-
-// DefaultFlowName is the flow every fresh install can run out of the box;
-// projects created without a default_flow fall back to it.
-const DefaultFlowName = "builder"
 
 type registry struct {
 	flows    map[string]*flow.Flow

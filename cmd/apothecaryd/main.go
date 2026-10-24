@@ -205,8 +205,8 @@ func cmdServe(args []string) error {
 		RunsDir:                 boot.RunsDir,
 		PortDiscoveryAutoExpose: boot.PortAutoExpose,
 	}
-	// Flows resolve DB-first with the compiled-in defaults underneath
-	// (internal/builtin): an empty database still runs the "builder" flow.
+	// Flows resolve DB-first with the compiled-in templates underneath
+	// (internal/builtin): an empty database still has flows to run.
 	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
@@ -515,9 +515,10 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
 		},
 		Commands: map[string]string{"setup": "true", "verify": "true"},
-		// The project starts on the built-in template: its own flows cannot
-		// exist before it does, now that a flow belongs to a project.
-		DefaultFlow: builtin.DefaultFlowName,
+		// A project needs a default flow that resolves, and its own flows
+		// cannot exist before it does: it starts on whichever template is
+		// listed first and moves to its dev flow just below.
+		DefaultFlow: builtin.FlowNames()[0],
 	})
 	if err != nil {
 		return err

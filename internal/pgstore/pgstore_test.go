@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
@@ -292,7 +291,7 @@ func mustSeedProjectAndTicket(t *testing.T, s *Store, ticketID string) {
 	}
 	if err := s.UpsertProject(ctx, confstore.Project{
 		ID: "fprj1", Name: "files-prj", RepoAccountID: "fint1", ProvisionerID: "fint1",
-		HarnessIDs: []string{"fint1"}, DefaultFlow: builtin.DefaultFlowName,
+		HarnessIDs: []string{"fint1"}, DefaultFlow: "builder",
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)

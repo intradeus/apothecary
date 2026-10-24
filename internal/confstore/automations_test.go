@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"apothecary/internal/builtin"
 )
 
 func seedTracker(t *testing.T, svc *Service) Integration {
@@ -81,7 +79,7 @@ func TestAutomationLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	q, err := svc.CreateAutomation(ctx, Automation{ProjectID: p.ID, Name: " inbox ", Kind: AutomationTrackerQuery,
-		SourceID: tracker.ID, Query: "assignee = me", Flow: builtin.DefaultFlowName, Phase: "deliver",
+		SourceID: tracker.ID, Query: "assignee = me", Flow: "builder", Phase: "deliver",
 		Params: map[string]string{"plan_gate": "false", "verify": " "}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +88,7 @@ func TestAutomationLifecycle(t *testing.T) {
 		t.Fatalf("created = %+v", q)
 	}
 	c, err := svc.CreateAutomation(ctx, Automation{ProjectID: p.ID, Name: "nightly", Kind: AutomationCron,
-		Schedule: "0 3 * * *", TicketID: tk.ID, Flow: builtin.DefaultFlowName})
+		Schedule: "0 3 * * *", TicketID: tk.ID, Flow: "builder"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +122,7 @@ func TestAutomationLifecycle(t *testing.T) {
 	// An update replaces the rule and keeps the marks; the project and the
 	// creation time are not the caller's to change.
 	upd, err := svc.UpdateAutomation(ctx, q.ID, Automation{ProjectID: "other", Name: "inbox-2", Kind: AutomationTrackerQuery,
-		SourceID: tracker.ID, Flow: builtin.DefaultFlowName, Enabled: false})
+		SourceID: tracker.ID, Flow: "builder", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}

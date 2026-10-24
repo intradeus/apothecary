@@ -5,8 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"apothecary/internal/builtin"
 )
 
 // knobsFlow declares every kind of parameter a project may bind: strings,
@@ -135,7 +133,7 @@ func TestFlowBindingFollowsTheFlow(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
 	p := seedProject(t, svc)
-	tmpl := builtin.DefaultFlowName
+	tmpl := "builder"
 	if _, err := svc.GetFlow(ctx, p.ID, tmpl); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("the project has its own %s already: %v", tmpl, err)
 	}

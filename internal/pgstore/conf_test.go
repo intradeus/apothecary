@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 )
@@ -30,12 +29,12 @@ func TestProjectDefaultFlowBuiltin(t *testing.T) {
 	}
 	p := confstore.Project{
 		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
-		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
+		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatalf("builtin default_flow upsert = %v", err)
 	}
-	if gp, err := s.GetProject(ctx, "prj1"); err != nil || gp.DefaultFlow != builtin.DefaultFlowName {
+	if gp, err := s.GetProject(ctx, "prj1"); err != nil || gp.DefaultFlow != "builder" {
 		t.Fatalf("roundtrip = %+v, %v", gp, err)
 	}
 	p.DefaultFlow = "nope"
@@ -73,7 +72,7 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 	p := confstore.Project{
 		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
-		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
+		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
@@ -151,7 +150,7 @@ func TestFlowBindingRoundtripAndCascade(t *testing.T) {
 		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
-		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
+		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
@@ -227,7 +226,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		Workspace:   confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},
-		DefaultFlow: builtin.DefaultFlowName, CreatedAt: now, UpdatedAt: now,
+		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
@@ -288,7 +287,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	// Deleting the FLOW keeps its versions (§7: immutable forever) — the
 	// project has to stop pointing at it first, which is the reference the
 	// guard above refuses to break.
-	p.DefaultFlow = builtin.DefaultFlowName
+	p.DefaultFlow = "builder"
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
 	}

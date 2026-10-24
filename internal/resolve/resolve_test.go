@@ -1,7 +1,6 @@
 package resolve
 
 import (
-	"apothecary/internal/builtin"
 	"context"
 	"errors"
 	"slices"
@@ -76,7 +75,7 @@ func setup(t *testing.T) (*Resolver, *confstore.Service, confstore.Project, *ato
 		HarnessIDs:    []string{mk(confstore.PortHarness, "fake", "h", nil)},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		Workspace:     confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},
-		DefaultFlow:   builtin.DefaultFlowName,
+		DefaultFlow:   "builder",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +154,7 @@ func TestResolveMultiHarness(t *testing.T) {
 		HarnessIDs:    []string{def, alt},
 		Repo:          confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		Workspace:     confstore.WorkspaceConfig{},
-		DefaultFlow:   builtin.DefaultFlowName,
+		DefaultFlow:   "builder",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -308,7 +307,7 @@ func TestUnresolvableMapping(t *testing.T) {
 		ProvisionerID: mk(confstore.PortProvisioner, "c2"), HarnessIDs: []string{ghost.ID},
 		Repo:        confstore.RepoConfig{URL: "https://x.example/g/p.git"},
 		Workspace:   confstore.WorkspaceConfig{},
-		DefaultFlow: builtin.DefaultFlowName,
+		DefaultFlow: "builder",
 	})
 	if err != nil {
 		t.Fatal(err)

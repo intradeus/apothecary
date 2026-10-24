@@ -3495,10 +3495,10 @@ to see in the flow what this node does". Two changes in the editor:
   success chain until `end` or `done` — the `closed` outcome ends on
   `on_success: abort`, so it looked `abort` up as a stage. The walk now stops
   at anything that is not a stage of the document.
-- **Renamed: `default` → `builder`** (`internal/builtin/flows/builder.yaml`,
-  `builtin.DefaultFlowName`). *Default* still means what a project starts runs
-  with (`projects.default_flow`); the template that fills that role on a fresh
-  install is called by what it does. Migration `0007_builder_flow.sql` moves
+- **Renamed: `default` → `builder`** (`internal/builtin/flows/builder.yaml`).
+  *Default* still means what a project starts runs with
+  (`projects.default_flow`); the template is called by what it does.
+  Migration `0007_builder_flow.sql` moves
   what named the built-in — a project's default flow, its binding, its
   automations — and leaves alone a project's own saved flow named `default`
   (a flow's YAML `name:` must equal its id, so a copy is not renamed behind
@@ -3509,3 +3509,18 @@ to see in the flow what this node does". Two changes in the editor:
   entrypoints read down the left edge. Arranging fits the view again, and a
   fit that has to zoom in to stay legible anchors a flow taller than the
   canvas at its top-left — the entry — instead of its vertical middle.
+
+## No code names a flow
+
+2026-10-24, the user: "Why do we need DefaultFlowName in the code? … No
+backend code must use \"builder\" anywhere; it should just be used for
+display / in a dropdown." `builtin.DefaultFlowName` is gone, and with it the
+fallback that gave a project created without a `default_flow` the built-in
+template: `default_flow` is now required (400 "default_flow is required"),
+always the project's choice — the project form's dropdown lists the flows it
+can run, templates included, and preselects the first. Templates are found
+like any flow, by the name a project or a run gives (`builtin.Flow(name)`,
+every `flows/*.yaml`). The `-dev` seed, which must give its project a flow
+that resolves before the project's own `dev` flow can exist, borrows
+whichever template `builtin.FlowNames()` lists first. Tests name the template
+they exercise.

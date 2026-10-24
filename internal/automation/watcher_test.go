@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
@@ -129,7 +128,7 @@ func newHarness(t *testing.T) *harness {
 	p, err := conf.CreateProject(ctx, confstore.Project{
 		Name: "p1", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{hs.ID},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
-		DefaultFlow: builtin.DefaultFlowName,
+		DefaultFlow: "builder",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +153,7 @@ func (h *harness) automation(t *testing.T, a confstore.Automation) confstore.Aut
 	t.Helper()
 	a.ProjectID = h.project.ID
 	if a.Flow == "" {
-		a.Flow = builtin.DefaultFlowName
+		a.Flow = "builder"
 	}
 	created, err := h.conf.CreateAutomation(context.Background(), a)
 	if err != nil {
@@ -199,7 +198,7 @@ func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
 		t.Fatalf("runs created = %d, want 2 (last error %q)", n, h.get(t, a.ID).LastError)
 	}
 	call := h.eng.calls[0]
-	if call.Flow != builtin.DefaultFlowName || call.In.By != By || call.In.Phase != "deliver" || call.In.Params["plan_gate"] != "false" ||
+	if call.Flow != "builder" || call.In.By != By || call.In.Phase != "deliver" || call.In.Params["plan_gate"] != "false" ||
 		call.Ticket.SourceKey != "DEV-1" || call.Ticket.Title != "First" || call.Ticket.TicketID == "" {
 		t.Errorf("first run = %+v", call)
 	}
@@ -411,7 +410,7 @@ func TestAutomationEntrypointKinds(t *testing.T) {
 	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, err := h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "x", Kind: confstore.AutomationMergeRequest, Flow: builtin.DefaultFlowName})
+	_, err := h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "x", Kind: confstore.AutomationMergeRequest, Flow: "builder"})
 	if err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a run on a merge request") {
 		t.Errorf("merge_request on the default flow: %v", err)
 	}

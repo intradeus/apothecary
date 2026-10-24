@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/builtin"
 	"apothecary/internal/secrets"
 )
 
@@ -52,7 +51,7 @@ func seedProject(t *testing.T, svc *Service) Project {
 		Workspace: WorkspaceConfig{},
 		// A project starts on the built-in template: its own flows cannot
 		// exist before it does.
-		DefaultFlow: builtin.DefaultFlowName,
+		DefaultFlow: "builder",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,18 +132,16 @@ func TestProjectValidation(t *testing.T) {
 		Name: "p", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{},
-		DefaultFlow: builtin.DefaultFlowName,
+		DefaultFlow: "builder",
 	}
 
-	// An empty default_flow falls back to the compiled-in default
-	// (internal/builtin): fresh installs run without authoring a flow.
+	// A project names its default flow: the code knows no flow to fall back
+	// to.
 	fb := base
-	fb.Name = "p-default-fallback"
+	fb.Name = "p-no-default-flow"
 	fb.DefaultFlow = ""
-	if created, err := svc.CreateProject(ctx, fb); err != nil {
-		t.Errorf("empty default_flow refused: %v", err)
-	} else if created.DefaultFlow != builtin.DefaultFlowName {
-		t.Errorf("empty default_flow = %q, want %q", created.DefaultFlow, builtin.DefaultFlowName)
+	if _, err := svc.CreateProject(ctx, fb); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "default_flow is required") {
+		t.Errorf("empty default_flow = %v, want a refusal naming it", err)
 	}
 
 	// Wrong-port reference is refused naming the field.
@@ -181,7 +178,7 @@ func TestProjectHarnessSet(t *testing.T) {
 		Name: "p", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{oc.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/p.git"},
 		Workspace:   WorkspaceConfig{},
-		DefaultFlow: builtin.DefaultFlowName,
+		DefaultFlow: "builder",
 	}
 
 	// A single-harness set round-trips (no default designation).
@@ -257,7 +254,7 @@ func TestDeleteRules(t *testing.T) {
 	// project has to stop pointing at the flow first — that reference is
 	// exactly what the guard above refuses to break.
 	row, _ := svc.GetFlow(ctx, p.ID, "v1")
-	p.DefaultFlow = builtin.DefaultFlowName
+	p.DefaultFlow = "builder"
 	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
 		t.Fatal(err)
 	}

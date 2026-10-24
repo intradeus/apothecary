@@ -131,12 +131,12 @@ func TestBuiltinTemplateAdoptedPerProject(t *testing.T) {
 	b := seedNamedProject(t, svc, "p2")
 
 	// Nobody owns it yet.
-	if _, err := svc.GetFlow(ctx, a.ID, builtin.DefaultFlowName); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.GetFlow(ctx, a.ID, "builder"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unadopted template = %v, want ErrNotFound (the engine layers it in)", err)
 	}
 
 	// Copying the template into a project adopts it.
-	row, err := svc.CopyFlow(ctx, a.ID, builtin.DefaultFlowName, a.ID, "ours")
+	row, err := svc.CopyFlow(ctx, a.ID, "builder", a.ID, "ours")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,28 +160,28 @@ func TestCopyTemplateIntoProject(t *testing.T) {
 
 	// Adopting under the template's own name is the common case, and the one
 	// CopyFlow would refuse as a copy onto itself.
-	row, err := svc.CopyTemplate(ctx, builtin.DefaultFlowName, a.ID, "")
+	row, err := svc.CopyTemplate(ctx, "builder", a.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl, _ := builtin.FlowYAML(builtin.DefaultFlowName)
-	if row.ProjectID != a.ID || row.Name != builtin.DefaultFlowName || row.YAML != tmpl {
+	tmpl, _ := builtin.FlowYAML("builder")
+	if row.ProjectID != a.ID || row.Name != "builder" || row.YAML != tmpl {
 		t.Fatalf("adopted template = %+v, want the template's document under project A", row)
 	}
 	// Adopting twice refuses like any copy onto an existing name.
-	if _, err := svc.CopyTemplate(ctx, builtin.DefaultFlowName, a.ID, ""); !errors.Is(err, ErrConflict) {
+	if _, err := svc.CopyTemplate(ctx, "builder", a.ID, ""); !errors.Is(err, ErrConflict) {
 		t.Errorf("second adoption = %v, want ErrConflict", err)
 	}
 	// A rename rewrites the document's own name, into another project.
-	renamed, err := svc.CopyTemplate(ctx, builtin.DefaultFlowName, b.ID, "default-fork")
+	renamed, err := svc.CopyTemplate(ctx, "builder", b.ID, "builder-fork")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renamed.ProjectID != b.ID || renamed.Name != "default-fork" || !strings.Contains(renamed.YAML, "name: default-fork") {
+	if renamed.ProjectID != b.ID || renamed.Name != "builder-fork" || !strings.Contains(renamed.YAML, "name: builder-fork") {
 		t.Fatalf("renamed template copy = %+v", renamed)
 	}
 	// Project A's adoption is untouched by B's copy.
-	if _, err := svc.GetFlow(ctx, b.ID, builtin.DefaultFlowName); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.GetFlow(ctx, b.ID, "builder"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("project B got A's adoption: %v", err)
 	}
 	// Not a template: a clear not-found, not a silent empty document.
@@ -208,7 +208,7 @@ func seedNamedProject(t *testing.T, svc *Service, name string) Project {
 	p, err := svc.CreateProject(ctx, Project{
 		Name: name, RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:        RepoConfig{URL: "https://gitlab.com/g/" + name + ".git", Locator: "43"},
-		DefaultFlow: builtin.DefaultFlowName,
+		DefaultFlow: "builder",
 	})
 	if err != nil {
 		t.Fatal(err)

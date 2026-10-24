@@ -358,12 +358,12 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 		return invalidf("project: harness_ids is required (at least one harness integration)")
 	}
 	p.HarnessIDs = norm
-	// default_flow falls back to the compiled-in default (internal/builtin):
-	// a fresh install runs without authoring a flow first. A name resolves
+	// default_flow is the project's own choice — the UI offers the flows it
+	// can run, templates included — never a name the code knows. It resolves
 	// against the DB first, then the built-ins (same layering the engine's
 	// flow source uses).
 	if p.DefaultFlow == "" {
-		p.DefaultFlow = builtin.DefaultFlowName
+		return invalidf("project: default_flow is required")
 	}
 	if _, err := s.db.GetFlow(ctx, p.ID, p.DefaultFlow); errors.Is(err, ErrNotFound) {
 		if builtin.Flow(p.DefaultFlow) == nil {
