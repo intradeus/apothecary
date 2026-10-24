@@ -4,7 +4,7 @@ export default {
 	'tickets.col.source': 'Source',
 	'tickets.col.workshop': 'Workshop',
 	'tickets.col.branch': 'Base branch',
-	'tickets.col.status': 'Status',
+	'tickets.col.runs': 'Runs',
 	'tickets.col.created': 'Created',
 	'tickets.importedFrom': 'Imported from {kind}',
 	'tickets.noRuns': 'no runs',

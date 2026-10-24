@@ -1,6 +1,6 @@
 <script lang="ts" module>
 	import { t } from '$lib/i18n/index.svelte';
-	export type TicketCol = 'title' | 'source' | 'workshop' | 'branch' | 'status' | 'created';
+	export type TicketCol = 'title' | 'source' | 'workshop' | 'branch' | 'runs' | 'created';
 </script>
 
 <script lang="ts">
@@ -16,7 +16,7 @@
 
 	let {
 		tickets,
-		cols = ['title', 'source', 'workshop', 'branch', 'status', 'created']
+		cols = ['title', 'source', 'workshop', 'branch', 'runs', 'created']
 	}: { tickets: Ticket[]; cols?: TicketCol[] } = $props();
 
 	const WIDTH: Record<TicketCol, string> = {
@@ -24,7 +24,7 @@
 		source: '110px',
 		workshop: 'minmax(0, 1fr)',
 		branch: 'minmax(0, 1.2fr)',
-		status: '170px',
+		runs: '170px',
 		created: '74px'
 	};
 	const WIDE: TicketCol[] = ['source', 'workshop', 'branch'];
@@ -32,7 +32,7 @@
 	const tplSm = $derived(
 		cols
 			.filter((c) => !WIDE.includes(c))
-			.map((c) => (c === 'status' ? 'auto' : WIDTH[c]))
+			.map((c) => (c === 'runs' ? 'auto' : WIDTH[c]))
 			.join(' ')
 	);
 	const label = (c: TicketCol) =>
@@ -41,7 +41,7 @@
 			source: t('tickets.col.source'),
 			workshop: t('tickets.col.workshop'),
 			branch: t('tickets.col.branch'),
-			status: t('tickets.col.status'),
+			runs: t('tickets.col.runs'),
 			created: t('tickets.col.created')
 		})[c];
 </script>
@@ -69,7 +69,7 @@
 					<span class="hide-sm ell"><WorkshopName projectId={tk.projectId} /></span>
 				{:else if c === 'branch'}
 					<span class="mono mut ell hide-sm" title={tk.baseBranch}>{tk.baseBranch}</span>
-				{:else if c === 'status'}
+				{:else if c === 'runs'}
 					<span class="st">
 						{#if runs.length}
 							<StatusChip state={runs[0].state} size="sm" />

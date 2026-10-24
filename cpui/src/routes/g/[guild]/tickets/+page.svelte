@@ -136,8 +136,8 @@
 			<TicketTable
 				tickets={shown}
 				cols={projectFilter
-					? ['title', 'source', 'branch', 'status', 'created']
-					: ['title', 'source', 'workshop', 'branch', 'status', 'created']}
+					? ['title', 'source', 'branch', 'runs', 'created']
+					: ['title', 'source', 'workshop', 'branch', 'runs', 'created']}
 			/>
 		</div>
 	{/if}
