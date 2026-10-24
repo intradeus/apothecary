@@ -299,8 +299,8 @@ per-run Docker-in-Docker sandbox ── egress only via the project gateway
   and push run in each, and every repository the run changed gets its own
   merge request. The run page's workspace views take a repository picker.
 - **After the merge request opens, the run stays with it** (*in review*)
-  until it merges (completed) or is closed (abandoned). The default flow
-  reacts meanwhile, one thing at a time:
+  until it merges (completed) or is closed (abandoned). The built-in
+  `builder` flow reacts meanwhile, one thing at a time:
   - **conflicts** — when the target moves and the MR no longer merges, you
     get an inbox question; on *Run it* the engine merges the target in, an
     agent resolves any conflict by editing the files (never running git),

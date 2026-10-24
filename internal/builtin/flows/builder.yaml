@@ -1,6 +1,6 @@
-name: default
+name: builder
 version: 4
-description: "built-in default: plan-gated build with cross-vendor adversarial review, then the merge request's life: conflicts fixed on your go, review comments fixed and answered once the review goes quiet"
+description: "plan-gated build with cross-vendor adversarial review, then the merge request's life: conflicts fixed on your go, review comments fixed and answered once the review goes quiet"
 # The flow's one settings block: what every agent stage inherits, the run's
 # ceilings (the whole life of the ticket, review rounds included), and this
 # flow's own knobs, read where $name appears below. A project binds any of

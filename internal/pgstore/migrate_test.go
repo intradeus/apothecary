@@ -192,3 +192,41 @@ func TestMigrateCatchesUpAnInitEditedInPlace(t *testing.T) {
 		t.Fatalf("ledger after reopen = %v, want %v", got, want)
 	}
 }
+
+// The built-in flow "default" became "builder" (0007): a project that ran the
+// built-in follows the rename, its binding and automation with it; a project
+// with its own flow named "default" keeps everything pointing at that copy.
+func TestMigrateRenamesTheBuiltinFlowReferences(t *testing.T) {
+	dsn := freshSchemaDSN(t)
+	ctx := context.Background()
+	s := openDSN(t, dsn)
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO integrations (id, port, kind, name, created_at, updated_at) VALUES
+			('r', 'repository', 'fake', 'r', now(), now()), ('v', 'provisioner', 'fake', 'v', now(), now());
+		INSERT INTO projects (id, name, repo_account_id, provisioner_id, repo, default_flow, created_at, updated_at) VALUES
+			('p1', 'ran-the-builtin', 'r', 'v', '{}', 'default', now(), now()),
+			('p2', 'has-its-own', 'r', 'v', '{}', 'default', now(), now());
+		INSERT INTO flows (project_id, name, yaml, hash, updated_at) VALUES ('p2', 'default', 'name: default', 'h', now());
+		INSERT INTO flow_bindings (project_id, flow_name, params, updated_at) VALUES
+			('p1', 'default', '{}', now()), ('p2', 'default', '{}', now());
+		INSERT INTO automations (id, project_id, kind, name, flow, created_at, updated_at) VALUES
+			('a1', 'p1', 'cron', 'a1', 'default', now(), now()), ('a2', 'p2', 'cron', 'a2', 'default', now(), now());
+		DELETE FROM schema_migrations WHERE version = 7`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s2 := openDSN(t, dsn)
+	for _, q := range []struct{ sql, p1, p2 string }{
+		{`SELECT default_flow FROM projects WHERE id = $1`, "builder", "default"},
+		{`SELECT flow_name FROM flow_bindings WHERE project_id = $1`, "builder", "default"},
+		{`SELECT flow FROM automations WHERE project_id = $1`, "builder", "default"},
+	} {
+		for id, want := range map[string]string{"p1": q.p1, "p2": q.p2} {
+			var got string
+			if err := s2.pool.QueryRow(ctx, q.sql, id).Scan(&got); err != nil || got != want {
+				t.Errorf("%s [%s] = %q (%v), want %q", q.sql, id, got, err, want)
+			}
+		}
+	}
+}

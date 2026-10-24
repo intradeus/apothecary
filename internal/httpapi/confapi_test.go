@@ -355,14 +355,14 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	projectID := x.wizard(t)
 
 	// Unadopted: the template serves with the flag, for THIS project.
-	resp, data := x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
+	resp, data := x.do(t, "GET", "/api/projects/"+projectID+"/flows/builder", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"builtin":true`) {
 		t.Fatalf("get default = %d: %s", resp.StatusCode, data)
 	}
 	// The project's own listing offers the template it has not adopted; the
 	// cross-project overview lists only what projects actually own.
 	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows", nil, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), `"name":"default"`) {
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"name":"builder"`) {
 		t.Fatalf("project list = %d: %s", resp.StatusCode, data)
 	}
 	resp, data = x.do(t, "GET", "/api/flow-templates", nil, nil)
@@ -371,12 +371,12 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 
 	// Saving under the template's name creates this project's own copy.
-	override := "name: default\nversion: 4\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
-	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/flows/default", map[string]string{"yaml": override}, nil)
+	override := "name: builder\nversion: 4\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/flows/builder", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/builder", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"shadows_builtin":true`) ||
 		strings.Contains(string(data), `"builtin":true`) {
 		t.Fatalf("shadowed get = %d: %s", resp.StatusCode, data)
@@ -384,15 +384,15 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 
 	// Deleting the override resets to the built-in; deleting again is a
 	// clear refusal, not a silent 404.
-	resp, _ = x.do(t, "DELETE", "/api/projects/"+projectID+"/flows/default", nil, nil)
+	resp, _ = x.do(t, "DELETE", "/api/projects/"+projectID+"/flows/builder", nil, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("override delete = %d", resp.StatusCode)
 	}
-	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/builder", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"builtin":true`) {
 		t.Fatalf("post-reset get = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "DELETE", "/api/projects/"+projectID+"/flows/default", nil, nil)
+	resp, data = x.do(t, "DELETE", "/api/projects/"+projectID+"/flows/builder", nil, nil)
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), "built-in") {
 		t.Fatalf("builtin delete = %d: %s", resp.StatusCode, data)
 	}
@@ -405,27 +405,27 @@ func TestCopyFlowTemplateAPI(t *testing.T) {
 	x := newConfEnv(t)
 	projectID := x.wizard(t)
 
-	resp, data := x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{"to_project_id": projectID}, nil)
+	resp, data := x.do(t, "POST", "/api/flow-templates/builder/copy", map[string]string{"to_project_id": projectID}, nil)
 	if resp.StatusCode != http.StatusCreated || !strings.Contains(string(data), `"shadows_builtin":true`) ||
 		!strings.Contains(string(data), `"project_id":"`+projectID+`"`) {
 		t.Fatalf("adopt = %d: %s", resp.StatusCode, data)
 	}
 	// From here on the project owns it: the listing shows it as its own,
 	// and the template has become this project's shadowed document.
-	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/default", nil, nil)
+	resp, data = x.do(t, "GET", "/api/projects/"+projectID+"/flows/builder", nil, nil)
 	if resp.StatusCode != 200 || strings.Contains(string(data), `"builtin":true`) {
 		t.Fatalf("adopted get = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{"to_project_id": projectID}, nil)
+	resp, data = x.do(t, "POST", "/api/flow-templates/builder/copy", map[string]string{"to_project_id": projectID}, nil)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("second adoption = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{"to_project_id": projectID, "name": "default-fork"}, nil)
-	if resp.StatusCode != http.StatusCreated || !strings.Contains(string(data), `"name":"default-fork"`) ||
+	resp, data = x.do(t, "POST", "/api/flow-templates/builder/copy", map[string]string{"to_project_id": projectID, "name": "builder-fork"}, nil)
+	if resp.StatusCode != http.StatusCreated || !strings.Contains(string(data), `"name":"builder-fork"`) ||
 		strings.Contains(string(data), `"shadows_builtin":true`) {
 		t.Fatalf("renamed copy = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "POST", "/api/flow-templates/default/copy", map[string]string{}, nil)
+	resp, data = x.do(t, "POST", "/api/flow-templates/builder/copy", map[string]string{}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("no target = %d: %s", resp.StatusCode, data)
 	}
@@ -446,7 +446,7 @@ func TestFlowBindingAPI(t *testing.T) {
 	if resp.StatusCode != 200 || strings.TrimSpace(string(data)) != "[]" {
 		t.Fatalf("bindings before any = %d: %s", resp.StatusCode, data)
 	}
-	if resp, _ = x.do(t, "GET", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
+	if resp, _ = x.do(t, "GET", base+"/flows/builder/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unbound get = %d", resp.StatusCode)
 	}
 	var b struct {
@@ -455,13 +455,13 @@ func TestFlowBindingAPI(t *testing.T) {
 		Params    map[string]string `json:"params"`
 		UpdatedAt string            `json:"updated_at"`
 	}
-	resp, data = x.do(t, "PUT", base+"/flows/default/binding",
+	resp, data = x.do(t, "PUT", base+"/flows/builder/binding",
 		map[string]any{"params": map[string]string{"plan_gate": "false", "conflicts_start": "manual", "verify": ""}}, nil)
-	if err := json.Unmarshal(data, &b); err != nil || resp.StatusCode != 200 || b.ProjectID != projectID || b.FlowName != "default" ||
+	if err := json.Unmarshal(data, &b); err != nil || resp.StatusCode != 200 || b.ProjectID != projectID || b.FlowName != "builder" ||
 		len(b.Params) != 2 || b.Params["plan_gate"] != "false" || b.Params["conflicts_start"] != "manual" || b.UpdatedAt == "" {
 		t.Fatalf("put = %d %v: %s", resp.StatusCode, err, data)
 	}
-	resp, data = x.do(t, "GET", base+"/flows/default/binding", nil, nil)
+	resp, data = x.do(t, "GET", base+"/flows/builder/binding", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"conflicts_start":"manual"`) {
 		t.Fatalf("get = %d: %s", resp.StatusCode, data)
 	}
@@ -482,14 +482,14 @@ func TestFlowBindingAPI(t *testing.T) {
 			Entry bool   `json:"entry"`
 		} `json:"phases"`
 	}
-	resp, data = x.do(t, "GET", base+"/flows/default", nil, nil)
+	resp, data = x.do(t, "GET", base+"/flows/builder", nil, nil)
 	if err := json.Unmarshal(data, &fr); err != nil || resp.StatusCode != 200 || !fr.Builtin || len(fr.Parameters) < 7 ||
 		fr.Parameters[0].Name != "harness" || !fr.Parameters[0].Known || len(fr.Phases) < 2 || fr.Phases[0].ID != "deliver" || !fr.Phases[0].Entry {
 		t.Fatalf("flow = %d %v: %s", resp.StatusCode, err, data)
 	}
 	// Refusals name the parameter, and leave the binding as it was.
 	for _, bad := range []map[string]string{{"nope": "x"}, {"conflicts_start": "sometimes"}, {"plan_gate": "maybe"}, {"timeout": "soon"}} {
-		resp, data = x.do(t, "PUT", base+"/flows/default/binding", map[string]any{"params": bad}, nil)
+		resp, data = x.do(t, "PUT", base+"/flows/builder/binding", map[string]any{"params": bad}, nil)
 		var name string
 		for k := range bad {
 			name = k
@@ -498,30 +498,30 @@ func TestFlowBindingAPI(t *testing.T) {
 			t.Errorf("put %v = %d: %s", bad, resp.StatusCode, data)
 		}
 	}
-	if resp, data = x.do(t, "GET", base+"/flows/default/binding", nil, nil); resp.StatusCode != 200 || !strings.Contains(string(data), `"plan_gate":"false"`) {
+	if resp, data = x.do(t, "GET", base+"/flows/builder/binding", nil, nil); resp.StatusCode != 200 || !strings.Contains(string(data), `"plan_gate":"false"`) {
 		t.Errorf("binding after refusals = %d: %s", resp.StatusCode, data)
 	}
-	if resp, _ = x.do(t, "PUT", "/api/projects/nope/flows/default/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != http.StatusNotFound {
+	if resp, _ = x.do(t, "PUT", "/api/projects/nope/flows/builder/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown project = %d", resp.StatusCode)
 	}
 	if resp, _ = x.do(t, "PUT", base+"/flows/nope/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown flow = %d", resp.StatusCode)
 	}
 	// Clearing every value removes the binding; so does a delete.
-	resp, data = x.do(t, "PUT", base+"/flows/default/binding", map[string]any{"params": map[string]string{"plan_gate": " "}}, nil)
+	resp, data = x.do(t, "PUT", base+"/flows/builder/binding", map[string]any{"params": map[string]string{"plan_gate": " "}}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"params":{}`) {
 		t.Fatalf("clearing put = %d: %s", resp.StatusCode, data)
 	}
-	if resp, _ = x.do(t, "GET", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
+	if resp, _ = x.do(t, "GET", base+"/flows/builder/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("after clearing = %d", resp.StatusCode)
 	}
-	if resp, _ = x.do(t, "PUT", base+"/flows/default/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != 200 {
+	if resp, _ = x.do(t, "PUT", base+"/flows/builder/binding", map[string]any{"params": map[string]string{"plan_gate": "false"}}, nil); resp.StatusCode != 200 {
 		t.Fatal("re-bind refused")
 	}
-	if resp, _ = x.do(t, "DELETE", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNoContent {
+	if resp, _ = x.do(t, "DELETE", base+"/flows/builder/binding", nil, nil); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("delete = %d", resp.StatusCode)
 	}
-	if resp, _ = x.do(t, "DELETE", base+"/flows/default/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
+	if resp, _ = x.do(t, "DELETE", base+"/flows/builder/binding", nil, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("second delete = %d", resp.StatusCode)
 	}
 }
@@ -576,7 +576,7 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 			}
 		}
 	}
-	if !seen["knobs"] || !seen["default"] {
+	if !seen["knobs"] || !seen["builder"] {
 		t.Errorf("listing = %+v", list)
 	}
 }

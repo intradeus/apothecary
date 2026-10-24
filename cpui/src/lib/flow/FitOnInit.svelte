@@ -4,10 +4,11 @@
 	// a wide flow at max zoom on its first stage.
 	//
 	// A long flow fitted whole is unreadable, so below a legible zoom it
-	// anchors on the entry (left edge) at that zoom instead, keeping the
-	// fitted vertical centre. Each change of `refit` fits again, animated —
+	// anchors on the entry (left edge) at that zoom instead — keeping the
+	// fitted vertical centre while the flow still fits in height, and at the
+	// top (where the entry is) once its phases' rows run taller than that. Each change of `refit` fits again, animated —
 	// the canvas changed size (a pane opened or closed beside it).
-	import { useNodesInitialized, useSvelteFlow } from '@xyflow/svelte';
+	import { useNodesInitialized, useStore, useSvelteFlow } from '@xyflow/svelte';
 	import { tick, untrack } from 'svelte';
 	import { ms } from '$lib/ui/motion';
 
@@ -29,6 +30,7 @@
 
 	const initialized = useNodesInitialized();
 	const flow = useSvelteFlow();
+	const store = useStore();
 	let done = false;
 
 	async function fit(duration?: number) {
@@ -37,11 +39,11 @@
 		if (vp.zoom >= legible) return;
 		const b = flow.getNodesBounds(flow.getNodes());
 		const midY = b.y + b.height / 2;
-		const screenMidY = vp.y + midY * vp.zoom;
-		await flow.setViewport(
-			{ x: 40 - b.x * legible, y: screenMidY - midY * legible, zoom: legible },
-			{ duration }
-		);
+		const y =
+			b.height * legible + 80 > store.height
+				? 40 - b.y * legible
+				: vp.y + midY * vp.zoom - midY * legible;
+		await flow.setViewport({ x: 40 - b.x * legible, y, zoom: legible }, { duration });
 	}
 
 	$effect(() => {

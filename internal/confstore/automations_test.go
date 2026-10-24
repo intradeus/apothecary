@@ -38,19 +38,19 @@ func TestAutomationValidates(t *testing.T) {
 		a    Automation
 		want string
 	}{
-		{"no name", Automation{Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "default"}, "needs a name"},
-		{"bad kind", Automation{Name: "x", Kind: "webhook", Flow: "default"}, `kind "webhook"`},
-		{"no source", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "default"}, "needs source_id"},
-		{"wrong port", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: repoHost.RepoAccountID, Flow: "default"}, "not a ticket source"},
-		{"query with schedule", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Schedule: "0 9 * * *", Flow: "default"}, "takes no schedule"},
-		{"bad schedule", Automation{Name: "x", Kind: AutomationCron, Schedule: "soon", TicketID: tk.ID, Flow: "default"}, "five fields"},
-		{"no ticket", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", Flow: "default"}, "needs ticket_id"},
-		{"ticket elsewhere", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, ProjectID: other.ID, Flow: "default"}, "another project"},
+		{"no name", Automation{Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder"}, "needs a name"},
+		{"bad kind", Automation{Name: "x", Kind: "webhook", Flow: "builder"}, `kind "webhook"`},
+		{"no source", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "builder"}, "needs source_id"},
+		{"wrong port", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: repoHost.RepoAccountID, Flow: "builder"}, "not a ticket source"},
+		{"query with schedule", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Schedule: "0 9 * * *", Flow: "builder"}, "takes no schedule"},
+		{"bad schedule", Automation{Name: "x", Kind: AutomationCron, Schedule: "soon", TicketID: tk.ID, Flow: "builder"}, "five fields"},
+		{"no ticket", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", Flow: "builder"}, "needs ticket_id"},
+		{"ticket elsewhere", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, ProjectID: other.ID, Flow: "builder"}, "another project"},
 		{"no flow", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID}, "needs a flow"},
 		{"no such flow", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "nope"}, "nope"},
-		{"not an entrypoint", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "default", Phase: "conflicts"}, "not an entrypoint"},
-		{"bad param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "default", Params: map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
-		{"unknown param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "default", Params: map[string]string{"nope": "1"}}, "nope"},
+		{"not an entrypoint", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Phase: "conflicts"}, "not an entrypoint"},
+		{"bad param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Params: map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
+		{"unknown param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Params: map[string]string{"nope": "1"}}, "nope"},
 	} {
 		a := tc.a
 		if a.ProjectID == "" {
@@ -64,7 +64,7 @@ func TestAutomationValidates(t *testing.T) {
 			t.Errorf("%s: err = %v, want ErrInvalid", tc.name, err)
 		}
 	}
-	if _, err := svc.CreateAutomation(ctx, Automation{ProjectID: "nope", Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "default"}); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.CreateAutomation(ctx, Automation{ProjectID: "nope", Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown project: err = %v", err)
 	}
 }
@@ -131,7 +131,7 @@ func TestAutomationLifecycle(t *testing.T) {
 	if upd.ProjectID != p.ID || upd.Name != "inbox-2" || upd.Enabled || upd.LastFiredAt == nil || !upd.CreatedAt.Equal(q.CreatedAt) || !upd.UpdatedAt.After(q.UpdatedAt) {
 		t.Errorf("updated = %+v", upd)
 	}
-	if _, err := svc.UpdateAutomation(ctx, q.ID, Automation{Name: "x", Kind: AutomationCron, Schedule: "nope", TicketID: tk.ID, Flow: "default"}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.UpdateAutomation(ctx, q.ID, Automation{Name: "x", Kind: AutomationCron, Schedule: "nope", TicketID: tk.ID, Flow: "builder"}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("bad update: err = %v", err)
 	}
 	if err := svc.DeleteAutomation(ctx, c.ID); err != nil {

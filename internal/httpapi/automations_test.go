@@ -38,10 +38,10 @@ func TestAutomationAPI(t *testing.T) {
 		body map[string]any
 		want string
 	}{
-		{map[string]any{"name": "x", "kind": "tracker_query", "flow": "default"}, "source_id"},
-		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "default", "phase": "conflicts"}, "not an entrypoint"},
-		{map[string]any{"name": "x", "kind": "cron", "schedule": "soon", "ticket_id": tk.ID, "flow": "default"}, "five fields"},
-		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "default", "params": map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "flow": "builder"}, "source_id"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "builder", "phase": "conflicts"}, "not an entrypoint"},
+		{map[string]any{"name": "x", "kind": "cron", "schedule": "soon", "ticket_id": tk.ID, "flow": "builder"}, "five fields"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "builder", "params": map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
 	} {
 		resp, data = x.do(t, "POST", base, bad.body, nil)
 		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), bad.want) {
@@ -57,11 +57,11 @@ func TestAutomationAPI(t *testing.T) {
 		Enabled bool              `json:"enabled"`
 	}
 	resp, data = x.do(t, "POST", base, map[string]any{"name": "inbox", "kind": "tracker_query", "source_id": in.ID,
-		"query": "assignee = factory", "flow": "default", "phase": "deliver", "params": map[string]string{"plan_gate": "false"}}, nil)
+		"query": "assignee = factory", "flow": "builder", "phase": "deliver", "params": map[string]string{"plan_gate": "false"}}, nil)
 	if err := json.Unmarshal(data, &a); err != nil || resp.StatusCode != http.StatusCreated || a.ID == "" || !a.Enabled || a.Params["plan_gate"] != "false" || a.Phase != "deliver" {
 		t.Fatalf("create = %d %v: %s", resp.StatusCode, err, data)
 	}
-	resp, data = x.do(t, "POST", base, map[string]any{"name": "nightly", "kind": "cron", "schedule": "0 3 * * *", "ticket_id": tk.ID, "flow": "default", "enabled": false}, nil)
+	resp, data = x.do(t, "POST", base, map[string]any{"name": "nightly", "kind": "cron", "schedule": "0 3 * * *", "ticket_id": tk.ID, "flow": "builder", "enabled": false}, nil)
 	if resp.StatusCode != http.StatusCreated || !strings.Contains(string(data), `"enabled":false`) {
 		t.Fatalf("create cron = %d: %s", resp.StatusCode, data)
 	}
@@ -73,7 +73,7 @@ func TestAutomationAPI(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"name":"inbox"`) {
 		t.Fatalf("get = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "PUT", base+"/"+a.ID, map[string]any{"name": "inbox", "kind": "tracker_query", "source_id": in.ID, "flow": "default", "enabled": false}, nil)
+	resp, data = x.do(t, "PUT", base+"/"+a.ID, map[string]any{"name": "inbox", "kind": "tracker_query", "source_id": in.ID, "flow": "builder", "enabled": false}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"enabled":false`) || strings.Contains(string(data), "plan_gate") {
 		t.Fatalf("update = %d: %s", resp.StatusCode, data)
 	}

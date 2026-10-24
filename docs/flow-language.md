@@ -60,7 +60,7 @@ is one of a few things:
 ## §1 Document
 
 ```yaml
-name: default              # required, slug: the flow's permanent id
+name: builder              # required, slug: the flow's permanent id
 version: 4                 # required int: the grammar this document is written in
 description: "..."         # optional
 parameters:                # the flow's ONE settings block (below): every entry is a knob
@@ -1017,7 +1017,7 @@ Why two sentinels rather than one `$FEEDBACK`? Three reasons, in ascending
 order of importance:
 
 1. **The prompt says which setback this was.** A stage can be re-entered by
-   different kinds of edge — in the default flow `build` is the target of both
+   different kinds of edge — in the built-in `builder` flow `build` is the target of both
    `test.on_fail` and `review.on_reject`. One slot would make the agent infer
    the situation from the text; two label it.
 2. **The agent can instruct differently per slot.** "If you got a rejection,
@@ -1114,7 +1114,7 @@ A stage that **skips** — its `when` does not hold, a tracker action with no
 tracker or no word for the status — is not a failure: it completes with
 `skipped` and a note, and `on_success` follows.
 
-The recommended shape, and the one the built-in default flow uses: every agent
+The recommended shape, and the one the built-in `builder` flow uses: every agent
 and command stage first retries itself with its error fed back, then escalates
 to the `debug` leaf (`then: debug`). A human opens the workspace, fixes what the
 agents could not, and continuing re-runs exactly the stage that escalated — the
@@ -1288,13 +1288,13 @@ Older spellings the parser still answers by name rather than with a bare
 
 ## §8 Annotated example
 
-The built-in default flow, abridged — plan-gated build with cross-vendor
+The built-in `builder` flow, abridged — plan-gated build with cross-vendor
 adversarial review, the debug leaf as every stage's rescue, the ticket's
 tracker issue following the work in canonical statuses, and the merge
-request's life after it opens. Full text: `internal/builtin/flows/default.yaml`.
+request's life after it opens. Full text: `internal/builtin/flows/builder.yaml`.
 
 ```yaml
-name: default
+name: builder
 version: 4
 # One settings block. A project binds any of these in the workshop without
 # touching this document; a run may override.

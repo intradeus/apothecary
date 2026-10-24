@@ -788,12 +788,18 @@ export function autoLayout(
 	const pos: Record<string, { x: number; y: number }> = {};
 	const bands = doc.phases?.length ? doc.phases.map((p) => p.id) : [undefined];
 	const byId = new Map(doc.stages.map((s, i) => [s.id, i]));
+	// What begins each band — the entry's marker, then each later phase's —
+	// stands in one column on the left, its left edges aligned: the widest
+	// marker sets where the column starts.
+	const markers = [START, ...bands.slice(1).map((p) => `trigger:${p}`)];
+	const markerX = -(Math.max(...markers.map((k) => size(k, GUESS_TERMINAL).width)) + GAP_X);
 	let y0 = 0;
 	let right = 0; // the widest band's right edge: where the terminals go
 	bands.forEach((phase, band) => {
 		const chain = new Set<string>();
+		// The chain ends where success leaves the stages: end, done, abort.
 		let cur = phaseEntry(doc, phase)?.id;
-		while (cur && cur !== END && cur !== DONE && !chain.has(cur)) {
+		while (cur && byId.has(cur) && !chain.has(cur)) {
 			chain.add(cur);
 			cur = effectiveSuccess(doc, byId.get(cur)!);
 		}
@@ -835,18 +841,15 @@ export function autoLayout(
 			laneH = Math.max(laneH, height);
 		}
 		right = Math.max(right, x, offChain.length ? x1 : 0);
-		// A reaction phase's trigger marker sits left of its first stage.
-		if (band > 0 && phase !== undefined) {
-			const key = `trigger:${phase}`;
-			pos[key] = { x: -(size(key, GUESS_TERMINAL).width + GAP_X), y: y0 };
-		}
+		// A later phase's marker: in the column, on its band's row.
+		if (band > 0 && phase !== undefined) pos[`trigger:${phase}`] = { x: markerX, y: y0 };
 		y0 = (offChain.length ? leaves(offChain, y1 + laneH) : leaves(onChain, y0 + rowH)) + BAND_GAP;
 	});
-	// Terminals: the entry marker left of the first stage; end, done and
-	// abort stacked right of everything (done and abort draw only when a
-	// route reaches them, but a position costs nothing). Debug is no terminal
-	// — its leaves sit by their stages, above.
-	pos[START] = { x: -(size(START, GUESS_TERMINAL).width + GAP_X), y: 0 };
+	// Terminals: the entry marker heads the column; end, done and abort
+	// stacked right of everything (done and abort draw only when a route
+	// reaches them, but a position costs nothing). Debug is no terminal — its
+	// leaves sit by their stages, above.
+	pos[START] = { x: markerX, y: 0 };
 	let ty = 0;
 	for (const key of [END, DONE, ABORT]) {
 		pos[key] = { x: right, y: ty };

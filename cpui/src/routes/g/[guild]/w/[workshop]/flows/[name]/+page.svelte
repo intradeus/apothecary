@@ -255,6 +255,7 @@
 		if (!doc) return;
 		layout = autoLayout(doc, sizes);
 		rev++;
+		mainRefit++; // and show the whole of it
 		const first = doc.stages[0]?.id;
 		if (first) onmove(first, layout[first].x, layout[first].y);
 	}

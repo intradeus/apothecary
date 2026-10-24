@@ -1,4 +1,4 @@
-// Package builtin holds the compiled-in defaults: the "default" flow and the
+// Package builtin holds the compiled-in defaults: the "builder" flow and the
 // suggested egress-allowlist defaults (EgressDefaults). They are embedded in
 // the binary, so a completely empty database still resolves a working
 // configuration — no seeding step, no drift, nothing to delete by accident.
@@ -7,7 +7,7 @@
 //
 // Since FLOWLANG v3 (PLAN5 M26) the default flow carries its own agents, so
 // there is no separate built-in agent library: everything the factory runs
-// out of the box lives in flows/default.yaml.
+// out of the box lives in flows/builder.yaml.
 //
 // Layering contract (shadowing): the database always wins. A user-saved flow
 // with the same name overrides the built-in through the ordinary save path
@@ -36,7 +36,7 @@ var flowFS embed.FS
 
 // DefaultFlowName is the flow every fresh install can run out of the box;
 // projects created without a default_flow fall back to it.
-const DefaultFlowName = "default"
+const DefaultFlowName = "builder"
 
 type registry struct {
 	flows    map[string]*flow.Flow
