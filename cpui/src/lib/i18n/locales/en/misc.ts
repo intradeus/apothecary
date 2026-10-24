@@ -130,6 +130,8 @@ export default {
 	'flow.binding.keyPlaceholder': 'name',
 	'flow.term.start': 'Where the chain begins — drag this handle onto a stage to start it there',
 	'flow.term.end': 'This chain is over — the run goes back to waiting',
+	'flow.term.endBranch':
+		'This chain is over — the run goes back to waiting on the merge request, for the next signal',
 	'flow.term.done': 'The run is done',
 	'flow.term.exit': 'The sequence is over: the run goes on from the stage that runs it',
 	'flow.term.failexit': 'fail: the sequence leaves by its stage’s on_fail',
@@ -414,6 +416,19 @@ export default {
 	'flow.graph.beginLabel': '{phase}: on {trigger}',
 	'flow.graph.beginLabelPlain': 'on {trigger}',
 	'flow.graph.mainLabel': 'main · on {on}',
+	// A flow with no main chain: its runs wait from the start.
+	'flow.graph.watchLabel': 'run · on {on}',
+	'flow.graph.watchTitle':
+		'A person or an automation starts a run of this flow on {on}. It has no main chain: the run waits from the start, and its watchers run on what happens to the merge request.',
+	// The hub: the run between its chains.
+	'flow.graph.hubLabel': 'waiting',
+	'flow.graph.hubSub': 'on the merge request',
+	'flow.graph.hubTitle':
+		'The run is open between its chains, waiting on what happens to its merge requests. The main chain’s end comes back here; each watcher runs from here on its signal, one at a time, and comes back; an outcome ends the run. Drop a route here to end its chain.',
+	'flow.graph.folded_one': '{count} stage',
+	'flow.graph.folded_other': '{count} stages',
+	'flow.graph.fold': 'Fold {phase} to its marker',
+	'flow.graph.unfold': 'Unfold {phase}',
 	'flow.graph.mainTitle':
 		'The main chain: it runs once, when a person or an automation starts a run on {on} — drag this handle onto a stage of the chain to start it there',
 	'flow.graph.runStart.ticket': 'a ticket',
@@ -446,9 +461,9 @@ export default {
 	'flow.insp.deleteStageTitle': 'Delete stage {id}?',
 	'flow.insp.deleteBody': 'The stage <b>{id}</b> is removed from this draft.',
 	'flow.insp.deleteRewired_one':
-		'{count} other stage pointing at it is rewired: success goes to <b>done</b>, failure links to it are dropped.',
+		'{count} other stage pointing at it is rewired: its success goes on without it, failure links to it are dropped.',
 	'flow.insp.deleteRewired_other':
-		'{count} other stages pointing at it are rewired: success goes to <b>done</b>, failure links to it are dropped.',
+		'{count} other stages pointing at it are rewired: their success goes on without it, failure links to it are dropped.',
 	'flow.insp.deleteNote': 'Nothing changes for runs until you save.',
 	'flow.insp.deleteAction': 'Delete stage',
 	'flow.insp.deleteTitle': 'Delete stage (⌫)',
@@ -493,7 +508,7 @@ export default {
 		'The chain this stage runs in its place. Its stages run with this stage’s id in front (review.read, review.post); its last stage’s success is this stage’s on_success, and a `fail` inside it is this stage’s on_fail.',
 	'flow.insp.sequenceStages': 'Runs',
 	'flow.insp.sequenceEditHelp':
-		'Sequences are edited in the YAML tab, under sequences: — every stage that names one runs the same chain.',
+		'Click a stage in the pane beside the flow to edit it, or Edit sequence for the whole of it — every stage that names the sequence runs the same chain.',
 	'flow.insp.phaseStages_one': '{count} stage',
 	'flow.insp.phaseStages_other': '{count} stages',
 	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the chain with it.',
@@ -554,7 +569,7 @@ export default {
 	'flow.insp.noInputs':
 		'Agent “{name}” declares no inputs — its prompt gets the task and nothing else.',
 	'flow.insp.unknownAgent':
-		"Unknown agent “{name}”: bind its inputs after it exists in the project's library.",
+		'Agent “{name}” is not declared in this flow — declare it, or name one the flow carries.',
 	'flow.insp.outputs': 'Outputs',
 	'flow.insp.outputsHelp': 'Declared by the agent; edit a path only to override it here.',
 	'flow.insp.verdict': 'verdict',
@@ -669,6 +684,7 @@ export default {
 	'flow.insp.paramName': 'Name',
 	'flow.insp.paramDefault': 'Default',
 	'flow.insp.paramEnum': 'Allowed values',
+	'flow.insp.paramMore': 'description, allowed values',
 	'flow.insp.paramEnumPlaceholder': 'auto, confirm, manual',
 	'flow.insp.paramEnumHelp':
 		'Comma-separated; the default must be one of them. An enum within auto, confirm, manual can drive a watcher\u2019s or an outcome\u2019s start policy.',
@@ -681,7 +697,115 @@ export default {
 	'flow.insp.addParam': '+ parameter',
 	'flow.insp.paramsReadHelp':
 		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns or timeout, an action input, a watcher\u2019s start or max, a stage\u2019s condition.',
-	'flow.insp.addStage': 'Add a stage',
+	'flow.insp.addStageMain': 'Add a stage to the main chain',
+	'flow.insp.addStageTo': 'Add a stage to {id}',
+	'flow.insp.addToChain': 'Add a stage to this chain',
+	'flow.insp.addToChainHelp': 'It goes after the chain’s last stage, which now goes on to it.',
+	'flow.insp.addToSequence': 'Add a stage to this sequence',
+	'flow.insp.addMain': 'main chain',
+	'flow.insp.addChainHelpNoMain':
+		'This flow only watches: with no main chain, its runs must be started on a merge request. Add one to begin every run with it.',
+	// Stages inside a sequence
+	'flow.insp.onlyStage': 'A sequence needs a stage — delete the sequence instead',
+	'flow.insp.inSequence': 'In sequence',
+	'flow.insp.inSequenceHelp':
+		'Its routes stay inside the sequence: to its stages, to fail (the sequence stage’s on_fail), or to the ends.',
+	'flow.insp.editSequence': 'Edit sequence',
+	'flow.insp.nextOption': 'next — {next}',
+	'flow.insp.leaveOption': 'out — on, the way the stage running the sequence goes',
+	'flow.insp.endsHelpSequence':
+		'Saying nothing goes on to the next stage — from the last, out of the sequence, the way the stage running it goes on. end and done end the chain or the run, as anywhere.',
+	'flow.insp.failOption': 'fail — the sequence stage’s on_fail',
+	'flow.insp.runsMain': 'main — the main chain, again',
+	// Commands and actions
+	'flow.insp.commandTimeoutHelp':
+		'How long the script may run: a duration (30m, 2h) or a string $parameter; empty = the flow’s timeout.',
+	'flow.insp.enumParamHelp': 'Or a $parameter whose allowed values fit — a workshop chooses.',
+	// What a watcher or an outcome runs
+	'flow.insp.runs': 'Runs',
+	'flow.insp.runsOwn_one': 'its own stage ({count})',
+	'flow.insp.runsOwn_other': 'its own stages ({count})',
+	'flow.insp.runsNothing': 'nothing — it only ends the run',
+	'flow.insp.runsSequence': 'sequence {id}',
+	'flow.insp.runsHelp':
+		'A sequence runs in place of stages of its own: written once, run by every chain that names it (`sequence:` in the YAML).',
+	'flow.insp.runsHelpNone':
+		'Its own stages. Add a sequence on the flow panel to run one chain from several places.',
+	'flow.insp.runsReplaceTitle': 'Replace the chain of {id}?',
+	'flow.insp.runsReplaceBody_one': 'The one stage of <b>{id}</b> is removed from this draft.',
+	'flow.insp.runsReplaceBody_other':
+		'The {count} stages of <b>{id}</b> are removed from this draft.',
+	'flow.insp.runsReplace': 'Replace',
+	// Agents
+	'flow.insp.agents': 'Agents',
+	'flow.insp.agentsHelp': 'The agents this flow carries; an agent stage runs one by name.',
+	'flow.insp.addAgent': 'agent',
+	'flow.insp.kind.agent': 'agent',
+	'flow.insp.editAgent': 'Edit agent {name}',
+	'flow.insp.declareAgent': 'Declare agent {name}',
+	'flow.insp.newAgent': 'New agent',
+	'flow.insp.agentPanelHelp':
+		'An agent the flow carries: its prompt, and the contract a stage binds — what it reads and the files it must write. Pinned with the flow, so a run keeps the prompt it started with.',
+	'flow.insp.agentName': 'Name',
+	'flow.insp.agentRenameHelp': 'Renaming updates every stage that runs it.',
+	'flow.insp.agentDescPlaceholder': 'what this agent does',
+	'flow.insp.readOnly': 'Read-only',
+	'flow.insp.readOnlyTitle': 'Denies the harness its edit and write tools',
+	'flow.insp.allowBash': 'Allow shell',
+	'flow.insp.allowBashTitle':
+		'Lets the agent run shell commands — even read-only, it can then change files through the shell',
+	'flow.insp.prompt': 'Prompt',
+	'flow.insp.promptPlaceholder': 'You are …',
+	'flow.insp.promptHelp':
+		'Required. The inputs a stage binds and the outputs it must write are added to it, named and described.',
+	'flow.insp.agentInputsHelp':
+		'What a stage running it binds by name: a file, a sentinel, a $parameter. One bound to $FAILURE or $DECISION must be optional — it is empty on the first attempt.',
+	'flow.insp.agentOutputsHelp':
+		'Files the agent must write; a stage may move one. A verdict is the APPROVE / REJECT its stage’s on_reject routes on.',
+	'flow.insp.portName': 'Name',
+	'flow.insp.portPath': 'Path',
+	'flow.insp.portType': 'Type',
+	'flow.insp.portDescPlaceholder': 'what it is (the agent reads this)',
+	'flow.insp.optionalTitle': 'A stage may leave it unbound',
+	'flow.insp.removePort': 'Remove',
+	'flow.insp.addInput': 'input',
+	'flow.insp.addOutput': 'output',
+	'flow.insp.outputType.file': 'a file',
+	'flow.insp.outputType.verdict': 'verdict — APPROVE or REJECT',
+	'flow.insp.outputType.review_threads': 'review_threads — a review to post',
+	'flow.insp.outputType.review_replies': 'review_replies — answers to a review round',
+	'flow.insp.runBy': 'Run by',
+	'flow.insp.runByCount_one': 'run by {count} stage',
+	'flow.insp.runByCount_other': 'run by {count} stages',
+	'flow.insp.agentUnused': 'No stage runs it yet: name it on an agent stage.',
+	'flow.insp.deleteAgent': 'Delete agent',
+	'flow.insp.deleteAgentTitle': 'Delete agent {name}?',
+	'flow.insp.deleteAgentBody': 'The agent <b>{name}</b> is removed from this draft.',
+	'flow.insp.deleteAgentUsed_one':
+		'The agent <b>{name}</b> is removed from this draft; the stage running it, {stages}, will not validate until it runs another.',
+	'flow.insp.deleteAgentUsed_other':
+		'The agent <b>{name}</b> is removed from this draft; the {count} stages running it — {stages} — will not validate until they run another.',
+	// Sequences
+	'flow.insp.sequences': 'Sequences',
+	'flow.insp.sequencesHelp': 'Chains written once, run in place wherever a stage names one.',
+	'flow.insp.addSequence': 'sequence',
+	'flow.insp.kind.sequence': 'sequence',
+	'flow.insp.sequencePanelHelp':
+		'A chain written once and run in place by every stage that names it — a watcher or an outcome may run one too. Click one of its stages, here or in the pane, to edit it.',
+	'flow.insp.sequenceRenameHelp': 'Renaming updates every stage that runs it.',
+	'flow.insp.sequenceUnused':
+		'Nothing runs it yet: a sequence stage can, or a watcher’s or an outcome’s Runs.',
+	'flow.insp.moveUp': 'Move up',
+	'flow.insp.moveDown': 'Move down',
+	'flow.insp.sequenceOrderHelp':
+		'It runs from its first stage; a stage that names no success goes on to the next one, and the last leaves the sequence.',
+	'flow.insp.sequenceInUse': 'Stages run it — point them elsewhere first',
+	'flow.insp.deleteSequence': 'Delete sequence',
+	'flow.insp.deleteSequenceTitle': 'Delete sequence {id}?',
+	'flow.insp.deleteSequenceBody_one':
+		'The sequence <b>{id}</b> and its one stage are removed from this draft.',
+	'flow.insp.deleteSequenceBody_other':
+		'The sequence <b>{id}</b> and its {count} stages are removed from this draft.',
 	'flow.insp.canvasHelp':
 		"Click a node or edge to edit it. Drag from a node's coloured handles to rewire control flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may target the abort terminal to stop the run deliberately, or the debug leaf to park it for a human and then run the stage again. The faint dashed lines are dataflow — they are derived from the artifact paths stages read and write, so you change them by editing an input or output, not by dragging.",
 	// PlanReview

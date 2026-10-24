@@ -150,6 +150,7 @@
 		notice = null;
 		placeMarkers();
 		rev++;
+		relayoutSequence();
 	}
 
 	// placeMarkers makes room for a chain added since the layout was made —
@@ -282,18 +283,21 @@
 		rev++;
 	}
 
-	// ---- a sequence stage's sequence, opened beside the flow --------------
-	// Selecting a sequence stage opens the sequence it runs in a pane of its
-	// own, its chain drawn like a flow; selecting anything else (or the empty
-	// canvas) closes it. A sequence stage inside the sequence opens that
-	// sequence in its place — `nested` is the path of sequence stage ids
-	// below the selected one.
+	// ---- a sequence, opened beside the flow ---------------------------------
+	// Selecting a sequence stage of the chains opens the sequence it runs in a
+	// pane of its own, its chain drawn like a flow; a sequence selected in the
+	// inspector opens on its own. A stage or an edge of the open sequence is
+	// edited in place, the pane staying open; selecting anything else (or the
+	// empty canvas) closes it. A sequence stage inside the sequence opens
+	// that sequence in its place — `path` is the sequence stage ids opened
+	// below the root.
 	interface Level {
-		stage: DocStage;
+		/** The stage running the sequence; none for one opened on its own. */
+		stage?: DocStage;
 		sequence: DocSequence;
 		view: SequenceView;
 	}
-	let nested = $state<{ root: string; path: string[] }>({ root: '', path: [] });
+	let pane = $state<{ root: string; sequence?: string; path: string[] } | null>(null);
 	const failOf = (e: DocEdge | undefined, outer?: string) => {
 		const to = chainLinks(e)[0]?.to;
 		return to === FAIL ? outer : to;
@@ -301,14 +305,27 @@
 	const sequenceOf = (st: DocStage | undefined) =>
 		st?.type === 'sequence' ? doc?.sequences?.find((q) => q.id === st.sequence) : undefined;
 	const levels = $derived.by((): Level[] => {
-		const sel = selection;
-		if (!doc || tab !== 'graph' || sel?.kind !== 'stage') return [];
-		const i = doc.stages.findIndex((s) => s.id === sel.id);
-		const st = doc.stages[i];
-		const seq = sequenceOf(st);
-		if (!seq) return [];
-		const out: Level[] = [
-			{
+		const p = pane;
+		if (!doc || tab !== 'graph' || !p) return [];
+		const out: Level[] = [];
+		if (p.sequence) {
+			const seq = doc.sequences?.find((q) => q.id === p.sequence);
+			if (!seq) return [];
+			out.push({
+				sequence: seq,
+				view: {
+					id: seq.id,
+					description: seq.description,
+					exit: t('page.flow.sequenceExitAny'),
+					fail: t('page.flow.sequenceFailAny')
+				}
+			});
+		} else {
+			const i = doc.stages.findIndex((s) => s.id === p.root);
+			const st = doc.stages[i];
+			const seq = sequenceOf(st);
+			if (!seq) return [];
+			out.push({
 				stage: st,
 				sequence: seq,
 				view: {
@@ -317,9 +334,9 @@
 					exit: effectiveSuccess(doc, i),
 					fail: failOf(st.on_fail)
 				}
-			}
-		];
-		for (const id of nested.root === st.id ? nested.path : []) {
+			});
+		}
+		for (const id of p.path) {
 			const up = out[out.length - 1];
 			const j = up.sequence.stages.findIndex((s) => s.id === id);
 			const s = up.sequence.stages[j];
@@ -341,38 +358,77 @@
 		return out;
 	});
 	const open = $derived(levels.at(-1));
+
+	// select is every selection's way in — the canvas, the pane, the
+	// inspector — so the pane follows it.
+	function select(sel: Selection) {
+		selection = sel;
+		if (!doc) return;
+		if (sel?.kind === 'stage' && !sel.sequence) {
+			const st = doc.stages.find((s) => s.id === sel.id);
+			if (st?.type !== 'sequence') pane = null;
+			else if (pane?.root !== st.id || pane.sequence) pane = { root: st.id, path: [] };
+			return;
+		}
+		const seq =
+			sel?.kind === 'sequence'
+				? sel.id
+				: sel?.kind === 'stage' || sel?.kind === 'edge'
+					? sel.sequence
+					: undefined;
+		if (!seq) {
+			pane = null;
+			return;
+		}
+		// Already open, or one of the sequences above it: show that one.
+		const at = levels.findIndex((l) => l.sequence.id === seq);
+		if (at >= 0 && pane) pane = { ...pane, path: pane.path.slice(0, at) };
+		else pane = { root: '', sequence: seq, path: [] };
+	}
+
 	// The open sequence as a document of its own: the flow's agents,
 	// parameters and sequences, the sequence's stages.
 	const sequenceDoc = $derived<FlowDoc | null>(
 		doc && open ? { ...doc, phases: undefined, stages: open.sequence.stages } : null
 	);
+	// The pane is drawn afresh when it shows another sequence or the open
+	// one gains, loses or renames a stage — its nodes measured again.
+	const paneKey = $derived(
+		open
+			? `${levels.map((l) => l.sequence.id).join('/')}|${open.sequence.stages.map((s) => s.id).join(',')}`
+			: ''
+	);
 	let sequenceLayout = $state<Record<string, { x: number; y: number }>>({});
 	let sequenceRev = $state(0);
-	$effect(() => {
+	let sequenceSizes: Record<string, NodeSize> = {};
+	function relayoutSequence() {
 		if (!sequenceDoc) return;
-		sequenceLayout = columnLayout(sequenceDoc);
-		untrack(() => sequenceRev++);
-	});
-	function onSequenceMeasured(sizes: Record<string, NodeSize>) {
-		if (!sequenceDoc) return;
-		sequenceLayout = columnLayout(sequenceDoc, sizes);
+		sequenceLayout = columnLayout(sequenceDoc, sequenceSizes);
 		sequenceRev++;
 	}
-	function onSequenceSelect(sel: Selection) {
-		if (sel?.kind !== 'stage' || !open || !levels.length) return;
-		const s = open.sequence.stages.find((x) => x.id === sel.id);
-		if (!sequenceOf(s)) return;
-		nested = {
-			root: levels[0].stage.id,
-			path: [...levels.slice(1).map((l) => l.stage.id), s!.id]
-		};
-	}
-	/** Back to the sequence at `depth` (0 = the selected sequence stage's). */
-	const backTo = (depth: number) =>
-		(nested = {
-			root: levels[0].stage.id,
-			path: levels.slice(1, depth + 1).map((l) => l.stage.id)
+	$effect(() => {
+		void paneKey;
+		untrack(() => {
+			sequenceSizes = {};
+			relayoutSequence();
 		});
+	});
+	function onSequenceMeasured(sizes: Record<string, NodeSize>) {
+		sequenceSizes = sizes;
+		relayoutSequence();
+	}
+	// A click in the pane edits what it lands on in its sequence; the
+	// marker, the ways out and the empty canvas select the sequence itself.
+	function onSequenceSelect(sel: Selection) {
+		if (!open || !pane) return;
+		const seq = open.sequence.id;
+		if (sel?.kind === 'stage') {
+			selection = { kind: 'stage', id: sel.id, sequence: seq };
+			const s = open.sequence.stages.find((x) => x.id === sel.id);
+			if (sequenceOf(s)) pane = { ...pane, path: [...pane.path, sel.id] };
+		} else if (sel?.kind === 'edge') selection = { ...sel, sequence: seq };
+		else selection = { kind: 'sequence', id: seq };
+	}
 	// Opening or closing the pane resizes the flow's canvas: it fits again.
 	let mainRefit = $state(0);
 	let wasOpen = false;
@@ -563,7 +619,7 @@
 		}
 		const el = e.target as HTMLElement | null;
 		if (e.key === 'Escape' && levels.length && !el?.closest('input, textarea, select')) {
-			selection = null;
+			select(null);
 			return;
 		}
 		if (e.key !== 'Delete' && e.key !== 'Backspace') return;
@@ -744,7 +800,7 @@
 							{doc}
 							{layout}
 							{rev}
-							onselect={(s) => (selection = s)}
+							onselect={select}
 							{onmove}
 							{onlink}
 							onarrange={autoArrange}
@@ -768,7 +824,11 @@
 									{#each levels as l, d (d)}
 										{#if d > 0}<span class="fnt">›</span>{/if}
 										{#if d < levels.length - 1}
-											<button class="rowbtn" onclick={() => backTo(d)}>{l.sequence.id}</button>
+											<button
+												class="rowbtn"
+												onclick={() => select({ kind: 'sequence', id: l.sequence.id })}
+												>{l.sequence.id}</button
+											>
 										{:else}
 											<span class="cur">{l.sequence.id}</span>
 										{/if}
@@ -776,16 +836,18 @@
 								</nav>
 								<span class="fnt small ell grow"
 									>{open.sequence.description ??
-										t('page.flow.sequenceRunsAs', { stage: levels[0].stage.id })}</span
+										(levels[0].stage
+											? t('page.flow.sequenceRunsAs', { stage: levels[0].stage.id })
+											: '')}</span
 								>
 								<button
 									class="btn-icon"
 									title={t('page.flow.sequenceClose')}
 									aria-label={t('page.flow.sequenceClose')}
-									onclick={() => (selection = null)}>{I.close}</button
+									onclick={() => select(null)}>{I.close}</button
 								>
 							</header>
-							{#key levels.map((l) => l.sequence.id).join('/')}
+							{#key paneKey}
 								<FlowGraph
 									doc={sequenceDoc}
 									layout={sequenceLayout}
@@ -858,7 +920,7 @@
 					{actions}
 					{signals}
 					onchange={markChanged}
-					onselect={(s) => (selection = s)}
+					onselect={select}
 				/>
 			</aside>
 		{/if}

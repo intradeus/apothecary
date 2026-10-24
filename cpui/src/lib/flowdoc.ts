@@ -636,10 +636,16 @@ export function docToYaml(doc: FlowDoc): string {
 	const obj: Record<string, unknown> = { name: doc.name, version: doc.version ?? CURRENT_VERSION };
 	if (doc.description) obj.description = doc.description;
 	if (doc.run_start && doc.run_start !== 'ticket') obj.run_start = doc.run_start;
-	// The one settings block, in document order: a bare default when that is
-	// all a parameter has.
+	// The one settings block: the six the engine reads, in their order (the
+	// order the editor shows them in), then the flow's own in document order
+	// — a bare default when that is all a parameter has.
 	const params: Record<string, unknown> = {};
-	for (const [name, p] of Object.entries(doc.parameters ?? {})) {
+	const known = KNOWN_PARAMS.filter((k) => doc.parameters?.[k] != null);
+	const own = Object.keys(doc.parameters ?? {}).filter(
+		(k) => !(KNOWN_PARAMS as readonly string[]).includes(k)
+	);
+	for (const name of [...known, ...own]) {
+		const p = doc.parameters[name];
 		if (!p.description && !p.enum?.length) params[name] = p.default;
 		else {
 			const o: Record<string, unknown> = { default: p.default };
@@ -804,8 +810,9 @@ function edgeToYamlValue(e: DocEdge): unknown {
 }
 
 /** A node's rendered size, as Svelte Flow measured it. FlowGraph reports them
- *  keyed the way `layout` is: stage ids, START/END/DONE/ABORT, `trigger:<phase>`,
- *  `section:<kind>` and `debug:<stage>`. */
+ *  keyed the way `layout` is: stage ids, START/END/DONE/ABORT, HUB,
+ *  `trigger:<phase>`, `end|done|abort:<phase>`, `section:<kind>` and
+ *  `debug:<stage>`. */
 export interface NodeSize {
 	width: number;
 	height: number;
@@ -820,6 +827,7 @@ const LANE_INDENT = 120;
 const GUESS: NodeSize = { width: 220, height: 120 };
 const GUESS_TERMINAL: NodeSize = { width: 110, height: 44 };
 const GUESS_SECTION: NodeSize = { width: 90, height: 18 };
+const GUESS_HUB: NodeSize = { width: 150, height: 52 };
 const SECTION_GAP = 14;
 const LEAF_GAP = 14;
 
@@ -827,6 +835,34 @@ const LEAF_GAP = 14;
  *  other phase its own. */
 export const markerKey = (ph: DocPhase | undefined) =>
 	!ph || ph.kind === 'main' ? START : `trigger:${ph.id}`;
+/** The layout key of the hub: where the run waits once the main chain is
+ *  over, and every watcher and outcome branches from. */
+export const HUB = 'hub';
+/** Whether the canvas draws the hub: the flow has watchers or outcomes —
+ *  something the run waits for. */
+export const hasHub = (doc: FlowDoc) => !!doc.phases?.some((p) => p.kind !== 'main');
+
+/** The ends a route may reach. */
+export type Terminal = typeof END | typeof DONE | typeof ABORT;
+/** The layout key of a terminal a chain reaches: the main chain's are the
+ *  flow's END / DONE / ABORT (its end is the hub, once there is one); a
+ *  watcher or an outcome has its own, at the end of its row. */
+export const terminalKey = (to: Terminal, ph: DocPhase | undefined) =>
+	!ph || ph.kind === 'main' ? to : `${to}:${ph.id}`;
+
+/** The ends a chain's routes reach, in END / DONE / ABORT order — the
+ *  terminals its row draws. An outcome with no chain reaches its then. */
+export function chainEnds(doc: FlowDoc, ph: DocPhase): Terminal[] {
+	const reached = new Set<string>();
+	doc.stages.forEach((s, i) => {
+		if (s.phase !== ph.id) return;
+		reached.add(effectiveSuccess(doc, i));
+		for (const k of EDGE_KINDS) for (const l of chainLinks(edgeOf(s, k))) reached.add(l.to);
+	});
+	if (!phaseEntry(doc, ph.id) && ph.kind === 'outcome') reached.add(ph.then ?? DONE);
+	return ([END, DONE, ABORT] as Terminal[]).filter((x) => reached.has(x));
+}
+
 /** The layout key of a section's label on the canvas. */
 export const sectionKey = (kind: PhaseKind) => `section:${kind}`;
 /** Whether the canvas labels its sections: once a flow has more than its
@@ -879,10 +915,26 @@ export function autoLayout(
 	const markers = bands.map(markerKey);
 	const markerX = -(Math.max(...markers.map((k) => size(k, GUESS_TERMINAL).width)) + GAP_X);
 	const sections = showsSections(doc);
+	const hub = hasHub(doc);
+	const main = doc.phases?.find((p) => p.kind === 'main');
+	// The hub stands left of the marker column, on a row of its own between
+	// the main chain and what branches from it.
+	const hubX = markerX - size(HUB, GUESS_HUB).width - GAP_X;
 	let y0 = 0;
 	let right = 0; // the widest band's right edge: where the terminals go
+	let mainRight = 0; // the main chain's: where its own ends go, beside a hub
 	bands.forEach((ph, band) => {
 		const phase = ph?.id;
+		// What comes after the main chain opens on the hub (a flow that only
+		// watches begins there: its start marker above it).
+		if (hub && ph && ph.kind !== 'main' && !(HUB in pos)) {
+			if (!main) {
+				pos[START] = { x: hubX, y: y0 };
+				y0 += size(START, GUESS_TERMINAL).height + GAP_Y / 2;
+			}
+			pos[HUB] = { x: hubX, y: y0 };
+			y0 += size(HUB, GUESS_HUB).height + GAP_Y / 2;
+		}
 		// A section begins: its label heads the marker column.
 		if (sections && ph && ph.kind !== bands[band - 1]?.kind) {
 			const key = sectionKey(ph.kind);
@@ -934,22 +986,34 @@ export function autoLayout(
 			laneH = Math.max(laneH, height);
 		}
 		right = Math.max(right, x, offChain.length ? x1 : 0);
+		if (!ph || ph.kind === 'main') mainRight = Math.max(x, offChain.length ? x1 : 0);
 		// The band's marker: in the column, on its band's row. A chain-less
 		// outcome is its marker alone, so its band is no taller.
 		pos[markers[band]] = { x: markerX, y: y0 };
+		// A watcher's or an outcome's ends close its row: where its chain goes
+		// back to waiting, or ends the run.
+		if (ph && ph.kind !== 'main') {
+			let ty = y0;
+			for (const to of chainEnds(doc, ph)) {
+				const key = terminalKey(to, ph);
+				pos[key] = { x, y: ty };
+				ty += size(key, GUESS_TERMINAL).height + LEAF_GAP;
+			}
+		}
 		if (!onChain.length && !offChain.length) {
 			y0 += size(markers[band], GUESS_TERMINAL).height + GAP_Y / 2;
 			return;
 		}
 		y0 = (offChain.length ? leaves(offChain, y1 + laneH) : leaves(onChain, y0 + rowH)) + BAND_GAP;
 	});
-	// Terminals: end, done and abort stacked right of everything (done and
-	// abort draw only when a route reaches them, but a position costs
-	// nothing). Debug is no terminal — its leaves sit by their stages, above.
+	// The main chain's terminals: end, done and abort stacked right of
+	// everything — right of the main chain, beside a hub, which is its end
+	// (done and abort draw only when a route reaches them, but a position
+	// costs nothing). Debug is no terminal — its leaves sit by their stages.
 	pos[START] ??= { x: markerX, y: 0 };
 	let ty = 0;
 	for (const key of [END, DONE, ABORT]) {
-		pos[key] = { x: right, y: ty };
+		pos[key] = { x: hub ? mainRight : right, y: ty };
 		ty += size(key, GUESS_TERMINAL).height + GAP_Y;
 	}
 	return pos;
@@ -971,10 +1035,11 @@ export function placeChain(
 	const others = (doc.phases ?? []).filter((p) => p.id !== id && layout[markerKey(p)]);
 	const keysOf = (p: DocPhase) => [
 		markerKey(p),
-		...stagesOf(doc, p.id).flatMap((s) => [s.id, debugKey(s.id)])
+		...stagesOf(doc, p.id).flatMap((s) => [s.id, debugKey(s.id)]),
+		...([END, DONE, ABORT] as Terminal[]).map((to) => terminalKey(to, p))
 	];
 	const height = (key: string) =>
-		key === START || key.startsWith('trigger:') || key.startsWith('debug:')
+		key === START || /^(trigger|debug|end|done|abort):/.test(key)
 			? GUESS_TERMINAL.height
 			: GUESS.height;
 	const rank = PHASE_KINDS.indexOf(ph.kind);
@@ -986,6 +1051,11 @@ export function placeChain(
 	let y = Number.isFinite(bottom) ? bottom + BAND_GAP : 0;
 	const markerX = layout[START]?.x ?? (others.length ? layout[markerKey(others[0])].x : -280);
 	const top = y;
+	// The first watcher or outcome opens the hub, on a row above it.
+	if (ph.kind !== 'main' && !layout[HUB]) {
+		layout[HUB] = { x: markerX - GUESS_HUB.width - GAP_X, y };
+		y += GUESS_HUB.height + GAP_Y / 2;
+	}
 	if (showsSections(doc) && !before.some((p) => p.kind === ph.kind)) {
 		layout[sectionKey(ph.kind)] = { x: markerX, y };
 		y += GUESS_SECTION.height + SECTION_GAP;
@@ -1001,6 +1071,14 @@ export function placeChain(
 	for (const s of own) {
 		layout[s.id] = { x, y };
 		x += GUESS.width + GAP_X;
+	}
+	// Its ends close the row.
+	if (ph.kind !== 'main') {
+		let ty = y;
+		for (const to of chainEnds(doc, ph)) {
+			layout[terminalKey(to, ph)] = { x, y: ty };
+			ty += GUESS_TERMINAL.height + LEAF_GAP;
+		}
 	}
 	// Everything after it moves down by what it took.
 	const took = y - top + (own.length ? GUESS.height + BAND_GAP : GUESS_TERMINAL.height + GAP_Y / 2);
@@ -1042,9 +1120,20 @@ function freshPhaseId(doc: FlowDoc, base: string): string {
 	return `${base}_${n}`;
 }
 
+// armMain: a main chain that nothing watches ends the run with done; once
+// there is a watcher or an outcome to wait for, it ends with end — the run
+// stays open for them (FLOWLANG §1). Only the chain's last stage changes: a
+// done said earlier in it is the author's.
+function armMain(doc: FlowDoc) {
+	if (doc.phases?.some((p) => p.kind !== 'main')) return;
+	const last = stagesOf(doc, MAIN).at(-1);
+	if (last?.on_success === DONE) last.on_success = END;
+}
+
 /** addWatcher adds a watcher a person starts from the run page, with one
  *  command stage — a watcher needs a chain — after the last watcher. */
 export function addWatcher(doc: FlowDoc): DocPhase {
+	armMain(doc);
 	doc.phases ??= [];
 	const ph: DocPhase = {
 		id: freshPhaseId(doc, 'watcher'),
@@ -1062,6 +1151,7 @@ export function addWatcher(doc: FlowDoc): DocPhase {
 /** addOutcome adds an outcome that completes the run once every merge
  *  request merged — nothing to do first. */
 export function addOutcome(doc: FlowDoc): DocPhase {
+	armMain(doc);
 	doc.phases ??= [];
 	const ph: DocPhase = {
 		id: freshPhaseId(doc, 'outcome'),
@@ -1080,8 +1170,14 @@ export function removePhase(doc: FlowDoc, id: string) {
 	doc.stages = doc.stages.filter((s) => s.phase !== id);
 }
 
-// freshStage builds a new stage of the given type with a unique id.
-export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
+/** Every stage list of the document: the chains' and each sequence's. */
+export function allStages(doc: FlowDoc): DocStage[] {
+	return [...doc.stages, ...(doc.sequences ?? []).flatMap((q) => q.stages)];
+}
+
+// freshStage builds a new stage of the given type with an id not yet in
+// taken (the chains' stages by default; a sequence's are its own).
+export function freshStage(doc: FlowDoc, type: StageKind, taken = doc.stages): DocStage {
 	const base = {
 		agent: 'agent',
 		command: 'cmd',
@@ -1092,17 +1188,210 @@ export function freshStage(doc: FlowDoc, type: StageKind): DocStage {
 	}[type];
 	let n = 1;
 	let id = `${base}_${n}`;
-	const ids = new Set(doc.stages.map((s) => s.id));
+	const ids = new Set(taken.map((s) => s.id));
 	while (ids.has(id)) id = `${base}_${++n}`;
 	const s: DocStage = { id, type, on_success: END };
 	if (doc.phases?.length) s.phase = doc.phases[0].id;
-	if (type === 'agent') s.agent = '';
+	if (type === 'agent') s.agent = doc.agents?.[0]?.name ?? '';
 	if (type === 'command') s.run_ref = '';
 	if (type === 'human_gate') s.question = '';
 	if (type === 'action') s.action = '';
 	if (type === 'wait') s.for = '';
-	if (type === 'sequence') s.sequence = doc.sequences?.[0]?.id ?? '';
+	// The main chain is a sequence too — for the chains that are not it.
+	if (type === 'sequence') s.sequence = doc.sequences?.[0]?.id ?? (hasMain(doc) ? MAIN : '');
 	return s;
+}
+
+/** Whether the flow has a main chain — which other chains may run as the
+ *  sequence `main`. */
+export const hasMain = (doc: FlowDoc) => !!doc.phases?.some((p) => p.kind === 'main');
+
+/** How a chain ends when its last stage says nothing: the run is done for a
+ *  main chain nothing watches, an outcome the way its then says, a watcher
+ *  goes back to waiting. */
+function chainEnd(doc: FlowDoc, phase: string): string {
+	const ph = doc.phases?.find((p) => p.id === phase);
+	if (ph?.kind === 'outcome') return ph.then ?? DONE;
+	return ph?.kind === 'main' && doc.phases?.length === 1 ? DONE : END;
+}
+
+/** appendStage adds a stage at the end of a chain and wires it in: the
+ *  chain's last stage goes on to it, and it ends the chain the way that
+ *  stage did. `init` is set on it before it joins the document: once in, a
+ *  stage is changed through the document, never through the object made
+ *  here (the reactive document holds its own view of it). */
+export function appendStage(
+	doc: FlowDoc,
+	type: StageKind,
+	phase: string,
+	init: Partial<DocStage> = {}
+): DocStage {
+	const s = Object.assign(freshStage(doc, type), init);
+	s.phase = phase;
+	const chain = stagesOf(doc, phase);
+	const last = chain.at(-1);
+	s.on_success = chainEnd(doc, phase);
+	if (last && (!last.on_success || isReservedTarget(last.on_success))) {
+		s.on_success = last.on_success || s.on_success;
+		last.on_success = s.id;
+	}
+	if (last) doc.stages.splice(doc.stages.indexOf(last) + 1, 0, s);
+	else {
+		// An empty chain: its stages go where the section order says.
+		const order = (doc.phases ?? []).map((p) => p.id);
+		const at = doc.stages.findIndex((x) => order.indexOf(x.phase ?? '') > order.indexOf(phase));
+		doc.stages.splice(at < 0 ? doc.stages.length : at, 0, s);
+	}
+	return s;
+}
+
+/** appendSequenceStage adds a stage at the end of a sequence: the last stage
+ *  goes on to it, and it leaves the sequence the way that one did. */
+export function appendSequenceStage(
+	doc: FlowDoc,
+	type: StageKind,
+	id: string
+): DocStage | undefined {
+	const q = doc.sequences?.find((x) => x.id === id);
+	if (!q) return undefined;
+	const s = freshStage(doc, type, q.stages);
+	s.phase = undefined;
+	s.on_success = undefined;
+	// A sequence never runs itself: another one, else the main chain.
+	if (s.sequence === id) s.sequence = doc.sequences?.find((x) => x.id !== id)?.id ?? MAIN;
+	const last = q.stages.at(-1);
+	if (last?.on_success && isReservedTarget(last.on_success)) {
+		s.on_success = last.on_success;
+		last.on_success = undefined;
+	}
+	q.stages.push(s);
+	return s;
+}
+
+/** moveSequenceStage moves a sequence's stage one place up (-1) or down
+ *  (+1). A sequence runs from its first stage and, where a stage says no
+ *  success, on to the next: the order is part of the chain. */
+export function moveSequenceStage(doc: FlowDoc, id: string, stage: string, delta: -1 | 1) {
+	const q = doc.sequences?.find((x) => x.id === id);
+	const i = q?.stages.findIndex((s) => s.id === stage) ?? -1;
+	if (!q || i < 0 || i + delta < 0 || i + delta >= q.stages.length) return;
+	const [s] = q.stages.splice(i, 1);
+	q.stages.splice(i + delta, 0, s);
+}
+
+/** The stage ids — in a chain or a sequence — that run the sequence id. */
+export function sequenceUsers(doc: FlowDoc, id: string): string[] {
+	return allStages(doc)
+		.filter((s) => s.type === 'sequence' && s.sequence === id)
+		.map((s) => s.id);
+}
+
+/** addSequence adds a sequence of one command stage, nothing running it yet. */
+export function addSequence(doc: FlowDoc): DocSequence {
+	const ids = new Set((doc.sequences ?? []).map((q) => q.id));
+	let n = 1;
+	while (ids.has(`sequence_${n}`) || `sequence_${n}` === MAIN) n++;
+	const stage = freshStage(doc, 'command', []);
+	stage.phase = undefined;
+	stage.on_success = undefined;
+	const q: DocSequence = { id: `sequence_${n}`, stages: [stage] };
+	doc.sequences = [...(doc.sequences ?? []), q];
+	return q;
+}
+
+/** renameSequence renames a sequence and every stage that runs it. */
+export function renameSequence(doc: FlowDoc, from: string, to: string) {
+	const q = doc.sequences?.find((x) => x.id === from);
+	if (!q) return;
+	q.id = to;
+	for (const s of allStages(doc)) if (s.type === 'sequence' && s.sequence === from) s.sequence = to;
+}
+
+/** removeSequence drops a sequence nothing runs. */
+export function removeSequence(doc: FlowDoc, id: string) {
+	doc.sequences = doc.sequences?.filter((q) => q.id !== id);
+	if (!doc.sequences?.length) doc.sequences = undefined;
+}
+
+/** What an agent's name — and each of its inputs' and outputs' — may be. */
+export const AGENT_NAME = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** The stage ids — in a chain or a sequence — that run the agent name. */
+export function agentUsers(doc: FlowDoc, name: string): string[] {
+	return allStages(doc)
+		.filter((s) => s.type === 'agent' && s.agent === name)
+		.map((s) => s.id);
+}
+
+/** addAgent declares an agent with an empty prompt, for a stage to run —
+ *  under the name given when it is free, else agent_N. */
+export function addAgent(doc: FlowDoc, name?: string): DocAgent {
+	const names = new Set((doc.agents ?? []).map((a) => a.name));
+	let n = 1;
+	while (names.has(`agent_${n}`)) n++;
+	const free = name && AGENT_NAME.test(name) && !names.has(name);
+	const a: DocAgent = { name: free ? name : `agent_${n}`, prompt: '' };
+	doc.agents = [...(doc.agents ?? []), a];
+	return a;
+}
+
+/** renameAgent renames an agent and every stage that runs it. */
+export function renameAgent(doc: FlowDoc, from: string, to: string) {
+	const a = doc.agents?.find((x) => x.name === from);
+	if (!a) return;
+	a.name = to;
+	for (const s of allStages(doc)) if (s.type === 'agent' && s.agent === from) s.agent = to;
+}
+
+/** renameAgentPort renames one of an agent's inputs or outputs, and the
+ *  binding every stage running the agent holds under that name — keeping
+ *  the bindings' order. */
+export function renameAgentPort(
+	doc: FlowDoc,
+	agent: string,
+	field: 'input' | 'output',
+	from: string,
+	to: string
+) {
+	for (const s of allStages(doc)) {
+		const io = s[field];
+		if (s.type !== 'agent' || s.agent !== agent || !io || !(from in io)) continue;
+		s[field] = Object.fromEntries(Object.entries(io).map(([k, v]) => [k === from ? to : k, v]));
+	}
+}
+
+/** addMainChain gives a flow that only watches the chain a run starts with:
+ *  one command stage. */
+export function addMainChain(doc: FlowDoc): DocPhase {
+	doc.phases ??= [];
+	const ph: DocPhase = { id: MAIN, kind: 'main', on: { signal: RUN_START } };
+	doc.phases.unshift(ph);
+	appendStage(doc, 'command', MAIN);
+	return ph;
+}
+
+/** setChainSequence makes a watcher's or an outcome's chain one stage that
+ *  runs the sequence id — written `sequence: id` — or, with no id, stages of
+ *  its own: one command stage for a watcher (it needs a chain), none for an
+ *  outcome (its then is enough). Its stages so far are dropped. */
+export function setChainSequence(doc: FlowDoc, phase: string, id: string | undefined) {
+	const ph = doc.phases?.find((p) => p.id === phase);
+	if (!ph) return;
+	doc.stages = doc.stages.filter((s) => s.phase !== phase);
+	if (!id) {
+		if (ph.kind === 'watcher') appendStage(doc, 'command', phase);
+		return;
+	}
+	// Named after its chain, as the parser names `sequence: id` — unless a
+	// stage elsewhere has that id; then it is written out as stages.
+	const named = !doc.stages.some((x) => x.id === phase);
+	appendStage(doc, 'sequence', phase, { sequence: id, ...(named ? { id: phase } : {}) });
+}
+
+/** The sequence a watcher's or an outcome's chain is written as
+ *  `sequence: X` for, or undefined when it has stages of its own. */
+export function chainSequence(doc: FlowDoc, ph: DocPhase): string | undefined {
+	return sequenceOf(ph, stagesOf(doc, ph.id));
 }
 
 // --- dataflow (FLOWLANG §4) -------------------------------------------------

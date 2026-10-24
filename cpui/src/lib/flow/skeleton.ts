@@ -6,7 +6,7 @@ import { CURRENT_VERSION } from '$lib/flowdoc';
 export const flowSkeleton = (name: string) => `name: ${name}
 version: ${CURRENT_VERSION}
 description: describe what this flow does
-parameters: { timeout: 30m, harness: opencode, model: anthropic/claude-sonnet-4-6, max_turns: 50, max_cost_usd: 10.0, max_total_turns: 300 }
+parameters: { harness: opencode, model: anthropic/claude-sonnet-4-6, timeout: 30m, max_turns: 50, max_cost_usd: 10.0, max_total_turns: 300 }
 agents:
   # An agent is a prompt, the inputs a stage hands it and the files it writes.
   - name: worker

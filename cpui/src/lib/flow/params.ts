@@ -1,7 +1,7 @@
 // Parameters in the editor (FLOWLANG §1): a parameter's type as the server
 // infers it from its default, which control edits it, which parameters a
 // site may read, and where a parameter is read.
-import { KNOWN_PARAMS, START_POLICIES, type DocParam, type FlowDoc } from '$lib/flowdoc';
+import { allStages, KNOWN_PARAMS, START_POLICIES, type DocParam, type FlowDoc } from '$lib/flowdoc';
 
 export type ParamType = 'bool' | 'int' | 'float' | 'string';
 export type ParamKind = ParamType | 'enum' | 'policy' | 'duration';
@@ -68,7 +68,7 @@ export const policyParams = (doc: FlowDoc) => enumParamsWithin(doc, START_POLICI
 export function paramRefs(doc: FlowDoc, name: string): string[] {
 	const ref = '$' + name;
 	const out: string[] = [];
-	for (const s of doc.stages) {
+	for (const s of allStages(doc)) {
 		for (const f of ['model', 'harness', 'run_ref', 'timeout', 'max_turns'] as const) {
 			if (s[f] === ref) out.push(`${s.id}.${f}`);
 		}
@@ -91,7 +91,7 @@ export function renameParam(doc: FlowDoc, from: string, to: string) {
 	);
 	const a = '$' + from;
 	const b = '$' + to;
-	for (const s of doc.stages) {
+	for (const s of allStages(doc)) {
 		for (const f of ['model', 'harness', 'run_ref', 'timeout', 'max_turns'] as const)
 			if (s[f] === a) s[f] = b;
 		if (s.when) s.when = s.when.replace(a, b);

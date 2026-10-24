@@ -41,6 +41,8 @@ export default {
 	'ui.optional.clear': 'Clear {label}',
 	'ui.optional.value': 'value',
 	'ui.optional.set': 'Set',
+	'ui.optional.param': 'Read {label} from a parameter',
+	'ui.optional.orParam': 'or a parameter…',
 	'ui.sidenav.label': 'Sections',
 	'ui.error.details': 'Details',
 	'ui.error.retry': 'Retry',

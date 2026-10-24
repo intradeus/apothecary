@@ -84,6 +84,32 @@
 			placeholder={KNOWN_PLACEHOLDER[name]}
 			onchange={(e) => setKnown(name, e.currentTarget.value)}
 		/>
+		<!-- A value set here may say what it is for and which values a
+		     workshop may bind, like any parameter. -->
+		{#if p != null}
+			<details class="more" open={!!(p.description || p.enum?.length)}>
+				<summary class="fnt tiny">{t('flow.insp.paramMore')}</summary>
+				<input
+					value={p.description ?? ''}
+					aria-label={t('flow.insp.description')}
+					placeholder={t('flow.insp.description')}
+					onchange={(e) => setField(name, { description: e.currentTarget.value || undefined })}
+				/>
+				<input
+					class="mono"
+					value={(p.enum ?? []).join(', ')}
+					aria-label={t('flow.insp.paramEnum')}
+					placeholder={t('flow.insp.paramEnum')}
+					onchange={(e) => {
+						const vals = e.currentTarget.value
+							.split(',')
+							.map((v) => v.trim())
+							.filter(Boolean);
+						setField(name, { enum: vals.length ? vals : undefined });
+					}}
+				/>
+			</details>
+		{/if}
 	</div>
 {/each}
 
@@ -149,6 +175,17 @@
 <style>
 	.lbl.sub {
 		margin-top: 8px;
+	}
+	.more {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.more[open] > summary {
+		margin-bottom: 6px;
+	}
+	.more > input + input {
+		margin-top: 6px;
 	}
 	.param {
 		display: flex;

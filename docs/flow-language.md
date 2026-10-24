@@ -146,10 +146,12 @@ Project-side dependencies are resolved live and audited per attempt instead:
 `stage_started.agent_hash`, the content address of the exact agent definition
 that produced it.
 
-The graph editor re-emits a canonical form — agents before stages, stages in
-success order, an explicit `on_success` on every stage, no comments — and
-`docToYaml ∘ parse` is a fixed point, so opening and saving an already-canonical
-flow produces no change.
+The graph editor re-emits a canonical form — the six parameters the engine
+reads first, in their order, then the flow's own; agents before stages; stages
+in success order, an explicit `on_success` on every chain's stage; no comments
+— and `docToYaml ∘ parse` is a fixed point, so opening and saving an
+already-canonical flow produces no change. Everything the document can say,
+the editor can write: a flow is made whole in the graph, YAML never required.
 
 **Where flows live.** A flow belongs to one project — its stages name that
 project's commands and its agents know that repository — or it is a
@@ -1129,14 +1131,19 @@ the repository's business at posting time, not a failure (below).
 Because consumption and production are declared, the graph editor derives the
 dataflow rather than storing it: each stage shows an input dot per thing it
 reads and an output dot per thing it writes, and a dashed line connects a
-producer's dot to a consumer's dot whenever their paths match. Those lines are
-read-only by construction — you rewire them by editing a path, not by dragging.
-Control-flow edges (the colored ones) are the draggable layer, and one of them
-lands directly on the `$DECISION` or `$FAILURE` dot that receives its content —
-so the retry path is visible too. Every chain is drawn the same way, one row
-each with its opening — the main chain's start, a watcher's or an outcome's
-wait point — as a marker on its first stage, under its section's label (main,
-watchers, outcomes); the stages that park are marked too.
+producer's dot to a consumer's dot in the same chain whenever their paths
+match (a watcher reading what the main chain wrote shows the path on its dot).
+Those lines are read-only by construction — you rewire them by editing a path,
+not by dragging. Control-flow edges (the colored ones) are the draggable
+layer, and one of them lands directly on the `$DECISION` or `$FAILURE` dot
+that receives its content — so the retry path is visible too. Every chain is
+drawn the same way, one row each with its opening — the main chain's start, a
+watcher's or an outcome's wait point — as a marker on its first stage, under
+its section's label (main, watchers, outcomes); the stages that park are
+marked too. Once a flow has watchers or outcomes, the main chain's `end` is
+the **hub** — the run open, waiting on its merge requests — and each watcher
+and outcome branches from it, framed as the sub-run it is, with its own ends:
+`end` back to the hub's waiting, `done` or `abort` for an outcome.
 
 ---
 

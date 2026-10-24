@@ -394,6 +394,9 @@ export default {
 	'page.flow.sequencePane': 'Sequence {sequence}',
 	'page.flow.sequenceClose': 'Close the sequence (Esc)',
 	'page.flow.sequenceRunsAs': 'runs in place of {stage}',
+	// A sequence opened on its own leaves the way whichever stage runs it says.
+	'page.flow.sequenceExitAny': 'the stage running it',
+	'page.flow.sequenceFailAny': 'its on_fail',
 	'page.flow.hint':
 		'<span class="kbd">⌫</span> delete selection · <span class="kbd">⌘S</span> save · drag handles to rewire',
 	'page.flow.yamlLabel': 'Flow YAML',

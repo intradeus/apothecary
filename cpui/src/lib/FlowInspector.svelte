@@ -14,7 +14,14 @@
 	import OptionalDuration from '$lib/ui/OptionalDuration.svelte';
 	import OptionalNumber from '$lib/ui/OptionalNumber.svelte';
 	import ParamsEditor from '$lib/flow/ParamsEditor.svelte';
-	import { boolParams, intParams, isParamRef, policyParams, stringParams } from '$lib/flow/params';
+	import {
+		boolParams,
+		enumParamsWithin,
+		intParams,
+		isParamRef,
+		policyParams,
+		stringParams
+	} from '$lib/flow/params';
 	import type { ActionSpec, SignalSpec } from '$lib/domain';
 	import {
 		ABORT,
@@ -28,9 +35,26 @@
 		MANUAL,
 		RUN_STARTS,
 		START_POLICIES,
+		AGENT_NAME,
+		addAgent,
+		addMainChain,
 		addOutcome,
+		addSequence,
 		addWatcher,
+		agentUsers,
+		appendSequenceStage,
+		appendStage,
+		chainSequence,
+		hasMain,
+		moveSequenceStage,
 		removePhase,
+		removeSequence,
+		renameAgent,
+		renameAgentPort,
+		renameSequence,
+		sequenceUsers,
+		setChainSequence,
+		stagesOf,
 		fires,
 		paramDefault,
 		chainSummary,
@@ -47,7 +71,6 @@
 		pruneEdgeTarget,
 		sentinelsFor,
 		setEdge,
-		freshStage,
 		movePhase,
 		triggerLabel,
 		verdictOutput,
@@ -56,6 +79,7 @@
 		type DocStage,
 		type EdgeKind,
 		type DocAgent,
+		type DocSequence,
 		type FlowDoc,
 		type StageKind
 	} from '$lib/flowdoc';
@@ -83,8 +107,21 @@
 		signals?: SignalSpec[];
 	} = $props();
 
+	// A stage or an edge inside a sequence is edited in its sequence: its id,
+	// its routes and its neighbours are the sequence's own.
+	const scopeSeq = $derived(
+		(selection?.kind === 'stage' || selection?.kind === 'edge') && selection.sequence
+			? doc.sequences?.find((q) => q.id === selection.sequence)
+			: undefined
+	);
+	const scopeStages = $derived(scopeSeq ? scopeSeq.stages : doc.stages);
+	// What a selection inside the open sequence carries along.
+	const inSeq = $derived(scopeSeq ? { sequence: scopeSeq.id } : {});
+	// The stages a stage may route to: its sequence's, or its chain's.
+	const routable = (s: DocStage) => (scopeSeq ? scopeSeq.stages : routableFrom(doc, s));
+
 	const stage = $derived(
-		selection?.kind === 'stage' ? doc.stages.find((s) => s.id === selection.id) : undefined
+		selection?.kind === 'stage' ? scopeStages.find((s) => s.id === selection.id) : undefined
 	);
 
 	// The declared I/O of the selected stage's agent, when known. feedback is
@@ -130,17 +167,23 @@
 	);
 
 	// renamePhase renames a watcher or an outcome and every stage that
-	// belongs to it. The main chain is `main`.
-	function renamePhase(oldId: string, newId: string) {
+	// belongs to it. The main chain is `main`. Like every rename here, it
+	// says whether it took: a refused one puts the field back.
+	function renamePhase(oldId: string, newId: string): boolean {
 		newId = newId.trim();
 		const ph = doc.phases?.find((p) => p.id === oldId);
-		if (!ph || ph.kind === 'main' || !newId || newId === oldId || newId === MAIN) return;
-		if (!/^[a-z][a-z0-9_-]*$/.test(newId) || doc.phases?.some((p) => p.id === newId)) return;
+		if (!ph || ph.kind === 'main' || !newId || newId === oldId || newId === MAIN) return false;
+		if (!/^[a-z][a-z0-9_-]*$/.test(newId) || doc.phases?.some((p) => p.id === newId)) return false;
 		ph.id = newId;
 		for (const s of doc.stages) if (s.phase === oldId) s.phase = newId;
 		onchange();
 		onselect({ kind: 'phase', id: newId });
+		return true;
 	}
+	// The field of a rename the document refused shows the name in force.
+	const renamed = (el: HTMLInputElement, current: string, took: boolean) => {
+		if (!took) el.value = current;
+	};
 
 	function setRunStart(v: string) {
 		doc.run_start = v === 'merge_request' ? 'merge_request' : undefined;
@@ -185,6 +228,171 @@
 		onchange();
 		onselect(null);
 	}
+
+	// What a watcher or an outcome runs: stages of its own, or a sequence in
+	// their place (`sequence: X`) — one chain written once, run from several
+	// places.
+	const phaseRuns = $derived(
+		phaseSel && phaseSel.kind !== 'main' ? (chainSequence(doc, phaseSel) ?? '') : ''
+	);
+	async function setRuns(ph: DocPhase, id: string) {
+		const own = stagesOf(doc, ph.id);
+		if (own.length && !chainSequence(doc, ph)) {
+			const ok = await confirmDialog({
+				title: t('flow.insp.runsReplaceTitle', { id: ph.id }),
+				body: [
+					th('flow.insp.runsReplaceBody', { id: ph.id, count: own.length }),
+					t('flow.insp.deleteNote')
+				].join(' '),
+				action: t('flow.insp.runsReplace')
+			});
+			if (!ok) return;
+		}
+		setChainSequence(doc, ph.id, id || undefined);
+		onchange();
+	}
+
+	function newMainChain() {
+		addMainChain(doc);
+		onchange();
+		onselect({ kind: 'phase', id: MAIN });
+	}
+
+	// ---- agents: the flow carries their definitions (FLOWLANG §1) ----------
+	const agentSel = $derived(
+		selection?.kind === 'agent' ? doc.agents?.find((a) => a.name === selection.name) : undefined
+	);
+	function newAgent(name?: string) {
+		const a = addAgent(doc, name);
+		onchange();
+		onselect({ kind: 'agent', name: a.name });
+	}
+	function renameAgentTo(from: string, to: string): boolean {
+		to = to.trim();
+		if (!to || to === from || !AGENT_NAME.test(to) || doc.agents?.some((a) => a.name === to))
+			return false;
+		renameAgent(doc, from, to);
+		onchange();
+		onselect({ kind: 'agent', name: to });
+		return true;
+	}
+	async function deleteAgent(name: string) {
+		const used = agentUsers(doc, name);
+		const ok = await confirmDialog({
+			title: t('flow.insp.deleteAgentTitle', { name }),
+			body: [
+				used.length
+					? th('flow.insp.deleteAgentUsed', { name, count: used.length, stages: used.join(', ') })
+					: th('flow.insp.deleteAgentBody', { name }),
+				t('flow.insp.deleteNote')
+			].join(' '),
+			action: t('flow.insp.deleteAgent')
+		});
+		if (!ok) return;
+		doc.agents = doc.agents?.filter((a) => a.name !== name);
+		if (!doc.agents?.length) doc.agents = undefined;
+		onchange();
+		onselect(null);
+	}
+	// A port is one declared input or output: a slug unique on its agent.
+	const portName = (taken: { name: string }[], base: string) => {
+		let n = 1;
+		while (taken.some((p) => p.name === `${base}_${n}`)) n++;
+		return `${base}_${n}`;
+	};
+	function addInput(a: DocAgent) {
+		a.inputs = [...(a.inputs ?? []), { name: portName(a.inputs ?? [], 'input') }];
+		onchange();
+	}
+	function addOutput(a: DocAgent) {
+		const name = portName(a.outputs ?? [], 'output');
+		a.outputs = [...(a.outputs ?? []), { name, path: `artifacts/${name}.md` }];
+		onchange();
+	}
+	function renamePort(a: DocAgent, field: 'input' | 'output', from: string, to: string): boolean {
+		to = to.trim();
+		const list = (field === 'input' ? a.inputs : a.outputs) ?? [];
+		const port = list.find((p) => p.name === from);
+		if (!port || !to || to === from || !AGENT_NAME.test(to) || list.some((p) => p.name === to))
+			return false;
+		port.name = to;
+		renameAgentPort(doc, a.name, field, from, to);
+		onchange();
+		return true;
+	}
+	function removeInput(a: DocAgent, name: string) {
+		a.inputs = a.inputs?.filter((p) => p.name !== name);
+		if (!a.inputs?.length) a.inputs = undefined;
+		onchange();
+	}
+	function removeOutput(a: DocAgent, name: string) {
+		a.outputs = a.outputs?.filter((p) => p.name !== name);
+		if (!a.outputs?.length) a.outputs = undefined;
+		onchange();
+	}
+	// What an output's type makes of the file (agentspec): an opaque file,
+	// the verdict on_reject routes on, a review for post_review, or a review
+	// round's replies.
+	const OUTPUT_TYPES = ['', 'verdict', 'review_threads', 'review_replies'] as const;
+
+	// ---- sequences: chains written once, run where a stage names them -----
+	const seqSel = $derived(
+		selection?.kind === 'sequence' ? doc.sequences?.find((q) => q.id === selection.id) : undefined
+	);
+	function newSequence() {
+		const q = addSequence(doc);
+		onchange();
+		onselect({ kind: 'sequence', id: q.id });
+	}
+	function renameSequenceTo(from: string, to: string): boolean {
+		to = to.trim();
+		if (
+			!to ||
+			to === from ||
+			to === MAIN ||
+			!/^[a-z][a-z0-9_-]*$/.test(to) ||
+			doc.sequences?.some((q) => q.id === to)
+		)
+			return false;
+		renameSequence(doc, from, to);
+		onchange();
+		onselect({ kind: 'sequence', id: to });
+		return true;
+	}
+	async function deleteSequence(q: DocSequence) {
+		if (sequenceUsers(doc, q.id).length) return;
+		const ok = await confirmDialog({
+			title: t('flow.insp.deleteSequenceTitle', { id: q.id }),
+			body: [
+				th('flow.insp.deleteSequenceBody', { id: q.id, count: q.stages.length }),
+				t('flow.insp.deleteNote')
+			].join(' '),
+			action: t('flow.insp.deleteSequence')
+		});
+		if (!ok) return;
+		removeSequence(doc, q.id);
+		onchange();
+		onselect(null);
+	}
+	// What a sequence stage may run: the flow's sequences, and the main chain
+	// for the chains that are not it — never the sequence it is written in.
+	const runnable = (s: DocStage) => [
+		...(hasMain(doc) && s.phase !== MAIN ? [MAIN] : []),
+		...(doc.sequences ?? []).map((q) => q.id).filter((id) => id !== scopeSeq?.id)
+	];
+	// The stages — in the chains and in sequences — that match, each as the
+	// selection that opens it.
+	const runners = (match: (s: DocStage) => boolean): { label: string; sel: Selection }[] => [
+		...doc.stages
+			.filter(match)
+			.map((s) => ({ label: s.id, sel: { kind: 'stage', id: s.id } as const })),
+		...(doc.sequences ?? []).flatMap((q) =>
+			q.stages.filter(match).map((s) => ({
+				label: `${q.id} › ${s.id}`,
+				sel: { kind: 'stage', id: s.id, sequence: q.id } as const
+			}))
+		)
+	];
 
 	// Bindings are one form everywhere (FLOWLANG §4), so there is one editor:
 	// read a name's value, write it back preserving order.
@@ -235,23 +443,35 @@
 	// outgoing and incoming views share one grid cell for the moment.
 	const viewKey = $derived(
 		selection?.kind === 'stage'
-			? `s:${selection.id}`
+			? `s:${selection.sequence ?? ''}:${selection.id}`
 			: selection?.kind === 'edge'
-				? `e:${selection.stage}:${selection.edge}`
+				? `e:${selection.sequence ?? ''}:${selection.stage}:${selection.edge}`
 				: selection?.kind === 'phase'
 					? `p:${selection.id}`
-					: 'flow'
+					: selection?.kind === 'agent'
+						? `a:${selection.name}`
+						: selection?.kind === 'sequence'
+							? `q:${selection.id}`
+							: 'flow'
 	);
 	const xf = () => ({ duration: ms('--dur-fade', 160) });
-	// A sequence stage is offered once the document has a sequence to run.
-	const ADD = $derived<StageKind[]>([
-		'agent',
-		'command',
-		'human_gate',
-		'action',
-		'wait',
-		...(doc.sequences?.length ? (['sequence'] as const) : [])
-	]);
+	// The stages a chain or a sequence may add: a sequence stage once there
+	// is something for it to run — another sequence, or the main chain again
+	// (from anywhere but the main chain itself).
+	const addKinds = (where: { phase?: string; sequence?: string }): StageKind[] => {
+		const runs =
+			(doc.sequences ?? []).some((q) => q.id !== where.sequence) ||
+			(hasMain(doc) && where.phase !== MAIN);
+		return [
+			'agent',
+			'command',
+			'human_gate',
+			'action',
+			'wait',
+			...(runs ? ['sequence' as const] : [])
+		];
+	};
+	const mainPhase = $derived(doc.phases?.find((p) => p.kind === 'main'));
 	const sequenceSel = $derived(
 		stage?.type === 'sequence' ? doc.sequences?.find((q) => q.id === stage.sequence) : undefined
 	);
@@ -259,21 +479,32 @@
 	const edgeSel = $derived(
 		selection?.kind === 'edge'
 			? {
-					stage: doc.stages.find((s) => s.id === selection.stage),
+					stage: scopeStages.find((s) => s.id === selection.stage),
 					kind: selection.edge as EdgeKind
 				}
 			: undefined
 	);
-	const stageIds = $derived(doc.stages.map((s) => s.id));
 
-	function addStage(type: StageKind) {
-		const s = freshStage(doc, type);
-		doc.stages.push(s);
+	// A stage is added at the end of a chain or a sequence, wired in after
+	// its last stage; the flow panel adds to the main chain (or the first
+	// chain there is).
+	function addToChain(type: StageKind, phase: string) {
+		const s = appendStage(doc, type, phase);
 		onchange();
 		onselect({ kind: 'stage', id: s.id });
 	}
+	function addToSequence(type: StageKind, id: string) {
+		const s = appendSequenceStage(doc, type, id);
+		if (!s) return;
+		onchange();
+		onselect({ kind: 'stage', id: s.id, sequence: id });
+	}
+	function addStage(type: StageKind) {
+		const phase = mainPhase?.id ?? doc.phases?.[0]?.id;
+		if (phase) addToChain(type, phase);
+	}
 
-	function renameStage(oldId: string, newId: string) {
+	function renameStage(oldId: string, newId: string): boolean {
 		newId = newId.trim();
 		if (
 			!newId ||
@@ -281,9 +512,10 @@
 			[END, DONE, ABORT, DEBUG, START, FAIL].includes(newId) ||
 			!/^[a-z][a-z0-9_-]*$/.test(newId)
 		)
-			return;
-		if (doc.stages.some((s) => s.id === newId)) return;
-		for (const s of doc.stages) {
+			return false;
+		// Ids are unique in the chains, and in each sequence on its own.
+		if (scopeStages.some((s) => s.id === newId)) return false;
+		for (const s of scopeStages) {
 			if (s.id === oldId) s.id = newId;
 			if (s.on_success === oldId) s.on_success = newId;
 			for (const kind of EDGE_KINDS) {
@@ -293,11 +525,13 @@
 			}
 		}
 		onchange();
-		onselect({ kind: 'stage', id: newId });
+		onselect({ kind: 'stage', id: newId, ...inSeq });
+		return true;
 	}
 
 	async function deleteStage(id: string) {
-		const refs = doc.stages.filter(
+		const seq = scopeSeq;
+		const refs = scopeStages.filter(
 			(s) =>
 				s.id !== id &&
 				(s.on_success === id ||
@@ -315,30 +549,34 @@
 			action: t('flow.insp.deleteAction')
 		});
 		if (!ok) return;
-		doc.stages = doc.stages.filter((s) => s.id !== id);
-		for (const s of doc.stages) {
-			if (s.on_success === id) s.on_success = END;
+		const rest = (seq ? seq.stages : doc.stages).filter((s) => s.id !== id);
+		for (const s of rest) {
+			// A success that led there ends the chain — in a sequence it goes
+			// on to the next stage, or out.
+			if (s.on_success === id) s.on_success = seq ? undefined : END;
 			for (const kind of EDGE_KINDS) {
 				setEdge(s, kind, pruneEdgeTarget(edgeOf(s, kind), id));
 			}
 		}
+		if (seq) seq.stages = rest;
+		else doc.stages = rest;
 		onchange();
-		onselect(null);
+		onselect(seq ? { kind: 'sequence', id: seq.id } : null);
 	}
 
 	// A new edge starts somewhere legal: a stage of the same phase (a route
 	// may not leave it). A failure or timeout retries the stage itself; a
 	// gate's rejection goes back to whatever leads into the gate.
 	function addEdge(s: NonNullable<typeof stage>, kind: EdgeKind) {
-		const mine = routableFrom(doc, s);
+		const mine = routable(s);
 		const feeder = mine.find((x) => x.on_success === s.id && x.id !== s.id);
 		const to = s.type === 'human_gate' ? (feeder ?? mine.find((x) => x.id !== s.id))?.id : s.id;
 		setEdge(s, kind, to ? { to, max: 3 } : { to: DEBUG });
 		onchange();
-		onselect({ kind: 'edge', stage: s.id, edge: kind });
+		onselect({ kind: 'edge', stage: s.id, edge: kind, ...inSeq });
 	}
 
-	const targetsGate = (id: string) => doc.stages.find((x) => x.id === id)?.type === 'human_gate';
+	const targetsGate = (id: string) => scopeStages.find((x) => x.id === id)?.type === 'human_gate';
 	// Unlimited (-1) needs a human on the link: gate target (each firing
 	// parks on a decision) or gate source (the link only fires on reject).
 	const unlimitedOK = (sourceType: StageKind, to: string) =>
@@ -359,17 +597,21 @@
 		onchange();
 	}
 
-	/** Delete what is selected (⌫ / Del on the canvas): a stage asks first;
-	 *  an edge goes at once (re-adding it is one click). */
+	/** Delete what is selected (⌫ / Del on the canvas): a stage, a chain, an
+	 *  agent or a sequence asks first; an edge goes at once (re-adding it is
+	 *  one click). */
 	export function deleteSelection() {
-		if (selection?.kind === 'stage') void deleteStage(selection.id);
-		else if (selection?.kind === 'edge') {
-			const s = doc.stages.find((x) => x.id === selection.stage);
+		if (selection?.kind === 'stage') {
+			if (scopeSeq?.stages.length !== 1) void deleteStage(selection.id);
+		} else if (selection?.kind === 'edge') {
+			const s = scopeStages.find((x) => x.id === selection.stage);
 			if (!s) return;
 			setEdge(s, selection.edge as EdgeKind, undefined);
 			onchange();
-			onselect({ kind: 'stage', id: s.id });
-		}
+			onselect({ kind: 'stage', id: s.id, ...inSeq });
+		} else if (phaseSel && phaseSel.kind !== 'main') void deletePhase(phaseSel);
+		else if (agentSel) void deleteAgent(agentSel.name);
+		else if (seqSel) void deleteSequence(seqSel);
 	}
 
 	const maxHelp = (depth: number, then: unknown, canUnlimit: boolean) => {
@@ -414,7 +656,7 @@
 		const links = chainLinks(e);
 		if (links.length === 1) {
 			setEdge(s, kind, undefined);
-			onselect({ kind: 'stage', id: s.id });
+			onselect({ kind: 'stage', id: s.id, ...inSeq });
 		} else {
 			links[links.length - 2].then = undefined;
 		}
@@ -427,14 +669,18 @@
 		<div class="view-x" in:fade={xf()} out:fade={xf()}>
 			{#if stage}
 				{@const s = stage}
+				{@const only = scopeSeq?.stages.length === 1}
 				<div class="ih">
 					<StageChip type={s.type} />
+					{#if scopeSeq}<span class="mono fnt">{scopeSeq.id}.</span>{/if}
 					<span class="mono iid ell">{s.id}</span>
 					<span class="spacer"></span>
 					<button
 						class="btn-danger btn-sm"
+						disabled={only}
 						onclick={() => deleteStage(s.id)}
-						title={t('flow.insp.deleteTitle')}>{t('flow.insp.delete')}</button
+						title={only ? t('flow.insp.onlyStage') : t('flow.insp.deleteTitle')}
+						>{t('flow.insp.delete')}</button
 					>
 				</div>
 				<div class="field">
@@ -443,11 +689,25 @@
 						id="st-id"
 						class="mono"
 						value={s.id}
-						onchange={(e) => renameStage(s.id, e.currentTarget.value)}
+						onchange={(e) =>
+							renamed(e.currentTarget, s.id, renameStage(s.id, e.currentTarget.value))}
 					/>
 					<div class="help">{t('flow.insp.renameHelp')}</div>
 				</div>
-				{#if doc.phases?.length}
+				{#if scopeSeq}
+					{@const q = scopeSeq}
+					<div class="field">
+						<span class="lbl-in">{t('flow.insp.inSequence')}</span>
+						<div class="row">
+							<span class="mono">{q.id}</span>
+							<span class="fnt small ell grow">{q.description ?? ''}</span>
+							<button class="btn-sm" onclick={() => onselect({ kind: 'sequence', id: q.id })}
+								>{t('flow.insp.editSequence')}</button
+							>
+						</div>
+						<div class="help">{t('flow.insp.inSequenceHelp')}</div>
+					</div>
+				{:else if doc.phases?.length}
 					<div class="field">
 						<label for="st-phase">{t('flow.insp.chain')}</label>
 						<select
@@ -521,6 +781,22 @@
 							{#each agents as a (a.name)}<option value={a.name}></option>{/each}
 						</datalist>
 						<div class="help">{t('flow.insp.agentHelp')}</div>
+						{#if agentDecl}
+							{@const name = agentDecl.name}
+							<div class="chips">
+								<button class="btn-sm" onclick={() => onselect({ kind: 'agent', name })}
+									>{t('flow.insp.editAgent', { name })}</button
+								>
+							</div>
+						{:else}
+							<div class="chips">
+								<button class="btn-sm" onclick={() => newAgent(s.agent)}
+									>{s.agent && AGENT_NAME.test(s.agent)
+										? t('flow.insp.declareAgent', { name: s.agent })
+										: t('flow.insp.newAgent')}</button
+								>
+							</div>
+						{/if}
 					</div>
 					<div class="field">
 						<label for="st-harness">{t('flow.insp.harness')}</label>
@@ -611,7 +887,7 @@
 							{#each sentinelsFor('agent') as v (v)}<option value={v}></option>{/each}
 						</datalist>
 					{:else if s.agent}
-						<div class="help">
+						<div class="help" class:hue-amb={!agentDecl}>
 							{agentDecl
 								? t('flow.insp.noInputs', { name: s.agent })
 								: t('flow.insp.unknownAgent', { name: s.agent })}
@@ -673,6 +949,18 @@
 							oninput={onchange}
 							rows="3"
 							placeholder="make test"></textarea>
+					</div>
+					<div class="field">
+						<label for="st-cmd-timeout">{t('flow.insp.timeout')}</label>
+						<input
+							id="st-cmd-timeout"
+							class="mono"
+							list="flow-params"
+							bind:value={s.timeout}
+							oninput={onchange}
+							placeholder={paramDefault(doc, 'timeout') ?? '30m'}
+						/>
+						<div class="help">{t('flow.insp.commandTimeoutHelp')}</div>
 					</div>
 					<Toggle
 						checked={!!s.each_repo}
@@ -804,6 +1092,8 @@
 							</div>
 						{/if}
 						{#each actionSig.inputs ?? [] as d (d.name)}
+							{@const cur = bindingValue(s, 'input', d.name)}
+							{@const fits = d.kind === 'enum' ? enumParamsWithin(doc, d.values ?? []) : []}
 							<div class="io-bind card-in field">
 								<label for="act-{d.name}"
 									><span class="mono">{d.name}</span>
@@ -823,11 +1113,17 @@
 									>
 										{#if !d.required && !d.defaultValue}<option value="">—</option>{/if}
 										{#each d.values ?? [] as v (v)}<option value={v}>{v}</option>{/each}
+										{#each fits as p (p)}<option value={'$' + p}>${p}</option>{/each}
+										{#if isParamRef(cur) && !fits.includes(cur.slice(1))}
+											<option value={cur}>{cur}</option>
+										{/if}
 									</select>
+									{#if fits.length}<div class="help">{t('flow.insp.enumParamHelp')}</div>{/if}
 								{:else if d.kind === 'text'}
 									<input
 										id="act-{d.name}"
-										value={bindingValue(s, 'input', d.name)}
+										list="flow-params"
+										value={cur}
 										placeholder={t('flow.insp.textPlaceholder')}
 										oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
 									/>
@@ -835,7 +1131,8 @@
 								{:else}
 									<input
 										id="act-{d.name}"
-										value={bindingValue(s, 'input', d.name)}
+										list="flow-params"
+										value={cur}
 										placeholder={d.defaultPath ?? ''}
 										oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
 									/>
@@ -849,6 +1146,7 @@
 						<div class="help hue-amb">{t('flow.insp.unknownAction', { name: s.action })}</div>
 					{/if}
 				{:else if s.type === 'sequence'}
+					{@const options = runnable(s)}
 					<div class="field">
 						<label for="st-sequence">{t('flow.insp.sequence')}</label>
 						<select
@@ -859,12 +1157,22 @@
 								onchange();
 							}}
 						>
-							{#each doc.sequences ?? [] as q (q.id)}<option value={q.id}>{q.id}</option>{/each}
-							{#if s.sequence && !doc.sequences?.some((q) => q.id === s.sequence)}
+							{#each options as id (id)}<option value={id}
+									>{id === MAIN ? t('flow.insp.runsMain') : id}</option
+								>{/each}
+							{#if s.sequence && !options.includes(s.sequence)}
 								<option value={s.sequence}>{s.sequence}</option>
 							{/if}
 						</select>
 						<div class="help">{t('flow.insp.sequenceHelp')}</div>
+						{#if sequenceSel}
+							{@const id = sequenceSel.id}
+							<div class="chips">
+								<button class="btn-sm" onclick={() => onselect({ kind: 'sequence', id })}
+									>{t('flow.insp.editSequence')}</button
+								>
+							</div>
+						{/if}
 					</div>
 					{#if sequenceSel}
 						{#if sequenceSel.description}<div class="help">{sequenceSel.description}</div>{/if}
@@ -946,15 +1254,35 @@
 
 				<div class="field">
 					<label for="st-succ">{t('flow.insp.onSuccess')}</label>
-					<select id="st-succ" bind:value={s.on_success} {onchange}>
+					<select
+						id="st-succ"
+						value={s.on_success ?? ''}
+						onchange={(e) => {
+							s.on_success = e.currentTarget.value || undefined;
+							onchange();
+						}}
+					>
+						{#if scopeSeq}
+							<!-- In a sequence, saying nothing goes on to the next stage — or,
+							     from the last, out by the sequence stage's success. -->
+							<option value=""
+								>{scopeSeq.stages.at(-1)?.id === s.id
+									? t('flow.insp.leaveOption')
+									: t('flow.insp.nextOption', {
+											next: scopeSeq.stages[scopeSeq.stages.indexOf(s) + 1]?.id ?? ''
+										})}</option
+							>
+						{/if}
 						<option value={END}>{t('flow.insp.endOption')}</option>
 						<option value={DONE}>{t('flow.insp.doneOption')}</option>
 						<option value={ABORT}>{t('flow.insp.abortOption')}</option>
-						{#each routableFrom(doc, s).filter((x) => x.id !== s.id) as x (x.id)}<option
-								value={x.id}>{x.id}</option
+						{#each routable(s).filter((x) => x.id !== s.id) as x (x.id)}<option value={x.id}
+								>{x.id}</option
 							>{/each}
 					</select>
-					<div class="help">{t('flow.insp.endsHelp')}</div>
+					<div class="help">
+						{t(scopeSeq ? 'flow.insp.endsHelpSequence' : 'flow.insp.endsHelp')}
+					</div>
 				</div>
 
 				<div class="chips">
@@ -967,7 +1295,7 @@
 							<button
 								class="btn-sm btn-sel hue-{EDGE_HUE[kind]}"
 								title={t('flow.insp.editEdge')}
-								onclick={() => onselect({ kind: 'edge', stage: s.id, edge: kind })}
+								onclick={() => onselect({ kind: 'edge', stage: s.id, edge: kind, ...inSeq })}
 								>{kind}
 								{I.forward} <span class="mono">{chainSummary(edgeOf(s, kind))}</span></button
 							>
@@ -994,7 +1322,7 @@
 							onclick={() => {
 								setEdge(s, kind, undefined);
 								onchange();
-								onselect({ kind: 'stage', id: s.id });
+								onselect({ kind: 'stage', id: s.id, ...inSeq });
 							}}>{t('flow.insp.removeEdge')}</button
 						>
 					</div>
@@ -1011,8 +1339,10 @@
 									value={link.to}
 									onchange={(ev) => retarget(s.type, link, ev.currentTarget.value)}
 								>
-									{#each routableFrom(doc, s) as x (x.id)}<option value={x.id}>{x.id}</option
-										>{/each}
+									{#each routable(s) as x (x.id)}<option value={x.id}>{x.id}</option>{/each}
+									{#if scopeSeq}
+										<option value={FAIL}>{t('flow.insp.failOption')}</option>
+									{/if}
 									<option value={END}>{t('flow.insp.endOption')}</option>
 									<option value={DONE}>{t('flow.insp.doneOption')}</option>
 									<option value={ABORT}>{t('flow.insp.abortOption')}</option>
@@ -1106,6 +1436,7 @@
 						</select>
 						<div class="help">{t('flow.insp.runStartHelp')}</div>
 					</div>
+					{@render addTo(ph)}
 				{:else}
 					<div class="help">
 						{t(ph.kind === 'outcome' ? 'flow.insp.outcomeHelp' : 'flow.insp.watcherHelp')}
@@ -1116,7 +1447,8 @@
 							id="ph-id"
 							class="mono"
 							value={ph.id}
-							onchange={(e) => renamePhase(ph.id, e.currentTarget.value)}
+							onchange={(e) =>
+								renamed(e.currentTarget, ph.id, renamePhase(ph.id, e.currentTarget.value))}
 						/>
 						<div class="help">{t('flow.insp.phaseRenameHelp')}</div>
 					</div>
@@ -1188,7 +1520,7 @@
 								{t(ph.kind === 'outcome' ? 'flow.insp.startHelpOutcome' : 'flow.insp.startHelp')}
 							</div>
 						</div>
-						{#if phaseSig?.debounced && ph.kind === 'watcher'}
+						{#if phaseSig?.debounced || ph.on.quiet_for}
 							<div class="field">
 								<label for="ph-quiet">{t('flow.insp.quietFor')}</label>
 								<OptionalDuration
@@ -1197,6 +1529,7 @@
 									bind:value={ph.on.quiet_for}
 									empty={t('flow.insp.noQuiet')}
 									fallback="1h"
+									params={stringParams(doc)}
 									{onchange}
 								/>
 								<div class="help">{t('flow.insp.quietForHelp')}</div>
@@ -1236,10 +1569,326 @@
 							<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
 						</div>
 					{/if}
+					{@const choices = [
+						...(hasMain(doc) ? [MAIN] : []),
+						...(doc.sequences ?? []).map((q) => q.id)
+					]}
+					<div class="field">
+						<label for="ph-runs">{t('flow.insp.runs')}</label>
+						<select
+							id="ph-runs"
+							value={phaseRuns}
+							onchange={(e) => {
+								const el = e.currentTarget;
+								void setRuns(ph, el.value).then(() => (el.value = phaseRuns));
+							}}
+						>
+							<option value=""
+								>{ph.kind === 'outcome' && !phaseStageCount
+									? t('flow.insp.runsNothing')
+									: t('flow.insp.runsOwn', { count: phaseStageCount })}</option
+							>
+							{#each choices as id (id)}<option value={id}
+									>{id === MAIN
+										? t('flow.insp.runsMain')
+										: t('flow.insp.runsSequence', { id })}</option
+								>{/each}
+						</select>
+						<div class="help">
+							{choices.length ? t('flow.insp.runsHelp') : t('flow.insp.runsHelpNone')}
+						</div>
+					</div>
+					{@render addTo(ph)}
 				{/if}
 				<datalist id="flow-int-params">
 					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
 				</datalist>
+			{:else if agentSel}
+				{@const a = agentSel}
+				{@const used = runners((x) => x.type === 'agent' && x.agent === a.name)}
+				<div class="ih">
+					<span class="pill sm mono t-{STAGE_HUE.agent}">{t('flow.insp.kind.agent')}</span>
+					<span class="mono iid ell">{a.name}</span>
+					<span class="spacer"></span>
+					<span class="fnt tiny">{t('flow.insp.runByCount', { count: used.length })}</span>
+					<button
+						class="btn-danger btn-sm"
+						onclick={() => deleteAgent(a.name)}
+						title={t('flow.insp.deleteAgent')}>{t('flow.insp.delete')}</button
+					>
+				</div>
+				<div class="help">{t('flow.insp.agentPanelHelp')}</div>
+				<div class="field">
+					<label for="ag-name">{t('flow.insp.agentName')}</label>
+					<input
+						id="ag-name"
+						class="mono"
+						value={a.name}
+						onchange={(e) =>
+							renamed(e.currentTarget, a.name, renameAgentTo(a.name, e.currentTarget.value))}
+					/>
+					<div class="help">{t('flow.insp.agentRenameHelp')}</div>
+				</div>
+				<div class="field">
+					<label for="ag-desc">{t('flow.insp.description')}</label>
+					<input
+						id="ag-desc"
+						value={a.description ?? ''}
+						placeholder={t('flow.insp.agentDescPlaceholder')}
+						oninput={(e) => {
+							a.description = e.currentTarget.value || undefined;
+							onchange();
+						}}
+					/>
+				</div>
+				<Toggle
+					checked={!!a.read_only}
+					label={t('flow.insp.readOnly')}
+					title={t('flow.insp.readOnlyTitle')}
+					onchange={(v) => {
+						a.read_only = v || undefined;
+						onchange();
+					}}
+				/>
+				<Toggle
+					checked={!!a.allow_bash}
+					label={t('flow.insp.allowBash')}
+					title={t('flow.insp.allowBashTitle')}
+					onchange={(v) => {
+						a.allow_bash = v || undefined;
+						onchange();
+					}}
+				/>
+				<div class="field">
+					<label for="ag-prompt">{t('flow.insp.prompt')}</label>
+					<textarea
+						id="ag-prompt"
+						class="mono prompt"
+						rows="12"
+						bind:value={a.prompt}
+						oninput={onchange}
+						placeholder={t('flow.insp.promptPlaceholder')}></textarea>
+					<div class="help">{t('flow.insp.promptHelp')}</div>
+				</div>
+				<div class="grp">
+					<div class="lbl">{t('flow.insp.inputs')}</div>
+					<div class="help">{t('flow.insp.agentInputsHelp')}</div>
+				</div>
+				{#each a.inputs ?? [] as d, i (i)}
+					<div class="io-bind card-in port">
+						<div class="row nowrap">
+							<input
+								class="mono grow"
+								value={d.name}
+								aria-label={t('flow.insp.portName')}
+								onchange={(e) =>
+									renamed(
+										e.currentTarget,
+										d.name,
+										renamePort(a, 'input', d.name, e.currentTarget.value)
+									)}
+							/>
+							<button class="btn-sm btn-ghost" onclick={() => removeInput(a, d.name)}
+								>{t('flow.insp.removePort')}</button
+							>
+						</div>
+						<input
+							value={d.description ?? ''}
+							aria-label={t('flow.insp.description')}
+							placeholder={t('flow.insp.portDescPlaceholder')}
+							oninput={(e) => {
+								d.description = e.currentTarget.value || undefined;
+								onchange();
+							}}
+						/>
+						<Toggle
+							checked={!!d.optional}
+							label={t('flow.insp.optional')}
+							title={t('flow.insp.optionalTitle')}
+							onchange={(v) => {
+								d.optional = v || undefined;
+								onchange();
+							}}
+						/>
+					</div>
+				{/each}
+				<div class="chips">
+					<button class="btn-sm" onclick={() => addInput(a)}
+						>{I.add} {t('flow.insp.addInput')}</button
+					>
+				</div>
+				<div class="grp">
+					<div class="lbl">{t('flow.insp.outputs')}</div>
+					<div class="help">{t('flow.insp.agentOutputsHelp')}</div>
+				</div>
+				{#each a.outputs ?? [] as d, i (i)}
+					<div class="io-bind card-in port">
+						<div class="row nowrap">
+							<input
+								class="mono grow"
+								value={d.name}
+								aria-label={t('flow.insp.portName')}
+								onchange={(e) =>
+									renamed(
+										e.currentTarget,
+										d.name,
+										renamePort(a, 'output', d.name, e.currentTarget.value)
+									)}
+							/>
+							<button class="btn-sm btn-ghost" onclick={() => removeOutput(a, d.name)}
+								>{t('flow.insp.removePort')}</button
+							>
+						</div>
+						<input
+							class="mono"
+							value={d.path}
+							aria-label={t('flow.insp.portPath')}
+							placeholder="artifacts/…"
+							oninput={(e) => {
+								d.path = e.currentTarget.value.trim();
+								onchange();
+							}}
+						/>
+						<select
+							value={d.type ?? ''}
+							aria-label={t('flow.insp.portType')}
+							onchange={(e) => {
+								d.type = e.currentTarget.value || undefined;
+								onchange();
+							}}
+						>
+							{#each OUTPUT_TYPES as ty (ty)}<option value={ty}
+									>{t(`flow.insp.outputType.${ty || 'file'}`)}</option
+								>{/each}
+							{#if d.type && !(OUTPUT_TYPES as readonly string[]).includes(d.type)}
+								<option value={d.type}>{d.type}</option>
+							{/if}
+						</select>
+						<input
+							value={d.description ?? ''}
+							aria-label={t('flow.insp.description')}
+							placeholder={t('flow.insp.portDescPlaceholder')}
+							oninput={(e) => {
+								d.description = e.currentTarget.value || undefined;
+								onchange();
+							}}
+						/>
+					</div>
+				{/each}
+				<div class="chips">
+					<button class="btn-sm" onclick={() => addOutput(a)}
+						>{I.add} {t('flow.insp.addOutput')}</button
+					>
+				</div>
+				<div class="grp">
+					<div class="lbl">{t('flow.insp.runBy')}</div>
+					{#if used.length}
+						<div class="chips">
+							{#each used as u (u.label)}<button class="btn-sm mono" onclick={() => onselect(u.sel)}
+									>{u.label}</button
+								>{/each}
+						</div>
+					{:else}
+						<div class="help">{t('flow.insp.agentUnused')}</div>
+					{/if}
+				</div>
+			{:else if seqSel}
+				{@const q = seqSel}
+				{@const users = runners((x) => x.type === 'sequence' && x.sequence === q.id)}
+				<div class="ih">
+					<span class="pill sm mono t-{STAGE_HUE.sequence}">{t('flow.insp.kind.sequence')}</span>
+					<span class="mono iid ell">{q.id}</span>
+					<span class="spacer"></span>
+					<span class="fnt tiny">{t('flow.insp.phaseStages', { count: q.stages.length })}</span>
+					<button
+						class="btn-danger btn-sm"
+						disabled={users.length > 0}
+						onclick={() => deleteSequence(q)}
+						title={users.length ? t('flow.insp.sequenceInUse') : t('flow.insp.deleteSequence')}
+						>{t('flow.insp.delete')}</button
+					>
+				</div>
+				<div class="help">{t('flow.insp.sequencePanelHelp')}</div>
+				<div class="field">
+					<label for="sq-id">{t('flow.insp.id')}</label>
+					<input
+						id="sq-id"
+						class="mono"
+						value={q.id}
+						onchange={(e) =>
+							renamed(e.currentTarget, q.id, renameSequenceTo(q.id, e.currentTarget.value))}
+					/>
+					<div class="help">{t('flow.insp.sequenceRenameHelp')}</div>
+				</div>
+				<div class="field">
+					<label for="sq-desc">{t('flow.insp.description')}</label>
+					<input
+						id="sq-desc"
+						value={q.description ?? ''}
+						oninput={(e) => {
+							q.description = e.currentTarget.value || undefined;
+							onchange();
+						}}
+					/>
+				</div>
+				<div class="grp">
+					<div class="lbl">{t('flow.insp.sequenceStages')}</div>
+					{#each q.stages as x, i (x.id)}
+						<div class="seq-line">
+							<button
+								class="rowbtn seq-row"
+								onclick={() => onselect({ kind: 'stage', id: x.id, sequence: q.id })}
+							>
+								<StageChip type={x.type} />
+								<span class="mono">{x.id}</span>
+								{#if x.sequence}<span class="mut small">→ {x.sequence}</span>{/if}
+							</button>
+							<button
+								class="btn-icon"
+								disabled={i === 0}
+								title={t('flow.insp.moveUp')}
+								aria-label={t('flow.insp.moveUp')}
+								onclick={() => {
+									moveSequenceStage(doc, q.id, x.id, -1);
+									onchange();
+								}}>↑</button
+							>
+							<button
+								class="btn-icon"
+								disabled={i === q.stages.length - 1}
+								title={t('flow.insp.moveDown')}
+								aria-label={t('flow.insp.moveDown')}
+								onclick={() => {
+									moveSequenceStage(doc, q.id, x.id, 1);
+									onchange();
+								}}>↓</button
+							>
+						</div>
+					{/each}
+					<div class="help">{t('flow.insp.sequenceOrderHelp')}</div>
+				</div>
+				<div class="lbl">{t('flow.insp.addToSequence')}</div>
+				<div class="chips">
+					{#each addKinds({ sequence: q.id }) as kind (kind)}
+						<button class="btn-sm" onclick={() => addToSequence(kind, q.id)}
+							><span class="ldot sm flat hue-{STAGE_HUE[kind]}"></span>{STAGE_WORD[kind] ??
+								kind}</button
+						>
+					{/each}
+				</div>
+				<div class="grp">
+					<div class="lbl">{t('flow.insp.runBy')}</div>
+					{#if users.length}
+						<div class="chips">
+							{#each users as u (u.label)}<button
+									class="btn-sm mono"
+									onclick={() => onselect(u.sel)}>{u.label}</button
+								>{/each}
+						</div>
+					{:else}
+						<div class="help">{t('flow.insp.sequenceUnused')}</div>
+					{/if}
+				</div>
 			{:else}
 				<div class="ih">
 					<span class="serif ttl">{t('flow.insp.formula')}</span>
@@ -1272,8 +1921,33 @@
 				<div class="lbl">{t('flow.insp.params')}</div>
 				<div class="help">{t('flow.insp.paramsHelp')}</div>
 				<ParamsEditor {doc} {onchange} />
+				<div class="lbl">{t('flow.insp.agents')}</div>
+				<div class="help">{t('flow.insp.agentsHelp')}</div>
+				<div class="chips">
+					{#each doc.agents ?? [] as a (a.name)}<button
+							class="btn-sm mono"
+							onclick={() => onselect({ kind: 'agent', name: a.name })}>{a.name}</button
+						>{/each}
+					<button class="btn-sm" onclick={() => newAgent()}
+						>{I.add} {t('flow.insp.addAgent')}</button
+					>
+				</div>
+				<div class="lbl">{t('flow.insp.sequences')}</div>
+				<div class="help">{t('flow.insp.sequencesHelp')}</div>
+				<div class="chips">
+					{#each doc.sequences ?? [] as q (q.id)}<button
+							class="btn-sm mono"
+							onclick={() => onselect({ kind: 'sequence', id: q.id })}>{q.id}</button
+						>{/each}
+					<button class="btn-sm" onclick={newSequence}>{I.add} {t('flow.insp.addSequence')}</button>
+				</div>
 				<div class="lbl">{t('flow.insp.addChain')}</div>
 				<div class="chips">
+					{#if !mainPhase}
+						<button class="btn-sm" onclick={newMainChain}
+							><span class="ldot sm flat hue-brand"></span>{t('flow.insp.addMain')}</button
+						>
+					{/if}
 					<button class="btn-sm" onclick={() => addChain('watcher')}
 						><span class="ldot sm flat hue-vio"></span>{t('flow.insp.addWatcher')}</button
 					>
@@ -1281,21 +1955,44 @@
 						><span class="ldot sm flat hue-grn"></span>{t('flow.insp.addOutcome')}</button
 					>
 				</div>
-				<div class="help">{t('flow.insp.addChainHelp')}</div>
-				<div class="lbl">{t('flow.insp.addStage')}</div>
-				<div class="chips">
-					{#each ADD as kind (kind)}
-						<button class="btn-sm" onclick={() => addStage(kind)}
-							><span class="ldot sm flat hue-{STAGE_HUE[kind]}"></span>{STAGE_WORD[kind] ??
-								kind}</button
-						>
-					{/each}
+				<div class="help">
+					{t(mainPhase ? 'flow.insp.addChainHelp' : 'flow.insp.addChainHelpNoMain')}
 				</div>
+				{#if doc.phases?.length}
+					{@const into = mainPhase ?? doc.phases[0]}
+					<div class="lbl">
+						{into.kind === 'main'
+							? t('flow.insp.addStageMain')
+							: t('flow.insp.addStageTo', { id: into.id })}
+					</div>
+					<div class="chips">
+						{#each addKinds({ phase: into.id }) as kind (kind)}
+							<button class="btn-sm" onclick={() => addStage(kind)}
+								><span class="ldot sm flat hue-{STAGE_HUE[kind]}"></span>{STAGE_WORD[kind] ??
+									kind}</button
+							>
+						{/each}
+					</div>
+				{/if}
 				<div class="help">{t('flow.insp.canvasHelp')}</div>
 			{/if}
 		</div>
 	{/key}
 </div>
+
+<!-- A chain's own way to grow: a stage of each kind, appended after its
+     last stage and wired in. -->
+{#snippet addTo(ph: DocPhase)}
+	<div class="lbl">{t('flow.insp.addToChain')}</div>
+	<div class="chips">
+		{#each addKinds({ phase: ph.id }) as kind (kind)}
+			<button class="btn-sm" onclick={() => addToChain(kind, ph.id)}
+				><span class="ldot sm flat hue-{STAGE_HUE[kind]}"></span>{STAGE_WORD[kind] ?? kind}</button
+			>
+		{/each}
+	</div>
+	<div class="help">{t('flow.insp.addToChainHelp')}</div>
+{/snippet}
 
 <style>
 	/* The inspector sits on control glass, given by the page (DESIGN 7.8). */
@@ -1311,6 +2008,27 @@
 		gap: 8px;
 		min-width: 0;
 		padding: 2px 0;
+	}
+	.seq-row.rowbtn {
+		padding: 4px 6px;
+	}
+	.seq-line {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
+	/* An agent's declared input or output: its name, then what describes it. */
+	.port {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.prompt {
+		min-height: 180px;
+		resize: vertical;
+	}
+	.lbl-in {
+		font-size: var(--fs-label, inherit);
 	}
 	/* Outgoing and incoming views share the cell while they cross-fade. */
 	.view-x {

@@ -14,9 +14,11 @@
 	//    workspace, then the stage that sent the run here runs again. Drawn
 	//    once per stage that escalates to it, beside that stage, so its source
 	//    handle carries the return edge.
-	//  - exit (grn) and failexit (ros), in a block's view only: the ways out
-	//    of the block, back to the stage that includes it — its success, and
-	//    `fail` (its on_fail). data.label names where each one goes.
+	//  - exit (grn) and failexit (ros), in a sequence's view only: the ways
+	//    out of the sequence, back to the stage that runs it — its success,
+	//    and `fail` (its on_fail). data.label names where each one goes.
+	// A watcher's or an outcome's marker branches from the hub (data.hub): it
+	// takes the hub's edge on its left, which nothing else may connect to.
 	// One component for all of them; the node type picks the tone.
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import type { Hue } from '$lib/ui/hues';
@@ -84,6 +86,8 @@
 <div class="term {tone} h-{HUE[tone]}" {title}>
 	{#if !marker}
 		<Handle type="target" position={Position.Left} style={handle} />
+	{:else if data?.hub}
+		<Handle id="hub" type="target" position={Position.Left} style={handle} isConnectable={false} />
 	{/if}
 	<span class="l">{label}</span><span class="g">{GLYPH[tone]}</span>
 	{#if marker || tone === 'debug'}

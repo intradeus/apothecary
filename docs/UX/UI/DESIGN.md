@@ -845,21 +845,30 @@ The same anatomy, scoped to one guild:
 2. **Body:** row [canvas 1fr | inspector 340px].
    - **Canvas:** Svelte Flow on a transparent background over the scene, with a faint dot grid (`--ln` 1px, 20px).
      - **Nodes:** content glass, radius 14px, with a 3px top accent in the stage-type hue.
-       - Head: type chip + mono id, plus an ENTRY tag (parchment outline) on the first stage, plus a detail line (agent name / command / action / signal / "gate").
-       - Rows: inputs (bound grn dot, unbound amb hollow, sentinel vio `$DIFF_TARGET`) and outputs with data dots.
-     - Start / Done / Abort are serif italic pills (Done dashed grn, Abort dashed ros).
+       - Head: type chip + mono id, plus an ENTRY tag (parchment outline) on the first stage, plus a detail line (agent name / command / action / signal / "gate" / the sequence it runs).
+       - Rows: inputs (bound grn dot, unbound amb hollow, sentinel vio `$DIFF_TARGET`) and outputs with data dots. Dataflow lines join dots within a chain only.
+     - **Chains**, one row each under their section's label (main / watchers / outcomes), each opened by a marker: the main chain's start (brand, solid), a watcher's (vio, dashed), an outcome's (grn or ros, the end it says).
+     - **The hub** (tea, solid, serif italic *waiting · on the merge request*): once a flow has watchers or outcomes, the main chain's end. It stands left of the marker column below the main chain; one dashed tea line runs down from it to every watcher's and outcome's marker. A flow without a main chain starts at it.
+     - **Frames**: each watcher and outcome is a sub-run in a faint wash of its marker's hue, with its own ends at the end of its row (*end* back to waiting; *done* / *abort* for an outcome) — nothing crosses the canvas to a shared terminal. The frame's corner (▾ / ▸) folds the chain to its marker (which then counts its stages). Dragging a marker moves its whole chain.
+     - Start / End / Done / Abort are serif italic pills (End dashed tea, Done dashed grn, Abort dashed ros); the debug leaf sits beside each stage that escalates to it.
      - Handles and edges as in 3.6.
      - Bottom-left controls: zoom, fit, lock, auto-arrange. Node positions autosave silently.
-   - **Inspector** (control glass):
-     - With nothing selected: flow description, defaults (harness, model, timeout, max turns), budget (max USD, max total turns), and "+ agent / + command / + gate / + action / + wait".
-     - Stage selected: id (rename updates every reference), type, description, success target, add on_fail / on_timeout / on_reject, plus per-type fields:
-       - agent: name autocomplete, overrides, input bindings, output paths, verdict note
-       - command: run_ref or literal script, reads, writes, **each_repo** toggle
+   - **Sequence pane**: selecting a sequence stage, or a sequence in the inspector, splits the canvas — the sequence on the right, its stages top to bottom, its two ways out (*back · …*, *fail · …*). Its stages and edges are edited in the inspector like any other; a sequence stage inside opens its sequence in place, with a breadcrumb.
+   - **Inspector** (control glass) — everything the YAML can say:
+     - With nothing selected: description, what runs start on, parameters (the six the engine reads, each with an optional description and allowed values, then the flow's own), the agents and the sequences (one chip each, + agent / + sequence), + main chain (when there is none) / + watcher / + outcome, and a stage of each kind for the main chain.
+     - Chain marker selected: the main chain — what runs start on; a watcher or an outcome — id, description, its signal (or *by hand*, for a watcher), start policy (or an enum `$param`), quiet for (debounced signals), runs per merge request (watcher) or then (outcome), and **Runs**: its own stages or a sequence (`sequence: X`). Each panel adds a stage of each kind to its chain, wired after the last.
+     - Stage selected: id (rename updates every reference), its chain (or the sequence it is in), condition, description, success target, add on_fail / on_timeout / on_reject, plus per-type fields:
+       - agent: name autocomplete, *Edit agent* (or *Declare agent* for a name the flow lacks), overrides, input bindings, output paths, verdict note
+       - command: run_ref or literal script, timeout, reads, writes, **each_repo** toggle
        - gate: question, shows (artifact / `$WORKSPACE` / `$MR_URL`), auto-approve / auto-reject signals
-       - action: registry picker, description, required integration, inputs / outputs
+       - action: registry picker, description, required integration, inputs (an enum input also offers fitting `$params`) / outputs
        - wait: signal picker, timeout (empty = ∞)
+       - sequence: what it runs (a sequence, or `main` from another chain), *Edit sequence*
+     - Inside a sequence, a stage routes to the sequence's stages, the ends, and `fail` (the sequence stage's on_fail); saying nothing goes on to the next stage, or out.
      - Edge selected: a chain of links (target + max ×N / ∞), "then" fallbacks, remove last / remove edge.
-     - Delete selected node or edge: inspector button **or** ⌫ / Del key.
+     - Agent selected: name, description, read-only, allow shell, prompt, inputs (name, description, optional), outputs (name, path, type, description), the stages that run it, delete.
+     - Sequence selected: id, description, its stages (reorder ↑ ↓), add a stage of each kind, the stages that run it, delete (once nothing does).
+     - Delete what is selected: inspector button **or** ⌫ / Del key. A rename the document refuses puts the field back.
    - **Versions:** a drawer from the header (list, current marked, "Load into editor").
    - Leaving with unsaved changes triggers a confirm modal.
 
