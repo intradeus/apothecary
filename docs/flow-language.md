@@ -278,7 +278,12 @@ phases:
   built-in `reviewer` template is this shape: one `review` block (read, an
   optional gate, `post_review`) run by its `mr_opened` entrypoint and again
   by a reaction on `mr_head_moved`, and outcomes on `mr_merged` and
-  `mr_closed` that end the run.
+  `mr_closed` that end the run. `conflict-resolver` is the same shape around
+  a `settle` block — `sync_target`, the `resolver` agent on a conflict, the
+  project's tests, `push_branch` to the merge request's own branch, leased
+  against the head the phase began on — run by its entrypoint and again by a
+  reaction on `mr_conflicts` (`start: $again_start`, `confirm` by default).
+  A fork's merge request cannot be pushed to: its push fails to `debug`.
 - **By hand.** `on: manual` is a phase only a person opens, from the run page
   while the run is idle. Any other phase without a live run can be started the
   same way, whether or not its signal holds; its `max` counts those starts.

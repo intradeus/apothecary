@@ -1,0 +1,106 @@
+name: conflict-resolver
+version: 4
+description: "bring a merge request up to date with its target: take the target in, resolve what conflicts, test, push — again each time it conflicts, until it merges or closes"
+# A run of this flow is created ON a merge request (on: mr_opened) — from the
+# workshop's Repositories tab, or by a merge-request automation watching the
+# repository. It checks out the merge request's branch, takes its target
+# branch in — the engine merges (or rebases), never the agent — and when that
+# stops on a conflict, an agent edits the conflicting files until no marker is
+# left. The project's tests run, and the result is pushed to the merge
+# request's own branch: leased against the head the run began on, so a push
+# the author made meanwhile is never overwritten.
+#
+# The run then waits. Each time the target moves and the merge request
+# conflicts again, it does the same — after asking, by default
+# ($again_start). The merge request merging or closing ends the run.
+#
+# A merge request from a fork cannot be pushed to: the push fails and a
+# person gets the workspace, resolution and all, to decide what to do.
+parameters:
+  harness: opencode
+  model: opencode-go/qwen3.7-plus
+  timeout: 30m
+  max_turns: 40
+  max_cost_usd: 5.0
+  max_total_turns: 240
+  verify:      { default: verify, description: "the project command that runs the tests (project.commands)" }
+  strategy:    { default: merge, enum: [merge, rebase], description: "take the target in with a merge commit, or rebase the branch onto it (rewrites the author's commits; the push is leased)" }
+  again_start: { default: confirm, enum: [auto, confirm, manual], description: "how a later conflict is taken on: by itself, after asking, or by hand from the run page" }
+agents:
+  - name: resolver
+    description: settles a paused merge's conflicts by editing the files — never with git
+    read_only: false
+    allow_bash: true
+    inputs:
+      - name: changes
+        description: the files the merge request changes against its target branch
+      - name: conflict
+        description: which files carry conflict markers, and what is being taken in
+        optional: true
+    prompt: |
+      You resolve merge conflicts in a merge request someone else wrote. The
+      TASK section is the merge request: its title and its author's
+      description — what the change is meant to do. The engine is taking the
+      merge request's target branch into its branch and stopped on a
+      conflict: the files named in your prompt contain conflict markers
+      (<<<<<<<, =======, >>>>>>>). The changes input lists every file the
+      merge request touches.
+
+      Your only job is to make those files correct, keeping BOTH intents: what
+      the target branch changed, and what the merge request's change does.
+      Remove every marker. Do not drop either side wholesale; when the two
+      cannot coexist, keep the target's behaviour and adapt the merge
+      request's change to it.
+
+      Rules:
+      - Edit only the conflicting files, plus what is strictly needed for them
+        to compile. No new features, no refactors, no cleanup — the change is
+        its author's, not yours.
+      - Run NO git command. The engine finishes the merge once the markers are
+        gone; `git add`, `git commit`, `git merge`, `git rebase`,
+        `git checkout`, `git stash` or `git reset` would corrupt it.
+      - If the build or the tests can run in this state, run them and fix what
+        your resolution broke.
+      - Leave no marker behind: the engine checks, and hands the files back
+        while any remain.
+blocks:
+  # Take the target in, settle what conflicts, test, push. The same chain
+  # brings the merge request up to date when the run begins and each time it
+  # conflicts again.
+  - id: settle
+    description: "take the target in, resolve what conflicts, test, push"
+    stages:
+      - { id: sync, type: action, action: sync_target, input: { strategy: $strategy },
+          description: "the engine takes the target in; a conflict pauses it with the files named",
+          on_success: test,
+          on_fail: { to: resolve, max: 6, then: debug } }
+      - { id: resolve, type: agent, agent: resolver, max_turns: 30,
+          input: { changes: $DIFF_TARGET, conflict: $FAILURE },
+          description: "remove the conflict markers, keeping both intents — no git",
+          on_success: sync,
+          on_fail: debug }
+      - { id: test, type: command, run_ref: $verify,
+          description: "the project's tests, on the merge request as it now stands",
+          on_success: push,
+          on_fail: debug }
+      - { id: push, type: action, action: push_branch,
+          description: "push to the merge request's branch, leased against the head the phase began on",
+          on_fail: debug }
+phases:
+  # ---- the entrypoint: a run created on the merge request ---------------
+  - id: first_pass
+    on: mr_opened
+    description: "bring the merge request up to date with its target"
+    stages:
+      - { id: settle, include: settle }
+
+  # ---- a reaction: the target moved and it conflicts again --------------
+  - id: again
+    on: { signal: mr_conflicts, start: $again_start }
+    description: "the target moved and the merge request conflicts again"
+    stages:
+      - { id: resettle, include: settle }
+
+  # ---- outcomes: merged or closed, nothing left to settle ----------------
+  - { id: merged, on: mr_merged, then: done, description: "it merged: the run is over" }
+  - { id: closed, on: mr_closed, then: done, description: "it was closed: the run is over" }

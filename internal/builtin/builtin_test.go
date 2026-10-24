@@ -351,3 +351,48 @@ func TestReviewerTemplate(t *testing.T) {
 		t.Errorf("review_gate = %+v: a review posts by itself unless a workshop asks", p)
 	}
 }
+
+// TestConflictResolverTemplate: created on a merge request, it takes the
+// target in, resolves, tests and pushes to the merge request's branch —
+// again on each new conflict, after asking — and ends with the merge
+// request. It never opens, merges or reviews one.
+func TestConflictResolverTemplate(t *testing.T) {
+	f := Flow("conflict-resolver")
+	if f == nil {
+		t.Fatal("no built-in conflict-resolver")
+	}
+	first, again := f.Phase("first_pass"), f.Phase("again")
+	if first == nil || !first.IsEntrypoint() || !first.OnMR() || len(f.Entrypoints()) != 1 {
+		t.Fatalf("first_pass = %+v", first)
+	}
+	if again == nil || again.On.Signal != signalspec.MRConflicts || again.On.Start != flow.StartConfirm {
+		t.Errorf("again = %+v: a later conflict is taken on after asking, by default", again)
+	}
+	for _, id := range []string{"merged", "closed"} {
+		if ph := f.Phase(id); ph == nil || !ph.IsOutcome() || ph.Then != flow.TerminalDone {
+			t.Errorf("outcome %s = %+v", id, ph)
+		}
+	}
+	for _, inc := range []string{"settle", "resettle"} {
+		for stage, action := range map[string]string{"sync": actionspec.SyncTarget, "push": actionspec.PushBranch} {
+			if st := f.Stage(inc + "." + stage); st == nil || st.Action != action {
+				t.Errorf("stage %s.%s = %+v", inc, stage, st)
+			}
+		}
+		if st := f.Stage(inc + ".resolve"); st == nil || st.Agent != "resolver" {
+			t.Errorf("stage %s.resolve = %+v", inc, st)
+		}
+	}
+	for i := range f.Stages {
+		st := &f.Stages[i]
+		if st.Type == flow.StageAction && (st.Action == actionspec.CreateMR || st.Action == actionspec.MRMerge || st.Action == actionspec.PostReview) {
+			t.Errorf("stage %s: the conflict resolver never opens, merges or reviews a merge request", st.ID)
+		}
+	}
+	if sp := f.Agent("resolver"); sp == nil || sp.ReadOnly {
+		t.Errorf("resolver = %+v: it edits the conflicting files", sp)
+	}
+	if p := f.Param("strategy"); p == nil || p.Default != "merge" {
+		t.Errorf("strategy = %+v: someone's commits are not rewritten unless a workshop asks", p)
+	}
+}
