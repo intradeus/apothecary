@@ -6,6 +6,9 @@ export default {
 	'runview.session.noconv_pending':
 		'No conversation yet. When an agent stage starts, its prompt, replies and tool calls appear here as they happen.',
 	'runview.session.follow': 'Follow',
+	'runview.session.betweenPhases': 'The run is between phases.',
+	'runview.session.openPhases': 'See what can start next',
+	'runview.session.dismissNudge': 'Dismiss — it comes back after the next phase',
 	'runview.session.closed_title': 'The bottle is corked',
 	'runview.session.closed_text': 'The run is finished.',
 	'runview.session.closed_text_ws':

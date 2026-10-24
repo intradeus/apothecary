@@ -15,19 +15,30 @@
 	import Transcript, { type Sending } from '../Transcript.svelte';
 	import PingDock from '../PingDock.svelte';
 	import Composer from '../Composer.svelte';
-	import PhasesCard from '../PhasesCard.svelte';
 	import type { RunStore } from '../store.svelte';
 
-	let { rs, visible, onlog }: { rs: RunStore; visible: boolean; onlog: (stage: string) => void } =
-		$props();
+	let {
+		rs,
+		visible,
+		onlog,
+		onphases
+	}: {
+		rs: RunStore;
+		visible: boolean;
+		onlog: (stage: string) => void;
+		/** Open the Phases window. */
+		onphases: () => void;
+	} = $props();
 
 	const items = $derived(buildTranscript(rs.events, rs.live));
 	const ping = $derived(rs.terminal ? undefined : rs.pendingPings[0]);
 	const run = $derived(rs.run);
-	// The phases card: whenever the run is idle (between phases, or parked
-	// at a wait point), and while a later phase runs on a merge request.
-	const showPhases = $derived(
-		!!run && !rs.terminal && (run.idle || (!!run.phase && run.mrs.length > 0))
+	// Between phases (idle, or parked at a wait point) a one-line nudge points
+	// at the Phases window: what may start next lives there. Dismissed, it
+	// stays away until another phase has ended.
+	const phasesDone = $derived(rs.events.filter((e) => e.type === 'phase_completed').length);
+	const showNudge = $derived(
+		!!run && !rs.terminal && run.idle && rs.phasesNudgeDismissedAt !== phasesDone
 	);
 
 	let scroller = $state<HTMLDivElement | null>(null);
@@ -96,12 +107,19 @@
 				</div>
 			{/if}
 			<Transcript {items} {sending} over={rs.terminal} {onlog} onanswer={() => follow()} />
-			{#if showPhases && run}
-				{#key run.idle + (run.phase ?? '')}<PhasesCard
-						runId={rs.runId}
-						idle={run.idle}
-						beginPhase={run.beginPhase ?? ''}
-					/>{/key}
+			{#if showNudge}
+				<div class="nudge" transition:materialize={{ origin: 'center bottom', y: 6 }}>
+					<span class="mut">{t('runview.session.betweenPhases')}</span>
+					<button class="linklike brand" onclick={onphases}
+						>{t('runview.session.openPhases')} {I.forward}</button
+					>
+					<button
+						class="x"
+						title={t('runview.session.dismissNudge')}
+						aria-label={t('runview.session.dismissNudge')}
+						onclick={() => (rs.phasesNudgeDismissedAt = phasesDone)}>{I.close}</button
+					>
+				</div>
 			{/if}
 		</div>
 		{#if !stick}
@@ -147,6 +165,38 @@
 </div>
 
 <style>
+	.nudge {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin: 10px 0 4px;
+		padding: 6px 8px 6px 12px;
+		border: 1px solid var(--ln);
+		border-radius: var(--r-pill);
+		background: var(--cBg);
+		font-size: var(--fs-ui);
+		width: fit-content;
+		max-width: 100%;
+	}
+	.nudge .mut {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.nudge .x {
+		width: 20px;
+		height: 20px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: var(--r-tag);
+		color: var(--fnt);
+		cursor: pointer;
+	}
+	.nudge .x:hover {
+		background: var(--p3);
+		color: var(--tx);
+	}
 	.session {
 		flex: 1;
 		min-height: 0;

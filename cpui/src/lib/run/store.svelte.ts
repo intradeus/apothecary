@@ -56,6 +56,9 @@ export class RunStore {
 	changesCount = $state<number | null>(null);
 	/** The Logs view's source: 'workspace', '_provision' or a stage id. */
 	logSource = $state('workspace');
+	/** The Session's between-phases nudge was dismissed after this many
+	 *  phase completions: it shows again once another phase ends. */
+	phasesNudgeDismissedAt = $state(-1);
 	/** The Egress view's verdict filter (the banner opens it on denials). */
 	egressVerdict = $state<'' | 'allow' | 'deny'>('');
 

@@ -16,8 +16,15 @@
 	let {
 		runId,
 		idle,
+		ended = false,
 		beginPhase = ''
-	}: { runId: string; idle: boolean; beginPhase?: string } = $props();
+	}: {
+		runId: string;
+		idle: boolean;
+		/** The run is over: what ran, without anything to start. */
+		ended?: boolean;
+		beginPhase?: string;
+	} = $props();
 	let mrs = $state<MergeRequestLive[]>([]);
 	let phases = $state<RunPhase[]>([]);
 	let titles = $state<Record<string, string>>({});
@@ -150,7 +157,9 @@
 									: t('run.phases.running')}</span
 							>{/if}</span
 					>
-					{#if p.outcome}
+					{#if ended}
+						<!-- the run is over: nothing to start -->
+					{:else if p.outcome}
 						<!-- An outcome happens on the forge; starting one by hand would
 						     end the run from a button beside the ones that do not. -->
 						<span class="fnt small" title={t('run.phases.outcomeTitle')}

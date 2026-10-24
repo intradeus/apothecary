@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The live run (DESIGN 7.1): header, an alert banner when something needs
-	// a decision, and the window desk with the run's thirteen views.
+	// a decision, and the window desk with the run's fourteen views.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
@@ -17,6 +17,7 @@
 	import FlowView from './views/FlowView.svelte';
 	import SessionView from './views/SessionView.svelte';
 	import PingsView from './views/PingsView.svelte';
+	import PhasesView from './views/PhasesView.svelte';
 	import TimelineView from './views/TimelineView.svelte';
 	import RecordView from './views/RecordView.svelte';
 	import WorkspaceView from './views/WorkspaceView.svelte';
@@ -54,6 +55,11 @@
 				return rs.pendingPings.length
 					? { count: rs.pendingPings.length, alert: 'amb', hint: t('run.page.waitingOnYou') }
 					: { count: rs.pings.length || '' };
+			case 'phases':
+				return {
+					hint:
+						rs.run?.idle && !rs.terminal ? t('run.page.betweenPhases') : t('run.page.whatCanStart')
+				};
 			case 'timeline':
 				return { count: timelineCount || '', hint: t('run.page.everyEvent') };
 			case 'record':
@@ -152,9 +158,16 @@
 				{#if v === 'flow'}
 					<FlowView {rs} w={p.w} h={p.h} onstage={openStage} />
 				{:else if v === 'session'}
-					<SessionView {rs} visible={p.visible} onlog={openLog} />
+					<SessionView
+						{rs}
+						visible={p.visible}
+						onlog={openLog}
+						onphases={() => desk.reveal('phases')}
+					/>
 				{:else if v === 'pings'}
 					<PingsView {rs} />
+				{:else if v === 'phases'}
+					<PhasesView {rs} />
 				{:else if v === 'timeline'}
 					<TimelineView {rs} />
 				{:else if v === 'record'}

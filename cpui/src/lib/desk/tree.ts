@@ -9,6 +9,7 @@ export const VIEWS = [
 	'flow',
 	'session',
 	'pings',
+	'phases',
 	'timeline',
 	'record',
 	'changes',
@@ -31,6 +32,9 @@ export const VIEW_LABEL: Record<ViewId, string> = {
 	},
 	get pings() {
 		return t('desk.view.pings');
+	},
+	get phases() {
+		return t('desk.view.phases');
 	},
 	get timeline() {
 		return t('desk.view.timeline');
@@ -122,6 +126,7 @@ export const PRESETS = {
 							leaf([
 								'session',
 								'pings',
+								'phases',
 								'timeline',
 								'changes',
 								'files',
@@ -148,6 +153,7 @@ export const PRESETS = {
 					leaf([
 						'session',
 						'pings',
+						'phases',
 						'timeline',
 						'changes',
 						'files',
@@ -175,7 +181,7 @@ export const PRESETS = {
 					split(
 						'row',
 						[0.6, 0.4],
-						[leaf(['session', 'pings', 'timeline', 'record']), leaf(['changes', 'files'])]
+						[leaf(['session', 'pings', 'phases', 'timeline', 'record']), leaf(['changes', 'files'])]
 					),
 					split(
 						'row',
@@ -195,7 +201,7 @@ export const PRESETS = {
 				[0.19, 0.45, 0.36],
 				[
 					leaf(['flow']),
-					leaf(['session', 'pings', 'timeline', 'record', 'logs']),
+					leaf(['session', 'pings', 'phases', 'timeline', 'record', 'logs']),
 					split(
 						'col',
 						[0.68, 0.32],
@@ -216,7 +222,7 @@ export const PRESETS = {
 				'row',
 				[0.34, 0.66],
 				[
-					leaf(['session', 'pings']),
+					leaf(['session', 'pings', 'phases']),
 					split(
 						'col',
 						[0.17, 0.22, 0.61],

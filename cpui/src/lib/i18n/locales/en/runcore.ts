@@ -162,6 +162,8 @@ export default {
 	'run.page.closed': 'closed',
 	'run.page.following': 'following',
 	'run.page.waitingOnYou': 'waiting on you',
+	'run.page.betweenPhases': 'between phases',
+	'run.page.whatCanStart': 'what opens each phase',
 	'run.page.everyEvent': 'every lifecycle event',
 	'run.page.keptAfter': 'kept after the workspace',
 	'run.page.refresh5': 'refreshes every 5s',
