@@ -42,7 +42,7 @@ func newTracker() *fake.TicketSource {
 const transitionFirstDoc = `name: tk
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: kick, type: action, action: ticket_transition, input: { to: in_progress } }
   - { id: build, type: agent, agent: builder }
 `
@@ -84,7 +84,7 @@ func TestModelCheckSurvivesALeadingRemoteStage(t *testing.T) {
 	doc := `name: tkm
 version: 2
 parameters: { harness: fake, model: zen/glm-5.1 }
-stages:
+main:
   - { id: kick, type: action, action: ticket_transition, input: { to: in_progress } }
   - { id: build, type: agent, agent: builder }
 `
@@ -123,7 +123,7 @@ func TestTicketTransitionAlreadyThereIsANoop(t *testing.T) {
 const routedDoc = `name: routed
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: kick, type: action, action: ticket_transition, input: { to: %s }, on_success: build, on_fail: { to: build, max: 1 } }
   - { id: build, type: agent, agent: builder }
 `
@@ -333,7 +333,7 @@ func TestRerunKeepsTheTicketSource(t *testing.T) {
 const commentDoc = `name: cm
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: write, type: agent, agent: redactor, output: { mr: artifacts/ticket_comment.md } }
   - { id: post,  type: action, action: ticket_comment, input: { body: artifacts/ticket_comment.md } }
 `
@@ -419,7 +419,7 @@ func TestTicketCommentReconcilesAfterCrashOrFailedAttempt(t *testing.T) {
 const setFieldDoc = `name: sf
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: write, type: agent, agent: redactor, output: { mr: artifacts/feature_flags.txt } }
   - { id: flags, type: action, action: ticket_set_field, input: { field: "Feature flags", value: artifacts/feature_flags.txt, mode: append } }
   - { id: team,  type: action, action: ticket_set_field, input: { field: Team, text: Platform } }
@@ -459,7 +459,7 @@ func TestTicketSetFieldUnknownFieldIsInputInvalid(t *testing.T) {
 	doc := `name: sfu
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: team, type: action, action: ticket_set_field, input: { field: Squad, text: Platform } }
 `
 	h, tracker := trackerHarness(t, doc)
@@ -482,7 +482,7 @@ func TestTicketLinkAttachesTheMergeRequest(t *testing.T) {
 	doc := `name: lk
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: redact, type: agent, agent: redactor }
   - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md } }
   - { id: link,   type: action, action: ticket_link }
@@ -515,7 +515,7 @@ stages:
 	first := `name: lk1
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: link, type: action, action: ticket_link }
 `
 	fl1 := mustFlow(t, first)
@@ -540,7 +540,7 @@ func TestTicketDoneAfterTheFinalGateNeedsNoWorkspace(t *testing.T) {
 	doc := `name: dn
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: build,  type: agent, agent: builder }
   - { id: gate,   type: human_gate, question: "Merge?", on_success: finish, on_reject: abort }
   - { id: finish, type: action, action: ticket_transition, input: { to: done } }

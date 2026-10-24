@@ -188,7 +188,7 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 const twoAgentFlowDoc = `name: two
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: scout, type: agent, agent: builder }
   - { id: build, type: agent, agent: builder }
 `

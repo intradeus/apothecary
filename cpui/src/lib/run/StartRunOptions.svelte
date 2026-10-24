@@ -1,23 +1,21 @@
 <script lang="ts">
-	// What else a run may choose at creation (flow v4): the entrypoint — one
-	// of the flow's run_start phases, offered only when it has several — and
-	// parameter overrides for this run only, collapsed under Advanced. The
-	// component resolves the chosen flow's declaration and the layer
-	// underneath (the workshop's binding, or the run a rerun comes from)
-	// itself, so the forms that mount it only carry a flow name.
+	// What else a run may choose at creation: the merge request it is started
+	// on, for a flow whose runs are (run_start: merge_request), and parameter
+	// overrides for this run only, collapsed under Advanced. The component
+	// resolves the chosen flow's declaration and the layer underneath (the
+	// workshop's binding, or the run a rerun comes from) itself, so the forms
+	// that mount it only carry a flow name.
 	import { api } from '$lib/api';
 	import type { Flow, Integration, Model, OpenMergeRequest, ParamDecl } from '$lib/domain';
-	import { KNOWN_PARAMS, MR_OPENED } from '$lib/flowdoc';
+	import { KNOWN_PARAMS } from '$lib/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		projectId,
 		flowName,
-		phase = $bindable(''),
 		params = $bindable({}),
 		mr = $bindable(0),
-		entries = 'all',
 		askMR = true,
 		under,
 		underLabel = 'workshop',
@@ -27,17 +25,11 @@
 		/** The flow the run will use (the project default when the picker is
 		 *  empty). */
 		flowName: string;
-		/** The entrypoint to begin at: one of the flow's run_start phases. */
-		phase: string;
 		/** Overrides for this run only; empty values never travel. */
 		params: Record<string, string>;
-		/** The merge request to create the run on (0 = none), asked for when
-		 *  the entrypoint begins runs on one (mr_opened). */
+		/** The merge request to start the run on (0 = none), asked for when
+		 *  the flow's runs are started on one (run_start: merge_request). */
 		mr?: number;
-		/** Which entrypoints to offer: every one, those beginning a fresh run
-		 *  (run_start), or those beginning one on a merge request (mr_opened)
-		 *  — what an automation of that kind can create. */
-		entries?: 'all' | 'fresh' | 'mr';
 		/** Ask which merge request (a person starting a run does; an
 		 *  automation picks them itself). */
 		askMR?: boolean;
@@ -54,14 +46,9 @@
 	let models = $state<Model[]>([]);
 	let loadError = $state('');
 
-	const kindOK = (signal: string) =>
-		entries === 'all' || (entries === 'mr') === (signal === MR_OPENED);
-	const entrypoints = $derived((flow?.phases ?? []).filter((p) => p.entry && kindOK(p.signal)));
-	// An entrypoint on mr_opened begins the run on a merge request someone
-	// opened: the form asks which.
-	const onMR = $derived(
-		askMR && (flow?.phases ?? []).find((p) => p.id === phase)?.signal === MR_OPENED
-	);
+	// A flow whose runs are started on a merge request someone opened: the
+	// form asks which.
+	const onMR = $derived(askMR && flow?.runStart === 'merge_request');
 	let openMRs = $state<OpenMergeRequest[] | null>(null);
 	let mrError = $state('');
 	$effect(() => {
@@ -128,9 +115,6 @@
 					.filter((i) => i.port === 'harness' && ids.has(i.id))
 					.map((i) => ({ kind: i.kind, label: `${i.kind} · ${i.name}`, id: i.id }));
 				loadError = '';
-				// The entrypoint: a still-valid choice stays, else the flow's first.
-				const offered = f.phases.filter((ph) => ph.entry && kindOK(ph.signal));
-				if (!offered.some((ph) => ph.id === phase)) phase = offered[0]?.id ?? '';
 				// Overrides of parameters this flow does not declare are dropped.
 				const declared = new Set(f.parameters.map((d) => d.name));
 				const kept = Object.fromEntries(Object.entries(params).filter(([k]) => declared.has(k)));
@@ -178,17 +162,6 @@
 </script>
 
 {#if flow}
-	{#if entrypoints.length > 1}
-		<div class="field">
-			<label for="{idPrefix}-phase">{t('run.start.entrypoint')}</label>
-			<select id="{idPrefix}-phase" class="mono" bind:value={phase}>
-				{#each entrypoints as ph (ph.id)}
-					<option value={ph.id}>{ph.id}{ph.description ? ` — ${ph.description}` : ''}</option>
-				{/each}
-			</select>
-			<span class="help">{t('run.start.entrypointHelp')}</span>
-		</div>
-	{/if}
 	{#if onMR}
 		<div class="field">
 			<label for="{idPrefix}-mr">{t('run.start.mr')}</label>

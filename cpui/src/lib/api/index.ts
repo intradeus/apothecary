@@ -83,7 +83,6 @@ const runInputBody = (o?: RunInput) => ({
 	...(o?.goal ? { goal: o.goal } : {}),
 	...(o?.sourceBranch ? { source_branch: o.sourceBranch } : {}),
 	...(o?.attachmentIds?.length ? { attachment_ids: o.attachmentIds } : {}),
-	...(o?.phase ? { phase: o.phase } : {}),
 	...(o?.params && Object.keys(o.params).length ? { params: o.params } : {}),
 	...(o?.mr ? { mr: { iid: o.mr.iid, ...(o.mr.repo ? { repo: o.mr.repo } : {}) } } : {})
 });
@@ -418,26 +417,25 @@ export const projects = {
 	/** Branches of the project's repository, for the source-branch picker. */
 	branches: async (id: string): Promise<Branch[]> =>
 		many(await unwrap(gen.listProjectBranches({ path: { id } })), map.toBranch),
-	/** The repository's open merge requests, newest first: what a run may be
-	 *  created on at an entrypoint on mr_opened. */
+	/** The repository's open merge requests, newest first: what a run of a
+	 *  flow with run_start: merge_request may be started on. */
 	mergeRequests: async (id: string, repo?: string): Promise<MergeRequestRow[]> =>
 		many(
 			await unwrap(gen.listProjectMrs({ path: { id }, query: repo ? { repo } : undefined })),
 			map.toMergeRequestRow
 		),
-	/** Start a run of a flow on a merge request: its ticket found or made, the
-	 *  run created at the flow's mr_opened entrypoint. */
+	/** Start a run of a flow on a merge request: its ticket found or made,
+	 *  the run started on it (the flow's run_start must be merge_request). */
 	startRunOnMR: async (
 		id: string,
 		iid: number,
-		opts?: { flow?: string; phase?: string; repo?: string; params?: Record<string, string> }
+		opts?: { flow?: string; repo?: string; params?: Record<string, string> }
 	): Promise<{ runId: string; ticketId: string }> => {
 		const r = await unwrap(
 			gen.startMrRun({
 				path: { id, iid: String(iid) },
 				body: {
 					...(opts?.flow ? { flow: opts.flow } : {}),
-					...(opts?.phase ? { phase: opts.phase } : {}),
 					...(opts?.repo ? { repo: opts.repo } : {}),
 					...(opts?.params && Object.keys(opts.params).length ? { params: opts.params } : {})
 				}
@@ -707,7 +705,6 @@ function automationBody(d: AutomationDraft): Wire.AutomationRequest {
 		...(d.schedule ? { schedule: d.schedule } : {}),
 		...(d.ticketId ? { ticket_id: d.ticketId } : {}),
 		...(d.repo ? { repo: d.repo } : {}),
-		...(d.phase ? { phase: d.phase } : {}),
 		...(d.params && Object.keys(d.params).length ? { params: d.params } : {})
 	};
 }

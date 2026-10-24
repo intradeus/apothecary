@@ -1,9 +1,9 @@
 package engine
 
-// FLOWLANG §1 outcomes: a phase on mr_merged or mr_closed opens once, when
-// the merge request's fate is known, and ends the run — its last stage says
-// done or abort, or a stage-less phase says `then:`. An outcome is what keeps
-// a run alive while its merge request is open, and what ends it after.
+// FLOWLANG §1 outcomes: an outcome fires once, when the merge request's fate
+// is known, and ends the run — after its chain, if it has one, the way its
+// `then:` says (done by default). An outcome is what keeps a run alive while
+// its merge request is open, and what ends it after.
 
 import (
 	"context"
@@ -16,10 +16,10 @@ import (
 	"apothecary/internal/run"
 )
 
-// outcomeFlowDoc: the default's shape in small. deliver ends with the merge
-// request open; nothing reacts on its own (both reactions start by hand), so
-// the outcomes alone keep the run waiting: merged runs a last stage and the
-// run is done, closed abandons it on the spot.
+// outcomeFlowDoc: the builder's shape in small. The main chain ends with the
+// merge request open; nothing reacts on its own (both watchers start by
+// hand), so the outcomes alone keep the run waiting: merged runs a last stage
+// and the run is done, closed abandons it on the spot.
 var outcomeFlowDoc = strings.NewReplacer(
 	"on: { signal: mr_conflicts, start: confirm }", "on: { signal: mr_conflicts, start: manual }",
 	"on: { signal: mr_review_settled, quiet_for: 1h, max: 2 }", "on: manual",
@@ -42,7 +42,7 @@ func TestMergedOutcomeRunsItsStagesAndEndsTheRun(t *testing.T) {
 	for _, p := range infos {
 		byID[p.ID] = p
 	}
-	if m, c := byID["merged"], byID["closed"]; !m.Outcome || m.Then != "" || m.Max != -1 || !c.Outcome || c.Then != "abort" {
+	if m, c := byID["merged"], byID["closed"]; m.Kind != "outcome" || m.Then != "done" || m.Max != -1 || c.Kind != "outcome" || c.Then != "abort" {
 		t.Errorf("phases: merged %+v closed %+v", m, c)
 	}
 	ph.repoHost.SetMRState(1, ports.MRMerged)
@@ -52,8 +52,8 @@ func TestMergedOutcomeRunsItsStagesAndEndsTheRun(t *testing.T) {
 	}
 	evs := ph.events(t, runID)
 	starts := phaseStarts(evs)
-	if len(starts) != 2 || starts[1].Phase != "merged" || starts[1].Subject != "" || starts[1].Key != "merged" || starts[1].By != "signal" {
-		t.Errorf("phase starts = %+v, want deliver, then merged on no subject", starts)
+	if len(starts) != 2 || starts[1].Phase != "merged" || starts[1].Subject != "" || starts[1].Key != "mr_merged" || starts[1].By != "signal" {
+		t.Errorf("phase starts = %+v, want main, then merged on no subject", starts)
 	}
 	if c := lastCompletion(evs, "merged"); c == nil || c.Reason != "" {
 		t.Errorf("merged's completion = %+v", c)
@@ -73,7 +73,7 @@ func TestClosedOutcomeAbandonsTheRunOnTheSpot(t *testing.T) {
 		t.Errorf("abandon = %+v", ab)
 	}
 	starts := phaseStarts(evs)
-	if len(starts) != 2 || starts[1].Phase != "closed" || starts[1].Subject != "repo" || starts[1].Key != "closed:repo" {
+	if len(starts) != 2 || starts[1].Phase != "closed" || starts[1].Subject != "repo" || starts[1].Key != "closed" {
 		t.Errorf("phase starts = %+v, want closed on the closed merge request", starts)
 	}
 	if c := lastCompletion(evs, "closed"); c == nil {
@@ -94,7 +94,7 @@ func TestOutcomeAsksFirstUnderConfirm(t *testing.T) {
 	runID := ph.start(t)
 	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
-	if ask.Phase != "merged" || !strings.Contains(ask.Question, "end the run?") || !strings.Contains(ask.Question, "Every merge request merged") {
+	if ask.Phase != "merged" || !strings.Contains(ask.Question, "end the run?") || !strings.Contains(ask.Question, "The merge request https://gitlab.local/mr/1 merged.") {
 		t.Errorf("confirm ping = %+v", ask)
 	}
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
@@ -147,9 +147,9 @@ func TestADeadEndInAnOutcomeAbandonsTheRun(t *testing.T) {
 }
 
 // `on_success: abort` is the flow abandoning the run from a success — the
-// shorthand's one phase here, with its required route to done on the edge.
+// main chain here, with its required route to done on the edge.
 func TestOnSuccessAbortAbandonsTheRun(t *testing.T) {
-	doc := "name: short\nversion: 4\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n" +
+	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nmain:\n" +
 		"  - { id: s, type: command, run: \"true\", on_success: abort, on_fail: done }\n"
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Short"}, "short", testProject)

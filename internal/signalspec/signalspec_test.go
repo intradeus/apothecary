@@ -63,27 +63,27 @@ func TestMRMerged(t *testing.T) {
 	}
 }
 
-// Beginnings: run_start is the one Entry (a run is created for the phase),
-// manual the Trigger that never fires (a person starts the phase from the
-// run page); neither needs anything of the project nor is debounced. The
-// repository host triggers open phases only.
-func TestBeginnings(t *testing.T) {
+// Beginnings: run_start is how a run begins, manual a person's act; neither
+// needs anything of the project nor is debounced. Every other signal is
+// observed on the run's merge requests — what it does is the flow's call.
+func TestKinds(t *testing.T) {
 	rs := Get(RunStart)
-	if rs == nil || !rs.Entry || rs.Trigger || rs.Requires != "" || rs.Needs != "" || rs.Debounced {
-		t.Errorf("run_start = %+v, want Entry only", rs)
+	if rs == nil || rs.Kind != KindStart || rs.Observed() || rs.Requires != "" || rs.Needs != "" || rs.Debounced {
+		t.Errorf("run_start = %+v", rs)
 	}
 	m := Get(Manual)
-	if m == nil || m.Entry || !m.Trigger || m.Requires != "" || m.Needs != "" || m.Debounced {
-		t.Errorf("manual = %+v, want Trigger only", m)
+	if m == nil || m.Kind != KindHand || m.Observed() || m.Requires != "" || m.Needs != "" || m.Debounced {
+		t.Errorf("manual = %+v", m)
 	}
-	for _, slug := range []string{MRConflicts, MRReviewSettled} {
-		if s := Get(slug); s.Entry || !s.Trigger {
-			t.Errorf("%s: entry %v trigger %v", slug, s.Entry, s.Trigger)
+	for _, s := range Registry() {
+		if s.Slug == RunStart || s.Slug == Manual {
+			continue
+		}
+		if !s.Observed() || s.Requires != RequiresRepository || s.Needs != NeedsMR {
+			t.Errorf("%s = %+v: an observed merge-request signal", s.Slug, s)
 		}
 	}
-	for _, slug := range []string{MRMerged, MRClosed} {
-		if s := Get(slug); s.Entry || s.Trigger {
-			t.Errorf("%s is waitable, got entry %v trigger %v", slug, s.Entry, s.Trigger)
-		}
+	if Get("mr_opened") != nil {
+		t.Error("mr_opened is a run_start on a merge request, not a signal")
 	}
 }

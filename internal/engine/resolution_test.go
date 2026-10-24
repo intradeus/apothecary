@@ -48,13 +48,11 @@ func TestResolutionRunnerSelection(t *testing.T) {
 }
 
 const phaseSignalDoc = `name: sig
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: build, type: command, run: "true" }
+main:
+  - { id: build, type: command, run: "true" }
+watchers:
   - id: polish
     on: manual
     stages:
@@ -63,15 +61,17 @@ phases:
     on: { signal: mr_conflicts, start: manual }
     stages:
       - { id: fix, type: command, run: "true" }
+outcomes:
   - id: shipped
     on: mr_merged
     then: done
 `
 
-// A phase that opens on a repository host signal — a reaction's trigger, an
-// outcome — needs the repository host, like a wait stage does; run_start and
-// manual phases need nothing. Checked on the flow's refs, which
-// PreflightProject and run creation share.
+// A phase that opens on a repository host signal — a watcher's, an
+// outcome's — needs the repository host, like a wait stage does, and so
+// does a main chain started on a merge request; a main chain started on a
+// ticket and a watcher started by hand need nothing. Checked on the flow's
+// refs, which PreflightProject and run creation share.
 func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	fl := mustFlow(t, phaseSignalDoc)
 	h := newHarness(t, fl)
@@ -80,17 +80,22 @@ func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	}
 	h.res.RepoHost = nil
 	err := h.e.preflightFlowRefs(h.res, fl)
-	if err == nil || !strings.Contains(err.Error(), `phase "conflicts"`) || !strings.Contains(err.Error(), "repository integration") {
+	if err == nil || !strings.Contains(err.Error(), `watcher "conflicts"`) || !strings.Contains(err.Error(), "repository integration") {
 		t.Fatalf("without a repository host: err = %v", err)
 	}
 	onlyOutcome := mustFlow(t, strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1))
-	if err := h.e.preflightFlowRefs(h.res, onlyOutcome); err == nil || !strings.Contains(err.Error(), `phase "shipped"`) {
+	if err := h.e.preflightFlowRefs(h.res, onlyOutcome); err == nil || !strings.Contains(err.Error(), `outcome "shipped"`) {
 		t.Errorf("an outcome without a repository host: err = %v", err)
 	}
 	noFire := mustFlow(t, strings.Replace(strings.Replace(phaseSignalDoc, "on: { signal: mr_conflicts, start: manual }", "on: manual", 1),
-		"  - id: shipped\n    on: mr_merged\n    then: done\n",
+		"outcomes:\n  - id: shipped\n    on: mr_merged\n    then: done\n",
 		"  - id: finish\n    on: manual\n    stages:\n      - { id: wrap, type: command, run: \"true\", on_success: done }\n", 1))
 	if err := h.e.preflightFlowRefs(h.res, noFire); err != nil {
 		t.Errorf("manual phases without a repository host: %v", err)
+	}
+	onMR := mustFlow(t, "name: rev\nversion: 5\nrun_start: merge_request\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\n"+
+		"main:\n  - { id: look, type: command, run: \"true\", on_success: done }\n")
+	if err := h.e.preflightFlowRefs(h.res, onMR); err == nil || !strings.Contains(err.Error(), "the main chain") || !strings.Contains(err.Error(), "run_start: merge_request") {
+		t.Errorf("a flow started on merge requests, without a repository host: err = %v", err)
 	}
 }

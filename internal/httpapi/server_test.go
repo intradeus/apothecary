@@ -25,7 +25,7 @@ import (
 )
 
 const loopFlowDoc = `name: loop
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
@@ -36,7 +36,7 @@ agents:
     prompt: build the thing
     inputs:
       - { name: plan, optional: true }
-stages:
+main:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
 `
@@ -428,7 +428,7 @@ func TestSSEReplayAndLive(t *testing.T) {
 // → 204 + X-Ping-ID (hold expired) → GET re-poll → 200 with the answer.
 func TestShimProtocol(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: ping
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
@@ -439,7 +439,7 @@ agents:
     prompt: build the thing
     inputs:
       - { name: plan, optional: true }
-stages:
+main:
   - { id: build, type: agent, agent: builder }
 `)
 	x.srv.HoldTimeout = 5 * time.Millisecond
@@ -773,7 +773,7 @@ func TestLogsEndpoint(t *testing.T) {
 // content comes from the record, not the live workspace (DESIGN-FILES §5.2).
 func TestPingArtifact(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
@@ -784,7 +784,7 @@ agents:
     prompt: build the thing
     inputs:
       - { name: plan, optional: true }
-stages:
+main:
   - { id: plan, type: agent, agent: planner }
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
       on_reject: { to: plan, max: 2 } }
@@ -851,7 +851,7 @@ stages:
 // stay queryable with both sides of the exchange and their stage.
 func TestPingHistory(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
@@ -862,7 +862,7 @@ agents:
     prompt: build the thing
     inputs:
       - { name: plan, optional: true }
-stages:
+main:
   - { id: plan, type: agent, agent: planner }
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
       on_reject: { to: plan, max: 2 } }
@@ -1155,12 +1155,12 @@ func TestHoldForClampsGraceHold(t *testing.T) {
 // back, and from then on the poll answers 410 so the call stops waiting.
 func TestPingLongPollStaysLiveUntilTheRunParks(t *testing.T) {
 	x := newEnv(t, engine.Config{AskHumanHold: 150 * time.Millisecond}, `name: hold
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
     prompt: build the thing
-stages:
+main:
   - { id: build, type: agent, agent: builder }
 `)
 	x.srv.HoldTimeout = 5 * time.Millisecond
@@ -1211,12 +1211,12 @@ stages:
 // take it; otherwise the API says so instead of queueing it into a void.
 func TestSendMessageToTheRunningAgent(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: msg
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
     prompt: build the thing
-stages:
+main:
   - { id: build, type: agent, agent: builder }
 `)
 	got := make(chan string, 1)

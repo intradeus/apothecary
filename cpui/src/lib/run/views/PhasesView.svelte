@@ -1,8 +1,9 @@
 <script lang="ts">
-	// The flow's phases as a window of their own: what opens each one, how
-	// often it ran, which one is live or parked, what holds right now, and a
-	// way to start one by hand while the run is idle. Still there once the
-	// run is over — what ran, without the buttons.
+	// The flow's watchers as a window of their own, beside its main chain and
+	// its outcomes: what opens each one, how often it ran, which one is live
+	// or parked, what holds right now, and a way to start one by hand while
+	// the run is idle. Still there once the run is over — what ran, without
+	// the buttons.
 	import type { RunStore } from '../store.svelte';
 	import PhasesCard from '../PhasesCard.svelte';
 
@@ -16,7 +17,6 @@
 				runId={rs.runId}
 				idle={run.idle && !rs.terminal}
 				ended={rs.terminal}
-				beginPhase={run.beginPhase ?? ''}
 			/>{/key}
 	{/if}
 </div>

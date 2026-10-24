@@ -20,9 +20,9 @@ func TestFlowsAreOwnedPerProject(t *testing.T) {
 	b := seedNamedProject(t, svc, "p2")
 
 	const shape = `name: verify
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: check, type: command, run: %q }
 `
 	if _, err := svc.SaveFlow(ctx, a.ID, "verify", fmt.Sprintf(shape, "make verify"), nil); err != nil {

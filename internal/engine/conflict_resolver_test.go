@@ -8,11 +8,12 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/builtin"
 	"apothecary/internal/event"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
 
-// The built-in conflict-resolver template runs as written: created on
+// The built-in conflict-resolver template runs as written: started on
 // someone's merge request that conflicts with its moved target, it merges
 // the target in, has the resolver settle the conflict, tests and pushes to
 // the merge request's own branch (leased against its head); a later conflict
@@ -64,7 +65,7 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ph.waitPhaseRuns(t, runID, "first_pass", 1)
+	ph.waitPhaseRuns(t, runID, flow.MainPhase, 1)
 	merges, _, pushes, paused := git.snapshot()
 	if merges != 1 || paused != "" || len(pushes) != 1 || pushes[0] != "lease:feature/cache" {
 		t.Fatalf("merges %d paused %q pushes %v: one merge, pushed leased to the merge request's branch", merges, paused, pushes)

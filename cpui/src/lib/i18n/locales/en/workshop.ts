@@ -138,7 +138,7 @@ export default {
 	'workshop.repos.lede':
 		'What the repository brings in: its open merge requests, and the runs done on each. Start a run on one with any flow of this workshop that can begin on a merge request.',
 	'workshop.repos.noFlow':
-		'No flow of this workshop can begin on a merge request — one does from an entrypoint on mr_opened.',
+		'No flow of this workshop is started on a merge request — one is with run_start: merge_request.',
 	'workshop.repos.loadError': 'Could not list the merge requests',
 	'workshop.repos.emptyTitle': 'No open merge requests',
 	'workshop.repos.emptyText': 'When one is opened in this repository, it shows here.',
@@ -163,7 +163,7 @@ export default {
 	'workshop.automations.repo': 'Repository',
 	'workshop.automations.repoPrimary': 'the primary repository',
 	'workshop.automations.repoHelp':
-		'Every merge request someone else opens here gets a ticket and one run, at an entrypoint on mr_opened — drafts once they are marked ready; the integration’s own (the factory’s) never.',
+		'Every merge request someone else opens here gets a ticket and one run, of a flow started on merge requests (run_start: merge_request) — drafts once they are marked ready; the integration’s own (the factory’s) never.',
 	'workshop.automations.mrSummary': 'merge requests others open in {repo}',
 	'workshop.automations.polled': 'polled {ago}',
 	'workshop.automations.fired': 'fired {ago}',
@@ -202,8 +202,6 @@ export default {
 	'workshop.automations.save': 'Save',
 	'workshop.automations.saving': 'Saving…',
 	'workshop.automations.create': 'Create automation',
-	'workshop.automations.flowPhase': '{flow} · begins at {phase}',
-	'workshop.automations.flowFirst': '{flow} · its first entrypoint',
 	'workshop.automations.overrides': '{count} overrides',
 	'workshop.flows.createTitle': 'New flow',
 	'workshop.flows.createAction': 'Create & edit',

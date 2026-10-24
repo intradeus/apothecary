@@ -1,9 +1,8 @@
 <script lang="ts">
 	// "New run from this…" (DESIGN 4.5): the same ticket as a fresh run — new
-	// workspace, new branch — with direction for the attempt, files, a flow,
-	// the entrypoint to begin at and parameter overrides (what this run used
-	// is the layer underneath: the engine carries it forward). The current
-	// run is untouched.
+	// workspace, new branch — with direction for the attempt, files, a flow
+	// and parameter overrides (what this run used is the layer underneath:
+	// the engine carries it forward). The current run is untouched.
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { shortId } from '$lib/format';
@@ -24,17 +23,15 @@
 
 	let goal = $state('');
 	let flow = $state('');
-	let phase = $state('');
 	let params = $state<Record<string, string>>({});
 	let files = $state<File[]>([]);
 	let busy = $state(false);
 	let error = $state('');
 
-	// Each opening starts from where this run began, with no overrides.
+	// Each opening starts with no overrides.
 	$effect(() => {
 		if (!open) return;
 		untrack(() => {
-			phase = rs.run?.beginPhase ?? '';
 			params = {};
 		});
 	});
@@ -49,7 +46,6 @@
 				flow: flow.trim() || undefined,
 				goal: goal.trim() || undefined,
 				attachmentIds,
-				phase: phase || undefined,
 				params: Object.keys(params).length ? params : undefined
 			});
 			void fleet.refresh();
@@ -94,7 +90,6 @@
 			<StartRunOptions
 				projectId={rs.run.projectId}
 				flowName={flow.trim() || rs.run.flowName}
-				bind:phase
 				bind:params
 				under={rs.run.params ?? {}}
 				underLabel="run"

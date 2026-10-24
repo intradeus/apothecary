@@ -14,7 +14,7 @@ import (
 	"apothecary/internal/run"
 )
 
-// mergeGit is enough of git for the reaction phases: a commit graph with
+// mergeGit is enough of git for the watchers: a commit graph with
 // merge commits, a remote, paused merges and rebases with conflict markers,
 // and leased pushes — parsed from the scripts the engine sends.
 type mergeGit struct {
@@ -204,11 +204,11 @@ func (g *mergeGit) snapshot() (merges, rebases int, pushes []string, paused stri
 	return g.merges, g.rebases, append([]string(nil), g.pushes...), g.paused
 }
 
-// reactionFlowDoc is the template's shape, small: deliver, then a confirmed
-// conflict fix (engine merge, resolver for conflicts) and a review round
-// (load, fix, reply, post).
-const reactionFlowDoc = `name: phased
-version: 4
+// watcherFlowDoc is the builder's shape, small: the main chain, then the
+// watchers — a confirmed conflict fix (engine merge, resolver for
+// conflicts) and a review round (load, fix, reply, post).
+const watcherFlowDoc = `name: phased
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
@@ -231,15 +231,13 @@ agents:
       - { name: failure, optional: true }
     outputs:
       - { name: replies, type: review_replies, path: artifacts/replies.yaml }
-phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: build, type: agent, agent: builder }
-      - { id: commit, type: command, run: "git add -A && git commit -m build" }
-      - { id: push, type: action, action: push_branch }
-      - { id: redact, type: agent, agent: redactor }
-      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+main:
+  - { id: build, type: agent, agent: builder }
+  - { id: commit, type: command, run: "git add -A && git commit -m build" }
+  - { id: push, type: action, action: push_branch }
+  - { id: redact, type: agent, agent: redactor }
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: confirm }
     stages:
@@ -258,12 +256,13 @@ phases:
       - { id: reply, type: agent, agent: replier, input: { comments: artifacts/review.md, failure: $FAILURE },
           on_fail: { to: reply, max: 1 } }
       - { id: post, type: action, action: reply_review_comments, input: { replies: artifacts/replies.yaml } }
+outcomes:
   - id: shipped
     on: mr_merged
     then: done
 `
 
-type reactionHarness struct {
+type watcherHarness struct {
 	*phasedHarness
 	git *mergeGit
 	// resolverClears: the resolver agent removes the conflict markers.
@@ -274,10 +273,10 @@ type reactionHarness struct {
 	review  []string // the review.md the fixer was given
 }
 
-func newReactionHarness(t *testing.T, strategy string) *reactionHarness {
+func newWatcherHarness(t *testing.T, strategy string) *watcherHarness {
 	t.Helper()
-	ph := newPhasedHarness(t, strings.Replace(reactionFlowDoc, "STRATEGY", strategy, 1))
-	rh := &reactionHarness{phasedHarness: ph, git: newMergeGit("main"), resolverClears: true}
+	ph := newPhasedHarness(t, strings.Replace(watcherFlowDoc, "STRATEGY", strategy, 1))
+	rh := &watcherHarness{phasedHarness: ph, git: newMergeGit("main"), resolverClears: true}
 	ph.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if cmd.Dir == "repo" {
 			return rh.git.exec(env, cmd)
@@ -310,7 +309,7 @@ func newReactionHarness(t *testing.T, strategy string) *reactionHarness {
 }
 
 // conflict makes the repository host report a conflict against a moved target.
-func (rh *reactionHarness) conflict(t *testing.T) {
+func (rh *watcherHarness) conflict(t *testing.T) {
 	t.Helper()
 	tip := rh.git.advanceTarget("main")
 	rh.repoHost.SetTargetSHA(1, tip)
@@ -319,7 +318,7 @@ func (rh *reactionHarness) conflict(t *testing.T) {
 
 // pick answers the round's thread selection with the given thread ids
 // (none = select nothing), returning the options offered.
-func (rh *reactionHarness) pick(t *testing.T, ids ...string) []string {
+func (rh *watcherHarness) pick(t *testing.T, ids ...string) []string {
 	t.Helper()
 	p := rh.waitPing(t, event.PingSelect)
 	var chosen []string
@@ -348,7 +347,7 @@ func (rh *reactionHarness) pick(t *testing.T, ids ...string) []string {
 	return out
 }
 
-func (rh *reactionHarness) approveConflictFix(t *testing.T, except ...string) string {
+func (rh *watcherHarness) approveConflictFix(t *testing.T, except ...string) string {
 	t.Helper()
 	ask := rh.waitPing(t, event.PingPhaseConfirm, except...)
 	if err := rh.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
@@ -362,7 +361,7 @@ func (rh *reactionHarness) approveConflictFix(t *testing.T, except ...string) st
 // pushes — the first push was plain, this one leased against what the run
 // last pushed.
 func TestConflictPhaseMergesAndTheResolverSettlesIt(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	runID := rh.start(t)
 	rh.git.mu.Lock()
 	rh.git.conflicts = 1
@@ -396,7 +395,7 @@ func TestConflictPhaseMergesAndTheResolverSettlesIt(t *testing.T) {
 // A branch that already contains its target is a no-op: no merge, nothing
 // recorded, the phase ends after its tests and an idempotent push.
 func TestSyncWithNothingToTakeIn(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	runID := rh.start(t)
 	rh.repoHost.SetTargetSHA(1, "c0") // the repository host says conflict, but main has not moved
 	rh.repoHost.SetMergeable(1, ports.MergeConflicts, "head")
@@ -414,7 +413,7 @@ func TestSyncWithNothingToTakeIn(t *testing.T) {
 // A resolver that leaves markers is sent round again, then a human gets the
 // paused merge; clearing the markers and approving continues it.
 func TestUnresolvedConflictReachesAHuman(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	rh.resolverClears = false
 	runID := rh.start(t)
 	rh.git.mu.Lock()
@@ -451,7 +450,7 @@ func TestUnresolvedConflictReachesAHuman(t *testing.T) {
 // phase started, so it lands — unless someone pushed meanwhile, which is
 // refused rather than overwritten.
 func TestRebaseIsPushedLeased(t *testing.T) {
-	rh := newReactionHarness(t, "rebase")
+	rh := newWatcherHarness(t, "rebase")
 	runID := rh.start(t)
 	branch := rh.view(t, runID).Branch
 	rh.git.mu.Lock()
@@ -497,7 +496,7 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 // are posted with markers, the threads stop being pending — no second round
 // for the same comments.
 func TestReviewRoundFixesAndReplies(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	rh.replies = func() string {
 		return "- { thread: d1, reply: \"Renamed in the latest commit.\" }\n- { thread: d2, reply: \"Added a test.\", resolve: true }\n"
 	}
@@ -538,7 +537,7 @@ func TestReviewRoundFixesAndReplies(t *testing.T) {
 // A reply to a thread the round did not load fails the replier's stage —
 // before anything is posted — and its retry gets the reason.
 func TestRepliesNamingAnUnknownThreadFailTheStage(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	var calls int
 	rh.replies = func() string {
 		calls++
@@ -571,7 +570,7 @@ func TestRepliesNamingAnUnknownThreadFailTheStage(t *testing.T) {
 // A crash between two replies: the run fails on the repository host error;
 // trying again posts only the reply that is missing.
 func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	rh.replies = func() string { return "- { thread: d1, reply: one }\n- { thread: d2, reply: two }\n" }
 	rh.repoHost.ReplyFailAfter = 1
 	runID := rh.start(t)
@@ -602,7 +601,7 @@ func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
 // get replies; the skipped one is left alone — not offered again — until a
 // reviewer writes on it again.
 func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	rh.replies = func() string { return "- { thread: d1, reply: done }\n" }
 	runID := rh.start(t)
 	t0 := rh.clock.Now()
@@ -644,7 +643,7 @@ func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
 
 // Selecting nothing ends the round at once: no agent turn is spent.
 func TestReviewRoundWithNothingSelectedEndsAtOnce(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	runID := rh.start(t)
 	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
@@ -671,7 +670,7 @@ func TestReviewRoundWithNothingSelectedEndsAtOnce(t *testing.T) {
 
 // A selection answer must name offered threads.
 func TestSelectionAnswerIsValidated(t *testing.T) {
-	rh := newReactionHarness(t, "merge")
+	rh := newWatcherHarness(t, "merge")
 	rh.start(t)
 	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)

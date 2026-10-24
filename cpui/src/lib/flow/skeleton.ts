@@ -15,9 +15,9 @@ agents:
       - { name: failure, description: why the last attempt failed, optional: true }
     prompt: |
       Do what the TASK section asks, in this repository.
-stages:
-  # Every stage declares what it reads and writes; $FAILURE is what the edge
-  # that sent the run back here carried.
+main:
+  # The chain a run starts with. Every stage declares what it reads and
+  # writes; $FAILURE is what the edge that sent the run back here carried.
   - { id: work, type: agent, agent: worker, on_success: done,
       input: { failure: $FAILURE },
       on_fail: { to: work, max: 2 } }

@@ -17,13 +17,15 @@ import (
 
 // CurrentVersion is the grammar this build speaks. Every document declares
 // its version, so a break gets a clean refusal ("this build speaks version
-// 4") instead of mis-parsing an unfamiliar shape.
+// 5") instead of mis-parsing an unfamiliar shape.
 //
-// v4 made every phase an equal chain opened by a wait point (`on:`), with
-// explicit entrypoints (`on: run_start`) in place of a positional entry, and
-// moved the flow's settings into one `parameters:` block a project binds.
-// There is no legacy mapping: a document of any other version is refused.
-const CurrentVersion = 4
+// v5 gives a flow one way in (`run_start:` — what a person or an automation
+// starts its runs on), one `main` chain that runs when the run starts,
+// `watchers` that run their chain on each new occurrence of a signal while
+// the run is open, and `outcomes` that fire once and end it. Underneath
+// they are v4's phases, each opened by a wait point. There is no legacy
+// mapping: a document of any other version is refused.
+const CurrentVersion = 5
 
 type StageType string
 
@@ -124,7 +126,7 @@ const (
 // on its signal, or the run completes once nothing is parked or armed. It is
 // on_success's natural end (a phase's last stage), and an edge's for a stage
 // whose failure is not worth routing anywhere ("best effort"). A phase that
-// can run many times — a reaction — ends this way.
+// can run many times — a watcher — ends this way.
 //
 // TerminalDone ends the RUN: it completes now, whatever else is parked or
 // armed (their open questions are withdrawn). It is said where the work is
@@ -136,8 +138,8 @@ const (
 // ReservedStart is the graph editor's marker key ("start" is never a routing
 // target). ReservedDebug is the debug leaf: NOT a terminal — the phase parks
 // for a human who has the workspace, continuing re-enters the stage that took
-// the link, and giving up ends the run in an entrypoint phase and that phase
-// run in any other.
+// the link, and giving up ends the run in the main chain or an outcome, and
+// a watcher's round in a watcher.
 //
 // ReservedFail exists only inside a block: an edge to it is the include's
 // on_fail, spliced in by the parser. No parsed flow carries it.
@@ -160,9 +162,31 @@ func routeTerminal(to string) bool {
 	return false
 }
 
-// ShorthandPhase is the phase a document written with top-level stages
-// desugars to: one chain opened by run_start.
-const ShorthandPhase = "main"
+// MainPhase is the id of a flow's main chain, the phase every run begins
+// with. It is also the name other chains include it by (`run: main`).
+const MainPhase = "main"
+
+// What a run is started on (FLOWLANG §1 run_start): a ticket — the run
+// makes its own branch and opens its merge request — or a merge request
+// someone opened, which the run works on from the start.
+const (
+	StartsOnTicket = "ticket"
+	StartsOnMR     = "merge_request"
+)
+
+// PhaseKind is which section of the document a phase comes from.
+type PhaseKind string
+
+const (
+	// PhaseMain is the main chain: it runs once, when the run starts.
+	PhaseMain PhaseKind = "main"
+	// PhaseWatcher runs its chain on each new occurrence of its signal while
+	// the run is open (or when a person starts it, on manual); it never ends
+	// the run.
+	PhaseWatcher PhaseKind = "watcher"
+	// PhaseOutcome fires once, when its signal holds, and ends the run.
+	PhaseOutcome PhaseKind = "outcome"
+)
 
 // UnlimitedMax marks a link that never exhausts (max: -1). It is only
 // valid when a human_gate sits on the link — as its TARGET (each firing
@@ -173,14 +197,14 @@ const ShorthandPhase = "main"
 // command consumes no turns and no dollars; a broken harness can fail in
 // milliseconds). The debug leaf is unlimited by nature and takes no max.
 // On a phase's wait point it means "no bound on the phase's runs" — the
-// default: a reaction happens as often as its signal brings a new fact.
+// default: a watcher runs as often as its signal brings a new fact.
 const UnlimitedMax = -1
 
 // Edge is a recoverable redirect (on_fail / on_reject / on_timeout). Each
 // link carries its own cumulative max; when a link is exhausted the NEXT
 // failure falls through to Then (retry-then-escalate chains). An exhausted
-// chain is a dead end: it abandons the run in an entrypoint phase, and ends
-// that phase run in any other. To may be TerminalEnd: the phase ends there,
+// chain is a dead end: it abandons the run in the main chain or an outcome,
+// and ends that round in a watcher. To may be TerminalEnd: the phase ends there,
 // TerminalDone: the run completes, TerminalAbort: the run is abandoned, or
 // ReservedDebug: the phase parks for a human and comes back to this stage on
 // continue (none of the four takes max/then — there is no target stage).
@@ -282,8 +306,8 @@ type Stage struct {
 	// follows on_success.
 	When *When
 
-	// Phase is the id of the phase the stage belongs to — always set, since
-	// every flow is phases (the shorthand's is ShorthandPhase).
+	// Phase is the id of the phase the stage belongs to — always set: the
+	// main chain's stages are MainPhase's.
 	Phase string
 
 	// Line is the stage's line in the source YAML, for error reporting.
@@ -463,67 +487,72 @@ type Wait struct {
 	Timeout  time.Duration
 }
 
-// Phase is one chain of stages and the wait point that opens it. Its stages
-// are Flow.Stages[First..Last], contiguous in document order. Every phase is
-// equal: an entrypoint (on: run_start) opens when a run is created for it, a
-// manual phase when a person starts it from the run page, a firing phase when
-// its signal holds for one of the run's merge requests — one phase run at a
-// time, in one workspace.
+// Phase is one chain of stages and the wait point that opens it — the main
+// chain, a watcher or an outcome (Kind). Its stages are
+// Flow.Stages[First..Last], contiguous in document order. The main chain
+// opens when the run starts, a watcher each time its signal brings something
+// new (or when a person starts it, on manual), an outcome once — one phase
+// run at a time, in one workspace.
 type Phase struct {
 	ID          string
 	Description string
+	Kind        PhaseKind
 	On          Wait
-	// Then is what a stage-less OUTCOME does when its signal holds:
-	// TerminalDone or TerminalAbort. Empty for a phase with stages, whose
-	// last stage ends the run.
+	// BringsMR marks the main chain of a flow whose runs are started on a
+	// merge request: it acts on that merge request from the start.
+	BringsMR bool
+	// Then is how an OUTCOME ends the run once its chain, if it has one, is
+	// through: TerminalDone (the default) or TerminalAbort — its last
+	// stage's success goes there. Empty for the main chain and watchers.
 	Then        string
-	First, Last int // the phase's stages; Last < First for a then-phase
+	First, Last int // the phase's stages; Last < First for an outcome with no chain
 	Line        int
 }
 
-// IsEntrypoint reports whether a run may begin at this phase: on run_start,
-// or on mr_opened (a run created on a merge request someone opened).
-func (p *Phase) IsEntrypoint() bool {
-	sig := signalspec.Get(p.On.Signal)
-	return sig != nil && sig.Entry
-}
+// IsMain reports whether this phase is the main chain, the one a run begins
+// with.
+func (p *Phase) IsMain() bool { return p.Kind == PhaseMain }
 
-// OnMR reports whether a run begun at this phase is created on an existing
-// merge request (mr_opened) — and so needs one to be created.
-func (p *Phase) OnMR() bool {
-	sig := signalspec.Get(p.On.Signal)
-	return sig != nil && sig.Brings == signalspec.NeedsMR
-}
+// OnMR reports whether a run begun at this phase is started on an existing
+// merge request (run_start: merge_request) — and so needs one named.
+func (p *Phase) OnMR() bool { return p.Kind == PhaseMain && p.BringsMR }
 
-// IsOutcome reports whether the phase ends the run: it opens on an outcome
-// signal (the merge request merged or closed), fires once, and every route
-// in it ends the run.
-func (p *Phase) IsOutcome() bool {
-	sig := signalspec.Get(p.On.Signal)
-	return sig != nil && sig.Outcome
-}
+// IsOutcome reports whether the phase ends the run: it fires once, and every
+// route in it ends the run.
+func (p *Phase) IsOutcome() bool { return p.Kind == PhaseOutcome }
 
 // Observed reports whether the engine watches a signal to open this phase:
-// a reaction's trigger or an outcome's signal, as opposed to a person's act.
+// a watcher's or an outcome's, as opposed to a person's act.
 func (p *Phase) Observed() bool { return p.Fires() || p.IsOutcome() }
 
-// Fires reports whether the phase opens on a signal the engine observes (a
-// trigger other than manual).
-func (p *Phase) Fires() bool {
-	sig := signalspec.Get(p.On.Signal)
-	return sig != nil && sig.Trigger && p.On.Signal != signalspec.Manual
+// Fires reports whether the phase is a watcher on a signal the engine
+// observes (any but manual).
+func (p *Phase) Fires() bool { return p.Kind == PhaseWatcher && p.On.Signal != signalspec.Manual }
+
+// Label names the phase for a person: "the main chain", `watcher "x"`,
+// `outcome "x"`.
+func (p *Phase) Label() string {
+	if p.Kind == PhaseMain {
+		return "the main chain"
+	}
+	return fmt.Sprintf("%s %q", p.Kind, p.ID)
 }
 
 // HasSubject reports whether a run of this phase acts on one merge request:
-// its signal needs one, or the run was created on one (mr_opened). mr_merged
-// and mr_approved are the exceptions — they hold for every merge request at
-// once, so a phase on them acts on none in particular.
+// a watcher on a merge-request signal (each occurrence is one merge
+// request's), the main chain of a run started on one, and an outcome that
+// holds as soon as one merge request has its signal (closed: the one someone
+// closed). An outcome that waits for every merge request (merged, approved —
+// signalspec.All) acts on none in particular.
 func (p *Phase) HasSubject() bool {
+	if p.Kind == PhaseMain {
+		return p.BringsMR
+	}
 	sig := signalspec.Get(p.On.Signal)
-	if sig == nil || p.On.Signal == signalspec.MRMerged || p.On.Signal == signalspec.MRApproved {
+	if sig == nil || sig.Needs != signalspec.NeedsMR {
 		return false
 	}
-	return sig.Needs == signalspec.NeedsMR || sig.Brings == signalspec.NeedsMR
+	return p.Kind == PhaseWatcher || !sig.All
 }
 
 // Input returns the stage's named binding for name, or nil.
@@ -550,8 +579,11 @@ type Flow struct {
 	// run pins prompts along with the rest of the document.
 	Agents []agentspec.Spec
 	Stages []Stage
-	// Phases is never empty after Parse: a document written with top-level
-	// stages is one phase, ShorthandPhase, opened by run_start.
+	// StartsOn is what its runs are started on: StartsOnTicket or
+	// StartsOnMR (FLOWLANG §1 run_start).
+	StartsOn string
+	// Phases are the main chain (MainPhase, absent in a flow that only
+	// watches), then the watchers, then the outcomes, in document order.
 	Phases []Phase
 
 	// Hash is the SHA-256 (hex) of the raw flow file.
@@ -571,9 +603,6 @@ type Flow struct {
 	Refs     []ParamRef
 	Bindings map[string]string
 
-	// shorthand marks a document written with top-level stages, desugared
-	// into the one phase above.
-	shorthand bool
 	// file and src are what Parse was given, kept so Resolve can re-parse
 	// the same bytes with bound values.
 	file string
@@ -641,22 +670,15 @@ func (f *Flow) AgentSpecs() []*agentspec.Spec {
 	return out
 }
 
-// Entrypoints lists the phases a run may begin at, in document order.
-func (f *Flow) Entrypoints() []*Phase {
-	var out []*Phase
-	for i := range f.Phases {
-		if f.Phases[i].IsEntrypoint() {
-			out = append(out, &f.Phases[i])
-		}
-	}
-	return out
-}
+// StartsOnMR reports whether the flow's runs are started on a merge request
+// someone opened.
+func (f *Flow) StartsOnMR() bool { return f.StartsOn == StartsOnMR }
 
-// Beginning is the phase a run begins at when its creation names none: the
-// first entrypoint in document order (Parse guarantees one exists).
-func (f *Flow) Beginning() *Phase {
+// Main is the flow's main chain, the phase every run begins with; nil for a
+// flow that only watches (a caretaker, started idle on a merge request).
+func (f *Flow) Main() *Phase {
 	for i := range f.Phases {
-		if f.Phases[i].IsEntrypoint() {
+		if f.Phases[i].IsMain() {
 			return &f.Phases[i]
 		}
 	}
@@ -683,11 +705,12 @@ func (f *Flow) Stage(id string) *Stage {
 }
 
 // EndsRun reports whether some route of the flow ends the run: a stage
-// routing to done, or an outcome `then: done`. A flow with none is refused
-// (FLOWLANG §3): it would say nothing about when the work is finished.
+// routing to done, or an outcome with no chain whose then is done. A flow
+// with none is refused (FLOWLANG §3): it would say nothing about when the
+// work is finished.
 func (f *Flow) EndsRun() bool {
 	for i := range f.Phases {
-		if f.Phases[i].Then == TerminalDone {
+		if ph := &f.Phases[i]; ph.Then == TerminalDone && ph.Last < ph.First {
 			return true
 		}
 	}

@@ -153,7 +153,7 @@ func TestAttemptSnapshotsSurviveRetries(t *testing.T) {
 	doc := `name: snap
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: plan, type: agent, agent: planner, input: { failure: $FAILURE }, on_success: check }
   - { id: check, type: command, run: verify, on_success: done,
       on_fail: { to: plan, max: 1 } }
@@ -242,7 +242,7 @@ func TestPingAttachmentsAreSnapshotted(t *testing.T) {
 	doc := `name: ping
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: build, type: agent, agent: builder }
 `
 	h := newHarness(t, mustFlow(t, doc))

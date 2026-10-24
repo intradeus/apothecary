@@ -152,9 +152,10 @@ func (x *exec) recordSync(st *flow.Stage, strategy, targetTip string, git func(s
 	return false, nil
 }
 
-// actionPushBranch pushes the run's branch: the subject's in a reaction
-// phase, every checkout's in the entry. Leased against the tip this action
-// last recorded — or, in a reaction phase, the head when the phase started —
+// actionPushBranch pushes the run's branch: the subject's when the chain
+// acts on one merge request, every checkout's otherwise. Leased against the
+// tip this action last recorded — or, on a subject, the head when the phase
+// started —
 // so a rebased branch can be force-pushed without ever overwriting a commit
 // the run did not see. A first push is a plain push.
 func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
@@ -201,8 +202,7 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 		if err := x.append(&event.BranchPushed{StageID: st.ID, Repo: co.Name, Branch: co.Branch, Tip: tip}); err != nil {
 			return true, err
 		}
-		rs.pushed[co.Name+"\x00"+co.Branch] = tip
-		rs.noteHead(co.Name, tip)
+		rs.notePush(co.Name, co.Branch, tip)
 	}
 	return false, nil
 }

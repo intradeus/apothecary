@@ -1,24 +1,22 @@
-// Package signalspec is the registry of external things a flow can wait for:
-// "the merge request merged", and in future "CI went green", "the ticket moved
-// to Done". A signal is something that happens *to* the run from outside it.
+// Package signalspec is the registry of things a flow can react to: "the
+// merge request conflicts", "review comments settled", "it merged". A signal
+// is something that happens *to* the run from outside it.
 //
-// Two stages use this registry (FLOWLANG §2):
+// A signal says what it is and nothing about what it does (FLOWLANG §1): the
+// flow decides that by where it names it —
 //
-//	type: wait, for: mr_merged                — park the phase until the signal holds
-//	type: human_gate, auto_approve/auto_reject — the signal answers the gate for you
+//	watchers: [{ on: mr_conflicts, … }]   — a watcher runs its chain on each new occurrence
+//	outcomes: [{ on: mr_merged, … }]      — an outcome fires once and ends the run
+//	type: wait, for: mr_mergeable          — a wait stage parks its chain until it holds
+//	type: human_gate, auto_approve: …      — the signal answers the gate for you
 //
-// A phase's `on:` (FLOWLANG §1) names a signal too: the wait point that
-// opens it. Those carry Trigger (may open a REACTION while the merge request
-// is open, any number of times), Outcome (may open an OUTCOME, once: the
-// phase ends the run) or Entry (may begin the run itself). `manual` is the
-// one Trigger that never fires on its own — a person gives it from the run
-// page — and `run_start` the one Entry: a run is created for the phase, by a
-// person or an automation. A signal that is not a Trigger or an Entry is
-// waitable: a wait stage parks on it, a gate's auto-answer takes it — the
-// outcome signals among them, so a flow may park on the merge instead of
-// ending on it.
+// Two entries are not observed. run_start is the one way a run begins: a
+// person or an automation starts it — never an event the flow listens for.
+// manual is a watcher a person opens from the run page. Every other signal
+// is observed on the run's merge requests, and any of them may be watched,
+// be an outcome, be waited on or answer a gate.
 //
-// The second is why both exist rather than only `wait`: a final gate is a race
+// The gate's auto-answer exists beside `wait` because a final gate is a race
 // (a human clicks approve, OR they merge and apothecary notices), and the
 // engine runs one stage at a time, so the race has to live inside the gate.
 //
@@ -35,58 +33,56 @@ import (
 	"strings"
 )
 
-// Signal is one waitable external condition.
+// Signal is one thing a flow can react to.
 type Signal struct {
 	Slug        string `json:"slug"`
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
+	// Kind is what the signal is: KindStart (run_start, how a run begins),
+	// KindHand (manual, a person's act) or KindObserved (a fact about the
+	// run's merge requests the engine watches for).
+	Kind string `json:"kind"`
 	// Requires names an integration port the project must have configured for
 	// a flow using this signal to start; empty = none needed.
 	Requires string `json:"requires,omitempty"`
 	// Needs names a run fact the signal depends on, so a flow that waits for
 	// something that can never happen is caught rather than hanging.
 	Needs string `json:"needs,omitempty"`
-	// Brings names a run fact a run created at a phase on this signal has
-	// from its creation: mr_opened's runs are created on a merge request,
-	// so nothing has to open one for the run to act on it.
-	Brings string `json:"brings,omitempty"`
-	// Trigger marks a signal that opens a phase (PLAN6) rather than
-	// answering a gate or ending a wait: it describes something to react to
-	// while the merge request is open, not an outcome. Manual carries it
-	// too, as the trigger that never fires on its own.
-	Trigger bool `json:"trigger,omitempty"`
-	// Entry marks a signal that begins the run itself: a phase on it is an
-	// entrypoint a run is created at. RunStart is the one today.
-	Entry bool `json:"entry,omitempty"`
-	// Outcome marks a signal that ends the run: a phase on it is an outcome
-	// — it fires once, with the start policies a trigger takes, and must end
-	// the run (done or abort). Still waitable: a wait stage may park on it.
-	Outcome bool `json:"outcome,omitempty"`
-	// Debounced marks a trigger that fires on activity and so accepts a
-	// quiet_for: the phase starts once the activity has stopped.
+	// Debounced marks a signal that fires on activity and so accepts a
+	// quiet_for: the watcher starts once the activity has stopped.
 	Debounced bool `json:"debounced,omitempty"`
+	// All marks a signal that, as an outcome or a wait on the whole run,
+	// holds once it holds on every merge request of the run — a merged one
+	// counts as approved and as mergeable. Any other holds as soon as one
+	// merge request has it, and that one is the outcome's subject.
+	All bool `json:"all,omitempty"`
 }
+
+// Signal kinds.
+const (
+	KindStart    = "start"
+	KindHand     = "hand"
+	KindObserved = "observed"
+)
+
+// Observed reports whether the engine watches for the signal on the run's
+// merge requests — anything but run_start and manual.
+func (s *Signal) Observed() bool { return s != nil && s.Kind == KindObserved }
 
 // Signal slugs, the port kinds they require, and the run facts they need.
 const (
-	// RunStart is the entrypoint's beginning: a run is created for the phase
-	// (a person starts one from a ticket, or an automation does). A flow
-	// opens at least one phase on it; several are allowed, and the creator
-	// picks.
+	// RunStart is how a run begins: a person starts it (a ticket's page, the
+	// Repositories tab) or an automation does. The flow's main chain runs
+	// on it; the flow's `run_start:` says what the run is started on.
 	RunStart = "run_start"
-	// Manual is the beginning a person gives from the run page; it never
-	// fires on its own, and a phase on it starts no other way.
+	// Manual is the start a person gives from the run page: a watcher on it
+	// never fires on its own.
 	Manual = "manual"
-	// MROpened is the other entrypoint: a run is created for the phase on a
-	// merge request someone opened — a person names it, or the merge_request
-	// automation does — and acts on that merge request from the start.
-	MROpened = "mr_opened"
 
 	MRMerged   = "mr_merged"
 	MRClosed   = "mr_closed"
 	MRApproved = "mr_approved"
 
-	// Phase triggers.
 	MRConflicts     = "mr_conflicts"
 	MRReviewSettled = "mr_review_settled"
 	CIFailed        = "ci_failed"
@@ -95,85 +91,81 @@ const (
 
 	RequiresRepository = "repository"
 
-	// NeedsMR: the run must have opened a merge request (a create_mr action)
-	// before this signal can ever fire.
+	// NeedsMR: the run must have a merge request (one it opened with
+	// create_mr, or the one it was started on) before this signal can hold.
 	NeedsMR = "merge_request"
 )
 
 var registry = []Signal{{
 	Slug:        RunStart,
 	Title:       "Run started",
-	Description: "A run is created for this phase — a person starts one from a ticket, or an automation does. Marks the phase as an entrypoint; a flow has at least one, and the start-run form picks among several.",
-	Entry:       true,
+	Description: "A person starts the run — from a ticket, or on a merge request from the Repositories tab — or an automation does. The flow's main chain runs on it; nothing the flow listens for starts a run.",
+	Kind:        KindStart,
 }, {
 	Slug:        Manual,
 	Title:       "Started by hand",
-	Description: "Never fires on its own: a person starts the phase from the run page while the run is idle, and it starts no other way.",
-	Trigger:     true,
-}, {
-	Slug:        MROpened,
-	Title:       "Run started on a merge request",
-	Description: "A run is created for this phase on a merge request someone opened — a person names it on the start-run form, or a merge-request automation picks it. The run works on that merge request's branch, the merge request is the phase's subject, and the run's outcomes follow it. An entrypoint, like run_start.",
-	Requires:    RequiresRepository,
-	Brings:      NeedsMR,
-	Entry:       true,
+	Description: "Never fires on its own: a person starts the watcher from the run page while the run is idle.",
+	Kind:        KindHand,
 }, {
 	Slug:        MRMerged,
 	Title:       "Merge request merged",
-	Description: "Holds once every merge request the run opened is merged. A phase on it is an outcome: it fires once and ends the run; a wait stage may park on it instead.",
+	Description: "As an outcome or a wait: every merge request of the run is merged. As a watcher: one of them merged — once per merge request.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Outcome:     true,
+	All:         true,
 }, {
 	Slug:        MRClosed,
 	Title:       "Merge request closed unmerged",
-	Description: "Holds as soon as one of the run's merge requests is closed without being merged — someone decided against it. A phase on it is an outcome, acting on the closed merge request.",
+	Description: "One of the run's merge requests was closed without being merged — someone decided against it. Once per merge request; that one is the chain's subject.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Outcome:     true,
 }, {
 	Slug:        MRApproved,
 	Title:       "Merge request approved",
-	Description: "Holds once every merge request of the run is approved — by at least one reviewer, with no request for changes outstanding (GitHub), or with its approval rules met (GitLab) — or merged. A phase on it is an outcome, for a team whose work is done at approval; a wait stage may park on it instead.",
+	Description: "Approved by at least one reviewer with no request for changes outstanding (GitHub), or its approval rules met (GitLab). As an outcome or a wait: every merge request of the run (or merged). As a watcher: one of them, once per head it was approved at — a push after the approval is a new occurrence.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Outcome:     true,
+	All:         true,
 }, {
 	Slug:        MRConflicts,
 	Title:       "Merge request conflicts with its target",
-	Description: "Holds while the repository reports the merge request cannot merge cleanly into its target. Once per (target tip, head) pair: a declined or finished fix is not offered again until either moves.",
+	Description: "The repository reports the merge request cannot merge cleanly into its target. Once per (target tip, head) pair: a declined or finished fix is not offered again until either moves.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Trigger:     true,
 }, {
 	Slug:        MRReviewSettled,
 	Title:       "Review comments settled",
-	Description: "Holds when the merge request has unresolved review threads whose last word is a reviewer's, and the newest of those comments is older than quiet_for: someone reviewed, then stopped.",
+	Description: "The merge request has unresolved review threads whose last word is a reviewer's, and the newest of those comments is older than quiet_for: someone reviewed, then stopped.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Trigger:     true,
 	Debounced:   true,
 }, {
 	Slug:        CIFailed,
 	Title:       "CI failed",
-	Description: "Holds while a CI check on the merge request's head commit has failed (GitHub check runs and commit statuses, GitLab's head pipeline). Once per head and set of failed checks: a push, or another check failing, is a new occurrence.",
+	Description: "A CI check on the merge request's head commit has failed (GitHub check runs and commit statuses, GitLab's head pipeline). Once per head and set of failed checks: a push, or another check failing, is a new occurrence.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Trigger:     true,
 }, {
 	Slug:        MRMergeable,
 	Title:       "Merge request can be merged",
-	Description: "Holds while the repository says it would merge the merge request now: no conflict, its required approvals and checks in, not a draft. The repository's own verdict, so the project's rules decide. Once per head.",
+	Description: "The repository says it would merge the merge request now: no conflict, its required approvals and checks in, not a draft. The repository's own verdict, so the project's rules decide. As an outcome or a wait: every merge request of the run (or merged). As a watcher: once per head.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Trigger:     true,
+	All:         true,
 }, {
 	Slug:        MRHeadMoved,
 	Title:       "Someone pushed to the merge request",
-	Description: "Holds while the merge request's head is a commit the run did not push, open the merge request at, or already act on — someone else pushed. With quiet_for, only once the head has stood still that long. Once per head.",
+	Description: "The merge request's head is a commit the run did not push, open the merge request at, or already act on — someone else pushed. With quiet_for, only once the head has stood still that long. Once per head.",
+	Kind:        KindObserved,
 	Requires:    RequiresRepository,
 	Needs:       NeedsMR,
-	Trigger:     true,
 	Debounced:   true,
 }}
 

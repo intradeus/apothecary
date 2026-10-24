@@ -46,7 +46,7 @@ export default {
 	'ui.error.retry': 'Retry',
 	'ui.ping.gate': 'Gate',
 	'ui.ping.debug': 'Debug',
-	'ui.ping.phase_confirm': 'Phase',
+	'ui.ping.phase_confirm': 'Start',
 	'ui.ping.select': 'Select',
 	'ui.ping.clarification': 'Clarification',
 	'ui.ping.blocker': 'Blocker',

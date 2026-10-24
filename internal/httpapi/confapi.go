@@ -27,17 +27,19 @@ type flowResp struct {
 	confstore.FlowRow
 	Builtin        bool `json:"builtin,omitempty"`
 	ShadowsBuiltin bool `json:"shadows_builtin,omitempty"`
-	// Parameters and Phases describe the document (flow v4): what a project
-	// may bind, and where a run may begin. Absent when the document no
-	// longer parses.
+	// RunStart, Parameters and Phases describe the document: what its runs
+	// are started on (ticket or merge_request), what a project may bind,
+	// and its main chain, watchers and outcomes. Absent when the document
+	// no longer parses.
+	RunStart   string         `json:"run_start,omitempty"`
 	Parameters []flow.Param   `json:"parameters,omitempty"`
 	Phases     []PhaseSummary `json:"phases,omitempty"`
 }
 
-// describeFlow presents a row with what a project configures and where a run
-// may begin: the document's parameters and phases. A row whose document no
-// longer parses is served without them — the editor shows the parse error,
-// and the rest of the listing stays usable.
+// describeFlow presents a row with what a project configures and what its
+// runs are started on: the document's run_start, parameters and phases. A
+// row whose document no longer parses is served without them — the editor
+// shows the parse error, and the rest of the listing stays usable.
 func describeFlow(row confstore.FlowRow, isBuiltin bool) flowResp {
 	out := flowResp{FlowRow: row, Builtin: isBuiltin, ShadowsBuiltin: !isBuiltin && builtin.Flow(row.Name) != nil}
 	f := builtin.Flow(row.Name)
@@ -51,7 +53,7 @@ func describeFlow(row confstore.FlowRow, isBuiltin bool) flowResp {
 	if f == nil {
 		return out
 	}
-	out.Parameters, out.Phases = f.Params, phaseSummaries(f)
+	out.RunStart, out.Parameters, out.Phases = f.StartsOn, f.Params, phaseSummaries(f)
 	return out
 }
 
@@ -629,7 +631,7 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := FlowValidation{
-		OK: true, Name: f.Name, Hash: f.Hash,
+		OK: true, Name: f.Name, Hash: f.Hash, RunStart: f.StartsOn,
 		Stages: len(f.Stages), Agents: len(f.Agents), Doc: doc,
 		Warnings: f.Warnings, Parameters: f.Params, Refs: f.Refs, Phases: phaseSummaries(f),
 	}

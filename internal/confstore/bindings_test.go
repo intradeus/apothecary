@@ -10,7 +10,7 @@ import (
 // knobsFlow declares every kind of parameter a project may bind: strings,
 // a bool, an enum, and the engine-known names.
 const knobsFlow = `name: knobs
-version: 4
+version: 5
 parameters:
   harness: fake
   model: anthropic/claude-sonnet-4-6
@@ -18,7 +18,7 @@ parameters:
   gate: { default: true }
   mode: { default: confirm, enum: [auto, confirm, manual] }
 agents: []
-stages:
+main:
   - { id: check, type: command, run_ref: $verify }
   - { id: ask, type: human_gate, when: $gate, question: "ok?", on_reject: abort }
 `

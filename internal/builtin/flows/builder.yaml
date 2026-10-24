@@ -1,5 +1,5 @@
 name: builder
-version: 4
+version: 5
 description: "plan-gated build with cross-vendor adversarial review, then the merge request's life: conflicts fixed on your go, review comments fixed and answered once the review goes quiet"
 # The flow's one settings block: what every agent stage inherits, the run's
 # ceilings (the whole life of the ticket, review rounds included), and this
@@ -19,29 +19,29 @@ parameters:
   plan_gate:       { default: true, description: "stop for a human to approve the plan before building" }
   conflicts_start: { default: confirm, enum: [auto, confirm, manual], description: "how a conflict fix begins: by itself, after asking, or by hand from the run page" }
   review_start:    { default: auto, enum: [auto, confirm, manual], description: "how a review-fix round begins" }
-# Phases: every phase is a chain of stages opened by a wait point, its `on:`.
-# `deliver` opens when the run is created (on: run_start): plan, build,
-# review, open the merge request — and ends: the run is in review. From there
-# the run is idle, and the REACTIONS open on their own signals, one at a
-# time, on the merge request the signal carries, as often as it brings
-# something new — a reaction has no run cap:
+# A run is started on a ticket — by a person, or by an automation — and its
+# MAIN chain runs: plan, build, review, open the merge request — and ends:
+# the run is in review. From there the run is idle, and the WATCHERS run
+# their chains on their own signals, one at a time, on the merge request the
+# signal carries, as often as it brings something new — a watcher has no run
+# cap:
 #   conflicts     the target moved and the MR no longer merges — the engine
 #                 merges the target in; a conflict is resolved by an agent
-#                 editing the files, never by an agent running git. Opens by
+#                 editing the files, never by an agent running git. Starts by
 #                 itself, after asking, or only by hand: $conflicts_start
 #   review_fixes  reviewers commented, then went quiet for an hour — you pick
 #                 the threads worth fixing; those are fixed in one batch,
 #                 tested, pushed, and answered on their threads
-# A reaction never finishes the run: it closes with `end`, and the run goes
-# back to waiting. Even its dead ends — a failure with nowhere to go, you
-# giving up at its debug leaf — end only that round. The run ends in an
-# OUTCOME: a phase that opens once, on what became of the merge request:
+# A watcher never finishes the run: its chain closes with `end`, and the run
+# goes back to waiting. Even its dead ends — a failure with nowhere to go,
+# you giving up at its debug leaf — end only that round. The run ends in an
+# OUTCOME, which fires once, on what became of the merge request:
 #   merged        every merge request merged — the ticket is done, and so is
 #                 the run (done)
 #   closed        a merge request closed unmerged — the ticket goes back to
 #                 its to-do, and the run is abandoned (abort)
-# Any phase can also be started by hand from the run page while the run is
-# idle, and a gate parks its phase the way a wait does: the run stays alive
+# Any watcher can also be started by hand from the run page while the run is
+# idle, and a gate parks its chain the way a wait does: the run stays alive
 # for whatever else needs doing meanwhile.
 #
 # The ticket's tracker issue follows the work in CANONICAL statuses —
@@ -60,7 +60,7 @@ parameters:
 # there, so no stage is ever skipped). No chain ends without a person: once
 # its retries are spent, every route reaches the debug leaf rather than
 # abandoning the run unasked. The human decides when to stop — giving up in
-# deliver abandons the run, in a reaction it ends that round; plan_gate
+# the main chain abandons the run, in a watcher it ends that round; plan_gate
 # rejections are unlimited too (each rejection IS a human decision). Timeouts
 # fall back to on_fail unless a stage declares on_timeout.
 #
@@ -336,82 +336,79 @@ agents:
       - Leave no marker behind: the engine checks, and hands the files back
         while any remain.
 
-phases:
-  - id: deliver
-    on: run_start
-    description: "plan, build, review and open the merge request"
-    stages:
-      # The issue moves first — before any workspace exists; the move needs
-      # none, so it lands seconds in. A tracker hiccup routes straight on to
-      # the plan: bookkeeping never blocks the work.
-      - { id: in_progress, type: action, action: ticket_transition, input: { to: in_progress },
-          description: "move the ticket's tracker issue to its in-progress status",
-          on_success: plan,
-          on_fail: { to: plan, max: 1 } }
-      # Agent stages bind their agents' declared inputs by name; outputs come from
-      # the agent's contract (planner → artifacts/plan.md) unless rebound here.
-      - { id: plan,       type: agent, agent: planner, max_turns: 25,
-          description: "explore the repo and write the implementation plan",
-          input: { rejection: $DECISION, failure: $FAILURE },
-          on_success: plan_gate,
-          on_fail: { to: plan, max: 2, then: debug } }
-      - { id: plan_gate,  type: human_gate, when: $plan_gate, input: { plan: artifacts/plan.md },
-          question: "Approve this implementation plan? Rejecting sends it back to the planner with your feedback.",
-          on_success: build,
-          on_reject: { to: plan, max: -1 } }
-      - { id: build,      type: agent, agent: builder, max_turns: 80,
-          input: { plan: artifacts/plan.md, rejection: $DECISION, failure: $FAILURE },
-          description: "implement the approved plan, leaving the changes uncommitted",
-          on_success: commit_msg,
-          on_fail: { to: build, max: 2, then: debug } }
-      - { id: commit_msg, type: agent, agent: committer, max_turns: 10,
-          input: { changes: $STATUS, plan: artifacts/plan.md, failure: $FAILURE },
-          description: "write the commit subject for the build's uncommitted work",
-          on_success: commit,
-          on_fail: { to: commit_msg, max: 1, then: debug } }
-      # A failing commit (git identity, hooks) is not something a rerun fixes —
-      # hand it straight to a human, then re-run the commit itself.
-      # each_repo: a multi-repo project commits (and below, pushes) in every
-      # checkout; the message file lives in the primary, so it is addressed there.
-      - { id: commit,     type: command, each_repo: true,
-          run: "git add -A && if ! git diff --cached --quiet; then git commit -F \"$HOME/repo/artifacts/commit.md\"; fi",
-          input: { message: artifacts/commit.md },
-          on_success: test,
-          on_fail: debug }
-      - { id: test,       type: command, run_ref: $verify,
-          on_success: review,
-          on_fail: { to: build, max: 5, then: debug },
-          on_timeout: { to: test, max: 1, then: { to: build, max: 2, then: debug } } }
-      # The reviewer's verdict output is what makes on_reject reachable here; a
-      # REJECT carries its comments back to the builder as feedback. Three
-      # rejected rounds, and a human looks rather than the run being dropped.
-      - { id: review,     type: agent, agent: reviewer, model: $review_model,
-          input: { plan: artifacts/plan.md, changes: $DIFF_TARGET, failure: $FAILURE }, max_turns: 30,
-          description: "adversarial review against the plan, conventions and correctness",
-          on_success: redact,
-          on_reject: { to: build, max: 3, then: debug },
-          on_fail: { to: review, max: 1, then: debug } }
-      - { id: redact,     type: agent, agent: redactor, max_turns: 15,
-          input: { changes: $DIFF_TARGET, failure: $FAILURE },
-          description: "write the merge request description",
-          on_success: push,
-          on_fail: { to: redact, max: 1, then: debug } }
-      # push_branch records what it pushed: a later push of this branch (after a
-      # rebase) is leased against it, never blind. Refused = someone else wrote to
-      # the branch, which is a human's call.
-      - { id: push,       type: action, action: push_branch,
-          on_success: mr,
-          on_fail: debug }
-      # The merge request opens, and the issue moves to its in-review status
-      # right after. A tracker hiccup is not worth stopping for: best effort.
-      # Then the phase ends and the run is in review: the reactions below
-      # keep the merge request healthy, and the outcomes end the run.
-      - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },
-          on_success: in_review }
-      - { id: in_review,  type: action, action: ticket_transition, input: { to: in_review },
-          description: "move the ticket's tracker issue to its in-review status",
-          on_fail: end }
+main:
+  # The issue moves first — before any workspace exists; the move needs
+  # none, so it lands seconds in. A tracker hiccup routes straight on to
+  # the plan: bookkeeping never blocks the work.
+  - { id: in_progress, type: action, action: ticket_transition, input: { to: in_progress },
+      description: "move the ticket's tracker issue to its in-progress status",
+      on_success: plan,
+      on_fail: { to: plan, max: 1 } }
+  # Agent stages bind their agents' declared inputs by name; outputs come from
+  # the agent's contract (planner → artifacts/plan.md) unless rebound here.
+  - { id: plan,       type: agent, agent: planner, max_turns: 25,
+      description: "explore the repo and write the implementation plan",
+      input: { rejection: $DECISION, failure: $FAILURE },
+      on_success: plan_gate,
+      on_fail: { to: plan, max: 2, then: debug } }
+  - { id: plan_gate,  type: human_gate, when: $plan_gate, input: { plan: artifacts/plan.md },
+      question: "Approve this implementation plan? Rejecting sends it back to the planner with your feedback.",
+      on_success: build,
+      on_reject: { to: plan, max: -1 } }
+  - { id: build,      type: agent, agent: builder, max_turns: 80,
+      input: { plan: artifacts/plan.md, rejection: $DECISION, failure: $FAILURE },
+      description: "implement the approved plan, leaving the changes uncommitted",
+      on_success: commit_msg,
+      on_fail: { to: build, max: 2, then: debug } }
+  - { id: commit_msg, type: agent, agent: committer, max_turns: 10,
+      input: { changes: $STATUS, plan: artifacts/plan.md, failure: $FAILURE },
+      description: "write the commit subject for the build's uncommitted work",
+      on_success: commit,
+      on_fail: { to: commit_msg, max: 1, then: debug } }
+  # A failing commit (git identity, hooks) is not something a rerun fixes —
+  # hand it straight to a human, then re-run the commit itself.
+  # each_repo: a multi-repo project commits (and below, pushes) in every
+  # checkout; the message file lives in the primary, so it is addressed there.
+  - { id: commit,     type: command, each_repo: true,
+      run: "git add -A && if ! git diff --cached --quiet; then git commit -F \"$HOME/repo/artifacts/commit.md\"; fi",
+      input: { message: artifacts/commit.md },
+      on_success: test,
+      on_fail: debug }
+  - { id: test,       type: command, run_ref: $verify,
+      on_success: review,
+      on_fail: { to: build, max: 5, then: debug },
+      on_timeout: { to: test, max: 1, then: { to: build, max: 2, then: debug } } }
+  # The reviewer's verdict output is what makes on_reject reachable here; a
+  # REJECT carries its comments back to the builder as feedback. Three
+  # rejected rounds, and a human looks rather than the run being dropped.
+  - { id: review,     type: agent, agent: reviewer, model: $review_model,
+      input: { plan: artifacts/plan.md, changes: $DIFF_TARGET, failure: $FAILURE }, max_turns: 30,
+      description: "adversarial review against the plan, conventions and correctness",
+      on_success: redact,
+      on_reject: { to: build, max: 3, then: debug },
+      on_fail: { to: review, max: 1, then: debug } }
+  - { id: redact,     type: agent, agent: redactor, max_turns: 15,
+      input: { changes: $DIFF_TARGET, failure: $FAILURE },
+      description: "write the merge request description",
+      on_success: push,
+      on_fail: { to: redact, max: 1, then: debug } }
+  # push_branch records what it pushed: a later push of this branch (after a
+  # rebase) is leased against it, never blind. Refused = someone else wrote to
+  # the branch, which is a human's call.
+  - { id: push,       type: action, action: push_branch,
+      on_success: mr,
+      on_fail: debug }
+  # The merge request opens, and the issue moves to its in-review status
+  # right after. A tracker hiccup is not worth stopping for: best effort.
+  # Then the phase ends and the run is in review: the reactions below
+  # keep the merge request healthy, and the outcomes end the run.
+  - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md },
+      on_success: in_review }
+  - { id: in_review,  type: action, action: ticket_transition, input: { to: in_review },
+      description: "move the ticket's tracker issue to its in-review status",
+      on_fail: end }
 
+watchers:
   # The target moved under the merge request. How a fix begins is the
   # project's call ($conflicts_start): by itself, after asking in the inbox
   # (the default), or only by hand. Declined, it is offered again only when
@@ -477,6 +474,7 @@ phases:
       - { id: post,       type: action, action: reply_review_comments, input: { replies: artifacts/replies.yaml },
           on_success: end }
 
+outcomes:
   # ---- outcomes: once, and the run is over --------------------------------
   # Merged: the ticket is done, and so is the run. The tracker is best
   # effort here too — a hiccup moving the issue never un-finishes the work.
@@ -493,8 +491,9 @@ phases:
   # abandoned — the decision was theirs, so nobody is asked again.
   - id: closed
     on: mr_closed
+    then: abort
     description: "a merge request closed unmerged — the ticket goes back to to-do, the run is abandoned"
     stages:
       - { id: ticket_back, type: action, action: ticket_transition, input: { to: todo },
           description: "move the ticket's tracker issue back to its to-do status",
-          on_success: abort, on_fail: abort }
+          on_fail: abort }

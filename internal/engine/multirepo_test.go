@@ -123,7 +123,7 @@ func gitPerDir(gits map[string]*fakeGit) func(*fake.Env, ports.Command) (ports.E
 }
 
 const multiRepoFlowDoc = `name: multi
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
@@ -132,7 +132,7 @@ agents:
     prompt: describe it
     outputs:
       - { name: mr, path: artifacts/mr.md }
-stages:
+main:
   - { id: build, type: agent, agent: builder, on_success: commit }
   - { id: commit, type: command, each_repo: true, run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi", on_success: push }
   - { id: push, type: command, each_repo: true, run: "git push -u origin HEAD", on_success: redact }

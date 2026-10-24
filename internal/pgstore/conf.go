@@ -550,14 +550,14 @@ func (s *Store) DeleteFlowBinding(ctx context.Context, projectID, flowName strin
 
 // --- automations ------------------------------------------------------------
 
-const automationCols = `id, project_id, name, kind, source_id, query, schedule, ticket_id, flow, phase, params, ` +
+const automationCols = `id, project_id, name, kind, source_id, query, schedule, ticket_id, flow, params, ` +
 	`enabled, last_polled_at, last_fired_at, last_error, created_at, updated_at, repo`
 
 func scanAutomation(row pgx.Row) (confstore.Automation, error) {
 	var a confstore.Automation
 	var params []byte
 	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Kind, &a.SourceID, &a.Query, &a.Schedule, &a.TicketID,
-		&a.Flow, &a.Phase, &params, &a.Enabled, &a.LastPolledAt, &a.LastFiredAt, &a.LastError, &a.CreatedAt, &a.UpdatedAt, &a.Repo)
+		&a.Flow, &params, &a.Enabled, &a.LastPolledAt, &a.LastFiredAt, &a.LastError, &a.CreatedAt, &a.UpdatedAt, &a.Repo)
 	if err != nil {
 		return a, err
 	}
@@ -581,13 +581,13 @@ func (s *Store) UpsertAutomation(ctx context.Context, a confstore.Automation) er
 		params = []byte("{}")
 	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO automations (id, project_id, name, kind, source_id, query, schedule, ticket_id, flow, phase, params,
+		INSERT INTO automations (id, project_id, name, kind, source_id, query, schedule, ticket_id, flow, params,
 			enabled, last_polled_at, last_fired_at, last_error, created_at, updated_at, repo)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$3, kind=$4, source_id=$5, query=$6, schedule=$7, ticket_id=$8, flow=$9, phase=$10, params=$11,
-			enabled=$12, last_polled_at=$13, last_fired_at=$14, last_error=$15, updated_at=$17, repo=$18`,
-		a.ID, a.ProjectID, a.Name, a.Kind, a.SourceID, a.Query, a.Schedule, a.TicketID, a.Flow, a.Phase, params,
+			name=$3, kind=$4, source_id=$5, query=$6, schedule=$7, ticket_id=$8, flow=$9, params=$10,
+			enabled=$11, last_polled_at=$12, last_fired_at=$13, last_error=$14, updated_at=$16, repo=$17`,
+		a.ID, a.ProjectID, a.Name, a.Kind, a.SourceID, a.Query, a.Schedule, a.TicketID, a.Flow, params,
 		a.Enabled, a.LastPolledAt, a.LastFiredAt, a.LastError, a.CreatedAt, a.UpdatedAt, a.Repo)
 	if isFK(err) {
 		return fmt.Errorf("automation %s references a missing project: %w", a.ID, confstore.ErrInvalid)

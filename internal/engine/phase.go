@@ -1,13 +1,13 @@
 package engine
 
-// Phases (PLAN6, FLOWLANG §1): a flow is chains of stages, each opened by a
-// wait point. A run begins at an entrypoint (on: run_start — the one its
-// creation named); when a phase run ends or parks at a wait point mid-chain
-// the run is idle, and the idle loop is the one scheduler: a firing phase
-// opens when its signal holds for one merge request (its subject), under its
-// start policy; a person starts any phase from the run page; one phase run
-// holds the workspace at a time. The run ends from its merge requests: all
-// merged completes it, one closed abandons it.
+// Phases (FLOWLANG §1): a flow is chains of stages — its main chain, its
+// watchers and its outcomes, each a phase opened by a wait point. A run
+// begins with its main chain (run_start); when a phase run ends or parks at
+// a wait point mid-chain the run is idle, and the idle loop is the one
+// scheduler: a watcher opens when its signal holds for one merge request
+// (its subject), under its start policy; an outcome fires once and ends the
+// run; a person starts any watcher from the run page; one phase run holds
+// the workspace at a time.
 
 import (
 	"context"
@@ -60,21 +60,21 @@ func (e *Engine) StartPhase(runID, phase, subject string) error {
 	}
 }
 
-// beginRun opens the run's first phase — the entrypoint its creation named
-// (run_created) — through the same path every other phase start takes.
-// Replay decides: a log that already holds a phase_started has begun.
+// beginRun opens the run's main chain through the same path every other
+// phase start takes. A flow with no main chain (a caretaker) does its work
+// in watchers: the run begins idle. Replay decides: a log that already holds
+// a phase_started has begun.
 func (x *exec) beginRun() error {
 	rs := x.rs
 	if rs.phase != "" || rs.idle || rs.done {
 		return nil
 	}
-	begin := rs.begin
-	if begin == "" {
-		begin = rs.fl.Beginning().ID
+	main := rs.fl.Main()
+	if main == nil {
+		rs.idle = true
+		return nil
 	}
-	if rs.fl.Phase(begin) == nil {
-		return x.fail(fmt.Sprintf("flow %q changed: the run's beginning phase %q no longer exists in it", rs.fl.Name, begin))
-	}
+	begin := main.ID
 	by := rs.view.StartedBy
 	if by == "" {
 		by = "human"
@@ -91,12 +91,10 @@ func (x *exec) beginRun() error {
 		rs.phaseRuns[phaseRunKey(begin, "")]++
 		return nil
 	}
-	// A run created on someone's merge request begins on it: the merge
-	// request is the phase's subject, at the head it was created at.
-	if m := rs.adopted; m != nil {
-		if ph := rs.fl.Phase(begin); ph != nil && ph.OnMR() {
-			return x.beginPhase(begin, m.Repo, "", by, m.Head)
-		}
+	// A run started on someone's merge request begins on it: the merge
+	// request is the main chain's subject, at the head it was started at.
+	if m := rs.adopted; m != nil && main.OnMR() {
+		return x.beginPhase(begin, m.Repo, "", by, m.Head)
 	}
 	return x.beginPhase(begin, "", "", by, "")
 }
@@ -156,12 +154,11 @@ func (x *exec) runAbort() error {
 }
 
 // deadEnd is where a failure has nowhere left to go: no edge for it, its
-// chain exhausted, or a person giving up at the debug leaf. In an entrypoint
-// or an outcome that ends the run — it is abandoned: the delivery failed, or
-// its end did. Any other phase — a reaction, a phase started by hand — is
-// one round of something the run may do any number of times: the round
-// ends, its phase_completed saying why, and the run goes back to waiting
-// (FLOWLANG §3).
+// chain exhausted, or a person giving up at the debug leaf. In the main
+// chain or an outcome that ends the run — it is abandoned: the work failed,
+// or its end did. A watcher's round — opened by its signal or by hand — is
+// one of any number the run may do: the round ends, its phase_completed
+// saying why, and the run goes back to waiting (FLOWLANG §3).
 func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
 	if x.endsRunAtDeadEnd() {
 		return x.abandon(st.ID, edgeKind, reason)
@@ -174,14 +171,14 @@ func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
 }
 
 // endsRunAtDeadEnd reports whether the phase in progress is one whose dead
-// end ends the run rather than the round: an entrypoint or an outcome.
+// end ends the run rather than the round: the main chain or an outcome.
 func (x *exec) endsRunAtDeadEnd() bool {
 	ph := x.rs.fl.Phase(x.rs.phase)
-	return ph == nil || ph.IsEntrypoint() || ph.IsOutcome()
+	return ph == nil || ph.Kind != flow.PhaseWatcher
 }
 
-// subjectCheckout is the checkout a reaction phase acts on, or nil (the
-// entry phase, or a flow without phases).
+// subjectCheckout is the checkout the phase run acts on, or nil (the main
+// chain of a run started on a ticket).
 func (x *exec) subjectCheckout() *event.Checkout {
 	if x.rs.subject == "" {
 		return nil
@@ -189,7 +186,7 @@ func (x *exec) subjectCheckout() *event.Checkout {
 	return x.rs.checkout(x.rs.subject)
 }
 
-// subjectMR is the merge request a reaction phase acts on, or nil.
+// subjectMR is the merge request the phase run acts on, or nil.
 func (x *exec) subjectMR() *mrRecord {
 	co := x.subjectCheckout()
 	if co == nil {
@@ -263,7 +260,7 @@ func readsOf(fl *flow.Flow) repoHostReads {
 }
 
 // idle runs while the run sits between phases: it polls the repository host
-// for the run's ending and the reaction triggers, takes confirmation answers
+// for the outcomes' and the watchers' signals, takes confirmation answers
 // and manual starts, and returns once a phase starts or the run ends.
 func (x *exec) idle() error {
 	rs := x.rs
@@ -361,18 +358,17 @@ func (x *exec) evaluateIdle(st *idler) error {
 	holds := map[string][]TriggerHold{}
 	defer x.e.holds.set(rs.runID, holds)
 
-	// Outcomes first: an end that holds beats any reaction. Merged is every
-	// merge request merged, with no subject; closed is any one closed
-	// unmerged, that one being the subject. Each fires once (FLOWLANG §1).
+	// Outcomes first: an end that holds beats any watcher. Each fires once
+	// (FLOWLANG §1).
 	for i := range rs.fl.Phases {
 		ph := &rs.fl.Phases[i]
 		if !ph.IsOutcome() || rs.parked[ph.ID] != nil {
 			continue
 		}
-		if held, _, _ := x.waitState(ph.On.Signal, obs); !held {
+		held, subject, link, key, why := x.outcomeHolds(ph.On.Signal, obs)
+		if !held {
 			continue
 		}
-		subject, link, key, why := outcomeOf(ph, obs)
 		seen := rs.triggerSeen[triggerKey(ph.ID, subject, key)]
 		holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: subject, Key: key, Why: why, Seen: seen, At: x.e.clock()})
 		if seen {
@@ -390,20 +386,20 @@ func (x *exec) evaluateIdle(st *idler) error {
 		return x.beginPhase(ph.ID, subject, key, "signal", "")
 	}
 
+	// Watchers, per merge request: each new occurrence of the signal on one
+	// is a round of the watcher on it.
 	for _, o := range obs {
-		if o.status.State != ports.MROpen {
-			continue
-		}
 		for i := range rs.fl.Phases {
 			ph := &rs.fl.Phases[i]
 			if !ph.Fires() || rs.parked[ph.ID] != nil {
 				continue
 			}
-			spent := ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max
-			held, key, why := x.triggerHolds(ph, o)
-			if !held {
+			s := x.signalOn(ph.On.Signal, ph.On.QuietFor, o)
+			if !s.holds {
 				continue
 			}
+			key, why := s.key, s.why
+			spent := ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max
 			seen := spent || rs.triggerSeen[triggerKey(ph.ID, o.mr.Repo, key)]
 			holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: o.mr.Repo, Key: key, Why: why, Seen: seen, At: x.e.clock()})
 			if seen {
@@ -426,30 +422,32 @@ func (x *exec) evaluateIdle(st *idler) error {
 	return x.endCheck(obs)
 }
 
-// outcomeOf names what an outcome fires on: the subject (the closed merge
-// request's checkout; none for a merge), a link for the human, the
-// occurrence key, and a sentence.
-func outcomeOf(ph *flow.Phase, obs []mrObservation) (subject, link, key, why string) {
-	switch ph.On.Signal {
-	case signalspec.MRClosed:
-		for _, o := range obs {
-			if o.status.State == ports.MRClosed {
-				return o.mr.Repo, o.mr.Ref.URL, "closed:" + o.mr.Repo,
-					fmt.Sprintf("The merge request %s was closed without being merged.", o.mr.Ref.URL)
-			}
-		}
-	case signalspec.MRMerged:
-		if len(obs) > 0 {
-			link = obs[0].mr.Ref.URL
-		}
-		return "", link, "merged", "Every merge request merged."
-	case signalspec.MRApproved:
-		if len(obs) > 0 {
-			link = obs[0].mr.Ref.URL
-		}
-		return "", link, "approved", "Every merge request is approved."
+// outcomeHolds evaluates an outcome's signal on the run's merge requests:
+// whether it holds, its subject, a link for the human, the occurrence key
+// and a sentence. A signal that waits for every merge request
+// (signalspec.All: merged, approved, mergeable) has no subject; any other
+// holds as soon as one merge request has it, and that one is the subject.
+func (x *exec) outcomeHolds(slug string, obs []mrObservation) (held bool, subject, link, key, why string) {
+	sig := signalspec.Get(slug)
+	if !sig.Observed() || len(obs) == 0 {
+		return false, "", "", "", ""
 	}
-	return "", "", ph.On.Signal, ""
+	if sig.All {
+		if held, _, _ := x.waitState(slug, "", obs); !held {
+			return false, "", "", "", ""
+		}
+		why = everyOne[slug]
+		if s := x.signalOn(slug, 0, obs[0]); len(obs) == 1 && s.holds {
+			why = s.why
+		}
+		return true, "", obs[0].mr.Ref.URL, slug, why
+	}
+	for _, o := range obs {
+		if s := x.signalOn(slug, 0, o); s.holds {
+			return true, o.mr.Repo, o.mr.Ref.URL, s.key, s.why
+		}
+	}
+	return false, "", "", "", ""
 }
 
 // observe polls every merge request's status, and its threads when a
@@ -520,56 +518,94 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 	return out, nil
 }
 
-// triggerHolds evaluates one reaction phase's trigger for one merge request:
-// whether it holds, the occurrence key, and a sentence for a human.
-func (x *exec) triggerHolds(ph *flow.Phase, o mrObservation) (bool, string, string) {
-	switch ph.On.Signal {
-	case signalspec.Manual:
-		// Never holds on its own: a person begins the phase (manualStart).
-		return false, "", ""
+// everyOne is what a signal that waits for every merge request says once
+// it holds on a run with several.
+var everyOne = map[string]string{
+	signalspec.MRMerged:    "Every merge request merged.",
+	signalspec.MRApproved:  "Every merge request is approved.",
+	signalspec.MRMergeable: "Every merge request can be merged now.",
+}
+
+// mrSignal is what an observed signal says about one merge request: it
+// holds — an occurrence, with its key and a sentence for a human; the merge
+// request is past it (merged: past approval and past being mergeable — held
+// for a wait or an outcome, never an occurrence for a watcher); or it can
+// never hold there again (gone, and why).
+type mrSignal struct {
+	holds, passed, gone bool
+	key, why            string
+}
+
+// signalOn evaluates an observed signal on one merge request. quiet is the
+// debounce: a watcher's quiet_for, zero for a wait, a gate or an outcome.
+func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSignal {
+	url := o.mr.Ref.URL
+	switch o.status.State {
+	case ports.MRMerged:
+		switch slug {
+		case signalspec.MRMerged:
+			return mrSignal{holds: true, key: "merged", why: fmt.Sprintf("The merge request %s merged.", url)}
+		case signalspec.MRApproved, signalspec.MRMergeable:
+			return mrSignal{passed: true}
+		}
+		return mrSignal{gone: true, why: "the merge request merged: " + url}
+	case ports.MRClosed:
+		if slug == signalspec.MRClosed {
+			return mrSignal{holds: true, key: "closed", why: fmt.Sprintf("The merge request %s was closed without being merged.", url)}
+		}
+		return mrSignal{gone: true, why: "merge request closed unmerged: " + url}
+	}
+	switch slug {
+	case signalspec.MRApproved:
+		// One occurrence per head it was approved at: a push after the
+		// approval, approved again, is a new one.
+		if o.approval == nil || !o.approval.Approved {
+			return mrSignal{}
+		}
+		return mrSignal{holds: true, key: o.status.HeadSHA, why: fmt.Sprintf("The merge request %s is approved.", url)}
 	case signalspec.MRConflicts:
 		if o.status.Mergeable != ports.MergeConflicts {
-			return false, "", ""
+			return mrSignal{}
 		}
 		target := o.status.Target
 		if target == "" {
 			target = o.mr.Target
 		}
-		return true, o.status.TargetSHA + ".." + o.status.HeadSHA,
-			fmt.Sprintf("The merge request %s no longer merges cleanly into %s.", o.mr.Ref.URL, target)
+		return mrSignal{holds: true, key: o.status.TargetSHA + ".." + o.status.HeadSHA,
+			why: fmt.Sprintf("The merge request %s no longer merges cleanly into %s.", url, target)}
 	case signalspec.MRReviewSettled:
 		pending := x.unskipped(pendingThreads(o.threads))
 		newest, ok := newestPending(pending)
-		if !ok || x.e.clock().Sub(newest.CreatedAt) < ph.On.QuietFor {
-			return false, "", ""
+		if !ok || x.e.clock().Sub(newest.CreatedAt) < quiet {
+			return mrSignal{}
 		}
-		return true, newest.ID, fmt.Sprintf("%d review thread(s) on %s are waiting, the last comment %s ago.",
-			len(pending), o.mr.Ref.URL, x.e.clock().Sub(newest.CreatedAt).Round(time.Minute))
+		return mrSignal{holds: true, key: newest.ID, why: fmt.Sprintf("%d review thread(s) on %s are waiting, the last comment %s ago.",
+			len(pending), url, x.e.clock().Sub(newest.CreatedAt).Round(time.Minute))}
 	case signalspec.CIFailed:
 		// The checks of the head this poll saw, failed: one occurrence per
 		// head and set of failed checks.
 		if o.checks == nil || o.checks.Head != o.status.HeadSHA || o.checks.State != ports.CheckFailure {
-			return false, "", ""
+			return mrSignal{}
 		}
 		failed := o.checks.Failed()
-		return true, o.status.HeadSHA + ":" + strings.Join(failed, ","),
-			fmt.Sprintf("CI failed on %s: %s.", o.mr.Ref.URL, strings.Join(failed, ", "))
+		return mrSignal{holds: true, key: o.status.HeadSHA + ":" + strings.Join(failed, ","),
+			why: fmt.Sprintf("CI failed on %s: %s.", url, strings.Join(failed, ", "))}
 	case signalspec.MRMergeable:
 		if !o.status.MergeableNow {
-			return false, "", ""
+			return mrSignal{}
 		}
-		return true, o.status.HeadSHA, fmt.Sprintf("The repository says %s can be merged now.", o.mr.Ref.URL)
+		return mrSignal{holds: true, key: o.status.HeadSHA, why: fmt.Sprintf("The repository says %s can be merged now.", url)}
 	case signalspec.MRHeadMoved:
 		head := o.status.HeadSHA
 		if head == "" || x.rs.knownHead(o.mr.Repo, head) {
-			return false, "", ""
+			return mrSignal{}
 		}
-		if q := ph.On.QuietFor; q > 0 && x.e.clock().Sub(o.headSince) < q {
-			return false, "", ""
+		if quiet > 0 && x.e.clock().Sub(o.headSince) < quiet {
+			return mrSignal{}
 		}
-		return true, head, fmt.Sprintf("Someone pushed to %s: its head is now %s, a commit this run did not push.", o.mr.Ref.URL, shortSHA(head))
+		return mrSignal{holds: true, key: head, why: fmt.Sprintf("Someone pushed to %s: its head is now %s, a commit this run did not push.", url, shortSHA(head))}
 	}
-	return false, "", ""
+	return mrSignal{}
 }
 
 // shortSHA is a commit id as people read it.
@@ -588,9 +624,9 @@ func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error 
 			return nil // already asked (or a question about it is still open)
 		}
 	}
-	q := fmt.Sprintf("%s Run phase %q on it?", why, ph.ID)
+	q := fmt.Sprintf("%s Run the %q watcher on it?", why, ph.ID)
 	if ph.IsOutcome() {
-		q = fmt.Sprintf("%s Run phase %q and end the run?", why, ph.ID)
+		q = fmt.Sprintf("%s Run the %q outcome and end the run?", why, ph.ID)
 	}
 	if ph.Description != "" {
 		q += " (" + ph.Description + ")"
@@ -621,9 +657,10 @@ func (x *exec) beginPhase(phase, subject, key, by, tip string) error {
 	return nil
 }
 
-// manualStart starts a phase a human asked for, from the idle loop: any
-// phase without a live run, on the named checkout's merge request, else on
-// the run's single open one, else on none.
+// manualStart starts a phase a human asked for, from the idle loop: a
+// watcher or an outcome without a live run, on the named checkout's merge
+// request, else on the run's single open one, else on none. The main chain
+// runs once, when the run is started.
 func (x *exec) manualStart(req phaseStartReq) error {
 	rs := x.rs
 	ph := rs.fl.Phase(req.phase)
@@ -632,6 +669,9 @@ func (x *exec) manualStart(req phaseStartReq) error {
 	}
 	if pr := rs.parked[ph.ID]; pr != nil {
 		return fmt.Errorf("%w: phase %q is parked at %s", ErrPhaseNotStartable, ph.ID, pr.parkedAt)
+	}
+	if ph.Kind == flow.PhaseMain {
+		return fmt.Errorf("%w: the main chain runs once, when the run is started — rerun the run to run it again", ErrPhaseNotStartable)
 	}
 	var subject string
 	var mr *mrRecord
@@ -683,7 +723,8 @@ func (x *exec) openMRs() []*mrRecord {
 	return out
 }
 
-// subjectSection tells a reaction phase's agent which merge request it is
+// subjectSection tells the agent of a phase run on a subject which merge
+// request it is
 // working on, and that every other checkout is context only (R12).
 func (x *exec) subjectSection() string {
 	co := x.subjectCheckout()
@@ -702,9 +743,9 @@ func (x *exec) subjectSection() string {
 	return b.String()
 }
 
-// PhaseInfo is one phase of a run's flow: what opens it, its start policy,
-// how many of its runs are left per merge request, and its live run if any
-// (the run page's buttons).
+// PhaseInfo is one phase of a run's flow — its main chain, a watcher or an
+// outcome: what opens it, its start policy, how many of its runs are left
+// per merge request, and its live run if any (the run page's buttons).
 type PhaseInfo struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
@@ -713,12 +754,11 @@ type PhaseInfo struct {
 	// manual); Confirm mirrors start == confirm for the run page's labels.
 	Start   string `json:"start"`
 	Confirm bool   `json:"confirm,omitempty"`
-	// Entry marks a phase a run may begin at (on: run_start). Outcome marks
-	// one that ends the run; Then is what a stage-less outcome does (done or
-	// abort).
-	Entry   bool   `json:"entry,omitempty"`
-	Outcome bool   `json:"outcome,omitempty"`
-	Then    string `json:"then,omitempty"`
+	// Kind is the section the phase is declared in: main (what the run
+	// started with), watcher, or outcome (fires once and ends the run —
+	// Then says how: done or abort).
+	Kind string `json:"kind"`
+	Then string `json:"then,omitempty"`
 	// QuietFor is the debounce in seconds (review comments).
 	QuietFor int `json:"quiet_for_s,omitempty"`
 	// Max is the runs allowed per merge request (-1 = unlimited).
@@ -780,7 +820,7 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 			total += n
 		}
 		info := PhaseInfo{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Start: string(ph.On.Start),
-			Confirm: ph.On.Start == flow.StartConfirm, Entry: ph.IsEntrypoint(), Outcome: ph.IsOutcome(), Then: ph.Then,
+			Confirm: ph.On.Start == flow.StartConfirm, Kind: string(ph.Kind), Then: ph.Then,
 			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r, Total: total,
 			Holds: e.holds.of(runID, ph.ID)}
 		switch {

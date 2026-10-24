@@ -97,7 +97,9 @@ type Action struct {
 	// whose prerequisite no path creates.
 	Provides string `json:"provides,omitempty"`
 	// Subject marks an action that acts on one merge request — the phase's
-	// subject — and so only makes sense in a reaction phase (PLAN6 R12).
+	// subject — and so only makes sense in a chain that has one: a watcher
+	// on a merge request signal, the main chain of a run started on a merge
+	// request (PLAN6 R12).
 	Subject bool `json:"subject,omitempty"`
 	// Needs names a run fact the action depends on, mirroring a signal's
 	// Needs: ticket_link needs a merge request to link. The validator warns
@@ -247,7 +249,7 @@ var registry = []Action{{
 }, {
 	Slug:        PushBranch,
 	Title:       "Push the branch",
-	Description: "Pushes the run's branch — every checkout's in the entry phase, the subject's in a reaction phase. A branch the run pushed before is force-pushed leased against the tip it recorded (or, in a reaction phase, the head when the phase started), never blind; a first push is a plain one. What a rebase needs.",
+	Description: "Pushes the run's branch — the subject's when the chain acts on one merge request, every checkout's otherwise. A branch the run pushed before is force-pushed leased against the tip it recorded (or, on a subject, the head when the phase started), never blind; a first push is a plain one. What a rebase needs.",
 }, {
 	Slug:        TicketTransition,
 	Title:       "Move the ticket",
@@ -316,7 +318,7 @@ var registry = []Action{{
 }, {
 	Slug:        MRMerge,
 	Title:       "Merge the merge request",
-	Description: "Merges the phase's merge request — only at the head the phase began on, so nothing pushed after the decision is merged unseen. The repository's own rules apply: a merge it declines (a draft, checks or approvals missing, the head moved, a method it does not offer) fails the stage with its reason, for on_fail to route. After a crash the merge request's state says whether it already happened. Needs no workspace.",
+	Description: "Merges the chain's merge request — only at the newest head the chain knows: the one it pushed, else the one it began on, so nothing someone else pushed is merged unseen. The repository's own rules apply: a merge it declines (a draft, checks or approvals missing, the head moved, a method it does not offer) fails the stage with its reason, for on_fail to route. After a crash the merge request's state says whether it already happened. Needs no workspace.",
 	Requires:    RequiresRepository,
 	Subject:     true,
 	Remote:      true,

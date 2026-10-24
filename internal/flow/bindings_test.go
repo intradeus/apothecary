@@ -45,7 +45,7 @@ func parseWith(stages string, specs map[string]*agentspec.Spec) (*Flow, error) {
 		}
 		doc += string(y)
 	}
-	return Parse("t.yaml", []byte(doc+"stages:\n"+stages))
+	return Parse("t.yaml", []byte(doc+"main:\n"+stages))
 }
 
 func specMap(specs ...*agentspec.Spec) map[string]*agentspec.Spec {

@@ -383,7 +383,7 @@ func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
 
 	newID, err := s.Engine.Rerun(r.Context(), r.PathValue("id"), engine.RunInput{
 		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
-		Phase: body.Phase, Params: body.Params, MR: body.MR,
+		Params: body.Params, MR: body.MR,
 	})
 	if err != nil {
 		msg := err.Error()

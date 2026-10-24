@@ -2,7 +2,7 @@ export default {
 	'desk.view.flow': 'Flow',
 	'desk.view.session': 'Session',
 	'desk.view.pings': 'Pings',
-	'desk.view.phases': 'Phases',
+	'desk.view.phases': 'Watchers',
 	'desk.view.timeline': 'Timeline',
 	'desk.view.record': 'Record',
 	'desk.view.changes': 'Changes',

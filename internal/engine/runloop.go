@@ -387,7 +387,7 @@ func (x *exec) fail(reason string) error {
 // link falls through to its then fallback (retry-then-escalate). A link
 // targeting end finishes the phase, done the run, abort abandons the run;
 // an absent edge or an exhausted chain is a dead end (deadEnd: the run is
-// abandoned in an entrypoint phase, the round ends in any other — §3).
+// abandoned in the main chain or an outcome, a watcher's round ends — §3).
 func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
 	// The feed becomes an abandon reason and rs.feed (which an agent reads as
@@ -1363,8 +1363,8 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	}
 	// Once in the primary, or — each_repo — once per checkout, stopping at
 	// the first failure. Each checkout gets the full timeout.
-	// In a reaction phase, in the subject's checkout (PLAN6 R12): the phase
-	// acts on that merge request's branch only.
+	// On a subject, in its checkout (PLAN6 R12): the phase acts on that
+	// merge request's branch only.
 	dirs := []string{event.PrimaryCheckoutDir}
 	if co := x.subjectCheckout(); co != nil {
 		dirs = []string{co.Dir}
@@ -1573,7 +1573,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 func (x *exec) resolveGateInput(v string) string {
 	switch v {
 	case flow.SentinelMRURL:
-		// Inside a reaction phase, the merge request it acts on.
+		// On a subject, the merge request the phase acts on.
 		if mr := x.subjectMR(); mr != nil {
 			return mr.Ref.URL
 		}
@@ -1621,7 +1621,8 @@ func (x *exec) raiseDecision(p *Ping) error {
 // composes no prose: the ping carries which stage, what it printed and where
 // the workspace is, and the card is the UI's. Continue re-enters st as a
 // fresh attempt (the cursor never left it); giving up is a dead end — it
-// abandons the run in an entrypoint phase and ends the round in any other.
+// abandons the run in the main chain or an outcome, and ends a watcher's
+// round.
 // Like a gate it never provisions: ensureEnv runs lazily when st re-enters,
 // and re-seeds what a human may have changed.
 func (x *exec) stageDebug(st *flow.Stage) error {

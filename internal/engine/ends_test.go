@@ -1,10 +1,10 @@
 package engine
 
 // FLOWLANG §3's two ends, said apart: `end` finishes a phase and the run
-// goes back to waiting; `done` finishes the run. And a dead end outside an
-// entrypoint — a failure with nowhere to go, a person giving up at the debug
-// leaf — ends that round, never the run: a reaction may happen any number of
-// times, and the delivery it reacts around is still waiting for its merge.
+// goes back to waiting; `done` finishes the run. And a dead end in a watcher
+// — a failure with nowhere to go, a person giving up at the debug leaf —
+// ends that round, never the run: a watcher may run any number of times, and
+// the main chain it watches around is still waiting for its merge.
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
@@ -49,14 +50,14 @@ func lastCompletion(evs []event.Event, phase string) *event.PhaseCompleted {
 	return out
 }
 
-// A delivery that says done right after opening its merge request completes
-// the run there and then — the reactions are armed on the open merge
-// request, and none of them runs. (The same flow ending with end stays in
+// A main chain that says done right after opening its merge request
+// completes the run there and then — the watchers are armed on the open
+// merge request, and none of them runs. (The same flow ending with end stays in
 // review: TestPhasedRunWaitsInReviewAndCompletesOnMerge.)
-func TestDoneEndsTheRunWhileReactionsAreArmed(t *testing.T) {
+func TestDoneEndsTheRunWhileWatchersAreArmed(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc,
-		"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
-		"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }\n", 1)
+		"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+		"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }\n", 1)
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
@@ -65,22 +66,22 @@ func TestDoneEndsTheRunWhileReactionsAreArmed(t *testing.T) {
 	ph.waitState(t, runID, run.Completed)
 	evs := ph.events(t, runID)
 	for _, s := range phaseStarts(evs) {
-		if s.Phase != "deliver" {
+		if s.Phase != flow.MainPhase {
 			t.Errorf("phase %s started after done", s.Phase)
 		}
 	}
-	if c := lastCompletion(evs, "deliver"); c == nil || c.Reason != "" {
-		t.Errorf("deliver's completion = %+v", c)
+	if c := lastCompletion(evs, flow.MainPhase); c == nil || c.Reason != "" {
+		t.Errorf("main's completion = %+v", c)
 	}
 	if len(ph.repoHost.MRs) != 1 {
 		t.Errorf("merge requests = %d", len(ph.repoHost.MRs))
 	}
 }
 
-// A reaction stage that fails with nowhere to go ends that round, not the
-// run: its phase_completed says why, the delivery stays parked on its merge
-// request, and the merge still completes the run.
-func TestADeadEndInAReactionEndsTheRound(t *testing.T) {
+// A watcher's stage that fails with nowhere to go ends that round, not the
+// run: its phase_completed says why, the main chain stays parked on its
+// merge request, and the merge still completes the run.
+func TestADeadEndInAWatcherEndsTheRound(t *testing.T) {
 	ph := newPhasedHarness(t, waitFlowDoc)
 	failSync(ph)
 	runID := ph.start(t)
@@ -92,10 +93,10 @@ func TestADeadEndInAReactionEndsTheRound(t *testing.T) {
 		t.Fatalf("conflicts' completion = %+v, want it to say why the round ended", c)
 	}
 	if _, abandoned := findPayload[*event.RunAbandoned](evs); abandoned {
-		t.Fatal("a reaction's dead end abandoned the run")
+		t.Fatal("a watcher's dead end abandoned the run")
 	}
 	if infos, err := ph.e.RunPhases(context.Background(), runID); err != nil || infos[0].Live == nil || infos[0].Live.ParkedAt != "merged" {
-		t.Fatalf("deliver after the failed round = %+v, %v; want it still parked on the merge", infos, err)
+		t.Fatalf("main after the failed round = %+v, %v; want it still parked on the merge", infos, err)
 	}
 	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
@@ -104,11 +105,11 @@ func TestADeadEndInAReactionEndsTheRound(t *testing.T) {
 	}
 }
 
-// Giving up at a reaction's debug leaf ends that round: the ping says so
-// (its phase, and that giving up ends only the phase), the human's words
-// become the round's reason, and the run goes back to waiting for the merge.
-// In an entrypoint the same answer still abandons the run (TestDebugLeaf).
-func TestGivingUpAtAReactionsDebugLeafEndsTheRound(t *testing.T) {
+// Giving up at a watcher's debug leaf ends that round: the ping says so (its
+// phase, and that giving up ends only the phase), the human's words become
+// the round's reason, and the run goes back to waiting for the merge. In the
+// main chain the same answer still abandons the run (TestDebugLeaf).
+func TestGivingUpAtAWatchersDebugLeafEndsTheRound(t *testing.T) {
 	doc := strings.Replace(waitFlowDoc,
 		`      - { id: fix_conflicts, type: command, run: "./sync.sh" }`,
 		`      - { id: fix_conflicts, type: command, run: "./sync.sh", on_fail: debug }`, 1)
@@ -118,7 +119,7 @@ func TestGivingUpAtAReactionsDebugLeafEndsTheRound(t *testing.T) {
 	conflictRound(t, ph)
 	dbg := ph.waitPing(t, PingDebug)
 	if dbg.StageID != "fix_conflicts" || dbg.Phase != "conflicts" || !dbg.EndsPhase {
-		t.Fatalf("debug ping = stage %q phase %q ends_phase %v; want the reaction's, ending only its round", dbg.StageID, dbg.Phase, dbg.EndsPhase)
+		t.Fatalf("debug ping = stage %q phase %q ends_phase %v; want the watcher's, ending only its round", dbg.StageID, dbg.Phase, dbg.EndsPhase)
 	}
 	if err := ph.e.AnswerPing(dbg.ID, PingAnswer{Answer: "reject", Feedback: "the target's refactor needs a person"}); err != nil {
 		t.Fatal(err)
@@ -130,7 +131,7 @@ func TestGivingUpAtAReactionsDebugLeafEndsTheRound(t *testing.T) {
 		t.Fatalf("conflicts' completion = %+v", c)
 	}
 	if _, abandoned := findPayload[*event.RunAbandoned](evs); abandoned {
-		t.Fatal("giving up on a reaction abandoned the run")
+		t.Fatal("giving up in a watcher abandoned the run")
 	}
 	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)

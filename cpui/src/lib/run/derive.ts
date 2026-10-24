@@ -2,6 +2,7 @@
 // store holds the events, the views render what comes out of here.
 
 import type { Run, RunEvent } from '$lib/domain';
+import { MAIN } from '$lib/flowdoc';
 import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/format';
 import { t } from '$lib/i18n/index.svelte';
 import { answerKindOf, toPingOption, type PingLike } from '$lib/ping';
@@ -105,16 +106,16 @@ export interface StageDef {
 	/** agent | command | human_gate | action | wait (or '' when unknown). */
 	type: string;
 	agent?: string;
-	/** The phase it belongs to; absent for a document without phases. */
+	/** The chain it belongs to: main, or a watcher's or an outcome's id. */
 	phase?: string;
 }
 
-/** The stages a run's strip shows: the phase it began at, then every other
- *  phase in the order it first started — no phase is the flow's "main" one.
- *  A document without phases shows all of its stages. */
-export function shownStages(defs: StageDef[], events: RunEvent[], begun: string): StageDef[] {
+/** The stages a run's strip shows: the main chain, what the run starts with,
+ *  then every other chain in the order it first started — a flow that only
+ *  watches shows its first chain until one does. */
+export function shownStages(defs: StageDef[], events: RunEvent[]): StageDef[] {
 	if (!defs.some((d) => d.phase)) return defs;
-	const order = [begun || defs[0].phase!];
+	const order = [defs.some((d) => d.phase === MAIN) ? MAIN : defs[0].phase!];
 	for (const e of events) {
 		const ph = e.type === 'phase_started' ? String(e.payload.phase ?? '') : '';
 		if (ph && !order.includes(ph)) order.push(ph);

@@ -1,15 +1,14 @@
 <script lang="ts">
 	// Workshop repositories tab: what the repository integration brings in —
-	// the repository's open merge requests — and the runs done on each. Any flow of the workshop
-	// that can begin on a merge request (an entrypoint on mr_opened) starts
-	// on one from here; which flow, and so what the run does, is the
-	// person's pick. A merge request's runs are filed under its own ticket,
+	// the repository's open merge requests — and the runs done on each. Any
+	// flow of the workshop whose runs are started on a merge request
+	// (run_start: merge_request) starts on one from here; which flow, and so
+	// what the run does, is the person's pick. A merge request's runs are filed under its own ticket,
 	// the same one a merge-request automation would use.
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type { Flow, MergeRequestRow, Project } from '$lib/domain';
-	import { MR_OPENED } from '$lib/flowdoc';
 	import { ago, fmtAbs } from '$lib/format';
 	import { to } from '$lib/guild';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -42,20 +41,9 @@
 		return () => clearInterval(timer);
 	});
 
-	// What can start on a merge request: every entrypoint on mr_opened of
-	// every flow of the workshop.
-	const starts = $derived(
-		(flows ?? []).flatMap((f) =>
-			f.phases
-				.filter((p) => p.signal === MR_OPENED)
-				.map((p, _, all) => ({
-					flow: f.name,
-					phase: p.id,
-					label: all.length > 1 ? `${f.name} · ${p.id}` : f.name,
-					description: p.description
-				}))
-		)
-	);
+	// What can start on a merge request: every flow of the workshop whose
+	// runs are started on one.
+	const starts = $derived((flows ?? []).filter((f) => f.runStart === 'merge_request'));
 
 	// The flow picker, anchored on the row's button.
 	let pickFor = $state<MergeRequestRow | null>(null);
@@ -67,12 +55,12 @@
 		pickOpen = true;
 	}
 
-	async function start(row: MergeRequestRow, flow: string, phase: string) {
+	async function start(row: MergeRequestRow, flow: string) {
 		pickOpen = false;
 		if (busy !== null) return;
 		busy = row.mr.iid;
 		try {
-			const started = await api.projects.startRunOnMR(project.id, row.mr.iid, { flow, phase });
+			const started = await api.projects.startRunOnMR(project.id, row.mr.iid, { flow });
 			toast(t('workshop.repos.started', { flow, iid: row.mr.iid }), {
 				action: { label: t('workshop.repos.openRun'), run: () => void goto(to.run(started.runId)) }
 			});
@@ -171,10 +159,9 @@
 <Popover {anchor} bind:open={pickOpen} placement="below-end">
 	<div class="pickbox">
 		<span class="mut fnt small">{t('workshop.repos.pick', { iid: pickFor?.mr.iid ?? '' })}</span>
-		{#each starts as s (s.flow + '|' + s.phase)}
-			<button class="opt" onclick={() => pickFor && start(pickFor, s.flow, s.phase)}>
-				<span class="mono">{s.label}</span>
-				{#if s.description}<span class="fnt small">{s.description}</span>{/if}
+		{#each starts as f (f.name)}
+			<button class="opt" onclick={() => pickFor && start(pickFor, f.name)}>
+				<span class="mono">{f.name}</span>
 			</button>
 		{/each}
 	</div>

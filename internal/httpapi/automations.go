@@ -28,7 +28,7 @@ func automationFrom(projectID string, body AutomationRequest) confstore.Automati
 	a := confstore.Automation{
 		ProjectID: projectID, Name: body.Name, Kind: body.Kind,
 		SourceID: body.SourceID, Query: body.Query, Schedule: body.Schedule, TicketID: body.TicketID, Repo: body.Repo,
-		Flow: body.Flow, Phase: body.Phase, Params: body.Params, Enabled: true,
+		Flow: body.Flow, Params: body.Params, Enabled: true,
 	}
 	if body.Enabled != nil {
 		a.Enabled = *body.Enabled

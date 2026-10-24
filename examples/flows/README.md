@@ -3,10 +3,10 @@
 Ready-to-load configuration for a standard plan-gated pipeline. The flow
 language itself is specified in `docs/flow-language.md`.
 
-- `v4.yaml` — the reference flow in the expanded form the graph editor
+- `v5.yaml` — the reference flow in the expanded form the graph editor
   emits (`on_success` on every stage, rescue gates last, one key per
   line). Paste into a new flow in the UI, or `PUT /api/flows/reference`.
-  Validate anytime: `task validate -- examples/flows/v4.yaml`.
+  Validate anytime: `task validate -- examples/flows/v5.yaml`.
 
 The agents it references (planner, builder, committer, reviewer,
 redactor) are **declared inside the flow document itself** (FLOWLANG v3):

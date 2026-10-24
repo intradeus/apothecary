@@ -2,14 +2,12 @@ package engine
 
 // Parameters (FLOWLANG §1) are resolved once, at run creation: the flow's
 // defaults, then the project's bindings, then this attempt's overrides — and
-// recorded on run_created, with the entrypoint the run began at.
+// recorded on run_created.
 
 import (
 	"context"
 	"strings"
 	"testing"
-
-	"apothecary/internal/event"
 )
 
 // staticBindings is a FlowBindings that answers the same values for every
@@ -21,22 +19,15 @@ func (b staticBindings) Binding(context.Context, string, string) (map[string]str
 }
 
 const paramFlowDoc = `name: knobs
-version: 4
+version: 5
 parameters:
   harness: fake
   model: anthropic/claude-sonnet-4-6
   verify: verify
   gate: true
   mode: { default: confirm, enum: [auto, confirm, manual] }
-phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: test, type: command, run_ref: $verify, on_success: done }
-  - id: quick
-    on: run_start
-    stages:
-      - { id: fast, type: command, run_ref: $verify, on_success: done }
+main:
+  - { id: test, type: command, run_ref: $verify, on_success: done }
 `
 
 func TestParamsResolvedAtCreation(t *testing.T) {
@@ -61,8 +52,8 @@ func TestParamsResolvedAtCreation(t *testing.T) {
 			t.Errorf("params[%s] = %q, want %q", k, v.Params[k], val)
 		}
 	}
-	if v.BeginPhase != "deliver" || v.StartedBy != "human" {
-		t.Errorf("begin_phase %q started_by %q", v.BeginPhase, v.StartedBy)
+	if v.StartedBy != "human" {
+		t.Errorf("started_by %q", v.StartedBy)
 	}
 	if v.State != "completed" {
 		t.Errorf("state = %s", v.State)
@@ -110,47 +101,12 @@ func TestBoundRunRefIsPreflighted(t *testing.T) {
 	}
 }
 
-// A run begins at the entrypoint its creation names, and only at one.
-func TestRunBeginsAtTheRequestedEntrypoint(t *testing.T) {
+// A rerun runs with the original's parameter values, unless the request
+// says otherwise.
+func TestRerunCarriesParams(t *testing.T) {
 	h := newHarness(t, mustFlow(t, paramFlowDoc))
 	ctx := context.Background()
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "q"}, "knobs", testProject, RunInput{Phase: "quick"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.e.Wait(id)
-	if v := h.view(t, id); v.BeginPhase != "quick" || v.State != "completed" {
-		t.Errorf("begin_phase = %q state %s", v.BeginPhase, v.State)
-	}
-	started := map[string]bool{}
-	var starts []*event.PhaseStarted
-	for _, ev := range h.events(t, id) {
-		switch p := ev.Payload.(type) {
-		case *event.StageStarted:
-			started[p.StageID] = true
-		case *event.PhaseStarted:
-			starts = append(starts, p)
-		}
-	}
-	if !started["fast"] || started["test"] || len(starts) != 1 || starts[0].Phase != "quick" || starts[0].By != "human" {
-		t.Errorf("stages started %v, phase starts %+v", started, starts)
-	}
-	if _, err := h.e.CreateRunWith(ctx, Ticket{Title: "q"}, "knobs", testProject, RunInput{Phase: "nope"}); err == nil || !strings.Contains(err.Error(), "is not an entrypoint") {
-		t.Errorf("unknown phase: err = %v", err)
-	}
-	fl := mustFlow(t, strings.Replace(paramFlowDoc, "  - id: quick\n    on: run_start\n", "  - id: quick\n    on: manual\n", 1))
-	h2 := newHarness(t, fl)
-	if _, err := h2.e.CreateRunWith(ctx, Ticket{Title: "q"}, "knobs", testProject, RunInput{Phase: "quick"}); err == nil || !strings.Contains(err.Error(), "is not an entrypoint") {
-		t.Errorf("manual phase as beginning: err = %v", err)
-	}
-}
-
-// A rerun begins where the original did, with its parameter values, unless
-// the request says otherwise.
-func TestRerunCarriesEntrypointAndParams(t *testing.T) {
-	h := newHarness(t, mustFlow(t, paramFlowDoc))
-	ctx := context.Background()
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "carry"}, "knobs", testProject, RunInput{Phase: "quick", Params: map[string]string{"mode": "manual"}})
+	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "carry"}, "knobs", testProject, RunInput{Params: map[string]string{"mode": "manual"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,25 +116,25 @@ func TestRerunCarriesEntrypointAndParams(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.e.Wait(again)
-	if v := h.view(t, again); v.BeginPhase != "quick" || v.Params["mode"] != "manual" {
-		t.Errorf("rerun begin_phase %q params %v", v.BeginPhase, v.Params)
+	if v := h.view(t, again); v.Params["mode"] != "manual" {
+		t.Errorf("rerun params %v", v.Params)
 	}
-	steered, err := h.e.Rerun(ctx, id, RunInput{Phase: "deliver", Params: map[string]string{"mode": "auto"}})
+	steered, err := h.e.Rerun(ctx, id, RunInput{Params: map[string]string{"mode": "auto"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(steered)
-	if v := h.view(t, steered); v.BeginPhase != "deliver" || v.Params["mode"] != "auto" {
-		t.Errorf("steered rerun begin_phase %q params %v", v.BeginPhase, v.Params)
+	if v := h.view(t, steered); v.Params["mode"] != "auto" {
+		t.Errorf("steered rerun params %v", v.Params)
 	}
 }
 
 const boundAgentDoc = `name: bound
-version: 4
+version: 5
 parameters:
   harness: fake
   model: anthropic/claude-sonnet-4-6
-stages:
+main:
   - { id: build, type: agent, agent: builder }
 `
 

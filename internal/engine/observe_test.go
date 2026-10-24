@@ -1,9 +1,8 @@
 package engine
 
 // The repository host observations behind ci_failed, mr_mergeable,
-// mr_head_moved and the mr_approved outcome: what each holds on, its
-// occurrence key, and that the idle loop asks the repository host only for
-// what the flow reads.
+// mr_head_moved and mr_approved: what each holds on, its occurrence key, and
+// that the idle loop asks the repository host only for what the flow reads.
 
 import (
 	"context"
@@ -12,16 +11,16 @@ import (
 	"time"
 
 	"apothecary/internal/event"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/signalspec"
 )
 
-// observeFlowDoc: deliver opens the merge request; one reaction per signal
-// under test, each a script the test counts; the merge ends the run.
-func observeFlowDoc(reaction string) string {
-	return strings.Replace(phasedFlowDoc,
-		"  - id: shipped\n",
-		reaction+"  - id: shipped\n", 1)
+// observeFlowDoc: the main chain opens the merge request; one watcher per
+// signal under test, each a script the test counts; the merge ends the run.
+func observeFlowDoc(watcher string) string {
+	return strings.Replace(phasedFlowDoc, "outcomes:\n", watcher+"outcomes:\n", 1)
 }
 
 func (ph *phasedHarness) runsOf(script string) int { return len(ph.execsOf(script)) }
@@ -154,11 +153,11 @@ func TestReplayKnowsTheRunsHeads(t *testing.T) {
 	fl := mustFlow(t, parkFlowDoc)
 	ev := func(p event.Payload) event.Event { return event.Event{RunID: "r", Type: p.EventType(), Payload: p} }
 	rs := replay([]event.Event{
-		ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", Phase: "deliver", By: "human"}),
-		ev(&event.PhaseStarted{Phase: "deliver", By: "human"}),
+		ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", By: "human"}),
+		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
 		ev(&event.BranchPushed{Repo: "repo", Branch: "b", Tip: "p1"}),
 		ev(&event.MRCreated{Repo: "repo", Branch: "b", MRURL: "https://x/1", MRIID: 1, Head: "m1"}),
-		ev(&event.PhaseCompleted{Phase: "deliver"}),
+		ev(&event.PhaseCompleted{Phase: flow.MainPhase}),
 		ev(&event.PhaseStarted{Phase: "conflicts", Subject: "repo", Key: "k", By: "signal", Tip: "t1"}),
 	}, fl)
 	for _, sha := range []string{"p1", "m1", "t1"} {
@@ -185,9 +184,68 @@ func TestApprovedOutcomeEndsTheRun(t *testing.T) {
 	ph.repoHost.SetApprovedBy(1, "rev")
 	ph.waitState(t, runID, run.Completed)
 	starts := phaseStarts(ph.events(t, runID))
-	if last := starts[len(starts)-1]; last.Phase != "approved" || last.Key != "approved" || last.Subject != "" {
+	if last := starts[len(starts)-1]; last.Phase != "approved" || last.Key != signalspec.MRApproved || last.Subject != "" {
 		t.Errorf("start = %+v", last)
 	}
+}
+
+// mr_approved as a watcher: one merge request's approval, once per head it
+// was approved at — a push after the approval, approved again, is a new
+// round; the same approval seen again is not.
+func TestApprovedWatcherRunsOncePerApprovedHead(t *testing.T) {
+	ph := newPhasedHarness(t, observeFlowDoc("  - id: ship\n    on: mr_approved\n    stages:\n      - { id: land, type: command, run: \"./land.sh\" }\n"))
+	runID := ph.start(t)
+	ph.repoHost.SetHead(1, "h1")
+	settle()
+	if n := ph.runsOf("./land.sh"); n != 0 {
+		t.Fatalf("ship ran %d times before any approval", n)
+	}
+	ph.repoHost.SetApprovedBy(1, "rev")
+	ph.waitRuns(t, "./land.sh", 1)
+	starts := phaseStarts(ph.events(t, runID))
+	if last := starts[len(starts)-1]; last.Phase != "ship" || last.Key != "h1" || last.Subject != "repo" || last.Tip != "h1" {
+		t.Errorf("start = %+v", last)
+	}
+	settle()
+	if n := ph.runsOf("./land.sh"); n != 1 {
+		t.Fatalf("one approval ran ship %d times", n)
+	}
+	ph.repoHost.SetHead(1, "h2") // still approved: a new head is a new occurrence
+	ph.waitRuns(t, "./land.sh", 2)
+	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.waitState(t, runID, run.Completed)
+	if n := ph.runsOf("./land.sh"); n != 2 {
+		t.Errorf("a merged merge request ran ship again (%d runs)", n)
+	}
+}
+
+// Any observed signal may be waited on: a watcher's chain parks on
+// mr_mergeable, on its own merge request, and goes on once the repository
+// host says it can be merged.
+func TestWaitForMergeableInAWatcher(t *testing.T) {
+	ph := newPhasedHarness(t, observeFlowDoc("  - id: ship\n    on: manual\n    stages:\n"+
+		"      - { id: ready, type: wait, for: mr_mergeable, on_fail: end }\n      - { id: land, type: command, run: \"./land.sh\" }\n"))
+	runID := ph.start(t)
+	if err := ph.e.StartPhase(runID, "ship", ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, parked := findPayload[*event.PhaseParked](ph.events(t, runID)); parked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the wait never parked")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	settle()
+	if n := ph.runsOf("./land.sh"); n != 0 {
+		t.Fatalf("land ran before the merge request could be merged (%d)", n)
+	}
+	ph.repoHost.SetMergeableNow(1, true)
+	ph.waitRuns(t, "./land.sh", 1)
+	ph.waitPhaseCompleted(t, runID, "ship", 1)
 }
 
 // A wait may park on the approval too; a close means it never comes.

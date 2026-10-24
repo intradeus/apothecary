@@ -10,18 +10,17 @@ import (
 )
 
 const mrFlowYAML = `name: on-mr
-version: 4
+version: 5
+run_start: merge_request
 parameters: { harness: fake, model: a/b }
 agents:
   - name: reader
     prompt: read it
     inputs:
       - { name: changes }
-phases:
-  - id: look
-    on: mr_opened
-    stages:
-      - { id: read, type: agent, agent: reader, input: { changes: $DIFF_TARGET }, on_fail: debug }
+main:
+  - { id: read, type: agent, agent: reader, input: { changes: $DIFF_TARGET }, on_fail: debug }
+outcomes:
   - { id: merged, on: mr_merged, then: done }
   - { id: closed, on: mr_closed, then: done }
 `
@@ -86,13 +85,13 @@ func TestMergeRequestsListAndStartARun(t *testing.T) {
 		t.Errorf("ticket = %d: %s", resp.StatusCode, data)
 	}
 	// The factory's own merge request takes a run like any other; a flow
-	// that cannot begin on a merge request is refused and leaves no ticket.
-	plain := "name: plain\nversion: 4\nparameters: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	// whose runs are started on tickets is refused and leaves no ticket.
+	plain := "name: plain\nversion: 5\nparameters: { harness: fake, model: a/b }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
 	if resp, data := x.do(t, "POST", "/api/projects/"+pid+"/flows", map[string]any{"name": "plain", "yaml": plain}, nil); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("save plain = %d: %s", resp.StatusCode, data)
 	}
 	resp, data = x.do(t, "POST", "/api/projects/"+pid+"/mrs/2/runs", map[string]any{"flow": "plain"}, nil)
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "no entrypoint that begins a run on a merge request") {
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "starts its runs on a ticket") {
 		t.Errorf("plain flow = %d: %s", resp.StatusCode, data)
 	}
 	if rows := list(); rows[0].TicketID != "" {

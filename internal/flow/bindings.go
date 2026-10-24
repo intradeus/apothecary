@@ -100,8 +100,8 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 		}
 		// An action's prerequisite, the same way: ticket_link attaches the
 		// merge request, so a route that never opens one reaches a stage
-		// that can only fail with input_missing. Inside a reaction phase the
-		// subject merge request exists by definition.
+		// that can only fail with input_missing. Inside a watcher on a merge
+		// request signal the subject merge request exists by definition.
 		if st.Type == StageAction {
 			if act := actionspec.Get(st.Action); act != nil && act.Needs == actionspec.NeedsMR &&
 				!inSubjectPhase(f, st) && !definitelyHasMR(f, st) {
@@ -123,13 +123,13 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 	return warns, nil
 }
 
-// endingWarnings: the run's end written where it does not belong. A phase
-// opened by a firing signal may run any number of times; ending the whole run
-// from it (done, abort) stops every one of them for good — almost always a
-// slip for `end`, which goes back to waiting. And a phase that opens a merge
-// request, then reaches done with nothing waiting for the merge, completes
-// the run the moment the merge request exists: the phases that react to it,
-// and the outcomes that would end it, never get to run.
+// endingWarnings: the run's end written where it does not belong. A watcher
+// may run any number of times; ending the whole run from it (done, abort)
+// stops every one of them for good — almost always a slip for `end`, which
+// goes back to waiting. And a chain that opens a merge request, then reaches
+// done with nothing waiting for the merge, completes the run the moment the
+// merge request exists: the watchers on it, and the outcomes that would end
+// it, never get to run.
 func endingWarnings(f *Flow) []string {
 	reacts := false
 	for i := range f.Phases {
@@ -143,7 +143,7 @@ func endingWarnings(f *Flow) []string {
 			st := &f.Stages[i]
 			ends := runEndsOf(st)
 			if ph.Fires() && len(ends) > 0 {
-				warns = append(warns, fmt.Sprintf("stage %q: phase %q opens on %s and may run any number of times, but this stage ends the whole run (%s) — end the phase with %q to go back to waiting",
+				warns = append(warns, fmt.Sprintf("stage %q: watcher %q runs on each %s and may run any number of times, but this stage ends the whole run (%s) — end its chain with %q to go back to waiting",
 					st.ID, ph.ID, ph.On.Signal, strings.Join(ends, ", "), TerminalEnd))
 			}
 			if st.Type == StageAction {
@@ -159,8 +159,8 @@ func endingWarnings(f *Flow) []string {
 			}
 		}
 		if reacts && doneAfterMR && !waits {
-			warns = append(warns, fmt.Sprintf("phase %q opens a merge request and ends the run (%s) without waiting for it: the run completes as soon as the merge request exists, and the phases watching it never run — end the phase (%s) and let an outcome (on: %s) end the run, or park on a %s stage for %s first",
-				ph.ID, TerminalDone, TerminalEnd, signalspec.MRMerged, StageWait, signalspec.MRMerged))
+			warns = append(warns, fmt.Sprintf("%s opens a merge request and ends the run (%s) without waiting for it: the run completes as soon as the merge request exists, and the watchers on it never run — end the chain (%s) and let an outcome (on: %s) end the run, or park on a %s stage for %s first",
+				ph.Label(), TerminalDone, TerminalEnd, signalspec.MRMerged, StageWait, signalspec.MRMerged))
 		}
 	}
 	return warns
@@ -197,8 +197,9 @@ func waitsOnMerge(st *Stage) bool {
 	return false
 }
 
-// phaseShapeWarnings: what a phase opens on versus what the flow does — a
-// trigger that needs a merge request no stage of the flow opens.
+// phaseShapeWarnings: what a watcher or an outcome opens on versus what the
+// flow does — a signal that needs a merge request no stage of the flow
+// opens.
 func phaseShapeWarnings(f *Flow) []string {
 	opensMR := false
 	for i := range f.Phases {
@@ -214,8 +215,8 @@ func phaseShapeWarnings(f *Flow) []string {
 	var warns []string
 	for i := range f.Phases {
 		if ph := &f.Phases[i]; ph.HasSubject() && !opensMR {
-			warns = append(warns, fmt.Sprintf("phase %q opens on %s, which needs a merge request no stage opens (add a %s action)",
-				ph.ID, ph.On.Signal, actionspec.CreateMR))
+			warns = append(warns, fmt.Sprintf("%s opens on %s, which needs a merge request no stage opens (add a %s action)",
+				ph.Label(), ph.On.Signal, actionspec.CreateMR))
 		}
 	}
 	return warns

@@ -3,8 +3,9 @@ package httpapi
 // A project repository's merge requests as a source of runs, the way the
 // tracker's issues are tickets: each open merge request with the runs done on
 // it — through its ticket, the one a merge_request automation would use too —
-// and a way to start a run of any flow that can begin on one (an entrypoint on
-// mr_opened). Which flow — a review, a rebase, anything — is the person's
+// and a way to start a run of any flow whose runs are started on one
+// (run_start: merge_request). Which flow — a review, a rebase, anything — is
+// the person's
 // pick; nothing here knows one from another.
 
 import (
@@ -40,18 +41,16 @@ type MRRun struct {
 	ID        string    `json:"id"`
 	State     run.State `json:"state"`
 	Flow      string    `json:"flow"`
-	Phase     string    `json:"phase,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 // MRRunRequest starts a run on a merge request: of Flow ("" = the project's
-// default flow), at its mr_opened entrypoint Phase ("" = the first), with
-// Params over the project's bindings, on the merge request in Repo ("" =
-// the primary).
+// default flow), which must start its runs on one (run_start:
+// merge_request), with Params over the project's bindings, on the merge
+// request in Repo ("" = the primary).
 type MRRunRequest struct {
 	Repo   string            `json:"repo,omitempty"`
 	Flow   string            `json:"flow,omitempty"`
-	Phase  string            `json:"phase,omitempty"`
 	Params map[string]string `json:"params,omitempty"`
 }
 
@@ -97,7 +96,7 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 			row.Runs = len(runs)
 			for _, v := range runs {
 				if row.Run == nil || v.CreatedAt.After(row.Run.CreatedAt) {
-					row.Run = &MRRun{ID: v.RunID, State: v.State, Flow: v.FlowName, Phase: v.BeginPhase, CreatedAt: v.CreatedAt}
+					row.Run = &MRRun{ID: v.RunID, State: v.State, Flow: v.FlowName, CreatedAt: v.CreatedAt}
 				}
 			}
 		}
@@ -170,7 +169,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := s.Engine.CreateRunWith(ctx, engine.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal,
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, flowName, projectID, engine.RunInput{Phase: body.Phase, Params: body.Params, MR: &engine.RunMR{Repo: body.Repo, IID: iid}})
+	}, flowName, projectID, engine.RunInput{Params: body.Params, MR: &engine.RunMR{Repo: body.Repo, IID: iid}})
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())

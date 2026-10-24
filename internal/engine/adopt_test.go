@@ -1,9 +1,9 @@
 package engine
 
-// Runs created on a merge request someone opened (an entrypoint on mr_opened):
-// the run works on that merge request's branch, from the head the repository
-// host keeps a ref for, acts on it from its first phase, reads the author's
-// later pushes, and ends with it.
+// Runs started on a merge request someone opened (a flow with run_start:
+// merge_request): the run works on that merge request's branch, from the head
+// the repository host keeps a ref for, acts on it from its main chain, reads
+// the author's later pushes, and ends with it.
 
 import (
 	"context"
@@ -14,12 +14,14 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/builtin"
 	"apothecary/internal/event"
+	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 )
 
 const reviewerFlowDoc = `name: rev
-version: 4
+version: 5
+run_start: merge_request
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: pr_reviewer
@@ -28,17 +30,16 @@ agents:
       - { name: changes }
     outputs:
       - { name: review, type: review_threads, path: artifacts/review.yaml }
-phases:
-  - id: first_look
-    on: mr_opened
-    stages:
-      - { id: read, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
-      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+main:
+  - { id: read, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
+  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+watchers:
   - id: again
     on: mr_head_moved
     stages:
       - { id: reread, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
       - { id: repost, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+outcomes:
   - { id: merged, on: mr_merged, then: done }
   - { id: closed, on: mr_closed, then: done }
 `
@@ -101,7 +102,7 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 		t.Errorf("bootstrap did not check out the merge request's head:\n%s", strings.Join(scripts(), "\n"))
 	}
 	starts := phaseStarts(ph.events(t, runID))
-	if len(starts) != 1 || starts[0].Phase != "first_look" || starts[0].Subject != "repo" || starts[0].Tip != "a1" {
+	if len(starts) != 1 || starts[0].Phase != flow.MainPhase || starts[0].Subject != "repo" || starts[0].Tip != "a1" {
 		t.Fatalf("starts = %+v", starts)
 	}
 	if !hasScript(scripts(), "git diff --name-status origin/main...HEAD") {
@@ -126,13 +127,13 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 	ph.waitState(t, runID, run.Completed)
 }
 
-// Run creation holds the two kinds of entrypoint apart, and a merge request
-// is created on only while open.
+// Run creation holds the two kinds of run_start apart, and a run is started
+// on a merge request only while it is open.
 func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	ctx := context.Background()
 	ph, _ := newReviewerHarness(t, reviewerFlowDoc)
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{}); err == nil || !strings.Contains(err.Error(), "begins runs on a merge request someone opened: name one") {
+	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{}); err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request (run_start: merge_request): name the merge request") {
 		t.Errorf("no merge request: %v", err)
 	}
 	ph.repoHost.SetMRState(ref.IID, ports.MRClosed)
@@ -141,11 +142,8 @@ func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	}
 	ph2 := newPhasedHarness(t, phasedFlowDoc)
 	other := ph2.repoHost.AddOpenMR("bob", "Fix", "fix/x", "main", "b1")
-	if _, err := ph2.e.CreateRunWith(ctx, Ticket{Title: "T"}, "phased", testProject, RunInput{MR: &RunMR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a run on a merge request") {
-		t.Errorf("flow with run_start only: %v", err)
-	}
-	if _, err := ph2.e.CreateRunWith(ctx, Ticket{Title: "T"}, "phased", testProject, RunInput{Phase: "deliver", MR: &RunMR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "begins a fresh run") {
-		t.Errorf("run_start phase with a merge request: %v", err)
+	if _, err := ph2.e.CreateRunWith(ctx, Ticket{Title: "T"}, "phased", testProject, RunInput{MR: &RunMR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "starts its runs on a ticket (run_start: ticket), not on a merge request") {
+		t.Errorf("a flow started on tickets, on a merge request: %v", err)
 	}
 }
 
@@ -153,8 +151,8 @@ func TestRunOnAMergeRequestRefusals(t *testing.T) {
 // branch of its own; there is nothing here to push it to. A rerun stays on it.
 func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	doc := strings.Replace(reviewerFlowDoc,
-		"      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n",
-		"      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n      - { id: push, type: action, action: push_branch }\n", 1)
+		"  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n",
+		"  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n  - { id: push, type: action, action: push_branch }\n", 1)
 	ph, _ := newReviewerHarness(t, doc)
 	ref := ph.repoHost.AddOpenMR("eve", "From my fork", "main", "main", "f1")
 	ph.repoHost.MRs[0].Fork = true
@@ -162,7 +160,7 @@ func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ph.waitState(t, runID, run.Abandoned) // the push is a dead end of the entrypoint
+	ph.waitState(t, runID, run.Abandoned) // the push is a dead end of the main chain
 	evs := ph.events(t, runID)
 	created, _ := findPayload[*event.RunCreated](evs)
 	if created.Branch != "mr-1" || !created.Checkouts[0].Fork {
@@ -182,7 +180,7 @@ func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	}
 }
 
-// The built-in reviewer template runs as written: created on a merge
+// The built-in reviewer template runs as written: started on a merge
 // request, it reviews it through its block, waits, and ends with it.
 func TestBuiltinReviewerTemplateRuns(t *testing.T) {
 	src, ok := builtin.FlowYAML("reviewer")

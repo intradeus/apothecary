@@ -97,7 +97,7 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 	}
 	switch st.Type {
 	case flow.StageWait:
-		holds, impossible, why := x.waitState(st.WaitFor, obs)
+		holds, impossible, why := x.waitState(st.WaitFor, pr.subject, obs)
 		switch {
 		case holds:
 			if err := resume(); err != nil {
@@ -133,7 +133,7 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 				if a.slug == "" {
 					continue
 				}
-				if holds, _, _ := x.waitState(a.slug, obs); holds {
+				if holds, _, _ := x.waitState(a.slug, pr.subject, obs); holds {
 					rec, err := x.answerFromEngine(pr.ping, PingAnswer{Answer: a.answer, Feedback: "auto: " + a.slug})
 					if err != nil {
 						return true, err
@@ -154,58 +154,56 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 	return false, nil
 }
 
-// waitState evaluates a waitable signal against the latest observation: it
-// holds, it can no longer hold (with why), or neither yet. A run with several
-// merge requests is merged when ALL are, and closed as soon as ANY is closed
-// unmerged — someone decided against part of it.
-func (x *exec) waitState(slug string, obs []mrObservation) (holds, impossible bool, why string) {
+// waitState evaluates an observed signal for a wait point mid-chain — a wait
+// stage, a gate's auto-answer — or an outcome: it holds, it can no longer
+// hold (with why), or neither yet. On the chain's subject when it has one;
+// otherwise on the run's merge requests: a signal that waits for every one
+// (signalspec.All — merged, approved, mergeable) holds once each has it or is
+// past it and can no longer hold once one cannot; any other holds as soon as
+// one merge request has it — merged and closed alike, someone decided about
+// part of the run.
+func (x *exec) waitState(slug, subject string, obs []mrObservation) (holds, impossible bool, why string) {
 	rs := x.rs
-	if sig := signalspec.Get(slug); sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.mrs) == 0 {
+	sig := signalspec.Get(slug)
+	if sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.mrs) == 0 {
 		return false, true, "this run has opened no merge request"
 	}
-	if len(obs) == 0 {
+	if !sig.Observed() {
 		return false, false, ""
 	}
-	allMerged, closed := true, ""
+	var on []mrSignal
 	for _, o := range obs {
-		switch o.status.State {
-		case ports.MRMerged:
-		case ports.MRClosed:
-			allMerged = false
-			if closed == "" {
-				closed = o.mr.Ref.URL
-			}
-		default:
-			allMerged = false
+		if subject == "" || o.mr.Repo == subject {
+			on = append(on, x.signalOn(slug, 0, o))
 		}
 	}
-	switch slug {
-	case signalspec.MRMerged:
-		if allMerged {
-			return true, false, ""
-		}
-		if closed != "" {
-			return false, true, "merge request closed unmerged: " + closed
-		}
-	case signalspec.MRClosed:
-		if closed != "" {
-			return true, false, ""
-		}
-		if allMerged {
-			return false, true, "every merge request merged"
-		}
-	case signalspec.MRApproved:
-		// Approved or merged, every one: a merge is past approval. A close
-		// means it will never be.
-		if closed != "" {
-			return false, true, "merge request closed unmerged: " + closed
-		}
-		for _, o := range obs {
-			if o.status.State == ports.MROpen && (o.approval == nil || !o.approval.Approved) {
-				return false, false, ""
+	if len(on) == 0 {
+		return false, false, ""
+	}
+	if sig.All {
+		holds = true
+		for _, s := range on {
+			if s.gone {
+				return false, true, s.why
 			}
+			holds = holds && (s.holds || s.passed)
 		}
-		return true, false, ""
+		return holds, false, ""
+	}
+	gone := 0
+	for _, s := range on {
+		if s.holds {
+			return true, false, ""
+		}
+		if s.gone {
+			gone, why = gone+1, s.why
+		}
+	}
+	if gone == len(on) {
+		if len(on) > 1 {
+			why = "every merge request is merged or closed"
+		}
+		return false, true, why
 	}
 	return false, false, ""
 }
@@ -254,7 +252,7 @@ func (x *exec) pingDelivered(pingID string) []string {
 
 // anyArmed reports whether some observed phase may still open on its own:
 // its policy is automatic (auto or confirm), it is not parked, and — a
-// reaction — it has runs left on an open merge request, or — an outcome
+// watcher — it has runs left on an open merge request, or — an outcome
 // that has not fired — a merge request is still open for its end to come;
 // or a confirmation for it is still open.
 func (x *exec) anyArmed(obs []mrObservation) bool {

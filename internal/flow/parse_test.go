@@ -10,7 +10,7 @@ import (
 
 // header is a minimal valid preamble; tests append stages to it.
 const header = `name: t
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 `
 
@@ -56,10 +56,10 @@ func wantErr(t *testing.T, doc, substr string, line int) {
 	}
 }
 
-// TestCanonicalV4 locks the fixture that exercises every stage construct: all
+// TestCanonicalV5 locks the fixture that exercises every stage construct: all
 // stage types, the binding forms, every sentinel, output rebinding.
-func TestCanonicalV4(t *testing.T) {
-	f, err := Load("testdata/v4.yaml")
+func TestCanonicalV5(t *testing.T) {
+	f, err := Load("testdata/v5.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestCanonicalV4(t *testing.T) {
 // the graph editor emits): abort terminals, on_timeout, then-chains, unlimited
 // links and the debug leaf as every stage's rescue.
 func TestReferenceFlowParses(t *testing.T) {
-	f, err := Load("../../examples/flows/v4.yaml")
+	f, err := Load("../../examples/flows/v5.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestReferenceFlowParses(t *testing.T) {
 }
 
 func TestStageMapFormBindings(t *testing.T) {
-	doc := header + commonAgents + `stages:
+	doc := header + commonAgents + `main:
   - { id: build, type: agent, agent: builder,
       input: { plan: artifacts/plan.md, changes: $DIFF_TARGET },
       output: { patch: artifacts/patch.md }, on_success: done }
@@ -245,7 +245,7 @@ func TestStageMapFormBindings(t *testing.T) {
 // to check the names against, so they are free labels — which is the point:
 // they say what each file is for.
 func TestCommandBindings(t *testing.T) {
-	doc := header + `stages:
+	doc := header + `main:
   - { id: verify, type: command, run: "make check",
       input: { plan: artifacts/plan.md, spec: docs/spec.md },
       output: { report: artifacts/report.txt }, on_success: done }
@@ -271,7 +271,7 @@ func TestCommandBindings(t *testing.T) {
 
 func TestBindingShapeErrors(t *testing.T) {
 	agent := func(binding string) string {
-		return header + "stages:\n  - { id: a, type: agent, agent: x, " + binding + ", on_success: done }\n"
+		return header + "main:\n  - { id: a, type: agent, agent: x, " + binding + ", on_success: done }\n"
 	}
 	cases := []struct{ name, doc, want string }{
 		{"dup key", agent("input: { plan: a.md, plan: b.md }"), "bound twice"},
@@ -284,29 +284,29 @@ func TestBindingShapeErrors(t *testing.T) {
 		// message says what to do instead.
 		{"agent list input", agent("input: [artifacts/plan.md]"), "name each entry"},
 		{"agent scalar output", agent("output: artifacts/out.md"), "name what"},
-		{"command list input", header + "stages:\n  - { id: c, type: command, run: x, input: [a.md] }\n",
+		{"command list input", header + "main:\n  - { id: c, type: command, run: x, input: [a.md] }\n",
 			"name each entry"},
-		{"command sentinel input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $DIFF_TARGET } }\n",
+		{"command sentinel input", header + "main:\n  - { id: c, type: command, run: x, input: { c: $DIFF_TARGET } }\n",
 			"must be a relative artifact path"},
-		{"gate scalar input", header + "stages:\n  - { id: g, type: human_gate, input: artifacts/a.md }\n",
+		{"gate scalar input", header + "main:\n  - { id: g, type: human_gate, input: artifacts/a.md }\n",
 			"name what"},
-		{"gate two inputs", header + "stages:\n  - { id: g, type: human_gate, input: { a: x.md, b: y.md } }\n",
+		{"gate two inputs", header + "main:\n  - { id: g, type: human_gate, input: { a: x.md, b: y.md } }\n",
 			"shows one thing"},
-		{"gate bad sentinel", header + "stages:\n  - { id: g, type: human_gate, input: { x: $NOPE } }\n",
+		{"gate bad sentinel", header + "main:\n  - { id: g, type: human_gate, input: { x: $NOPE } }\n",
 			"must be a relative artifact path"},
 		// Sentinels are scoped: a link is for a human, prompt content is not.
 		{"agent gets a link", agent("input: { mr: $MR_URL }"), "is a link for a human_gate"},
-		{"gate gets prompt content", header + "stages:\n  - { id: g, type: human_gate, input: { c: $DIFF_TARGET } }\n",
+		{"gate gets prompt content", header + "main:\n  - { id: g, type: human_gate, input: { c: $DIFF_TARGET } }\n",
 			"not something to show a human"},
-		{"gate gets uncommitted", header + "stages:\n  - { id: g, type: human_gate, input: { c: $STATUS } }\n",
+		{"gate gets uncommitted", header + "main:\n  - { id: g, type: human_gate, input: { c: $STATUS } }\n",
 			"not something to show a human"},
-		{"command uncommitted input", header + "stages:\n  - { id: c, type: command, run: x, input: { c: $STATUS } }\n",
+		{"command uncommitted input", header + "main:\n  - { id: c, type: command, run: x, input: { c: $STATUS } }\n",
 			"must be a relative artifact path"},
 		// The two git sentinels that meant different ranges by context are
 		// gone; the error names what replaced them.
 		{"retired $CHANGED", agent("input: { changes: $CHANGED }"), "use $DIFF_TARGET (what the branch changes against its target) or $DIFF_PHASE"},
 		{"retired $UNCOMMITTED", agent("input: { changes: $UNCOMMITTED }"), "use $STATUS"},
-		{"retired on a gate", header + "stages:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n", "$CHANGED is retired"},
+		{"retired on a gate", header + "main:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n", "$CHANGED is retired"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -321,21 +321,21 @@ func TestBindingShapeErrors(t *testing.T) {
 // than a bare "unknown field", so an old document tells you how to fix itself.
 func TestRetiredSpellings(t *testing.T) {
 	cases := []struct{ name, doc, want string }{
-		{"verdict", header + "stages:\n  - { id: a, type: agent, agent: x, verdict: true }\n",
+		{"verdict", header + "main:\n  - { id: a, type: agent, agent: x, verdict: true }\n",
 			"declare a verdict-typed output on the agent"},
-		{"ping", header + "stages:\n  - { id: g, type: human_gate, ping: plan_approval }\n",
+		{"ping", header + "main:\n  - { id: g, type: human_gate, ping: plan_approval }\n",
 			`say what you are asking in "question"`},
-		{"payload", header + "stages:\n  - { id: g, type: human_gate, payload: artifacts/plan.md }\n",
+		{"payload", header + "main:\n  - { id: g, type: human_gate, payload: artifacts/plan.md }\n",
 			`renamed "input"`},
-		{"body", header + "stages:\n  - { id: m, type: action, action: create_mr, body: artifacts/mr.md }\n",
+		{"body", header + "main:\n  - { id: m, type: action, action: create_mr, body: artifacts/mr.md }\n",
 			"with input: {body: <path>}"},
-		{"feed", header + "stages:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
+		{"feed", header + "main:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
 			"bind $DECISION"},
-		{"auto_complete", header + "stages:\n  - { id: g, type: human_gate, auto_complete: mr_merged }\n",
+		{"auto_complete", header + "main:\n  - { id: g, type: human_gate, auto_complete: mr_merged }\n",
 			`use "auto_approve"`},
-		{"bare mr_url", header + "stages:\n  - { id: g, type: human_gate, input: { mr: mr_url } }\n",
+		{"bare mr_url", header + "main:\n  - { id: g, type: human_gate, input: { mr: mr_url } }\n",
 			"use $MR_URL"},
-		{"bare workspace", header + "stages:\n  - { id: g, type: human_gate, input: { w: workspace } }\n",
+		{"bare workspace", header + "main:\n  - { id: g, type: human_gate, input: { w: workspace } }\n",
 			"use $WORKSPACE"},
 	}
 	for _, tc := range cases {
@@ -350,13 +350,13 @@ func TestRetiredSpellings(t *testing.T) {
 // TestVersionRequired: a document states its grammar, so an unfamiliar one is
 // refused rather than half-understood.
 func TestVersionRequired(t *testing.T) {
-	stages := "stages:\n  - { id: s, type: command, run: x }\n"
+	stages := "main:\n  - { id: s, type: command, run: x }\n"
 	noVersion := "name: t\nparameters: { harness: fake, model: a/b }\n" + stages
 	if _, err := Parse("t.yaml", []byte(noVersion)); err == nil || !strings.Contains(err.Error(), "version is required") {
 		t.Errorf("missing version: err = %v", err)
 	}
 	future := "name: t\nversion: 99\nparameters: { harness: fake, model: a/b }\n" + stages
-	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 4") {
+	if _, err := Parse("t.yaml", []byte(future)); err == nil || !strings.Contains(err.Error(), "this build speaks version 5") {
 		t.Errorf("future version: err = %v", err)
 	}
 }
@@ -387,7 +387,7 @@ func TestDocIOJSONForms(t *testing.T) {
 // TestParseDocMapRoundTrip parses a map-form flow to the editor Doc and back to
 // JSON, asserting the binding object survives with its keys in order.
 func TestParseDocMapRoundTrip(t *testing.T) {
-	doc := header + commonAgents + `stages:
+	doc := header + commonAgents + `main:
   - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md, changes: $DIFF_TARGET }, on_success: done }
 `
 	d, err := ParseDoc("t.yaml", []byte(doc))
@@ -404,11 +404,11 @@ func TestParseDocMapRoundTrip(t *testing.T) {
 }
 
 func TestHashChangesWithContent(t *testing.T) {
-	a, err := Parse("a.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: \"true\" }\n"))
+	a, err := Parse("a.yaml", []byte(header+"main:\n  - { id: s, type: command, run: \"true\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Parse("b.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: \"false\" }\n"))
+	b, err := Parse("b.yaml", []byte(header+"main:\n  - { id: s, type: command, run: \"false\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestHashChangesWithContent(t *testing.T) {
 }
 
 func TestUnknownFieldRejectedWithLine(t *testing.T) {
-	doc := header + `stages:
+	doc := header + `main:
   - { id: s, type: command, run: "true" }
 bogus_field: 1
 `
@@ -435,112 +435,112 @@ func TestValidationErrors(t *testing.T) {
 		substr string
 		line   int
 	}{
-		{"missing name", "version: 2\nparameters: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing name", "version: 2\nparameters: { harness: fake, model: a/b }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"flow name is required", 0},
-		{"missing harness", "name: t\nversion: 4\nparameters: { model: a/b }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing harness", "name: t\nversion: 5\nparameters: { model: a/b }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"harness is required", 3},
-		{"missing model", "name: t\nversion: 4\nparameters: { harness: fake }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"missing model", "name: t\nversion: 5\nparameters: { harness: fake }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"model is required", 0},
-		{"bad model format", "name: t\nversion: 4\nparameters: { harness: fake, model: nomodel }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad model format", "name: t\nversion: 5\nparameters: { harness: fake, model: nomodel }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"provider/model", 3},
-		{"bad timeout", "name: t\nversion: 4\nparameters: { model: a/b, timeout: soon }\nstages:\n  - { id: s, type: command, run: x }\n",
+		{"bad timeout", "name: t\nversion: 5\nparameters: { model: a/b, timeout: soon }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"invalid duration", 3},
-		{"no stages", header, "at least one stage", 0},
-		{"duplicate id", header + "stages:\n  - { id: s, type: command, run: x }\n  - { id: s, type: command, run: y }\n",
+		{"no main", header, "main is required", 0},
+		{"duplicate id", header + "main:\n  - { id: s, type: command, run: x }\n  - { id: s, type: command, run: y }\n",
 			"duplicate id", 6},
-		{"non-slug id", header + "stages:\n  - { id: Bad_ID, type: command, run: x }\n",
+		{"non-slug id", header + "main:\n  - { id: Bad_ID, type: command, run: x }\n",
 			"not a slug", 5},
-		{"missing type", header + "stages:\n  - { id: s, run: x }\n",
+		{"missing type", header + "main:\n  - { id: s, run: x }\n",
 			"type is required", 5},
-		{"unknown type", header + "stages:\n  - { id: s, type: robot }\n",
+		{"unknown type", header + "main:\n  - { id: s, type: robot }\n",
 			`unknown type "robot"`, 5},
-		{"model on command", header + "stages:\n  - { id: s, type: command, run: x, model: a/b }\n",
+		{"model on command", header + "main:\n  - { id: s, type: command, run: x, model: a/b }\n",
 			`field "model" does not apply to type command`, 5},
-		{"run and run_ref", header + "stages:\n  - { id: s, type: command, run: x, run_ref: y }\n",
+		{"run and run_ref", header + "main:\n  - { id: s, type: command, run: x, run_ref: y }\n",
 			"exactly one of run / run_ref", 5},
-		{"neither run nor run_ref", header + "stages:\n  - { id: s, type: command }\n",
+		{"neither run nor run_ref", header + "main:\n  - { id: s, type: command }\n",
 			"exactly one of run / run_ref", 5},
-		{"agent missing", header + "stages:\n  - { id: s, type: agent }\n",
+		{"agent missing", header + "main:\n  - { id: s, type: agent }\n",
 			"agent is required", 5},
-		{"bad input path", header + "stages:\n  - { id: s, type: command, run: x, input: { p: /etc/passwd } }\n",
+		{"bad input path", header + "main:\n  - { id: s, type: command, run: x, input: { p: /etc/passwd } }\n",
 			"must be a relative artifact path", 5},
-		{"dotdot output", header + "stages:\n  - { id: s, type: command, run: x, output: { o: ../out.md } }\n",
+		{"dotdot output", header + "main:\n  - { id: s, type: command, run: x, output: { o: ../out.md } }\n",
 			"relative artifact path", 5},
-		{"unknown auto_approve", header + "stages:\n  - { id: s, type: human_gate, auto_approve: ci_green }\n",
+		{"unknown auto_approve", header + "main:\n  - { id: s, type: human_gate, auto_approve: ci_green }\n",
 			"unknown auto_approve signal", 5},
-		{"action missing action", header + "stages:\n  - { id: s, type: action }\n",
+		{"action missing action", header + "main:\n  - { id: s, type: action }\n",
 			"action is required", 5},
-		{"unknown action", header + "stages:\n  - { id: s, type: action, action: send_carrier_pigeon }\n",
+		{"unknown action", header + "main:\n  - { id: s, type: action, action: send_carrier_pigeon }\n",
 			`unknown action "send_carrier_pigeon"`, 5},
-		{"action missing required input", header + "stages:\n  - { id: s, type: action, action: create_mr }\n",
+		{"action missing required input", header + "main:\n  - { id: s, type: action, action: create_mr }\n",
 			`requires input "body"`, 5},
-		{"action unknown input", header + "stages:\n  - { id: s, type: action, action: create_mr, input: { body: a.md, subject: b.md } }\n",
+		{"action unknown input", header + "main:\n  - { id: s, type: action, action: create_mr, input: { body: a.md, subject: b.md } }\n",
 			`input "subject" is not an input of action`, 5},
-		{"output on action", header + "stages:\n  - { id: s, type: action, action: create_mr, input: { body: a.md }, output: { x: x.md } }\n",
+		{"output on action", header + "main:\n  - { id: s, type: action, action: create_mr, input: { body: a.md }, output: { x: x.md } }\n",
 			`field "output" does not apply to type action`, 5},
-		{"edge target missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: ghost, max: 2 } }\n",
+		{"edge target missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: ghost, max: 2 } }\n",
 			`on_fail target "ghost" does not exist`, 5},
-		{"edge max missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s } }\n",
+		{"edge max missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s } }\n",
 			"max is required", 5},
-		{"edge max zero", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 0 } }\n",
+		{"edge max zero", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 0 } }\n",
 			"max must be >= 1", 5},
 
-		{"on_fail on human_gate", header + "stages:\n  - { id: g, type: human_gate, on_fail: { to: g, max: 1 } }\n",
+		{"on_fail on human_gate", header + "main:\n  - { id: g, type: human_gate, on_fail: { to: g, max: 1 } }\n",
 			`field "on_fail" does not apply`, 5},
-		{"two create_mr actions", header + "stages:\n  - { id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+		{"two create_mr actions", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
 			`at most one "create_mr" action`, 6},
 
-		{"reserved done id", header + "stages:\n  - { id: done, type: command, run: x }\n",
+		{"reserved done id", header + "main:\n  - { id: done, type: command, run: x }\n",
 			"reserved", 5},
-		{"reserved abort id", header + "stages:\n  - { id: abort, type: command, run: x }\n",
+		{"reserved abort id", header + "main:\n  - { id: abort, type: command, run: x }\n",
 			"reserved", 5},
-		{"reserved start id", header + "stages:\n  - { id: start, type: command, run: x }\n",
+		{"reserved start id", header + "main:\n  - { id: start, type: command, run: x }\n",
 			"reserved", 5},
-		{"edge to done with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: done, max: 1 } }\n",
+		{"edge to done with max", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: done, max: 1 } }\n",
 			"max does not apply", 5},
-		{"abort edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, max: 2 } }\n",
+		{"abort edge with max", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: abort, max: 2 } }\n",
 			"max does not apply", 5},
 
-		{"abort edge with then", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: abort, then: { to: s, max: 1 } } }\n",
+		{"abort edge with then", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: abort, then: { to: s, max: 1 } } }\n",
 			"then does not apply", 5},
-		{"no route ends the run", header + "stages:\n  - { id: s, type: command, run: x, on_success: abort }\n",
+		{"no route ends the run", header + "main:\n  - { id: s, type: command, run: x, on_success: abort }\n",
 			"no route ends the run", 4},
-		{"reserved debug id", header + "stages:\n  - { id: debug, type: command, run: x }\n",
+		{"reserved debug id", header + "main:\n  - { id: debug, type: command, run: x }\n",
 			"reserved", 5},
-		{"debug edge with max", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: debug, max: 2 } }\n",
+		{"debug edge with max", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: debug, max: 2 } }\n",
 			"max does not apply", 5},
-		{"debug edge with then", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: debug, then: { to: s, max: 1 } } }\n",
+		{"debug edge with then", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: debug, then: { to: s, max: 1 } } }\n",
 			"then does not apply", 5},
-		{"on_success debug", header + "stages:\n  - { id: s, type: command, run: x, on_success: debug }\n",
+		{"on_success debug", header + "main:\n  - { id: s, type: command, run: x, on_success: debug }\n",
 			`on_success cannot be "debug"`, 5},
-		{"on_timeout on gate", header + "stages:\n  - { id: g, type: human_gate, on_timeout: { to: g, max: 1 } }\n",
+		{"on_timeout on gate", header + "main:\n  - { id: g, type: human_gate, on_timeout: { to: g, max: 1 } }\n",
 			`field "on_timeout" does not apply`, 5},
-		{"each_repo on an agent", header + "stages:\n  - { id: a, type: agent, agent: x, each_repo: true }\n",
+		{"each_repo on an agent", header + "main:\n  - { id: a, type: agent, agent: x, each_repo: true }\n",
 			"each_repo", 5},
-		{"then target missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: ghost, max: 1 } } }\n",
+		{"then target missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: ghost, max: 1 } } }\n",
 			`on_fail target "ghost" does not exist`, 5},
-		{"then max missing", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: s } } }\n",
+		{"then max missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: s } } }\n",
 			"then #1", 5},
-		{"feed on a then link", header + "stages:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
+		{"feed on a then link", header + "main:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
 			"is retired: bind $DECISION", 5},
-		{"unknown edge field", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
+		{"unknown edge field", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
 			"bogus", 0},
-		{"unlimited without a gate on the link", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -1 } }\n",
+		{"unlimited without a gate on the link", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -1 } }\n",
 			"requires a human_gate", 5},
-		{"max below -1", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -2 } }\n",
+		{"max below -1", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -2 } }\n",
 			"max must be >= 1", 5},
-		{"then after unlimited", header + "stages:\n  - { id: s, type: command, run: x, on_fail: { to: g, max: -1, then: { to: s, max: 1 } } }\n  - { id: g, type: human_gate, on_success: done }\n",
+		{"then after unlimited", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: g, max: -1, then: { to: s, max: 1 } } }\n  - { id: g, type: human_gate, on_success: done }\n",
 			"unreachable", 5},
 		// A wait stage cannot be rejected: there is no human to reject it.
-		{"on_reject on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, on_reject: { to: w, max: 1 } }\n",
+		{"on_reject on a wait", header + "main:\n  - { id: w, type: wait, for: mr_merged, on_reject: { to: w, max: 1 } }\n",
 			`field "on_reject" does not apply`, 5},
-		{"on_success bad target", header + "stages:\n  - { id: a, type: command, run: x, on_success: nope }\n",
+		{"on_success bad target", header + "main:\n  - { id: a, type: command, run: x, on_success: nope }\n",
 			`on_success target "nope" does not exist`, 5},
-		{"success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: b }\n  - { id: b, type: command, run: x, on_success: a }\n",
+		{"success cycle", header + "main:\n  - { id: a, type: command, run: x, on_success: b }\n  - { id: b, type: command, run: x, on_success: a }\n",
 			"success cycle", 5},
-		{"self success cycle", header + "stages:\n  - { id: a, type: command, run: x, on_success: a }\n",
+		{"self success cycle", header + "main:\n  - { id: a, type: command, run: x, on_success: a }\n",
 			"success cycle", 5},
-		{"unreachable stage", header + "stages:\n  - { id: a, type: command, run: x, on_success: done }\n  - { id: b, type: command, run: x, on_success: done }\n",
+		{"unreachable stage", header + "main:\n  - { id: a, type: command, run: x, on_success: done }\n  - { id: b, type: command, run: x, on_success: done }\n",
 			`stage "b" is unreachable`, 6},
 	}
 	for _, tc := range cases {
@@ -561,7 +561,7 @@ func TestGateInputForms(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			doc := header + "stages:\n  - { id: g, type: human_gate, question: \"Ready?\", input: { shown: " + tc.value + " } }\n"
+			doc := header + "main:\n  - { id: g, type: human_gate, question: \"Ready?\", input: { shown: " + tc.value + " } }\n"
 			f, err := Parse("t.yaml", []byte(doc))
 			if err != nil {
 				t.Fatal(err)
@@ -577,7 +577,7 @@ func TestGateInputForms(t *testing.T) {
 	}
 	// Both are optional: a gate with neither still parses (it asks about the
 	// run itself, and the engine falls back to naming the stage).
-	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: g, type: human_gate }\n"))
+	f, err := Parse("t.yaml", []byte(header+"main:\n  - { id: g, type: human_gate }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +589,7 @@ func TestGateInputForms(t *testing.T) {
 // TestWaitStage: blocking on an external signal, and the errors that keep a
 // flow from waiting on something that cannot happen.
 func TestWaitStage(t *testing.T) {
-	f, err := Parse("t.yaml", []byte(header+`stages:
+	f, err := Parse("t.yaml", []byte(header+`main:
   - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
   - { id: merged, type: wait, for: mr_merged, timeout: 24h, on_success: done,
       on_timeout: { to: merged, max: 2 } }
@@ -603,7 +603,7 @@ func TestWaitStage(t *testing.T) {
 		t.Errorf("wait stage = %+v wait %+v", w, w.Wait)
 	}
 	// A gate may be auto-answered by the same registry.
-	g, err := Parse("t.yaml", []byte(header+`stages:
+	g, err := Parse("t.yaml", []byte(header+`main:
   - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
   - { id: gate, type: human_gate, question: "Merge?", input: { mr: $MR_URL },
       auto_approve: mr_merged, on_success: done }
@@ -615,17 +615,17 @@ func TestWaitStage(t *testing.T) {
 		t.Errorf("auto_approve = %q", g.Stage("gate").AutoApprove)
 	}
 	for _, tc := range []struct{ name, doc, want string }{
-		{"missing for", header + "stages:\n  - { id: w, type: wait }\n", "for is required"},
-		{"unknown signal", header + "stages:\n  - { id: w, type: wait, for: pigs_fly }\n", `unknown signal "pigs_fly"`},
-		{"unknown auto_approve", header + "stages:\n  - { id: g, type: human_gate, auto_approve: pigs_fly }\n",
+		{"missing for", header + "main:\n  - { id: w, type: wait }\n", "for is required"},
+		{"unknown signal", header + "main:\n  - { id: w, type: wait, for: pigs_fly }\n", `unknown signal "pigs_fly"`},
+		{"unknown auto_approve", header + "main:\n  - { id: g, type: human_gate, auto_approve: pigs_fly }\n",
 			"unknown auto_approve signal"},
-		{"for on a gate", header + "stages:\n  - { id: g, type: human_gate, for: mr_merged }\n",
+		{"for on a gate", header + "main:\n  - { id: g, type: human_gate, for: mr_merged }\n",
 			`field "for" does not apply`},
-		{"auto_approve on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, auto_approve: mr_merged }\n",
+		{"auto_approve on a wait", header + "main:\n  - { id: w, type: wait, for: mr_merged, auto_approve: mr_merged }\n",
 			`field "auto_approve" does not apply`},
 		// A wait has no start policy: a person in the loop after a signal
 		// is a gate with auto_approve.
-		{"start on a wait", header + "stages:\n  - { id: w, type: wait, for: mr_merged, start: confirm }\n",
+		{"start on a wait", header + "main:\n  - { id: w, type: wait, for: mr_merged, start: confirm }\n",
 			"field start not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -640,7 +640,7 @@ func TestWaitStage(t *testing.T) {
 // escalation, no max/then, and no stage of its own — it is a reserved
 // target the run comes back from, not a terminal.
 func TestDebugLeaf(t *testing.T) {
-	doc := header + commonAgents + `stages:
+	doc := header + commonAgents + `main:
   - { id: build, type: agent, agent: b,
       on_fail: { to: build, max: 2, then: debug } }
   - { id: test,  type: command, run: t, on_fail: debug,
@@ -664,31 +664,30 @@ func TestDebugLeaf(t *testing.T) {
 	if len(f.Stages) != 2 || f.Stage(ReservedDebug) != nil {
 		t.Fatalf("stages = %d; the debug leaf must not become a stage", len(f.Stages))
 	}
-	// Inside a phase: a reaction's routes stay in the phase, and the leaf
-	// (like done/abort) is in every phase.
-	phased := header + commonAgents + `phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: build, type: agent, agent: b, on_fail: debug }
-      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+	// Inside a watcher: its routes stay in its chain, and the leaf (like
+	// done/abort) is in every chain.
+	phased := header + commonAgents + `main:
+  - { id: build, type: agent, agent: b, on_fail: debug }
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+watchers:
   - id: fixes
     on: { signal: mr_review_settled }
     stages:
       - { id: fix, type: agent, agent: b, on_fail: { to: fix, max: 1, then: debug } }
+outcomes:
   - id: shipped
     on: mr_merged
     then: done
 `
 	if _, err := Parse("t.yaml", []byte(phased)); err != nil {
-		t.Fatalf("debug inside phases: %v", err)
+		t.Fatalf("debug inside chains: %v", err)
 	}
 }
 
 // TestAbortAndThenChains covers the abort terminal (map + scalar sugar) and
 // retry-then-escalate chains.
 func TestAbortAndThenChains(t *testing.T) {
-	doc := header + commonAgents + `stages:
+	doc := header + commonAgents + `main:
   - { id: build, type: agent, agent: b }
   - { id: test,  type: command, run: t,
       on_fail: { to: test, max: 2, then: { to: build, max: 3 } },
@@ -717,7 +716,7 @@ func TestAbortAndThenChains(t *testing.T) {
 	}
 
 	// Unlimited links (max -1) parse on human_gate targets.
-	unl := header + `stages:
+	unl := header + `main:
   - { id: work,   type: command, run: w, on_success: done,
       on_fail: { to: rescue, max: -1 } }
   - { id: rescue, type: human_gate, input: { workspace: $WORKSPACE },
@@ -733,7 +732,7 @@ func TestAbortAndThenChains(t *testing.T) {
 
 	// Unlimited is also legal when the SOURCE is a human_gate (the link
 	// only fires when a human rejects it), regardless of the target type.
-	gsrc := header + "agents:\n  - { name: a, prompt: do a }\n" + `stages:
+	gsrc := header + "agents:\n  - { name: a, prompt: do a }\n" + `main:
   - { id: work, type: agent, agent: a, on_success: gate }
   - { id: gate, type: human_gate, on_success: done,
       on_reject: { to: work, max: -1 } }
@@ -751,8 +750,8 @@ func TestAbortAndThenChains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Stages[2].OnReject == nil || d.Stages[2].OnReject.To != TerminalAbort || d.Stages[2].OnReject.Max != nil {
-		t.Fatalf("doc on_reject = %+v", d.Stages[2].OnReject)
+	if d.Main[2].OnReject == nil || d.Main[2].OnReject.To != TerminalAbort || d.Main[2].OnReject.Max != nil {
+		t.Fatalf("doc on_reject = %+v", d.Main[2].OnReject)
 	}
 }
 
@@ -761,7 +760,7 @@ func TestAbortAndThenChains(t *testing.T) {
 func TestExplicitSuccessGraph(t *testing.T) {
 	// Sugar: absent on_success chains document order; the last stage of the
 	// shorthand's one phase ends the run (done) — nothing could follow it.
-	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x }\n  - { id: b, type: command, run: x }\n"))
+	f, err := Parse("t.yaml", []byte(header+"main:\n  - { id: a, type: command, run: x }\n  - { id: b, type: command, run: x }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -771,7 +770,7 @@ func TestExplicitSuccessGraph(t *testing.T) {
 
 	// Explicit branching: a skips b on success; b is reached via a's
 	// on_fail and terminates the run early.
-	doc := header + `stages:
+	doc := header + `main:
   - { id: a, type: command, run: x, on_success: c, on_fail: { to: b, max: 1 } }
   - { id: b, type: command, run: x, on_success: done }
   - { id: c, type: command, run: x }
@@ -792,7 +791,7 @@ func TestExplicitSuccessGraph(t *testing.T) {
 // (FLOWLANG §6, PLAN5 M22). Each of these is legal YAML that would either
 // break the editor's canonical round-trip or hide structure from a reader.
 func TestYAMLHardening(t *testing.T) {
-	stages := "stages:\n  - { id: s, type: command, run: x }\n"
+	stages := "main:\n  - { id: s, type: command, run: x }\n"
 	cases := []struct{ name, doc, substr string }{
 		{
 			name:   "anchors are refused",
@@ -801,17 +800,17 @@ func TestYAMLHardening(t *testing.T) {
 		},
 		{
 			name:   "aliases are refused",
-			doc:    header + commonAgents + "stages:\n  - &s { id: a, type: command, run: x, on_success: done }\n",
+			doc:    header + commonAgents + "main:\n  - &s { id: a, type: command, run: x, on_success: done }\n",
 			substr: "anchors",
 		},
 		{
 			name:   "a second document is refused",
-			doc:    header + stages + "---\nname: other\nversion: 4\n",
+			doc:    header + stages + "---\nname: other\nversion: 5\n",
 			substr: "one document",
 		},
 		{
 			name: "duplicate edge keys are refused",
-			doc: header + "stages:\n  - { id: s, type: command, run: x, " +
+			doc: header + "main:\n  - { id: s, type: command, run: x, " +
 				"on_fail: { to: s, max: 1, to: s } }\n",
 			substr: `"to" set twice`,
 		},
@@ -835,20 +834,18 @@ func TestThenChainDepthCapped(t *testing.T) {
 	for range maxChainDepth + 2 {
 		edge = "{ to: s, max: 1, then: " + edge + " }"
 	}
-	_, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x, on_fail: "+edge+" }\n"))
+	_, err := Parse("t.yaml", []byte(header+"main:\n  - { id: s, type: command, run: x, on_fail: "+edge+" }\n"))
 	if err == nil || !strings.Contains(err.Error(), "then chain is deeper") {
 		t.Errorf("err = %v, want a chain-depth refusal", err)
 	}
 }
 
-// A phased flow (PLAN6): an entrypoint, two firing phases, stage ids one
-// namespace, routes kept inside their phase.
-const phasedDoc = header + `phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: build, type: command, run: x }
-      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+// A flow with all three sections: the main chain, two watchers and an
+// outcome — stage ids one namespace, routes kept inside their chain.
+const phasedDoc = header + `main:
+  - { id: build, type: command, run: x }
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: confirm }
     stages:
@@ -859,6 +856,7 @@ const phasedDoc = header + `phases:
     stages:
       - { id: load, type: action, action: load_review_comments }
       - { id: fix, type: command, run: x, input: { comments: artifacts/review.md } }
+outcomes:
   - id: shipped
     on: mr_merged
     then: done
@@ -873,7 +871,10 @@ func TestPhasedFlowParses(t *testing.T) {
 		t.Fatalf("phases %d stages %d", len(f.Phases), len(f.Stages))
 	}
 	d, c, r, o := f.Phases[0], f.Phases[1], f.Phases[2], f.Phases[3]
-	if !d.IsEntrypoint() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
+	if d.ID != MainPhase || d.Kind != PhaseMain || c.Kind != PhaseWatcher || o.Kind != PhaseOutcome || f.StartsOn != StartsOnTicket {
+		t.Errorf("kinds: %s/%s %s %s, starts on %s", d.ID, d.Kind, c.Kind, o.Kind, f.StartsOn)
+	}
+	if !d.IsMain() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
 		t.Errorf("spans: %+v %+v %+v", d, c, r)
 	}
 	// A then-phase spans no stages: its start is the run's end.
@@ -884,10 +885,10 @@ func TestPhasedFlowParses(t *testing.T) {
 		t.Errorf("wait points: %+v %+v", c.On, r.On)
 	}
 	if !c.Fires() || !c.HasSubject() || d.Fires() || d.HasSubject() {
-		t.Errorf("fires/subject: deliver %v/%v conflicts %v/%v", d.Fires(), d.HasSubject(), c.Fires(), c.HasSubject())
+		t.Errorf("fires/subject: main %v/%v conflicts %v/%v", d.Fires(), d.HasSubject(), c.Fires(), c.HasSubject())
 	}
-	// Absent on_success: next stage in the phase; the phase's last stage ends
-	// the PHASE (end), never the run.
+	// Absent on_success: next stage in the chain; a chain's last stage ends
+	// the PHASE (end) when anything watches — never the run.
 	if f.Stage("build").OnSuccess != "mr" || f.Stage("mr").OnSuccess != TerminalEnd || f.Stage("sync_test").OnSuccess != TerminalEnd {
 		t.Errorf("on_success: build→%s mr→%s sync_test→%s", f.Stage("build").OnSuccess, f.Stage("mr").OnSuccess, f.Stage("sync_test").OnSuccess)
 	}
@@ -899,46 +900,59 @@ func TestPhasedFlowParses(t *testing.T) {
 			t.Errorf("warning %q: review.md is produced by load", w)
 		}
 	}
-	if f.Stage("build").Line != 8 || f.Stage("load").Line != 18 {
+	if f.Stage("build").Line != 5 || f.Stage("load").Line != 16 {
 		t.Errorf("lines: build %d load %d", f.Stage("build").Line, f.Stage("load").Line)
 	}
 }
 
 func TestPhaseValidationErrors(t *testing.T) {
-	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
-		"  - { id: shipped, on: mr_merged, then: done }\n"
+	entry := header + "main:\n  - { id: build, type: command, run: x }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
+	w := func(item string) string { return entry + "watchers:\n" + item }
+	o := func(item string) string { return entry + item } // one more outcome
+	cmd := "stages: [{ id: s, type: command, run: x }]"
 	cases := []struct{ name, doc, substr string }{
-		{"stages and phases", entry + "stages:\n  - { id: s, type: command, run: x }\n", "either top-level stages"},
-		{"no entrypoint", header + "phases:\n  - { id: c, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "no phase begins a run"},
-		{"missing on", header + "phases:\n  - { id: d, stages: [{ id: s, type: command, run: x }] }\n", "signal is required"},
-		{"start on manual", entry + "  - { id: m, on: { signal: manual, start: confirm }, stages: [{ id: s, type: command, run: x }] }\n", "start does not apply"},
-		{"start on run_start", header + "phases:\n  - { id: d, on: { signal: run_start, start: auto }, stages: [{ id: s, type: command, run: x }] }\n", "start does not apply"},
-		{"bad start", entry + "  - { id: m, on: { signal: mr_conflicts, start: later }, stages: [{ id: s, type: command, run: x }] }\n", `start "later" must be`},
-		{"then on a trigger", entry + "  - { id: m, on: mr_conflicts, then: done }\n", "then is for an outcome phase"},
-		{"then and stages", entry + "  - { id: m, on: mr_closed, then: abort, stages: [{ id: s, type: command, run: x }] }\n", "stages or then, not both"},
-		{"bad then", entry + "  - { id: m, on: mr_closed, then: finish }\n", `then "finish" must be`},
-		{"max on an outcome", entry + "  - { id: m, on: { signal: mr_closed, max: 2 }, then: abort }\n", "max does not apply to an outcome"},
-		{"quiet_for on an outcome", entry + "  - { id: m, on: { signal: mr_closed, quiet_for: 1h }, then: abort }\n", "quiet_for applies only"},
-		{"end inside an outcome", entry + "  - { id: m, on: mr_closed, stages: [{ id: s, type: command, run: x, on_success: end }] }\n", `phase "m" is an outcome and ends the run`},
-		{"end on an outcome's edge", entry + "  - { id: m, on: mr_closed, stages: [{ id: s, type: command, run: x, on_fail: end }] }\n", `on_fail: phase "m" is an outcome and ends the run`},
-		{"no route ends the run", header + "phases:\n  - { id: d, on: run_start, stages: [{ id: s, type: command, run: x }] }\n", "no route ends the run"},
-		{"unknown signal", entry + "  - { id: m, on: mr_ghost, stages: [{ id: s, type: command, run: x }] }\n", "unknown signal"},
-		{"quiet on conflicts", entry + "  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, stages: [{ id: s, type: command, run: x }] }\n", "quiet_for applies only"},
-		{"quiet too short", entry + "  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, stages: [{ id: s, type: command, run: x }] }\n", "at least 1m"},
-		{"max zero", entry + "  - { id: m, on: { signal: mr_conflicts, max: 0 }, stages: [{ id: s, type: command, run: x }] }\n", "max must be >= 1"},
-		{"confirm is not grammar", entry + "  - { id: m, on: { signal: mr_conflicts, confirm: true }, stages: [{ id: s, type: command, run: x }] }\n", "field confirm not found"},
-		{"unknown trigger key", entry + "  - { id: m, on: { signal: mr_conflicts, when: now }, stages: [{ id: s, type: command, run: x }] }\n", "field when not found"},
-		{"empty phase", entry + "  - { id: m, on: mr_conflicts, stages: [] }\n", "a phase needs stages"},
-		{"duplicate phase", entry + "  - { id: deliver, on: mr_conflicts, stages: [{ id: s, type: command, run: x }] }\n", "duplicate phase id"},
-		{"duplicate stage across phases", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n", "one namespace"},
-		{"route leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n", "stay inside it"},
-		{"edge leaves phase", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n", "stay inside it"},
-		{"two create_mr in one phase", header + "phases:\n  - { id: d, on: run_start, stages: [{ id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }, { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n", "per phase"},
-		{"rebase without a leased push", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n", "push_branch"},
-		{"bad strategy", entry + "  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: squash } }] }\n", "not one of merge | rebase"},
-		{"trigger on a gate", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: g, type: human_gate, auto_approve: mr_conflicts }\n", "opens a phase"},
-		{"trigger on a wait", header + "stages:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_review_settled }\n", "opens a phase"},
-		{"run_start on a wait", header + "stages:\n  - { id: w, type: wait, for: run_start }\n", "opens a phase"},
+		{"a v4 document", strings.Replace(entry, "version: 5", "version: 4", 1), "this build speaks version 5) — v5 writes the chain a run starts with under `main:`"},
+		{"v4 phases", header + "phases:\n  - { id: d, on: run_start, " + cmd + " }\n", "phases: is v4"},
+		{"v4 stages", entry + "stages:\n  - { id: s, type: command, run: x }\n", "stages: is v4's shorthand"},
+		{"no main", header + "watchers:\n  - { id: c, on: mr_conflicts, " + cmd + " }\n", "main is required"},
+		{"no main and nothing watched", header + "run_start: merge_request\noutcomes:\n  - { id: m, on: mr_merged, then: done }\n", "declare at least one"},
+		{"bad run_start", header + "run_start: repository\nmain:\n  - { id: s, type: command, run: x }\n", `run_start "repository" must be ticket`},
+		{"missing on", w("  - { id: d, " + cmd + " }\n"), "signal is required"},
+		{"start on manual", w("  - { id: m, on: { signal: manual, start: confirm }, " + cmd + " }\n"), "start does not apply"},
+		{"run_start on a watcher", w("  - { id: m, on: run_start, " + cmd + " }\n"), "run_start is how a run begins"},
+		{"manual outcome", o("  - { id: m, on: manual, then: done }\n"), "an outcome fires on something the engine observes"},
+		{"bad start", w("  - { id: m, on: { signal: mr_conflicts, start: later }, " + cmd + " }\n"), `start "later" must be`},
+		{"then on a watcher", w("  - { id: m, on: mr_conflicts, then: done }\n"), "then is an outcome's"},
+		{"bad then", o("  - { id: m, on: mr_closed, then: finish }\n"), `then "finish" must be`},
+		{"max on an outcome", o("  - { id: m, on: { signal: mr_closed, max: 2 }, then: abort }\n"), "max does not apply to an outcome"},
+		{"quiet_for on an outcome", o("  - { id: m, on: { signal: mr_closed, quiet_for: 1h }, then: abort }\n"), "quiet_for applies only"},
+		{"end inside an outcome", o("  - { id: m, on: mr_closed, stages: [{ id: s, type: command, run: x, on_success: end }] }\n"), `outcome "m" ends the run`},
+		{"end on an outcome's edge", o("  - { id: m, on: mr_closed, stages: [{ id: s, type: command, run: x, on_fail: end }] }\n"), `on_fail: outcome "m" ends the run`},
+		{"no route ends the run", header + "main:\n  - { id: s, type: command, run: x }\nwatchers:\n  - { id: c, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n", "no route ends the run"},
+		{"unknown signal", w("  - { id: m, on: mr_ghost, " + cmd + " }\n"), "unknown signal"},
+		{"quiet on conflicts", w("  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, " + cmd + " }\n"), "quiet_for applies only"},
+		{"quiet too short", w("  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, " + cmd + " }\n"), "at least 1m"},
+		{"max zero", w("  - { id: m, on: { signal: mr_conflicts, max: 0 }, " + cmd + " }\n"), "max must be >= 1"},
+		{"confirm is not grammar", w("  - { id: m, on: { signal: mr_conflicts, confirm: true }, " + cmd + " }\n"), "field confirm not found"},
+		{"unknown trigger key", w("  - { id: m, on: { signal: mr_conflicts, when: now }, " + cmd + " }\n"), "field when not found"},
+		{"empty watcher", w("  - { id: m, on: mr_conflicts, stages: [] }\n"), "a watcher needs a chain"},
+		{"empty outcome", o("  - { id: m, on: mr_closed }\n"), "an outcome needs a chain"},
+		{"run and stages", w("  - { id: m, on: mr_conflicts, run: main, " + cmd + " }\n"), "run or stages, not both"},
+		{"run of nothing", w("  - { id: m, on: mr_conflicts, run: nope }\n"), `include "nope": no block of that name`},
+		{"duplicate watcher", w("  - { id: shipped, on: mr_conflicts, " + cmd + " }\n"), "watchers and outcomes are one namespace"},
+		{"watcher named main", w("  - { id: main, on: mr_conflicts, " + cmd + " }\n"), `id "main" is the main chain's`},
+		{"block named main", header + "blocks:\n  - { id: main, " + cmd + " }\nmain:\n  - { id: s, type: command, run: x }\n", "the name is the flow's main chain"},
+		{"main runs itself", header + "main:\n  - { id: s, type: command, run: x }\n  - { id: again, include: main }\n", "includes itself"},
+		{"duplicate stage across chains", w("  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n"), "one namespace"},
+		{"route leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n"), "stay inside it"},
+		{"edge leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n"), "stay inside it"},
+		{"two create_mr in one chain", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n", "per phase"},
+		{"rebase without a leased push", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n"), "push_branch"},
+		{"bad strategy", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: squash } }] }\n"), "not one of merge | rebase"},
+		{"run_start on a gate", header + "main:\n  - { id: g, type: human_gate, auto_approve: run_start }\n", "is not something the engine observes"},
+		{"manual on a wait", header + "main:\n  - { id: w, type: wait, for: manual }\n", "is not something the engine observes"},
+		{"run_start on a wait", header + "main:\n  - { id: w, type: wait, for: run_start }\n", "is not something the engine observes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -950,18 +964,83 @@ func TestPhaseValidationErrors(t *testing.T) {
 	}
 }
 
-// The shorthand is one phase: top-level stages desugar to ShorthandPhase,
-// opened by run_start, so the engine has one execution mode.
-func TestShorthandDesugarsToMain(t *testing.T) {
-	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x }\n"))
+// Any observed signal may be watched, waited on or answer a gate — what it
+// does is the flow's call, not the registry's.
+func TestObservedSignalsGoAnywhere(t *testing.T) {
+	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"  - { id: ready, type: wait, for: mr_mergeable, timeout: 1h, on_fail: end }\n" +
+		"  - { id: g, type: human_gate, auto_approve: mr_approved, auto_reject: mr_conflicts }\n" +
+		"watchers:\n  - { id: ship, on: { signal: mr_approved, start: confirm }, stages: [{ id: merge, type: action, action: mr_merge }] }\n" +
+		"  - { id: gone, on: mr_closed, stages: [{ id: note, type: command, run: x }] }\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
+	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Phases) != 1 || f.Phases[0].ID != ShorthandPhase || !f.Phases[0].IsEntrypoint() || f.Stages[0].Phase != ShorthandPhase {
+	ship, gone := f.Phase("ship"), f.Phase("gone")
+	if !ship.Fires() || !ship.HasSubject() || ship.On.Start != StartConfirm || !gone.Fires() || !gone.HasSubject() || gone.IsOutcome() {
+		t.Errorf("ship %+v gone %+v", ship, gone)
+	}
+	if st := f.Stage("ready"); st.WaitFor != "mr_mergeable" || st.Wait.Timeout != time.Hour {
+		t.Errorf("ready = %+v", st)
+	}
+}
+
+// The main chain is a phase, MainPhase, opened when the run starts; with
+// nothing watching, its last stage ends the run.
+func TestMainChain(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(header+"main:\n  - { id: s, type: command, run: x }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Phases) != 1 || f.Phases[0].ID != MainPhase || !f.Phases[0].IsMain() || f.Stages[0].Phase != MainPhase || f.StartsOnMR() {
 		t.Fatalf("phases = %+v, stage phase %q", f.Phases, f.Stages[0].Phase)
 	}
-	if b := f.Beginning(); b == nil || b.ID != ShorthandPhase || f.Stages[0].Line != 5 || f.Phases[0].On.Max != UnlimitedMax {
-		t.Errorf("beginning %+v, line %d", b, f.Stages[0].Line)
+	if m := f.Main(); m == nil || f.Stages[0].Line != 5 || m.On.Max != UnlimitedMax || m.On.Signal != "run_start" || f.Stages[0].OnSuccess != TerminalDone {
+		t.Errorf("main %+v, line %d, on_success %q", m, f.Stages[0].Line, f.Stages[0].OnSuccess)
+	}
+}
+
+// A watcher or an outcome may run a block — or the main chain — in place:
+// `run: X` is one include of X, named after the watcher.
+func TestRunAChain(t *testing.T) {
+	doc := header + "run_start: merge_request\n" +
+		"blocks:\n  - { id: tidy, stages: [{ id: fmt, type: command, run: x }] }\n" +
+		"main:\n  - { id: sync, type: action, action: sync_target }\n  - { id: push, type: action, action: push_branch }\n" +
+		"watchers:\n  - { id: again, on: mr_conflicts, run: main }\n  - { id: neat, on: manual, run: tidy }\n" +
+		"outcomes:\n  - { id: merged, on: mr_merged, then: done }\n  - { id: closed, on: mr_closed, run: tidy, then: abort }\n"
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, st := range f.Stages {
+		ids = append(ids, st.Phase+":"+st.ID+"→"+st.OnSuccess)
+	}
+	want := "main:sync→push main:push→end again:again.sync→again.push again:again.push→end neat:neat.fmt→end closed:closed.fmt→abort"
+	if got := strings.Join(ids, " "); got != want {
+		t.Errorf("stages = %s\n want %s", got, want)
+	}
+	if !f.StartsOnMR() || !f.Main().OnMR() || f.Stage("again.sync").Include != "again" {
+		t.Errorf("starts on %s, main %+v", f.StartsOn, f.Main())
+	}
+	for _, w := range f.Warnings {
+		t.Errorf("warning: %s", w)
+	}
+}
+
+// A flow whose runs start on a merge request may leave the main chain out
+// and only watch it: a caretaker, started idle.
+func TestCaretakerHasNoMain(t *testing.T) {
+	doc := header + "run_start: merge_request\n" +
+		"watchers:\n  - { id: conflicts, on: mr_conflicts, stages: [{ id: sync, type: action, action: sync_target }, { id: push, type: action, action: push_branch }] }\n" +
+		"outcomes:\n  - { id: merged, on: mr_merged, then: done }\n"
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Main() != nil || len(f.Phases) != 2 || f.Phases[0].Kind != PhaseWatcher {
+		t.Errorf("phases = %+v", f.Phases)
 	}
 }
 
@@ -977,10 +1056,9 @@ func TestPhaseShapeWarnings(t *testing.T) {
 		}
 		return false
 	}
-	doc := header + "phases:\n" +
-		"  - { id: d, on: run_start, stages: [{ id: s, type: action, action: sync_target }, { id: p, type: action, action: push_branch }] }\n" +
-		"  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x, each_repo: true }, { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
-		"  - { id: shipped, on: mr_merged, then: done }\n"
+	doc := header + "main:\n  - { id: s, type: action, action: sync_target }\n  - { id: p, type: action, action: push_branch }\n" +
+		"watchers:\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x, each_repo: true }, { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
@@ -988,7 +1066,7 @@ func TestPhaseShapeWarnings(t *testing.T) {
 	if !warned(f, `"sync_target" acts on the merge request`) || !warned(f, "each_repo is ignored") || warned(f, "needs a merge request no stage opens") {
 		t.Errorf("warnings = %v", f.Warnings)
 	}
-	noMR := header + "phases:\n  - { id: d, on: run_start, stages: [{ id: s, type: command, run: x }] }\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\n  - { id: shipped, on: mr_merged, then: done }\n"
+	noMR := header + "main:\n  - { id: s, type: command, run: x }\nwatchers:\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x }] }\noutcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	if f, err := Parse("t.yaml", []byte(noMR)); err != nil || !warned(f, "needs a merge request no stage opens") {
 		t.Errorf("err %v warnings %v", err, f.Warnings)
 	}
@@ -1001,7 +1079,7 @@ func TestPhaseShapeWarnings(t *testing.T) {
 // edge, in its scalar or mapping form, and neither takes max or then; both
 // are reserved ids.
 func TestEdgeToEndOrDone(t *testing.T) {
-	f, err := Parse("t.yaml", []byte(header+"stages:\n"+
+	f, err := Parse("t.yaml", []byte(header+"main:\n"+
 		"  - { id: a, type: command, run: x, on_fail: done }\n"+
 		"  - { id: b, type: command, run: x, on_fail: { to: done } }\n"+
 		"  - { id: c, type: command, run: x, on_fail: end }\n"+
@@ -1018,29 +1096,29 @@ func TestEdgeToEndOrDone(t *testing.T) {
 	if f.Stage("d").OnSuccess != "e" || f.Stage("e").OnSuccess != TerminalDone {
 		t.Errorf("on_success: d %q e %q", f.Stage("d").OnSuccess, f.Stage("e").OnSuccess)
 	}
-	g, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: a, type: command, run: x, on_success: end, on_fail: done }\n"))
+	g, err := Parse("t.yaml", []byte(header+"main:\n  - { id: a, type: command, run: x, on_success: end, on_fail: done }\n"))
 	if err != nil || g.Stage("a").OnSuccess != TerminalEnd {
 		t.Errorf("on_success: end = %v, %v", g, err)
 	}
-	wantErr(t, header+"stages:\n  - { id: a, type: command, run: x, on_fail: { to: done, then: { to: a, max: 1 } } }\n", "then does not apply", 5)
-	wantErr(t, header+"stages:\n  - { id: a, type: command, run: x, on_fail: { to: end, max: 2 } }\n", `max does not apply when to is "end" (the phase ends)`, 5)
-	wantErr(t, header+"stages:\n  - { id: end, type: command, run: x }\n", `id "end" is reserved`, 5)
-	wantErr(t, header+"stages:\n  - { id: a, type: command, run: x, on_success: finish }\n", `on_success target "finish" does not exist`, 5)
+	wantErr(t, header+"main:\n  - { id: a, type: command, run: x, on_fail: { to: done, then: { to: a, max: 1 } } }\n", "then does not apply", 5)
+	wantErr(t, header+"main:\n  - { id: a, type: command, run: x, on_fail: { to: end, max: 2 } }\n", `max does not apply when to is "end" (the phase ends)`, 5)
+	wantErr(t, header+"main:\n  - { id: end, type: command, run: x }\n", `id "end" is reserved`, 5)
+	wantErr(t, header+"main:\n  - { id: a, type: command, run: x, on_success: finish }\n", `on_success target "finish" does not exist`, 5)
 }
 
 // The run's end written where it does not belong is warned about, never
-// refused: a phase opened by a firing signal may run any number of times, so
-// ending the whole run from it (done, abort) is almost always a slip for
-// end; and a delivery that opens a merge request and says done without
-// waiting for it leaves the reactions nothing to react to.
+// refused: a watcher opened by a firing signal may run any number of times,
+// so ending the whole run from it (done, abort) is almost always a slip for
+// end; and a main chain that opens a merge request and says done without
+// waiting for it leaves the watchers nothing to watch.
 func TestEndingWarnings(t *testing.T) {
-	deliver := func(tail string) string {
-		return header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n" +
-			"      - { id: build, type: command, run: x, output: { mr: artifacts/mr.md } }\n" +
-			"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" + tail
+	mainChain := func(tail string) string {
+		return header + "main:\n" +
+			"  - { id: build, type: command, run: x, output: { mr: artifacts/mr.md } }\n" +
+			"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" + tail
 	}
 	conflicts := func(push string) string {
-		return "  - id: conflicts\n    on: mr_conflicts\n    stages:\n" +
+		return "watchers:\n  - id: conflicts\n    on: mr_conflicts\n    stages:\n" +
 			"      - { id: sync, type: action, action: sync_target }\n" + push
 	}
 	warnings := func(doc string) string {
@@ -1051,40 +1129,40 @@ func TestEndingWarnings(t *testing.T) {
 		}
 		return strings.Join(f.Warnings, "\n")
 	}
-	wait := "      - { id: wait_merge, type: wait, for: mr_merged, on_fail: abort }\n" +
-		"      - { id: ticket_done, type: command, run: x, on_success: done }\n"
+	wait := "  - { id: wait_merge, type: wait, for: mr_merged, on_fail: abort }\n" +
+		"  - { id: ticket_done, type: command, run: x, on_success: done }\n"
 
-	// The default shape: deliver parks on the merge and says done after it;
-	// the reaction ends with end. Nothing to warn about.
-	if w := warnings(deliver(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: end }\n")); w != "" {
+	// The main chain parks on the merge and says done after it; the watcher
+	// ends with end. Nothing to warn about.
+	if w := warnings(mainChain(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: end }\n")); w != "" {
 		t.Errorf("clean flow warned: %s", w)
 	}
-	// A reaction that ends the run, on success or on failure.
-	w := warnings(deliver(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: done, on_fail: abort }\n"))
-	if !strings.Contains(w, `stage "push": phase "conflicts" opens on mr_conflicts and may run any number of times, but this stage ends the whole run (done, abort)`) {
-		t.Errorf("reaction ending the run: %s", w)
+	// A watcher that ends the run, on success or on failure.
+	w := warnings(mainChain(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: done, on_fail: abort }\n"))
+	if !strings.Contains(w, `stage "push": watcher "conflicts" runs on each mr_conflicts and may run any number of times, but this stage ends the whole run (done, abort)`) {
+		t.Errorf("watcher ending the run: %s", w)
 	}
-	// A delivery that is done as soon as the merge request exists.
-	w = warnings(deliver("      - { id: note, type: command, run: x, on_success: done }\n") + conflicts(""))
-	if !strings.Contains(w, `phase "deliver" opens a merge request and ends the run (done) without waiting for it`) {
+	// A main chain that is done as soon as the merge request exists.
+	w = warnings(mainChain("  - { id: note, type: command, run: x, on_success: done }\n") + conflicts(""))
+	if !strings.Contains(w, `the main chain opens a merge request and ends the run (done) without waiting for it`) {
 		t.Errorf("done without a wait: %s", w)
 	}
-	// A gate the merge answers is a wait too; and without reactions there is
+	// A gate the merge answers is a wait too; and without watchers there is
 	// nothing to miss.
-	gate := "      - { id: final, type: human_gate, auto_approve: mr_merged, on_success: done, on_reject: abort }\n"
-	if w := warnings(deliver(gate) + conflicts("")); strings.Contains(w, "without waiting") {
+	gate := "  - { id: final, type: human_gate, auto_approve: mr_merged, on_success: done, on_reject: abort }\n"
+	if w := warnings(mainChain(gate) + conflicts("")); strings.Contains(w, "without waiting") {
 		t.Errorf("a merge-answered gate is a wait: %s", w)
 	}
-	if w := warnings(header + "stages:\n  - { id: b, type: command, run: x, output: { mr: artifacts/mr.md } }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }\n"); strings.Contains(w, "without waiting") {
-		t.Errorf("no reaction phase, nothing to miss: %s", w)
+	if w := warnings(header + "main:\n  - { id: b, type: command, run: x, output: { mr: artifacts/mr.md } }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }\n"); strings.Contains(w, "without waiting") {
+		t.Errorf("no watcher, nothing to miss: %s", w)
 	}
 }
 
-// A phase runs as often as its signal brings a new fact: unbounded unless
+// A watcher runs as often as its signal brings a new fact: unbounded unless
 // the flow caps it, whatever its start policy.
 func TestPhaseRunsAreUnboundedByDefault(t *testing.T) {
-	entry := header + "phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: command, run: x }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
-		"  - { id: shipped, on: mr_merged, then: done }\n"
+	entry := header + "main:\n  - { id: build, type: command, run: x }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\nwatchers:\n"
 	f, err := Parse("t.yaml", []byte(entry+
 		"  - { id: a, on: mr_conflicts, stages: [{ id: s1, type: command, run: x }] }\n"+
 		"  - { id: b, on: { signal: mr_review_settled, quiet_for: 1h, max: -1 }, stages: [{ id: s2, type: command, run: x }] }\n"+
@@ -1099,11 +1177,11 @@ func TestPhaseRunsAreUnboundedByDefault(t *testing.T) {
 
 // A command may bound its script.
 func TestCommandTimeout(t *testing.T) {
-	f, err := Parse("t.yaml", []byte(header+"stages:\n  - { id: s, type: command, run: x, timeout: 5m }\n"))
+	f, err := Parse("t.yaml", []byte(header+"main:\n  - { id: s, type: command, run: x, timeout: 5m }\n"))
 	if err != nil || f.Stages[0].Timeout != 5*time.Minute {
 		t.Fatalf("err %v timeout %v", err, f.Stages[0].Timeout)
 	}
-	wantErr(t, header+"stages:\n  - { id: s, type: command, run: x, timeout: soon }\n", "invalid timeout", 5)
+	wantErr(t, header+"main:\n  - { id: s, type: command, run: x, timeout: soon }\n", "invalid timeout", 5)
 }
 
 // Tracker actions: ticket_transition names a canonical status (`to`, an enum
@@ -1113,7 +1191,7 @@ func TestCommandTimeout(t *testing.T) {
 // takes its value from an artifact OR the flow; ticket_link warns when no
 // merge request precedes it.
 func TestTrackerActionBindings(t *testing.T) {
-	head := "name: tk\nversion: 4\nparameters: { harness: fake, model: fake/m }\nagents: []\nstages:\n"
+	head := "name: tk\nversion: 5\nparameters: { harness: fake, model: fake/m }\nagents: []\nmain:\n"
 	plain := head + "  - { id: s, type: action, action: ticket_transition, input: { status: In Progress } }\n"
 	quoted := head + "  - { id: s, type: action, action: ticket_transition, input: { status: \"In Progress\" } }\n"
 	fp, err := Parse("t.yaml", []byte(plain))
@@ -1170,8 +1248,8 @@ func TestTrackerActionBindings(t *testing.T) {
 		t.Errorf("valid set_field refused: %v", err)
 	}
 
-	// ticket_link's prerequisite: a warning in a stages-only flow with no
-	// create_mr before it, none inside a reaction phase (the subject exists).
+	// ticket_link's prerequisite: a warning in a main chain with no create_mr
+	// before it, none inside a watcher (the subject exists).
 	alone := head + "  - { id: l, type: action, action: ticket_link }\n"
 	f, err := Parse("t.yaml", []byte(alone))
 	if err != nil {
@@ -1193,39 +1271,42 @@ func TestTrackerActionBindings(t *testing.T) {
 	if f, err := Parse("t.yaml", []byte(after)); err != nil || needsMR(f) != 0 {
 		t.Errorf("link after create_mr: err %v warnings %v", err, f.Warnings)
 	}
-	phased := "name: tk\nversion: 4\nparameters: { harness: fake, model: fake/m }\nagents: []\nphases:\n" +
-		"  - { id: deliver, on: run_start, stages: [ { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } } ] }\n" +
-		"  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n" +
-		"  - { id: shipped, on: mr_merged, then: done }\n"
+	phased := "name: tk\nversion: 5\nparameters: { harness: fake, model: fake/m }\nagents: []\n" +
+		"main:\n  - { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"watchers:\n  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	if f, err := Parse("t.yaml", []byte(phased)); err != nil || needsMR(f) != 0 {
-		t.Errorf("link in a reaction phase: err %v warnings %v", err, f.Warnings)
+		t.Errorf("link in a watcher: err %v warnings %v", err, f.Warnings)
 	}
 }
 
-// Outcomes (FLOWLANG §1): a phase on mr_merged or mr_closed ends the run. It
-// takes a start policy like a trigger, no max or quiet_for, and fires once;
-// with stages, its last stage's implicit success is done; with none, `then`
-// says done or abort. on_success may say abort anywhere; the outcome signals
-// stay waitable; and a flow needs some route to done.
+// Outcomes (FLOWLANG §1) fire once and end the run. An outcome takes a start
+// policy like a watcher, no max or quiet_for; its last stage's implicit
+// success is its then (done by default); with no stages, then says how the
+// run ends. on_success may say abort anywhere; the outcome signals stay
+// waitable; and a flow needs some route to done.
 func TestOutcomes(t *testing.T) {
-	doc := header + "phases:\n" +
-		"  - { id: d, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }, { id: w, type: wait, for: mr_closed, on_fail: end }] }\n" +
-		"  - id: merged\n    on: { signal: mr_merged, start: confirm }\n    stages:\n      - { id: tidy, type: command, run: x }\n      - { id: last, type: command, run: x, on_fail: abort }\n" +
+	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_closed, on_fail: end }\n" +
+		"watchers:\n  - { id: giveup, on: manual, stages: [{ id: g, type: command, run: x, on_success: abort, on_fail: done }] }\n" +
+		"outcomes:\n  - id: merged\n    on: { signal: mr_merged, start: confirm }\n    stages:\n      - { id: tidy, type: command, run: x }\n      - { id: last, type: command, run: x, on_fail: abort }\n" +
 		"  - { id: closed, on: mr_closed, then: abort }\n" +
-		"  - { id: giveup, on: manual, stages: [{ id: g, type: command, run: x, on_success: abort, on_fail: done }] }\n"
+		"  - { id: approved, on: mr_approved, then: abort, stages: [{ id: back, type: command, run: x }] }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
 	merged, closed := f.Phase("merged"), f.Phase("closed")
-	if !merged.IsOutcome() || !merged.Observed() || merged.Fires() || merged.HasSubject() || merged.On.Start != StartConfirm || merged.On.Max != UnlimitedMax || merged.Then != "" {
+	if !merged.IsOutcome() || !merged.Observed() || merged.Fires() || merged.HasSubject() || merged.On.Start != StartConfirm || merged.On.Max != UnlimitedMax || merged.Then != TerminalDone {
 		t.Errorf("merged = %+v", merged)
 	}
 	if f.Stage("tidy").OnSuccess != "last" || f.Stage("last").OnSuccess != TerminalDone {
 		t.Errorf("an outcome's chain: tidy→%s last→%s", f.Stage("tidy").OnSuccess, f.Stage("last").OnSuccess)
 	}
-	if !closed.IsOutcome() || !closed.HasSubject() || closed.Then != TerminalAbort || closed.On.Start != StartAuto || closed.First != 4 || closed.Last != 3 { // no stages of its own; g follows at 4
+	if !closed.IsOutcome() || !closed.HasSubject() || closed.Then != TerminalAbort || closed.On.Start != StartAuto || closed.First != 5 || closed.Last != 4 { // no stages of its own; back follows at 5
 		t.Errorf("closed = %+v", closed)
+	}
+	if f.Stage("back").OnSuccess != TerminalAbort {
+		t.Errorf("an outcome's then is its chain's end: back→%s", f.Stage("back").OnSuccess)
 	}
 	if f.Stage("g").OnSuccess != TerminalAbort || f.Stage("w").WaitFor != "mr_closed" || !f.EndsRun() {
 		t.Errorf("g→%s w waits on %s ends %v", f.Stage("g").OnSuccess, f.Stage("w").WaitFor, f.EndsRun())
@@ -1236,44 +1317,36 @@ func TestOutcomes(t *testing.T) {
 		}
 	}
 	// The done rule counts a then: done, an on_success: done and an edge to done.
+	base := header + "main:\n  - { id: b, type: command, run: x }\nwatchers:\n  - { id: c, on: mr_conflicts, stages: [{ id: c1, type: command, run: x }] }\n"
 	for _, tc := range []struct{ name, tail string }{
-		{"then", "  - { id: o, on: mr_merged, then: done }\n"},
+		{"then", "outcomes:\n  - { id: o, on: mr_merged, then: done }\n"},
 		{"on_success", "  - { id: o, on: manual, stages: [{ id: s, type: command, run: x, on_success: done }] }\n"},
 		{"edge", "  - { id: o, on: manual, stages: [{ id: s, type: command, run: x, on_fail: done }] }\n"},
 	} {
-		base := header + "phases:\n  - { id: d, on: run_start, stages: [{ id: b, type: command, run: x }] }\n"
 		if f, err := Parse("t.yaml", []byte(base+tc.tail)); err != nil || !f.EndsRun() {
 			t.Errorf("%s: err %v", tc.name, err)
 		}
 	}
 }
 
-// Entrypoints are explicit: a run begins at a phase `on: run_start` (several
-// allowed; the first is the default), a phase `on: manual` starts by hand
-// from the run page only, and neither takes a start policy.
-func TestEntrypoints(t *testing.T) {
-	doc := header + "phases:\n" +
-		"  - { id: polish, on: { signal: manual, max: 3 }, stages: [{ id: shine, type: command, run: x }] }\n" +
-		"  - { id: deliver, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
-		"  - { id: quick, on: run_start, stages: [{ id: mr2, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
-		"  - { id: shipped, on: mr_merged, then: done }\n"
+// One way in: a run starts with the main chain (a person's or an
+// automation's act, so no start policy), and a watcher `on: manual` is
+// started by hand from the run page only.
+func TestMainAndManual(t *testing.T) {
+	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"watchers:\n  - { id: polish, on: { signal: manual, max: 3 }, stages: [{ id: shine, type: command, run: x }] }\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := f.Entrypoints(); len(got) != 2 || got[0].ID != "deliver" || got[1].ID != "quick" {
-		t.Errorf("entrypoints = %+v", got)
-	}
-	if b := f.Beginning(); b == nil || b.ID != "deliver" {
-		t.Errorf("beginning = %+v", b)
-	}
 	polish := f.Phase("polish")
-	if polish.IsEntrypoint() || polish.Fires() || polish.HasSubject() || polish.On.Max != 3 || polish.On.Start != StartManual {
+	if polish.IsMain() || polish.Fires() || polish.HasSubject() || polish.On.Max != 3 || polish.On.Start != StartManual {
 		t.Errorf("polish = %+v", polish.On)
 	}
-	deliver := f.Phase("deliver")
-	if !deliver.IsEntrypoint() || deliver.Fires() || deliver.On.Max != UnlimitedMax || deliver.On.Start != StartManual {
-		t.Errorf("deliver = %+v", deliver.On)
+	main := f.Main()
+	if main == nil || main.ID != MainPhase || !main.IsMain() || main.Fires() || main.On.Max != UnlimitedMax || main.On.Start != StartManual {
+		t.Errorf("main = %+v", main)
 	}
 }
 
@@ -1283,7 +1356,7 @@ func TestEntrypoints(t *testing.T) {
 // read where $name appears.
 func TestParametersDeclare(t *testing.T) {
 	doc := `name: t
-version: 4
+version: 5
 parameters:
   harness: fake
   model: { default: a/b, description: "the default model" }
@@ -1297,17 +1370,16 @@ parameters:
 agents:
   - name: b
     prompt: do b
-phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: build, type: agent, agent: b, model: $review_model, max_turns: $turns, when: $plan_gate }
-      - { id: test, type: command, run_ref: $verify }
-      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+main:
+  - { id: build, type: agent, agent: b, model: $review_model, max_turns: $turns, when: $plan_gate }
+  - { id: test, type: command, run_ref: $verify }
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: $mode }
     stages:
       - { id: sync, type: action, action: sync_target }
+outcomes:
   - id: shipped
     on: mr_merged
     then: done
@@ -1348,8 +1420,8 @@ phases:
 	for _, r := range f.Refs {
 		refs[r.Param] = r.Phase + "/" + r.Stage + "/" + r.Field
 	}
-	if len(f.Refs) != 5 || refs["review_model"] != "deliver/build/model" || refs["plan_gate"] != "deliver/build/when" ||
-		refs["verify"] != "deliver/test/run_ref" || refs["mode"] != "conflicts//start" || refs["turns"] != "deliver/build/max_turns" {
+	if len(f.Refs) != 5 || refs["review_model"] != "main/build/model" || refs["plan_gate"] != "main/build/when" ||
+		refs["verify"] != "main/test/run_ref" || refs["mode"] != "conflicts//start" || refs["turns"] != "main/build/max_turns" {
 		t.Errorf("refs = %+v", f.Refs)
 	}
 	unused := false
@@ -1362,7 +1434,7 @@ phases:
 		t.Errorf("warnings = %v", f.Warnings)
 	}
 
-	stages := "stages:\n  - { id: s, type: command, run: x }\n"
+	stages := "main:\n  - { id: s, type: command, run: x }\n"
 	for _, tc := range []struct{ name, params, substr string }{
 		{"harness missing", "{ model: a/b }", "harness is required"},
 		{"bad name", "{ harness: fake, model: a/b, Bad: 1 }", "is not a parameter name"},
@@ -1379,14 +1451,14 @@ phases:
 		{"declared twice", "{ harness: fake, model: a/b, x: 1, x: 2 }", "declared twice"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Parse("t.yaml", []byte("name: t\nversion: 4\nparameters: "+tc.params+"\n"+stages))
+			_, err := Parse("t.yaml", []byte("name: t\nversion: 5\nparameters: "+tc.params+"\n"+stages))
 			if err == nil || !strings.Contains(err.Error(), tc.substr) {
 				t.Errorf("err = %v, want %q", err, tc.substr)
 			}
 		})
 	}
 	// defaults: and budget: are not grammar.
-	if _, err := Parse("t.yaml", []byte("name: t\nversion: 4\ndefaults: { harness: fake, model: a/b }\n"+stages)); err == nil || !strings.Contains(err.Error(), "field defaults not found") {
+	if _, err := Parse("t.yaml", []byte("name: t\nversion: 5\ndefaults: { harness: fake, model: a/b }\n"+stages)); err == nil || !strings.Contains(err.Error(), "field defaults not found") {
 		t.Errorf("defaults: err = %v", err)
 	}
 }
@@ -1395,21 +1467,21 @@ phases:
 // the site's type, an enum within an enum site's values, and then the site's
 // own rule on the value it yields.
 func TestParamSites(t *testing.T) {
-	head := "name: t\nversion: 4\nparameters: { harness: fake, model: a/b, s: text, d: 5m, n: 2, b: true, e: { default: auto, enum: [auto, confirm] }, big: { default: auto, enum: [auto, confirm, manual] } }\n" + commonAgents
+	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: text, d: 5m, n: 2, b: true, e: { default: auto, enum: [auto, confirm] }, big: { default: auto, enum: [auto, confirm, manual] } }\n" + commonAgents
 	for _, tc := range []struct{ name, doc, substr string }{
-		{"sentinel at a site", head + "stages:\n  - { id: a, type: agent, agent: b, model: $DIFF_TARGET }\n", "is a sentinel, not a parameter"},
-		{"undeclared", head + "stages:\n  - { id: a, type: agent, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
-		{"wrong type", head + "stages:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
-		{"bool at a string site", head + "stages:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},
-		{"param in a path", head + "stages:\n  - { id: a, type: agent, agent: b, input: { plan: $s } }\n", "must be a relative artifact path"},
-		{"enum site needs an enum", head + "phases:\n  - { id: d, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n  - { id: c, on: { signal: mr_conflicts, start: $s }, stages: [{ id: x, type: command, run: x }] }\n", "needs an enum within"},
-		{"enum wider than the site", head + "stages:\n  - { id: s, type: action, action: sync_target, input: { strategy: $big } }\n", `allows "auto", which this field does not`},
-		{"mixed case ref", head + "stages:\n  - { id: a, type: agent, agent: b, model: $Mixed }\n", "is not a parameter reference"},
-		{"value fails the site rule", head + "stages:\n  - { id: a, type: agent, agent: b, model: $s }\n", `model: "text" (parameter "s") is not of the form provider/model`},
-		{"duration via param", head + "stages:\n  - { id: a, type: agent, agent: b, timeout: $s }\n", `invalid timeout "text" (parameter "s")`},
-		{"max_turns via param zero", "name: t\nversion: 4\nparameters: { harness: fake, model: a/b, z: 0 }\n" + commonAgents + "stages:\n  - { id: a, type: agent, agent: b, max_turns: $z }\n", `max_turns must be > 0, got 0 (parameter "z")`},
-		{"on.max via string", head + "phases:\n  - { id: d, on: run_start, stages: [{ id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n  - { id: c, on: { signal: mr_conflicts, max: $s }, stages: [{ id: x, type: command, run: x }] }\n", "takes a int"},
-		{"action enum via plain string", head + "stages:\n  - { id: s, type: action, action: sync_target, input: { strategy: $s } }\n", "needs an enum within"},
+		{"sentinel at a site", head + "main:\n  - { id: a, type: agent, agent: b, model: $DIFF_TARGET }\n", "is a sentinel, not a parameter"},
+		{"undeclared", head + "main:\n  - { id: a, type: agent, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
+		{"wrong type", head + "main:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
+		{"bool at a string site", head + "main:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},
+		{"param in a path", head + "main:\n  - { id: a, type: agent, agent: b, input: { plan: $s } }\n", "must be a relative artifact path"},
+		{"enum site needs an enum", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, start: $s }, stages: [{ id: x, type: command, run: x }] }\n", "needs an enum within"},
+		{"enum wider than the site", head + "main:\n  - { id: s, type: action, action: sync_target, input: { strategy: $big } }\n", `allows "auto", which this field does not`},
+		{"mixed case ref", head + "main:\n  - { id: a, type: agent, agent: b, model: $Mixed }\n", "is not a parameter reference"},
+		{"value fails the site rule", head + "main:\n  - { id: a, type: agent, agent: b, model: $s }\n", `model: "text" (parameter "s") is not of the form provider/model`},
+		{"duration via param", head + "main:\n  - { id: a, type: agent, agent: b, timeout: $s }\n", `invalid timeout "text" (parameter "s")`},
+		{"max_turns via param zero", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, z: 0 }\n" + commonAgents + "main:\n  - { id: a, type: agent, agent: b, max_turns: $z }\n", `max_turns must be > 0, got 0 (parameter "z")`},
+		{"on.max via string", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, max: $s }, stages: [{ id: x, type: command, run: x }] }\n", "takes a int"},
+		{"action enum via plain string", head + "main:\n  - { id: s, type: action, action: sync_target, input: { strategy: $s } }\n", "needs an enum within"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Parse("t.yaml", []byte(tc.doc))
@@ -1418,13 +1490,13 @@ func TestParamSites(t *testing.T) {
 			}
 		})
 	}
-	ok := head + "phases:\n  - id: d\n    on: run_start\n    stages:\n" +
-		"      - { id: a, type: agent, agent: b, max_turns: $n, timeout: $d, harness: $s, model: a/c }\n" +
-		"      - { id: c, type: command, run: \"echo $HOME\", run_ref: $s, timeout: $d }\n"
+	ok := head + "main:\n" +
+		"  - { id: a, type: agent, agent: b, max_turns: $n, timeout: $d, harness: $s, model: a/c }\n" +
+		"  - { id: c, type: command, run: \"echo $HOME\", run_ref: $s, timeout: $d }\n"
 	ok = strings.Replace(ok, "run: \"echo $HOME\", run_ref: $s", "run: \"echo $HOME\"", 1)
-	ok += "      - { id: w, type: wait, for: mr_merged }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
-		"  - id: cf\n    on: { signal: mr_conflicts, start: $big, max: $n, quiet_for: $d }\n    stages: [{ id: x, type: command, run: x }]\n" +
-		"  - { id: shipped, on: mr_merged, then: done }\n"
+	ok += "  - { id: w, type: wait, for: mr_merged }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"watchers:\n  - id: cf\n    on: { signal: mr_conflicts, start: $big, max: $n, quiet_for: $d }\n    stages: [{ id: x, type: command, run: x }]\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	ok = strings.Replace(ok, "start: $big, max: $n, quiet_for: $d", "start: $big, max: $n", 1)
 	f, err := Parse("t.yaml", []byte(ok))
 	if err != nil {
@@ -1451,7 +1523,7 @@ func TestParamSites(t *testing.T) {
 // the receiver is untouched.
 func TestResolve(t *testing.T) {
 	doc := `name: t
-version: 4
+version: 5
 parameters:
   harness: fake
   model: a/b
@@ -1460,17 +1532,16 @@ parameters:
   gate: true
   mode: { default: confirm, enum: [auto, confirm, manual] }
   turns: 2
-` + commonAgents + `phases:
-  - id: d
-    on: run_start
-    stages:
-      - { id: a, type: agent, agent: b, max_turns: $turns, when: $gate }
-      - { id: t, type: command, run_ref: $verify }
-      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+` + commonAgents + `main:
+  - { id: a, type: agent, agent: b, max_turns: $turns, when: $gate }
+  - { id: t, type: command, run_ref: $verify }
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+watchers:
   - id: c
     on: { signal: mr_conflicts, start: $mode, max: -1 }
     stages:
       - { id: s, type: action, action: sync_target }
+outcomes:
   - id: shipped
     on: mr_merged
     then: done
@@ -1518,8 +1589,8 @@ parameters:
 // when: a run fact or a bool parameter (which folds), optionally negated as
 // `not x`; a conditional producer is no longer a definite one.
 func TestWhen(t *testing.T) {
-	head := "name: t\nversion: 4\nparameters: { harness: fake, model: a/b, yes: true, no: false, s: x }\n"
-	f, err := Parse("t.yaml", []byte(head+"stages:\n"+
+	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, yes: true, no: false, s: x }\n"
+	f, err := Parse("t.yaml", []byte(head+"main:\n"+
 		"  - { id: a, type: command, run: x, when: tracker }\n"+
 		"  - { id: b, type: command, run: x, when: not subject }\n"+
 		"  - { id: c, type: command, run: x, when: $yes }\n"+
@@ -1545,14 +1616,14 @@ func TestWhen(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ doc, substr string }{
-		{head + "stages:\n  - { id: a, type: command, run: x, when: maybe }\n", "is not a condition"},
-		{head + "stages:\n  - { id: a, type: command, run: x, when: $s }\n", "is a string, and this field takes a bool"},
+		{head + "main:\n  - { id: a, type: command, run: x, when: maybe }\n", "is not a condition"},
+		{head + "main:\n  - { id: a, type: command, run: x, when: $s }\n", "is a string, and this field takes a bool"},
 	} {
 		if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.substr) {
 			t.Errorf("err = %v, want %q", err, tc.substr)
 		}
 	}
-	cond := header + commonAgents + "stages:\n  - { id: p, type: agent, agent: builder, when: tracker }\n  - { id: c, type: command, run: x, input: { patch: artifacts/patch.md } }\n"
+	cond := header + commonAgents + "main:\n  - { id: p, type: agent, agent: builder, when: tracker }\n  - { id: c, type: command, run: x, input: { patch: artifacts/patch.md } }\n"
 	f, err = Parse("t.yaml", []byte(cond))
 	if err != nil {
 		t.Fatal(err)
@@ -1571,10 +1642,10 @@ func TestWhen(t *testing.T) {
 // The editor's document shape: parameters as an ordered object of long
 // forms with typed defaults, int fields as a number or a "$name" string.
 func TestDocJSONShapes(t *testing.T) {
-	doc := "name: t\nversion: 4\nparameters:\n  harness: fake\n  model: a/b\n  turns: 3\n  cost: 1.5\n  gate: true\n  mode: { default: a, enum: [a, b], description: pick }\n" + commonAgents +
-		"phases:\n  - id: d\n    on: run_start\n    stages:\n      - { id: s, type: agent, agent: b, max_turns: $turns, when: $gate }\n" +
-		"  - id: c\n    on: { signal: mr_conflicts, max: $turns }\n    stages: [{ id: x, type: command, run: x }]\n" +
-		"  - { id: o, on: mr_merged, then: done }\n"
+	doc := "name: t\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  turns: 3\n  cost: 1.5\n  gate: true\n  mode: { default: a, enum: [a, b], description: pick }\n" + commonAgents +
+		"main:\n  - { id: s, type: agent, agent: b, max_turns: $turns, when: $gate }\n" +
+		"watchers:\n  - id: c\n    on: { signal: mr_conflicts, max: $turns }\n    stages: [{ id: x, type: command, run: x }]\n" +
+		"outcomes:\n  - { id: o, on: mr_merged, then: done }\n"
 	d, err := ParseDoc("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
@@ -1585,7 +1656,7 @@ func TestDocJSONShapes(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"parameters":{"harness":{"default":"fake"},"model":{"default":"a/b"},"turns":{"default":3},"cost":{"default":1.5},"gate":{"default":true},"mode":{"default":"a","description":"pick","enum":["a","b"]}}`,
-		`"max_turns":"$turns"`, `"when":"$gate"`, `"on":{"signal":"run_start"}`, `"on":{"signal":"mr_conflicts","max":"$turns"}`,
+		`"max_turns":"$turns"`, `"when":"$gate"`, `"main":[{"id":"s"`, `"on":{"signal":"mr_conflicts","max":"$turns"}`,
 		`{"id":"o","on":{"signal":"mr_merged"},"then":"done"}`,
 	} {
 		if !strings.Contains(string(b), want) {
@@ -1602,7 +1673,7 @@ func TestDocJSONShapes(t *testing.T) {
 	}
 	// Short forms read back too.
 	var short Doc
-	if err := json.Unmarshal([]byte(`{"name":"t","version":4,"parameters":{"harness":"fake","n":2}}`), &short); err != nil || len(short.Parameters.Entries) != 2 || short.Parameters.Entries[1].Param.Default.Kind != ParamInt {
+	if err := json.Unmarshal([]byte(`{"name":"t","version":5,"parameters":{"harness":"fake","n":2}}`), &short); err != nil || len(short.Parameters.Entries) != 2 || short.Parameters.Entries[1].Param.Default.Kind != ParamInt {
 		t.Errorf("short form: %v %+v", err, short.Parameters.Entries)
 	}
 }

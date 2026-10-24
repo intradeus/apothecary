@@ -107,7 +107,7 @@
 
 	/** The debug leaf carries facts, not prose: the card is the wording. */
 	const debug = $derived(ping.type === 'debug');
-	// Giving up at a reaction's debug leaf ends that round, not the run: the
+	// Giving up at a watcher's debug leaf ends that round, not the run: the
 	// engine says which on the ping, and the buttons say what will happen.
 	const endsRound = $derived(debug && ping.endsPhase);
 	const phaseName = $derived(ping.phase ?? '');

@@ -71,33 +71,56 @@ type Doc struct {
 	// Blocks are chains of stages written once and included where needed
 	// (FLOWLANG §1 Blocks); the parser expands every include in place.
 	Blocks []DocBlock `yaml:"blocks" json:"blocks,omitempty"`
-	// Stages and Phases are exclusive: top-level stages are the one-phase
-	// shorthand (today's flows), phases the whole life of a ticket (PLAN6).
-	Stages []DocStage `yaml:"stages" json:"stages,omitempty"`
-	Phases []DocPhase `yaml:"phases" json:"phases,omitempty"`
+	// RunStart is what the flow's runs are started on (FLOWLANG §1): a
+	// ticket, the default, or a merge request someone opened. A person or an
+	// automation starts a run — nothing the flow listens for does.
+	RunStart string `yaml:"run_start" json:"run_start,omitempty"`
+	// Main is the chain that runs when the run starts. Watchers run theirs
+	// on each new occurrence of a signal while the run is open; outcomes
+	// fire once and end it.
+	Main     []DocStage   `yaml:"main" json:"main,omitempty"`
+	Watchers []DocWatcher `yaml:"watchers" json:"watchers,omitempty"`
+	Outcomes []DocWatcher `yaml:"outcomes" json:"outcomes,omitempty"`
+	// v4's keys, read only to point a v4 document at their v5 spelling.
+	LegacyStages yaml.Node `yaml:"stages" json:"-"`
+	LegacyPhases yaml.Node `yaml:"phases" json:"-"`
 }
 
-// DocBlock is one block: a named chain of stages a stage `include:`s. Like a
-// phase without an `on:` — nothing opens it, an include runs it.
+// DocBlock is one block: a named chain of stages a stage `include:`s, or a
+// watcher `run:`s. Nothing opens it; an include runs it in place.
 type DocBlock struct {
 	ID          string     `yaml:"id" json:"id"`
 	Description string     `yaml:"description" json:"description,omitempty"`
 	Stages      []DocStage `yaml:"stages" json:"stages"`
 }
 
-// DocPhase is one phase: what starts it and its stages.
-type DocPhase struct {
+// DocWatcher is one watcher or one outcome (FLOWLANG §1): the signal it is
+// on, and the chain it runs — its own stages, or `run:` naming a block (or
+// `main`, the main chain) to run in place. An outcome's `then:` says how the
+// run ends after its chain: done (the default) or abort; an outcome with
+// nothing to do but end the run says only that.
+type DocWatcher struct {
 	ID          string     `yaml:"id" json:"id"`
 	Description string     `yaml:"description" json:"description,omitempty"`
 	On          DocWait    `yaml:"on" json:"on"`
+	Run         string     `yaml:"run" json:"run,omitempty"`
 	Stages      []DocStage `yaml:"stages" json:"stages,omitempty"`
-	// Then: an outcome with nothing to do but end the run — `then: done` or
-	// `then: abort` in place of stages.
-	Then string `yaml:"then" json:"then,omitempty"`
+	Then        string     `yaml:"then" json:"then,omitempty"`
 }
 
-// DocWait is a phase's `on:` — the wait point that opens it: a bare slug
-// (`on: run_start`, `on: manual`, `on: mr_conflicts`) or a mapping with the
+// phaseSrc is one phase as the parser assembles it from the document's
+// sections: the main chain, a watcher or an outcome.
+type phaseSrc struct {
+	id, description string
+	kind            PhaseKind
+	on              DocWait
+	stages          []DocStage
+	then            string
+	line            int
+}
+
+// DocWait is a watcher's or an outcome's `on:` — the wait point that opens
+// it: a bare slug (`on: manual`, `on: mr_conflicts`) or a mapping with the
 // options.
 type DocWait struct {
 	Signal   string  `yaml:"signal" json:"signal"`
@@ -774,12 +797,14 @@ func parseBound(filename string, data []byte, bindings map[string]string) (*Flow
 			return nil, err
 		}
 	}
-	total := len(raw.Stages)
-	for i := range raw.Phases {
-		total += len(raw.Phases[i].Stages)
+	total := len(raw.Main)
+	for _, list := range [][]DocWatcher{raw.Watchers, raw.Outcomes} {
+		for i := range list {
+			total += len(list[i].Stages)
+		}
 	}
 	if total > maxStages {
-		return nil, p.errf(p.keyLine("stages"), "flow declares %d stages; the limit is %d", total, maxStages)
+		return nil, p.errf(p.keyLine("main"), "flow declares %d stages; the limit is %d", total, maxStages)
 	}
 	if len(raw.Agents) > maxAgents {
 		return nil, p.errf(p.keyLine("agents"), "flow declares %d agents; the limit is %d", len(raw.Agents), maxAgents)
@@ -890,7 +915,7 @@ func (p *parser) stageLine(i int) int {
 	if i < len(p.stageLines) {
 		return p.stageLines[i]
 	}
-	return p.seqLine("stages", i)
+	return p.seqLine("main", i)
 }
 
 // seqNodes returns a top-level sequence's element nodes, or nil.
@@ -955,7 +980,25 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	case 0:
 		return nil, p.errf(1, "version is required (this build speaks version %d)", CurrentVersion)
 	default:
-		return nil, p.errf(p.keyLine("version"), "unsupported flow version %d (this build speaks version %d)", raw.Version, CurrentVersion)
+		hint := ""
+		if raw.Version == 4 {
+			hint = " — v5 writes the chain a run starts with under `main:`, the phases that react under `watchers:` and those that end the run under `outcomes:`, and says what runs are started on with `run_start:` (FLOWLANG §1)"
+		}
+		return nil, p.errf(p.keyLine("version"), "unsupported flow version %d (this build speaks version %d)%s", raw.Version, CurrentVersion, hint)
+	}
+	if raw.LegacyPhases.Kind != 0 {
+		return nil, p.errf(p.keyLine("phases"), "phases: is v4 — the chain a run starts with goes under `main:`, the phases that react under `watchers:`, those that end the run under `outcomes:`")
+	}
+	if raw.LegacyStages.Kind != 0 {
+		return nil, p.errf(p.keyLine("stages"), "stages: is v4's shorthand — write the chain under `main:`")
+	}
+	switch raw.RunStart {
+	case "", StartsOnTicket:
+		f.StartsOn = StartsOnTicket
+	case StartsOnMR:
+		f.StartsOn = StartsOnMR
+	default:
+		return nil, p.errf(p.keyLine("run_start"), "run_start %q must be %s (the default: a run is started from a ticket) or %s (a run is started on a merge request someone opened)", raw.RunStart, StartsOnTicket, StartsOnMR)
 	}
 
 	var err error
@@ -966,47 +1009,31 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		return nil, err
 	}
 
-	// Every flow is phases. Top-level stages are the one-phase shorthand: a
-	// phase named ShorthandPhase opened by run_start, which is exactly what
-	// the engine runs — there is no second execution mode.
-	rawPhases := raw.Phases
-	if len(rawPhases) > 0 && len(raw.Stages) > 0 {
-		return nil, p.errf(p.keyLine("stages"), "a flow declares either top-level stages (one phase) or phases, not both — move these stages into a phase (`on: %s`)", signalspec.RunStart)
-	}
-	if len(rawPhases) == 0 {
-		if len(raw.Stages) == 0 {
-			return nil, p.errf(p.keyLine("stages"), "flow must declare at least one stage")
-		}
-		rawPhases = []DocPhase{{ID: ShorthandPhase, On: DocWait{Signal: signalspec.RunStart}, Stages: raw.Stages}}
-		f.shorthand = true
-	}
-	// Every stage remembers its line before blocks are expanded, which
-	// copies stages out of where they were written.
-	nodes := p.seqNodes("phases")
-	for i := range rawPhases {
-		var lines []int
-		if !f.shorthand && i < len(nodes) {
-			lines = phaseStageLines(nodes[i])
-		}
-		for j := range rawPhases[i].Stages {
-			l := p.seqLine("phases", i)
-			switch {
-			case f.shorthand:
-				l = p.seqLine("stages", j)
-			case j < len(lines):
-				l = lines[j]
-			}
-			rawPhases[i].Stages[j].line = l
-		}
-	}
-	if err = p.buildBlocks(raw.Blocks); err != nil {
+	// The document's sections are phases underneath: the main chain, then
+	// each watcher, then each outcome, in document order.
+	srcs, err := p.phaseSources(raw, f)
+	if err != nil {
 		return nil, err
 	}
-	if err = p.indexIncludes(rawPhases); err != nil {
+	// The main chain is a block too, so a watcher can run it again
+	// (`run: main`): its stages, as written.
+	blocks := raw.Blocks
+	for i := range blocks {
+		if blocks[i].ID == MainPhase {
+			return nil, p.errf(p.seqLine("blocks", i), "block %q: the name is the flow's main chain (a watcher runs it with `run: %s`) — name the block otherwise", MainPhase, MainPhase)
+		}
+	}
+	if len(srcs) > 0 && srcs[0].kind == PhaseMain {
+		blocks = append(slices.Clone(blocks), DocBlock{ID: MainPhase, Description: "the main chain", Stages: slices.Clone(srcs[0].stages)})
+	}
+	if err = p.buildBlocks(blocks); err != nil {
+		return nil, err
+	}
+	if err = p.indexIncludes(srcs); err != nil {
 		return nil, err
 	}
 	var rawStages []DocStage
-	if f.Phases, rawStages, err = p.buildPhases(rawPhases, f.shorthand); err != nil {
+	if f.Phases, rawStages, err = p.buildPhases(srcs, f); err != nil {
 		return nil, err
 	}
 	ids := map[string]int{} // id -> stage index, for uniqueness + edge targets
@@ -1038,15 +1065,21 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 
 	// The success chain is explicit in the model (DESIGN3 §2.1); absent
 	// on_success is YAML sugar for "next stage in document order", and the
-	// last stage of a phase ends the PHASE (end) — never the run, unless
-	// nothing could follow: the one phase of the shorthand, and an outcome,
-	// end the run (done) when their chain is over. After this loop every
-	// stage has a concrete target.
+	// last stage of a chain ends the PHASE (end) — the run goes back to
+	// waiting — unless nothing could follow: the main chain of a flow with
+	// no watcher and no outcome ends the run (done), and an outcome ends it
+	// the way its then says (done by default). After this loop every stage
+	// has a concrete target.
+	watches := len(f.Phases) > 0 && (len(f.Phases) > 1 || !f.Phases[0].IsMain())
 	for i := range f.Stages {
 		if f.Stages[i].OnSuccess == "" {
 			if i == len(f.Stages)-1 || f.Stages[i+1].Phase != f.Stages[i].Phase {
 				f.Stages[i].OnSuccess = TerminalEnd
-				if ph := f.Phase(f.Stages[i].Phase); f.shorthand || (ph != nil && ph.IsOutcome()) {
+				switch ph := f.Phase(f.Stages[i].Phase); {
+				case ph == nil:
+				case ph.IsOutcome():
+					f.Stages[i].OnSuccess = ph.Then
+				case ph.IsMain() && !watches:
 					f.Stages[i].OnSuccess = TerminalDone
 				}
 			} else {
@@ -1541,11 +1574,14 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		for _, f := range []struct{ field, slug string }{
 			{"auto_approve", raw.AutoApprove}, {"auto_reject", raw.AutoReject},
 		} {
-			if f.slug != "" && signalspec.Get(f.slug) == nil {
-				return fail("unknown %s signal %q (%s)", f.field, f.slug, signalspec.Slugs())
+			if f.slug == "" {
+				continue
 			}
-			if sig := signalspec.Get(f.slug); sig != nil && (sig.Trigger || sig.Entry) {
-				return fail("%s: %q opens a phase, it does not answer a gate (declare a phase `on: %s`)", f.field, f.slug, f.slug)
+			switch sig := signalspec.Get(f.slug); {
+			case sig == nil:
+				return fail("unknown %s signal %q (%s)", f.field, f.slug, observedSlugs())
+			case !sig.Observed():
+				return fail("%s: %q is not something the engine observes (%s)", f.field, f.slug, observedSlugs())
 			}
 		}
 		if raw.AutoApprove != "" && raw.AutoApprove == raw.AutoReject {
@@ -1622,14 +1658,13 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 
 	case StageWait:
 		if raw.For == "" {
-			return fail("for is required (%s)", waitableSlugs())
+			return fail("for is required (%s)", observedSlugs())
 		}
-		sig := signalspec.Get(raw.For)
-		if sig == nil {
-			return fail("unknown signal %q (%s)", raw.For, waitableSlugs())
-		}
-		if sig.Trigger || sig.Entry {
-			return fail("%q opens a phase, it is not something to wait for (declare a phase `on: %s`)", raw.For, raw.For)
+		switch sig := signalspec.Get(raw.For); {
+		case sig == nil:
+			return fail("unknown signal %q (%s)", raw.For, observedSlugs())
+		case !sig.Observed():
+			return fail("for: %q is not something the engine observes (%s)", raw.For, observedSlugs())
 		}
 		// A wait stage is a wait point mid-chain: it parks the phase until
 		// the signal holds, then continues (a person in the loop after a
@@ -1925,7 +1960,7 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	reached := map[string]bool{}
 	var queue []string
 	for _, ph := range f.Phases {
-		if ph.First <= ph.Last { // a then-phase has no stages
+		if ph.First <= ph.Last { // an outcome may have no chain
 			queue = append(queue, f.Stages[ph.First].ID)
 		}
 	}
@@ -1964,102 +1999,172 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 // recording each phase's span and every stage's source line. shorthand marks
 // the desugared one-phase document, whose stage lines come from the
 // top-level stages sequence.
-func (p *parser) buildPhases(raw []DocPhase, shorthand bool) ([]Phase, []DocStage, error) {
+// phaseSources assembles the document's sections into phases: the main
+// chain (MainPhase, opened by run_start), then each watcher, then each
+// outcome. A watcher's or an outcome's `run: X` is a chain of one include of
+// X, named after the watcher. Every stage remembers its line before blocks
+// are expanded, which copies stages out of where they were written.
+func (p *parser) phaseSources(raw *Doc, f *Flow) ([]phaseSrc, error) {
+	var out []phaseSrc
+	switch {
+	case len(raw.Main) > 0:
+		main := phaseSrc{id: MainPhase, kind: PhaseMain, on: DocWait{Signal: signalspec.RunStart}, line: p.keyLine("main"),
+			stages: slices.Clone(raw.Main)}
+		for j := range main.stages {
+			main.stages[j].line = p.seqLine("main", j)
+		}
+		out = append(out, main)
+	case !f.StartsOnMR():
+		return nil, p.errf(p.keyLine("main"), "main is required: the chain a run starts with (only a flow whose runs are started on a merge request may leave it out, and only watch it)")
+	case len(raw.Watchers) == 0:
+		return nil, p.errf(p.keyLine("watchers"), "a flow with no main chain does its work in watchers: declare at least one")
+	}
+	for _, sec := range []struct {
+		key  string
+		kind PhaseKind
+		list []DocWatcher
+	}{{"watchers", PhaseWatcher, raw.Watchers}, {"outcomes", PhaseOutcome, raw.Outcomes}} {
+		nodes := p.seqNodes(sec.key)
+		for i := range sec.list {
+			w := &sec.list[i]
+			ps := phaseSrc{id: w.ID, description: w.Description, kind: sec.kind, on: w.On, then: w.Then, line: p.seqLine(sec.key, i)}
+			switch {
+			case w.Run != "" && len(w.Stages) > 0:
+				return nil, p.errf(ps.line, "%s %q: run or stages, not both — run names a chain to run in place, stages are the watcher's own", sec.kind, w.ID)
+			case w.Run != "":
+				ps.stages = []DocStage{{ID: w.ID, Include: w.Run, line: ps.line}}
+			default:
+				ps.stages = slices.Clone(w.Stages)
+				var lines []int
+				if i < len(nodes) {
+					lines = phaseStageLines(nodes[i])
+				}
+				for j := range ps.stages {
+					ps.stages[j].line = ps.line
+					if j < len(lines) {
+						ps.stages[j].line = lines[j]
+					}
+				}
+			}
+			out = append(out, ps)
+		}
+	}
+	return out, nil
+}
+
+// buildPhases turns the phase sources into phases and their stages, every
+// include written out. Watcher and outcome ids are one namespace.
+func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, error) {
 	var phases []Phase
 	var stages []DocStage
 	seen := map[string]int{}
 	p.stageLines = nil
-	entrypoints := 0
-	for i := range raw {
-		rp := &raw[i]
-		line := p.seqLine("phases", i)
-		if shorthand {
-			line = p.keyLine("stages")
-		}
+	for i := range srcs {
+		rp := &srcs[i]
+		line := rp.line
 		fail := func(format string, args ...any) ([]Phase, []DocStage, error) {
-			id := rp.ID
+			if rp.kind == PhaseMain {
+				return nil, nil, p.errf(line, "main: %s", fmt.Sprintf(format, args...))
+			}
+			id := rp.id
 			if id == "" {
 				id = fmt.Sprintf("#%d", i+1)
 			}
-			return nil, nil, p.errf(line, "phase %q: %s", id, fmt.Sprintf(format, args...))
+			return nil, nil, p.errf(line, "%s %q: %s", rp.kind, id, fmt.Sprintf(format, args...))
 		}
-		if rp.ID == "" {
-			return fail("id is required")
-		}
-		if !slugRe.MatchString(rp.ID) {
-			return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
-		}
-		if prev, dup := seen[rp.ID]; dup {
-			return fail("duplicate phase id (first declared at line %d)", prev)
-		}
-		seen[rp.ID] = line
-		if len(rp.Stages) == 0 && rp.Then == "" {
-			return fail("a phase needs stages — or, for an outcome that only ends the run, `then: %s` or `then: %s`", TerminalDone, TerminalAbort)
-		}
-		if len(rp.Stages) > 0 && rp.Then != "" {
-			return fail("stages or then, not both: a phase with stages ends the run from its last stage")
-		}
-		on, err := p.buildWait(&rp.On, rp.ID)
-		if err != nil {
-			return fail("on: %v", err)
-		}
-		if sig := signalspec.Get(on.Signal); sig != nil && sig.Entry {
-			entrypoints++
-		}
-		if rp.Then != "" {
-			if rp.Then != TerminalDone && rp.Then != TerminalAbort {
-				return fail("then %q must be %s (the run completes) or %s (the run is abandoned)", rp.Then, TerminalDone, TerminalAbort)
+		var on Wait
+		switch rp.kind {
+		case PhaseMain:
+			// The run's start is a person's act, or an automation's.
+			on = Wait{Signal: signalspec.RunStart, Start: StartManual, Max: UnlimitedMax}
+		default:
+			switch {
+			case rp.id == "":
+				return fail("id is required")
+			case !slugRe.MatchString(rp.id):
+				return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
+			case rp.id == MainPhase:
+				return fail("id %q is the main chain's", MainPhase)
 			}
-			if sig := signalspec.Get(on.Signal); sig == nil || !sig.Outcome {
-				return fail("then is for an outcome phase (on: %s): a phase that does work has stages", outcomeSlugs())
+			if prev, dup := seen[rp.id]; dup {
+				return fail("duplicate id (first declared at line %d) — watchers and outcomes are one namespace", prev)
+			}
+			seen[rp.id] = line
+			var err error
+			if on, err = p.buildWait(&rp.on, rp.id, rp.kind); err != nil {
+				return fail("on: %v", err)
+			}
+		}
+		switch rp.kind {
+		case PhaseWatcher:
+			if rp.then != "" {
+				return fail("then is an outcome's — a watcher's chain ends with %q and the run goes back to waiting", TerminalEnd)
+			}
+			if len(rp.stages) == 0 {
+				return fail("a watcher needs a chain: stages, or run: a block (or %s) to run in place", MainPhase)
+			}
+		case PhaseOutcome:
+			if rp.then != "" && rp.then != TerminalDone && rp.then != TerminalAbort {
+				return fail("then %q must be %s (the run completes) or %s (the run is abandoned)", rp.then, TerminalDone, TerminalAbort)
+			}
+			if len(rp.stages) == 0 && rp.then == "" {
+				return fail("an outcome needs a chain or `then: %s` / `then: %s` — what ends the run", TerminalDone, TerminalAbort)
 			}
 		}
 		// The phase's stages with every include written out.
-		own, err := p.expand(rp.Stages, &expandScope{})
+		own, err := p.expand(rp.stages, &expandScope{})
 		if err != nil {
 			return nil, nil, err
 		}
 		if len(stages)+len(own) > maxStages {
-			return nil, nil, p.errf(line, "phase %q: the flow expands to more than %d stages (blocks included)", rp.ID, maxStages)
+			return fail("the flow expands to more than %d stages (blocks included)", maxStages)
 		}
-		ph := Phase{ID: rp.ID, Description: rp.Description, On: on, Then: rp.Then, First: len(stages), Last: len(stages) + len(own) - 1, Line: line}
+		then := rp.then
+		if rp.kind == PhaseOutcome && then == "" {
+			then = TerminalDone
+		}
+		ph := Phase{ID: rp.id, Description: rp.description, Kind: rp.kind, On: on, Then: then,
+			BringsMR: rp.kind == PhaseMain && f.StartsOnMR(), First: len(stages), Last: len(stages) + len(own) - 1, Line: line}
 		phases = append(phases, ph)
 		stages = append(stages, own...)
 		for j := range own {
 			p.stageLines = append(p.stageLines, own[j].line)
 		}
 	}
-	if entrypoints == 0 {
-		return nil, nil, p.errf(p.keyLine("phases"), "no phase begins a run: at least one must open `on: %s` (an entrypoint a run is created at) or `on: %s` (one created on a merge request someone opened)", signalspec.RunStart, signalspec.MROpened)
-	}
 	return phases, stages, nil
 }
 
-// buildWait validates a phase's opening wait point on its own (FLOWLANG §1):
-// what it opens on and the options that apply to it. Whether the flow can
-// satisfy it (a merge request to react to) is a warning, not a rule.
-func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
+// buildWait validates a watcher's or an outcome's opening wait point on its
+// own (FLOWLANG §1): what it opens on and the options that apply to it.
+// Whether the flow can satisfy it (a merge request to watch) is a warning,
+// not a rule.
+func (p *parser) buildWait(raw *DocWait, phaseID string, kind PhaseKind) (Wait, error) {
 	w := Wait{Signal: raw.Signal, Start: StartManual, Max: UnlimitedMax}
 	site := func(field string, typ ParamType, values []string) paramSite {
 		return paramSite{phase: phaseID, field: field, typ: typ, values: values}
 	}
+	opens := observedSlugs()
+	if kind == PhaseWatcher {
+		opens = signalspec.Manual + " (a person starts it from the run page), or " + opens
+	}
 	if w.Signal == "" {
-		return w, fmt.Errorf("signal is required: %s (an entrypoint), %s (started by hand), a trigger (%s) or an outcome (%s)",
-			signalspec.RunStart, signalspec.Manual, triggerSlugs(), outcomeSlugs())
+		return w, fmt.Errorf("signal is required: %s", opens)
 	}
 	sig := signalspec.Get(w.Signal)
 	if sig == nil {
-		return w, fmt.Errorf("unknown signal %q (%s, %s, a trigger: %s, or an outcome: %s)", w.Signal, signalspec.RunStart, signalspec.Manual, triggerSlugs(), outcomeSlugs())
+		return w, fmt.Errorf("unknown signal %q (%s)", w.Signal, opens)
 	}
-	fires := sig.Trigger && w.Signal != signalspec.Manual
-	if !fires && !sig.Outcome && !sig.Entry && w.Signal != signalspec.Manual {
-		return w, fmt.Errorf("signal %q is something to wait for, not something that opens a phase (a %s stage waits on it; a phase opens on %s, %s, a trigger: %s, or an outcome: %s)",
-			w.Signal, StageWait, signalspec.RunStart, signalspec.Manual, triggerSlugs(), outcomeSlugs())
+	switch {
+	case w.Signal == signalspec.RunStart:
+		return w, fmt.Errorf("%s is how a run begins — a person or an automation starts it, and the main chain runs; a %s watches something about the merge request (%s)", signalspec.RunStart, kind, opens)
+	case kind == PhaseOutcome && !sig.Observed():
+		return w, fmt.Errorf("an outcome fires on something the engine observes (%s): a person ends a run with Abort", observedSlugs())
 	}
-	// The policy: only a signal the engine observes has one — a trigger or
-	// an outcome. For run_start and manual a person's act is the start.
+	fires := sig.Observed()
+	// The policy: only a signal the engine observes has one. For manual a
+	// person's act is the start.
 	if raw.Start != "" {
-		if !fires && !sig.Outcome {
+		if !fires {
 			return w, fmt.Errorf("start does not apply to %q — nothing fires to decide about: a person's act is the start", w.Signal)
 		}
 		v, via, err := p.lookup(raw.Start, site("start", ParamString, []string{string(StartAuto), string(StartConfirm), string(StartManual)}))
@@ -2072,7 +2177,7 @@ func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 		default:
 			return w, fmt.Errorf("start %q%s must be %s, %s or %s", v, via, StartAuto, StartConfirm, StartManual)
 		}
-	} else if fires || sig.Outcome {
+	} else if fires {
 		w.Start = StartAuto
 	}
 	if raw.QuietFor != "" {
@@ -2092,11 +2197,11 @@ func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 		}
 		w.QuietFor = d
 	}
-	// Runs per subject are unbounded unless the flow caps them: a reaction
-	// happens as often as its signal brings a NEW fact (an occurrence key
+	// Runs per subject are unbounded unless the flow caps them: a watcher
+	// runs as often as its signal brings a NEW fact (an occurrence key
 	// never fires twice), and the run's budget bounds what that may cost.
 	if raw.Max != nil {
-		if sig.Outcome {
+		if kind == PhaseOutcome {
 			return w, fmt.Errorf("max does not apply to an outcome: it fires once, and the run ends")
 		}
 		n, via, err := p.lookupInt(raw.Max, site("max", ParamInt, nil))
@@ -2111,42 +2216,22 @@ func (p *parser) buildWait(raw *DocWait, phaseID string) (Wait, error) {
 	return w, nil
 }
 
-// triggerSlugs lists the signals that open a phase when they hold.
-func triggerSlugs() string {
+// observedSlugs lists the signals the engine observes on the run's merge
+// requests: what a watcher or an outcome opens on, a wait stage parks on and
+// a gate's auto-answer takes.
+func observedSlugs() string {
 	var out []string
 	for _, s := range signalspec.Registry() {
-		if s.Trigger && s.Slug != signalspec.Manual {
+		if s.Observed() {
 			out = append(out, s.Slug)
 		}
 	}
 	return strings.Join(out, ", ")
 }
 
-// outcomeSlugs lists the signals that end the run when a phase opens on them.
-func outcomeSlugs() string {
-	var out []string
-	for _, s := range signalspec.Registry() {
-		if s.Outcome {
-			out = append(out, s.Slug)
-		}
-	}
-	return strings.Join(out, ", ")
-}
-
-// waitableSlugs lists the signals a wait stage or a gate's auto-answer may
-// take: those that open no phase.
-func waitableSlugs() string {
-	var out []string
-	for _, s := range signalspec.Registry() {
-		if !s.Trigger && !s.Entry {
-			out = append(out, s.Slug)
-		}
-	}
-	return strings.Join(out, "|")
-}
-
-// validatePhases checks what spans stages: a phase's routes stay inside it,
-// and a rebase is published by a leased push.
+// validatePhases checks what spans stages: a chain's routes stay inside it,
+// a rebase is published by a leased push, an outcome ends the run, and some
+// route ends it.
 func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 	same := func(from *Stage, to string) bool {
 		return routeTerminal(to) || f.Stages[ids[to]].Phase == from.Phase
@@ -2154,13 +2239,13 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 	for i := range f.Stages {
 		s := &f.Stages[i]
 		if !same(s, s.OnSuccess) {
-			return p.errf(s.Line, "stage %q: on_success %q is in phase %q — a phase's routes stay inside it (end it with %q)",
+			return p.errf(s.Line, "stage %q: on_success %q is in phase %q — a chain's routes stay inside it (end it with %q)",
 				s.ID, s.OnSuccess, f.Stages[ids[s.OnSuccess]].Phase, TerminalEnd)
 		}
 		for kind, e := range s.Edges {
 			for link := e; link != nil; link = link.Then {
 				if !same(s, link.To) {
-					return p.errf(s.Line, "stage %q: %s target %q is in phase %q — a phase's routes stay inside it",
+					return p.errf(s.Line, "stage %q: %s target %q is in phase %q — a chain's routes stay inside it",
 						s.ID, kind, link.To, f.Stages[ids[link.To]].Phase)
 				}
 			}
@@ -2194,12 +2279,12 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 		for i := ph.First; i <= ph.Last; i++ {
 			s := &f.Stages[i]
 			if s.OnSuccess == TerminalEnd {
-				return p.errf(s.Line, "stage %q: phase %q is an outcome and ends the run — route to %q or %q, not %q", s.ID, ph.ID, TerminalDone, TerminalAbort, TerminalEnd)
+				return p.errf(s.Line, "stage %q: outcome %q ends the run — route to %q or %q, not %q", s.ID, ph.ID, TerminalDone, TerminalAbort, TerminalEnd)
 			}
 			for kind, e := range s.Edges {
 				for link := e; link != nil; link = link.Then {
 					if link.To == TerminalEnd {
-						return p.errf(s.Line, "stage %q: %s: phase %q is an outcome and ends the run — route to %q or %q, not %q", s.ID, kind, ph.ID, TerminalDone, TerminalAbort, TerminalEnd)
+						return p.errf(s.Line, "stage %q: %s: outcome %q ends the run — route to %q or %q, not %q", s.ID, kind, ph.ID, TerminalDone, TerminalAbort, TerminalEnd)
 					}
 				}
 			}
@@ -2208,11 +2293,11 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 	// At least one route ends the run (FLOWLANG §3): a flow that only ever
 	// ends phases says nothing about when the work is finished.
 	if !f.EndsRun() {
-		line := p.keyLine("phases")
-		if f.shorthand {
-			line = p.keyLine("stages")
+		line := p.keyLine("outcomes")
+		if line == 0 {
+			line = p.keyLine("main")
 		}
-		return p.errf(line, "no route ends the run: route a stage to %q, or add an outcome phase (on: %s, then: %s)", TerminalDone, signalspec.MRMerged, TerminalDone)
+		return p.errf(line, "no route ends the run: route a stage to %q, or add an outcome (outcomes: [{ id: merged, on: %s, then: %s }])", TerminalDone, signalspec.MRMerged, TerminalDone)
 	}
 	return nil
 }

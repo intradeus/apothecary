@@ -21,7 +21,9 @@ import (
 //   - outside, an include's id is a route target: its first stage. Nothing
 //     routes into the middle of an include;
 //   - blocks may include blocks, at most maxIncludeDepth levels deep, and a
-//     block that includes itself is refused.
+//     block that includes itself is refused;
+//   - the main chain is a block named `main` (MainPhase), so a watcher can
+//     run it again (`run: main`).
 
 // blockDef is one declared block and whether any include expanded it.
 type blockDef struct {
@@ -30,7 +32,7 @@ type blockDef struct {
 	used bool
 }
 
-// expandScope is where a list of stages was written: a phase (block "") or
+// expandScope is where a list of stages was written: a chain (block "") or
 // a block expanded for one include.
 type expandScope struct {
 	block  string // the block being expanded; "" for a phase's own stages
@@ -125,14 +127,19 @@ func (p *parser) buildBlocks(raw []DocBlock) error {
 		if len(b.Stages) == 0 {
 			return fail("a block needs at least one stage")
 		}
-		var lines []int
-		if i < len(nodes) {
-			lines = phaseStageLines(nodes[i])
-		}
-		for j := range b.Stages {
-			b.Stages[j].line = line
-			if j < len(lines) {
-				b.Stages[j].line = lines[j]
+		if b.ID == MainPhase {
+			// The main chain, appended by build: its stages carry their lines.
+			line = p.keyLine("main")
+		} else {
+			var lines []int
+			if i < len(nodes) {
+				lines = phaseStageLines(nodes[i])
+			}
+			for j := range b.Stages {
+				b.Stages[j].line = line
+				if j < len(lines) {
+					b.Stages[j].line = lines[j]
+				}
 			}
 		}
 		p.blocks[b.ID] = &blockDef{doc: b, line: line}
@@ -216,15 +223,15 @@ func (p *parser) blockNames() string {
 	return strings.Join(p.blockOrder, ", ")
 }
 
-// indexIncludes checks the includes written in phases and records where
+// indexIncludes checks the includes written in chains and records where
 // each one begins, so a route to an include's id lands on its first stage.
 // An include's id is in the stages' one namespace.
-func (p *parser) indexIncludes(phases []DocPhase) error {
+func (p *parser) indexIncludes(phases []phaseSrc) error {
 	p.topIncludes = map[string]string{}
 	ids := map[string]int{}
 	for i := range phases {
-		for j := range phases[i].Stages {
-			st := &phases[i].Stages[j]
+		for j := range phases[i].stages {
+			st := &phases[i].stages[j]
 			if st.Include == "" {
 				if st.ID != "" {
 					if _, dup := ids[st.ID]; !dup {
@@ -258,8 +265,8 @@ func (p *parser) indexIncludes(phases []DocPhase) error {
 	}
 	// A plain stage written after an include of the same id.
 	for i := range phases {
-		for j := range phases[i].Stages {
-			st := &phases[i].Stages[j]
+		for j := range phases[i].stages {
+			st := &phases[i].stages[j]
 			if _, inc := p.topIncludes[st.ID]; inc && st.Include == "" {
 				return p.errf(st.line, "stage %q: duplicate id (an include is named %q) — stage ids are one namespace across phases, includes too", st.ID, st.ID)
 			}
@@ -410,7 +417,7 @@ func cloneEdge(e *DocEdge) *DocEdge {
 func (p *parser) unusedBlocks(raw []DocBlock) []string {
 	var out []string
 	for i := range raw {
-		if b := p.blocks[raw[i].ID]; b != nil && !b.used {
+		if b := p.blocks[raw[i].ID]; b != nil && !b.used && raw[i].ID != MainPhase {
 			out = append(out, raw[i].ID)
 		}
 	}

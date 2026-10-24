@@ -1,23 +1,33 @@
 <script lang="ts">
 	// Flow picker (DESIGN 4.14): "Default · <name>" first (the '' value — the
 	// caller's fallbackLabel says what it means), then the workshop's own
-	// flows, then the built-in templates it has not adopted (both run as-is).
-	// If the list cannot be loaded it degrades to free text.
+	// flows, then the built-in templates it has not adopted (both run as-is) —
+	// only those whose runs are started on what the caller starts them on,
+	// when it says (an automation's kind). If the list cannot be loaded it
+	// degrades to free text.
 	import { api } from '$lib/api';
 	import type { Flow } from '$lib/domain';
+	import type { RunStart } from '$lib/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		projectId,
 		value = $bindable(''),
 		fallbackLabel,
-		id
+		id,
+		runStart,
+		fallbackFlow
 	}: {
 		projectId: string;
 		value?: string;
 		/** What '' means here, e.g. "Default · full-integration". */
 		fallbackLabel: string;
 		id?: string;
+		/** Only the flows whose runs are started on this (run_start). */
+		runStart?: RunStart;
+		/** The flow '' stands for, when the caller knows it: left out when its
+		 *  runs are not started on runStart. */
+		fallbackFlow?: string;
 	} = $props();
 
 	let flows = $state<Flow[] | null>(null);
@@ -34,11 +44,21 @@
 			.catch(() => (failed = true));
 	});
 
+	const fits = $derived((flows ?? []).filter((f) => !runStart || f.runStart === runStart));
+	const fallbackFits = $derived(
+		!runStart || !fallbackFlow || fits.some((f) => f.name === fallbackFlow)
+	);
+	// A choice the kind no longer fits moves to one it does.
+	$effect(() => {
+		if (!flows || !runStart) return;
+		const ok = value === '' ? fallbackFits : fits.some((f) => f.name === value);
+		if (!ok) value = fallbackFits ? '' : (fits[0]?.name ?? '');
+	});
 	const owned = $derived(
-		(flows ?? []).filter((f) => !f.builtin).sort((a, b) => a.name.localeCompare(b.name))
+		fits.filter((f) => !f.builtin).sort((a, b) => a.name.localeCompare(b.name))
 	);
 	const templates = $derived(
-		(flows ?? []).filter((f) => f.builtin).sort((a, b) => a.name.localeCompare(b.name))
+		fits.filter((f) => f.builtin).sort((a, b) => a.name.localeCompare(b.name))
 	);
 </script>
 
@@ -52,7 +72,7 @@
 		{#if !flows}
 			<option {value}>{t('flowselect.loading')}</option>
 		{:else}
-			<option value="">{fallbackLabel}</option>
+			{#if fallbackFits}<option value="">{fallbackLabel}</option>{/if}
 			{#if owned.length}
 				<optgroup label={t('flowselect.workshopFlows')}>
 					{#each owned as f (f.name)}<option value={f.name}

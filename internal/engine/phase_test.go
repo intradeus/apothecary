@@ -16,11 +16,11 @@ import (
 	"apothecary/internal/run"
 )
 
-// phasedFlowDoc is a ticket's whole life (PLAN6): deliver opens the merge
-// request; conflicts (confirmed by a human) and review_fixes (after a quiet
-// hour, at most twice) react to it.
+// phasedFlowDoc is a ticket's whole life: the main chain opens the merge
+// request; the watchers conflicts (confirmed by a human) and review_fixes
+// (after a quiet hour, at most twice) react to it.
 const phasedFlowDoc = `name: phased
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: builder
@@ -31,13 +31,11 @@ agents:
     prompt: describe it
     outputs:
       - { name: mr, path: artifacts/mr.md }
-phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: build, type: agent, agent: builder }
-      - { id: redact, type: agent, agent: redactor }
-      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+main:
+  - { id: build, type: agent, agent: builder }
+  - { id: redact, type: agent, agent: redactor }
+  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: confirm }
     stages:
@@ -47,6 +45,7 @@ phases:
     stages:
       - { id: fix, type: agent, agent: builder, input: { failure: $FAILURE }, on_fail: { to: fix, max: 1 } }
       - { id: post, type: command, run: "./post.sh" }
+outcomes:
   - id: shipped
     on: mr_merged
     then: done
@@ -74,7 +73,7 @@ func newPhasedHarness(t *testing.T, doc string) *phasedHarness {
 	ph := &phasedHarness{harness: h, clock: &offsetClock{}, prompts: map[string][]string{}}
 	h.e.clock = ph.clock.Now
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
-		// The fake carries no stage id: a reaction phase's prompt is the one
+		// The fake carries no stage id: a watcher's prompt is the one
 		// with a SUBJECT section.
 		stage := call.Spec.Agent
 		if strings.Contains(call.In.Prompt, "# SUBJECT") {
@@ -101,7 +100,7 @@ func (ph *phasedHarness) promptsOf(stage string) []string {
 	return append([]string(nil), ph.prompts[stage]...)
 }
 
-// start files the ticket and waits for the entry phase to leave the run in
+// start files the ticket and waits for the main chain to leave the run in
 // review.
 func (ph *phasedHarness) start(t *testing.T) string {
 	t.Helper()
@@ -187,17 +186,17 @@ func (ph *phasedHarness) execsOf(script string) []ports.Command {
 	return out
 }
 
-// The entry phase ends with the merge request open: the run is in review,
+// The main chain ends with the merge request open: the run is in review,
 // not completed, and it completes when the merge request merges (R9).
 func TestPhasedRunWaitsInReviewAndCompletesOnMerge(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
 	v := ph.view(t, runID)
-	if !v.Idle || v.Phase != "deliver" || len(v.MRs) != 1 {
+	if !v.Idle || v.Phase != flow.MainPhase || len(v.MRs) != 1 {
 		t.Fatalf("view = idle %v phase %q mrs %d", v.Idle, v.Phase, len(v.MRs))
 	}
 	starts := phaseStarts(ph.events(t, runID))
-	if len(starts) != 1 || starts[0].Phase != "deliver" || starts[0].By != "human" {
+	if len(starts) != 1 || starts[0].Phase != flow.MainPhase || starts[0].By != "human" {
 		t.Errorf("phase_started = %+v", starts)
 	}
 	ph.repoHost.SetMRState(1, ports.MRMerged)
@@ -220,8 +219,9 @@ func TestParkedWaitFailsWhenTheMRIsClosed(t *testing.T) {
 	}
 }
 
-// The run completes as soon as nothing is armed — here the moment deliver
-// ends, since every other phase (the reactions, the outcome) starts by hand.
+// The run completes as soon as nothing is armed — here the moment the main
+// chain ends, since every other phase (the watchers, the outcome) starts by
+// hand.
 func TestRunCompletesWhenNothingIsArmed(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "on: { signal: mr_conflicts, start: confirm }", "on: manual", 1)
 	doc = strings.Replace(doc, "on: { signal: mr_review_settled, quiet_for: 1h, max: 2 }", "on: manual", 1)
@@ -237,10 +237,10 @@ func TestRunCompletesWhenNothingIsArmed(t *testing.T) {
 	}
 }
 
-// A document written with top-level stages is one phase, "main": the run
+// A document with nothing but a main chain is one phase, "main": the run
 // opens it, ends it, and completes.
 func TestStagesOnlyDocumentRunsAsOnePhase(t *testing.T) {
-	doc := "name: short\nversion: 4\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Short"}, "short", testProject)
 	if err != nil {
@@ -249,29 +249,29 @@ func TestStagesOnlyDocumentRunsAsOnePhase(t *testing.T) {
 	ph.waitState(t, runID, run.Completed)
 	starts := phaseStarts(ph.events(t, runID))
 	done, _ := findPayload[*event.PhaseCompleted](ph.events(t, runID))
-	if len(starts) != 1 || starts[0].Phase != flow.ShorthandPhase || starts[0].By != "human" || done == nil || done.Phase != flow.ShorthandPhase {
+	if len(starts) != 1 || starts[0].Phase != flow.MainPhase || starts[0].By != "human" || done == nil || done.Phase != flow.MainPhase {
 		t.Errorf("starts %+v completed %+v", starts, done)
 	}
 }
 
-// waitFlowDoc ends deliver with the wait on the merge: the phase parks there,
-// reactions run meanwhile, and a close routes to abort.
+// waitFlowDoc ends the main chain with the wait on the merge: the chain parks
+// there, watchers run meanwhile, and a close routes to abort.
 var waitFlowDoc = strings.Replace(phasedFlowDoc,
-	"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
-	"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n      - { id: merged, type: wait, for: mr_merged, on_fail: abort }\n      - { id: after, type: command, run: \"./after.sh\" }\n", 1)
+	"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+	"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: merged, type: wait, for: mr_merged, on_fail: abort }\n  - { id: after, type: command, run: \"./after.sh\" }\n", 1)
 
-// A wait parks its phase: the run is idle and in review, a reaction runs in
+// A wait parks its phase: the run is idle and in review, a watcher runs in
 // the meantime and gives the workspace back, and the merge resumes the
 // phase, which finishes its stages before the run completes.
-func TestWaitParksAndReactionsRunMeanwhile(t *testing.T) {
+func TestWaitParksAndWatchersRunMeanwhile(t *testing.T) {
 	ph := newPhasedHarness(t, waitFlowDoc)
 	runID := ph.start(t)
 	infos, err := ph.e.RunPhases(context.Background(), runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := infos[0]; d.ID != "deliver" || d.Live == nil || d.Live.ParkedAt != "merged" {
-		t.Fatalf("deliver = %+v", d)
+	if d := infos[0]; d.ID != flow.MainPhase || d.Kind != string(flow.PhaseMain) || d.Live == nil || d.Live.ParkedAt != "merged" {
+		t.Fatalf("main = %+v", d)
 	}
 	ph.repoHost.SetTargetSHA(1, "t1")
 	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
@@ -300,7 +300,7 @@ func TestWaitParksAndReactionsRunMeanwhile(t *testing.T) {
 	if parked != 1 || resumed != 1 {
 		t.Errorf("parked %d resumed %d", parked, resumed)
 	}
-	if err := ph.e.StartPhase(runID, "deliver", ""); !errors.Is(err, ErrPhaseNotStartable) {
+	if err := ph.e.StartPhase(runID, flow.MainPhase, ""); !errors.Is(err, ErrPhaseNotStartable) {
 		t.Errorf("start after the end: %v", err)
 	}
 }
@@ -309,7 +309,7 @@ func TestWaitParksAndReactionsRunMeanwhile(t *testing.T) {
 func TestHumanStartRefusesAParkedPhase(t *testing.T) {
 	ph := newPhasedHarness(t, waitFlowDoc)
 	runID := ph.start(t)
-	if err := ph.e.StartPhase(runID, "deliver", ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "parked at merged") {
+	if err := ph.e.StartPhase(runID, flow.MainPhase, ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "parked at merged") {
 		t.Errorf("parked phase by hand: %v", err)
 	}
 }
@@ -328,12 +328,12 @@ func TestParkedWaitTimesOut(t *testing.T) {
 	}
 }
 
-// A gate parks its phase the same way: a reaction runs while the person
+// A gate parks its phase the same way: a watcher runs while the person
 // thinks, and a signal may answer the gate for them.
-func TestGateParksAndAReactionRunsMeanwhile(t *testing.T) {
+func TestGateParksAndAWatcherRunsMeanwhile(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc,
-		"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
-		"      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n      - { id: final, type: human_gate, question: \"Merge?\", input: { mr: $MR_URL }, auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }\n", 1)
+		"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+		"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: final, type: human_gate, question: \"Merge?\", input: { mr: $MR_URL }, auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }\n", 1)
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
@@ -355,7 +355,7 @@ func TestGateParksAndAReactionRunsMeanwhile(t *testing.T) {
 		t.Fatalf("sync ran %d times while the gate was open", n)
 	}
 	if v := ph.view(t, runID); v.State != run.WaitingOnHuman || !v.Idle {
-		t.Errorf("after the reaction, the open gate keeps the run waiting: %s idle %v", v.State, v.Idle)
+		t.Errorf("after the watcher, the open gate keeps the run waiting: %s idle %v", v.State, v.Idle)
 	}
 	ph.repoHost.SetMRState(1, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
@@ -463,7 +463,7 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 	for _, e := range h2.events(t, runID) {
 		switch p := e.Payload.(type) {
 		case *event.PhaseStarted:
-			if p.Phase == "deliver" {
+			if p.Phase == flow.MainPhase {
 				starts++
 			}
 		case *event.PhaseParked:
@@ -471,18 +471,19 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 		}
 	}
 	if starts != 1 || parked != 1 {
-		t.Errorf("deliver starts = %d parked = %d, want 1 and 1", starts, parked)
+		t.Errorf("main starts = %d parked = %d, want 1 and 1", starts, parked)
 	}
 }
 
-// An entry phase that opens no merge request has nothing to react to and
-// no outcome to wait for: the run completes as a flow without phases would.
+// A main chain that opens no merge request has nothing to watch and no
+// outcome to wait for: the run completes as a flow without watchers would.
 func TestPhasedRunWithoutAnMRCompletes(t *testing.T) {
 	doc := `name: phased
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-phases:
-  - { id: deliver, on: run_start, stages: [{ id: s, type: command, run: "true" }] }
+main:
+  - { id: s, type: command, run: "true" }
+outcomes:
   - { id: shipped, on: mr_merged, then: done }
 `
 	ph := newPhasedHarness(t, doc)
@@ -585,7 +586,7 @@ func TestReviewPhaseWaitsForAQuietReview(t *testing.T) {
 	ph.clock.Advance(61 * time.Minute)
 	time.Sleep(60 * time.Millisecond)
 	if n := len(phaseStarts(ph.events(t, runID))); n != 3 {
-		t.Errorf("phase starts = %d, want 3 (deliver + 2 rounds, max reached)", n)
+		t.Errorf("phase starts = %d, want 3 (main + 2 rounds, max reached)", n)
 	}
 	if v := ph.view(t, runID); v.State != run.InReview {
 		t.Errorf("state = %s", v.State)
@@ -616,8 +617,8 @@ func TestSimultaneousTriggersRunInDocumentOrder(t *testing.T) {
 // checkout, and they take turns, the primary first (R3, R12).
 func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "start: confirm", "start: auto", 1)
-	doc = strings.Replace(doc, "      - { id: build, type: agent, agent: builder }\n",
-		"      - { id: build, type: agent, agent: builder }\n      - { id: commit, type: command, each_repo: true, run: \"git add -A && git commit -m x\" }\n", 1)
+	doc = strings.Replace(doc, "  - { id: build, type: agent, agent: builder }\n",
+		"  - { id: build, type: agent, agent: builder }\n  - { id: commit, type: command, each_repo: true, run: \"git add -A && git commit -m x\" }\n", 1)
 	ph := newPhasedHarness(t, doc)
 	apiRepoHost := &fake.RepoHost{}
 	ph.res.ExtraRepos = []ExtraRepo{{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"}}
@@ -644,10 +645,10 @@ func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
 	}
 }
 
-// A human can start any phase from the idle run — on the single open merge
+// A human can start any watcher from the idle run — on the single open merge
 // request when none is named — not while a phase runs, not for a phase or
-// repository the run does not have. An entrypoint may be started again: its
-// create_mr finds the merge request already open.
+// repository the run does not have. The main chain runs once, when the run
+// is started: it is never started by hand.
 func TestStartPhaseByHand(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
@@ -665,12 +666,8 @@ func TestStartPhaseByHand(t *testing.T) {
 	if last := starts[len(starts)-1]; last.By != "human" || last.Phase != "conflicts" || last.Subject != "repo" {
 		t.Errorf("start = %+v", last)
 	}
-	if err := ph.e.StartPhase(runID, "deliver", ""); err != nil {
-		t.Fatalf("entrypoint by hand: %v", err)
-	}
-	ph.waitPhaseRuns(t, runID, "deliver", 2)
-	if n := len(ph.view(t, runID).MRs); n != 1 {
-		t.Errorf("merge requests = %d, want the one already open", n)
+	if err := ph.e.StartPhase(runID, flow.MainPhase, ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "runs once") {
+		t.Errorf("the main chain by hand: %v", err)
 	}
 	infos, err := ph.e.RunPhases(context.Background(), runID)
 	if err != nil {
@@ -680,10 +677,10 @@ func TestStartPhaseByHand(t *testing.T) {
 	for _, p := range infos {
 		byID[p.ID] = p
 	}
-	if d := byID["deliver"]; !d.Entry || d.Total != 2 || d.Start != "manual" || d.Live != nil {
-		t.Errorf("deliver = %+v", d)
+	if d := byID[flow.MainPhase]; d.Kind != string(flow.PhaseMain) || d.Signal != "run_start" || d.Total != 1 || d.Live != nil {
+		t.Errorf("main = %+v", d)
 	}
-	if c := byID["conflicts"]; c.Entry || c.Total != 1 || c.Runs["repo"] != 1 || c.Start != "confirm" || !c.Confirm {
+	if c := byID["conflicts"]; c.Kind != string(flow.PhaseWatcher) || c.Total != 1 || c.Runs["repo"] != 1 || c.Start != "confirm" || !c.Confirm {
 		t.Errorf("conflicts = %+v", c)
 	}
 }
@@ -702,7 +699,7 @@ func TestIdleRunsFreeTheirSlot(t *testing.T) {
 }
 
 // An engine restart while idle re-arms the watch: the merge still completes
-// the run, and nothing restarts the entry phase.
+// the run, and nothing restarts the main chain.
 func TestIdleRunSurvivesARestart(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
@@ -726,15 +723,16 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	if st := h2.view(t, runID).State; st != run.Completed {
 		t.Fatalf("state after restart + merge = %s", st)
 	}
-	if starts := phaseStarts(h2.events(t, runID)); len(starts) != 2 || starts[0].Phase != "deliver" || starts[1].Phase != "shipped" {
-		t.Errorf("phase starts = %+v, want deliver once, then the merged outcome", starts)
+	if starts := phaseStarts(h2.events(t, runID)); len(starts) != 2 || starts[0].Phase != flow.MainPhase || starts[1].Phase != "shipped" {
+		t.Errorf("phase starts = %+v, want main once, then the merged outcome", starts)
 	}
 }
 
-// A reaction phase on manual never begins on its own: the idle loop skips
-// it, a person starts it from the run page, and its max counts those starts.
+// A watcher on manual never begins on its own: the idle loop skips it, a
+// person starts it from the run page, and its max counts those starts.
 func TestManualPhaseStartsOnlyByHand(t *testing.T) {
-	doc := phasedFlowDoc + "  - id: polish\n    on: { signal: manual, max: 1 }\n    stages:\n      - { id: shine, type: command, run: \"./shine.sh\" }\n"
+	doc := strings.Replace(phasedFlowDoc, "outcomes:\n",
+		"  - id: polish\n    on: { signal: manual, max: 1 }\n    stages:\n      - { id: shine, type: command, run: \"./shine.sh\" }\noutcomes:\n", 1)
 	ph := newPhasedHarness(t, doc)
 	runID := ph.start(t)
 	if starts := phaseStarts(ph.events(t, runID)); len(starts) != 1 {

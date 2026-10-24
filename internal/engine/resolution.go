@@ -225,6 +225,22 @@ func (e *Engine) preflightTicket(ctx context.Context, res *Resolution, fl *flow.
 // signalAvailable reports whether this project can observe the signal a stage
 // waits for (or a gate auto-answers on): the registry says which integration
 // port it needs, the resolution says whether the project configured one.
+// phaseAvailable checks what opening a phase needs from the project: a
+// watcher or an outcome on an observed signal needs whoever raises it, like
+// a wait stage does — the run would otherwise sit armed on an event nothing
+// can observe — and a main chain started on a merge request needs the
+// repository that holds it. A main chain started on a ticket, and a watcher
+// a person starts by hand, need nothing.
+func (r *Resolution) phaseAvailable(ph *flow.Phase) error {
+	switch {
+	case ph.Observed():
+		return r.signalAvailable(ph.On.Signal)
+	case ph.OnMR() && r.RepoHost == nil:
+		return fmt.Errorf("its runs are started on a merge request (run_start: %s), which needs a repository integration (GitLab, GitHub) this project has not configured", flow.StartsOnMR)
+	}
+	return nil
+}
+
 func (r *Resolution) signalAvailable(slug string) error {
 	sig := signalspec.Get(slug)
 	if sig == nil {

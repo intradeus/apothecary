@@ -336,7 +336,7 @@ export default {
 	'page.flow.validationFailed': 'Validation failed',
 	'page.flow.valid': 'Valid',
 	'page.flow.crossPhase':
-		"{from} and {to} are in different phases, and a route stays inside its phase. Move one of them first (the stage's Phase field).",
+		"{from} and {to} are in different chains, and a route stays inside its chain. Move one of them first (the stage's Chain field).",
 	'page.flow.invalid': 'Invalid',
 	'page.flow.validToast_one': 'Valid · {count} stage',
 	'page.flow.validToast_other': 'Valid · {count} stages',

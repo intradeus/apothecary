@@ -18,7 +18,7 @@ func seedTracker(t *testing.T, svc *Service) Integration {
 }
 
 // An automation is validated the way a firing would be — the kind's own
-// needs, the flow, an entrypoint of it, params it accepts — so the watcher
+// needs, a flow whose run_start fits it, params it accepts — so the watcher
 // is never the first to find a mistake.
 func TestAutomationValidates(t *testing.T) {
 	svc, _ := newSvc(t)
@@ -46,7 +46,8 @@ func TestAutomationValidates(t *testing.T) {
 		{"ticket elsewhere", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, ProjectID: other.ID, Flow: "builder"}, "another project"},
 		{"no flow", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID}, "needs a flow"},
 		{"no such flow", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "nope"}, "nope"},
-		{"not an entrypoint", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Phase: "conflicts"}, "not an entrypoint"},
+		{"started on merge requests", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "reviewer"}, "starts its runs on a merge request"},
+		{"started on tickets", Automation{Name: "x", Kind: AutomationMergeRequest, Flow: "builder"}, "starts its runs on a ticket"},
 		{"bad param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Params: map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
 		{"unknown param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Params: map[string]string{"nope": "1"}}, "nope"},
 	} {
@@ -79,7 +80,7 @@ func TestAutomationLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	q, err := svc.CreateAutomation(ctx, Automation{ProjectID: p.ID, Name: " inbox ", Kind: AutomationTrackerQuery,
-		SourceID: tracker.ID, Query: "assignee = me", Flow: "builder", Phase: "deliver",
+		SourceID: tracker.ID, Query: "assignee = me", Flow: "builder",
 		Params: map[string]string{"plan_gate": "false", "verify": " "}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)

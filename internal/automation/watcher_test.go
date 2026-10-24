@@ -186,19 +186,18 @@ func (h *harness) get(t *testing.T, id string) confstore.Automation {
 }
 
 // A tracker query imports what it finds as tickets of the project, marked
-// with the automation, and starts one run per import at the automation's
-// entrypoint with its params, by "automation". The next pass finds nothing
-// new to do.
+// with the automation, and starts one run of its flow per import with its
+// params, by "automation". The next pass finds nothing new to do.
 func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
 	h := newHarness(t)
 	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery,
-		SourceID: h.source.ID, Query: "do", Phase: "deliver", Params: map[string]string{"plan_gate": "false"}, Enabled: true})
+		SourceID: h.source.ID, Query: "do", Params: map[string]string{"plan_gate": "false"}, Enabled: true})
 	h.pass(t)
 	if n := h.eng.count(); n != 2 {
 		t.Fatalf("runs created = %d, want 2 (last error %q)", n, h.get(t, a.ID).LastError)
 	}
 	call := h.eng.calls[0]
-	if call.Flow != "builder" || call.In.By != By || call.In.Phase != "deliver" || call.In.Params["plan_gate"] != "false" ||
+	if call.Flow != "builder" || call.In.By != By || call.In.Params["plan_gate"] != "false" ||
 		call.Ticket.SourceKey != "DEV-1" || call.Ticket.Title != "First" || call.Ticket.TicketID == "" {
 		t.Errorf("first run = %+v", call)
 	}
@@ -330,8 +329,7 @@ func TestCronFiresOncePerSlot(t *testing.T) {
 	}
 }
 
-// Disabled automations are not walked; a stale phase is refused by the
-// engine at firing time and recorded, never silently repointed.
+// Disabled automations are not walked.
 func TestDisabledAndStale(t *testing.T) {
 	h := newHarness(t)
 	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: false})
@@ -345,7 +343,8 @@ func TestDisabledAndStale(t *testing.T) {
 }
 
 const reviewerYAML = `name: rev
-version: 4
+version: 5
+run_start: merge_request
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: pr_reviewer
@@ -354,12 +353,10 @@ agents:
       - { name: changes }
     outputs:
       - { name: review, type: review_threads, path: artifacts/review.yaml }
-phases:
-  - id: first_look
-    on: mr_opened
-    stages:
-      - { id: read, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
-      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+main:
+  - { id: read, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
+  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+outcomes:
   - { id: merged, on: mr_merged, then: done }
   - { id: closed, on: mr_closed, then: done }
 `
@@ -403,19 +400,20 @@ func TestMergeRequestAutomationStartsOnOthersMergeRequestsOnce(t *testing.T) {
 	}
 }
 
-// Each kind takes the entrypoints of its kind of run.
-func TestAutomationEntrypointKinds(t *testing.T) {
+// Each kind starts the flows whose runs are started on what it finds: a
+// merge request, or a ticket (run_start).
+func TestAutomationRunStartKinds(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "x", Kind: confstore.AutomationMergeRequest, Flow: "builder"})
-	if err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a run on a merge request") {
-		t.Errorf("merge_request on the default flow: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "starts its runs on a ticket") {
+		t.Errorf("merge_request on the builder flow: %v", err)
 	}
 	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "y", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Flow: "rev"})
-	if err == nil || !strings.Contains(err.Error(), "no entrypoint that begins a fresh run") {
+	if err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request") {
 		t.Errorf("tracker_query on a reviewer flow: %v", err)
 	}
 	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "z", Kind: confstore.AutomationMergeRequest, Flow: "rev", Repo: "ghost"})

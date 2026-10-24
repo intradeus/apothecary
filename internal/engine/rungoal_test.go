@@ -130,14 +130,14 @@ func TestRerunCarriesDirection(t *testing.T) {
 // about to record, which $DIFF_TARGET (commits only) cannot see yet.
 func TestUncommittedRendersWorkingTreeStatus(t *testing.T) {
 	h := newHarness(t, mustFlow(t, `name: uncommitted
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: committer
     prompt: name it
     inputs:
       - { name: changes, description: the uncommitted files }
-stages:
+main:
   - { id: commit_msg, type: agent, agent: committer, input: { changes: $STATUS } }
 `))
 	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
@@ -159,13 +159,13 @@ stages:
 }
 
 // The two diffs are two ranges, the same wherever they are bound: inside a
-// reaction, $DIFF_TARGET is still the whole branch against its target and
+// watcher, $DIFF_TARGET is still the whole branch against its target and
 // $DIFF_PHASE what this round committed since the head it began on.
 func TestDiffSentinelsMeasureTheirOwnRange(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "  - name: redactor\n",
 		"  - name: replier\n    prompt: reply\n    inputs:\n      - { name: all }\n      - { name: round }\n  - name: redactor\n", 1)
-	doc = strings.Replace(doc, "  - id: shipped\n",
-		"  - id: answer\n    on: manual\n    stages:\n      - { id: say, type: agent, agent: replier, input: { all: $DIFF_TARGET, round: $DIFF_PHASE } }\n  - id: shipped\n", 1)
+	doc = strings.Replace(doc, "outcomes:\n",
+		"  - id: answer\n    on: manual\n    stages:\n      - { id: say, type: agent, agent: replier, input: { all: $DIFF_TARGET, round: $DIFF_PHASE } }\noutcomes:\n", 1)
 	ph := newPhasedHarness(t, doc)
 	ph.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		switch cmd.Script {

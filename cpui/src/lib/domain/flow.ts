@@ -1,7 +1,7 @@
 // Flows: the documents a run executes, and the registries their stages may
 // name.
 
-import type { FlowDoc } from '$lib/flowdoc';
+import type { FlowDoc, PhaseKind, RunStart } from '$lib/flowdoc';
 
 export interface FlowLayout {
 	nodes: Record<string, { x: number; y: number }>;
@@ -24,9 +24,11 @@ export interface Flow {
 	/** This project's own copy of a template's name; deleting it resets to the
 	 *  template. */
 	shadowsBuiltin: boolean;
-	/** The document's parameters — what a project may bind (the engine-known
-	 *  six always present) — and its phases, where a run may begin. Empty when
-	 *  the document no longer parses. */
+	/** What its runs are started on, the document's parameters — what a
+	 *  project may bind (the engine-known six always present) — and its
+	 *  phases: the main chain, the watchers, the outcomes. Empty (runStart
+	 *  undefined) when the document no longer parses. */
+	runStart?: RunStart;
 	parameters: ParamDecl[];
 	phases: PhaseSummary[];
 }
@@ -47,8 +49,10 @@ export interface FlowValidation {
 	stages?: number;
 	agents?: number;
 	doc?: FlowDoc;
-	/** The document's parameters (the engine-known six always present) and
-	 *  where they are read; its phases with the wait point's effective values. */
+	/** What its runs are started on, the document's parameters (the
+	 *  engine-known six always present) and where they are read; its phases
+	 *  with the wait point's effective values. */
+	runStart?: RunStart;
 	parameters: ParamDecl[];
 	refs: ParamRef[];
 	phases: PhaseSummary[];
@@ -84,19 +88,17 @@ export interface ParamRef {
 	input?: string;
 }
 
-/** One phase of a flow with its wait point's effective values. */
+/** One phase of a flow — its main chain, a watcher or an outcome — with its
+ *  wait point's effective values. */
 export interface PhaseSummary {
 	id: string;
 	description?: string;
+	kind: PhaseKind;
 	signal: string;
 	start: 'auto' | 'confirm' | 'manual';
 	quietFor?: string;
 	max: number;
-	/** A run may begin here (on: run_start). */
-	entry: boolean;
-	/** It ends the run (on: mr_merged / mr_closed); `then` is what a
-	 *  stage-less outcome does. */
-	outcome: boolean;
+	/** How an outcome ends the run. */
 	then?: 'done' | 'abort';
 	/** Its runs act on one merge request. */
 	subject: boolean;
@@ -144,7 +146,8 @@ export interface ActionSpec {
 	outputs: ActionIO[];
 }
 
-/** What a `wait` stage may block on, or a gate's auto-answer may name. */
+/** A signal (FLOWLANG §1): what it is, never what it does — the section
+ *  that names it decides that. */
 export interface SignalSpec {
 	slug: string;
 	title: string;
@@ -153,14 +156,13 @@ export interface SignalSpec {
 	/** A run fact the signal depends on ('merge_request'), so a flow cannot
 	 *  wait on something that can never happen. */
 	needs?: string;
-	/** Begins a reaction phase (`on:`) rather than ending a wait or answering
-	 *  a gate — the two uses are exclusive. */
-	trigger: boolean;
-	/** May begin the run: allowed as the first phase's `on:`. */
-	entry: boolean;
-	/** Ends the run: a phase on it is an OUTCOME — it opens once, when the
-	 *  signal holds, and every route in it ends the run. Still waitable. */
-	outcome: boolean;
-	/** A trigger that fires on activity, so its phase may take a quiet_for. */
+	/** start: run_start, how a run begins; hand: manual, a person's start of
+	 *  a watcher; observed: a fact about the run's merge requests — which
+	 *  any watcher, outcome, wait or gate may name. */
+	kind: 'start' | 'hand' | 'observed';
+	/** It fires on activity, so a watcher on it may take a quiet_for. */
 	debounced: boolean;
+	/** As an outcome or a wait on the whole run, it holds once every merge
+	 *  request has it; otherwise as soon as one does. */
+	all: boolean;
 }

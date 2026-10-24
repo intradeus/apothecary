@@ -7,9 +7,9 @@ import { stringify } from 'yaml';
 
 // The two ends (FLOWLANG §3). END finishes a PHASE: its chain is over and the
 // run goes back to waiting — a phase's last stage ends this way, and a
-// reaction, which may run any number of times, always does. DONE finishes the
+// watcher, which may run any number of times, always does. DONE finishes the
 // RUN, now, whatever else is parked or armed: said where the work is truly
-// finished (the default flow says it once the merge request merged).
+// finished (an outcome says it once the merge request merged).
 export const END = 'end';
 export const DONE = 'done';
 // ABORT is the reserved edge target that deliberately stops the run
@@ -19,7 +19,7 @@ export const ABORT = 'abort';
 // workspace and comes BACK to the stage that took it — a leaf on the canvas,
 // not a terminal. Like abort it carries no max/then.
 export const DEBUG = 'debug';
-// START is the first phase's marker layout/link key (the canvas's solid
+// START is the main chain's marker layout/link key (the canvas's solid
 // beginning marker); it is never serialized.
 export const START = 'start';
 // FAIL exists only inside a block: an edge to it is the include's on_fail
@@ -40,7 +40,7 @@ export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait' |
 
 // CURRENT_VERSION is the grammar this build writes; every document declares
 // it, so a future break is a refusal rather than a mis-parse (FLOWLANG §1).
-export const CURRENT_VERSION = 4;
+export const CURRENT_VERSION = 5;
 
 // An edge is a chain: when a link's max is exhausted the next failure
 // falls through to `then` (retry-then-escalate). A link with to: abort
@@ -157,52 +157,56 @@ export interface DocStage {
 	on_fail?: DocEdge;
 	on_reject?: DocEdge;
 	on_timeout?: DocEdge;
-	/** Editor-only: the phase this stage belongs to, in a phased flow. The
-	 *  YAML nests stages under their phase; the editor keeps one flat list. */
+	/** Editor-only: the chain this stage belongs to — `main`, or a watcher's
+	 *  or an outcome's id. The YAML writes stages under their section; the
+	 *  editor keeps one flat list. */
 	phase?: string;
 }
 
 /** A phase's `on:` — the wait point that opens it (FLOWLANG §1): run_start
- *  (an entrypoint a run is created at), manual (the run page only), or a
- *  repository signal with its start policy (auto | confirm | manual, or a $param).
- *  `max` may read an int parameter ("$name"). */
+ *  for the main chain (a person or an automation starts the run), manual for
+ *  a watcher a person starts from the run page, or an observed signal with
+ *  its start policy (auto | confirm | manual, or a $param). `max` may read
+ *  an int parameter ("$name"). */
 export interface DocWait {
 	signal: string;
 	start?: string;
 	quiet_for?: string;
 	max?: number | string;
 }
-export type DocTrigger = DocWait;
 
-/** A phase header: one beginning (`on`) and, tagged with its id, the flat
- *  list's stages it runs. */
+/** Which section a phase is written in (FLOWLANG §1): the main chain a run
+ *  starts with, a watcher that runs its chain on each new occurrence of its
+ *  signal, or an outcome that fires once and ends the run. */
+export type PhaseKind = 'main' | 'watcher' | 'outcome';
+export const PHASE_KINDS: PhaseKind[] = ['main', 'watcher', 'outcome'];
+
+/** A phase header: what opens it (`on`), its section and, tagged with its
+ *  id, the flat list's stages it runs. */
 export interface DocPhase {
 	id: string;
+	/** Editor-only: the section it is written in. */
+	kind: PhaseKind;
 	description?: string;
-	on: DocTrigger;
-	/** An OUTCOME with nothing to do but end the run: `then: done` or
-	 *  `then: abort` in place of stages. */
+	on: DocWait;
+	/** An OUTCOME's end of the run, done (the default) or abort: its last
+	 *  stage's success, or all it does when it has no chain. */
 	then?: string;
 }
 
-// RUN_START opens an entrypoint: a run is created for the phase. MANUAL opens
-// a phase from the run page only. Everything else that opens a phase is a
-// repository signal, which takes a start policy.
+/** The main chain's id — and the block other chains run it by. */
+export const MAIN = 'main';
+// RUN_START is how the main chain opens: a person or an automation starts a
+// run. MANUAL opens a watcher from the run page only. Every other signal is
+// observed on the run's merge requests, and takes a start policy.
 export const RUN_START = 'run_start';
-// MR_OPENED is the other entrypoint: a run created on a merge request someone
-// opened, which its phase acts on from the start.
-export const MR_OPENED = 'mr_opened';
-export const isEntrySignal = (s: string) => s === RUN_START || s === MR_OPENED;
 export const MANUAL = 'manual';
 export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
-/** The signals whose phase is an OUTCOME — it opens once and ends the run.
- *  Mirrors signalspec's Outcome flag: the registry (GET /api/signals) is the
- *  truth and the pickers read it; this list only shapes what the document
- *  model cannot ask the server for — the implicit `done` of an outcome's
- *  last stage. */
-export const OUTCOME_SIGNALS = ['mr_merged', 'mr_closed', 'mr_approved'];
-export const isOutcome = (w: DocWait) => OUTCOME_SIGNALS.includes(w.signal);
 export type StartPolicy = (typeof START_POLICIES)[number];
+/** What a flow's runs are started on (`run_start:`): a ticket, the default,
+ *  or a merge request someone opened. */
+export const RUN_STARTS = ['ticket', 'merge_request'] as const;
+export type RunStart = (typeof RUN_STARTS)[number];
 
 /** One parameter of the flow's `parameters:` block (FLOWLANG §1): its
  *  default — whose JS type is the parameter's type: bool, int/float, string —
@@ -268,22 +272,38 @@ export interface FlowDoc {
 	name: string;
 	version?: number;
 	description?: string;
+	/** What the flow's runs are started on; absent = a ticket. */
+	run_start?: RunStart;
 	/** The flow's one settings block, in document order. */
 	parameters: Record<string, DocParam>;
 	agents?: DocAgent[];
 	/** Blocks, in document order; the canvas shows their includes. */
 	blocks?: DocBlock[];
+	/** Every chain's stages, in section order, each tagged with its phase. */
 	stages: DocStage[];
-	/** Phased flows (PLAN6): the phase headers, the entry first. Absent for a
-	 *  flow written with top-level stages. */
+	/** The chains' headers, in section order: the main chain (a flow that
+	 *  only watches has none), the watchers, the outcomes. Absent for a
+	 *  block drawn on its own. */
 	phases?: DocPhase[];
 }
 
-/** The wire document, where a phased flow nests its stages and an include
- *  has no type. */
-type WireDoc = Omit<FlowDoc, 'stages' | 'phases'> & {
+/** A watcher or an outcome as the document writes it: `on` may be the bare
+ *  signal, and `run: X` stands for a chain of one stage including X. */
+interface WireWatcher {
+	id: string;
+	description?: string;
+	on: DocWait | string;
+	run?: string;
 	stages?: DocStage[];
-	phases?: (DocPhase & { stages?: DocStage[] })[];
+	then?: string;
+}
+
+/** The wire document: a section per kind of chain, and includes with no
+ *  type. */
+type WireDoc = Omit<FlowDoc, 'stages' | 'phases'> & {
+	main?: DocStage[];
+	watchers?: WireWatcher[];
+	outcomes?: WireWatcher[];
 };
 
 /** An edge as the editor holds it. The server's document spells every edge
@@ -304,8 +324,10 @@ function tagStage(s: DocStage): DocStage {
 	return out;
 }
 
-// normalizeDoc turns the server's document into the editor's: a phased
-// flow's stages flattened in phase order, each tagged with its phase.
+// normalizeDoc turns the server's document — or a pinned one parsed here —
+// into the editor's: every chain's stages flattened in section order, each
+// tagged with its phase, and `run: X` read the way the parser reads it, as a
+// chain of one stage that includes X, named after its watcher.
 //
 // It also makes every stage's success target explicit. The YAML may leave
 // `on_success` out ("next stage in document order"); the graph resolves that
@@ -313,19 +335,23 @@ function tagStage(s: DocStage): DocStage {
 // "done" — the canvas and the sidebar disagreed. docToYaml writes it explicitly
 // anyway, so materializing it here changes no saved document.
 export function normalizeDoc(raw: unknown): FlowDoc {
-	const w = raw as WireDoc;
-	let doc: FlowDoc;
-	if (!w.phases?.length) doc = { ...(w as FlowDoc), stages: (w.stages ?? []).map(tagStage) };
-	else {
-		const stages: DocStage[] = [];
-		const phases: DocPhase[] = [];
-		for (const ph of w.phases) {
-			const { stages: inner, ...head } = ph;
-			phases.push(head);
-			for (const st of inner ?? []) stages.push({ ...tagStage(st), phase: ph.id });
-		}
-		doc = { ...(w as FlowDoc), stages, phases };
+	const { main, watchers, outcomes, ...w } = raw as WireDoc;
+	const stages: DocStage[] = [];
+	const phases: DocPhase[] = [];
+	if (main?.length) {
+		phases.push({ id: MAIN, kind: 'main', on: { signal: RUN_START } });
+		for (const st of main) stages.push({ ...tagStage(st), phase: MAIN });
 	}
+	const section = (list: WireWatcher[] | undefined, kind: PhaseKind) => {
+		for (const { stages: inner, run, on, ...head } of list ?? []) {
+			phases.push({ ...head, kind, on: typeof on === 'string' ? { signal: on } : { ...on } });
+			const chain = run ? [{ id: head.id, include: run } as DocStage] : (inner ?? []);
+			for (const st of chain) stages.push({ ...tagStage(st), phase: head.id });
+		}
+	};
+	section(watchers, 'watcher');
+	section(outcomes, 'outcome');
+	const doc: FlowDoc = { ...(w as FlowDoc), stages, phases };
 	doc.stages.forEach((s, i) => (s.on_success = effectiveSuccess(doc, i)));
 	// A block's stages keep their sugar: its last stage's success is
 	// whichever include runs it.
@@ -458,6 +484,11 @@ export function phaseEntry(doc: FlowDoc, phase: string | undefined): DocStage | 
 	return doc.stages.find((s) => (s.phase ?? '') === (phase ?? ''));
 }
 
+/** The phase a stage belongs to. */
+export function phaseOf(doc: FlowDoc, s: DocStage): DocPhase | undefined {
+	return doc.phases?.find((p) => p.id === s.phase);
+}
+
 /** "mr_conflicts (confirm)" — a phase's wait point in a few words. */
 export function triggerLabel(w: DocWait): string {
 	if (!fires(w)) return w.signal;
@@ -471,7 +502,7 @@ export function triggerLabel(w: DocWait): string {
 /** Whether a phase's signal fires on its own — and so takes a start policy.
  *  run_start and manual are a person's act. */
 export function fires(w: DocWait): boolean {
-	return !isEntrySignal(w.signal) && w.signal !== MANUAL;
+	return w.signal !== RUN_START && w.signal !== MANUAL;
 }
 
 /** A parameter's default as text, or undefined when the document omits it
@@ -487,18 +518,19 @@ export function agentOf(doc: FlowDoc, name: string): DocAgent | undefined {
 }
 
 // effectiveSuccess resolves the YAML sugar for display: explicit target, or
-// next stage in document order, or the end of the phase. "Next" never crosses
-// into another phase, and an implicit end is never the run's: only an
-// explicit `done` says the run is finished.
+// next stage in document order, or the end of the chain. "Next" never crosses
+// into another chain. A chain's last stage ends its phase — unless nothing
+// could follow: a main chain with no watcher or outcome is done, and an
+// outcome ends the run the way its then says.
 export function effectiveSuccess(doc: FlowDoc, i: number): string {
 	const s = doc.stages[i];
 	if (s.on_success) return s.on_success;
 	const next = doc.stages[i + 1];
 	if (next && (next.phase ?? '') === (s.phase ?? '')) return next.id;
-	// The phase's last stage ends the phase — unless nothing could follow:
-	// the shorthand's one phase and an outcome end the run.
-	const ph = doc.phases?.find((p) => p.id === s.phase);
-	return !doc.phases?.length || (ph && isOutcome(ph.on)) ? DONE : END;
+	if (!doc.phases?.length) return DONE;
+	const ph = phaseOf(doc, s);
+	if (ph?.kind === 'outcome') return ph.then ?? DONE;
+	return ph?.kind === 'main' && doc.phases.length === 1 ? DONE : END;
 }
 
 export function edgeOf(s: DocStage, kind: EdgeKind): DocEdge | undefined {
@@ -546,7 +578,7 @@ function placeInPhase(doc: FlowDoc, id: string, phase: string) {
 		}
 	}
 	if (at === doc.stages.length) {
-		// An empty phase: place its block where the phase order says.
+		// An empty chain: place its stages where the section order says.
 		const order = (doc.phases ?? []).map((p) => p.id);
 		const rank = order.indexOf(phase);
 		at = doc.stages.findIndex((x) => order.indexOf(x.phase ?? '') > rank);
@@ -600,6 +632,7 @@ export function docToYaml(doc: FlowDoc): string {
 	const idx = new Map(doc.stages.map((s, i) => [s.id, i]));
 	const obj: Record<string, unknown> = { name: doc.name, version: doc.version ?? CURRENT_VERSION };
 	if (doc.description) obj.description = doc.description;
+	if (doc.run_start && doc.run_start !== 'ticket') obj.run_start = doc.run_start;
 	// The one settings block, in document order: a bare default when that is
 	// all a parameter has.
 	const params: Record<string, unknown> = {};
@@ -686,7 +719,7 @@ export function docToYaml(doc: FlowDoc): string {
 		}
 		return o;
 	};
-	// Blocks before the phases that include them, as written.
+	// Blocks before the chains that include them, as written.
 	if (doc.blocks?.length) {
 		obj.blocks = doc.blocks.map((b) => {
 			const o: Record<string, unknown> = { id: b.id };
@@ -695,25 +728,47 @@ export function docToYaml(doc: FlowDoc): string {
 			return o;
 		});
 	}
-	if (doc.phases?.length) {
-		obj.phases = doc.phases.map((ph) => {
-			const o: Record<string, unknown> = { id: ph.id };
-			if (ph.description) o.description = ph.description;
-			o.on = triggerYaml(ph.on);
-			// A stage-less outcome says `then`; any stage makes it a chain.
-			const own = ordered.filter((s) => s.phase === ph.id);
-			if (ph.then && !own.length) o.then = ph.then;
-			else o.stages = own.map((s) => stageYaml(s));
-			return o;
-		});
-	} else {
-		obj.stages = ordered.map((s) => stageYaml(s));
-	}
+	// The sections: the main chain, then the watchers and the outcomes —
+	// each opened by its `on`, an outcome ending the run by its `then`.
+	const chainOf = (ph: DocPhase) => ordered.filter((s) => s.phase === ph.id);
+	const main = doc.phases?.find((p) => p.kind === 'main');
+	if (main) obj.main = chainOf(main).map((s) => stageYaml(s));
+	const section = (kind: PhaseKind) =>
+		(doc.phases ?? [])
+			.filter((p) => p.kind === kind)
+			.map((ph) => {
+				const o: Record<string, unknown> = { id: ph.id };
+				if (ph.description) o.description = ph.description;
+				o.on = triggerYaml(ph.on);
+				const own = chainOf(ph);
+				// An outcome with no chain is nothing but its `then`.
+				if (kind === 'outcome' && (ph.then || !own.length)) o.then = ph.then ?? DONE;
+				const run = runOf(ph, own);
+				if (run) o.run = run;
+				else if (own.length) o.stages = own.map((s) => stageYaml(s));
+				return o;
+			});
+	const watchers = section('watcher');
+	if (watchers.length) obj.watchers = watchers;
+	const outcomes = section('outcome');
+	if (outcomes.length) obj.outcomes = outcomes;
 	return stringify(obj, { lineWidth: 0 });
 }
 
+// runOf is the block a chain is written as `run: X` for: a chain of one
+// include named after its phase, leaving the way the chain ends on its own
+// — exactly what the parser reads `run: X` as.
+function runOf(ph: DocPhase, own: DocStage[]): string | undefined {
+	if (own.length !== 1) return undefined;
+	const [s] = own;
+	const ends = ph.kind === 'outcome' ? (ph.then ?? DONE) : END;
+	if (s.type !== 'include' || s.id !== ph.id || s.on_fail || s.description || s.on_success !== ends)
+		return undefined;
+	return s.include;
+}
+
 // triggerYaml uses the scalar sugar when the wait point has no options
-// (`on: run_start`, `on: manual`, `on: mr_conflicts`).
+// (`on: manual`, `on: mr_conflicts`).
 function triggerYaml(w: DocWait): unknown {
 	const start = w.start && w.start !== 'auto' ? w.start : undefined;
 	if (!start && !w.quiet_for && w.max == null) return w.signal;
@@ -740,8 +795,8 @@ function edgeToYamlValue(e: DocEdge): unknown {
 }
 
 /** A node's rendered size, as Svelte Flow measured it. FlowGraph reports them
- *  keyed the way `layout` is: stage ids, START/END/DONE/ABORT, `trigger:<phase>`
- *  and `debug:<stage>`. */
+ *  keyed the way `layout` is: stage ids, START/END/DONE/ABORT, `trigger:<phase>`,
+ *  `section:<kind>` and `debug:<stage>`. */
 export interface NodeSize {
 	width: number;
 	height: number;
@@ -755,7 +810,19 @@ const BAND_GAP = 140;
 const LANE_INDENT = 120;
 const GUESS: NodeSize = { width: 220, height: 120 };
 const GUESS_TERMINAL: NodeSize = { width: 110, height: 44 };
+const GUESS_SECTION: NodeSize = { width: 90, height: 18 };
+const SECTION_GAP = 14;
 const LEAF_GAP = 14;
+
+/** The layout key of a phase's marker: START for the main chain, every
+ *  other phase its own. */
+export const markerKey = (ph: DocPhase | undefined) =>
+	!ph || ph.kind === 'main' ? START : `trigger:${ph.id}`;
+/** The layout key of a section's label on the canvas. */
+export const sectionKey = (kind: PhaseKind) => `section:${kind}`;
+/** Whether the canvas labels its sections: once a flow has more than its
+ *  one chain. */
+export const showsSections = (doc: FlowDoc) => (doc.phases?.length ?? 0) > 1;
 
 /** One labelled control link leaving a stage: every link of every edge
  *  chain, in edge-kind then chain order. Its index is the label's row under
@@ -783,26 +850,36 @@ export function parksOnDebug(s: DocStage): boolean {
 
 // autoLayout places nodes left-to-right along the success chain, dropping
 // off-chain stages into a lane below (used when no stored layout exists, and
-// by the auto-arrange button). A phased flow gets one band per phase, top to
-// bottom. Every column is as wide as the node in it and every row as tall as
-// its tallest node — from the sizes Svelte Flow measured, when the caller has
-// them — so nodes never overlap however many ports they grew.
+// by the auto-arrange button). Each chain gets one band, top to bottom, its
+// marker in a column on the left — the main chain, the watchers, the
+// outcomes, each section under its label. Every column is as wide as the
+// node in it and every row as tall as its tallest node — from the sizes
+// Svelte Flow measured, when the caller has them — so nodes never overlap
+// however many ports they grew.
 export function autoLayout(
 	doc: FlowDoc,
 	sizes: Record<string, NodeSize> = {}
 ): Record<string, { x: number; y: number }> {
 	const size = (key: string, guess = GUESS) => sizes[key] ?? guess;
 	const pos: Record<string, { x: number; y: number }> = {};
-	const bands = doc.phases?.length ? doc.phases.map((p) => p.id) : [undefined];
+	const bands: (DocPhase | undefined)[] = doc.phases?.length ? doc.phases : [undefined];
 	const byId = new Map(doc.stages.map((s, i) => [s.id, i]));
-	// What begins each band — the entry's marker, then each later phase's —
-	// stands in one column on the left, its left edges aligned: the widest
-	// marker sets where the column starts.
-	const markers = [START, ...bands.slice(1).map((p) => `trigger:${p}`)];
+	// What begins each band — its phase's marker — stands in one column on
+	// the left, its left edges aligned: the widest marker sets where the
+	// column starts.
+	const markers = bands.map(markerKey);
 	const markerX = -(Math.max(...markers.map((k) => size(k, GUESS_TERMINAL).width)) + GAP_X);
+	const sections = showsSections(doc);
 	let y0 = 0;
 	let right = 0; // the widest band's right edge: where the terminals go
-	bands.forEach((phase, band) => {
+	bands.forEach((ph, band) => {
+		const phase = ph?.id;
+		// A section begins: its label heads the marker column.
+		if (sections && ph && ph.kind !== bands[band - 1]?.kind) {
+			const key = sectionKey(ph.kind);
+			pos[key] = { x: markerX, y: y0 };
+			y0 += size(key, GUESS_SECTION).height + SECTION_GAP;
+		}
 		const chain = new Set<string>();
 		// The chain ends where success leaves the stages: end, done, abort.
 		let cur = phaseEntry(doc, phase)?.id;
@@ -848,21 +925,79 @@ export function autoLayout(
 			laneH = Math.max(laneH, height);
 		}
 		right = Math.max(right, x, offChain.length ? x1 : 0);
-		// A later phase's marker: in the column, on its band's row.
-		if (band > 0 && phase !== undefined) pos[`trigger:${phase}`] = { x: markerX, y: y0 };
+		// The band's marker: in the column, on its band's row. A chain-less
+		// outcome is its marker alone, so its band is no taller.
+		pos[markers[band]] = { x: markerX, y: y0 };
+		if (!onChain.length && !offChain.length) {
+			y0 += size(markers[band], GUESS_TERMINAL).height + GAP_Y / 2;
+			return;
+		}
 		y0 = (offChain.length ? leaves(offChain, y1 + laneH) : leaves(onChain, y0 + rowH)) + BAND_GAP;
 	});
-	// Terminals: the entry marker heads the column; end, done and abort
-	// stacked right of everything (done and abort draw only when a route
-	// reaches them, but a position costs nothing). Debug is no terminal — its
-	// leaves sit by their stages, above.
-	pos[START] = { x: markerX, y: 0 };
+	// Terminals: end, done and abort stacked right of everything (done and
+	// abort draw only when a route reaches them, but a position costs
+	// nothing). Debug is no terminal — its leaves sit by their stages, above.
+	pos[START] ??= { x: markerX, y: 0 };
 	let ty = 0;
 	for (const key of [END, DONE, ABORT]) {
 		pos[key] = { x: right, y: ty };
 		ty += size(key, GUESS_TERMINAL).height + GAP_Y;
 	}
 	return pos;
+}
+
+// placeChain makes room on a laid-out canvas for a chain added since it was
+// laid out: its band goes at the end of its section — its section's label
+// first, when it opens the section — and the sections after it move down by
+// its height, so a new watcher lands among the watchers and nothing else
+// moves. Its marker and stages are placed; a chain already placed is left
+// as it is.
+export function placeChain(
+	doc: FlowDoc,
+	layout: Record<string, { x: number; y: number }>,
+	id: string
+) {
+	const ph = doc.phases?.find((p) => p.id === id);
+	if (!ph || layout[markerKey(ph)]) return;
+	const others = (doc.phases ?? []).filter((p) => p.id !== id && layout[markerKey(p)]);
+	const keysOf = (p: DocPhase) => [
+		markerKey(p),
+		...stagesOf(doc, p.id).flatMap((s) => [s.id, debugKey(s.id)])
+	];
+	const height = (key: string) =>
+		key === START || key.startsWith('trigger:') || key.startsWith('debug:')
+			? GUESS_TERMINAL.height
+			: GUESS.height;
+	const rank = PHASE_KINDS.indexOf(ph.kind);
+	const before = others.filter((p) => PHASE_KINDS.indexOf(p.kind) <= rank);
+	const after = others.filter((p) => PHASE_KINDS.indexOf(p.kind) > rank);
+	const bottom = Math.max(
+		...before.flatMap(keysOf).flatMap((k) => (layout[k] ? [layout[k].y + height(k)] : []))
+	);
+	let y = Number.isFinite(bottom) ? bottom + BAND_GAP : 0;
+	const markerX = layout[START]?.x ?? (others.length ? layout[markerKey(others[0])].x : -280);
+	const top = y;
+	if (showsSections(doc) && !before.some((p) => p.kind === ph.kind)) {
+		layout[sectionKey(ph.kind)] = { x: markerX, y };
+		y += GUESS_SECTION.height + SECTION_GAP;
+	}
+	layout[markerKey(ph)] = { x: markerX, y };
+	// Its stages in a row, from where the other chains' first stages start.
+	const firsts = others.flatMap((p) => {
+		const first = phaseEntry(doc, p.id);
+		return first && layout[first.id] ? [layout[first.id].x] : [];
+	});
+	let x = firsts.length ? Math.min(...firsts) : markerX + GUESS_TERMINAL.width + GAP_X;
+	const own = stagesOf(doc, ph.id);
+	for (const s of own) {
+		layout[s.id] = { x, y };
+		x += GUESS.width + GAP_X;
+	}
+	// Everything after it moves down by what it took.
+	const took = y - top + (own.length ? GUESS.height + BAND_GAP : GUESS_TERMINAL.height + GAP_Y / 2);
+	const below = new Set(after.flatMap(keysOf));
+	for (const p of after) below.add(sectionKey(p.kind));
+	for (const k of below) if (layout[k]) layout[k] = { x: layout[k].x, y: layout[k].y + took };
 }
 
 // columnLayout stacks a block's stages top to bottom, in document order —
@@ -888,6 +1023,52 @@ export function columnLayout(
 	pos[END] = { x: 0, y };
 	pos[DONE] = { x: size(END, GUESS_TERMINAL).width + GAP_X, y };
 	return pos;
+}
+
+// freshPhaseId is a phase id not yet taken: watcher_1, outcome_2, …
+function freshPhaseId(doc: FlowDoc, base: string): string {
+	const ids = new Set((doc.phases ?? []).map((p) => p.id));
+	let n = 1;
+	while (ids.has(`${base}_${n}`)) n++;
+	return `${base}_${n}`;
+}
+
+/** addWatcher adds a watcher a person starts from the run page, with one
+ *  command stage — a watcher needs a chain — after the last watcher. */
+export function addWatcher(doc: FlowDoc): DocPhase {
+	doc.phases ??= [];
+	const ph: DocPhase = {
+		id: freshPhaseId(doc, 'watcher'),
+		kind: 'watcher',
+		on: { signal: MANUAL }
+	};
+	const at = doc.phases.findIndex((p) => p.kind === 'outcome');
+	doc.phases.splice(at < 0 ? doc.phases.length : at, 0, ph);
+	const s = freshStage(doc, 'command');
+	doc.stages.push(s);
+	placeInPhase(doc, s.id, ph.id);
+	return ph;
+}
+
+/** addOutcome adds an outcome that completes the run once every merge
+ *  request merged — nothing to do first. */
+export function addOutcome(doc: FlowDoc): DocPhase {
+	doc.phases ??= [];
+	const ph: DocPhase = {
+		id: freshPhaseId(doc, 'outcome'),
+		kind: 'outcome',
+		on: { signal: 'mr_merged' },
+		then: DONE
+	};
+	doc.phases.push(ph);
+	return ph;
+}
+
+/** removePhase drops a watcher or an outcome with its chain. Nothing routes
+ *  into a chain from outside it, so nothing else changes. */
+export function removePhase(doc: FlowDoc, id: string) {
+	doc.phases = doc.phases?.filter((p) => p.id !== id);
+	doc.stages = doc.stages.filter((s) => s.phase !== id);
 }
 
 // freshStage builds a new stage of the given type with a unique id.

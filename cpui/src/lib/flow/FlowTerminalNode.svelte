@@ -1,13 +1,14 @@
 <script lang="ts">
 	// The flow's terminals (DESIGN 7.8): serif italic pills on content glass.
-	//  - start (brand, solid): the entry's beginning — the phase every run
-	//    begins with — naming what begins it; its handle drags onto a stage
-	//    to make that stage the entry. Each reaction phase draws its own
+	//  - start (brand, solid): the main chain's beginning — what every run
+	//    starts with — naming what runs are started on; its handle drags onto
+	//    a stage to start the chain there. Each watcher draws its own
 	//    beginning (data.entry false), violet and dashed, naming its signal:
-	//    one beginning per phase, one phase per beginning. An outcome's
-	//    (data.outcome) is green: the phase opens once and ends the run.
-	//  - end (tea, dashed): a phase is over and the run goes back to waiting —
-	//    where most chains close, a reaction's always.
+	//    one beginning per chain, one chain per beginning. An outcome's
+	//    (data.outcome) wears the end it says (data.then): green for done,
+	//    rose for abort — it fires once and ends the run.
+	//  - end (tea, dashed): a chain is over and the run goes back to waiting —
+	//    where most chains close, a watcher's always.
 	//  - done (grn, dashed) and abort (ros, dashed): where the RUN ends.
 	//  - debug (amb, dashed): the stop that comes back — a human fixes the
 	//    workspace, then the stage that sent the run here runs again. Drawn
@@ -40,9 +41,11 @@
 					: 'done'
 	);
 	const HUE: Record<Tone, Hue> = {
+		get outcome(): Hue {
+			return data?.then === 'abort' ? 'ros' : 'grn';
+		},
 		start: 'brand',
 		trigger: 'vio',
-		outcome: 'grn',
 		end: 'tea',
 		done: 'grn',
 		abort: 'ros',

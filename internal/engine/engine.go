@@ -77,15 +77,13 @@ type RunInput struct {
 	// "" reuses the original run's source branch.
 	SourceBranch  string
 	AttachmentIDs []string
-	// Phase is the entrypoint the run begins at ("" = the flow's first);
-	// Params override the project's parameter bindings for this attempt; By
-	// records who created the run on run_created ("" = a person,
-	// "automation" for a watcher).
-	Phase  string
+	// Params override the project's parameter bindings for this attempt;
+	// By records who created the run on run_created ("" = a person,
+	// "automation" for an automation).
 	Params map[string]string
 	By     string
-	// MR creates the run on a merge request someone opened, at an
-	// entrypoint on mr_opened: Repo is the checkout it belongs to ("" =
+	// MR starts the run on a merge request someone opened, for a flow with
+	// run_start: merge_request: Repo is the checkout it belongs to ("" =
 	// the primary), IID its number.
 	MR *RunMR
 }
@@ -954,17 +952,18 @@ func (e *Engine) appendAndEmit(ctx context.Context, runID string, ps ...event.Pa
 	return nil
 }
 
-// CreateRun is CreateRunWith at the flow's first entrypoint, with the
-// project's parameter bindings and nothing overridden.
+// CreateRun is CreateRunWith on a ticket, with the project's parameter
+// bindings and nothing overridden.
 func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID string) (string, error) {
 	return e.CreateRunWith(ctx, t, flowName, projectID, RunInput{})
 }
 
 // CreateRunWith performs §1 preflight against the project's resolved
 // configuration and, if it passes, appends run_created and starts the run's
-// writer goroutine. flowName "" means the project's default flow; in.Phase
-// the entrypoint to begin at ("" = the flow's first) and in.Params this
-// attempt's parameter overrides, on top of the project's bindings. The flow
+// writer goroutine. flowName "" means the project's default flow; in.MR the
+// merge request a flow with run_start: merge_request is started on, and
+// in.Params this attempt's parameter overrides, on top of the project's
+// bindings. The flow
 // is resolved with those values before preflight, so a bound harness, model
 // or run_ref is checked exactly like a literal one. Preflight failures
 // refuse the run naming the exact missing item — no events are written.
@@ -987,8 +986,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if err != nil {
 		return "", fmt.Errorf("flow %q: %w", flowName, err)
 	}
-	phase, err := entrypointOf(fl, in.Phase, in.MR != nil)
-	if err != nil {
+	if err := startsOn(fl, in.MR != nil); err != nil {
 		return "", err
 	}
 	params, err := e.resolveParams(ctx, fl, projectID, in.Params)
@@ -1073,7 +1071,6 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 		TicketSourceKind:    t.SourceKind,
 		TicketSourceKey:     t.SourceKey,
 		TicketSourceURL:     t.SourceURL,
-		Phase:               phase,
 		Params:              params,
 		By:                  by,
 		MR:                  adopted,
@@ -1324,18 +1321,15 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	if in.SourceBranch != "" {
 		sourceBranch = in.SourceBranch
 	}
-	// The attempt begins where the original did and with its parameter
-	// values — unless the flow changed (then its own first entrypoint) or
-	// the request says otherwise. Values the flow no longer declares drop.
-	next := RunInput{Phase: in.Phase, Params: map[string]string{}, By: in.By, MR: in.MR}
-	// A run created on someone's merge request is rerun on it.
+	// The attempt runs with the original's parameter values — unless the
+	// flow changed, or the request says otherwise. Values the flow no
+	// longer declares drop.
+	next := RunInput{Params: map[string]string{}, By: in.By, MR: in.MR}
+	// A run started on someone's merge request is rerun on it.
 	if next.MR == nil && v.Adopted != nil {
 		next.MR = &RunMR{Repo: v.Adopted.Repo, IID: v.Adopted.IID}
 	}
 	if in.Flow == "" || in.Flow == v.FlowName {
-		if next.Phase == "" {
-			next.Phase = v.BeginPhase
-		}
 		if fl, ferr := e.flows.Get(ctx, v.ProjectID, flowName); ferr == nil {
 			for k, val := range v.Params {
 				if fl.Param(k) != nil {
@@ -1514,16 +1508,9 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	} else if !dc {
 		return fmt.Errorf("preflight: repo has no .devcontainer/devcontainer.json — apothecary runs the repo's own devcontainer")
 	}
-	// A phase that opens on a signal needs whoever raises it, like a wait
-	// stage does: the run would otherwise sit armed on an event nothing can
-	// observe. run_start and manual phases need nothing.
 	for i := range fl.Phases {
-		ph := &fl.Phases[i]
-		if !ph.Observed() && !ph.OnMR() {
-			continue
-		}
-		if err := res.signalAvailable(ph.On.Signal); err != nil {
-			return fmt.Errorf("preflight: phase %q: %w", ph.ID, err)
+		if err := res.phaseAvailable(&fl.Phases[i]); err != nil {
+			return fmt.Errorf("preflight: %s: %w", fl.Phases[i].Label(), err)
 		}
 	}
 	for i := range fl.Stages {
@@ -2747,12 +2734,8 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 
 func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 	for i := range fl.Phases {
-		ph := &fl.Phases[i]
-		if !ph.Observed() && !ph.OnMR() {
-			continue
-		}
-		if err := res.signalAvailable(ph.On.Signal); err != nil {
-			return fmt.Errorf("phase %q: %w", ph.ID, err)
+		if err := res.phaseAvailable(&fl.Phases[i]); err != nil {
+			return fmt.Errorf("%s: %w", fl.Phases[i].Label(), err)
 		}
 	}
 	for i := range fl.Stages {

@@ -16,7 +16,7 @@ import (
 const askFlowDoc = `name: ask
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: build, type: agent, agent: builder }
 `
 
@@ -289,7 +289,7 @@ agents:
       Plan the work.
     outputs:
       - { name: plan, description: the plan, path: artifacts/plan.md }
-stages:
+main:
   - { id: plan, type: agent, agent: planner }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -426,7 +426,7 @@ func TestGateParksAndAnswerResumes(t *testing.T) {
 	doc := `name: gated
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: plan_gate, type: human_gate, question: "Approve?", on_success: done, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))

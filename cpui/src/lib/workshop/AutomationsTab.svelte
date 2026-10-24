@@ -72,7 +72,6 @@
 	let editing = $state<Automation | null>(null);
 	let draft = $state<AutomationDraft>(blank());
 	let flowPick = $state(''); // '' = the workshop's default flow
-	let phase = $state('');
 	let params = $state<Record<string, string>>({});
 	let busy = $state(false);
 	let formError = $state('');
@@ -86,7 +85,6 @@
 		draft = blank();
 		draft.sourceId = sources[0]?.id;
 		flowPick = '';
-		phase = '';
 		params = {};
 		formError = '';
 		open = true;
@@ -105,7 +103,6 @@
 			enabled: a.enabled
 		};
 		flowPick = a.flow === project.defaultFlow ? '' : a.flow;
-		phase = a.phase ?? '';
 		params = { ...a.params };
 		formError = '';
 		open = true;
@@ -120,7 +117,6 @@
 			ticketId: a.ticketId,
 			repo: a.repo,
 			flow: a.flow,
-			phase: a.phase,
 			params: a.params,
 			enabled
 		};
@@ -130,7 +126,7 @@
 		e.preventDefault();
 		busy = true;
 		formError = '';
-		const d: AutomationDraft = { ...draft, flow: flowName, phase: phase || undefined, params };
+		const d: AutomationDraft = { ...draft, flow: flowName, params };
 		// Only what the kind takes travels.
 		if (d.kind !== 'tracker_query') {
 			d.sourceId = undefined;
@@ -241,9 +237,7 @@
 						{/if}
 					</span>
 					<span class="small">
-						{a.phase
-							? t('workshop.automations.flowPhase', { flow: a.flow, phase: a.phase })
-							: t('workshop.automations.flowFirst', { flow: a.flow })}
+						{a.flow}
 						{#if Object.keys(a.params).length}
 							· {t('workshop.automations.overrides', { count: Object.keys(a.params).length })}
 						{/if}
@@ -358,17 +352,11 @@
 					projectId={project.id}
 					bind:value={flowPick}
 					fallbackLabel={t('workshop.automations.defaultFlow', { flow: project.defaultFlow })}
+					runStart={draft.kind === 'merge_request' ? 'merge_request' : 'ticket'}
+					fallbackFlow={project.defaultFlow}
 				/>
 			</div>
-			<StartRunOptions
-				projectId={project.id}
-				{flowName}
-				bind:phase
-				bind:params
-				entries={draft.kind === 'merge_request' ? 'mr' : 'fresh'}
-				askMR={false}
-				idPrefix="au"
-			/>
+			<StartRunOptions projectId={project.id} {flowName} bind:params askMR={false} idPrefix="au" />
 			<Toggle
 				checked={draft.enabled}
 				label={t('workshop.automations.startEnabled')}

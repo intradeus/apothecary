@@ -155,8 +155,6 @@ components:
           additionalProperties:
             type: string
           type: object
-        phase:
-          type: string
         project_id:
           type: string
         query:
@@ -197,8 +195,6 @@ components:
           additionalProperties:
             type: string
           type: object
-        phase:
-          type: string
         query:
           type: string
         repo:
@@ -396,24 +392,6 @@ components:
           - default
         type: object
       type: object
-    DocPhase:
-      properties:
-        description:
-          type: string
-        id:
-          type: string
-        "on":
-          $ref: '#/components/schemas/DocWait'
-        stages:
-          items:
-            $ref: '#/components/schemas/DocStage'
-          type: array
-        then:
-          type: string
-      required:
-        - id
-        - "on"
-      type: object
     DocStage:
       properties:
         action:
@@ -479,6 +457,26 @@ components:
           type: string
       required:
         - signal
+      type: object
+    DocWatcher:
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        "on":
+          $ref: '#/components/schemas/DocWait'
+        run:
+          type: string
+        stages:
+          items:
+            $ref: '#/components/schemas/DocStage'
+          type: array
+        then:
+          type: string
+      required:
+        - id
+        - "on"
       type: object
     EditorConfig:
       properties:
@@ -773,6 +771,8 @@ components:
           type: array
         project_id:
           type: string
+        run_start:
+          type: string
         shadows_builtin:
           type: boolean
         updated_at:
@@ -823,20 +823,26 @@ components:
           type: array
         description:
           type: string
-        name:
-          type: string
-        parameters:
-          $ref: '#/components/schemas/DocParams'
-        phases:
-          items:
-            $ref: '#/components/schemas/DocPhase'
-          type: array
-        stages:
+        main:
           items:
             $ref: '#/components/schemas/DocStage'
           type: array
+        name:
+          type: string
+        outcomes:
+          items:
+            $ref: '#/components/schemas/DocWatcher'
+          type: array
+        parameters:
+          $ref: '#/components/schemas/DocParams'
+        run_start:
+          type: string
         version:
           type: integer
+        watchers:
+          items:
+            $ref: '#/components/schemas/DocWatcher'
+          type: array
       required:
         - name
         - version
@@ -869,6 +875,8 @@ components:
           items:
             $ref: '#/components/schemas/ParamRef'
           type: array
+        run_start:
+          type: string
         stages:
           type: integer
         warnings:
@@ -1141,8 +1149,6 @@ components:
           type: string
         id:
           type: string
-        phase:
-          type: string
         state:
           type: string
       required:
@@ -1159,8 +1165,6 @@ components:
           additionalProperties:
             type: string
           type: object
-        phase:
-          type: string
         repo:
           type: string
       type: object
@@ -1285,20 +1289,18 @@ components:
           type: boolean
         description:
           type: string
-        entry:
-          type: boolean
         holds:
           items:
             $ref: '#/components/schemas/TriggerHold'
           type: array
         id:
           type: string
+        kind:
+          type: string
         live:
           $ref: '#/components/schemas/PhaseLive'
         max:
           type: integer
-        outcome:
-          type: boolean
         quiet_for_s:
           type: integer
         runs:
@@ -1316,6 +1318,7 @@ components:
           type: integer
       required:
         - id
+        - kind
         - max
         - runs
         - signal
@@ -1333,14 +1336,12 @@ components:
       properties:
         description:
           type: string
-        entry:
-          type: boolean
         id:
+          type: string
+        kind:
           type: string
         max:
           type: integer
-        outcome:
-          type: boolean
         quiet_for:
           type: string
         signal:
@@ -1355,6 +1356,7 @@ components:
           type: string
       required:
         - id
+        - kind
         - max
         - signal
         - stages
@@ -1680,8 +1682,6 @@ components:
           additionalProperties:
             type: string
           type: object
-        phase:
-          type: string
         source_branch:
           type: string
       type: object
@@ -1841,8 +1841,6 @@ components:
       properties:
         adopted:
           $ref: '#/components/schemas/AdoptedMR'
-        begin_phase:
-          type: string
         branch:
           type: string
         branch_base:
@@ -1951,27 +1949,24 @@ components:
       type: object
     Signal:
       properties:
-        brings:
-          type: string
+        all:
+          type: boolean
         debounced:
           type: boolean
         description:
           type: string
-        entry:
-          type: boolean
+        kind:
+          type: string
         needs:
           type: string
-        outcome:
-          type: boolean
         requires:
           type: string
         slug:
           type: string
         title:
           type: string
-        trigger:
-          type: boolean
       required:
+        - kind
         - slug
         - title
       type: object
@@ -2089,8 +2084,6 @@ components:
           additionalProperties:
             type: string
           type: object
-        phase:
-          type: string
         source_branch:
           type: string
       type: object
@@ -3544,7 +3537,7 @@ paths:
       tags:
         - automations
     post:
-      description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves, the phase is one of its entrypoints, the params are ones it accepts.'
+      description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its run_start fits the kind (merge_request for a merge_request automation, ticket otherwise), the params are ones it accepts.'
       operationId: createAutomation
       parameters:
         - in: path
@@ -4389,7 +4382,7 @@ paths:
         - flows
   /api/projects/{id}/mrs:
     get:
-      description: 'The repository''s open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket''s newest run. What a run may be created on, at a flow''s mr_opened entrypoint.'
+      description: 'The repository''s open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket''s newest run. What a run of a flow started on merge requests (run_start: merge_request) may be started on.'
       operationId: listProjectMRs
       parameters:
         - in: path
@@ -4429,7 +4422,7 @@ paths:
         - projects
   /api/projects/{id}/mrs/{iid}/runs:
     post:
-      description: Finds or makes the merge request's ticket and creates a run on the merge request at the flow's mr_opened entrypoint (the project's default flow unless the body names another). 409 while a run of the same flow on it is going.
+      description: 'Finds or makes the merge request''s ticket and starts a run on the merge request of a flow whose runs are started on one (run_start: merge_request; the project''s default flow unless the body names another). 409 while a run of the same flow on it is going.'
       operationId: startMRRun
       parameters:
         - in: path

@@ -298,11 +298,6 @@
 				>{t('run.header.flow')} <span class="tx">{run.flowName}</span>{#if run.flowHash}
 					<span class="mono hash fnt">@{run.flowHash.slice(0, 6)}</span>{/if}</span
 			>
-			{#if run.beginPhase}
-				<span title={t('run.header.beganAtTitle')}
-					>{t('run.header.beganAt')} <span class="tx mono">{run.beginPhase}</span></span
-				>
-			{/if}
 			{#if run.branch}
 				<span
 					class="mono br ell"

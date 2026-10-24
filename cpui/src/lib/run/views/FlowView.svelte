@@ -13,12 +13,7 @@
 		$props();
 
 	const rows = $derived(
-		stageRows(
-			shownStages(rs.stageDefs ?? [], rs.events, rs.run?.beginPhase ?? ''),
-			rs.events,
-			rs.run,
-			rs.now
-		)
+		stageRows(shownStages(rs.stageDefs ?? [], rs.events), rs.events, rs.run, rs.now)
 	);
 	const grouped = $derived(new Set(rows.map((r) => r.phase ?? '')).size > 1);
 	/** The phase a row opens, when the view is grouped and it is the first of it. */

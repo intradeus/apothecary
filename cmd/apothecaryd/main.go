@@ -435,7 +435,7 @@ func cmdServe(args []string) error {
 // final gate — enough to exercise every stage type against the fakes.
 // Dev-mode only; production flows are user-defined in the UI.
 const devFlowYAML = `name: dev
-version: 4
+version: 5
 description: dev-mode sandbox flow (fake adapters)
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
@@ -456,7 +456,7 @@ agents:
     inputs:
       - name: plan
         description: the plan to implement
-stages:
+main:
   - { id: plan,       type: agent, agent: planner }
   - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
       on_reject: { to: plan, max: 3 } }

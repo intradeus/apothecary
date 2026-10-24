@@ -1,10 +1,10 @@
 package engine
 
 // The merge request's two acts on the repository host beyond opening it:
-// mr_merge merges it, at the head the phase began on; post_review puts a
-// review on it from an agent's review_threads output. Both act on the phase's
-// subject and record their intent first, so a crash is reconciled from the
-// repository host.
+// mr_merge merges it, at the newest head the chain run knows (what it pushed,
+// else the head it began on); post_review puts a review on it from an agent's
+// review_threads output. Both act on the chain's subject and record their
+// intent first, so a crash is reconciled from the repository host.
 
 import (
 	"errors"
@@ -115,7 +115,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		}
 		rs.actionPending[st.ID] = true
 	}
-	res, err := repoHost.PostReview(x.ctx, mr.Ref, ports.Review{Head: rs.phaseTip, Summary: summary, Notes: notes, ID: x.roundID() + "/" + st.ID})
+	res, err := repoHost.PostReview(x.ctx, mr.Ref, ports.Review{Head: rs.phaseHead, Summary: summary, Notes: notes, ID: x.roundID() + "/" + st.ID})
 	if err != nil {
 		return x.infraFail(st, "posting the review: "+err.Error())
 	}
@@ -126,8 +126,9 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 	return false, nil
 }
 
-// actionMRMerge merges the subject merge request, pinned to the head the phase
-// began on. A merge the repository host declines is the stage's failure, for
+// actionMRMerge merges the subject merge request, pinned to the newest head
+// the phase run knows (phaseHead): what it pushed, else the head it began
+// on. A merge the repository host declines is the stage's failure, for
 // on_fail; after a crash, a merge request already merged is this merge.
 func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 	rs := x.rs
@@ -146,7 +147,7 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 	if in := st.Input("branch"); in != nil {
 		deleteBranch = in.Value == actionspec.BranchDelete
 	}
-	merged := &event.MRMerged{StageID: st.ID, Repo: mr.Repo, Method: method, Head: rs.phaseTip, BranchDeleted: deleteBranch}
+	merged := &event.MRMerged{StageID: st.ID, Repo: mr.Repo, Method: method, Head: rs.phaseHead, BranchDeleted: deleteBranch}
 	if rs.actionPending[st.ID] {
 		status, err := repoHost.MRStatus(x.ctx, mr.Ref)
 		if err != nil {
@@ -165,7 +166,7 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 		}
 		rs.actionPending[st.ID] = true
 	}
-	err = repoHost.MergeMR(x.ctx, mr.Ref, ports.MergeOptions{Method: method, Head: rs.phaseTip, DeleteBranch: deleteBranch})
+	err = repoHost.MergeMR(x.ctx, mr.Ref, ports.MergeOptions{Method: method, Head: rs.phaseHead, DeleteBranch: deleteBranch})
 	var refused *ports.ErrMergeRefused
 	if errors.As(err, &refused) {
 		delete(rs.actionPending, st.ID)

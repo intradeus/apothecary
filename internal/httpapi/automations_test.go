@@ -39,7 +39,7 @@ func TestAutomationAPI(t *testing.T) {
 		want string
 	}{
 		{map[string]any{"name": "x", "kind": "tracker_query", "flow": "builder"}, "source_id"},
-		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "builder", "phase": "conflicts"}, "not an entrypoint"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "reviewer"}, "starts its runs on a merge request"},
 		{map[string]any{"name": "x", "kind": "cron", "schedule": "soon", "ticket_id": tk.ID, "flow": "builder"}, "five fields"},
 		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "builder", "params": map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
 	} {
@@ -52,13 +52,12 @@ func TestAutomationAPI(t *testing.T) {
 	var a struct {
 		ID      string            `json:"id"`
 		Kind    string            `json:"kind"`
-		Phase   string            `json:"phase"`
 		Params  map[string]string `json:"params"`
 		Enabled bool              `json:"enabled"`
 	}
 	resp, data = x.do(t, "POST", base, map[string]any{"name": "inbox", "kind": "tracker_query", "source_id": in.ID,
-		"query": "assignee = factory", "flow": "builder", "phase": "deliver", "params": map[string]string{"plan_gate": "false"}}, nil)
-	if err := json.Unmarshal(data, &a); err != nil || resp.StatusCode != http.StatusCreated || a.ID == "" || !a.Enabled || a.Params["plan_gate"] != "false" || a.Phase != "deliver" {
+		"query": "assignee = factory", "flow": "builder", "params": map[string]string{"plan_gate": "false"}}, nil)
+	if err := json.Unmarshal(data, &a); err != nil || resp.StatusCode != http.StatusCreated || a.ID == "" || !a.Enabled || a.Params["plan_gate"] != "false" {
 		t.Fatalf("create = %d %v: %s", resp.StatusCode, err, data)
 	}
 	resp, data = x.do(t, "POST", base, map[string]any{"name": "nightly", "kind": "cron", "schedule": "0 3 * * *", "ticket_id": tk.ID, "flow": "builder", "enabled": false}, nil)

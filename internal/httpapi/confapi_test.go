@@ -23,7 +23,7 @@ import (
 // v1FlowDoc is this suite's user-created flow (the product ships none):
 // gated build ending in an MR — enough to drive both human gates.
 const v1FlowDoc = `name: v1
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: planner
@@ -34,7 +34,7 @@ agents:
     prompt: build the thing
     inputs:
       - { name: plan, optional: true }
-stages:
+main:
   - { id: plan,       type: agent, agent: planner }
   - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
       on_reject: { to: plan, max: 3 } }
@@ -248,7 +248,7 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// Flow validate: line-precise errors verbatim.
 	resp, data = x.do(t, "POST", "/api/flows/validate", map[string]string{
-		"yaml": "name: bad\nversion: 4\nparameters: { harness: fake, model: nope }\nstages: []\n",
+		"yaml": "name: bad\nversion: 5\nparameters: { harness: fake, model: nope }\nmain: []\n",
 	}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "provider/model") {
 		t.Fatalf("validate = %d: %s", resp.StatusCode, data)
@@ -370,7 +370,7 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 
 	// Saving under the template's name creates this project's own copy.
-	override := "name: builder\nversion: 4\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"
+	override := "name: builder\nversion: 5\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
 	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/flows/builder", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
@@ -469,21 +469,22 @@ func TestFlowBindingAPI(t *testing.T) {
 		t.Fatalf("list = %d: %s", resp.StatusCode, data)
 	}
 	// The template is still the template: untouched, and describing what
-	// may be bound and where a run may begin.
+	// may be bound and what its runs are started on.
 	var fr struct {
-		Builtin    bool `json:"builtin"`
+		Builtin    bool   `json:"builtin"`
+		RunStart   string `json:"run_start"`
 		Parameters []struct {
 			Name  string `json:"name"`
 			Known bool   `json:"known"`
 		} `json:"parameters"`
 		Phases []struct {
-			ID    string `json:"id"`
-			Entry bool   `json:"entry"`
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
 		} `json:"phases"`
 	}
 	resp, data = x.do(t, "GET", base+"/flows/builder", nil, nil)
 	if err := json.Unmarshal(data, &fr); err != nil || resp.StatusCode != 200 || !fr.Builtin || len(fr.Parameters) < 7 ||
-		fr.Parameters[0].Name != "harness" || !fr.Parameters[0].Known || len(fr.Phases) < 2 || fr.Phases[0].ID != "deliver" || !fr.Phases[0].Entry {
+		fr.Parameters[0].Name != "harness" || !fr.Parameters[0].Known || len(fr.Phases) < 2 || fr.Phases[0].ID != "main" || fr.Phases[0].Kind != "main" || fr.RunStart != "ticket" {
 		t.Fatalf("flow = %d %v: %s", resp.StatusCode, err, data)
 	}
 	// Refusals name the parameter, and leave the binding as it was.
@@ -526,26 +527,28 @@ func TestFlowBindingAPI(t *testing.T) {
 }
 
 // Every flow response — a created one, a listing's rows and templates —
-// carries the document's parameters and phases, so the workshop can offer
-// what to bind and the start form where to begin without parsing YAML.
+// carries what its runs are started on and the document's parameters and
+// phases, so the workshop can offer what to bind and where to start it
+// without parsing YAML.
 func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 	x := newConfEnv(t)
 	projectID := x.wizard(t)
 	base := "/api/projects/" + projectID
-	doc := "name: knobs\nversion: 4\nparameters: { harness: fake, model: a/b, mode: { default: confirm, enum: [auto, confirm, manual] } }\nagents: []\n" +
-		"phases:\n  - id: main\n    on: run_start\n    stages:\n      - { id: s, type: command, run: x, on_success: done }\n" +
-		"  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n"
+	doc := "name: knobs\nversion: 5\nparameters: { harness: fake, model: a/b, mode: { default: confirm, enum: [auto, confirm, manual] } }\nagents: []\n" +
+		"main:\n  - { id: s, type: command, run: x, on_success: done }\n" +
+		"watchers:\n  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n"
 	type described struct {
 		Name       string `json:"name"`
 		Builtin    bool   `json:"builtin"`
 		Parameters []struct {
 			Name string `json:"name"`
 		} `json:"parameters"`
-		Phases []struct {
+		RunStart string `json:"run_start"`
+		Phases   []struct {
 			ID     string `json:"id"`
+			Kind   string `json:"kind"`
 			Signal string `json:"signal"`
 			Start  string `json:"start"`
-			Entry  bool   `json:"entry"`
 		} `json:"phases"`
 	}
 	var fr described
@@ -553,7 +556,8 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 	// Parameters come in document order, the omitted engine-known names
 	// synthesized after the declared ones.
 	if err := json.Unmarshal(data, &fr); err != nil || resp.StatusCode != http.StatusCreated || len(fr.Parameters) != 7 || fr.Parameters[2].Name != "mode" ||
-		len(fr.Phases) != 2 || !fr.Phases[0].Entry || fr.Phases[1].Signal != "mr_conflicts" || fr.Phases[1].Start != "confirm" {
+		fr.RunStart != "ticket" || len(fr.Phases) != 2 || fr.Phases[0].Kind != "main" || fr.Phases[1].Kind != "watcher" ||
+		fr.Phases[1].Signal != "mr_conflicts" || fr.Phases[1].Start != "confirm" {
 		t.Fatalf("create = %d %v: %s", resp.StatusCode, err, data)
 	}
 	var list []described
@@ -569,13 +573,17 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 			if f.Builtin || len(f.Parameters) != 7 || len(f.Phases) != 2 {
 				t.Errorf("knobs in listing = %+v", f)
 			}
-		case "default":
-			if !f.Builtin || len(f.Parameters) < 7 || len(f.Phases) < 2 || f.Phases[0].ID != "deliver" {
-				t.Errorf("default template in listing = %+v", f)
+		case "builder":
+			if !f.Builtin || len(f.Parameters) < 7 || len(f.Phases) < 2 || f.Phases[0].ID != "main" {
+				t.Errorf("builder template in listing = %+v", f)
+			}
+		case "reviewer":
+			if !f.Builtin || f.RunStart != "merge_request" {
+				t.Errorf("reviewer template in listing = %+v", f)
 			}
 		}
 	}
-	if !seen["knobs"] || !seen["builder"] {
+	if !seen["knobs"] || !seen["builder"] || !seen["reviewer"] {
 		t.Errorf("listing = %+v", list)
 	}
 }
@@ -612,8 +620,8 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 	}
 
 	// Binding an input the agent does not declare: refused, not advised.
-	code, vr := post("name: w\nversion: 4\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"stages:\n  - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }\n")
+	code, vr := post("name: w\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
+		"main:\n  - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
@@ -623,8 +631,8 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 
 	// on_reject on an agent that declares no verdict can never fire: also an
 	// error now that the contract is in the document.
-	code, vr = post("name: r\nversion: 4\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"stages:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/p.md }, on_success: j }\n" +
+	code, vr = post("name: r\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
+		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/p.md }, on_success: j }\n" +
 		"  - { id: j, type: agent, agent: plain, on_success: done, on_reject: { to: b, max: 1 } }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
@@ -635,8 +643,8 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 
 	// A legal-but-suspicious document still validates, with the finding as a
 	// warning: nothing produces the path the builder reads.
-	code, vr = post("name: ok\nversion: 4\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"stages:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/nobody.md }, on_success: done }\n")
+	code, vr = post("name: ok\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
+		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/nobody.md }, on_success: done }\n")
 	if code != 200 || !vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:true", code, vr.OK)
 	}
@@ -679,11 +687,11 @@ func TestActionRegistryRoute(t *testing.T) {
 // applied, and validates a workshop's bound values when given.
 func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	x := newConfEnv(t)
-	doc := "name: p\nversion: 4\nparameters:\n  harness: fake\n  model: a/b\n  mode: { default: confirm, enum: [auto, confirm, manual] }\n  turns: 3\n" +
+	doc := "name: p\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  mode: { default: confirm, enum: [auto, confirm, manual] }\n  turns: 3\n" +
 		"agents:\n  - { name: b, prompt: build }\n" +
-		"phases:\n  - id: deliver\n    on: run_start\n    stages:\n      - { id: build, type: agent, agent: b, max_turns: $turns }\n      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
-		"  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n" +
-		"  - { id: shipped, on: mr_merged, then: done }\n"
+		"main:\n  - { id: build, type: agent, agent: b, max_turns: $turns }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"watchers:\n  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n" +
+		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	var vr struct {
 		OK         bool     `json:"ok"`
 		Errors     []string `json:"errors"`
@@ -697,11 +705,10 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 		} `json:"refs"`
 		Phases []struct {
 			ID      string `json:"id"`
+			Kind    string `json:"kind"`
 			Signal  string `json:"signal"`
 			Start   string `json:"start"`
 			Max     int    `json:"max"`
-			Entry   bool   `json:"entry"`
-			Outcome bool   `json:"outcome"`
 			Then    string `json:"then"`
 			Subject bool   `json:"subject"`
 			Stages  int    `json:"stages"`
@@ -714,9 +721,9 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	if len(vr.Parameters) != 8 || vr.Parameters[0].Name != "harness" || !vr.Parameters[0].Known || vr.Parameters[2].Name != "mode" || vr.Parameters[3].Type != "int" {
 		t.Errorf("parameters = %+v", vr.Parameters)
 	}
-	if len(vr.Refs) != 2 || len(vr.Phases) != 3 || !vr.Phases[0].Entry || vr.Phases[0].Signal != "run_start" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
+	if len(vr.Refs) != 2 || len(vr.Phases) != 3 || vr.Phases[0].Kind != "main" || vr.Phases[0].Signal != "run_start" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
 		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != -1 ||
-		!vr.Phases[2].Outcome || vr.Phases[2].Then != "done" || vr.Phases[2].Stages != 0 || vr.Phases[2].Start != "auto" || vr.Phases[2].Subject {
+		vr.Phases[2].Kind != "outcome" || vr.Phases[2].Then != "done" || vr.Phases[2].Stages != 0 || vr.Phases[2].Start != "auto" || vr.Phases[2].Subject {
 		t.Errorf("refs = %+v phases = %+v", vr.Refs, vr.Phases)
 	}
 	// Bound values: a legal one changes the summary, an illegal one is an error.

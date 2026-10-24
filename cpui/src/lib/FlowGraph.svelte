@@ -14,6 +14,7 @@
 	import { untrack } from 'svelte';
 	import FlowStageNode from '$lib/FlowStageNode.svelte';
 	import FlowTerminalNode from '$lib/flow/FlowTerminalNode.svelte';
+	import FlowSectionNode from '$lib/flow/FlowSectionNode.svelte';
 	import FitOnInit from '$lib/flow/FitOnInit.svelte';
 	import FlowLabeledEdge from '$lib/flow/FlowLabeledEdge.svelte';
 	import { EDGE_HUE } from '$lib/ui/hues';
@@ -30,9 +31,10 @@
 		END,
 		FAIL,
 		START,
+		MAIN,
 		MANUAL,
+		PHASE_KINDS,
 		RUN_START,
-		MR_OPENED,
 		EDGE_KINDS,
 		chainLinks,
 		edgeLinks,
@@ -40,8 +42,10 @@
 		effectiveSuccess,
 		edgeOf,
 		phaseEntry,
+		markerKey,
+		sectionKey,
+		showsSections,
 		triggerLabel,
-		isOutcome,
 		feedDots,
 		feedSentinelFor,
 		type ActionContract,
@@ -119,7 +123,8 @@
 		debug: FlowTerminalNode,
 		start: FlowTerminalNode,
 		exit: FlowTerminalNode,
-		failexit: FlowTerminalNode
+		failexit: FlowTerminalNode,
+		section: FlowSectionNode
 	};
 	// Control edges carry their label by the source (FlowLabeledEdge), so
 	// labels never land on nodes or on each other.
@@ -186,11 +191,24 @@
 		}
 		known = ids;
 
+		// Where a stage nobody has placed yet goes: after the stage before it
+		// in its chain, else beside its chain's marker — a new watcher's first
+		// stage lands on its own row, not on another chain's.
+		const placed: Record<string, { x: number; y: number }> = {};
+		const guess = (i: number) => {
+			const s = doc.stages[i];
+			const prev = doc.stages[i - 1];
+			if (prev && prev.phase === s.phase && placed[prev.id])
+				return { x: placed[prev.id].x + 260, y: placed[prev.id].y };
+			const ph = doc.phases?.find((p) => p.id === s.phase);
+			const m = ph && layout[markerKey(ph)];
+			return m ? { x: m.x + 220, y: m.y } : { x: i * 240, y: 0 };
+		};
 		const ns: Node[] = doc.stages.map((s, i) => ({
 			id: s.id,
 			type: 'stage',
-			position: layout[s.id] ??
-				(renamed?.to === s.id ? renamed.from.position : undefined) ?? { x: i * 240, y: 0 },
+			position: (placed[s.id] =
+				layout[s.id] ?? (renamed?.to === s.id ? renamed.from.position : undefined) ?? guess(i)),
 			data: {
 				stage: s,
 				entry: i === 0 || phaseEntry(doc, s.phase)?.id === s.id,
@@ -204,66 +222,92 @@
 			if (ids.has(id)) ghosts.delete(id);
 			else ns.push(g);
 		}
-		// One beginning per phase (1 entrypoint = 1 phase): a marker naming the
-		// phase and what begins it, pointing at the phase's first stage. The
-		// entry's is `__start` (layout key START) — the phase every run begins
-		// with, drawn solid; a reaction's is `__trigger:<phase>`, dashed.
-		// An outcome's marker (data.outcome) is the same beginning in the hue
-		// of the run's ends: the phase opens once and ends the run.
+		// One beginning per chain: a marker naming it and what opens it,
+		// pointing at its first stage. The main chain's is `__start` (layout
+		// key START), drawn solid — what every run starts with; a watcher's is
+		// `__trigger:<phase>`, dashed; an outcome's (data.outcome) is the same
+		// beginning in the hue of the run's end it says, done or abort.
 		const markerTitle = (ph: DocPhase) =>
-			ph.on.signal === RUN_START
-				? t('flow.graph.entryTitle', { phase: ph.id })
-				: ph.on.signal === MR_OPENED
-					? t('flow.graph.entryMRTitle', { phase: ph.id })
-					: ph.on.signal === MANUAL
-						? t('flow.graph.manualTitle', { phase: ph.id })
-						: isOutcome(ph.on)
-							? t('flow.graph.outcomeTitle', { phase: ph.id, signal: ph.on.signal })
-							: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal });
-		const triggers = (doc.phases ?? []).slice(1);
+			ph.kind === 'outcome'
+				? t(ph.then === ABORT ? 'flow.graph.outcomeAbortTitle' : 'flow.graph.outcomeTitle', {
+						phase: ph.id,
+						signal: ph.on.signal
+					})
+				: ph.on.signal === MANUAL
+					? t('flow.graph.manualTitle', { phase: ph.id })
+					: t('flow.graph.triggerTitle', { phase: ph.id, signal: ph.on.signal });
+		const mainPhase = doc.phases?.find((p) => p.kind === 'main');
+		const triggers = (doc.phases ?? []).filter((p) => p.kind !== 'main');
 		for (const ph of triggers) {
 			const first = phaseEntry(doc, ph.id);
 			const at = first ? (layout[first.id] ?? { x: 0, y: 0 }) : { x: 0, y: 0 };
 			ns.push({
 				id: `__trigger:${ph.id}`,
 				type: 'start',
-				position: layout[`trigger:${ph.id}`] ?? { x: at.x - 220, y: at.y },
+				position: layout[markerKey(ph)] ?? { x: at.x - 220, y: at.y },
 				data: {
 					entry: false,
-					outcome: isOutcome(ph.on),
-					label: t('flow.graph.beginLabel', { phase: ph.id, trigger: triggerLabel(ph.on) }),
+					outcome: ph.kind === 'outcome',
+					then: ph.then ?? DONE,
+					label:
+						ph.kind === 'outcome'
+							? t('flow.graph.outcomeLabel', {
+									phase: ph.id,
+									trigger: triggerLabel(ph.on),
+									then: ph.then ?? DONE
+								})
+							: t('flow.graph.beginLabel', { phase: ph.id, trigger: triggerLabel(ph.on) }),
 					title: markerTitle(ph)
 				}
 			});
 		}
-		// The entry marker: its edge points at stages[0]; dragging that edge
-		// onto another stage makes it the entry (moves it to document front).
-		// A flow without phases is one entry phase, begun by hand.
+		// The main chain's marker: its edge points at its first stage, and
+		// dragging that edge onto another stage of it starts it there. A flow
+		// that only watches has none; a block drawn on its own has its own.
 		const entryPos = doc.stages.length
 			? (layout[doc.stages[0].id] ?? { x: 0, y: 0 })
 			: { x: 0, y: 0 };
-		const entryPhase = doc.phases?.[0];
-		ns.push({
-			id: '__start',
-			type: 'start',
-			position: layout[START] ?? { x: entryPos.x - 170, y: entryPos.y },
-			data: {
-				entry: true,
-				label: block
-					? t('flow.graph.blockLabel', { block: block.id })
-					: entryPhase
-						? t('flow.graph.beginLabel', {
-								phase: entryPhase.id,
-								trigger: triggerLabel(entryPhase.on)
-							})
-						: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
-				title: block
-					? (block.description ?? t('flow.graph.blockTitle', { block: block.id }))
-					: entryPhase
-						? markerTitle(entryPhase)
-						: t('flow.graph.entryTitle', { phase: 'main' })
+		const runsOn = t(`flow.graph.runStart.${doc.run_start ?? 'ticket'}`);
+		if (block || mainPhase || !doc.phases?.length)
+			ns.push({
+				id: '__start',
+				type: 'start',
+				position: layout[START] ?? { x: entryPos.x - 170, y: entryPos.y },
+				data: {
+					entry: true,
+					label: block
+						? t('flow.graph.blockLabel', { block: block.id })
+						: mainPhase
+							? t('flow.graph.mainLabel', { on: runsOn })
+							: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
+					title: block
+						? (block.description ?? t('flow.graph.blockTitle', { block: block.id }))
+						: t('flow.graph.mainTitle', { on: runsOn })
+				}
+			});
+		// The sections' labels, heading the marker column where the main
+		// chain, the watchers and the outcomes begin — once there is more
+		// than one chain to tell apart.
+		if (!block && showsSections(doc)) {
+			for (const kind of PHASE_KINDS) {
+				const first = doc.phases!.find((p) => p.kind === kind);
+				if (!first) continue;
+				const at = layout[markerKey(first)] ?? { x: -220, y: 0 };
+				ns.push({
+					id: `__section:${kind}`,
+					type: 'section',
+					position: layout[sectionKey(kind)] ?? { x: at.x, y: at.y - 32 },
+					draggable: false,
+					selectable: false,
+					connectable: false,
+					focusable: false,
+					data: {
+						label: t(`flow.graph.section.${kind}`),
+						title: t(`flow.graph.sectionTitle.${kind}`)
+					}
+				});
 			}
-		});
+		}
 		// A block's two ways out, where the run goes on from the stage that
 		// includes it: its success, and `fail` (its on_fail) when a stage
 		// routes there.
@@ -308,7 +352,7 @@
 				(s) =>
 					s.on_success === DONE ||
 					EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DONE))
-			) || (doc.phases ?? []).some((p) => p.then === DONE);
+			) || (doc.phases ?? []).some((p) => p.then === DONE && !phaseEntry(doc, p.id));
 		if (reachesDone) {
 			ns.push({
 				id: '__done',
@@ -323,7 +367,7 @@
 				(s) =>
 					s.on_success === ABORT ||
 					EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === ABORT))
-			) || (doc.phases ?? []).some((p) => p.then === ABORT);
+			) || (doc.phases ?? []).some((p) => p.then === ABORT && !phaseEntry(doc, p.id));
 		if (hasAbort) {
 			ns.push({
 				id: '__abort',
@@ -366,7 +410,7 @@
 				class: 'e-data'
 			});
 		}
-		if (doc.stages.length) {
+		if (doc.stages.length && (block || mainPhase || !doc.phases?.length)) {
 			es.push({
 				id: 'entry|__start',
 				source: '__start',
@@ -392,7 +436,7 @@
 					target,
 					type: 'smoothstep',
 					class: 'e-dash',
-					style: hued(isOutcome(ph.on) ? 'grn' : 'vio')
+					style: hued(ph.kind !== 'outcome' ? 'vio' : ph.then === ABORT ? 'ros' : 'grn')
 				});
 		}
 		doc.stages.forEach((s, i) => {
@@ -534,7 +578,7 @@
 						? debugKey(id.slice('__debug:'.length))
 						: id === '__start'
 							? START
-							: id.startsWith('__trigger:')
+							: id.startsWith('__trigger:') || id.startsWith('__section:')
 								? id.slice(2)
 								: id;
 </script>
@@ -561,8 +605,8 @@
 					? { kind: 'stage', id: node.id.slice('__debug:'.length) }
 					: node.id.startsWith('__trigger:')
 						? { kind: 'phase', id: node.id.slice('__trigger:'.length) }
-						: node.id === '__start' && doc.phases?.length
-							? { kind: 'phase', id: doc.phases[0].id }
+						: node.id === '__start' && doc.phases?.some((p) => p.kind === 'main')
+							? { kind: 'phase', id: MAIN }
 							: node.id.startsWith('__')
 								? null
 								: { kind: 'stage', id: node.id }

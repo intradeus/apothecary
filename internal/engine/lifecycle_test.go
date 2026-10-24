@@ -109,7 +109,7 @@ func TestCommandStageCarriesItsMarker(t *testing.T) {
 	doc := `name: c
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-stages:
+main:
   - { id: test, type: command, run: "make test" }
 `
 	h := newHarness(t, mustFlow(t, doc))

@@ -32,9 +32,7 @@ type runState struct {
 	fl           *flow.Flow
 	branch       string
 	sourceBranch string // branch this run forks off from (origin/<sourceBranch>)
-	// begin is the entrypoint the run began at and params the parameter
-	// values it runs with (run_created).
-	begin  string
+	// params are the parameter values the run runs with (run_created).
 	params map[string]string
 	envID  ports.EnvID
 	// envRequested: the run asked for its workspace once (env_requested is
@@ -48,7 +46,7 @@ type runState struct {
 	// ran out); abortsRun: the flow routed to `abort` from a success (an
 	// outcome's `then: abort`, `on_success: abort`), abortAt/abortReason
 	// saying where and why. endReason, when set, is why a phase ended early:
-	// a dead end outside an entrypoint, recorded on its phase_completed.
+	// a dead end in a watcher, recorded on its phase_completed.
 	endsRun     bool
 	abortsRun   bool
 	abortAt     string
@@ -90,12 +88,16 @@ type runState struct {
 
 	// Phases (PLAN6). phase is the phase in progress (or the last one run),
 	// subject the checkout whose merge request it acts on ("" = all: the
-	// entry); idle is true between phases. phaseTip is the subject branch's
-	// head when the phase started ($DIFF_PHASE counts from it).
-	phase    string
-	subject  string
-	idle     bool
-	phaseTip string
+	// main chain of a run started on a ticket); idle is true between phases.
+	// phaseTip is the subject branch's head when the phase started
+	// ($DIFF_PHASE counts from it); phaseHead the newest head the phase run
+	// knows there — phaseTip, then each tip it pushed. A merge or a review
+	// is pinned to phaseHead: never a head the run has not seen.
+	phase     string
+	subject   string
+	idle      bool
+	phaseTip  string
+	phaseHead string
 	// triggerSeen holds every (phase, subject, key) a phase run started for
 	// or a human declined (R6); phaseRuns counts runs per (phase, subject).
 	triggerSeen map[string]bool
@@ -217,16 +219,16 @@ func (rs *runState) phaseEverRan(phase string) bool {
 // is kept here until it resumes. Stage-keyed maps (iters, edgeCounts,
 // sessions, …) stay shared: stage ids are one namespace across phases.
 type phaseRun struct {
-	phase, subject, tip string
-	pos                 int
-	ph                  phase
-	feed, feedSentinel  string
-	feedAttempts        int
-	lastFailure         *event.StageFailed
-	gateAnswer          *event.PingAnswered
-	roundThreads        []string
-	roundLoaded         bool
-	selectPing          *event.PingRaised
+	phase, subject, tip, head string
+	pos                       int
+	ph                        phase
+	feed, feedSentinel        string
+	feedAttempts              int
+	lastFailure               *event.StageFailed
+	gateAnswer                *event.PingAnswered
+	roundThreads              []string
+	roundLoaded               bool
+	selectPing                *event.PingRaised
 	// parkedAt is the stage the run waits at (a wait or a gate), ping the
 	// decision a gate waits on, since when it parked (a wait's timeout runs
 	// from there).
@@ -242,7 +244,7 @@ func (rs *runState) park(stage, ping string, since time.Time) {
 		rs.parked = map[string]*phaseRun{}
 	}
 	rs.parked[rs.phase] = &phaseRun{
-		phase: rs.phase, subject: rs.subject, tip: rs.phaseTip, pos: rs.pos, ph: rs.ph,
+		phase: rs.phase, subject: rs.subject, tip: rs.phaseTip, head: rs.phaseHead, pos: rs.pos, ph: rs.ph,
 		feed: rs.feed, feedSentinel: rs.feedSentinel, feedAttempts: rs.feedAttempts,
 		lastFailure: rs.lastFailure, gateAnswer: rs.gateAnswer,
 		roundThreads: rs.roundThreads, roundLoaded: rs.roundLoaded, selectPing: rs.selectPing,
@@ -259,7 +261,7 @@ func (rs *runState) unpark(phase string) bool {
 		return false
 	}
 	delete(rs.parked, phase)
-	rs.phase, rs.subject, rs.phaseTip, rs.pos, rs.ph = pr.phase, pr.subject, pr.tip, pr.pos, pr.ph
+	rs.phase, rs.subject, rs.phaseTip, rs.phaseHead, rs.pos, rs.ph = pr.phase, pr.subject, pr.tip, pr.head, pr.pos, pr.ph
 	rs.feed, rs.feedSentinel, rs.feedAttempts = pr.feed, pr.feedSentinel, pr.feedAttempts
 	rs.lastFailure, rs.gateAnswer = pr.lastFailure, pr.gateAnswer
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = pr.roundThreads, pr.roundLoaded, pr.selectPing
@@ -275,7 +277,7 @@ func (rs *runState) anyParked() bool { return len(rs.parked) > 0 }
 // counters reset (R7 — a review round's retries are per round), the feed
 // cleared. Shared by replay and the live start so they cannot disagree.
 func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
-	rs.phase, rs.subject, rs.phaseTip, rs.idle = p.Phase, p.Subject, p.Tip, false
+	rs.phase, rs.subject, rs.phaseTip, rs.phaseHead, rs.idle = p.Phase, p.Subject, p.Tip, p.Tip, false
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = nil, false, nil
 	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
@@ -302,8 +304,8 @@ func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	rs.pos, rs.ph = ph.First, phStart
 	rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
 	rs.lastFailure, rs.gateAnswer = nil, nil
-	if ph.Then != "" {
-		// A then-phase has no stages: its start is its end — the run's.
+	if ph.Then != "" && ph.Last < ph.First {
+		// An outcome with no chain: its start is its end — the run's.
 		rs.pos = len(fl.Stages)
 		rs.endsRun = ph.Then == flow.TerminalDone
 		rs.abortsRun = ph.Then == flow.TerminalAbort
@@ -340,7 +342,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.RunCreated:
 			rs.branch = p.Branch
 			rs.sourceBranch = p.SourceBranch
-			rs.begin, rs.params = p.Phase, p.Params
+			rs.params = p.Params
 			rs.checkouts = checkoutsOf(p)
 			if m := p.MR; m != nil {
 				rs.adopted = m
@@ -471,8 +473,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.PhaseResumed:
 			rs.unpark(p.Phase)
 		case *event.BranchPushed:
-			rs.pushed[p.Repo+"\x00"+p.Branch] = p.Tip
-			rs.noteHead(p.Repo, p.Tip)
+			rs.notePush(p.Repo, p.Branch, p.Tip)
 		case *event.ReviewCommentsLoaded:
 			rs.roundThreads, rs.roundLoaded = append([]string(nil), p.ThreadIDs...), true
 			for id, last := range p.Skipped {
@@ -688,6 +689,17 @@ func (rs *runState) checkoutDirs() []string {
 		dirs = []string{event.PrimaryCheckoutDir}
 	}
 	return dirs
+}
+
+// notePush records a tip push_branch pushed: the run knows it, and so does
+// the phase run whose subject's branch it went to. Shared by replay and the
+// live push so they cannot disagree.
+func (rs *runState) notePush(repo, branch, tip string) {
+	rs.pushed[repo+"\x00"+branch] = tip
+	rs.noteHead(repo, tip)
+	if repo == rs.subject {
+		rs.phaseHead = tip
+	}
 }
 
 // noteHead records a commit the run knows on a checkout's branch.

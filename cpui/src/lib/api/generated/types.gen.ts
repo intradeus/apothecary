@@ -72,7 +72,6 @@ export type Automation = {
 	params?: {
 		[key: string]: string;
 	};
-	phase?: string;
 	project_id: string;
 	query?: string;
 	repo?: string;
@@ -90,7 +89,6 @@ export type AutomationRequest = {
 	params?: {
 		[key: string]: string;
 	};
-	phase?: string;
 	query?: string;
 	repo?: string;
 	schedule?: string;
@@ -186,14 +184,6 @@ export type DocParams = {
 	};
 };
 
-export type DocPhase = {
-	description?: string;
-	id: string;
-	on: DocWait;
-	stages?: Array<DocStage>;
-	then?: string;
-};
-
 export type DocStage = {
 	action?: string;
 	agent?: string;
@@ -226,6 +216,15 @@ export type DocWait = {
 	quiet_for?: string;
 	signal: string;
 	start?: string;
+};
+
+export type DocWatcher = {
+	description?: string;
+	id: string;
+	on: DocWait;
+	run?: string;
+	stages?: Array<DocStage>;
+	then?: string;
 };
 
 export type EditorConfig = {
@@ -357,6 +356,7 @@ export type Flow = {
 	parameters?: Array<Param>;
 	phases?: Array<PhaseSummary>;
 	project_id?: string;
+	run_start?: string;
 	shadows_builtin?: boolean;
 	updated_at?: string;
 	yaml?: string;
@@ -381,11 +381,13 @@ export type FlowDoc = {
 	agents?: Array<Spec>;
 	blocks?: Array<DocBlock>;
 	description?: string;
+	main?: Array<DocStage>;
 	name: string;
+	outcomes?: Array<DocWatcher>;
 	parameters?: DocParams;
-	phases?: Array<DocPhase>;
-	stages?: Array<DocStage>;
+	run_start?: string;
 	version: number;
+	watchers?: Array<DocWatcher>;
 };
 
 export type FlowValidation = {
@@ -398,6 +400,7 @@ export type FlowValidation = {
 	parameters?: Array<Param>;
 	phases?: Array<PhaseSummary>;
 	refs?: Array<ParamRef>;
+	run_start?: string;
 	stages?: number;
 	warnings?: Array<string>;
 };
@@ -525,7 +528,6 @@ export type MrRun = {
 	created_at: string;
 	flow: string;
 	id: string;
-	phase?: string;
 	state: string;
 };
 
@@ -534,7 +536,6 @@ export type MrRunRequest = {
 	params?: {
 		[key: string]: string;
 	};
-	phase?: string;
 	repo?: string;
 };
 
@@ -597,12 +598,11 @@ export type ParamRef = {
 export type PhaseInfo = {
 	confirm?: boolean;
 	description?: string;
-	entry?: boolean;
 	holds?: Array<TriggerHold>;
 	id: string;
+	kind: string;
 	live?: PhaseLive;
 	max: number;
-	outcome?: boolean;
 	quiet_for_s?: number;
 	runs: {
 		[key: string]: number;
@@ -620,10 +620,9 @@ export type PhaseLive = {
 
 export type PhaseSummary = {
 	description?: string;
-	entry?: boolean;
 	id: string;
+	kind: string;
 	max: number;
-	outcome?: boolean;
 	quiet_for?: string;
 	signal: string;
 	stages: number;
@@ -766,7 +765,6 @@ export type RerunRequest = {
 	params?: {
 		[key: string]: string;
 	};
-	phase?: string;
 	source_branch?: string;
 };
 
@@ -832,7 +830,6 @@ export type RunResources = {
 
 export type RunView = {
 	adopted?: AdoptedMr;
-	begin_phase?: string;
 	branch?: string;
 	branch_base?: string;
 	checkouts?: Array<RunCheckout>;
@@ -880,16 +877,14 @@ export type Settings = {
 };
 
 export type Signal = {
-	brings?: string;
+	all?: boolean;
 	debounced?: boolean;
 	description?: string;
-	entry?: boolean;
+	kind: string;
 	needs?: string;
-	outcome?: boolean;
 	requires?: string;
 	slug: string;
 	title: string;
-	trigger?: boolean;
 };
 
 export type Snapshot = {
@@ -943,7 +938,6 @@ export type StartRunRequest = {
 	params?: {
 		[key: string]: string;
 	};
-	phase?: string;
 	source_branch?: string;
 };
 

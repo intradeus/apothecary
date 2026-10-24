@@ -26,11 +26,11 @@ func skipped(evs []event.Event, stage string) (bool, string) {
 // workspace is provisioned for it; the command after it gets the workspace.
 func TestWhenTrackerSkipsWithoutASource(t *testing.T) {
 	doc := `name: cond
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - { name: b, prompt: build it }
-stages:
+main:
   - { id: note, type: agent, agent: b, when: tracker }
   - { id: test, type: command, run: "true" }
 `
@@ -80,19 +80,18 @@ stages:
 // a subject action without the guard fails routably instead.
 func TestWhenSubjectSkipsInASubjectlessPhaseRun(t *testing.T) {
 	doc := `name: subj
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: build, type: command, run: "true" }
+main:
+  - { id: build, type: command, run: "true" }
+watchers:
   - id: polish
     on: manual
     stages:
       - { id: sync, type: action, action: sync_target, when: subject }
       - { id: load, type: action, action: load_review_comments, on_fail: end }
       - { id: shine, type: command, run: "./shine.sh" }
+outcomes:
   - { id: shipped, on: mr_merged, then: done }
 `
 	ph := newPhasedHarness(t, doc)
@@ -100,15 +99,15 @@ phases:
 	if err != nil {
 		t.Fatal(err)
 	}
-	ph.waitState(t, runID, run.Completed) // nothing armed: deliver ends, the run completes
+	ph.waitState(t, runID, run.Completed) // nothing armed: the main chain ends, the run completes
 	if err := ph.e.StartPhase(runID, "polish", ""); err == nil {
 		t.Fatal("a completed run must not start a phase")
 	}
 	// Keep the run alive with a firing phase that needs a merge request the
 	// flow never opens: a parked wait would do too, but a manual phase on an
 	// idle run is the case under test.
-	doc2 := strings.Replace(doc, "      - { id: build, type: command, run: \"true\" }\n",
-		"      - { id: build, type: command, run: \"true\" }\n      - { id: hold, type: human_gate, question: \"Keep the run around?\" }\n", 1)
+	doc2 := strings.Replace(doc, "  - { id: build, type: command, run: \"true\" }\n",
+		"  - { id: build, type: command, run: \"true\" }\n  - { id: hold, type: human_gate, question: \"Keep the run around?\" }\n", 1)
 	ph2 := newPhasedHarness(t, doc2)
 	runID2, err := ph2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "subj", testProject)
 	if err != nil {
@@ -144,9 +143,9 @@ phases:
 // A bool parameter bound false folds into a skip: the gate never asks.
 func TestWhenParamFalseSkips(t *testing.T) {
 	doc := `name: gated
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6, gate: true }
-stages:
+main:
   - { id: approve, type: human_gate, question: "Go?", when: $gate }
   - { id: build, type: command, run: "true" }
 `

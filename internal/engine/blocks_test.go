@@ -17,14 +17,14 @@ import (
 // back to build, whose second pass gets through.
 func TestIncludedBlockRunsAsItsStages(t *testing.T) {
 	doc := `name: blk
-version: 4
+version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 blocks:
   - id: check
     stages:
       - { id: lint, type: command, run: "./lint.sh" }
       - { id: test, type: command, run: "./test.sh", on_fail: fail }
-stages:
+main:
   - { id: build, type: command, run: "./build.sh" }
   - { id: check, include: check, on_fail: { to: build, max: 1 } }
 `

@@ -1,8 +1,9 @@
 <script lang="ts">
-	// The flow's phases (FLOWLANG §1): what opens each one — an entrypoint, a
-	// repository signal under its start policy, or you — how often it ran, which
-	// one is live or parked, and which signals hold right now. Any phase
-	// without a live run can be started by hand while the run is idle.
+	// The flow's chains (FLOWLANG §1): the main chain the run started with,
+	// the watchers — what opens each one, a signal under its start policy or
+	// you, how often it ran, whether it is live or parked, which signals hold
+	// right now — and the outcomes that end the run. Any watcher without a
+	// live run can be started by hand while the run is idle.
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
@@ -16,14 +17,12 @@
 	let {
 		runId,
 		idle,
-		ended = false,
-		beginPhase = ''
+		ended = false
 	}: {
 		runId: string;
 		idle: boolean;
 		/** The run is over: what ran, without anything to start. */
 		ended?: boolean;
-		beginPhase?: string;
 	} = $props();
 	let mrs = $state<MergeRequestLive[]>([]);
 	let phases = $state<RunPhase[]>([]);
@@ -75,11 +74,10 @@
 
 	/** "on conflicts with its target · asks you first" — the wait point in a few words. */
 	const opens = (p: RunPhase) => {
-		if (p.signal === 'run_start') return t('run.phases.entrypoint');
-		if (p.signal === 'mr_opened') return t('run.phases.entrypointMR');
+		if (p.kind === 'main') return t('run.phases.main');
 		if (p.signal === 'manual') return t('run.phases.byHand');
 		const signal = titles[p.signal] ?? p.signal;
-		if (p.outcome) {
+		if (p.kind === 'outcome') {
 			// An outcome opens once and ends the run: done, or abandoned.
 			const ends =
 				p.then === 'abort'
@@ -92,9 +90,9 @@
 			: '';
 		return `${t('run.phases.on', { signal })}${quiet} · ${t(`run.phases.start.${p.start}`)}`;
 	};
-	/** "2/∞ runs" — or, for an outcome, that it happens once. */
+	/** "2/∞ runs" — or, for the main chain and an outcome, that it happens once. */
 	const usage = (p: RunPhase) =>
-		p.outcome
+		p.kind !== 'watcher'
 			? t('run.phases.once')
 			: t('run.phases.usage', { used: p.total, max: p.max === -1 ? '∞' : p.max });
 	const pending = (p: RunPhase) => p.holds.filter((h) => !h.seen);
@@ -140,9 +138,11 @@
 				{@const waits = pending(p)}
 				<div class="phase" class:islive={!!p.live}>
 					<div class="who">
-						<span class="mono pid">{p.id}</span>
-						{#if p.id === beginPhase}<span class="pill fnt" title={t('run.phases.began')}
-								>{t('run.phases.beganHere')}</span
+						<span class="mono pid" title={p.kind === 'main' ? t('run.phases.mainTitle') : undefined}
+							>{p.id}</span
+						>
+						{#if p.kind === 'outcome'}<span class="pill fnt" title={t('run.phases.outcomeTitle')}
+								>{t('run.phases.outcomePill')}</span
 							>{/if}
 						{#if waits.length}<span
 								class="pill t-hot fnt"
@@ -157,9 +157,10 @@
 									: t('run.phases.running')}</span
 							>{/if}</span
 					>
-					{#if ended}
-						<!-- the run is over: nothing to start -->
-					{:else if p.outcome}
+					{#if ended || p.kind === 'main'}
+						<!-- the run is over, or the main chain: it runs once, when the run starts -->
+						<span></span>
+					{:else if p.kind === 'outcome'}
 						<!-- An outcome happens on the repository; starting one by hand would
 						     end the run from a button beside the ones that do not. -->
 						<span class="fnt small" title={t('run.phases.outcomeTitle')}

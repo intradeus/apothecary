@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// blocksDoc includes blocks from two phases and a block from a block: make
-// runs build, ship (a block of its own), review and publish.
+// blocksDoc includes blocks from the main chain and a watcher, and a block
+// from a block: make runs build, ship (a block of its own), review and
+// publish.
 const blocksDoc = header + `blocks:
   - id: ship
     description: commit what was left and run the tests
@@ -24,18 +25,17 @@ const blocksDoc = header + `blocks:
       - { id: ship, include: ship, on_fail: { to: build, max: 5, then: debug } }
       - { id: review, type: command, run: x, on_fail: { to: build, max: 3, then: debug } }
       - { id: publish, include: publish }
-phases:
-  - id: deliver
-    on: run_start
-    stages:
-      - { id: plan, type: command, run: x, on_fail: { to: make, max: 1 } }
-      - { id: make, include: make }
+main:
+  - { id: plan, type: command, run: x, on_fail: { to: make, max: 1 } }
+  - { id: make, include: make }
+watchers:
   - id: fixes
     on: mr_conflicts
     stages:
       - { id: patch, type: command, run: x }
       - { id: again, include: ship, on_fail: { to: patch, max: 2 }, on_success: wrap }
       - { id: wrap, type: command, run: x, on_success: end }
+outcomes:
   - { id: shipped, on: mr_merged, then: done }
 `
 
@@ -55,8 +55,8 @@ func TestBlocksExpandInPlace(t *testing.T) {
 	if got := strings.Join(ids, " "); got != want {
 		t.Fatalf("stages = %s\n want %s", got, want)
 	}
-	if d := f.Phase("deliver"); d.First != 0 || d.Last != 5 {
-		t.Errorf("deliver spans %d..%d", d.First, d.Last)
+	if d := f.Phase(MainPhase); d.First != 0 || d.Last != 5 {
+		t.Errorf("main spans %d..%d", d.First, d.Last)
 	}
 	st := func(id string) *Stage {
 		t.Helper()
@@ -100,7 +100,7 @@ func TestBlocksExpandInPlace(t *testing.T) {
 			t.Errorf("%s include = %q, want %q", id, got, inc)
 		}
 	}
-	if st("make.ship.test").Phase != "deliver" || st("again.test").Phase != "fixes" {
+	if st("make.ship.test").Phase != MainPhase || st("again.test").Phase != "fixes" {
 		t.Error("expanded stages belong to the phase that includes them")
 	}
 	if st("make.ship.test").Line != 9 {
@@ -122,7 +122,7 @@ func TestFailWithoutAndThroughIncludes(t *testing.T) {
     stages:
       - { id: in, include: inner, on_fail: fail }
       - { id: u, type: command, run: x, on_fail: { to: u, max: 1, then: fail } }
-stages:
+main:
   - { id: a, type: command, run: x }
   - { id: o, include: outer, on_fail: { to: a, max: 2 } }
   - { id: bare, include: inner, on_success: done }
@@ -147,26 +147,26 @@ stages:
 
 func TestBlockErrors(t *testing.T) {
 	blk := func(stages string) string { return "blocks:\n  - id: b\n    stages:\n" + stages }
-	use := "stages:\n  - { id: a, type: command, run: x }\n  - { id: inc, include: b, on_success: done }\n"
+	use := "main:\n  - { id: a, type: command, run: x }\n  - { id: inc, include: b, on_success: done }\n"
 	for _, tc := range []struct{ name, doc, substr string }{
-		{"unknown block", header + "stages:\n  - { id: a, include: nope, on_success: done }\n", `include "nope": no block of that name`},
-		{"cycle", header + "blocks:\n  - { id: x, stages: [{ id: s, include: y }] }\n  - { id: y, stages: [{ id: s, include: x }] }\n" + "stages:\n  - { id: a, include: x, on_success: done }\n", "includes itself (x → y → x)"},
-		{"too deep", header + "blocks:\n  - { id: b1, stages: [{ id: s, include: b2 }] }\n  - { id: b2, stages: [{ id: s, include: b3 }] }\n  - { id: b3, stages: [{ id: s, include: b4 }] }\n  - { id: b4, stages: [{ id: s, type: command, run: x }] }\n" + "stages:\n  - { id: a, include: b1, on_success: done }\n", "includes nest 4 levels deep; the limit is 3"},
+		{"unknown block", header + "main:\n  - { id: a, include: nope, on_success: done }\n", `include "nope": no block of that name`},
+		{"cycle", header + "blocks:\n  - { id: x, stages: [{ id: s, include: y }] }\n  - { id: y, stages: [{ id: s, include: x }] }\n" + "main:\n  - { id: a, include: x, on_success: done }\n", "includes itself (x → y → x)"},
+		{"too deep", header + "blocks:\n  - { id: b1, stages: [{ id: s, include: b2 }] }\n  - { id: b2, stages: [{ id: s, include: b3 }] }\n  - { id: b3, stages: [{ id: s, include: b4 }] }\n  - { id: b4, stages: [{ id: s, type: command, run: x }] }\n" + "main:\n  - { id: a, include: b1, on_success: done }\n", "includes nest 4 levels deep; the limit is 3"},
 		{"route out of a block", header + blk("      - { id: s, type: command, run: x, on_success: a }\n") + use, `"a" is not a stage of block "b"`},
 		{"edge out of a block", header + blk("      - { id: s, type: command, run: x, on_fail: { to: a, max: 1 } }\n") + use, `on_fail: "a" is not a stage of block "b"`},
-		{"fail outside a block", header + "stages:\n  - { id: a, type: command, run: x, on_fail: fail, on_success: done }\n", "only exists inside a block"},
-		{"fail on an include in a phase", header + blk("      - { id: s, type: command, run: x }\n") + "stages:\n  - { id: inc, include: b, on_fail: fail, on_success: done }\n", "only exists inside a block"},
+		{"fail outside a block", header + "main:\n  - { id: a, type: command, run: x, on_fail: fail, on_success: done }\n", "only exists inside a block"},
+		{"fail on an include in a phase", header + blk("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, include: b, on_fail: fail, on_success: done }\n", "only exists inside a block"},
 		{"fail with max", header + blk("      - { id: s, type: command, run: x, on_fail: { to: fail, max: 1 } }\n") + use, `max and then do not apply when to is "fail"`},
 		{"on_success fail", header + blk("      - { id: s, type: command, run: x, on_success: fail }\n") + use, `on_success cannot be "fail"`},
-		{"include with a type", header + blk("      - { id: s, type: command, run: x }\n") + "stages:\n  - { id: inc, include: b, type: command, on_success: done }\n", "an include has no type"},
-		{"include with when", header + blk("      - { id: s, type: command, run: x }\n") + "stages:\n  - { id: inc, include: b, when: tracker, on_success: done }\n", `field "when" does not apply to an include`},
-		{"include with on_reject", header + blk("      - { id: s, type: command, run: x }\n") + "stages:\n  - { id: inc, include: b, on_reject: abort, on_success: done }\n", `field "on_reject" does not apply to an include`},
-		{"route into an include", header + blk("      - { id: s, type: command, run: x }\n      - { id: t, type: command, run: x }\n") + "stages:\n  - { id: a, type: command, run: x, on_success: inc.t }\n  - { id: inc, include: b, on_success: done }\n", `"inc.t" is inside an include`},
-		{"include id taken", header + blk("      - { id: s, type: command, run: x }\n") + "stages:\n  - { id: inc, type: command, run: x }\n  - { id: inc, include: b, on_success: done }\n", "duplicate id"},
-		{"stage after an include of its id", header + blk("      - { id: s, type: command, run: x }\n") + "stages:\n  - { id: inc, include: b }\n  - { id: inc, type: command, run: x, on_success: done }\n", "duplicate id"},
+		{"include with a type", header + blk("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, include: b, type: command, on_success: done }\n", "an include has no type"},
+		{"include with when", header + blk("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, include: b, when: tracker, on_success: done }\n", `field "when" does not apply to an include`},
+		{"include with on_reject", header + blk("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, include: b, on_reject: abort, on_success: done }\n", `field "on_reject" does not apply to an include`},
+		{"route into an include", header + blk("      - { id: s, type: command, run: x }\n      - { id: t, type: command, run: x }\n") + "main:\n  - { id: a, type: command, run: x, on_success: inc.t }\n  - { id: inc, include: b, on_success: done }\n", `"inc.t" is inside an include`},
+		{"include id taken", header + blk("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, type: command, run: x }\n  - { id: inc, include: b, on_success: done }\n", "duplicate id"},
+		{"stage after an include of its id", header + blk("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, include: b }\n  - { id: inc, type: command, run: x, on_success: done }\n", "duplicate id"},
 		{"reserved id in a block", header + blk("      - { id: fail, type: command, run: x }\n") + use, `id "fail" is reserved`},
-		{"reserved fail in a phase", header + "stages:\n  - { id: fail, type: command, run: x, on_success: done }\n", `id "fail" is reserved`},
-		{"dotted id", header + "stages:\n  - { id: a.b, type: command, run: x, on_success: done }\n", "not a slug"},
+		{"reserved fail in a phase", header + "main:\n  - { id: fail, type: command, run: x, on_success: done }\n", `id "fail" is reserved`},
+		{"dotted id", header + "main:\n  - { id: a.b, type: command, run: x, on_success: done }\n", "not a slug"},
 		{"empty block", header + "blocks:\n  - { id: b, stages: [] }\n" + use, "a block needs at least one stage"},
 		{"duplicate block", header + "blocks:\n  - { id: b, stages: [{ id: s, type: command, run: x }] }\n  - { id: b, stages: [{ id: s, type: command, run: x }] }\n" + use, "duplicate block id"},
 		{"duplicate stage in a block", header + blk("      - { id: s, type: command, run: x }\n      - { id: s, type: command, run: x }\n") + use, `block "b", stage "s": duplicate id`},
@@ -186,7 +186,7 @@ func TestBlockErrors(t *testing.T) {
 
 // A block nothing includes is not checked, and the parser says so.
 func TestUnusedBlockWarns(t *testing.T) {
-	f, err := Parse("t.yaml", []byte(header+"blocks:\n  - { id: spare, stages: [{ id: s, type: command, run: x }] }\nstages:\n  - { id: a, type: command, run: x }\n"))
+	f, err := Parse("t.yaml", []byte(header+"blocks:\n  - { id: spare, stages: [{ id: s, type: command, run: x }] }\nmain:\n  - { id: a, type: command, run: x }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,34 +204,33 @@ func TestBlocksRoundTripTheDocument(t *testing.T) {
 	if len(d.Blocks) != 3 || d.Blocks[0].ID != "ship" || d.Blocks[0].Description == "" || len(d.Blocks[2].Stages) != 4 || d.Blocks[2].Stages[1].Include != "ship" {
 		t.Errorf("blocks = %+v", d.Blocks)
 	}
-	if inc := d.Phases[0].Stages[1]; inc.ID != "make" || inc.Include != "make" || inc.Type != "" {
+	if inc := d.Main[1]; inc.ID != "make" || inc.Include != "make" || inc.Type != "" {
 		t.Errorf("include stage = %+v", inc)
 	}
 }
 
-// An entrypoint on mr_opened begins a run created on a merge request
-// someone opened: it acts on that merge request from the start, so a
+// A flow whose runs are started on a merge request someone opened acts on
+// it from the start: its main chain's subject is that merge request, so a
 // subject action needs no guard and nothing has to open one.
-func TestEntrypointOnAMergeRequest(t *testing.T) {
-	doc := header + `phases:
-  - id: first_look
-    on: mr_opened
-    stages:
-      - { id: read, type: command, run: x, output: { review: artifacts/review.yaml } }
-      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
-      - { id: wait_merge, type: wait, for: mr_merged, on_fail: done }
+func TestRunStartOnAMergeRequest(t *testing.T) {
+	doc := header + `run_start: merge_request
+main:
+  - { id: read, type: command, run: x, output: { review: artifacts/review.yaml } }
+  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+  - { id: wait_merge, type: wait, for: mr_merged, on_fail: done }
+outcomes:
   - { id: merged, on: mr_merged, then: done }
 `
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ph := f.Phase("first_look")
-	if !ph.IsEntrypoint() || !ph.OnMR() || !ph.HasSubject() || ph.Fires() || ph.On.Start != StartManual {
-		t.Errorf("first_look = %+v", ph)
+	ph := f.Phase(MainPhase)
+	if !f.StartsOnMR() || !ph.IsMain() || !ph.OnMR() || !ph.HasSubject() || ph.Fires() || ph.On.Start != StartManual {
+		t.Errorf("main = %+v", ph)
 	}
-	if b := f.Beginning(); b == nil || b.ID != "first_look" {
-		t.Errorf("beginning = %+v", b)
+	if b := f.Main(); b == nil || b.ID != MainPhase {
+		t.Errorf("main = %+v", b)
 	}
 	for _, w := range f.Warnings {
 		t.Errorf("warning: %s", w)

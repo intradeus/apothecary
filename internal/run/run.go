@@ -17,9 +17,9 @@ const (
 	Provisioning   State = "provisioning"
 	Running        State = "running"
 	WaitingOnHuman State = "waiting_on_human"
-	// InReview: a phased run between phases, its merge requests open — the
-	// reviewers have it, and reaction phases start when their triggers
-	// hold (PLAN6). Non-terminal; the run ends from its merge requests.
+	// InReview: a run between phases, its merge requests open — the
+	// reviewers have it, and watchers start when their signals hold.
+	// Non-terminal; the run ends from its merge requests.
 	InReview State = "in_review"
 	// Paused is non-terminal but NOT auto-recovered on boot: the user
 	// pressed pause; only run_unpaused (play) or an abort moves it on.
@@ -63,12 +63,11 @@ type View struct {
 	Branch           string `json:"branch,omitempty"`        // the run's actual git branch (from RunCreated)
 	BranchBase       string `json:"branch_base,omitempty"`   // branch stem before the per-run suffix
 	SourceBranch     string `json:"source_branch,omitempty"` // branch this run forks off from (origin/<SourceBranch>)
-	// BeginPhase is the entrypoint the run began at, Params the parameter
-	// values it runs with and StartedBy who created it (all from run_created).
-	BeginPhase string            `json:"begin_phase,omitempty"`
-	Params     map[string]string `json:"params,omitempty"`
-	StartedBy  string            `json:"started_by,omitempty"`
-	MRURL      string            `json:"mr_url,omitempty"`
+	// Params are the parameter values the run runs with and StartedBy who
+	// created it (both from run_created).
+	Params    map[string]string `json:"params,omitempty"`
+	StartedBy string            `json:"started_by,omitempty"`
+	MRURL     string            `json:"mr_url,omitempty"`
 	// MRs are every merge request the run opened (a multi-repo run has one
 	// per changed repo), in creation order;
 	// MRURL is the first. Checkouts are the run's repositories. Neither is a
@@ -78,7 +77,8 @@ type View struct {
 	// Adopted is the merge request the run was created on, if it was.
 	Adopted *event.AdoptedMR `json:"adopted,omitempty"`
 	// Phase is the phase in progress — or the last one, while Idle — and
-	// PhaseSubject the checkout it acts on ("" for the entry phase). Not
+	// PhaseSubject the checkout it acts on ("" for a main chain started on
+	// a ticket). Not
 	// read-model columns.
 	Phase        string `json:"phase,omitempty"`
 	PhaseSubject string `json:"phase_subject,omitempty"`
@@ -161,7 +161,6 @@ func Apply(v *View, e *event.Event) {
 		v.Branch = p.Branch
 		v.BranchBase = p.BranchBase
 		v.SourceBranch = p.SourceBranch
-		v.BeginPhase = p.Phase
 		v.Params = p.Params
 		v.StartedBy = p.By
 		if len(p.Checkouts) > 0 {

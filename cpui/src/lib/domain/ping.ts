@@ -45,7 +45,7 @@ export interface Ping {
 	 *  debug leaf's phase). */
 	phase?: string;
 	/** On a debug ping: giving up ends that phase run and the run goes back
-	 *  to waiting — the phase is no entrypoint. False: giving up abandons the
+	 *  to waiting — the phase is a watcher. False: giving up abandons the
 	 *  run. */
 	endsPhase: boolean;
 	answer?: string;

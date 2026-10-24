@@ -239,7 +239,7 @@ func mergeItems(current, added string) string {
 }
 
 // actionTicketLink attaches the run's merge request(s) to the issue — every
-// one the entry opened, or the subject's in a reaction phase. Idempotent in
+// one the run opened, or the subject's when the chain acts on one. Idempotent in
 // the adapter (an upsert on URL), so a re-entry never attaches twice.
 func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 	rs := x.rs

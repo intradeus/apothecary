@@ -10,11 +10,9 @@ package engine
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"apothecary/internal/flow"
 	"apothecary/internal/run"
-	"apothecary/internal/signalspec"
 )
 
 // FlowBindings is the storage plane's per-project parameter bindings: the
@@ -94,35 +92,14 @@ func (e *Engine) runFlow(ctx context.Context, v run.View) (*flow.Flow, error) {
 	return fl.Resolve(v.Params)
 }
 
-// entrypointOf picks the phase a run begins at: the named one, which must be
-// an entrypoint, or the flow's first entrypoint.
-func entrypointOf(fl *flow.Flow, name string, onMR bool) (string, error) {
-	var names []string
-	for _, p := range fl.Entrypoints() {
-		names = append(names, p.ID)
-	}
-	if name == "" {
-		// The first entrypoint of the kind asked for: one created on a
-		// merge request, or a fresh one.
-		for _, p := range fl.Entrypoints() {
-			if p.OnMR() == onMR {
-				return p.ID, nil
-			}
-		}
-		if onMR {
-			return "", fmt.Errorf("flow %q has no entrypoint that begins a run on a merge request (on: %s)", fl.Name, signalspec.MROpened)
-		}
-		return "", fmt.Errorf("flow %q begins runs on a merge request someone opened: name one (entrypoints: %s)", fl.Name, strings.Join(names, ", "))
-	}
-	ph := fl.Phase(name)
-	if ph == nil || !ph.IsEntrypoint() {
-		return "", fmt.Errorf("phase %q is not an entrypoint of flow %q (entrypoints: %s)", name, fl.Name, strings.Join(names, ", "))
-	}
+// startsOn checks a run is started on what its flow says (run_start): a
+// merge request, or a ticket.
+func startsOn(fl *flow.Flow, onMR bool) error {
 	switch {
-	case ph.OnMR() && !onMR:
-		return "", fmt.Errorf("phase %q begins a run on a merge request someone opened (on: %s): name the merge request", name, signalspec.MROpened)
-	case !ph.OnMR() && onMR:
-		return "", fmt.Errorf("phase %q begins a fresh run (on: %s), not one on a merge request: begin at a phase on %s", name, ph.On.Signal, signalspec.MROpened)
+	case fl.StartsOnMR() && !onMR:
+		return fmt.Errorf("flow %q starts its runs on a merge request (run_start: %s): name the merge request", fl.Name, flow.StartsOnMR)
+	case !fl.StartsOnMR() && onMR:
+		return fmt.Errorf("flow %q starts its runs on a ticket (run_start: %s), not on a merge request", fl.Name, flow.StartsOnTicket)
 	}
-	return name, nil
+	return nil
 }

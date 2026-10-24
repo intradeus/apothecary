@@ -1,5 +1,6 @@
 // Automations: how runs begin without a person pressing Start. A rule of a
-// workshop naming a flow, one of its entrypoints and parameter overrides,
+// workshop naming a flow (one whose run_start fits its kind) and parameter
+// overrides,
 // plus how it fires — a tracker query polled into tickets and runs, or a
 // schedule for one ticket. The watcher's last poll, firing and error ride
 // along for the list.
@@ -21,8 +22,6 @@ export interface Automation {
 	 *  primary). */
 	repo?: string;
 	flow: string;
-	/** The entrypoint; empty = the flow's first. */
-	phase?: string;
 	/** Overrides over the workshop's binding, for the runs it creates. */
 	params: Record<string, string>;
 	enabled: boolean;
@@ -43,7 +42,6 @@ export interface AutomationDraft {
 	ticketId?: string;
 	repo?: string;
 	flow: string;
-	phase?: string;
 	params?: Record<string, string>;
 	enabled: boolean;
 }

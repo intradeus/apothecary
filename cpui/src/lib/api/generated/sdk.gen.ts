@@ -796,7 +796,7 @@ export const listAutomations = <ThrowOnError extends boolean = false>(
 /**
  * Create an automation
  *
- * Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves, the phase is one of its entrypoints, the params are ones it accepts.
+ * Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its run_start fits the kind (merge_request for a merge_request automation, ticket otherwise), the params are ones it accepts.
  */
 export const createAutomation = <ThrowOnError extends boolean = false>(
 	options: Options<CreateAutomationData, ThrowOnError>
@@ -1087,7 +1087,7 @@ export const listFlowVersions = <ThrowOnError extends boolean = false>(
 /**
  * Open merge requests of a project's repository, with the runs on each
  *
- * The repository's open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket's newest run. What a run may be created on, at a flow's mr_opened entrypoint.
+ * The repository's open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket's newest run. What a run of a flow started on merge requests (run_start: merge_request) may be started on.
  */
 export const listProjectMrs = <ThrowOnError extends boolean = false>(
 	options: Options<ListProjectMrsData, ThrowOnError>
@@ -1100,7 +1100,7 @@ export const listProjectMrs = <ThrowOnError extends boolean = false>(
 /**
  * Start a run of a flow on a merge request
  *
- * Finds or makes the merge request's ticket and creates a run on the merge request at the flow's mr_opened entrypoint (the project's default flow unless the body names another). 409 while a run of the same flow on it is going.
+ * Finds or makes the merge request's ticket and starts a run on the merge request of a flow whose runs are started on one (run_start: merge_request; the project's default flow unless the body names another). 409 while a run of the same flow on it is going.
  */
 export const startMrRun = <ThrowOnError extends boolean = false>(
 	options: Options<StartMrRunData, ThrowOnError>

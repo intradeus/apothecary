@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
@@ -13,14 +14,14 @@ import (
 	"apothecary/internal/run"
 )
 
-const automergeReaction = "  - id: automerge\n    on: mr_mergeable\n    stages:\n" +
+const automergeWatcher = "  - id: automerge\n    on: mr_mergeable\n    stages:\n" +
 	"      - { id: merge, type: action, action: mr_merge, input: { method: squash, branch: delete }, on_fail: end }\n"
 
-// The repository host says it can be merged: the reaction merges it — with the
-// method asked, at the head the phase began on — and the merge is the
+// The repository host says it can be merged: the watcher merges it — with
+// the method asked, at the head the round began on — and the merge is the
 // outcome that ends the run.
 func TestMRMergeMergesAtThePhasesHead(t *testing.T) {
-	ph := newPhasedHarness(t, observeFlowDoc(automergeReaction))
+	ph := newPhasedHarness(t, observeFlowDoc(automergeWatcher))
 	runID := ph.start(t)
 	ph.repoHost.SetHead(1, "h1")
 	ph.repoHost.SetMergeableNow(1, true)
@@ -45,7 +46,7 @@ func TestMRMergeMergesAtThePhasesHead(t *testing.T) {
 // on_fail — here ending the round, the run back in review; the next head the
 // repository host calls mergeable is merged.
 func TestMRMergeRefusedRoutesOnFail(t *testing.T) {
-	ph := newPhasedHarness(t, observeFlowDoc(automergeReaction))
+	ph := newPhasedHarness(t, observeFlowDoc(automergeWatcher))
 	runID := ph.start(t)
 	ph.repoHost.SetHead(1, "h1")
 	ph.repoHost.SetMergeRefusal(1, "required status checks are expected")
@@ -115,5 +116,98 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 	posted, _ := findPayload[*event.ReviewPosted](evs)
 	if posted == nil || posted.Subject != "repo" || posted.Inline != 1 {
 		t.Errorf("review_posted = %+v", posted)
+	}
+}
+
+// shipFlowDoc is "get approval, rebase once, merge" on someone's merge
+// request: the approval opens the round, which rebases onto the target,
+// pushes, waits until the repository host says it can be merged — the
+// checks on the new head — and merges.
+const shipFlowDoc = `name: shipper
+version: 5
+run_start: merge_request
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+main:
+  - { id: look, type: command, run: "true" }
+watchers:
+  - id: ship
+    on: mr_approved
+    stages:
+      - { id: rebase, type: action, action: sync_target, input: { strategy: rebase }, on_fail: end }
+      - { id: push, type: action, action: push_branch, on_fail: end }
+      - { id: ready, type: wait, for: mr_mergeable, timeout: 24h, on_fail: end }
+      - { id: merge, type: action, action: mr_merge, on_fail: end }
+outcomes:
+  - { id: merged, on: mr_merged, then: done }
+  - { id: closed, on: mr_closed, then: done }
+`
+
+// A merge after the round's own push is pinned to the head it pushed — not
+// the head the round began on, which the push replaced — and only that.
+func TestMRMergeIsPinnedToTheHeadTheRoundPushed(t *testing.T) {
+	ph := newPhasedHarness(t, shipFlowDoc)
+	git := newMergeGit("main")
+	git.parents["a1"] = []string{"c0"}
+	git.remote["feature/cache"] = "a1"
+	git.head = "a1"
+	git.advanceTarget("main")
+	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
+	ph.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if cmd.Dir != "repo" {
+			return ports.ExecResult{}, nil
+		}
+		res, err := git.exec(env, cmd)
+		if strings.HasPrefix(strings.TrimSpace(cmd.Script), "git push") && res.ExitCode == 0 {
+			git.mu.Lock()
+			head := git.remote["feature/cache"]
+			git.mu.Unlock()
+			ph.repoHost.SetHead(ref.IID, head)
+		}
+		return res, err
+	}
+	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching (!1 by alice)"}, "shipper", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ph.waitState(t, runID, run.InReview)
+	ph.repoHost.SetApprovedBy(ref.IID, "rev")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, parked := findPayload[*event.PhaseParked](ph.events(t, runID)); parked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the round never parked at ready; events %v", eventTypes(ph.events(t, runID)))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	_, rebases, pushes, _ := git.snapshot()
+	pushed := ph.repoHost.SnapshotMRs()[0].HeadSHA
+	if rebases != 1 || len(pushes) != 1 || pushes[0] != "lease:feature/cache" || pushed == "a1" {
+		t.Fatalf("rebases %d pushes %v head %s: one rebase, pushed leased", rebases, pushes, pushed)
+	}
+	ph.repoHost.SetMergeableNow(ref.IID, true)
+	ph.waitState(t, runID, run.Completed)
+	evs := ph.events(t, runID)
+	merged, _ := findPayload[*event.MRMerged](evs)
+	if merged == nil || merged.Head != pushed {
+		t.Fatalf("mr_merged = %+v, want it pinned to the pushed head %s", merged, pushed)
+	}
+	// In the round that pushed: a merge pinned to the head it began on is
+	// refused, and only the next approval's round would land it.
+	if failed, ok := findPayload[*event.StageFailed](evs); ok {
+		t.Errorf("stage_failed = %+v", failed)
+	}
+	rounds := 0
+	for _, s := range phaseStarts(evs) {
+		if s.Phase == "ship" {
+			rounds++
+		}
+	}
+	if rounds != 1 {
+		t.Errorf("ship ran %d rounds, want the one that pushed to merge", rounds)
+	}
+	if m := ph.repoHost.SnapshotMRs()[0]; m.State != ports.MRMerged {
+		t.Errorf("mr = %+v", m)
 	}
 }

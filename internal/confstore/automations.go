@@ -9,12 +9,13 @@ package confstore
 //     project — once — and starts a run for each;
 //   - cron fires on a schedule (five-field cron, UTC) for one ticket, a new
 //     run each time;
-//   - merge_request watches a repository's open merge requests and creates a run
-//     on each one someone else opened — once — at an mr_opened entrypoint,
-//     each with a ticket of its own.
+//   - merge_request watches a repository's open merge requests and starts a
+//     run on each one someone else opened — once — of a flow whose runs are
+//     started on one (run_start: merge_request), each with a ticket of its
+//     own.
 //
 // The flow is untouched by any of this: an automation is a rule outside the
-// run that creates one at an entrypoint, the way a person would.
+// run that starts one, the way a person would.
 
 import (
 	"context"
@@ -55,10 +56,9 @@ type Automation struct {
 	// merge_request: the repository watched ("" = the project's primary, else
 	// an extra repository's name).
 	Repo string `json:"repo,omitempty"`
-	// What a firing creates: a run of Flow beginning at Phase ("" = the
-	// flow's first entrypoint) with Params laid over the project's binding.
+	// What a firing creates: a run of Flow with Params laid over the
+	// project's binding.
 	Flow    string            `json:"flow"`
-	Phase   string            `json:"phase,omitempty"`
 	Params  map[string]string `json:"params,omitempty"`
 	Enabled bool              `json:"enabled"`
 	// What the watcher last did with it.
@@ -159,9 +159,9 @@ func (s *Service) MarkAutomation(ctx context.Context, id string, m AutomationMar
 	return s.db.UpsertAutomation(ctx, a)
 }
 
-// validateAutomation: the kind and what it needs, the project, the flow and
-// an entrypoint of it, and params the flow accepts — checked the way a run
-// would check them, so a firing is never the first to find out.
+// validateAutomation: the kind and what it needs, the project, a flow whose
+// run_start fits the kind, and params the flow accepts — checked the way a
+// run would check them, so a firing is never the first to find out.
 func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	a.Name = strings.TrimSpace(a.Name)
 	if a.Name == "" {
@@ -243,27 +243,13 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	if err != nil {
 		return invalidf("flow %q does not parse: %v", a.Flow, err)
 	}
-	// The entrypoint must begin the kind of run the automation creates: on
-	// a merge request (merge_request), or a fresh one.
-	a.Phase = strings.TrimSpace(a.Phase)
-	onMR := a.Kind == AutomationMergeRequest
-	var names []string
-	fits := false
-	for _, ph := range f.Entrypoints() {
-		if ph.OnMR() == onMR {
-			names = append(names, ph.ID)
-			fits = fits || a.Phase == "" || ph.ID == a.Phase
-		}
-	}
-	if !fits {
-		what := "a fresh run (on: run_start)"
-		if onMR {
-			what = "a run on a merge request (on: mr_opened)"
-		}
-		if a.Phase == "" {
-			return invalidf("flow %q has no entrypoint that begins %s", a.Flow, what)
-		}
-		return invalidf("phase %q is not an entrypoint of flow %q that begins %s (%s)", a.Phase, a.Flow, what, strings.Join(names, ", "))
+	// The flow's runs must be started on what the automation finds: a
+	// merge request (merge_request), or a ticket.
+	switch onMR := a.Kind == AutomationMergeRequest; {
+	case onMR && !f.StartsOnMR():
+		return invalidf("flow %q starts its runs on a ticket (run_start: %s): a merge_request automation starts flows whose runs are started on a merge request", a.Flow, flow.StartsOnTicket)
+	case !onMR && f.StartsOnMR():
+		return invalidf("flow %q starts its runs on a merge request (run_start: %s): a %s automation starts flows whose runs are started on a ticket", a.Flow, flow.StartsOnMR, a.Kind)
 	}
 	values := map[string]string{}
 	for k, v := range a.Params {

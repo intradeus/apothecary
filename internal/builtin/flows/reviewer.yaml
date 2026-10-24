@@ -1,15 +1,16 @@
 name: reviewer
-version: 4
+version: 5
 description: "review a merge request someone opened: notes on its lines and a summary, again after every push, until it merges or closes"
-# A run of this flow is created ON a merge request a person opened (on:
-# mr_opened) — from the workshop's Repositories tab, or by a merge-request
-# automation watching the repository. It never builds and never pushes: it checks out
+run_start: merge_request
+# A run of this flow is started on a merge request a person opened — from the
+# workshop's Repositories tab, or by a merge-request automation watching the
+# repository. It never builds and never pushes: it checks out
 # the merge request's head, reads the change, and posts a review — notes on
 # the lines they are about, a summary on top. It never approves nor requests
 # changes; that decision stays a person's.
 #
 # The run then waits. Each time the author pushes and stops for a while
-# ($rereview_quiet), it reviews again, the checkout brought to the new head
+# ($rereview_quiet), the `again` watcher reviews again, the checkout brought to the new head
 # first, with its earlier review in hand so it says what is new rather than
 # repeating itself. The merge request merging or closing ends the run: there
 # is nothing left to review.
@@ -101,21 +102,17 @@ blocks:
           on_reject: { to: read, max: -1 } }
       - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml },
           on_fail: debug }
-phases:
-  # ---- the entrypoint: a run created on the merge request ---------------
-  - id: first_look
-    on: mr_opened
-    description: "the first review, of the merge request as it was opened"
-    stages:
-      - { id: review, include: review }
-
-  # ---- a reaction: the author pushed and stopped -------------------------
+# The first review, of the merge request as it was opened.
+main:
+  - { id: review, include: review }
+watchers:
+  # The author pushed and stopped: review what the merge request is now.
   - id: again
     on: { signal: mr_head_moved, quiet_for: $rereview_quiet }
     description: "the author pushed: review what the merge request is now"
     stages:
       - { id: rereview, include: review }
-
-  # ---- outcomes: merged or closed, nothing left to review ----------------
+outcomes:
+  # Merged or closed: nothing left to review.
   - { id: merged, on: mr_merged, then: done, description: "it merged: the review is over" }
   - { id: closed, on: mr_closed, then: done, description: "it was closed: the review is over" }

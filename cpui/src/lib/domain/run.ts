@@ -2,14 +2,16 @@
 // not the shape the wire happens to have. Nothing here imports from
 // $lib/api/generated; the mappers translate.
 
+import type { PhaseKind } from '$lib/flowdoc';
+
 /** Every state a run can be in. Exhaustive: a new one is a type error here. */
 export type RunState =
 	| 'pending'
 	| 'provisioning'
 	| 'running'
 	| 'waiting_on_human'
-	/** Between phases, merge requests open: reviewers have it, reaction
-	 *  phases start when their triggers hold (PLAN6). */
+	/** Between phases, merge requests open: reviewers have it, watchers
+	 *  start when their signals hold. */
 	| 'in_review'
 	| 'paused'
 	| 'completed'
@@ -65,9 +67,7 @@ export interface Run {
 	 *  checkout it acts on ('' when it acts on no merge request). */
 	phase?: string;
 	phaseSubject?: string;
-	/** The entrypoint the run began at, the parameter values it runs with
-	 *  and who began it (run_created). */
-	beginPhase?: string;
+	/** The parameter values it runs with and who began it (run_created). */
 	params?: Record<string, string>;
 	startedBy?: string;
 	/** Idle: between phases, or parked at a wait point. */
@@ -91,22 +91,20 @@ export interface RunMergeRequest {
 	iid: number;
 }
 
-/** A phase of the run's flow: what opens it, its runs so far, its live run
- *  and the signals holding for it (FLOWLANG §1). */
+/** A phase of the run's flow — its main chain, a watcher or an outcome:
+ *  what opens it, its runs so far, its live run and the signals holding for
+ *  it (FLOWLANG §1). */
 export interface RunPhase {
 	id: string;
 	description?: string;
-	/** What opens it: run_start (an entrypoint), manual (the run page), or a
-	 *  repository signal. */
+	kind: PhaseKind;
+	/** What opens it: run_start (the main chain), manual (the run page), or
+	 *  a signal observed on the run's merge requests. */
 	signal: string;
 	/** The policy when the signal holds: auto, confirm (an inbox decision
 	 *  first) or manual (surfaced as pending; you start it). */
 	start: 'auto' | 'confirm' | 'manual';
-	/** A run may begin at this phase. */
-	entry: boolean;
-	/** The phase ends the run: it opens once, when its signal holds. `then`
-	 *  is what a stage-less outcome does (done or abort). */
-	outcome: boolean;
+	/** How an outcome ends the run: done or abort. */
 	then?: string;
 	/** Debounce, in seconds (review comments). */
 	quietForS?: number;
@@ -202,12 +200,11 @@ export interface RunInput {
 	/** Branch to fork off; empty = the project default. */
 	sourceBranch?: string;
 	attachmentIds?: string[];
-	/** The entrypoint to begin at; empty = the flow's first. */
-	phase?: string;
 	/** Parameter values overriding the workshop's bindings for this attempt. */
 	params?: Record<string, string>;
-	/** Create the run on a merge request someone opened (an entrypoint on
-	 *  mr_opened): its number, in the primary unless repo says otherwise. */
+	/** Start the run on a merge request someone opened (a flow with
+	 *  run_start: merge_request): its number, in the primary unless repo
+	 *  says otherwise. */
 	mr?: { repo?: string; iid: number };
 }
 
@@ -218,7 +215,7 @@ export interface MergeRequestRow {
 	mr: OpenMergeRequest;
 	mine: boolean;
 	ticketId?: string;
-	run?: { id: string; state: RunState; flow: string; phase?: string; createdAt: string };
+	run?: { id: string; state: RunState; flow: string; createdAt: string };
 	runs: number;
 }
 

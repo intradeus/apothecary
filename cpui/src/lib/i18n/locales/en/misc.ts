@@ -128,8 +128,8 @@ export default {
 	'flow.name.working': 'Working…',
 	'flow.binding.add': 'Add',
 	'flow.binding.keyPlaceholder': 'name',
-	'flow.term.start': 'The entry — drag this handle onto a stage to start the flow there',
-	'flow.term.end': 'This phase is over — the run goes back to waiting',
+	'flow.term.start': 'Where the chain begins — drag this handle onto a stage to start it there',
+	'flow.term.end': 'This chain is over — the run goes back to waiting',
 	'flow.term.done': 'The run is done',
 	'flow.term.exit': 'The block is over: the run goes on from the stage that includes it',
 	'flow.term.failexit': 'fail: the block leaves by the including stage’s on_fail',
@@ -406,27 +406,38 @@ export default {
 	'flow.node.noBlock': 'no block chosen',
 	'flow.node.noSignal': '(no signal)',
 	'flow.node.asksHuman': 'asks a human',
-	'flow.node.entryTitle': 'Its phase opens here',
+	'flow.node.entryTitle': 'Its chain begins here',
 	'flow.node.entry': 'first',
 	'flow.node.unbound': 'unbound',
 	// FlowGraph
-	// One beginning per phase: its marker names the phase and what begins it.
+	// One beginning per chain: its marker names it and what opens it.
 	'flow.graph.beginLabel': '{phase}: on {trigger}',
 	'flow.graph.beginLabelPlain': 'on {trigger}',
+	'flow.graph.mainLabel': 'main · on {on}',
+	'flow.graph.mainTitle':
+		'The main chain: it runs once, when a person or an automation starts a run on {on} — drag this handle onto a stage of the chain to start it there',
+	'flow.graph.runStart.ticket': 'a ticket',
+	'flow.graph.runStart.merge_request': 'a merge request',
+	'flow.graph.outcomeLabel': '{phase}: on {trigger} → {then}',
+	'flow.graph.section.main': 'main',
+	'flow.graph.section.watcher': 'watchers',
+	'flow.graph.section.outcome': 'outcomes',
+	'flow.graph.sectionTitle.main': 'The chain a run starts with',
+	'flow.graph.sectionTitle.watcher':
+		'Chains that run on what happens to the merge requests while the run is open — one at a time, in its workspace',
+	'flow.graph.sectionTitle.outcome': 'What ends the run: each fires once',
 	'flow.graph.blockLabel': 'block {block}',
 	'flow.graph.blockTitle': 'The block {block}: its stages run in the including stage’s place',
 	'flow.graph.blockExit': 'back · {to}',
 	'flow.graph.blockFail': 'fail · {to}',
-	'flow.graph.entryTitle':
-		'Phase {phase} is an entrypoint: a run begins here when it is created for it — drag this handle onto a stage of the phase to start it there',
 	'flow.graph.triggerTitle':
-		"Phase {phase} opens when {signal} holds for one of the run's merge requests, under its start policy — drag onto a stage of this phase to start it there",
+		"Watcher {phase} runs its chain on each new {signal} on one of the run's merge requests, under its start policy — drag onto a stage of the chain to start it there",
 	'flow.graph.manualTitle':
-		'Phase {phase} opens only when a person starts it from the run page, while the run is idle — drag onto a stage of this phase to start it there',
-	'flow.graph.entryMRTitle':
-		'Phase {phase} is an entrypoint for a run created on a merge request someone opened: the phase acts on it from the start — drag onto a stage of this phase to start it there',
+		'Watcher {phase} runs only when a person starts it from the run page, while the run is idle — drag onto a stage of the chain to start it there',
 	'flow.graph.outcomeTitle':
-		'Phase {phase} is an outcome: it opens once, when {signal} holds, and ends the run — drag onto a stage of this phase to start it there',
+		'Outcome {phase} fires once, when {signal} holds, and the run is done — drag onto a stage of its chain to start it there',
+	'flow.graph.outcomeAbortTitle':
+		'Outcome {phase} fires once, when {signal} holds, and the run is abandoned — drag onto a stage of its chain to start it there',
 	'flow.graph.debugReturn': 'again',
 	'flow.graph.arrangeTitle': 'Auto-arrange along the success chain',
 	'flow.graph.arrangeAria': 'Auto-arrange',
@@ -443,8 +454,39 @@ export default {
 	'flow.insp.delete': 'Delete…',
 	'flow.insp.id': 'Id',
 	'flow.insp.renameHelp': 'Renaming updates every reference.',
-	'flow.insp.phase': 'Phase',
-	'flow.insp.phaseKind': 'phase',
+	'flow.insp.chain': 'Chain',
+	'flow.insp.chainMain': 'the main chain',
+	'flow.insp.chainOption.watcher': 'watcher {id} — on {trigger}',
+	'flow.insp.chainOption.outcome': 'outcome {id} — on {trigger}',
+	'flow.insp.kind.main': 'main chain',
+	'flow.insp.kind.watcher': 'watcher',
+	'flow.insp.kind.outcome': 'outcome',
+	'flow.insp.mainHelp':
+		'The chain a run starts with: it runs once, when a person or an automation starts the run. Once it ends, the watchers take over until an outcome ends the run.',
+	'flow.insp.watcherHelp':
+		'A chain that runs while the run is open, on each new occurrence of its signal on one of the run’s merge requests — one at a time, in the run’s workspace. It never ends the run: its chain closes with end.',
+	'flow.insp.outcomeHelp':
+		'What ends the run: it fires once, when its signal holds — after its chain, when it has one.',
+	'flow.insp.runStart': 'Runs start on',
+	'flow.insp.runStart.ticket': 'a ticket',
+	'flow.insp.runStart.merge_request': 'a merge request someone opened',
+	'flow.insp.runStartHelp':
+		'A person starts a run — from a ticket, or on a merge request from the Repositories tab — or an automation does; nothing the flow listens for does. A flow started on a merge request checks out its branch and acts on it from the start.',
+	'flow.insp.firesOn': 'Fires on',
+	'flow.insp.addChain': 'Add a chain',
+	'flow.insp.addWatcher': 'watcher',
+	'flow.insp.addOutcome': 'outcome',
+	'flow.insp.addChainHelp':
+		'A watcher runs on what happens to the merge requests, or when you start it; an outcome ends the run.',
+	'flow.insp.deleteWatcherTitle': 'Delete watcher {id}?',
+	'flow.insp.deleteOutcomeTitle': 'Delete outcome {id}?',
+	'flow.insp.deleteWatcher': 'Delete watcher',
+	'flow.insp.deleteOutcome': 'Delete outcome',
+	'flow.insp.deleteChainBody_one':
+		'<b>{id}</b> and the one stage of its chain are removed from this draft.',
+	'flow.insp.deleteChainBody_other':
+		'<b>{id}</b> and the {count} stages of its chain are removed from this draft.',
+	'flow.insp.deleteChainEmpty': '<b>{id}</b> is removed from this draft.',
 	'flow.insp.block': 'Block',
 	'flow.insp.blockHelp':
 		'The chain this stage runs in its place. Its stages run as {include}.{stage}; its last stage’s success is this stage’s on_success, and a `fail` inside it is this stage’s on_fail.',
@@ -453,56 +495,46 @@ export default {
 		'Blocks are edited in the YAML tab, under blocks: — every stage that includes one runs the same chain.',
 	'flow.insp.phaseStages_one': '{count} stage',
 	'flow.insp.phaseStages_other': '{count} stages',
-	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the phase with it.',
-	'flow.insp.entrypoint': 'entrypoint',
-	'flow.insp.entrypointTitle': 'A run may begin at this phase (the start-run form offers it)',
-	'flow.insp.outcome': 'outcome',
-	'flow.insp.outcomeTitle': 'This phase ends the run: it opens once, when its signal holds',
+	'flow.insp.phaseRenameHelp': 'Renaming moves every stage of the chain with it.',
 	'flow.insp.phaseThen': 'then: {then}',
-	'flow.insp.opensOn': 'Opens on',
-	'flow.insp.opensOn.run_start': 'a run created for it (entrypoint)',
+	'flow.insp.opensOn': 'Runs on',
 	'flow.insp.opensOn.manual': 'a person, from the run page',
-	'flow.insp.opensOn.mr_opened': 'a run created on someone’s merge request (entrypoint)',
-	'flow.insp.opensOnHelp.mr_opened':
-		'An entrypoint for a run created on a merge request someone opened — named on the start-run form, or picked by a merge-request automation. The phase acts on it from the start: it is the phase’s subject, $DIFF_TARGET is what it merges, and later phases follow its pushes.',
-	'flow.insp.opensOn.outcomes': 'and ends the run on…',
 	'flow.insp.then': 'Then',
 	'flow.insp.then.done': 'the run is done',
 	'flow.insp.then.abort': 'the run is abandoned',
 	'flow.insp.phaseThenHelp':
-		'An outcome with nothing to do but end the run. Add stages to do something first — the ticket’s done, a last message — and the last of them ends the run instead.',
+		'An outcome with nothing to do but end the run. Give it stages to do something first — the ticket’s done, a last message — and the last of them ends the run this way.',
 	'flow.insp.outcomeStagesHelp':
-		'An outcome’s chain ends the run: its last stage says done unless it routes to abort. `end` has no place here — there is nothing to go back to.',
-	'flow.insp.opensOnHelp.run_start':
-		'An entrypoint: the phase a run begins at when it is created for it. Several phases may be entrypoints; the start-run form picks one (the first by default). It may be started again by hand.',
+		'How the run ends once the chain is through: its last stage’s success goes here unless it routes elsewhere. `end` has no place in an outcome — there is nothing to go back to.',
 	'flow.insp.opensOnHelp.manual':
-		'No signal: the phase starts only when a person starts it from the run page, while the run is idle.',
+		'No signal: the watcher runs only when a person starts it from the run page, while the run is idle.',
 	'flow.insp.start': 'When the signal holds',
 	'flow.insp.start.auto': 'start by itself',
 	'flow.insp.start.confirm': 'ask first (an inbox decision)',
 	'flow.insp.start.manual': 'only surface it; a person starts it',
 	'flow.insp.startHelp':
 		'The start policy. A $parameter whose enum fits the three lets a workshop choose — manual rebase here, automatic there.',
+	'flow.insp.startHelpOutcome':
+		'Ask first, and the inbox decides whether the run ends; only surfaced, and a person ends it from the run page.',
 	'flow.insp.quietFor': 'Quiet for',
 	'flow.insp.noQuiet': 'start as soon as it holds',
 	'flow.insp.quietForHelp':
 		'Start only once nothing new happened for this long (at least 1m): comments arriving mean someone is still reviewing.',
 	'flow.insp.phaseMax': 'Runs per merge request',
 	'flow.insp.phaseMaxHelp':
-		'Empty: as often as its signal brings something new — a phase never fires twice for the same fact, and the run’s budget bounds the cost. A number (or an int $parameter) caps its runs per merge request.',
+		'Empty: as often as its signal brings something new — a watcher never runs twice for the same fact, and the run’s budget bounds the cost. A number (or an int $parameter) caps its runs per merge request.',
 	'flow.insp.when': 'Only when',
 	'flow.insp.when.none': 'always',
 	'flow.insp.when.tracker': 'the ticket has a tracker issue',
 	'flow.insp.when.notTracker': 'the ticket has no tracker issue',
-	'flow.insp.when.subject': 'the phase acts on a merge request',
-	'flow.insp.when.notSubject': 'the phase acts on no merge request',
+	'flow.insp.when.subject': 'the chain acts on a merge request',
+	'flow.insp.when.notSubject': 'the chain acts on no merge request',
 	'flow.insp.whenHelp':
 		'A stage whose condition does not hold completes as skipped and the chain goes on. A bool $parameter lets a workshop switch the stage off.',
 	'flow.insp.numberOrParam': 'A number, or an int $parameter.',
 	'flow.insp.durationOrParam': 'A duration (30m, 2h), or a string $parameter.',
 	'flow.insp.editEdge': 'Edit this edge',
-	'flow.insp.phaseOption': '{id} — on {trigger}',
-	'flow.insp.phaseHelp': "Its routes stay inside it; the phase's last stage ends it.",
+	'flow.insp.phaseHelp': "Its routes stay inside it; the chain's last stage ends it.",
 	'flow.insp.agent': 'Agent',
 	'flow.insp.agentHelp': 'A name declared in this flow’s agents block.',
 	'flow.insp.harness': 'Harness',
@@ -565,7 +597,8 @@ export default {
 		'Needs a <span class="mono">{kind}</span> integration on the project running this flow.',
 	'flow.insp.tracker':
 		"Acts on the ticket's tracker issue (Jira, GitHub Issues) through the integration it was imported from. A ticket written by hand has none: the stage is skipped.",
-	'flow.insp.needsMR': 'Needs a merge request: place it after a create_mr, or in a reaction phase.',
+	'flow.insp.needsMR':
+		'Needs a merge request: place it after a create_mr, in a watcher on a merge request signal, or in a flow started on a merge request.',
 	'flow.insp.textPlaceholder': 'as the tracker spells it',
 	'flow.insp.textInputHelp': 'A literal written in the flow, not a file.',
 	'flow.insp.exactlyOne': 'Bind exactly one of {names}.',
@@ -594,10 +627,10 @@ export default {
 	'flow.insp.descPlaceholder': 'what this stage is for',
 	'flow.insp.descHelp': 'Optional note on what this stage is for.',
 	'flow.insp.onSuccess': 'On success',
-	'flow.insp.endOption': 'end — this phase is over; the run goes back to waiting',
+	'flow.insp.endOption': 'end — this chain is over; the run goes back to waiting',
 	'flow.insp.doneOption': 'done — the run is done (completes now)',
 	'flow.insp.endsHelp':
-		'end closes this phase and keeps the run alive for whatever else waits; done completes the run, whatever else waits. A reaction ends with end.',
+		'end closes this chain and keeps the run alive for whatever else waits; done completes the run, whatever else waits. A watcher ends with end.',
 	'flow.insp.timeoutsHelp':
 		'Timeouts route via on_timeout when declared, else fall back to on_fail.',
 	'flow.insp.from': 'from',
@@ -637,7 +670,7 @@ export default {
 	'flow.insp.paramEnum': 'Allowed values',
 	'flow.insp.paramEnumPlaceholder': 'auto, confirm, manual',
 	'flow.insp.paramEnumHelp':
-		'Comma-separated; the default must be one of them. An enum within auto, confirm, manual can drive a phase\u2019s start policy.',
+		'Comma-separated; the default must be one of them. An enum within auto, confirm, manual can drive a watcher\u2019s or an outcome\u2019s start policy.',
 	'flow.insp.paramUsed_one': 'read in {count} place',
 	'flow.insp.paramUsed_other': 'read in {count} places',
 	'flow.insp.removeParam': 'Remove',
@@ -646,7 +679,7 @@ export default {
 		'It is read in {count} place(s): {where}. Those fields will no longer resolve.',
 	'flow.insp.addParam': '+ parameter',
 	'flow.insp.paramsReadHelp':
-		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns or timeout, an action input, a phase\u2019s start or max, a stage\u2019s condition.',
+		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns or timeout, an action input, a watcher\u2019s start or max, a stage\u2019s condition.',
 	'flow.insp.addStage': 'Add a stage',
 	'flow.insp.canvasHelp':
 		"Click a node or edge to edit it. Drag from a node's coloured handles to rewire control flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may target the abort terminal to stop the run deliberately, or the debug leaf to park it for a human and then run the stage again. The faint dashed lines are dataflow — they are derived from the artifact paths stages read and write, so you change them by editing an input or output, not by dragging.",

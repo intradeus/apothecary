@@ -1,9 +1,9 @@
 // Package automation watches a project's automations (confstore.Automation)
 // and begins runs from them: a tracker query polled into tickets, each
 // started once; a schedule firing a run of one ticket per slot. It lives
-// outside the engine on purpose — an automation is a rule that creates a run
-// at a flow's entrypoint the way a person would, and the run neither knows
-// nor cares (its first phase_started says `by: automation`, nothing else).
+// outside the engine on purpose — an automation is a rule that starts a run
+// of a flow the way a person would, and the run neither knows nor cares (its
+// first phase_started says `by: automation`, nothing else).
 // One pass (RunOnce) walks every enabled automation; the daemon runs a pass
 // every couple of minutes.
 package automation
@@ -182,7 +182,7 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 // pollMRs lists the repository's open merge requests and creates a run on
 // each one someone else opened that has none yet: its own ticket first (the
 // merge request's title, description and link; keyed by its URL, with no
-// tracker), then the run at the automation's mr_opened entrypoint. Drafts
+// tracker), then the run of the automation's flow. Drafts
 // wait until they are marked ready; the integration's own merge requests —
 // the ones the factory's runs opened — are never picked. A ticket made by an
 // earlier pass and left without a run (a crash) is adopted; a person's
@@ -251,7 +251,7 @@ func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confsto
 	id, err := w.Engine.CreateRunWith(ctx, engine.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal,
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, a.Flow, a.ProjectID, engine.RunInput{Phase: a.Phase, Params: maps.Clone(a.Params), By: By,
+	}, a.Flow, a.ProjectID, engine.RunInput{Params: maps.Clone(a.Params), By: By,
 		MR: &engine.RunMR{Repo: a.Repo, IID: mr.Ref.IID}})
 	if err != nil {
 		return "", err
@@ -307,12 +307,12 @@ func (w *Watcher) start(ctx context.Context, a confstore.Automation, t confstore
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, Branch: t.BaseBranch,
 		TicketAttachmentIDs: attIDs,
 		SourceID:            t.SourceID, SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, a.Flow, a.ProjectID, engine.RunInput{Phase: a.Phase, Params: maps.Clone(a.Params), By: By})
+	}, a.Flow, a.ProjectID, engine.RunInput{Params: maps.Clone(a.Params), By: By})
 	if err != nil {
 		return "", err
 	}
 	w.log().Info("automation started a run", "automation", a.ID, "name", a.Name,
-		"ticket", t.ID, "run", id, "flow", a.Flow, "phase", a.Phase)
+		"ticket", t.ID, "run", id, "flow", a.Flow)
 	return id, nil
 }
 

@@ -33,6 +33,7 @@
 		columnLayout,
 		DEBUG,
 		autoLayout,
+		placeChain,
 		type NodeSize,
 		docToYaml,
 		DONE,
@@ -147,7 +148,17 @@
 	function markChanged() {
 		graphDirty = true;
 		notice = null;
+		placeMarkers();
 		rev++;
+	}
+
+	// placeMarkers makes room for a chain added since the layout was made —
+	// in the inspector or the YAML — at the end of its section; everything
+	// placed keeps its place, the sections below moving down. (A stage added
+	// to an existing chain is placed by the graph, after its chain's last.)
+	function placeMarkers() {
+		if (!doc) return;
+		for (const ph of doc.phases ?? []) placeChain(doc, layout, ph.id);
 	}
 
 	function switchTab(next: 'graph' | 'yaml') {
@@ -167,6 +178,7 @@
 					// rather than dropping them all on one point (which overlaps them).
 					const auto = autoLayout(doc);
 					for (const s of doc.stages) if (!(s.id in layout)) layout[s.id] = auto[s.id];
+					placeMarkers();
 					graphDirty = false;
 					validation = null;
 					rev++;

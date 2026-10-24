@@ -24,11 +24,13 @@
 		END,
 		isReservedTarget,
 		START,
+		MAIN,
 		MANUAL,
-		RUN_START,
-		MR_OPENED,
-		isEntrySignal,
+		RUN_STARTS,
 		START_POLICIES,
+		addOutcome,
+		addWatcher,
+		removePhase,
 		fires,
 		paramDefault,
 		chainSummary,
@@ -50,6 +52,7 @@
 		triggerLabel,
 		verdictOutput,
 		type DocEdge,
+		type DocPhase,
 		type DocStage,
 		type EdgeKind,
 		type DocAgent,
@@ -100,13 +103,20 @@
 	const waitSig = $derived(
 		stage?.type === 'wait' ? signals.find((g) => g.slug === stage.for) : undefined
 	);
-	// A trigger starts a phase; it can neither end a wait nor answer a gate
-	// (the parser refuses it there), so the two pickers never offer the other's.
-	const waitable = $derived(signals.filter((g) => !g.trigger && !g.entry));
-	// What opens a phase on its own: a repository trigger (manual is a person's
-	// act, offered apart) — or an outcome, which opens once and ends the run.
-	const triggers = $derived(signals.filter((g) => g.trigger && g.slug !== MANUAL));
-	const outcomes = $derived(signals.filter((g) => g.outcome));
+	// Any signal observed on the run's merge requests may end a wait, answer
+	// a gate, open a watcher or fire an outcome: the section decides what it
+	// does (FLOWLANG §1). manual — a person's start — opens a watcher only.
+	const observed = $derived(signals.filter((g) => g.kind === 'observed'));
+	// A chain's kind in the marker's hue: main brand, watchers violet, an
+	// outcome the end it says.
+	const kindHue = (ph: DocPhase) =>
+		ph.kind === 'main'
+			? 'brand'
+			: ph.kind === 'watcher'
+				? 'vio'
+				: ph.then === ABORT
+					? 'ros'
+					: 'grn';
 	const WHEN_TERMS = ['tracker', 'not tracker', 'subject', 'not subject'];
 
 	const phaseSel = $derived(
@@ -119,16 +129,61 @@
 		phaseSel ? doc.stages.filter((x) => x.phase === phaseSel.id).length : 0
 	);
 
-	// renamePhase renames a phase and every stage that belongs to it.
+	// renamePhase renames a watcher or an outcome and every stage that
+	// belongs to it. The main chain is `main`.
 	function renamePhase(oldId: string, newId: string) {
 		newId = newId.trim();
 		const ph = doc.phases?.find((p) => p.id === oldId);
-		if (!ph || !newId || newId === oldId || !/^[a-z][a-z0-9_-]*$/.test(newId)) return;
-		if (doc.phases?.some((p) => p.id === newId)) return;
+		if (!ph || ph.kind === 'main' || !newId || newId === oldId || newId === MAIN) return;
+		if (!/^[a-z][a-z0-9_-]*$/.test(newId) || doc.phases?.some((p) => p.id === newId)) return;
 		ph.id = newId;
 		for (const s of doc.stages) if (s.phase === oldId) s.phase = newId;
 		onchange();
 		onselect({ kind: 'phase', id: newId });
+	}
+
+	function setRunStart(v: string) {
+		doc.run_start = v === 'merge_request' ? 'merge_request' : undefined;
+		onchange();
+	}
+
+	// An outcome's then is its chain's end: the last stage's success goes
+	// there unless it says otherwise.
+	function setThen(ph: DocPhase, then: string) {
+		const chain = doc.stages.filter((x) => x.phase === ph.id);
+		const last = chain[chain.length - 1];
+		if (last && last.on_success === (ph.then ?? DONE)) last.on_success = then;
+		ph.then = then;
+		onchange();
+	}
+
+	function addChain(kind: 'watcher' | 'outcome') {
+		const ph = kind === 'watcher' ? addWatcher(doc) : addOutcome(doc);
+		onchange();
+		onselect({ kind: 'phase', id: ph.id });
+	}
+
+	async function deletePhase(ph: DocPhase) {
+		const count = doc.stages.filter((x) => x.phase === ph.id).length;
+		const ok = await confirmDialog({
+			title: t(
+				ph.kind === 'outcome' ? 'flow.insp.deleteOutcomeTitle' : 'flow.insp.deleteWatcherTitle',
+				{
+					id: ph.id
+				}
+			),
+			body: [
+				count
+					? th('flow.insp.deleteChainBody', { id: ph.id, count })
+					: th('flow.insp.deleteChainEmpty', { id: ph.id }),
+				t('flow.insp.deleteNote')
+			].join(' '),
+			action: t(ph.kind === 'outcome' ? 'flow.insp.deleteOutcome' : 'flow.insp.deleteWatcher')
+		});
+		if (!ok) return;
+		removePhase(doc, ph.id);
+		onchange();
+		onselect(null);
 	}
 
 	// Bindings are one form everywhere (FLOWLANG §4), so there is one editor:
@@ -394,7 +449,7 @@
 				</div>
 				{#if doc.phases?.length}
 					<div class="field">
-						<label for="st-phase">{t('flow.insp.phase')}</label>
+						<label for="st-phase">{t('flow.insp.chain')}</label>
 						<select
 							id="st-phase"
 							value={s.phase}
@@ -405,7 +460,12 @@
 						>
 							{#each doc.phases as ph (ph.id)}
 								<option value={ph.id}
-									>{t('flow.insp.phaseOption', { id: ph.id, trigger: triggerLabel(ph.on) })}</option
+									>{ph.kind === 'main'
+										? t('flow.insp.chainMain')
+										: t(`flow.insp.chainOption.${ph.kind}`, {
+												id: ph.id,
+												trigger: triggerLabel(ph.on)
+											})}</option
 								>
 							{/each}
 						</select>
@@ -677,7 +737,7 @@
 								}}
 							>
 								<option value="">—</option>
-								{#each waitable as sig (sig.slug)}
+								{#each observed as sig (sig.slug)}
 									<option value={sig.slug} disabled={sig.slug === s.auto_reject}>{sig.title}</option
 									>
 								{/each}
@@ -694,7 +754,7 @@
 								}}
 							>
 								<option value="">—</option>
-								{#each waitable as sig (sig.slug)}
+								{#each observed as sig (sig.slug)}
 									<option value={sig.slug} disabled={sig.slug === s.auto_approve}
 										>{sig.title}</option
 									>
@@ -832,7 +892,7 @@
 							}}
 						>
 							<option value="">—</option>
-							{#each waitable as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
+							{#each observed as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
 						</select>
 						<div class="help">{t('flow.insp.waitHelp')}</div>
 					</div>
@@ -1014,163 +1074,168 @@
 				{@const ph = phaseSel}
 				{@const firing = fires(ph.on)}
 				<div class="ih">
-					<span class="pill sm mono t-vio">{t('flow.insp.phaseKind')}</span>
-					<span class="mono iid ell">{ph.id}</span>
-					{#if isEntrySignal(ph.on.signal)}<span
-							class="pill sm flat sq t-brand"
-							title={t('flow.insp.entrypointTitle')}>{t('flow.insp.entrypoint')}</span
-						>{:else if phaseSig?.outcome}<span
-							class="pill sm flat sq t-grn"
-							title={t('flow.insp.outcomeTitle')}>{t('flow.insp.outcome')}</span
-						>{/if}
+					<span class="pill sm mono t-{kindHue(ph)}">{t(`flow.insp.kind.${ph.kind}`)}</span>
+					{#if ph.kind !== 'main'}<span class="mono iid ell">{ph.id}</span>{/if}
 					<span class="spacer"></span>
 					<span class="fnt tiny"
-						>{phaseSig?.outcome && !phaseStageCount
+						>{ph.kind === 'outcome' && !phaseStageCount
 							? t('flow.insp.phaseThen', { then: ph.then ?? DONE })
 							: t('flow.insp.phaseStages', { count: phaseStageCount })}</span
 					>
+					{#if ph.kind !== 'main'}
+						<button
+							class="btn-danger btn-sm"
+							onclick={() => deletePhase(ph)}
+							title={t(
+								ph.kind === 'outcome' ? 'flow.insp.deleteOutcome' : 'flow.insp.deleteWatcher'
+							)}>{t('flow.insp.delete')}</button
+						>
+					{/if}
 				</div>
-				<div class="field">
-					<label for="ph-id">{t('flow.insp.id')}</label>
-					<input
-						id="ph-id"
-						class="mono"
-						value={ph.id}
-						onchange={(e) => renamePhase(ph.id, e.currentTarget.value)}
-					/>
-					<div class="help">{t('flow.insp.phaseRenameHelp')}</div>
-				</div>
-				<div class="field">
-					<label for="ph-desc">{t('flow.insp.description')}</label>
-					<input
-						id="ph-desc"
-						value={ph.description ?? ''}
-						oninput={(e) => {
-							ph.description = e.currentTarget.value || undefined;
-							onchange();
-						}}
-					/>
-				</div>
-				<div class="field">
-					<label for="ph-on">{t('flow.insp.opensOn')}</label>
-					<select
-						id="ph-on"
-						value={ph.on.signal}
-						onchange={(e) => {
-							ph.on.signal = e.currentTarget.value;
-							const sig = signals.find((g) => g.slug === ph.on.signal);
-							if (!fires(ph.on)) {
-								// A person's act is the start: no policy, nothing to debounce.
-								ph.on.start = undefined;
-								ph.on.quiet_for = undefined;
-							} else if (!sig?.debounced) {
-								ph.on.quiet_for = undefined;
-							}
-							if (sig?.outcome) {
-								// An outcome fires once and ends the run: no cap, and a
-								// stage-less one needs its `then`.
-								ph.on.max = undefined;
-								if (!phaseStageCount) ph.then ??= DONE;
-							} else {
-								ph.then = undefined;
-							}
-							onchange();
-						}}
-					>
-						<option value={RUN_START}>{t('flow.insp.opensOn.run_start')}</option>
-						<option value={MR_OPENED}>{t('flow.insp.opensOn.mr_opened')}</option>
-						<option value={MANUAL}>{t('flow.insp.opensOn.manual')}</option>
-						{#each triggers as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
-						<optgroup label={t('flow.insp.opensOn.outcomes')}>
-							{#each outcomes as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
-						</optgroup>
-						{#if firing && !triggers.some((g) => g.slug === ph.on.signal) && !outcomes.some((g) => g.slug === ph.on.signal)}
-							<option value={ph.on.signal}>{ph.on.signal}</option>
-						{/if}
-					</select>
-					<div class="help">
-						{ph.on.signal === RUN_START
-							? t('flow.insp.opensOnHelp.run_start')
-							: ph.on.signal === MR_OPENED
-								? t('flow.insp.opensOnHelp.mr_opened')
-								: ph.on.signal === MANUAL
-									? t('flow.insp.opensOnHelp.manual')
-									: (phaseSig?.description ?? '')}
-					</div>
-				</div>
-				{#if firing}
+				{#if ph.kind === 'main'}
+					<div class="help">{t('flow.insp.mainHelp')}</div>
 					<div class="field">
-						<label for="ph-start">{t('flow.insp.start')}</label>
+						<label for="ph-runstart">{t('flow.insp.runStart')}</label>
 						<select
-							id="ph-start"
-							value={ph.on.start ?? 'auto'}
+							id="ph-runstart"
+							value={doc.run_start ?? 'ticket'}
+							onchange={(e) => setRunStart(e.currentTarget.value)}
+						>
+							{#each RUN_STARTS as r (r)}<option value={r}>{t(`flow.insp.runStart.${r}`)}</option
+								>{/each}
+						</select>
+						<div class="help">{t('flow.insp.runStartHelp')}</div>
+					</div>
+				{:else}
+					<div class="help">
+						{t(ph.kind === 'outcome' ? 'flow.insp.outcomeHelp' : 'flow.insp.watcherHelp')}
+					</div>
+					<div class="field">
+						<label for="ph-id">{t('flow.insp.id')}</label>
+						<input
+							id="ph-id"
+							class="mono"
+							value={ph.id}
+							onchange={(e) => renamePhase(ph.id, e.currentTarget.value)}
+						/>
+						<div class="help">{t('flow.insp.phaseRenameHelp')}</div>
+					</div>
+					<div class="field">
+						<label for="ph-desc">{t('flow.insp.description')}</label>
+						<input
+							id="ph-desc"
+							value={ph.description ?? ''}
+							oninput={(e) => {
+								ph.description = e.currentTarget.value || undefined;
+								onchange();
+							}}
+						/>
+					</div>
+					<div class="field">
+						<label for="ph-on"
+							>{t(ph.kind === 'outcome' ? 'flow.insp.firesOn' : 'flow.insp.opensOn')}</label
+						>
+						<select
+							id="ph-on"
+							value={ph.on.signal}
 							onchange={(e) => {
-								const v = e.currentTarget.value;
-								ph.on.start = v === 'auto' ? undefined : v;
+								ph.on.signal = e.currentTarget.value;
+								const sig = signals.find((g) => g.slug === ph.on.signal);
+								if (!fires(ph.on)) {
+									// A person's act is the start: no policy, nothing to debounce.
+									ph.on.start = undefined;
+									ph.on.quiet_for = undefined;
+								} else if (!sig?.debounced) {
+									ph.on.quiet_for = undefined;
+								}
 								onchange();
 							}}
 						>
-							{#each START_POLICIES as p (p)}<option value={p}>{t(`flow.insp.start.${p}`)}</option
-								>{/each}
-							{#each policyParams(doc) as p (p)}<option value={'$' + p}>${p}</option>{/each}
-							{#if isParamRef(ph.on.start) && !policyParams(doc).includes(ph.on.start.slice(1))}
-								<option value={ph.on.start}>{ph.on.start}</option>
+							{#if ph.kind === 'watcher'}
+								<option value={MANUAL}>{t('flow.insp.opensOn.manual')}</option>
+							{/if}
+							{#each observed as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
+							{#if firing && !observed.some((g) => g.slug === ph.on.signal)}
+								<option value={ph.on.signal}>{ph.on.signal}</option>
 							{/if}
 						</select>
-						<div class="help">{t('flow.insp.startHelp')}</div>
-					</div>
-					{#if phaseSig?.debounced}
-						<div class="field">
-							<label for="ph-quiet">{t('flow.insp.quietFor')}</label>
-							<OptionalDuration
-								id="ph-quiet"
-								label={t('flow.insp.quietFor')}
-								bind:value={ph.on.quiet_for}
-								empty={t('flow.insp.noQuiet')}
-								fallback="1h"
-								{onchange}
-							/>
-							<div class="help">{t('flow.insp.quietForHelp')}</div>
+						<div class="help">
+							{ph.on.signal === MANUAL
+								? t('flow.insp.opensOnHelp.manual')
+								: (phaseSig?.description ?? '')}
 						</div>
+					</div>
+					{#if firing}
+						<div class="field">
+							<label for="ph-start">{t('flow.insp.start')}</label>
+							<select
+								id="ph-start"
+								value={ph.on.start ?? 'auto'}
+								onchange={(e) => {
+									const v = e.currentTarget.value;
+									ph.on.start = v === 'auto' ? undefined : v;
+									onchange();
+								}}
+							>
+								{#each START_POLICIES as p (p)}<option value={p}>{t(`flow.insp.start.${p}`)}</option
+									>{/each}
+								{#each policyParams(doc) as p (p)}<option value={'$' + p}>${p}</option>{/each}
+								{#if isParamRef(ph.on.start) && !policyParams(doc).includes(ph.on.start.slice(1))}
+									<option value={ph.on.start}>{ph.on.start}</option>
+								{/if}
+							</select>
+							<div class="help">
+								{t(ph.kind === 'outcome' ? 'flow.insp.startHelpOutcome' : 'flow.insp.startHelp')}
+							</div>
+						</div>
+						{#if phaseSig?.debounced && ph.kind === 'watcher'}
+							<div class="field">
+								<label for="ph-quiet">{t('flow.insp.quietFor')}</label>
+								<OptionalDuration
+									id="ph-quiet"
+									label={t('flow.insp.quietFor')}
+									bind:value={ph.on.quiet_for}
+									empty={t('flow.insp.noQuiet')}
+									fallback="1h"
+									{onchange}
+								/>
+								<div class="help">{t('flow.insp.quietForHelp')}</div>
+							</div>
+						{/if}
 					{/if}
-				{/if}
-				{#if phaseSig?.outcome}
-					{#if !phaseStageCount}
+					{#if ph.kind === 'outcome'}
 						<div class="field">
 							<label for="ph-then">{t('flow.insp.then')}</label>
 							<select
 								id="ph-then"
 								value={ph.then ?? DONE}
-								onchange={(e) => {
-									ph.then = e.currentTarget.value;
-									onchange();
-								}}
+								onchange={(e) => setThen(ph, e.currentTarget.value)}
 							>
 								<option value={DONE}>{t('flow.insp.then.done')}</option>
 								<option value={ABORT}>{t('flow.insp.then.abort')}</option>
 							</select>
-							<div class="help">{t('flow.insp.phaseThenHelp')}</div>
+							<div class="help">
+								{t(phaseStageCount ? 'flow.insp.outcomeStagesHelp' : 'flow.insp.phaseThenHelp')}
+							</div>
 						</div>
 					{:else}
-						<div class="help">{t('flow.insp.outcomeStagesHelp')}</div>
+						<div class="field">
+							<label for="ph-max">{t('flow.insp.phaseMax')}</label>
+							<input
+								id="ph-max"
+								class="mono"
+								list="flow-int-params"
+								value={ph.on.max ?? ''}
+								placeholder={t('flow.insp.unlimited')}
+								oninput={(e) => {
+									const v = e.currentTarget.value.trim();
+									ph.on.max = v === '' ? undefined : /^-?\d+$/.test(v) ? Number(v) : v;
+									onchange();
+								}}
+							/>
+							<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
+						</div>
 					{/if}
-				{:else}
-					<div class="field">
-						<label for="ph-max">{t('flow.insp.phaseMax')}</label>
-						<input
-							id="ph-max"
-							class="mono"
-							list="flow-int-params"
-							value={ph.on.max ?? ''}
-							placeholder={t('flow.insp.unlimited')}
-							oninput={(e) => {
-								const v = e.currentTarget.value.trim();
-								ph.on.max = v === '' ? undefined : /^-?\d+$/.test(v) ? Number(v) : v;
-								onchange();
-							}}
-						/>
-						<div class="help">{t('flow.insp.phaseMaxHelp')}</div>
-					</div>
 				{/if}
 				<datalist id="flow-int-params">
 					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
@@ -1192,9 +1257,31 @@
 						}}
 					/>
 				</div>
+				<div class="field">
+					<label for="fl-runstart">{t('flow.insp.runStart')}</label>
+					<select
+						id="fl-runstart"
+						value={doc.run_start ?? 'ticket'}
+						onchange={(e) => setRunStart(e.currentTarget.value)}
+					>
+						{#each RUN_STARTS as r (r)}<option value={r}>{t(`flow.insp.runStart.${r}`)}</option
+							>{/each}
+					</select>
+					<div class="help">{t('flow.insp.runStartHelp')}</div>
+				</div>
 				<div class="lbl">{t('flow.insp.params')}</div>
 				<div class="help">{t('flow.insp.paramsHelp')}</div>
 				<ParamsEditor {doc} {onchange} />
+				<div class="lbl">{t('flow.insp.addChain')}</div>
+				<div class="chips">
+					<button class="btn-sm" onclick={() => addChain('watcher')}
+						><span class="ldot sm flat hue-vio"></span>{t('flow.insp.addWatcher')}</button
+					>
+					<button class="btn-sm" onclick={() => addChain('outcome')}
+						><span class="ldot sm flat hue-grn"></span>{t('flow.insp.addOutcome')}</button
+					>
+				</div>
+				<div class="help">{t('flow.insp.addChainHelp')}</div>
 				<div class="lbl">{t('flow.insp.addStage')}</div>
 				<div class="chips">
 					{#each ADD as kind (kind)}

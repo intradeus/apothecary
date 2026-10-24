@@ -54,12 +54,10 @@ type RerunRequest struct {
 	Goal          string   `json:"goal,omitempty"`
 	SourceBranch  string   `json:"source_branch,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
-	// Phase is the entrypoint to begin at ("" = where the original began);
 	// Params override the parameter values the original ran with.
-	Phase  string            `json:"phase,omitempty"`
 	Params map[string]string `json:"params,omitempty"`
 	// MR moves the rerun to another merge request ("" = the one the
-	// original was created on, if it was).
+	// original was started on, if it was).
 	MR *engine.RunMR `json:"mr,omitempty"`
 }
 
@@ -69,12 +67,10 @@ type StartRunRequest struct {
 	Goal          string   `json:"goal,omitempty"`
 	SourceBranch  string   `json:"source_branch,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
-	// Phase is the entrypoint to begin at ("" = the flow's first); Params
-	// override the workshop's parameter bindings for this attempt.
-	Phase  string            `json:"phase,omitempty"`
+	// Params override the workshop's parameter bindings for this attempt.
 	Params map[string]string `json:"params,omitempty"`
-	// MR creates the run on a merge request someone opened, at an
-	// entrypoint on mr_opened (the first one when Phase is empty).
+	// MR starts the run on a merge request someone opened, for a flow
+	// whose runs are started on one (run_start: merge_request).
 	MR *engine.RunMR `json:"mr,omitempty"`
 }
 
@@ -337,9 +333,9 @@ type FlowBindingRequest struct {
 // with query, import what it finds, one run each), cron (schedule, five
 // fields in UTC, a new run of ticket_id each firing) or merge_request (watch
 // repo's open merge requests, a run on each one someone else opened, once).
-// flow + phase (an entrypoint of the kind the automation creates; empty =
-// the flow's first) + params say what each firing creates. enabled
-// defaults to true.
+// flow (one whose run_start fits: merge_request for a merge_request
+// automation, ticket otherwise) + params say what each firing creates.
+// enabled defaults to true.
 type AutomationRequest struct {
 	Name     string            `json:"name"`
 	Kind     string            `json:"kind"`
@@ -349,7 +345,6 @@ type AutomationRequest struct {
 	TicketID string            `json:"ticket_id,omitempty"`
 	Repo     string            `json:"repo,omitempty"`
 	Flow     string            `json:"flow"`
-	Phase    string            `json:"phase,omitempty"`
 	Params   map[string]string `json:"params,omitempty"`
 	Enabled  *bool             `json:"enabled,omitempty"`
 }
@@ -371,14 +366,15 @@ type ValidateFlowRequest struct {
 
 // FlowValidation is the verdict. On failure Errors says why and the rest is
 // absent; on success the parsed shape comes back for the editor to render,
-// with the document's parameters (declared and read where) and its phases
-// summarized with the defaults applied — so the editor never re-derives a
-// start policy or a max.
+// with what its runs are started on, the document's parameters (declared and
+// read where) and its phases summarized with the defaults applied — so the
+// editor never re-derives a start policy or a max.
 type FlowValidation struct {
 	OK         bool            `json:"ok"`
 	Errors     []string        `json:"errors,omitempty"`
 	Name       string          `json:"name,omitempty"`
 	Hash       string          `json:"hash,omitempty"`
+	RunStart   string          `json:"run_start,omitempty"`
 	Stages     int             `json:"stages,omitempty"`
 	Agents     int             `json:"agents,omitempty"`
 	Doc        *flow.Doc       `json:"doc,omitempty"`
@@ -388,19 +384,19 @@ type FlowValidation struct {
 	Phases     []PhaseSummary  `json:"phases,omitempty"`
 }
 
-// PhaseSummary is one phase of a flow with its wait point's effective
-// values (FLOWLANG §1): what opens it, the start policy, the debounce, the
-// run bound, whether a run may begin there and whether its runs act on one
-// merge request.
+// PhaseSummary is one phase of a flow — its main chain, a watcher or an
+// outcome (Kind) — with its wait point's effective values (FLOWLANG §1):
+// what opens it, the start policy, the debounce, the run bound, how an
+// outcome ends the run (Then) and whether its runs act on one merge
+// request.
 type PhaseSummary struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
+	Kind        string `json:"kind"`
 	Signal      string `json:"signal"`
 	Start       string `json:"start"`
 	QuietFor    string `json:"quiet_for,omitempty"`
 	Max         int    `json:"max"`
-	Entry       bool   `json:"entry,omitempty"`
-	Outcome     bool   `json:"outcome,omitempty"`
 	Then        string `json:"then,omitempty"`
 	Subject     bool   `json:"subject,omitempty"`
 	Stages      int    `json:"stages"`
@@ -411,8 +407,8 @@ func phaseSummaries(f *flow.Flow) []PhaseSummary {
 	out := make([]PhaseSummary, 0, len(f.Phases))
 	for i := range f.Phases {
 		ph := &f.Phases[i]
-		ps := PhaseSummary{ID: ph.ID, Description: ph.Description, Signal: ph.On.Signal, Start: string(ph.On.Start),
-			Max: ph.On.Max, Entry: ph.IsEntrypoint(), Outcome: ph.IsOutcome(), Then: ph.Then, Subject: ph.HasSubject(), Stages: ph.Last - ph.First + 1}
+		ps := PhaseSummary{ID: ph.ID, Description: ph.Description, Kind: string(ph.Kind), Signal: ph.On.Signal, Start: string(ph.On.Start),
+			Max: ph.On.Max, Then: ph.Then, Subject: ph.HasSubject(), Stages: ph.Last - ph.First + 1}
 		if ph.On.QuietFor > 0 {
 			ps.QuietFor = ph.On.QuietFor.String()
 		}

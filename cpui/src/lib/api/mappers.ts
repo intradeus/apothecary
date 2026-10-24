@@ -9,7 +9,7 @@
 // index.ts, because a request body is only ever built at one call site.
 
 import type * as Wire from './generated/types.gen';
-import { normalizeDoc } from '$lib/flowdoc';
+import { normalizeDoc, PHASE_KINDS, RUN_STARTS, type RunStart } from '$lib/flowdoc';
 import { answerKindOf, toPingOption } from '$lib/ping';
 import type {
 	ActionIO,
@@ -105,7 +105,7 @@ const PING_STATUSES: PingStatus[] = ['pending', 'answered', 'withdrawn'];
 const PORTS: Port[] = ['repository', 'provisioner', 'harness', 'ticketsource'];
 const SNAPSHOT_KINDS: SnapshotKind[] = ['output', 'log', 'ping_file'];
 
-const oneOf = <T extends string>(allowed: T[], v: string | undefined, fallback: T): T =>
+const oneOf = <T extends string>(allowed: readonly T[], v: string | undefined, fallback: T): T =>
 	allowed.includes(v as T) ? (v as T) : fallback;
 
 const list = <T>(v: T[] | null | undefined): T[] => v ?? [];
@@ -154,7 +154,6 @@ export function toRun(w: Wire.RunView): Run {
 		})),
 		phase: w.phase || undefined,
 		phaseSubject: w.phase_subject || undefined,
-		beginPhase: w.begin_phase || undefined,
 		params: w.params ?? undefined,
 		startedBy: w.started_by || undefined,
 		idle: w.idle ?? false,
@@ -171,9 +170,8 @@ export function toRunPhase(w: Wire.PhaseInfo): RunPhase {
 		id: w.id,
 		description: w.description || undefined,
 		signal: w.signal,
+		kind: oneOf(PHASE_KINDS, w.kind, 'watcher'),
 		start: oneOf(['auto', 'confirm', 'manual'] as const, w.start, 'auto'),
-		entry: w.entry ?? false,
-		outcome: w.outcome ?? false,
 		then: w.then || undefined,
 		quietForS: w.quiet_for_s || undefined,
 		max: w.max,
@@ -202,7 +200,6 @@ export function toMergeRequestRow(w: Wire.MrRow): MergeRequestRow {
 					id: w.run.id,
 					state: w.run.state as RunState,
 					flow: w.run.flow,
-					phase: w.run.phase || undefined,
 					createdAt: w.run.created_at
 				}
 			: undefined,
@@ -538,6 +535,7 @@ export function toFlow(w: Wire.Flow): Flow {
 		updatedAt: w.updated_at ?? '',
 		builtin: w.builtin ?? false,
 		shadowsBuiltin: w.shadows_builtin ?? false,
+		runStart: toRunStart(w.run_start),
 		parameters: list(w.parameters).map(toParamDecl),
 		phases: list(w.phases).map(toPhaseSummary)
 	};
@@ -555,7 +553,6 @@ export function toAutomation(w: Wire.Automation): Automation {
 		ticketId: w.ticket_id || undefined,
 		repo: w.repo || undefined,
 		flow: w.flow ?? '',
-		phase: w.phase || undefined,
 		params: { ...(w.params ?? {}) },
 		enabled: w.enabled ?? false,
 		lastPolledAt: w.last_polled_at || undefined,
@@ -576,7 +573,11 @@ export function toFlowBinding(w: Wire.FlowBinding): FlowBinding {
 }
 
 // A flow's parameters and phases are described the same way on a stored flow
-// and on a validation verdict: what a project may bind, where a run may begin.
+// and on a validation verdict: what its runs are started on, what a project
+// may bind, its main chain, watchers and outcomes.
+const toRunStart = (v?: string): RunStart | undefined =>
+	v ? oneOf(RUN_STARTS, v, 'ticket') : undefined;
+
 function toParamDecl(p: Wire.Param): ParamDecl {
 	return {
 		name: p.name,
@@ -592,12 +593,11 @@ function toPhaseSummary(p: Wire.PhaseSummary): PhaseSummary {
 	return {
 		id: p.id,
 		description: p.description || undefined,
+		kind: oneOf(PHASE_KINDS, p.kind, 'watcher'),
 		signal: p.signal,
 		start: oneOf(['auto', 'confirm', 'manual'] as const, p.start, 'auto'),
 		quietFor: p.quiet_for || undefined,
 		max: p.max,
-		entry: p.entry ?? false,
-		outcome: p.outcome ?? false,
 		then: p.then === 'done' || p.then === 'abort' ? p.then : undefined,
 		subject: p.subject ?? false,
 		stages: p.stages
@@ -620,6 +620,7 @@ export function toFlowValidation(w: Wire.FlowValidation): FlowValidation {
 		warnings: list(w.warnings),
 		name: w.name,
 		hash: w.hash,
+		runStart: toRunStart(w.run_start),
 		stages: w.stages,
 		agents: w.agents,
 		doc: w.doc ? normalizeDoc(w.doc) : undefined,
@@ -689,10 +690,9 @@ export function toSignalSpec(w: Wire.Signal) {
 		description: w.description,
 		requires: w.requires,
 		needs: w.needs,
-		trigger: w.trigger ?? false,
-		entry: w.entry ?? false,
-		outcome: w.outcome ?? false,
-		debounced: w.debounced ?? false
+		kind: oneOf(['start', 'hand', 'observed'] as const, w.kind, 'observed'),
+		debounced: w.debounced ?? false,
+		all: w.all ?? false
 	};
 }
 

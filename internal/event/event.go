@@ -203,19 +203,17 @@ type RunCreated struct {
 	TicketSourceKind string `json:"ticket_source_kind,omitempty"`
 	TicketSourceKey  string `json:"ticket_source_key,omitempty"`
 	TicketSourceURL  string `json:"ticket_source_url,omitempty"`
-	// Phase is the entrypoint the run began at (FLOWLANG §1). Params are the
-	// parameter values it runs with — every declared one, resolved at
-	// creation from the flow's defaults, the project's bindings and this
-	// attempt's overrides — so recovery resolves the pinned document to the
-	// same flow whatever changed since. By is who created it: human, or
-	// automation.
-	Phase  string            `json:"phase,omitempty"`
+	// Params are the parameter values the run runs with — every declared
+	// one, resolved at creation from the flow's defaults, the project's
+	// bindings and this attempt's overrides — so recovery resolves the
+	// pinned document to the same flow whatever changed since. By is who
+	// created it: human, or automation.
 	Params map[string]string `json:"params,omitempty"`
 	By     string            `json:"by,omitempty"`
-	// MR is the merge request someone opened that the run was created on
-	// (an entrypoint on mr_opened): the run works on its branch, and it is
-	// the run's merge request from the start. Nil for a run that opens its
-	// own.
+	// MR is the merge request someone opened that the run was started on (a
+	// flow with run_start: merge_request): the run works on its branch, and
+	// it is the run's merge request from the start. Nil for a run that opens
+	// its own.
 	MR *AdoptedMR `json:"mr,omitempty"`
 }
 
@@ -435,13 +433,14 @@ type PingRaised struct {
 	Subject    string `json:"subject,omitempty"`
 	TriggerKey string `json:"trigger_key,omitempty"`
 	// EndsPhase, on a debug ping: giving up ends that phase run and the run
-	// goes back to waiting — the phase is no entrypoint (FLOWLANG §3). False:
+	// goes back to waiting — the phase is a watcher (FLOWLANG §3). False:
 	// giving up abandons the run.
 	EndsPhase bool `json:"ends_phase,omitempty"`
 }
 
 // PhaseStarted: a phase run begins. Subject is the checkout whose merge
-// request it acts on ("" for the entry phase, which acts on all of them);
+// request it acts on ("" for a main chain started on a ticket, which acts on
+// all of them, and an outcome that waits for every one);
 // Key is the trigger occurrence it answers (R6: never started twice for
 // one); By is signal (its trigger held) or human (a person started the run,
 // or the phase from the run page); Tip is the subject branch's head at the
@@ -455,12 +454,12 @@ type PhaseStarted struct {
 }
 
 // PhaseCompleted: the phase run reached done; the run is idle again (or,
-// for an entry phase that opened no merge request, about to complete).
+// for a main chain that opened no merge request, about to complete).
 type PhaseCompleted struct {
 	Phase   string `json:"phase"`
 	Subject string `json:"subject,omitempty"`
-	// Reason is why the phase ended early, when it did: a dead end outside an
-	// entrypoint — a failure with nowhere to go, a person giving up at the
+	// Reason is why the phase ended early, when it did: a dead end in a
+	// watcher — a failure with nowhere to go, a person giving up at the
 	// debug leaf (FLOWLANG §3). Empty: its chain reached its end.
 	Reason string `json:"reason,omitempty"`
 }

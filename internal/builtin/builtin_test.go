@@ -58,7 +58,7 @@ func TestBuiltinFlowsBindCleanly(t *testing.T) {
 // human copies to start from, so a stale one teaches the wrong grammar.
 // (The built-in default is covered above; these are the two on disk.)
 func TestShippedFlowsBindCleanly(t *testing.T) {
-	for _, path := range []string{"../../examples/flows/v4.yaml", "../flow/testdata/v4.yaml"} {
+	for _, path := range []string{"../../examples/flows/v5.yaml", "../flow/testdata/v5.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			f, err := flow.Load(path)
 			if err != nil {
@@ -128,15 +128,16 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 			t.Errorf("gate %s hands out the workspace by hand; that is the debug leaf's job", s.ID)
 		}
 	}
-	// The run's whole life (PLAN6): the merge request ends it — no final
-	// gate — and the reactions are the conflict fix (asked first) and the
-	// debounced review round.
-	if len(f.Phases) < 2 || f.Stage("final_gate") != nil {
-		t.Fatal("the default flow is phased and has no final gate")
+	// The run's whole life: the merge request ends it — no final gate — and
+	// the watchers are the conflict fix (asked first) and the debounced
+	// review round.
+	if f.Main() == nil || f.StartsOnMR() || f.Stage("final_gate") != nil {
+		t.Fatal("the default flow starts on a ticket, has a main chain and no final gate")
 	}
 	conflicts, review := f.Phase("conflicts"), f.Phase("review_fixes")
-	if conflicts == nil || conflicts.On.Start != flow.StartConfirm || review == nil || review.On.QuietFor == 0 {
-		t.Errorf("reactions: conflicts %+v review %+v", conflicts, review)
+	if conflicts == nil || conflicts.Kind != flow.PhaseWatcher || conflicts.On.Start != flow.StartConfirm ||
+		review == nil || review.Kind != flow.PhaseWatcher || review.On.QuietFor == 0 {
+		t.Errorf("watchers: conflicts %+v review %+v", conflicts, review)
 	}
 	if f.Agent("replier").ReviewRepliesOutput() == nil {
 		t.Error("the replier must declare a review_replies output, or bad replies reach the repository")
@@ -229,7 +230,7 @@ func TestFlowSourceLayering(t *testing.T) {
 		t.Fatalf("Get(nope) err = %v, want ErrNotFound", err)
 	}
 	// A DB row with the same name shadows the built-in.
-	shadow, err := flow.Parse("default", []byte("name: default\nversion: 4\nparameters: { harness: fake, model: a/b }\nstages:\n  - { id: s, type: command, run: \"true\" }\n"))
+	shadow, err := flow.Parse("default", []byte("name: default\nversion: 5\nparameters: { harness: fake, model: a/b }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +246,7 @@ func TestFlowSourceLayering(t *testing.T) {
 // no chain runs out on its own — once its retries are spent, every edge of a
 // stage that can run again reaches a person (the debug leaf, a gate) or an
 // end the flow states (end, done, abort). An exhausted chain would otherwise
-// abandon the run without anyone being asked. And a reaction never ends the
+// abandon the run without anyone being asked. And a watcher never ends the
 // run, nor is it capped.
 func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
 	f := Flow(builderFlow)
@@ -286,7 +287,7 @@ func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
 			t.Errorf("stage %s has no on_fail: its failure would be a dead end", st.ID)
 		}
 		if ph := f.Phase(st.Phase); ph != nil && ph.Fires() && st.OnSuccess == flow.TerminalDone {
-			t.Errorf("stage %s: reaction %s ends the whole run", st.ID, ph.ID)
+			t.Errorf("stage %s: watcher %s ends the whole run", st.ID, ph.ID)
 		}
 		if !onCycle(st.ID) {
 			continue
@@ -308,24 +309,24 @@ func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
 	}
 	for i := range f.Phases {
 		if ph := &f.Phases[i]; ph.Fires() && ph.On.Max != flow.UnlimitedMax {
-			t.Errorf("reaction %s is capped at %d runs; reactions happen as often as their signal brings something new", ph.ID, ph.On.Max)
+			t.Errorf("watcher %s is capped at %d runs; watchers run as often as their signal brings something new", ph.ID, ph.On.Max)
 		}
 	}
 }
 
-// TestReviewerTemplate: the reviewer is created on someone's merge request,
-// reviews it through one block from its entrypoint and again after the
+// TestReviewerTemplate: the reviewer is started on someone's merge request,
+// reviews it through one block from its main chain and again after the
 // author's pushes, never builds or pushes, and ends with the merge request.
 func TestReviewerTemplate(t *testing.T) {
 	f := Flow("reviewer")
 	if f == nil {
 		t.Fatal("no built-in reviewer")
 	}
-	first, again := f.Phase("first_look"), f.Phase("again")
-	if first == nil || !first.IsEntrypoint() || !first.OnMR() || len(f.Entrypoints()) != 1 {
-		t.Fatalf("first_look = %+v", first)
+	main, again := f.Main(), f.Phase("again")
+	if !f.StartsOnMR() || main == nil || !main.OnMR() {
+		t.Fatalf("main = %+v, run_start %q", main, f.StartsOn)
 	}
-	if again == nil || again.On.Signal != signalspec.MRHeadMoved || again.On.QuietFor < time.Minute {
+	if again == nil || again.Kind != flow.PhaseWatcher || again.On.Signal != signalspec.MRHeadMoved || again.On.QuietFor < time.Minute {
 		t.Errorf("again = %+v", again)
 	}
 	for _, id := range []string{"merged", "closed"} {
@@ -352,7 +353,7 @@ func TestReviewerTemplate(t *testing.T) {
 	}
 }
 
-// TestConflictResolverTemplate: created on a merge request, it takes the
+// TestConflictResolverTemplate: started on a merge request, it takes the
 // target in, resolves, tests and pushes to the merge request's branch —
 // again on each new conflict, after asking — and ends with the merge
 // request. It never opens, merges or reviews one.
@@ -361,11 +362,11 @@ func TestConflictResolverTemplate(t *testing.T) {
 	if f == nil {
 		t.Fatal("no built-in conflict-resolver")
 	}
-	first, again := f.Phase("first_pass"), f.Phase("again")
-	if first == nil || !first.IsEntrypoint() || !first.OnMR() || len(f.Entrypoints()) != 1 {
-		t.Fatalf("first_pass = %+v", first)
+	main, again := f.Main(), f.Phase("again")
+	if !f.StartsOnMR() || main == nil || !main.OnMR() {
+		t.Fatalf("main = %+v, run_start %q", main, f.StartsOn)
 	}
-	if again == nil || again.On.Signal != signalspec.MRConflicts || again.On.Start != flow.StartConfirm {
+	if again == nil || again.Kind != flow.PhaseWatcher || again.On.Signal != signalspec.MRConflicts || again.On.Start != flow.StartConfirm {
 		t.Errorf("again = %+v: a later conflict is taken on after asking, by default", again)
 	}
 	for _, id := range []string{"merged", "closed"} {
