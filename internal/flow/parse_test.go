@@ -871,8 +871,8 @@ func TestPhasedFlowParses(t *testing.T) {
 		t.Fatalf("phases %d stages %d", len(f.Phases), len(f.Stages))
 	}
 	d, c, r, o := f.Phases[0], f.Phases[1], f.Phases[2], f.Phases[3]
-	if d.ID != MainPhase || d.Kind != PhaseMain || c.Kind != PhaseWatcher || o.Kind != PhaseOutcome || f.StartsOn != StartsOnTicket {
-		t.Errorf("kinds: %s/%s %s %s, starts on %s", d.ID, d.Kind, c.Kind, o.Kind, f.StartsOn)
+	if d.ID != MainPhase || d.Kind != PhaseMain || c.Kind != PhaseWatcher || o.Kind != PhaseOutcome || f.OperatesOn != OperatesOnTicket {
+		t.Errorf("kinds: %s/%s %s %s, starts on %s", d.ID, d.Kind, c.Kind, o.Kind, f.OperatesOn)
 	}
 	if !d.IsMain() || d.First != 0 || d.Last != 1 || c.First != 2 || c.Last != 3 || r.First != 4 || r.Last != 5 {
 		t.Errorf("spans: %+v %+v %+v", d, c, r)
@@ -916,8 +916,9 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"v4 phases", header + "phases:\n  - { id: d, on: run_start, " + cmd + " }\n", "phases: is v4"},
 		{"v4 stages", entry + "stages:\n  - { id: s, type: command, run: x }\n", "stages: is v4's shorthand"},
 		{"no main", header + "watchers:\n  - { id: c, on: mr_conflicts, " + cmd + " }\n", "main is required"},
-		{"no main and nothing watched", header + "run_start: merge_request\noutcomes:\n  - { id: m, on: mr_merged, then: done }\n", "declare at least one"},
-		{"bad run_start", header + "run_start: repository\nmain:\n  - { id: s, type: command, run: x }\n", `run_start "repository" must be ticket`},
+		{"no main and nothing watched", header + "operates_on: merge_request\noutcomes:\n  - { id: m, on: mr_merged, then: done }\n", "declare at least one"},
+		{"bad operates_on", header + "operates_on: repository\nmain:\n  - { id: s, type: command, run: x }\n", `operates_on "repository" must be ticket`},
+		{"retired run_start", header + "run_start: merge_request\nmain:\n  - { id: s, type: command, run: x }\n", "run_start: is now operates_on:"},
 		{"missing on", w("  - { id: d, " + cmd + " }\n"), "signal is required"},
 		{"start on manual", w("  - { id: m, on: { signal: manual, start: confirm }, " + cmd + " }\n"), "start does not apply"},
 		{"run_start on a watcher", w("  - { id: m, on: run_start, " + cmd + " }\n"), "run_start is how a run begins"},
@@ -996,7 +997,7 @@ func TestMainChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Phases) != 1 || f.Phases[0].ID != MainPhase || !f.Phases[0].IsMain() || f.Stages[0].Phase != MainPhase || f.StartsOnMR() {
+	if len(f.Phases) != 1 || f.Phases[0].ID != MainPhase || !f.Phases[0].IsMain() || f.Stages[0].Phase != MainPhase || f.OperatesOnMR() {
 		t.Fatalf("phases = %+v, stage phase %q", f.Phases, f.Stages[0].Phase)
 	}
 	if m := f.Main(); m == nil || f.Stages[0].Line != 5 || m.On.Max != UnlimitedMax || m.On.Signal != "run_start" || f.Stages[0].OnSuccess != TerminalDone {
@@ -1007,7 +1008,7 @@ func TestMainChain(t *testing.T) {
 // A watcher or an outcome may run a sequence — or the main chain — in place:
 // `sequence: X` is one sequence stage running X, named after the watcher.
 func TestRunASequence(t *testing.T) {
-	doc := header + "run_start: merge_request\n" +
+	doc := header + "operates_on: merge_request\n" +
 		"sequences:\n  - { id: tidy, stages: [{ id: fmt, type: command, run: x }] }\n" +
 		"main:\n  - { id: sync, type: action, action: sync_target }\n  - { id: push, type: action, action: push_branch }\n" +
 		"watchers:\n  - { id: again, on: mr_conflicts, sequence: main }\n  - { id: neat, on: manual, sequence: tidy }\n" +
@@ -1024,8 +1025,8 @@ func TestRunASequence(t *testing.T) {
 	if got := strings.Join(ids, " "); got != want {
 		t.Errorf("stages = %s\n want %s", got, want)
 	}
-	if !f.StartsOnMR() || !f.Main().OnMR() || f.Stage("again.sync").Sequence != "again" {
-		t.Errorf("starts on %s, main %+v", f.StartsOn, f.Main())
+	if !f.OperatesOnMR() || !f.Main().OnMR() || f.Stage("again.sync").Sequence != "again" {
+		t.Errorf("starts on %s, main %+v", f.OperatesOn, f.Main())
 	}
 	for _, w := range f.Warnings {
 		t.Errorf("warning: %s", w)
@@ -1035,7 +1036,7 @@ func TestRunASequence(t *testing.T) {
 // A flow whose runs start on a merge request may leave the main chain out
 // and only watch it: a caretaker, started idle.
 func TestCaretakerHasNoMain(t *testing.T) {
-	doc := header + "run_start: merge_request\n" +
+	doc := header + "operates_on: merge_request\n" +
 		"watchers:\n  - { id: conflicts, on: mr_conflicts, stages: [{ id: sync, type: action, action: sync_target }, { id: push, type: action, action: push_branch }] }\n" +
 		"outcomes:\n  - { id: merged, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(doc))

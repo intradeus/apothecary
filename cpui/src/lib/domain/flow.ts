@@ -1,7 +1,7 @@
 // Flows: the documents a run executes, and the registries their stages may
 // name.
 
-import type { FlowDoc, PhaseKind, RunStart } from '$lib/flowdoc';
+import type { FlowDoc, PhaseKind, OperatesOn } from '$lib/flowdoc';
 
 export interface FlowLayout {
 	nodes: Record<string, { x: number; y: number }>;
@@ -26,9 +26,9 @@ export interface Flow {
 	shadowsBuiltin: boolean;
 	/** What its runs are started on, the document's parameters — what a
 	 *  project may bind (the engine-known six always present) — and its
-	 *  phases: the main chain, the watchers, the outcomes. Empty (runStart
+	 *  phases: the main chain, the watchers, the outcomes. Empty (operatesOn
 	 *  undefined) when the document no longer parses. */
-	runStart?: RunStart;
+	operatesOn?: OperatesOn;
 	parameters: ParamDecl[];
 	phases: PhaseSummary[];
 }
@@ -52,7 +52,7 @@ export interface FlowValidation {
 	/** What its runs are started on, the document's parameters (the
 	 *  engine-known six always present) and where they are read; its phases
 	 *  with the wait point's effective values. */
-	runStart?: RunStart;
+	operatesOn?: OperatesOn;
 	parameters: ParamDecl[];
 	refs: ParamRef[];
 	phases: PhaseSummary[];

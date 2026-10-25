@@ -203,7 +203,7 @@ export interface RunInput {
 	/** Parameter values overriding the workshop's bindings for this attempt. */
 	params?: Record<string, string>;
 	/** Start the run on a merge request someone opened (a flow with
-	 *  run_start: merge_request): its number, in the primary unless repo
+	 *  operates_on: merge_request): its number, in the primary unless repo
 	 *  says otherwise. */
 	mr?: { repo?: string; iid: number };
 }

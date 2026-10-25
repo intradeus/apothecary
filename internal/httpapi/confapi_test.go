@@ -472,7 +472,7 @@ func TestFlowBindingAPI(t *testing.T) {
 	// may be bound and what its runs are started on.
 	var fr struct {
 		Builtin    bool   `json:"builtin"`
-		RunStart   string `json:"run_start"`
+		OperatesOn string `json:"operates_on"`
 		Parameters []struct {
 			Name  string `json:"name"`
 			Known bool   `json:"known"`
@@ -484,7 +484,7 @@ func TestFlowBindingAPI(t *testing.T) {
 	}
 	resp, data = x.do(t, "GET", base+"/flows/builder", nil, nil)
 	if err := json.Unmarshal(data, &fr); err != nil || resp.StatusCode != 200 || !fr.Builtin || len(fr.Parameters) < 7 ||
-		fr.Parameters[0].Name != "harness" || !fr.Parameters[0].Known || len(fr.Phases) < 2 || fr.Phases[0].ID != "main" || fr.Phases[0].Kind != "main" || fr.RunStart != "ticket" {
+		fr.Parameters[0].Name != "harness" || !fr.Parameters[0].Known || len(fr.Phases) < 2 || fr.Phases[0].ID != "main" || fr.Phases[0].Kind != "main" || fr.OperatesOn != "ticket" {
 		t.Fatalf("flow = %d %v: %s", resp.StatusCode, err, data)
 	}
 	// Refusals name the parameter, and leave the binding as it was.
@@ -543,8 +543,8 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 		Parameters []struct {
 			Name string `json:"name"`
 		} `json:"parameters"`
-		RunStart string `json:"run_start"`
-		Phases   []struct {
+		OperatesOn string `json:"operates_on"`
+		Phases     []struct {
 			ID     string `json:"id"`
 			Kind   string `json:"kind"`
 			Signal string `json:"signal"`
@@ -556,7 +556,7 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 	// Parameters come in document order, the omitted engine-known names
 	// synthesized after the declared ones.
 	if err := json.Unmarshal(data, &fr); err != nil || resp.StatusCode != http.StatusCreated || len(fr.Parameters) != 7 || fr.Parameters[2].Name != "mode" ||
-		fr.RunStart != "ticket" || len(fr.Phases) != 2 || fr.Phases[0].Kind != "main" || fr.Phases[1].Kind != "watcher" ||
+		fr.OperatesOn != "ticket" || len(fr.Phases) != 2 || fr.Phases[0].Kind != "main" || fr.Phases[1].Kind != "watcher" ||
 		fr.Phases[1].Signal != "mr_conflicts" || fr.Phases[1].Start != "confirm" {
 		t.Fatalf("create = %d %v: %s", resp.StatusCode, err, data)
 	}
@@ -578,7 +578,7 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 				t.Errorf("builder template in listing = %+v", f)
 			}
 		case "reviewer":
-			if !f.Builtin || f.RunStart != "merge_request" {
+			if !f.Builtin || f.OperatesOn != "merge_request" {
 				t.Errorf("reviewer template in listing = %+v", f)
 			}
 		}

@@ -7,7 +7,7 @@
 	// degrades to free text.
 	import { api } from '$lib/api';
 	import type { Flow } from '$lib/domain';
-	import type { RunStart } from '$lib/flowdoc';
+	import type { OperatesOn } from '$lib/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -15,7 +15,7 @@
 		value = $bindable(''),
 		fallbackLabel,
 		id,
-		runStart,
+		operatesOn,
 		fallbackFlow
 	}: {
 		projectId: string;
@@ -23,10 +23,10 @@
 		/** What '' means here, e.g. "Default · full-integration". */
 		fallbackLabel: string;
 		id?: string;
-		/** Only the flows whose runs are started on this (run_start). */
-		runStart?: RunStart;
+		/** Only the flows whose runs are started on this (operates_on). */
+		operatesOn?: OperatesOn;
 		/** The flow '' stands for, when the caller knows it: left out when its
-		 *  runs are not started on runStart. */
+		 *  runs are not started on operatesOn. */
 		fallbackFlow?: string;
 	} = $props();
 
@@ -44,13 +44,13 @@
 			.catch(() => (failed = true));
 	});
 
-	const fits = $derived((flows ?? []).filter((f) => !runStart || f.runStart === runStart));
+	const fits = $derived((flows ?? []).filter((f) => !operatesOn || f.operatesOn === operatesOn));
 	const fallbackFits = $derived(
-		!runStart || !fallbackFlow || fits.some((f) => f.name === fallbackFlow)
+		!operatesOn || !fallbackFlow || fits.some((f) => f.name === fallbackFlow)
 	);
 	// A choice the kind no longer fits moves to one it does.
 	$effect(() => {
-		if (!flows || !runStart) return;
+		if (!flows || !operatesOn) return;
 		const ok = value === '' ? fallbackFits : fits.some((f) => f.name === value);
 		if (!ok) value = fallbackFits ? '' : (fits[0]?.name ?? '');
 	});

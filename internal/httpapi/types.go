@@ -70,7 +70,7 @@ type StartRunRequest struct {
 	// Params override the workshop's parameter bindings for this attempt.
 	Params map[string]string `json:"params,omitempty"`
 	// MR starts the run on a merge request someone opened, for a flow
-	// whose runs are started on one (run_start: merge_request).
+	// whose runs are started on one (operates_on: merge_request).
 	MR *engine.RunMR `json:"mr,omitempty"`
 }
 
@@ -333,7 +333,7 @@ type FlowBindingRequest struct {
 // with query, import what it finds, one run each), cron (schedule, five
 // fields in UTC, a new run of ticket_id each firing) or merge_request (watch
 // repo's open merge requests, a run on each one someone else opened, once).
-// flow (one whose run_start fits: merge_request for a merge_request
+// flow (one whose operates_on fits: merge_request for a merge_request
 // automation, ticket otherwise) + params say what each firing creates.
 // enabled defaults to true.
 type AutomationRequest struct {
@@ -374,7 +374,7 @@ type FlowValidation struct {
 	Errors     []string        `json:"errors,omitempty"`
 	Name       string          `json:"name,omitempty"`
 	Hash       string          `json:"hash,omitempty"`
-	RunStart   string          `json:"run_start,omitempty"`
+	OperatesOn string          `json:"operates_on,omitempty"`
 	Stages     int             `json:"stages,omitempty"`
 	Agents     int             `json:"agents,omitempty"`
 	Doc        *flow.Doc       `json:"doc,omitempty"`

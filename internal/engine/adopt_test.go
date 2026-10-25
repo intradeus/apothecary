@@ -1,6 +1,6 @@
 package engine
 
-// Runs started on a merge request someone opened (a flow with run_start:
+// Runs started on a merge request someone opened (a flow with operates_on:
 // merge_request): the run works on that merge request's branch, from the head
 // the repository host keeps a ref for, acts on it from its main chain, reads
 // the author's later pushes, and ends with it.
@@ -21,7 +21,7 @@ import (
 
 const reviewerFlowDoc = `name: rev
 version: 5
-run_start: merge_request
+operates_on: merge_request
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: pr_reviewer
@@ -127,13 +127,13 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 	ph.waitState(t, runID, run.Completed)
 }
 
-// Run creation holds the two kinds of run_start apart, and a run is started
+// Run creation holds the two kinds of operates_on apart, and a run is started
 // on a merge request only while it is open.
 func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	ctx := context.Background()
 	ph, _ := newReviewerHarness(t, reviewerFlowDoc)
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{}); err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request (run_start: merge_request): name the merge request") {
+	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{}); err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request (operates_on: merge_request): name the merge request") {
 		t.Errorf("no merge request: %v", err)
 	}
 	ph.repoHost.SetMRState(ref.IID, ports.MRClosed)
@@ -142,7 +142,7 @@ func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	}
 	ph2 := newPhasedHarness(t, phasedFlowDoc)
 	other := ph2.repoHost.AddOpenMR("bob", "Fix", "fix/x", "main", "b1")
-	if _, err := ph2.e.CreateRunWith(ctx, Ticket{Title: "T"}, "phased", testProject, RunInput{MR: &RunMR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "starts its runs on a ticket (run_start: ticket), not on a merge request") {
+	if _, err := ph2.e.CreateRunWith(ctx, Ticket{Title: "T"}, "phased", testProject, RunInput{MR: &RunMR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "starts its runs on a ticket (operates_on: ticket), not on a merge request") {
 		t.Errorf("a flow started on tickets, on a merge request: %v", err)
 	}
 }

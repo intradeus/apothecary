@@ -18,7 +18,7 @@ func seedTracker(t *testing.T, svc *Service) Integration {
 }
 
 // An automation is validated the way a firing would be — the kind's own
-// needs, a flow whose run_start fits it, params it accepts — so the watcher
+// needs, a flow whose operates_on fits it, params it accepts — so the watcher
 // is never the first to find a mistake.
 func TestAutomationValidates(t *testing.T) {
 	svc, _ := newSvc(t)

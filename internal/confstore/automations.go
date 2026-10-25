@@ -1,8 +1,8 @@
 package confstore
 
 // Automations: the ways a run begins without a person pressing Start (flow
-// v4). An automation belongs to a project and names a flow, one of its
-// run_start phases and parameter overrides, plus how it fires:
+// v4). An automation belongs to a project and names a flow whose
+// operates_on fits it, parameter overrides, plus how it fires:
 //
 //   - tracker_query polls a ticketsource integration with a query ("assigned
 //     to the factory"), imports every issue it finds as a ticket of the
@@ -11,7 +11,7 @@ package confstore
 //     run each time;
 //   - merge_request watches a repository's open merge requests and starts a
 //     run on each one someone else opened — once — of a flow whose runs are
-//     started on one (run_start: merge_request), each with a ticket of its
+//     started on one (operates_on: merge_request), each with a ticket of its
 //     own.
 //
 // The flow is untouched by any of this: an automation is a rule outside the
@@ -160,7 +160,7 @@ func (s *Service) MarkAutomation(ctx context.Context, id string, m AutomationMar
 }
 
 // validateAutomation: the kind and what it needs, the project, a flow whose
-// run_start fits the kind, and params the flow accepts — checked the way a
+// operates_on fits the kind, and params the flow accepts — checked the way a
 // run would check them, so a firing is never the first to find out.
 func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	a.Name = strings.TrimSpace(a.Name)
@@ -246,10 +246,10 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	// The flow's runs must be started on what the automation finds: a
 	// merge request (merge_request), or a ticket.
 	switch onMR := a.Kind == AutomationMergeRequest; {
-	case onMR && !f.StartsOnMR():
-		return invalidf("flow %q starts its runs on a ticket (run_start: %s): a merge_request automation starts flows whose runs are started on a merge request", a.Flow, flow.StartsOnTicket)
-	case !onMR && f.StartsOnMR():
-		return invalidf("flow %q starts its runs on a merge request (run_start: %s): a %s automation starts flows whose runs are started on a ticket", a.Flow, flow.StartsOnMR, a.Kind)
+	case onMR && !f.OperatesOnMR():
+		return invalidf("flow %q starts its runs on a ticket (operates_on: %s): a merge_request automation starts flows whose runs are started on a merge request", a.Flow, flow.OperatesOnTicket)
+	case !onMR && f.OperatesOnMR():
+		return invalidf("flow %q starts its runs on a merge request (operates_on: %s): a %s automation starts flows whose runs are started on a ticket", a.Flow, flow.OperatesOnMR, a.Kind)
 	}
 	values := map[string]string{}
 	for k, v := range a.Params {

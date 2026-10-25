@@ -352,7 +352,7 @@
 					projectId={project.id}
 					bind:value={flowPick}
 					fallbackLabel={t('workshop.automations.defaultFlow', { flow: project.defaultFlow })}
-					runStart={draft.kind === 'merge_request' ? 'merge_request' : 'ticket'}
+					operatesOn={draft.kind === 'merge_request' ? 'merge_request' : 'ticket'}
 					fallbackFlow={project.defaultFlow}
 				/>
 			</div>

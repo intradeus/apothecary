@@ -415,11 +415,11 @@ export default {
 	// One beginning per chain: its marker names it and what opens it.
 	'flow.graph.beginLabel': '{phase}: on {trigger}',
 	'flow.graph.beginLabelPlain': 'on {trigger}',
-	'flow.graph.mainLabel': 'main · on {on}',
+	'flow.graph.mainLabel': 'main · operates on {on}',
 	// A flow with no main chain: its runs wait from the start.
-	'flow.graph.watchLabel': 'run · on {on}',
+	'flow.graph.watchLabel': 'run · operates on {on}',
 	'flow.graph.watchTitle':
-		'A person or an automation starts a run of this flow on {on}. It has no main chain: the run waits from the start, and its watchers run on what happens to the merge request.',
+		'Each run of this flow operates on {on}, picked by the person or the automation that starts it. It has no main chain: the run waits from the start, and its watchers run on what happens to the merge request.',
 	// The hub: the run between its chains.
 	'flow.graph.hubLabel': 'waiting',
 	'flow.graph.hubSub': 'on the merge request',
@@ -430,9 +430,9 @@ export default {
 	'flow.graph.fold': 'Fold {phase} to its marker',
 	'flow.graph.unfold': 'Unfold {phase}',
 	'flow.graph.mainTitle':
-		'The main chain: it runs once, when a person or an automation starts a run on {on} — drag this handle onto a stage of the chain to start it there',
-	'flow.graph.runStart.ticket': 'a ticket',
-	'flow.graph.runStart.merge_request': 'a merge request',
+		'The main chain: it runs once, when a person or an automation starts a run — each run operates on {on}, the one they picked. Drag this handle onto a stage of the chain to start it there',
+	'flow.graph.operatesOn.ticket': 'a ticket',
+	'flow.graph.operatesOn.merge_request': 'a merge request',
 	'flow.graph.outcomeLabel': '{phase}: on {trigger} → {then}',
 	'flow.graph.section.main': 'main',
 	'flow.graph.section.watcher': 'watchers',
@@ -483,11 +483,11 @@ export default {
 		'A chain that runs while the run is open, on each new occurrence of its signal on one of the run’s merge requests — one at a time, in the run’s workspace. It never ends the run: its chain closes with end.',
 	'flow.insp.outcomeHelp':
 		'What ends the run: it fires once, when its signal holds — after its chain, when it has one.',
-	'flow.insp.runStart': 'Runs start on',
-	'flow.insp.runStart.ticket': 'a ticket',
-	'flow.insp.runStart.merge_request': 'a merge request someone opened',
-	'flow.insp.runStartHelp':
-		'A person starts a run — from a ticket, or on a merge request from the Repositories tab — or an automation does; nothing the flow listens for does. A flow started on a merge request checks out its branch and acts on it from the start.',
+	'flow.insp.operatesOn': 'Operates on',
+	'flow.insp.operatesOn.ticket': 'a ticket',
+	'flow.insp.operatesOn.merge_request': 'a merge request someone opened',
+	'flow.insp.operatesOnHelp':
+		'What each run works on — its branch, and the merge request its watchers follow. It is not what starts a run: a person picks one when starting it (from the ticket’s page, or a merge request on the Repositories tab), or an automation does. A run that operates on a merge request checks out that merge request’s branch and acts on it from the start.',
 	'flow.insp.firesOn': 'Fires on',
 	'flow.insp.addChain': 'Add a chain',
 	'flow.insp.addWatcher': 'watcher',
@@ -703,7 +703,7 @@ export default {
 	'flow.insp.addToSequence': 'Add a stage to this sequence',
 	'flow.insp.addMain': 'main chain',
 	'flow.insp.addChainHelpNoMain':
-		'This flow only watches: with no main chain, its runs must be started on a merge request. Add one to begin every run with it.',
+		'This flow only watches: with no main chain, it must operate on a merge request. Add one to begin every run with it.',
 	// Stages inside a sequence
 	'flow.insp.onlyStage': 'A sequence needs a stage — delete the sequence instead',
 	'flow.insp.inSequence': 'In sequence',

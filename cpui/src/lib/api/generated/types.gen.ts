@@ -353,10 +353,10 @@ export type Flow = {
 	hash?: string;
 	layout?: unknown;
 	name?: string;
+	operates_on?: string;
 	parameters?: Array<Param>;
 	phases?: Array<PhaseSummary>;
 	project_id?: string;
-	run_start?: string;
 	shadows_builtin?: boolean;
 	updated_at?: string;
 	yaml?: string;
@@ -382,9 +382,9 @@ export type FlowDoc = {
 	description?: string;
 	main?: Array<DocStage>;
 	name: string;
+	operates_on?: string;
 	outcomes?: Array<DocWatcher>;
 	parameters?: DocParams;
-	run_start?: string;
 	sequences?: Array<DocSequence>;
 	version: number;
 	watchers?: Array<DocWatcher>;
@@ -397,10 +397,10 @@ export type FlowValidation = {
 	hash?: string;
 	name?: string;
 	ok: boolean;
+	operates_on?: string;
 	parameters?: Array<Param>;
 	phases?: Array<PhaseSummary>;
 	refs?: Array<ParamRef>;
-	run_start?: string;
 	stages?: number;
 	warnings?: Array<string>;
 };

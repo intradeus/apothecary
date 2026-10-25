@@ -33,7 +33,7 @@
 		START,
 		MAIN,
 		MANUAL,
-		RUN_STARTS,
+		OPERATES_ON,
 		START_POLICIES,
 		AGENT_NAME,
 		addAgent,
@@ -218,8 +218,8 @@
 		if (!took) el.value = current;
 	};
 
-	function setRunStart(v: string) {
-		doc.run_start = v === 'merge_request' ? 'merge_request' : undefined;
+	function setOperatesOn(v: string) {
+		doc.operates_on = v === 'merge_request' ? 'merge_request' : undefined;
 		onchange();
 	}
 
@@ -1467,16 +1467,16 @@
 				{#if ph.kind === 'main'}
 					<div class="help">{t('flow.insp.mainHelp')}</div>
 					<div class="field">
-						<label for="ph-runstart">{t('flow.insp.runStart')}</label>
+						<label for="ph-operates">{t('flow.insp.operatesOn')}</label>
 						<select
-							id="ph-runstart"
-							value={doc.run_start ?? 'ticket'}
-							onchange={(e) => setRunStart(e.currentTarget.value)}
+							id="ph-operates"
+							value={doc.operates_on ?? 'ticket'}
+							onchange={(e) => setOperatesOn(e.currentTarget.value)}
 						>
-							{#each RUN_STARTS as r (r)}<option value={r}>{t(`flow.insp.runStart.${r}`)}</option
+							{#each OPERATES_ON as r (r)}<option value={r}>{t(`flow.insp.operatesOn.${r}`)}</option
 								>{/each}
 						</select>
-						<div class="help">{t('flow.insp.runStartHelp')}</div>
+						<div class="help">{t('flow.insp.operatesOnHelp')}</div>
 					</div>
 					{@render addTo(ph)}
 				{:else}
@@ -1948,16 +1948,16 @@
 					/>
 				</div>
 				<div class="field">
-					<label for="fl-runstart">{t('flow.insp.runStart')}</label>
+					<label for="fl-operates">{t('flow.insp.operatesOn')}</label>
 					<select
-						id="fl-runstart"
-						value={doc.run_start ?? 'ticket'}
-						onchange={(e) => setRunStart(e.currentTarget.value)}
+						id="fl-operates"
+						value={doc.operates_on ?? 'ticket'}
+						onchange={(e) => setOperatesOn(e.currentTarget.value)}
 					>
-						{#each RUN_STARTS as r (r)}<option value={r}>{t(`flow.insp.runStart.${r}`)}</option
+						{#each OPERATES_ON as r (r)}<option value={r}>{t(`flow.insp.operatesOn.${r}`)}</option
 							>{/each}
 					</select>
-					<div class="help">{t('flow.insp.runStartHelp')}</div>
+					<div class="help">{t('flow.insp.operatesOnHelp')}</div>
 				</div>
 				<div class="lbl">{t('flow.insp.params')}</div>
 				<div class="help">{t('flow.insp.paramsHelp')}</div>

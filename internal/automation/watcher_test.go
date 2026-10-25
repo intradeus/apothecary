@@ -344,7 +344,7 @@ func TestDisabledAndStale(t *testing.T) {
 
 const reviewerYAML = `name: rev
 version: 5
-run_start: merge_request
+operates_on: merge_request
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - name: pr_reviewer
@@ -401,8 +401,8 @@ func TestMergeRequestAutomationStartsOnOthersMergeRequestsOnce(t *testing.T) {
 }
 
 // Each kind starts the flows whose runs are started on what it finds: a
-// merge request, or a ticket (run_start).
-func TestAutomationRunStartKinds(t *testing.T) {
+// merge request, or a ticket (operates_on).
+func TestAutomationOperatesOnKinds(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {

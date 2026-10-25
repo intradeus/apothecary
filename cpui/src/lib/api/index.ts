@@ -418,14 +418,14 @@ export const projects = {
 	branches: async (id: string): Promise<Branch[]> =>
 		many(await unwrap(gen.listProjectBranches({ path: { id } })), map.toBranch),
 	/** The repository's open merge requests, newest first: what a run of a
-	 *  flow with run_start: merge_request may be started on. */
+	 *  flow with operates_on: merge_request may be started on. */
 	mergeRequests: async (id: string, repo?: string): Promise<MergeRequestRow[]> =>
 		many(
 			await unwrap(gen.listProjectMrs({ path: { id }, query: repo ? { repo } : undefined })),
 			map.toMergeRequestRow
 		),
 	/** Start a run of a flow on a merge request: its ticket found or made,
-	 *  the run started on it (the flow's run_start must be merge_request). */
+	 *  the run started on it (the flow's operates_on must be merge_request). */
 	startRunOnMR: async (
 		id: string,
 		iid: number,

@@ -211,7 +211,7 @@ type RunCreated struct {
 	Params map[string]string `json:"params,omitempty"`
 	By     string            `json:"by,omitempty"`
 	// MR is the merge request someone opened that the run was started on (a
-	// flow with run_start: merge_request): the run works on its branch, and
+	// flow with operates_on: merge_request): the run works on its branch, and
 	// it is the run's merge request from the start. Nil for a run that opens
 	// its own.
 	MR *AdoptedMR `json:"mr,omitempty"`

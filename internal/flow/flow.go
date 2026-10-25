@@ -19,7 +19,7 @@ import (
 // its version, so a break gets a clean refusal ("this build speaks version
 // 5") instead of mis-parsing an unfamiliar shape.
 //
-// v5 gives a flow one way in (`run_start:` — what a person or an automation
+// v5 gives a flow one way in (`operates_on:` — what a person or an automation
 // starts its runs on), one `main` chain that runs when the run starts,
 // `watchers` that run their chain on each new occurrence of a signal while
 // the run is open, and `outcomes` that fire once and end it. Underneath
@@ -166,12 +166,12 @@ func routeTerminal(to string) bool {
 // with. It is also the name other chains run it by (`sequence: main`).
 const MainPhase = "main"
 
-// What a run is started on (FLOWLANG §1 run_start): a ticket — the run
+// What a run is started on (FLOWLANG §1 operates_on): a ticket — the run
 // makes its own branch and opens its merge request — or a merge request
 // someone opened, which the run works on from the start.
 const (
-	StartsOnTicket = "ticket"
-	StartsOnMR     = "merge_request"
+	OperatesOnTicket = "ticket"
+	OperatesOnMR     = "merge_request"
 )
 
 // PhaseKind is which section of the document a phase comes from.
@@ -514,7 +514,7 @@ type Phase struct {
 func (p *Phase) IsMain() bool { return p.Kind == PhaseMain }
 
 // OnMR reports whether a run begun at this phase is started on an existing
-// merge request (run_start: merge_request) — and so needs one named.
+// merge request (operates_on: merge_request) — and so needs one named.
 func (p *Phase) OnMR() bool { return p.Kind == PhaseMain && p.BringsMR }
 
 // IsOutcome reports whether the phase ends the run: it fires once, and every
@@ -579,9 +579,9 @@ type Flow struct {
 	// run pins prompts along with the rest of the document.
 	Agents []agentspec.Spec
 	Stages []Stage
-	// StartsOn is what its runs are started on: StartsOnTicket or
-	// StartsOnMR (FLOWLANG §1 run_start).
-	StartsOn string
+	// OperatesOn is what its runs are started on: OperatesOnTicket or
+	// OperatesOnMR (FLOWLANG §1 operates_on).
+	OperatesOn string
 	// Phases are the main chain (MainPhase, absent in a flow that only
 	// watches), then the watchers, then the outcomes, in document order.
 	Phases []Phase
@@ -670,9 +670,9 @@ func (f *Flow) AgentSpecs() []*agentspec.Spec {
 	return out
 }
 
-// StartsOnMR reports whether the flow's runs are started on a merge request
+// OperatesOnMR reports whether the flow's runs are started on a merge request
 // someone opened.
-func (f *Flow) StartsOnMR() bool { return f.StartsOn == StartsOnMR }
+func (f *Flow) OperatesOnMR() bool { return f.OperatesOn == OperatesOnMR }
 
 // Main is the flow's main chain, the phase every run begins with; nil for a
 // flow that only watches (a caretaker, started idle on a merge request).

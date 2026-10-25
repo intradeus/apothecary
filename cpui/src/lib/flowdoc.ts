@@ -203,10 +203,10 @@ export const RUN_START = 'run_start';
 export const MANUAL = 'manual';
 export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
 export type StartPolicy = (typeof START_POLICIES)[number];
-/** What a flow's runs are started on (`run_start:`): a ticket, the default,
+/** What a flow's runs are started on (`operates_on:`): a ticket, the default,
  *  or a merge request someone opened. */
-export const RUN_STARTS = ['ticket', 'merge_request'] as const;
-export type RunStart = (typeof RUN_STARTS)[number];
+export const OPERATES_ON = ['ticket', 'merge_request'] as const;
+export type OperatesOn = (typeof OPERATES_ON)[number];
 
 /** One parameter of the flow's `parameters:` block (FLOWLANG §1): its
  *  default — whose JS type is the parameter's type: bool, int/float, string —
@@ -273,7 +273,7 @@ export interface FlowDoc {
 	version?: number;
 	description?: string;
 	/** What the flow's runs are started on; absent = a ticket. */
-	run_start?: RunStart;
+	operates_on?: OperatesOn;
 	/** The flow's one settings block, in document order. */
 	parameters: Record<string, DocParam>;
 	agents?: DocAgent[];
@@ -624,7 +624,7 @@ export function docToYaml(doc: FlowDoc): string {
 	const idx = new Map(doc.stages.map((s, i) => [s.id, i]));
 	const obj: Record<string, unknown> = { name: doc.name, version: doc.version ?? CURRENT_VERSION };
 	if (doc.description) obj.description = doc.description;
-	if (doc.run_start && doc.run_start !== 'ticket') obj.run_start = doc.run_start;
+	if (doc.operates_on && doc.operates_on !== 'ticket') obj.operates_on = doc.operates_on;
 	// The one settings block: the six the engine reads, in their order (the
 	// order the editor shows them in), then the flow's own in document order
 	// — a bare default when that is all a parameter has.

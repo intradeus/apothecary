@@ -11,7 +11,7 @@ import (
 
 const mrFlowYAML = `name: on-mr
 version: 5
-run_start: merge_request
+operates_on: merge_request
 parameters: { harness: fake, model: a/b }
 agents:
   - name: reader

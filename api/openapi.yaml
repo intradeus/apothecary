@@ -761,6 +761,8 @@ components:
         layout: {}
         name:
           type: string
+        operates_on:
+          type: string
         parameters:
           items:
             $ref: '#/components/schemas/Param'
@@ -770,8 +772,6 @@ components:
             $ref: '#/components/schemas/PhaseSummary'
           type: array
         project_id:
-          type: string
-        run_start:
           type: string
         shadows_builtin:
           type: boolean
@@ -825,14 +825,14 @@ components:
           type: array
         name:
           type: string
+        operates_on:
+          type: string
         outcomes:
           items:
             $ref: '#/components/schemas/DocWatcher'
           type: array
         parameters:
           $ref: '#/components/schemas/DocParams'
-        run_start:
-          type: string
         sequences:
           items:
             $ref: '#/components/schemas/DocSequence'
@@ -863,6 +863,8 @@ components:
           type: string
         ok:
           type: boolean
+        operates_on:
+          type: string
         parameters:
           items:
             $ref: '#/components/schemas/Param'
@@ -875,8 +877,6 @@ components:
           items:
             $ref: '#/components/schemas/ParamRef'
           type: array
-        run_start:
-          type: string
         stages:
           type: integer
         warnings:
@@ -3537,7 +3537,7 @@ paths:
       tags:
         - automations
     post:
-      description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its run_start fits the kind (merge_request for a merge_request automation, ticket otherwise), the params are ones it accepts.'
+      description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise), the params are ones it accepts.'
       operationId: createAutomation
       parameters:
         - in: path
@@ -4382,7 +4382,7 @@ paths:
         - flows
   /api/projects/{id}/mrs:
     get:
-      description: 'The repository''s open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket''s newest run. What a run of a flow started on merge requests (run_start: merge_request) may be started on.'
+      description: 'The repository''s open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket''s newest run. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.'
       operationId: listProjectMRs
       parameters:
         - in: path
@@ -4422,7 +4422,7 @@ paths:
         - projects
   /api/projects/{id}/mrs/{iid}/runs:
     post:
-      description: 'Finds or makes the merge request''s ticket and starts a run on the merge request of a flow whose runs are started on one (run_start: merge_request; the project''s default flow unless the body names another). 409 while a run of the same flow on it is going.'
+      description: 'Finds or makes the merge request''s ticket and starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project''s default flow unless the body names another). 409 while a run of the same flow on it is going.'
       operationId: startMRRun
       parameters:
         - in: path

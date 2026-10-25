@@ -1,7 +1,7 @@
 name: reviewer
 version: 5
 description: "review a merge request someone opened: notes on its lines and a summary, again after every push, until it merges or closes"
-run_start: merge_request
+operates_on: merge_request
 # A run of this flow is started on a merge request a person opened — from the
 # workshop's Repositories tab, or by a merge-request automation watching the
 # repository. It never builds and never pushes: it checks out

@@ -53,7 +53,7 @@ is one of a few things:
 | **chain** | A sequential list of stages: the **main** chain a run starts with, a **watcher** that runs on each new occurrence of its signal while the run is open, an **outcome** that fires once and ends the run (§1). Each is a *phase* of the run, with at most one **live run** at a time — active, or parked at a wait point inside it; each owns its cursor, its edge counters, its feed and its tip. |
 | **scheduler** | The engine's idle loop. Each tick: observe the sources (the repositories, timers, answered pings), then walk every wait point in document order — parked ones, outcomes, watchers — and resume or open the first whose event is ready under its policy. That chain run takes the workspace and runs work stages until its next wait point or its end. One start per tick. |
 | **run end** | Two ends, said apart. `end` finishes a **chain**: it is over and the run goes back to waiting. `done` finishes the **run**, whatever else waits; `abort` abandons it. A flow must have some route to `done` (§3). A run normally ends in an **outcome**, on what became of the merge request (`mr_merged`, `mr_closed`): it fires once and ends the run — the `builder` template's `merged` moves the ticket to done and says `done`, its `closed` says `abort`. Without one the run **completes** when no chain is active, none is parked, and nothing is **armed** — an outcome that has not fired while a merge request is open; a watcher with policy `auto` or `confirm`, its signal live for an open merge request, runs left. A dead end — a failure with nowhere to go — abandons the run in the main chain or an outcome; in a watcher it ends that round (§3). |
-| **extension points** | A new thing to react to is one signal plus its poller: it works for watchers, outcomes and mid-chain waits, under every policy, with subjects, and the scheduler does not change. A new kind of work is a stage type and an executor. A new human interaction is a gate variant. A new way to begin runs is an automation outside the run, starting a flow whose `run_start` fits it. Parallelism is deliberately absent: the mutex is the design (§10). |
+| **extension points** | A new thing to react to is one signal plus its poller: it works for watchers, outcomes and mid-chain waits, under every policy, with subjects, and the scheduler does not change. A new kind of work is a stage type and an executor. A new human interaction is a gate variant. A new way to begin runs is an automation outside the run, starting a flow whose `operates_on` fits it. Parallelism is deliberately absent: the mutex is the design (§10). |
 
 ---
 
@@ -63,7 +63,7 @@ is one of a few things:
 name: builder              # required, slug: the flow's permanent id
 version: 5                 # required int: the grammar this document is written in
 description: "..."         # optional
-run_start: ticket          # what runs are started on: ticket (default) | merge_request (below)
+operates_on: ticket        # what each run works on: ticket (default) | merge_request (below)
 parameters:                # the flow's ONE settings block (below): every entry is a knob
   harness: opencode        #   required: the harness kind agent stages run on
   model: provider/model    #   required: the model they run, unless a stage pins another
@@ -246,7 +246,7 @@ sections, each a list of chains of stages (§2):
   merge request.
 
 ```yaml
-run_start: ticket                                        # what runs are started on: ticket (default) | merge_request
+operates_on: ticket                                      # what each run works on: ticket (default) | merge_request
 main:                                                    # runs once, when the run is started
   - { id: in_progress, … }                               # in_progress, plan … mr, in_review — ends: the run is in review
 watchers:
@@ -273,21 +273,22 @@ Each chain is one **phase** of the run: the main chain is the phase `main`, a
 watcher or an outcome the phase its `id` names — watchers and outcomes share
 one namespace, and `main` is taken.
 
-- **`run_start`** says what the flow's runs are started on: `ticket`, the
-  default — from the ticket's page, or by a `tracker_query` or `cron`
-  automation — or `merge_request`, a merge request someone opened — named on
-  the start-run form (the open ones are listed), picked on the Repositories
-  tab, or by a `merge_request` automation. Starting a run is always
-  someone's decision; the automations are the listeners. A run started on
-  the other kind of thing is refused.
+- **`operates_on`** says what each run of the flow works on — not what
+  starts it: `ticket`, the default — started from the ticket's page, or by a
+  `tracker_query` or `cron` automation — or `merge_request`, a merge request
+  someone opened — named on the start-run form (the open ones are listed),
+  picked on the Repositories tab, or by a `merge_request` automation.
+  Starting a run is always someone's decision; the automations are the
+  listeners. A run started on the other kind of thing is refused. (The key
+  was `run_start:`; that spelling is refused with this one.)
 - **The main chain** runs once, when the run is started; its
   `phase_started` records who started it (`by: human`, or the automation). It
   is never started again — a rerun is a new run. Its last stage ends it with
   `end` when the flow has watchers or outcomes (the run stays open), and with
   `done` when it has neither (the run is over). A flow with no `main` only
-  watches — a *caretaker* — and must be `run_start: merge_request`: there is
+  watches — a *caretaker* — and must be `operates_on: merge_request`: there is
   nothing to watch on a bare ticket. Its runs start idle.
-- **On someone's merge request.** With `run_start: merge_request` the run
+- **On someone's merge request.** With `operates_on: merge_request` the run
   works on that merge request's branch, checked out from the ref its
   repository keeps for the head (`refs/pull/<n>/head`,
   `refs/merge-requests/<iid>/head` — a fork's too, on a local `mr-<iid>`
@@ -1208,8 +1209,8 @@ not apply to a stage's type, unknown action slugs, unbound required action
 inputs, an action's "exactly one" group bound twice or not at all, malformed
 edges, `each_repo` outside a command, success cycles, unreachable stages, and
 for the chains and wait points: v4's `phases:` or top-level `stages:` (each
-named with its v5 spelling); a `run_start` other than `ticket` or
-`merge_request`; no `main` in a flow whose runs are started on a ticket; a
+named with its v5 spelling); `run_start:` (now `operates_on:`); an `operates_on`
+other than `ticket` or `merge_request`; no `main` in a flow whose runs are started on a ticket; a
 flow with neither `main` nor a watcher; a watcher or an outcome whose `id` is
 missing, not a slug, `main`, or another's (watchers and outcomes are one
 namespace); a watcher with neither `run` nor `stages`, or both; `then` on a
@@ -1323,10 +1324,11 @@ Converting one by hand:
 | `phases:` (v4) | the sections: `main:` — the chain a run starts with, a list of stages — `watchers:` and `outcomes:` (§1) |
 | top-level `stages:` (v4's shorthand, one phase `main`) | `main:` |
 | a phase `on: run_start` — an entrypoint, several allowed (v4) | the `main` chain, one per flow: a person or an automation starts the run, and a chain shared with another is a sequence (§1 *Sequences*) |
-| a phase `on: mr_opened` (v4) | `run_start: merge_request`, the chain under `main:` |
+| a phase `on: mr_opened` (v4) | `operates_on: merge_request`, the chain under `main:` |
+| `run_start:` (v5, before its rename) | `operates_on:` — the same values |
 | a reaction phase, on a firing signal or `manual` (v4) | a watcher, under `watchers:` |
 | an outcome phase, on `mr_merged`, `mr_closed` or `mr_approved` (v4) | an outcome, under `outcomes:` — on any observed signal |
-| a `phase` on a start-run, rerun or automation request (v4) | nothing: a flow has one main chain, and its `run_start` says what an automation of each kind may start |
+| a `phase` on a start-run, rerun or automation request (v4) | nothing: a flow has one main chain, and its `operates_on` says what an automation of each kind may start |
 | a person beginning the entry phase again from the run page (v4) | the main chain runs once; a rerun is a new run |
 | `defaults:` and `budget:` blocks (v3) | one `parameters:` block (§1): the same six names, plus the flow's own knobs |
 | the entry phase `on: manual` (or `on: ticket`), the first by position (v3) | the `main` chain |
@@ -1367,7 +1369,7 @@ request's life after it opens. Full text: `internal/builtin/flows/builder.yaml`.
 ```yaml
 name: builder
 version: 5
-run_start: ticket                  # the default: a run is started from a ticket
+operates_on: ticket                # the default: a run works on a ticket
 # One settings block. A project binds any of these in the workshop without
 # touching this document; a run may override.
 parameters:
@@ -1598,7 +1600,7 @@ over one workspace. Additive, no grammar break:
   the same park, the same inbox, a different question shape.
 - **An automation** — a new way to *begin* runs lives outside the run: a rule
   (a tracker query, a schedule, the merge requests others open) that starts a
-  run of a flow whose `run_start` matches it — `ticket`, or `merge_request`
+  run of a flow whose `operates_on` matches it — `ticket`, or `merge_request`
   for one watching merge requests — with its parameters, recorded as
   `phase_started{by: automation}`. The flow is untouched.
 - **An action** — one `actionspec` registry entry, one executor case, one

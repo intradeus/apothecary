@@ -322,7 +322,7 @@
 		const entryPos = doc.stages.length
 			? (layout[doc.stages[0].id] ?? { x: 0, y: 0 })
 			: { x: 0, y: 0 };
-		const runsOn = t(`flow.graph.runStart.${doc.run_start ?? 'ticket'}`);
+		const runsOn = t(`flow.graph.operatesOn.${doc.operates_on ?? 'ticket'}`);
 		const watchesOnly = hub && !mainPhase;
 		if (sequence || mainPhase || !doc.phases?.length || watchesOnly)
 			ns.push({

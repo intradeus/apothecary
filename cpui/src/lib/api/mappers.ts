@@ -9,7 +9,7 @@
 // index.ts, because a request body is only ever built at one call site.
 
 import type * as Wire from './generated/types.gen';
-import { normalizeDoc, PHASE_KINDS, RUN_STARTS, type RunStart } from '$lib/flowdoc';
+import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
 import { answerKindOf, toPingOption } from '$lib/ping';
 import type {
 	ActionIO,
@@ -535,7 +535,7 @@ export function toFlow(w: Wire.Flow): Flow {
 		updatedAt: w.updated_at ?? '',
 		builtin: w.builtin ?? false,
 		shadowsBuiltin: w.shadows_builtin ?? false,
-		runStart: toRunStart(w.run_start),
+		operatesOn: toOperatesOn(w.operates_on),
 		parameters: list(w.parameters).map(toParamDecl),
 		phases: list(w.phases).map(toPhaseSummary)
 	};
@@ -575,8 +575,8 @@ export function toFlowBinding(w: Wire.FlowBinding): FlowBinding {
 // A flow's parameters and phases are described the same way on a stored flow
 // and on a validation verdict: what its runs are started on, what a project
 // may bind, its main chain, watchers and outcomes.
-const toRunStart = (v?: string): RunStart | undefined =>
-	v ? oneOf(RUN_STARTS, v, 'ticket') : undefined;
+const toOperatesOn = (v?: string): OperatesOn | undefined =>
+	v ? oneOf(OPERATES_ON, v, 'ticket') : undefined;
 
 function toParamDecl(p: Wire.Param): ParamDecl {
 	return {
@@ -620,7 +620,7 @@ export function toFlowValidation(w: Wire.FlowValidation): FlowValidation {
 		warnings: list(w.warnings),
 		name: w.name,
 		hash: w.hash,
-		runStart: toRunStart(w.run_start),
+		operatesOn: toOperatesOn(w.operates_on),
 		stages: w.stages,
 		agents: w.agents,
 		doc: w.doc ? normalizeDoc(w.doc) : undefined,

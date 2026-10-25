@@ -1,5 +1,5 @@
 // Automations: how runs begin without a person pressing Start. A rule of a
-// workshop naming a flow (one whose run_start fits its kind) and parameter
+// workshop naming a flow (one whose operates_on fits its kind) and parameter
 // overrides,
 // plus how it fires — a tracker query polled into tickets and runs, or a
 // schedule for one ticket. The watcher's last poll, firing and error ride

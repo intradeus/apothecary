@@ -73,7 +73,7 @@ func (s *Signal) Observed() bool { return s != nil && s.Kind == KindObserved }
 const (
 	// RunStart is how a run begins: a person starts it (a ticket's page, the
 	// Repositories tab) or an automation does. The flow's main chain runs
-	// on it; the flow's `run_start:` says what the run is started on.
+	// on it; the flow's `operates_on:` says what the run works on.
 	RunStart = "run_start"
 	// Manual is the start a person gives from the run page: a watcher on it
 	// never fires on its own.

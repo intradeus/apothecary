@@ -2,7 +2,7 @@
 	// Workshop repositories tab: what the repository integration brings in —
 	// the repository's open merge requests — and the runs done on each. Any
 	// flow of the workshop whose runs are started on a merge request
-	// (run_start: merge_request) starts on one from here; which flow, and so
+	// (operates_on: merge_request) starts on one from here; which flow, and so
 	// what the run does, is the person's pick. A merge request's runs are filed under its own ticket,
 	// the same one a merge-request automation would use.
 	import { goto } from '$app/navigation';
@@ -43,7 +43,7 @@
 
 	// What can start on a merge request: every flow of the workshop whose
 	// runs are started on one.
-	const starts = $derived((flows ?? []).filter((f) => f.runStart === 'merge_request'));
+	const starts = $derived((flows ?? []).filter((f) => f.operatesOn === 'merge_request'));
 
 	// The flow picker, anchored on the row's button.
 	let pickFor = $state<MergeRequestRow | null>(null);

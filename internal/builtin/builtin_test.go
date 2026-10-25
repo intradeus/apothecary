@@ -131,7 +131,7 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	// The run's whole life: the merge request ends it — no final gate — and
 	// the watchers are the conflict fix (asked first) and the debounced
 	// review round.
-	if f.Main() == nil || f.StartsOnMR() || f.Stage("final_gate") != nil {
+	if f.Main() == nil || f.OperatesOnMR() || f.Stage("final_gate") != nil {
 		t.Fatal("the default flow starts on a ticket, has a main chain and no final gate")
 	}
 	conflicts, review := f.Phase("conflicts"), f.Phase("review_fixes")
@@ -323,8 +323,8 @@ func TestReviewerTemplate(t *testing.T) {
 		t.Fatal("no built-in reviewer")
 	}
 	main, again := f.Main(), f.Phase("again")
-	if !f.StartsOnMR() || main == nil || !main.OnMR() {
-		t.Fatalf("main = %+v, run_start %q", main, f.StartsOn)
+	if !f.OperatesOnMR() || main == nil || !main.OnMR() {
+		t.Fatalf("main = %+v, operates_on %q", main, f.OperatesOn)
 	}
 	if again == nil || again.Kind != flow.PhaseWatcher || again.On.Signal != signalspec.MRHeadMoved || again.On.QuietFor < time.Minute {
 		t.Errorf("again = %+v", again)
@@ -363,8 +363,8 @@ func TestConflictResolverTemplate(t *testing.T) {
 		t.Fatal("no built-in conflict-resolver")
 	}
 	main, again := f.Main(), f.Phase("again")
-	if !f.StartsOnMR() || main == nil || !main.OnMR() {
-		t.Fatalf("main = %+v, run_start %q", main, f.StartsOn)
+	if !f.OperatesOnMR() || main == nil || !main.OnMR() {
+		t.Fatalf("main = %+v, operates_on %q", main, f.OperatesOn)
 	}
 	if again == nil || again.Kind != flow.PhaseWatcher || again.On.Signal != signalspec.MRConflicts || again.On.Start != flow.StartConfirm {
 		t.Errorf("again = %+v: a later conflict is taken on after asking, by default", again)

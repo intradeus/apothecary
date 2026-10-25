@@ -83,7 +83,7 @@ type RunInput struct {
 	Params map[string]string
 	By     string
 	// MR starts the run on a merge request someone opened, for a flow with
-	// run_start: merge_request: Repo is the checkout it belongs to ("" =
+	// operates_on: merge_request: Repo is the checkout it belongs to ("" =
 	// the primary), IID its number.
 	MR *RunMR
 }
@@ -961,7 +961,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 // CreateRunWith performs §1 preflight against the project's resolved
 // configuration and, if it passes, appends run_created and starts the run's
 // writer goroutine. flowName "" means the project's default flow; in.MR the
-// merge request a flow with run_start: merge_request is started on, and
+// merge request a flow with operates_on: merge_request is started on, and
 // in.Params this attempt's parameter overrides, on top of the project's
 // bindings. The flow
 // is resolved with those values before preflight, so a bound harness, model

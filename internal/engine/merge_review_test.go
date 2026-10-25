@@ -125,7 +125,7 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 // checks on the new head — and merges.
 const shipFlowDoc = `name: shipper
 version: 5
-run_start: merge_request
+operates_on: merge_request
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
   - { id: look, type: command, run: "true" }

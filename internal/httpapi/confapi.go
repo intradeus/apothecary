@@ -27,17 +27,17 @@ type flowResp struct {
 	confstore.FlowRow
 	Builtin        bool `json:"builtin,omitempty"`
 	ShadowsBuiltin bool `json:"shadows_builtin,omitempty"`
-	// RunStart, Parameters and Phases describe the document: what its runs
-	// are started on (ticket or merge_request), what a project may bind,
+	// OperatesOn, Parameters and Phases describe the document: what its runs
+	// work on (ticket or merge_request), what a project may bind,
 	// and its main chain, watchers and outcomes. Absent when the document
 	// no longer parses.
-	RunStart   string         `json:"run_start,omitempty"`
+	OperatesOn string         `json:"operates_on,omitempty"`
 	Parameters []flow.Param   `json:"parameters,omitempty"`
 	Phases     []PhaseSummary `json:"phases,omitempty"`
 }
 
 // describeFlow presents a row with what a project configures and what its
-// runs are started on: the document's run_start, parameters and phases. A
+// runs are started on: the document's operates_on, parameters and phases. A
 // row whose document no longer parses is served without them — the editor
 // shows the parse error, and the rest of the listing stays usable.
 func describeFlow(row confstore.FlowRow, isBuiltin bool) flowResp {
@@ -53,7 +53,7 @@ func describeFlow(row confstore.FlowRow, isBuiltin bool) flowResp {
 	if f == nil {
 		return out
 	}
-	out.RunStart, out.Parameters, out.Phases = f.StartsOn, f.Params, phaseSummaries(f)
+	out.OperatesOn, out.Parameters, out.Phases = f.OperatesOn, f.Params, phaseSummaries(f)
 	return out
 }
 
@@ -631,7 +631,7 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := FlowValidation{
-		OK: true, Name: f.Name, Hash: f.Hash, RunStart: f.StartsOn,
+		OK: true, Name: f.Name, Hash: f.Hash, OperatesOn: f.OperatesOn,
 		Stages: len(f.Stages), Agents: len(f.Agents), Doc: doc,
 		Warnings: f.Warnings, Parameters: f.Params, Refs: f.Refs, Phases: phaseSummaries(f),
 	}

@@ -215,8 +215,8 @@ func TestSequencesRoundTripTheDocument(t *testing.T) {
 // A flow whose runs are started on a merge request someone opened acts on
 // it from the start: its main chain's subject is that merge request, so a
 // subject action needs no guard and nothing has to open one.
-func TestRunStartOnAMergeRequest(t *testing.T) {
-	doc := header + `run_start: merge_request
+func TestOperatesOnAMergeRequest(t *testing.T) {
+	doc := header + `operates_on: merge_request
 main:
   - { id: read, type: command, run: x, output: { review: artifacts/review.yaml } }
   - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
@@ -229,7 +229,7 @@ outcomes:
 		t.Fatal(err)
 	}
 	ph := f.Phase(MainPhase)
-	if !f.StartsOnMR() || !ph.IsMain() || !ph.OnMR() || !ph.HasSubject() || ph.Fires() || ph.On.Start != StartManual {
+	if !f.OperatesOnMR() || !ph.IsMain() || !ph.OnMR() || !ph.HasSubject() || ph.Fires() || ph.On.Start != StartManual {
 		t.Errorf("main = %+v", ph)
 	}
 	if b := f.Main(); b == nil || b.ID != MainPhase {

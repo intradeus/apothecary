@@ -236,7 +236,7 @@ func (r *Resolution) phaseAvailable(ph *flow.Phase) error {
 	case ph.Observed():
 		return r.signalAvailable(ph.On.Signal)
 	case ph.OnMR() && r.RepoHost == nil:
-		return fmt.Errorf("its runs are started on a merge request (run_start: %s), which needs a repository integration (GitLab, GitHub) this project has not configured", flow.StartsOnMR)
+		return fmt.Errorf("its runs are started on a merge request (operates_on: %s), which needs a repository integration (GitLab, GitHub) this project has not configured", flow.OperatesOnMR)
 	}
 	return nil
 }

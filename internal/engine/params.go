@@ -92,14 +92,14 @@ func (e *Engine) runFlow(ctx context.Context, v run.View) (*flow.Flow, error) {
 	return fl.Resolve(v.Params)
 }
 
-// startsOn checks a run is started on what its flow says (run_start): a
-// merge request, or a ticket.
+// startsOn checks a run is started on what its flow operates on
+// (operates_on): a merge request, or a ticket.
 func startsOn(fl *flow.Flow, onMR bool) error {
 	switch {
-	case fl.StartsOnMR() && !onMR:
-		return fmt.Errorf("flow %q starts its runs on a merge request (run_start: %s): name the merge request", fl.Name, flow.StartsOnMR)
-	case !fl.StartsOnMR() && onMR:
-		return fmt.Errorf("flow %q starts its runs on a ticket (run_start: %s), not on a merge request", fl.Name, flow.StartsOnTicket)
+	case fl.OperatesOnMR() && !onMR:
+		return fmt.Errorf("flow %q starts its runs on a merge request (operates_on: %s): name the merge request", fl.Name, flow.OperatesOnMR)
+	case !fl.OperatesOnMR() && onMR:
+		return fmt.Errorf("flow %q starts its runs on a ticket (operates_on: %s), not on a merge request", fl.Name, flow.OperatesOnTicket)
 	}
 	return nil
 }

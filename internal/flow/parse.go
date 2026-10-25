@@ -72,10 +72,11 @@ type Doc struct {
 	// names them (FLOWLANG §1 Sequences); the parser expands every sequence
 	// stage in place.
 	Sequences []DocSequence `yaml:"sequences" json:"sequences,omitempty"`
-	// RunStart is what the flow's runs are started on (FLOWLANG §1): a
-	// ticket, the default, or a merge request someone opened. A person or an
-	// automation starts a run — nothing the flow listens for does.
-	RunStart string `yaml:"run_start" json:"run_start,omitempty"`
+	// OperatesOn is what a run of the flow works on (FLOWLANG §1): a ticket,
+	// the default, or a merge request someone opened — chosen by whoever
+	// starts the run, a person or an automation; nothing the flow listens
+	// for starts one.
+	OperatesOn string `yaml:"operates_on" json:"operates_on,omitempty"`
 	// Main is the chain that runs when the run starts. Watchers run theirs
 	// on each new occurrence of a signal while the run is open; outcomes
 	// fire once and end it.
@@ -83,9 +84,10 @@ type Doc struct {
 	Watchers []DocWatcher `yaml:"watchers" json:"watchers,omitempty"`
 	Outcomes []DocWatcher `yaml:"outcomes" json:"outcomes,omitempty"`
 	// Retired keys, read only to point a document at their v5 spelling.
-	LegacyStages yaml.Node `yaml:"stages" json:"-"`
-	LegacyPhases yaml.Node `yaml:"phases" json:"-"`
-	LegacyBlocks yaml.Node `yaml:"blocks" json:"-"`
+	LegacyStages   yaml.Node `yaml:"stages" json:"-"`
+	LegacyPhases   yaml.Node `yaml:"phases" json:"-"`
+	LegacyBlocks   yaml.Node `yaml:"blocks" json:"-"`
+	LegacyRunStart yaml.Node `yaml:"run_start" json:"-"`
 }
 
 // DocSequence is one sequence: a named chain of stages a stage — or a
@@ -992,7 +994,7 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	default:
 		hint := ""
 		if raw.Version == 4 {
-			hint = " — v5 writes the chain a run starts with under `main:`, the phases that react under `watchers:` and those that end the run under `outcomes:`, and says what runs are started on with `run_start:` (FLOWLANG §1)"
+			hint = " — v5 writes the chain a run starts with under `main:`, the phases that react under `watchers:` and those that end the run under `outcomes:`, and says what a run works on with `operates_on:` (FLOWLANG §1)"
 		}
 		return nil, p.errf(p.keyLine("version"), "unsupported flow version %d (this build speaks version %d)%s", raw.Version, CurrentVersion, hint)
 	}
@@ -1005,13 +1007,16 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if raw.LegacyBlocks.Kind != 0 {
 		return nil, p.errf(p.keyLine("blocks"), "blocks: is now sequences: — the same list under its new name; a stage runs one with sequence:")
 	}
-	switch raw.RunStart {
-	case "", StartsOnTicket:
-		f.StartsOn = StartsOnTicket
-	case StartsOnMR:
-		f.StartsOn = StartsOnMR
+	if raw.LegacyRunStart.Kind != 0 {
+		return nil, p.errf(p.keyLine("run_start"), "run_start: is now operates_on: — what a run of the flow works on, %s or %s; whoever starts the run picks which one", OperatesOnTicket, OperatesOnMR)
+	}
+	switch raw.OperatesOn {
+	case "", OperatesOnTicket:
+		f.OperatesOn = OperatesOnTicket
+	case OperatesOnMR:
+		f.OperatesOn = OperatesOnMR
 	default:
-		return nil, p.errf(p.keyLine("run_start"), "run_start %q must be %s (the default: a run is started from a ticket) or %s (a run is started on a merge request someone opened)", raw.RunStart, StartsOnTicket, StartsOnMR)
+		return nil, p.errf(p.keyLine("operates_on"), "operates_on %q must be %s (the default: a run works on a ticket) or %s (a run works on a merge request someone opened)", raw.OperatesOn, OperatesOnTicket, OperatesOnMR)
 	}
 
 	var err error
@@ -2024,7 +2029,7 @@ func (p *parser) phaseSources(raw *Doc, f *Flow) ([]phaseSrc, error) {
 			main.stages[j].line = p.seqLine("main", j)
 		}
 		out = append(out, main)
-	case !f.StartsOnMR():
+	case !f.OperatesOnMR():
 		return nil, p.errf(p.keyLine("main"), "main is required: the chain a run starts with (only a flow whose runs are started on a merge request may leave it out, and only watch it)")
 	case len(raw.Watchers) == 0:
 		return nil, p.errf(p.keyLine("watchers"), "a flow with no main chain does its work in watchers: declare at least one")
@@ -2136,7 +2141,7 @@ func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, err
 			then = TerminalDone
 		}
 		ph := Phase{ID: rp.id, Description: rp.description, Kind: rp.kind, On: on, Then: then,
-			BringsMR: rp.kind == PhaseMain && f.StartsOnMR(), First: len(stages), Last: len(stages) + len(own) - 1, Line: line}
+			BringsMR: rp.kind == PhaseMain && f.OperatesOnMR(), First: len(stages), Last: len(stages) + len(own) - 1, Line: line}
 		phases = append(phases, ph)
 		stages = append(stages, own...)
 		for j := range own {

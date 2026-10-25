@@ -93,9 +93,9 @@ func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	if err := h.e.preflightFlowRefs(h.res, noFire); err != nil {
 		t.Errorf("manual phases without a repository host: %v", err)
 	}
-	onMR := mustFlow(t, "name: rev\nversion: 5\nrun_start: merge_request\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\n"+
+	onMR := mustFlow(t, "name: rev\nversion: 5\noperates_on: merge_request\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\n"+
 		"main:\n  - { id: look, type: command, run: \"true\", on_success: done }\n")
-	if err := h.e.preflightFlowRefs(h.res, onMR); err == nil || !strings.Contains(err.Error(), "the main chain") || !strings.Contains(err.Error(), "run_start: merge_request") {
+	if err := h.e.preflightFlowRefs(h.res, onMR); err == nil || !strings.Contains(err.Error(), "the main chain") || !strings.Contains(err.Error(), "operates_on: merge_request") {
 		t.Errorf("a flow started on merge requests, without a repository host: err = %v", err)
 	}
 }

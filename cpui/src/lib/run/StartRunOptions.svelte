@@ -1,6 +1,6 @@
 <script lang="ts">
 	// What else a run may choose at creation: the merge request it is started
-	// on, for a flow whose runs are (run_start: merge_request), and parameter
+	// on, for a flow whose runs are (operates_on: merge_request), and parameter
 	// overrides for this run only, collapsed under Advanced. The component
 	// resolves the chosen flow's declaration and the layer underneath (the
 	// workshop's binding, or the run a rerun comes from) itself, so the forms
@@ -28,7 +28,7 @@
 		/** Overrides for this run only; empty values never travel. */
 		params: Record<string, string>;
 		/** The merge request to start the run on (0 = none), asked for when
-		 *  the flow's runs are started on one (run_start: merge_request). */
+		 *  the flow's runs are started on one (operates_on: merge_request). */
 		mr?: number;
 		/** Ask which merge request (a person starting a run does; an
 		 *  automation picks them itself). */
@@ -48,7 +48,7 @@
 
 	// A flow whose runs are started on a merge request someone opened: the
 	// form asks which.
-	const onMR = $derived(askMR && flow?.runStart === 'merge_request');
+	const onMR = $derived(askMR && flow?.operatesOn === 'merge_request');
 	let openMRs = $state<OpenMergeRequest[] | null>(null);
 	let mrError = $state('');
 	$effect(() => {

@@ -4,7 +4,7 @@ package httpapi
 // tracker's issues are tickets: each open merge request with the runs done on
 // it — through its ticket, the one a merge_request automation would use too —
 // and a way to start a run of any flow whose runs are started on one
-// (run_start: merge_request). Which flow — a review, a rebase, anything — is
+// (operates_on: merge_request). Which flow — a review, a rebase, anything — is
 // the person's
 // pick; nothing here knows one from another.
 
@@ -45,7 +45,7 @@ type MRRun struct {
 }
 
 // MRRunRequest starts a run on a merge request: of Flow ("" = the project's
-// default flow), which must start its runs on one (run_start:
+// default flow), which must start its runs on one (operates_on:
 // merge_request), with Params over the project's bindings, on the merge
 // request in Repo ("" = the primary).
 type MRRunRequest struct {
