@@ -172,7 +172,7 @@ func (t *DocWait) UnmarshalYAML(n *yaml.Node) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("line %d: on must be a slug (run_start, manual or a trigger signal) or a mapping {signal, start, quiet_for, max}", n.Line)
+	return fmt.Errorf("line %d: on must be a slug (manual or a signal) or a mapping {signal, start, quiet_for, max}", n.Line)
 }
 
 // DocParams is the document's `parameters:` block: an ordered mapping of
@@ -2014,7 +2014,7 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 }
 
 // phaseSources assembles the document's sections into phases: the main
-// chain (MainPhase, opened by run_start), then each watcher, then each
+// chain (MainPhase, run when the run starts), then each watcher, then each
 // outcome. A watcher's or an outcome's `sequence: X` is a chain of one
 // sequence stage running X, named after the watcher. Every stage remembers
 // its line before sequences are expanded, which copies stages out of where
@@ -2023,7 +2023,7 @@ func (p *parser) phaseSources(raw *Doc, f *Flow) ([]phaseSrc, error) {
 	var out []phaseSrc
 	switch {
 	case len(raw.Main) > 0:
-		main := phaseSrc{id: MainPhase, kind: PhaseMain, on: DocWait{Signal: signalspec.RunStart}, line: p.keyLine("main"),
+		main := phaseSrc{id: MainPhase, kind: PhaseMain, line: p.keyLine("main"),
 			stages: slices.Clone(raw.Main)}
 		for j := range main.stages {
 			main.stages[j].line = p.seqLine("main", j)
@@ -2092,8 +2092,9 @@ func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, err
 		var on Wait
 		switch rp.kind {
 		case PhaseMain:
-			// The run's start is a person's act, or an automation's.
-			on = Wait{Signal: signalspec.RunStart, Start: StartManual, Max: UnlimitedMax}
+			// Nothing opens it: it runs when someone — a person or an
+			// automation — starts the run.
+			on = Wait{Start: StartManual, Max: UnlimitedMax}
 		default:
 			switch {
 			case rp.id == "":
@@ -2172,8 +2173,6 @@ func (p *parser) buildWait(raw *DocWait, phaseID string, kind PhaseKind) (Wait, 
 		return w, fmt.Errorf("unknown signal %q (%s)", w.Signal, opens)
 	}
 	switch {
-	case w.Signal == signalspec.RunStart:
-		return w, fmt.Errorf("%s is how a run begins — a person or an automation starts it, and the main chain runs; a %s watches something about the merge request (%s)", signalspec.RunStart, kind, opens)
 	case kind == PhaseOutcome && !sig.Observed():
 		return w, fmt.Errorf("an outcome fires on something the engine observes (%s): a person ends a run with Abort", observedSlugs())
 	}

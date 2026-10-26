@@ -111,7 +111,7 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 			// one only when the phase was started on one by hand.
 			if act := actionspec.Get(st.Action); act != nil && act.Subject && !inSubjectPhase(f, st) {
 				warnf("%q acts on the merge request a phase is opened for, and phase %q is not (it opens on %s) — it has one only when started on one by hand; guard the stage with `when: subject` or route on_fail",
-					st.Action, st.Phase, f.Phase(st.Phase).On.Signal)
+					st.Action, st.Phase, f.Phase(st.Phase).OpensOn())
 			}
 		}
 		if st.EachRepo && inSubjectPhase(f, st) {
@@ -216,7 +216,7 @@ func phaseShapeWarnings(f *Flow) []string {
 	for i := range f.Phases {
 		if ph := &f.Phases[i]; ph.HasSubject() && !opensMR {
 			warns = append(warns, fmt.Sprintf("%s opens on %s, which needs a merge request no stage opens (add a %s action)",
-				ph.Label(), ph.On.Signal, actionspec.CreateMR))
+				ph.Label(), ph.OpensOn(), actionspec.CreateMR))
 		}
 	}
 	return warns

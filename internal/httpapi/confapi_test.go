@@ -721,7 +721,7 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	if len(vr.Parameters) != 8 || vr.Parameters[0].Name != "harness" || !vr.Parameters[0].Known || vr.Parameters[2].Name != "mode" || vr.Parameters[3].Type != "int" {
 		t.Errorf("parameters = %+v", vr.Parameters)
 	}
-	if len(vr.Refs) != 2 || len(vr.Phases) != 3 || vr.Phases[0].Kind != "main" || vr.Phases[0].Signal != "run_start" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
+	if len(vr.Refs) != 2 || len(vr.Phases) != 3 || vr.Phases[0].Kind != "main" || vr.Phases[0].Signal != "" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
 		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != -1 ||
 		vr.Phases[2].Kind != "outcome" || vr.Phases[2].Then != "done" || vr.Phases[2].Stages != 0 || vr.Phases[2].Start != "auto" || vr.Phases[2].Subject {
 		t.Errorf("refs = %+v phases = %+v", vr.Refs, vr.Phases)

@@ -677,7 +677,7 @@ func TestStartPhaseByHand(t *testing.T) {
 	for _, p := range infos {
 		byID[p.ID] = p
 	}
-	if d := byID[flow.MainPhase]; d.Kind != string(flow.PhaseMain) || d.Signal != "run_start" || d.Total != 1 || d.Live != nil {
+	if d := byID[flow.MainPhase]; d.Kind != string(flow.PhaseMain) || d.Signal != "" || d.Total != 1 || d.Live != nil {
 		t.Errorf("main = %+v", d)
 	}
 	if c := byID["conflicts"]; c.Kind != string(flow.PhaseWatcher) || c.Total != 1 || c.Runs["repo"] != 1 || c.Start != "confirm" || !c.Confirm {

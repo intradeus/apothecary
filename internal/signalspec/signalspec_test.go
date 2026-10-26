@@ -63,20 +63,20 @@ func TestMRMerged(t *testing.T) {
 	}
 }
 
-// Beginnings: run_start is how a run begins, manual a person's act; neither
-// needs anything of the project nor is debounced. Every other signal is
-// observed on the run's merge requests — what it does is the flow's call.
+// manual is a person's act: it needs nothing of the project and is not
+// debounced. Every other signal is observed on the run's merge requests —
+// what it does is the flow's call. A run's start is no signal: someone
+// starts the run, and its main chain runs.
 func TestKinds(t *testing.T) {
-	rs := Get(RunStart)
-	if rs == nil || rs.Kind != KindStart || rs.Observed() || rs.Requires != "" || rs.Needs != "" || rs.Debounced {
-		t.Errorf("run_start = %+v", rs)
+	if Get("run_start") != nil {
+		t.Error("run_start is no signal: a run begins when someone starts it")
 	}
 	m := Get(Manual)
 	if m == nil || m.Kind != KindHand || m.Observed() || m.Requires != "" || m.Needs != "" || m.Debounced {
 		t.Errorf("manual = %+v", m)
 	}
 	for _, s := range Registry() {
-		if s.Slug == RunStart || s.Slug == Manual {
+		if s.Slug == Manual {
 			continue
 		}
 		if !s.Observed() || s.Requires != RequiresRepository || s.Needs != NeedsMR {
@@ -84,6 +84,6 @@ func TestKinds(t *testing.T) {
 		}
 	}
 	if Get("mr_opened") != nil {
-		t.Error("mr_opened is a run_start on a merge request, not a signal")
+		t.Error("mr_opened is a run started on a merge request, not a signal")
 	}
 }

@@ -10,11 +10,11 @@
 //	type: wait, for: mr_mergeable          — a wait stage parks its chain until it holds
 //	type: human_gate, auto_approve: …      — the signal answers the gate for you
 //
-// Two entries are not observed. run_start is the one way a run begins: a
-// person or an automation starts it — never an event the flow listens for.
-// manual is a watcher a person opens from the run page. Every other signal
-// is observed on the run's merge requests, and any of them may be watched,
-// be an outcome, be waited on or answer a gate.
+// One entry is not observed: manual, a watcher a person opens from the run
+// page. Every other signal is observed on the run's merge requests, and any
+// of them may be watched, be an outcome, be waited on or answer a gate. A
+// run itself begins by someone's decision — a person or an automation starts
+// it, and its main chain runs — never on a signal.
 //
 // The gate's auto-answer exists beside `wait` because a final gate is a race
 // (a human clicks approve, OR they merge and apothecary notices), and the
@@ -38,9 +38,9 @@ type Signal struct {
 	Slug        string `json:"slug"`
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
-	// Kind is what the signal is: KindStart (run_start, how a run begins),
-	// KindHand (manual, a person's act) or KindObserved (a fact about the
-	// run's merge requests the engine watches for).
+	// Kind is what the signal is: KindHand (manual, a person's act) or
+	// KindObserved (a fact about the run's merge requests the engine watches
+	// for).
 	Kind string `json:"kind"`
 	// Requires names an integration port the project must have configured for
 	// a flow using this signal to start; empty = none needed.
@@ -60,21 +60,16 @@ type Signal struct {
 
 // Signal kinds.
 const (
-	KindStart    = "start"
 	KindHand     = "hand"
 	KindObserved = "observed"
 )
 
 // Observed reports whether the engine watches for the signal on the run's
-// merge requests — anything but run_start and manual.
+// merge requests — anything but manual.
 func (s *Signal) Observed() bool { return s != nil && s.Kind == KindObserved }
 
 // Signal slugs, the port kinds they require, and the run facts they need.
 const (
-	// RunStart is how a run begins: a person starts it (a ticket's page, the
-	// Repositories tab) or an automation does. The flow's main chain runs
-	// on it; the flow's `operates_on:` says what the run works on.
-	RunStart = "run_start"
 	// Manual is the start a person gives from the run page: a watcher on it
 	// never fires on its own.
 	Manual = "manual"
@@ -97,11 +92,6 @@ const (
 )
 
 var registry = []Signal{{
-	Slug:        RunStart,
-	Title:       "Run started",
-	Description: "A person starts the run — from a ticket, or on a merge request from the Repositories tab — or an automation does. The flow's main chain runs on it; nothing the flow listens for starts a run.",
-	Kind:        KindStart,
-}, {
 	Slug:        Manual,
 	Title:       "Started by hand",
 	Description: "Never fires on its own: a person starts the watcher from the run page while the run is idle.",

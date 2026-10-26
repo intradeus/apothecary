@@ -163,9 +163,10 @@ export interface DocStage {
 	phase?: string;
 }
 
-/** A phase's `on:` — the wait point that opens it (FLOWLANG §1): run_start
- *  for the main chain (a person or an automation starts the run), manual for
- *  a watcher a person starts from the run page, or an observed signal with
+/** A phase's `on:` — the wait point that opens it (FLOWLANG §1): nothing
+ *  (signal '') for the main chain, which runs when a person or an automation
+ *  starts the run; manual for a watcher a person starts from the run page;
+ *  or an observed signal with
  *  its start policy (auto | confirm | manual, or a $param). `max` may read
  *  an int parameter ("$name"). */
 export interface DocWait {
@@ -196,10 +197,9 @@ export interface DocPhase {
 
 /** The main chain's id — and the sequence other chains run it by. */
 export const MAIN = 'main';
-// RUN_START is how the main chain opens: a person or an automation starts a
-// run. MANUAL opens a watcher from the run page only. Every other signal is
-// observed on the run's merge requests, and takes a start policy.
-export const RUN_START = 'run_start';
+// MANUAL opens a watcher from the run page only. Every other signal is
+// observed on the run's merge requests, and takes a start policy. The main
+// chain has none: it runs when the run is started.
 export const MANUAL = 'manual';
 export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
 export type StartPolicy = (typeof START_POLICIES)[number];
@@ -340,7 +340,7 @@ export function normalizeDoc(raw: unknown): FlowDoc {
 	const stages: DocStage[] = [];
 	const phases: DocPhase[] = [];
 	if (main?.length) {
-		phases.push({ id: MAIN, kind: 'main', on: { signal: RUN_START } });
+		phases.push({ id: MAIN, kind: 'main', on: { signal: '' } });
 		for (const st of main) stages.push({ ...tagStage(st), phase: MAIN });
 	}
 	const section = (list: WireWatcher[] | undefined, kind: PhaseKind) => {
@@ -492,9 +492,9 @@ export function triggerLabel(w: DocWait): string {
 }
 
 /** Whether a phase's signal fires on its own — and so takes a start policy.
- *  run_start and manual are a person's act. */
+ *  The main chain (no signal) and manual are a person's act. */
 export function fires(w: DocWait): boolean {
-	return w.signal !== RUN_START && w.signal !== MANUAL;
+	return !!w.signal && w.signal !== MANUAL;
 }
 
 /** A parameter's default as text, or undefined when the document omits it
@@ -1353,7 +1353,7 @@ export function renameAgentPort(
  *  one command stage. */
 export function addMainChain(doc: FlowDoc): DocPhase {
 	doc.phases ??= [];
-	const ph: DocPhase = { id: MAIN, kind: 'main', on: { signal: RUN_START } };
+	const ph: DocPhase = { id: MAIN, kind: 'main', on: { signal: '' } };
 	doc.phases.unshift(ph);
 	appendStage(doc, 'command', MAIN);
 	return ph;

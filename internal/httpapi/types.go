@@ -393,13 +393,15 @@ type PhaseSummary struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
 	Kind        string `json:"kind"`
-	Signal      string `json:"signal"`
-	Start       string `json:"start"`
-	QuietFor    string `json:"quiet_for,omitempty"`
-	Max         int    `json:"max"`
-	Then        string `json:"then,omitempty"`
-	Subject     bool   `json:"subject,omitempty"`
-	Stages      int    `json:"stages"`
+	// Signal opens the phase: manual, or one the engine observes; empty for
+	// the main chain, which runs when the run is started.
+	Signal   string `json:"signal"`
+	Start    string `json:"start"`
+	QuietFor string `json:"quiet_for,omitempty"`
+	Max      int    `json:"max"`
+	Then     string `json:"then,omitempty"`
+	Subject  bool   `json:"subject,omitempty"`
+	Stages   int    `json:"stages"`
 }
 
 // phaseSummaries renders a parsed flow's phases.

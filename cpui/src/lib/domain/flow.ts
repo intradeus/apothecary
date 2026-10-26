@@ -156,10 +156,10 @@ export interface SignalSpec {
 	/** A run fact the signal depends on ('merge_request'), so a flow cannot
 	 *  wait on something that can never happen. */
 	needs?: string;
-	/** start: run_start, how a run begins; hand: manual, a person's start of
-	 *  a watcher; observed: a fact about the run's merge requests — which
-	 *  any watcher, outcome, wait or gate may name. */
-	kind: 'start' | 'hand' | 'observed';
+	/** hand: manual, a person's start of a watcher; observed: a fact about
+	 *  the run's merge requests — which any watcher, outcome, wait or gate
+	 *  may name. */
+	kind: 'hand' | 'observed';
 	/** It fires on activity, so a watcher on it may take a quiet_for. */
 	debounced: boolean;
 	/** As an outcome or a wait on the whole run, it holds once every merge

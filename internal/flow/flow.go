@@ -471,11 +471,11 @@ const (
 
 // Wait is a wait point: where a chain stops for something outside the run
 // (FLOWLANG §1). A phase's `on:` is its opening wait point; a wait stage is
-// one mid-chain. Signal is a registry slug — run_start (a run is created for
-// the phase), manual (a person starts it), a trigger (the repository host) —
-// or, on a wait stage, a waitable one. Start is the policy applied when the
-// signal holds (a person's act for run_start and manual; always auto on a wait
-// stage). QuietFor debounces a signal that fires on activity. Max bounds a
+// one mid-chain. Signal is a registry slug — manual (a person starts it) or
+// one the engine observes (the repository host); empty for the main chain,
+// which nothing opens: it runs when the run is started. Start is the policy
+// applied when the signal holds (a person's act for the main chain and
+// manual; always auto on a wait stage). QuietFor debounces a signal that fires on activity. Max bounds a
 // phase's runs per subject (UnlimitedMax, the default, = no bound; 1 on a wait
 // stage, which fires once per pass). Timeout bounds a wait stage (zero =
 // none).
@@ -528,6 +528,15 @@ func (p *Phase) Observed() bool { return p.Fires() || p.IsOutcome() }
 // Fires reports whether the phase is a watcher on a signal the engine
 // observes (any but manual).
 func (p *Phase) Fires() bool { return p.Kind == PhaseWatcher && p.On.Signal != signalspec.Manual }
+
+// OpensOn says what opens the phase, for a message: its signal, or for the
+// main chain the run's start.
+func (p *Phase) OpensOn() string {
+	if p.Kind == PhaseMain {
+		return "the run's start"
+	}
+	return p.On.Signal
+}
 
 // Label names the phase for a person: "the main chain", `watcher "x"`,
 // `outcome "x"`.

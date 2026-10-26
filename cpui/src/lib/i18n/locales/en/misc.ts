@@ -414,7 +414,7 @@ export default {
 	// FlowGraph
 	// One beginning per chain: its marker names it and what opens it.
 	'flow.graph.beginLabel': '{phase}: on {trigger}',
-	'flow.graph.beginLabelPlain': 'on {trigger}',
+	'flow.graph.beginLabelPlain': 'start',
 	'flow.graph.mainLabel': 'main · operates on {on}',
 	// A flow with no main chain: its runs wait from the start.
 	'flow.graph.watchLabel': 'run · operates on {on}',

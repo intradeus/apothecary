@@ -749,7 +749,9 @@ func (x *exec) subjectSection() string {
 type PhaseInfo struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
-	Signal      string `json:"signal"`
+	// Signal opens the phase: manual, or one the engine observes; empty for
+	// the main chain, which runs when the run is started.
+	Signal string `json:"signal"`
 	// Start is the policy applied when the signal holds (auto, confirm,
 	// manual); Confirm mirrors start == confirm for the run page's labels.
 	Start   string `json:"start"`

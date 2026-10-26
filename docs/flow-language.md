@@ -48,7 +48,7 @@ is one of a few things:
 | piece | definition |
 |---|---|
 | **work stage** | `agent`, `command`, `action`. Runs in the workspace — one checkout, one branch — and at most one runs at any instant: the workspace is a mutex, which is what keeps the git history linear. |
-| **wait point** | Where a chain stops for something outside the run. It has a **source** (a signal from the registry, `run_start`, a person, a timer), a **policy** (`auto`: proceed when the source holds; `confirm`: raise a decision first; `manual`: only a person proceeds, the event is advice), an optional **subject** the event carries (which merge request), an occurrence **key** (the same fact never fires twice), a run bound (`max`), optionally a debounce (`quiet_for`) and a `timeout`, and **outcomes**: proceed, declined, can no longer happen, timed out, rejected with feedback. A wait point releases the workspace — unless it is one that owns it: an agent's `ask_human` turn (§9), the `debug` leaf (§3). |
+| **wait point** | Where a chain stops for something outside the run. It has a **source** (a signal from the registry, a person, a timer), a **policy** (`auto`: proceed when the source holds; `confirm`: raise a decision first; `manual`: only a person proceeds, the event is advice), an optional **subject** the event carries (which merge request), an occurrence **key** (the same fact never fires twice), a run bound (`max`), optionally a debounce (`quiet_for`) and a `timeout`, and **outcomes**: proceed, declined, can no longer happen, timed out, rejected with feedback. A wait point releases the workspace — unless it is one that owns it: an agent's `ask_human` turn (§9), the `debug` leaf (§3). |
 | **its spellings** | A watcher's or an outcome's `on:` is its opening wait point. `type: wait` is one mid-chain, on a signal. `type: human_gate` is one mid-chain whose first source is a person, with `auto_approve` / `auto_reject` as extra signal sources. The confirmation ping in the inbox and the Run button on the run page are the `confirm` and `manual` policies of the same thing. |
 | **chain** | A sequential list of stages: the **main** chain a run starts with, a **watcher** that runs on each new occurrence of its signal while the run is open, an **outcome** that fires once and ends the run (§1). Each is a *phase* of the run, with at most one **live run** at a time — active, or parked at a wait point inside it; each owns its cursor, its edge counters, its feed and its tip. |
 | **scheduler** | The engine's idle loop. Each tick: observe the sources (the repositories, timers, answered pings), then walk every wait point in document order — parked ones, outcomes, watchers — and resume or open the first whose event is ready under its policy. That chain run takes the workspace and runs work stages until its next wait point or its end. One start per tick. |
@@ -801,12 +801,15 @@ a restart: the engine replays to the park and resumes polling, raising
 nothing twice.
 
 Registry (`GET /api/signals`). A signal says what it **is**, never what it
-does: the section that names it decides that (§1). Two are not observed:
+does: the section that names it decides that (§1). One is not observed:
 
 | signal | holds when |
 |---|---|
-| `run_start` | a person or an automation starts the run: how the main chain opens. Nothing the flow listens for starts a run |
 | `manual` | never on its own: a person starts the watcher from the run page |
+
+A run's start is no signal: a person or an automation starts the run, and its
+main chain — which no `on:` opens — runs. Nothing the flow listens for starts
+a run.
 
 Every other signal is **observed** on the run's merge requests — it requires a
 repository integration and needs a merge request — and any of them may run a
@@ -1215,9 +1218,9 @@ flow with neither `main` nor a watcher; a watcher or an outcome whose `id` is
 missing, not a slug, `main`, or another's (watchers and outcomes are one
 namespace); a watcher with neither `run` nor `stages`, or both; `then` on a
 watcher; an outcome with neither a chain nor `then`, or a `then` other than
-`done` / `abort`; `on:` `run_start` anywhere, `manual` on an outcome, or a
-signal the registry does not know; a `wait` on, or a gate auto-answered by, a
-signal the engine does not observe (`run_start`, `manual`); `start` on
+`done` / `abort`; `manual` on an outcome, or a signal the registry does not
+know (`run_start` among them: a run's start is no signal); a `wait` on, or a
+gate auto-answered by, a signal the engine does not observe (`manual`); `start` on
 `manual`; `quiet_for` on a signal that does not fire on activity, or under 1m;
 a watcher `max` of 0; `max` on an outcome; a route to `end` inside an outcome;
 no route to `done` anywhere; a route leaving its chain; a success chain that

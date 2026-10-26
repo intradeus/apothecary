@@ -921,7 +921,7 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"retired run_start", header + "run_start: merge_request\nmain:\n  - { id: s, type: command, run: x }\n", "run_start: is now operates_on:"},
 		{"missing on", w("  - { id: d, " + cmd + " }\n"), "signal is required"},
 		{"start on manual", w("  - { id: m, on: { signal: manual, start: confirm }, " + cmd + " }\n"), "start does not apply"},
-		{"run_start on a watcher", w("  - { id: m, on: run_start, " + cmd + " }\n"), "run_start is how a run begins"},
+		{"run_start on a watcher", w("  - { id: m, on: run_start, " + cmd + " }\n"), `unknown signal "run_start"`},
 		{"manual outcome", o("  - { id: m, on: manual, then: done }\n"), "an outcome fires on something the engine observes"},
 		{"bad start", w("  - { id: m, on: { signal: mr_conflicts, start: later }, " + cmd + " }\n"), `start "later" must be`},
 		{"then on a watcher", w("  - { id: m, on: mr_conflicts, then: done }\n"), "then is an outcome's"},
@@ -954,9 +954,9 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"two create_mr in one chain", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n", "per phase"},
 		{"rebase without a leased push", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n"), "push_branch"},
 		{"bad strategy", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: squash } }] }\n"), "not one of merge | rebase"},
-		{"run_start on a gate", header + "main:\n  - { id: g, type: human_gate, auto_approve: run_start }\n", "is not something the engine observes"},
+		{"run_start on a gate", header + "main:\n  - { id: g, type: human_gate, auto_approve: run_start }\n", `unknown auto_approve signal "run_start"`},
 		{"manual on a wait", header + "main:\n  - { id: w, type: wait, for: manual }\n", "is not something the engine observes"},
-		{"run_start on a wait", header + "main:\n  - { id: w, type: wait, for: run_start }\n", "is not something the engine observes"},
+		{"run_start on a wait", header + "main:\n  - { id: w, type: wait, for: run_start }\n", "unknown signal"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1000,7 +1000,7 @@ func TestMainChain(t *testing.T) {
 	if len(f.Phases) != 1 || f.Phases[0].ID != MainPhase || !f.Phases[0].IsMain() || f.Stages[0].Phase != MainPhase || f.OperatesOnMR() {
 		t.Fatalf("phases = %+v, stage phase %q", f.Phases, f.Stages[0].Phase)
 	}
-	if m := f.Main(); m == nil || f.Stages[0].Line != 5 || m.On.Max != UnlimitedMax || m.On.Signal != "run_start" || f.Stages[0].OnSuccess != TerminalDone {
+	if m := f.Main(); m == nil || f.Stages[0].Line != 5 || m.On.Max != UnlimitedMax || m.On.Signal != "" || f.Stages[0].OnSuccess != TerminalDone {
 		t.Errorf("main %+v, line %d, on_success %q", m, f.Stages[0].Line, f.Stages[0].OnSuccess)
 	}
 }

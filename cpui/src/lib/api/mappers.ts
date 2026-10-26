@@ -690,7 +690,7 @@ export function toSignalSpec(w: Wire.Signal) {
 		description: w.description,
 		requires: w.requires,
 		needs: w.needs,
-		kind: oneOf(['start', 'hand', 'observed'] as const, w.kind, 'observed'),
+		kind: oneOf(['hand', 'observed'] as const, w.kind, 'observed'),
 		debounced: w.debounced ?? false,
 		all: w.all ?? false
 	};

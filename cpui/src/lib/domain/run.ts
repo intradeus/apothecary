@@ -98,8 +98,9 @@ export interface RunPhase {
 	id: string;
 	description?: string;
 	kind: PhaseKind;
-	/** What opens it: run_start (the main chain), manual (the run page), or
-	 *  a signal observed on the run's merge requests. */
+	/** What opens it: manual (the run page), or a signal observed on the
+	 *  run's merge requests; empty for the main chain, which runs when the
+	 *  run is started. */
 	signal: string;
 	/** The policy when the signal holds: auto, confirm (an inbox decision
 	 *  first) or manual (surfaced as pending; you start it). */

@@ -36,7 +36,6 @@
 		MAIN,
 		MANUAL,
 		PHASE_KINDS,
-		RUN_START,
 		EDGE_KINDS,
 		HUB,
 		LABEL_PAD,
@@ -339,7 +338,7 @@
 							? t('flow.graph.mainLabel', { on: runsOn })
 							: watchesOnly
 								? t('flow.graph.watchLabel', { on: runsOn })
-								: t('flow.graph.beginLabelPlain', { trigger: RUN_START }),
+								: t('flow.graph.beginLabelPlain'),
 					title: sequence
 						? (sequence.description ?? t('flow.graph.sequenceTitle', { sequence: sequence.id }))
 						: watchesOnly
