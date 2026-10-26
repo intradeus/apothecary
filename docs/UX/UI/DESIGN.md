@@ -870,6 +870,7 @@ The same anatomy, scoped to one guild:
      - Sequence selected: id, description, its stages (reorder ↑ ↓), add a stage of each kind, the stages that run it, delete (once nothing does).
      - Delete what is selected: inspector button **or** ⌫ / Del key. A rename the document refuses puts the field back.
      - **Back**: a panel opened from another — *Edit agent*, *Edit sequence*, a sequence's stage, *Run by*, the flow panel's chips, a stage just added — offers "← stage build" (or agent, sequence, watcher, *The formula*) at its top, as many steps back as it was opened through; renames carry along, deleted panels are skipped. Selecting on the canvas starts afresh.
+   - **YAML tab:** the document in a code editor (CodeMirror), in the theme's hues — keys, comments, a `$parameter` (brand), a `$SENTINEL` (vio). Checked as you type against the flow's JSON Schema (an unknown key, a stage type, a signal, a start policy, an action's input) and by the parser (what the schema cannot say), each problem once, underlined on its line with a dot in the gutter; keys and values complete from the schema (Ctrl+Space), hovering a key shows what it is. Loaded with the tab, never with the graph.
    - **Versions:** a drawer from the header (list, current marked, "Load into editor").
    - Leaving with unsaved changes triggers a confirm modal.
 

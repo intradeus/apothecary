@@ -82,6 +82,10 @@
 	let actions = $state<ActionSpec[]>([]);
 	// The signal registry: what a wait stage blocks on, or a gate auto-answers on.
 	let signals = $state<SignalSpec[]>([]);
+	// The flow document's JSON Schema: what the YAML tab checks as you type.
+	let flowSchema = $state<Record<string, unknown> | undefined>();
+	// The parser's verdict for the YAML tab's lint: its errors only.
+	const checkYaml = async (text: string) => (await api.flows.validate(text)).errors ?? [];
 
 	let validateBtn = $state<HTMLButtonElement | null>(null);
 	let validateOpen = $state(false);
@@ -146,6 +150,12 @@
 		} catch {
 			/* binding hints stay off */
 		}
+		api.flows.schema().then(
+			(s) => (flowSchema = s),
+			() => {
+				/* the YAML tab still has the parser's checks */
+			}
+		);
 	};
 	onMount(load);
 
@@ -957,11 +967,15 @@
 					{/if}
 				</div>
 			{:else}
-				<textarea
-					class="yaml-ed bare"
-					bind:value={yaml}
-					spellcheck="false"
-					aria-label={t('page.flow.yamlLabel')}></textarea>
+				<!-- Loaded with the tab: the graph never pays for the editor. -->
+				{#await import('$lib/flow/YamlEditor.svelte') then { default: YamlEditor }}
+					<YamlEditor
+						bind:value={yaml}
+						schema={flowSchema}
+						check={checkYaml}
+						label={t('page.flow.yamlLabel')}
+					/>
+				{/await}
 			{/if}
 		</div>
 
@@ -1177,18 +1191,6 @@
 		pointer-events: none;
 	}
 	/* .bare strips the field chrome (the canvas draws it). */
-	.yaml-ed {
-		width: 100%;
-		height: 100%;
-		min-height: 0;
-		resize: none;
-		border-radius: 0;
-		font-family: var(--mono);
-		font-size: var(--fs-ui);
-		line-height: 1.65;
-		padding: 14px 18px;
-		tab-size: 2;
-	}
 	/* Wider than a form's side column: the inspector edits whole agents —
 	 * prompts included — and sequences. */
 	.side {

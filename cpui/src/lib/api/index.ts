@@ -631,6 +631,10 @@ export const flows = {
 		),
 
 	/** Project-independent: the parser checks the document itself. */
+	/** The JSON Schema of a flow document as written, for the YAML editor. */
+	schema: async (): Promise<Record<string, unknown>> =>
+		(await unwrap(gen.getFlowSchema())) as Record<string, unknown>,
+
 	validate: async (yaml: string): Promise<FlowValidation> =>
 		map.toFlowValidation(await unwrap(gen.validateFlow({ body: { yaml } }))),
 

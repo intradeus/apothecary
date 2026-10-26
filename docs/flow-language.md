@@ -153,6 +153,17 @@ in success order, an explicit `on_success` on every chain's stage; no comments
 already-canonical flow produces no change. Everything the document can say,
 the editor can write: a flow is made whole in the graph, YAML never required.
 
+**The schema.** `GET /api/flows/schema` serves the document's JSON Schema —
+the YAML as written, shorthand included (`on: mr_conflicts`, `on_fail:
+debug`, a parameter's bare default) — with its lists taken from the
+registries: stage types, signals, actions and each action's inputs, start
+policies. The editor's YAML tab checks, completes and documents from it as
+you type; any editor can (`# yaml-language-server: $schema=<url>` for VS
+Code's YAML extension). It cannot say everything — that a parameter's enum
+fits a field, that a route stays in its chain — so the parser stays the
+authority, and the YAML tab shows its errors too, on their lines. A test
+keeps the schema and the grammar's keys the same.
+
 **Where flows live.** A flow belongs to one project — its stages name that
 project's commands and its agents know that repository — or it is a
 compiled-in **template** that any project runs as it is until it saves its own

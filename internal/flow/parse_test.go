@@ -423,7 +423,7 @@ func TestUnknownFieldRejectedWithLine(t *testing.T) {
 bogus_field: 1
 `
 	fe := parseErr(t, doc)
-	if !strings.Contains(fe.Error(), "bogus_field") || !strings.Contains(fe.Error(), "line 6") {
+	if !strings.Contains(fe.Error(), "bogus_field") || fe.Line != 6 {
 		t.Errorf("unknown-field error not line-precise: %s", fe.Error())
 	}
 }
@@ -626,7 +626,7 @@ func TestWaitStage(t *testing.T) {
 		// A wait has no start policy: a person in the loop after a signal
 		// is a gate with auto_approve.
 		{"start on a wait", header + "main:\n  - { id: w, type: wait, for: mr_merged, start: confirm }\n",
-			"field start not found"},
+			`unknown key "start"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -935,8 +935,8 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"quiet on conflicts", w("  - { id: m, on: { signal: mr_conflicts, quiet_for: 1h }, " + cmd + " }\n"), "quiet_for applies only"},
 		{"quiet too short", w("  - { id: m, on: { signal: mr_review_settled, quiet_for: 10s }, " + cmd + " }\n"), "at least 1m"},
 		{"max zero", w("  - { id: m, on: { signal: mr_conflicts, max: 0 }, " + cmd + " }\n"), "max must be >= 1"},
-		{"confirm is not grammar", w("  - { id: m, on: { signal: mr_conflicts, confirm: true }, " + cmd + " }\n"), "field confirm not found"},
-		{"unknown trigger key", w("  - { id: m, on: { signal: mr_conflicts, when: now }, " + cmd + " }\n"), "field when not found"},
+		{"confirm is not grammar", w("  - { id: m, on: { signal: mr_conflicts, confirm: true }, " + cmd + " }\n"), `unknown key "confirm"`},
+		{"unknown trigger key", w("  - { id: m, on: { signal: mr_conflicts, when: now }, " + cmd + " }\n"), `unknown key "when"`},
 		{"empty watcher", w("  - { id: m, on: mr_conflicts, stages: [] }\n"), "a watcher needs a chain"},
 		{"empty outcome", o("  - { id: m, on: mr_closed }\n"), "an outcome needs a chain"},
 		{"sequence and stages", w("  - { id: m, on: mr_conflicts, sequence: main, " + cmd + " }\n"), "sequence or stages, not both"},
@@ -1449,7 +1449,7 @@ outcomes:
 		{"float as int", "{ harness: fake, model: a/b, max_turns: 1.5 }", "max_turns takes a int default"},
 		{"null default", "{ harness: fake, model: a/b, x: }", "needs a default value"},
 		{"list default", "{ harness: fake, model: a/b, x: [1] }", "must be a default value or a mapping"},
-		{"unknown long-form key", "{ harness: fake, model: a/b, x: { default: 1, type: int } }", "field type not found"},
+		{"unknown long-form key", "{ harness: fake, model: a/b, x: { default: 1, type: int } }", `unknown key "type"`},
 		{"bad timeout", "{ harness: fake, model: a/b, timeout: soon }", "timeout: invalid duration"},
 		{"max_cost zero", "{ harness: fake, model: a/b, max_cost_usd: 0 }", "max_cost_usd must be > 0"},
 		{"declared twice", "{ harness: fake, model: a/b, x: 1, x: 2 }", "declared twice"},
@@ -1462,7 +1462,7 @@ outcomes:
 		})
 	}
 	// defaults: and budget: are not grammar.
-	if _, err := Parse("t.yaml", []byte("name: t\nversion: 5\ndefaults: { harness: fake, model: a/b }\n"+stages)); err == nil || !strings.Contains(err.Error(), "field defaults not found") {
+	if _, err := Parse("t.yaml", []byte("name: t\nversion: 5\ndefaults: { harness: fake, model: a/b }\n"+stages)); err == nil || !strings.Contains(err.Error(), `unknown key "defaults"`) {
 		t.Errorf("defaults: err = %v", err)
 	}
 }

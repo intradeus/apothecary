@@ -1492,6 +1492,35 @@ export type ListAllFlowsResponses = {
 
 export type ListAllFlowsResponse = ListAllFlowsResponses[keyof ListAllFlowsResponses];
 
+export type GetFlowSchemaData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/flows/schema';
+};
+
+export type GetFlowSchemaErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetFlowSchemaResponses = {
+	/**
+	 * OK
+	 */
+	200: {
+		[key: string]: unknown;
+	} | null;
+};
+
+export type GetFlowSchemaResponse = GetFlowSchemaResponses[keyof GetFlowSchemaResponses];
+
 export type ValidateFlowData = {
 	body: ValidateFlowRequest;
 	path?: never;

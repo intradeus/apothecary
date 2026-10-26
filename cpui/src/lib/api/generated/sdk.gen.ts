@@ -104,6 +104,9 @@ import type {
 	GetFlowData,
 	GetFlowErrors,
 	GetFlowResponses,
+	GetFlowSchemaData,
+	GetFlowSchemaErrors,
+	GetFlowSchemaResponses,
 	GetFlowVersionData,
 	GetFlowVersionErrors,
 	GetFlowVersionResponses,
@@ -512,6 +515,19 @@ export const listAllFlows = <ThrowOnError extends boolean = false>(
 ): RequestResult<ListAllFlowsResponses, ListAllFlowsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListAllFlowsResponses, ListAllFlowsErrors, ThrowOnError>({
 		url: '/api/flows',
+		...options
+	});
+
+/**
+ * The JSON Schema of a flow document as it is written
+ *
+ * The YAML with its shorthand, for an editor to validate, complete and document as a person types; its lists (stage types, signals, actions and their inputs) come from the registries. The parser stays the authority: validate a document for the rules a schema cannot say.
+ */
+export const getFlowSchema = <ThrowOnError extends boolean = false>(
+	options?: Options<GetFlowSchemaData, ThrowOnError>
+): RequestResult<GetFlowSchemaResponses, GetFlowSchemaErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetFlowSchemaResponses, GetFlowSchemaErrors, ThrowOnError>({
+		url: '/api/flows/schema',
 		...options
 	});
 

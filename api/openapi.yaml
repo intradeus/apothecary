@@ -2811,6 +2811,30 @@ paths:
       summary: Every project's flows, for the cross-project overview
       tags:
         - flows
+  /api/flows/schema:
+    get:
+      description: 'The YAML with its shorthand, for an editor to validate, complete and document as a person types; its lists (stage types, signals, actions and their inputs) come from the registries. The parser stays the authority: validate a document for the rules a schema cannot say.'
+      operationId: getFlowSchema
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                nullable: true
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The JSON Schema of a flow document as it is written
+      tags:
+        - flows
   /api/flows/validate:
     post:
       description: 'Project-independent: the parser checks the document itself, and a flow carries its own agents.'

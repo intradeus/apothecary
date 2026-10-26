@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -884,7 +885,56 @@ func (p *parser) wrapYAML(err error) error {
 	msg = strings.TrimPrefix(msg, "yaml: unmarshal errors:\n  ")
 	msg = strings.TrimPrefix(msg, "yaml: ")
 	msg = strings.ReplaceAll(msg, "\n  ", "; ")
+	// The strict decoder names an unknown key by its Go type: say it the way
+	// the document does, with the keys that part of it takes.
+	if m := unknownKeyRe.FindStringSubmatch(msg); m != nil {
+		line, _ := strconv.Atoi(m[1])
+		where, keys := "the document", ""
+		if k, ok := keysOf[m[3]]; ok {
+			where, keys = k.where, strings.Join(yamlKeysOf(k.typ), ", ")
+		}
+		if keys != "" {
+			keys = " — it takes " + keys
+		}
+		return &Error{File: p.file, Line: line, Msg: fmt.Sprintf("unknown key %q in %s%s", m[2], where, keys)}
+	}
 	return &Error{File: p.file, Msg: msg}
+}
+
+// unknownKeyRe matches the strict decoder's "line 5: field mian not found in
+// type flow.Doc" (and the hand-written decoders' same wording).
+var unknownKeyRe = regexp.MustCompile(`^line (\d+): field (\S+) not found in type ([\w.]+)`)
+
+// keysOf names, for each decoded type, the part of the document it is.
+var keysOf = map[string]struct {
+	where string
+	typ   reflect.Type
+}{
+	"flow.Doc":             {"the document", reflect.TypeOf(Doc{})},
+	"flow.DocStage":        {"a stage", reflect.TypeOf(DocStage{})},
+	"flow.DocWatcher":      {"a watcher or an outcome", reflect.TypeOf(DocWatcher{})},
+	"flow.DocSequence":     {"a sequence", reflect.TypeOf(DocSequence{})},
+	"flow.DocWait":         {"on:", reflect.TypeOf(DocWait{})},
+	"flow.DocParam":        {"a parameter", reflect.TypeOf(DocParam{})},
+	"flow.DocEdge":         {"a route", reflect.TypeOf(DocEdge{})},
+	"agentspec.Spec":       {"an agent", reflect.TypeOf(agentspec.Spec{})},
+	"agentspec.InputDecl":  {"an agent's input", reflect.TypeOf(agentspec.InputDecl{})},
+	"agentspec.OutputDecl": {"an agent's output", reflect.TypeOf(agentspec.OutputDecl{})},
+}
+
+// yamlKeysOf lists the YAML keys a struct reads, retired ones (json "-") and
+// edges' retired feed aside.
+func yamlKeysOf(t reflect.Type) []string {
+	var out []string
+	for i := range t.NumField() {
+		f := t.Field(i)
+		key, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if key == "" || key == "-" || f.Tag.Get("json") == "-" || (t == reflect.TypeOf(DocEdge{}) && key == "feed") {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
 }
 
 // rejectAliases refuses YAML anchors/aliases and merge keys anywhere in the

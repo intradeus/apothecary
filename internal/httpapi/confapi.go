@@ -403,6 +403,12 @@ func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 
 // --- flows ------------------------------------------------------------------
 
+// getFlowSchema serves the flow document's JSON Schema (flow.Schema).
+func (s *Server) getFlowSchema(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/schema+json")
+	_, _ = w.Write(flow.Schema())
+}
+
 // listFlows serves one project's flows, or every project's when no project is
 // addressed (the overview). Built-in templates ride along on a project listing
 // as the names that project could adopt but has not.
