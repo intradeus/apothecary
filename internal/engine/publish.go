@@ -16,7 +16,9 @@ import (
 // extra repo when its branch is ahead of its source. Each targets the branch
 // the checkout forked from, so a run started off another run's branch stacks
 // on it. Idempotent via rs.mrs, rehydrated from mr_created on replay:
-// re-entering after a crash never opens a second MR for a branch.
+// re-entering after a crash never opens a second MR for a branch. The files
+// of its attachments port are uploaded to each merge request's repository
+// host just before it opens, and the body links them (attach.go).
 //
 // The narrow window the events alone cannot cover is a crash BETWEEN a
 // repository host call returning and mr_created being appended — the MR
@@ -93,10 +95,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		return false, nil
 	}
 
-	bodyPath := ""
-	if in := st.Input("body"); in != nil {
-		bodyPath = in.Value
-	}
+	bodyPath := inputPath(st, "body")
 	body, err := x.res.Envp.ReadFile(x.ctx, rs.envID, bodyPath)
 	if err != nil {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
@@ -106,6 +105,10 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		return true, x.abandon(st.ID, "", fmt.Sprintf("MR body artifact %s missing", bodyPath))
 	}
 	title := mrTitle(string(body), rs.view.TicketTitle)
+	files, routed, err := x.attachmentFiles(st)
+	if routed || err != nil {
+		return true, err
+	}
 	if !rs.actionPending[st.ID] {
 		// Record the intent BEFORE the effect: if the process dies past this
 		// point the next boot knows an MR may exist and reconciles instead of
@@ -117,9 +120,31 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	}
 	for _, co := range todo {
 		repoHost := x.res.repoHostFor(co.Name)
-		ref, err := repoHost.CreateDraftMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source, title, string(body))
+		// Uploaded to each merge request's own repository: an upload is
+		// hosted by, and shown in, the repository it went to.
+		mrBody := string(body)
+		if len(files) > 0 {
+			repo := x.repoRefFor(co)
+			mrBody, err = x.attach(mrBody, files, func(name, ct string, data []byte) (ports.Attachment, error) {
+				return repoHost.UploadAttachment(x.ctx, repo, name, ct, data)
+			})
+			if err != nil {
+				if x.ctx.Err() != nil {
+					return true, context.Cause(x.ctx)
+				}
+				return x.actionFail(st, event.ReasonInfra, "attaching files to the merge request failed: "+err.Error())
+			}
+		}
+		ref, err := repoHost.CreateDraftMR(x.ctx, x.repoRefFor(co), co.Branch, co.Source, title, mrBody)
 		if err != nil {
 			return x.infraFail(st, "opening the merge request failed: "+err.Error())
+		}
+		// Labels are how the merge request is filed, not part of the work:
+		// one the host refuses is logged, and the merge request stands.
+		if labels := st.SettingList("labels"); len(labels) > 0 {
+			if err := repoHost.AddMRLabels(x.ctx, ref, labels); err != nil {
+				x.e.log.Warn("labelling the merge request", "run", rs.runID, "mr", ref.URL, "labels", labels, "err", err)
+			}
 		}
 		// mr_created is what makes the $MR_URL sentinel and the merge signals
 		// work downstream, and what makes this action idempotent.

@@ -5,9 +5,11 @@
 //	WAIT      block until session/cancel, end with stopReason "cancelled"
 //	SLOW      say something, then end after 400ms (or on cancel)
 //	FAIL      answer the prompt with a JSON-RPC error
+//	MCP       say the mcpServers the session was opened (or loaded) with
 //	(else)    echo the prompt back, with a tool call and a plan
 //
 // Every completed prompt adds $0.10 to the session's cost (usage_update).
+// It takes remote (http) MCP servers unless FAKEACP_NO_HTTP_MCP is set.
 package main
 
 import (
@@ -37,6 +39,7 @@ func main() {
 	var mu sync.Mutex
 	cancels := map[string]chan struct{}{}
 	cost := map[string]float64{}
+	mcps := map[string]json.RawMessage{}
 	nsess := 0
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
@@ -50,9 +53,10 @@ func main() {
 			continue
 		}
 		var p struct {
-			SessionID string `json:"sessionId"`
-			ModeID    string `json:"modeId"`
-			Prompt    []struct {
+			SessionID  string          `json:"sessionId"`
+			ModeID     string          `json:"modeId"`
+			MCPServers json.RawMessage `json:"mcpServers"`
+			Prompt     []struct {
 				Text string `json:"text"`
 			} `json:"prompt"`
 		}
@@ -64,15 +68,20 @@ func main() {
 		}
 		switch f.Method {
 		case "initialize":
-			res(map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{"loadSession": true}})
+			res(map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{"loadSession": true,
+				"mcpCapabilities": map[string]any{"http": os.Getenv("FAKEACP_NO_HTTP_MCP") == ""}}})
 		case "session/new":
 			mu.Lock()
 			nsess++
 			sid := fmt.Sprintf("s%d", nsess)
+			mcps[sid] = p.MCPServers
 			mu.Unlock()
 			res(map[string]any{"sessionId": sid,
 				"modes": map[string]any{"availableModes": []any{map[string]any{"id": "builder"}, map[string]any{"id": "planner"}}}})
 		case "session/load":
+			mu.Lock()
+			mcps[p.SessionID] = p.MCPServers
+			mu.Unlock()
 			res(map[string]any{})
 		case "session/set_mode", "session/set_model":
 			res(map[string]any{})
@@ -107,6 +116,12 @@ func main() {
 				switch {
 				case strings.Contains(text, "FAIL"):
 					fail("model exploded")
+				case strings.Contains(text, "MCP"):
+					mu.Lock()
+					servers := string(mcps[sid])
+					mu.Unlock()
+					update(sid, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "mcp: " + servers}})
+					finish("end_turn")
 				case strings.Contains(text, "WAIT"):
 					update(sid, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "waiting"}})
 					<-cancel

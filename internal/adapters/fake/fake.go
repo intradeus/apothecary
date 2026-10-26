@@ -130,11 +130,21 @@ func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Comma
 	p.mu.Unlock()
 	// `rm -f` really removes from the env's Files, so a test about deleting
 	// something (the engine's terminal credential scrub) can assert the file is
-	// gone rather than that a string was sent. Everything else stays a no-op.
-	if paths, ok := parseRemove(cmd.Script); ok {
+	// gone rather than that a string was sent; `rm -rf` removes a directory's
+	// files too (a files output cleared before an attempt). Everything else
+	// stays a no-op.
+	if paths, recursive, ok := parseRemove(cmd.Script); ok {
 		p.mu.Lock()
 		for _, path := range paths {
 			delete(e.Files, path)
+			if recursive {
+				dir := strings.TrimSuffix(path, "/") + "/"
+				for f := range e.Files {
+					if strings.HasPrefix(f, dir) {
+						delete(e.Files, f)
+					}
+				}
+			}
 		}
 		p.mu.Unlock()
 		return ports.ExecResult{ExitCode: 0}, nil
@@ -151,19 +161,23 @@ func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Comma
 	return res, err
 }
 
-// parseRemove recognizes a bare `rm -f a b c` script and returns its operands
-// with any shell quoting stripped. Anything more complex is not a remove as far
-// as the fake is concerned.
-func parseRemove(script string) ([]string, bool) {
+// parseRemove recognizes a bare `rm -f a b c` (or `rm -rf …`, recursive)
+// script and returns its operands with any shell quoting stripped; whatever
+// follows a `&&` is ignored. Anything more complex is not a remove as far as
+// the fake is concerned.
+func parseRemove(script string) (paths []string, recursive, ok bool) {
 	fields := strings.Fields(strings.TrimSpace(script))
-	if len(fields) < 3 || fields[0] != "rm" || fields[1] != "-f" {
-		return nil, false
+	if len(fields) < 3 || fields[0] != "rm" || (fields[1] != "-f" && fields[1] != "-rf") {
+		return nil, false, false
 	}
 	out := make([]string, 0, len(fields)-2)
 	for _, f := range fields[2:] {
+		if f == "&&" {
+			break
+		}
 		out = append(out, strings.ReplaceAll(strings.Trim(f, "'"), `'\''`, "'"))
 	}
-	return out, true
+	return out, fields[1] == "-rf", true
 }
 
 // TailExecLog implements the optional ports.ExecLogTailer capability.
@@ -196,6 +210,32 @@ func (p *EnvProvisioner) ReadFile(_ context.Context, id ports.EnvID, path string
 		return nil, fmt.Errorf("%s: %w", path, fs.ErrNotExist)
 	}
 	return append([]byte(nil), data...), nil
+}
+
+// ListFiles lists the Files under dir; a directory with none is not there
+// (the fake keeps files, not directories).
+func (p *EnvProvisioner) ListFiles(_ context.Context, id ports.EnvID, dir string) ([]ports.FileEntry, error) {
+	e, err := p.get(id)
+	if err != nil {
+		return nil, err
+	}
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []ports.FileEntry
+	for path, data := range e.Files {
+		if strings.HasPrefix(path, prefix) {
+			out = append(out, ports.FileEntry{Path: path, Size: int64(len(data))})
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: %w", dir, fs.ErrNotExist)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	if len(out) > ports.ListFilesLimit {
+		out = out[:ports.ListFilesLimit]
+	}
+	return out, nil
 }
 
 func (p *EnvProvisioner) WriteFile(_ context.Context, id ports.EnvID, path string, data []byte, _ fs.FileMode) error {
@@ -426,6 +466,10 @@ type MR struct {
 	Draft        bool
 	Checks       []ports.Check
 	ApprovedBy   []string
+	// CIFailures, when set, is what CIFailures details for the head.
+	CIFailures []ports.CIFailure
+	// Labels are what AddMRLabels added.
+	Labels []string
 	// MergedWith is the method MergeMR merged with, BranchDeleted whether it
 	// removed the branch; MergeRefusal, when set, refuses every merge.
 	MergedWith    string
@@ -450,6 +494,8 @@ type RepoHost struct {
 	AccessErr error
 	// MissingFiles marks paths FileExists reports false for (default: all exist).
 	MissingFiles map[string]bool
+	// LabelErr fails AddMRLabels when set.
+	LabelErr error
 	// CreateErr fails CreateDraftMR when set.
 	CreateErr error
 	// MRStateErr fails MRState when set (signal poll failure paths).
@@ -473,6 +519,44 @@ type RepoHost struct {
 	NewHead string
 	// User is who Whoami says the integration is (default "apothecary").
 	User string
+	// Uploads are the files UploadAttachment hosted, in order; UploadErr
+	// fails it when set.
+	Uploads   []Upload
+	UploadErr error
+}
+
+// Upload is one file a fake repository host or tracker was given to host.
+type Upload struct {
+	Repo        ports.RepoRef // repository host uploads
+	Key         string        // tracker uploads: the issue
+	Name        string
+	ContentType string
+	Data        []byte
+	URL         string
+}
+
+// UploadAttachment hosts the file at a deterministic URL: the upload's
+// ordinal and its name.
+func (f *RepoHost) UploadAttachment(_ context.Context, repo ports.RepoRef, name, contentType string, data []byte) (ports.Attachment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.UploadErr != nil {
+		return ports.Attachment{}, f.UploadErr
+	}
+	url := fmt.Sprintf("https://gitlab.local/uploads/%d/%s", len(f.Uploads)+1, name)
+	f.Uploads = append(f.Uploads, Upload{Repo: repo, Name: name, ContentType: contentType, Data: append([]byte(nil), data...), URL: url})
+	md := "[" + name + "](" + url + ")"
+	if strings.HasPrefix(contentType, "image/") {
+		md = "!" + md
+	}
+	return ports.Attachment{URL: url, Markdown: md}, nil
+}
+
+// SnapshotUploads returns a locked copy of the uploads so far.
+func (f *RepoHost) SnapshotUploads() []Upload {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Upload(nil), f.Uploads...)
 }
 
 // Reset forgets every merge request and scripted failure (test control, for
@@ -480,8 +564,8 @@ type RepoHost struct {
 func (f *RepoHost) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.MRs, f.nextID, f.ChecksCalls, f.NewHead, f.User = nil, 0, 0, "", ""
-	f.AccessErr, f.CreateErr, f.MRStateErr, f.FindErr, f.ThreadsErr, f.ReplyErr = nil, nil, nil, nil, nil, nil
+	f.MRs, f.nextID, f.ChecksCalls, f.NewHead, f.User, f.Uploads = nil, 0, 0, "", "", nil
+	f.AccessErr, f.CreateErr, f.MRStateErr, f.FindErr, f.ThreadsErr, f.ReplyErr, f.UploadErr = nil, nil, nil, nil, nil, nil, nil
 }
 
 // AddOpenMR scripts a merge request someone else opened (test control): it
@@ -570,6 +654,26 @@ func (f *RepoHost) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, 
 	return ref, nil
 }
 
+// AddMRLabels adds the labels the merge request does not have yet;
+// LabelErr fails it.
+func (f *RepoHost) AddMRLabels(_ context.Context, mr ports.MRRef, labels []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.LabelErr != nil {
+		return f.LabelErr
+	}
+	m := f.mr(mr.IID)
+	if m == nil {
+		return fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	for _, l := range labels {
+		if !slices.Contains(m.Labels, l) {
+			m.Labels = append(m.Labels, l)
+		}
+	}
+	return nil
+}
+
 // FindMR reports the open MR for a branch, as the reconciliation path needs
 // after a crash between creating one and recording it.
 func (f *RepoHost) FindMR(_ context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
@@ -644,6 +748,30 @@ func (f *RepoHost) MRChecks(_ context.Context, mr ports.MRRef, head string) (por
 	out := ports.Checks{Head: head, Items: append([]ports.Check(nil), m.Checks...)}
 	out.State = ports.AggregateChecks(out.Items)
 	f.ChecksCalls++
+	return out, nil
+}
+
+// CIFailures is what Failures holds for the merge request — the failed
+// checks' details a test sets — or, without it, its failed Checks by name.
+func (f *RepoHost) CIFailures(_ context.Context, mr ports.MRRef, _ string) ([]ports.CIFailure, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MRStateErr != nil {
+		return nil, f.MRStateErr
+	}
+	m := f.mr(mr.IID)
+	if m == nil {
+		return nil, fmt.Errorf("mr !%d not found", mr.IID)
+	}
+	if m.CIFailures != nil {
+		return append([]ports.CIFailure(nil), m.CIFailures...), nil
+	}
+	var out []ports.CIFailure
+	for _, c := range m.Checks {
+		if c.State == ports.CheckFailure {
+			out = append(out, ports.CIFailure{Name: c.Name, URL: c.URL})
+		}
+	}
 	return out, nil
 }
 
@@ -797,6 +925,15 @@ func (f *RepoHost) SetChecks(iid int, checks ...ports.Check) {
 	}
 }
 
+// SetCIFailures scripts what CIFailures details for the merge request.
+func (f *RepoHost) SetCIFailures(iid int, failures ...ports.CIFailure) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m := f.mr(iid); m != nil {
+		m.CIFailures = failures
+	}
+}
+
 // SetMergeableNow scripts the repository host's "it can be merged now" verdict.
 func (f *RepoHost) SetMergeableNow(iid int, now bool) {
 	f.mu.Lock()
@@ -941,6 +1078,8 @@ type TicketSource struct {
 	Linked      map[string][]ports.TicketLink
 	Calls       []string
 	WriteErr    error
+	// Attached are the files Attach hosted, in order.
+	Attached []Upload
 }
 
 func (s *TicketSource) Test(context.Context) error { return s.Err }
@@ -1203,6 +1342,24 @@ func (s *TicketSource) AddLink(_ context.Context, key string, link ports.TicketL
 	return nil
 }
 
+// Attach hosts a file for the issue at a deterministic URL and links it the
+// way Jira does: a link, never an embedded image.
+func (s *TicketSource) Attach(_ context.Context, key, name, contentType string, data []byte) (ports.Attachment, error) {
+	if err := s.writeErr(); err != nil {
+		return ports.Attachment{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.ticket(key)
+	if t == nil {
+		return ports.Attachment{}, fmt.Errorf("fake: no ticket %q", key)
+	}
+	url := fmt.Sprintf("https://tracker.local/%s/attachments/%d/%s", t.Key, len(s.Attached)+1, name)
+	s.Attached = append(s.Attached, Upload{Key: t.Key, Name: name, ContentType: contentType, Data: append([]byte(nil), data...), URL: url})
+	s.record("attach %s %s", t.Key, name)
+	return ports.Attachment{URL: url, Markdown: "[" + name + "](" + url + ")"}, nil
+}
+
 // ReadOnlyTicketSource is a tracker with no write side — what an adapter
 // that never implemented ports.TicketWriter looks like to the resolver (the
 // "this integration cannot write back" path). It serves Src's corpus.
@@ -1227,5 +1384,6 @@ var (
 	_ ports.NotificationChannel = (*Channel)(nil)
 	_ ports.TicketSource        = (*TicketSource)(nil)
 	_ ports.TicketWriter        = (*TicketSource)(nil)
+	_ ports.TicketAttacher      = (*TicketSource)(nil)
 	_ ports.TicketSource        = ReadOnlyTicketSource{}
 )

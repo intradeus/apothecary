@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Workshop overview (DESIGN 7.7): the header, then a tab strip — Overview,
-	// Runs, Tickets, Flows, Agents, Health — driven by ?tab=.
+	// Runs, Tickets, Flows, Health — driven by ?tab=.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -26,7 +26,6 @@
 	import FlowsTab from '$lib/workshop/FlowsTab.svelte';
 	import AutomationsTab from '$lib/workshop/AutomationsTab.svelte';
 	import ReposTab from '$lib/workshop/ReposTab.svelte';
-	import AgentsTab from '$lib/workshop/AgentsTab.svelte';
 	import HealthTab from '$lib/workshop/HealthTab.svelte';
 
 	const projectId = $derived(page.params.workshop!);
@@ -37,7 +36,6 @@
 		'repos',
 		'flows',
 		'automations',
-		'agents',
 		'health'
 	];
 	const tab = $derived.by<WorkshopTab>(() => {
@@ -108,7 +106,6 @@
 		repos: t('page.workshop.tabRepos'),
 		flows: t('page.workshops.flows'),
 		automations: t('page.workshop.tabAutomations'),
-		agents: t('page.workshop.tabAgents'),
 		health: t('page.workshop.tabHealth')
 	});
 
@@ -247,8 +244,6 @@
 				<FlowsTab {project} {flows} error={flowsError} onreload={loadFlows} />
 			{:else if tab === 'automations'}
 				<AutomationsTab {project} {tickets} {integrations} />
-			{:else if tab === 'agents'}
-				<AgentsTab {project} {flows} error={flowsError} onretry={loadFlows} />
 			{:else if tab === 'health'}
 				<HealthTab {project} />
 			{/if}

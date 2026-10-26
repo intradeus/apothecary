@@ -224,6 +224,10 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	if err != nil || string(shim) != "#!fake-shim" {
 		t.Errorf("shim binary not materialized: %q, %v", shim, err)
 	}
+	// The callable alias: relative, so it resolves in the container too.
+	if target, err := os.Readlink(filepath.Join(a.folderFor("apothecary-run1"), "shim", "apothecary-shim")); err != nil || target != "shim" {
+		t.Errorf("apothecary-shim alias = %q, %v; want -> shim", target, err)
+	}
 
 	init := find(t, r.calls, "docker", "exec")
 	joined = strings.Join(init.args, " ")
@@ -555,6 +559,10 @@ func TestExecPropagatesExitAndCombinesOutput(t *testing.T) {
 	stdin := string(c.stdin)
 	if !strings.Contains(stdin, `cd "$HOME/repo"`) || !strings.Contains(stdin, "make test") {
 		t.Errorf("stdin = %q", stdin)
+	}
+	// The shim dir is appended (never prepended) to the script's PATH.
+	if !strings.HasPrefix(stdin, `export PATH="$PATH:/opt/apothecary"`+"\n") {
+		t.Errorf("stdin missing the shim PATH append: %q", stdin)
 	}
 }
 
@@ -1568,5 +1576,29 @@ func TestRebuildKeepsTheCacheByDefault(t *testing.T) {
 	up := find(t, r.calls, "devcontainer", "up")
 	if strings.Contains(strings.Join(up.args, " "), "--build-no-cache") {
 		t.Errorf("a plain rebuild must keep the cache: %v", up.args)
+	}
+}
+
+// ListFiles parses the in-container listing into sorted, dir-joined entries
+// and reads exit 44 as a directory that is not there.
+func TestListFiles(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: "5 ./b.png\n12 ./nested/a.png\nnot a line\n"},
+		{code: 44},
+	}}
+	a := newTestAdapter(t, r)
+	files, err := a.ListFiles(context.Background(), "ws", "artifacts/shots/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.FileEntry{{Path: "artifacts/shots/b.png", Size: 5}, {Path: "artifacts/shots/nested/a.png", Size: 12}}
+	if !slices.Equal(files, want) {
+		t.Fatalf("files = %v, want %v", files, want)
+	}
+	if script := string(r.calls[0].stdin); !strings.Contains(script, `"$HOME"/repo/'artifacts/shots'`) || !strings.Contains(script, "find . -type f") {
+		t.Errorf("script = %q", script)
+	}
+	if _, err := a.ListFiles(context.Background(), "ws", "missing/"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("want fs.ErrNotExist, got %v", err)
 	}
 }

@@ -64,6 +64,12 @@ type Doc struct {
 	// Parameters is the flow's one settings block (FLOWLANG §1): the six the
 	// engine reads itself and the flow's own knobs, each with its default.
 	Parameters DocParams `yaml:"parameters" json:"parameters,omitempty"`
+	// Schemas are the structures the flow's own files hold (FLOWLANG §4),
+	// named by the agents' inputs and outputs that read and write them.
+	Schemas []DocSchema `yaml:"schemas" json:"schemas,omitempty"`
+	// MCPServers are the MCP servers the flow's agents may use (FLOWLANG §1),
+	// each agent naming its own in `mcp:`.
+	MCPServers []DocMCPServer `yaml:"mcp_servers" json:"mcp_servers,omitempty"`
 	// Agents are the agent definitions the flow runs (FLOWLANG §1, v3). A
 	// list rather than a mapping so the shape is exactly agentspec.Spec —
 	// the same schema the retired library files spoke, with document order
@@ -177,8 +183,9 @@ func (t *DocWait) UnmarshalYAML(n *yaml.Node) error {
 }
 
 // DocParams is the document's `parameters:` block: an ordered mapping of
-// name to default, or to {default, description, enum}. Order is kept so the
-// editor round-trips the author's layout.
+// name to {type, list, default, description, enum} — or, for the six the
+// engine reads itself, to a bare default. Order is kept so the editor
+// round-trips the author's layout.
 type DocParams struct {
 	Entries []DocParamEntry
 }
@@ -190,62 +197,110 @@ type DocParamEntry struct {
 	Line  int
 }
 
-// DocParam is the long form of a parameter declaration.
+// DocParam is the long form of a parameter declaration: what it holds is
+// declared (type, list), never read off its default.
 type DocParam struct {
+	Type        ParamType     `yaml:"type" json:"type,omitempty"`
+	List        bool          `yaml:"list" json:"list,omitempty"`
 	Default     DocParamValue `yaml:"default" json:"default"`
 	Description string        `yaml:"description" json:"description,omitempty"`
 	Enum        []string      `yaml:"enum" json:"enum,omitempty"`
 }
 
-// DocParamValue is a parameter's default as written: its YAML type is the
-// parameter's type (true → bool, 10 → int, 1.5 → float, anything else a
-// string) and Text its canonical spelling.
+// MarshalJSON emits the declaration with its default typed by its type:
+// true, 10, 1.5, "text" — or a list of them. A bare known default has no
+// type of its own; it is typed by the engine's.
+func (d DocParam) MarshalJSON() ([]byte, error) {
+	typ := d.Type
+	if typ == "" {
+		typ = d.Default.Hint
+	}
+	var def json.RawMessage
+	switch {
+	case d.Default.IsList:
+		def = json.RawMessage(EncodeParamList(typ, d.Default.Items))
+	default:
+		def = typedJSON(typ, d.Default.Text)
+	}
+	type wire struct {
+		Type        ParamType       `json:"type,omitempty"`
+		List        bool            `json:"list,omitempty"`
+		Default     json.RawMessage `json:"default"`
+		Description string          `json:"description,omitempty"`
+		Enum        []string        `json:"enum,omitempty"`
+	}
+	return json.Marshal(wire{d.Type, d.List, def, d.Description, d.Enum})
+}
+
+// typedJSON is one value as JSON: a bool or a number bare when it parses as
+// one, anything else a string.
+func typedJSON(typ ParamType, text string) json.RawMessage {
+	switch typ {
+	case ParamBool:
+		if _, err := strconv.ParseBool(text); err == nil {
+			return json.RawMessage(text)
+		}
+	case ParamInt, ParamFloat:
+		if _, err := strconv.ParseFloat(text, 64); err == nil {
+			return json.RawMessage(text)
+		}
+	}
+	b, _ := json.Marshal(text)
+	return b
+}
+
+// DocParamValue is a parameter's default as written: one value (Text) or a
+// list of them (Items, IsList). Its declared type says how it reads; Hint is
+// what the YAML wrote it as (true → bool, 10 → int, 1.5 → float, else a
+// string) — the type a bare known default has, and what a declaration
+// missing its type is told to say.
 type DocParamValue struct {
-	Kind ParamType
-	Text string
-	Set  bool
+	Hint   ParamType
+	Text   string
+	Items  []string
+	IsList bool
+	Set    bool
 }
 
 func (v *DocParamValue) UnmarshalYAML(n *yaml.Node) error {
-	if n.Kind != yaml.ScalarNode {
-		return fmt.Errorf("line %d: a parameter's default is one value — true/false, a number or a string", n.Line)
+	switch n.Kind {
+	case yaml.ScalarNode:
+		if n.ShortTag() == "!!null" {
+			return fmt.Errorf("line %d: a parameter needs a default value", n.Line)
+		}
+		*v = DocParamValue{Hint: yamlHint(n), Text: n.Value, Set: true}
+		return nil
+	case yaml.SequenceNode:
+		out := DocParamValue{IsList: true, Set: true, Items: []string{}}
+		for _, it := range n.Content {
+			if it.Kind != yaml.ScalarNode || it.ShortTag() == "!!null" {
+				return fmt.Errorf("line %d: a list default holds values — true/false, numbers or strings", it.Line)
+			}
+			if out.Hint == "" {
+				out.Hint = yamlHint(it)
+			}
+			out.Items = append(out.Items, it.Value)
+		}
+		if out.Hint == "" {
+			out.Hint = ParamString
+		}
+		*v = out
+		return nil
 	}
-	switch n.ShortTag() {
-	case "!!bool":
-		b, err := strconv.ParseBool(n.Value)
-		if err != nil {
-			return fmt.Errorf("line %d: %q is not a bool", n.Line, n.Value)
-		}
-		*v = DocParamValue{Kind: ParamBool, Text: strconv.FormatBool(b), Set: true}
-	case "!!int":
-		i, err := strconv.ParseInt(n.Value, 0, 64)
-		if err != nil {
-			return fmt.Errorf("line %d: %q is not an integer", n.Line, n.Value)
-		}
-		*v = DocParamValue{Kind: ParamInt, Text: strconv.FormatInt(i, 10), Set: true}
-	case "!!float":
-		f, err := strconv.ParseFloat(n.Value, 64)
-		if err != nil {
-			return fmt.Errorf("line %d: %q is not a number", n.Line, n.Value)
-		}
-		*v = DocParamValue{Kind: ParamFloat, Text: strconv.FormatFloat(f, 'f', -1, 64), Set: true}
-	case "!!str":
-		*v = DocParamValue{Kind: ParamString, Text: n.Value, Set: true}
-	case "!!null":
-		return fmt.Errorf("line %d: a parameter needs a default value", n.Line)
-	default:
-		return fmt.Errorf("line %d: %q is not a parameter default (true/false, a number or a string)", n.Line, n.Value)
-	}
-	return nil
+	return fmt.Errorf("line %d: a parameter's default is a value, or a list of values", n.Line)
 }
 
-// MarshalJSON emits the default with its type: true, 10, 1.5 or "text".
-func (v DocParamValue) MarshalJSON() ([]byte, error) {
-	switch v.Kind {
-	case ParamBool, ParamInt, ParamFloat:
-		return []byte(v.Text), nil
+// yamlHint is the type a YAML scalar is written as.
+func yamlHint(n *yaml.Node) ParamType {
+	switch n.ShortTag() {
+	case "!!bool":
+		return ParamBool
+	case "!!int":
+		return ParamInt
+	case "!!float":
+		return ParamFloat
 	}
-	return json.Marshal(v.Text)
+	return ParamString
 }
 
 func (v *DocParamValue) UnmarshalJSON(data []byte) error {
@@ -255,24 +310,43 @@ func (v *DocParamValue) UnmarshalJSON(data []byte) error {
 	if err := dec.Decode(&x); err != nil {
 		return err
 	}
-	switch t := x.(type) {
-	case bool:
-		*v = DocParamValue{Kind: ParamBool, Text: strconv.FormatBool(t), Set: true}
-	case json.Number:
-		if i, err := t.Int64(); err == nil {
-			*v = DocParamValue{Kind: ParamInt, Text: strconv.FormatInt(i, 10), Set: true}
-		} else {
-			f, err := t.Float64()
+	one := func(x any) (ParamType, string, error) {
+		switch t := x.(type) {
+		case bool:
+			return ParamBool, strconv.FormatBool(t), nil
+		case json.Number:
+			if _, err := t.Int64(); err == nil {
+				return ParamInt, t.String(), nil
+			}
+			return ParamFloat, t.String(), nil
+		case string:
+			return ParamString, t, nil
+		}
+		return "", "", fmt.Errorf("a parameter default is true/false, a number, a string, or a list of them")
+	}
+	if list, ok := x.([]any); ok {
+		out := DocParamValue{IsList: true, Set: true, Items: []string{}}
+		for _, it := range list {
+			h, text, err := one(it)
 			if err != nil {
 				return err
 			}
-			*v = DocParamValue{Kind: ParamFloat, Text: strconv.FormatFloat(f, 'f', -1, 64), Set: true}
+			if out.Hint == "" {
+				out.Hint = h
+			}
+			out.Items = append(out.Items, text)
 		}
-	case string:
-		*v = DocParamValue{Kind: ParamString, Text: t, Set: true}
-	default:
-		return fmt.Errorf("a parameter default is true/false, a number or a string")
+		if out.Hint == "" {
+			out.Hint = ParamString
+		}
+		*v = out
+		return nil
 	}
+	h, text, err := one(x)
+	if err != nil {
+		return err
+	}
+	*v = DocParamValue{Hint: h, Text: text, Set: true}
 	return nil
 }
 
@@ -284,7 +358,7 @@ func (d *DocParams) UnmarshalYAML(n *yaml.Node) error {
 		return nil
 	}
 	if n.Kind != yaml.MappingNode {
-		return fmt.Errorf("line %d: parameters must be a mapping of name: default, or name: {default, description, enum}", n.Line)
+		return fmt.Errorf("line %d: parameters must be a mapping of name: {type, default, description, enum}", n.Line)
 	}
 	seen := map[string]bool{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
@@ -309,6 +383,10 @@ func (d *DocParams) UnmarshalYAML(n *yaml.Node) error {
 				keys[kk.Value] = true
 				var err error
 				switch kk.Value {
+				case "type":
+					err = vv.Decode(&e.Param.Type)
+				case "list":
+					err = vv.Decode(&e.Param.List)
 				case "default":
 					err = e.Param.Default.UnmarshalYAML(vv)
 				case "description":
@@ -316,14 +394,14 @@ func (d *DocParams) UnmarshalYAML(n *yaml.Node) error {
 				case "enum":
 					err = vv.Decode(&e.Param.Enum)
 				default:
-					return fmt.Errorf("line %d: field %s not found in type flow.DocParam (default, description, enum)", kk.Line, kk.Value)
+					return fmt.Errorf("line %d: field %s not found in type flow.DocParam (type, list, default, description, enum)", kk.Line, kk.Value)
 				}
 				if err != nil {
 					return err
 				}
 			}
 		default:
-			return fmt.Errorf("line %d: parameter %q must be a default value or a mapping {default, description, enum}", v.Line, k.Value)
+			return fmt.Errorf("line %d: parameter %q must be a mapping {type, default, description, enum} (a bare default is for the engine's own: %s)", v.Line, k.Value, strings.Join(KnownParamOrder, ", "))
 		}
 		d.Entries = append(d.Entries, e)
 	}
@@ -463,29 +541,32 @@ type DocStage struct {
 	ID string `yaml:"id" json:"id"`
 	// Sequence names a sequence this stage runs in its place (FLOWLANG §1
 	// Sequences): a sequence stage, which has no type.
-	Sequence    string   `yaml:"sequence" json:"sequence,omitempty"`
-	Type        string   `yaml:"type" json:"type,omitempty"`
-	Description string   `yaml:"description" json:"description,omitempty"`
-	When        string   `yaml:"when" json:"when,omitempty"`
-	Agent       string   `yaml:"agent" json:"agent,omitempty"`
-	Model       string   `yaml:"model" json:"model,omitempty"`
-	Harness     string   `yaml:"harness" json:"harness,omitempty"`
-	MaxTurns    *DocInt  `yaml:"max_turns" json:"max_turns,omitempty"`
-	Timeout     string   `yaml:"timeout" json:"timeout,omitempty"`
-	Input       *DocIO   `yaml:"input" json:"input,omitempty"`
-	Output      *DocIO   `yaml:"output" json:"output,omitempty"`
-	Run         string   `yaml:"run" json:"run,omitempty"`
-	RunRef      string   `yaml:"run_ref" json:"run_ref,omitempty"`
-	EachRepo    bool     `yaml:"each_repo" json:"each_repo,omitempty"`
-	Question    string   `yaml:"question" json:"question,omitempty"`
-	AutoApprove string   `yaml:"auto_approve" json:"auto_approve,omitempty"`
-	AutoReject  string   `yaml:"auto_reject" json:"auto_reject,omitempty"`
-	Action      string   `yaml:"action" json:"action,omitempty"`
-	For         string   `yaml:"for" json:"for,omitempty"`
-	OnSuccess   string   `yaml:"on_success" json:"on_success,omitempty"`
-	OnFail      *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
-	OnReject    *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
-	OnTimeout   *DocEdge `yaml:"on_timeout" json:"on_timeout,omitempty"`
+	Sequence    string    `yaml:"sequence" json:"sequence,omitempty"`
+	Type        string    `yaml:"type" json:"type,omitempty"`
+	Description string    `yaml:"description" json:"description,omitempty"`
+	RunIf       string    `yaml:"run_if" json:"run_if,omitempty"`
+	Agent       string    `yaml:"agent" json:"agent,omitempty"`
+	Model       string    `yaml:"model" json:"model,omitempty"`
+	Harness     string    `yaml:"harness" json:"harness,omitempty"`
+	MaxTurns    *DocInt   `yaml:"max_turns" json:"max_turns,omitempty"`
+	Timeout     string    `yaml:"timeout" json:"timeout,omitempty"`
+	Input       *DocPorts `yaml:"input" json:"input,omitempty"`
+	Output      *DocPorts `yaml:"output" json:"output,omitempty"`
+	With        *DocIO    `yaml:"with" json:"with,omitempty"`
+	Run         string    `yaml:"run" json:"run,omitempty"`
+	RunRef      string    `yaml:"run_ref" json:"run_ref,omitempty"`
+	EachRepo    bool      `yaml:"each_repo" json:"each_repo,omitempty"`
+	Question    string    `yaml:"question" json:"question,omitempty"`
+	AutoApprove string    `yaml:"auto_approve" json:"auto_approve,omitempty"`
+	AutoReject  string    `yaml:"auto_reject" json:"auto_reject,omitempty"`
+	Action      string    `yaml:"action" json:"action,omitempty"`
+	Service     string    `yaml:"service" json:"service,omitempty"`
+	Do          string    `yaml:"do" json:"do,omitempty"`
+	For         string    `yaml:"for" json:"for,omitempty"`
+	OnSuccess   string    `yaml:"on_success" json:"on_success,omitempty"`
+	OnFail      *DocEdge  `yaml:"on_fail" json:"on_fail,omitempty"`
+	OnReject    *DocEdge  `yaml:"on_reject" json:"on_reject,omitempty"`
+	OnTimeout   *DocEdge  `yaml:"on_timeout" json:"on_timeout,omitempty"`
 
 	// Retired fields, still decoded so the parser can answer with the
 	// upgrade (FLOWLANG §7) instead of the strict decoder's bare "field not
@@ -497,6 +578,7 @@ type DocStage struct {
 	AutoComplete string `yaml:"auto_complete" json:"-"`
 	AutoAnswer   string `yaml:"auto_answer" json:"-"`
 	Include      string `yaml:"include" json:"-"`
+	When         string `yaml:"when" json:"-"`
 
 	// line is the stage's source line; scope the path of sequence stages it
 	// was expanded through (empty for a stage written in its chain). Set by
@@ -511,16 +593,16 @@ type DocStage struct {
 func (r *DocStage) retired() []string {
 	var msgs []string
 	if r.Verdict {
-		msgs = append(msgs, `"verdict" is retired: declare a verdict-typed output on the agent instead (outputs: [{name: verdict, type: verdict, path: artifacts/verdict.json}])`)
+		msgs = append(msgs, `"verdict" is retired: declare a verdict-typed output on the agent (outputs: [{name: verdict, type: verdict}]) and state it on the stage (output: { verdict: { to: artifacts/verdict.json, type: verdict } })`)
 	}
 	if r.Ping != "" {
 		msgs = append(msgs, `"ping" is retired: every human_gate is the same machine now — say what you are asking in "question"`)
 	}
 	if r.Payload != "" {
-		msgs = append(msgs, fmt.Sprintf(`"payload" is retired: renamed "input" (an artifact path, %s or %s)`, SentinelMRURL, SentinelWorkspace))
+		msgs = append(msgs, fmt.Sprintf(`"payload" is retired: a gate shows an input port — from: a path, %s or %s`, SourceMRURL, SourceWorkspace))
 	}
 	if r.Body != "" {
-		msgs = append(msgs, `"body" is retired: use type: action, action: create_mr with input: {body: <path>}`)
+		msgs = append(msgs, `"body" is retired: use type: action, action: create_mr with input: { body: { from: <path>, type: file } }`)
 	}
 	if r.AutoComplete != "" {
 		msgs = append(msgs, fmt.Sprintf(`"auto_complete" is retired: use "auto_approve" (the signal approves the gate) — or a %s stage to just block on it`, StageWait))
@@ -530,6 +612,9 @@ func (r *DocStage) retired() []string {
 	}
 	if r.Include != "" {
 		msgs = append(msgs, fmt.Sprintf(`"include" is retired: a stage runs a sequence with "sequence" (sequence: %s)`, r.Include))
+	}
+	if r.When != "" {
+		msgs = append(msgs, fmt.Sprintf(`"when" is now "run_if" (run_if: %s)`, r.When))
 	}
 	return msgs
 }
@@ -553,14 +638,14 @@ var edgeKinds = map[string]edgeKindSpec{
 	// An action fails too when its outcome is wrong in a way a retry or an
 	// agent can fix (a merge that conflicts); its infrastructure errors stay
 	// terminal. With no on_fail, any failure is terminal.
-	EdgeFail: {on: []StageType{StageAgent, StageCommand, StageWait, StageAction}},
+	EdgeFail: {on: []StageType{StageAgent, StageCommand, StageWait, StageAction, StageService}},
 	// A rejection carries its rationale — an agent's verdict comments or a
 	// gate's feedback text. Either way the target reads one $DECISION.
 	EdgeReject: {on: []StageType{StageAgent, StageHumanGate}},
 	// on_timeout routes stage timeouts separately from failures ("stuck ≠
 	// broken": retry the same stage fresh vs. go fix the code). When a stage
 	// declares no on_timeout, the engine falls back to on_fail.
-	EdgeTimeout: {on: []StageType{StageAgent, StageCommand, StageWait}},
+	EdgeTimeout: {on: []StageType{StageAgent, StageCommand, StageWait, StageService}},
 }
 
 type DocEdge struct {
@@ -612,19 +697,21 @@ func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
 	return fmt.Errorf("line %d: edge must be a mapping, or one of %q, %q, %q, %q", n.Line, TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug)
 }
 
-// IOPair is one named binding in a stage's map-form input/output. Line is
-// retained for error reporting; it is not part of the JSON document shape.
+// IOPair is one named literal in an action stage's `with:` — one value, or
+// a list of them (Items, IsList) for a list setting. Line is retained for
+// error reporting; it is not part of the JSON document shape.
 type IOPair struct {
-	Name  string
-	Value string
-	Line  int
+	Name   string
+	Value  string
+	Items  []string
+	IsList bool
+	Line   int
 }
 
-// DocIO is a stage's input or output binding in the document model: an ordered
-// mapping of name to value (FLOWLANG §4). One form for every stage type — the
-// name is checked against a contract where one exists and is a free label
-// otherwise. Pairs preserves document order: prompts and editor round-trips
-// must stay deterministic, and encoding/json would sort a Go map's keys.
+// DocIO is an action stage's settings (`with:`) in the document model: an
+// ordered mapping of name to literal (FLOWLANG §2 action). Pairs preserves
+// document order: editor round-trips must stay deterministic, and
+// encoding/json would sort a Go map's keys.
 type DocIO struct {
 	Pairs []IOPair
 }
@@ -669,20 +756,31 @@ func (d *DocIO) UnmarshalJSON(data []byte) error {
 }
 
 // decodeYAMLPairs reads an ordered mapping node into IOPairs, rejecting
-// duplicate keys and non-scalar values.
+// duplicate keys and mappings: a value is a literal, or a list of them.
 func decodeYAMLPairs(n *yaml.Node) ([]IOPair, error) {
 	seen := map[string]bool{}
 	var pairs []IOPair
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
-		if v.Kind != yaml.ScalarNode {
-			return nil, fmt.Errorf("line %d: %q: value must be a single value (a path, a sentinel or a literal), not a mapping or a list", v.Line, k.Value)
-		}
 		if seen[k.Value] {
-			return nil, fmt.Errorf("line %d: %q bound twice", k.Line, k.Value)
+			return nil, fmt.Errorf("line %d: %q given twice", k.Line, k.Value)
 		}
 		seen[k.Value] = true
-		pairs = append(pairs, IOPair{Name: k.Value, Value: v.Value, Line: k.Line})
+		pr := IOPair{Name: k.Value, Value: v.Value, Line: k.Line}
+		switch v.Kind {
+		case yaml.ScalarNode:
+		case yaml.SequenceNode:
+			pr.Value, pr.IsList, pr.Items = "", true, []string{}
+			for _, it := range v.Content {
+				if it.Kind != yaml.ScalarNode {
+					return nil, fmt.Errorf("line %d: %q: a list holds literals, not mappings or lists", it.Line, k.Value)
+				}
+				pr.Items = append(pr.Items, it.Value)
+			}
+		default:
+			return nil, fmt.Errorf("line %d: %q: value must be a literal or a list of them, not a mapping", v.Line, k.Value)
+		}
+		pairs = append(pairs, pr)
 	}
 	return pairs, nil
 }
@@ -699,7 +797,12 @@ func marshalOrderedPairs(pairs []IOPair) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		val, err := json.Marshal(p.Value)
+		var val []byte
+		if p.IsList {
+			val, err = json.Marshal(p.Items)
+		} else {
+			val, err = json.Marshal(p.Value)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -731,11 +834,20 @@ func unmarshalOrderedPairs(data []byte) ([]IOPair, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected a string key")
 		}
-		var val string
-		if err := dec.Decode(&val); err != nil {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
 			return nil, err
 		}
-		pairs = append(pairs, IOPair{Name: key, Value: val})
+		pr := IOPair{Name: key}
+		if t := bytes.TrimSpace(raw); len(t) > 0 && t[0] == '[' {
+			pr.IsList, pr.Items = true, []string{}
+			if err := json.Unmarshal(t, &pr.Items); err != nil {
+				return nil, err
+			}
+		} else if err := json.Unmarshal(t, &pr.Value); err != nil {
+			return nil, err
+		}
+		pairs = append(pairs, pr)
 	}
 	return pairs, nil
 }
@@ -872,6 +984,9 @@ type parser struct {
 	plist    []Param
 	used     map[string]bool
 	refs     []ParamRef
+	// schemas are the flow's structures by name, for the bindings that name
+	// one (a command's long form).
+	schemas map[string]bool
 }
 
 func (p *parser) errf(line int, format string, args ...any) error {
@@ -1076,7 +1191,17 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if err = p.buildParameters(f, &raw.Parameters); err != nil {
 		return nil, err
 	}
-	if f.Agents, err = p.buildAgents(raw.Agents); err != nil {
+	if f.Schemas, err = p.buildSchemas(raw.Schemas); err != nil {
+		return nil, err
+	}
+	p.schemas = map[string]bool{}
+	for _, s := range f.Schemas {
+		p.schemas[s.Name] = true
+	}
+	if f.MCPServers, err = p.buildMCPServers(raw.MCPServers); err != nil {
+		return nil, err
+	}
+	if f.Agents, err = p.buildAgents(raw.Agents, f); err != nil {
 		return nil, err
 	}
 
@@ -1179,6 +1304,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 			warns = append(warns, fmt.Sprintf("parameter %q is declared but nothing reads it ($%s)", pr.Name, pr.Name))
 		}
 	}
+	for _, name := range unusedSchemas(f) {
+		warns = append(warns, fmt.Sprintf("schema %q is declared but no input or output names it", name))
+	}
 	for _, name := range p.unusedSequences(raw.Sequences) {
 		warns = append(warns, fmt.Sprintf("sequence %q is never run (nothing checks its stages until something does)", name))
 	}
@@ -1209,19 +1337,57 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 		if !e.Param.Default.Set {
 			return errf(e.Line, "%s: default is required", e.Name)
 		}
-		pr := Param{Name: e.Name, Type: e.Param.Default.Kind, Default: e.Param.Default.Text,
+		pr := Param{Name: e.Name, Type: e.Param.Type, List: e.Param.List,
 			Description: e.Param.Description, Enum: e.Param.Enum, Line: e.Line}
 		if kt, known := KnownParams[e.Name]; known {
+			// The engine's own: their type is the engine's, a bare default
+			// is enough, and a declaration may only agree with it.
 			pr.Known = true
-			switch {
-			case pr.Type == kt:
-			case kt == ParamFloat && pr.Type == ParamInt: // max_cost_usd: 10
-				pr.Type = kt
-			default:
-				return errf(e.Line, "%s takes a %s default, got a %s", e.Name, kt, pr.Type)
+			if pr.Type != "" && pr.Type != kt {
+				return errf(e.Line, "%s is the engine's: a %s, not a %s", e.Name, kt, pr.Type)
 			}
-		} else if custom++; custom > maxParams {
-			return errf(e.Line, "declares more than %d parameters of its own", maxParams)
+			if pr.List || e.Param.Default.IsList {
+				return errf(e.Line, "%s is the engine's: one %s, not a list", e.Name, kt)
+			}
+			pr.Type = kt
+		} else {
+			if custom++; custom > maxParams {
+				return errf(e.Line, "declares more than %d parameters of its own", maxParams)
+			}
+			if pr.Type == "" {
+				hint := fmt.Sprintf("type: %s", e.Param.Default.Hint)
+				if e.Param.Default.IsList {
+					hint += ", list: true"
+				}
+				return errf(e.Line, "%s: type is required — %s (%s)", e.Name, hint, joinTypes())
+			}
+			if !slices.Contains(ParamTypes, pr.Type) {
+				return errf(e.Line, "%s: type %q must be one of %s", e.Name, pr.Type, joinTypes())
+			}
+			if pr.List != e.Param.Default.IsList {
+				if pr.List {
+					return errf(e.Line, "%s is a list: its default is a list too (default: [a, b])", e.Name)
+				}
+				return errf(e.Line, "%s: the default is a list — declare list: true, or give one value", e.Name)
+			}
+		}
+		if len(pr.Enum) > 0 && pr.Type != ParamString {
+			return errf(e.Line, "%s: enum applies to a string parameter (this one is %s)", e.Name, pr.Type)
+		}
+		// The default reads as the declared type, however the YAML spelled it.
+		var err error
+		if e.Param.Default.IsList {
+			items := make([]string, 0, len(e.Param.Default.Items))
+			for _, it := range e.Param.Default.Items {
+				v, ierr := parseParamItem(&Param{Name: pr.Name, Type: pr.Type}, it)
+				if ierr != nil {
+					return errf(e.Line, "%s: default: %v", e.Name, ierr)
+				}
+				items = append(items, v)
+			}
+			pr.Default = EncodeParamList(pr.Type, items)
+		} else if pr.Default, err = parseParamItem(&Param{Name: pr.Name, Type: pr.Type}, e.Param.Default.Text); err != nil {
+			return errf(e.Line, "%s: default: %v", e.Name, err)
 		}
 		if len(pr.Description) > 500 {
 			return errf(e.Line, "%s: description is longer than 500 characters", e.Name)
@@ -1230,9 +1396,6 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 			return errf(e.Line, "%s: description: %v", e.Name, err)
 		}
 		if len(pr.Enum) > 0 {
-			if pr.Type != ParamString {
-				return errf(e.Line, "%s: enum applies to a string parameter (this one is %s)", e.Name, pr.Type)
-			}
 			seen := map[string]bool{}
 			for _, v := range pr.Enum {
 				if v == "" || seen[v] {
@@ -1240,8 +1403,14 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 				}
 				seen[v] = true
 			}
-			if !contains(pr.Enum, pr.Default) {
-				return errf(e.Line, "%s: default %q is not one of its enum (%s)", e.Name, pr.Default, strings.Join(pr.Enum, " | "))
+			defaults := []string{pr.Default}
+			if pr.List {
+				defaults, _ = DecodeParamList(pr.Default)
+			}
+			for _, d := range defaults {
+				if !contains(pr.Enum, d) {
+					return errf(e.Line, "%s: default %q is not one of its enum (%s)", e.Name, d, strings.Join(pr.Enum, " | "))
+				}
 			}
 		}
 		p.plist = append(p.plist, pr)
@@ -1326,6 +1495,14 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 	return nil
 }
 
+func joinTypes() string {
+	out := make([]string, len(ParamTypes))
+	for i, t := range ParamTypes {
+		out[i] = string(t)
+	}
+	return strings.Join(out, " | ")
+}
+
 // knownDefaults are the engine-known parameters' values when a document
 // omits them (harness and model have none: they are required).
 var knownDefaults = map[string]string{
@@ -1342,6 +1519,9 @@ type paramSite struct {
 	phase, stage, field, input string
 	typ                        ParamType
 	values                     []string
+	// list: the site takes a list of typ (a list setting); every other
+	// takes one value.
+	list bool
 }
 
 // lookup resolves a field's raw text: a literal is returned as is; a
@@ -1354,8 +1534,8 @@ func (p *parser) lookup(raw string, site paramSite) (value, via string, err erro
 		return raw, "", nil
 	}
 	if !IsParamRef(raw) {
-		if IsSentinel(raw) {
-			return "", "", fmt.Errorf("%s is a sentinel, not a parameter — parameters are $lowercase names declared under parameters", raw)
+		if retiredSentinelRe.MatchString(raw) {
+			return "", "", fmt.Errorf("%s is not a parameter — parameters are $lowercase names declared under parameters", raw)
 		}
 		return "", "", fmt.Errorf("%q is not a parameter reference (parameters are $lowercase_name)", raw)
 	}
@@ -1364,8 +1544,8 @@ func (p *parser) lookup(raw string, site paramSite) (value, via string, err erro
 	if pr == nil {
 		return "", "", fmt.Errorf("parameter %q is not declared (declared: %s)", name, p.paramNames())
 	}
-	if pr.Type != site.typ {
-		return "", "", fmt.Errorf("parameter %q is a %s, and this field takes a %s", name, pr.Type, site.typ)
+	if pr.Type != site.typ || pr.List != site.list {
+		return "", "", fmt.Errorf("parameter %q is %s, and this field takes %s", name, typeWords(pr.Type, pr.List), typeWords(site.typ, site.list))
 	}
 	if site.values != nil {
 		if len(pr.Enum) == 0 {
@@ -1386,6 +1566,41 @@ func (p *parser) lookup(raw string, site paramSite) (value, via string, err erro
 	return pr.Default, via, nil
 }
 
+// listSetting resolves a list setting: a YAML list of literals, or a list
+// $parameter of strings. Each item must say something; an empty list is
+// none.
+func (p *parser) listSetting(stage string, pr IOPair) ([]string, error) {
+	items, via := pr.Items, ""
+	if !pr.IsList {
+		if !strings.HasPrefix(pr.Value, "$") {
+			return nil, fmt.Errorf("a list: %s: [%s] — or a list $parameter", pr.Name, pr.Value)
+		}
+		v, by, err := p.lookup(pr.Value, paramSite{stage: stage, field: "with", input: pr.Name, typ: ParamString, list: true})
+		if err != nil {
+			return nil, err
+		}
+		if items, err = DecodeParamList(v); err != nil {
+			return nil, fmt.Errorf("%q%s is not a list", v, by)
+		}
+		via = by
+	}
+	for _, it := range items {
+		if strings.TrimSpace(it) == "" || strings.HasPrefix(it, "$") {
+			return nil, fmt.Errorf("item %q%s must be a literal that says something", it, via)
+		}
+	}
+	return items, nil
+}
+
+// typeWords says what a parameter or a site holds: "a string", "a list of
+// strings".
+func typeWords(t ParamType, list bool) string {
+	if list {
+		return "a list of " + string(t) + "s"
+	}
+	return "a " + string(t)
+}
+
 // lookupInt resolves an integer field: the literal, or an int parameter.
 func (p *parser) lookupInt(raw *DocInt, site paramSite) (int, string, error) {
 	if raw.Ref == "" {
@@ -1399,7 +1614,7 @@ func (p *parser) lookupInt(raw *DocInt, site paramSite) (int, string, error) {
 	return n, via, nil
 }
 
-// lookupDuration resolves a duration field: the literal, or a string
+// lookupDuration resolves a duration field: the literal, or a duration
 // parameter; either must parse as a positive duration.
 func (p *parser) lookupDuration(raw string, site paramSite) (time.Duration, string, error) {
 	v, via, err := p.lookup(raw, site)
@@ -1413,15 +1628,15 @@ func (p *parser) lookupDuration(raw string, site paramSite) (time.Duration, stri
 	return t, via, nil
 }
 
-// buildWhen parses a stage condition: one of the run facts, or a bool
+// buildRunIf parses a stage condition: one of the run facts, or a bool
 // parameter — which folds right here, so the engine never sees it.
-func (p *parser) buildWhen(raw string, site paramSite) (*When, error) {
+func (p *parser) buildRunIf(raw string, site paramSite) (*Cond, error) {
 	// Negation is spelled `not x`: a leading `!` would be a YAML tag.
 	term, not := strings.CutPrefix(raw, "not ")
 	term = strings.TrimSpace(term)
 	switch {
-	case term == WhenTracker || term == WhenSubject:
-		return &When{Term: term, Not: not}, nil
+	case term == CondTracker || term == CondSubject:
+		return &Cond{Term: term, Not: not}, nil
 	case strings.HasPrefix(term, "$"):
 		v, _, err := p.lookup(term, site)
 		if err != nil {
@@ -1431,9 +1646,9 @@ func (p *parser) buildWhen(raw string, site paramSite) (*When, error) {
 		if b != not {
 			return nil, nil // holds: no condition to carry
 		}
-		return &When{Term: WhenNever}, nil
+		return &Cond{Term: CondNever}, nil
 	}
-	return nil, fmt.Errorf("%q is not a condition: %s, %s or a $bool parameter, each optionally negated as `not x`", raw, WhenTracker, WhenSubject)
+	return nil, fmt.Errorf("%q is not a condition: %s, %s or a $bool parameter, each optionally negated as `not x`", raw, CondTracker, CondSubject)
 }
 
 func (p *parser) paramNames() string {
@@ -1447,7 +1662,7 @@ func (p *parser) paramNames() string {
 // buildAgents validates the document's agent definitions (FLOWLANG §1, v3).
 // Since the flow now carries them, every contract check that used to need a
 // per-project library is a parse-time fact.
-func (p *parser) buildAgents(raw []agentspec.Spec) ([]agentspec.Spec, error) {
+func (p *parser) buildAgents(raw []agentspec.Spec, f *Flow) ([]agentspec.Spec, error) {
 	line := p.keyLine("agents")
 	seen := map[string]int{}
 	for i := range raw {
@@ -1465,12 +1680,45 @@ func (p *parser) buildAgents(raw []agentspec.Spec) ([]agentspec.Spec, error) {
 		if err := agentspec.Validate(sp); err != nil {
 			return nil, p.errf(at, "agent %q: %v", sp.Name, err)
 		}
+		if err := agentSchemas(sp, f); err != nil {
+			return nil, p.errf(at, "agent %q: %v", sp.Name, err)
+		}
+		if err := agentMCP(sp, f); err != nil {
+			return nil, p.errf(at, "agent %q: %v", sp.Name, err)
+		}
 		if prev, dup := seen[sp.Name]; dup {
 			return nil, p.errf(at, "agent %q: declared twice (first at line %d)", sp.Name, prev)
 		}
 		seen[sp.Name] = at
 	}
 	return raw, nil
+}
+
+// agentSchemas checks that every schema an agent's inputs and outputs name is
+// one the flow declares.
+func agentSchemas(sp *agentspec.Spec, f *Flow) error {
+	unknown := func(name string) error {
+		names := make([]string, 0, len(f.Schemas))
+		for _, s := range f.Schemas {
+			names = append(names, s.Name)
+		}
+		declared := "none"
+		if len(names) > 0 {
+			declared = strings.Join(names, ", ")
+		}
+		return fmt.Errorf("schema %q is not declared in this flow (add it to the %q block; declared: %s)", name, "schemas", declared)
+	}
+	for _, in := range sp.Inputs {
+		if in.Schema != "" && f.Schema(in.Schema) == nil {
+			return fmt.Errorf("input %q: %w", in.Name, unknown(in.Schema))
+		}
+	}
+	for _, out := range sp.Outputs {
+		if out.Schema != "" && f.Schema(out.Schema) == nil {
+			return fmt.Errorf("output %q: %w", out.Name, unknown(out.Schema))
+		}
+	}
+	return nil
 }
 
 // agentFreeText refuses a $parameter as an agent's text — its description,
@@ -1496,9 +1744,6 @@ func agentFreeText(sp *agentspec.Spec) error {
 	}
 	for _, out := range sp.Outputs {
 		if err := check(fmt.Sprintf("output %q: description", out.Name), out.Description); err != nil {
-			return err
-		}
-		if err := check(fmt.Sprintf("output %q: path", out.Name), out.Path); err != nil {
 			return err
 		}
 	}
@@ -1527,14 +1772,13 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	}
 	st := StageType(raw.Type)
 	switch st {
-	case StageAgent, StageCommand, StageHumanGate, StageAction, StageWait:
+	case StageAgent, StageCommand, StageHumanGate, StageAction, StageWait, StageService:
 	case "":
 		return fail("type is required")
 	default:
-		return fail("unknown type %q (%s|%s|%s|%s|%s)", raw.Type,
-			StageAgent, StageCommand, StageHumanGate, StageAction, StageWait)
+		return fail("unknown type %q (%s|%s|%s|%s|%s|%s)", raw.Type,
+			StageAgent, StageCommand, StageHumanGate, StageAction, StageWait, StageService)
 	}
-
 	// Reject fields that don't apply to the stage type (DESIGN.md §3: "model
 	// only on agent stages"; generalized to every type-specific field).
 	type fieldSet struct {
@@ -1550,9 +1794,10 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		// A wait stage may bound how long it waits; absent, it waits forever
 		// (like a gate — both park on something outside the run). A command
 		// bounds its script.
-		{"timeout", raw.Timeout != "", []StageType{StageAgent, StageCommand, StageWait}},
+		{"timeout", raw.Timeout != "", []StageType{StageAgent, StageCommand, StageWait, StageService}},
 		{"input", raw.Input != nil, []StageType{StageAgent, StageCommand, StageHumanGate, StageAction}},
-		{"output", raw.Output != nil, []StageType{StageAgent, StageCommand}},
+		{"output", raw.Output != nil, []StageType{StageAgent, StageCommand, StageAction}},
+		{"with", raw.With != nil, []StageType{StageAction}},
 		{"run", raw.Run != "", []StageType{StageCommand}},
 		{"run_ref", raw.RunRef != "", []StageType{StageCommand}},
 		{"each_repo", raw.EachRepo, []StageType{StageCommand}},
@@ -1561,6 +1806,8 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"auto_reject", raw.AutoReject != "", []StageType{StageHumanGate}},
 		{"action", raw.Action != "", []StageType{StageAction}},
 		{"for", raw.For != "", []StageType{StageWait}},
+		{"service", raw.Service != "", []StageType{StageService}},
+		{"do", raw.Do != "", []StageType{StageService}},
 	}
 	for kind, re := range raw.edges() {
 		fields = append(fields, fieldSet{kind, re != nil, edgeKinds[kind].on})
@@ -1580,6 +1827,16 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 	}
 	s := &Stage{ID: raw.ID, Type: st, Line: line, Description: raw.Description, Sequence: raw.scope}
+	// Ports: what each one says by itself. Whether they fit the agent's or
+	// the action's contract, and who writes each path, is validateContracts'
+	// once the whole flow is built.
+	var perr error
+	if s.Inputs, perr = p.buildPorts(raw.Input, portIn, st, raw.ID); perr != nil {
+		return fail("%v", perr)
+	}
+	if s.Outputs, perr = p.buildPorts(raw.Output, portOut, st, raw.ID); perr != nil {
+		return fail("%v", perr)
+	}
 	// site describes a field of this stage that may read a $parameter.
 	site := func(field string, typ ParamType, values []string) paramSite {
 		return paramSite{stage: raw.ID, field: field, typ: typ, values: values}
@@ -1626,24 +1883,12 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			s.MaxTurns = n
 		}
 		if raw.Timeout != "" {
-			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamString, nil))
+			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamDuration, nil))
 			if err != nil {
 				return fail("%v", err)
 			}
 			s.Timeout = t
 		}
-		// input/output: bindings against the agent's declared contract. Only
-		// the VALUES are checked here; the names are checked against the
-		// flow's own agent decls in validateContracts, once every agent has
-		// been built.
-		var berr error
-		if s.Inputs, berr = bindings(raw.Input, "input", agentInputValue); berr != nil {
-			return fail("%s", berr)
-		}
-		if s.Outputs, berr = bindings(raw.Output, "output", pathValue); berr != nil {
-			return fail("%s", berr)
-		}
-
 	case StageCommand:
 		if (raw.Run != "") == (raw.RunRef != "") {
 			return fail("exactly one of run / run_ref is required")
@@ -1660,34 +1905,24 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			s.RunRef = v
 		}
 		if raw.Timeout != "" {
-			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamString, nil))
+			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamDuration, nil))
 			if err != nil {
 				return fail("%v", err)
 			}
 			s.Timeout = t
 		}
-		// input/output: the paths the script reads and writes. A command has no
-		// contract, so the names are free labels — they document what each file
-		// is for. Declaring them makes the dataflow visible and lets the engine
-		// check the inputs before running and the outputs after.
-		var berr error
-		if s.Inputs, berr = bindings(raw.Input, "input", pathValue); berr != nil {
-			return fail("%s", berr)
-		}
-		if s.Outputs, berr = bindings(raw.Output, "output", pathValue); berr != nil {
-			return fail("%s", berr)
-		}
-
 	case StageHumanGate:
 		s.Question = raw.Question
-		// A gate shows the human one thing: an artifact to review, or a link.
-		// One entry today; the form leaves room for more without a grammar change.
-		var berr error
-		if s.Inputs, berr = bindings(raw.Input, "input", gateInputValue); berr != nil {
-			return fail("%s", berr)
+		// A gate shows the human what to review — files, folders of them —
+		// and at most one link to open (the merge request, a preview).
+		links := 0
+		for _, in := range s.Inputs {
+			if SourceType(in.Value) != "" {
+				links++
+			}
 		}
-		if len(s.Inputs) > 1 {
-			return fail("input: a human_gate shows one thing; got %d bindings", len(s.Inputs))
+		if links > 1 {
+			return fail("input: a human_gate opens at most one link; got %d", links)
 		}
 		for _, f := range []struct{ field, slug string }{
 			{"auto_approve", raw.AutoApprove}, {"auto_reject", raw.AutoReject},
@@ -1716,61 +1951,72 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			return fail("unknown action %q (%s)", raw.Action, actionspec.Slugs())
 		}
 		s.Action = raw.Action
-		// Bind the action's signature: apothecary owns the registry, so unlike
-		// agent bindings these names are checkable right here.
-		bound := map[string]bool{}
-		if raw.Input != nil {
-			for _, pr := range raw.Input.Pairs {
-				sig := act.Input(pr.Name)
+		given := map[string]bool{}
+		for _, pr := range s.Inputs {
+			given[pr.Name] = true
+		}
+		if raw.With != nil {
+			for _, pr := range raw.With.Pairs {
+				sig := act.Setting(pr.Name)
 				if sig == nil {
-					return fail("input %q is not an input of action %q (%s)", pr.Name, act.Slug, act.InputNames())
+					if act.Input(pr.Name) != nil {
+						return fail("with %q: %q is a file the action reads — a port: input: { %s: { from: …, type: %s } }", pr.Name, pr.Name, pr.Name, act.Input(pr.Name).Type)
+					}
+					return fail("with %q is not a setting of action %q (settings: %s)", pr.Name, act.Slug, actionspec.Names(act.Settings))
+				}
+				if sig.Kind == actionspec.KindList {
+					items, err := p.listSetting(raw.ID, pr)
+					if err != nil {
+						return fail("with %q: %v", pr.Name, err)
+					}
+					given[pr.Name] = true
+					s.Settings = append(s.Settings, Setting{Name: pr.Name, Values: items})
+					continue
+				}
+				if pr.IsList {
+					return fail("with %q takes one value, not a list (%s)", pr.Name, sig.Description)
 				}
 				var values []string
 				if sig.Kind == actionspec.KindEnum {
 					values = sig.Values
 				}
-				v, via, err := p.lookup(pr.Value, paramSite{stage: raw.ID, field: "input", input: pr.Name, typ: ParamString, values: values})
+				v, via, err := p.lookup(pr.Value, paramSite{stage: raw.ID, field: "with", input: pr.Name, typ: ParamString, values: values})
 				if err != nil {
-					return fail("input %q: %v", pr.Name, err)
-				}
-				if sig.Kind == actionspec.KindFile && !validArtifactPath(v) {
-					return fail("input %q: path %q%s must be a relative artifact path", pr.Name, v, via)
+					return fail("with %q: %v", pr.Name, err)
 				}
 				if sig.Kind == actionspec.KindEnum && !slices.Contains(sig.Values, v) {
-					return fail("input %q: %q%s is not one of %s", pr.Name, v, via, strings.Join(sig.Values, " | "))
+					return fail("with %q: %q%s is not one of %s", pr.Name, v, via, strings.Join(sig.Values, " | "))
 				}
-				// A text input is the tracker's vocabulary, not ours: only
+				// A text setting is the tracker's vocabulary, not ours: only
 				// blankness is checkable here.
 				if sig.Kind == actionspec.KindText && strings.TrimSpace(v) == "" {
-					return fail("input %q: a value is required%s (%s)", pr.Name, via, sig.Description)
+					return fail("with %q: a value is required%s (%s)", pr.Name, via, sig.Description)
 				}
-				bound[pr.Name] = true
-				s.Inputs = append(s.Inputs, IOBinding{Name: pr.Name, Value: v})
+				given[pr.Name] = true
+				s.Settings = append(s.Settings, Setting{Name: pr.Name, Value: v})
 			}
 		}
-		for i := range act.Inputs {
-			if sig := &act.Inputs[i]; sig.Required && !bound[sig.Name] {
-				return fail("action %q requires input %q (%s)", act.Slug, sig.Name, sig.Description)
+		// The action's whole contract is known here: apothecary owns the
+		// registry, so unlike an agent's it is checked as the stage is read.
+		if err := actionPorts(act, s); err != nil {
+			return fail("%v", err)
+		}
+		for i := range act.Settings {
+			if sig := &act.Settings[i]; sig.Required && !given[sig.Name] {
+				return fail("action %q requires with %q (%s)", act.Slug, sig.Name, sig.Description)
 			}
 		}
-		// An action may take a value from an artifact OR from the flow —
-		// exactly one, the way a command takes run OR run_ref.
+		// An action may take a value from a file OR from the flow — exactly
+		// one, the way a command takes run OR run_ref.
 		if group := act.ExactlyOne; len(group) > 0 {
 			n := 0
 			for _, name := range group {
-				if bound[name] {
+				if given[name] {
 					n++
 				}
 			}
 			if n != 1 {
 				return fail("action %q takes exactly one of %s", act.Slug, strings.Join(group, " / "))
-			}
-		}
-		// A file an action writes is part of the dataflow like an agent's
-		// output: later stages bind it, the validator sees it produced.
-		for _, o := range act.Outputs {
-			if o.Kind == actionspec.KindFile && o.Path != "" {
-				s.Outputs = append(s.Outputs, IOBinding{Name: o.Name, Value: o.Path})
 			}
 		}
 
@@ -1789,22 +2035,52 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		// signal is a human_gate with auto_approve).
 		w := Wait{Signal: raw.For, Start: StartAuto, Max: 1}
 		if raw.Timeout != "" {
-			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamString, nil))
+			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamDuration, nil))
 			if err != nil {
 				return fail("%v", err)
 			}
 			w.Timeout, s.Timeout = t, t
 		}
 		s.WaitFor, s.Wait = raw.For, &w
+
+	case StageService:
+		if raw.Service == "" {
+			return fail("service is required: a service the project declares — usually a parameter (service: $app)")
+		}
+		v, via, err := p.lookup(raw.Service, site("service", ParamString, nil))
+		if err != nil {
+			return fail("service: %v", err)
+		}
+		if !slugRe.MatchString(v) {
+			return fail("service %q%s is not a slug (a name in the project's services; checked at run creation)", v, via)
+		}
+		s.Service = v
+		s.Do = ServiceStart
+		if raw.Do != "" {
+			if !slices.Contains(ServiceDos, raw.Do) {
+				return fail("do %q must be %s", raw.Do, strings.Join(ServiceDos, " | "))
+			}
+			s.Do = raw.Do
+		}
+		if raw.Timeout != "" {
+			if s.Do == ServiceStop {
+				return fail("timeout bounds how long a start takes to be healthy; a stop has none")
+			}
+			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamDuration, nil))
+			if err != nil {
+				return fail("%v", err)
+			}
+			s.Timeout = t
+		}
 	}
 
-	// when: a condition on any stage type.
-	if raw.When != "" {
-		w, err := p.buildWhen(raw.When, site("when", ParamBool, nil))
+	// run_if: a condition on any stage type.
+	if raw.RunIf != "" {
+		w, err := p.buildRunIf(raw.RunIf, site("run_if", ParamBool, nil))
 		if err != nil {
-			return fail("when: %v", err)
+			return fail("run_if: %v", err)
 		}
-		s.When = w
+		s.RunIf = w
 	}
 
 	if raw.OnSuccess == ReservedDebug {
@@ -1832,108 +2108,14 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	return s, nil
 }
 
-// bindings converts a document mapping into resolved bindings: names are
-// slugs, and each value is checked by the rule its stage type allows. One
-// helper for all four types, because the FORM is the same everywhere and only
-// the legal values differ (FLOWLANG §4).
-func bindings(io *DocIO, field string, valueOK func(v string) error) ([]IOBinding, error) {
-	if io == nil {
-		return nil, nil
-	}
-	out := make([]IOBinding, 0, len(io.Pairs))
-	for _, pr := range io.Pairs {
-		if !agentspec.ValidName(pr.Name) {
-			return nil, fmt.Errorf("%s %q: name must match [a-z0-9][a-z0-9._-]* (lowercase slug)", field, pr.Name)
-		}
-		if err := valueOK(pr.Value); err != nil {
-			return nil, fmt.Errorf("%s %q: %w", field, pr.Name, err)
-		}
-		out = append(out, IOBinding{Name: pr.Name, Value: pr.Value})
-	}
-	return out, nil
-}
-
 // paramFields names where a $parameter is read (FLOWLANG §1 Parameters).
-const paramFields = "a stage's model, harness, max_turns, timeout, run_ref and when, an action's inputs, and a watcher's or an outcome's start, quiet_for and max"
+const paramFields = "a stage's model, harness, max_turns, timeout, run_ref and run_if, an action's settings (with), a service stage's service, a run.service.$name source, and a watcher's or an outcome's start, quiet_for and max"
 
 // notAParam refuses a $parameter in a field that reads none: written there,
 // $name would stay the text "$name" — never the parameter's value.
 func notAParam(v string) error {
 	if IsParamRef(strings.TrimSpace(v)) {
 		return fmt.Errorf("%s is a parameter, and this field reads none — it would stay the text %q (parameters are read in %s)", strings.TrimSpace(v), strings.TrimSpace(v), paramFields)
-	}
-	return nil
-}
-
-// pathValue accepts a repo-relative artifact path and nothing else: a command
-// reads and writes files, and an agent's outputs are files.
-func pathValue(v string) error {
-	if err := notAParam(v); err != nil {
-		return err
-	}
-	if !validArtifactPath(v) {
-		return fmt.Errorf("%q must be a relative artifact path", v)
-	}
-	return nil
-}
-
-// retiredSentinel names the replacement of a sentinel this grammar no longer
-// has, or "".
-func retiredSentinel(v string) string {
-	switch v {
-	case "$CHANGED":
-		return fmt.Sprintf("$CHANGED is retired — it meant two ranges: use %s (what the branch changes against its target) or %s (what this phase run committed)", SentinelDiffTarget, SentinelDiffPhase)
-	case "$UNCOMMITTED":
-		return fmt.Sprintf("$UNCOMMITTED is retired: use %s (git status: staged, unstaged and untracked)", SentinelStatus)
-	}
-	return ""
-}
-
-// agentInputValue accepts a path or one of the sentinels an agent prompt can
-// render: the git file lists, and the content of the edge that re-entered
-// the stage.
-func agentInputValue(v string) error {
-	if err := notAParam(v); err != nil {
-		return err
-	}
-	switch v {
-	case SentinelDiffTarget, SentinelDiffPhase, SentinelStatus, SentinelDecision, SentinelFailure:
-		return nil
-	case "ticket":
-		return fmt.Errorf("the ticket is always the TASK section; remove this binding")
-	case SentinelMRURL, SentinelWorkspace:
-		return fmt.Errorf("%s is a link for a human_gate, not something an agent reads", v)
-	}
-	if msg := retiredSentinel(v); msg != "" {
-		return fmt.Errorf("%s", msg)
-	}
-	if !validArtifactPath(v) {
-		return fmt.Errorf("%q must be a relative artifact path, %s, %s, %s, %s or %s",
-			v, SentinelDiffTarget, SentinelDiffPhase, SentinelStatus, SentinelDecision, SentinelFailure)
-	}
-	return nil
-}
-
-// gateInputValue accepts a path to review or a link the engine resolves.
-func gateInputValue(v string) error {
-	if err := notAParam(v); err != nil {
-		return err
-	}
-	switch v {
-	case SentinelMRURL, SentinelWorkspace:
-		return nil
-	case "mr_url":
-		return fmt.Errorf("retired: use %s", SentinelMRURL)
-	case "workspace":
-		return fmt.Errorf("retired: use %s", SentinelWorkspace)
-	case SentinelDiffTarget, SentinelDiffPhase, SentinelStatus, SentinelDecision, SentinelFailure:
-		return fmt.Errorf("%s is agent-prompt content, not something to show a human", v)
-	}
-	if msg := retiredSentinel(v); msg != "" {
-		return fmt.Errorf("%s", msg)
-	}
-	if !validArtifactPath(v) {
-		return fmt.Errorf("%q must be a relative artifact path, %s or %s", v, SentinelMRURL, SentinelWorkspace)
 	}
 	return nil
 }
@@ -1965,7 +2147,7 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 		if routeTerminal(raw.To) || raw.To == "" {
 			where = "on the target stage"
 		}
-		return fail("%q is retired: bind %s as an input %s instead", "feed", FeedSentinel(kind), where)
+		return fail("%q is retired: read %s from an input port %s instead", "feed", FeedSource(kind), where)
 	}
 	if raw.To == "" {
 		return fail("to is required")
@@ -2324,7 +2506,7 @@ func (p *parser) buildWait(raw *DocWait, phaseID string, kind PhaseKind) (Wait, 
 		if !sig.Debounced {
 			return w, fmt.Errorf("quiet_for applies only to a signal that fires on activity (%s does not)", w.Signal)
 		}
-		v, via, err := p.lookup(raw.QuietFor, site("quiet_for", ParamString, nil))
+		v, via, err := p.lookup(raw.QuietFor, site("quiet_for", ParamDuration, nil))
 		if err != nil {
 			return w, fmt.Errorf("quiet_for: %v", err)
 		}
@@ -2402,7 +2584,7 @@ func (p *parser) validatePhases(f *Flow, ids map[string]int) error {
 			if s.Action == actionspec.PushBranch {
 				leased = true
 			}
-			if in := s.Input("strategy"); s.Action == actionspec.SyncTarget && in != nil && in.Value == actionspec.StrategyRebase {
+			if s.Action == actionspec.SyncTarget && s.Setting("strategy", "") == actionspec.StrategyRebase {
 				rebase = s.Line
 			}
 		}

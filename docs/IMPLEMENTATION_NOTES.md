@@ -2295,7 +2295,7 @@ answer. Only then does it fall back to "the engine restarted, continue".
 
 ### What the agent will run, checked before it runs
 
-Found live: the built-in flow's review stage pinned `opencode-go/glm-5.1`. The
+Found live: the built-in flow's review stage pinned `opencode-go/glm-5.2`. The
 provider's live model list still served it, but opencode 1.17.8 in the
 workspace did not offer it, so runs built a workspace, planned, built — and
 failed at review when the session refused the model. Two checks now, because
@@ -3892,3 +3892,301 @@ enforce a yaml schema on the editor directly?"
   takes name, version, …` (was Go's `field mian not found in type
   flow.Doc`), for every decoded part: a stage, a watcher or an outcome, `on:`,
   a route, a parameter, an agent and its inputs and outputs.
+
+## Structured agent outputs: built-in types and flow schemas
+
+2026-10-26, TODO #33, the user: "make sure the agent respected whatever was
+asked of it … enforce things like a schema output on an expected agent
+output". The rule they set: *if a built-in stage requires a structured input,
+it deserves a built-in type; if the stage is the user's, the user defines the
+structure.*
+
+- **Built-in types** stay the four something built in reads: `verdict` (the
+  router), `review_threads` (`post_review`), `review_replies`
+  (`reply_review_comments`), and the new `commit_message` (`commit`). An
+  action's file input now names its type (`actionspec.InputSig.Type`), and the
+  parser refuses an agent output of another shape bound to it — it was only a
+  description before.
+- **Flow schemas** (`schemas:` — `{name, description, json_schema}`, JSON
+  Schema 2020-12 in YAML), named by an agent input's or output's `schema:`.
+  Compiled at parse with every loader removed (`jsonschema.SchemeURLLoader{}`):
+  a `$ref` to `file://` or `https://` is a parse error, never a read. Static:
+  every agent output writing a structured input's path must declare the same
+  structure. Runtime: outputs checked at stage end (`output_invalid`, the
+  violations as `$FAILURE`), schema'd agent inputs before the stage starts
+  (`input_missing` / `input_invalid`, before outputs are cleared — as a
+  command's). The schema is rendered verbatim into the OUTPUT CONTRACT.
+  `commit_message`'s shape is a built-in schema through the same machinery
+  (`flow.TypeSchema`), so it is checked and shown the same way.
+- **`DocJSON`** keeps the YAML node, not a decoded map, so the editor gets
+  the author's key order and re-emits it (Go maps would sort `properties`
+  before `type`). Unexported field: an exported `yaml.Node` leaked into the
+  OpenAPI components.
+- **`commit` action** replaces the builder template's `git commit -F` command:
+  the message is piped to `git commit -F -` (shell-quoted, no temp file),
+  every checkout or the subject's, a clean tree left alone (idempotent
+  re-entry). Considered first: jq in the dind image (wrong level — commands
+  run in the repo's own image), jq via the harness feature (installs into the
+  user's image), a shim wrapper. The shim got a real `jq` anyway
+  (`apothecary-shim jq`, gojq's own CLI, pinned in the builder Dockerfile and
+  held to go.mod by a test; `/opt/apothecary` appended to every Exec'd
+  script's PATH, never prepended).
+- A verdict that fails its shape now feeds the error to the retry as
+  `$FAILURE` (it fed nothing; the review types already did).
+- Not done: "unstaged code exists" (TODO #33's other half) — an agent that
+  must leave changes is not a file, so it fits neither a type nor a schema.
+
+## Commands declare structures too; a schema narrows a type
+
+Same day, the user: "is there a reason why command stages can't declare a
+schema? … why can't the 2 share the same schema in output → input?" There
+was none — the schema lived on agent decls only because commands had no decl.
+
+- **Long form** `name: {path, schema}` on a command's `input:`/`output:`
+  (`IOPair.Schema`, `IOBinding.Schema`); both keys required, nothing else
+  allowed, refused on any other stage type with the reason. The document's
+  JSON keeps it as `{path, schema}`; the editor splits it on load into
+  `input_schema`/`output_schema` beside the plain `StageIO` (every consumer
+  of bindings stays `name → path`) and `docToYaml` joins it back.
+  `BindingRows` carries the schema on the row, so renaming a binding keeps it.
+- **Agreement is by writer, whoever it is**: agent outputs (decl), command
+  bindings (long form), action outputs (opaque files) all count. A command
+  writing for an action's *typed* input is exempt — it cannot declare a
+  built-in type, and the action parses the file anyway (a flow test feeds
+  `post_review` from a script).
+- **Runtime**: a command's structured inputs are checked after the existence
+  check, its outputs after its exit-0 existence check (`checkFiles`, shared
+  with agents).
+- **`schema` beside `type`** (was mutually exclusive): the file holds both;
+  `Flow.OutputSchemas` lists the type's built-in schema then the flow's, both
+  rendered into the contract; the by-hand type checks (verdict, review_*) run
+  first. Agreement: a writer satisfies a reader when it has every structure
+  the reader names (`shape.satisfies`).
+
+## Ports: every value a stage reads or writes, typed, with its source
+
+Same day, after a long design exchange with the user, which rewrote the flow
+grammar in place (still `version: 5` — the app is unreleased, so no upgrader).
+
+- **What the user asked for, in order.** Stages should declare their inputs
+  and outputs "as a function does" — typed, without pointing at a location —
+  and "more declarative = better": every stage restates its I/O even where an
+  agent's or an action's contract already says it. Rejected along the way:
+  edges passing every argument (the function-call model taken literally:
+  ~19 edge sites re-passing `plan` in the builder, and chains opened by a
+  signal have no caller); `producer.output` references (a reader would name a
+  stage); a named run scope (names would need a uniqueness that paths
+  already give); `$IN_`/`$OUT_` environment variables for scripts (the user
+  dislikes them — scripts keep literal paths).
+- **What it is.** A port is `{from | to, type | schema, description?,
+  optional?}`. Sources: a path some stage writes, `repo:<path>`, `run.*`
+  (ticket, git.status/diff_target/diff_phase, mr.url, workspace) and
+  `edge.*` (failure, decision). Paths stay the wiring — a path written by
+  several stages gives the most recent, two stages to a third use two paths
+  — so "functions over a typed run scope" is the workspace's files keyed by
+  path. Edges carry control and only the transition's payload.
+- **Contracts say what, stages say where.** Agent decls are typed and lose
+  `path:`; a stage states every output and every required input, and may
+  narrow (add a schema), never change a type. Actions: file ports typed in
+  the registry (`PortSig`), literals under `with:` (`SettingSig`); every
+  action output is stated (load_review_comments' `review`). create_mr's link
+  became `run.mr.url`, not an output.
+- **The TASK section is a port now** (`run.ticket`, type `ticket`): an agent
+  without one never sees the ticket — the conflict resolver deliberately.
+- **Checks became errors**: nothing writes a path (the hint is `repo:`),
+  not written on every route (unless `optional`), writers disagreeing, an
+  edge source no edge fills. A typo'd `run.tiket` suggests `run.ticket`
+  (Levenshtein ≤ 3). The runtime checks every stage's file inputs before it
+  runs and agent/command outputs after — except an action with a pending
+  effect, which reconciles first (caught by the test-conversion agent: a
+  retried ticket_comment on a rebuilt workspace).
+- **Editor**: `PortRows` replaces `BindingRows` — contract rows for agents and
+  actions, free rows for commands and gates, a source datalist (engine
+  sources + paths the flow writes), type and schema selects; a value the
+  engine provides fixes the type. The doc model keeps the wire shape
+  (`input`/`output` maps of `DocPort`, `with` a string map).
+- The `{path, schema}` command long form from earlier the same day is gone:
+  every port carries its shape.
+
+## Screenshots in the merge request: services, the project browser, MCP, files
+
+The test the user set the flow language: bring the app up, have an agent look
+at it in a browser, put the screenshots in the merge request. Four pieces,
+built at once (2026-10-26), each usable without the others.
+
+- **`type: files`** — a directory port (`artifacts/shots/`, the trailing `/`
+  is the type's mark). Emptied before a fresh attempt (`rm -rf` of the path
+  without its slash, so a planted symlink goes, never its target), present
+  when it holds ≥1 file, listed (never pasted) in a reader's prompt, captured
+  one snapshot per file (≤20, ≤10 MB — the store tail-truncates, which would
+  corrupt an image). `file` readers are not satisfied by it. New required
+  `EnvProvisioner.ListFiles` (POSIX `find` + `wc -c`, busybox-safe, same
+  containment guard as a read).
+- **Attachments** — `create_mr` / `ticket_comment` take an optional
+  `attachments` (`files`). `RepoHost.UploadAttachment` → `{URL, Link,
+  Markdown}`: GitLab `POST /projects/:id/uploads`; GitHub
+  `uploads.github.com/user-attachments/assets` (what `gh` uses — classic PAT
+  with `repo` only; fine-grained/app tokens 404, GHES has no such endpoint —
+  both refused with that sentence); Jira issue attachments (v3 links them —
+  ADF media needs a Media API id; v2 wiki `!name!`) through the optional
+  `ports.TicketAttacher`. Body rewrite: link/image targets and whole-path
+  mentions become the upload; unmentioned files follow under Screenshots /
+  Attachments. Limits checked before any upload. create_mr reconciles
+  (FindMR) before reading anything, so an adopted MR never re-uploads; a
+  crash between upload and creation leaves orphan uploads, never a second
+  MR. Known: a path inside a fenced code block is rewritten too.
+- **Services** — declared in the project (`workspace.services`: start, stop?,
+  one health probe, ports), named by flows through a parameter (`service:
+  $app`, default `default` — the user's own project calls it `aio`; nothing
+  hardcodes either). A shim supervisor (`apothecary-shim service …`)
+  detaches with setsid, survives the exec and engine restarts, keeps
+  `/apothecary/services/<name>/{spec,state}.json` + `output.log` in the
+  container (a rebuild honestly wipes them with the processes) and is read
+  through the sidecar (exec fallback). A start that exits 0 daemonized
+  something; then only the probe decides. Stage-started services stop at
+  their chain's end (every one at the run's); human-started ones never by the
+  engine. Human actions append events from outside the loop, so appends now
+  take a per-run mutex. Health flips are polled state, not events. Run page:
+  `GET/POST /api/runs/{id}/services[/{name}/start|restart|stop|logs]`.
+- **MCP** — flow `mcp_servers:` (builtin | command | url; `${secrets.x}` in
+  env/headers) + agent `mcp:`. Resolved at stage start (secrets re-read and
+  taught to the redactor) into `ports.AgentInput.MCPServers` and sent on the
+  ACP `session/new`/`session/load` — not harness config files: opencode
+  reads `opencode.json` once per process, so per-stage secrets and a server
+  per session (one Chromium each) only work through ACP. opencode keeps a
+  session's servers for the process, so each agent's markdown turns the
+  others' tools off (`"browser_*": false`). Known: two concurrent sessions
+  on one server in one workspace (a watcher beside the main chain) — the
+  second replaces the first's process; sidechat sessions get no toggles.
+  Project secrets: new table `project_secrets` (one sealed row each) in
+  migration 0009 — not 0001, which `TestInitMigrationIsFrozen` pins for
+  databases that applied it.
+- **The project browser** — `apo-browser-<project>` (egress-gateway
+  lifecycle: create on need, recreate when stale and idle, stop after 10
+  idle minutes, warmed at run creation), `--network none`, caps dropped;
+  image `node:22` + `@playwright/mcp@0.0.83` + its Chromium + the shim.
+  Session: the workspace's `shim browser-mcp` upgrades
+  `GET /api/runs/{id}/browser-mcp` (run token), the engine `docker exec`s
+  `shim browser-session -- playwright-mcp --isolated …` with
+  `--proxy-server` at a per-session unix socket the daemon serves: loopback
+  hosts dial the run's port through `ExposePort`, every other host 403.
+  Named screenshots are taken inline and written into the workspace by the
+  shim (Playwright would write them in the container). Known: an agent can
+  run code in the shared container, so sessions of one project can reach each
+  other's proxy sockets (projects stay isolated); no reconnect mid-session.
+- **Builder template** — `screenshots: false` + `app: default`; on, `app_up`
+  (service, best effort: a dead app opens the MR without shots) and `shoot`
+  (a `photographer` agent with the browser, to the debug leaf like every
+  agent) run after the review; the redactor may show shots inline and
+  `create_mr` attaches them. Off, run creation asks for no service and no
+  browser: `Flow.Services/Secrets/UsesBuiltin` skip stages `when:` folded
+  off.
+
+## Reviews: a gate over many files, and a decision with a shape
+
+A gate shows what a run made — a plan, a folder of screenshots — and the
+person answers file by file (2026-10-26). Three changes, one idea: the
+review page's structure reaches the engine, and the engine writes the text.
+
+- **A gate shows files and one link.** Any number of `file`/`files` ports
+  plus at most one link (was: exactly one port). A folder is expanded when the
+  gate opens (`gateFiles`): its files in order, the attachment bounds (≤20 in
+  all, none over 10 MB — a cut snapshot ruins an image), each snapshotted as
+  shown. `Ping.Files` was already a list; only the gate ever put one in it.
+- **A review is structured.** `PingAnswered.Review []ReviewComment{path,
+  start_line, end_line, heading, quote, body, attachment_ids}`; `feedback` is
+  its summary. Checked on both answer paths (`validateReview`): each on a
+  shown file, non-empty, a real range, an image (by extension) whole-file only,
+  its attachments the answer's. Projected one row per comment into
+  `ping_review_comments` (migration 0010 — 0001 is frozen), rebuilt with the
+  pings, read back with them. The page no longer composes a feedback text
+  (`composeFeedback` is gone): one Go renderer (`renderReview`) writes it
+  grouped by file in the order shown, numbered, attachments named where a
+  comment names them and listed after otherwise — for a gate's decision and
+  for an `ask_human` answer alike (`composeAnswerText`).
+- **An approval carries its decision.** `flow.Decides` — a gate, or an agent
+  with a verdict — makes on_success carry `edge.decision` when the approval
+  said something (a summary, comments, files; a verdict's comments). The
+  validator counts that as filling `edge.decision`. Persisted as
+  `StageCompleted.Feed` (as `EdgeTaken.Feed` is for a rejection), so recovery
+  between the gate and the next stage hands it on (`completedFeed`). Replay of
+  `stage_completed` now also clears a feed the stage was entered with — the
+  live `advance` always did, replay did not, so a run recovered after a
+  rejection loop could re-hand the old rejection to the stage after next.
+  Decisions keep their head (32 KB, `capDecision`); failures their tail (8 KB).
+- Found on the way: live gate pings never entered `rs.raisedPings` (replay
+  put them there), so anything reading what a gate showed differed between a
+  live run and a recovered one; `raiseDecision` now mirrors replay.
+- Not done: the engine checks a comment's lines are a range, not that they
+  fall inside the file (that would mean reading the snapshot on every answer).
+
+## One word for a judgement, `run_if`, and what failed in CI
+
+Three renames and a source (2026-10-26).
+
+- **verdict, everywhere.** `edge.decision`/`type: decision` are `edge.verdict`/
+  `type: verdict`: a person's review at a gate and an agent's verdict file are
+  one thing now, so they have one name. `verdict` stays a file type and is the
+  one an engine source also gives (`SourceVerdict` → `TypeVerdict`); the type
+  rules needed no exception beyond the source table, since a port's source
+  already says file or value. `flow.Decides` → `GivesVerdict`,
+  `engine/decision.go` → `verdict.go`.
+- **The verdict file has the review's shape.** `{verdict, summary?, comments:
+  [remark | {path, line?, end_line?, quote?, body}]}`, a built-in JSON Schema
+  (shown in the OUTPUT CONTRACT, checked with the outputs, as commit_message)
+  plus `parseVerdict`'s rules a schema cannot say: a REJECT says why (a
+  summary now counts), a path `filepath.IsLocal`, a range runs forward.
+  `ports.Verdict{Approve, Summary, Comments []VerdictComment}`. One renderer
+  for both givers (`renderVerdict` → `renderReview`): remarks first, then by
+  file — the gate's order, else first mention.
+- **yes_no.** The answer kind of approve/reject questions (gates, watcher and
+  outcome confirmations, the debug leaf) was also "decision"; it is `yes_no`.
+  Migration 0011 rewrites `pings.answer_kind` and, the app being unreleased,
+  the `ping_raised` events themselves rather than reading both spellings.
+- **`run_if:`** replaces a stage's `when:` (Go `Stage.RunIf *Cond`,
+  `Cond*` terms). A document still saying `when:` gets the retired-name
+  message with the line rewritten.
+- **`run.ci.failure`** — what failed, never the log: `RepoHost.CIFailures`
+  (GitHub: the newest check run per name; an Actions run is its job, whose
+  failed steps and workflow run's `path` — a called workflow's `@ref` cut —
+  say where; an app's run its output title; a failed status its description.
+  GitLab: the head pipeline's failed jobs, not allowed-to-fail, with stage
+  and the project's `ci_config_path`). Read once in `beginPhase` for a chain
+  that reads the source, kept on `phase_started.ci` (replayed into `rs.ci`,
+  parked with the phase run), rendered by `ciFailureText`. Only a `ci_failed`
+  watcher's stages may read it (the parser says so); the editor offers it
+  there only. `builder` gains the `ci_fix` watcher (`$ci_start`, default
+  confirm) and a `ci_fixer` agent told to re-run the failed steps itself and
+  not to loosen CI.
+
+## Parameters declare their type; lists, and labels on the merge request
+
+What a parameter holds is declared, never read off its default (2026-10-26).
+
+- **`type:`** — `bool | int | float | string | duration` — is required on a
+  flow's own parameter (the six the engine reads keep their bare default and
+  the engine's type; another type, or a list, is refused). The default reads
+  *as* the type, so YAML quoting stops deciding it; a missing type is refused
+  with the one the old inference would have given. `duration` is a real type
+  now: `timeout` (known) is one, and `timeout`/`quiet_for` sites take one
+  (they took a string that parsed as a duration). `DocParamValue.Kind` became
+  `Hint` — what the YAML wrote, used only for the bare known defaults and
+  that error message.
+- **`list: true`** — any number of values of the type; the default is a YAML
+  list, a bound value a JSON array, canonicalised typed (`EncodeParamList`).
+  An enum constrains each item. `paramSite.list` keeps lists out of scalar
+  sites and the reverse. Bindings stay `map[string]string`: a list is its
+  JSON text, so no store changed.
+- **The first reader: `create_mr`'s `labels`** (`actionspec.KindList`). A
+  `with:` value may now be a YAML list (`IOPair.Items`); a list setting takes
+  that or a list `$parameter`, each item non-blank and no `$` inside.
+  `RepoHost.AddMRLabels` (GitHub: `POST issues/{n}/labels`; GitLab:
+  `add_labels` on the merge request — both create a missing label) runs
+  after `CreateDraftMR`, best effort: a refusal is logged and the merge
+  request stands. `builder` labels its merge request from `mr_labels`,
+  default `[apothecary]`.
+- Editor: the parameter card gets Type and List controls (the default field
+  follows the type; changing type keeps what still parses); the Configure
+  sheet and the start form draw a list as checkboxes (enum) or a
+  comma-separated field, sending a JSON array; timeouts offer duration
+  parameters, a list setting a list parameter or items written in place.

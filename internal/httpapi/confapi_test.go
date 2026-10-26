@@ -29,19 +29,19 @@ agents:
   - name: planner
     prompt: plan the work
     outputs:
-      - { name: plan, path: artifacts/plan.md }
+      - { name: plan, type: file }
   - name: builder
     prompt: build the thing
     inputs:
-      - { name: plan, optional: true }
+      - { name: plan, type: file, optional: true }
 main:
-  - { id: plan,       type: agent, agent: planner }
-  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+  - { id: plan,       type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 3 } }
-  - { id: build,      type: agent, agent: builder, input: { plan: artifacts/plan.md } }
+  - { id: build,      type: agent, agent: builder, input: { plan: { from: artifacts/plan.md, type: file } } }
   - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
-  - { id: mr,         type: action, action: create_mr, input: { body: artifacts/plan.md } }
-  - { id: final_gate, type: human_gate, question: "Merge when ready.", input: { mr: $MR_URL }, auto_approve: mr_merged }
+  - { id: mr,         type: action, action: create_mr, input: { body: { from: artifacts/plan.md, type: file } } }
+  - { id: final_gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged }
 `
 
 // confEnv is the full config-plane stack over Mem + fake kinds: the same
@@ -534,7 +534,7 @@ func TestFlowResponsesDescribeParametersAndPhases(t *testing.T) {
 	x := newConfEnv(t)
 	projectID := x.wizard(t)
 	base := "/api/projects/" + projectID
-	doc := "name: knobs\nversion: 5\nparameters: { harness: fake, model: a/b, mode: { default: confirm, enum: [auto, confirm, manual] } }\nagents: []\n" +
+	doc := "name: knobs\nversion: 5\nparameters: { harness: fake, model: a/b, mode: { type: string, default: confirm, enum: [auto, confirm, manual] } }\nagents: []\n" +
 		"main:\n  - { id: s, type: command, run: x, on_success: done }\n" +
 		"watchers:\n  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n"
 	type described struct {
@@ -600,7 +600,7 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
   - name: builder
     prompt: build it
     inputs:
-      - { name: plan }
+      - { name: plan, type: file }
   - name: plain
     prompt: plain
 `
@@ -621,18 +621,18 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 
 	// Binding an input the agent does not declare: refused, not advised.
 	code, vr := post("name: w\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"main:\n  - { id: b, type: agent, agent: builder, input: { ghost: x.md }, on_success: done }\n")
+		"main:\n  - { id: b, type: agent, agent: builder, input: { ghost: { from: repo:x.md, type: file } }, on_success: done }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
-	if !strings.Contains(strings.Join(vr.Errors, " "), "not declared by agent") {
+	if !strings.Contains(strings.Join(vr.Errors, " "), "is not an input of agent") {
 		t.Errorf("errors = %v, want an undeclared-input error", vr.Errors)
 	}
 
 	// on_reject on an agent that declares no verdict can never fire: also an
 	// error now that the contract is in the document.
 	code, vr = post("name: r\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/p.md }, on_success: j }\n" +
+		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: { from: repo:docs/plan.md, type: file } }, on_success: j }\n" +
 		"  - { id: j, type: agent, agent: plain, on_success: done, on_reject: { to: b, max: 1 } }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
@@ -641,15 +641,27 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 		t.Errorf("errors = %v, want a dead-on_reject error", vr.Errors)
 	}
 
-	// A legal-but-suspicious document still validates, with the finding as a
-	// warning: nothing produces the path the builder reads.
-	code, vr = post("name: ok\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: artifacts/nobody.md }, on_success: done }\n")
-	if code != 200 || !vr.OK {
-		t.Fatalf("validate = %d ok=%v, want ok:true", code, vr.OK)
+	// Reading a path nothing in the flow writes is refused too: a file of
+	// the repository says so with repo:.
+	code, vr = post("name: n\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
+		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: { from: artifacts/nobody.md, type: file } }, on_success: done }\n")
+	if code != 200 || vr.OK {
+		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
-	if !strings.Contains(strings.Join(vr.Warnings, " "), "which no stage produces") {
-		t.Errorf("warnings = %v, want an unproduced-path warning", vr.Warnings)
+	if !strings.Contains(strings.Join(vr.Errors, " "), "nothing in this flow writes") {
+		t.Errorf("errors = %v, want an unwritten-path error", vr.Errors)
+	}
+
+	// A legal-but-suspicious document still validates, with the finding as a
+	// warning: the gate shows a merge request no route opens.
+	code, vr = post("name: ok\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
+		"main:\n  - { id: b, type: agent, agent: plain }\n" +
+		"  - { id: g, type: human_gate, question: \"Merge?\", input: { mr: { from: run.mr.url, type: link } }, on_success: done }\n")
+	if code != 200 || !vr.OK {
+		t.Fatalf("validate = %d ok=%v errors=%v, want ok:true", code, vr.OK, vr.Errors)
+	}
+	if !strings.Contains(strings.Join(vr.Warnings, " "), "a merge request is not opened on every path") {
+		t.Errorf("warnings = %v, want an unopened-merge-request warning", vr.Warnings)
 	}
 }
 
@@ -674,12 +686,16 @@ func TestActionRegistryRoute(t *testing.T) {
 	if mr == nil {
 		t.Fatalf("no %s in %+v", actionspec.CreateMR, acts)
 	}
-	if mr.Title == "" || mr.Requires != actionspec.RequiresRepository || len(mr.Inputs) != 1 ||
-		mr.Inputs[0].Name != "body" || !mr.Inputs[0].Required {
+	if mr.Title == "" || mr.Requires != actionspec.RequiresRepository || len(mr.Inputs) != 2 ||
+		mr.Inputs[0].Name != "body" || !mr.Inputs[0].Required ||
+		mr.Inputs[1].Name != "attachments" || mr.Inputs[1].Type != "files" || mr.Inputs[1].Required {
 		t.Errorf("create_mr = %+v", mr)
 	}
-	if len(mr.Outputs) != 1 || mr.Outputs[0].Sentinel != "$MR_URL" {
-		t.Errorf("create_mr outputs = %+v", mr.Outputs)
+	if mr.Inputs[0].Type != "file" || mr.Inputs[0].DefaultPath == "" {
+		t.Errorf("create_mr body = %+v, want a typed file port with a path to prefill", mr.Inputs[0])
+	}
+	if len(mr.Outputs) != 0 {
+		t.Errorf("create_mr outputs = %+v, want none: its link is run.mr.url", mr.Outputs)
 	}
 }
 
@@ -687,9 +703,9 @@ func TestActionRegistryRoute(t *testing.T) {
 // applied, and validates a workshop's bound values when given.
 func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	x := newConfEnv(t)
-	doc := "name: p\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  mode: { default: confirm, enum: [auto, confirm, manual] }\n  turns: 3\n" +
-		"agents:\n  - { name: b, prompt: build }\n" +
-		"main:\n  - { id: build, type: agent, agent: b, max_turns: $turns }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+	doc := "name: p\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  mode: { type: string, default: confirm, enum: [auto, confirm, manual] }\n  turns: { type: int, default: 3 }\n" +
+		"agents:\n  - { name: b, prompt: build, outputs: [ { name: mr, type: file } ] }\n" +
+		"main:\n  - { id: build, type: agent, agent: b, max_turns: $turns, output: { mr: { to: artifacts/mr.md, type: file } } }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n" +
 		"watchers:\n  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	var vr struct {

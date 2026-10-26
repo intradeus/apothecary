@@ -10,14 +10,16 @@
 
 import type * as Wire from './generated/types.gen';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
-import { answerKindOf, toPingOption } from '$lib/ping';
+import { answerKindOf, toPingOption, toReviewComment } from '$lib/ping';
 import type {
-	ActionIO,
+	ActionPort,
+	ActionSetting,
 	ActionSpec,
 	AgentToolCall,
 	Attachment,
 	Automation,
 	Branch,
+	BrowserStatus,
 	BuildCache,
 	ChangedFile,
 	ChangeStatus,
@@ -48,10 +50,12 @@ import type {
 	PingPayload,
 	PingStatus,
 	PingType,
+	ReviewComment,
 	Port,
 	Preflight,
 	PreflightStep,
 	Project,
+	ProjectSecret,
 	Repo,
 	ResourceSample,
 	Run,
@@ -60,7 +64,11 @@ import type {
 	RunFiles,
 	RunPhase,
 	RunPorts,
+	RunServices,
 	RunState,
+	ServiceConfig,
+	ServiceState,
+	ServiceStatus,
 	Settings,
 	Snapshot,
 	SnapshotKind,
@@ -104,6 +112,15 @@ const PING_TYPES: PingType[] = [
 const PING_STATUSES: PingStatus[] = ['pending', 'answered', 'withdrawn'];
 const PORTS: Port[] = ['repository', 'provisioner', 'harness', 'ticketsource'];
 const SNAPSHOT_KINDS: SnapshotKind[] = ['output', 'log', 'ping_file'];
+const SERVICE_STATES: ServiceState[] = [
+	'stopped',
+	'starting',
+	'healthy',
+	'unhealthy',
+	'exited',
+	'stopping',
+	'unknown'
+];
 
 const oneOf = <T extends string>(allowed: readonly T[], v: string | undefined, fallback: T): T =>
 	allowed.includes(v as T) ? (v as T) : fallback;
@@ -290,6 +307,68 @@ export function toRunPorts(w: Wire.RunPorts): RunPorts {
 	};
 }
 
+// --- services ----------------------------------------------------------------
+
+export function toServiceStatus(w: Wire.ServiceInfo): ServiceStatus {
+	return {
+		name: w.name,
+		description: w.description || undefined,
+		state: oneOf(SERVICE_STATES, w.state, 'unknown'),
+		healthy: w.healthy,
+		by: w.by === 'stage' || w.by === 'human' ? w.by : undefined,
+		stageId: w.stage_id || undefined,
+		phase: w.flow_phase || undefined,
+		startedAt: w.started_at || undefined,
+		healthyAt: w.healthy_at || undefined,
+		endedAt: w.ended_at || undefined,
+		exitCode: w.exit_code ?? undefined,
+		probe: w.probe || undefined,
+		lastProbeAt: w.last_probe_at || undefined,
+		lastProbeOk: w.last_probe_ok,
+		lastError: w.last_error || undefined,
+		ports: list(w.ports).map((p) => ({
+			port: p.port,
+			label: p.label || undefined,
+			path: p.path || undefined,
+			address: p.address,
+			url: p.url || undefined
+		}))
+	};
+}
+
+export function toRunServices(w: Wire.RunServices): RunServices {
+	return {
+		workspace: w.workspace,
+		error: w.error || undefined,
+		services: list(w.services).map(toServiceStatus)
+	};
+}
+
+function toServiceConfig(w: Wire.ServiceConfig): ServiceConfig {
+	const h = w.health;
+	return {
+		name: w.name,
+		description: w.description || undefined,
+		start: w.start,
+		stop: w.stop || undefined,
+		health:
+			h && (h.http || h.tcp || h.command || h.timeout || h.interval)
+				? {
+						http: h.http || undefined,
+						tcp: h.tcp || undefined,
+						command: h.command || undefined,
+						timeout: h.timeout || undefined,
+						interval: h.interval || undefined
+					}
+				: undefined,
+		ports: list(w.ports).map((p) => ({
+			port: p.port,
+			label: p.label || undefined,
+			path: p.path || undefined
+		}))
+	};
+}
+
 // --- pings -------------------------------------------------------------------
 
 export function toPing(w: Wire.PingView): Ping {
@@ -311,8 +390,20 @@ export function toPing(w: Wire.PingView): Ping {
 		answer: w.answer,
 		feedback: w.feedback,
 		answerAttachmentIds: list(w.answer_attachment_ids),
+		review: list(w.review).map(toReviewComment),
 		raisedAt: w.raised_at,
 		answeredAt: w.answered_at
+	};
+}
+
+export function fromReviewComment(c: ReviewComment): Wire.ReviewComment {
+	return {
+		path: c.path,
+		body: c.body,
+		...(c.startLine ? { start_line: c.startLine, end_line: c.endLine ?? c.startLine } : {}),
+		...(c.heading ? { heading: c.heading } : {}),
+		...(c.quote ? { quote: c.quote } : {}),
+		...(c.attachmentIds.length ? { attachment_ids: c.attachmentIds } : {})
 	};
 }
 
@@ -387,6 +478,8 @@ function toWorkspacePolicy(w: Wire.Project['workspace']): WorkspacePolicy {
 		allowedCidrs: list(w?.egress_allowed_cidrs),
 		allowedPorts: list(w?.egress_allowed_ports),
 		codeServerExtensions: list(w?.code_server_extensions),
+		services: list(w?.services).map(toServiceConfig),
+		browserEnabled: w?.browser?.enabled ?? false,
 		editor: w?.editor
 			? {
 					theme: w.editor.theme,
@@ -450,6 +543,23 @@ export function toPreflightStep(w: Wire.PreflightStep): PreflightStep {
 
 export function toPreflight(w: Wire.PreflightResult): Preflight {
 	return { ok: w.ok, steps: list(w.steps).map(toPreflightStep) };
+}
+
+export function toProjectSecret(w: Wire.ProjectSecret): ProjectSecret {
+	return { name: w.name, updatedAt: w.updated_at };
+}
+
+export function toBrowserStatus(w: Wire.BrowserInfo): BrowserStatus {
+	return {
+		enabled: w.enabled,
+		available: w.available,
+		container: w.container || undefined,
+		state: w.state === 'running' || w.state === 'stopped' ? w.state : 'absent',
+		image: w.image || undefined,
+		current: w.current || undefined,
+		sessions: w.sessions,
+		error: w.error || undefined
+	};
 }
 
 export function toBuildCache(w: Wire.BuildCacheInfo): BuildCache {
@@ -581,7 +691,8 @@ const toOperatesOn = (v?: string): OperatesOn | undefined =>
 function toParamDecl(p: Wire.Param): ParamDecl {
 	return {
 		name: p.name,
-		type: oneOf(['bool', 'int', 'float', 'string'] as const, p.type, 'string'),
+		type: oneOf(['bool', 'int', 'float', 'string', 'duration'] as const, p.type, 'string'),
+		list: p.list || undefined,
 		default: p.default,
 		description: p.description || undefined,
 		enum: p.enum ?? undefined,
@@ -636,35 +747,24 @@ export function toFlowValidation(w: Wire.FlowValidation): FlowValidation {
 	};
 }
 
-// An action's inputs and outputs are two wire types with one meaning: what a
-// stage may bind. The UI treats them alike, so they map to one domain type.
-function toActionInput(w: Wire.InputSig): ActionIO {
+function toActionPort(w: Wire.PortSig): ActionPort {
 	return {
 		name: w.name,
 		description: w.description,
-		kind:
-			w.kind === 'value'
-				? 'value'
-				: w.kind === 'enum'
-					? 'enum'
-					: w.kind === 'text'
-						? 'text'
-						: 'file',
+		type: w.type,
 		required: w.required ?? false,
-		defaultPath: w.default_path,
-		values: w.values ?? undefined,
-		defaultValue: w.default || undefined
+		defaultPath: w.default_path
 	};
 }
 
-function toActionOutput(w: Wire.OutputSig): ActionIO {
+function toActionSetting(w: Wire.SettingSig): ActionSetting {
 	return {
 		name: w.name,
 		description: w.description,
-		kind: w.kind === 'value' ? 'value' : 'file',
-		required: false,
-		sentinel: w.sentinel,
-		path: w.path || undefined
+		kind: oneOf(['enum', 'text', 'list'] as const, w.kind, 'text'),
+		required: w.required ?? false,
+		values: w.values ?? undefined,
+		defaultValue: w.default || undefined
 	};
 }
 
@@ -678,8 +778,9 @@ export function toActionSpec(w: Wire.Action): ActionSpec {
 		exactlyOne: w.exactly_one?.length ? list(w.exactly_one) : undefined,
 		remote: w.remote ?? false,
 		needs: w.needs,
-		inputs: list(w.inputs).map(toActionInput),
-		outputs: list(w.outputs).map(toActionOutput)
+		inputs: list(w.inputs).map(toActionPort),
+		outputs: list(w.outputs).map(toActionPort),
+		settings: list(w.settings).map(toActionSetting)
 	};
 }
 

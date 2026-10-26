@@ -1035,7 +1035,7 @@ func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err := s.Engine.AnswerPing(pid, engine.PingAnswer{Answer: body.Answer, Feedback: body.Feedback,
-		AttachmentIDs: body.AttachmentIDs})
+		AttachmentIDs: body.AttachmentIDs, Review: body.Review})
 	switch {
 	case errors.Is(err, engine.ErrPingNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())

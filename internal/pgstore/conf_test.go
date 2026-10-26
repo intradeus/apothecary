@@ -193,6 +193,51 @@ func TestFlowBindingRoundtripAndCascade(t *testing.T) {
 	}
 }
 
+func TestProjectSecretsRoundtripAndCascade(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.UpsertIntegration(ctx, confstore.StoredIntegration{
+		ID: "int1", Port: "repository", Kind: "gitlab", Name: "gl", Config: map[string]any{},
+		Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := confstore.Project{
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
+		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutProjectSecret(ctx, "ghost", confstore.StoredProjectSecret{Name: "x", Sealed: []byte{1}, UpdatedAt: now}); !errors.Is(err, confstore.ErrInvalid) {
+		t.Fatalf("secret of a missing project = %v, want ErrInvalid", err)
+	}
+	for i, name := range []string{"token", "api_key", "token"} {
+		if err := s.PutProjectSecret(ctx, p.ID, confstore.StoredProjectSecret{Name: name, Sealed: []byte{byte(i)}, UpdatedAt: now.Add(time.Duration(i) * time.Second)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.ListProjectSecrets(ctx, p.ID)
+	if err != nil || len(got) != 2 || got[0].Name != "api_key" || got[1].Name != "token" ||
+		got[1].Sealed[0] != 2 || !got[1].UpdatedAt.Equal(now.Add(2*time.Second)) {
+		t.Fatalf("list = %+v, %v", got, err)
+	}
+	if err := s.DeleteProjectSecret(ctx, p.ID, "api_key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProjectSecret(ctx, p.ID, "api_key"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Fatalf("second delete = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteProject(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListProjectSecrets(ctx, p.ID); len(got) != 0 {
+		t.Fatalf("secrets outlived their project: %+v", got)
+	}
+}
+
 func TestConfCRUDRoundtrip(t *testing.T) {
 	s := openConf(t)
 	ctx := context.Background()

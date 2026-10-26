@@ -22,16 +22,21 @@ agents:
     read_only: true
     allow_bash: false
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket the work is for
       - name: rejection
+        type: verdict
         description: why the last plan was rejected — the reviewer's or human's words
         optional: true
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
       - name: plan
+        type: file
         description: implementation plan with Goal, Files to touch, Steps, Test plan and Risks sections
-        path: artifacts/plan.md
     prompt: |
       You are the planning agent of a software factory. You work on a ticket in
       an unfamiliar repository and your only deliverable is a plan — you never
@@ -62,12 +67,18 @@ agents:
     read_only: false
     allow_bash: true
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket the work is for
       - name: plan
+        type: file
         description: the approved implementation plan to execute
       - name: rejection
+        type: verdict
         description: why the last attempt was turned down — a reviewer's comments or a human's feedback
         optional: true
       - name: failure
+        type: failure
         description: what the failing stage printed (test output, a command's error)
         optional: true
     prompt: |
@@ -94,26 +105,30 @@ agents:
     allow_bash: true
     inputs:
       - name: changes
+        type: changeset
         description: the uncommitted files the commit will record
       - name: plan
+        type: file
         description: the approved plan, for context on what the change set implements
         optional: true
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
       - name: commit
-        description: a single-line commit subject, and nothing else
-        path: artifacts/commit.md
+        type: commit_message
+        description: the commit's subject line, and a body only when the subject cannot carry the why
     prompt: |
       You are the commit agent of a software factory. The building agent has
       finished; you write ONE short commit message covering its work. A later
       stage performs the commit from your file — you MUST NOT run `git commit`,
       `git add` or `git push` yourself.
 
-      Your only deliverable is the file named in the OUTPUT CONTRACT section: a
-      SINGLE line — the commit subject and nothing else. No body, no blank line,
-      no bullets, no trailing period.
+      Your only deliverable is the JSON file named in the OUTPUT CONTRACT
+      section: {"subject": "..."} — the subject is a single line, no trailing
+      period. Add a "body" (plain text, wrapped at 72 columns) only when the
+      change needs a why the subject cannot carry; most commits need none.
 
       Inspect before writing:
       - The files listed in your changes input (`git diff HEAD` on them) —
@@ -127,19 +142,24 @@ agents:
       The subject line: imperative mood, under 70 characters, summarizing the
       whole change in one line; if it spans areas, name the most significant.
 
-      If the changes input shows nothing uncommitted, write a single short
-      subject in the project's style anyway (the commit stage skips a clean
-      tree).
+      If the changes input shows nothing uncommitted, write a short subject
+      in the project's style anyway (the commit stage skips a clean tree).
   - name: reviewer
     description: adversarial code reviewer
     read_only: true
     allow_bash: true
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket the work is for
       - name: plan
+        type: file
         description: the approved plan to check the change set against
       - name: changes
+        type: changeset
         description: the set of changed files in this branch to review
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
@@ -148,7 +168,6 @@ agents:
       - name: verdict
         type: verdict
         description: APPROVE or REJECT, with actionable comments naming file, problem and resolution
-        path: artifacts/verdict.json
     prompt: |
       You are the adversarial reviewer of a software factory. Your job is to
       find reasons to REJECT — approve only when you have genuinely tried and
@@ -175,15 +194,20 @@ agents:
     read_only: true
     allow_bash: true
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket the work is for
       - name: changes
+        type: changeset
         description: the set of changed files to describe for whoever reads the merge request
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
       - name: mr
+        type: file
         description: the merge request description; first line a "# <title>" heading
-        path: artifacts/mr.md
     prompt: |
       You are the redaction agent of a software factory. The work is done and
       reviewed; you write the merge request description that a human will read
@@ -208,7 +232,7 @@ main:
   - id: in_progress
     type: action
     action: ticket_transition
-    input:
+    with:
       to: in_progress
     on_success: plan
     on_fail:
@@ -219,8 +243,21 @@ main:
     agent: planner
     max_turns: 25
     input:
-      rejection: $DECISION
-      failure: $FAILURE
+      ticket:
+        from: run.ticket
+        type: ticket
+      rejection:
+        from: edge.verdict
+        type: verdict
+        optional: true
+      failure:
+        from: edge.failure
+        type: failure
+        optional: true
+    output:
+      plan:
+        to: artifacts/plan.md
+        type: file
     on_success: plan_gate
     on_fail:
       to: plan
@@ -229,7 +266,10 @@ main:
   - id: plan_gate
     type: human_gate
     question: Approve this implementation plan?
-    input: { plan: artifacts/plan.md }
+    input:
+      plan:
+        from: artifacts/plan.md
+        type: file
     on_success: build
     on_reject:
       to: plan
@@ -239,9 +279,20 @@ main:
     agent: builder
     max_turns: 80
     input:
-      plan: artifacts/plan.md
-      rejection: $DECISION
-      failure: $FAILURE
+      ticket:
+        from: run.ticket
+        type: ticket
+      plan:
+        from: artifacts/plan.md
+        type: file
+      rejection:
+        from: edge.verdict
+        type: verdict
+        optional: true
+      failure:
+        from: edge.failure
+        type: failure
+        optional: true
     on_success: commit_msg
     on_fail:
       to: build
@@ -252,19 +303,32 @@ main:
     agent: committer
     max_turns: 10
     input:
-      changes: $STATUS
-      plan: artifacts/plan.md
-      failure: $FAILURE
+      changes:
+        from: run.git.status
+        type: changeset
+      plan:
+        from: artifacts/plan.md
+        type: file
+      failure:
+        from: edge.failure
+        type: failure
+        optional: true
+    output:
+      commit:
+        to: artifacts/commit.json
+        type: commit_message
     on_success: commit
     on_fail:
       to: commit_msg
       max: 1
       then: debug
   - id: commit
-    type: command
-    run: git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi
+    type: action
+    action: commit
     input:
-      message: artifacts/commit.md
+      message:
+        from: artifacts/commit.json
+        type: commit_message
     on_success: test
     on_fail: debug
   - id: test
@@ -284,12 +348,26 @@ main:
   - id: review
     type: agent
     agent: reviewer
-    model: opencode-go/glm-5.1
+    model: opencode-go/glm-5.2
     max_turns: 30
     input:
-      plan: artifacts/plan.md
-      changes: $DIFF_TARGET
-      failure: $FAILURE
+      ticket:
+        from: run.ticket
+        type: ticket
+      plan:
+        from: artifacts/plan.md
+        type: file
+      changes:
+        from: run.git.diff_target
+        type: changeset
+      failure:
+        from: edge.failure
+        type: failure
+        optional: true
+    output:
+      verdict:
+        to: artifacts/verdict.json
+        type: verdict
     on_success: redact
     on_fail:
       to: review
@@ -303,8 +381,20 @@ main:
     agent: redactor
     max_turns: 15
     input:
-      changes: $DIFF_TARGET
-      failure: $FAILURE
+      ticket:
+        from: run.ticket
+        type: ticket
+      changes:
+        from: run.git.diff_target
+        type: changeset
+      failure:
+        from: edge.failure
+        type: failure
+        optional: true
+    output:
+      mr:
+        to: artifacts/mr.md
+        type: file
     on_success: push
     on_fail:
       to: redact
@@ -322,12 +412,17 @@ main:
     type: action
     action: create_mr
     input:
-      body: artifacts/mr.md
+      body:
+        from: artifacts/mr.md
+        type: file
     on_success: final_gate
   - id: final_gate
     type: human_gate
     question: Review the merge request and merge when satisfied.
-    input: { mr: $MR_URL }
+    input:
+      mr:
+        from: run.mr.url
+        type: link
     auto_approve: mr_merged
     auto_reject: mr_closed
     on_success: ticket_done
@@ -337,7 +432,7 @@ main:
   - id: ticket_done
     type: action
     action: ticket_transition
-    input:
+    with:
       to: done
     on_success: done
     on_fail: done

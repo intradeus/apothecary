@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -346,6 +348,37 @@ func TestMRChecks(t *testing.T) {
 	}
 }
 
+// What failed in head's pipeline: each failed job (not one allowed to fail)
+// with its stage and the project's CI file; a stale or passing pipeline has
+// no failures.
+func TestCIFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, mr, project string
+		want              []ports.CIFailure
+	}{
+		{"failed", `{"head_pipeline":{"id":9,"sha":"h1","status":"failed","web_url":"https://gl/p/9"}}`, `{"ci_config_path":""}`,
+			[]ports.CIFailure{{Name: "rspec", URL: "https://gl/j/1", File: ".gitlab-ci.yml", Job: "rspec", Stage: "test", Summary: "script failure"}}},
+		{"own ci file", `{"head_pipeline":{"id":9,"sha":"h1","status":"failed"}}`, `{"ci_config_path":"ci/main.yml"}`,
+			[]ports.CIFailure{{Name: "rspec", URL: "https://gl/j/1", File: "ci/main.yml", Job: "rspec", Stage: "test", Summary: "script failure"}}},
+		{"stale", `{"head_pipeline":{"id":8,"sha":"h0","status":"failed"}}`, `{}`, nil},
+		{"passed", `{"head_pipeline":{"id":9,"sha":"h1","status":"success"}}`, `{}`, nil},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/v4/projects/7/merge_requests/4", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.mr)) })
+		mux.HandleFunc("GET /api/v4/projects/7", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.project)) })
+		mux.HandleFunc("GET /api/v4/projects/7/pipelines/9/jobs", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`[{"name":"rspec","stage":"test","web_url":"https://gl/j/1","failure_reason":"script_failure"},{"name":"flaky","allow_failure":true}]`))
+		})
+		ts := httptest.NewServer(mux)
+		a, _ := testAdapter(ts)
+		got, err := a.CIFailures(context.Background(), ports.MRRef{IID: 4}, "h1")
+		ts.Close()
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: %+v, %v", tc.name, got, err)
+		}
+	}
+}
+
 // A project without approval rules reports approved with nobody's approval:
 // that is not one.
 func TestMRApproval(t *testing.T) {
@@ -461,5 +494,66 @@ func TestPostReview(t *testing.T) {
 	res, err = a.PostReview(context.Background(), ports.MRRef{IID: 4}, rev)
 	if err != nil || res.Already || len(discussions) != 1 || len(notes) != 1 {
 		t.Errorf("retry: res %+v err %v discussions %d notes %d", res, err, len(discussions), len(notes))
+	}
+}
+
+// An upload is a multipart "file" to the project; the body links it by the
+// project-relative url GitLab's renderer resolves, and URL is absolute — from
+// full_path when GitLab gives one, else built from the project id.
+func TestUploadAttachment(t *testing.T) {
+	for _, tc := range []struct{ name, resp, wantURL string }{
+		{"full_path", `{"url":"/uploads/abc/home.png","full_path":"/-/project/7/uploads/abc/home.png","markdown":"![home](/uploads/abc/home.png)"}`, "/-/project/7/uploads/abc/home.png"},
+		{"older GitLab", `{"url":"/uploads/abc/home.png","markdown":"![home](/uploads/abc/home.png)"}`, "/-/project/7/uploads/abc/home.png"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []byte
+			var ct, token string
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /api/v4/projects/7/uploads", func(w http.ResponseWriter, r *http.Request) {
+				token = r.Header.Get("PRIVATE-TOKEN")
+				f, h, err := r.FormFile("file")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				got, _ = io.ReadAll(f)
+				ct = h.Filename + " " + h.Header.Get("Content-Type")
+				w.WriteHeader(201)
+				_, _ = w.Write([]byte(tc.resp))
+			})
+			ts := httptest.NewServer(mux)
+			defer ts.Close()
+			a, repo := testAdapter(ts)
+			att, err := a.UploadAttachment(context.Background(), repo, "home.png", "image/png", []byte("\x89PNG"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "\x89PNG" || ct != "home.png image/png" || token != "tok" {
+				t.Errorf("sent %q as %q with token %q", got, ct, token)
+			}
+			want := ports.Attachment{URL: ts.URL + tc.wantURL, Link: "/uploads/abc/home.png", Markdown: "![home](/uploads/abc/home.png)"}
+			if att != want {
+				t.Errorf("attachment = %+v, want %+v", att, want)
+			}
+		})
+	}
+}
+
+// Labels are added, keeping the merge request's others.
+func TestAddMRLabels(t *testing.T) {
+	var got map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /api/v4/projects/7/merge_requests/4", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	if err := a.AddMRLabels(context.Background(), ports.MRRef{IID: 4}, []string{"apothecary", "bot"}); err != nil {
+		t.Fatal(err)
+	}
+	if got["add_labels"] != "apothecary,bot" {
+		t.Errorf("sent %v", got)
 	}
 }

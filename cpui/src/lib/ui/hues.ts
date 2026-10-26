@@ -16,6 +16,8 @@ export const STAGE_HUE: Record<string, Hue> = {
 	gate: 'amb',
 	action: 'vio',
 	wait: 'tea',
+	// A service is the project's, as a command is: the same hue.
+	service: 'grn',
 	sequence: 'brand'
 };
 /** The chip word for a stage type ("human_gate" reads "gate"). */

@@ -524,11 +524,46 @@ func (h *agentHost) current() (*agentProc, error) {
 	return h.proc, nil
 }
 
+// mcpServer is one MCP server for a session, as the engine sends it: a
+// local stdio server (Command) or a remote one (URL).
 type mcpServer struct {
 	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Env     []envVar `json:"env"`
+	Command string   `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	Env     []envVar `json:"env,omitempty"`
+	URL     string   `json:"url,omitempty"`
+	Headers []envVar `json:"headers,omitempty"`
+}
+
+// MarshalJSON writes ACP's McpServer: an untagged union in which stdio has
+// no type and every field present, while http is tagged — an agent decoding
+// it variant by variant must not see a stdio-shaped http server.
+func (m mcpServer) MarshalJSON() ([]byte, error) {
+	if m.URL != "" {
+		headers := m.Headers
+		if headers == nil {
+			headers = []envVar{}
+		}
+		return json.Marshal(struct {
+			Type    string   `json:"type"`
+			Name    string   `json:"name"`
+			URL     string   `json:"url"`
+			Headers []envVar `json:"headers"`
+		}{"http", m.Name, m.URL, headers})
+	}
+	args, env := m.Args, m.Env
+	if args == nil {
+		args = []string{}
+	}
+	if env == nil {
+		env = []envVar{}
+	}
+	return json.Marshal(struct {
+		Name    string   `json:"name"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+		Env     []envVar `json:"env"`
+	}{m.Name, m.Command, args, env})
 }
 
 type envVar struct {

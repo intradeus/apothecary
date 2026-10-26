@@ -52,6 +52,11 @@ var registry = map[Type]func() Payload{
 	TypeEnvRebuildStarted:   func() Payload { return &EnvRebuildStarted{} },
 	TypeEnvRebuildCompleted: func() Payload { return &EnvRebuildCompleted{} },
 	TypeEnvRebuildFailed:    func() Payload { return &EnvRebuildFailed{} },
+
+	TypeServiceStarted: func() Payload { return &ServiceStarted{} },
+	TypeServiceReady:   func() Payload { return &ServiceReady{} },
+	TypeServiceStopped: func() Payload { return &ServiceStopped{} },
+	TypeServiceFailed:  func() Payload { return &ServiceFailed{} },
 }
 
 // Unknown is the decode result for an event type this binary does not

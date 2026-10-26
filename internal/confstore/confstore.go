@@ -112,6 +112,61 @@ type WorkspaceConfig struct {
 	// user settings when the browser editor is opened — so changing them needs
 	// no image rebuild.
 	Editor EditorConfig `json:"editor,omitzero"`
+	// Services are the project's long-running processes — its app, a
+	// database — named by a flow's service stages (usually through a
+	// parameter: `service: $app`) and started from a run's page.
+	Services []ServiceConfig `json:"services,omitempty"`
+	// Browser is the project's browser: one container its runs share, a
+	// Chromium per agent session reaching the run's services at localhost —
+	// what a flow's builtin `browser` MCP server drives.
+	Browser BrowserConfig `json:"browser,omitzero"`
+}
+
+// ServiceConfig is one project service. Start runs in the run's primary
+// checkout. A start that keeps running is the service (stopped by signalling
+// it, or by Stop); one that exits 0 started something in the background —
+// `docker compose up -d` — and then Stop is what brings it down. Either way
+// Health says when it is up.
+type ServiceConfig struct {
+	// Name is a slug: what a flow's `service:` and `run.service.<name>`
+	// name. A project usually calls its main one `default`, the builder
+	// template's default.
+	Name        string        `json:"name"`
+	Description string        `json:"description,omitempty"`
+	Start       string        `json:"start"`
+	Stop        string        `json:"stop,omitempty"`
+	Health      ServiceHealth `json:"health,omitzero"`
+	// Ports are where it listens in the workspace; the first is its
+	// address (run.service.<name>) and each one gets a preview link.
+	Ports []ServicePort `json:"ports,omitempty"`
+}
+
+// ServiceHealth says when a service is up: at most one probe (none = up as
+// soon as it started), probed until Timeout while starting, then every
+// Interval.
+type ServiceHealth struct {
+	// HTTP is a URL probed in the workspace (http://localhost:3000/health):
+	// any 2xx or 3xx answer is healthy.
+	HTTP string `json:"http,omitempty"`
+	// TCP is a port that accepts connections.
+	TCP int `json:"tcp,omitempty"`
+	// Command is a script that exits 0.
+	Command  string `json:"command,omitempty"`
+	Timeout  string `json:"timeout,omitempty"`  // a duration; default 5m
+	Interval string `json:"interval,omitempty"` // a duration; default 10s
+}
+
+// ServicePort is one port a service listens on.
+type ServicePort struct {
+	Port  int    `json:"port"`
+	Label string `json:"label,omitempty"`
+	// Path is what its link opens: "/" by default.
+	Path string `json:"path,omitempty"`
+}
+
+// BrowserConfig turns the project's browser on.
+type BrowserConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // EditorConfig is the per-project code-server UI defaults (§ code-server
@@ -232,6 +287,12 @@ type DB interface {
 	GetFlowBinding(ctx Ctx, projectID, flowName string) (FlowBinding, error)
 	ListFlowBindings(ctx Ctx, projectID string) ([]FlowBinding, error)
 	DeleteFlowBinding(ctx Ctx, projectID, flowName string) error
+
+	// Project secrets go with their project (deleted with it); each value
+	// is sealed by the Service before it gets here.
+	PutProjectSecret(ctx Ctx, projectID string, sec StoredProjectSecret) error
+	ListProjectSecrets(ctx Ctx, projectID string) ([]StoredProjectSecret, error)
+	DeleteProjectSecret(ctx Ctx, projectID, name string) error
 
 	// Automations go with their project (deleted with it).
 	UpsertAutomation(ctx Ctx, a Automation) error

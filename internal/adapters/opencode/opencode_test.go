@@ -138,3 +138,47 @@ func TestPrepareEnvZeroSpecsStillWritesConfig(t *testing.T) {
 		t.Errorf("opencode.json missing ask_human MCP: %v\n%s", err, cfg)
 	}
 }
+
+// A flow's MCP servers ride each stage's session, but opencode keeps them for
+// the whole process: an agent that does not list a server has its tools
+// turned off by prefix, so the browser one agent opened is not every agent's.
+func TestAgentsTurnOffTheMCPServersTheyDoNotList(t *testing.T) {
+	envp, id := envWith(t, nil)
+	specs := []*agentspec.Spec{
+		{Name: "shooter", Prompt: "Shoot.\n", MCP: []string{"browser"}},
+		{Name: "designer", Prompt: "Design.\n", MCP: []string{"figma", "browser"}},
+		{Name: "builder", Prompt: "Build.\n"},
+	}
+	ctx := context.Background()
+	if err := New(envp, Config{}).PrepareEnv(ctx, id, specs); err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) string {
+		md, err := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/"+name+".md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		front, _, _ := strings.Cut(strings.TrimPrefix(string(md), "---\n"), "---\n")
+		return front
+	}
+	for _, c := range []struct {
+		agent    string
+		off, not []string
+	}{
+		{"shooter", []string{`"figma_*": false`}, []string{`"browser_*"`}},
+		{"designer", nil, []string{`"figma_*"`, `"browser_*"`}},
+		{"builder", []string{`"browser_*": false`, `"figma_*": false`}, nil},
+	} {
+		front := read(c.agent)
+		for _, w := range c.off {
+			if !strings.Contains(front, "  "+w+"\n") {
+				t.Errorf("%s does not turn off %s:\n%s", c.agent, w, front)
+			}
+		}
+		for _, w := range c.not {
+			if strings.Contains(front, w) {
+				t.Errorf("%s turns off %s, which it lists:\n%s", c.agent, w, front)
+			}
+		}
+	}
+}

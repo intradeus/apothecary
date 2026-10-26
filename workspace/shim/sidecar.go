@@ -19,6 +19,8 @@ package main
 //	GET  /git/changes     the run's changes against ?base= (merge-base)
 //	GET  /git/diff        one file's unified diff (?base=&path=)
 //	GET  /term            WebSocket terminal (PTY) in the repo
+//	GET  /services        every service's state (shim service status)
+//	GET  /services/{name}/log  the last ?tail= lines of its output
 //
 // Every workspace route takes ?repo=<name> to address one of a multi-repo
 // run's additional checkouts (~/repos/<name>); absent = the primary.
@@ -171,6 +173,8 @@ func (s *sidecar) routes() http.Handler {
 	mux.HandleFunc("GET /git/changes", s.gitChanges)
 	mux.HandleFunc("GET /git/diff", s.gitDiff)
 	mux.HandleFunc("GET /term", s.terminal)
+	mux.HandleFunc("GET /services", serveServiceStatus)
+	mux.HandleFunc("GET /services/{name}/log", serveServiceLog)
 	return mux
 }
 

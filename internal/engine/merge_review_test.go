@@ -15,7 +15,7 @@ import (
 )
 
 const automergeWatcher = "  - id: automerge\n    on: mr_mergeable\n    stages:\n" +
-	"      - { id: merge, type: action, action: mr_merge, input: { method: squash, branch: delete }, on_fail: end }\n"
+	"      - { id: merge, type: action, action: mr_merge, with: { method: squash, branch: delete }, on_fail: end }\n"
 
 // The repository host says it can be merged: the watcher merges it — with
 // the method asked, at the head the round began on — and the merge is the
@@ -70,11 +70,12 @@ func TestMRMergeRefusedRoutesOnFail(t *testing.T) {
 // puts the good one on the merge request, named after the phase run.
 func TestPostReviewFromAReviewOutput(t *testing.T) {
 	doc := observeFlowDoc("  - id: look\n    on: manual\n    stages:\n" +
-		"      - { id: read, type: agent, agent: pr_reviewer, input: { failure: $FAILURE }, on_fail: { to: read, max: 1 } }\n" +
-		"      - { id: publish_review, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n")
+		"      - { id: read, type: agent, agent: pr_reviewer, input: { failure: { from: edge.failure, type: failure, optional: true } },\n" +
+		"          output: { review: { to: artifacts/review.yaml, type: review_threads } }, on_fail: { to: read, max: 1 } }\n" +
+		"      - { id: publish_review, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }\n")
 	doc = strings.Replace(doc, "agents:\n",
-		"agents:\n  - name: pr_reviewer\n    prompt: review it\n    inputs:\n      - { name: failure, optional: true }\n"+
-			"    outputs:\n      - { name: review, type: review_threads, path: artifacts/review.yaml }\n", 1)
+		"agents:\n  - name: pr_reviewer\n    prompt: review it\n    inputs:\n      - { name: failure, type: failure, optional: true }\n"+
+			"    outputs:\n      - { name: review, type: review_threads }\n", 1)
 	ph := newPhasedHarness(t, doc)
 	var reads atomic.Int32
 	var mu sync.Mutex
@@ -133,7 +134,7 @@ watchers:
   - id: ship
     on: mr_approved
     stages:
-      - { id: rebase, type: action, action: sync_target, input: { strategy: rebase }, on_fail: end }
+      - { id: rebase, type: action, action: sync_target, with: { strategy: rebase }, on_fail: end }
       - { id: push, type: action, action: push_branch, on_fail: end }
       - { id: ready, type: wait, for: mr_mergeable, timeout: 24h, on_fail: end }
       - { id: merge, type: action, action: mr_merge, on_fail: end }

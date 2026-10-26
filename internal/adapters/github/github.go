@@ -13,7 +13,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"apothecary/internal/ports"
@@ -32,14 +34,30 @@ type Config struct {
 type Adapter struct {
 	cfg  Config
 	http *http.Client
+	// uploads is the attachment upload host: uploads.github.com, for
+	// github.com only; "" on GitHub Enterprise Server, which has no
+	// equivalent a token can reach.
+	uploads string
+
+	// repoIDs caches each repository's numeric id ("owner/repo" → id), which
+	// an upload names it by.
+	idMu    sync.Mutex
+	repoIDs map[string]int64
 }
+
+// apiGitHubCom is github.com's API, the default base URL.
+const apiGitHubCom = "https://api.github.com"
 
 func New(cfg Config) *Adapter {
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = "https://api.github.com"
+		cfg.BaseURL = apiGitHubCom
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	return &Adapter{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
+	a := &Adapter{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}, repoIDs: map[string]int64{}}
+	if cfg.BaseURL == apiGitHubCom {
+		a.uploads = "https://uploads.github.com"
+	}
+	return a
 }
 
 // api performs one authenticated call; out may be nil.
@@ -190,6 +208,16 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 		return ports.MRRef{}, err
 	}
 	return ports.MRRef{IID: pr.Number, URL: pr.HTMLURL}, nil
+}
+
+// AddMRLabels adds labels through the pull request's issue: GitHub creates
+// a label the repository does not have yet, and adding one twice is a no-op.
+func (a *Adapter) AddMRLabels(ctx context.Context, mr ports.MRRef, labels []string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	_, err := a.api(ctx, http.MethodPost, fmt.Sprintf("%s/issues/%d/labels", a.repoPath(), mr.IID), map[string]any{"labels": labels}, nil)
+	return err
 }
 
 // FindMR implements the port's reconciliation lookup: the open PR whose head
@@ -343,6 +371,113 @@ func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (po
 	}
 	out.State = ports.AggregateChecks(out.Items)
 	return out, nil
+}
+
+// ciDetailMax bounds the failed checks CIFailures details (two calls each):
+// past it they are listed by name.
+const ciDetailMax = 20
+
+// CIFailures lists head's failed checks — the newest run of each name, as
+// MRChecks counts them — and what each is: a GitHub Actions check run is a
+// job (its id is the job's), so the job names its failed steps and its
+// workflow run the workflow file; an app's check run has its output's title;
+// a commit status its description.
+func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) ([]ports.CIFailure, error) {
+	if head == "" {
+		return nil, nil
+	}
+	var runs struct {
+		CheckRuns []struct {
+			ID         int64  `json:"id"`
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
+			App        struct {
+				Slug string `json:"slug"`
+			} `json:"app"`
+			Output struct {
+				Title string `json:"title"`
+			} `json:"output"`
+		} `json:"check_runs"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/commits/%s/check-runs?per_page=100", a.repoPath(), url.PathEscape(head)), nil, &runs); err != nil {
+		return nil, err
+	}
+	newest := map[string]int{}
+	for i, r := range runs.CheckRuns {
+		if j, seen := newest[r.Name]; !seen || r.ID > runs.CheckRuns[j].ID {
+			newest[r.Name] = i
+		}
+	}
+	var out []ports.CIFailure
+	workflows := map[int64]string{}
+	for i, r := range runs.CheckRuns {
+		if newest[r.Name] != i || r.Status != "completed" {
+			continue
+		}
+		switch r.Conclusion {
+		case "failure", "timed_out", "action_required":
+		default:
+			continue
+		}
+		f := ports.CIFailure{Name: r.Name, URL: r.HTMLURL, Summary: r.Output.Title}
+		if r.App.Slug == "github-actions" && len(out) < ciDetailMax {
+			a.actionsJob(ctx, r.ID, workflows, &f)
+		}
+		out = append(out, f)
+	}
+	var combined struct {
+		Statuses []struct {
+			Context     string `json:"context"`
+			State       string `json:"state"`
+			TargetURL   string `json:"target_url"`
+			Description string `json:"description"`
+		} `json:"statuses"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/commits/%s/status", a.repoPath(), url.PathEscape(head)), nil, &combined); err != nil {
+		return out, err
+	}
+	for _, s := range combined.Statuses {
+		if s.State == "failure" || s.State == "error" {
+			out = append(out, ports.CIFailure{Name: s.Context, URL: s.TargetURL, Summary: s.Description})
+		}
+	}
+	return out, nil
+}
+
+// actionsJob fills an Actions check run's job, failed steps and workflow
+// file. Best effort: what cannot be read leaves the check as its name says.
+func (a *Adapter) actionsJob(ctx context.Context, jobID int64, workflows map[int64]string, f *ports.CIFailure) {
+	var job struct {
+		Name  string `json:"name"`
+		RunID int64  `json:"run_id"`
+		Steps []struct {
+			Name       string `json:"name"`
+			Conclusion string `json:"conclusion"`
+		} `json:"steps"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/actions/jobs/%d", a.repoPath(), jobID), nil, &job); err != nil {
+		return
+	}
+	f.Job = job.Name
+	for _, s := range job.Steps {
+		if s.Conclusion == "failure" || s.Conclusion == "timed_out" {
+			f.Steps = append(f.Steps, s.Name)
+		}
+	}
+	path, seen := workflows[job.RunID]
+	if !seen {
+		var run struct {
+			Path string `json:"path"`
+		}
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/actions/runs/%d", a.repoPath(), job.RunID), nil, &run); err == nil {
+			// A called workflow's path carries its ref: .github/workflows/x.yml@main.
+			path, _, _ = strings.Cut(run.Path, "@")
+		}
+		workflows[job.RunID] = path
+	}
+	f.File = path
 }
 
 // MRApproval reads the pull request's reviews: each reviewer's latest
@@ -598,6 +733,81 @@ func (a *Adapter) ResolveThread(ctx context.Context, mr ports.MRRef, threadID st
 		return nil // a conversation comment has nothing to resolve
 	}
 	return a.graphql(ctx, `mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}`, map[string]any{"id": threadID}, nil)
+}
+
+// UploadAttachment uploads a file for the bound repository's pull requests
+// to show (uploadAttachment).
+func (a *Adapter) UploadAttachment(ctx context.Context, _ ports.RepoRef, name, contentType string, data []byte) (ports.Attachment, error) {
+	return a.uploadAttachment(ctx, a.cfg.Locator, name, contentType, data)
+}
+
+// uploadAttachment uploads a file the way the web editor does a pasted
+// screenshot: to uploads.github.com's user-attachments, for one repository,
+// which answers with the URL a body embeds. That endpoint takes a classic
+// personal access token with the repo scope; a fine-grained or an app's
+// token gets a 404, so a refusal says what token it needs.
+func (a *Adapter) uploadAttachment(ctx context.Context, repo, name, contentType string, data []byte) (ports.Attachment, error) {
+	if a.uploads == "" {
+		return ports.Attachment{}, fmt.Errorf("github: attachments can only be uploaded to github.com, and this integration is %s (GitHub Enterprise Server is not supported)", a.cfg.BaseURL)
+	}
+	id, err := a.repoID(ctx, repo)
+	if err != nil {
+		return ports.Attachment{}, err
+	}
+	q := url.Values{"name": {name}, "content_type": {contentType}, "repository_id": {strconv.FormatInt(id, 10)}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.uploads+"/user-attachments/assets?"+q.Encode(), bytes.NewReader(data))
+	if err != nil {
+		return ports.Attachment{}, err
+	}
+	req.Header.Set("Authorization", "token "+a.cfg.Token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", contentType)
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return ports.Attachment{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
+		return ports.Attachment{}, fmt.Errorf("github: uploading %s to %s was refused (%d): uploads need a classic personal access token with the repo scope — a fine-grained token or an app's cannot upload", name, repo, resp.StatusCode)
+	case resp.StatusCode >= 400:
+		return ports.Attachment{}, fmt.Errorf("github: uploading %s to %s: %d: %s", name, repo, resp.StatusCode, tail(string(body), 300))
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || out.URL == "" {
+		return ports.Attachment{}, fmt.Errorf("github: uploading %s to %s: the answer carries no url: %s", name, repo, tail(string(body), 300))
+	}
+	md := "[" + name + "](" + out.URL + ")"
+	if strings.HasPrefix(contentType, "image/") {
+		md = "!" + md
+	}
+	return ports.Attachment{URL: out.URL, Markdown: md}, nil
+}
+
+// repoID is a repository's numeric id, asked once (GET /repos/{owner}/{repo}).
+func (a *Adapter) repoID(ctx context.Context, repo string) (int64, error) {
+	a.idMu.Lock()
+	id, ok := a.repoIDs[repo]
+	a.idMu.Unlock()
+	if ok {
+		return id, nil
+	}
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, "/repos/"+repo, nil, &out); err != nil {
+		return 0, err
+	}
+	if out.ID == 0 {
+		return 0, fmt.Errorf("github: repository %s reports no id", repo)
+	}
+	a.idMu.Lock()
+	a.repoIDs[repo] = out.ID
+	a.idMu.Unlock()
+	return out.ID, nil
 }
 
 func tail(s string, n int) string {

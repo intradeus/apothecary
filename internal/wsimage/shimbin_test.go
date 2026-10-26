@@ -74,3 +74,29 @@ func TestEnsureShimBuildsExtractsAndCaches(t *testing.T) {
 		t.Errorf("cache hit ran docker: %v", f.calls)
 	}
 }
+
+// The builder pins gojq for the docker build; the root module compiles the
+// same shim source (go vet/test ./...). Both must use one version, or the
+// tested shim and the shipped one quietly diverge.
+func TestShimGojqPinMatchesGoMod(t *testing.T) {
+	data, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var modVersion string
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require "))
+		if len(f) >= 2 && f[0] == "github.com/itchyny/gojq" {
+			modVersion = f[1]
+		}
+	}
+	if modVersion == "" {
+		t.Fatal("go.mod does not require github.com/itchyny/gojq")
+	}
+	if gojqVersion != modVersion {
+		t.Errorf("shim builder pins gojq %s, go.mod requires %s", gojqVersion, modVersion)
+	}
+	if !strings.Contains(shimBuilderDockerfile, "github.com/itchyny/gojq/cli@"+modVersion+" ") {
+		t.Errorf("builder Dockerfile does not get gojq@%s:\n%s", modVersion, shimBuilderDockerfile)
+	}
+}

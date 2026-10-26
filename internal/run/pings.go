@@ -37,9 +37,11 @@ type PingView struct {
 	Feedback  string `json:"feedback,omitempty"`
 	// AnswerAttachmentIDs are the files the human attached to the answer
 	// (projected from ping_answered).
-	AnswerAttachmentIDs []string   `json:"answer_attachment_ids,omitempty"`
-	RaisedAt            time.Time  `json:"raised_at"`
-	AnsweredAt          *time.Time `json:"answered_at,omitempty"`
+	AnswerAttachmentIDs []string `json:"answer_attachment_ids,omitempty"`
+	// Review is the answer's comments on the files shown (ping_answered).
+	Review     []event.ReviewComment `json:"review,omitempty"`
+	RaisedAt   time.Time             `json:"raised_at"`
+	AnsweredAt *time.Time            `json:"answered_at,omitempty"`
 }
 
 // Primary is the ping's primary payload: the link, or the first file.
@@ -75,6 +77,7 @@ func ReducePings(evs []event.Event) []PingView {
 				out[j].Answer = p.Answer
 				out[j].Feedback = p.Feedback
 				out[j].AnswerAttachmentIDs = p.AttachmentIDs
+				out[j].Review = p.Review
 				out[j].AnsweredAt = &ts
 			}
 		case *event.RunAbandoned, *event.RunFailed, *event.RunArchived, *event.RunCompleted:

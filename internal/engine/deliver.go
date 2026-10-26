@@ -159,17 +159,40 @@ func (x *exec) goalAttachments() []filestore.Attachment {
 	return goals
 }
 
-// pingAnswerPaths delivers a ping's answer attachments into the workspace and
-// returns their paths (for the shim tool-return and the gate-reject feed).
-func (x *exec) pingAnswerPaths(pingID string) []string {
+// pingAnswerFiles delivers a ping's answer attachments into the workspace and
+// returns where each landed (for the shim tool-return and the resume
+// message).
+func (x *exec) pingAnswerFiles(pingID string) []answerFile {
+	atts := x.pingAnswerAttachments(pingID)
+	return answerFilesOf(atts, x.deliverAttachments(atts))
+}
+
+// answerFileRefs says where a ping's answer attachments are delivered,
+// without writing them: a gate's verdict names them, and the stage that
+// reads it gets them with the workspace (deliverRunAttachments).
+func (x *exec) answerFileRefs(pingID string) []answerFile {
+	atts := x.pingAnswerAttachments(pingID)
+	return answerFilesOf(atts, attachmentPaths(atts))
+}
+
+func (x *exec) pingAnswerAttachments(pingID string) []filestore.Attachment {
 	if x.e.attachments == nil {
 		return nil
 	}
 	atts, err := x.e.attachments.ForPing(x.ctx, pingID)
-	if err != nil || len(atts) == 0 {
+	if err != nil {
+		x.e.log.Warn("answer attachments", "run", x.rs.runID, "ping", pingID, "err", err)
 		return nil
 	}
-	return x.deliverAttachments(atts)
+	return atts
+}
+
+func answerFilesOf(atts []filestore.Attachment, paths []string) []answerFile {
+	out := make([]answerFile, 0, len(atts))
+	for i, a := range atts {
+		out = append(out, answerFile{id: a.ID, path: paths[i]})
+	}
+	return out
 }
 
 // attachedFilesNote renders paths as a markdown block for feedback delivery.

@@ -79,6 +79,14 @@ const (
 	TypeEnvRebuildStarted   Type = "env_rebuild_started"
 	TypeEnvRebuildCompleted Type = "env_rebuild_completed"
 	TypeEnvRebuildFailed    Type = "env_rebuild_failed"
+	// A project service started, up, stopped, or failing to come up — by a
+	// stage, a person on the run page, or the engine when the chain whose
+	// stage started it ends. Its health flipping while it runs is live state
+	// the workspace's supervisor keeps, not history.
+	TypeServiceStarted Type = "service_started"
+	TypeServiceReady   Type = "service_ready"
+	TypeServiceStopped Type = "service_stopped"
+	TypeServiceFailed  Type = "service_failed"
 )
 
 // Payload is implemented by every event payload struct.
@@ -304,6 +312,10 @@ type StageCompleted struct {
 	// the timeline. Engine-authored text, never workspace output.
 	Skipped bool   `json:"skipped,omitempty"`
 	Note    string `json:"note,omitempty"`
+	// Feed is the verdict an approval carries to on_success (≤32 KB): a
+	// gate's review, a verdict's comments (flow.GivesVerdict). Persisted like
+	// EdgeTaken.Feed, so recovery hands it on.
+	Feed string `json:"feed,omitempty"`
 }
 
 type StageFailed struct {
@@ -351,7 +363,8 @@ type EdgeTaken struct {
 	// fallbacks); each link keeps its own counter across replay. Absent in
 	// pre-chain events, which were all depth 0.
 	Depth int `json:"depth,omitempty"`
-	// Feed is the content carried to the target stage (≤8 KB tail),
+	// Feed is the content carried to the target stage (a failure's last
+	// 8 KB, a verdict's first 32 KB),
 	// persisted so crash recovery never loses feedback. Extension over the
 	// §6 catalog — see IMPLEMENTATION_NOTES.
 	Feed string `json:"feed,omitempty"`
@@ -383,11 +396,11 @@ const (
 	// ping when it is raised (PingRaised.AnswerKind). One field, one table
 	// of rules — the UI renders it, the engine validates it, no caller
 	// infers it from the ping's type or its options.
-	//   decision  approve | reject (+ feedback)        gates, phase confirmations
+	//   yes_no    approve | reject (+ feedback)        gates, phase confirmations, the debug leaf
 	//   choice    one option id | "other" (+ note)     ask_human closed questions
 	//   multi     option ids, one per line | "none"    which review threads to fix
 	//   text      free text                            ask_human open questions
-	AnswerDecision    = "decision"
+	AnswerYesNo       = "yes_no"
 	AnswerChoice      = "choice"
 	AnswerMulti       = "multi"
 	AnswerText        = "text"
@@ -451,6 +464,29 @@ type PhaseStarted struct {
 	Key     string `json:"key,omitempty"`
 	By      string `json:"by"`
 	Tip     string `json:"tip,omitempty"`
+	// CI is what failed in CI on the subject's head as the chain started —
+	// read once, for a chain that reads run.ci.failure, so a recovered chain
+	// is told the same.
+	CI *CIReport `json:"ci,omitempty"`
+}
+
+// CIReport is what failed in CI on a head commit: each failed check, said so
+// it can be found and re-run (never its log), or why it could not be read.
+type CIReport struct {
+	Head   string    `json:"head"`
+	Checks []CICheck `json:"checks,omitempty"`
+	Error  string    `json:"error,omitempty"`
+}
+
+// CICheck is one failed check (ports.CIFailure, as recorded).
+type CICheck struct {
+	Name    string   `json:"name"`
+	URL     string   `json:"url,omitempty"`
+	File    string   `json:"file,omitempty"`
+	Job     string   `json:"job,omitempty"`
+	Stage   string   `json:"stage,omitempty"`
+	Steps   []string `json:"steps,omitempty"`
+	Summary string   `json:"summary,omitempty"`
 }
 
 // PhaseCompleted: the phase run reached done; the run is idle again (or,
@@ -591,7 +627,7 @@ func OptionIDs(opts []Option) []string {
 }
 
 // Kind is the ping's answer kind, inferred for pings recorded before the
-// field existed: a gate or phase confirmation is a decision, a selection a
+// field existed: a gate or phase confirmation is a yes/no, a selection a
 // multi, a question with options a choice, anything else free text.
 func (p *PingRaised) Kind() string {
 	if p.AnswerKind != "" {
@@ -599,7 +635,7 @@ func (p *PingRaised) Kind() string {
 	}
 	switch {
 	case p.Type == PingGate || p.Type == PingPhaseConfirm || p.Type == PingDebug:
-		return AnswerDecision
+		return AnswerYesNo
 	case p.Type == PingSelect:
 		return AnswerMulti
 	case len(p.Options) > 0:
@@ -615,6 +651,26 @@ type PingAnswered struct {
 	// AttachmentIDs are the files the human attached to this answer — the
 	// association is a replayable fact of the run, not just a side-table
 	// write (DESIGN-FILES §4).
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	// Review is what the person said about the files the ping showed, comment
+	// by comment; Feedback is then its summary. The engine renders it into
+	// the verdict (or the answer) the agent reads.
+	Review []ReviewComment `json:"review,omitempty"`
+}
+
+// ReviewComment is one comment of a review: on a file the ping showed, on a
+// stretch of its lines (StartLine 0: the whole file — always, on an image),
+// quoting the text selected.
+type ReviewComment struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line,omitempty"`
+	EndLine   int    `json:"end_line,omitempty"`
+	// Heading is the section the lines sit in (a markdown file's).
+	Heading string `json:"heading,omitempty"`
+	Quote   string `json:"quote,omitempty"`
+	Body    string `json:"body"`
+	// AttachmentIDs are the answer's files this comment is about (a subset
+	// of PingAnswered.AttachmentIDs).
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
@@ -799,3 +855,55 @@ func (*EnvDestroyed) EventType() Type        { return TypeEnvDestroyed }
 func (*EnvRebuildStarted) EventType() Type   { return TypeEnvRebuildStarted }
 func (*EnvRebuildCompleted) EventType() Type { return TypeEnvRebuildCompleted }
 func (*EnvRebuildFailed) EventType() Type    { return TypeEnvRebuildFailed }
+
+func (*ServiceStarted) EventType() Type { return TypeServiceStarted }
+func (*ServiceReady) EventType() Type   { return TypeServiceReady }
+func (*ServiceStopped) EventType() Type { return TypeServiceStopped }
+func (*ServiceFailed) EventType() Type  { return TypeServiceFailed }
+
+// Who acts on a service (ServiceStarted.By, ServiceStopped.By).
+const (
+	ServiceByStage = "stage"
+	ServiceByHuman = "human"
+	// ServiceByEngine: the chain whose stage started it ended.
+	ServiceByEngine = "engine"
+)
+
+// ServiceStarted: a service was started, or restarted. A stage's (StageID)
+// belongs to its chain (Phase), which stops it when it ends; a human's stays
+// up until a human stops it or the workspace goes.
+type ServiceStarted struct {
+	Service string `json:"service"`
+	StageID string `json:"stage_id,omitempty"`
+	Phase   string `json:"phase,omitempty"`
+	By      string `json:"by"`
+	Restart bool   `json:"restart,omitempty"`
+}
+
+// ServiceReady: the service answered its health probe. URL is its address
+// in the workspace (http://localhost:<first port><path>) — what an agent is
+// handed; the human's preview link is engine-process state, never logged.
+type ServiceReady struct {
+	Service string `json:"service"`
+	StageID string `json:"stage_id,omitempty"`
+	URL     string `json:"url,omitempty"`
+}
+
+// ServiceStopped: a stage, a human or the engine stopped the service;
+// Reason says why when the engine did.
+type ServiceStopped struct {
+	Service string `json:"service"`
+	StageID string `json:"stage_id,omitempty"`
+	By      string `json:"by"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// ServiceFailed: a start that did not come up — its script exited non-zero
+// (ExitCode), it was not healthy within its timeout, or it could not be
+// started at all. Its output is the service's log, not the event's.
+type ServiceFailed struct {
+	Service  string `json:"service"`
+	StageID  string `json:"stage_id,omitempty"`
+	Reason   string `json:"reason"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+}

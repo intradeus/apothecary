@@ -20,8 +20,8 @@ func (x *exec) stageCondition(st *flow.Stage) (skip bool, note string) {
 	rs := x.rs
 	tracker := rs.view.TicketSourceID != "" && rs.view.TicketKey != ""
 	subject := rs.subject != "" && x.subjectMR() != nil
-	if !st.When.Holds(tracker, subject) {
-		return true, "skipped: when " + st.When.String() + " does not hold for this run"
+	if !st.RunIf.Holds(tracker, subject) {
+		return true, "skipped: run_if " + st.RunIf.String() + " does not hold for this run"
 	}
 	if st.Type == flow.StageAction && !tracker {
 		if act := actionspec.Get(st.Action); act != nil && act.Requires == actionspec.RequiresTracker {

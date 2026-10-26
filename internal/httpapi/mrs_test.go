@@ -17,9 +17,9 @@ agents:
   - name: reader
     prompt: read it
     inputs:
-      - { name: changes }
+      - { name: changes, type: changeset }
 main:
-  - { id: read, type: agent, agent: reader, input: { changes: $DIFF_TARGET }, on_fail: debug }
+  - { id: read, type: agent, agent: reader, input: { changes: { from: run.git.diff_target, type: changeset } }, on_fail: debug }
 outcomes:
   - { id: merged, on: mr_merged, then: done }
   - { id: closed, on: mr_closed, then: done }

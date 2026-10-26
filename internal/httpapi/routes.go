@@ -220,6 +220,26 @@ func (s *Server) routes() []Route {
 			Summary: "Rolling window of workspace cpu/memory/network samples",
 			Handler: s.getRunResources, Returns: RunResources{}},
 
+		// --- services -------------------------------------------------------
+		{Method: "GET", Path: "/api/runs/{id}/services", ID: "getRunServices", Tag: tagWorkspace,
+			Summary: "The project's services and how each stands in the run's workspace",
+			Doc:     "Live state read from the workspace's supervisor on each call — poll it while the pane is open; service_started, service_ready, service_stopped and service_failed also arrive on the run's event stream. A healthy service's ports carry their preview links. workspace is false when the run has none; error says its services could not be read just now.",
+			Handler: s.getRunServices, Returns: engine.RunServices{}},
+		{Method: "POST", Path: "/api/runs/{id}/services/{name}/start", ID: "startRunService", Tag: tagWorkspace,
+			Summary: "Start a service by hand",
+			Doc:     "Returns once the workspace runs it (already up: left alone); whether it comes up is its state on the services list, and service_ready or service_failed on the event stream. A service started by hand stays up until someone stops it or the workspace goes. 409 when the run has no workspace.",
+			Handler: s.postStartService, Returns: engine.ServiceInfo{}, Status: http.StatusAccepted},
+		{Method: "POST", Path: "/api/runs/{id}/services/{name}/restart", ID: "restartRunService", Tag: tagWorkspace,
+			Summary: "Stop a service and start it again",
+			Handler: s.postRestartService, Returns: engine.ServiceInfo{}, Status: http.StatusAccepted},
+		{Method: "POST", Path: "/api/runs/{id}/services/{name}/stop", ID: "stopRunService", Tag: tagWorkspace,
+			Summary: "Stop a service, whoever started it",
+			Handler: s.postStopService, Returns: engine.ServiceInfo{}, Status: http.StatusAccepted},
+		{Method: "GET", Path: "/api/runs/{id}/services/{name}/logs", ID: "getRunServiceLogs", Tag: tagWorkspace,
+			Summary: "The last lines of a service's output",
+			Query:   []Param{{Name: "tail", Doc: "lines (default 200, at most 5000)", Type: "integer"}},
+			Handler: s.getServiceLogs, Produces: "text/plain"},
+
 		// --- pings ----------------------------------------------------------
 		{Method: "POST", Path: "/api/runs/{id}/pings", ID: "raisePing", Tag: tagPings,
 			Summary: "Ask the human a question (ask_human)",
@@ -377,6 +397,22 @@ func (s *Server) routes() []Route {
 			Summary: "Empty the project's build cache",
 			Doc:     "Safe: the next build repopulates it, so the cost of clearing needlessly is one slow build.",
 			Handler: s.deleteBuildCache, Status: http.StatusNoContent, Enabled: haveConf},
+		{Method: "GET", Path: "/api/projects/{id}/secrets", ID: "listProjectSecrets", Tag: tagProjects,
+			Summary: "The project's secrets, by name",
+			Doc:     "What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.",
+			Handler: s.listProjectSecrets, Returns: []confstore.ProjectSecret{}, Enabled: haveConf},
+		{Method: "PUT", Path: "/api/projects/{id}/secrets/{name}", ID: "setProjectSecret", Tag: tagProjects,
+			Summary: "Set one project secret",
+			Doc:     "Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.",
+			Body:    ProjectSecretRequest{}, Handler: s.putProjectSecret, Returns: confstore.ProjectSecret{}, Enabled: haveConf},
+		{Method: "DELETE", Path: "/api/projects/{id}/secrets/{name}", ID: "deleteProjectSecret", Tag: tagProjects,
+			Summary: "Remove one project secret",
+			Doc:     "A flow that reads it is refused at its next run's creation.",
+			Handler: s.deleteProjectSecret, Status: http.StatusNoContent, Enabled: haveConf},
+		{Method: "GET", Path: "/api/projects/{id}/browser", ID: "getProjectBrowser", Tag: tagProjects,
+			Summary: "The project's browser: its toggle and its container",
+			Doc:     "One container per project, a Chromium per agent session (the builtin browser MCP server). The toggle is the project's workspace.browser.enabled; this says whether the container runs, with what image, and how many sessions use it.",
+			Handler: s.getProjectBrowser, Returns: BrowserInfo{}, Enabled: haveConf},
 		{Method: "GET", Path: "/api/envchecks/{id}", ID: "getEnvCheck", Tag: tagProjects,
 			Summary: "Poll a workspace check",
 			Handler: s.getEnvCheck, Returns: engine.CheckRun{}, Enabled: haveConf},
@@ -512,6 +548,8 @@ func (s *Server) Handler() http.Handler {
 	}
 	// A WebSocket, so outside the table (and the spec): see serveTerminal.
 	mux.HandleFunc("GET /api/runs/{id}/terminal", s.serveTerminal)
+	// The workspace's browser MCP stream, upgraded likewise: see serveBrowserMCP.
+	mux.HandleFunc("GET /api/runs/{id}/browser-mcp", s.serveBrowserMCP)
 	mux.HandleFunc("GET /api/openapi.json", s.getOpenAPIJSON)
 	mux.HandleFunc("GET /api/openapi.yaml", s.getOpenAPIYAML)
 	mux.HandleFunc("GET /docs", s.serveDocs)

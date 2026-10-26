@@ -89,7 +89,7 @@ func sequenceStageProblem(st *DocStage) string {
 		name string
 		set  bool
 	}{
-		{"when", st.When != ""}, {"agent", st.Agent != ""}, {"model", st.Model != ""}, {"harness", st.Harness != ""},
+		{"run_if", st.RunIf != ""}, {"agent", st.Agent != ""}, {"model", st.Model != ""}, {"harness", st.Harness != ""},
 		{"max_turns", st.MaxTurns != nil}, {"timeout", st.Timeout != ""}, {"input", st.Input != nil}, {"output", st.Output != nil},
 		{"run", st.Run != ""}, {"run_ref", st.RunRef != ""}, {"each_repo", st.EachRepo}, {"question", st.Question != ""},
 		{"auto_approve", st.AutoApprove != ""}, {"auto_reject", st.AutoReject != ""}, {"action", st.Action != ""}, {"for", st.For != ""},

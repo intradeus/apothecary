@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -371,6 +373,55 @@ func TestMRChecks(t *testing.T) {
 	}
 }
 
+// What failed, so it can be re-run: an Actions job names its failed steps
+// and its workflow file (a called workflow's ref dropped); an app's check run
+// its output's title; a failed commit status its description. Superseded and
+// passing runs are not failures.
+func TestCIFailures(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/lu/greeter/commits/h1/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"check_runs":[
+		  {"id":11,"name":"test","status":"completed","conclusion":"failure","html_url":"https://gh/job/11","app":{"slug":"github-actions"}},
+		  {"id":12,"name":"lint","status":"completed","conclusion":"failure","html_url":"https://gh/job/12","app":{"slug":"github-actions"}},
+		  {"id":13,"name":"build","status":"completed","conclusion":"failure","app":{"slug":"github-actions"}},
+		  {"id":14,"name":"build","status":"completed","conclusion":"success","app":{"slug":"github-actions"}},
+		  {"id":20,"name":"codecov","status":"completed","conclusion":"failure","html_url":"https://cov/1","app":{"slug":"codecov"},"output":{"title":"coverage dropped 3%"}}]}`))
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/actions/jobs/11", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"test (ubuntu)","run_id":7,"steps":[{"name":"Checkout","conclusion":"success"},{"name":"Run go test ./...","conclusion":"failure"},{"name":"Upload","conclusion":"skipped"}]}`))
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/actions/jobs/12", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"lint","run_id":7,"steps":[{"name":"golangci-lint","conclusion":"failure"}]}`))
+	})
+	runs := 0
+	mux.HandleFunc("GET /repos/lu/greeter/actions/runs/7", func(w http.ResponseWriter, _ *http.Request) {
+		runs++
+		_, _ = w.Write([]byte(`{"path":".github/workflows/ci.yml@refs/heads/main"}`))
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/commits/h1/status", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"statuses":[{"context":"ci/legacy","state":"error","target_url":"https://ci/9","description":"build broke"},{"context":"ok","state":"success"}]}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	got, err := a.CIFailures(context.Background(), ports.MRRef{IID: 5}, "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.CIFailure{
+		{Name: "test", URL: "https://gh/job/11", File: ".github/workflows/ci.yml", Job: "test (ubuntu)", Steps: []string{"Run go test ./..."}},
+		{Name: "lint", URL: "https://gh/job/12", File: ".github/workflows/ci.yml", Job: "lint", Steps: []string{"golangci-lint"}},
+		{Name: "codecov", URL: "https://cov/1", Summary: "coverage dropped 3%"},
+		{Name: "ci/legacy", URL: "https://ci/9", Summary: "build broke"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if runs != 1 {
+		t.Errorf("the workflow run was read %d times; one run, one read", runs)
+	}
+}
+
 // Each reviewer's latest decision counts; a comment decides nothing, a
 // dismissal undoes an approval, one request for changes blocks.
 func TestMRApproval(t *testing.T) {
@@ -484,5 +535,86 @@ func TestPostReview(t *testing.T) {
 	res, err = a.PostReview(context.Background(), ports.MRRef{IID: 5}, rev)
 	if err != nil || !res.Already || len(posted) != 1 {
 		t.Errorf("retry: res %+v err %v posted %d", res, err, len(posted))
+	}
+}
+
+// An upload goes to user-attachments with the repository's numeric id (asked
+// once) and a classic-token header; a 404 — what a fine-grained token gets —
+// says which token uploads need.
+func TestUploadAttachment(t *testing.T) {
+	var repoCalls, uploads int
+	var query, auth, ct, body string
+	refuse := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/lu/greeter", func(w http.ResponseWriter, _ *http.Request) {
+		repoCalls++
+		_, _ = w.Write([]byte(`{"id":4242,"permissions":{"push":true}}`))
+	})
+	mux.HandleFunc("POST /user-attachments/assets", func(w http.ResponseWriter, r *http.Request) {
+		uploads++
+		if refuse {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		query, auth, ct = r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Content-Type")
+		data, _ := io.ReadAll(r.Body)
+		body = string(data)
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"url":"https://github.com/user-attachments/assets/0f1e"}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a := New(Config{BaseURL: ts.URL, Token: "tok", Locator: "lu/greeter"})
+	a.uploads = ts.URL
+	ctx := context.Background()
+	att, err := a.UploadAttachment(ctx, ports.RepoRef{}, "home.png", "image/png", []byte("\x89PNG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query != "content_type=image%2Fpng&name=home.png&repository_id=4242" || auth != "token tok" || ct != "image/png" || body != "\x89PNG" {
+		t.Errorf("query %q auth %q content type %q body %q", query, auth, ct, body)
+	}
+	want := ports.Attachment{URL: "https://github.com/user-attachments/assets/0f1e", Markdown: "![home.png](https://github.com/user-attachments/assets/0f1e)"}
+	if att != want {
+		t.Errorf("attachment = %+v, want %+v", att, want)
+	}
+	refuse = true
+	_, err = a.UploadAttachment(ctx, ports.RepoRef{}, "notes.txt", "text/plain", []byte("x"))
+	if err == nil || !strings.Contains(err.Error(), "classic personal access token with the repo scope") {
+		t.Errorf("refusal = %v", err)
+	}
+	if repoCalls != 1 || uploads != 2 {
+		t.Errorf("repository read %d times (want once, cached), %d uploads", repoCalls, uploads)
+	}
+	// GitHub Enterprise Server has no uploads host a token can reach.
+	ghes := New(Config{BaseURL: "https://ghe.example/api/v3", Token: "tok", Locator: "lu/greeter"})
+	if _, err := ghes.UploadAttachment(ctx, ports.RepoRef{}, "home.png", "image/png", nil); err == nil || !strings.Contains(err.Error(), "github.com") {
+		t.Errorf("GHES upload = %v", err)
+	}
+	if New(Config{Token: "tok"}).uploads != "https://uploads.github.com" {
+		t.Error("github.com does not upload to uploads.github.com")
+	}
+}
+
+// Labels go on through the pull request's issue, all in one call.
+func TestAddMRLabels(t *testing.T) {
+	var got map[string][]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/lu/greeter/issues/5/labels", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`[]`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	a, _ := testAdapter(ts)
+	if err := a.AddMRLabels(context.Background(), ports.MRRef{IID: 5}, []string{"apothecary", "bot"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got["labels"], []string{"apothecary", "bot"}) {
+		t.Errorf("sent %v", got)
+	}
+	if err := a.AddMRLabels(context.Background(), ports.MRRef{IID: 5}, nil); err != nil {
+		t.Errorf("no labels is no call: %v", err)
 	}
 }

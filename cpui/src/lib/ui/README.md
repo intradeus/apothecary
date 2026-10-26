@@ -101,7 +101,6 @@ A theme is one `:root[data-theme='id']` block in `tokens.css` plus one entry in 
 | `Markdown` (`doc`, `quiet`), `CodeView`                                                                            | Reading material                                                        |
 | `FileChip`                                                                                                         | One file (thumb, name, size, missing/refused, removable)                |
 | `Meter`                                                                                                            | Capacity bar                                                            |
-| `Sparkline`                                                                                                        | Vitals tile. Bind `hover` across tiles for a shared crosshair.          |
 
 Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bump`, `dragDismiss`, `project`, `rubberband`), `tokens.ts`, `icons.ts` (`I`), `hues.ts`, `trap.ts`, `confirm.svelte.ts`, `toast.svelte.ts`, `html.ts` (`esc`), `duration.ts`.
 

@@ -1,6 +1,6 @@
 name: canonical
 version: 5
-description: canonical v5 flow — agent/command/gate/action stages, every sentinel, output rebinding
+description: canonical v5 flow — agent/command/gate/action stages, typed ports, every engine source
 # The flow's one settings block: the engine-known six (a stage may override
 # harness and model; a project binds any of them at run creation, where the
 # harness kind is checked) and the flow's own knobs, read where $name appears.
@@ -11,25 +11,30 @@ parameters:
   max_turns: 50
   max_cost_usd: 10.0
   max_total_turns: 300
-  verify: { default: verify, description: "the project command that runs the tests" }
-  review_model: { default: openai/gpt-5, description: "the reviewer's model" }
-  ticket_status: { default: done, enum: [done, in_review], description: "where the tracker issue goes once the merge request merges" }
+  verify: { type: string, default: verify, description: "the project command that runs the tests" }
+  review_model: { type: string, default: openai/gpt-5, description: "the reviewer's model" }
+  ticket_status: { type: string, default: done, enum: [done, in_review], description: "where the tracker issue goes once the merge request merges" }
 agents:
   - name: planner
     description: explores the repository and writes the implementation plan
     read_only: true
     allow_bash: false
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket to plan for
       - name: rejection
+        type: verdict
         description: why the last plan was rejected — the reviewer's or human's words
         optional: true
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
       - name: plan
+        type: file
         description: implementation plan with Goal, Files to touch, Steps, Test plan and Risks sections
-        path: artifacts/plan.md
     prompt: |
       You are the planning agent of a software factory. You work on a ticket in
       an unfamiliar repository and your only deliverable is a plan — you never
@@ -60,12 +65,18 @@ agents:
     read_only: false
     allow_bash: true
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket the change is for
       - name: plan
+        type: file
         description: the approved implementation plan to execute
       - name: rejection
+        type: verdict
         description: why the last attempt was turned down — a reviewer's comments or a human's feedback
         optional: true
       - name: failure
+        type: failure
         description: what the failing stage printed (test output, a command's error)
         optional: true
     prompt: |
@@ -92,15 +103,17 @@ agents:
     allow_bash: true
     inputs:
       - name: plan
+        type: file
         description: the approved plan, for context on what the change set implements
         optional: true
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
       - name: commit
+        type: file
         description: a single-line commit subject, and nothing else
-        path: artifacts/commit.md
     prompt: |
       You are the commit agent of a software factory. The building agent has
       finished; you write ONE short commit message covering its work. A later
@@ -129,11 +142,17 @@ agents:
     read_only: true
     allow_bash: true
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket the change is for
       - name: plan
+        type: file
         description: the approved plan to check the change set against
       - name: changes
+        type: changeset
         description: the set of changed files in this branch to review
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
@@ -142,7 +161,6 @@ agents:
       - name: verdict
         type: verdict
         description: APPROVE or REJECT, with actionable comments naming file, problem and resolution
-        path: artifacts/verdict.json
     prompt: |
       You are the adversarial reviewer of a software factory. Your job is to
       find reasons to REJECT — approve only when you have genuinely tried and
@@ -169,15 +187,20 @@ agents:
     read_only: true
     allow_bash: true
     inputs:
+      - name: ticket
+        type: ticket
+        description: the ticket the change is for
       - name: changes
+        type: changeset
         description: the set of changed files to describe for whoever reads the merge request
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
         optional: true
     outputs:
       - name: mr
+        type: file
         description: the merge request description; first line a "# <title>" heading
-        path: artifacts/mr.md
     prompt: |
       You are the redaction agent of a software factory. The work is done and
       reviewed; you write the merge request description that a human will read
@@ -203,54 +226,86 @@ main:
   # a canonical status the ticket's tracker translates into its own word; a
   # ticket written by hand (no tracker issue) skips the stage, and so does a
   # tracker with no word for it.
-  - { id: in_progress, type: action, action: ticket_transition, input: { to: in_progress },
+  - { id: in_progress, type: action, action: ticket_transition, with: { to: in_progress },
       on_fail: { to: plan, max: 1 } }
-  # No output: the planner's contract already says where its plan goes.
-  - { id: plan,       type: agent, agent: planner, max_turns: 25,
-      description: write the implementation plan,
-      input: { rejection: $DECISION, failure: $FAILURE },
-      on_fail: { to: plan, max: 2 } }
-  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { plan: artifacts/plan.md },
+  # Every port says where it comes from or goes: the ticket from the run, the
+  # plan to the path the rest of the flow reads it from.
+  - id: plan
+    type: agent
+    agent: planner
+    max_turns: 25
+    description: write the implementation plan
+    input:
+      ticket:    { from: run.ticket, type: ticket }
+      rejection: { from: edge.verdict, type: verdict, optional: true }
+      failure:   { from: edge.failure, type: failure, optional: true }
+    output:
+      plan:      { to: artifacts/plan.md, type: file }
+    on_fail: { to: plan, max: 2 }
+  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { plan: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 3 } }
-  # The retry channel is declared like any other input: an edge says where to
-  # go, the stage it lands on says where the content goes.
-  - { id: build,      type: agent, agent: builder, max_turns: 80,
-      input: { plan: artifacts/plan.md, rejection: $DECISION, failure: $FAILURE } }
-  # Rebinding a declared output's path.
-  - { id: commit_msg, type: agent, agent: committer, input: { plan: artifacts/plan.md },
-      output: { commit: artifacts/commit-subject.md }, max_turns: 10 }
-  # A command declares the paths it reads and writes: a precondition before it
+  # The retry channels are inputs like any other: an edge says where to go,
+  # the stage it lands on says where the content goes.
+  - id: build
+    type: agent
+    agent: builder
+    max_turns: 80
+    input:
+      ticket:    { from: run.ticket, type: ticket }
+      plan:      { from: artifacts/plan.md, type: file }
+      rejection: { from: edge.verdict, type: verdict, optional: true }
+      failure:   { from: edge.failure, type: failure, optional: true }
+  # The stage, not the agent, says where an output goes.
+  - { id: commit_msg, type: agent, agent: committer, input: { plan: { from: artifacts/plan.md, type: file } },
+      output: { commit: { to: artifacts/commit-subject.md, type: file } }, max_turns: 10 }
+  # A command states the files it reads and writes: a precondition before it
   # runs, a contract after.
-  - { id: commit,     type: command, input: { message: artifacts/commit-subject.md },
+  - { id: commit,     type: command, input: { message: { from: artifacts/commit-subject.md, type: file } },
       run: "git add -A && git commit -F artifacts/commit-subject.md" }
   - { id: test,       type: command, run_ref: $verify,
       on_fail: { to: build, max: 5 },
       on_timeout: { to: test, max: 1, then: { to: build, max: 2 } } }
-  # The reviewer's verdict output is what makes on_reject reachable; rebinding
-  # its path proves the engine never hardcodes artifacts/verdict.json.
-  - { id: review,     type: agent, agent: reviewer, model: $review_model, max_turns: 30,
-      input: { plan: artifacts/plan.md, changes: $DIFF_TARGET },
-      output: { verdict: artifacts/review/verdict.json },
-      on_reject: { to: build, max: 3 } }
-  - { id: redact,     type: agent, agent: redactor, input: { changes: $DIFF_TARGET }, max_turns: 15 }
+  # The reviewer's verdict port is what makes on_reject reachable; its path
+  # proves the engine never hardcodes artifacts/verdict.json.
+  - id: review
+    type: agent
+    agent: reviewer
+    model: $review_model
+    max_turns: 30
+    input:
+      ticket:  { from: run.ticket, type: ticket }
+      plan:    { from: artifacts/plan.md, type: file }
+      changes: { from: run.git.diff_target, type: changeset }
+    output:
+      verdict: { to: artifacts/review/verdict.json, type: verdict }
+    on_reject: { to: build, max: 3 }
+  - id: redact
+    type: agent
+    agent: redactor
+    max_turns: 15
+    input:
+      ticket:  { from: run.ticket, type: ticket }
+      changes: { from: run.git.diff_target, type: changeset }
+    output:
+      mr:      { to: artifacts/mr.md, type: file }
   - { id: push,       type: command, run: "git push -u origin HEAD", on_success: mr,
       on_fail: { to: push, max: 1, then: { to: debug_push, max: -1 } } }
-  - { id: debug_push, type: human_gate, question: "Push failed — fix it, then approve.", input: { workspace: $WORKSPACE },
+  - { id: debug_push, type: human_gate, question: "Push failed — fix it, then approve.", input: { workspace: { from: run.workspace, type: link } },
       on_success: push,
       on_reject: abort }
-  - { id: mr,         type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: mr,         type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
   # `status` is the tracker's own word, verbatim — for a column no canonical
   # status covers.
-  - { id: in_review,  type: action, action: ticket_transition, input: { status: "In Review" },
+  - { id: in_review,  type: action, action: ticket_transition, with: { status: "In Review" },
       on_fail: { to: final_gate, max: 1 } }
   # A gate the repository can answer either way — and an explicit on_reject, because
   # a rejection with nowhere to go abandons the run. (`type: wait` is covered by
   # TestWaitStage and the engine's wait scenarios; putting one here would make
   # this fixture's end-to-end walk wait on a signal that must not fire.)
-  - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
+  - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: { from: run.mr.url, type: link } },
       auto_approve: mr_merged, auto_reject: mr_closed,
       on_reject: abort }
   # Where the issue goes once merged is the project's call: an enum parameter
-  # read at an enum input (its values within the input's).
-  - { id: ticket_done, type: action, action: ticket_transition, input: { to: $ticket_status },
+  # read at an enum setting (its values within the setting's).
+  - { id: ticket_done, type: action, action: ticket_transition, with: { to: $ticket_status },
       on_fail: done }

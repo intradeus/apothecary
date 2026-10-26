@@ -11,19 +11,18 @@ import (
 	"apothecary/internal/signalspec"
 )
 
-// validateContracts checks each stage's bindings against the contract on the
-// other side — the flow's own agent definitions (FLOWLANG §1) or an action's
-// signature — and checks that every path a stage consumes is produced by some
-// stage.
+// validateContracts checks each stage's ports against the contract on the
+// other side — the flow's own agent definitions (FLOWLANG §1); an action's
+// was checked as its stage was read — and every input against what feeds it:
+// a path some stage writes, with a shape that satisfies the reader, on every
+// route that reaches it; an edge source some edge of its kind carries in.
 //
 // Since v3 the agents live in the document, so everything here is a parse-time
-// fact: a binding that does not satisfy its agent's contract is an error that
-// refuses the document, not a per-project warning. What remains advisory is
-// suspicion rather than breakage — a path nothing produces (it may be a
-// pre-existing repo file), a sentinel no edge can fill — and rides on
-// Flow.Warnings for the editor to surface.
+// fact: a port that does not hold is an error that refuses the document. What
+// remains advisory is suspicion rather than breakage — a merge request not
+// opened on every route to what needs one — and rides on Flow.Warnings for
+// the editor to surface.
 func (p *parser) validateContracts(f *Flow) ([]string, error) {
-	produced := producedPaths(f)
 	var warns []string
 
 	for i := range f.Stages {
@@ -41,44 +40,18 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 				return warns, fail("agent %q is not declared in this flow (add it to the %q block; declared: %s)",
 					st.Agent, "agents", agentNameList(f))
 			}
-			if err := validateStageInputs(st, spec, fail); err != nil {
-				return warns, err
-			}
-			if err := validateStageOutputs(st, spec, fail, warnf); err != nil {
-				return warns, err
+			if err := agentPorts(st, spec); err != nil {
+				return warns, fail("%v", err)
 			}
 			// An on_reject edge only ever fires on a REJECT verdict, and only a
-			// verdict-typed output produces one. The agent is in the document,
-			// so this is now decidable here rather than guessed at.
-			if st.Edges[EdgeReject] != nil && spec.VerdictOutput() == nil {
-				return warns, fail("on_reject can never fire: agent %q declares no %s output",
-					st.Agent, agentspec.OutputTypeVerdict)
-			}
-			if err := validateFeedBindings(f, st, spec, fail, warnf); err != nil {
-				return warns, err
+			// verdict-typed output produces one.
+			if st.Edges[EdgeReject] != nil && st.TypedOutput(agentspec.TypeVerdict) == nil {
+				return warns, fail("on_reject can never fire: agent %q writes no %s", st.Agent, agentspec.TypeVerdict)
 			}
 		}
-
-		// Rendezvous: every path a stage consumes should be produced by some
-		// stage. Restricted to artifacts/ — a stage may legitimately read
-		// pre-existing repo files (docs/spec.md), which have no producer.
-		for _, in := range consumedPaths(st) {
-			if !strings.HasPrefix(in.Value, "artifacts/") {
-				continue
-			}
-			switch {
-			case !produced[in.Value]:
-				if in.Name != "" {
-					warnf("input %q binds %q, which no stage produces", in.Name, in.Value)
-				} else {
-					warnf("consumes %q, which no stage produces", in.Value)
-				}
-			case !definitelyProduced(f, st, in.Value):
-				// A producer exists, but not on every route here: some path
-				// through the graph reaches this stage without it, and the
-				// engine will report input_missing at run time (PLAN5 M24).
-				warnf("input %q binds %q, which is not produced on every path that reaches this stage",
-					in.Name, in.Value)
+		for _, in := range st.Inputs {
+			if err := sourceHolds(f, st, in, warnf); err != nil {
+				return warns, fail("input %q: %v", in.Name, err)
 			}
 		}
 
@@ -111,7 +84,7 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 			// A subject action outside a phase opened for a merge request has
 			// one only when the phase was started on one by hand.
 			if act := actionspec.Get(st.Action); act != nil && act.Subject && !inSubjectPhase(f, st) {
-				warnf("%q acts on the merge request a phase is opened for, and phase %q is not (it opens on %s) — it has one only when started on one by hand; guard the stage with `when: subject` or route on_fail",
+				warnf("%q acts on the merge request a phase is opened for, and phase %q is not (it opens on %s) — it has one only when started on one by hand; guard the stage with `run_if: subject` or route on_fail",
 					st.Action, st.Phase, f.Phase(st.Phase).OpensOn())
 			}
 		}
@@ -276,10 +249,10 @@ func inSubjectPhase(f *Flow, st *Stage) bool {
 // already run its producer at least once — or never will.
 func definitelyProduced(f *Flow, consumer *Stage, path string) bool {
 	return everyRouteSatisfies(f, consumer, func(st *Stage) bool {
-		if st.When != nil {
+		if st.RunIf != nil {
 			return false // a conditional producer may be skipped
 		}
-		for _, o := range effectiveOutputsOf(f, st) {
+		for _, o := range st.Outputs {
 			if o.Value == path {
 				return true
 			}
@@ -296,7 +269,7 @@ func definitelyHasMR(f *Flow, st *Stage) bool {
 		return true
 	}
 	return everyRouteSatisfies(f, st, func(s *Stage) bool {
-		if s.Type != StageAction || s.When != nil {
+		if s.Type != StageAction || s.RunIf != nil {
 			return false
 		}
 		act := actionspec.Get(s.Action)
@@ -367,14 +340,6 @@ func everyRouteSatisfies(f *Flow, target *Stage, ok func(*Stage) bool) bool {
 	return walk(&f.Stages[ph.First], map[string]bool{}, before)
 }
 
-// effectiveOutputsOf is EffectiveOutputs with the flow's own agent lookup.
-func effectiveOutputsOf(f *Flow, st *Stage) []IOBinding {
-	if st.Type == StageAgent {
-		return EffectiveOutputs(st, f.Agent(st.Agent))
-	}
-	return st.Outputs
-}
-
 func agentNameList(f *Flow) string {
 	if len(f.Agents) == 0 {
 		return "(none)"
@@ -386,222 +351,213 @@ func agentNameList(f *Flow) string {
 	return strings.Join(names, ", ")
 }
 
-// producedPaths collects every artifact path the flow's stages produce: agent
-// effective outputs and command declared outputs.
-func producedPaths(f *Flow) map[string]bool {
-	produced := map[string]bool{}
-	for i := range f.Stages {
-		st := &f.Stages[i]
-		switch st.Type {
-		case StageAgent:
-			for _, o := range EffectiveOutputs(st, f.Agent(st.Agent)) {
-				if o.Value != "" {
-					produced[o.Value] = true
-				}
-			}
-		case StageCommand, StageAction:
-			for _, o := range st.Outputs {
-				if o.Value != "" {
-					produced[o.Value] = true
-				}
-			}
-		}
-	}
-	return produced
-}
-
-// consumedPaths lists the artifact paths a stage reads. Every stage type binds
-// the same way, so this is one loop plus a per-type filter: an action's value
-// inputs are not files, and sentinels are engine-provided rather than produced
-// by another stage.
-func consumedPaths(st *Stage) []IOBinding {
-	act := actionspec.Get(st.Action)
-	if st.Type == StageAction && act == nil {
-		return nil
-	}
-	var out []IOBinding
+// agentPorts holds an agent stage's ports to the agent's contract: every
+// port is one the agent declares, a required input is stated, every output
+// is stated (the agent writes them all; the stage says where), and each
+// port's shape satisfies the declaration's — an output may narrow it (a
+// schema beside its type), never change it.
+func agentPorts(st *Stage, spec *agentspec.Spec) error {
+	stated := map[string]bool{}
 	for _, in := range st.Inputs {
-		if IsSentinel(in.Value) {
-			continue
+		d := spec.Input(in.Name)
+		if d == nil {
+			return fmt.Errorf("input %q is not an input of agent %q (inputs: %s)", in.Name, spec.Name, declNames(spec.Inputs))
 		}
-		if act != nil {
-			if sig := act.Input(in.Name); sig == nil || sig.Kind != actionspec.KindFile {
-				continue
-			}
+		stated[in.Name] = true
+		if need := (shape{d.Type, d.Schema}); !shapeOf(in).satisfies(need) {
+			return fmt.Errorf("input %q: agent %q reads %s, the port says %s", in.Name, spec.Name, need, shapeOf(in))
 		}
-		out = append(out, in)
-	}
-	return out
-}
-
-// validateFeedBindings checks the edge-carried inputs ($DECISION, $FAILURE):
-// they are empty on a stage's first attempt, so the decl must be optional, and
-// they only ever fill if some edge of the matching kind actually targets this
-// stage — a binding no edge can fill is dead weight worth flagging.
-func validateFeedBindings(f *Flow, st *Stage, spec *agentspec.Spec, fail func(string, ...any) error, warnf func(string, ...any)) error {
-	// Which feed sentinels can reach this stage, from any edge in the flow.
-	reachable := map[string]bool{}
-	for i := range f.Stages {
-		for kind, e := range f.Stages[i].Edges {
-			for link := e; link != nil; link = link.Then {
-				if link.To == st.ID {
-					reachable[FeedSentinel(kind)] = true
-				}
-			}
-		}
-	}
-	for _, in := range st.Inputs {
-		if !IsFeedSentinel(in.Value) {
-			continue
-		}
-		for _, d := range spec.Inputs {
-			if d.Name == in.Name && !d.Optional {
-				return fail("input %q binds %s, which is empty on the first attempt: declare it optional on agent %q",
-					in.Name, in.Value, st.Agent)
-			}
-		}
-		if !reachable[in.Value] {
-			kind := EdgeReject
-			if in.Value == SentinelFailure {
-				kind = "on_fail/on_timeout"
-			}
-			warnf("input %q binds %s, but no %s edge targets this stage — nothing will ever fill it",
-				in.Name, in.Value, kind)
-		}
-	}
-	return nil
-}
-
-func validateStageInputs(st *Stage, spec *agentspec.Spec, fail func(string, ...any) error) error {
-	bound := map[string]bool{}
-	for _, in := range st.Inputs {
-		if !specHasInput(spec, in.Name) {
-			return fail("input %q is not declared by agent %q (declares: %s)",
-				in.Name, st.Agent, inputNameList(spec))
-		}
-		bound[in.Name] = true
 	}
 	for _, d := range spec.Inputs {
-		if d.Optional {
-			continue
+		if !stated[d.Name] && !d.Optional {
+			return fmt.Errorf("agent %q requires input %q: input: { %s: { from: …, type: %s } }", spec.Name, d.Name, d.Name, shape{d.Type, d.Schema})
 		}
-		if !bound[d.Name] {
-			return fail("required input %q of agent %q is not bound", d.Name, st.Agent)
+	}
+	stated = map[string]bool{}
+	for _, out := range st.Outputs {
+		d := spec.Output(out.Name)
+		if d == nil {
+			return fmt.Errorf("output %q is not an output of agent %q (outputs: %s)", out.Name, spec.Name, declNames(spec.Outputs))
+		}
+		stated[out.Name] = true
+		if need := (shape{d.Type, d.Schema}); !shapeOf(out).satisfies(need) {
+			return fmt.Errorf("output %q: agent %q writes %s, the port says %s", out.Name, spec.Name, need, shapeOf(out))
+		}
+	}
+	for _, d := range spec.Outputs {
+		if !stated[d.Name] {
+			typ := d.Type
+			if typ == "" {
+				typ = "…, schema: " + d.Schema
+			}
+			return fmt.Errorf("agent %q writes %q — state where: output: { %s: { to: …, type: %s } }", spec.Name, d.Name, d.Name, typ)
 		}
 	}
 	return nil
 }
 
-func validateStageOutputs(st *Stage, spec *agentspec.Spec, fail func(string, ...any) error, warnf func(string, ...any)) error {
-	for _, o := range st.Outputs {
-		if !specHasOutput(spec, o.Name) {
-			return fail("output %q is not declared by agent %q (a stage may rebind a declared output's path, not add one)", o.Name, st.Agent)
+func declNames[T agentspec.InputDecl | agentspec.OutputDecl](ds []T) string {
+	if len(ds) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(ds))
+	for _, d := range ds {
+		switch v := any(d).(type) {
+		case agentspec.InputDecl:
+			names = append(names, v.Name)
+		case agentspec.OutputDecl:
+			names = append(names, v.Name)
 		}
-	}
-	if len(st.Outputs) > 0 && len(spec.Outputs) == 0 {
-		warnf("agent %q declares no outputs", st.Agent)
-	}
-
-	// Duplicate effective output paths would make the MUST-write contract
-	// self-contradictory.
-	seen := map[string]bool{}
-	for _, o := range EffectiveOutputs(st, spec) {
-		if o.Value == "" {
-			continue
-		}
-		if seen[o.Value] {
-			return fail("output path %q is bound more than once", o.Value)
-		}
-		seen[o.Value] = true
-	}
-	return nil
-}
-
-func inputNameList(spec *agentspec.Spec) string {
-	if len(spec.Inputs) == 0 {
-		return "(none)"
-	}
-	names := make([]string, len(spec.Inputs))
-	for i, d := range spec.Inputs {
-		names[i] = d.Name
 	}
 	return strings.Join(names, ", ")
 }
 
-// EffectiveOutputs resolves the set of files a stage must produce: for an agent,
-// its declared output default paths overlaid with the stage's rebinds; for any
-// other stage (or a nil spec) the stage's literal bindings. A nil spec means the
-// engine degrades gracefully if a stage names an agent the flow does not declare.
-func EffectiveOutputs(st *Stage, spec *agentspec.Spec) []IOBinding {
-	if spec == nil || len(spec.Outputs) == 0 {
-		return st.Outputs
+// sourceHolds checks one input against what feeds it:
+//
+//   - an edge source: some edge of its kind enters the stage — a port no
+//     edge can fill is a mistake, not a precaution;
+//   - run.mr.url: a merge request is opened on every route (a warning — a
+//     run started on one has it anyway);
+//   - repo:path: nothing in the flow writes it (else it is a flow file);
+//   - a path: some stage writes it; every writer states the same shape, and
+//     that shape satisfies the port; and unless the port is optional, a
+//     writer runs on every route that reaches the stage.
+func sourceHolds(f *Flow, st *Stage, in Port, warnf func(string, ...any)) error {
+	switch {
+	case IsEdgeSource(in.Value):
+		kinds := map[string]bool{}
+		for i := range f.Stages {
+			for kind, e := range f.Stages[i].Edges {
+				for link := e; link != nil; link = link.Then {
+					if link.To == st.ID {
+						kinds[FeedSource(kind)] = true
+					}
+				}
+			}
+			// An approval carries its verdict on to its success target.
+			if GivesVerdict(&f.Stages[i]) && f.Stages[i].OnSuccess == st.ID {
+				kinds[SourceVerdict] = true
+			}
+		}
+		if !kinds[in.Value] {
+			if in.Value == SourceFailure {
+				return fmt.Errorf("no %s or %s edge enters stage %q, so %s is never filled", EdgeFail, EdgeTimeout, st.ID, in.Value)
+			}
+			return fmt.Errorf("no %s edge enters stage %q, nor the success of a gate or a verdict, so %s is never filled", EdgeReject, st.ID, in.Value)
+		}
+		return nil
+	case in.Value == SourceCIFailure:
+		// What failed is the failure that opened the chain: a watcher on
+		// ci_failed has one; any other chain would read nothing.
+		if ph := f.PhaseOf(st); ph == nil || ph.Kind != PhaseWatcher || ph.On.Signal != signalspec.CIFailed {
+			return fmt.Errorf("%s is what failed when a %s watcher opened — stage %q is not in one", in.Value, signalspec.CIFailed, st.ID)
+		}
+		return nil
+	case in.Value == SourceMRURL:
+		if !definitelyHasMR(f, st) {
+			warnf("input %q reads %s, but a merge request is not opened on every path reaching this stage", in.Name, in.Value)
+		}
+		return nil
+	case IsEngineSource(in.Value):
+		return nil
+	case strings.HasPrefix(in.Value, RepoPrefix):
+		path := FilePath(in.Value)
+		if ws := writersOf(f, path); len(ws) > 0 {
+			return fmt.Errorf("stage %q writes %s — read it as from: %s (repo: is a file nothing in the flow writes)", ws[0].stage.ID, path, path)
+		}
+		return nil
 	}
-	rebinds := map[string]string{} // decl name -> rebound path
-	var extra []IOBinding          // bindings matching no decl (a validation error)
-	for _, b := range st.Outputs {
-		if b.Name != "" && specHasOutput(spec, b.Name) {
-			rebinds[b.Name] = b.Value
-		} else {
-			extra = append(extra, b)
+	ws := writersOf(f, in.Value)
+	if len(ws) == 0 {
+		hint := fmt.Sprintf(" — a file of the repository is from: %s%s", RepoPrefix, in.Value)
+		if near := nearestSource(in.Value); near != "" {
+			hint = fmt.Sprintf(" — did you mean %s?", near)
+		}
+		return fmt.Errorf("nothing in this flow writes %q%s", in.Value, hint)
+	}
+	for _, w := range ws[1:] {
+		if w.port.Type != ws[0].port.Type || w.port.Schema != ws[0].port.Schema {
+			return fmt.Errorf("stages %q and %q both write %q, as %s and as %s — one path holds one thing", ws[0].stage.ID, w.stage.ID, in.Value, shapeOf(ws[0].port), shapeOf(w.port))
 		}
 	}
-	out := make([]IOBinding, 0, len(spec.Outputs)+len(extra))
-	for _, d := range spec.Outputs {
-		path := d.Path
-		if p, ok := rebinds[d.Name]; ok {
-			path = p
-		}
-		out = append(out, IOBinding{Name: d.Name, Value: path})
+	if !shapeOf(ws[0].port).satisfies(shapeOf(in)) {
+		return fmt.Errorf("stage %q writes %q as %s; the port reads %s", ws[0].stage.ID, in.Value, shapeOf(ws[0].port), shapeOf(in))
 	}
-	return append(out, extra...)
+	if !in.Optional && !definitelyProduced(f, st, in.Value) {
+		return fmt.Errorf("%q is not written on every route reaching this stage (written by %s) — mark the port optional: true if the stage does without it", in.Value, writerList(ws))
+	}
+	return nil
 }
 
-// VerdictPath returns where a stage's verdict must be written: the path of the
-// agent's verdict-typed output, honouring a stage rebind. Empty when the agent
-// renders no verdict — the single resolution used by prompt assembly, the
-// post-run read and crash recovery, so they can never disagree.
-func VerdictPath(st *Stage, spec *agentspec.Spec) string {
-	return typedOutputPath(st, spec, spec.VerdictOutput())
+// writer is one stage output that writes a path.
+type writer struct {
+	stage *Stage
+	port  Port
 }
 
-// ReviewRepliesPath is the effective path of the agent's review_replies
-// output, or "" when it declares none.
-func ReviewRepliesPath(st *Stage, spec *agentspec.Spec) string {
-	return typedOutputPath(st, spec, spec.ReviewRepliesOutput())
+// writersOf lists the stage outputs that write path, in stage order.
+func writersOf(f *Flow, path string) []writer {
+	var out []writer
+	for i := range f.Stages {
+		for _, o := range f.Stages[i].Outputs {
+			if o.Value == path {
+				out = append(out, writer{&f.Stages[i], o})
+			}
+		}
+	}
+	return out
 }
 
-// ReviewThreadsPath is the effective path of the agent's review_threads
-// output, or "" when it declares none.
-func ReviewThreadsPath(st *Stage, spec *agentspec.Spec) string {
-	return typedOutputPath(st, spec, spec.ReviewThreadsOutput())
+func writerList(ws []writer) string {
+	ids := make([]string, 0, len(ws))
+	for _, w := range ws {
+		ids = append(ids, fmt.Sprintf("%q", w.stage.ID))
+	}
+	return strings.Join(ids, ", ")
 }
 
-func typedOutputPath(st *Stage, spec *agentspec.Spec, d *agentspec.OutputDecl) string {
-	if d == nil {
+// nearestSource is the engine source a mistyped run.* or edge.* most likely
+// meant, or "".
+func nearestSource(v string) string {
+	if !strings.HasPrefix(v, "run.") && !strings.HasPrefix(v, "edge.") {
 		return ""
 	}
-	for _, o := range EffectiveOutputs(st, spec) {
-		if o.Name == d.Name {
-			return o.Value
+	best, bestD := "", 4
+	for _, src := range EngineSources {
+		if d := editDistance(v, src); d < bestD {
+			best, bestD = src, d
 		}
 	}
-	return d.Path
+	return best
 }
 
-func specHasInput(spec *agentspec.Spec, name string) bool {
-	for _, d := range spec.Inputs {
-		if d.Name == name {
-			return true
-		}
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
 	}
-	return false
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
 
-func specHasOutput(spec *agentspec.Spec, name string) bool {
-	for _, d := range spec.Outputs {
-		if d.Name == name {
-			return true
-		}
+// TypedPath is where a stage writes its output of a structured type, or ""
+// when it writes none: the single resolution used by prompt assembly and
+// the engine's checks.
+func TypedPath(st *Stage, typ string) string {
+	if o := st.TypedOutput(typ); o != nil {
+		return o.Value
 	}
-	return false
+	return ""
 }

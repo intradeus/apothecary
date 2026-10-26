@@ -291,6 +291,50 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 	return nil
 }
 
+// --- project secrets --------------------------------------------------------
+
+func (s *Store) PutProjectSecret(ctx context.Context, projectID string, sec confstore.StoredProjectSecret) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO project_secrets (project_id, name, value, updated_at)
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (project_id, name) DO UPDATE SET value=$3, updated_at=$4`,
+		projectID, sec.Name, sec.Sealed, sec.UpdatedAt)
+	if isFK(err) {
+		return fmt.Errorf("secret %s references a missing project: %w", sec.Name, confstore.ErrInvalid)
+	}
+	return err
+}
+
+func (s *Store) ListProjectSecrets(ctx context.Context, projectID string) ([]confstore.StoredProjectSecret, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT name, value, updated_at FROM project_secrets
+		WHERE project_id=$1 ORDER BY name`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.StoredProjectSecret
+	for rows.Next() {
+		var r confstore.StoredProjectSecret
+		if err := rows.Scan(&r.Name, &r.Sealed, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteProjectSecret(ctx context.Context, projectID, name string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM project_secrets WHERE project_id=$1 AND name=$2`, projectID, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("secret %s: %w", name, confstore.ErrNotFound)
+	}
+	return nil
+}
+
 // --- tickets ----------------------------------------------------------------
 
 const ticketCols = `id, project_id, title, goal, base_branch, ` +

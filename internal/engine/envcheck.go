@@ -17,8 +17,8 @@ import (
 
 // Dynamic envcheck (DESIGN2 §9): the workspace compliance gate. The check
 // list is DERIVED from the project's resolution — adapters declare their
-// egress domains, the harness its binary, the project its commands — so
-// whatever the user customizes, this proves the contract deterministically.
+// egress domains, the harness its binary — so whatever the user customizes,
+// this proves the contract deterministically.
 // RunEnvCheck is standalone (CLI reuse); the Engine wraps it with an
 // in-memory registry for the API.
 
@@ -179,16 +179,9 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		GitEmail:     res.GitEmail,
 		Prepare:      res.Prepare,
 		Agents:       opts.Agents,
-		Setup:        res.Commands["setup"],
 		Timeout:      10 * time.Minute,
 		Extras:       envcheckExtras(res, branch),
-	}), "clone + seed auth + prepare + setup")
-
-	if verify, ok := res.Commands["verify"]; ok && verify != "" {
-		step("verify", execExpect(ctx, envp, env, verify, "repo", true), "")
-	} else {
-		skip("verify", "project.commands.verify not configured")
-	}
+	}), "clone + seed auth + prepare")
 
 	// Egress negative: in allow mode a non-allowlisted host must be blocked by
 	// the per-project gateway. In deny mode everything but the denylist is

@@ -211,6 +211,10 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 
 	gitUser, gitPass := account.GitCredential()
 	gitName, gitEmail := account.GitIdentity()
+	projectSecrets, err := r.conf.ProjectSecrets(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	res := &engine.Resolution{
 		ProjectID:            p.ID,
@@ -219,6 +223,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		AgentsMDPath:         p.Repo.AgentsMDPath,
 		DefaultFlow:          p.DefaultFlow,
 		Commands:             p.Commands,
+		Services:             services(p.Workspace.Services),
 		GitUser:              gitUser,
 		GitPass:              gitPass,
 		GitName:              gitName,
@@ -240,6 +245,8 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			WordWrap:       p.Workspace.Editor.WordWrap,
 			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
+		Secrets:      projectSecrets,
+		Browser:      p.Workspace.Browser.Enabled,
 		ExtraRepos:   extras,
 		RepoHosts:    repoHosts,
 		HarnessKind:  defaultKind,
@@ -688,3 +695,19 @@ func (r *Resolver) ListModels(ctx context.Context, id string) ([]kinds.ModelInfo
 }
 
 var _ engine.Resolver = (*Resolver)(nil)
+
+// services is the project's services as the engine runs them, health
+// durations defaulted.
+func services(in []confstore.ServiceConfig) []engine.Service {
+	out := make([]engine.Service, 0, len(in))
+	for _, s := range in {
+		sv := engine.Service{Name: s.Name, Description: s.Description, Start: s.Start, Stop: s.Stop,
+			Health: engine.ServiceHealth{HTTP: s.Health.HTTP, TCP: s.Health.TCP, Command: s.Health.Command,
+				Timeout: s.Health.TimeoutOr(), Interval: s.Health.IntervalOr()}}
+		for _, p := range s.Ports {
+			sv.Ports = append(sv.Ports, engine.ServicePort{Port: p.Port, Label: p.Label, Path: p.Path})
+		}
+		out = append(out, sv)
+	}
+	return out
+}

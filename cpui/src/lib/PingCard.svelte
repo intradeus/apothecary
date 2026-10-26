@@ -20,6 +20,7 @@
 		answerMeta,
 		isAgentPing,
 		isDocumentPing,
+		primaryFile,
 		isPhaseConfirm,
 		SELECT_NONE,
 		type PingLike
@@ -61,7 +62,7 @@
 	let uploading = $state(false);
 	let uploadErr = $state('');
 	let showAttach = $state(false);
-	/** decision: "Request changes…" opens the feedback box. choice: "Other…". */
+	/** yes_no: "Request changes…" opens the feedback box. choice: "Other…". */
 	let noteOpen = $state(false);
 
 	// Upload any attached files first, then hand the answer up. A failed
@@ -84,7 +85,7 @@
 	}
 
 	// The card renders the ANSWER KIND; the type only tunes the wording (a
-	// phase confirmation is a decision read as "run it / not now").
+	// phase confirmation is a yes/no read as "run it / not now").
 	const kind = $derived(ping.answerKind);
 	const confirmPhase = $derived(isPhaseConfirm(ping.type));
 	const options = $derived(ping.options ?? []);
@@ -191,10 +192,14 @@
 				<a class="ref" href={ping.link} target="_blank" rel="noreferrer">
 					<span class="mono ell">{ping.link}</span><span>{I.external}</span>
 				</a>
-			{:else if isDocumentPing(ping) && ping.primaryRef}
-				<!-- …and a file payload opens the review workbench. -->
+			{/if}
+			{#if isDocumentPing(ping)}
+				<!-- …and files open the review workbench. -->
 				<div class="card-in docref">
-					<FileChip name={ping.primaryRef} />
+					<FileChip name={primaryFile(ping)} />
+					{#if (ping.files?.length ?? 0) > 1}<span class="fnt"
+							>{t('ping.moreFiles', { count: ping.files!.length - 1 })}</span
+						>{/if}
 					<span class="spacer"></span>
 					<a class="btn btn-sel btn-sm" href={to.ping(ping.id)}
 						>{t('ping.reviewComment')} {I.forward}</a
@@ -230,7 +235,7 @@
 					>
 					{@render attachBtn()}
 				</div>
-			{:else if kind === 'decision' && confirmPhase}
+			{:else if kind === 'yes_no' && confirmPhase}
 				<div class="acts">
 					<button
 						class="btn-hot btn-md"
@@ -247,7 +252,7 @@
 					{@render attachBtn()}
 				</div>
 				<p class="help">{t('ping.notNowHelp')}</p>
-			{:else if kind === 'decision'}
+			{:else if kind === 'yes_no'}
 				{#if noteOpen}
 					<textarea
 						bind:value={note}

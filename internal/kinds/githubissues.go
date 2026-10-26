@@ -24,7 +24,7 @@ Reads (import): GET /user (Test), GET /search/issues, GET /repos/{owner}/{repo}/
 
 Writes happen ONLY when a flow runs a tracker action on a ticket imported from here:
 • ticket_transition — PATCH the issue's state: "to: todo" reopens, "to: done" closes (as completed); the other canonical statuses have no GitHub equivalent and skip the stage. "status" takes open or closed verbatim (Projects v2 columns are not reachable through the issue itself).
-• ticket_comment / ticket_link — POST /repos/{owner}/{repo}/issues/{n}/comments (a link is a comment GitHub autolinks).
+• ticket_comment / ticket_link — POST /repos/{owner}/{repo}/issues/{n}/comments (a link is a comment GitHub autolinks). A comment with attachments first uploads each file to POST https://uploads.github.com/user-attachments/assets (after GET /repos/{owner}/{repo} for its id) — github.com only, and only with a classic token.
 • ticket_set_field — PATCH the issue: the writable fields are labels, assignees and milestone (by title); GitHub issues have no custom fields.
 
 Token: a fine-grained personal access token with Issues: Read and write on the repositories (Metadata: Read is implied), or a classic token with the repo scope. A read-only token is enough for importing; a flow's tracker action on such a ticket is refused at run creation with the integration named.`

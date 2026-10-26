@@ -57,9 +57,6 @@ type BootstrapSpec struct {
 	// Agents are the flow's agent definitions, materialized by Prepare.
 	Agents []*agentspec.Spec
 
-	// Setup is project.commands.setup (§11 step 6) — OPTIONAL in v2:
-	// empty means the step is skipped.
-	Setup   string
 	Timeout time.Duration
 
 	// Extras are the run's additional repositories (multi-repo tasks),
@@ -206,17 +203,6 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		if err := spec.Prepare(ctx, id, spec.Agents); err != nil {
 			return fmt.Errorf("bootstrap harness-config: %w", err)
 		}
-	}
-
-	if spec.Setup == "" {
-		return nil // setup is optional in v2 (DESIGN2 §8): no step 6
-	}
-	res, err := envp.Exec(ctx, id, ports.Command{Script: spec.Setup, Dir: "repo", Timeout: spec.Timeout})
-	if err != nil {
-		return fmt.Errorf("setup: %w", err)
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("setup: exit %d: %s", res.ExitCode, tail(res.Output, 8<<10))
 	}
 	return nil
 }

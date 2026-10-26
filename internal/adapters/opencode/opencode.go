@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,8 +70,9 @@ func (a *Adapter) authFile(ctx context.Context, env ports.EnvID) string {
 // needs git-excluding, regenerated every provision.
 func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
 	cfgDir := a.configDir(ctx, env)
+	servers := mcpNames(specs)
 	for _, s := range specs {
-		md := agentMarkdown(s)
+		md := agentMarkdown(s, servers)
 		p := path.Join(cfgDir, "agent", s.Name+".md")
 		if err := a.envp.WriteFile(ctx, env, p, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("write agent config %s: %w", s.Name, err)
@@ -124,8 +126,28 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 	return nil
 }
 
+// mcpNames is every MCP server some agent of the flow lists (`mcp:`).
+func mcpNames(specs []*agentspec.Spec) []string {
+	var out []string
+	for _, s := range specs {
+		for _, m := range s.MCP {
+			if !slices.Contains(out, m) {
+				out = append(out, m)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // agentMarkdown renders one opencode agent definition (frontmatter + prompt).
-func agentMarkdown(s *agentspec.Spec) string {
+//
+// A stage's MCP servers arrive on its ACP session (acpagent), but opencode
+// keeps a session's servers for the whole process — every later session sees
+// their tools until another session registers the same name. So each agent
+// turns off, by tool prefix (opencode names an MCP tool <server>_<tool>),
+// the servers of the flow it does not list itself.
+func agentMarkdown(s *agentspec.Spec, servers []string) string {
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "description: %q\n", s.Description)
@@ -140,6 +162,11 @@ func agentMarkdown(s *agentspec.Spec) string {
 		b.WriteString("  edit: false\n  patch: false\n  write: true\n")
 	}
 	fmt.Fprintf(&b, "  bash: %v\n", s.AllowBash)
+	for _, m := range servers {
+		if !slices.Contains(s.MCP, m) {
+			fmt.Fprintf(&b, "  %q: false\n", m+"_*")
+		}
+	}
 	b.WriteString("---\n")
 	b.WriteString(s.Prompt)
 	return b.String()

@@ -18,7 +18,7 @@ func (GitHub) Descriptor() Descriptor {
 		Port: "repository", Kind: "github", Label: "GitHub",
 		Fields: []Field{
 			{Name: "base_url", Label: "API base URL", Default: "https://api.github.com", Required: true},
-			{Name: "token", Label: "Personal access token (repo scope, or fine-grained Contents:RW + Pull requests:RW)", Secret: true, Required: true},
+			{Name: "token", Label: "Personal access token (classic with repo scope; fine-grained Contents:RW + Pull requests:RW cannot upload merge request attachments)", Secret: true, Required: true},
 			{Name: "git_name", Label: "Commit author name", Placeholder: "Apothecary"},
 			{Name: "git_email", Label: "Commit author email", Placeholder: "apothecary@local"},
 		},

@@ -632,12 +632,12 @@ func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error 
 		q += " (" + ph.Description + ")"
 	}
 	p := &Ping{ID: x.e.newID(), RunID: rs.runID, Type: event.PingPhaseConfirm, Question: q,
-		Link: link, RaisedAt: x.e.clock(), AnswerKind: event.AnswerDecision, Phase: ph.ID,
+		Link: link, RaisedAt: x.e.clock(), AnswerKind: event.AnswerYesNo, Phase: ph.ID,
 		done: make(chan struct{})}
 	x.e.mu.Lock()
 	x.e.pings[p.ID] = p
 	x.e.mu.Unlock()
-	raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: q, Link: p.Link, AnswerKind: event.AnswerDecision,
+	raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: q, Link: p.Link, AnswerKind: event.AnswerYesNo,
 		Phase: ph.ID, Subject: subject, TriggerKey: key}
 	if err := x.append(raised); err != nil {
 		return err
@@ -650,11 +650,111 @@ func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error 
 // beginPhase records a phase start and moves the cursor to its first stage.
 func (x *exec) beginPhase(phase, subject, key, by, tip string) error {
 	p := &event.PhaseStarted{Phase: phase, Subject: subject, Key: key, By: by, Tip: tip}
+	if ph := x.rs.fl.Phase(phase); ph != nil && x.rs.fl.ReadsCIFailure(ph) {
+		p.CI = x.readCI(subject, tip)
+	}
 	if err := x.append(p); err != nil {
 		return err
 	}
 	x.rs.startPhase(p, x.rs.fl)
 	return nil
+}
+
+// readCI reads what failed in CI on the subject's merge request at head
+// (its current head when the start did not say), once, for the chain's
+// run.ci.failure. What cannot be read is said, not fatal: the agent can
+// still run the project's checks itself.
+func (x *exec) readCI(subject, head string) *event.CIReport {
+	rep := &event.CIReport{Head: head}
+	co := x.rs.checkout(subject)
+	var mr *mrRecord
+	if co != nil {
+		mr = x.rs.mrFor(co.Name, co.Branch)
+	}
+	repoHost := x.res.repoHostFor(subject)
+	if mr == nil || repoHost == nil {
+		rep.Error = "this chain has no merge request to read CI from"
+		return rep
+	}
+	if rep.Head == "" {
+		st, err := repoHost.MRStatus(x.ctx, mr.Ref)
+		if err != nil {
+			rep.Error = "reading the merge request: " + err.Error()
+			return rep
+		}
+		rep.Head = st.HeadSHA
+	}
+	failures, err := repoHost.CIFailures(x.ctx, mr.Ref, rep.Head)
+	if err != nil {
+		rep.Error = "reading its CI: " + err.Error()
+	}
+	for _, f := range failures {
+		rep.Checks = append(rep.Checks, event.CICheck{Name: f.Name, URL: f.URL, File: f.File, Job: f.Job,
+			Stage: f.Stage, Steps: f.Steps, Summary: f.Summary})
+	}
+	return rep
+}
+
+// ciFailureText is run.ci.failure as an agent reads it: each failed check
+// and where it is declared, so the agent finds its script and runs it — the
+// log is not handed over.
+func ciFailureText(rep *event.CIReport) string {
+	if rep == nil {
+		return "(CI was not read for this chain)"
+	}
+	var b strings.Builder
+	head := rep.Head
+	if len(head) > 12 {
+		head = head[:12]
+	}
+	switch {
+	case len(rep.Checks) > 0:
+		fmt.Fprintf(&b, "CI failed on %s:\n", head)
+	case rep.Error != "":
+		fmt.Fprintf(&b, "What failed in CI could not be read (%s).\n", rep.Error)
+	default:
+		fmt.Fprintf(&b, "No CI check is failing on %s.\n", head)
+	}
+	for _, c := range rep.Checks {
+		fmt.Fprintf(&b, "- %s", c.Name)
+		var where []string
+		if c.File != "" {
+			where = append(where, c.File)
+		}
+		if c.Job != "" && c.Job != c.Name {
+			where = append(where, "job "+quoted(c.Job))
+		}
+		if c.Stage != "" {
+			where = append(where, "stage "+c.Stage)
+		}
+		if len(c.Steps) > 0 {
+			where = append(where, "failed step "+strings.Join(quoteAll(c.Steps), ", "))
+		}
+		if len(where) > 0 {
+			fmt.Fprintf(&b, " — %s", strings.Join(where, ", "))
+		}
+		if c.Summary != "" {
+			fmt.Fprintf(&b, ": %s", c.Summary)
+		}
+		if c.URL != "" {
+			fmt.Fprintf(&b, " (%s)", c.URL)
+		}
+		b.WriteString("\n")
+	}
+	if len(rep.Checks) > 0 {
+		b.WriteString("The logs are not included: find each job in its CI file, run the script it runs here, and fix what it reports.\n")
+	}
+	return b.String()
+}
+
+func quoted(s string) string { return `"` + s + `"` }
+
+func quoteAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = quoted(s)
+	}
+	return out
 }
 
 // manualStart starts a phase a human asked for, from the idle loop: a

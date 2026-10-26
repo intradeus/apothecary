@@ -410,6 +410,17 @@ func (s *Issues) AddLink(ctx context.Context, key string, link ports.TicketLink)
 	return s.Comment(ctx, key, fmt.Sprintf("%s: %s\n\n%s", title, link.URL, marker))
 }
 
+// Attach uploads a file for a comment on the issue: GitHub keeps no files
+// on an issue, so it goes where a pasted screenshot does — user-attachments,
+// for the issue's repository (Adapter.uploadAttachment).
+func (s *Issues) Attach(ctx context.Context, key, name, contentType string, data []byte) (ports.Attachment, error) {
+	repo, _, err := s.parseKey(key)
+	if err != nil {
+		return ports.Attachment{}, err
+	}
+	return s.a.uploadAttachment(ctx, repo, name, contentType, data)
+}
+
 func splitItems(value string) []string {
 	var out []string
 	for part := range strings.SplitSeq(value, ",") {
@@ -421,6 +432,7 @@ func splitItems(value string) []string {
 }
 
 var (
-	_ ports.TicketSource = (*Issues)(nil)
-	_ ports.TicketWriter = (*Issues)(nil)
+	_ ports.TicketSource   = (*Issues)(nil)
+	_ ports.TicketWriter   = (*Issues)(nil)
+	_ ports.TicketAttacher = (*Issues)(nil)
 )

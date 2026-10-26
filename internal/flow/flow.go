@@ -5,6 +5,7 @@
 package flow
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -38,60 +39,108 @@ const (
 	StageAction StageType = "action"
 	// StageWait parks the phase until an external signal holds (signalspec).
 	StageWait StageType = "wait"
+	// StageService starts, restarts or stops one of the project's services
+	// (FLOWLANG §3 service): the app the run builds, brought up to be looked
+	// at, then healthy before the chain goes on.
+	StageService StageType = "service"
 )
 
+// Sources are where a stage's input comes from (FLOWLANG §4): a file some
+// stage of the flow writes (its path), a file of the repository (repo:path),
+// or a value the engine provides — a fact about the run (run.*) or what the
+// edge that entered the stage carried (edge.*). Every engine source has one
+// type; a file source holds whatever its writer declares.
 const (
-	// Sentinels are the engine-provided input values (FLOWLANG §4). The rule
-	// is lexical: a $NAME input is resolved by the engine at stage time,
-	// anything else is a repo-relative artifact path. Adding one costs a
-	// const here plus one resolution case in the engine.
-	//
-	// The git ones are named after the git they run, so each means one
-	// range wherever it is bound: DIFF_TARGET what the branch changes
-	// against its target (what the merge request merges), DIFF_PHASE what
-	// this phase run committed since the commit it began on, STATUS what a
-	// commit would record now.
-	SentinelDiffTarget = "$DIFF_TARGET" // git diff --name-status <target>...HEAD
-	SentinelDiffPhase  = "$DIFF_PHASE"  // git diff --name-status <phase start>...HEAD
-	SentinelStatus     = "$STATUS"      // git status --short: staged, unstaged, untracked
-	SentinelMRURL      = "$MR_URL"      // the run's merge-request link (create_mr's output)
-	SentinelWorkspace  = "$WORKSPACE"   // the workspace's access link (terminal/IDE)
-	// SentinelDecision and SentinelFailure carry what the edge that re-entered
-	// this stage brought with it: a rejection's rationale (verdict comments or
-	// a human's gate feedback) and a failing stage's output tail. They are
-	// bound like any other input, so the retry channel is declared rather than
-	// arriving invisibly — and an agent can tell "you were rejected" apart
-	// from "the tests broke". Empty on a stage's first attempt, so a binding
-	// to one must be an optional input.
-	SentinelDecision = "$DECISION"
-	SentinelFailure  = "$FAILURE"
+	// RepoPrefix marks a file of the repository nothing in the flow writes:
+	// without it, a path no stage writes is an error, never a guess.
+	RepoPrefix = "repo:"
+
+	SourceTicket     = "run.ticket"          // the run's ticket
+	SourceStatus     = "run.git.status"      // git status: staged, unstaged, untracked
+	SourceDiffTarget = "run.git.diff_target" // what the branch changes against its target
+	SourceDiffPhase  = "run.git.diff_phase"  // what this phase run committed since it began
+	SourceMRURL      = "run.mr.url"          // the run's merge request (create_mr)
+	SourceWorkspace  = "run.workspace"       // the workspace's access link (terminal/IDE)
+	// SourceFailure and SourceVerdict are what the edge that entered the
+	// stage carried: a failing stage's reason and output; a verdict — an
+	// agent's, a person's review at a gate — on a rejection, or on an
+	// approval that said something (GivesVerdict). Empty when the stage was
+	// entered any other way, so a port reading one is optional.
+	SourceFailure = "edge.failure"
+	SourceVerdict = "edge.verdict"
+	// SourceCIFailure is what failed in CI on the merge request a ci_failed
+	// watcher runs on — each check's CI file, job and failed steps, never a
+	// log — read once as the chain starts.
+	SourceCIFailure = "run.ci.failure"
 )
 
-// FeedSentinel is which sentinel an edge kind's carried content fills. It is
-// derived, not declared: on_reject can only carry a decision, on_fail and
-// on_timeout can only carry the failure's output — so an edge says where to go
-// and the target says where the content lands, each exactly once.
-func FeedSentinel(edgeKind string) string {
-	if edgeKind == EdgeReject {
-		return SentinelDecision
-	}
-	return SentinelFailure
+// engineSources are the engine's sources and the type of each.
+var engineSources = map[string]string{
+	SourceTicket:     agentspec.TypeTicket,
+	SourceStatus:     agentspec.TypeChangeset,
+	SourceDiffTarget: agentspec.TypeChangeset,
+	SourceDiffPhase:  agentspec.TypeChangeset,
+	SourceMRURL:      agentspec.TypeLink,
+	SourceWorkspace:  agentspec.TypeLink,
+	SourceFailure:    agentspec.TypeFailure,
+	SourceVerdict:    agentspec.TypeVerdict,
+	SourceCIFailure:  agentspec.TypeFailure,
 }
 
-// IsFeedSentinel reports whether v is one of the edge-carried values.
-func IsFeedSentinel(v string) bool { return v == SentinelDecision || v == SentinelFailure }
+// EngineSources lists the engine's sources, in display order.
+var EngineSources = []string{SourceTicket, SourceStatus, SourceDiffTarget, SourceDiffPhase,
+	SourceMRURL, SourceWorkspace, SourceCIFailure, SourceFailure, SourceVerdict}
 
-// IsSentinel reports whether v is an engine-provided value rather than a
-// repo-relative artifact path: $UPPER_CASE. A $lower_case token is a
-// parameter reference (IsParamRef), never a sentinel.
-func IsSentinel(v string) bool { return sentinelRe.MatchString(v) }
+// IsEngineSource reports whether v is a value the engine provides rather
+// than a file.
+func IsEngineSource(v string) bool { return SourceType(v) != "" }
+
+// SourceType is the type of an engine source, or "" for a file. A running
+// service's address (run.service.<name>) is a link.
+func SourceType(v string) string {
+	if SourceService(v) != "" {
+		return agentspec.TypeLink
+	}
+	return engineSources[v]
+}
+
+// IsEdgeSource reports whether v is what an entering edge carried.
+func IsEdgeSource(v string) bool { return v == SourceFailure || v == SourceVerdict }
+
+// GivesVerdict reports whether a stage's success is a verdict: a gate's
+// approval, or an agent's APPROVE. Its on_success then carries the verdict
+// to edge.verdict, as on_reject does a rejection — the comments of an
+// approval reach the stage that acts on them.
+func GivesVerdict(st *Stage) bool {
+	return st.Type == StageHumanGate || (st.Type == StageAgent && TypedPath(st, agentspec.TypeVerdict) != "")
+}
+
+// FeedSource is which edge source an edge kind's carried content fills. It is
+// derived, not declared: on_reject can only carry a verdict, on_fail and
+// on_timeout a failure — so an edge says where to go and the target says
+// where the content lands, each exactly once.
+func FeedSource(edgeKind string) string {
+	if edgeKind == EdgeReject {
+		return SourceVerdict
+	}
+	return SourceFailure
+}
+
+// FilePath is the workspace path a file source names — repo: stripped — or
+// "" for a value the engine provides.
+func FilePath(v string) string {
+	if IsEngineSource(v) {
+		return ""
+	}
+	return strings.TrimPrefix(v, RepoPrefix)
+}
 
 // IsParamRef reports whether v reads a parameter: $name, lowercase.
 func IsParamRef(v string) bool { return paramRefRe.MatchString(v) }
 
 var (
-	sentinelRe = regexp.MustCompile(`^\$[A-Z][A-Z0-9_]*$`)
-	paramRefRe = regexp.MustCompile(`^\$[a-z][a-z0-9_]*$`)
+	retiredSentinelRe = regexp.MustCompile(`^\$[A-Z][A-Z0-9_]*$`)
+	paramRefRe        = regexp.MustCompile(`^\$[a-z][a-z0-9_]*$`)
 	// ParamNameRe is the shape of a parameter's name.
 	ParamNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 )
@@ -218,15 +267,30 @@ type Edge struct {
 	Then *Edge // fallback link once this one is exhausted; nil = abandon
 }
 
-// IOBinding is one input or output binding on a stage (FLOWLANG §4). Every
-// stage type uses the same form — a name and a value — so there is one thing to
-// learn and one thing to render. The value is a repo-relative artifact path or
-// a sentinel; the name is checked against a contract where one exists (an
-// agent's declared I/O, an action's signature) and is otherwise a free label
-// that documents the file's role.
-type IOBinding struct {
+// Port is one value a stage reads or writes (FLOWLANG §4): its name — the
+// agent's or action's, or a command's own label — where it comes from or goes
+// (Value: an input's source, an output's path), and what it is. Every stage
+// type states its ports the same way, so there is one thing to learn and one
+// thing to render.
+type Port struct {
 	Name  string
 	Value string
+	// Type is a port type (agentspec.FileTypes, agentspec.ValueTypes);
+	// Schema one of the flow's schemas. At least one is set.
+	Type        string
+	Schema      string
+	Description string
+	// Optional is an input that may be empty: an edge source, or a value
+	// not written on every route that reaches the stage.
+	Optional bool
+}
+
+// Setting is one literal an action stage gives its action (`with:`).
+type Setting struct {
+	Name  string
+	Value string
+	// Values are a list setting's items (actionspec.KindList).
+	Values []string
 }
 
 // Stage is one validated flow stage. Model, Harness, MaxTurns and Timeout are
@@ -250,12 +314,12 @@ type Stage struct {
 	MaxTurns int
 	Timeout  time.Duration
 
-	// Inputs and Outputs are the stage's declared consumption and production
-	// (agent, command and action stages). Every path here is visible to the
-	// validator, the editor's dataflow view and — for inputs the engine can
-	// check — enforced before or after the stage runs.
-	Inputs  []IOBinding
-	Outputs []IOBinding
+	// Inputs and Outputs are the stage's ports: what it reads, from where,
+	// and what it writes, to where — each typed. Every one is visible to the
+	// validator and the editor's dataflow view, and checked before the stage
+	// runs (inputs) and after it (outputs).
+	Inputs  []Port
+	Outputs []Port
 
 	// command
 	Run    string // literal bash
@@ -284,7 +348,14 @@ type Stage struct {
 	AutoReject  string
 
 	// action
-	Action string // a slug registered in actionspec
+	Action   string    // a slug registered in actionspec
+	Settings []Setting // its literals (`with:`)
+
+	// service: the project service (resolved from its parameter) and what
+	// to do with it (ServiceStart, ServiceRestart, ServiceStop). Timeout is
+	// how long a start may take to be healthy; zero = the service's own.
+	Service string
+	Do      string
 
 	// wait: the mid-chain wait point (its signal, policy and timeout).
 	// WaitFor mirrors Wait.Signal for the engine's current readers.
@@ -301,10 +372,10 @@ type Stage struct {
 	// future kinds — DESIGN3 §2.1). Never nil after Parse.
 	Edges map[string]*Edge
 
-	// When is the stage's condition (FLOWLANG §2 when), nil = always. A
+	// RunIf is the stage's condition (FLOWLANG §2 run_if), nil = always. A
 	// stage whose condition is false completes as skipped and the chain
 	// follows on_success.
-	When *When
+	RunIf *Cond
 
 	// Phase is the id of the phase the stage belongs to — always set: the
 	// main chain's stages are MainPhase's.
@@ -318,36 +389,36 @@ type Stage struct {
 // gate, which stops the phase for something outside the run.
 func (s *Stage) Parks() bool { return s.Type == StageWait || s.Type == StageHumanGate }
 
-// When is a stage's condition: one term, optionally negated. A $bool
-// parameter folds at parse time into nil (true) or WhenNever (false), so the
+// Cond is a stage's condition (run_if): one term, optionally negated. A $bool
+// parameter folds at parse time into nil (true) or CondNever (false), so the
 // engine only ever sees the two run facts.
-type When struct {
-	Term string // WhenTracker | WhenSubject | WhenNever
+type Cond struct {
+	Term string // CondTracker | CondSubject | CondNever
 	Not  bool
 }
 
 const (
-	WhenTracker = "tracker" // the run's ticket has a tracker issue to write to
-	WhenSubject = "subject" // the phase run acts on one merge request
-	WhenNever   = "never"   // a parameter said no
+	CondTracker = "tracker" // the run's ticket has a tracker issue to write to
+	CondSubject = "subject" // the phase run acts on one merge request
+	CondNever   = "never"   // a parameter said no
 )
 
-// Holds evaluates the condition against the run's facts; a nil When holds.
-func (w *When) Holds(tracker, subject bool) bool {
+// Holds evaluates the condition against the run's facts; a nil Cond holds.
+func (w *Cond) Holds(tracker, subject bool) bool {
 	if w == nil {
 		return true
 	}
 	var v bool
 	switch w.Term {
-	case WhenTracker:
+	case CondTracker:
 		v = tracker
-	case WhenSubject:
+	case CondSubject:
 		v = subject
 	}
 	return v != w.Not
 }
 
-func (w *When) String() string {
+func (w *Cond) String() string {
 	if w == nil {
 		return ""
 	}
@@ -357,25 +428,32 @@ func (w *When) String() string {
 	return w.Term
 }
 
-// ParamType is what a parameter's default was written as, and so what its
-// bound values must parse as.
+// ParamType is what a parameter declares it holds (`type:`), and so what its
+// default and its bound values must parse as.
 type ParamType string
 
 const (
-	ParamBool   ParamType = "bool"
-	ParamInt    ParamType = "int"
-	ParamFloat  ParamType = "float"
-	ParamString ParamType = "string"
+	ParamBool     ParamType = "bool"
+	ParamInt      ParamType = "int"
+	ParamFloat    ParamType = "float"
+	ParamString   ParamType = "string"
+	ParamDuration ParamType = "duration" // a positive Go duration: 30m, 2h
 )
+
+// ParamTypes are the types a parameter may declare, in display order.
+var ParamTypes = []ParamType{ParamBool, ParamInt, ParamFloat, ParamString, ParamDuration}
 
 // Param is one entry of the flow's `parameters:` block (FLOWLANG §1): a knob
 // declared with its default in the document and bound from outside it — by
 // the project, then by the run. Known marks the six the engine reads itself
 // (harness, model, timeout, max_turns, max_cost_usd, max_total_turns); every
 // other one is read where $name appears.
+// A list parameter (List) holds any number of values of its type; its
+// Default and bound values are then a JSON array ("[\"apothecary\"]").
 type Param struct {
 	Name        string    `json:"name"`
 	Type        ParamType `json:"type"`
+	List        bool      `json:"list,omitempty"`
 	Default     string    `json:"default"`
 	Description string    `json:"description,omitempty"`
 	Enum        []string  `json:"enum,omitempty"`
@@ -385,7 +463,7 @@ type Param struct {
 
 // KnownParams are the engine-read parameters and their types.
 var KnownParams = map[string]ParamType{
-	"harness": ParamString, "model": ParamString, "timeout": ParamString,
+	"harness": ParamString, "model": ParamString, "timeout": ParamDuration,
 	"max_turns": ParamInt, "max_cost_usd": ParamFloat, "max_total_turns": ParamInt,
 }
 
@@ -403,11 +481,42 @@ type ParamRef struct {
 }
 
 // ParseParamValue checks a value against a parameter's type and enum and
-// returns its canonical text.
+// returns its canonical text. A list parameter's value is a JSON array of
+// its type's values; its canonical text is that array, compact.
 func ParseParamValue(pr *Param, v string) (string, error) {
+	if !pr.List {
+		return parseParamItem(pr, v)
+	}
+	var raw []any
+	if err := json.Unmarshal([]byte(v), &raw); err != nil {
+		return "", fmt.Errorf("parameter %q takes a list — a JSON array of %s values, got %q", pr.Name, pr.Type, v)
+	}
+	items := make([]string, 0, len(raw))
+	for _, x := range raw {
+		var text string
+		switch t := x.(type) {
+		case string:
+			text = t
+		case bool, float64:
+			text = fmt.Sprint(t)
+		default:
+			return "", fmt.Errorf("parameter %q takes a list of %s values, got %v", pr.Name, pr.Type, x)
+		}
+		item, err := parseParamItem(pr, text)
+		if err != nil {
+			return "", err
+		}
+		items = append(items, item)
+	}
+	return EncodeParamList(pr.Type, items), nil
+}
+
+// parseParamItem checks one value of a parameter's type (an item, for a
+// list) and returns its canonical text.
+func parseParamItem(pr *Param, v string) (string, error) {
 	switch pr.Type {
 	case ParamBool:
-		b, err := strconv.ParseBool(v)
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
 		if err != nil {
 			return "", fmt.Errorf("parameter %q takes true or false, got %q", pr.Name, v)
 		}
@@ -424,11 +533,52 @@ func ParseParamValue(pr *Param, v string) (string, error) {
 			return "", fmt.Errorf("parameter %q takes a number, got %q", pr.Name, v)
 		}
 		return strconv.FormatFloat(f, 'f', -1, 64), nil
+	case ParamDuration:
+		d, err := time.ParseDuration(strings.TrimSpace(v))
+		if err != nil || d <= 0 {
+			return "", fmt.Errorf("parameter %q takes a duration (30m, 2h), got %q", pr.Name, v)
+		}
+		return strings.TrimSpace(v), nil
 	}
 	if len(pr.Enum) > 0 && !contains(pr.Enum, v) {
 		return "", fmt.Errorf("parameter %q takes one of %s, got %q", pr.Name, strings.Join(pr.Enum, " | "), v)
 	}
 	return v, nil
+}
+
+// EncodeParamList is a list parameter's canonical text: a compact JSON
+// array, its items typed (true, 10, "text").
+func EncodeParamList(typ ParamType, items []string) string {
+	out := make([]json.RawMessage, 0, len(items))
+	for _, it := range items {
+		switch typ {
+		case ParamBool, ParamInt, ParamFloat:
+			out = append(out, json.RawMessage(it))
+		default:
+			b, _ := json.Marshal(it)
+			out = append(out, b)
+		}
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// DecodeParamList reads a list parameter's canonical text back into its
+// items, as text.
+func DecodeParamList(v string) ([]string, error) {
+	var raw []any
+	if err := json.Unmarshal([]byte(v), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(raw))
+	for _, x := range raw {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		} else {
+			out = append(out, fmt.Sprint(x))
+		}
+	}
+	return out, nil
 }
 
 func contains(list []string, v string) bool {
@@ -564,14 +714,50 @@ func (p *Phase) HasSubject() bool {
 	return p.Kind == PhaseWatcher || !sig.All
 }
 
-// Input returns the stage's named binding for name, or nil.
-func (s *Stage) Input(name string) *IOBinding {
-	for i := range s.Inputs {
-		if s.Inputs[i].Name == name {
-			return &s.Inputs[i]
+// Input returns the stage's input port named name, or nil.
+func (s *Stage) Input(name string) *Port { return portNamed(s.Inputs, name) }
+
+// Output returns the stage's output port named name, or nil.
+func (s *Stage) Output(name string) *Port { return portNamed(s.Outputs, name) }
+
+// TypedOutput returns the stage's output of a structured type, or nil.
+func (s *Stage) TypedOutput(typ string) *Port {
+	for i := range s.Outputs {
+		if s.Outputs[i].Type == typ {
+			return &s.Outputs[i]
 		}
 	}
 	return nil
+}
+
+func portNamed(ps []Port, name string) *Port {
+	for i := range ps {
+		if ps[i].Name == name {
+			return &ps[i]
+		}
+	}
+	return nil
+}
+
+// Setting returns the value of the action setting named name, or def when
+// the stage does not give it.
+// SettingList is a list setting's items, or nil when the stage gives none.
+func (s *Stage) SettingList(name string) []string {
+	for _, st := range s.Settings {
+		if st.Name == name {
+			return st.Values
+		}
+	}
+	return nil
+}
+
+func (s *Stage) Setting(name, def string) string {
+	for _, st := range s.Settings {
+		if st.Name == name && st.Value != "" {
+			return st.Value
+		}
+	}
+	return def
 }
 
 // Edge returns the stage's edge of the given kind, or nil.
@@ -587,7 +773,13 @@ type Flow struct {
 	// Agent names one of these, so contracts are parse-time facts and the
 	// run pins prompts along with the rest of the document.
 	Agents []agentspec.Spec
-	Stages []Stage
+	// Schemas are the flow's structures, compiled (FLOWLANG §4): what a file
+	// an agent writes or reads with `schema:` must hold.
+	Schemas []DataSchema
+	// MCPServers are the tools beyond a harness's own that the flow's agents
+	// may call (FLOWLANG §1 mcp_servers), each agent listing its own.
+	MCPServers []MCPServer
+	Stages     []Stage
 	// OperatesOn is what its runs are started on: OperatesOnTicket or
 	// OperatesOnMR (FLOWLANG §1 operates_on).
 	OperatesOn string
@@ -692,6 +884,30 @@ func (f *Flow) Main() *Phase {
 		}
 	}
 	return nil
+}
+
+// PhaseOf returns the phase a stage belongs to, or nil.
+func (f *Flow) PhaseOf(st *Stage) *Phase {
+	i := f.Index(st.ID)
+	for j := range f.Phases {
+		if ph := &f.Phases[j]; i >= ph.First && i <= ph.Last {
+			return ph
+		}
+	}
+	return nil
+}
+
+// ReadsCIFailure reports whether a stage of the phase reads run.ci.failure:
+// what its chain must read from the repository host as it starts.
+func (f *Flow) ReadsCIFailure(ph *Phase) bool {
+	for i := ph.First; i <= ph.Last && i < len(f.Stages); i++ {
+		for _, in := range f.Stages[i].Inputs {
+			if in.Value == SourceCIFailure {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Phase returns the phase with the given id, or nil.

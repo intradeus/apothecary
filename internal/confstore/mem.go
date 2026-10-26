@@ -21,6 +21,7 @@ type Mem struct {
 	versions     map[string]FlowVersion
 	bindings     map[string]FlowBinding
 	automations  map[string]Automation
+	secrets      map[string]StoredProjectSecret // flowKey(project, name)
 	settings     map[string]string
 
 	// BlockingRuns lists non-archived runs of a project (blocks project
@@ -40,6 +41,7 @@ func NewMem() *Mem {
 		versions:     map[string]FlowVersion{},
 		bindings:     map[string]FlowBinding{},
 		automations:  map[string]Automation{},
+		secrets:      map[string]StoredProjectSecret{},
 		settings:     map[string]string{},
 	}
 }
@@ -175,6 +177,45 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 			delete(m.automations, key)
 		}
 	}
+	for key := range m.secrets {
+		if strings.HasPrefix(key, id+"\x00") {
+			delete(m.secrets, key)
+		}
+	}
+	return nil
+}
+
+func (m *Mem) PutProjectSecret(_ context.Context, projectID string, sec StoredProjectSecret) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.projects[projectID]; !ok {
+		return fmt.Errorf("secret %s references a missing project: %w", sec.Name, ErrInvalid)
+	}
+	sec.Sealed = append([]byte(nil), sec.Sealed...)
+	m.secrets[flowKey(projectID, sec.Name)] = sec
+	return nil
+}
+
+func (m *Mem) ListProjectSecrets(_ context.Context, projectID string) ([]StoredProjectSecret, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []StoredProjectSecret
+	for key, sec := range m.secrets {
+		if strings.HasPrefix(key, projectID+"\x00") {
+			out = append(out, sec)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (m *Mem) DeleteProjectSecret(_ context.Context, projectID, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.secrets[flowKey(projectID, name)]; !ok {
+		return notFound("secret", name)
+	}
+	delete(m.secrets, flowKey(projectID, name))
 	return nil
 }
 

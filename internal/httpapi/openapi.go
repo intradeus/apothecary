@@ -384,19 +384,47 @@ func customizeSchema(name string, t reflect.Type, tag reflect.StructTag, schema 
 	// reflection cannot see through it. Each one has to say what it really
 	// emits, or the generated client gets a shape the server never sends.
 	if t == reflect.TypeOf(flow.DocIO{}) {
-		// An ordered name → value mapping (marshalOrderedPairs).
+		// An ordered name → literal mapping (marshalOrderedPairs): an action
+		// stage's `with:`.
 		*schema = *openapi3.NewObjectSchema().WithAdditionalProperties(openapi3.NewStringSchema())
 		return nil
 	}
+	if t == reflect.TypeOf(flow.DocPorts{}) {
+		// An ordered name → port mapping: {from|to, type, schema,
+		// description, optional}.
+		port := openapi3.NewObjectSchema().WithProperties(map[string]*openapi3.Schema{
+			"from":        openapi3.NewStringSchema(),
+			"to":          openapi3.NewStringSchema(),
+			"type":        openapi3.NewStringSchema(),
+			"schema":      openapi3.NewStringSchema(),
+			"description": openapi3.NewStringSchema(),
+			"optional":    openapi3.NewBoolSchema(),
+		})
+		*schema = *openapi3.NewObjectSchema().WithAdditionalProperties(port)
+		return nil
+	}
+	if t == reflect.TypeOf(flow.DocJSON{}) {
+		// A JSON value written in YAML (a schema's json_schema): any JSON,
+		// keys in document order. The empty Properties exports it as a
+		// component (see paramValueSchema).
+		*schema = openapi3.Schema{Properties: openapi3.Schemas{}}
+		return nil
+	}
 	if t == reflect.TypeOf(flow.DocParamValue{}) {
-		// A parameter's default, typed: true, 10, 1.5 or "text".
-		*schema = *paramValueSchema()
+		// A parameter's default, typed: true, 10, 1.5 or "text" — or a list.
+		*schema = *paramDefaultSchema()
 		return nil
 	}
 	if t == reflect.TypeOf(flow.DocParams{}) {
 		// An ordered name → declaration mapping, always in the long form.
+		types := make([]any, len(flow.ParamTypes))
+		for i, pt := range flow.ParamTypes {
+			types[i] = string(pt)
+		}
 		decl := openapi3.NewObjectSchema().WithProperties(map[string]*openapi3.Schema{
-			"default":     paramValueSchema(),
+			"type":        openapi3.NewStringSchema().WithEnum(types...),
+			"list":        openapi3.NewBoolSchema(),
+			"default":     paramDefaultSchema(),
 			"description": openapi3.NewStringSchema(),
 			"enum":        openapi3.NewArraySchema().WithItems(openapi3.NewStringSchema()),
 		})
@@ -421,6 +449,14 @@ func customizeSchema(name string, t reflect.Type, tag reflect.StructTag, schema 
 func paramValueSchema() *openapi3.Schema {
 	return &openapi3.Schema{OneOf: openapi3.SchemaRefs{
 		openapi3.NewBoolSchema().NewRef(), openapi3.NewFloat64Schema().NewRef(), openapi3.NewStringSchema().NewRef(),
+	}, Properties: openapi3.Schemas{}}
+}
+
+// paramDefaultSchema is a parameter's default: one value, or a list's.
+func paramDefaultSchema() *openapi3.Schema {
+	return &openapi3.Schema{OneOf: openapi3.SchemaRefs{
+		openapi3.NewBoolSchema().NewRef(), openapi3.NewFloat64Schema().NewRef(), openapi3.NewStringSchema().NewRef(),
+		openapi3.NewArraySchema().WithItems(paramValueSchema()).NewRef(),
 	}, Properties: openapi3.Schemas{}}
 }
 

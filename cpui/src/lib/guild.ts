@@ -53,7 +53,7 @@ const q = (params: Record<string, string | undefined>) => {
 };
 
 export type WorkshopTab =
-	'overview' | 'runs' | 'tickets' | 'repos' | 'flows' | 'automations' | 'agents' | 'health';
+	'overview' | 'runs' | 'tickets' | 'repos' | 'flows' | 'automations' | 'health';
 export type SystemSection =
 	'integrations' | 'channels' | 'members' | 'limits' | 'reaper' | 'storage';
 

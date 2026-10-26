@@ -54,7 +54,9 @@
 		showsSections,
 		triggerLabel,
 		feedDots,
-		feedSentinelFor,
+		givesVerdict,
+		SOURCE_VERDICT,
+		feedSourceFor,
 		type ActionContract,
 		type AgentContract,
 		type DocSequence,
@@ -73,6 +75,8 @@
 		| { kind: 'phase'; id: string }
 		| { kind: 'agent'; name: string }
 		| { kind: 'sequence'; id: string }
+		| { kind: 'schema'; name: string }
+		| { kind: 'mcp'; name: string }
 		| null;
 
 	/** A sequence drawn on its own: its stages as `doc.stages`, and where its
@@ -558,6 +562,11 @@
 		}
 		doc.stages.forEach((s, i) => {
 			const target = successOf(i);
+			// A stage whose success is a verdict carries it on: the success
+			// edge lands on the target's edge.verdict dot, when it has one.
+			const verdictDot = givesVerdict(s, agents)
+				? fed.get(`${target}|${SOURCE_VERDICT}`)
+				: undefined;
 			es.push({
 				id: `success|${s.id}`,
 				source: s.id,
@@ -566,6 +575,7 @@
 					target === END || target === DONE || target === ABORT
 						? termNode(s.phase, target)
 						: target,
+				targetHandle: verdictDot ? `in:${verdictDot}` : undefined,
 				type: 'smoothstep',
 				class: 'e-success',
 				style: hued(EDGE_HUE.success)
@@ -576,7 +586,7 @@
 			edgeLinks(s).forEach(({ kind, link, depth }, row) => {
 				// The edge lands on the exact dot that receives its content, when the
 				// target bound one: the picture shows where the rationale goes.
-				const dot = fed.get(`${link.to}|${feedSentinelFor(kind)}`);
+				const dot = fed.get(`${link.to}|${feedSourceFor(kind)}`);
 				es.push({
 					id: `${kind}|${s.id}|${depth}`,
 					source: s.id,

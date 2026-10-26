@@ -405,10 +405,10 @@ func adfCodeBlock(lang, code string) map[string]any {
 }
 
 // inlineNodes tokenizes a run of inline markdown into ADF text nodes with
-// marks: **strong**, *em* / _em_, `code`, ~~strike~~, [text](href); a
-// newline is a hardBreak. Marks do not nest (a link's text is plain) — the
-// engine's own comments never need more, and an unmatched opener stays
-// literal rather than swallowing the rest of the line.
+// marks: **strong**, *em* / _em_, `code`, ~~strike~~, [text](href) (and
+// ![alt](href), as a link); a newline is a hardBreak. Marks do not nest (a
+// link's text is plain) — the engine's own comments never need more, and an
+// unmatched opener stays literal rather than swallowing the rest of the line.
 func inlineNodes(s string) []map[string]any {
 	var out []map[string]any
 	var text strings.Builder
@@ -430,6 +430,19 @@ func inlineNodes(s string) []map[string]any {
 			return "", 0, false
 		}
 		return s[start : start+end], start + end + len(close), true
+	}
+	// link marks [label](href) starting at i, and says where it ends.
+	link := func(i int) (next int, ok bool) {
+		label, next, ok := span(i, "[", "](")
+		if !ok || next > len(s) {
+			return 0, false
+		}
+		end := strings.IndexByte(s[next:], ')')
+		if end < 0 {
+			return 0, false
+		}
+		marked(label, map[string]any{"type": "link", "attrs": map[string]any{"href": s[next : next+end]}})
+		return next + end + 1, true
 	}
 	for i := 0; i < len(s); {
 		switch {
@@ -462,15 +475,20 @@ func inlineNodes(s string) []map[string]any {
 			text.WriteByte('`')
 			i++
 		case s[i] == '[':
-			if label, next, ok := span(i, "[", "]("); ok && next <= len(s) {
-				if end := strings.IndexByte(s[next:], ')'); end >= 0 {
-					href := s[next : next+end]
-					marked(label, map[string]any{"type": "link", "attrs": map[string]any{"href": href}})
-					i = next + end + 1
-					continue
-				}
+			if next, ok := link(i); ok {
+				i = next
+				continue
 			}
 			text.WriteByte('[')
+			i++
+		case s[i] == '!' && strings.HasPrefix(s[i+1:], "["):
+			// An image is linked, not embedded: an ADF media node needs a
+			// Media API id, which a URL is not. The bang goes, the link stays.
+			if next, ok := link(i + 1); ok {
+				i = next
+				continue
+			}
+			text.WriteByte('!')
 			i++
 		case s[i] == '*' || s[i] == '_':
 			d := string(s[i])

@@ -27,6 +27,7 @@ import (
 	matrixadapter "apothecary/internal/adapters/matrix"
 	slackadapter "apothecary/internal/adapters/slack"
 	"apothecary/internal/automation"
+	"apothecary/internal/browser"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
@@ -43,6 +44,7 @@ import (
 	"apothecary/internal/secrets"
 	"apothecary/internal/telemetry"
 	"apothecary/internal/tickets"
+	"apothecary/internal/wsimage"
 )
 
 // version is stamped by the release build (deploy/release.sh, ldflags).
@@ -253,6 +255,19 @@ func cmdServe(args []string) error {
 	// answerable — the SQL view, rather than the engine folding every run's
 	// log to find one row.
 	e.SetPingLookup(store)
+	// The project browser (the builtin `browser` MCP server): one container
+	// per project, a Chromium per agent session. Agent stages re-read the
+	// project's secrets their MCP servers name when they open a session.
+	e.SetProjectSecrets(conf)
+	browsers := browser.New(browser.Config{
+		RunsDir: boot.RunsDir,
+		Image:   wsimage.New(boot.RunsDir).EnsureBrowserImage,
+		Tag:     wsimage.BrowserImageTag,
+		Log:     log,
+	})
+	browsers.Start(ctx)
+	defer browsers.Close()
+	e.SetBrowser(browsers)
 
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)
@@ -444,26 +459,31 @@ agents:
     read_only: true
     prompt: |
       You are the planning agent of the dev sandbox. Write a short plan.
+    inputs:
+      - { name: ticket, type: ticket, description: "the ticket to plan for" }
     outputs:
-      - name: plan
-        description: the plan
-        path: artifacts/plan.md
+      - { name: plan, type: file, description: "the plan" }
   - name: builder
     description: implements the plan
     allow_bash: true
     prompt: |
       You are the building agent of the dev sandbox. Implement the plan.
     inputs:
-      - name: plan
-        description: the plan to implement
+      - { name: plan, type: file, description: "the plan to implement" }
 main:
-  - { id: plan,       type: agent, agent: planner }
-  - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+  - { id: plan, type: agent, agent: planner,
+      input: { ticket: { from: run.ticket, type: ticket } },
+      output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: plan_gate, type: human_gate, question: "Approve the plan?",
+      input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 3 } }
-  - { id: build,      type: agent, agent: builder, input: { plan: artifacts/plan.md } }
-  - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
-  - { id: mr,         type: action, action: create_mr, input: { body: artifacts/plan.md } }
-  - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
+  - { id: build, type: agent, agent: builder,
+      input: { plan: { from: artifacts/plan.md, type: file } } }
+  - { id: test, type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
+  - { id: mr, type: action, action: create_mr,
+      input: { body: { from: artifacts/plan.md, type: file } } }
+  - { id: final_gate, type: human_gate, question: "Merge when satisfied.",
+      input: { mr: { from: run.mr.url, type: link } },
       auto_approve: mr_merged }
 `
 
@@ -514,7 +534,7 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 			URL: "https://git.local/dev/fake-repo.git", Locator: "1",
 			DefaultBranch: "main", AgentsMDPath: "AGENTS.md",
 		},
-		Commands: map[string]string{"setup": "true", "verify": "true"},
+		Commands: map[string]string{"verify": "true"},
 		// A project needs a default flow that resolves, and its own flows
 		// cannot exist before it does: it starts on whichever template is
 		// listed first and moves to its dev flow just below.

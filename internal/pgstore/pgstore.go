@@ -347,6 +347,19 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 				p.PingID, p.Answer, p.Feedback, ids, evs[i].TS); err != nil {
 				return err
 			}
+			for j, c := range p.Review {
+				var att []byte
+				if len(c.AttachmentIDs) > 0 {
+					att, _ = json.Marshal(c.AttachmentIDs)
+				}
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO ping_review_comments (ping_id, run_id, idx, path, start_line, end_line, heading, quote, body, attachment_ids)
+					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+					ON CONFLICT (ping_id, idx) DO NOTHING`,
+					p.PingID, runID, j, c.Path, c.StartLine, c.EndLine, c.Heading, c.Quote, c.Body, att); err != nil {
+					return err
+				}
+			}
 		case *event.SnapshotCaptured:
 			// The snapshots table is a PROJECTION of this event (DESIGN-FILES
 			// §3.3). On the live path the row already exists — Capture inserts
@@ -529,7 +542,7 @@ func (s *Store) RebuildProjections(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `TRUNCATE runs, pings, snapshots`); err != nil {
+	if _, err := tx.Exec(ctx, `TRUNCATE runs, pings, ping_review_comments, snapshots`); err != nil {
 		return 0, err
 	}
 	for _, id := range ids {
@@ -679,7 +692,46 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.loadReviews(ctx, out)
+}
+
+// loadReviews fills each answered ping's review comments, in one query.
+func (s *Store) loadReviews(ctx context.Context, vs []run.PingView) error {
+	var ids []string
+	at := map[string]int{}
+	for i := range vs {
+		if vs[i].Status == "answered" {
+			ids = append(ids, vs[i].PingID)
+			at[vs[i].PingID] = i
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT ping_id, path, start_line, end_line, heading, quote, body, attachment_ids
+		FROM ping_review_comments WHERE ping_id = ANY($1) ORDER BY ping_id, idx`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var c event.ReviewComment
+		var att []byte
+		if err := rows.Scan(&id, &c.Path, &c.StartLine, &c.EndLine, &c.Heading, &c.Quote, &c.Body, &att); err != nil {
+			return err
+		}
+		if len(att) > 0 {
+			_ = json.Unmarshal(att, &c.AttachmentIDs)
+		}
+		v := &vs[at[id]]
+		v.Review = append(v.Review, c)
+	}
+	return rows.Err()
 }
 
 // GetPing reads one projected request/response pair by id.
@@ -691,7 +743,12 @@ func (s *Store) GetPing(ctx context.Context, id string) (run.PingView, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.PingView{}, fmt.Errorf("ping %s: %w", id, ErrPingNotFound)
 	}
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	one := []run.PingView{v}
+	err = s.loadReviews(ctx, one)
+	return one[0], err
 }
 
 // ErrPingNotFound is the projection-read miss sentinel.

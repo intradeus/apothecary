@@ -122,7 +122,6 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		SeedAuth:     res.SeedAuth,
 		Prepare:      res.Prepare,
 		Agents:       fl.AgentSpecs(),
-		Setup:        res.Commands["setup"],
 		Timeout:      fl.Defaults.Timeout,
 		Extras:       viewExtras(v),
 	}); berr != nil {

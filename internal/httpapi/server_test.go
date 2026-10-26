@@ -31,11 +31,11 @@ agents:
   - name: planner
     prompt: plan the work
     outputs:
-      - { name: plan, path: artifacts/plan.md }
+      - { name: plan, type: file }
   - name: builder
     prompt: build the thing
     inputs:
-      - { name: plan, optional: true }
+      - { name: plan, type: file, optional: true }
 main:
   - { id: build, type: agent, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
@@ -93,7 +93,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  "loop",
-		Commands:     map[string]string{"setup": "./setup.sh", "verify": "make lint && make test"},
+		Commands:     map[string]string{"verify": "make lint && make test"},
 		HarnessKind:  "fake",
 		Envp:         x.envp,
 		Runner:       x.runner,
@@ -434,11 +434,11 @@ agents:
   - name: planner
     prompt: plan the work
     outputs:
-      - { name: plan, path: artifacts/plan.md }
+      - { name: plan, type: file }
   - name: builder
     prompt: build the thing
     inputs:
-      - { name: plan, optional: true }
+      - { name: plan, type: file, optional: true }
 main:
   - { id: build, type: agent, agent: builder }
 `)
@@ -779,14 +779,14 @@ agents:
   - name: planner
     prompt: plan the work
     outputs:
-      - { name: plan, path: artifacts/plan.md }
+      - { name: plan, type: file }
   - name: builder
     prompt: build the thing
     inputs:
-      - { name: plan, optional: true }
+      - { name: plan, type: file, optional: true }
 main:
-  - { id: plan, type: agent, agent: planner }
-  - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 2 } }
 `)
 	newFilesFor(t, x, 1<<20, []string{"text/*"})
@@ -857,14 +857,14 @@ agents:
   - name: planner
     prompt: plan the work
     outputs:
-      - { name: plan, path: artifacts/plan.md }
+      - { name: plan, type: file }
   - name: builder
     prompt: build the thing
     inputs:
-      - { name: plan, optional: true }
+      - { name: plan, type: file, optional: true }
 main:
-  - { id: plan, type: agent, agent: planner }
-  - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md },
+  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 2 } }
 `)
 	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {

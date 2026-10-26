@@ -17,7 +17,7 @@ const askFlowDoc = `name: ask
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, agent: builder, input: { ticket: { from: run.ticket, type: ticket } } }
 `
 
 // waitEvent polls the log for the first payload of type T.
@@ -288,9 +288,9 @@ agents:
     prompt: |
       Plan the work.
     outputs:
-      - { name: plan, description: the plan, path: artifacts/plan.md }
+      - { name: plan, type: file, description: the plan }
 main:
-  - { id: plan, type: agent, agent: planner }
+  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	runIDCh := make(chan string, 1)

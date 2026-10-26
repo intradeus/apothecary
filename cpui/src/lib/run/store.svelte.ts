@@ -1,6 +1,7 @@
 // One live run, as the run page and its views share it: the run, its event
 // log (SSE) and the agent's live deltas, plus the bits of workspace state
-// several views read (denials, ports, the record, resource samples).
+// several views read (denials, ports, services, the record, resource
+// samples).
 //
 // Polling is demand-driven: a view that needs a feed holds it with use*()
 // while it is visible, and every poll skips while the tab is hidden.
@@ -14,6 +15,7 @@ import type {
 	ResourceSample,
 	Run,
 	RunEvent,
+	RunServices,
 	Snapshot,
 	Ticket
 } from '$lib/domain';
@@ -52,6 +54,10 @@ export class RunStore {
 	snapshots = $state<Snapshot[]>([]);
 	attachments = $state<Attachment[]>([]);
 	samples = $state<ResourceSample[]>([]);
+	/** The workshop's services as they stand in the workspace; null until
+	 *  first read. */
+	services = $state<RunServices | null>(null);
+	servicesError = $state('');
 	/** Ticks every second: live clocks. */
 	now = $state(Date.now());
 	answering = $state(false);
@@ -68,6 +74,7 @@ export class RunStore {
 	// Plain counters: polls read them, nothing renders them.
 	#portUsers = 0;
 	#resourceUsers = 0;
+	#serviceUsers = 0;
 
 	constructor(runId: string) {
 		this.runId = runId;
@@ -87,7 +94,7 @@ export class RunStore {
 	readonly pendingPings = $derived(this.pings.filter((p) => p.status === 'pending').reverse());
 	readonly current = $derived(currentStage(this.events));
 	readonly since = $derived(workingSince(this.events, this.current));
-	readonly links = $derived(envLinks(this.events, this.exposed));
+	readonly links = $derived(envLinks(this.events, this.exposed, this.services?.services ?? []));
 	readonly newDenials = $derived(this.denials.filter((d) => !this.dismissed.has(d.host)));
 	/** When the workspace went away, for the "destroyed 2h ago" states. */
 	readonly destroyedAt = $derived(this.events.findLast((e) => e.type === 'env_destroyed')?.ts);
@@ -111,6 +118,13 @@ export class RunStore {
 				void this.refreshResources();
 			}, 5000)
 		);
+		// A service's health flips without an event: poll while one is on screen.
+		timers.push(
+			setInterval(() => {
+				if (document.hidden || this.#serviceUsers === 0 || !this.hasWorkspace) return;
+				void this.refreshServices();
+			}, 3000)
+		);
 
 		void this.refreshRun().then(() => {
 			const r = this.run;
@@ -129,6 +143,7 @@ export class RunStore {
 			if (this.hasWorkspace) {
 				void this.refreshDenials();
 				void this.refreshPorts();
+				void this.refreshServices();
 			}
 		});
 		void this.refreshFiles();
@@ -151,6 +166,8 @@ export class RunStore {
 				// A capture (or an answer, which may carry files) adds a record row.
 				if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered')
 					void this.refreshFiles();
+				// A service started, came up, stopped or failed.
+				if (ev.type.startsWith('service_')) void this.refreshServices();
 			},
 			(d) => (this.live = applyDelta(this.live, d))
 		);
@@ -198,6 +215,15 @@ export class RunStore {
 		}
 	}
 
+	async refreshServices() {
+		try {
+			this.services = await api.runs.services(this.runId);
+			this.servicesError = '';
+		} catch (e) {
+			this.servicesError = errText(e);
+		}
+	}
+
 	async refreshResources() {
 		try {
 			this.samples = await api.runs.resources(this.runId);
@@ -211,6 +237,13 @@ export class RunStore {
 		this.#portUsers++;
 		if (this.hasWorkspace) void this.refreshPorts();
 		return () => this.#portUsers--;
+	}
+
+	/** Hold the services feed (Services view, Env popover) while on screen. */
+	useServices(): () => void {
+		this.#serviceUsers++;
+		void this.refreshServices();
+		return () => this.#serviceUsers--;
 	}
 
 	/** Hold the resource samples feed (Vitals, Resources) while on screen. */

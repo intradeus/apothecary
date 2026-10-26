@@ -17,8 +17,8 @@ export const VIEWS = [
 	'terminal',
 	'logs',
 	'egress',
+	'services',
 	'ports',
-	'resources',
 	'vitals'
 ] as const;
 export type ViewId = (typeof VIEWS)[number];
@@ -57,11 +57,11 @@ export const VIEW_LABEL: Record<ViewId, string> = {
 	get egress() {
 		return t('desk.view.egress');
 	},
+	get services() {
+		return t('desk.view.services');
+	},
 	get ports() {
 		return t('desk.view.ports');
-	},
-	get resources() {
-		return t('desk.view.resources');
 	},
 	get vitals() {
 		return t('desk.view.vitals');
@@ -134,7 +134,7 @@ export const PRESETS = {
 								'logs',
 								'record'
 							]),
-							split('col', [0.3, 0.7], [leaf(['vitals']), leaf(['egress', 'ports', 'resources'])])
+							split('col', [0.5, 0.5], [leaf(['vitals']), leaf(['egress', 'services', 'ports'])])
 						]
 					)
 				]
@@ -166,7 +166,7 @@ export const PRESETS = {
 					split(
 						'row',
 						[0.62, 0.38],
-						[leaf(['terminal', 'logs', 'egress', 'ports']), leaf(['vitals', 'resources'])]
+						[leaf(['terminal', 'logs', 'egress', 'services', 'ports']), leaf(['vitals'])]
 					)
 				]
 			)
@@ -186,8 +186,8 @@ export const PRESETS = {
 						'col',
 						[0.68, 0.32],
 						[
-							leaf(['changes', 'files', 'terminal', 'egress', 'ports']),
-							leaf(['vitals', 'resources'])
+							leaf(['changes', 'files', 'terminal', 'egress', 'services', 'ports']),
+							leaf(['vitals'])
 						]
 					)
 				]
@@ -205,10 +205,9 @@ export const PRESETS = {
 					leaf(['session', 'pings', 'phases']),
 					split(
 						'col',
-						[0.17, 0.22, 0.61],
+						[0.17, 0.83],
 						[
 							leaf(['flow']),
-							leaf(['vitals']),
 							leaf([
 								'changes',
 								'files',
@@ -217,8 +216,9 @@ export const PRESETS = {
 								'logs',
 								'record',
 								'egress',
+								'services',
 								'ports',
-								'resources'
+								'vitals'
 							])
 						]
 					)

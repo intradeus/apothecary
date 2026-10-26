@@ -1,63 +1,96 @@
 <script lang="ts">
-	import { flip } from 'svelte/animate';
+	// The review workbench (DESIGN3 §3): every file a ping shows — a gate's
+	// files and folders of them, an agent's ask_human about its own — on one
+	// page, answered with ONE structured review: comments, each on one file
+	// (on the text selected, or the whole file — the only kind an image
+	// takes), a summary, attachments. The engine renders the review into
+	// what the agent reads; this page only collects it.
+	//
+	// Gates answer approve/reject — either carrying the review; an ask_human
+	// answers its declared option, or its text, with the review alongside.
+	import { tick, untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { Ping, PingFile } from '$lib/domain';
+	import type { Ping } from '$lib/domain';
 	import AttachFiles from '$lib/AttachFiles.svelte';
-	import DocHead from '$lib/inbox/DocHead.svelte';
-	import AgentFiles from '$lib/inbox/AgentFiles.svelte';
 	import {
-		byPosition,
+		byPlace,
 		clearDraft,
 		commentId,
-		composeFeedback,
+		perFile,
+		commentToSend,
 		isMarkdown,
+		isWholeFile,
 		loadDraft,
-		docBlocks,
-		rangeAt,
 		saveDraft,
-		textOffset,
 		type CommentAnchor,
-		type DocBlock,
-		type ReviewComment
+		type DraftComment
 	} from '$lib/docreview';
+	import { ReviewFiles } from '$lib/review/files.svelte';
+	import ReviewLayout from '$lib/review/ReviewLayout.svelte';
+	import FileList from '$lib/review/FileList.svelte';
+	import FileView from '$lib/review/FileView.svelte';
+	import Outline from '$lib/review/Outline.svelte';
+	import CommentList from '$lib/review/CommentList.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import { I } from '$lib/ui/icons';
-	import { bump, materialize, ms, spring } from '$lib/ui/motion';
+	import { bump } from '$lib/ui/motion';
 	import { onMount } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
 
-	// Gates answer approve/reject; ask_human artifact reviews (PLAN4 M16)
-	// answer with the composed review text — or a declared option with the
-	// review as its note.
-	const isGate = $derived(ping.answerKind === 'decision');
+	const isGate = $derived(ping.answerKind === 'yes_no');
 
-	let blocks = $state<DocBlock[]>([]);
-	let path = $state('');
+	// One ping per mount: the page remounts this for another.
+	const set = new ReviewFiles(untrack(() => ping.id));
+	let comments = $state<DraftComment[]>([]);
+	let summary = $state('');
 	let error = $state('');
-	let loading = $state(true);
-	let comments = $state<ReviewComment[]>([]);
 	let busy = $state(false);
-	let files = $state<File[]>([]); // the human's answer attachments
-	let extraFiles = $state<PingFile[]>([]); // agent-attached extras, beyond the primary doc
+	let files = $state<File[]>([]); // the review's own attachments
+	let showAll = $state(false);
+	let view = $state<FileView | null>(null);
+	let loaded = $state(false); // the draft is read
 
-	// The composer pops up where a selection was released. It is deliberately
-	// sticky: only Add/Save or Close dismiss it — clicking away (to scroll, to
-	// re-read the document, to pick a file) must never throw away what was typed.
+	onMount(async () => {
+		await set.init();
+		// The draft is read once the files are known: an old one's comments
+		// are on the primary, and a comment on a file no longer shown is gone.
+		const d = loadDraft(ping.id, set.primary);
+		comments = d.comments.filter((c) => set.paths.includes(c.path)).sort(byPlace(set.paths));
+		summary = d.summary;
+		loaded = true;
+	});
+
+	const file = $derived(set.file);
+	const doc = $derived(set.docs.get(set.current));
+	const here = $derived(comments.filter((c) => c.path === set.current));
+	const counts = $derived(perFile(comments));
+
+	function persist() {
+		saveDraft(ping.id, { comments, summary });
+	}
+
+	// ---- the composer ---------------------------------------------------------
+
+	// The composer pops up where a selection was released (or by the "Comment
+	// on this file" button). It is deliberately sticky: only Add/Save or Close
+	// dismiss it — clicking away (to scroll, to re-read the file, to pick
+	// another) must never throw away what was typed.
 	interface Composer {
+		path: string;
 		anchor: CommentAnchor | null;
 		quote: string;
 		heading: string;
-		startLine: number;
+		startLine: number; // 0: the whole file
 		endLine: number;
 		text: string;
 		files: File[];
-		editing: number | null; // index of the comment being edited, else null
+		editing: string | null; // the id of the comment being edited, else null
 		x: number;
 		y: number;
 	}
@@ -70,70 +103,11 @@
 		if (composer) shownComposer = composer;
 	});
 	let composerEl = $state<HTMLTextAreaElement | null>(null);
-	let hovered = $state<number | null>(null);
-	let docEl = $state<HTMLDivElement | null>(null);
-	// Rendered blocks by index, for anchoring and highlighting. Deliberately
-	// not reactive: they are read on demand (selection, scroll, paint).
-	const blockEls: HTMLElement[] = [];
-	const block = (node: HTMLElement, i: number) => {
-		blockEls[i] = node;
-		return { update: (j: number) => void (blockEls[j] = node) };
-	};
-
-	onMount(async () => {
-		comments = loadDraft(ping.id);
-		// ONE fetch: the ping's files, primary first, each with its raise-time
-		// snapshot. The reviewed document's content comes from the snapshot —
-		// what you approve is what was captured, not what the workspace holds
-		// by the time you look (DESIGN-FILES §9).
-		try {
-			const { files: fs } = await api.pings.payload(ping.id);
-			const primary = fs[0];
-			if (!primary) {
-				error = t('doc.noFiles');
-			} else if (!primary.captured || !primary.snapshotId) {
-				error = t('doc.notCaptured', { path: primary.path });
-			} else {
-				path = primary.path;
-				const res = await fetch(api.files.snapshotUrl(primary.snapshotId));
-				if (!res.ok) throw new Error(t('doc.docUnavailable', { status: res.status }));
-				blocks = docBlocks(await res.text(), primary.path);
-			}
-			extraFiles = fs.slice(1);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			loading = false;
-		}
-	});
-
-	// ---- selection → anchor -------------------------------------------------
-
-	function blockIndexOf(node: Node): number {
-		const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-		const b = el?.closest<HTMLElement>('.block');
-		return b?.dataset.idx === undefined ? -1 : Number(b.dataset.idx);
-	}
-
-	function anchorFrom(range: Range) {
-		const sb = blockIndexOf(range.startContainer);
-		let eb = blockIndexOf(range.endContainer);
-		if (sb < 0 || eb < sb || !blockEls[sb] || !blockEls[eb]) return null;
-		const startOffset = textOffset(blockEls[sb], range.startContainer, range.startOffset);
-		let endOffset = textOffset(blockEls[eb], range.endContainer, range.endOffset);
-		// A drag released just past a block lands on the head of the next one:
-		// credit the text actually covered, not the untouched block below it.
-		while (eb > sb && endOffset === 0) {
-			eb -= 1;
-			endOffset = blockEls[eb].textContent?.length ?? 0;
-		}
-		return {
-			anchor: { startBlock: sb, startOffset, endBlock: eb, endOffset },
-			heading: blocks[sb].heading,
-			startLine: blocks[sb].startLine,
-			endLine: blocks[eb].endLine
-		};
-	}
+	const holdsWork = (c: Composer | null) =>
+		!!c && (!!c.text.trim() || c.files.length > 0 || c.editing !== null);
+	/** The comment hovered in the list, or the one just jumped to. */
+	let hovered = $state<string | null>(null);
+	let flashed = $state<string | null>(null);
 
 	const POPUP_W = 340;
 	function place(rect: { left: number; bottom: number }): { x: number; y: number } {
@@ -145,17 +119,17 @@
 
 	function captureSelection() {
 		const sel = window.getSelection();
-		if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !docEl) return;
+		if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !view) return;
 		const range = sel.getRangeAt(0);
-		if (!docEl.contains(range.commonAncestorContainer)) return;
+		if (!view.holds(range)) return;
 		const quote = sel.toString().trim();
 		if (quote.length < 2) return;
 		// Never clobber a composer that already holds work.
-		if (composer && (composer.text.trim() || composer.files.length || composer.editing !== null))
-			return;
-		const a = anchorFrom(range);
+		if (holdsWork(composer)) return;
+		const a = view.anchorFrom(range);
 		if (!a) return;
 		composer = {
+			path: set.current,
 			...a,
 			quote,
 			text: '',
@@ -165,8 +139,26 @@
 		};
 	}
 
-	// Listeners live on the document (a drag can be released outside the document)
-	// and are attached imperatively so the document stays a plain, non-interactive
+	/** A comment on the whole file: the only kind an image takes. */
+	function commentOnFile(e: MouseEvent) {
+		if (holdsWork(composer)) return void composerEl?.focus();
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		composer = {
+			path: set.current,
+			anchor: null,
+			quote: '',
+			heading: '',
+			startLine: 0,
+			endLine: 0,
+			text: '',
+			files: [],
+			editing: null,
+			...place({ left: r.right - POPUP_W, bottom: r.bottom })
+		};
+	}
+
+	// Listeners live on the document (a drag can be released outside the file)
+	// and are attached imperatively so the file stays a plain, non-interactive
 	// region as far as a11y is concerned.
 	$effect(() => {
 		const onUp = () => setTimeout(captureSelection, 0); // let the selection settle
@@ -187,77 +179,11 @@
 		if (composer) composerEl?.focus();
 	});
 
-	// ---- highlighting -------------------------------------------------------
-
-	const PENDING = 'apo-doc-pending';
-	const ACTIVE = 'apo-doc-active';
-	type HighlightRegistry = { set(k: string, v: object): void; delete(k: string): void };
-	type HighlightCtor = new (...ranges: Range[]) => object;
-
-	function registry(): HighlightRegistry | null {
-		const g = globalThis as unknown as {
-			CSS?: { highlights?: HighlightRegistry };
-			Highlight?: HighlightCtor;
-		};
-		return g.CSS?.highlights && typeof g.Highlight === 'function' ? g.CSS.highlights : null;
-	}
-
-	// One Range per spanned block: the anchor's offsets are per-block, and a
-	// Highlight happily holds several.
-	function rangesFor(a: CommentAnchor): Range[] {
-		const out: Range[] = [];
-		for (let i = a.startBlock; i <= a.endBlock; i++) {
-			const el = blockEls[i];
-			if (!el) continue;
-			const len = el.textContent?.length ?? 0;
-			const from = i === a.startBlock ? a.startOffset : 0;
-			const to = i === a.endBlock ? a.endOffset : len;
-			const r = rangeAt(el, Math.min(from, len), Math.min(to, len));
-			if (r) out.push(r);
-		}
-		return out;
-	}
-
-	function paint(name: string, anchor: CommentAnchor | null | undefined) {
-		const reg = registry();
-		if (!reg) return; // no Custom Highlight API — the block tint carries it
-		reg.delete(name);
-		const rs = anchor ? rangesFor(anchor) : [];
-		if (!rs.length) return;
-		const Ctor = (globalThis as unknown as { Highlight: HighlightCtor }).Highlight;
-		reg.set(name, new Ctor(...rs));
-	}
-
-	$effect(() => {
-		void composer; // repaint on open/close/edit, not on every keystroke
-		void hovered;
-		void blocks.length;
-		void comments.length;
-		paint(PENDING, composer?.anchor);
-		paint(ACTIVE, hovered === null ? null : comments[hovered]?.anchor);
-		return () => {
-			const reg = registry();
-			reg?.delete(PENDING);
-			reg?.delete(ACTIVE);
-		};
-	});
-
-	// Block-level span of a comment: the anchor when we have one, else the line
-	// overlap (drafts saved before comments were anchored to exact text).
-	function spans(c: ReviewComment | undefined, i: number): boolean {
-		if (!c) return false;
-		if (c.anchor) return i >= c.anchor.startBlock && i <= c.anchor.endBlock;
-		return blocks[i].endLine >= c.startLine && blocks[i].startLine <= c.endLine;
-	}
-	const blockOf = (c: ReviewComment) =>
-		c.anchor?.startBlock ?? blocks.findIndex((b) => b.endLine >= c.startLine);
-
-	// ---- comments -----------------------------------------------------------
-
 	function commitComment() {
 		if (!composer || !composer.text.trim()) return;
-		const c: ReviewComment = {
-			id: (composer.editing !== null ? comments[composer.editing]?.id : undefined) ?? commentId(),
+		const c: DraftComment = {
+			id: composer.editing ?? commentId(),
+			path: composer.path,
 			quote: composer.quote,
 			heading: composer.heading,
 			startLine: composer.startLine,
@@ -266,10 +192,11 @@
 			...(composer.anchor ? { anchor: composer.anchor } : {}),
 			...(composer.files.length ? { files: composer.files } : {})
 		};
-		if (composer.editing !== null) comments[composer.editing] = c;
+		const i = comments.findIndex((x) => x.id === composer!.editing);
+		if (i >= 0) comments[i] = c;
 		else comments.push(c);
-		comments.sort(byPosition);
-		saveDraft(ping.id, comments);
+		comments.sort(byPlace(set.paths));
+		persist();
 		closeComposer();
 	}
 
@@ -278,12 +205,11 @@
 		window.getSelection()?.removeAllRanges();
 	}
 
-	function editComment(i: number) {
-		const c = comments[i];
-		const rect =
-			(c.anchor ? rangesFor(c.anchor)[0]?.getBoundingClientRect() : null) ??
-			blockEls[blockOf(c)]?.getBoundingClientRect();
+	async function editComment(c: DraftComment) {
+		await show(c.path);
+		const rect = view?.rectOf(c);
 		composer = {
+			path: c.path,
 			anchor: c.anchor ?? null,
 			quote: c.quote,
 			heading: c.heading,
@@ -291,13 +217,12 @@
 			endLine: c.endLine,
 			text: c.text,
 			files: [...(c.files ?? [])],
-			editing: i,
+			editing: c.id,
 			...place(rect ?? { left: 40, bottom: 80 })
 		};
 	}
 
-	async function removeComment(i: number) {
-		const c = comments[i];
+	async function removeComment(c: DraftComment) {
 		if (
 			!(await confirmDialog({
 				title: t('doc.deleteTitle'),
@@ -306,17 +231,10 @@
 			}))
 		)
 			return;
-		i = comments.indexOf(c);
-		if (i < 0) return;
-		comments.splice(i, 1);
-		saveDraft(ping.id, comments);
-		if (hovered === i) hovered = null;
-		if (composer?.editing === i) closeComposer();
-		else if (composer && composer.editing !== null && composer.editing > i) composer.editing -= 1;
-	}
-
-	function reveal(c: ReviewComment) {
-		blockEls[blockOf(c)]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		comments = comments.filter((x) => x.id !== c.id);
+		persist();
+		if (hovered === c.id) hovered = null;
+		if (composer?.editing === c.id) closeComposer();
 	}
 
 	// Esc is the popover's own (it closes through onclose).
@@ -327,33 +245,59 @@
 		}
 	}
 
-	// Comments rise into the list and leave the same way; the rest close the
-	// gap on the spring.
-	const move = { duration: ms('--dur-spring', 450), easing: spring };
-
 	const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
+
+	// ---- moving around ----------------------------------------------------------
+
+	/** Open a file and wait for it to be on screen. */
+	async function show(path: string) {
+		if (path !== set.current) {
+			await set.open(path);
+			await tick();
+		}
+	}
+
+	/** Open a comment's file, bring the comment into view and light it. */
+	let flashTimer: ReturnType<typeof setTimeout> | undefined;
+	async function openComment(c: DraftComment) {
+		await show(c.path);
+		await tick();
+		view?.reveal(c);
+		flashed = c.id;
+		clearTimeout(flashTimer);
+		flashTimer = setTimeout(() => (flashed = null), 1400);
+	}
 
 	// ---- submit -------------------------------------------------------------
 
-	const feedback = () =>
-		composeFeedback(
-			path,
-			comments,
-			files.map((f) => f.name)
-		);
-
 	/** Which action is in flight, so only its button shows busy. */
 	let sending = $state('');
-	async function submit(answer: string, text?: string) {
+	const said = $derived(comments.length > 0 || summary.trim() !== '');
+
+	async function submit(answer: string, feedback = summary.trim()) {
 		sending = answer;
 		busy = true;
 		error = '';
 		try {
-			// Per-comment attachments ride along with the review-level ones — all
-			// land in the workspace, and the feedback prompt names them per comment.
-			const all = [...comments.flatMap((c) => c.files ?? []), ...files];
-			const ids = all.length ? (await api.files.upload(all)).map((a) => a.id) : undefined;
-			await api.pings.answer(ping.id, answer, text, ids);
+			// Per-comment attachments go up with the review's own, in one upload;
+			// each comment then names its own among the answer's.
+			const perComment = comments.map((c) => c.files ?? []);
+			const all = [...perComment.flat(), ...files];
+			const up = all.length ? await api.files.upload(all) : [];
+			let k = 0;
+			const review = comments.map((c, i) =>
+				commentToSend(
+					c,
+					perComment[i].map(() => up[k++].id)
+				)
+			);
+			await api.pings.answer(
+				ping.id,
+				answer,
+				feedback || undefined,
+				up.map((a) => a.id),
+				review
+			);
 			clearDraft(ping.id);
 			onanswered();
 		} catch (e) {
@@ -363,126 +307,90 @@
 		}
 	}
 
-	async function requestChanges() {
-		if (comments.length === 0) return;
-		await submit('reject', feedback());
-	}
-
-	async function sendReview() {
-		if (comments.length === 0) return;
-		await submit(feedback());
-	}
-
-	async function chooseOption(opt: string) {
-		await submit(opt, comments.length > 0 ? feedback() : undefined);
-	}
-
-	async function approve() {
-		if (
-			comments.length > 0 &&
-			!(await confirmDialog({
-				title: t('doc.approveTitle'),
-				body: th('doc.approveBody', { count: comments.length }),
-				action: t('doc.approveAnyway'),
-				tone: 'warn'
-			}))
-		)
-			return;
-		await submit('approve');
-	}
-
-	// ---- outline -------------------------------------------------------------
-
-	const outline = $derived(
-		blocks
-			.map((b, i) => {
-				const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/m.exec(b.raw.trim().split('\n')[0]);
-				return m ? { i, level: m[1].length, text: m[2].replace(/[*_`]/g, '') } : null;
-			})
-			.filter((x): x is { i: number; level: number; text: string } => !!x)
-	);
-	const minLevel = $derived(Math.min(...outline.map((o) => o.level), 6));
-	const commentsUnder = (blockIdx: number) => {
-		const next = outline.find((o) => o.i > blockIdx)?.i ?? Infinity;
-		return comments.filter((c) => {
-			const b = blockOf(c);
-			return b >= blockIdx && b < next;
-		}).length;
-	};
-	const jump = (i: number) => blockEls[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	// A free-text ask_human: the summary is the answer itself.
+	const sendText = () => submit(summary.trim(), '');
 
 	// "Draft saved" flashes after each change to the draft.
 	let savedAt = $state<number | null>(null);
 	$effect(() => {
 		void comments.length;
 		void comments.map((c) => c.text).join();
-		if (!loading) savedAt = Date.now();
+		void summary;
+		if (loaded) savedAt = Date.now();
 	});
+
+	const emptyHint = $derived(
+		file?.kind === 'image'
+			? th('doc.hintImage')
+			: file?.kind === 'other' || !file?.captured
+				? th('doc.hintWhole')
+				: th('doc.hint')
+	);
 </script>
 
-<div class="wb">
-	<!-- Outline -->
-	<nav class="outline c pane" aria-label={t('doc.outlineLabel')}>
-		<div class="pane-head"><h2>{t('doc.outline')}</h2></div>
-		{#if loading}
-			<div class="pane-body"><Skeleton lines={5} height={10} /></div>
-		{:else if outline.length}
-			<div class="ol">
-				{#each outline as o (o.i)}
-					{@const n = commentsUnder(o.i)}
-					<button
-						class="rowbtn oi"
-						style:padding-left="{10 + (o.level - minLevel) * 12}px"
-						onclick={() => jump(o.i)}
-						title={o.text}
-						><span class="ell grow">{o.text}</span>{#if n}<span class="pill sm mono t-brand"
-								>{n}</span
-							>{/if}</button
-					>
-				{/each}
-			</div>
+<ReviewLayout onstep={(d) => set.step(d)}>
+	{#snippet nav()}
+		<div class="pane-head"><h2>{t('doc.files')}</h2></div>
+		{#if set.loading}
+			<div class="pane-body"><Skeleton lines={3} height={10} /></div>
 		{:else}
-			<div class="empty-line">{t('doc.noHeadings')}</div>
+			<FileList
+				files={set.files}
+				current={set.current}
+				{counts}
+				viewed={set.viewed}
+				onpick={(p) => void set.open(p)}
+			/>
 		{/if}
-	</nav>
+		{#if file?.kind === 'text' && isMarkdown(file.path) && doc && !doc.error}
+			<div class="pane-head sub"><h2>{t('doc.outline')}</h2></div>
+			<Outline
+				blocks={doc.blocks}
+				commentBlocks={view?.commentBlocks() ?? []}
+				onjump={(i) => view?.jump(i)}
+			/>
+		{/if}
+	{/snippet}
 
-	<!-- Document -->
-	<section class="doc c pane">
-		<DocHead path={path || ping.primaryRef || ''} raisedAt={ping.raisedAt} />
-		<div class="dscroll">
-			{#if extraFiles.length}
-				<div class="paper extras"><AgentFiles files={extraFiles} /></div>
-			{/if}
-
-			{#if loading}
-				<div class="paper"><Skeleton lines={10} /></div>
-			{:else if error && blocks.length === 0}
-				<div class="paper"><ErrorCard cause={error} /></div>
-			{:else if blocks.length === 0}
-				<div class="paper fnt">{t('doc.empty')}</div>
-			{:else}
-				<div class="paper" class:listing={!isMarkdown(path)} bind:this={docEl}>
-					{#each blocks as b, i (i)}
-						<div
-							class="block"
-							data-idx={i}
-							use:block={i}
-							class:commented={comments.some((c) => spans(c, i))}
-							class:active={hovered !== null && spans(comments[hovered], i)}
-							class:pending={!!composer?.anchor &&
-								i >= composer.anchor.startBlock &&
-								i <= composer.anchor.endBlock}
+	{#snippet main()}
+		{#if set.loading}
+			<div class="dscroll"><div class="paper"><Skeleton lines={10} /></div></div>
+		{:else if !file}
+			<div class="dscroll"><div class="paper"><ErrorCard cause={set.error} /></div></div>
+		{:else}
+			{#key file.path}
+				<FileView
+					bind:this={view}
+					{file}
+					{doc}
+					comments={here}
+					active={hovered ?? flashed}
+					pending={composer?.path === file.path ? composer.anchor : null}
+					raisedAt={ping.raisedAt}
+					scrolls={set.scrolls}
+				>
+					{#snippet picker()}
+						<FileList
+							variant="select"
+							files={set.files}
+							current={set.current}
+							{counts}
+							viewed={set.viewed}
+							onpick={(p) => void set.open(p)}
+						/>
+					{/snippet}
+					{#snippet actions()}
+						<button class="btn-sm" onclick={commentOnFile}
+							>{I.add}
+							{file.kind === 'image' ? t('doc.commentImage') : t('doc.commentFile')}</button
 						>
-							<Markdown src={b.raw} doc />
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	</section>
+					{/snippet}
+				</FileView>
+			{/key}
+		{/if}
+	{/snippet}
 
-	<!-- Review sidebar -->
-	<aside class="side lg pane">
+	{#snippet side()}
 		<div class="pane-head">
 			<h2>{t('doc.review')}</h2>
 			<span class="count hot" class:gone={!comments.length} use:bump={comments.length}
@@ -495,65 +403,52 @@
 				<Markdown src={ping.question} quiet />
 			</details>
 
-			<div class="cl" role="list">
-				{#each comments as c, i (c.id)}
-					<div
-						class="card-in comment"
-						class:hot={hovered === i}
-						role="listitem"
-						onmouseenter={() => (hovered = i)}
-						onmouseleave={() => (hovered = null)}
-						animate:flip={move}
-						transition:materialize={{ origin: 'top center', y: 6 }}
-					>
-						<div class="ch">
-							<button class="rowbtn jump" title={t('doc.scrollTo')} onclick={() => reveal(c)}>
-								<span class="ell"
-									>{#if c.heading}§ {c.heading} ·{/if}
-									<span class="mono">L{c.startLine}–{c.endLine}</span></span
-								>
-							</button>
-							<button class="btn-ghost btn-sm" onclick={() => editComment(i)}
-								>{t('doc.edit')}</button
-							>
-							<button
-								class="btn-icon"
-								onclick={() => removeComment(i)}
-								aria-label={t('doc.deleteComment')}
-								title={t('doc.deleteComment')}>{I.close}</button
-							>
-						</div>
-						<blockquote class="mono">{trunc(c.quote, 120)}</blockquote>
-						<div class="ct">{c.text}</div>
-						{#if c.files?.length}
-							<div class="help">{I.attach} {c.files.map((f) => f.name).join(', ')}</div>
-						{/if}
-					</div>
-				{:else}
-					<p class="note">{@html th('doc.hint')}</p>
-				{/each}
-			</div>
-
-			<AttachFiles bind:files label={t('doc.attachReview')} compact />
-			{#if error && blocks.length > 0}<div class="err">{error}</div>{/if}
+			<CommentList
+				{comments}
+				files={set.files}
+				current={set.current}
+				bind:all={showAll}
+				bind:hovered
+				onopen={openComment}
+				onedit={editComment}
+				onremove={removeComment}
+			>
+				{#snippet empty()}
+					<p class="note">{@html emptyHint}</p>
+				{/snippet}
+			</CommentList>
 		</div>
 
 		<footer class="pane-foot sf">
+			<label class="sum">
+				<span class="lbl">{t('doc.summary')}</span>
+				<textarea
+					bind:value={summary}
+					oninput={persist}
+					rows="2"
+					placeholder={ping.answerKind === 'text'
+						? t('doc.answerPlaceholder')
+						: t('doc.summaryPlaceholder')}></textarea>
+			</label>
+			<AttachFiles bind:files label={t('doc.attachReview')} compact />
+			{#if error}<div class="err">{error}</div>{/if}
 			{#if isGate}
 				<div class="acts">
 					<button
 						class="btn-primary"
 						disabled={busy}
 						aria-busy={busy && sending === 'approve'}
-						onclick={approve}>{t('doc.approve')}</button
+						onclick={() => submit('approve')}
+						>{said ? t('doc.approveWith') : t('doc.approve')}</button
 					>
 					<button
 						class="btn-sel"
-						disabled={busy || comments.length === 0}
+						disabled={busy || !said}
 						aria-busy={busy && sending === 'reject'}
-						onclick={requestChanges}
+						title={said ? '' : t('doc.rejectNeeds')}
+						onclick={() => submit('reject')}
 					>
-						{t('doc.requestChanges', { count: comments.length })}
+						{t('doc.requestChanges')}
 					</button>
 				</div>
 			{:else if ping.answerKind === 'choice' && ping.options.length}
@@ -564,36 +459,31 @@
 							disabled={busy}
 							aria-busy={busy && sending === opt.id}
 							title={opt.detail ?? ''}
-							onclick={() => chooseOption(opt.id)}>{opt.label}</button
+							onclick={() => submit(opt.id)}>{opt.label}</button
 						>
 					{/each}
 				</div>
 				<p class="cap">{t('doc.pickHint')}</p>
 			{:else}
 				<div class="acts">
-					<button
-						class="btn-primary"
-						disabled={busy || comments.length === 0}
-						aria-busy={busy}
-						onclick={sendReview}
-					>
-						{t('doc.sendReview', { count: comments.length })}
+					<button class="btn-primary" disabled={busy || !said} aria-busy={busy} onclick={sendText}>
+						{t('doc.sendReview')}
 					</button>
 				</div>
 			{/if}
 			<p class="cap">
-				{#if comments.length && savedAt}
+				{#if said && savedAt}
 					<span class="hue-grn">{I.ok} {t('doc.draftSaved')}</span>{t('doc.draftKept')}
 				{:else}
 					{t('doc.draftsKept')}
 				{/if}
 			</p>
 		</footer>
-	</aside>
-</div>
+	{/snippet}
+</ReviewLayout>
 
 <!-- The floating composer: sticky (only Add/Save, Close or Esc dismiss it, so
-     clicking away to re-read the document never throws away what was typed), and
+     clicking away to re-read the file never throws away what was typed), and
      it materialises where the selection was released. -->
 <Popover
 	open={composer !== null}
@@ -611,10 +501,15 @@
 			onkeydown={onComposerKey}
 		>
 			<div class="cmh">
-				<span class="ell">{composer.heading ? `§ ${composer.heading}` : ''}</span>
-				<span class="mono fnt">L{composer.startLine}–{composer.endLine}</span>
+				{#if isWholeFile(composer)}
+					<span class="ell mono" title={composer.path}>{composer.path.split('/').pop()}</span>
+					<span class="fnt">{t('doc.wholeFile')}</span>
+				{:else}
+					<span class="ell">{composer.heading ? `§ ${composer.heading}` : ''}</span>
+					<span class="mono fnt">L{composer.startLine}–{composer.endLine}</span>
+				{/if}
 			</div>
-			<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>
+			{#if composer.quote}<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>{/if}
 			<textarea
 				bind:this={composerEl}
 				bind:value={composer.text}
@@ -638,90 +533,17 @@
 </Popover>
 
 <style>
-	.wb {
-		flex: 1;
-		min-height: 0;
-		display: grid;
-		grid-template-columns: 220px minmax(0, 1fr) var(--aside-w);
-		gap: 10px;
-		padding: 2px 22px 16px;
-	}
-	.outline,
-	.doc,
-	.side {
-		min-height: 0;
-		display: flex;
-		flex-direction: column;
-	}
 	.gone {
 		display: none;
 	}
-
-	/* outline */
-	.ol {
-		overflow: auto;
-		padding: 6px;
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
+	.sub {
+		border-top: 1px solid var(--ln);
 	}
-	.oi {
-		padding-top: 4px;
-		padding-bottom: 4px;
-		font-size: var(--fs-label);
-		color: var(--mut);
-	}
-	.oi:hover {
-		color: var(--tx);
-	}
-
-	/* document */
 	.dscroll {
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
 		padding: 16px 22px 40px;
-	}
-	.extras {
-		margin-bottom: 16px;
-	}
-	.block {
-		position: relative;
-		border-radius: var(--r-tag);
-		padding: 0 8px;
-		margin: 0 -8px 2px;
-		transition: background var(--dur-fade) var(--ease-out);
-	}
-	/* A file shown as written: its runs of lines read as one listing. */
-	.listing .block {
-		margin-bottom: 0;
-	}
-	.listing .block :global(pre) {
-		margin: 0;
-		border-radius: 0;
-	}
-	.listing .block:first-child :global(pre) {
-		border-radius: var(--r-tag) var(--r-tag) 0 0;
-	}
-	.listing .block:last-child :global(pre) {
-		border-radius: 0 0 var(--r-tag) var(--r-tag);
-	}
-	.block.commented {
-		box-shadow: inset 3px 0 0 var(--brand);
-	}
-	.block.active,
-	.block.pending {
-		background: var(--brandBg);
-	}
-
-	/* Exact-selection highlights. ::highlight() isn't attached to an element,
-     so it can't be scoped — hence :global. Falls back to the block tint above
-     where the Custom Highlight API is missing. */
-	:global(::highlight(apo-doc-pending)) {
-		background: color-mix(in oklch, var(--brand) 32%, transparent);
-	}
-	:global(::highlight(apo-doc-active)) {
-		background: color-mix(in oklch, var(--brand) 26%, transparent);
 	}
 
 	/* sidebar */
@@ -746,64 +568,22 @@
 	.ask > :global(.md) {
 		margin-top: 6px;
 	}
-	.cl {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-	.comment {
-		padding: 5px 6px 9px 10px;
-		display: flex;
-		flex-direction: column;
-		gap: 5px;
-		transition:
-			background var(--dur-fade) var(--ease-out),
-			border-color var(--dur-fade) var(--ease-out);
-	}
-	.comment.hot {
-		border-color: var(--brandLn);
-		background: var(--brandBg);
-	}
-	.ch {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		min-width: 0;
-	}
-	.jump {
-		flex: 1;
-		padding: 3px 4px;
-		font-size: var(--fs-help);
-		color: var(--mut);
-	}
-	.jump:hover {
-		color: var(--tx);
-	}
-	.jump .mono {
-		font-size: var(--fs-id);
-	}
-	blockquote {
-		white-space: pre-wrap;
-		margin: 0;
-		padding-left: 8px;
-		border-left: 2px solid var(--brandLn);
-		color: var(--mut);
-		font-size: var(--fs-meta);
-		max-height: 5.5em;
-		overflow: hidden;
-	}
-	.ct {
-		white-space: pre-wrap;
-		font-size: var(--fs-ui);
-	}
 	.note {
 		margin: 0;
 	}
 	.sf {
 		flex-direction: column;
 		align-items: stretch;
-		gap: 6px;
+		gap: 8px;
 		padding: 10px 12px 11px;
+	}
+	.sum {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.sum textarea {
+		resize: vertical;
 	}
 	.acts {
 		display: flex;
@@ -814,6 +594,16 @@
 		font-size: var(--fs-meta);
 		color: var(--fnt);
 		margin: 0;
+	}
+	blockquote {
+		white-space: pre-wrap;
+		margin: 0;
+		padding-left: 8px;
+		border-left: 2px solid var(--brandLn);
+		color: var(--mut);
+		font-size: var(--fs-meta);
+		max-height: 5.5em;
+		overflow: hidden;
 	}
 
 	/* floating composer (inside the Popover's glass) */
@@ -840,27 +630,9 @@
 		gap: 6px;
 	}
 
-	@media (max-width: 1180px) {
-		.wb {
-			grid-template-columns: minmax(0, 1fr) var(--aside-w);
-		}
-		.outline {
-			display: none;
-		}
-	}
-	@media (max-width: 760px) {
-		.wb {
-			grid-template-columns: minmax(0, 1fr);
-			overflow: auto;
-			padding: 2px 16px 16px;
-		}
-		.outline,
-		.doc,
-		.side {
+	@container review (max-width: 700px) {
+		.sscroll {
 			overflow: visible;
-		}
-		.dscroll {
-			padding: 12px 14px 24px;
 		}
 	}
 </style>

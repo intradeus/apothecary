@@ -4,7 +4,7 @@
 	import { counterRates, fmtBytes, fmtPct, fmtRate, fmtTime } from '$lib/format';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 
-	// Sparkline charts of the run's workspace resource usage (CPU / memory /
+	// Charts of the run's workspace resource usage (CPU / memory /
 	// network) from the engine's ~10s sample window. Hand-rolled SVG: the
 	// series are small and the app has no chart dependency. The crosshair is
 	// shared across charts (same x = same sample time); hovered values replace

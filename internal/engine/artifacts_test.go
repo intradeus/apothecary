@@ -154,7 +154,7 @@ func TestAttemptSnapshotsSurviveRetries(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: plan, type: agent, agent: planner, input: { failure: $FAILURE }, on_success: check }
+  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } }, input: { failure: { from: edge.failure, type: failure, optional: true } }, on_success: check }
   - { id: check, type: command, run: verify, on_success: done,
       on_fail: { to: plan, max: 1 } }
 `

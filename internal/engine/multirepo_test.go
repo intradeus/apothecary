@@ -131,14 +131,14 @@ agents:
   - name: redactor
     prompt: describe it
     outputs:
-      - { name: mr, path: artifacts/mr.md }
+      - { name: mr, type: file }
 main:
   - { id: build, type: agent, agent: builder, on_success: commit }
   - { id: commit, type: command, each_repo: true, run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi", on_success: push }
   - { id: push, type: command, each_repo: true, run: "git push -u origin HEAD", on_success: redact }
-  - { id: redact, type: agent, agent: redactor, on_success: mr }
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: final_gate }
-  - { id: final_gate, type: human_gate, input: { mr: $MR_URL }, auto_approve: mr_merged, auto_reject: mr_closed, on_success: done, on_reject: abort }
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: final_gate }
+  - { id: final_gate, type: human_gate, input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, auto_reject: mr_closed, on_success: done, on_reject: abort }
 `
 
 // A project with extra repositories: every checkout is cloned and branched,

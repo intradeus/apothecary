@@ -7,6 +7,7 @@ package ports
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"sort"
@@ -149,10 +150,26 @@ type EnvProvisioner interface {
 	// (artifacts/plan.md), absolute = absolute (/apothecary/run.env).
 	ReadFile(ctx context.Context, env EnvID, path string) ([]byte, error)
 	WriteFile(ctx context.Context, env EnvID, path string, data []byte, mode fs.FileMode) error
+	// ListFiles lists the regular files under dir, recursively, sorted by
+	// path — what a files port holds. Symlinks are never followed; a dir
+	// that is not there is fs.ErrNotExist. At most ListFilesLimit entries.
+	ListFiles(ctx context.Context, env EnvID, dir string) ([]FileEntry, error)
 	Links(ctx context.Context, env EnvID) ([]AccessLink, error)
 	Status(ctx context.Context, env EnvID) (EnvStatus, error)
 	Destroy(ctx context.Context, env EnvID) error
 }
+
+// FileEntry is one file ListFiles found: its path as ReadFile takes it (the
+// directory's path joined with the file's own) and its size in bytes.
+type FileEntry struct {
+	Path string
+	Size int64
+}
+
+// ListFilesLimit bounds one ListFiles: a directory holding more lists its
+// first ListFilesLimit files. A files port is screenshots and reports, not a
+// tree to walk.
+const ListFilesLimit = 1000
 
 type SessionID string
 
@@ -174,12 +191,29 @@ type AgentInput struct {
 	// Called from the runner's goroutine; implementations must not block for
 	// long (the engine buffers).
 	Events func(AgentEvent)
+	// MCPServers are the MCP servers the stage's agent may call (its `mcp:`
+	// list, FLOWLANG §1), resolved for this run: secrets filled, the builtin
+	// browser turned into its workspace command. A runner registers them on
+	// the session it opens or loads — so they are the agent's, not the
+	// workspace's — and must never log or persist them.
+	MCPServers []MCPServer
 	// Inbox holds the human's messages for this invocation. A runner that can
 	// deliver them mid-invocation takes them at the end of each turn (or
 	// interrupts the turn, when a message asks to); one that cannot simply
 	// never takes them, and the engine carries them into the next prompt.
 	// nil = no messages.
 	Inbox Inbox
+}
+
+// MCPServer is one MCP server an agent session can call: a local command
+// speaking MCP on stdio in the workspace (Command), or a remote server over
+// streamable HTTP (URL). Values are final — a harness passes them through.
+type MCPServer struct {
+	Name    string
+	Command []string
+	URL     string
+	Env     map[string]string
+	Headers map[string]string
 }
 
 // UserMessage is one message a human sent to a running agent.
@@ -254,9 +288,22 @@ type AgentPlanEntry struct {
 	Priority string
 }
 
+// Verdict is a judgement on the work: approve or reject, a summary, and
+// comments — each a remark on the whole, or on a file (and its lines).
 type Verdict struct {
 	Approve  bool
-	Comments []string
+	Summary  string
+	Comments []VerdictComment
+}
+
+// VerdictComment is one comment of a verdict: Path "" is a remark on the
+// whole change; Line 0 is on the whole file.
+type VerdictComment struct {
+	Path    string
+	Line    int
+	EndLine int
+	Quote   string
+	Body    string
 }
 
 type Usage struct {
@@ -384,6 +431,20 @@ type Check struct {
 	Name  string     `json:"name"`
 	State CheckState `json:"state"`
 	URL   string     `json:"url,omitempty"`
+}
+
+// CIFailure is one failed CI check, said so that what failed can be found and
+// run again locally: the CI file that declares it, its job and stage, the
+// steps that failed. A check another app reports (not the repository host's
+// own CI) has only its name, link and summary.
+type CIFailure struct {
+	Name    string   `json:"name"`
+	URL     string   `json:"url,omitempty"`
+	File    string   `json:"file,omitempty"`  // .github/workflows/ci.yml, .gitlab-ci.yml
+	Job     string   `json:"job,omitempty"`   // the job's name in that file
+	Stage   string   `json:"stage,omitempty"` // GitLab: the job's stage
+	Steps   []string `json:"steps,omitempty"` // GitHub Actions: the failed steps, in order
+	Summary string   `json:"summary,omitempty"`
 }
 
 // Checks are a merge request head's CI checks and what they add up to.
@@ -767,6 +828,46 @@ type WorkspacePortExposer interface {
 	AppPorts(ctx context.Context, env EnvID) []int
 }
 
+// Browser is the project browser (internal/browser): one container per
+// project, a Chromium per agent session, driven through Playwright's MCP
+// server — what a flow's builtin `browser` MCP server is. The browser has no
+// network of its own: it reaches the run's services at localhost, through
+// Dial, and nothing else.
+type Browser interface {
+	// Session serves one MCP session on stdio (newline-delimited JSON-RPC,
+	// as an MCP client speaks to a stdio server) until either side closes,
+	// bringing the project's browser up first. One session is one Chromium.
+	Session(ctx context.Context, s BrowserSession, stdio io.ReadWriter) error
+	// Warm brings the project's browser up (building its image on first
+	// use) in the background, so a session does not wait on it.
+	Warm(project string)
+	// Status is the project's browser as the settings page shows it.
+	Status(ctx context.Context, project string) (BrowserStatus, error)
+}
+
+// BrowserSession is who a browser session is for.
+type BrowserSession struct {
+	Project string // the project's name, which names its container
+	Run     string
+	// Dial reaches a TCP port the run's workspace serves: where the
+	// browser's http://localhost:<port> goes.
+	Dial func(ctx context.Context, port int) (net.Conn, error)
+}
+
+// BrowserStatus is a project browser's state.
+type BrowserStatus struct {
+	Container string `json:"container"`
+	// State is the container's: absent (never started, or removed),
+	// running, or stopped (idle — the next session starts it again).
+	State string `json:"state"`
+	// Image is what the container runs; Current what this build would run
+	// — they differ until the browser is next idle and gets recreated.
+	Image   string `json:"image,omitempty"`
+	Current string `json:"current,omitempty"`
+	// Sessions are the agent sessions using it now, each its own Chromium.
+	Sessions int `json:"sessions"`
+}
+
 // CodeServerPort is the fixed workspace-loopback port code-server binds
 // (avoids the engine 8080 / egress-proxy 8079 loopback ports the bridge uses).
 const CodeServerPort = 8471
@@ -902,6 +1003,9 @@ type RepoHost interface {
 	// (empty target = the repo's default branch). A stacked change is MRs
 	// whose targets chain: each layer onto the one below.
 	CreateDraftMR(ctx context.Context, repo RepoRef, branch, target, title, body string) (MRRef, error)
+	// AddMRLabels adds labels to a merge request, keeping the ones it has;
+	// a label the repository does not have yet is created. Idempotent.
+	AddMRLabels(ctx context.Context, mr MRRef, labels []string) error
 	// FindMR locates an already-open merge request from branch onto target.
 	// The engine reconciles with it after a crash between creating an MR on
 	// the repository host and recording it (PLAN5 M20): the branch is unique
@@ -915,6 +1019,10 @@ type RepoHost interface {
 	// MRChecks lists the CI checks reported on head (the merge request's
 	// head commit, as MRStatus returned it) with their aggregate state.
 	MRChecks(ctx context.Context, mr MRRef, head string) (Checks, error)
+	// CIFailures says what failed on head, so it can be found and re-run:
+	// each failed check's CI file, job, stage and failed steps — never its
+	// log. More calls than MRChecks: read once, when a chain needs it.
+	CIFailures(ctx context.Context, mr MRRef, head string) ([]CIFailure, error)
 	// MRApproval says whether the merge request is approved: by at least one
 	// reviewer with no request for changes outstanding (GitHub), or with its
 	// approval rules met by at least one approval (GitLab).
@@ -944,6 +1052,32 @@ type RepoHost interface {
 	// summary. Every part carries ReviewMarker(rev.ID, …); parts already on
 	// the merge request are not posted again.
 	PostReview(ctx context.Context, mr MRRef, rev Review) (ReviewPosted, error)
+	// UploadAttachment hosts a file on the repository host for a merge
+	// request's body to show (a screenshot): uploaded, not committed, so it
+	// never lands on the branch.
+	UploadAttachment(ctx context.Context, repo RepoRef, name, contentType string, data []byte) (Attachment, error)
+}
+
+// Attachment is a file a repository host or a tracker now hosts, and how a
+// body written there shows it.
+type Attachment struct {
+	// URL is the file's absolute address.
+	URL string
+	// Link is what a markdown link or image in a body written there points
+	// at: URL, or the host's own shorter form its renderer resolves
+	// (GitLab's project-relative /uploads/…). "" means URL.
+	Link string
+	// Markdown shows it: an image for an image where the host renders one,
+	// a link otherwise. "" means the caller builds it from Link.
+	Markdown string
+}
+
+// Target is Link, else URL.
+func (a Attachment) Target() string {
+	if a.Link != "" {
+		return a.Link
+	}
+	return a.URL
 }
 
 // Notification is the one-way fan-out payload; the CPUI inbox is canonical,

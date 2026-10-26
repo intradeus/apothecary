@@ -17,8 +17,6 @@
 		valuePlaceholder = 'value',
 		keyWidth = 140,
 		addLabel = 'Add',
-		/** Rows that can't be removed or renamed (a pinned first `setup`). */
-		locked = () => false,
 		/** Values to suggest while typing (`$WORKSPACE`, `$MR_URL`). */
 		suggestions = [],
 		/** Keys to mark invalid (duplicates, bad names). */
@@ -30,7 +28,6 @@
 		valuePlaceholder?: string;
 		keyWidth?: number;
 		addLabel?: string;
-		locked?: (key: string, index: number) => boolean;
 		suggestions?: string[];
 		invalid?: Set<string>;
 		/** Values are scripts: a textarea instead of an input. */
@@ -55,7 +52,6 @@
 				class:invalid={invalid.has(r.key)}
 				value={r.key}
 				placeholder={keyPlaceholder}
-				readonly={locked(r.key, i)}
 				aria-label={t('ui.kv.key')}
 				oninput={(e) => update(i, { key: e.currentTarget.value })}
 			/>
@@ -81,7 +77,6 @@
 				type="button"
 				class="btn-icon"
 				aria-label={t('ui.kv.remove', { key: r.key || t('ui.kv.row') })}
-				disabled={locked(r.key, i)}
 				onclick={() => (rows = rows.filter((_, j) => j !== i))}>{I.close}</button
 			>
 		</div>

@@ -1,11 +1,13 @@
 <script lang="ts">
 	// Pings (DESIGN §6): every ping this run raised, newest first. A pending
-	// one opens into the card that answers it; answered ones say how.
+	// one opens into the card that answers it; answered ones say how — one
+	// that showed files, with the review as it was submitted.
 	import { t } from '$lib/i18n/index.svelte';
 	import PingCard from '$lib/PingCard.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
 	import { ago, fmtAbs, fmtClock } from '$lib/format';
-	import { isAgentPing } from '$lib/ping';
+	import { isAgentPing, isDocumentPing } from '$lib/ping';
+	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
 	import { to } from '$lib/guild';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import { I } from '$lib/ui/icons';
@@ -77,7 +79,22 @@
 				{#if open === p.id}
 					<div class="body">
 						<Markdown src={p.question} />
-						{#if p.feedback}<div class="fb"><b>{t('runview.pings.you')}</b> {p.feedback}</div>{/if}
+						{#if p.status === 'answered' && isDocumentPing(p)}
+							<ReviewHistory
+								embedded
+								keys={false}
+								pingId={p.id}
+								runId={rs.runId}
+								review={p.review}
+								summary={p.feedback}
+								attachmentIds={p.attachmentIds}
+								attachments={rs.attachments}
+								raisedAt={p.raisedAt}
+							/>
+						{:else if p.feedback}<div class="fb">
+								<b>{t('runview.pings.you')}</b>
+								{p.feedback}
+							</div>{/if}
 						<a class="brand ib" href={to.ping(p.id)}>{t('runview.pings.open_inbox')} {I.forward}</a>
 					</div>
 				{/if}

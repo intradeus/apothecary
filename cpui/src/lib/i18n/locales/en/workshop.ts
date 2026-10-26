@@ -45,38 +45,6 @@ export default {
 	'workshop.runs.noneFinishedTitle': 'No finished runs yet',
 	'workshop.runs.noneFinishedText': 'Completed, failed and archived runs land here.',
 
-	// --- agents tab
-	'workshop.agents.callout':
-		'Agents live inside their flow’s document, so each flow carries its own. They are read-only here for now — edit them in the flow editor’s YAML view.',
-	'workshop.agents.loadError': 'Couldn’t load flows',
-	'workshop.agents.emptyTitle': 'No agents yet',
-	'workshop.agents.emptyText': 'Agents arrive with this workshop’s first flow.',
-	'workshop.agents.flows': 'Flows',
-	'workshop.agents.noneDeclaredTitle': 'No agents declared',
-	'workshop.agents.noneDeclaredText': 'These flows run commands, gates and actions only.',
-	'workshop.agents.builtin': 'built-in',
-	'workshop.agents.default': 'default',
-	'workshop.agents.editInEditor': 'Edit in flow editor',
-	'workshop.agents.parseError': 'This flow’s YAML didn’t parse here',
-	'workshop.agents.noneInFlow': 'No agents in this flow.',
-	'workshop.agents.readOnly': 'read-only',
-	'workshop.agents.readOnlyTitle': 'May not edit files',
-	'workshop.agents.writes': 'writes',
-	'workshop.agents.writesTitle': 'May edit files',
-	'workshop.agents.bash': 'bash',
-	'workshop.agents.bashTitle': 'May run shell commands',
-	'workshop.agents.noBash': 'no bash',
-	'workshop.agents.noBashTitle': 'No shell',
-	'workshop.agents.runsOn': 'runs on',
-	'workshop.agents.unused': 'declared, not used by any stage',
-	'workshop.agents.inputs': 'inputs',
-	'workshop.agents.optional': ' optional',
-	'workshop.agents.ticketOnly': 'the ticket only',
-	'workshop.agents.outputs': 'outputs',
-	'workshop.agents.verdict': 'verdict',
-	'workshop.agents.none': 'none',
-	'workshop.agents.prompt': 'Prompt',
-
 	// --- flows tab
 	'workshop.flows.lede':
 		'A flow belongs to this workshop: its stages run these commands and its agents know this repository. Runs pin the version they start on.',

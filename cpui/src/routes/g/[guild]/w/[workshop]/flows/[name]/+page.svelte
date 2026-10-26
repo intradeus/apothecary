@@ -14,6 +14,7 @@
 	import { t, th } from '$lib/i18n/index.svelte';
 	import FlowGraph, { type SequenceView, type Selection } from '$lib/FlowGraph.svelte';
 	import FlowInspector from '$lib/FlowInspector.svelte';
+	import AgentsPage from '$lib/flow/AgentsPage.svelte';
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import GlassGroup from '$lib/ui/GlassGroup.svelte';
@@ -58,7 +59,10 @@
 	// redone once the graph has measured its nodes.
 	let autoPlaced = false;
 	let rev = $state(0);
-	let tab = $state<'graph' | 'yaml'>('graph');
+	// Graph and Agents edit the same document; YAML its text.
+	let tab = $state<'graph' | 'agents' | 'yaml'>('graph');
+	// The agent open in the Agents tab.
+	let agentOpen = $state<string | undefined>();
 	let graphDirty = $state(false);
 	let selection = $state<Selection>(null);
 	let versions = $state<FlowVersion[]>([]);
@@ -160,7 +164,7 @@
 	onMount(load);
 
 	function currentYAML(): string {
-		if (doc && (tab === 'graph' || graphDirty)) return docToYaml(doc);
+		if (doc && (tab !== 'yaml' || graphDirty)) return docToYaml(doc);
 		return yaml;
 	}
 
@@ -181,11 +185,16 @@
 		for (const ph of doc.phases ?? []) placeChain(doc, layout, ph.id);
 	}
 
-	function switchTab(next: 'graph' | 'yaml') {
+	function switchTab(next: 'graph' | 'agents' | 'yaml') {
 		if (next === tab) return;
 		if (next === 'yaml') {
 			if (doc && graphDirty) yaml = docToYaml(doc);
 			tab = 'yaml';
+			return;
+		}
+		// Graph and Agents share the document: nothing to re-read between them.
+		if (tab !== 'yaml') {
+			tab = next;
 			return;
 		}
 		// yaml -> graph: re-parse through the server (single validation source).
@@ -202,7 +211,7 @@
 					graphDirty = false;
 					validation = null;
 					rev++;
-					tab = 'graph';
+					tab = next;
 				} else {
 					tab = 'yaml';
 					validation = {
@@ -384,8 +393,15 @@
 	// Selecting on the canvas starts afresh.
 	let trail = $state<Selection[]>([]);
 	function openPanel(sel: Selection) {
+		if (sel?.kind === 'agent') return openAgent(sel.name);
 		trail = [...trail, selection];
 		select(sel, true);
+	}
+	// An agent is edited in the Agents tab, wherever it is opened from — a
+	// stage's "Edit agent", the flow panel's list, a schema's users.
+	function openAgent(name: string) {
+		agentOpen = name;
+		switchTab('agents');
 	}
 	// Whether a selection still names something (a delete leaves the trail
 	// pointing at nothing).
@@ -404,6 +420,10 @@
 				return !!doc.agents?.some((a) => a.name === sel.name);
 			case 'sequence':
 				return !!doc.sequences?.some((q) => q.id === sel.id);
+			case 'schema':
+				return !!doc.schemas?.some((q) => q.name === sel.name);
+			case 'mcp':
+				return !!doc.mcp_servers?.some((m) => m.name === sel.name);
 		}
 	}
 	function goBack() {
@@ -440,6 +460,15 @@
 				return { ...t, name: to.name };
 			if (from.kind === 'phase' && to.kind === 'phase' && t.kind === 'phase' && t.id === from.id)
 				return { ...t, id: to.id };
+			if (
+				from.kind === 'schema' &&
+				to.kind === 'schema' &&
+				t.kind === 'schema' &&
+				t.name === from.name
+			)
+				return { ...t, name: to.name };
+			if (from.kind === 'mcp' && to.kind === 'mcp' && t.kind === 'mcp' && t.name === from.name)
+				return { ...t, name: to.name };
 			if (from.kind === 'stage' && to.kind === 'stage') {
 				if (t.kind === 'stage' && t.sequence === from.sequence && t.id === from.id)
 					return { ...t, id: to.id };
@@ -460,6 +489,7 @@
 	// inspector — so the pane follows it. From the canvas (`keep` unset) it
 	// starts the trail afresh.
 	function select(sel: Selection, keep = false) {
+		if (sel?.kind === 'agent') return openAgent(sel.name);
 		if (!keep) trail = [];
 		selection = sel;
 		if (!doc) return;
@@ -769,6 +799,7 @@
 				<Segmented
 					options={[
 						{ value: 'graph', label: t('page.flow.graph') },
+						{ value: 'agents', label: t('page.flow.agents') },
 						{ value: 'yaml', label: 'YAML' }
 					]}
 					value={tab}
@@ -892,8 +923,22 @@
 	{#if !flow && !error}
 		<div class="canvas"><Skeleton pane lines={6} /></div>
 	{:else if flow}
-		<div class="canvas" class:yaml={tab === 'yaml'}>
-			{#if tab === 'graph' && doc}
+		<div class="canvas" class:yaml={tab === 'yaml'} class:agents={tab === 'agents'}>
+			{#if tab === 'agents' && doc}
+				<AgentsPage
+					{doc}
+					bind:selected={agentOpen}
+					onchange={markChanged}
+					onopenstage={(r) => {
+						switchTab('graph');
+						select({ kind: 'stage', id: r.id, sequence: r.sequence });
+					}}
+					onopenmcp={(name) => {
+						switchTab('graph');
+						select({ kind: 'mcp', name });
+					}}
+				/>
+			{:else if tab === 'graph' && doc}
 				<div class="split">
 					<div class="pane">
 						<FlowGraph
@@ -1174,7 +1219,8 @@
 		color: var(--tx);
 		font-weight: 600;
 	}
-	.canvas.yaml {
+	.canvas.yaml,
+	.canvas.agents {
 		background: var(--cBg);
 		backdrop-filter: var(--cBf);
 		-webkit-backdrop-filter: var(--cBf);

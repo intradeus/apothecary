@@ -1,19 +1,23 @@
 <script lang="ts">
-	// The head of a reviewed document (plan review, the answered review): its
-	// workspace path, and a caption saying it is the raise-time snapshot, not
-	// the live file (DESIGN-FILES §9).
+	// The head of a reviewed file (the review being written, the one
+	// submitted): its workspace path, what can be done with it, and a caption
+	// saying it is the raise-time snapshot, not the live file (DESIGN-FILES §9).
+	import type { Snippet } from 'svelte';
 	import { fmtAbs, fmtClock } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
 		path,
 		raisedAt,
-		reviewed = false
+		reviewed = false,
+		children
 	}: {
 		path: string;
 		raisedAt: string;
 		/** Answered: the document as it was reviewed. */
 		reviewed?: boolean;
+		/** Actions on the file, at the end of the head. */
+		children?: Snippet;
 	} = $props();
 </script>
 
@@ -25,6 +29,7 @@
 			? t('inbox.snapshotReviewed', { time: fmtClock(raisedAt) })
 			: t('inbox.snapshotLive', { time: fmtClock(raisedAt) })}</span
 	>
+	{@render children?.()}
 </div>
 
 <style>

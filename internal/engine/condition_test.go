@@ -22,7 +22,7 @@ func skipped(evs []event.Event, stage string) (bool, string) {
 	return false, ""
 }
 
-// when: tracker on a ticket written by hand: the agent never runs and no
+// run_if: tracker on a ticket written by hand: the agent never runs and no
 // workspace is provisioned for it; the command after it gets the workspace.
 func TestWhenTrackerSkipsWithoutASource(t *testing.T) {
 	doc := `name: cond
@@ -31,7 +31,7 @@ parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 agents:
   - { name: b, prompt: build it }
 main:
-  - { id: note, type: agent, agent: b, when: tracker }
+  - { id: note, type: agent, agent: b, run_if: tracker }
   - { id: test, type: command, run: "true" }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -41,7 +41,7 @@ main:
 	}
 	h.e.Wait(id)
 	evs := h.events(t, id)
-	if ok, note := skipped(evs, "note"); !ok || !strings.Contains(note, "when tracker") {
+	if ok, note := skipped(evs, "note"); !ok || !strings.Contains(note, "run_if tracker") {
 		t.Fatalf("note not skipped: %v", eventTypes(evs))
 	}
 	if n := len(h.runner.SnapshotRunCalls()); n != 0 {
@@ -76,7 +76,7 @@ main:
 	}
 }
 
-// when: subject in a phase started by hand with no merge request skips;
+// run_if: subject in a phase started by hand with no merge request skips;
 // a subject action without the guard fails routably instead.
 func TestWhenSubjectSkipsInASubjectlessPhaseRun(t *testing.T) {
 	doc := `name: subj
@@ -88,8 +88,8 @@ watchers:
   - id: polish
     on: manual
     stages:
-      - { id: sync, type: action, action: sync_target, when: subject }
-      - { id: load, type: action, action: load_review_comments, on_fail: end }
+      - { id: sync, type: action, action: sync_target, run_if: subject }
+      - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } }, on_fail: end }
       - { id: shine, type: command, run: "./shine.sh" }
 outcomes:
   - { id: shipped, on: mr_merged, then: done }
@@ -120,7 +120,7 @@ outcomes:
 	}
 	ph2.waitPhaseCompleted(t, runID2, "polish", 1)
 	evs := ph2.events(t, runID2)
-	if ok, note := skipped(evs, "sync"); !ok || !strings.Contains(note, "when subject") {
+	if ok, note := skipped(evs, "sync"); !ok || !strings.Contains(note, "run_if subject") {
 		t.Errorf("sync not skipped: %v", eventTypes(evs))
 	}
 	failed := false
@@ -144,9 +144,9 @@ outcomes:
 func TestWhenParamFalseSkips(t *testing.T) {
 	doc := `name: gated
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6, gate: true }
+parameters: { harness: fake, model: anthropic/claude-sonnet-4-6, gate: { type: bool, default: true } }
 main:
-  - { id: approve, type: human_gate, question: "Go?", when: $gate }
+  - { id: approve, type: human_gate, question: "Go?", run_if: $gate }
   - { id: build, type: command, run: "true" }
 `
 	h := newHarness(t, mustFlow(t, doc))

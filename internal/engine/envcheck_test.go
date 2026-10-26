@@ -48,7 +48,7 @@ func TestRunEnvCheckDerivedCatalog(t *testing.T) {
 	}
 	// The catalog is DERIVED: one egress step per resolved domain, the
 	// harness binary step, and destroy at the end.
-	for _, want := range []string{"provision", "bootstrap", "verify",
+	for _, want := range []string{"provision", "bootstrap",
 		"egress_deny", "egress:gitlab.local",
 		"egress:openrouter.ai", "harness_binary", "shim", "tunnel",
 		"rw_absolute", "rw_relative", "links", "destroy"} {

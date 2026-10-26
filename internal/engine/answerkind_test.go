@@ -19,9 +19,9 @@ func TestValidateAnswerByKind(t *testing.T) {
 		kind, answer, feedback string
 		ok                     bool
 	}{
-		{event.AnswerDecision, "approve", "", true},
-		{event.AnswerDecision, "reject", "why", true},
-		{event.AnswerDecision, "a", "", false},
+		{event.AnswerYesNo, "approve", "", true},
+		{event.AnswerYesNo, "reject", "why", true},
+		{event.AnswerYesNo, "a", "", false},
 		{event.AnswerChoice, "a", "", true},
 		{event.AnswerChoice, "other", "my own", true},
 		{event.AnswerChoice, "other", "", false},
@@ -97,7 +97,7 @@ func TestPingRaisedKindIsInferredForOldEvents(t *testing.T) {
 		json string
 		kind string
 	}{
-		{`{"ping_id":"p","type":"gate","question":"ok?"}`, event.AnswerDecision},
+		{`{"ping_id":"p","type":"gate","question":"ok?"}`, event.AnswerYesNo},
 		{`{"ping_id":"p","type":"clarification","question":"which?","options":["a","b"]}`, event.AnswerChoice},
 		{`{"ping_id":"p","type":"clarification","question":"why?"}`, event.AnswerText},
 		{`{"ping_id":"p","type":"select","question":"pick","options":["d1 — a.go"]}`, event.AnswerMulti},

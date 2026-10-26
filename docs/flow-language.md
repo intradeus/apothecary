@@ -9,23 +9,23 @@ This document is the normative reference. Code cites it as `FLOWLANG §n`.
 
 Four rules shape everything below:
 
-1. **Every artifact interface is declared, in one form.** No stage quietly
-   reads a file another stage happened to leave behind, and no *artifact*
-   arrives invisibly — not even the feedback from a failed attempt. Every
-   binding is `name: value`, whatever the stage type, which is why the graph
-   editor can draw the dataflow.
+1. **Every value a stage reads or writes is declared, in one form.** No stage
+   quietly reads a file another stage happened to leave behind, and nothing
+   arrives invisibly — not the ticket, not the feedback from a failed attempt.
+   Every port is `name: { from | to, type }`, whatever the stage type, which is
+   why the parser can check the dataflow and the graph editor draw it.
 
    What this rule does *not* claim: that a stage touches nothing else. Agent
    and command stages share one workspace — a checkout with a working tree, an
    index and a history — and that medium is ambient, not declared. A `commit`
    stage reads the whole tree by nature; `test` reads the repository; `push`
-   writes a remote. Declaring `input: {message: artifacts/commit.md}` says what
+   writes a remote. Declaring `input: { message: { from: artifacts/commit.json, type: commit_message } }` says what
    the *artifact interface* is, and is honest about being only that. The
    workspace is shared because the engine runs one work stage at a time (*The
    model*, below); that is the design, not a gap.
 2. **Values are strict, types are extensible.** Every field takes a closed set
    of values, so a typo is a parse error rather than a surprise at 3am. New
-   stage types, actions, signals, sentinels and edge kinds are added by
+   stage types, actions, signals, sources and edge kinds are added by
    extending a registry, not by loosening the grammar.
 3. **Each fact is stated once, where it belongs.** An edge says where the run
    goes; the stage it lands on says what to do with what arrived. An agent
@@ -72,6 +72,8 @@ parameters:                # the flow's ONE settings block (below): every entry 
   max_cost_usd: 10.0       #   run-wide ceilings; exceeding either abandons the run
   max_total_turns: 300
   verify: verify           #   the flow's own knobs, read where $verify appears
+schemas: [...]             # optional: the structures the flow's own files hold (§4 Schemas)
+mcp_servers: [...]         # optional: tools beyond a harness's own its agents may use (below)
 agents: [...]              # the agents this flow runs — definitions, not references
 sequences: [...]           # optional: chains of stages written once, run where a stage names them (below)
 main: [...]                # the chain a run starts with (below)
@@ -96,16 +98,18 @@ agents:
     description: adversarial code reviewer
     read_only: true                     # deny the harness's edit/write tools
     allow_bash: true
-    inputs:
+    mcp: [browser]                      # optional: the flow's mcp_servers it may use (below)
+    inputs:                             # what it reads, typed — a stage running it says from where (§4)
       - name: plan
+        type: file
         description: the approved plan to check the change set against
       - name: failure
+        type: failure
         description: what the previous attempt printed when it failed
-        optional: true                  # so a stage may bind $FAILURE to it
-    outputs:
+        optional: true                  # so a stage may feed it edge.failure
+    outputs:                            # what it writes, typed — a stage running it says where
       - name: verdict
-        type: verdict                   # "" (a plain file) | verdict | review_replies | review_threads
-        path: artifacts/verdict.json    # default; a stage may rebind it
+        type: verdict                   # file | files | verdict | review_threads | review_replies | commit_message
         description: APPROVE or REJECT with actionable comments
     prompt: |
       You are the adversarial reviewer of a software factory...
@@ -113,9 +117,10 @@ agents:
 
 Three things follow, and they are the point:
 
-- **The contracts are parse-time facts.** Binding an input the agent does not
-  declare, leaving a required one unbound, or putting `on_reject` on an agent
-  that renders no verdict are all **errors that refuse the document** — not
+- **The contracts are parse-time facts.** A port the agent does not declare, a
+  required input or an output left unstated, a type the agent does not read,
+  or `on_reject` on a stage that writes no verdict are all **errors that
+  refuse the document** — not
   advice from a second pass that needed a project to run. A flow is
   reviewable, and wrong flows are unsavable, on its own.
 - **A flow is self-contained.** One file states the whole behaviour: what runs,
@@ -172,6 +177,54 @@ parse time and validated against the project when a run is created (§6); what
 differs between projects beyond that is a parameter, bound per project without
 touching the document.
 
+### MCP servers: tools beyond the harness
+
+An agent's tools are its harness's — read, edit, bash — plus the MCP servers
+the flow declares and the agent lists:
+
+```yaml
+mcp_servers:
+  - name: browser
+    builtin: browser                    # apothecary's: the project's browser (below)
+  - name: tracker
+    description: the team's issue tracker
+    command: [npx, -y, "@acme/tracker-mcp"]   # a program speaking MCP on stdio, run in the workspace
+    env: { TRACKER_TOKEN: "${secrets.tracker_token}" }
+  - name: docs
+    url: https://mcp.example.com/       # a remote server (streamable HTTP)
+    headers: { Authorization: "Bearer ${secrets.docs_key}" }
+agents:
+  - name: shooter
+    mcp: [browser]                      # what this agent may call; the others never see it
+    …
+```
+
+A server is exactly one of `builtin`, `command` or `url`; `env` goes with a
+command, `headers` with a url. A secret is never written in the flow: a value
+says `${secrets.<name>}`, filled from the **project's secrets** (Workshop →
+Settings) when the stage starts — never in the command or the url, never in
+an event or a transcript. Run creation refuses a flow reading a secret the
+project does not have. Each harness registers the servers its agent lists, and
+only those.
+
+**`builtin: browser`** is the project's browser: one container per project,
+shared by its runs, that starts a Chromium for each agent session and drives it
+through Playwright's MCP server — navigate, click, type, screenshot. It reaches
+the *run's* services at `http://localhost:<port>` (§2 *service*), exactly as
+the agent would from its terminal, and nothing else — any other host is
+refused, so the browser is no way around the project's egress rules. The
+project turns it on (Workshop → Settings → Browser); run creation refuses a
+flow whose agents use it while it is off. A screenshot the agent names
+(`browser_take_screenshot` with a filename) is written into the workspace,
+relative to where the agent works — `artifacts/shots/home.png` lands where a
+`files` port reads it; what else the browser saves (page snapshots, PDFs)
+stays in its container, so an agent reads a page with `browser_snapshot`.
+
+The servers ride the agent's session: each session starts its own (one
+Chromium per session), and an agent's harness sees only the ones it lists. A
+`url` server needs a harness that takes remote servers — one that does not
+fails the stage saying so.
+
 ### Parameters
 
 `parameters:` is the flow's one settings block. Every entry declares a knob
@@ -200,34 +253,47 @@ without being referenced anywhere:
 | `max_cost_usd` | float | `10` | the run: exceeding it abandons the run |
 | `max_total_turns` | int | `300` | the run: exceeding it abandons the run |
 
-The flow's own knobs are any other slug name. A scalar is the default; the
-long form adds a description and, for a string, an enum:
+The flow's own knobs are any other slug name, and each **declares what it
+holds**: a `type` — `bool | int | float | string | duration` — and, with
+`list: true`, any number of values of it. The engine's six take a bare default
+(their type is the engine's: the table above):
 
 ```yaml
 parameters:
   harness: opencode
   model: opencode-go/qwen3.7-plus
-  verify:          { default: verify, description: "the project command that runs the tests" }
-  review_model:    { default: opencode-go/glm-5.2 }
-  plan_gate:       { default: true }
-  conflicts_start: { default: confirm, enum: [auto, confirm, manual] }
+  verify:          { type: string, default: verify, description: "the project command that runs the tests" }
+  review_model:    { type: string, default: opencode-go/glm-5.2 }
+  plan_gate:       { type: bool, default: true }
+  conflicts_start: { type: string, default: confirm, enum: [auto, confirm, manual] }
+  rereview_quiet:  { type: duration, default: 10m }
+  mr_labels:       { type: string, list: true, default: [apothecary] }
 ```
 
-A parameter's **type** is read from its default: `true`/`false` is a bool, an
-integer an int, a decimal a float, anything else a string. A bound value must
-parse as that type and, with an enum, be one of its values. The engine-known
-names cannot be declared as knobs of another shape, and the editor pins them
-at the top of the block.
+The type is declared, never read off the default: the default reads *as* it
+(`default: "true"` is a bool's true when the type says bool), and must parse
+as it — a `duration` as a positive Go duration (`30m`, `2h`). A list's default
+is a list. An `enum` is a string's (or each item of a list of strings) and
+holds the default. A bound value is the type's text — a list's a JSON array,
+`["apothecary", "bot"]` — and, with an enum, one of its values. A declaration
+without a type is refused with the one it would have had (*"verify: type is
+required — type: string"*). The engine-known names cannot be declared as
+another type, nor as lists, and the editor pins them at the top of the
+block.
 
-**Where a parameter is read.** `$name` — lower-case; `$UPPER` is a sentinel
-(§4) — at these sites only:
+**Where a parameter is read.** `$name` — lower-case, the only thing `$`
+means — at these sites only:
 
 | site | the parameter it takes |
 |---|---|
-| an agent stage's `model`, `harness`, `max_turns`, `timeout`; a command's `run_ref`, `timeout` | a string; an int; a string that parses as a duration |
-| an action input | a string — an enum input needs an enum parameter whose values all sit within the input's |
-| a watcher's or an outcome's `on.start`, a watcher's `on.quiet_for`, `on.max` | an enum within `auto \| confirm \| manual`; a string; an int |
-| a stage's `when` | a bool |
+| an agent stage's `model`, `harness`, `max_turns`, `timeout`; a command's `run_ref`, `timeout`; a service stage's `service`, `timeout` | a string; an int; a duration |
+| an action setting (`with:`) | a string — an enum setting needs an enum parameter whose values all sit within the setting's; a list setting (`create_mr`'s `labels`) a list of strings |
+| a watcher's or an outcome's `on.start`, a watcher's `on.quiet_for`, `on.max` | an enum within `auto \| confirm \| manual`; a duration; an int |
+| a stage's `run_if` | a bool |
+| a source `run.service.$name` | a string |
+
+A list parameter is read only where a list is taken, and a single value never
+where one is: `labels: $mr_labels`, not `timeout: $mr_labels`.
 
 Nowhere else. A field that reads no parameter refuses one written as its
 whole value — a description (the flow's, a stage's, a watcher's, an
@@ -311,8 +377,8 @@ one namespace, and `main` is taken.
   repository keeps for the head (`refs/pull/<n>/head`,
   `refs/merge-requests/<iid>/head` — a fork's too, on a local `mr-<iid>`
   there is no pushing to). The merge request is the run's from the start: the
-  main chain acts on it as its subject (no `create_mr`, no `when: subject`
-  needed), `$DIFF_TARGET` is what it merges, each later chain on it first
+  main chain acts on it as its subject (no `create_mr`, no `run_if: subject`
+  needed), `run.git.diff_target` is what it merges, each later chain on it first
   fast-forwards to its current head, and the outcomes follow its fate. A
   rerun stays on the merge request. The built-in `reviewer` is this shape: one
   `review` sequence (read, an optional gate, `post_review`) run by its main chain
@@ -384,14 +450,14 @@ point or `done` — so two chains never touch the branch at once.
 merge-request signal or started by hand on one, the main chain of a run
 started on one, an outcome holding for one — everything is scoped to the
 subject: command stages run in its checkout (artifacts stay in the primary's
-`artifacts/`, so address them as `$HOME/repo/artifacts/…`), `$MR_URL` is its
-merge request, `$DIFF_TARGET` is its branch against its target and
-`$DIFF_PHASE` what *this chain run* committed, and agents get a `# SUBJECT`
+`artifacts/`, so address them as `$HOME/repo/artifacts/…`), `run.mr.url` is its
+merge request, `run.git.diff_target` is its branch against its target and
+`run.git.diff_phase` what *this chain run* committed, and agents get a `# SUBJECT`
 prompt section saying which checkout to edit (the others are read-only
 context). `each_repo` does not apply there (the parser warns). A *subject
 action* — `sync_target`, `load_review_comments`, `reply_review_comments`,
 `mr_merge`, `post_review` — in a chain run that has no subject fails
-routably with `input_missing`: guard it with `when: subject` (§2) or route
+routably with `input_missing`: guard it with `run_if: subject` (§2) or route
 `on_fail`; the parser warns where that can happen. Each chain run's edges
 start with fresh counters (`max` is per run of the chain); the budget is the
 whole life's. A dead end in a watcher — a failure with nowhere to go, a
@@ -431,12 +497,12 @@ outcomes:
   - id: merged
     on: mr_merged                      # every merge request merged: the ticket is done, and so is the run
     stages:
-      - { id: ticket_done, type: action, action: ticket_transition, input: { to: done }, on_fail: done }
+      - { id: ticket_done, type: action, action: ticket_transition, with: { to: done }, on_fail: done }
   - id: closed
     on: mr_closed                      # closed unmerged: the ticket goes back, the run is abandoned
     then: abort
     stages:
-      - { id: ticket_back, type: action, action: ticket_transition, input: { to: todo }, on_fail: abort }
+      - { id: ticket_back, type: action, action: ticket_transition, with: { to: todo }, on_fail: abort }
 ```
 
 A team whose work is finished when a reviewer approves — the merge is
@@ -479,14 +545,16 @@ sequences:
   - id: ship
     description: "commit what the agent left and run the tests"
     stages:
-      - { id: commit, type: command, each_repo: true, run: "git add -A && git commit -F artifacts/commit.md",
+      - { id: commit, type: action, action: commit,
+          input: { message: { from: artifacts/commit.json, type: commit_message } },
           on_fail: debug }
       - { id: test,   type: command, run_ref: $verify,
           on_fail: fail,                                # the sequence stage's on_fail
           on_timeout: { to: test, max: 1, then: fail } }
   - id: make
     stages:
-      - { id: build,  type: agent, agent: builder, input: { failure: $FAILURE },
+      - { id: build,  type: agent, agent: builder,
+          input: { failure: { from: edge.failure, type: failure, optional: true } },
           on_fail: { to: build, max: 2, then: debug } }
       - { id: ship,   sequence: ship, on_fail: { to: build, max: 5, then: debug } }
       - { id: review, type: agent, agent: reviewer, on_reject: { to: build, max: 3, then: debug } }
@@ -549,12 +617,13 @@ flow is written against, and no binding names them:
 | the repository | the project's repo, cloned into the workspace — plus, for a multi-repo project, its *additional* repositories beside it (`~/repos/<name>`), each on the same branch name |
 | the branch | the ticket's base branch (`apothecary/<slug>` unless the ticket names one) with the run's id tail appended, forked from the run's source branch — or, for a run created on a merge request someone opened, that merge request's own branch |
 | the workspace | one checkout shared by every agent and command stage |
+| the services | the project's long-running processes — its app, a database — each a start script, a stop, a health probe and its ports, started by a `service` stage (§2) or by a person from the run page |
 | the parameters | the values the run was created with (§1 *Parameters*) |
 | run identity | run id and its bearer token, for the ask_human channel |
 
-A flow declares none of it because none of it varies per stage. `$DIFF_TARGET`,
-`$WORKSPACE` and `$MR_URL` (§4) are how a stage reaches into this context
-explicitly, and those *are* declared.
+A flow declares none of it because none of it varies per stage. `run.ticket`,
+`run.git.*`, `run.mr.url`, `run.workspace` and `run.service.<name>` (§4) are how a stage reaches into
+this context explicitly, and those *are* declared, as ports.
 
 ---
 
@@ -562,9 +631,9 @@ explicitly, and those *are* declared.
 
 ```yaml
 - id: build                # required, slug, unique; `end`/`done`/`abort`/`debug`/`start`/`fail` reserved
-  type: agent              # agent | command | human_gate | action | wait
+  type: agent              # agent | command | human_gate | action | wait | service
   description: "..."       # optional note; documentation only, reaches no prompt
-  when: $plan_gate         # optional condition (below); false ⇒ the stage completes as skipped
+  run_if: $plan_gate         # optional condition (below); false ⇒ the stage completes as skipped
 ```
 
 | type | what it does | key fields |
@@ -572,8 +641,9 @@ explicitly, and those *are* declared.
 | `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout` |
 | `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout`, `each_repo` |
 | `human_gate` | parks the phase on a human decision | `question`, `input`, `auto_approve`, `auto_reject` |
-| `action` | invokes a built-in apothecary integration | `action`, `input` |
+| `action` | invokes a built-in apothecary integration | `action`, `input`, `output`, `with` |
 | `wait` | parks the phase until a signal holds | `for`, `timeout` |
+| `service` | starts, restarts or stops one of the project's services | `service`, `do`, `timeout` |
 
 A field that does not apply to a stage's type is a parse error (`model` on a
 command, `question` on an agent, and so on).
@@ -584,10 +654,12 @@ command, `question` on an agent, and so on).
 - id: build
   type: agent
   agent: builder                        # a name in this flow's agents block
-  input:
-    plan: artifacts/plan.md             # bind the agent's declared inputs
-    rejection: $DECISION                # ...including what an edge brings back
-  output: { plan: docs/plan.md }         # optional: rebind a declared output's path
+  input:                                # the agent's inputs: from where, what
+    ticket:    { from: run.ticket, type: ticket }
+    plan:      { from: artifacts/plan.md, type: file }
+    rejection: { from: edge.verdict, type: verdict, optional: true }   # what an edge brings back
+  output:                               # every output the agent declares, and where it goes
+    notes:     { to: artifacts/build-notes.md, type: file }
   model: $review_model                  # optional overrides of the flow's parameters —
   harness: codex                        #   a literal, or a parameter of the right type
   max_turns: 80
@@ -595,28 +667,37 @@ command, `question` on an agent, and so on).
 ```
 
 The agent's definition in this document's `agents:` block — its **contract** —
-declares what it reads and writes (§1, §4). The stage binds that contract; it
-cannot invent inputs or outputs the agent does not declare, and the parser
-refuses the document if it tries.
+declares what it reads and writes (§1, §4). The stage states that contract as
+ports, saying where each comes from and goes; it cannot invent ports the agent
+does not declare, leave out an output or a required input, or change a type,
+and the parser refuses the document if it tries.
 
 ### command
 
 ```yaml
-- id: commit
+- id: coverage
   type: command
-  run: "git add -A && git commit -F artifacts/commit.md"   # ...or run_ref: verify, or run_ref: $verify
-  input: { message: artifacts/commit.md }   # read before the script runs; missing ⇒ input_missing
-  output: { report: artifacts/report.txt }  # must exist when the script exits 0
-  timeout: 20m                              # optional; absent = parameters.timeout
+  run: "make coverage > artifacts/coverage.txt"   # ...or run_ref: verify, or run_ref: $verify
+  input:                                           # checked before the script runs
+    thresholds: { from: repo:ci/thresholds.json, type: file }
+  output:                                          # checked once it exits 0
+    report: { to: artifacts/coverage.txt, type: file }
+  timeout: 20m                                     # optional; absent = parameters.timeout
 ```
 
 Exactly one of `run` (literal bash) or `run_ref` (a key in the project's
 `commands`, often read from a parameter so the project names it) is required.
-A command has no contract to check its binding names against, so they are
-free labels — and that is the point: they say what each file is *for*, and
-they title the file's dot in the graph. Declaring them is what makes
-`git commit -F artifacts/commit.md` visible as dataflow rather than an opaque
-string.
+A command has no contract to check its port names against, so they are free
+labels — and that is the point: they say what each file is *for*, and they
+title the file's dot in the graph. Declaring them is what makes the files a
+script reads and writes visible as dataflow rather than buried in an opaque
+string; the script itself names the same paths, literally. A port reads files
+only — `run.*` and `edge.*` are an agent's or a gate's (§4).
+
+Every command script can call **`apothecary-shim jq`** — a full jq CLI (gojq,
+inside apothecary's own static shim), taking jq's usual flags and arguments:
+`apothecary-shim jq -r .line artifacts/thresholds.json`. Use it instead of `jq`
+or `python`, which the repo's image may not have.
 
 **`each_repo: true`** runs the script once per checkout of a multi-repo run
 (see *Several repositories* below): the primary first, then every additional
@@ -630,9 +711,9 @@ repositories it touches.
 ```yaml
 - id: plan_gate
   type: human_gate
-  when: $plan_gate                                # a project may switch the gate off
+  run_if: $plan_gate                                # a project may switch the gate off
   question: "Approve this implementation plan?"   # what the human is asked
-  input: { plan: artifacts/plan.md }             # what they are shown
+  input: { plan: { from: artifacts/plan.md, type: file } }   # what they are shown
   on_reject: { to: plan, max: -1 }
 ```
 
@@ -644,12 +725,33 @@ a watcher a person starts by hand may edit it while a gate is open; that
 person chose so.
 
 Every gate is the **same machine**: approve follows `on_success`, reject follows
-`on_reject` carrying the human's feedback. There is no gate kind — what a
+`on_reject`, each carrying the person's verdict. There is no gate kind — what a
 particular gate means ("approve the plan", "merge when satisfied") is said in its
-`question`, and what it hands over is its `input` (one binding today). Both are
-optional; a gate with no question is labelled by its stage id. The one decision
-every flow needs — "the workspace is parked, fix it, then run the stage again" —
-is not a gate you write but the `debug` leaf (§3).
+`question`, and what it hands over is its `input`: the files to review — a `file`
+port each, a `files` port's folder file by file (the first 20, none over 10 MB) —
+and at most one link (`run.mr.url`, `run.workspace`, `run.service.<name>`). Both
+are optional; a gate with no question is labelled by its stage id. The one
+decision every flow needs — "the workspace is parked, fix it, then run the stage
+again" — is not a gate you write but the `debug` leaf (§3).
+
+```yaml
+- id: look_gate
+  type: human_gate
+  question: "Does it look right?"
+  input:
+    plan:  { from: artifacts/plan.md, type: file }
+    shots: { from: artifacts/shots/, type: files }    # each screenshot, reviewed in turn
+    app:   { from: run.service.$app, type: link }     # and the app itself
+  on_reject: { to: build, max: 2 }
+```
+
+**A review is the answer's shape.** The person reviews every file on one page and
+answers with comments, each on one file: on a stretch of a text file's lines,
+quoting what they selected, or on the whole file — always, on an image. With them
+come a summary and any files they attach. Approving can say something too. The
+engine writes that structure, file by file, into the verdict the next stage reads
+as `edge.verdict` (§4) — the page never writes the agent's prompt — and keeps it
+on the record, comment by comment. An approval that says nothing carries nothing.
 
 **Answered automatically.** A gate is a decision point whose *default* answerer
 is a human. `auto_approve` and `auto_reject` name signals (§2 wait) that may
@@ -659,7 +761,7 @@ supply the same two answers:
 - id: final_gate
   type: human_gate
   question: "Review the merge request and merge when satisfied."
-  input: { mr: $MR_URL }
+  input: { mr: { from: run.mr.url, type: link } }
   auto_approve: mr_merged     # they merged it instead of clicking approve
   auto_reject: mr_closed      # they closed it unmerged, which is a no
   on_success: done
@@ -671,7 +773,7 @@ first wins.** That race is why these are fields on the gate rather than separate
 `wait` stages — the engine runs one stage at a time, so `gate → wait` would mean
 "approve, *then* wait for merge", never "either one". A signal-supplied answer is
 recorded exactly like a human's, with `auto: <signal>` as its feedback (so a
-`$DECISION` reader still gets a reason). The same signal cannot be given to both
+`edge.verdict` reader still gets a reason). The same signal cannot be given to both
 fields.
 
 Why two named fields rather than one `auto_answer`, or a boolean `any_of`
@@ -687,30 +789,56 @@ keeps that visible. See §10 for why general AND/OR gates are not the answer.
 - id: mr
   type: action
   action: create_mr                     # a slug from the compiled-in registry
-  input: { body: artifacts/mr.md }      # bind the action's signature
+  input:                                # the files it reads, typed as the registry says
+    body: { from: artifacts/mr.md, type: file }
+```
+
+```yaml
+- id: sync
+  type: action
+  action: sync_target
+  with: { strategy: rebase }            # its settings: literals, or a $parameter
 ```
 
 Actions are apothecary's built-in integrations. Unlike agents they are compiled
-in, so an unknown `action:` is a **parse** error and its input names are checked
-immediately. Registry (`GET /api/actions`); *requires* names the integration
+in, so an unknown `action:` is a **parse** error and its ports and settings are
+checked immediately: every file it reads and writes is a port (§4), typed as
+the registry says — every output stated, the stage saying where — and every
+literal choice a setting under `with:`. Registry (`GET /api/actions`); *requires* names the integration
 the project must have — a repository (GitLab, GitHub) or a tracker:
 
-| action | requires | inputs | outputs | notes |
-|---|---|---|---|---|
-| `create_mr` | repository | `body` (file, required) | `mr_url` (value → `$MR_URL`) | at most one per chain; the body's first `# ` heading becomes the MR title. On a multi-repo run: one merge request per repository the run changed, each onto the branch that checkout forked from. A merge request the branch already has is adopted, never duplicated — so a chain that opens one may safely run again |
-| `push_branch` | — | — | — | pushes the run's branch (every checkout's, or the subject's on a subject). A branch it pushed before is force-pushed **leased** against the tip it recorded — on a subject, at worst the head when the chain started — never blind; a first push is plain. Refused = someone else wrote to the branch: `on_fail` |
-| `sync_target` | — | `strategy` (`merge` \| `rebase`, default `merge`) | — | a *subject action*. Takes the subject's target branch in, in the engine: a no-op when already contained; a conflict leaves the merge (or rebase) **paused** in the working tree and fails the stage with the files named. Whoever resolves it edits those files — no git — and the retried stage checks no marker is left and continues. `rebase` needs a `push_branch` in the same chain |
-| `load_review_comments` | repository | `select` (`human` \| `all`, default `human`) | `review` (file → `artifacts/review.md`) | a subject action. Writes the subject's **pending** threads (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): file, line, diff hunk, comments, thread id. With `select: human` a person first picks which threads to fix (an inbox checklist; the chain parks); unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. A re-entry rewrites the same set |
-| `reply_review_comments` | repository | `replies` (file, required) | — | a subject action. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice |
-| `post_review` | repository | `review` (file, required) | — | a subject action. Posts a `review_threads` file as a review: a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker, so a retry posts only what is missing, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
-| `mr_merge` | repository | `method` (`merge` \| `squash` \| `rebase`, default `merge`), `branch` (`keep` \| `delete`, default `keep`) | — | a subject action, needing no workspace. Merges the subject merge request at the newest head the chain knows: the tip it pushed, else the head it began on — a head someone else pushed is not merged. The repository's rules apply: a merge it declines (a draft, checks or approvals missing, the head moved) fails the stage with its reason, for `on_fail`. `rebase` is GitHub's; GitLab merges by the project's merge method (fast-forward for a linear history), so it refuses it. The merge is what the `merged` outcome then sees |
-| `ticket_transition` | `tracker` | `to` (enum: `todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`) **or** `status` (text), exactly one | — | moves the ticket's tracker issue. `to` is a **canonical** status the ticket's tracker translates into its own vocabulary — Jira through the integration's status map (the stock words by default; `done=Ready for prod` for a team whose Done is a deploy away), GitHub Issues to open/closed — and a status the tracker has no word for **skips** the stage with a note. `status` is the tracker's own status or transition name, verbatim (case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
-| `ticket_comment` | `tracker` | `body` (file, required → `artifacts/ticket_comment.md`) | — | posts the markdown artifact as a comment, ending with a short trailer naming the run, the chain run and the stage — also how a crash between posting and recording is reconciled, so nothing is posted twice |
-| `ticket_set_field` | `tracker` | `field` (text, required); `value` (file) **or** `text` (text), exactly one; `mode` (`replace` \| `append`, default `replace`) | — | writes one field by its display name (`"Feature flags"`, `labels`). `append` merges comma-separated items into the current value (a union: re-applying changes nothing). A field the tracker has no name for, or cannot write from text, fails the stage with `input_invalid` |
-| `ticket_link` | `tracker` | — | — | attaches every merge request the run opened (the subject's on a subject) to the issue — a remote link on Jira, a comment on GitHub — titled with the branch; an upsert, so a re-entry attaches nothing twice. Needs a merge request: `input_missing` without one, and the validator warns when no `create_mr` precedes it |
+| action | requires | `input` (ports) | `with` (settings) | `output` (ports) | notes |
+|---|---|---|---|---|---|
+| `create_mr` | repository | `body` (`file`, required), `attachments` (`files`) | `labels` (a list: `[a, b]` or a list `$parameter`) | — (its link is `run.mr.url`) | at most one per chain; the body's first `# ` heading becomes the MR title. Each attachment is uploaded to the repository host (below) and linked where the body names its path; the rest follow the body, images under *Screenshots*. On a multi-repo run: one merge request per repository the run changed, each onto the branch that checkout forked from. A merge request the branch already has is adopted, never duplicated — so a chain that opens one may safely run again. `labels` go on once it is open (a label the repository lacks is created); a host refusing them is logged, and the merge request stands |
+| `commit` | — | `message` (`commit_message`, required) | — | — | commits everything uncommitted — staged, unstaged, untracked — with the message's subject and body, in every checkout (the subject's alone on a subject). A checkout with nothing to commit is left alone, so a re-entry after the commit landed does nothing. A message that is not a `commit_message` fails with `input_invalid` before git runs; a refused commit (a hook, the git identity) fails with git's words |
+| `push_branch` | — | — | — | — | pushes the run's branch (every checkout's, or the subject's on a subject). A branch it pushed before is force-pushed **leased** against the tip it recorded — on a subject, at worst the head when the chain started — never blind; a first push is plain. Refused = someone else wrote to the branch: `on_fail` |
+| `sync_target` | — | — | `strategy` (`merge` \| `rebase`, default `merge`) | — | a *subject action*. Takes the subject's target branch in, in the engine: a no-op when already contained; a conflict leaves the merge (or rebase) **paused** in the working tree and fails the stage with the files named. Whoever resolves it edits those files — no git — and the retried stage checks no marker is left and continues. `rebase` needs a `push_branch` in the same chain |
+| `load_review_comments` | repository | — | `select` (`human` \| `all`, default `human`) | `review` (`file`, conventionally `artifacts/review.md`) | a subject action. Writes the subject's **pending** threads (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): file, line, diff hunk, comments, thread id. With `select: human` a person first picks which threads to fix (an inbox checklist; the chain parks); unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. A re-entry rewrites the same set |
+| `reply_review_comments` | repository | `replies` (`review_replies`, required) | — | — | a subject action. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice |
+| `post_review` | repository | `review` (`review_threads`, required) | — | — | a subject action. Posts a `review_threads` file as a review: a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker, so a retry posts only what is missing, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
+| `mr_merge` | repository | — | `method` (`merge` \| `squash` \| `rebase`, default `merge`), `branch` (`keep` \| `delete`, default `keep`) | — | a subject action, needing no workspace. Merges the subject merge request at the newest head the chain knows: the tip it pushed, else the head it began on — a head someone else pushed is not merged. The repository's rules apply: a merge it declines (a draft, checks or approvals missing, the head moved) fails the stage with its reason, for `on_fail`. `rebase` is GitHub's; GitLab merges by the project's merge method (fast-forward for a linear history), so it refuses it. The merge is what the `merged` outcome then sees |
+| `ticket_transition` | `tracker` | — | `to` (`todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`) **or** `status` (text), exactly one | — | moves the ticket's tracker issue. `to` is a **canonical** status the ticket's tracker translates into its own vocabulary — Jira through the integration's status map (the stock words by default; `done=Ready for prod` for a team whose Done is a deploy away), GitHub Issues to open/closed — and a status the tracker has no word for **skips** the stage with a note. `status` is the tracker's own status or transition name, verbatim (case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
+| `ticket_comment` | `tracker` | `body` (`file`, required), `attachments` (`files`) | — | — | attaches each file to the issue and links it where the body names its path (the rest listed after it), then posts the markdown artifact as a comment, ending with a short trailer naming the run, the chain run and the stage — also how a crash between posting and recording is reconciled, so nothing is posted twice |
+| `ticket_set_field` | `tracker` | `value` (`file`) — exactly one of `value` / `text` | `field` (text, required); `text` (text); `mode` (`replace` \| `append`, default `replace`) | — | writes one field by its display name (`"Feature flags"`, `labels`). `append` merges comma-separated items into the current value (a union: re-applying changes nothing). A field the tracker has no name for, or cannot write from text, fails the stage with `input_invalid` |
+| `ticket_link` | `tracker` | — | — | — | attaches every merge request the run opened (the subject's on a subject) to the issue — a remote link on Jira, a comment on GitHub — titled with the branch; an upsert, so a re-entry attaches nothing twice. Needs a merge request: `input_missing` without one, and the validator warns when no `create_mr` precedes it |
 
-An action's enum input may read an enum parameter whose values all sit within
-the input's (`to: $final_status`); a text input may read a string parameter.
+An action's enum setting may read an enum parameter whose values all sit within
+the setting's (`to: $final_status`); a text setting may read a string parameter.
+
+**Attachments.** `create_mr` and `ticket_comment` take a `files` directory —
+an agent's screenshots — as `attachments`. Each file is uploaded where the
+body will be read: GitLab's project uploads, GitHub's user attachments (which
+need a **classic** personal access token with the `repo` scope — a
+fine-grained or an app's token cannot upload, and GitHub Enterprise Server has
+no such endpoint, so both fail the stage saying so), Jira's issue
+attachments, GitHub Issues as GitHub. Where the body names a file by its path —
+a link or an image `![home](artifacts/shots/home.png)`, or the bare path — the
+reference becomes the uploaded file's link; a file it never names is listed
+after it, images under *Screenshots*, the rest under *Attachments*. At most 20
+files of at most 10 MB each, checked before anything is uploaded
+(`input_invalid`); an upload the host refuses is an `on_fail`. A merge request
+the branch already has is adopted before anything is read, so a re-entry
+uploads nothing.
 
 **Tracker actions** (`ticket_*`) are the one family whose prerequisite is per
 *ticket* rather than per project: they write through the `ticketsource`
@@ -722,31 +850,33 @@ refuses a flow with tracker actions only when the ticket *is* linked and its
 integration cannot write (a read-only adapter, a token without write scopes),
 naming the stage. A tracker that errors at stage time — unreachable, refused —
 is an outcome failure like any other action's (`on_fail`, with the reason as
-`$FAILURE`), never terminal: route it to the next stage for "best effort".
+`edge.failure`), never terminal: route it to the next stage for "best effort".
 Every tracker action is *remote*: it needs no workspace unless one of its file
 inputs is bound, so a flow may open with `ticket_transition` and have the
 issue moved seconds in, before anything is provisioned — and the `merged`
 outcome's move never re-provisions a workspace the reaper took.
 
 ```yaml
-- { id: kick,   type: action, action: ticket_transition, input: { to: in_progress },
+- { id: kick,   type: action, action: ticket_transition, with: { to: in_progress },
     on_success: plan, on_fail: { to: plan, max: 1 } }   # best effort: a tracker hiccup never blocks the work
 …
-- { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: link }
+- { id: mr,     type: action, action: create_mr,
+    input: { body: { from: artifacts/mr.md, type: file } }, on_success: link }
 - { id: link,   type: action, action: ticket_link, on_success: flags }
 - { id: flags,  type: action, action: ticket_set_field,
-    input: { field: "Feature flags", value: artifacts/feature_flags.txt, mode: append },
+    input: { value: { from: artifacts/feature_flags.txt, type: file } },
+    with: { field: "Feature flags", mode: append },
     on_success: in_review }
-- { id: in_review,   type: action, action: ticket_transition, input: { to: in_review }, on_fail: end }
+- { id: in_review,   type: action, action: ticket_transition, with: { to: in_review }, on_fail: end }
 …
 # the outcome: once every merge request merged, the ticket moves and the run is done
 - id: merged
   on: mr_merged
   stages:
-    - { id: ticket_done, type: action, action: ticket_transition, input: { status: "Ready for prod" }, on_fail: done }
+    - { id: ticket_done, type: action, action: ticket_transition, with: { status: "Ready for prod" }, on_fail: done }
 ```
 
-`artifacts/feature_flags.txt` is an agent output like any other — a small
+`artifacts/feature_flags.txt` is an agent's output like any other — a small
 agent that reads the diff for the flags it introduced and writes them,
 comma-separated — and the field name is the author's, written in the flow
 where the graph shows it. "Done once the merge request is accepted" is not a
@@ -758,7 +888,7 @@ bound to the same word would keep the flow portable.
 **Edges on actions.** `on_success` routes normally. An action may carry
 `on_fail`, taken when its *outcome* is wrong in a way an agent, a retry or a
 human can fix — a merge that conflicts, a push the remote refused, a subject
-action with nothing to act on — with the reason as `$FAILURE`. Its
+action with nothing to act on — with the reason as `edge.failure`. Its
 infrastructure errors (the repository unreachable, the workspace gone) stay
 terminal, and an action without `on_fail` fails the run on any error. Adding
 an action is one registry entry, one executor, and (if it needs an
@@ -773,13 +903,13 @@ primary stays `~/repo` and still supplies the devcontainer. What follows from
 one more checkout, without any flow change:
 
 - agents see a `# REPOSITORIES` prompt section naming each checkout and its
-  path; `$DIFF_TARGET` and `$STATUS` are grouped per repository;
-- a command stage marked `each_repo: true` runs in each checkout in turn, so
-  the default template's `commit` and `push` stages commit and push every
-  repository the run touched;
+  path; `run.git.diff_target` and `run.git.status` are grouped per repository;
+- a command stage marked `each_repo: true` runs in each checkout in turn, and
+  the `commit` and `push_branch` actions commit and push every repository the
+  run touched;
 - `create_mr` opens one draft merge request **per repository the run changed**
   (an untouched extra repository gets none), each onto the branch that
-  checkout forked from; a gate on `$MR_URL` lists them all, and `mr_merged` /
+  checkout forked from; a gate on `run.mr.url` lists them all, and `mr_merged` /
   `mr_closed` wait for all / fire on any;
 - each merge request is its own subject: a conflict on one repository's merge
   request is fixed in that checkout only;
@@ -860,16 +990,70 @@ something new happens to a merge request — or a person says so — and an
 **outcome** fires once and ends the run, when the merge request's fate is
 known.
 
-### when
+### service
 
 ```yaml
-- { id: plan_gate,   type: human_gate, when: $plan_gate, … }       # a bool parameter
-- { id: in_progress, type: action, action: ticket_transition, when: tracker, … }
-- { id: sync,        type: action, action: sync_target, when: subject, … }
-- { id: note,        type: agent, agent: writer, when: not tracker, … }
+parameters:
+  app: { default: default, description: the project service the run brings up }
+main:
+  …
+  - id: up
+    type: service
+    service: $app        # a project service: a name, or a $parameter naming one
+    do: start            # start (default) | restart | stop
+    timeout: 5m          # optional: how long it may take to be healthy (default: the service's own)
+    on_fail: { to: fix_app, max: 2 }   # never healthy: the log's tail is edge.failure
+  - id: shoot
+    type: agent
+    agent: shooter
+    input:
+      app: { from: run.service.$app, type: link }   # its address while it runs
+    output:
+      shots: { to: artifacts/shots/, type: files }
 ```
 
-`when:` names one condition: `tracker` (the ticket has a tracker issue),
+A **service** is the project's, not the flow's — like a command, it is the
+project that knows how its app starts — declared in Workshop → Settings →
+Services: a `start` script run in the primary checkout, an optional `stop`, a
+health probe (an HTTP URL answering 2xx/3xx, a TCP port accepting, or a
+command exiting 0) with how long a start may take and how often it is probed
+after, and the ports it listens on. A start that keeps running *is* the
+service; one that exits 0 started it in the background (`docker compose up
+-d`, `make dev-up`) and its `stop` brings it down. A flow names a service,
+usually through a parameter, so one flow serves projects that call their app
+anything — the convention is `default`, and a project whose app is `aio`
+binds `app: aio`.
+
+`start` succeeds once the service is healthy — immediately when it already is
+— and fails when its start script exits non-zero (`on_fail`) or it is not
+healthy within `timeout` (`on_timeout`, else `on_fail`); either way
+`edge.failure` holds why and the tail of its output, for an agent that can fix
+it. `restart` stops it first (a re-entry after a crash waits instead of
+restarting again). `stop` succeeds once it is down; stopping a service that is
+not running does nothing. While it starts it is probed every second; once
+healthy, at its interval, and three failures in a row make it unhealthy (one
+success, healthy again) — a flip the run page shows, never an event. Without
+a probe a service is up once its start has run a second without failing.
+
+A service a stage started is stopped when its chain ends — every one, when the
+run does; one a person started from the run page stays up until a person stops
+it or the workspace goes (a stage that restarts it makes it the stage's). The
+timeline records each start, readiness, stop and failure (`service_started`,
+`service_ready`, `service_stopped`, `service_failed`) and who did it. Its ports get preview links on the run page either way, and
+`run.service.<name>` (§4) is its address — `http://localhost:<port>` — for an
+agent, and the preview link for a gate. Run creation refuses a flow naming a
+service the project does not declare.
+
+### run_if
+
+```yaml
+- { id: plan_gate,   type: human_gate, run_if: $plan_gate, … }       # a bool parameter
+- { id: in_progress, type: action, action: ticket_transition, run_if: tracker, … }
+- { id: sync,        type: action, action: sync_target, run_if: subject, … }
+- { id: note,        type: agent, agent: writer, run_if: not tracker, … }
+```
+
+`run_if:` names one condition: `tracker` (the ticket has a tracker issue),
 `subject` (this chain run acts on a merge request), or a bool parameter — each
 negatable as `not x`. When it does not hold, the stage completes as
 **skipped** (`stage_completed{skipped, note}` on the timeline) and `on_success`
@@ -877,7 +1061,7 @@ follows, so the chain reads the same whether or not the project has a tracker
 or the knob is on. The validator counts what a conditional stage produces as
 produced only on some routes, and a skipped agent stage never silences the
 model check a later one needs. Tracker actions skip without a tracker on
-their own; `when: tracker` says it in the graph.
+their own; `run_if: tracker` says it in the graph.
 
 ### Timeouts
 
@@ -888,6 +1072,7 @@ One field, `timeout`, whose meaning follows the stage type:
 | `agent` | execution wall clock, suspended while an ask_human ping is open (§9) | `parameters.timeout` (30m) |
 | `command` | execution wall clock | `parameters.timeout` |
 | `wait` | how long the chain stays parked on the signal | parked indefinitely |
+| `service` | how long a start or restart may take to be healthy | the service's health timeout (5m) |
 | `human_gate` | — (the field does not apply) | bounded by human attention |
 | `action` | — (the field does not apply) | bounded by its client |
 
@@ -951,16 +1136,17 @@ There is deliberately no backoff: every agent/command loop must carry a finite
 
 | kind | raised when | allowed on | carries |
 |---|---|---|---|
-| `on_fail` | the stage failed | agent, command, action, wait | `$FAILURE` |
-| `on_reject` | a verdict said REJECT, or a human rejected a gate | agent, human_gate | `$DECISION` |
-| `on_timeout` | the stage exceeded its timeout | agent, command, wait | `$FAILURE` |
+| `on_fail` | the stage failed | agent, command, action, wait | `edge.failure` |
+| `on_reject` | a verdict said REJECT, or a human rejected a gate | agent, human_gate | `edge.verdict` |
+| `on_success` | the stage succeeded | every stage | nothing — but a gate's approval, or a verdict's APPROVE, that said something carries `edge.verdict` |
+| `on_timeout` | the stage exceeded its timeout | agent, command, wait | `edge.failure` |
 
 A timeout uses `on_timeout` when the stage declares one, else `on_fail`.
 
 **An edge does not declare what it carries.** Its kind already decides that, so
 saying it again could only disagree. What it carries is available to its target
-as a sentinel, and the target binds it like any other input (§4) — or ignores
-it. That is the single declaration: *where it goes* lives with the stage that
+as an edge source, which the target reads through a port like any other input
+(§4) — or ignores. That is the single declaration: *where it goes* lives with the stage that
 reads it, next to everything else that stage reads.
 
 **Terminals.** `end` finishes the **chain**: it is over and the run goes
@@ -1018,124 +1204,189 @@ Links between agents and commands must carry a finite `max`.
 
 ## §4 Dataflow
 
-Stages exchange work through files in the workspace. A path is the rendezvous:
-one stage writes `artifacts/plan.md`, another declares it reads
-`artifacts/plan.md`, and that is the connection. Nothing is passed by value and
-nothing is interpolated.
+Every value a stage reads or writes is a **port**, stated on the stage: its
+name, where it comes from (`from:`) or goes (`to:`), and what it is. A stage
+reads like a function's signature — `commit_msg(ticket: ticket, changes:
+changeset, plan: file) -> message: commit_message` — and nothing it uses is
+left implicit.
 
-### One binding form
+Control and data are separate. **Edges carry control** — which stage runs
+next — and the payload of the transition: the failure or the decision that
+sent the run there. **Ports carry data**, and a source never names a stage:
+an input reads a path, and whatever stage last wrote that path is what it
+gets. Two stages pass their own values to a third with two paths; one path
+written by several stages (a plan, then a replan) gives its readers the most
+recent.
 
-Every binding, on every stage type, is `name: value`:
+### Ports
 
 ```yaml
-input:
-  plan: artifacts/plan.md
-  changes: $DIFF_TARGET
+- id: commit_msg
+  type: agent
+  agent: committer
+  input:
+    ticket:  { from: run.ticket, type: ticket }
+    changes: { from: run.git.status, type: changeset }
+    plan:    { from: artifacts/plan.md, type: file }
+    failure: { from: edge.failure, type: failure, optional: true }
+  output:
+    message: { to: artifacts/commit.json, type: commit_message }
 ```
 
-What differs is only how the **name** is checked, which follows from the type:
+An input is `{from, type | schema, description?, optional?}`, an output
+`{to, type | schema, description?}`. A port is always this mapping — a bare
+value (`plan: artifacts/plan.md`) is a parse error that spells the fix. An
+action's literal choices are not ports: they are its **settings**, under
+`with:` (§2 action).
 
-| type | `input` names | `output` names |
+What the names are checked against follows from the stage type:
+
+| type | input ports | output ports |
 |---|---|---|
-| `agent` | must be a declared input | must be a declared output (rebinds its path) |
-| `action` | must be in the action's signature; an `enum` or `text` input takes a literal (or a parameter), not a path | — |
-| `command` | free labels | free labels |
-| `human_gate` | free label, exactly one binding | — |
+| `agent` | the agent's declared inputs: every required one stated, none it does not declare | every output the agent declares (it writes them all; the stage says where) |
+| `action` | the action's file inputs, typed as the registry says | every file the action writes |
+| `command` | free labels, files only | free labels |
+| `human_gate` | one: a file to review, or a link | — |
 
-### Sentinels
+### Sources
 
-A `$NAME` value is provided by the engine; a `$name` value is a parameter (§1);
-anything else is a repo-relative artifact path (no leading `/`, no `.` or `..`
-segments).
-
-| sentinel | is | bindable on |
+| source | is | type |
 |---|---|---|
-| `$DIFF_TARGET` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. The same range in every chain; on a multi-repo run one section per checkout, on a subject the subject's only | agent input |
-| `$DIFF_PHASE` | `git diff --name-status <chain start>...HEAD` — what **this chain run** committed since the head it began on: a review round's fixes, not the whole branch. A chain run that began on no recorded head (the main chain of a run started on a ticket, which forked the branch) counts from the target | agent input |
-| `$STATUS` | `git status --short` of the working tree — staged, unstaged and untracked files, i.e. what a commit stage would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like `$DIFF_TARGET` | agent input |
-| `$DECISION` | why the last attempt was turned down: a verdict's comments, or a human's gate feedback | agent input |
-| `$FAILURE` | what the failing stage printed: the last 8 KB, with every secret the engine injected replaced by `[redacted:<kind>]` | agent input |
-| `$MR_URL` | the run's merge request link, produced by `create_mr`; the first when a multi-repo run opened several — a gate then also lists them all in its context; on a subject, the subject's | gate input |
-| `$WORKSPACE` | the workspace's access link (terminal, else IDE); the `debug` leaf hands it out by itself | gate input |
+| `artifacts/plan.md` | a path some stage of the flow writes (`to:`); nothing writing it is a parse error | the writer's |
+| `repo:docs/spec.md` | a file of the repository nothing in the flow writes | any file type |
+| `run.ticket` | the run's ticket — title, goal, the person's direction for this attempt, the files attached to it; an agent reading it gets the `# TASK` section | `ticket` |
+| `run.git.diff_target` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. On a multi-repo run one section per checkout, on a subject the subject's only | `changeset` |
+| `run.git.diff_phase` | `git diff --name-status <chain start>...HEAD` — what **this chain run** committed since the head it began on: a review round's fixes, not the whole branch. A chain run that began on no recorded head counts from the target | `changeset` |
+| `run.git.status` | `git status --short` — staged, unstaged and untracked files, what a commit would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like the diffs | `changeset` |
+| `run.mr.url` | the run's merge request link (create_mr's); the first when a multi-repo run opened several — a gate then lists them all; on a subject, the subject's | `link` |
+| `run.workspace` | the workspace's access link (terminal, else IDE); the `debug` leaf hands it out by itself | `link` |
+| `run.service.<name>` | a project service's address while it runs: `http://localhost:<port>` for an agent (its first port), its preview link for a gate; not running, the agent is told so. The name may be a parameter: `run.service.$app` | `link` |
+| `run.ci.failure` | what failed in CI on the merge request a `ci_failed` watcher opened on — each failed check with the CI file that declares it, its job (and GitLab stage), its failed steps (GitHub Actions) and its link; a check another app reports, its name and summary. Never a log: the agent finds the job's script and runs it. Read once as the chain starts and kept on its `phase_started`. Only a `ci_failed` watcher's stages read it | `failure` |
+| `edge.failure` | what the failing stage printed — the last 8 KB, every secret the engine injected replaced by `[redacted:<kind>]` | `failure` |
+| `edge.verdict` | the last verdict on the stage before: an agent's, or a person's review at a gate — the summary and the comments, file by file. A rejection always carries one; an approval when it said something | `verdict` |
 
-The scoping is enforced: an agent cannot bind `$MR_URL` (a link is for a human
-to click, not for a prompt to read), and a gate cannot bind a git sentinel
-(prompt content is not something to show a human). Each git sentinel is named
-after the git it runs and means that one range wherever it is bound.
+The engine's sources are typed, and the port states that type. Who may read
+what is enforced: an agent reads any source; a gate shows files and a link; a
+command and an action read files only — a script has nothing to read a value
+the engine provides from. `$` means a parameter (§1) and nothing else.
 
-**`$DECISION` and `$FAILURE`** are the retry channel. They hold whatever the
-edge that re-entered this stage brought with it, so they are empty on a first
-attempt — which is why an input bound to one must be declared `optional`. Only
-one can be filled at a time (the edge kind decides which), and an agent that
-binds both can tell "the reviewer turned you down" apart from "the tests broke":
+**`edge.failure` and `edge.verdict` are the retry channel.** They hold what
+the edge that entered the stage carried — on_fail and on_timeout a failure,
+on_reject a verdict, and the on_success of a gate or of an agent with a verdict
+the verdict of an approval that said something ("approved — keep step two
+small") — and are empty when the stage was entered any other way, so a port
+reading one is `optional`, and something that carries it must enter the stage (a
+port nothing can fill is a parse error). A failure keeps its last 8 KB; a
+verdict its first 32 KB, since what was decided and the first comments matter
+most. An agent that reads both can tell "the reviewer turned you down" apart
+from "the tests broke":
 
 ```yaml
 - id: build
   type: agent
   agent: builder
   input:
-    plan: artifacts/plan.md
-    rejection: $DECISION      # reviewer comments, or a human's gate feedback
-    failure: $FAILURE         # test output, a command's error
+    plan:      { from: artifacts/plan.md, type: file }
+    rejection: { from: edge.verdict, type: verdict, optional: true }   # reviewer comments, a person's feedback
+    failure:   { from: edge.failure, type: failure, optional: true }     # test output, a command's error
 ```
 
-The names are the agent's own — there is no reserved slot.
+Why two sources rather than one `edge.feedback`? Because the prompt then says
+which setback this was (in the built-in `builder` flow `build` is the target of
+both `test.on_fail` and `review.on_reject`), the agent can be instructed
+differently per input ("a rejection: address every point first; a failure:
+reproduce it first"), and the edge kind alone decides which fills — no edge
+says what it carries, and the validator can say *"no on_reject edge enters this
+stage, nor the success of a gate or a verdict, so edge.verdict is never
+filled"*.
 
-Why two sentinels rather than one `$FEEDBACK`? Three reasons, in ascending
-order of importance:
+### What is checked
 
-1. **The prompt says which setback this was.** A stage can be re-entered by
-   different kinds of edge — in the built-in `builder` flow `build` is the target of both
-   `test.on_fail` and `review.on_reject`. One slot would make the agent infer
-   the situation from the text; two label it.
-2. **The agent can instruct differently per slot.** "If you got a rejection,
-   address every point first; if you got a failure, reproduce it first" needs two
-   descriptions, and a description belongs to an input.
-3. **It removed a second declaration.** With one slot the *edge* would still
-   have to say what to send (the target could not tell the difference), so the
-   old `feed:` field would survive alongside the binding — two statements of one
-   fact. With two sentinels the edge kind alone decides which fills, and `feed:`
-   became redundant. It is also what lets the validator say *"you bind
-   `$DECISION` but only `on_fail` edges reach you, so nothing will ever fill
-   it"*, which one undifferentiated slot cannot express.
+When the flow is saved — every one an error that refuses the document:
+
+1. **The contract.** An agent stage states every output its agent declares and
+   every required input, and no port the agent lacks; an action stage likewise
+   against the registry. A port's shape **satisfies** the declaration's: the
+   same type (any file satisfies `file`), the same schema — and on an output, a
+   schema may be added to narrow it, never the type changed.
+2. **The source.** A path is written by some stage (`repo:` says on purpose
+   that nothing does — and a path a stage writes cannot be read as `repo:`); an
+   engine source is one of the list (a typo suggests the nearest: *did you mean
+   run.ticket?*).
+3. **The shape agrees.** Every stage writing a path states the same shape, and
+   that shape satisfies every reader's. A stage cannot write one path twice.
+4. **Written before it is read.** On every route through the edges that reaches
+   a reader, a writer of its path runs first — what another chain wrote counts
+   as written. An `optional` input is exempt: its stage does without it.
+
+When the run executes, before any stage — agent, command, action — every file
+it reads must be there (`input_missing`, unless the port is optional) and hold
+its type or schema (`input_invalid`); after an agent or a command, every file
+it writes must be there (`output_contract`) and hold its shape
+(`output_invalid`, the violations handed to the retry as `edge.failure`).
+Before every fresh attempt the engine deletes the stage's outputs, so the check
+after it cannot be satisfied by a file an earlier attempt left behind. (Crash
+recovery re-entering a live stage does *not* delete: a resumed harness session
+is mid-work and its partial outputs must survive. Nor does an action whose
+effect is still pending check its inputs again: it reconciles first.)
 
 ### Agent contracts
 
-An agent declares its own I/O in the flow's `agents:` block (§1); a stage binds
-it. Because both halves are in one document, they cannot drift: a binding that
-violates a contract is a parse error.
+An agent declares what it reads and writes in the flow's `agents:` block (§1),
+each typed — **never where**:
 
-The prompt an agent receives is assembled, never templated: a `# TASK` section
-from the ticket, one `# INPUT: <name> — <description> (file: <path>)` section
-per bound input, and an `# OUTPUT CONTRACT` listing every file it must write.
+```yaml
+agents:
+  - name: committer
+    inputs:
+      - { name: ticket,  type: ticket }
+      - { name: changes, type: changeset, description: "the uncommitted files" }
+      - { name: plan,    type: file, optional: true }
+      - { name: failure, type: failure, optional: true }
+    outputs:
+      - { name: message, type: commit_message }
+```
 
-**Declared outputs must be written by the attempt that succeeds.** Before every
-fresh attempt the engine deletes the stage's declared outputs, so the check
-after it cannot be satisfied by a file an earlier attempt left behind — a
-retry that "succeeds" without producing anything fails with `output_contract`,
-naming every missing file at once. (Crash recovery re-entering a live stage
-does *not* delete: a resumed harness session is mid-work and its partial
-outputs must survive.)
+A stage running it states each of those again as a port, with its source or
+destination, and the parser holds the two together — so a stage reads on its
+own, and the agent stays reusable: `builder` reads `plan` from
+`artifacts/plan.md` in the main chain and `comments` from
+`artifacts/review.md` in a watcher. An output with a `path:` is refused: the
+path is the stage's to say.
 
-**A `verdict` output** holds `{"verdict":"APPROVE"|"REJECT","comments":[…]}`
-(comments required on REJECT). It is a file like any other — its existence is
-enforced with the rest — plus a shape the engine parses: a REJECT follows the
-stage's `on_reject` edge, carrying the comments as `decision`. A file that
-exists but does not hold that shape fails the stage with `output_invalid`,
-which is a different fault from never writing it. Declaring a verdict output is
-what makes `on_reject` reachable; a stage needs no flag of its own, and an
-agent may declare at most one — a stage whose agent declares none cannot carry
-an `on_reject` edge at all (a parse error).
+The prompt is assembled, never templated, from the stage's ports: each input
+renders by its type — a `ticket` as the `# TASK` section, a file as `# INPUT:
+<name> — <description> (file: <path>)` and its content, a changeset as its
+file list, a failure or a verdict as what the edge carried — and the outputs
+as the `# OUTPUT CONTRACT`, each path with its shape. An agent sees the ticket
+only through a ticket port.
 
-**A `review_replies` output** is a review round's answers: a YAML list of
-`{thread, reply, resolve}`, one entry per thread the round loaded. It is
-checked when the stage ends — every `thread` one of the round's, none twice,
-every `reply` non-empty (an empty list is valid) — so a reply to an unknown
-thread fails *that* stage with `output_invalid`, its reason as `$FAILURE`,
-before anything reaches the repository. `reply_review_comments` posts it.
+### Types
 
-**A `review_threads` output** is a review of the merge request, for
-`post_review`:
+| type | is | read by |
+|---|---|---|
+| `file` | any file: only its existence is checked. Every file type satisfies it — but `files` | anything |
+| `files` | a directory of files — screenshots, a report's pages — its path ending in `/` (`artifacts/shots/`): written, it must hold at least one file. Never a schema | `create_mr`, `ticket_comment` (`attachments`), a `human_gate` (each file reviewed) |
+| `verdict` | `{"verdict":"APPROVE"\|"REJECT","summary"?,"comments":[…]}` — each comment a remark or `{path, line?, end_line?, quote?, body}` (below); a REJECT says why | the router: REJECT follows the stage's `on_reject`; an APPROVE with comments carries them on `on_success` |
+| `review_threads` | a review of the merge request (below) | `post_review` |
+| `review_replies` | a review round's answers: a YAML list of `{thread, reply, resolve}` | `reply_review_comments` |
+| `commit_message` | JSON `{"subject": "...", "body": "..."}` — a one-line subject (at most 100 characters), an optional body | `commit` |
+| `ticket`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
+
+**Why these, and nothing else.** A file type exists for a structure something
+*built in* reads — the router, an action — and the action's port names it, so
+binding `post_review`'s `review` to a file written as a plain `file` is a parse
+error, not a run that fails at posting time. A structure only the flow's own
+stages pass around is the author's to define: a schema.
+
+A **verdict** is what makes `on_reject` reachable: a stage whose ports write
+none cannot carry the edge (a parse error), and an agent declares at most one.
+A file that exists but does not hold a type's shape fails the stage with
+`output_invalid` — a different fault from never writing it. A
+**review_replies** file is also checked against the threads the round loaded —
+every `thread` one of the round's, none twice, every `reply` non-empty (an
+empty list is valid) — before anything reaches the repository. A
+**review_threads** file is
 
 ```yaml
 summary: "Reads well; two things before it merges."   # optional, markdown
@@ -1143,10 +1394,93 @@ threads:                                              # optional, at most 50
   - { path: internal/flow/parse.go, line: 412, body: "This error loses the line number." }
 ```
 
-Checked when the stage ends — every thread on a repository-relative path, a
-line from 1 (in the changed file), a non-empty body — the same way: a bad one
-fails the stage, its reason as `$FAILURE`. Whether a line is in the change is
-the repository's business at posting time, not a failure (below).
+checked the same way: every thread on a repository-relative path, a line from 1
+(in the changed file), a non-empty body. Whether a line is in the change is the
+repository's business at posting time, not a failure. A **commit_message**'s
+shape is a JSON Schema the engine holds, shown verbatim in the agent's OUTPUT
+CONTRACT and checked like a flow schema.
+
+A **verdict** has one shape whoever gives it. An agent writes it as a file:
+
+```json
+{ "verdict": "REJECT",
+  "summary": "Two problems.",
+  "comments": [ "the change has no test",
+                { "path": "internal/flow/parse.go", "line": 412, "body": "this error loses the line number" },
+                { "path": "docs/a.md", "body": "out of date" } ] }
+```
+
+— a comment is a remark on the whole change, or one on a file: on a line or a
+range (`line`, `end_line`, with the `quote` it is about) or the whole file. A
+REJECT says why (a summary, comments, or both); a path stays inside the
+repository. The type's JSON Schema is shown in the agent's OUTPUT CONTRACT and
+checked like a flow schema. A person gives the same at a gate: a summary, and
+comments each on one file the gate showed — on its lines (quoting the
+selection, naming the markdown section) or on the whole file — with the files
+they attach. Read from `edge.verdict`, the next agent gets it written out
+file by file, numbered, with the files attached to each comment:
+
+```text
+REJECTED at gate look_gate.
+
+Close, two things.
+
+2 comments, on 2 files:
+
+artifacts/plan.md
+1. [§ Steps, lines 3–4]
+   > Step one.
+   say what each step changes
+   attached: .apothecary/attachments/ping-…/step.txt
+
+artifacts/shots/home.png
+2. [the whole image]
+   the header is cut off
+```
+
+### Schemas: the flow's own structures
+
+A flow declares its structures once, under `schemas:`, as JSON Schemas
+(draft 2020-12) written in YAML, and a port — or an agent's declaration — names
+one:
+
+```yaml
+schemas:
+  - name: coverage
+    description: line coverage of the change
+    json_schema:
+      type: object
+      properties:
+        percent: { type: number, minimum: 0, maximum: 100 }
+      required: [percent]
+main:
+  - id: measure
+    type: command
+    run: ./scripts/coverage.sh > artifacts/coverage.json
+    output:
+      report: { to: artifacts/coverage.json, schema: coverage }
+  - id: gate
+    type: command
+    run: apothecary-shim jq -e '.percent >= 80' artifacts/coverage.json
+    input:
+      report: { from: artifacts/coverage.json, schema: coverage }
+```
+
+- **A file with a schema** is JSON (`.json`) or YAML (`.yaml`, `.yml`) — the
+  extension decides how it is read, and any other is a parse error. Writer and
+  readers agree on it like on any shape, whoever they are.
+- **Checked like a type,** after the existence check: a file that does not
+  satisfy it fails its stage, every violation named at its place (`at /percent:
+  maximum: got 140, want 100`) — and an agent writing it is shown the schema in
+  its OUTPUT CONTRACT.
+- **Beside a type a schema narrows it:** the file holds both, and the agent is
+  shown both — a commit message that must follow Conventional Commits is
+  `{type: commit_message, schema: conventional_commit}`. Beside `file` it is
+  refused: the schema alone says what the file is.
+- **Nothing is loaded.** A `$ref` resolves inside the schema only; one naming a
+  file or a URL is a parse error, so a flow cannot make the engine read either.
+  A schema JSON Schema itself refuses is a parse error too, and one nothing
+  names is a warning.
 
 ### What the editor draws
 
@@ -1157,8 +1491,8 @@ producer's dot to a consumer's dot in the same chain whenever their paths
 match (a watcher reading what the main chain wrote shows the path on its dot).
 Those lines are read-only by construction — you rewire them by editing a path,
 not by dragging. Control-flow edges (the colored ones) are the draggable
-layer, and one of them lands directly on the `$DECISION` or `$FAILURE` dot
-that receives its content — so the retry path is visible too. Every chain is
+layer, and one of them lands directly on the `edge.verdict` or `edge.failure`
+dot that receives its content — so the retry path is visible too. Every chain is
 drawn the same way, one row each with its opening — the main chain's start, a
 watcher's or an outcome's wait point — as a marker on its first stage, under
 its section's label (main, watchers, outcomes); the stages that park are
@@ -1178,13 +1512,13 @@ A stage failure records a reason, then follows an edge:
 | `exit_nonzero` | a command exited non-zero |
 | `timeout` | the stage exceeded its timeout |
 | `harness_error` | the harness itself failed |
-| `input_missing` | a path the stage declared it consumes was not there, or a subject action ran with no merge request to act on — upstream wiring, not this stage's work |
-| `input_invalid` | a value the flow wrote means nothing where it lands — a status the tracker cannot reach, a field it has no name for or cannot write from text; or a parked wait's signal can no longer hold. Wiring again, but the input is there |
+| `input_missing` | a file the stage reads was not there (a port not `optional`), or a subject action ran with no merge request to act on — upstream wiring, not this stage's work |
+| `input_invalid` | a value the flow wrote means nothing where it lands — a status the tracker cannot reach, a field it has no name for or cannot write from text; a file the stage reads that does not hold its port's type or schema; or a parked wait's signal can no longer hold. Wiring again, but the input is there |
 | `output_contract` | the stage finished without writing what it declared (its outputs are cleared before each fresh attempt, so a stale file cannot satisfy it) |
-| `output_invalid` | a declared output exists but does not hold what its type promises — a malformed verdict |
+| `output_invalid` | a declared output exists but does not hold what its type or schema promises — a malformed verdict, a report that does not satisfy its schema; the violations are the retry's `edge.failure` |
 | `infra` | provisioning, repository or other infrastructure failure |
 
-A stage that **skips** — its `when` does not hold, a tracker action with no
+A stage that **skips** — its `run_if` does not hold, a tracker action with no
 tracker or no word for the status — is not a failure: it completes with
 `skipped` and a note, and `on_success` follows.
 
@@ -1206,7 +1540,7 @@ links them to the run's timeline with `snapshot_captured` events. The events
 carry references, never bytes, so they stay replay-cheap while the content can
 be any size. Two consequences worth relying on: attempt 1's plan stays
 readable after attempt 2 overwrites the file, and the 8 KB tails in
-`stage_failed` / `$FAILURE` are a *preview* — the whole log is one link away.
+`stage_failed` / `edge.failure` are a *preview* — the whole log is one link away.
 Snapshots outlive the run they describe (archiving keeps them) and are
 scrubbed of engine-injected secrets on the way in.
 
@@ -1260,13 +1594,28 @@ a default that fails its own validator (a model without a provider, a
 duration that does not parse, a ceiling at or below zero), an enum on a
 non-string or a default outside it, a reference to an undeclared parameter,
 one of the wrong type or at a site that takes none (a prompt, a path, a
-`run:` script), an enum parameter wider than its site; `when` naming anything
+`run:` script), an enum parameter wider than its site; `run_if` naming anything
 but `tracker`, `subject` or a bool parameter. And every **contract**
-violation: an agent a stage names but the flow does not declare, an input the
-agent does not declare, a required input left unbound, a non-optional input
-bound to `$DECISION`/`$FAILURE`, an output rebind of something undeclared,
-`on_reject` on an agent with no verdict output. A flow cannot be saved with
-any of these.
+violation: an agent a stage names but the flow does not declare; a port the
+agent or the action does not declare, a required input or any output of the
+agent's or the action's left unstated, a port whose shape does not satisfy its
+declaration's; `on_reject` on a stage that writes no verdict. And every
+**port**: a bare value, an unknown key, an input with `to:` or an output with
+`from:`, no type and no schema, an unknown type, `file` beside a schema, a
+value type on a file or on an output, an engine source with another type, an
+edge source not `optional` or that no edge of its kind enters, a command or an
+action reading `run.*` or `edge.*`, a gate shown anything but a file or a
+link, a destination outside the repository or under `repo:`, one stage writing
+a path twice; a path nothing in the flow writes (unless `repo:`) or a `repo:`
+path a stage writes; writers of one path stating different shapes, or a shape
+that does not satisfy a reader's; a non-optional input not written on every
+route that reaches it. And for structures: a schema whose name is not a slug
+or is declared twice, with no `json_schema` or one JSON Schema refuses, or a
+`$ref` outside it; a port or a declaration naming a schema the flow does not
+declare; a file with a schema or a structured type whose path is not `.json`,
+`.yaml` or `.yml`. And for actions: a setting given as a port or a port under
+`with:`, an unknown setting, an enum setting outside its values, a required
+setting left out. A flow cannot be saved with any of these.
 
 **Resolve-time errors** (the document with values) — the same rules, re-run
 over the pinned bytes with a project's binding or a run's overrides laid in:
@@ -1278,18 +1627,16 @@ Configure sheet, run creation — with the parameter named.
 
 **Warnings** — advisory, returned alongside a successful parse by
 `POST /api/flows/validate` and never blocking anything. These are legal
-constructs that look like mistakes: a path no stage produces, a path produced
-on only *some* of the routes that reach its consumer (a conditional producer
-among them), a feed sentinel no edge can fill, a `wait` on a signal — or a
-`ticket_link` — whose prerequisite merge request isn't opened on every route
-reaching it, a parameter nothing reads, a subject action in a chain that may
+constructs that look like mistakes: a `wait` on a signal — or a
+`ticket_link`, or a port reading `run.mr.url` — whose prerequisite merge
+request isn't opened on every route reaching it, a parameter nothing reads, a subject action in a chain that may
 have no subject, `each_repo` on a subject, a watcher or an outcome on a
 merge-request signal in a flow that opens no merge request (and is not
 started on one), a stage of a watcher opened by a signal that ends the whole
 run (`done` or `abort` — almost always a slip for `end`), and a main chain
 that opens a merge request and says `done` without waiting for it while
-watchers or outcomes watch it; and a sequence nothing runs, whose stages
-nothing has checked.
+watchers or outcomes watch it; a sequence nothing runs, whose stages
+nothing has checked; and a schema no input or output names.
 
 **Preflight errors** (this project, this ticket) — refuse to *create a run*.
 Checked with the project's real configuration on the **resolved** flow, so a
@@ -1324,7 +1671,8 @@ Normative, and enforced by the parser:
 - Limits: 1 MiB per document, 128 stages, 64 agents, `then` chains at most 8
   links deep.
 - **Paths** are repo-root-relative POSIX paths: no leading `/`, no `.` or `..`
-  segment, no leading `$` (that space belongs to sentinels and parameters).
+  segment, no leading `$` (that space belongs to parameters); a destination
+  never `repo:`.
   Beyond the lexical rule, the engine resolves symlinks before reading or
   writing an artifact and refuses anything landing outside the checkout — so
   an agent-authored `artifacts/plan.md -> /apothecary/run.env` cannot smuggle
@@ -1356,8 +1704,8 @@ Converting one by hand:
 | `on: { signal: mr_conflicts, confirm: true }` (v3) | `on: { signal: mr_conflicts, start: confirm }` — `auto` / `confirm` / `manual`, or `$param` |
 | a reaction `on: { signal: manual }` (v3) | a watcher `on: manual` |
 | the run ending by itself from its merge requests (v3) | an **outcome**: `on: mr_merged` ending with `done`, `on: mr_closed` with `then: abort` (§1 *How a run ends*) |
-| `$CHANGED` (the branch against its target in an entry phase, *this round's* changes in a subject phase) | `$DIFF_TARGET` or `$DIFF_PHASE` — one range each, wherever bound |
-| `$UNCOMMITTED` | `$STATUS` |
+| `$CHANGED` (the branch against its target in an entry phase, *this round's* changes in a subject phase) | `run.git.diff_target` or `run.git.diff_phase` — one range each, wherever read |
+| `$UNCOMMITTED` | `run.git.status` |
 | `wait_merge` + `ticket_done` closing the delivery phase (the first v4 cut) | the main chain ends with `end` once the merge request is open; the `merged` outcome moves the ticket and says `done` |
 | `on_success: done` closing a reaction (v3: the phase ended) | `on_success: end`, or nothing — `done` ends the run |
 | a reaction's `max` (v3: 10 by default) | no default cap: a watcher runs as often as the signal brings something new |
@@ -1372,11 +1720,18 @@ Older spellings the parser still answers by name rather than with a bare
 | old | now |
 |---|---|
 | `ping: plan_approval\|final_review\|manual_debug` | `question:` free text |
-| `payload:` on a gate | `input: {name: …}` |
+| `payload:` on a gate | `input: { name: { from: …, type: … } }` |
 | `auto_complete:` | `auto_approve:` (or a `wait` stage to just park on it) |
 | `auto_answer:` | `auto_approve:` / `auto_reject:` — say which answer it supplies |
-| `feed: output` / `feed: decision` on an edge | bind `$FAILURE` / `$DECISION` as an input on the target |
-| `mr_url` / `workspace` | `$MR_URL` / `$WORKSPACE` |
+| `feed: output` / `feed: decision` on an edge | a port on the target reading `edge.failure` / `edge.verdict` |
+| `when:` on a stage | `run_if:` — the message names it |
+| `edge.decision`, `type: decision` | `edge.verdict`, `type: verdict` |
+| `mr_url` / `workspace` | `run.mr.url` / `run.workspace` |
+| a bare binding, `plan: artifacts/plan.md` (v5 until ports) | a port: `plan: { from: artifacts/plan.md, type: file }` |
+| the sentinels `$DIFF_TARGET`, `$DIFF_PHASE`, `$STATUS`, `$MR_URL`, `$WORKSPACE`, `$DECISION`, `$FAILURE` | the sources `run.git.diff_target`, `run.git.diff_phase`, `run.git.status`, `run.mr.url`, `run.workspace`, `edge.verdict`, `edge.failure` — the message names the one to use |
+| `path:` on an agent's output | `output: { name: { to: <path>, type: … } }` on every stage running it |
+| an action's literal under `input:` (`to: done`) | `with: { to: done }` |
+| the implicit `# TASK` in every agent prompt | a `ticket` port reading `run.ticket` |
 
 ---
 
@@ -1406,17 +1761,19 @@ parameters:
   conflicts_start: { default: confirm, enum: [auto, confirm, manual] }
   review_start:    { default: auto,    enum: [auto, confirm, manual] }
 
-# The agents this flow runs, abridged to two. Their contracts are what the
-# stages below bind, and what the parser checks those bindings against.
+# The agents this flow runs, abridged to two. Their contracts — what each
+# reads and writes, typed, never where — are what the stages below state as
+# ports, and what the parser checks those ports against.
 agents:
   - name: planner
     description: explores the repository and writes the implementation plan
     read_only: true
     inputs:
-      - { name: rejection, optional: true, description: "why the last plan was rejected" }
-      - { name: failure,   optional: true, description: "what the previous attempt printed" }
+      - { name: ticket,    type: ticket }
+      - { name: rejection, type: verdict, optional: true, description: "why the last plan was rejected" }
+      - { name: failure,   type: failure,  optional: true, description: "what the previous attempt printed" }
     outputs:
-      - { name: plan, path: artifacts/plan.md, description: "the implementation plan" }
+      - { name: plan, type: file, description: "the implementation plan" }
     prompt: |
       You are the planning agent of a software factory...
   - name: reviewer
@@ -1424,13 +1781,12 @@ agents:
     read_only: true
     allow_bash: true
     inputs:
-      - { name: plan,    description: "the approved plan to check the change set against" }
-      - { name: changes, description: "the set of changed files to review" }
-      - { name: failure, optional: true, description: "what the previous attempt printed" }
+      - { name: plan,    type: file,      description: "the approved plan to check the change set against" }
+      - { name: changes, type: changeset, description: "the set of changed files to review" }
+      - { name: failure, type: failure, optional: true, description: "what the previous attempt printed" }
     outputs:
-      # A verdict output is what makes review.on_reject below legal at all.
-      - { name: verdict, type: verdict, path: artifacts/verdict.json,
-          description: "APPROVE or REJECT with actionable comments" }
+      # A verdict is what makes review.on_reject below legal at all.
+      - { name: verdict, type: verdict, description: "APPROVE or REJECT with actionable comments" }
     prompt: |
       You are the adversarial reviewer of a software factory...
 
@@ -1440,38 +1796,53 @@ main:
   # tracker action needs none. A canonical status: Jira says "In Progress",
   # GitHub Issues has no word for it and the stage skips; so does a ticket
   # written by hand. A tracker hiccup routes straight on to the plan.
-  - { id: in_progress, type: action, action: ticket_transition, input: { to: in_progress },
+  - { id: in_progress, type: action, action: ticket_transition, with: { to: in_progress },
       on_success: plan,
       on_fail: { to: plan, max: 1 } }
 
-  # No output binding: the planner's contract says its plan goes to
-  # artifacts/plan.md. It binds both retry values, so being sent back — by
-  # a human rejecting the plan, or by its own failure — arrives named. Two
-  # retries with the error fed back, then the debug leaf.
-  - { id: plan, type: agent, agent: planner, max_turns: 25,
-      input: { rejection: $DECISION, failure: $FAILURE },
-      on_success: plan_gate,
-      on_fail: { to: plan, max: 2, then: debug } }
+  # Every port stated: the ticket from the engine, both retry values from
+  # whichever edge sends the run back — a human rejecting the plan, its own
+  # failure — and where the plan goes. Two retries with the error fed back,
+  # then the debug leaf.
+  - id: plan
+    type: agent
+    agent: planner
+    max_turns: 25
+    input:
+      ticket:    { from: run.ticket, type: ticket }
+      rejection: { from: edge.verdict, type: verdict, optional: true }
+      failure:   { from: edge.failure, type: failure, optional: true }
+    output:
+      plan:      { to: artifacts/plan.md, type: file }
+    on_success: plan_gate
+    on_fail: { to: plan, max: 2, then: debug }
 
   # A wait point: the chain parks while the human reads; a conflict fix
   # may run meanwhile. A project that trusts its planner binds
   # plan_gate=false and the stage completes as skipped.
-  - { id: plan_gate, type: human_gate, when: $plan_gate, input: { plan: artifacts/plan.md },
+  - { id: plan_gate, type: human_gate, run_if: $plan_gate,
+      input: { plan: { from: artifacts/plan.md, type: file } },
       question: "Approve this implementation plan?",
       on_success: build,
       on_reject: { to: plan, max: -1 } }
 
-  - { id: build, type: agent, agent: builder, max_turns: 80,
-      input: { plan: artifacts/plan.md, rejection: $DECISION, failure: $FAILURE },
-      on_success: commit_msg,
-      on_fail: { to: build, max: 2, then: debug } }
+  - id: build
+    type: agent
+    agent: builder
+    max_turns: 80
+    input:
+      ticket:    { from: run.ticket, type: ticket }
+      plan:      { from: artifacts/plan.md, type: file }
+      rejection: { from: edge.verdict, type: verdict, optional: true }
+      failure:   { from: edge.failure, type: failure, optional: true }
+    on_success: commit_msg
+    on_fail: { to: build, max: 2, then: debug }
 
-  # The committer writes artifacts/commit.md (its contract); the commit
-  # stage declares it reads that file, so the dataflow is visible instead
-  # of buried in the script.
-  - { id: commit, type: command, each_repo: true,
-      run: "git add -A && if ! git diff --cached --quiet; then git commit -F \"$HOME/repo/artifacts/commit.md\"; fi",
-      input: { message: artifacts/commit.md },
+  # commit_msg (abridged) writes artifacts/commit.json as a commit_message;
+  # the commit action reads one, so a writer of anything else is a parse
+  # error. Every checkout is committed; a clean one is left alone.
+  - { id: commit, type: action, action: commit,
+      input: { message: { from: artifacts/commit.json, type: commit_message } },
       on_success: test, on_fail: debug }
 
   # The project's test command, by the name the project binds.
@@ -1483,21 +1854,31 @@ main:
   # A different vendor reviews. The reviewer's verdict output is what makes
   # on_reject reachable; its comments reach the builder's `rejection` input.
   # Three rejected rounds, then a human: no chain ends without a person.
-  - { id: review, type: agent, agent: reviewer, model: $review_model,
-      input: { plan: artifacts/plan.md, changes: $DIFF_TARGET, failure: $FAILURE }, max_turns: 30,
-      on_success: redact,
-      on_reject: { to: build, max: 3, then: debug },
-      on_fail: { to: review, max: 1, then: debug } }
+  - id: review
+    type: agent
+    agent: reviewer
+    model: $review_model
+    max_turns: 30
+    input:
+      plan:    { from: artifacts/plan.md, type: file }
+      changes: { from: run.git.diff_target, type: changeset }
+      failure: { from: edge.failure, type: failure, optional: true }
+    output:
+      verdict: { to: artifacts/verdict.json, type: verdict }
+    on_success: redact
+    on_reject: { to: build, max: 3, then: debug }
+    on_fail: { to: review, max: 1, then: debug }
 
   - { id: push, type: action, action: push_branch, on_success: mr, on_fail: debug }
-  - { id: mr,   type: action, action: create_mr, input: { body: artifacts/mr.md },
+  - { id: mr,   type: action, action: create_mr,
+      input: { body: { from: artifacts/mr.md, type: file } },
       on_success: in_review }
 
   # The merge request is open: the issue moves to its in-review status.
   # Best effort again — a failure ends the chain like a success would.
   # Then the main chain ENDS: the run is in review, the watchers below keep
   # the merge request healthy, and the outcomes at the bottom end the run.
-  - { id: in_review, type: action, action: ticket_transition, input: { to: in_review },
+  - { id: in_review, type: action, action: ticket_transition, with: { to: in_review },
       on_fail: end }
 
 watchers:
@@ -1507,10 +1888,11 @@ watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: $conflicts_start }
     stages:
-      - { id: sync,      type: action, action: sync_target, input: { strategy: merge },
+      - { id: sync,      type: action, action: sync_target, with: { strategy: merge },
           on_success: sync_test, on_fail: { to: resolve, max: 6, then: debug } }
       - { id: resolve,   type: agent, agent: resolver, max_turns: 30,
-          input: { plan: artifacts/plan.md, conflict: $FAILURE },
+          input: { plan:     { from: artifacts/plan.md, type: file },
+                   conflict: { from: edge.failure, type: failure, optional: true } },
           on_success: sync, on_fail: debug }
       - { id: sync_test, type: command, run_ref: $verify, on_success: sync_push, on_fail: debug }
       - { id: sync_push, type: action, action: push_branch, on_success: end, on_fail: debug }
@@ -1521,9 +1903,13 @@ watchers:
   - id: review_fixes
     on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h }
     stages:
-      - { id: load, type: action, action: load_review_comments, input: { select: human } }
+      - { id: load, type: action, action: load_review_comments, with: { select: human },
+          output: { review: { to: artifacts/review.md, type: file } } }
       - { id: fix,  type: agent, agent: builder, max_turns: 60,
-          input: { plan: artifacts/plan.md, comments: artifacts/review.md, failure: $FAILURE },
+          input: { ticket:   { from: run.ticket, type: ticket },
+                   plan:     { from: artifacts/plan.md, type: file },
+                   comments: { from: artifacts/review.md, type: file },
+                   failure:  { from: edge.failure, type: failure, optional: true } },
           on_success: fix_test, on_fail: { to: fix, max: 2, then: debug } }
       # … commit, test, push, reply, post — as in the full text.
 
@@ -1534,12 +1920,12 @@ outcomes:
   - id: merged
     on: mr_merged
     stages:
-      - { id: ticket_done, type: action, action: ticket_transition, input: { to: done }, on_fail: done }
+      - { id: ticket_done, type: action, action: ticket_transition, with: { to: done }, on_fail: done }
   - id: closed
     on: mr_closed
     then: abort
     stages:
-      - { id: ticket_back, type: action, action: ticket_transition, input: { to: todo }, on_fail: abort }
+      - { id: ticket_back, type: action, action: ticket_transition, with: { to: todo }, on_fail: abort }
 ```
 
 ## §9 Agent-side interactions (ask_human)
@@ -1571,8 +1957,8 @@ harness, owns the exchange:
   pick any number of them, or none: the tool returns `selected: id, id` or
   `none selected`.
 - **Every ping declares the shape of its answer** — `ping_raised.answer_kind`:
-  `decision` (approve | reject, a gate or a watcher's or outcome's
-  confirmation), `choice`
+  `yes_no` (approve | reject, a gate, a watcher's or outcome's
+  confirmation, the debug leaf), `choice`
   (one option id | other), `multi` (option ids | none) or `text`. The inbox
   renders that shape and the engine validates against it; nothing is inferred
   from a ping's type.
@@ -1627,13 +2013,17 @@ over one workspace. Additive, no grammar break:
 - **An action** — one `actionspec` registry entry, one executor case, one
   `requires` port string. Everything else (parsing, binding, the editor's
   picker, the dataflow view) follows from the signature.
-- **A sentinel** — one constant plus one resolution case. The `$NAME` rule
-  already tells authors it is engine-provided.
+- **A source** — one constant and its type in the engine's list, plus one
+  resolution case (a prompt rendering, a gate link). The `run.` / `edge.`
+  prefix already tells authors the engine provides it.
 - **A parameter site** — one `lookup` call where a field is read, declaring
   which type it takes; the resolve path and the editor's `$name` pickers
   follow.
 - **An output type** — like `verdict`: a value on an output's `type` plus the
-  engine behaviour it implies.
+  engine behaviour it implies — and only for a structure something built in
+  reads (the router, an action, whose file input then names the type). A
+  structure the flow's own stages pass around needs no change at all: it is a
+  schema the author declares.
 - **An edge kind** — one `DocStage` field, one row in the edge registry, one
   raise site. Parsing, validation, routing and the `edge_taken` event
   generalize.
@@ -1654,7 +2044,7 @@ Deliberately *not* in this version, each a real change rather than a patch:
   workspace), not a grammar patch — and it is not the design.
 - **Routing on arbitrary structured output** — the edge kinds are fixed; a
   verdict is the one structured decision.
-- **General value-passing or templating** — sentinels and parameters are the
+- **General value-passing or templating** — sources and parameters are the
   only engine-value channels, on purpose: a parameter is read at a typed site,
   never spliced into text.
 
@@ -1673,7 +2063,7 @@ like the natural generalization. It is not, for three separate reasons:
   first.
 - **The branches are not symmetric.** A signal can only say yes or no; a human
   can say no *and why*. `any_of: [mr_merged, human_approve]` would give a stage
-  an `on_reject` edge and a `$DECISION` only one branch could ever reach. Naming
+  an `on_reject` edge and an `edge.verdict` only one branch could ever reach. Naming
   the two outcomes (`auto_approve`, `auto_reject`) puts that asymmetry in the
   open instead.
 

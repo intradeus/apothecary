@@ -1,6 +1,8 @@
 // A project: the repository, the integrations and the workspace policy every
 // run of it inherits.
 
+import type { ServiceConfig } from './service';
+
 export interface Project {
 	id: string;
 	name: string;
@@ -53,6 +55,12 @@ export interface WorkspacePolicy {
 	allowedPorts: number[];
 	codeServerExtensions: string[];
 	editor?: EditorPrefs;
+	/** The workshop's services, in the order the run page lists them. */
+	services: ServiceConfig[];
+	/** The workshop's managed browser: one container its runs share, a
+	 *  Chromium per agent session — what a flow's `builtin: browser` MCP
+	 *  server drives. */
+	browserEnabled: boolean;
 }
 
 /** code-server defaults, applied as VS Code user settings when the browser
@@ -121,6 +129,30 @@ export interface EnvCheckStep {
 	id: string;
 	status: 'pass' | 'fail' | 'skip';
 	detail?: string;
+}
+
+/** A workshop secret: its name and when it was last set. The value never
+ *  comes back — flows read it as ${secrets.<name>} in an MCP server's env
+ *  or headers. */
+export interface ProjectSecret {
+	name: string;
+	updatedAt: string;
+}
+
+/** The workshop's browser as it stands. available false = this apothecary
+ *  runs no workshop browsers. image is what the container runs, current
+ *  what this build would: they differ until the browser is next idle, when
+ *  it is recreated. Stopped after a while with no session, started on
+ *  demand. */
+export interface BrowserStatus {
+	enabled: boolean;
+	available: boolean;
+	container?: string;
+	state: 'absent' | 'running' | 'stopped';
+	image?: string;
+	current?: string;
+	sessions: number;
+	error?: string;
 }
 
 /** The project's devcontainer build cache: what makes its second run fast.

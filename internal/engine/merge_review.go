@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"apothecary/internal/actionspec"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -67,7 +68,7 @@ func parseReviewThreads(data []byte) (string, []ports.ReviewNote, error) {
 // checkReviewThreads validates an agent stage's review_threads output when
 // the stage ends; "" = fine (or none declared).
 func (x *exec) checkReviewThreads(st *flow.Stage) string {
-	p := flow.ReviewThreadsPath(st, x.rs.fl.Agent(st.Agent))
+	p := flow.TypedPath(st, agentspec.TypeReviewThreads)
 	if p == "" {
 		return ""
 	}
@@ -93,10 +94,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 	if err != nil {
 		return x.infraFail(st, err.Error())
 	}
-	path := ""
-	if in := st.Input("review"); in != nil {
-		path = in.Value
-	}
+	path := inputPath(st, "review")
 	data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
 	if err != nil {
 		return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("review %s not readable: %v", path, err))
@@ -139,14 +137,8 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 	if err != nil {
 		return x.infraFail(st, err.Error())
 	}
-	method := actionspec.MethodMerge
-	if in := st.Input("method"); in != nil && in.Value != "" {
-		method = in.Value
-	}
-	deleteBranch := false
-	if in := st.Input("branch"); in != nil {
-		deleteBranch = in.Value == actionspec.BranchDelete
-	}
+	method := st.Setting("method", actionspec.MethodMerge)
+	deleteBranch := st.Setting("branch", actionspec.BranchKeep) == actionspec.BranchDelete
 	merged := &event.MRMerged{StageID: st.ID, Repo: mr.Repo, Method: method, Head: rs.phaseHead, BranchDeleted: deleteBranch}
 	if rs.actionPending[st.ID] {
 		status, err := repoHost.MRStatus(x.ctx, mr.Ref)

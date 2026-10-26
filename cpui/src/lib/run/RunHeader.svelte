@@ -87,9 +87,13 @@
 	);
 	let copied = $state('');
 
-	// Hold the live ports feed while the Env menu is open (its app links).
+	// Hold the live ports and services feeds while the Env menu is open (its
+	// app links, a healthy service's preview links).
 	$effect(() => {
-		if (envOpen) return rs.usePorts();
+		if (!envOpen) return;
+		const ports = rs.usePorts();
+		const services = rs.useServices();
+		return () => (ports(), services());
 	});
 
 	async function act(which: typeof busy, fn: () => Promise<unknown>): Promise<boolean> {

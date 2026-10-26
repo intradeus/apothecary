@@ -53,6 +53,9 @@ func (a *Adapter) codexHome(ctx context.Context, env ports.EnvID) string {
 // the ask_human MCP server, plus one role file per .apothecary/agents spec —
 // codex has no named-agent registry, so the role prompt is delivered
 // in-band as a prompt preamble (mechanism recorded in IMPLEMENTATION_NOTES).
+// A flow's mcp_servers are not here: a stage's ride its ACP session
+// (acpagent), and codex-acp keeps a session's servers to that session, so
+// each agent sees only its own.
 func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
 	for _, s := range specs {
 		if err := a.envp.WriteFile(ctx, env, path.Join(rolesDir, s.Name+".role"), []byte(roleText(s)), 0o644); err != nil {

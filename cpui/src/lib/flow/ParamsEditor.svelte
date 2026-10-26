@@ -1,12 +1,23 @@
 <script lang="ts">
 	// The flow's parameters (FLOWLANG §1): the six the engine reads itself,
 	// pinned at the top, and the flow's own knobs — each declared here with
-	// its default, and read where $name appears. Values come from outside the
-	// document: a workshop binds them, a run may override them.
+	// what it holds (a type, a list of it) and its default, and read where
+	// $name appears. Values come from outside the document: a workshop binds
+	// them, a run may override them.
 	import { t } from '$lib/i18n/index.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { KNOWN_PARAMS, type DocParam, type FlowDoc } from '$lib/flowdoc';
-	import { customParams, paramKind, paramRefs, parseDefault, renameParam } from './params';
+	import {
+		customParams,
+		defaultText,
+		KNOWN_TYPES,
+		PARAM_TYPES,
+		paramRefs,
+		paramType,
+		parseDefaultFor,
+		renameParam,
+		type ParamType
+	} from './params';
 
 	let { doc, onchange }: { doc: FlowDoc; onchange: () => void } = $props();
 
@@ -25,10 +36,7 @@
 		if (v === '') delete doc.parameters[name];
 		else {
 			const prev = doc.parameters[name];
-			doc.parameters[name] = {
-				...prev,
-				default: name === 'harness' || name === 'model' || name === 'timeout' ? v : parseDefault(v)
-			};
+			doc.parameters[name] = { ...prev, default: parseDefaultFor(v, KNOWN_TYPES[name]) };
 		}
 		onchange();
 	}
@@ -41,8 +49,39 @@
 	function add() {
 		let n = 1;
 		while (doc.parameters[`param_${n}`]) n++;
-		doc.parameters[`param_${n}`] = { default: '' };
+		doc.parameters[`param_${n}`] = { type: 'string', default: '' };
 		onchange();
+	}
+
+	// A new type reads the default as it: what still parses keeps, the rest
+	// becomes the type's empty value. An enum is a string's.
+	const EMPTY: Record<ParamType, DocParam['default']> = {
+		bool: false,
+		int: 0,
+		float: 0,
+		string: '',
+		duration: '30m'
+	};
+	function setType(name: string, p: DocParam, type: ParamType) {
+		const text = defaultText(p);
+		let def = parseDefaultFor(text, type, !!p.list);
+		const ok = (v: unknown) =>
+			type === 'bool'
+				? typeof v === 'boolean'
+				: type === 'int' || type === 'float'
+					? typeof v === 'number'
+					: type === 'duration'
+						? /^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$/.test(String(v))
+						: true;
+		if (Array.isArray(def) ? !def.every(ok) : !ok(def)) def = p.list ? [] : EMPTY[type];
+		setField(name, { type, default: def, enum: type === 'string' ? p.enum : undefined });
+	}
+	function setList(name: string, p: DocParam, list: boolean) {
+		const type = paramType(name, p);
+		setField(name, {
+			list: list || undefined,
+			default: parseDefaultFor(defaultText(p), type, list)
+		});
 	}
 
 	async function remove(name: string) {
@@ -116,6 +155,7 @@
 <div class="lbl sub">{t('flow.insp.customParams')}</div>
 {#each customParams(doc) as [name, p] (name)}
 	{@const refs = paramRefs(doc, name)}
+	{@const type = paramType(name, p)}
 	<div class="card-in param">
 		<div class="row">
 			<input
@@ -124,39 +164,78 @@
 				aria-label={t('flow.insp.paramName')}
 				onchange={(e) => rename(name, e.currentTarget.value)}
 			/>
-			<span class="pill sm fnt">{paramKind(name, p)}</span>
 			<span class="fnt tiny">{t('flow.insp.paramUsed', { count: refs.length })}</span>
 			<span class="spacer"></span>
 			<button class="btn-sm btn-ghost" onclick={() => remove(name)}
 				>{t('flow.insp.removeParam')}</button
 			>
 		</div>
+		<div class="row">
+			<label class="fnt small" for="pt-{name}">{t('flow.insp.paramType')}</label>
+			<select
+				id="pt-{name}"
+				value={p.type ?? ''}
+				onchange={(e) => setType(name, p, e.currentTarget.value as ParamType)}
+			>
+				{#if !p.type}<option value="">—</option>{/if}
+				{#each PARAM_TYPES as ty (ty)}<option value={ty}>{ty}</option>{/each}
+			</select>
+			<label class="chk fnt small"
+				><input
+					type="checkbox"
+					checked={!!p.list}
+					onchange={(e) => setList(name, p, e.currentTarget.checked)}
+				/>
+				{t('flow.insp.paramList')}</label
+			>
+		</div>
+		{#if !p.type}<div class="help hue-amb">{t('flow.insp.paramTypeRequired')}</div>{/if}
 		<div class="field">
 			<label for="pd-{name}">{t('flow.insp.paramDefault')}</label>
-			<input
-				id="pd-{name}"
-				class="mono"
-				value={String(p.default)}
-				onchange={(e) => setField(name, { default: parseDefault(e.currentTarget.value) })}
-			/>
+			{#if type === 'bool' && !p.list}
+				<select
+					id="pd-{name}"
+					value={String(p.default)}
+					onchange={(e) => setField(name, { default: e.currentTarget.value === 'true' })}
+				>
+					<option value="true">true</option>
+					<option value="false">false</option>
+				</select>
+			{:else}
+				<input
+					id="pd-{name}"
+					class="mono"
+					value={defaultText(p)}
+					placeholder={p.list
+						? t('flow.insp.paramListPlaceholder')
+						: type === 'duration'
+							? '30m'
+							: ''}
+					onchange={(e) =>
+						setField(name, { default: parseDefaultFor(e.currentTarget.value, type, !!p.list) })}
+				/>
+			{/if}
+			{#if p.list}<div class="help">{t('flow.insp.paramListHelp')}</div>{/if}
 		</div>
-		<div class="field">
-			<label for="pe-{name}">{t('flow.insp.paramEnum')}</label>
-			<input
-				id="pe-{name}"
-				class="mono"
-				value={(p.enum ?? []).join(', ')}
-				placeholder={t('flow.insp.paramEnumPlaceholder')}
-				onchange={(e) => {
-					const vals = e.currentTarget.value
-						.split(',')
-						.map((v) => v.trim())
-						.filter(Boolean);
-					setField(name, { enum: vals.length ? vals : undefined });
-				}}
-			/>
-			<div class="help">{t('flow.insp.paramEnumHelp')}</div>
-		</div>
+		{#if type === 'string'}
+			<div class="field">
+				<label for="pe-{name}">{t('flow.insp.paramEnum')}</label>
+				<input
+					id="pe-{name}"
+					class="mono"
+					value={(p.enum ?? []).join(', ')}
+					placeholder={t('flow.insp.paramEnumPlaceholder')}
+					onchange={(e) => {
+						const vals = e.currentTarget.value
+							.split(',')
+							.map((v) => v.trim())
+							.filter(Boolean);
+						setField(name, { enum: vals.length ? vals : undefined });
+					}}
+				/>
+				<div class="help">{t('flow.insp.paramEnumHelp')}</div>
+			</div>
+		{/if}
 		<div class="field">
 			<label for="ps-{name}">{t('flow.insp.description')}</label>
 			<input
@@ -201,6 +280,11 @@
 	}
 	.name {
 		max-width: 14ch;
+	}
+	.chk {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 	}
 	.spacer {
 		flex: 1;

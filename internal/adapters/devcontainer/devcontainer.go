@@ -967,6 +967,10 @@ func gitExclude(src, entry string) error {
 // at /opt/apothecary — the path harness configs (and startRelay) hardcode.
 // Written as tmp+rename: overwriting a binary a live relay is executing
 // would fail with ETXTBSY, while rename just swaps the directory entry.
+// Alongside it, the relative symlink apothecary-shim -> shim is the name
+// scripts call it by (shimPathPrelude puts the dir on their PATH); relative,
+// so it resolves inside the container too, and rename never breaks it.
+// Reattach runs this as well, so older workspaces gain the alias.
 func (a *Adapter) ensureShim(ctx context.Context, name string) (string, error) {
 	dir := filepath.Join(a.folderFor(name), "shim")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -987,8 +991,19 @@ func (a *Adapter) ensureShim(ctx context.Context, name string) (string, error) {
 	if err := os.WriteFile(tmp, data, 0o755); err != nil {
 		return "", err
 	}
-	return dir, os.Rename(tmp, filepath.Join(dir, "shim"))
+	if err := os.Rename(tmp, filepath.Join(dir, "shim")); err != nil {
+		return "", err
+	}
+	alias := filepath.Join(dir, shimAlias)
+	if target, err := os.Readlink(alias); err == nil && target == "shim" {
+		return dir, nil
+	}
+	_ = os.Remove(alias)
+	return dir, os.Symlink("shim", alias)
 }
+
+// shimAlias is the shim's callable name in workspaces (see ensureShim).
+const shimAlias = "apothecary-shim"
 
 // rootInit performs the one-time (idempotent) root-level setup the §11
 // contract needs inside an arbitrary user image: the /apothecary state dir
@@ -1044,6 +1059,13 @@ func (a *Adapter) waitReady(ctx context.Context, name string) error {
 
 // --- Exec / files -----------------------------------------------------------
 
+// shimPathPrelude puts the bind-mounted shim dir on every Exec'd script's
+// PATH, so command stages can call `apothecary-shim jq ...` by name (the
+// ensureShim alias). APPENDED, never prepended: the image's own PATH — as
+// the CLI's userEnvProbe resolved it — still wins every lookup. The sidecar
+// is started through Exec, so its children (harness, terminals) inherit it.
+const shimPathPrelude = `export PATH="$PATH:/opt/apothecary"` + "\n"
+
 func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) (ports.ExecResult, error) {
 	if cmd.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -1056,6 +1078,7 @@ func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) 
 	if cmd.Dir != "" {
 		script = fmt.Sprintf("cd \"$HOME/%s\" || exit 90\n%s", cmd.Dir, cmd.Script)
 	}
+	script = shimPathPrelude + script
 	tee := a.openExecLog(env, cmd)
 	if tee != nil {
 		defer tee.Close()
@@ -1146,6 +1169,51 @@ func (a *Adapter) ReadFile(ctx context.Context, env ports.EnvID, path string) ([
 		return nil, fmt.Errorf("read %s: decode: %w", path, err)
 	}
 	return data, nil
+}
+
+// ListFiles lists the regular files under dir, each as "<size> <path>" from
+// a POSIX loop rather than GNU find's -printf, so it works on a busybox
+// image too. find never follows a symlink, and the directory itself is
+// held inside the checkout like a read; a name with a newline in it cannot
+// be told apart and is dropped.
+func (a *Adapter) ListFiles(ctx context.Context, env ports.EnvID, dir string) ([]ports.FileEntry, error) {
+	dir = strings.TrimSuffix(dir, "/")
+	p := resolvePath(dir)
+	script := containmentGuard(dir) + fmt.Sprintf(
+		`if [ ! -d %[1]s ]; then exit 44; fi; cd %[1]s && `+
+			`find . -type f -exec sh -c 'for f; do printf "%%s %%s\n" "$(wc -c < "$f" | tr -d " ")" "$f"; done' sh {} + | head -n %[2]d`,
+		p, ports.ListFilesLimit)
+	stdout, stderr, code, err := a.runInner(ctx, string(env), a.cfg.DevcontainerBin,
+		[]string{"exec", "--id-label", label(string(env)), "bash", "-s"}, []byte(script), nil)
+	if err != nil {
+		return nil, err
+	}
+	if code == 44 {
+		return nil, fmt.Errorf("%s: %w", dir, fs.ErrNotExist)
+	}
+	if code == escapeExit {
+		return nil, fmt.Errorf("list %s: resolves outside the repository checkout (symlink escape)", dir)
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("list %s: exit %d: %s", dir, code, tail(string(stderr), 512))
+	}
+	return parseFileList(dir, string(stdout)), nil
+}
+
+// parseFileList reads ListFiles' "<size> ./<name>" lines into entries under
+// dir, sorted by path.
+func parseFileList(dir, out string) []ports.FileEntry {
+	var files []ports.FileEntry
+	for line := range strings.SplitSeq(out, "\n") {
+		size, name, ok := strings.Cut(line, " ")
+		n, err := strconv.ParseInt(size, 10, 64)
+		if !ok || err != nil || !strings.HasPrefix(name, "./") {
+			continue
+		}
+		files = append(files, ports.FileEntry{Path: dir + "/" + strings.TrimPrefix(name, "./"), Size: n})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files
 }
 
 func (a *Adapter) WriteFile(ctx context.Context, env ports.EnvID, path string, data []byte, mode fs.FileMode) error {

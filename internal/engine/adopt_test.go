@@ -27,18 +27,20 @@ agents:
   - name: pr_reviewer
     prompt: review it
     inputs:
-      - { name: changes }
+      - { name: changes, type: changeset }
     outputs:
-      - { name: review, type: review_threads, path: artifacts/review.yaml }
+      - { name: review, type: review_threads }
 main:
-  - { id: read, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
-  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+  - { id: read, type: agent, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
+      output: { review: { to: artifacts/review.yaml, type: review_threads } } }
+  - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 watchers:
   - id: again
     on: mr_head_moved
     stages:
-      - { id: reread, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
-      - { id: repost, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+      - { id: reread, type: agent, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
+          output: { review: { to: artifacts/review.yaml, type: review_threads } } }
+      - { id: repost, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 outcomes:
   - { id: merged, on: mr_merged, then: done }
   - { id: closed, on: mr_closed, then: done }
@@ -106,7 +108,7 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 		t.Fatalf("starts = %+v", starts)
 	}
 	if !hasScript(scripts(), "git diff --name-status origin/main...HEAD") {
-		t.Error("$DIFF_TARGET was not measured against the merge request's target")
+		t.Error("run.git.diff_target was not measured against the merge request's target")
 	}
 	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 1 || rv[0].Summary != "Reads well." {
 		t.Fatalf("reviews = %+v", rv)
@@ -151,8 +153,8 @@ func TestRunOnAMergeRequestRefusals(t *testing.T) {
 // branch of its own; there is nothing here to push it to. A rerun stays on it.
 func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	doc := strings.Replace(reviewerFlowDoc,
-		"  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n",
-		"  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }\n  - { id: push, type: action, action: push_branch }\n", 1)
+		"  - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }\n",
+		"  - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }\n  - { id: push, type: action, action: push_branch }\n", 1)
 	ph, _ := newReviewerHarness(t, doc)
 	ref := ph.repoHost.AddOpenMR("eve", "From my fork", "main", "main", "f1")
 	ph.repoHost.MRs[0].Fork = true

@@ -12,9 +12,9 @@ export type PingStatus = 'pending' | 'answered' | 'withdrawn';
 
 /** The shape of the answer a ping takes — declared on the ping, rendered by
  *  the card, validated by the engine from the same vocabulary:
- *  decision = approve | reject (+ feedback); choice = one option id | other;
+ *  yes_no = approve | reject (+ feedback); choice = one option id | other;
  *  multi = any option ids | none; text = free text. */
-export type AnswerKind = 'decision' | 'choice' | 'multi' | 'text';
+export type AnswerKind = 'yes_no' | 'choice' | 'multi' | 'text';
 
 /** One answer choice: the id is what the answer names, the label what the
  *  human reads, the detail an optional second line. */
@@ -49,10 +49,31 @@ export interface Ping {
 	 *  run. */
 	endsPhase: boolean;
 	answer?: string;
+	/** The answer's note — on a review of the files shown, its summary. */
 	feedback?: string;
 	answerAttachmentIds: string[];
+	/** What the person said about the files shown, comment by comment. */
+	review: ReviewComment[];
 	raisedAt: string;
 	answeredAt?: string;
+}
+
+/** One comment of a review: on one of the files the ping showed — on a
+ *  stretch of its lines, or (no lines) the whole file, always so on an
+ *  image. The engine renders the comments into what the agent reads; the
+ *  page only collects them. */
+export interface ReviewComment {
+	path: string;
+	/** Absent: the whole file. */
+	startLine?: number;
+	endLine?: number;
+	/** The section the lines sit in (a markdown file's). */
+	heading?: string;
+	/** The text selected. */
+	quote?: string;
+	body: string;
+	/** The answer's attachments this comment is about. */
+	attachmentIds: string[];
 }
 
 /** One of a ping's attached files: the declared ref joined with its

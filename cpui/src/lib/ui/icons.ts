@@ -68,6 +68,8 @@ export const I = {
 	storage: '⛁',
 	// files
 	file: '▤',
+	image: '◩',
+	binary: '◇',
 	folder: '▸'
 } as const;
 

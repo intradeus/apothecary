@@ -43,7 +43,7 @@ const transitionFirstDoc = `name: tk
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: kick, type: action, action: ticket_transition, input: { to: in_progress } }
+  - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
   - { id: build, type: agent, agent: builder }
 `
 
@@ -83,9 +83,9 @@ func TestTicketTransitionRunsBeforeAnyWorkspace(t *testing.T) {
 func TestModelCheckSurvivesALeadingRemoteStage(t *testing.T) {
 	doc := `name: tkm
 version: 2
-parameters: { harness: fake, model: zen/glm-5.1 }
+parameters: { harness: fake, model: zen/glm-5.2 }
 main:
-  - { id: kick, type: action, action: ticket_transition, input: { to: in_progress } }
+  - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
   - { id: build, type: agent, agent: builder }
 `
 	h, _ := trackerHarness(t, doc)
@@ -96,7 +96,7 @@ main:
 	}
 	h.e.Wait(runID)
 	evs := h.events(t, runID)
-	if rf, ok := findPayload[*event.RunFailed](evs); !ok || !strings.Contains(rf.Reason, "zen/glm-5.1") {
+	if rf, ok := findPayload[*event.RunFailed](evs); !ok || !strings.Contains(rf.Reason, "zen/glm-5.2") {
 		t.Fatalf("run_failed = %+v; events %v", rf, eventTypes(evs))
 	}
 	if len(h.runner.SnapshotRunCalls()) != 0 {
@@ -124,7 +124,7 @@ const routedDoc = `name: routed
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: kick, type: action, action: ticket_transition, input: { to: %s }, on_success: build, on_fail: { to: build, max: 1 } }
+  - { id: kick, type: action, action: ticket_transition, with: { to: %s }, on_success: build, on_fail: { to: build, max: 1 } }
   - { id: build, type: agent, agent: builder }
 `
 
@@ -334,8 +334,8 @@ const commentDoc = `name: cm
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: write, type: agent, agent: redactor, output: { mr: artifacts/ticket_comment.md } }
-  - { id: post,  type: action, action: ticket_comment, input: { body: artifacts/ticket_comment.md } }
+  - { id: write, type: agent, agent: redactor, output: { mr: { to: artifacts/ticket_comment.md, type: file } } }
+  - { id: post,  type: action, action: ticket_comment, input: { body: { from: artifacts/ticket_comment.md, type: file } } }
 `
 
 func TestTicketCommentPostsTheArtifactWithATrailer(t *testing.T) {
@@ -420,9 +420,9 @@ const setFieldDoc = `name: sf
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: write, type: agent, agent: redactor, output: { mr: artifacts/feature_flags.txt } }
-  - { id: flags, type: action, action: ticket_set_field, input: { field: "Feature flags", value: artifacts/feature_flags.txt, mode: append } }
-  - { id: team,  type: action, action: ticket_set_field, input: { field: Team, text: Platform } }
+  - { id: write, type: agent, agent: redactor, output: { mr: { to: artifacts/feature_flags.txt, type: file } } }
+  - { id: flags, type: action, action: ticket_set_field, with: { field: "Feature flags", mode: append }, input: { value: { from: artifacts/feature_flags.txt, type: file } } }
+  - { id: team,  type: action, action: ticket_set_field, with: { field: Team, text: Platform } }
 `
 
 func TestTicketSetFieldFromArtifactAndLiteral(t *testing.T) {
@@ -460,7 +460,7 @@ func TestTicketSetFieldUnknownFieldIsInputInvalid(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: team, type: action, action: ticket_set_field, input: { field: Squad, text: Platform } }
+  - { id: team, type: action, action: ticket_set_field, with: { field: Squad, text: Platform } }
 `
 	h, tracker := trackerHarness(t, doc)
 	tracker.KnownFields = []string{"Feature flags", "Team"}
@@ -483,8 +483,8 @@ func TestTicketLinkAttachesTheMergeRequest(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: redact, type: agent, agent: redactor }
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
   - { id: link,   type: action, action: ticket_link }
 `
 	fl := mustFlow(t, doc)
@@ -543,7 +543,7 @@ parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
   - { id: build,  type: agent, agent: builder }
   - { id: gate,   type: human_gate, question: "Merge?", on_success: finish, on_reject: abort }
-  - { id: finish, type: action, action: ticket_transition, input: { to: done } }
+  - { id: finish, type: action, action: ticket_transition, with: { to: done } }
 `
 	h, tracker := trackerHarness(t, doc)
 	tracker.Tickets[0].Status = "In Review"

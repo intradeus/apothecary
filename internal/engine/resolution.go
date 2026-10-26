@@ -25,9 +25,12 @@ type Resolution struct {
 	RepoRef      ports.RepoRef
 	AgentsMDPath string
 	DefaultFlow  string
-	// Commands is project.commands; "setup" is OPTIONAL in v2 (absent =
-	// bootstrap step 6 skipped).
+	// Commands is project.commands: named scripts, run only by a flow's
+	// run_ref — none is special to the engine.
 	Commands map[string]string
+	// Services are the project's services (its app, a database): what a
+	// flow's service stages start and run.service.<name> addresses.
+	Services []Service
 	// GitUser/GitPass form the §11 step 3 credential-store entry; both
 	// empty = public repo, no credential helper.
 	GitUser string
@@ -63,6 +66,14 @@ type Resolution struct {
 	// EditorSettings are the project's code-server UI defaults (theme + common
 	// prefs), applied to the browser editor at OpenEditor time (no rebuild).
 	EditorSettings ports.EditorSettings
+	// Secrets are the project's secrets, opened: what a flow's MCP servers
+	// read where they say ${secrets.<name>}. Checked at run creation, fed to
+	// the redactor, and re-read when an agent stage starts (Engine
+	// SetProjectSecrets), so a rotated value needs no new run.
+	Secrets map[string]string
+	// Browser is the project's browser toggle: a flow whose agents use the
+	// builtin browser MCP server is refused while it is off.
+	Browser bool
 	// HarnessKind is a deterministic FALLBACK harness kind (the first
 	// available in the project's set) — NOT a project-chosen default. The
 	// real default is the flow's defaults.harness, applied per stage; this

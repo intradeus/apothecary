@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"apothecary/internal/actionspec"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -59,7 +60,7 @@ func parseReviewReplies(data []byte, loaded []string) ([]reviewReply, error) {
 // checkReviewReplies validates an agent stage's review_replies output when
 // the stage ends; "" = fine (or none declared).
 func (x *exec) checkReviewReplies(st *flow.Stage) string {
-	p := flow.ReviewRepliesPath(st, x.rs.fl.Agent(st.Agent))
+	p := flow.TypedPath(st, agentspec.TypeReviewReplies)
 	if p == "" {
 		return ""
 	}
@@ -81,7 +82,7 @@ var errNoSubject = errors.New("no merge request subject")
 // run: the phase was opened for no merge request (started by hand with none
 // open, or the main chain of a run on a ticket), so there is nothing for it to act on.
 func noSubjectMsg(st *flow.Stage) string {
-	return fmt.Sprintf("%s: %s acts on the merge request a phase is opened for, and this phase run has none — guard the stage with `when: subject`, or start the phase on a merge request", errNoSubject, st.Action)
+	return fmt.Sprintf("%s: %s acts on the merge request a phase is opened for, and this phase run has none — guard the stage with `run_if: subject`, or start the phase on a merge request", errNoSubject, st.Action)
 }
 
 // subjectRepoHost is the repository host and merge request a subject action
@@ -126,7 +127,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 	} else {
 		pending := x.unskipped(pendingThreads(threads))
 		chosen := pending
-		if mode := inputOr(st, "select", actionspec.SelectHuman); mode == actionspec.SelectHuman && len(pending) > 0 {
+		if mode := st.Setting("select", actionspec.SelectHuman); mode == actionspec.SelectHuman && len(pending) > 0 {
 			picked, waiting, err := x.selectThreads(st, mr, pending)
 			if err != nil || waiting {
 				return true, err
@@ -156,9 +157,10 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 		}
 		round = chosen
 	}
+	// Where the stage said the review goes (its `review` output port).
 	path := "artifacts/review.md"
-	if act := actionspec.Get(st.Action); act != nil && len(act.Outputs) > 0 {
-		path = act.Outputs[0].Path
+	if o := st.Output("review"); o != nil {
+		path = o.Value
 	}
 	if err := x.res.Envp.WriteFile(x.ctx, rs.envID, path, []byte(reviewMarkdown(mr, round)), 0o644); err != nil {
 		return x.infraFail(st, "writing "+path+": "+err.Error())
@@ -169,12 +171,13 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 	return false, nil
 }
 
-// inputOr is a stage's literal input, or def when unbound.
-func inputOr(st *flow.Stage, name, def string) string {
-	if in := st.Input(name); in != nil && in.Value != "" {
-		return in.Value
+// inputPath is the workspace path of a stage's file input (repo: stripped),
+// or "" when the stage states no such port.
+func inputPath(st *flow.Stage, name string) string {
+	if in := st.Input(name); in != nil {
+		return flow.FilePath(in.Value)
 	}
-	return def
+	return ""
 }
 
 // unskipped drops the threads a human skipped in an earlier round, unless
@@ -314,10 +317,7 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	if err != nil {
 		return x.infraFail(st, err.Error())
 	}
-	path := ""
-	if in := st.Input("replies"); in != nil {
-		path = in.Value
-	}
+	path := inputPath(st, "replies")
 	data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
 	if err != nil {
 		return x.infraFail(st, fmt.Sprintf("replies %s not readable: %v", path, err))

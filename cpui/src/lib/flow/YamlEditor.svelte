@@ -75,6 +75,14 @@
 	// One lint, two checks: the schema's, where a person mistyped, then the
 	// parser's errors on their lines ("flow:14: …") — those on a line the
 	// schema already marks left out, so a typo is said once.
+	// Completion from the schema. With no schema yet (or none at all — a
+	// flow schema's own body) the library answers `[]`, which CodeMirror
+	// cannot read: no completion is null.
+	const schemaComplete = yamlCompletion();
+	const complete = (ctx: Parameters<typeof schemaComplete>[0]) => {
+		const r = schemaComplete(ctx);
+		return Array.isArray(r) ? null : r;
+	};
 	const schemaLint = yamlSchemaLinter();
 	const lint = linter(
 		async (v) => {
@@ -161,7 +169,7 @@
 					indentUnit.of('  '),
 					EditorState.tabSize.of(2),
 					yaml(),
-					yamlLanguage.data.of({ autocomplete: yamlCompletion() }),
+					yamlLanguage.data.of({ autocomplete: complete }),
 					yamlLanguage.data.of({ autocomplete: yamlValues }),
 					hoverTooltip(yamlSchemaHover()),
 					stateExtensions(),

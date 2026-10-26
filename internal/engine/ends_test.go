@@ -56,8 +56,8 @@ func lastCompletion(evs []event.Event, phase string) *event.PhaseCompleted {
 // review: TestPhasedRunWaitsInReviewAndCompletesOnMerge.)
 func TestDoneEndsTheRunWhileWatchersAreArmed(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc,
-		"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
-		"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }\n", 1)
+		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n",
+		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: done }\n", 1)
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {

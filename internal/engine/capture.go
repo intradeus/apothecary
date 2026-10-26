@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"path"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
@@ -55,12 +56,16 @@ func (x *exec) capture(snap filestore.Snapshot, data []byte) {
 // outcomes — with M18's delete-before-attempt, anything present here was
 // written by the attempt that just ran, so a snapshot can never be polluted
 // by a stale file from an earlier one.
-func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.IOBinding) {
+func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.Port) {
 	if x.e.snapshots == nil {
 		return
 	}
 	for _, b := range bindings {
-		if b.Value == "" || flow.IsSentinel(b.Value) {
+		if b.Value == "" || flow.IsEngineSource(b.Value) {
+			continue
+		}
+		if b.Type == agentspec.TypeFiles {
+			x.publishDir(st, iter, b)
 			continue
 		}
 		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, b.Value)
@@ -70,6 +75,37 @@ func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.IOBindin
 		x.capture(filestore.Snapshot{
 			Kind: filestore.KindOutput, StageID: st.ID, Iteration: iter,
 			Name: b.Name, Path: b.Value, Filename: path.Base(b.Value),
+		}, data)
+	}
+}
+
+// publishDir captures each file a files output holds, as one output snapshot
+// per file under the port's name — the first attachmentMaxFiles of them, and
+// none past attachmentMaxBytes: the store tail-truncates what is too big,
+// which keeps a log readable and ruins an image, so a file that large is
+// left out (and logged) rather than kept broken.
+func (x *exec) publishDir(st *flow.Stage, iter int, b flow.Port) {
+	files, err := x.dirFiles(b.Value)
+	if err != nil {
+		x.e.log.Warn("listing a files output", "run", x.rs.runID, "stage", st.ID, "path", b.Value, "err", err)
+	}
+	for i, f := range files {
+		if i == attachmentMaxFiles {
+			x.e.log.Warn("files output holds more files than are captured", "run", x.rs.runID, "stage", st.ID,
+				"path", b.Value, "files", len(files), "captured", attachmentMaxFiles)
+			break
+		}
+		if f.Size > attachmentMaxBytes {
+			x.e.log.Warn("file too large to capture", "run", x.rs.runID, "stage", st.ID, "path", f.Path, "size", f.Size)
+			continue
+		}
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, f.Path)
+		if err != nil {
+			continue
+		}
+		x.capture(filestore.Snapshot{
+			Kind: filestore.KindOutput, StageID: st.ID, Iteration: iter,
+			Name: b.Name, Path: f.Path, Filename: path.Base(f.Path),
 		}, data)
 	}
 }

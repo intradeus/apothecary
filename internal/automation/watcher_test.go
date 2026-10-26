@@ -350,12 +350,12 @@ agents:
   - name: pr_reviewer
     prompt: review it
     inputs:
-      - { name: changes }
+      - { name: changes, type: changeset }
     outputs:
-      - { name: review, type: review_threads, path: artifacts/review.yaml }
+      - { name: review, type: review_threads }
 main:
-  - { id: read, type: agent, agent: pr_reviewer, input: { changes: $DIFF_TARGET } }
-  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+  - { id: read, type: agent, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } }, output: { review: { to: artifacts/review.yaml, type: review_threads } } }
+  - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 outcomes:
   - { id: merged, on: mr_merged, then: done }
   - { id: closed, on: mr_closed, then: done }

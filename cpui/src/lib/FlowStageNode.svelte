@@ -4,7 +4,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { EDGE_HUE, STAGE_HUE, hueOf } from '$lib/ui/hues';
 	import {
-		isFeedSentinel,
+		isEdgeSource,
 		stageInputs,
 		stageOutputs,
 		type ActionContract,
@@ -74,6 +74,11 @@
 			return stage.for
 				? set(t('flow.node.waitFor', { signal: stage.for }))
 				: unset(t('flow.node.waitFor', { signal: t('flow.node.noSignal') }));
+		// A service stage says what it does to which: "start $app".
+		if (stage.type === 'service')
+			return stage.service
+				? set(`${stage.do ?? 'start'} ${stage.service}`)
+				: unset(t('flow.node.noService', { do: stage.do ?? 'start' }));
 		if (stage.type === 'sequence')
 			return !stage.sequence
 				? unset(t('flow.node.noSequence'))
@@ -119,16 +124,17 @@
 	{#if inputs.length || outputs.length}
 		<div class="ports">
 			{#each inputs as p (p.name)}
-				<!-- A feed sentinel ($DECISION/$FAILURE) gets a dot too: the control
-             edge that carries it lands there, so the retry path is visible. -->
+				<!-- An edge source (edge.verdict / edge.failure) gets a dot too: the
+             control edge that carries it lands there (a route back, or a
+             deciding stage's success), so the path the content takes is visible. -->
 				<div
 					class="io in"
 					class:unbound={p.unbound}
-					class:sentinel={p.sentinel}
-					class:fed={isFeedSentinel(p.value)}
+					class:sentinel={p.engine}
+					class:fed={isEdgeSource(p.value)}
 					title={p.unbound ? t('flow.node.unbound') : p.value}
 				>
-					{#if !p.unbound && !p.literal && (!p.sentinel || isFeedSentinel(p.value))}
+					{#if !p.unbound && (!p.engine || isEdgeSource(p.value))}
 						<Handle
 							id={`in:${p.name}`}
 							type="target"
@@ -141,16 +147,19 @@
 					{/if}
 					<span class="pname mono">{p.name}</span>
 					{#if p.unbound}<span class="unset">{t('flow.node.unbound')}</span>
-					{:else if p.sentinel}<span class="sent mono">{p.value}</span>
+					{:else if p.engine}<span class="sent mono">{p.value}</span>
 					{:else if p.value !== p.name}<span class="path mono">{p.value}</span>{/if}
 				</div>
 			{/each}
 
 			{#each outputs as p (p.name)}
-				<div class="io out" class:sentinel={p.sentinel} title={p.value}>
-					{#if p.value && p.value !== p.name}<span class="path mono" class:sent={p.sentinel}
-							>{p.value}</span
-						>{/if}
+				<div
+					class="io out"
+					class:unbound={p.unbound}
+					title={p.unbound ? t('flow.node.unbound') : p.value}
+				>
+					{#if p.unbound}<span class="unset">{t('flow.node.unbound')}</span>
+					{:else if p.value !== p.name}<span class="path mono">{p.value}</span>{/if}
 					<span class="pname mono">{p.name}</span>
 					{#if p.value}
 						<Handle
@@ -174,7 +183,7 @@
 			style="left: 25%; {hh('on_fail')}"
 		/>
 	{/if}
-	{#if stage.type === 'agent' || stage.type === 'command' || stage.type === 'wait'}
+	{#if stage.type === 'agent' || stage.type === 'command' || stage.type === 'wait' || stage.type === 'service'}
 		<Handle
 			id="on_fail"
 			type="source"

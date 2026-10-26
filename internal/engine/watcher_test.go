@@ -214,48 +214,48 @@ agents:
   - name: builder
     prompt: build it
     inputs:
-      - { name: comments, optional: true }
-      - { name: failure, optional: true }
+      - { name: comments, type: file, optional: true }
+      - { name: failure, type: failure, optional: true }
   - name: redactor
     prompt: describe it
     outputs:
-      - { name: mr, path: artifacts/mr.md }
+      - { name: mr, type: file }
   - name: resolver
     prompt: resolve it
     inputs:
-      - { name: conflict, optional: true }
+      - { name: conflict, type: failure, optional: true }
   - name: replier
     prompt: reply
     inputs:
-      - { name: comments }
-      - { name: failure, optional: true }
+      - { name: comments, type: file }
+      - { name: failure, type: failure, optional: true }
     outputs:
-      - { name: replies, type: review_replies, path: artifacts/replies.yaml }
+      - { name: replies, type: review_replies }
 main:
   - { id: build, type: agent, agent: builder }
   - { id: commit, type: command, run: "git add -A && git commit -m build" }
   - { id: push, type: action, action: push_branch }
-  - { id: redact, type: agent, agent: redactor }
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
 watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: confirm }
     stages:
-      - { id: sync, type: action, action: sync_target, input: { strategy: STRATEGY }, on_success: sync_test,
+      - { id: sync, type: action, action: sync_target, with: { strategy: STRATEGY }, on_success: sync_test,
           on_fail: { to: resolve, max: 2, then: debug } }
-      - { id: resolve, type: agent, agent: resolver, input: { conflict: $FAILURE }, on_success: sync }
+      - { id: resolve, type: agent, agent: resolver, input: { conflict: { from: edge.failure, type: failure, optional: true } }, on_success: sync }
       - { id: sync_test, type: command, run: "./verify.sh" }
       - { id: sync_push, type: action, action: push_branch, on_success: end, on_fail: debug }
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1m }
     stages:
-      - { id: load, type: action, action: load_review_comments }
-      - { id: fix, type: agent, agent: builder, input: { comments: artifacts/review.md } }
+      - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } } }
+      - { id: fix, type: agent, agent: builder, input: { comments: { from: artifacts/review.md, type: file } } }
       - { id: fix_commit, type: command, run: "git add -A && git commit -m fix" }
       - { id: fix_push, type: action, action: push_branch }
-      - { id: reply, type: agent, agent: replier, input: { comments: artifacts/review.md, failure: $FAILURE },
-          on_fail: { to: reply, max: 1 } }
-      - { id: post, type: action, action: reply_review_comments, input: { replies: artifacts/replies.yaml } }
+      - { id: reply, type: agent, agent: replier, input: { comments: { from: artifacts/review.md, type: file }, failure: { from: edge.failure, type: failure, optional: true } },
+          output: { replies: { to: artifacts/replies.yaml, type: review_replies } }, on_fail: { to: reply, max: 1 } }
+      - { id: post, type: action, action: reply_review_comments, input: { replies: { from: artifacts/replies.yaml, type: review_replies } } }
 outcomes:
   - id: shipped
     on: mr_merged

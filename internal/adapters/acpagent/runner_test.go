@@ -321,7 +321,7 @@ func TestReattachFollowsTheTurnInFlight(t *testing.T) {
 	r := h.runner()
 	c := sidecar.New(unixConn(h.sock))
 	ctx := context.Background()
-	if err := r.start(ctx, c); err != nil {
+	if _, err := r.start(ctx, c); err != nil {
 		t.Fatal(err)
 	}
 	sess, err := c.Session(ctx, sidecar.SessionRequest{})
@@ -366,7 +366,7 @@ func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
 	r := h.runner()
 	c := sidecar.New(unixConn(h.sock))
 	ctx := context.Background()
-	if err := r.start(ctx, c); err != nil {
+	if _, err := r.start(ctx, c); err != nil {
 		t.Fatal(err)
 	}
 	sess, _ := c.Session(ctx, sidecar.SessionRequest{})
@@ -413,5 +413,60 @@ func TestResumeContinuesTheSession(t *testing.T) {
 	// Each invocation reports only its own spend.
 	if again.Usage.CostUSD < 0.0999 || again.Usage.CostUSD > 0.1001 {
 		t.Errorf("resume cost = %v", again.Usage.CostUSD)
+	}
+}
+
+// A stage's MCP servers ride the session it opens, in ACP's shape: stdio
+// untagged with every field, http tagged — and a resumed session that has to
+// be reloaded gets them again.
+func TestMCPServersRideTheSession(t *testing.T) {
+	h := startSidecar(t)
+	rec := newRecorder()
+	servers := []ports.MCPServer{
+		{Name: "browser", Command: []string{"/opt/apothecary/shim", "browser-mcp"}},
+		{Name: "figma", URL: "https://mcp.figma.test/mcp", Headers: map[string]string{"X-B": "2", "Authorization": "Bearer t"}},
+		{Name: "db", Command: []string{"dbmcp"}, Env: map[string]string{"DSN": "pg://x"}},
+	}
+	res, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{Agent: "planner"},
+		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec, MCPServers: servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `mcp: [{"name":"browser","command":"/opt/apothecary/shim","args":["browser-mcp"],"env":[]},` +
+		`{"type":"http","name":"figma","url":"https://mcp.figma.test/mcp","headers":[{"name":"Authorization","value":"Bearer t"},{"name":"X-B","value":"2"}]},` +
+		`{"name":"db","command":"dbmcp","args":[],"env":[{"name":"DSN","value":"pg://x"}]}]|`
+	if rec.text() != want {
+		t.Errorf("session saw\n%s\nwant\n%s", rec.text(), want)
+	}
+	// Resume: the session is live, so nothing is reloaded — and a session the
+	// process lost is loaded with the servers again (fakeacp keeps no state
+	// across processes, so restarting the agent stands in for that).
+	if err := sidecar.New(unixConn(h.sock)).Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec2 := newRecorder()
+	if _, err := h.runner().Resume(context.Background(), "e", res.Session,
+		ports.AgentInput{Prompt: "MCP", Events: rec2.on, Inbox: rec2, MCPServers: servers[:1]}); err != nil {
+		t.Fatal(err)
+	}
+	if want := `mcp: [{"name":"browser","command":"/opt/apothecary/shim","args":["browser-mcp"],"env":[]}]|`; rec2.text() != want {
+		t.Errorf("reloaded session saw %s, want %s", rec2.text(), want)
+	}
+}
+
+// A remote server on a harness that takes none is refused before any session
+// is opened, naming the server.
+func TestRemoteMCPServerRefusedWhereTheAgentTakesNone(t *testing.T) {
+	h := startSidecar(t)
+	r := New(env{sock: h.sock}, Profile{Harness: "fake", Command: "env FAKEACP_NO_HTTP_MCP=1 " + h.fakeACP})
+	rec := newRecorder()
+	_, err := r.Run(context.Background(), "e", ports.AgentSpec{},
+		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
+			MCPServers: []ports.MCPServer{{Name: "figma", URL: "https://mcp.figma.test/mcp"}}})
+	if err == nil || !strings.Contains(err.Error(), `mcp server "figma" is remote`) {
+		t.Fatalf("err = %v, want the remote server refused", err)
+	}
+	if rec.kinds() != "" {
+		t.Errorf("a session was opened anyway: %s", rec.kinds())
 	}
 }

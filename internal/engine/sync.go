@@ -39,10 +39,7 @@ func (x *exec) actionSyncTarget(st *flow.Stage) (bool, error) {
 	if co == nil {
 		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
-	strategy := actionspec.StrategyMerge
-	if in := st.Input("strategy"); in != nil && in.Value != "" {
-		strategy = in.Value
-	}
+	strategy := st.Setting("strategy", actionspec.StrategyMerge)
 	target := co.Source
 	if target == "" {
 		target = x.res.RepoRef.DefaultBranch

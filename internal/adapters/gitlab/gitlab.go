@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
@@ -190,6 +192,17 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 	return ports.MRRef{IID: mr.IID, URL: mr.WebURL}, nil
 }
 
+// AddMRLabels adds labels with add_labels, which keeps the merge request's
+// others; GitLab creates a project label it does not have yet.
+func (a *Adapter) AddMRLabels(ctx context.Context, mr ports.MRRef, labels []string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	_, err := a.api(ctx, http.MethodPut, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID),
+		map[string]any{"add_labels": strings.Join(labels, ",")}, nil)
+	return err
+}
+
 // FindMR implements the port's reconciliation lookup: the open MR from this
 // source branch onto target.
 func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
@@ -304,6 +317,61 @@ func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (po
 		}
 	}
 	out.State = ports.AggregateChecks(out.Items)
+	return out, nil
+}
+
+// CIFailures lists the failed jobs of head's pipeline — a job allowed to fail
+// is not a failure — each with its stage and the CI file that declares it
+// (the project's ci_config_path, .gitlab-ci.yml by default; a job from an
+// included file is still named there, by its job name).
+func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) ([]ports.CIFailure, error) {
+	var m struct {
+		HeadPipeline *struct {
+			ID     int    `json:"id"`
+			SHA    string `json:"sha"`
+			Status string `json:"status"`
+			WebURL string `json:"web_url"`
+		} `json:"head_pipeline"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID), nil, &m); err != nil {
+		return nil, err
+	}
+	p := m.HeadPipeline
+	if p == nil || (head != "" && p.SHA != head) || p.Status != "failed" {
+		return nil, nil
+	}
+	var proj struct {
+		CIConfigPath string `json:"ci_config_path"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, a.path(), nil, &proj); err != nil {
+		return nil, err
+	}
+	file := proj.CIConfigPath
+	if file == "" {
+		file = ".gitlab-ci.yml"
+	}
+	var jobs []struct {
+		Name          string `json:"name"`
+		Stage         string `json:"stage"`
+		WebURL        string `json:"web_url"`
+		AllowFailure  bool   `json:"allow_failure"`
+		FailureReason string `json:"failure_reason"`
+	}
+	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pipelines/%d/jobs?scope[]=failed&per_page=100", a.path(), p.ID), nil, &jobs); err != nil {
+		return nil, err
+	}
+	var out []ports.CIFailure
+	for _, j := range jobs {
+		if j.AllowFailure {
+			continue
+		}
+		out = append(out, ports.CIFailure{Name: j.Name, URL: j.WebURL, File: file, Job: j.Name, Stage: j.Stage,
+			Summary: strings.ReplaceAll(j.FailureReason, "_", " ")})
+	}
+	if len(out) == 0 {
+		// Failed with no job of its own failing: a configuration error, say.
+		out = append(out, ports.CIFailure{Name: "pipeline", URL: p.WebURL, File: file})
+	}
 	return out, nil
 }
 
@@ -435,6 +503,64 @@ func (a *Adapter) ResolveThread(ctx context.Context, mr ports.MRRef, threadID st
 		fmt.Sprintf("%s/merge_requests/%d/discussions/%s?resolved=true", a.path(), mr.IID, url.PathEscape(threadID)), nil, nil)
 	return err
 }
+
+// UploadAttachment uploads a file to the project (POST /projects/:id/uploads)
+// for a description or a note to show. GitLab answers with a
+// project-relative url and the markdown for it — what its renderer resolves
+// inside that project, and so what the body uses — and, on recent versions,
+// a full_path; URL is the absolute address either way.
+func (a *Adapter) UploadAttachment(ctx context.Context, _ ports.RepoRef, name, contentType string, data []byte) (ports.Attachment, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, quoteEscaper.Replace(name)))
+	h.Set("Content-Type", contentType)
+	part, err := mw.CreatePart(h)
+	if err == nil {
+		_, err = part.Write(data)
+	}
+	if err == nil {
+		err = mw.Close()
+	}
+	if err != nil {
+		return ports.Attachment{}, err
+	}
+	path := a.path() + "/uploads"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.BaseURL+"/api/v4"+path, &buf)
+	if err != nil {
+		return ports.Attachment{}, err
+	}
+	req.Header.Set("PRIVATE-TOKEN", a.cfg.Token)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return ports.Attachment{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return ports.Attachment{}, fmt.Errorf("gitlab POST %s: %d: %s", path, resp.StatusCode, tail(string(body), 300))
+	}
+	var out struct {
+		URL      string `json:"url"`
+		FullPath string `json:"full_path"`
+		Markdown string `json:"markdown"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return ports.Attachment{}, fmt.Errorf("gitlab POST %s: decode: %w", path, err)
+	}
+	if out.URL == "" {
+		return ports.Attachment{}, fmt.Errorf("gitlab POST %s: the upload has no url", path)
+	}
+	abs := out.FullPath
+	if abs == "" {
+		abs = fmt.Sprintf("/-/project/%d%s", a.projectID, out.URL)
+	}
+	return ports.Attachment{URL: a.cfg.BaseURL + abs, Link: out.URL, Markdown: out.Markdown}, nil
+}
+
+// quoteEscaper escapes a multipart filename, as mime/multipart does.
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 
 func tail(s string, n int) string {
 	if len(s) <= n {

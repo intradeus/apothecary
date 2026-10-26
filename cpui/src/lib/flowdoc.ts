@@ -36,7 +36,8 @@ export type EdgeKind = (typeof EDGE_KINDS)[number];
 
 /** 'sequence' is the editor's name for a stage that runs a sequence in its
  *  place: the YAML gives it `sequence:` and no type. */
-export type StageKind = 'agent' | 'command' | 'human_gate' | 'action' | 'wait' | 'sequence';
+export type StageKind =
+	'agent' | 'command' | 'human_gate' | 'action' | 'wait' | 'service' | 'sequence';
 
 // CURRENT_VERSION is the grammar this build writes; every document declares
 // it, so a future break is a refusal rather than a mis-parse (FLOWLANG §1).
@@ -47,8 +48,9 @@ export const CURRENT_VERSION = 5;
 // stops the run, one with to: debug parks it for a human; both carry no
 // max/then.
 //
-// An edge does not say what it carries: its kind decides that ($DECISION for a
-// rejection, $FAILURE for a failure), and the TARGET stage binds it as an input.
+// An edge does not say what it carries: its kind decides that (edge.verdict
+// for a rejection, edge.failure for a failure), and the TARGET stage binds it
+// as an input.
 export interface DocEdge {
 	to: string;
 	max?: number;
@@ -65,7 +67,10 @@ export function chainLinks(e: DocEdge | undefined): DocEdge[] {
 // Which edge kinds a stage type may declare (mirror of the Go registry).
 export function edgeKindsFor(type: StageKind): EdgeKind[] {
 	const out: EdgeKind[] = [];
-	if (type === 'agent' || type === 'command' || type === 'wait') out.push('on_fail', 'on_timeout');
+	// A service fails when it does not come up healthy, and times out when it
+	// takes longer than its timeout to.
+	if (type === 'agent' || type === 'command' || type === 'wait' || type === 'service')
+		out.push('on_fail', 'on_timeout');
 	if (type === 'agent' || type === 'human_gate') out.push('on_reject');
 	// An action fails when its outcome is wrong in a fixable way (a merge
 	// that conflicts, a push the remote refuses).
@@ -73,53 +78,135 @@ export function edgeKindsFor(type: StageKind): EdgeKind[] {
 	return out;
 }
 
-/** Which sentinel an edge kind's carried content fills (mirror of Go). */
-export function feedSentinelFor(kind: EdgeKind): string {
-	return kind === 'on_reject' ? SENTINEL_DECISION : SENTINEL_FAILURE;
+/** Which edge source an edge kind's carried content fills (mirror of Go). */
+export function feedSourceFor(kind: EdgeKind): string {
+	return kind === 'on_reject' ? SOURCE_VERDICT : SOURCE_FAILURE;
 }
 
-// Sentinels are the engine-provided input values (FLOWLANG §4). The rule is
-// lexical: a $NAME input is resolved by the engine, anything else is a
-// repo-relative artifact path.
-// The git ones are named after the git they run, one range each wherever
-// they are bound: what the branch changes against its target, what this
-// phase run committed since it began, and what a commit would record now
-// (staged, unstaged, untracked — which the diffs, comparing commits, miss).
-export const SENTINEL_DIFF_TARGET = '$DIFF_TARGET';
-export const SENTINEL_DIFF_PHASE = '$DIFF_PHASE';
-export const SENTINEL_STATUS = '$STATUS';
-export const SENTINEL_MR_URL = '$MR_URL';
-export const SENTINEL_WORKSPACE = '$WORKSPACE';
-// $DECISION and $FAILURE carry what the edge that re-entered a stage brought:
-// a rejection's rationale, and a failing stage's output. Bound like any other
-// input, so the retry channel is declared rather than arriving invisibly.
-export const SENTINEL_DECISION = '$DECISION';
-export const SENTINEL_FAILURE = '$FAILURE';
-export const isSentinel = (v: string) => v.startsWith('$');
-export const isFeedSentinel = (v: string) => v === SENTINEL_DECISION || v === SENTINEL_FAILURE;
+// Sources are where an input comes from (FLOWLANG §4): a path some stage of
+// the flow writes, a file of the repository (repo:path), or a value the
+// engine provides — a fact about the run (run.*) or what the edge that
+// entered the stage carried (edge.*). Every engine source has one type.
+export const REPO_PREFIX = 'repo:';
+export const SOURCE_TICKET = 'run.ticket';
+export const SOURCE_STATUS = 'run.git.status';
+export const SOURCE_DIFF_TARGET = 'run.git.diff_target';
+export const SOURCE_DIFF_PHASE = 'run.git.diff_phase';
+export const SOURCE_MR_URL = 'run.mr.url';
+export const SOURCE_WORKSPACE = 'run.workspace';
+// What failed in CI on the merge request a ci_failed watcher opened on: each
+// check's CI file, job and failed steps (never a log).
+export const SOURCE_CI_FAILURE = 'run.ci.failure';
+// What the edge that entered a stage carried: a verdict (a rejection's
+// reasons; an approval's, on a gate's or a verdict's success), a failing
+// stage's output. Empty otherwise, so a port reading one is optional.
+export const SOURCE_VERDICT = 'edge.verdict';
+export const SOURCE_FAILURE = 'edge.failure';
+export const ENGINE_SOURCES: Record<string, string> = {
+	[SOURCE_TICKET]: 'ticket',
+	[SOURCE_STATUS]: 'changeset',
+	[SOURCE_DIFF_TARGET]: 'changeset',
+	[SOURCE_DIFF_PHASE]: 'changeset',
+	[SOURCE_MR_URL]: 'link',
+	[SOURCE_WORKSPACE]: 'link',
+	[SOURCE_CI_FAILURE]: 'failure',
+	[SOURCE_FAILURE]: 'failure',
+	[SOURCE_VERDICT]: 'verdict'
+};
+// A running service's address is a family of sources, one per service:
+// run.service.<name>, the name a project service's or a $parameter naming
+// one (run.service.$app). Every one of them is a link.
+export const SERVICE_SOURCE_PREFIX = 'run.service.';
+export const serviceSource = (name: string) => SERVICE_SOURCE_PREFIX + name;
+/** The service a source names ("" when it names none): a slug, or a $param. */
+export function sourceService(v: string): string {
+	if (!v.startsWith(SERVICE_SOURCE_PREFIX)) return '';
+	const name = v.slice(SERVICE_SOURCE_PREFIX.length);
+	return /^\$?[a-z][a-z0-9_-]*$/.test(name) ? name : '';
+}
+/** The type of a value the engine provides, or undefined for a file. */
+export const sourceType = (v: string): string | undefined =>
+	ENGINE_SOURCES[v] ?? (sourceService(v) ? 'link' : undefined);
+export const isEngineSource = (v: string) => sourceType(v) != null;
+export const isEdgeSource = (v: string) => v === SOURCE_VERDICT || v === SOURCE_FAILURE;
 
-/** Which sentinels each stage type may bind (mirror of the Go value rules). */
-export function sentinelsFor(type: StageKind): string[] {
+/** Port types (mirror of agentspec): what a file holds, what the engine
+ *  provides. `files` is a directory of files — its path ends in "/". */
+export const FILE_TYPES = [
+	'file',
+	'verdict',
+	'review_threads',
+	'review_replies',
+	'commit_message',
+	'files'
+];
+/** A verdict is also what edge.verdict gives: the one file type an engine
+ *  source has too. */
+export const VALUE_TYPES = ['ticket', 'changeset', 'failure', 'link'];
+/** What a gate shows the person: files, and folders of them (a link is
+ *  typed by its source). */
+export const GATE_TYPES = ['file', 'files'];
+/** The port types a schema never goes with: a plain file says nothing of
+ *  its shape, a directory holds many, a value is the engine's. */
+export const takesSchema = (type?: string) =>
+	type !== 'file' && type !== 'files' && !VALUE_TYPES.includes(type ?? '');
+
+/** Which engine sources each stage type may read (mirror of the Go rules):
+ *  an agent any — run.ci.failure only in a ci_failed watcher (`ciFailed`) —
+ *  a gate a link; the services' addresses among them, one per service the
+ *  flow's stages name (`services`). */
+export function sourcesFor(type: StageKind, services: string[] = [], ciFailed = false): string[] {
+	const running = services.map(serviceSource);
 	if (type === 'agent')
 		return [
-			SENTINEL_DIFF_TARGET,
-			SENTINEL_DIFF_PHASE,
-			SENTINEL_STATUS,
-			SENTINEL_DECISION,
-			SENTINEL_FAILURE
+			...Object.keys(ENGINE_SOURCES).filter((v) => ciFailed || v !== SOURCE_CI_FAILURE),
+			...running
 		];
-	if (type === 'human_gate') return [SENTINEL_WORKSPACE, SENTINEL_MR_URL];
+	if (type === 'human_gate') return [SOURCE_WORKSPACE, SOURCE_MR_URL, ...running];
 	return [];
 }
 
-// A stage's input/output binding: an ordered mapping of name to value
+/** What a service stage does to its service; start (the default) waits until
+ *  it is healthy. */
+export const SERVICE_DOS = ['start', 'restart', 'stop'] as const;
+export type ServiceDo = (typeof SERVICE_DOS)[number];
+
+/** The services the flow names — a service stage's service, a source's —
+ *  as written (`$app` stays `$app`), in document order. */
+export function flowServices(doc: FlowDoc): string[] {
+	const out = new Set<string>();
+	for (const s of allStages(doc)) {
+		if (s.type === 'service' && s.service) out.add(s.service);
+		for (const p of Object.values(s.input ?? {})) {
+			const name = sourceService(p.from ?? '');
+			if (name) out.add(name);
+		}
+	}
+	return [...out];
+}
+
+/** One port as the document writes it: an input's source, an output's
+ *  destination, and what it is. */
+export interface DocPort {
+	from?: string;
+	to?: string;
+	type?: string;
+	schema?: string;
+	description?: string;
+	optional?: boolean;
+}
+
+// A stage's input or output: an ordered mapping of port name to port
 // (FLOWLANG §4). One form for every stage type — the name is checked against a
 // contract where one exists (an agent's decls, an action's signature) and is a
 // free label otherwise. Object insertion order is preserved on the wire (the Go
-// side emits ordered JSON), so bindings never reorder across a round-trip.
-export type StageIO = Record<string, string>;
+// side emits ordered JSON), so ports never reorder across a round-trip.
+export type StagePorts = Record<string, DocPort>;
 
-export const ioEntries = (v?: StageIO): [string, string][] => (v ? Object.entries(v) : []);
+export const portEntries = (v?: StagePorts): [string, DocPort][] => (v ? Object.entries(v) : []);
+
+/** A port's source (an input) or destination (an output). */
+export const portValue = (p?: DocPort) => p?.from ?? p?.to ?? '';
 
 export interface DocStage {
 	id: string;
@@ -133,8 +220,10 @@ export interface DocStage {
 	harness?: string;
 	max_turns?: number | string;
 	timeout?: string;
-	input?: StageIO;
-	output?: StageIO;
+	input?: StagePorts;
+	output?: StagePorts;
+	/** action: its settings — literals, or $parameters. */
+	with?: Record<string, string | string[]>;
 	run?: string;
 	run_ref?: string;
 	/** command: run once per checkout of a multi-repo run instead of once in
@@ -148,11 +237,15 @@ export interface DocStage {
 	/** A condition (FLOWLANG §2): `tracker`, `subject`, `$bool_param`, each
 	 *  optionally negated as `not x`. A stage whose condition does not hold
 	 *  completes as skipped. */
-	when?: string;
+	run_if?: string;
 	/** action: a slug from the compiled-in registry (GET /api/actions). */
 	action?: string;
 	/** wait: a signal slug to block on (GET /api/signals). */
 	for?: string;
+	/** service: a project service, or a $parameter naming one (`$app`). */
+	service?: string;
+	/** service: what it does to it; absent = start. */
+	do?: ServiceDo;
 	on_success?: string;
 	on_fail?: DocEdge;
 	on_reject?: DocEdge;
@@ -208,12 +301,15 @@ export type StartPolicy = (typeof START_POLICIES)[number];
 export const OPERATES_ON = ['ticket', 'merge_request'] as const;
 export type OperatesOn = (typeof OPERATES_ON)[number];
 
-/** One parameter of the flow's `parameters:` block (FLOWLANG §1): its
- *  default — whose JS type is the parameter's type: bool, int/float, string —
- *  and optionally a description and an enum. Values come from outside the
- *  document (the workshop's bindings, a run's overrides). */
+/** One parameter of the flow's `parameters:` block (FLOWLANG §1): what it
+ *  holds — its declared type, and whether it is a list (the engine's six
+ *  take theirs from the engine) — its default, and optionally a description
+ *  and an enum. Values come from outside the document (the workshop's
+ *  bindings, a run's overrides). */
 export interface DocParam {
-	default: boolean | number | string;
+	type?: 'bool' | 'int' | 'float' | 'string' | 'duration';
+	list?: boolean;
+	default: boolean | number | string | (boolean | number | string)[];
 	description?: string;
 	enum?: string[];
 }
@@ -234,15 +330,29 @@ export interface DocAgentInput {
 	name: string;
 	description?: string;
 	optional?: boolean;
+	/** What it reads: a port type, a schema under `schemas:`, or both. */
+	type?: string;
+	schema?: string;
 }
 
-// One declared output: a file the agent must write. `type: verdict` is the
-// structured APPROVE/REJECT the engine routes on_reject from.
+// One declared output: a file the agent must write — what, never where (a
+// stage running it says). A `type` is `file` or a structure something built
+// in reads (`verdict`: the APPROVE/REJECT on_reject routes from;
+// `commit_message`: what the commit action commits with); a `schema` names
+// one of the flow's own structures, alone or narrowing the type.
 export interface DocAgentOutput {
 	name: string;
 	description?: string;
-	path: string;
 	type?: string;
+	schema?: string;
+}
+
+/** One of the flow's structures (FLOWLANG §4): a JSON Schema, named by the
+ *  agents' inputs and outputs that read and write it. */
+export interface DocSchema {
+	name: string;
+	description?: string;
+	json_schema: unknown;
 }
 
 // An agent definition carried BY the flow (FLOWLANG §1, v3): the document is
@@ -254,9 +364,37 @@ export interface DocAgent {
 	read_only?: boolean;
 	allow_bash?: boolean;
 	prompt: string;
+	/** The flow's MCP servers it may call, by name. */
+	mcp?: string[];
 	inputs?: DocAgentInput[];
 	outputs?: DocAgentOutput[];
 }
+
+/** One of the flow's MCP servers (FLOWLANG §1 mcp_servers): exactly one of a
+ *  server apothecary runs (builtin), a program speaking MCP on stdio
+ *  (command: the program, then its arguments) or a remote url. A command
+ *  takes env, a url headers; their values may read a project secret as
+ *  ${secrets.<name>} — nowhere else may. */
+export interface DocMCPServer {
+	name: string;
+	description?: string;
+	builtin?: string;
+	command?: string[];
+	url?: string;
+	env?: Record<string, string>;
+	headers?: Record<string, string>;
+}
+
+/** The servers apothecary provides (mirror of flow.MCPBuiltins): the
+ *  project's browser, one Chromium per agent session. */
+export const MCP_BUILTINS = ['browser'];
+
+/** How a server is reached — which of its three fields it sets. A server
+ *  that sets none yet reads as a command, the one most are. */
+export type MCPKind = 'builtin' | 'command' | 'url';
+export const MCP_KINDS: MCPKind[] = ['builtin', 'command', 'url'];
+export const mcpKind = (m: DocMCPServer): MCPKind =>
+	m.builtin != null ? 'builtin' : m.url != null ? 'url' : 'command';
 
 /** A sequence (FLOWLANG §1 Sequences): a chain of stages written once and run
  *  by every stage that names it. Its stages stay as written — their ids are
@@ -276,6 +414,10 @@ export interface FlowDoc {
 	operates_on?: OperatesOn;
 	/** The flow's one settings block, in document order. */
 	parameters: Record<string, DocParam>;
+	/** The flow's structures, in document order. */
+	schemas?: DocSchema[];
+	/** The MCP servers its agents may use, in document order. */
+	mcp_servers?: DocMCPServer[];
 	agents?: DocAgent[];
 	/** Sequences, in document order; the canvas shows the stages that run
 	 *  them. */
@@ -501,7 +643,8 @@ export function fires(w: DocWait): boolean {
  *  (a known one then runs at the engine's default). */
 export function paramDefault(doc: FlowDoc, name: string): string | undefined {
 	const p = doc.parameters?.[name];
-	return p == null ? undefined : String(p.default);
+	if (p == null) return undefined;
+	return Array.isArray(p.default) ? p.default.join(', ') : String(p.default);
 }
 
 /** The flow's definition of an agent by name, or undefined. */
@@ -635,15 +778,44 @@ export function docToYaml(doc: FlowDoc): string {
 	);
 	for (const name of [...known, ...own]) {
 		const p = doc.parameters[name];
-		if (!p.description && !p.enum?.length) params[name] = p.default;
+		const isKnown = (KNOWN_PARAMS as readonly string[]).includes(name);
+		// The engine's own take a bare default; the flow's declare what they hold.
+		if (isKnown && !p.description && !p.enum?.length) params[name] = p.default;
 		else {
-			const o: Record<string, unknown> = { default: p.default };
+			const o: Record<string, unknown> = {};
+			if (!isKnown && p.type) o.type = p.type;
+			if (!isKnown && p.list) o.list = true;
+			o.default = p.default;
 			if (p.description) o.description = p.description;
 			if (p.enum?.length) o.enum = p.enum;
 			params[name] = o;
 		}
 	}
 	obj.parameters = params;
+	// Schemas before the agents that name them.
+	if (doc.schemas?.length) {
+		obj.schemas = doc.schemas.map((q) => {
+			const o: Record<string, unknown> = { name: q.name };
+			if (q.description) o.description = q.description;
+			o.json_schema = q.json_schema;
+			return o;
+		});
+	}
+	// MCP servers before the agents that list them: name first, then what
+	// reaches it, then what it is given.
+	if (doc.mcp_servers?.length) {
+		obj.mcp_servers = doc.mcp_servers.map((m) => {
+			const o: Record<string, unknown> = { name: m.name };
+			if (m.description) o.description = m.description;
+			const kind = mcpKind(m);
+			if (kind === 'builtin') o.builtin = m.builtin;
+			else if (kind === 'url') o.url = m.url;
+			else o.command = m.command ?? [];
+			if (kind === 'command' && m.env && Object.keys(m.env).length) o.env = m.env;
+			if (kind === 'url' && m.headers && Object.keys(m.headers).length) o.headers = m.headers;
+			return o;
+		});
+	}
 	// Agents before stages: a reader meets the contracts before the wiring
 	// that binds them. Order within the list is the author's.
 	if (doc.agents?.length) {
@@ -652,11 +824,14 @@ export function docToYaml(doc: FlowDoc): string {
 			if (a.description) o.description = a.description;
 			if (a.read_only) o.read_only = a.read_only;
 			if (a.allow_bash) o.allow_bash = a.allow_bash;
+			if (a.mcp?.length) o.mcp = a.mcp;
 			if (a.inputs?.length) {
 				o.inputs = a.inputs.map((i) => {
 					const io: Record<string, unknown> = { name: i.name };
 					if (i.description) io.description = i.description;
 					if (i.optional) io.optional = i.optional;
+					if (i.type) io.type = i.type;
+					if (i.schema) io.schema = i.schema;
 					return io;
 				});
 			}
@@ -664,8 +839,8 @@ export function docToYaml(doc: FlowDoc): string {
 				o.outputs = a.outputs.map((out) => {
 					const oo: Record<string, unknown> = { name: out.name };
 					if (out.description) oo.description = out.description;
-					oo.path = out.path;
 					if (out.type) oo.type = out.type;
+					if (out.schema) oo.schema = out.schema;
 					return oo;
 				});
 			}
@@ -690,8 +865,11 @@ export function docToYaml(doc: FlowDoc): string {
 		}
 		const o: Record<string, unknown> = { id: s.id, type: s.type };
 		if (s.description) o.description = s.description;
-		if (s.when) o.when = s.when;
+		if (s.run_if) o.run_if = s.run_if;
 		if (s.agent) o.agent = s.agent;
+		// A service stage's what before its how long.
+		if (s.service) o.service = s.service;
+		if (s.do) o.do = s.do;
 		if (s.model) o.model = s.model;
 		if (s.harness) o.harness = s.harness;
 		if (s.max_turns != null) o.max_turns = s.max_turns;
@@ -699,8 +877,9 @@ export function docToYaml(doc: FlowDoc): string {
 		// input/output are three-way unions; emit only a non-empty one. Guarding
 		// on `.length` alone would silently drop the named form (objects have no
 		// length), losing every binding on save.
-		if (nonEmptyIO(s.input)) o.input = s.input;
-		if (nonEmptyIO(s.output)) o.output = s.output;
+		if (nonEmptyIO(s.input)) o.input = portsYaml(s.input!);
+		if (nonEmptyIO(s.output)) o.output = portsYaml(s.output!);
+		if (s.with && Object.keys(s.with).length) o.with = s.with;
 		if (s.run) o.run = s.run;
 		if (s.run_ref) o.run_ref = s.run_ref;
 		if (s.each_repo) o.each_repo = true;
@@ -783,9 +962,25 @@ function triggerYaml(w: DocWait): unknown {
 	return o;
 }
 
-// nonEmptyIO reports whether a binding has anything to serialize.
-function nonEmptyIO(v?: StageIO): boolean {
+// nonEmptyIO reports whether a port map has anything to serialize.
+function nonEmptyIO(v?: StagePorts): boolean {
 	return v != null && Object.keys(v).length > 0;
+}
+
+// portsYaml writes ports in the canonical key order, empty fields left out.
+function portsYaml(ports: StagePorts): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [name, p] of Object.entries(ports)) {
+		const o: Record<string, unknown> = {};
+		if (p.from) o.from = p.from;
+		if (p.to) o.to = p.to;
+		if (p.type) o.type = p.type;
+		if (p.schema) o.schema = p.schema;
+		if (p.description) o.description = p.description;
+		if (p.optional) o.optional = true;
+		out[name] = o;
+	}
+	return out;
 }
 
 // edgeToYamlValue serializes one chain link (recursing into then). A link to
@@ -1173,6 +1368,7 @@ export function freshStage(doc: FlowDoc, type: StageKind, taken = doc.stages): D
 		human_gate: 'gate',
 		action: 'action',
 		wait: 'wait',
+		service: 'service',
 		sequence: 'seq'
 	}[type];
 	let n = 1;
@@ -1186,9 +1382,27 @@ export function freshStage(doc: FlowDoc, type: StageKind, taken = doc.stages): D
 	if (type === 'human_gate') s.question = '';
 	if (type === 'action') s.action = '';
 	if (type === 'wait') s.for = '';
+	if (type === 'service') s.service = serviceFor(doc);
 	// The main chain is a sequence too — for the chains that are not it.
 	if (type === 'sequence') s.sequence = doc.sequences?.[0]?.id ?? (hasMain(doc) ? MAIN : '');
 	return s;
+}
+
+/** serviceFor is the service a new service stage names: the one the flow's
+ *  service stages already do, else the convention — `$app`, a parameter
+ *  whose default is the project's `default` service, so a project calling
+ *  its app anything binds its own name. The parameter is declared here when
+ *  the flow has none of that name. */
+function serviceFor(doc: FlowDoc): string {
+	const used = allStages(doc).find((x) => x.type === 'service' && x.service)?.service;
+	if (used) return used;
+	doc.parameters ??= {};
+	doc.parameters.app ??= {
+		type: 'string',
+		default: 'default',
+		description: 'the project service the run brings up'
+	};
+	return '$app';
 }
 
 /** Whether the flow has a main chain — which other chains may run as the
@@ -1305,6 +1519,102 @@ export function removeSequence(doc: FlowDoc, id: string) {
 /** What an agent's name — and each of its inputs' and outputs' — may be. */
 export const AGENT_NAME = /^[a-z0-9][a-z0-9._-]*$/;
 
+/** What a schema's name may be: the same slug as an agent's. */
+export const SCHEMA_NAME = AGENT_NAME;
+
+/** What names the schema: an agent's input or output, a command's binding. */
+export type SchemaUser =
+	{ agent: string; port: string } | { stage: string; sequence?: string; port: string };
+
+export function schemaUsers(doc: FlowDoc, name: string): SchemaUser[] {
+	const out: SchemaUser[] = [];
+	for (const a of doc.agents ?? []) {
+		for (const p of [...(a.inputs ?? []), ...(a.outputs ?? [])])
+			if (p.schema === name) out.push({ agent: a.name, port: p.name });
+	}
+	const scan = (stages: DocStage[], sequence?: string) => {
+		for (const s of stages)
+			for (const [port, p] of [...portEntries(s.input), ...portEntries(s.output)])
+				if (p.schema === name) out.push({ stage: s.id, sequence, port });
+	};
+	scan(doc.stages);
+	for (const q of doc.sequences ?? []) scan(q.stages, q.id);
+	return out;
+}
+
+/** addSchema declares an object schema with no properties yet, as schema_N. */
+export function addSchema(doc: FlowDoc): DocSchema {
+	const names = new Set((doc.schemas ?? []).map((q) => q.name));
+	let n = 1;
+	while (names.has(`schema_${n}`)) n++;
+	const q: DocSchema = { name: `schema_${n}`, json_schema: { type: 'object', properties: {} } };
+	doc.schemas = [...(doc.schemas ?? []), q];
+	return q;
+}
+
+/** renameSchema renames a schema and every port that names it. */
+export function renameSchema(doc: FlowDoc, from: string, to: string) {
+	const q = doc.schemas?.find((x) => x.name === from);
+	if (!q) return;
+	q.name = to;
+	for (const a of doc.agents ?? [])
+		for (const p of [...(a.inputs ?? []), ...(a.outputs ?? [])])
+			if (p.schema === from) p.schema = to;
+	for (const s of allStages(doc))
+		for (const [, p] of [...portEntries(s.input), ...portEntries(s.output)])
+			if (p.schema === from) p.schema = to;
+}
+
+/** removeSchema drops a schema no port names. */
+export function removeSchema(doc: FlowDoc, name: string) {
+	doc.schemas = doc.schemas?.filter((q) => q.name !== name);
+	if (!doc.schemas?.length) doc.schemas = undefined;
+}
+
+/** What an MCP server's name may be: a slug, as the agents' mcp lists name it. */
+export const MCP_NAME = /^[a-z][a-z0-9_-]*$/;
+
+/** The agents that list the MCP server name. */
+export function mcpUsers(doc: FlowDoc, name: string): string[] {
+	return (doc.agents ?? []).filter((a) => a.mcp?.includes(name)).map((a) => a.name);
+}
+
+/** addMCPServer declares a server: the project's browser when the flow has
+ *  none yet — the one most flows want — else a command to fill in. */
+export function addMCPServer(doc: FlowDoc): DocMCPServer {
+	const list = doc.mcp_servers ?? [];
+	const names = new Set(list.map((m) => m.name));
+	let m: DocMCPServer;
+	if (!list.some((x) => x.builtin === 'browser') && !names.has('browser'))
+		m = { name: 'browser', builtin: 'browser' };
+	else {
+		let n = 1;
+		while (names.has(`mcp_${n}`)) n++;
+		m = { name: `mcp_${n}`, command: [] };
+	}
+	doc.mcp_servers = [...list, m];
+	return m;
+}
+
+/** renameMCPServer renames a server and every agent's mention of it. */
+export function renameMCPServer(doc: FlowDoc, from: string, to: string) {
+	const m = doc.mcp_servers?.find((x) => x.name === from);
+	if (!m) return;
+	m.name = to;
+	for (const a of doc.agents ?? []) if (a.mcp) a.mcp = a.mcp.map((x) => (x === from ? to : x));
+}
+
+/** removeMCPServer drops a server, and it from every agent that listed it. */
+export function removeMCPServer(doc: FlowDoc, name: string) {
+	doc.mcp_servers = doc.mcp_servers?.filter((m) => m.name !== name);
+	if (!doc.mcp_servers?.length) doc.mcp_servers = undefined;
+	for (const a of doc.agents ?? []) {
+		if (!a.mcp?.includes(name)) continue;
+		a.mcp = a.mcp.filter((x) => x !== name);
+		if (!a.mcp.length) a.mcp = undefined;
+	}
+}
+
 /** The stage ids — in a chain or a sequence — that run the agent name. */
 export function agentUsers(doc: FlowDoc, name: string): string[] {
 	return allStages(doc)
@@ -1392,19 +1702,19 @@ export function chainSequence(doc: FlowDoc, ph: DocPhase): string | undefined {
 
 /** One io port on a stage: a dot in the graph, a row in the inspector. */
 export interface IOPort {
-	/** Binding name, or the path itself for a command's unnamed entries. */
+	/** The port's name. */
 	name: string;
-	/** The bound artifact path, or a sentinel. */
+	/** Its source (an input) or destination (an output), "" when unstated. */
 	value: string;
-	/** True when value is engine-provided ($DIFF_TARGET, $STATUS, $MR_URL, …). */
-	sentinel: boolean;
+	/** True when value is a value the engine provides (run.*, edge.*). */
+	engine: boolean;
+	/** What it is: its type, its schema. */
+	type?: string;
+	schema?: string;
 	/** Declared description, when the contract carries one. */
 	description?: string;
-	/** True for a declared-but-unbound input (nothing to connect yet). */
+	/** True for a declared port the stage does not state yet. */
 	unbound?: boolean;
-	/** True for a literal the stage writes (an enum choice, a text input):
-	 *  the author's word, not a path — shown, never connectable. */
-	literal?: boolean;
 }
 
 /** The agent/action contract shapes the graph needs; a subset of api.ts types. */
@@ -1412,11 +1722,10 @@ export interface IODecl {
 	name: string;
 	description?: string;
 	optional?: boolean;
-	path?: string;
 	type?: string;
-	kind?: string;
-	sentinel?: string;
+	schema?: string;
 	required?: boolean;
+	defaultPath?: string;
 }
 export interface AgentContract {
 	name: string;
@@ -1429,20 +1738,21 @@ export interface ActionContract {
 	outputs?: IODecl[];
 }
 
-const port = (name: string, value: string, decl?: IODecl, unbound = false): IOPort => ({
+const port = (name: string, p: DocPort | undefined, decl?: IODecl): IOPort => ({
 	name,
-	value,
-	sentinel: isSentinel(value),
-	description: decl?.description,
-	unbound: unbound || undefined,
-	literal: decl?.kind === 'enum' || decl?.kind === 'text' || undefined
+	value: portValue(p),
+	engine: isEngineSource(portValue(p)),
+	type: p?.type ?? decl?.type,
+	schema: p?.schema ?? decl?.schema,
+	description: p?.description ?? decl?.description,
+	unbound: p == null || undefined
 });
 
 /**
- * stageInputs lists a stage's input ports: named bindings for agents and
- * actions (including any declared-but-unbound ones, so the contract is visible
- * before it is wired), plain paths for commands, and the single reviewed
- * artifact or sentinel for a gate.
+ * stageInputs lists a stage's input ports: a contract's (an agent's, an
+ * action's) in declaration order — including any it does not state yet, so
+ * the contract is visible before it is wired — then every other port it
+ * states; a command's or a gate's as written.
  */
 export function stageInputs(
 	s: DocStage,
@@ -1454,66 +1764,62 @@ export function stageInputs(
 			return declaredPorts(s.input, agents.find((a) => a.name === s.agent)?.inputs ?? []);
 		case 'action':
 			return declaredPorts(s.input, actions.find((a) => a.slug === s.action)?.inputs ?? []);
-		// A command or gate has no contract, so every binding it wrote is a port.
 		case 'command':
 		case 'human_gate':
 		case 'wait':
-			return ioEntries(s.input).map(([name, value]) => port(name, value));
-		// A sequence stage binds nothing itself: its sequence's stages do.
+			return portEntries(s.input).map(([name, p]) => port(name, p));
+		// A sequence stage states nothing itself: its sequence's stages do. A
+		// service stage reads and writes nothing: its address is a source.
 		case 'sequence':
+		case 'service':
 			return [];
 	}
 }
 
 /**
- * declaredPorts lists a contract's inputs in declaration order (so the shape is
- * visible before it is wired), followed by any binding the contract does not
- * declare — the validator flags those, but hiding them would make the graph lie
- * about the YAML.
+ * declaredPorts lists a contract's ports in declaration order, followed by
+ * any port the contract does not declare — the validator refuses those, but
+ * hiding them would make the graph lie about the YAML.
  */
-function declaredPorts(io: StageIO | undefined, decls: IODecl[]): IOPort[] {
-	const bound = io ?? {};
-	const out = decls.map((d) => port(d.name, bound[d.name] ?? '', d, bound[d.name] == null));
-	for (const [name, value] of ioEntries(io)) {
-		if (!decls.some((d) => d.name === name)) out.push(port(name, value));
+function declaredPorts(ports: StagePorts | undefined, decls: IODecl[]): IOPort[] {
+	const out = decls.map((d) => port(d.name, ports?.[d.name], d));
+	for (const [name, p] of portEntries(ports)) {
+		if (!decls.some((d) => d.name === name)) out.push(port(name, p));
 	}
 	return out;
 }
 
-/**
- * stageOutputs lists what a stage produces: an agent's declared outputs with
- * the stage's rebinds applied (the TS mirror of flow.EffectiveOutputs), a
- * command's declared paths, or an action's value outputs shown by sentinel.
- */
+/** stageOutputs lists what a stage writes, the same way. */
 export function stageOutputs(
 	s: DocStage,
 	agents: AgentContract[] = [],
 	actions: ActionContract[] = []
 ): IOPort[] {
 	switch (s.type) {
-		case 'agent': {
-			// Declared defaults overlaid with the stage's rebinds — the TS mirror of
-			// flow.EffectiveOutputs.
-			const decls = agents.find((a) => a.name === s.agent)?.outputs ?? [];
-			const rebinds = s.output ?? {};
-			const out = decls.map((d) => port(d.name, rebinds[d.name] ?? d.path ?? '', d));
-			for (const [name, value] of ioEntries(s.output)) {
-				if (!decls.some((d) => d.name === name)) out.push(port(name, value));
-			}
-			return out;
-		}
+		case 'agent':
+			return declaredPorts(s.output, agents.find((a) => a.name === s.agent)?.outputs ?? []);
+		case 'action':
+			return declaredPorts(s.output, actions.find((a) => a.slug === s.action)?.outputs ?? []);
 		case 'command':
-			return ioEntries(s.output).map(([name, value]) => port(name, value));
-		case 'action': {
-			// A value output is consumed through its sentinel, not a path.
-			const sig = actions.find((a) => a.slug === s.action)?.outputs ?? [];
-			return sig.map((d) => port(d.name, d.sentinel ?? d.path ?? '', d));
-		}
+			return portEntries(s.output).map(([name, p]) => port(name, p));
 		case 'human_gate':
 		case 'wait':
+		case 'service':
 		case 'sequence':
 			return [];
 	}
+}
+
+/** givesVerdict reports whether a stage's success is a verdict (mirror of
+ *  Go's flow.GivesVerdict): a gate, or an agent writing a verdict. Its on_success target may read
+ *  edge.verdict too — an approval carries what was said with it. */
+export function givesVerdict(s: DocStage, agents: AgentContract[] = []): boolean {
+	if (s.type === 'human_gate') return true;
+	if (s.type !== 'agent') return false;
+	return (
+		Object.values(s.output ?? {}).some((p) => p.type === 'verdict') ||
+		!!verdictOutput(agents.find((a) => a.name === s.agent))
+	);
 }
 
 /** verdictOutput returns an agent's verdict-typed output decl, if it has one. */
@@ -1521,7 +1827,7 @@ export function verdictOutput(agent?: AgentContract): IODecl | undefined {
 	return agent?.outputs?.find((o) => o.type === 'verdict');
 }
 
-/** One derived producer→consumer connection. Read-only: paths are the wiring. */
+/** One derived writer→reader connection. Read-only: paths are the wiring. */
 export interface DataLink {
 	source: string;
 	sourceHandle: string;
@@ -1531,35 +1837,33 @@ export interface DataLink {
 }
 
 /**
- * deriveDataLinks connects every consumer port to the stage that produces its
- * value — by artifact path, or by sentinel for an action's value outputs (a
- * gate's $MR_URL comes from create_mr). Derived, never stored: the YAML's paths
- * are the wiring, and this only draws what they already say.
+ * deriveDataLinks connects every input port to the stage that writes its
+ * path. Derived, never stored: the ports' paths are the wiring, and this
+ * only draws what they already say. A value the engine provides has no
+ * writer to draw from.
  */
 export function deriveDataLinks(
 	doc: FlowDoc,
 	agents: AgentContract[] = [],
 	actions: ActionContract[] = []
 ): DataLink[] {
-	// value -> producing (stage, port). Later producers win, which keeps the
-	// link pointing at the most recent writer in document order.
-	const producers = new Map<string, { stage: string; name: string }>();
+	// path -> writing (stage, port). Later writers win, which keeps the link
+	// pointing at the most recent writer in document order.
+	const writers = new Map<string, { stage: string; name: string }>();
 	for (const s of doc.stages) {
 		for (const o of stageOutputs(s, agents, actions)) {
-			if (o.value) producers.set(o.value, { stage: s.id, name: o.name });
+			if (o.value) writers.set(o.value, { stage: s.id, name: o.name });
 		}
 	}
 	const links: DataLink[] = [];
 	for (const s of doc.stages) {
 		for (const i of stageInputs(s, agents, actions)) {
-			// A feed sentinel arrives along a control edge, not from an output — the
-			// graph lands those edges on the dot instead (see feedDots).
-			if (!i.value || i.unbound || isFeedSentinel(i.value)) continue;
-			const p = producers.get(i.value);
-			if (!p || p.stage === s.id) continue;
+			if (!i.value || i.unbound || i.engine) continue;
+			const w = writers.get(i.value);
+			if (!w || w.stage === s.id) continue;
 			links.push({
-				source: p.stage,
-				sourceHandle: `out:${p.name}`,
+				source: w.stage,
+				sourceHandle: `out:${w.name}`,
 				target: s.id,
 				targetHandle: `in:${i.name}`,
 				value: i.value
@@ -1570,15 +1874,16 @@ export function deriveDataLinks(
 }
 
 /**
- * feedDots maps "<stage id>|<sentinel>" to the input name bound to it, so the
- * graph can land a control edge on the exact dot that receives its content: an
- * on_reject edge ends at whatever the target called its $DECISION input.
+ * feedDots maps "<stage id>|<edge source>" to the input reading it, so the
+ * graph can land a control edge on the exact dot that receives its content:
+ * an on_reject edge — or a deciding stage's success — ends at whatever the
+ * target called its edge.verdict input.
  */
 export function feedDots(doc: FlowDoc): Map<string, string> {
 	const out = new Map<string, string>();
 	for (const s of doc.stages) {
-		for (const [name, value] of ioEntries(s.input)) {
-			if (isFeedSentinel(value)) out.set(`${s.id}|${value}`, name);
+		for (const [name, p] of portEntries(s.input)) {
+			if (p.from && isEdgeSource(p.from)) out.set(`${s.id}|${p.from}`, name);
 		}
 	}
 	return out;

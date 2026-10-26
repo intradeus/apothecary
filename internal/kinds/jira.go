@@ -42,7 +42,7 @@ EXACTLY what this integration calls — the reads (import):
 4. GET the attachment content URL returned by (3) — copies the files.
 And the writes, each only when a flow runs the named tracker action:
 5. ticket_transition: GET /issue/{KEY}?fields=status, GET /issue/{KEY}/transitions, POST /issue/{KEY}/transitions.
-6. ticket_comment: POST /issue/{KEY}/comment (GET /issue/{KEY}/comment only to reconcile after a crash).
+6. ticket_comment: POST /issue/{KEY}/comment (GET /issue/{KEY}/comment only to reconcile after a crash); with attachments, POST /issue/{KEY}/attachments for each file first.
 7. ticket_set_field: GET /field (name → id, once per run), GET /issue/{KEY}?fields=… (append mode), PUT /issue/{KEY}.
 8. ticket_link: POST /issue/{KEY}/remotelink.
 
@@ -60,7 +60,7 @@ CLOUD — create the API token:
        read:project:jira       — resolving keys and any "project = …" search filter
        read:attachment:jira    — call 4
      Atlassian also lists read:avatar:jira and read:group:jira on these endpoints because the RESPONSES carry avatar URLs and group memberships — this integration never reads either field, so start without them. If your site enforces the full documented list, the refused call names the missing scope and apothecary prints that message verbatim; add exactly what it names.
-     For the writes (calls 5-8), only when your flows use tracker actions: write:issue:jira (transitions + fields), write:comment:jira (comments), write:issue.remote-link:jira (links), plus read:field:jira for resolving a field's display name.
+     For the writes (calls 5-8), only when your flows use tracker actions: write:issue:jira (transitions + fields), write:comment:jira (comments), write:attachment:jira (a comment's attachments), write:issue.remote-link:jira (links), plus read:field:jira for resolving a field's display name.
    Never select manage: or delete: anything, and no write: scope unless a flow of yours runs a tracker action — a scope apothecary never uses only widens the blast radius of a leaked token.
 4. Label it (e.g. apothecary), set an expiry, Create, and copy it — it is shown once. Paste it below with that account's email address. Revoke it on the same page.
 Scopes cap the token; they do not grant anything. The account itself still needs the Jira "Browse Projects" permission on every project you want to import from, and the token can never see more than the human can.

@@ -46,30 +46,35 @@ type varSettings struct{ L Limits }
 func (v *varSettings) Limits(context.Context) (Limits, error) { return v.L, nil }
 
 // testAgentSpecs is the scenario suite's agent library: the same contracts the
-// built-ins carry (FLOWLANG §4), so test flows bind inputs by name and get
-// their output paths from the agent rather than the stage. Every input is
-// optional so a scenario can use a bare `agent: builder` stage when the
-// binding is not what it is testing — and `rejection`/`failure` (the
-// edge-carried values) must be optional anyway.
+// built-ins carry (FLOWLANG §4), so test flows bind inputs by name. Every
+// input is optional so a scenario can use a bare `agent: builder` stage when
+// the binding is not what it is testing — and `rejection`/`failure` (the
+// edge-carried values) must be optional anyway. An agent's outputs are the
+// stage's to place: a stage running planner, committer, reviewer or redactor
+// says where its output goes.
 func testAgentSpecs() map[string]*agentspec.Spec {
+	types := map[string]string{
+		"ticket": agentspec.TypeTicket, "plan": agentspec.TypeFile, "changes": agentspec.TypeChangeset,
+		"rejection": agentspec.TypeVerdict, "failure": agentspec.TypeFailure,
+	}
 	opt := func(names ...string) []agentspec.InputDecl {
 		var in []agentspec.InputDecl
 		for _, n := range names {
-			in = append(in, agentspec.InputDecl{Name: n, Description: n + " for the stage", Optional: true})
+			in = append(in, agentspec.InputDecl{Name: n, Description: n + " for the stage", Type: types[n], Optional: true})
 		}
 		return in
 	}
 	return map[string]*agentspec.Spec{
-		"planner": {Name: "planner", Inputs: opt("rejection", "failure"),
-			Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the implementation plan", Path: "artifacts/plan.md"}}},
-		"builder": {Name: "builder", Inputs: opt("plan", "rejection", "failure")},
-		"committer": {Name: "committer", Inputs: opt("plan", "failure"),
-			Outputs: []agentspec.OutputDecl{{Name: "commit", Description: "the commit subject", Path: "artifacts/commit.md"}}},
-		"reviewer": {Name: "reviewer", Inputs: opt("plan", "changes", "failure"),
-			Outputs: []agentspec.OutputDecl{{Name: "verdict", Type: agentspec.OutputTypeVerdict,
-				Description: "APPROVE or REJECT with comments", Path: "artifacts/verdict.json"}}},
-		"redactor": {Name: "redactor", Inputs: opt("changes", "failure"),
-			Outputs: []agentspec.OutputDecl{{Name: "mr", Description: "the merge request description", Path: "artifacts/mr.md"}}},
+		"planner": {Name: "planner", Inputs: opt("ticket", "rejection", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "plan", Type: agentspec.TypeFile, Description: "the implementation plan"}}},
+		"builder": {Name: "builder", Inputs: opt("ticket", "plan", "rejection", "failure")},
+		"committer": {Name: "committer", Inputs: opt("ticket", "plan", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "commit", Type: agentspec.TypeFile, Description: "the commit subject"}}},
+		"reviewer": {Name: "reviewer", Inputs: opt("ticket", "plan", "changes", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "verdict", Type: agentspec.TypeVerdict,
+				Description: "APPROVE or REJECT with comments"}}},
+		"redactor": {Name: "redactor", Inputs: opt("ticket", "changes", "failure"),
+			Outputs: []agentspec.OutputDecl{{Name: "mr", Type: agentspec.TypeFile, Description: "the merge request description"}}},
 		// fallback and sleeper deliberately have no contract: stages using them
 		// declare nothing and nothing is enforced.
 		"fallback": {Name: "fallback"},
@@ -182,7 +187,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  flows[0].Name,
-		Commands:     map[string]string{"setup": "./scripts/setup.sh", "verify": "make lint && make test"},
+		Commands:     map[string]string{"verify": "make lint && make test"},
 		ProviderEnv:  map[string]string{"ANTHROPIC_API_KEY": "sk-test"},
 		HarnessKind:  "fake",
 		Envp:         h.envp,
@@ -288,13 +293,15 @@ func (h *harness) agentScript(fns map[string]func(call fake.RunCall) (ports.Agen
 	}
 }
 
-// loopFlowDoc: the classic retry loop. The builder binds $FAILURE, so a test
-// failure comes back as a named input rather than arriving invisibly.
+// loopFlowDoc: the classic retry loop. The builder reads the ticket and
+// edge.failure, so a test failure comes back as a named input rather than
+// arriving invisibly.
 const loopFlowDoc = `name: loop
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: build, type: agent, agent: builder, input: { failure: $FAILURE } }
+  - { id: build, type: agent, agent: builder,
+      input: { ticket: { from: run.ticket, type: ticket }, failure: { from: edge.failure, type: failure, optional: true } } }
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
 `
 
@@ -315,7 +322,7 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 			return ports.AgentResult{TurnsUsed: 20, Usage: ports.Usage{CostUSD: 0.50}}, nil
 		},
 		"committer": func(c fake.RunCall) (ports.AgentResult, error) {
-			// The stage rebinds the committer's declared output path.
+			// The stage says where the committer's output goes.
 			h.writeFile(t, c.Env, "artifacts/commit-subject.md", "feat: add login form")
 			return ports.AgentResult{TurnsUsed: 2, Usage: ports.Usage{CostUSD: 0.02}}, nil
 		},
@@ -408,27 +415,28 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 }
 
 // TestDeclaredInputAndFeedbackRendering proves the decl-driven prompt shape
-// (DESIGN4 §1): a map-form input renders "# INPUT: <name> — <desc> (file:…)",
-// the agent's declared feedback input renames the retry section, and a decl
-// default output is enforced even though the plan stage names no `output:`.
+// (DESIGN4 §1): an input port renders "# INPUT: <name> — <desc> (file:…)",
+// and the agent's declared feedback input renames the retry section.
 func TestDeclaredInputAndFeedbackRendering(t *testing.T) {
 	doc := `name: declfb
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: plan,  type: agent, agent: planner, on_success: build }
+  - { id: plan,  type: agent, agent: planner, on_success: build,
+      output: { plan: { to: artifacts/plan.md, type: file } } }
   - { id: build, type: agent, agent: builder, on_success: test,
-      input: { plan: artifacts/plan.md, what_broke: $FAILURE } }
+      input: { plan: { from: artifacts/plan.md, type: file },
+               what_broke: { from: edge.failure, type: failure, optional: true } } }
   - { id: test,  type: command, run_ref: verify, on_success: done,
       on_fail: { to: build, max: 3 } }
 `
 	// The agent names and describes its own retry slot — there is no reserved
 	// name, so "what_broke" is as valid as anything else.
 	h := newHarness(t, mustFlowWith(t, doc, map[string]*agentspec.Spec{
-		"planner": {Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Path: "artifacts/plan.md"}}},
+		"planner": {Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Type: agentspec.TypeFile}}},
 		"builder": {Inputs: []agentspec.InputDecl{
-			{Name: "plan", Description: "the approved implementation plan to execute"},
-			{Name: "what_broke", Description: "what the failing stage printed", Optional: true},
+			{Name: "plan", Description: "the approved implementation plan to execute", Type: agentspec.TypeFile},
+			{Name: "what_broke", Description: "what the failing stage printed", Type: agentspec.TypeFailure, Optional: true},
 		}},
 	}))
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -468,7 +476,7 @@ main:
 	if len(builds) != 2 {
 		t.Fatalf("builder ran %d times, want 2", len(builds))
 	}
-	// First pass: named input section, nothing fed yet — the $FAILURE binding
+	// First pass: named input section, nothing fed yet — the edge.failure binding
 	// renders nothing at all rather than an empty section.
 	if !strings.Contains(builds[0], "# INPUT: plan — the approved implementation plan to execute (file: artifacts/plan.md)") {
 		t.Errorf("build[0] missing named INPUT section:\n%s", builds[0])
@@ -485,40 +493,6 @@ main:
 	}
 	if strings.Contains(builds[1], "PREVIOUS ATTEMPT FEEDBACK") { //nolint:staticcheck // retired header must never reappear
 		t.Errorf("build[1] should use the named feedback header, not the generic one:\n%s", builds[1])
-	}
-}
-
-// TestDeclDefaultOutputEnforced proves a declared output's default path is a
-// MUST-write contract even when the stage names no `output:` — the agent that
-// fails to produce it is failed on the output contract.
-func TestDeclDefaultOutputEnforced(t *testing.T) {
-	doc := `name: declout
-version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
-main:
-  - { id: plan, type: agent, agent: planner }
-`
-	h := newHarness(t, mustFlowWith(t, doc, map[string]*agentspec.Spec{
-		"planner": {Outputs: []agentspec.OutputDecl{{Name: "plan", Description: "the plan", Path: "artifacts/plan.md"}}},
-	}))
-	// planner never writes the declared default output.
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"planner": func(fake.RunCall) (ports.AgentResult, error) { return ports.AgentResult{}, nil },
-	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "declout", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.e.Wait(runID)
-	if v := h.view(t, runID); v.State != run.Abandoned {
-		t.Fatalf("state = %s, want abandoned (decl-default output unmet)", v.State)
-	}
-	sf, ok := findPayload[*event.StageFailed](h.events(t, runID))
-	if !ok || sf.Reason != event.ReasonOutputContract {
-		t.Errorf("failure = %+v, want output_contract", sf)
-	}
-	if !strings.Contains(sf.Error, "artifacts/plan.md") {
-		t.Errorf("failure should name the missing path: %q", sf.Error)
 	}
 }
 
@@ -575,8 +549,8 @@ func TestReviewRejectLoopThenApprove(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: build,  type: agent, agent: builder, input: { rejection: $DECISION } }
-  - { id: review, type: agent, agent: reviewer,
+  - { id: build,  type: agent, agent: builder, input: { rejection: { from: edge.verdict, type: verdict, optional: true } } }
+  - { id: review, type: agent, agent: reviewer, output: { verdict: { to: artifacts/verdict.json, type: verdict } },
       on_reject: { to: build, max: 3 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -584,8 +558,8 @@ main:
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
 		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
 			reviews++
-			// The verdict is the declared output file, at the path the agent's
-			// contract names — not something the harness reports out of band.
+			// The verdict is the stage's output file, at the path its port
+			// names — not something the harness reports out of band.
 			if reviews == 1 {
 				h.writeFile(t, c.Env, "artifacts/verdict.json",
 					`{"verdict":"REJECT","comments":["repository leaks into domain layer","missing test for empty cart"]}`)
@@ -722,8 +696,8 @@ func TestRecoveryAtGateSkipsEnv(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: plan,      type: agent, agent: planner, on_success: plan_gate }
-  - { id: plan_gate, type: human_gate, question: "Approve the plan?", input: { doc: artifacts/plan.md }, on_success: done,
+  - { id: plan,      type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } }, on_success: plan_gate }
+  - { id: plan_gate, type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } }, on_success: done,
       on_reject: { to: plan, max: 3 } }
 `
 	fl := mustFlow(t, doc)
@@ -782,8 +756,8 @@ func TestPlanGateRejectWithFeedback(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: plan,      type: agent, agent: planner, input: { rejection: $DECISION } }
-  - { id: plan_gate, type: human_gate, question: "Approve the plan?", input: { plan: artifacts/plan.md },
+  - { id: plan,      type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } }, input: { rejection: { from: edge.verdict, type: verdict, optional: true } } }
+  - { id: plan_gate, type: human_gate, question: "Approve the plan?", input: { plan: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 3 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -816,7 +790,7 @@ main:
 		t.Fatalf("planner ran %d times, want 2", len(h.runner.RunCalls))
 	}
 	rerun := h.runner.RunCalls[1].In.Prompt
-	// A human's rejection is a $DECISION like a reviewer's: same slot, same
+	// A human's rejection is a edge.verdict like a reviewer's: same slot, same
 	// shape — the planner cannot tell (and need not care) which it was.
 	if !strings.Contains(rerun, "add a rollback step") ||
 		!strings.Contains(rerun, "# INPUT: rejection") || !strings.Contains(rerun, "(attempt 2 of 4)") {
@@ -1047,8 +1021,8 @@ func TestAutoCompleteMergedWhileEngineDown(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: mr,   type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
-  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: $MR_URL }, auto_approve: mr_merged, on_success: done }
+  - { id: mr,   type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } }, on_success: gate }
+  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, on_success: done }
 `
 	fl := mustFlow(t, doc)
 	h := newHarness(t, fl)
@@ -1106,8 +1080,8 @@ version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
   - { id: prep, type: agent, agent: builder }
-  - { id: mr,   type: action, action: create_mr, input: { body: artifacts/mr.md } }
-  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: $MR_URL }, auto_approve: mr_merged }
+  - { id: mr,   type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } } }
+  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -1167,7 +1141,7 @@ parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
   - { id: work,   type: command, run_ref: verify, on_success: done,
       on_fail: { to: rescue, max: -1 } }
-  - { id: rescue, type: human_gate, question: "Inspect the workspace.", input: { workspace: $WORKSPACE },
+  - { id: rescue, type: human_gate, question: "Inspect the workspace.", input: { workspace: { from: run.workspace, type: link } },
       on_success: work, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -1337,7 +1311,7 @@ main:
 		t.Errorf("edges = %+v", edges)
 	}
 	// Every link carries the failing output — an edge no longer decides
-	// whether to; its target does, by binding $FAILURE or not.
+	// whether to; its target does, by binding edge.failure or not.
 	if !strings.Contains(edges[0].Feed, "FAIL: flaky") || !strings.Contains(edges[2].Feed, "FAIL: flaky") {
 		t.Errorf("feeds = %q / %q", edges[0].Feed, edges[2].Feed)
 	}
@@ -1544,7 +1518,7 @@ func TestDebugLeafSurvivesRestart(t *testing.T) {
 			&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "segfault"},
 			&event.EdgeTaken{From: "test", To: "debug", Edge: "on_fail", Count: 1, Max: -1, Feed: "segfault"},
 			&event.PingRaised{PingID: "dbg-" + runID, Type: event.PingDebug, Question: "test failed", Context: "segfault",
-				Link: "http://ws/" + runID + "/terminal", StageID: "test", AnswerKind: event.AnswerDecision},
+				Link: "http://ws/" + runID + "/terminal", StageID: "test", AnswerKind: event.AnswerYesNo},
 			&event.RunPaused{StageID: "test", Reason: event.PauseWaiting},
 		}
 		if answered {
@@ -1612,11 +1586,11 @@ func TestEnvFailureAfterRetry(t *testing.T) {
 	}
 }
 
-func TestSetupFailureIsEnvFailed(t *testing.T) {
+func TestBootstrapFailureIsEnvFailed(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "setup.sh") {
-			return ports.ExecResult{ExitCode: 1, Output: "npm install failed: ENOSPC"}, nil
+		if strings.Contains(cmd.Script, "git clone") {
+			return ports.ExecResult{ExitCode: 1, Output: "fatal: could not write: ENOSPC"}, nil
 		}
 		return ports.ExecResult{ExitCode: 0}, nil
 	}
@@ -1631,10 +1605,10 @@ func TestSetupFailureIsEnvFailed(t *testing.T) {
 	}
 	ef, _ := findPayload[*event.EnvFailed](h.events(t, runID))
 	if !strings.Contains(ef.Error, "ENOSPC") {
-		t.Errorf("env_failed should carry setup output, got %+v", ef)
+		t.Errorf("env_failed should carry the failing step's output, got %+v", ef)
 	}
 	if len(h.runner.RunCalls) != 0 {
-		t.Error("no agent may run when setup failed")
+		t.Error("no agent may run when bootstrap failed")
 	}
 }
 
@@ -1719,33 +1693,12 @@ func TestPreflightRejectsRepoWithoutDevcontainer(t *testing.T) {
 	}
 }
 
-// commands.setup is OPTIONAL in v2 (DESIGN2 §8): a project without one
-// runs fine — bootstrap step 6 is simply skipped.
-func TestSetupIsOptional(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	delete(h.res.Commands, "setup")
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
-	if err != nil {
-		t.Fatalf("setup-less project refused: %v", err)
-	}
-	h.e.Wait(runID)
-	if v := h.view(t, runID); v.State != run.Completed {
-		t.Fatalf("state = %s, want completed; events: %v", v.State, eventTypes(h.events(t, runID)))
-	}
-	// No exec may have run the (absent) setup script.
-	for _, c := range h.envp.ExecCalls {
-		if strings.Contains(c.Cmd.Script, "setup.sh") {
-			t.Errorf("setup script executed despite being unset: %q", c.Cmd.Script)
-		}
-	}
-}
-
 func TestOutputContractViolationFailsStage(t *testing.T) {
 	doc := `name: contract
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: plan, type: agent, agent: planner }
+  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	// Planner never writes the declared artifact.
@@ -1761,6 +1714,9 @@ main:
 	sf, _ := findPayload[*event.StageFailed](h.events(t, runID))
 	if sf.Reason != event.ReasonOutputContract {
 		t.Errorf("reason = %q", sf.Reason)
+	}
+	if !strings.Contains(sf.Error, "artifacts/plan.md") {
+		t.Errorf("failure should name the missing path: %q", sf.Error)
 	}
 }
 
@@ -2050,9 +2006,9 @@ version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
   - { id: commit, type: command, run: "git commit -F artifacts/commit.md",
-      input: { f0: artifacts/commit.md }, on_success: done,
+      input: { f0: { from: repo:artifacts/commit.md, type: file } }, on_success: done,
       on_fail: { to: rescue, max: -1 } }
-  - { id: rescue, type: human_gate, question: "Fix it.", input: { workspace: $WORKSPACE },
+  - { id: rescue, type: human_gate, question: "Fix it.", input: { workspace: { from: run.workspace, type: link } },
       on_success: commit, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -2102,7 +2058,7 @@ func TestCommandDeclaredOutputEnforced(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: gen, type: command, run: "generate", output: { report: artifacts/report.txt } }
+  - { id: gen, type: command, run: "generate", output: { report: { to: artifacts/report.txt, type: file } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "cmdout", testProject)
@@ -2127,9 +2083,9 @@ func TestVerdictOutputRebound(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: build,  type: agent, agent: builder, input: { rejection: $DECISION } }
+  - { id: build,  type: agent, agent: builder, input: { rejection: { from: edge.verdict, type: verdict, optional: true } } }
   - { id: review, type: agent, agent: reviewer,
-      output: { verdict: artifacts/review/verdict.json },
+      output: { verdict: { to: artifacts/review/verdict.json, type: verdict } },
       on_reject: { to: build, max: 2 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -2181,7 +2137,7 @@ func TestVerdictOutputMissingIsOneFailure(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: review, type: agent, agent: reviewer }
+  - { id: review, type: agent, agent: reviewer, output: { verdict: { to: artifacts/verdict.json, type: verdict } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "vmiss", testProject)
@@ -2200,16 +2156,16 @@ main:
 }
 
 // TestCreateMRAction: create_mr takes the title from the body's heading,
-// records one mr_created event, and the $MR_URL sentinel resolves for a
+// records one mr_created event, and the run.mr.url source resolves for a
 // later gate.
 func TestCreateMRAction(t *testing.T) {
 	doc := `name: act
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: redact, type: agent, agent: redactor }
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md } }
-  - { id: gate,   type: human_gate, question: "Merge?", input: { mr: $MR_URL }, on_success: done, on_reject: abort }
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
+  - { id: gate,   type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } }, on_success: done, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -2224,7 +2180,7 @@ main:
 	}
 	p := h.waitPing(t, PingGate)
 	if !strings.HasPrefix(p.Link, "https://gitlab.local/mr/") {
-		t.Errorf("gate payload = %q, want the $MR_URL link", p.Link)
+		t.Errorf("gate payload = %q, want the run.mr.url link", p.Link)
 	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -2248,7 +2204,7 @@ func TestCreateMRActionMissingBody(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "actmiss", testProject)
@@ -2325,8 +2281,8 @@ func TestWaitStageBlocksUntilSignal(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: redact, type: agent, agent: redactor, on_success: mr }
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: merged }
   - { id: merged, type: wait, for: mr_merged, on_success: done }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -2370,8 +2326,8 @@ func TestWaitStageTimeout(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: redact, type: agent, agent: redactor, on_success: mr }
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: merged }
   - { id: merged, type: wait, for: mr_merged, timeout: 20ms, on_success: done,
       on_timeout: { to: nudge, max: 1 } }
   - { id: nudge,  type: human_gate, question: "It never merged — chase it?", on_success: done,
@@ -2427,19 +2383,19 @@ main:
 	}
 }
 
-// TestFeedSentinelsAreDistinct: a rejection and a failure reach the same stage
+// TestEdgeSourcesAreDistinct: a rejection and a failure reach the same stage
 // through different, named inputs — an agent can tell "you were turned down"
 // apart from "it broke", which one undifferentiated blob could not express.
-func TestFeedSentinelsAreDistinct(t *testing.T) {
+func TestEdgeSourcesAreDistinct(t *testing.T) {
 	doc := `name: twofeeds
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
   - { id: build,  type: agent, agent: builder, on_success: test,
-      input: { rejection: $DECISION, failure: $FAILURE } }
+      input: { rejection: { from: edge.verdict, type: verdict, optional: true }, failure: { from: edge.failure, type: failure, optional: true } } }
   - { id: test,   type: command, run_ref: verify, on_success: review,
       on_fail: { to: build, max: 3 } }
-  - { id: review, type: agent, agent: reviewer, on_success: done,
+  - { id: review, type: agent, agent: reviewer, output: { verdict: { to: artifacts/verdict.json, type: verdict } }, on_success: done,
       on_reject: { to: build, max: 3 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -2509,9 +2465,9 @@ func TestGateAutoRejectOnClosedMR(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: redact, type: agent, agent: redactor, on_success: mr }
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
-  - { id: gate,   type: human_gate, question: "Merge when satisfied.", input: { mr: $MR_URL },
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: gate }
+  - { id: gate,   type: human_gate, question: "Merge when satisfied.", input: { mr: { from: run.mr.url, type: link } },
       auto_approve: mr_merged, auto_reject: mr_closed,
       on_success: done, on_reject: abort }
 `
@@ -2547,9 +2503,9 @@ func TestGateAutoApproveStillWinsARace(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: redact, type: agent, agent: redactor, on_success: mr }
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
-  - { id: gate,   type: human_gate, question: "Merge?", input: { mr: $MR_URL },
+  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
+  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: gate }
+  - { id: gate,   type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } },
       auto_approve: mr_merged, auto_reject: mr_closed,
       on_success: done, on_reject: abort }
 `
@@ -2587,8 +2543,8 @@ func TestUnlimitedRetryDoesNotClaimALastAttempt(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: plan, type: agent, agent: planner, input: { rejection: $DECISION }, on_success: gate }
-  - { id: gate, type: human_gate, question: "Approve?", input: { plan: artifacts/plan.md },
+  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } }, input: { rejection: { from: edge.verdict, type: verdict, optional: true } }, on_success: gate }
+  - { id: gate, type: human_gate, question: "Approve?", input: { plan: { from: artifacts/plan.md, type: file } },
       on_success: done,
       on_reject: { to: plan, max: -1 } }
 `
@@ -2634,7 +2590,7 @@ func TestCreateMRReconcilesAfterCrashInRecordWindow(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } }, on_success: done }
 `
 	fl := mustFlow(t, doc)
 	h := newHarness(t, fl)
@@ -2683,7 +2639,7 @@ func TestCreateMRReconcileFailureDoesNotDuplicate(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } }, on_success: done }
 `
 	fl := mustFlow(t, doc)
 	h := newHarness(t, fl)

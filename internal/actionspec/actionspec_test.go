@@ -1,6 +1,7 @@
 package actionspec
 
 import (
+	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 	"encoding/json"
 	"slices"
@@ -28,43 +29,54 @@ func TestRegistryIntegrity(t *testing.T) {
 		if a.Title == "" {
 			t.Errorf("action %q has no title (the editor's picker shows it)", a.Slug)
 		}
+		// Ports and settings share the stage's namespace (exactly_one pairs
+		// one of each), so a name is unique across all three lists.
 		names := map[string]bool{}
-		for _, in := range a.Inputs {
-			if in.Name == "" || names[in.Name] {
-				t.Errorf("action %q: bad or duplicate input name %q", a.Slug, in.Name)
+		for _, list := range [][]PortSig{a.Inputs, a.Outputs} {
+			for _, p := range list {
+				if p.Name == "" || names[p.Name] {
+					t.Errorf("action %q: bad or duplicate port name %q", a.Slug, p.Name)
+				}
+				names[p.Name] = true
+				if !agentspec.IsFileType(p.Type) {
+					t.Errorf("action %q port %q: type %q is not a file type (%v)", a.Slug, p.Name, p.Type, agentspec.FileTypes)
+				}
 			}
-			names[in.Name] = true
-			switch in.Kind {
-			case KindFile, KindValue:
-			case KindText:
-				// A free literal carries neither a path nor choices.
-				if in.DefaultPath != "" || len(in.Values) != 0 {
-					t.Errorf("action %q text input %q carries file/enum fields", a.Slug, in.Name)
+		}
+		for _, out := range a.Outputs {
+			if out.DefaultPath == "" {
+				t.Errorf("action %q output %q has no default path for the editor to prefill", a.Slug, out.Name)
+			}
+		}
+		for _, s := range a.Settings {
+			if s.Name == "" || names[s.Name] {
+				t.Errorf("action %q: bad or duplicate setting name %q", a.Slug, s.Name)
+			}
+			names[s.Name] = true
+			switch s.Kind {
+			case KindText, KindList:
+				// A free literal (or a list of them) carries no choices.
+				if len(s.Values) != 0 || s.Default != "" {
+					t.Errorf("action %q text setting %q carries enum fields", a.Slug, s.Name)
 				}
 			case KindEnum:
 				// A literal choice needs its choices, and a default among them
-				// when the stage may leave it unbound — unless leaving it
-				// unbound is choosing its exactly-one sibling.
-				optional := !in.Required && !slices.Contains(a.ExactlyOne, in.Name)
-				if len(in.Values) == 0 || (optional && !slices.Contains(in.Values, in.Default)) {
-					t.Errorf("action %q enum input %q: values %v, default %q", a.Slug, in.Name, in.Values, in.Default)
+				// when the stage may leave it out — unless leaving it out is
+				// choosing its exactly-one sibling.
+				optional := !s.Required && !slices.Contains(a.ExactlyOne, s.Name)
+				if len(s.Values) == 0 || (optional && !slices.Contains(s.Values, s.Default)) {
+					t.Errorf("action %q enum setting %q: values %v, default %q", a.Slug, s.Name, s.Values, s.Default)
+				}
+				if s.Default != "" && !slices.Contains(s.Values, s.Default) {
+					t.Errorf("action %q enum setting %q: default %q is not among %v", a.Slug, s.Name, s.Default, s.Values)
 				}
 			default:
-				t.Errorf("action %q input %q: unknown kind %q", a.Slug, in.Name, in.Kind)
+				t.Errorf("action %q setting %q: unknown kind %q", a.Slug, s.Name, s.Kind)
 			}
 		}
-		outs := map[string]bool{}
-		for _, out := range a.Outputs {
-			if out.Name == "" || outs[out.Name] {
-				t.Errorf("action %q: bad or duplicate output name %q", a.Slug, out.Name)
-			}
-			outs[out.Name] = true
-			if out.Kind == KindFile && out.Path == "" {
-				t.Errorf("action %q file output %q has no path", a.Slug, out.Name)
-			}
-			// A value output is only consumable if it names its sentinel.
-			if out.Kind == KindValue && !strings.HasPrefix(out.Sentinel, "$") {
-				t.Errorf("action %q output %q: value outputs need a $SENTINEL, got %q", a.Slug, out.Name, out.Sentinel)
+		for _, n := range a.ExactlyOne {
+			if !names[n] {
+				t.Errorf("action %q: exactly_one names %q, which is neither a port nor a setting", a.Slug, n)
 			}
 		}
 	}
@@ -72,6 +84,27 @@ func TestRegistryIntegrity(t *testing.T) {
 	reg[0].Slug = "mutated"
 	if Get("mutated") != nil {
 		t.Error("Registry() leaked the backing array")
+	}
+}
+
+// Every port's Type is a file type the agent side knows — whatever writes an
+// action's input declares the same type, so the two vocabularies are one.
+func TestInputTypesAreOutputTypes(t *testing.T) {
+	for _, a := range Registry() {
+		for _, p := range append(slices.Clone(a.Inputs), a.Outputs...) {
+			if !slices.Contains(agentspec.FileTypes, p.Type) {
+				t.Errorf("action %q port %q: type %q (file types: %v)", a.Slug, p.Name, p.Type, agentspec.FileTypes)
+			}
+		}
+	}
+	if got := Get(Commit).Input("message"); got == nil || got.Type != agentspec.TypeCommitMessage {
+		t.Errorf("commit's message = %+v", got)
+	}
+	if got := Get(ReplyReviewComments).Input("replies"); got == nil || got.Type != agentspec.TypeReviewReplies {
+		t.Errorf("reply_review_comments' replies = %+v", got)
+	}
+	if got := Get(PostReview).Input("review"); got == nil || got.Type != agentspec.TypeReviewThreads {
+		t.Errorf("post_review's review = %+v", got)
 	}
 }
 
@@ -87,33 +120,42 @@ func TestCreateMR(t *testing.T) {
 		t.Error("create_mr must be single: a run has one merge request")
 	}
 	body := a.Input("body")
-	if body == nil || !body.Required || body.Kind != KindFile {
+	if body == nil || !body.Required || body.Type != agentspec.TypeFile || body.DefaultPath == "" {
 		t.Errorf("body input = %+v, want a required file", body)
 	}
 	if a.Input("ghost") != nil {
 		t.Error("Input returned a signature for an unknown name")
 	}
-	out := a.Output("mr_url")
-	if out == nil || out.Kind != KindValue || out.Sentinel != "$MR_URL" {
-		t.Errorf("mr_url output = %+v", out)
+	// The merge request is the run's (run.mr.url), not a port of the stage.
+	if len(a.Outputs) != 0 {
+		t.Errorf("create_mr outputs = %+v, want none", a.Outputs)
 	}
 	if Get("nope") != nil {
 		t.Error("Get returned an unregistered action")
 	}
-	if !strings.Contains(Slugs(), CreateMR) || !strings.Contains(a.InputNames(), "body") {
-		t.Errorf("error-message helpers: slugs=%q inputs=%q", Slugs(), a.InputNames())
+	if !strings.Contains(Slugs(), CreateMR) || !strings.Contains(Names(a.Inputs), "body") || Names(a.Outputs) != "none" {
+		t.Errorf("error-message helpers: slugs=%q inputs=%q outputs=%q", Slugs(), Names(a.Inputs), Names(a.Outputs))
 	}
 }
 
 // TestJSONShape: the registry is served to the flow editor, which renders
-// binding rows from these field names.
+// port rows and setting controls from these field names.
 func TestJSONShape(t *testing.T) {
 	b, err := json.Marshal(Get(CreateMR))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`"slug":"create_mr"`, `"requires":"repository"`, `"single":true`,
-		`"name":"body"`, `"kind":"file"`, `"required":true`, `"sentinel":"$MR_URL"`} {
+		`"name":"body"`, `"type":"file"`, `"required":true`, `"default_path":"artifacts/mr.md"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("json missing %s:\n%s", want, b)
+		}
+	}
+	b, err = json.Marshal(Get(LoadReviewComments))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"outputs":[{"name":"review"`, `"settings":[{"name":"select"`, `"kind":"enum"`, `"values":["human","all"]`, `"default":"human"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("json missing %s:\n%s", want, b)
 		}
@@ -140,11 +182,11 @@ func TestTrackerActions(t *testing.T) {
 		}
 	}
 	tr := Get(TicketTransition)
-	if to := tr.Input("to"); to == nil || to.Kind != KindEnum || to.Required || !slices.Equal(to.Values, Statuses) || to.Default != "" {
+	if to := tr.Setting("to"); to == nil || to.Kind != KindEnum || to.Required || !slices.Equal(to.Values, Statuses) || to.Default != "" {
 		t.Errorf("ticket_transition.to = %+v, want an optional enum over the canonical statuses with no default", to)
 	}
-	if st := tr.Input("status"); st == nil || st.Kind != KindText || st.Required {
-		t.Errorf("ticket_transition.status = %+v, want an optional text input", st)
+	if st := tr.Setting("status"); st == nil || st.Kind != KindText || st.Required {
+		t.Errorf("ticket_transition.status = %+v, want an optional text setting", st)
 	}
 	if !slices.Equal(tr.ExactlyOne, []string{"to", "status"}) {
 		t.Errorf("ticket_transition.exactly_one = %v, want to / status", tr.ExactlyOne)
@@ -160,21 +202,21 @@ func TestTrackerActions(t *testing.T) {
 			t.Errorf("status %d = %q, ports %q", i, Statuses[i], st)
 		}
 	}
-	if body := Get(TicketComment).Input("body"); body == nil || body.Kind != KindFile || !body.Required || body.DefaultPath == "" {
+	if body := Get(TicketComment).Input("body"); body == nil || body.Type != agentspec.TypeFile || !body.Required || body.DefaultPath == "" {
 		t.Errorf("ticket_comment.body = %+v, want a required file input with a conventional path", body)
 	}
 	sf := Get(TicketSetField)
-	if f := sf.Input("field"); f == nil || f.Kind != KindText || !f.Required {
+	if f := sf.Setting("field"); f == nil || f.Kind != KindText || !f.Required {
 		t.Errorf("ticket_set_field.field = %+v", f)
 	}
-	if v, x := sf.Input("value"), sf.Input("text"); v == nil || x == nil || v.Kind != KindFile || x.Kind != KindText || v.Required || x.Required {
+	if v, x := sf.Input("value"), sf.Setting("text"); v == nil || x == nil || v.Type != agentspec.TypeFile || x.Kind != KindText || v.Required || x.Required {
 		t.Errorf("ticket_set_field value/text = %+v / %+v: want an optional file and an optional text (exactly one is bound, checked by the parser)", v, x)
 	}
-	if m := sf.Input("mode"); m == nil || m.Kind != KindEnum || m.Default != ModeReplace || !slices.Contains(m.Values, ModeAppend) {
+	if m := sf.Setting("mode"); m == nil || m.Kind != KindEnum || m.Default != ModeReplace || !slices.Contains(m.Values, ModeAppend) {
 		t.Errorf("ticket_set_field.mode = %+v", m)
 	}
-	if l := Get(TicketLink); l.Needs != NeedsMR || len(l.Inputs) != 0 {
-		t.Errorf("ticket_link = %+v: wants needs=%s and no inputs", l, NeedsMR)
+	if l := Get(TicketLink); l.Needs != NeedsMR || len(l.Inputs) != 0 || len(l.Settings) != 0 {
+		t.Errorf("ticket_link = %+v: wants needs=%s and no ports or settings", l, NeedsMR)
 	}
 	b, err := json.Marshal(Get(TicketSetField))
 	if err != nil {
@@ -198,7 +240,7 @@ func TestMergeMethodsMirrorThePort(t *testing.T) {
 		t.Fatalf("mr_merge = %+v", act)
 	}
 	want := []string{ports.MergeMethodMerge, ports.MergeMethodSquash, ports.MergeMethodRebase}
-	if got := act.Input("method").Values; !slices.Equal(got, want) {
+	if got := act.Setting("method").Values; !slices.Equal(got, want) {
 		t.Errorf("methods = %v, want %v", got, want)
 	}
 	if pr := Get(PostReview); pr == nil || !pr.Subject || pr.Input("review") == nil || !pr.Input("review").Required {

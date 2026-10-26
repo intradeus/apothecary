@@ -125,11 +125,16 @@ func (c *Client) Start(ctx context.Context, req StartRequest) (StartResponse, er
 	return out, err
 }
 
+// MCPServer is one MCP server for a session: Command (+Args, Env) for a
+// local stdio server, URL (+Headers) for a remote one. The sidecar hands it
+// to the agent in ACP's shape.
 type MCPServer struct {
 	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Env     []EnvVar `json:"env"`
+	Command string   `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	Env     []EnvVar `json:"env,omitempty"`
+	URL     string   `json:"url,omitempty"`
+	Headers []EnvVar `json:"headers,omitempty"`
 }
 
 type EnvVar struct {

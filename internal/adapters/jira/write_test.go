@@ -352,3 +352,38 @@ func TestFromMarkdownRoundTrips(t *testing.T) {
 		t.Errorf("empty doc = %v", doc)
 	}
 }
+
+// Attach posts the file as multipart with the XSRF opt-out and links it by
+// its content URL — on v2 in wiki markup, the image embedded by name.
+func TestAttach(t *testing.T) {
+	for _, tc := range []struct{ version, wantMD string }{
+		{"3", "[home.png](CONTENT)"},
+		{"2", "!home.png!"},
+	} {
+		t.Run("v"+tc.version, func(t *testing.T) {
+			var name, xsrf string
+			mux := http.NewServeMux()
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			content := srv.URL + "/rest/api/" + tc.version + "/attachment/content/10001"
+			mux.HandleFunc("POST /rest/api/"+tc.version+"/issue/PROJ-7/attachments", func(w http.ResponseWriter, r *http.Request) {
+				xsrf = r.Header.Get("X-Atlassian-Token")
+				if _, h, err := r.FormFile("file"); err == nil {
+					name = h.Filename
+				}
+				_, _ = w.Write([]byte(`[{"id":"10001","filename":"home.png","content":"` + content + `"}]`))
+			})
+			c := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok", APIVersion: tc.version})
+			att, err := c.Attach(context.Background(), "PROJ-7", "home.png", "image/png", []byte("\x89PNG"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name != "home.png" || xsrf != "no-check" {
+				t.Errorf("sent %q with X-Atlassian-Token %q", name, xsrf)
+			}
+			if want := strings.ReplaceAll(tc.wantMD, "CONTENT", content); att.URL != content || att.Markdown != want {
+				t.Errorf("attachment = %+v, want markdown %q", att, want)
+			}
+		})
+	}
+}

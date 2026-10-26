@@ -21,27 +21,20 @@ parameters:
   max_turns: 40
   max_cost_usd: 3.0
   max_total_turns: 160
-  review_gate:    { default: false, description: "a person reads each review before it is posted" }
-  rereview_quiet: { default: 10m, description: "how long the author's pushes must stop before a re-review" }
+  review_gate:    { type: bool, default: false, description: "a person reads each review before it is posted" }
+  rereview_quiet: { type: duration, default: 10m, description: "how long the author's pushes must stop before a re-review" }
 agents:
   - name: pr_reviewer
     description: reviews a merge request someone else wrote
     read_only: true
     allow_bash: true
     inputs:
-      - name: changes
-        description: the files the merge request changes against its target branch
-      - name: rejection
-        description: why a person sent the last draft of this review back
-        optional: true
-      - name: failure
-        description: why the last review file was refused
-        optional: true
+      - { name: ticket, type: ticket, optional: true, description: "what the merge request is for" }
+      - { name: changes, type: changeset, description: "the files the merge request changes against its target branch" }
+      - { name: rejection, type: verdict, optional: true, description: "why a person sent the last draft of this review back" }
+      - { name: failure, type: failure, optional: true, description: "why the last review file was refused" }
     outputs:
-      - name: review
-        type: review_threads
-        description: the review — a summary, and notes on lines of the changed files
-        path: artifacts/review.yaml
+      - { name: review, type: review_threads, description: "the review — a summary, and notes on lines of the changed files" }
     prompt: |
       You review a merge request someone else wrote. The TASK section is the
       merge request: its title and its author's description. The checkout is
@@ -94,14 +87,30 @@ sequences:
   - id: review
     description: "read the change, optionally let a person read the review, post it"
     stages:
-      - { id: read, type: agent, agent: pr_reviewer,
-          input: { changes: $DIFF_TARGET, rejection: $DECISION, failure: $FAILURE },
-          on_fail: { to: read, max: 1, then: debug } }
-      - { id: gate, type: human_gate, when: $review_gate, input: { review: artifacts/review.yaml },
-          question: "Post this review on the merge request? Rejecting sends it back with your feedback.",
-          on_reject: { to: read, max: -1 } }
-      - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml },
-          on_fail: debug }
+      - id: read
+        type: agent
+        agent: pr_reviewer
+        input:
+          ticket:    { from: run.ticket, type: ticket }
+          changes:   { from: run.git.diff_target, type: changeset }
+          rejection: { from: edge.verdict, type: verdict, optional: true }
+          failure:   { from: edge.failure, type: failure, optional: true }
+        output:
+          review:    { to: artifacts/review.yaml, type: review_threads }
+        on_fail: { to: read, max: 1, then: debug }
+      - id: gate
+        type: human_gate
+        run_if: $review_gate
+        question: "Post this review on the merge request? Rejecting sends it back with your feedback."
+        input:
+          review: { from: artifacts/review.yaml, type: review_threads }
+        on_reject: { to: read, max: -1 }
+      - id: post
+        type: action
+        action: post_review
+        input:
+          review: { from: artifacts/review.yaml, type: review_threads }
+        on_fail: debug
 # The first review, of the merge request as it was opened.
 main:
   - { id: review, sequence: review }

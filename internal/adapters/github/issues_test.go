@@ -202,3 +202,24 @@ func TestIssuesFieldsAndLink(t *testing.T) {
 		t.Errorf("link comment = %+v", posts)
 	}
 }
+
+// A comment's attachment goes up for the issue's own repository.
+func TestIssuesAttachUploadsForTheIssueRepository(t *testing.T) {
+	var query string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/lu/tracker", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":99}`))
+	})
+	mux.HandleFunc("POST /user-attachments/assets", func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query().Get("repository_id")
+		_, _ = w.Write([]byte(`{"url":"https://github.com/user-attachments/assets/1"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})
+	s.a.uploads = srv.URL
+	att, err := s.Attach(context.Background(), "lu/tracker#4", "home.png", "image/png", []byte("x"))
+	if err != nil || query != "99" || att.URL != "https://github.com/user-attachments/assets/1" {
+		t.Fatalf("att %+v err %v repository_id %q", att, err, query)
+	}
+}

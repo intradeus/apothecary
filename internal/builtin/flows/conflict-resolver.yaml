@@ -24,20 +24,17 @@ parameters:
   max_turns: 40
   max_cost_usd: 5.0
   max_total_turns: 240
-  verify:      { default: verify, description: "the project command that runs the tests (project.commands)" }
-  strategy:    { default: merge, enum: [merge, rebase], description: "take the target in with a merge commit, or rebase the branch onto it (rewrites the author's commits; the push is leased)" }
-  again_start: { default: confirm, enum: [auto, confirm, manual], description: "how a later conflict is taken on: by itself, after asking, or by hand from the run page" }
+  verify:      { type: string, default: verify, description: "the project command that runs the tests (project.commands)" }
+  strategy:    { type: string, default: merge, enum: [merge, rebase], description: "take the target in with a merge commit, or rebase the branch onto it (rewrites the author's commits; the push is leased)" }
+  again_start: { type: string, default: confirm, enum: [auto, confirm, manual], description: "how a later conflict is taken on: by itself, after asking, or by hand from the run page" }
 agents:
   - name: resolver
     description: settles a paused merge's conflicts by editing the files — never with git
     read_only: false
     allow_bash: true
     inputs:
-      - name: changes
-        description: the files the merge request changes against its target branch
-      - name: conflict
-        description: which files carry conflict markers, and what is being taken in
-        optional: true
+      - { name: changes, type: changeset, description: "the files the merge request changes against its target branch" }
+      - { name: conflict, type: failure, optional: true, description: "which files carry conflict markers, and what is being taken in" }
     prompt: |
       You resolve merge conflicts in a merge request someone else wrote. The
       TASK section is the merge request: its title and its author's
@@ -71,12 +68,13 @@ sequences:
   - id: settle
     description: "take the target in, resolve what conflicts, test, push"
     stages:
-      - { id: sync, type: action, action: sync_target, input: { strategy: $strategy },
+      - { id: sync, type: action, action: sync_target, with: { strategy: $strategy },
           description: "the engine takes the target in; a conflict pauses it with the files named",
           on_success: test,
           on_fail: { to: resolve, max: 6, then: debug } }
       - { id: resolve, type: agent, agent: resolver, max_turns: 30,
-          input: { changes: $DIFF_TARGET, conflict: $FAILURE },
+          input: { changes:  { from: run.git.diff_target, type: changeset },
+                   conflict: { from: edge.failure, type: failure, optional: true } },
           description: "remove the conflict markers, keeping both intents — no git",
           on_success: sync,
           on_fail: debug }

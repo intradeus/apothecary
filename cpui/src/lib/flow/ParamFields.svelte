@@ -36,22 +36,40 @@
 		onchange: (name: string, value: string) => void;
 	} = $props();
 
-	type Kind = 'bool' | 'int' | 'float' | 'enum' | 'duration' | 'harness' | 'model' | 'string';
+	type Kind =
+		'bool' | 'int' | 'float' | 'enum' | 'duration' | 'harness' | 'model' | 'string' | 'list';
 	function kindOf(p: ParamDecl): Kind {
+		if (p.list) return 'list';
 		if (p.name === 'harness') return 'harness';
 		if (p.name === 'model') return 'model';
 		if (p.type !== 'string') return p.type;
 		if (p.enum?.length) return 'enum';
-		if (p.name === 'timeout' || /^\d+(ms|s|m|h)$/.test(p.default)) return 'duration';
 		return 'string';
 	}
-	const applies = (p: ParamDecl) => under?.[p.name] ?? p.default;
+	// A list's value is a JSON array; it is shown, and typed, as its items.
+	function items(json: string | undefined): string[] | undefined {
+		if (!json) return undefined;
+		try {
+			const v = JSON.parse(json);
+			return Array.isArray(v) ? v.map(String) : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+	const shown = (p: ParamDecl, v: string) => (p.list ? (items(v) ?? []).join(', ') : v);
+	const applies = (p: ParamDecl) => shown(p, under?.[p.name] ?? p.default);
 	function appliesLabel(p: ParamDecl): string {
 		const u = under?.[p.name];
-		if (u === undefined) return t('flow.fields.flowDefault', { value: p.default });
+		if (u === undefined) return t('flow.fields.flowDefault', { value: shown(p, p.default) });
 		return underLabel === 'run'
-			? t('flow.fields.fromRun', { value: u })
-			: t('flow.fields.fromWorkshop', { value: u });
+			? t('flow.fields.fromRun', { value: shown(p, u) })
+			: t('flow.fields.fromWorkshop', { value: shown(p, u) });
+	}
+	/** Toggle one enum value of a list, starting from what applies. */
+	function toggle(p: ParamDecl, v: string, value: string, on: boolean) {
+		const cur = items(v) ?? items(under?.[p.name] ?? p.default) ?? [];
+		const next = on ? [...cur.filter((x) => x !== value), value] : cur.filter((x) => x !== value);
+		onchange(p.name, JSON.stringify((p.enum ?? []).filter((o) => next.includes(o))));
 	}
 	const id = (p: ParamDecl) => `${idPrefix}-${p.name}`;
 </script>
@@ -65,7 +83,39 @@
 			<span class="fnt small">{appliesLabel(p)}</span>
 		</label>
 		{#if p.description}<div class="help">{p.description}</div>{/if}
-		{#if kind === 'bool'}
+		{#if kind === 'list' && p.enum?.length}
+			{@const on = items(v) ?? items(under?.[p.name] ?? p.default) ?? []}
+			<div class="checks" id={id(p)}>
+				{#each p.enum as o (o)}
+					<label class="chk"
+						><input
+							type="checkbox"
+							checked={on.includes(o)}
+							onchange={(e) => toggle(p, v, o, e.currentTarget.checked)}
+						/>
+						<span class="mono">{o}</span></label
+					>
+				{/each}
+				{#if v}<button type="button" class="btn-sm" onclick={() => onchange(p.name, '')}
+						>{t('flow.fields.clear')}</button
+					>{/if}
+			</div>
+		{:else if kind === 'list'}
+			<input
+				id={id(p)}
+				class="mono"
+				value={shown(p, v)}
+				placeholder={applies(p)}
+				oninput={(e) => {
+					const list = e.currentTarget.value
+						.split(',')
+						.map((x) => x.trim())
+						.filter(Boolean);
+					onchange(p.name, e.currentTarget.value.trim() ? JSON.stringify(list) : '');
+				}}
+			/>
+			<div class="help">{t('flow.fields.listHelp')}</div>
+		{:else if kind === 'bool'}
 			<select id={id(p)} value={v} onchange={(e) => onchange(p.name, e.currentTarget.value)}>
 				<option value="">{t('flow.fields.unset')}</option>
 				<option value="true">true</option>
@@ -136,5 +186,16 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
+	}
+	.checks {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 12px;
+		align-items: center;
+	}
+	.chk {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 	}
 </style>

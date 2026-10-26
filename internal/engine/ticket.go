@@ -110,12 +110,11 @@ func (x *exec) actionTicketTransition(st *flow.Stage) (bool, error) {
 	if routed {
 		return true, err
 	}
-	var to string
-	if in := st.Input("to"); in != nil {
-		to = strings.TrimSpace(in.Value)
+	to := strings.TrimSpace(st.Setting("to", ""))
+	if to != "" {
 		err = tg.w.TransitionTo(x.ctx, tg.key, ports.TicketStatus(to))
 	} else {
-		to = strings.TrimSpace(inputOr(st, "status", ""))
+		to = strings.TrimSpace(st.Setting("status", ""))
 		err = tg.w.Transition(x.ctx, tg.key, to)
 	}
 	if err != nil {
@@ -140,6 +139,8 @@ func (x *exec) ticketTrailer(st *flow.Stage) string {
 // lands outside the run, so an intent (action_started) is recorded first and
 // a re-entry with the intent still pending asks the tracker whether the
 // comment is already there before posting again (PLAN5 M20, as create_mr).
+// The files of its attachments port go up to the tracker just before the
+// comment (ports.TicketAttacher), and the body links them (attach.go).
 func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 	rs := x.rs
 	tg, routed, err := x.tracker(st)
@@ -163,7 +164,7 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 			}
 		}
 	}
-	path := inputOr(st, "body", "")
+	path := inputPath(st, "body")
 	data, rerr := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
 	if rerr != nil {
 		return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("comment body %s not readable: %v", path, rerr))
@@ -172,6 +173,17 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 	if body == "" {
 		return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("comment body %s is empty", path))
 	}
+	files, routed, err := x.attachmentFiles(st)
+	if routed || err != nil {
+		return true, err
+	}
+	var attacher ports.TicketAttacher
+	if len(files) > 0 {
+		var ok bool
+		if attacher, ok = tg.w.(ports.TicketAttacher); !ok {
+			return x.actionFail(st, event.ReasonInfra, fmt.Sprintf("%s: ticket %s's tracker cannot host attachments", st.Action, tg.key))
+		}
+	}
 	if !rs.actionPending[st.ID] {
 		// Record the intent BEFORE the effect: a crash past this point makes
 		// the next boot reconcile instead of posting a second comment.
@@ -179,6 +191,15 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 			return true, err
 		}
 		rs.actionPending[st.ID] = true
+	}
+	if len(files) > 0 {
+		body, err = x.attach(body, files, func(name, ct string, data []byte) (ports.Attachment, error) {
+			return attacher.Attach(x.ctx, tg.key, name, ct, data)
+		})
+		if err != nil {
+			return x.trackerFail(st, err)
+		}
+		body = strings.TrimSpace(body)
 	}
 	if err := tg.w.Comment(x.ctx, tg.key, body+"\n\n"+trailer); err != nil {
 		return x.trackerFail(st, err)
@@ -197,18 +218,18 @@ func (x *exec) actionTicketSetField(st *flow.Stage) (bool, error) {
 	if routed {
 		return true, err
 	}
-	field := strings.TrimSpace(inputOr(st, "field", ""))
+	field := strings.TrimSpace(st.Setting("field", ""))
 	var value string
-	if in := st.Input("value"); in != nil {
-		data, rerr := x.res.Envp.ReadFile(x.ctx, rs.envID, in.Value)
+	if path := inputPath(st, "value"); path != "" {
+		data, rerr := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
 		if rerr != nil {
-			return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("field value %s not readable: %v", in.Value, rerr))
+			return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("field value %s not readable: %v", path, rerr))
 		}
 		value = strings.TrimSpace(string(data))
 	} else {
-		value = strings.TrimSpace(inputOr(st, "text", ""))
+		value = strings.TrimSpace(st.Setting("text", ""))
 	}
-	if inputOr(st, "mode", actionspec.ModeReplace) == actionspec.ModeAppend {
+	if st.Setting("mode", actionspec.ModeReplace) == actionspec.ModeAppend {
 		cur, ferr := tg.w.Fields(x.ctx, tg.key, []string{field})
 		if ferr != nil {
 			return x.trackerFail(st, ferr)

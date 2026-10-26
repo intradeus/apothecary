@@ -190,6 +190,10 @@ type AnswerPingRequest struct {
 	Answer        string   `json:"answer"`
 	Feedback      string   `json:"feedback,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	// Review is the comments on the files the ping shows, each on one of
+	// them (feedback is then the review's summary): on its lines, or on the
+	// whole file — always, on an image.
+	Review []event.ReviewComment `json:"review,omitempty"`
 }
 
 // AnswerAccepted confirms an answer was recorded.

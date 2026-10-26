@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/actionspec"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -69,6 +70,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	defer func() {
 		if x.rs != nil && x.rs.view.State.Terminal() {
 			e.ScrubWorkspaceSecrets(bg, x.rs.view)
+			e.stopRunServices(bg, x.rs)
 		}
 	}()
 
@@ -183,6 +185,8 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			case rs.endsRun:
 				end = x.runDone
 			}
+			// What its stages started ends with the chain.
+			x.stopChainServices(rs.phase, rs.endsRun || rs.abortsRun)
 			if err := end(); err != nil {
 				x.exit(err)
 				return
@@ -247,6 +251,8 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				err = x.stageAction(st)
 			case flow.StageWait:
 				err = x.stageWait(st)
+			case flow.StageService:
+				err = x.stageService(st)
 			}
 		}
 		if err != nil {
@@ -296,6 +302,9 @@ func (x *exec) append(ps ...event.Payload) error {
 			v.Feed = x.redact.scrub(v.Feed)
 		case *event.EnvFailed:
 			v.Error = x.redact.scrub(v.Error)
+		case *event.ServiceFailed:
+			// A health command's output rides its reason.
+			v.Reason = x.redact.scrub(v.Reason)
 		case *event.RunAbandoned:
 			v.Reason = x.redact.scrub(v.Reason)
 		case *event.RunFailed:
@@ -328,7 +337,9 @@ func (x *exec) append(ps ...event.Payload) error {
 			v.Text = x.redact.scrub(v.Text)
 		}
 	}
+	unlock := x.e.appendLock(x.rs.runID)
 	evs, err := x.e.store.Append(x.bg, x.rs.runID, ps...)
+	unlock()
 	if err != nil {
 		return fmt.Errorf("append: %w", err)
 	}
@@ -342,7 +353,11 @@ func (x *exec) append(ps ...event.Payload) error {
 // advance follows the stage's explicit on_success target (DESIGN3 §2.1):
 // end parks pos past the last stage, which the run loop reads as the
 // phase's end; done does the same and marks the run done.
-func (x *exec) advance(st *flow.Stage) {
+func (x *exec) advance(st *flow.Stage) { x.advanceWith(st, "") }
+
+// advanceWith follows on_success carrying verdict — what an approval said
+// (flow.GivesVerdict) — to the target's edge.verdict; "" carries nothing.
+func (x *exec) advanceWith(st *flow.Stage, verdict string) {
 	switch st.OnSuccess {
 	case flow.TerminalEnd, flow.TerminalDone, flow.TerminalAbort:
 		x.rs.pos = len(x.rs.fl.Stages)
@@ -355,9 +370,10 @@ func (x *exec) advance(st *flow.Stage) {
 		x.rs.pos = x.rs.fl.Index(st.OnSuccess) // parse-validated: always >= 0
 	}
 	x.rs.ph = phStart
-	x.rs.feed = ""
-	x.rs.feedSentinel = ""
-	x.rs.feedAttempts = 0
+	x.rs.feed, x.rs.feedSentinel, x.rs.feedAttempts = verdict, "", 0
+	if verdict != "" {
+		x.rs.feedSentinel = flow.SourceVerdict
+	}
 }
 
 func (x *exec) complete() error {
@@ -391,8 +407,15 @@ func (x *exec) fail(reason string) error {
 func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
 	// The feed becomes an abandon reason and rs.feed (which an agent reads as
-	// $FAILURE/$DECISION), neither of which passes through append's scrub.
+	// edge.failure/edge.verdict), neither of which passes through append's
+	// scrub. A failure keeps its tail, a verdict its head (capVerdict).
 	feedContent = x.redact.scrub(feedContent)
+	feedTail := func(s string) string {
+		if kind == flow.EdgeReject {
+			return capVerdict(s)
+		}
+		return tail(s, 8<<10)
+	}
 	edge := st.Edge(kind)
 	if edge == nil {
 		// A rejection is a decision, not a breakage: saying "unrecoverable
@@ -414,7 +437,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 			// worth routing anywhere — or, with done, the run (FLOWLANG §3).
 			// Recorded like any link.
 			if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Depth: depth,
-				Feed: tail(feedContent, 8<<10)}); err != nil {
+				Feed: feedTail(feedContent)}); err != nil {
 				return err
 			}
 			x.endPhase()
@@ -434,7 +457,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 			// The debug leaf: park here, on this stage, for a human with the
 			// workspace (stageDebug). Counted like any link — the timeline
 			// shows n/∞ — but never exhausted: the human decides when to stop.
-			feed := tail(feedContent, 8<<10)
+			feed := feedTail(feedContent)
 			if err := x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: count,
 				Max: flow.UnlimitedMax, Depth: depth, Feed: feed}); err != nil {
 				return err
@@ -442,7 +465,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 			rs.edgeCounts[key] = count
 			rs.ph = phDebug
 			rs.feed = feed
-			rs.feedSentinel = flow.FeedSentinel(kind)
+			rs.feedSentinel = flow.FeedSource(kind)
 			rs.feedAttempts = 0
 			return nil
 		}
@@ -450,10 +473,10 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 			continue // this link is exhausted; fall through to then
 		}
 		// The content always rides along; whether the target renders it is the
-		// target's decision (it binds $DECISION or $FAILURE, or it does not).
+		// target's decision (it binds edge.verdict or edge.failure, or it does not).
 		// Persisted in the event so a crash between edge_taken and the next
 		// stage_started loses nothing.
-		feed := tail(feedContent, 8<<10)
+		feed := feedTail(feedContent)
 		if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Count: count, Max: e.Max, Depth: depth, Feed: feed}); err != nil {
 			return err
 		}
@@ -463,7 +486,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		rs.feed = feed
 		// Which sentinel the content fills follows from the edge kind, so
 		// replay derives it from the persisted event rather than storing it.
-		rs.feedSentinel = flow.FeedSentinel(kind)
+		rs.feedSentinel = flow.FeedSource(kind)
 		rs.feedAttempts = e.Max + 1
 		return nil
 	}
@@ -541,10 +564,12 @@ func (x *exec) routeAfterComplete(st *flow.Stage) error {
 			return x.takeEdge(st, flow.EdgeFail, "")
 		}
 		if !v.Approve {
-			return x.takeEdge(st, flow.EdgeReject, strings.Join(v.Comments, "\n"))
+			return x.takeEdge(st, flow.EdgeReject, verdictText(st.ID, v))
 		}
 	}
-	x.advance(st)
+	// Recovery: the verdict an approval carries was replayed from its
+	// stage_completed.
+	x.advanceWith(st, x.rs.completedFeed)
 	return nil
 }
 
@@ -658,9 +683,19 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			return err
 		}
 		delete(rs.pausedAsks, st.ID) // a fresh attempt is parked on nothing
+		// What the agent reads with a schema is a precondition, like a
+		// command's inputs: an agent handed a malformed file would build on
+		// it. Upstream wiring, not this stage's work. Checked before the
+		// outputs are cleared, as a command's are — inputs must survive.
+		if reason, msg := x.checkStructuredInputs(st); reason != "" {
+			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: reason, Error: msg}); err != nil {
+				return err
+			}
+			return x.takeEdge(st, flow.EdgeFail, msg)
+		}
 		// A fresh attempt starts from a clean slate, so the output contract
 		// below cannot be satisfied by an earlier attempt's file (M18).
-		x.clearOutputs(flow.EffectiveOutputs(st, rs.fl.Agent(st.Agent)))
+		x.clearOutputs(st.Outputs)
 	}
 	rs.ph = phIn
 	started := x.e.clock()
@@ -669,6 +704,12 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	runner := x.res.runnerFor(st.Harness) // per-step harness (default when unpinned)
 	tr := x.newTranscript(st.ID, iter)
 	spec := ports.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns}
+	// The agent's MCP servers ride every session this attempt opens or
+	// loads, resolved now — with the project's secrets as they are today.
+	mcp, err := x.stageMCP(st)
+	if err != nil {
+		return x.failStageMCP(st, err)
+	}
 
 	// ONE ATTEMPT, ONE SESSION, SEVERAL INVOCATIONS. The agent runs as a
 	// live session: a question it cannot answer blocks in ask_human while
@@ -731,6 +772,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				var err error
 				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "",
 					func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error) {
+						in.MCPServers = mcp
 						r, _, err := ra.Reattach(ctx, rs.envID, session, rs.agentCursor[st.ID], in)
 						return r, err
 					})
@@ -787,6 +829,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		inv, err = x.invoke(st, budget, tr, nil, text,
 			func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error) {
+				in.MCPServers = mcp
 				if resuming {
 					return runner.Resume(ctx, rs.envID, session, in)
 				}
@@ -812,7 +855,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	x.publishLog(st.ID, iter, res.r.Output)
 	// Capture whatever this attempt produced BEFORE routing: a failed
 	// attempt's partial outputs are the interesting ones (M27).
-	x.publishOutputs(st, iter, flow.EffectiveOutputs(st, rs.fl.Agent(st.Agent)))
+	x.publishOutputs(st, iter, st.Outputs)
 	if inv.outcome == outcomeTimedOut {
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); err != nil {
 			return err
@@ -837,12 +880,13 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	// Output contract (§3): every effective output (decl defaults overlaid
 	// with stage rebinds) must exist. All missing paths are reported in one
 	// failure so a human sees the whole gap, not the first file only.
-	if missing := x.missingPaths(flow.EffectiveOutputs(st, x.rs.fl.Agent(st.Agent))); len(missing) > 0 {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
-			Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
+	if missing := x.missingPaths(st.Outputs); len(missing) > 0 {
+		// The retry is told which files it did not write (edge.failure).
+		msg := fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: msg}); aerr != nil {
 			return aerr
 		}
-		return x.takeEdge(st, flow.EdgeFail, "")
+		return x.takeEdge(st, flow.EdgeFail, msg)
 	}
 	// A verdict-typed output had its existence checked with every other output
 	// above, so this read can now only fail on shape — one report per cause.
@@ -855,7 +899,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: err.Error()}); aerr != nil {
 				return aerr
 			}
-			return x.takeEdge(st, flow.EdgeFail, "")
+			return x.takeEdge(st, flow.EdgeFail, err.Error())
 		}
 		verdict = v
 	}
@@ -875,6 +919,14 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		return x.takeEdge(st, flow.EdgeFail, msg)
 	}
+	// And every output with a structure — a flow schema, a commit_message —
+	// before anything reads it.
+	if msg := x.checkStructuredOutputs(st); msg != "" {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, msg)
+	}
 
 	completed := &event.StageCompleted{
 		StageID:    st.ID,
@@ -888,6 +940,10 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			OutputTokens: res.r.Usage.OutputTokens,
 			CostUSD:      res.r.Usage.CostUSD,
 		}
+	}
+	// An approval with comments carries them on (flow.GivesVerdict).
+	if verdict != nil && verdict.Approve {
+		completed.Feed = x.redact.scrub(verdictText(st.ID, verdict))
 	}
 	if err := x.append(completed); err != nil {
 		return err
@@ -907,9 +963,9 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		return err
 	}
 	if verdict != nil && !verdict.Approve {
-		return x.takeEdge(st, flow.EdgeReject, strings.Join(verdict.Comments, "\n"))
+		return x.takeEdge(st, flow.EdgeReject, verdictText(st.ID, verdict))
 	}
-	x.advance(st)
+	x.advanceWith(st, completed.Feed)
 	return nil
 }
 
@@ -1286,7 +1342,7 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 	// every other kind keeps the choice in answer and the note in feedback.
 	answer, feedback := recordedAnswer(ar.p.AnswerKind, ar.ans)
 	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback,
-		AttachmentIDs: ar.ans.AttachmentIDs}
+		AttachmentIDs: ar.ans.AttachmentIDs, Review: ar.ans.Review}
 	if err := x.append(recorded); err != nil {
 		// Roll the in-memory claim back so a retried answer can succeed
 		// after recovery (the event log has no ping_answered).
@@ -1300,9 +1356,9 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 	// Deliver any files the human attached to this answer into the workspace,
 	// recording their paths so the ask_human tool-return (agent pings) and the
 	// gate feed (gate pings) can point the agent at them.
-	if paths := x.pingAnswerPaths(ar.p.ID); len(paths) > 0 {
+	if files := x.pingAnswerFiles(ar.p.ID); len(files) > 0 {
 		x.e.mu.Lock()
-		ar.p.deliveredPaths = paths
+		ar.p.deliveredFiles = files
 		x.e.mu.Unlock()
 	}
 	close(ar.p.done)
@@ -1346,6 +1402,15 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			return aerr
 		}
 		return x.takeEdge(st, flow.EdgeFail, "")
+	}
+	// What it reads with a schema must hold it (FLOWLANG §4): a script fed a
+	// malformed file fails in a confusing way, or succeeds having done
+	// nothing.
+	if reason, msg := x.checkStructuredInputs(st); reason != "" {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: reason, Error: msg}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, msg)
 	}
 
 	// A fresh attempt starts from a clean slate, so the output check below
@@ -1427,6 +1492,13 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		}
 		return x.takeEdge(st, flow.EdgeFail, tail(res.Output, 8<<10))
 	}
+	// And what it writes with a schema must hold it, before anything reads it.
+	if msg := x.checkStructuredOutputs(st); msg != "" {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, msg)
+	}
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
@@ -1448,8 +1520,14 @@ func commandMarker(runID, stageID string) string { return runID + ":" + stageID 
 // question by guessing exactly which files it now has to revisit.
 func (x *exec) writtenOutputs(st *flow.Stage) []string {
 	var written []string
-	for _, b := range flow.EffectiveOutputs(st, x.rs.fl.Agent(st.Agent)) {
-		if b.Value == "" || flow.IsSentinel(b.Value) {
+	for _, b := range st.Outputs {
+		if b.Value == "" || flow.IsEngineSource(b.Value) {
+			continue
+		}
+		if b.Type == agentspec.TypeFiles {
+			if held, _ := x.dirFiles(b.Value); len(held) > 0 {
+				written = append(written, b.Value)
+			}
 			continue
 		}
 		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, b.Value); err == nil {
@@ -1459,14 +1537,23 @@ func (x *exec) writtenOutputs(st *flow.Stage) []string {
 	return written
 }
 
-func (x *exec) missingPaths(bindings []flow.IOBinding) []string {
+func (x *exec) missingPaths(ports []flow.Port) []string {
 	var missing []string
-	for _, b := range bindings {
-		if b.Value == "" || flow.IsSentinel(b.Value) {
+	for _, b := range ports {
+		// An engine source is no file; an optional input may be absent.
+		if b.Value == "" || flow.IsEngineSource(b.Value) || b.Optional {
 			continue
 		}
-		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, b.Value); err != nil {
-			missing = append(missing, b.Value)
+		path := flow.FilePath(b.Value)
+		if b.Type == agentspec.TypeFiles {
+			// A directory, there when it holds a file.
+			if held, _ := x.dirFiles(path); len(held) == 0 {
+				missing = append(missing, emptyDir(path))
+			}
+			continue
+		}
+		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, path); err != nil {
+			missing = append(missing, path)
 		}
 	}
 	return missing
@@ -1481,25 +1568,40 @@ func (x *exec) missingPaths(bindings []flow.IOBinding) []string {
 //
 // Never called on crash-recovery re-entry: a resumed harness session
 // continues mid-work, and its partial outputs must survive.
-func (x *exec) clearOutputs(bindings []flow.IOBinding) {
-	var paths []string
+func (x *exec) clearOutputs(bindings []flow.Port) {
+	var paths, dirs []string
 	for _, b := range bindings {
-		if b.Value == "" || flow.IsSentinel(b.Value) {
+		if b.Value == "" || flow.IsEngineSource(b.Value) {
+			continue
+		}
+		if b.Type == agentspec.TypeFiles {
+			// Without its slash: a symlink planted where the directory goes
+			// is removed itself, never followed into what it points at.
+			dirs = append(dirs, shellQuote(strings.TrimSuffix(b.Value, "/")))
 			continue
 		}
 		paths = append(paths, shellQuote(b.Value))
 	}
-	if len(paths) == 0 {
-		return
+	var scripts []string
+	if len(paths) > 0 {
+		scripts = append(scripts, "rm -f -- "+strings.Join(paths, " "))
+	}
+	if len(dirs) > 0 {
+		// A files output starts empty, and there: the attempt only writes
+		// into it.
+		list := strings.Join(dirs, " ")
+		scripts = append(scripts, "rm -rf -- "+list+" && mkdir -p -- "+list)
 	}
 	// Best-effort: a workspace that cannot delete is not a stage failure —
 	// the output contract still has the final say.
-	if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{
-		Script:  "rm -f -- " + strings.Join(paths, " "),
-		Dir:     "repo",
-		Timeout: time.Minute,
-	}); err != nil {
-		x.e.log.Warn("clearing declared outputs failed", "run", x.rs.runID, "err", err)
+	for _, script := range scripts {
+		if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{
+			Script:  script,
+			Dir:     "repo",
+			Timeout: time.Minute,
+		}); err != nil {
+			x.e.log.Warn("clearing declared outputs failed", "run", x.rs.runID, "err", err)
+		}
 	}
 }
 
@@ -1512,12 +1614,12 @@ func (x *exec) stageGate(st *flow.Stage) error {
 	if rs.ph == phIn && rs.gateAnswer != nil {
 		ans := rs.gateAnswer
 		rs.gateAnswer = nil
-		return x.routeGate(st, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback}, x.e.clock())
+		return x.routeGate(st, ans, x.e.clock())
 	}
 
 	var p *Ping
 	if rs.ph == phIn {
-		p = x.openDecision(st, PingGate)
+		p = x.openYesNo(st, PingGate)
 	}
 	if p == nil {
 		iter := rs.iters[st.ID] + 1
@@ -1526,28 +1628,20 @@ func (x *exec) stageGate(st *flow.Stage) error {
 			return err
 		}
 		rs.ph = phIn
-		// The gate's input: an artifact to review (a File) or a sentinel the
-		// engine resolves to a Link. TYPED HERE, at sentinel resolution — this
-		// is the one place that knows which is which, so nothing downstream
-		// ever sniffs a string for "http" (DESIGN-FILES §4).
-		var files []string
-		var link string
-		if len(st.Inputs) > 0 {
-			if v := st.Inputs[0].Value; flow.IsSentinel(v) {
-				link = x.resolveGateInput(v)
-			} else {
-				files = []string{v}
-			}
-		}
+		// The gate's inputs: files to review and at most one link source
+		// the engine resolves. TYPED HERE, at source resolution — this is
+		// the one place that knows which is which, so nothing downstream ever
+		// sniffs a string for "http" (DESIGN-FILES §4).
+		files, link := x.gateFiles(st)
 		p = &Ping{
 			Type:     PingGate,
 			Question: gateQuestion(st, rs.view.TicketTitle),
 			// A gate over several merge requests lists them all; the link
 			// stays the first (the primary repository's).
 			Context: x.mrListMarkdown(),
-			Files:   files, Link: link, StageID: st.ID, AnswerKind: event.AnswerDecision,
+			Files:   files, Link: link, StageID: st.ID, AnswerKind: event.AnswerYesNo,
 		}
-		if err := x.raiseDecision(p); err != nil {
+		if err := x.raiseYesNo(p); err != nil {
 			return err
 		}
 		// The plan a human approves is the single most important document in
@@ -1568,28 +1662,75 @@ func (x *exec) stageGate(st *flow.Stage) error {
 	return x.parkAt(st, p.ID)
 }
 
-// resolveGateInput turns a gate's bound input into what the human is handed: a
-// link for a sentinel, the path itself for an artifact to review.
+// gateFiles is what a gate shows: its files in port order — a folder's
+// (type files) each, as attachments are bounded: the first
+// attachmentMaxFiles in all, none past attachmentMaxBytes (a snapshot of it
+// would be cut) — and the link its link port resolves to.
+func (x *exec) gateFiles(st *flow.Stage) (files []string, link string) {
+	for _, in := range st.Inputs {
+		switch {
+		case flow.IsEngineSource(in.Value):
+			link = x.resolveGateInput(in.Value)
+			continue
+		case in.Type != agentspec.TypeFiles:
+			files = append(files, flow.FilePath(in.Value))
+			continue
+		}
+		dir := flow.FilePath(in.Value)
+		held, err := x.dirFiles(dir)
+		if err != nil {
+			x.e.log.Warn("listing a gate's folder", "run", x.rs.runID, "stage", st.ID, "path", dir, "err", err)
+		}
+		for _, f := range held {
+			if f.Size > attachmentMaxBytes {
+				x.e.log.Warn("file too large to review", "run", x.rs.runID, "stage", st.ID, "path", f.Path, "size", f.Size)
+				continue
+			}
+			files = append(files, f.Path)
+		}
+	}
+	if len(files) > attachmentMaxFiles {
+		x.e.log.Warn("a gate shows more files than are reviewed", "run", x.rs.runID, "stage", st.ID,
+			"files", len(files), "shown", attachmentMaxFiles)
+		files = files[:attachmentMaxFiles]
+	}
+	return files, link
+}
+
+// resolveGateInput turns a gate's input into what the human is handed: the
+// link for a link source, the workspace path of a file to review.
 func (x *exec) resolveGateInput(v string) string {
+	if link := x.sourceLink(v); link != "" || flow.IsEngineSource(v) {
+		return link
+	}
+	return flow.FilePath(v)
+}
+
+// sourceLink resolves a link source (run.mr.url, run.workspace,
+// run.service.<name> — the human's preview link), or "".
+func (x *exec) sourceLink(v string) string {
 	switch v {
-	case flow.SentinelMRURL:
+	case flow.SourceMRURL:
 		// On a subject, the merge request the phase acts on.
 		if mr := x.subjectMR(); mr != nil {
 			return mr.Ref.URL
 		}
 		return x.rs.view.MRURL
-	case flow.SentinelWorkspace:
+	case flow.SourceWorkspace:
 		// Workspace hand-off: point the human at the running environment
 		// (terminal beats IDE beats whatever else env_ready recorded).
 		return workspaceLink(x.rs.links)
 	}
-	return v
+	if name := flow.SourceService(v); name != "" {
+		return x.serviceLink(name)
+	}
+	return ""
 }
 
-// openDecision returns the live Ping for a still-open decision of this stage
+// openYesNo returns the live Ping for a still-open yes/no question of this stage
 // and type — one runLoop re-registered from the log after a restart — or nil
 // when the stage has to raise one.
-func (x *exec) openDecision(st *flow.Stage, ptype string) *Ping {
+func (x *exec) openYesNo(st *flow.Stage, ptype string) *Ping {
 	op := x.rs.openPing(st.ID, ptype)
 	if op == nil {
 		return nil
@@ -1599,18 +1740,24 @@ func (x *exec) openDecision(st *flow.Stage, ptype string) *Ping {
 	return x.e.pings[op.PingID]
 }
 
-// raiseDecision registers a decision ping and records it: the caller fills
+// raiseYesNo registers a yes/no question and records it: the caller fills
 // what is asked and of which stage, this mints the id and the clock. What
 // happens next (a snapshot of the reviewed file, the channels) is the
 // caller's.
-func (x *exec) raiseDecision(p *Ping) error {
+func (x *exec) raiseYesNo(p *Ping) error {
 	p.ID, p.RunID, p.RaisedAt, p.done = x.e.newID(), x.rs.runID, x.e.clock(), make(chan struct{})
 	x.e.mu.Lock()
 	x.e.pings[p.ID] = p
 	x.e.mu.Unlock()
-	return x.append(&event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
+	raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
 		Files: p.Files, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind,
-		Phase: p.Phase, EndsPhase: p.EndsPhase})
+		Phase: p.Phase, EndsPhase: p.EndsPhase}
+	if err := x.append(raised); err != nil {
+		return err
+	}
+	// As replay has it: what the ping showed, for the answer's review.
+	x.rs.raisedPings[raised.PingID] = raised
+	return nil
 }
 
 // --- the debug leaf --------------------------------------------------------
@@ -1633,11 +1780,11 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 		rs.gateAnswer = nil
 		return x.routeDebug(st, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback})
 	}
-	if x.openDecision(st, PingDebug) == nil {
+	if x.openYesNo(st, PingDebug) == nil {
 		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: tail(rs.feed, 4<<10),
-			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerDecision,
+			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerYesNo,
 			Phase: rs.phase, EndsPhase: !x.endsRunAtDeadEnd()}
-		if err := x.raiseDecision(p); err != nil {
+		if err := x.raiseYesNo(p); err != nil {
 			return err
 		}
 		x.e.notify(x.bg, ports.Notification{
@@ -1667,15 +1814,24 @@ func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
 	return x.deadEnd(st, "", reason)
 }
 
-func (x *exec) routeGate(st *flow.Stage, ans PingAnswer, started time.Time) error {
-	if ans.Answer == "approve" {
-		if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
+// routeGate follows a gate's answer, carrying the verdict — the person's
+// summary, their comments file by file, what they attached — to on_reject,
+// or to on_success when the approval said something.
+func (x *exec) routeGate(st *flow.Stage, rec *event.PingAnswered, started time.Time) error {
+	var shown []string
+	if r := x.rs.raisedPings[rec.PingID]; r != nil {
+		shown = r.Files
+	}
+	verdict := gateVerdict(st.ID, rec, shown, x.answerFileRefs(rec.PingID))
+	if rec.Answer == "approve" {
+		verdict = x.redact.scrub(verdict)
+		if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds(), Feed: verdict}); err != nil {
 			return err
 		}
-		x.advance(st)
+		x.advanceWith(st, verdict)
 		return nil
 	}
-	return x.takeEdge(st, flow.EdgeReject, ans.Feedback)
+	return x.takeEdge(st, flow.EdgeReject, verdict)
 }
 
 // --- action stages ----------------------------------------------------------
@@ -1693,6 +1849,16 @@ func (x *exec) stageAction(st *flow.Stage) error {
 			return err
 		}
 		rs.ph = phIn
+		// What it reads must be there and hold its shape, as for any stage:
+		// an action handed a malformed file would act on it. Not while an
+		// effect is pending: the executor reconciles first, and an effect
+		// that already landed needs neither the file nor the workspace.
+		if reason, msg := x.checkStructuredInputs(st); reason != "" && !rs.actionPending[st.ID] {
+			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: reason, Error: msg}); err != nil {
+				return err
+			}
+			return x.takeEdge(st, flow.EdgeFail, msg)
+		}
 	}
 	started := x.e.clock()
 
@@ -1710,6 +1876,8 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		routed, err = x.actionReplyReviewComments(st)
 	case actionspec.SyncTarget:
 		routed, err = x.actionSyncTarget(st)
+	case actionspec.Commit:
+		routed, err = x.actionCommit(st)
 	case actionspec.PushBranch:
 		routed, err = x.actionPushBranch(st)
 	case actionspec.MRMerge:
@@ -1815,7 +1983,7 @@ func gateQuestion(st *flow.Stage, ticketTitle string) string {
 // agent renders none. Single source for prompt assembly, the post-run read and
 // crash recovery.
 func (x *exec) verdictPath(st *flow.Stage) string {
-	return flow.VerdictPath(st, x.rs.fl.Agent(st.Agent))
+	return flow.TypedPath(st, agentspec.TypeVerdict)
 }
 
 // workspaceLink picks the link a debugging human wants first: the web
@@ -2088,7 +2256,6 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		SeedAuth:     res.SeedAuth,
 		Prepare:      res.Prepare,
 		Agents:       x.rs.fl.AgentSpecs(),
-		Setup:        res.Commands["setup"], // optional in v2: "" skips step 6
 		Timeout:      x.rs.fl.Defaults.Timeout,
 		Extras:       x.extraCheckouts(),
 	})

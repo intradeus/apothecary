@@ -149,7 +149,7 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 		if err := resume(); err != nil {
 			return true, err
 		}
-		return true, x.routeGate(st, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback + attachedFilesNote(x.pingDelivered(pr.ping))}, pr.since)
+		return true, x.routeGate(st, ans, pr.since)
 	}
 	return false, nil
 }
@@ -237,17 +237,6 @@ func (x *exec) answerFromEngine(pingID string, ans PingAnswer) (*event.PingAnswe
 		close(p.done)
 	}
 	return rec, nil
-}
-
-// pingDelivered lists the files a human attached to a ping's answer, as
-// delivered into the workspace (empty when none, or the ping is not live).
-func (x *exec) pingDelivered(pingID string) []string {
-	x.e.mu.Lock()
-	defer x.e.mu.Unlock()
-	if p := x.e.pings[pingID]; p != nil {
-		return p.deliveredPaths
-	}
-	return nil
 }
 
 // anyArmed reports whether some observed phase may still open on its own:

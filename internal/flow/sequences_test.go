@@ -17,10 +17,10 @@ const sequencesDoc = header + `sequences:
           on_timeout: { to: test, max: 1, then: fail } }
   - id: publish
     stages:
-      - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+      - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
   - id: make
     stages:
-      - { id: build, type: command, run: x, output: { mr: artifacts/mr.md },
+      - { id: build, type: command, run: x, output: { mr: { to: artifacts/mr.md, type: file } },
           on_fail: { to: build, max: 2, then: debug } }
       - { id: ship, sequence: ship, on_fail: { to: build, max: 5, then: debug } }
       - { id: review, type: command, run: x, on_fail: { to: build, max: 3, then: debug } }
@@ -162,7 +162,7 @@ func TestSequenceErrors(t *testing.T) {
 		{"fail with max", header + seq("      - { id: s, type: command, run: x, on_fail: { to: fail, max: 1 } }\n") + use, `max and then do not apply when to is "fail"`},
 		{"on_success fail", header + seq("      - { id: s, type: command, run: x, on_success: fail }\n") + use, `on_success cannot be "fail"`},
 		{"sequence stage with a type", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, type: command, on_success: done }\n", "a sequence stage has no type"},
-		{"sequence stage with when", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, when: tracker, on_success: done }\n", `field "when" does not apply to a sequence stage`},
+		{"sequence stage with run_if", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, run_if: tracker, on_success: done }\n", `field "run_if" does not apply to a sequence stage`},
 		{"sequence stage with on_reject", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, on_reject: abort, on_success: done }\n", `field "on_reject" does not apply to a sequence stage`},
 		{"route into a sequence stage", header + seq("      - { id: s, type: command, run: x }\n      - { id: t, type: command, run: x }\n") + "main:\n  - { id: a, type: command, run: x, on_success: inc.t }\n  - { id: inc, sequence: b, on_success: done }\n", `"inc.t" is inside a sequence`},
 		{"sequence stage id taken", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, type: command, run: x }\n  - { id: inc, sequence: b, on_success: done }\n", "duplicate id"},
@@ -218,8 +218,8 @@ func TestSequencesRoundTripTheDocument(t *testing.T) {
 func TestOperatesOnAMergeRequest(t *testing.T) {
 	doc := header + `operates_on: merge_request
 main:
-  - { id: read, type: command, run: x, output: { review: artifacts/review.yaml } }
-  - { id: post, type: action, action: post_review, input: { review: artifacts/review.yaml } }
+  - { id: read, type: command, run: x, output: { review: { to: artifacts/review.yaml, type: review_threads } } }
+  - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
   - { id: wait_merge, type: wait, for: mr_merged, on_fail: done }
 outcomes:
   - { id: merged, on: mr_merged, then: done }

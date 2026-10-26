@@ -22,12 +22,12 @@ const commonAgents = `agents:
   - name: builder
     prompt: build the thing
     inputs:
-      - { name: plan, optional: true }
-      - { name: changes, optional: true }
-      - { name: rejection, optional: true }
-      - { name: failure, optional: true }
+      - { name: plan, type: file, optional: true }
+      - { name: changes, type: changeset, optional: true }
+      - { name: rejection, type: verdict, optional: true }
+      - { name: failure, type: failure, optional: true }
     outputs:
-      - { name: patch, path: artifacts/patch.md }
+      - { name: patch, type: file }
   - name: b
     prompt: do b
 `
@@ -57,7 +57,7 @@ func wantErr(t *testing.T, doc, substr string, line int) {
 }
 
 // TestCanonicalV5 locks the fixture that exercises every stage construct: all
-// stage types, the binding forms, every sentinel, output rebinding.
+// stage types, their ports, every engine source, action settings.
 func TestCanonicalV5(t *testing.T) {
 	f, err := Load("testdata/v5.yaml")
 	if err != nil {
@@ -92,23 +92,27 @@ func TestCanonicalV5(t *testing.T) {
 	if plan.Model != "anthropic/claude-sonnet-4-6" || plan.MaxTurns != 25 || plan.Timeout != 30*time.Minute {
 		t.Errorf("plan defaults not resolved: %+v", plan)
 	}
-	// No output on the stage: the planner's contract carries the path.
-	if len(plan.Outputs) != 0 || plan.Description != "write the implementation plan" {
+	// The agent says what it writes; the stage says where.
+	if len(plan.Outputs) != 1 || plan.Outputs[0] != (Port{Name: "plan", Value: "artifacts/plan.md", Type: "file"}) ||
+		plan.Description != "write the implementation plan" {
 		t.Errorf("plan = %+v", plan)
 	}
+	if in := plan.Input("ticket"); in == nil || *in != (Port{Name: "ticket", Value: SourceTicket, Type: "ticket"}) {
+		t.Errorf("plan.ticket = %+v", in)
+	}
 
-	// An agent stage binds inputs by name and may rebind a declared output.
+	// An agent stage states its ports by the agent's names, each typed.
 	cm := f.Stage("commit_msg")
-	if len(cm.Inputs) != 1 || cm.Inputs[0] != (IOBinding{Name: "plan", Value: "artifacts/plan.md"}) {
+	if len(cm.Inputs) != 1 || cm.Inputs[0] != (Port{Name: "plan", Value: "artifacts/plan.md", Type: "file"}) {
 		t.Errorf("commit_msg.Inputs = %+v", cm.Inputs)
 	}
-	if len(cm.Outputs) != 1 || cm.Outputs[0] != (IOBinding{Name: "commit", Value: "artifacts/commit-subject.md"}) {
+	if len(cm.Outputs) != 1 || cm.Outputs[0] != (Port{Name: "commit", Value: "artifacts/commit-subject.md", Type: "file"}) {
 		t.Errorf("commit_msg.Outputs = %+v", cm.Outputs)
 	}
 
 	// A command names its files too — the label documents each one's role.
 	commit := f.Stage("commit")
-	if len(commit.Inputs) != 1 || commit.Inputs[0] != (IOBinding{Name: "message", Value: "artifacts/commit-subject.md"}) {
+	if len(commit.Inputs) != 1 || commit.Inputs[0] != (Port{Name: "message", Value: "artifacts/commit-subject.md", Type: "file"}) {
 		t.Errorf("commit.Inputs = %+v", commit.Inputs)
 	}
 
@@ -121,8 +125,11 @@ func TestCanonicalV5(t *testing.T) {
 	if review.Edge(EdgeReject) == nil || review.Edge(EdgeReject).To != "build" || review.Edge(EdgeReject).Max != 3 {
 		t.Errorf("review.on_reject = %+v", review.Edge(EdgeReject))
 	}
-	if len(review.Inputs) != 2 || review.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelDiffTarget}) {
+	if len(review.Inputs) != 3 || *review.Input("changes") != (Port{Name: "changes", Value: SourceDiffTarget, Type: "changeset"}) {
 		t.Errorf("review.Inputs = %+v", review.Inputs)
+	}
+	if p := TypedPath(review, "verdict"); p != "artifacts/review/verdict.json" {
+		t.Errorf("review verdict path = %q", p)
 	}
 
 	test := f.Stage("test")
@@ -130,42 +137,47 @@ func TestCanonicalV5(t *testing.T) {
 		test.Edge(EdgeFail).Max != 5 {
 		t.Errorf("test stage = %+v", test)
 	}
-	// The build stage binds both edge-carried values, so a rejection and a
+	// The build stage reads both edge-carried values, so a rejection and a
 	// failure land in different, named places.
 	build := f.Stage("build")
-	if build.Input("rejection") == nil || build.Input("rejection").Value != SentinelDecision ||
-		build.Input("failure") == nil || build.Input("failure").Value != SentinelFailure {
-		t.Errorf("build.Inputs = %+v", build.Inputs)
+	if in := build.Input("rejection"); in == nil || *in != (Port{Name: "rejection", Value: SourceVerdict, Type: "verdict", Optional: true}) {
+		t.Errorf("build.rejection = %+v", in)
+	}
+	if in := build.Input("failure"); in == nil || in.Value != SourceFailure || !in.Optional {
+		t.Errorf("build.failure = %+v", in)
 	}
 
 	mr := f.Stage("mr")
 	if mr.Type != StageAction || mr.Action != "create_mr" ||
-		len(mr.Inputs) != 1 || mr.Inputs[0] != (IOBinding{Name: "body", Value: "artifacts/mr.md"}) {
+		len(mr.Inputs) != 1 || mr.Inputs[0] != (Port{Name: "body", Value: "artifacts/mr.md", Type: "file"}) || len(mr.Outputs) != 0 {
 		t.Errorf("mr = %+v", mr)
 	}
 
 	gate := f.Stage("final_gate")
-	if len(gate.Inputs) != 1 || gate.Inputs[0].Value != SentinelMRURL ||
+	if len(gate.Inputs) != 1 || gate.Inputs[0] != (Port{Name: "mr", Value: SourceMRURL, Type: "link"}) ||
 		gate.AutoApprove != "mr_merged" || gate.Question == "" {
 		t.Errorf("final_gate = %+v", gate)
 	}
-	if dbg := f.Stage("debug_push"); len(dbg.Inputs) != 1 || dbg.Inputs[0].Value != SentinelWorkspace {
-		t.Errorf("debug_push.Inputs = %+v, want %s", dbg.Inputs, SentinelWorkspace)
+	if dbg := f.Stage("debug_push"); len(dbg.Inputs) != 1 || dbg.Inputs[0].Value != SourceWorkspace {
+		t.Errorf("debug_push.Inputs = %+v, want %s", dbg.Inputs, SourceWorkspace)
 	}
 
 	if f.Index("in_progress") != 0 || f.Index("ticket_done") != len(ids)-1 || f.Index("nope") != -1 {
 		t.Error("Index misbehaves")
 	}
 	// The tracker stages: a canonical status, the tracker's own word, and a
-	// canonical one read from an enum parameter.
-	if in := f.Stage("in_progress").Input("to"); in == nil || in.Value != "in_progress" {
-		t.Errorf("in_progress.to = %+v", in)
+	// canonical one read from an enum parameter — settings, not ports.
+	if st := f.Stage("in_progress"); st.Setting("to", "") != "in_progress" || len(st.Inputs) != 0 {
+		t.Errorf("in_progress = %+v", st.Settings)
 	}
-	if in := f.Stage("in_review").Input("status"); in == nil || in.Value != "In Review" {
-		t.Errorf("in_review.status = %+v", in)
+	if v := f.Stage("in_review").Setting("status", ""); v != "In Review" {
+		t.Errorf("in_review.status = %q", v)
 	}
-	if in := f.Stage("ticket_done").Input("to"); in == nil || in.Value != "done" {
-		t.Errorf("ticket_done.to = %+v", in)
+	if v := f.Stage("ticket_done").Setting("to", ""); v != "done" {
+		t.Errorf("ticket_done.to = %q", v)
+	}
+	for _, w := range f.Warnings {
+		t.Errorf("warning: %s", w)
 	}
 	if p := f.Param("ticket_status"); p == nil || p.Known || strings.Join(p.Enum, ",") != "done,in_review" {
 		t.Errorf("ticket_status = %+v", p)
@@ -220,11 +232,11 @@ func TestReferenceFlowParses(t *testing.T) {
 	}
 }
 
-func TestStageMapFormBindings(t *testing.T) {
+func TestStagePorts(t *testing.T) {
 	doc := header + commonAgents + `main:
   - { id: build, type: agent, agent: builder,
-      input: { plan: artifacts/plan.md, changes: $DIFF_TARGET },
-      output: { patch: artifacts/patch.md }, on_success: done }
+      input: { plan: { from: repo:docs/plan.md, type: file }, changes: { from: run.git.diff_target, type: changeset } },
+      output: { patch: { to: artifacts/patch.md, type: file } }, on_success: done }
 `
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
@@ -232,30 +244,34 @@ func TestStageMapFormBindings(t *testing.T) {
 	}
 	s := f.Stage("build")
 	if len(s.Inputs) != 2 ||
-		s.Inputs[0] != (IOBinding{Name: "plan", Value: "artifacts/plan.md"}) ||
-		s.Inputs[1] != (IOBinding{Name: "changes", Value: SentinelDiffTarget}) {
+		s.Inputs[0] != (Port{Name: "plan", Value: "repo:docs/plan.md", Type: "file"}) ||
+		s.Inputs[1] != (Port{Name: "changes", Value: SourceDiffTarget, Type: "changeset"}) {
 		t.Errorf("inputs = %+v", s.Inputs)
 	}
-	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Name: "patch", Value: "artifacts/patch.md"}) {
+	if FilePath(s.Inputs[0].Value) != "docs/plan.md" || FilePath(s.Inputs[1].Value) != "" {
+		t.Errorf("file paths = %q, %q", FilePath(s.Inputs[0].Value), FilePath(s.Inputs[1].Value))
+	}
+	if len(s.Outputs) != 1 || s.Outputs[0] != (Port{Name: "patch", Value: "artifacts/patch.md", Type: "file"}) {
 		t.Errorf("outputs = %+v", s.Outputs)
 	}
 }
 
-// TestCommandBindings: a command binds like everything else. It has no contract
-// to check the names against, so they are free labels — which is the point:
-// they say what each file is for.
-func TestCommandBindings(t *testing.T) {
+// TestCommandPorts: a command states its ports like everything else. It has
+// no contract to check the names against, so they are free labels — which is
+// the point: they say what each file is for.
+func TestCommandPorts(t *testing.T) {
 	doc := header + `main:
+  - { id: plan, type: command, run: "make plan", output: { plan: { to: artifacts/plan.md, type: file } } }
   - { id: verify, type: command, run: "make check",
-      input: { plan: artifacts/plan.md, spec: docs/spec.md },
-      output: { report: artifacts/report.txt }, on_success: done }
+      input: { plan: { from: artifacts/plan.md, type: file }, spec: { from: repo:docs/spec.md, type: file } },
+      output: { report: { to: artifacts/report.txt, type: file } }, on_success: done }
 `
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := f.Stage("verify")
-	want := []IOBinding{{Name: "plan", Value: "artifacts/plan.md"}, {Name: "spec", Value: "docs/spec.md"}}
+	want := []Port{{Name: "plan", Value: "artifacts/plan.md", Type: "file"}, {Name: "spec", Value: "repo:docs/spec.md", Type: "file"}}
 	if len(s.Inputs) != len(want) {
 		t.Fatalf("inputs = %+v", s.Inputs)
 	}
@@ -264,49 +280,45 @@ func TestCommandBindings(t *testing.T) {
 			t.Errorf("input[%d] = %+v, want %+v", i, s.Inputs[i], w)
 		}
 	}
-	if len(s.Outputs) != 1 || s.Outputs[0] != (IOBinding{Name: "report", Value: "artifacts/report.txt"}) {
+	if len(s.Outputs) != 1 || s.Outputs[0] != (Port{Name: "report", Value: "artifacts/report.txt", Type: "file"}) {
 		t.Errorf("outputs = %+v", s.Outputs)
 	}
 }
 
-func TestBindingShapeErrors(t *testing.T) {
-	agent := func(binding string) string {
-		return header + "main:\n  - { id: a, type: agent, agent: x, " + binding + ", on_success: done }\n"
+func TestPortShapeErrors(t *testing.T) {
+	agent := func(ports string) string {
+		return header + "main:\n  - { id: a, type: agent, agent: x, " + ports + ", on_success: done }\n"
 	}
 	cases := []struct{ name, doc, want string }{
-		{"dup key", agent("input: { plan: a.md, plan: b.md }"), "bound twice"},
-		{"ticket value", agent("input: { plan: ticket }"), "always the TASK section"},
-		{"bad input path", agent("input: { plan: /abs }"), "artifact path"},
-		{"non-scalar value", agent("input: { plan: [a, b] }"), "value must be a single value"},
-		{"bad output path", agent("output: { p: /abs }"), "artifact path"},
-		{"bad binding name", agent("input: { Bad Name: a.md }"), "lowercase slug"},
+		{"dup key", agent("input: { plan: { from: repo:a.md, type: file }, plan: { from: repo:b.md, type: file } }"), `port "plan" stated twice`},
+		{"ticket value", agent("input: { plan: ticket }"), "(ticket is now run.ticket)"},
+		{"bad input path", agent("input: { plan: { from: /abs, type: file } }"), "must be a path some stage writes, repo:<path>"},
+		{"non-scalar value", agent("input: { plan: { from: [a, b], type: file } }"), "from must be a single value"},
+		{"bad output path", agent("output: { p: { to: /abs, type: file } }"), "must be a repo-relative path"},
+		{"bad port name", agent("input: { Bad Name: { from: repo:a.md, type: file } }"), "lowercase slug"},
 		// One form everywhere: a bare value or a list is a shape error whose
 		// message says what to do instead.
-		{"agent list input", agent("input: [artifacts/plan.md]"), "name each entry"},
-		{"agent scalar output", agent("output: artifacts/out.md"), "name what"},
+		{"agent list input", agent("input: [artifacts/plan.md]"), "not a list"},
+		{"agent scalar output", agent("output: artifacts/out.md"), "must be a mapping of ports"},
 		{"command list input", header + "main:\n  - { id: c, type: command, run: x, input: [a.md] }\n",
-			"name each entry"},
-		{"command sentinel input", header + "main:\n  - { id: c, type: command, run: x, input: { c: $DIFF_TARGET } }\n",
-			"must be a relative artifact path"},
+			"not a list"},
 		{"gate scalar input", header + "main:\n  - { id: g, type: human_gate, input: artifacts/a.md }\n",
-			"name what"},
-		{"gate two inputs", header + "main:\n  - { id: g, type: human_gate, input: { a: x.md, b: y.md } }\n",
-			"shows one thing"},
-		{"gate bad sentinel", header + "main:\n  - { id: g, type: human_gate, input: { x: $NOPE } }\n",
-			"must be a relative artifact path"},
-		// Sentinels are scoped: a link is for a human, prompt content is not.
-		{"agent gets a link", agent("input: { mr: $MR_URL }"), "is a link for a human_gate"},
-		{"gate gets prompt content", header + "main:\n  - { id: g, type: human_gate, input: { c: $DIFF_TARGET } }\n",
-			"not something to show a human"},
-		{"gate gets uncommitted", header + "main:\n  - { id: g, type: human_gate, input: { c: $STATUS } }\n",
-			"not something to show a human"},
-		{"command uncommitted input", header + "main:\n  - { id: c, type: command, run: x, input: { c: $STATUS } }\n",
-			"must be a relative artifact path"},
+			"must be a mapping of ports"},
+		{"gate two links", header + "main:\n  - { id: g, type: human_gate, input: { a: { from: run.workspace, type: link }, b: { from: run.mr.url, type: link } } }\n",
+			"opens at most one link; got 2"},
+		{"gate bad sentinel", header + "main:\n  - { id: g, type: human_gate, input: { x: { from: $NOPE, type: link } } }\n",
+			"$NOPE is not a source"},
+		// Engine sources are scoped: what a gate shows is a file or a link,
+		// what an action reads is a file.
+		{"gate gets prompt content", header + "main:\n  - { id: g, type: human_gate, input: { t: { from: run.ticket, type: ticket } } }\n",
+			"a gate shows a file or a link; run.ticket is a ticket"},
+		{"action gets a link", header + "main:\n  - { id: m, type: action, action: create_mr, input: { body: { from: run.mr.url, type: link } } }\n",
+			"reads files; run.mr.url is a value the engine provides"},
 		// The two git sentinels that meant different ranges by context are
 		// gone; the error names what replaced them.
-		{"retired $CHANGED", agent("input: { changes: $CHANGED }"), "use $DIFF_TARGET (what the branch changes against its target) or $DIFF_PHASE"},
-		{"retired $UNCOMMITTED", agent("input: { changes: $UNCOMMITTED }"), "use $STATUS"},
-		{"retired on a gate", header + "main:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n", "$CHANGED is retired"},
+		{"retired $CHANGED", agent("input: { changes: { from: $CHANGED, type: changeset } }"), "$CHANGED is now run.git.diff_target"},
+		{"retired $UNCOMMITTED", agent("input: { changes: { from: $UNCOMMITTED, type: changeset } }"), "$UNCOMMITTED is now run.git.status"},
+		{"retired on a gate", header + "main:\n  - { id: g, type: human_gate, input: { c: $CHANGED } }\n", "($CHANGED is now run.git.diff_target)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -326,17 +338,17 @@ func TestRetiredSpellings(t *testing.T) {
 		{"ping", header + "main:\n  - { id: g, type: human_gate, ping: plan_approval }\n",
 			`say what you are asking in "question"`},
 		{"payload", header + "main:\n  - { id: g, type: human_gate, payload: artifacts/plan.md }\n",
-			`renamed "input"`},
+			"a gate shows an input port"},
 		{"body", header + "main:\n  - { id: m, type: action, action: create_mr, body: artifacts/mr.md }\n",
-			"with input: {body: <path>}"},
+			"with input: { body: { from: <path>, type: file } }"},
 		{"feed", header + "main:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
-			"bind $DECISION"},
+			"read edge.verdict from an input port"},
 		{"auto_complete", header + "main:\n  - { id: g, type: human_gate, auto_complete: mr_merged }\n",
 			`use "auto_approve"`},
 		{"bare mr_url", header + "main:\n  - { id: g, type: human_gate, input: { mr: mr_url } }\n",
-			"use $MR_URL"},
+			"(mr_url is now run.mr.url)"},
 		{"bare workspace", header + "main:\n  - { id: g, type: human_gate, input: { w: workspace } }\n",
-			"use $WORKSPACE"},
+			"(workspace is now run.workspace)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -361,9 +373,9 @@ func TestVersionRequired(t *testing.T) {
 	}
 }
 
-// TestDocIOJSONForms pins the three document forms' JSON shapes. The map form
-// must marshal in pair order, not sorted: reordering would churn the flow hash
-// on every editor round-trip.
+// TestDocIOJSONForms pins an action's settings' JSON shape. It must marshal in
+// pair order, not sorted: reordering would churn the flow hash on every editor
+// round-trip.
 func TestDocIOJSONForms(t *testing.T) {
 	d := DocIO{Pairs: []IOPair{{Name: "z", Value: "1"}, {Name: "a", Value: "2"}, {Name: "m", Value: "3"}}}
 	b, err := json.Marshal(d)
@@ -384,11 +396,12 @@ func TestDocIOJSONForms(t *testing.T) {
 	}
 }
 
-// TestParseDocMapRoundTrip parses a map-form flow to the editor Doc and back to
-// JSON, asserting the binding object survives with its keys in order.
+// TestParseDocMapRoundTrip parses a flow to the editor Doc and back to JSON,
+// asserting the port objects survive with their keys in order.
 func TestParseDocMapRoundTrip(t *testing.T) {
 	doc := header + commonAgents + `main:
-  - { id: build, type: agent, agent: builder, input: { plan: artifacts/plan.md, changes: $DIFF_TARGET }, on_success: done }
+  - { id: build, type: agent, agent: builder, input: { plan: { from: repo:docs/plan.md, type: file }, changes: { from: run.git.diff_target, type: changeset } },
+      output: { patch: { to: artifacts/patch.md, type: file } }, on_success: done }
 `
 	d, err := ParseDoc("t.yaml", []byte(doc))
 	if err != nil {
@@ -398,7 +411,7 @@ func TestParseDocMapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"input":{"plan":"artifacts/plan.md","changes":"$DIFF_TARGET"}`) {
+	if !strings.Contains(string(b), `"input":{"plan":{"from":"repo:docs/plan.md","type":"file"},"changes":{"from":"run.git.diff_target","type":"changeset"}},"output":{"patch":{"to":"artifacts/patch.md","type":"file"}}`) {
 		t.Errorf("round-trip lost ordered map input: %s", b)
 	}
 }
@@ -444,7 +457,7 @@ func TestValidationErrors(t *testing.T) {
 		{"bad model format", "name: t\nversion: 5\nparameters: { harness: fake, model: nomodel }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"provider/model", 3},
 		{"bad timeout", "name: t\nversion: 5\nparameters: { model: a/b, timeout: soon }\nmain:\n  - { id: s, type: command, run: x }\n",
-			"invalid duration", 3},
+			"takes a duration", 3},
 		{"no main", header, "main is required", 0},
 		{"duplicate id", header + "main:\n  - { id: s, type: command, run: x }\n  - { id: s, type: command, run: y }\n",
 			"duplicate id", 6},
@@ -462,10 +475,10 @@ func TestValidationErrors(t *testing.T) {
 			"exactly one of run / run_ref", 5},
 		{"agent missing", header + "main:\n  - { id: s, type: agent }\n",
 			"agent is required", 5},
-		{"bad input path", header + "main:\n  - { id: s, type: command, run: x, input: { p: /etc/passwd } }\n",
-			"must be a relative artifact path", 5},
-		{"dotdot output", header + "main:\n  - { id: s, type: command, run: x, output: { o: ../out.md } }\n",
-			"relative artifact path", 5},
+		{"bad input path", header + "main:\n  - { id: s, type: command, run: x, input: { p: { from: /etc/passwd, type: file } } }\n",
+			"must be a path some stage writes", 5},
+		{"dotdot output", header + "main:\n  - { id: s, type: command, run: x, output: { o: { to: ../out.md, type: file } } }\n",
+			"must be a repo-relative path", 5},
 		{"unknown auto_approve", header + "main:\n  - { id: s, type: human_gate, auto_approve: ci_green }\n",
 			"unknown auto_approve signal", 5},
 		{"action missing action", header + "main:\n  - { id: s, type: action }\n",
@@ -474,10 +487,12 @@ func TestValidationErrors(t *testing.T) {
 			`unknown action "send_carrier_pigeon"`, 5},
 		{"action missing required input", header + "main:\n  - { id: s, type: action, action: create_mr }\n",
 			`requires input "body"`, 5},
-		{"action unknown input", header + "main:\n  - { id: s, type: action, action: create_mr, input: { body: a.md, subject: b.md } }\n",
+		{"action unknown input", header + "main:\n  - { id: s, type: action, action: create_mr, input: { body: { from: repo:a.md, type: file }, subject: { from: repo:b.md, type: file } } }\n",
 			`input "subject" is not an input of action`, 5},
-		{"output on action", header + "main:\n  - { id: s, type: action, action: create_mr, input: { body: a.md }, output: { x: x.md } }\n",
-			`field "output" does not apply to type action`, 5},
+		{"action unknown output", header + "main:\n  - { id: s, type: action, action: create_mr, input: { body: { from: repo:a.md, type: file } }, output: { x: { to: x.md, type: file } } }\n",
+			`output "x" is not an output of action "create_mr"`, 5},
+		{"output on a gate", header + "main:\n  - { id: s, type: human_gate, output: { x: { to: x.md, type: file } } }\n",
+			`field "output" does not apply to type human_gate`, 5},
 		{"edge target missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: ghost, max: 2 } }\n",
 			`on_fail target "ghost" does not exist`, 5},
 		{"edge max missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s } }\n",
@@ -487,7 +502,7 @@ func TestValidationErrors(t *testing.T) {
 
 		{"on_fail on human_gate", header + "main:\n  - { id: g, type: human_gate, on_fail: { to: g, max: 1 } }\n",
 			`field "on_fail" does not apply`, 5},
-		{"two create_mr actions", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n",
+		{"two create_mr actions", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n  - { id: b, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n",
 			`at most one "create_mr" action`, 6},
 
 		{"reserved done id", header + "main:\n  - { id: done, type: command, run: x }\n",
@@ -522,7 +537,7 @@ func TestValidationErrors(t *testing.T) {
 		{"then max missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: s } } }\n",
 			"then #1", 5},
 		{"feed on a then link", header + "main:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
-			"is retired: bind $DECISION", 5},
+			"is retired: read edge.verdict from an input port", 5},
 		{"unknown edge field", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
 			"bogus", 0},
 		{"unlimited without a gate on the link", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -1 } }\n",
@@ -550,24 +565,24 @@ func TestValidationErrors(t *testing.T) {
 	}
 }
 
-// TestGateInputForms: a gate takes one input — an artifact to review or a
-// sentinel the engine resolves to a link — and says what it is asking in free
-// text. There is no gate kind: what it shows IS what kind it is.
+// TestGateInputForms: a gate takes one input — a file to review or a link the
+// engine provides — and says what it is asking in free text. There is no gate
+// kind: what it shows IS what kind it is.
 func TestGateInputForms(t *testing.T) {
-	cases := []struct{ name, value string }{
-		{"artifact", "artifacts/plan.md"},
-		{"workspace", SentinelWorkspace},
-		{"mr url", SentinelMRURL},
+	cases := []struct{ name, value, typ string }{
+		{"file", "repo:docs/plan.md", "file"},
+		{"workspace", SourceWorkspace, "link"},
+		{"mr url", SourceMRURL, "link"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			doc := header + "main:\n  - { id: g, type: human_gate, question: \"Ready?\", input: { shown: " + tc.value + " } }\n"
+			doc := header + "main:\n  - { id: g, type: human_gate, question: \"Ready?\", input: { shown: { from: " + tc.value + ", type: " + tc.typ + " } } }\n"
 			f, err := Parse("t.yaml", []byte(doc))
 			if err != nil {
 				t.Fatal(err)
 			}
 			g := f.Stages[0]
-			if len(g.Inputs) != 1 || g.Inputs[0] != (IOBinding{Name: "shown", Value: tc.value}) {
+			if len(g.Inputs) != 1 || g.Inputs[0] != (Port{Name: "shown", Value: tc.value, Type: tc.typ}) {
 				t.Errorf("Inputs = %+v, want shown -> %q", g.Inputs, tc.value)
 			}
 			if g.Question != "Ready?" {
@@ -590,7 +605,7 @@ func TestGateInputForms(t *testing.T) {
 // flow from waiting on something that cannot happen.
 func TestWaitStage(t *testing.T) {
 	f, err := Parse("t.yaml", []byte(header+`main:
-  - { id: mr,     type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: merged }
+  - { id: mr,     type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } }, on_success: merged }
   - { id: merged, type: wait, for: mr_merged, timeout: 24h, on_success: done,
       on_timeout: { to: merged, max: 2 } }
 `))
@@ -604,8 +619,8 @@ func TestWaitStage(t *testing.T) {
 	}
 	// A gate may be auto-answered by the same registry.
 	g, err := Parse("t.yaml", []byte(header+`main:
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: gate }
-  - { id: gate, type: human_gate, question: "Merge?", input: { mr: $MR_URL },
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } }, on_success: gate }
+  - { id: gate, type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } },
       auto_approve: mr_merged, on_success: done }
 `))
 	if err != nil {
@@ -668,7 +683,7 @@ func TestDebugLeaf(t *testing.T) {
 	// done/abort) is in every chain.
 	phased := header + commonAgents + `main:
   - { id: build, type: agent, agent: b, on_fail: debug }
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }
 watchers:
   - id: fixes
     on: { signal: mr_review_settled }
@@ -719,7 +734,7 @@ func TestAbortAndThenChains(t *testing.T) {
 	unl := header + `main:
   - { id: work,   type: command, run: w, on_success: done,
       on_fail: { to: rescue, max: -1 } }
-  - { id: rescue, type: human_gate, input: { workspace: $WORKSPACE },
+  - { id: rescue, type: human_gate, input: { workspace: { from: run.workspace, type: link } },
       on_success: work, on_reject: abort }
 `
 	uf, err := Parse("t.yaml", []byte(unl))
@@ -844,18 +859,18 @@ func TestThenChainDepthCapped(t *testing.T) {
 // outcome — stage ids one namespace, routes kept inside their chain.
 const phasedDoc = header + `main:
   - { id: build, type: command, run: x }
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }
 watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: confirm }
     stages:
-      - { id: sync, type: action, action: sync_target, input: { strategy: merge }, on_success: sync_test }
+      - { id: sync, type: action, action: sync_target, with: { strategy: merge }, on_success: sync_test }
       - { id: sync_test, type: command, run: x }
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1h, max: 3 }
     stages:
-      - { id: load, type: action, action: load_review_comments }
-      - { id: fix, type: command, run: x, input: { comments: artifacts/review.md } }
+      - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } } }
+      - { id: fix, type: command, run: x, input: { comments: { from: artifacts/review.md, type: file } } }
 outcomes:
   - id: shipped
     on: mr_merged
@@ -906,7 +921,7 @@ func TestPhasedFlowParses(t *testing.T) {
 }
 
 func TestPhaseValidationErrors(t *testing.T) {
-	entry := header + "main:\n  - { id: build, type: command, run: x }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+	entry := header + "main:\n  - { id: build, type: command, run: x }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	w := func(item string) string { return entry + "watchers:\n" + item }
 	o := func(item string) string { return entry + item } // one more outcome
@@ -948,12 +963,13 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"main runs itself", header + "main:\n  - { id: s, type: command, run: x }\n  - { id: again, sequence: main }\n", "runs itself"},
 		{"blocks is retired", header + "blocks:\n  - { id: b, " + cmd + " }\nmain:\n  - { id: s, type: command, run: x }\n", "blocks: is now sequences:"},
 		{"include is retired", header + "sequences:\n  - { id: b, " + cmd + " }\nmain:\n  - { id: s, include: b }\n", `"include" is retired: a stage runs a sequence with "sequence" (sequence: b)`},
+		{"when is run_if", header + "main:\n  - { id: s, type: command, run: x, when: tracker }\n", `"when" is now "run_if" (run_if: tracker)`},
 		{"duplicate stage across chains", w("  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n"), "one namespace"},
 		{"route leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n"), "stay inside it"},
 		{"edge leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n"), "stay inside it"},
-		{"two create_mr in one chain", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: b, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n", "per phase"},
-		{"rebase without a leased push", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n"), "push_branch"},
-		{"bad strategy", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, input: { strategy: squash } }] }\n"), "not one of merge | rebase"},
+		{"two create_mr in one chain", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n  - { id: b, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n", "per phase"},
+		{"rebase without a leased push", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, with: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n"), "push_branch"},
+		{"bad strategy", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, with: { strategy: squash } }] }\n"), "not one of merge | rebase"},
 		{"run_start on a gate", header + "main:\n  - { id: g, type: human_gate, auto_approve: run_start }\n", `unknown auto_approve signal "run_start"`},
 		{"manual on a wait", header + "main:\n  - { id: w, type: wait, for: manual }\n", "is not something the engine observes"},
 		{"run_start on a wait", header + "main:\n  - { id: w, type: wait, for: run_start }\n", "unknown signal"},
@@ -971,7 +987,7 @@ func TestPhaseValidationErrors(t *testing.T) {
 // Any observed signal may be watched, waited on or answer a gate — what it
 // does is the flow's call, not the registry's.
 func TestObservedSignalsGoAnywhere(t *testing.T) {
-	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n" +
 		"  - { id: ready, type: wait, for: mr_mergeable, timeout: 1h, on_fail: end }\n" +
 		"  - { id: g, type: human_gate, auto_approve: mr_approved, auto_reject: mr_conflicts }\n" +
 		"watchers:\n  - { id: ship, on: { signal: mr_approved, start: confirm }, stages: [{ id: merge, type: action, action: mr_merge }] }\n" +
@@ -1061,7 +1077,7 @@ func TestPhaseShapeWarnings(t *testing.T) {
 		return false
 	}
 	doc := header + "main:\n  - { id: s, type: action, action: sync_target }\n  - { id: p, type: action, action: push_branch }\n" +
-		"watchers:\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x, each_repo: true }, { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }] }\n" +
+		"watchers:\n  - { id: m, on: mr_conflicts, stages: [{ id: t, type: command, run: x, each_repo: true }, { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }] }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(doc))
 	if err != nil {
@@ -1118,8 +1134,8 @@ func TestEdgeToEndOrDone(t *testing.T) {
 func TestEndingWarnings(t *testing.T) {
 	mainChain := func(tail string) string {
 		return header + "main:\n" +
-			"  - { id: build, type: command, run: x, output: { mr: artifacts/mr.md } }\n" +
-			"  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" + tail
+			"  - { id: build, type: command, run: x, output: { mr: { to: artifacts/mr.md, type: file } } }\n" +
+			"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n" + tail
 	}
 	conflicts := func(push string) string {
 		return "watchers:\n  - id: conflicts\n    on: mr_conflicts\n    stages:\n" +
@@ -1157,7 +1173,7 @@ func TestEndingWarnings(t *testing.T) {
 	if w := warnings(mainChain(gate) + conflicts("")); strings.Contains(w, "without waiting") {
 		t.Errorf("a merge-answered gate is a wait: %s", w)
 	}
-	if w := warnings(header + "main:\n  - { id: b, type: command, run: x, output: { mr: artifacts/mr.md } }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md }, on_success: done }\n"); strings.Contains(w, "without waiting") {
+	if w := warnings(header + "main:\n  - { id: b, type: command, run: x, output: { mr: { to: artifacts/mr.md, type: file } } }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: done }\n"); strings.Contains(w, "without waiting") {
 		t.Errorf("no watcher, nothing to miss: %s", w)
 	}
 }
@@ -1165,7 +1181,7 @@ func TestEndingWarnings(t *testing.T) {
 // A watcher runs as often as its signal brings a new fact: unbounded unless
 // the flow caps it, whatever its start policy.
 func TestPhaseRunsAreUnboundedByDefault(t *testing.T) {
-	entry := header + "main:\n  - { id: build, type: command, run: x }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+	entry := header + "main:\n  - { id: build, type: command, run: x }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\nwatchers:\n"
 	f, err := Parse("t.yaml", []byte(entry+
 		"  - { id: a, on: mr_conflicts, stages: [{ id: s1, type: command, run: x }] }\n"+
@@ -1190,14 +1206,14 @@ func TestCommandTimeout(t *testing.T) {
 
 // Tracker actions: ticket_transition names a canonical status (`to`, an enum
 // the tracker translates — readable from an enum parameter within it) OR
-// the tracker's own word (`status`, a text input: only blankness is a parse
+// the tracker's own word (`status`, a text setting: only blankness is a parse
 // error, and quoting is the author's choice), exactly one; ticket_set_field
-// takes its value from an artifact OR the flow; ticket_link warns when no
-// merge request precedes it.
-func TestTrackerActionBindings(t *testing.T) {
+// takes its value from a file OR the flow; ticket_link warns when no merge
+// request precedes it.
+func TestTrackerActionSettings(t *testing.T) {
 	head := "name: tk\nversion: 5\nparameters: { harness: fake, model: fake/m }\nagents: []\nmain:\n"
-	plain := head + "  - { id: s, type: action, action: ticket_transition, input: { status: In Progress } }\n"
-	quoted := head + "  - { id: s, type: action, action: ticket_transition, input: { status: \"In Progress\" } }\n"
+	plain := head + "  - { id: s, type: action, action: ticket_transition, with: { status: In Progress } }\n"
+	quoted := head + "  - { id: s, type: action, action: ticket_transition, with: { status: \"In Progress\" } }\n"
 	fp, err := Parse("t.yaml", []byte(plain))
 	if err != nil {
 		t.Fatal(err)
@@ -1206,48 +1222,48 @@ func TestTrackerActionBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if in := fp.Stages[0].Input("status"); in == nil || in.Value != "In Progress" || in.Value != fq.Stages[0].Input("status").Value {
-		t.Errorf("plain/quoted text bindings differ: %+v vs %+v", fp.Stages[0].Inputs, fq.Stages[0].Inputs)
+	if v := fp.Stages[0].Setting("status", ""); v != "In Progress" || v != fq.Stages[0].Setting("status", "") {
+		t.Errorf("plain/quoted text settings differ: %+v vs %+v", fp.Stages[0].Settings, fq.Stages[0].Settings)
 	}
-	canon, err := Parse("t.yaml", []byte(head+"  - { id: s, type: action, action: ticket_transition, input: { to: in_review } }\n"))
+	canon, err := Parse("t.yaml", []byte(head+"  - { id: s, type: action, action: ticket_transition, with: { to: in_review } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if in := canon.Stages[0].Input("to"); in == nil || in.Value != "in_review" || canon.Stages[0].Input("status") != nil {
-		t.Errorf("canonical binding = %+v", canon.Stages[0].Inputs)
+	if st := canon.Stages[0]; st.Setting("to", "") != "in_review" || st.Setting("status", "") != "" {
+		t.Errorf("canonical setting = %+v", st.Settings)
 	}
 	// The canonical status may come from an enum parameter within the
 	// statuses — a project decides where its issues go once merged.
-	withParam := strings.Replace(head, "model: fake/m", "model: fake/m, final: { default: done, enum: [done, in_review] }", 1)
-	viaParam, err := Parse("t.yaml", []byte(withParam+"  - { id: s, type: action, action: ticket_transition, input: { to: $final } }\n"))
+	withParam := strings.Replace(head, "model: fake/m", "model: fake/m, final: { type: string, default: done, enum: [done, in_review] }", 1)
+	viaParam, err := Parse("t.yaml", []byte(withParam+"  - { id: s, type: action, action: ticket_transition, with: { to: $final } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if in := viaParam.Stages[0].Input("to"); in == nil || in.Value != "done" {
-		t.Errorf("to via $final = %+v", viaParam.Stages[0].Inputs)
+	if v := viaParam.Stages[0].Setting("to", ""); v != "done" {
+		t.Errorf("to via $final = %+v", viaParam.Stages[0].Settings)
 	}
-	if bound, err := viaParam.Resolve(map[string]string{"final": "in_review"}); err != nil || bound.Stages[0].Input("to").Value != "in_review" {
+	if bound, err := viaParam.Resolve(map[string]string{"final": "in_review"}); err != nil || bound.Stages[0].Setting("to", "") != "in_review" {
 		t.Errorf("to via $final bound = %+v, %v", bound, err)
 	}
 	for _, tc := range []struct{ doc, substr string }{
-		{head + "  - { id: s, type: action, action: ticket_transition, input: { to: \"In Progress\" } }\n", `input "to": "In Progress" is not one of todo | in_progress | in_review | done | blocked`},
-		{head + "  - { id: s, type: action, action: ticket_transition, input: { status: \"  \" } }\n", `input "status": a value is required`},
+		{head + "  - { id: s, type: action, action: ticket_transition, with: { to: \"In Progress\" } }\n", `with "to": "In Progress" is not one of todo | in_progress | in_review | done | blocked`},
+		{head + "  - { id: s, type: action, action: ticket_transition, with: { status: \"  \" } }\n", `with "status": a value is required`},
 		{head + "  - { id: s, type: action, action: ticket_transition }\n", `takes exactly one of to / status`},
-		{head + "  - { id: s, type: action, action: ticket_transition, input: { to: done, status: Done } }\n", `takes exactly one of to / status`},
-		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { default: done }", 1) +
-			"  - { id: s, type: action, action: ticket_transition, input: { to: $wide } }\n", `parameter "wide" needs an enum within todo | in_progress`},
-		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { default: done, enum: [done, closed] }", 1) +
-			"  - { id: s, type: action, action: ticket_transition, input: { to: $wide } }\n", `parameter "wide" allows "closed", which this field does not`},
-		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team } }\n", "exactly one of value"},
-		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, value: artifacts/t.txt, text: Platform } }\n", "exactly one of value"},
-		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, text: Platform, mode: merge } }\n", "not one of replace | append"},
-		{head + "  - { id: s, type: action, action: ticket_set_field, input: { field: Team, value: /abs } }\n", "relative artifact path"},
+		{head + "  - { id: s, type: action, action: ticket_transition, with: { to: done, status: Done } }\n", `takes exactly one of to / status`},
+		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { type: string, default: done }", 1) +
+			"  - { id: s, type: action, action: ticket_transition, with: { to: $wide } }\n", `parameter "wide" needs an enum within todo | in_progress`},
+		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { type: string, default: done, enum: [done, closed] }", 1) +
+			"  - { id: s, type: action, action: ticket_transition, with: { to: $wide } }\n", `parameter "wide" allows "closed", which this field does not`},
+		{head + "  - { id: s, type: action, action: ticket_set_field, with: { field: Team } }\n", "exactly one of value"},
+		{head + "  - { id: s, type: action, action: ticket_set_field, input: { value: { from: repo:t.txt, type: file } }, with: { field: Team, text: Platform } }\n", "exactly one of value"},
+		{head + "  - { id: s, type: action, action: ticket_set_field, with: { field: Team, text: Platform, mode: merge } }\n", "not one of replace | append"},
+		{head + "  - { id: s, type: action, action: ticket_set_field, input: { value: { from: /abs, type: file } }, with: { field: Team } }\n", "must be a path some stage writes"},
 	} {
 		if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.substr) {
 			t.Errorf("doc %q: err = %v, want %q", tc.doc[len(head):], err, tc.substr)
 		}
 	}
-	ok := head + "  - { id: s, type: action, action: ticket_set_field, input: { field: \"Feature flags\", value: artifacts/flags.txt, mode: append } }\n"
+	ok := head + "  - { id: s, type: action, action: ticket_set_field, input: { value: { from: repo:flags.txt, type: file } }, with: { field: \"Feature flags\", mode: append } }\n"
 	if _, err := Parse("t.yaml", []byte(ok)); err != nil {
 		t.Errorf("valid set_field refused: %v", err)
 	}
@@ -1271,12 +1287,12 @@ func TestTrackerActionBindings(t *testing.T) {
 	if needsMR(f) != 1 {
 		t.Errorf("warnings = %v", f.Warnings)
 	}
-	after := head + "  - { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: l, type: action, action: ticket_link }\n"
+	after := head + "  - { id: m, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n  - { id: l, type: action, action: ticket_link }\n"
 	if f, err := Parse("t.yaml", []byte(after)); err != nil || needsMR(f) != 0 {
 		t.Errorf("link after create_mr: err %v warnings %v", err, f.Warnings)
 	}
 	phased := "name: tk\nversion: 5\nparameters: { harness: fake, model: fake/m }\nagents: []\n" +
-		"main:\n  - { id: m, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+		"main:\n  - { id: m, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n" +
 		"watchers:\n  - { id: react, on: mr_conflicts, stages: [ { id: l, type: action, action: ticket_link } ] }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	if f, err := Parse("t.yaml", []byte(phased)); err != nil || needsMR(f) != 0 {
@@ -1290,7 +1306,7 @@ func TestTrackerActionBindings(t *testing.T) {
 // run ends. on_success may say abort anywhere; the outcome signals stay
 // waitable; and a flow needs some route to done.
 func TestOutcomes(t *testing.T) {
-	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n  - { id: w, type: wait, for: mr_closed, on_fail: end }\n" +
+	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n  - { id: w, type: wait, for: mr_closed, on_fail: end }\n" +
 		"watchers:\n  - { id: giveup, on: manual, stages: [{ id: g, type: command, run: x, on_success: abort, on_fail: done }] }\n" +
 		"outcomes:\n  - id: merged\n    on: { signal: mr_merged, start: confirm }\n    stages:\n      - { id: tidy, type: command, run: x }\n      - { id: last, type: command, run: x, on_fail: abort }\n" +
 		"  - { id: closed, on: mr_closed, then: abort }\n" +
@@ -1337,7 +1353,7 @@ func TestOutcomes(t *testing.T) {
 // automation's act, so no start policy), and a watcher `on: manual` is
 // started by hand from the run page only.
 func TestMainAndManual(t *testing.T) {
-	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n" +
 		"watchers:\n  - { id: polish, on: { signal: manual, max: 3 }, stages: [{ id: shine, type: command, run: x }] }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	f, err := Parse("t.yaml", []byte(doc))
@@ -1365,19 +1381,19 @@ parameters:
   harness: fake
   model: { default: a/b, description: "the default model" }
   max_cost_usd: 20
-  verify: { default: verify, description: "the test command" }
-  review_model: a/c
-  plan_gate: true
-  turns: 3
-  rate: 1.5
-  mode: { default: confirm, enum: [auto, confirm, manual] }
+  verify: { type: string, default: verify, description: "the test command" }
+  review_model: { type: string, default: a/c }
+  plan_gate: { type: bool, default: true }
+  turns: { type: int, default: 3 }
+  rate: { type: float, default: 1.5 }
+  mode: { type: string, default: confirm, enum: [auto, confirm, manual] }
 agents:
   - name: b
     prompt: do b
 main:
-  - { id: build, type: agent, agent: b, model: $review_model, max_turns: $turns, when: $plan_gate }
+  - { id: build, type: agent, agent: b, model: $review_model, max_turns: $turns, run_if: $plan_gate }
   - { id: test, type: command, run_ref: $verify }
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }
 watchers:
   - id: conflicts
     on: { signal: mr_conflicts, start: $mode }
@@ -1404,7 +1420,7 @@ outcomes:
 	if strings.Join(names, " ") != want {
 		t.Errorf("params = %v", names)
 	}
-	types := map[string]ParamType{"verify": ParamString, "plan_gate": ParamBool, "turns": ParamInt, "rate": ParamFloat, "mode": ParamString, "max_cost_usd": ParamFloat, "timeout": ParamString}
+	types := map[string]ParamType{"verify": ParamString, "plan_gate": ParamBool, "turns": ParamInt, "rate": ParamFloat, "mode": ParamString, "max_cost_usd": ParamFloat, "timeout": ParamDuration}
 	for name, typ := range types {
 		if pr := f.Param(name); pr == nil || pr.Type != typ {
 			t.Errorf("%s = %+v, want %s", name, pr, typ)
@@ -1417,14 +1433,14 @@ outcomes:
 		t.Errorf("mode = %+v", pr)
 	}
 	build, test := f.Stage("build"), f.Stage("test")
-	if build.Model != "a/c" || build.MaxTurns != 3 || build.When != nil || test.RunRef != "verify" || f.Phase("conflicts").On.Start != StartConfirm {
+	if build.Model != "a/c" || build.MaxTurns != 3 || build.RunIf != nil || test.RunRef != "verify" || f.Phase("conflicts").On.Start != StartConfirm {
 		t.Errorf("resolved: build %+v test %+v conflicts %+v", build, test, f.Phase("conflicts").On)
 	}
 	refs := map[string]string{}
 	for _, r := range f.Refs {
 		refs[r.Param] = r.Phase + "/" + r.Stage + "/" + r.Field
 	}
-	if len(f.Refs) != 5 || refs["review_model"] != "main/build/model" || refs["plan_gate"] != "main/build/when" ||
+	if len(f.Refs) != 5 || refs["review_model"] != "main/build/model" || refs["plan_gate"] != "main/build/run_if" ||
 		refs["verify"] != "main/test/run_ref" || refs["mode"] != "conflicts//start" || refs["turns"] != "main/build/max_turns" {
 		t.Errorf("refs = %+v", f.Refs)
 	}
@@ -1443,14 +1459,24 @@ outcomes:
 		{"harness missing", "{ model: a/b }", "harness is required"},
 		{"bad name", "{ harness: fake, model: a/b, Bad: 1 }", "is not a parameter name"},
 		{"no default", "{ harness: fake, model: a/b, x: { description: hi } }", "default is required"},
-		{"enum on an int", "{ harness: fake, model: a/b, x: { default: 1, enum: [1, 2] } }", "enum applies to a string"},
-		{"default not in enum", "{ harness: fake, model: a/b, x: { default: c, enum: [a, b] } }", "is not one of its enum"},
-		{"known type", "{ harness: 1, model: a/b }", "harness takes a string default"},
-		{"float as int", "{ harness: fake, model: a/b, max_turns: 1.5 }", "max_turns takes a int default"},
+		{"enum on an int", "{ harness: fake, model: a/b, x: { type: int, default: 1, enum: [1, 2] } }", "enum applies to a string"},
+		{"default not in enum", "{ harness: fake, model: a/b, x: { type: string, default: c, enum: [a, b] } }", "is not one of its enum"},
+		{"list default not in enum", "{ harness: fake, model: a/b, x: { type: string, list: true, default: [a, c], enum: [a, b] } }", `default "c" is not one of its enum`},
+		{"type required", "{ harness: fake, model: a/b, x: { default: true } }", "x: type is required — type: bool"},
+		{"type required, list", "{ harness: fake, model: a/b, x: { default: [a] } }", "type is required — type: string, list: true"},
+		{"a bare custom default", "{ harness: fake, model: a/b, x: 1 }", "x: type is required — type: int"},
+		{"unknown type", "{ harness: fake, model: a/b, x: { type: text, default: a } }", `type "text" must be one of bool | int | float | string | duration`},
+		{"default not of its type", "{ harness: fake, model: a/b, x: { type: int, default: many } }", `takes an integer, got "many"`},
+		{"a duration that is none", "{ harness: fake, model: a/b, x: { type: duration, default: soon } }", "takes a duration"},
+		{"list without a list", "{ harness: fake, model: a/b, x: { type: string, list: true, default: a } }", "x is a list: its default is a list too"},
+		{"a list default undeclared", "{ harness: fake, model: a/b, x: { type: string, default: [a] } }", "the default is a list — declare list: true"},
+		{"known, another type", "{ harness: fake, model: a/b, max_turns: { type: string, default: x } }", "max_turns is the engine's: a int, not a string"},
+		{"known, a list", "{ harness: fake, model: a/b, timeout: { type: duration, list: true, default: [1m] } }", "timeout is the engine's: one duration, not a list"},
+		{"known, bad value", "{ harness: 1, model: a/b }", `"1" is not a slug`},
+		{"float as int", "{ harness: fake, model: a/b, max_turns: 1.5 }", `max_turns: default: parameter "max_turns" takes an integer, got "1.5"`},
 		{"null default", "{ harness: fake, model: a/b, x: }", "needs a default value"},
-		{"list default", "{ harness: fake, model: a/b, x: [1] }", "must be a default value or a mapping"},
-		{"unknown long-form key", "{ harness: fake, model: a/b, x: { default: 1, type: int } }", `unknown key "type"`},
-		{"bad timeout", "{ harness: fake, model: a/b, timeout: soon }", "timeout: invalid duration"},
+		{"unknown long-form key", "{ harness: fake, model: a/b, x: { type: int, default: 1, kind: int } }", `unknown key "kind" in a parameter`},
+		{"bad timeout", "{ harness: fake, model: a/b, timeout: soon }", `"timeout" takes a duration (30m, 2h), got "soon"`},
 		{"max_cost zero", "{ harness: fake, model: a/b, max_cost_usd: 0 }", "max_cost_usd must be > 0"},
 		{"declared twice", "{ harness: fake, model: a/b, x: 1, x: 2 }", "declared twice"},
 	} {
@@ -1470,24 +1496,25 @@ outcomes:
 // A field that reads no parameter refuses one: written there, $name would
 // stay the text "$name", never the value a workshop binds.
 func TestNoParamWhereNoneIsRead(t *testing.T) {
-	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: text }\n"
+	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: { type: string, default: text } }\n"
 	stage := "main:\n  - { id: a, type: command, run: x }\n"
 	agent := func(fields string) string {
 		return "agents:\n  - { name: b, prompt: do b" + fields + " }\n" + stage
 	}
 	const refused = "$s is a parameter, and this field reads none"
 	for _, tc := range []struct{ name, doc string }{
-		{"flow description", "name: t\nversion: 5\ndescription: $s\nparameters: { harness: fake, model: a/b, s: text }\n" + stage},
-		{"parameter description", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: { default: text, description: $s } }\n" + stage},
+		{"flow description", "name: t\nversion: 5\ndescription: $s\nparameters: { harness: fake, model: a/b, s: { type: string, default: text } }\n" + stage},
+		{"parameter description", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: { type: string, default: text, description: $s } }\n" + stage},
 		{"stage description", head + "main:\n  - { id: a, type: command, run: x, description: $s }\n"},
 		{"gate question", head + "main:\n  - { id: a, type: human_gate, question: $s }\n"},
 		{"command script", head + "main:\n  - { id: a, type: command, run: $s }\n"},
-		{"command reads", head + "main:\n  - { id: a, type: command, run: x, input: { f: $s } }\n"},
-		{"gate shows", head + "main:\n  - { id: a, type: human_gate, question: ok, input: { show: $s } }\n"},
+		{"command reads", head + "main:\n  - { id: a, type: command, run: x, input: { f: { from: $s, type: file } } }\n"},
+		{"command writes", head + "main:\n  - { id: a, type: command, run: x, output: { f: { to: $s, type: file } } }\n"},
+		{"gate shows", head + "main:\n  - { id: a, type: human_gate, question: ok, input: { show: { from: $s, type: file } } }\n"},
+		{"port description", head + "main:\n  - { id: a, type: command, run: x, input: { f: { from: repo:f.md, type: file, description: $s } } }\n"},
 		{"agent description", head + agent(", description: $s")},
 		{"agent prompt", strings.Replace(head+agent(""), "prompt: do b", "prompt: $s", 1)},
-		{"agent input description", head + agent(", inputs: [ { name: i, description: $s, optional: true } ]")},
-		{"agent output path", head + agent(", outputs: [ { name: o, path: $s } ]")},
+		{"agent input description", head + agent(", inputs: [ { name: i, type: file, description: $s, optional: true } ]")},
 		{"watcher description", head + "operates_on: merge_request\n" + stage + "watchers:\n  - { id: w, description: $s, on: manual, stages: [ { id: t, type: command, run: y } ] }\n"},
 		{"sequence description", head + "sequences:\n  - { id: q, description: $s, stages: [ { id: z, type: command, run: z } ] }\nmain:\n  - { id: a, sequence: q }\n"},
 		{"sequence stage description", head + "sequences:\n  - { id: q, stages: [ { id: z, type: command, run: z } ] }\nmain:\n  - { id: a, sequence: q, description: $s }\n"},
@@ -1522,21 +1549,21 @@ func TestNoParamWhereNoneIsRead(t *testing.T) {
 // the site's type, an enum within an enum site's values, and then the site's
 // own rule on the value it yields.
 func TestParamSites(t *testing.T) {
-	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: text, d: 5m, n: 2, b: true, e: { default: auto, enum: [auto, confirm] }, big: { default: auto, enum: [auto, confirm, manual] } }\n" + commonAgents
+	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: { type: string, default: text }, d: { type: duration, default: 5m }, n: { type: int, default: 2 }, b: { type: bool, default: true }, e: { type: string, default: auto, enum: [auto, confirm] }, big: { type: string, default: auto, enum: [auto, confirm, manual] } }\n" + commonAgents
 	for _, tc := range []struct{ name, doc, substr string }{
-		{"sentinel at a site", head + "main:\n  - { id: a, type: agent, agent: b, model: $DIFF_TARGET }\n", "is a sentinel, not a parameter"},
+		{"sentinel at a site", head + "main:\n  - { id: a, type: agent, agent: b, model: $DIFF_TARGET }\n", "$DIFF_TARGET is not a parameter"},
 		{"undeclared", head + "main:\n  - { id: a, type: agent, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
 		{"wrong type", head + "main:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
 		{"bool at a string site", head + "main:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},
-		{"param in a path", head + "main:\n  - { id: a, type: agent, agent: b, input: { plan: $s } }\n", "$s is a parameter, and this field reads none"},
-		{"enum site needs an enum", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, start: $s }, stages: [{ id: x, type: command, run: x }] }\n", "needs an enum within"},
-		{"enum wider than the site", head + "main:\n  - { id: s, type: action, action: sync_target, input: { strategy: $big } }\n", `allows "auto", which this field does not`},
+		{"param in a path", head + "main:\n  - { id: a, type: agent, agent: b, input: { plan: { from: $s, type: file } } }\n", "$s is a parameter, and this field reads none"},
+		{"enum site needs an enum", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, start: $s }, stages: [{ id: x, type: command, run: x }] }\n", "needs an enum within"},
+		{"enum wider than the site", head + "main:\n  - { id: s, type: action, action: sync_target, with: { strategy: $big } }\n", `allows "auto", which this field does not`},
 		{"mixed case ref", head + "main:\n  - { id: a, type: agent, agent: b, model: $Mixed }\n", "is not a parameter reference"},
 		{"value fails the site rule", head + "main:\n  - { id: a, type: agent, agent: b, model: $s }\n", `model: "text" (parameter "s") is not of the form provider/model`},
-		{"duration via param", head + "main:\n  - { id: a, type: agent, agent: b, timeout: $s }\n", `invalid timeout "text" (parameter "s")`},
-		{"max_turns via param zero", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, z: 0 }\n" + commonAgents + "main:\n  - { id: a, type: agent, agent: b, max_turns: $z }\n", `max_turns must be > 0, got 0 (parameter "z")`},
-		{"on.max via string", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, max: $s }, stages: [{ id: x, type: command, run: x }] }\n", "takes a int"},
-		{"action enum via plain string", head + "main:\n  - { id: s, type: action, action: sync_target, input: { strategy: $s } }\n", "needs an enum within"},
+		{"duration via param", head + "main:\n  - { id: a, type: agent, agent: b, timeout: $s }\n", `parameter "s" is a string, and this field takes a duration`},
+		{"max_turns via param zero", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, z: { type: int, default: 0 } }\n" + commonAgents + "main:\n  - { id: a, type: agent, agent: b, max_turns: $z }\n", `max_turns must be > 0, got 0 (parameter "z")`},
+		{"on.max via string", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, max: $s }, stages: [{ id: x, type: command, run: x }] }\n", "takes a int"},
+		{"action enum via plain string", head + "main:\n  - { id: s, type: action, action: sync_target, with: { strategy: $s } }\n", "needs an enum within"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Parse("t.yaml", []byte(tc.doc))
@@ -1549,7 +1576,7 @@ func TestParamSites(t *testing.T) {
 		"  - { id: a, type: agent, agent: b, max_turns: $n, timeout: $d, harness: $s, model: a/c }\n" +
 		"  - { id: c, type: command, run: \"echo $HOME\", run_ref: $s, timeout: $d }\n"
 	ok = strings.Replace(ok, "run: \"echo $HOME\", run_ref: $s", "run: \"echo $HOME\"", 1)
-	ok += "  - { id: w, type: wait, for: mr_merged }\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\n" +
+	ok += "  - { id: w, type: wait, for: mr_merged }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n" +
 		"watchers:\n  - id: cf\n    on: { signal: mr_conflicts, start: $big, max: $n, quiet_for: $d }\n    stages: [{ id: x, type: command, run: x }]\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	ok = strings.Replace(ok, "start: $big, max: $n, quiet_for: $d", "start: $big, max: $n", 1)
@@ -1583,14 +1610,14 @@ parameters:
   harness: fake
   model: a/b
   max_cost_usd: 5
-  verify: verify
-  gate: true
-  mode: { default: confirm, enum: [auto, confirm, manual] }
-  turns: 2
+  verify: { type: string, default: verify }
+  gate: { type: bool, default: true }
+  mode: { type: string, default: confirm, enum: [auto, confirm, manual] }
+  turns: { type: int, default: 2 }
 ` + commonAgents + `main:
-  - { id: a, type: agent, agent: b, max_turns: $turns, when: $gate }
+  - { id: a, type: agent, agent: b, max_turns: $turns, run_if: $gate }
   - { id: t, type: command, run_ref: $verify }
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }
 watchers:
   - id: c
     on: { signal: mr_conflicts, start: $mode, max: -1 }
@@ -1611,7 +1638,7 @@ outcomes:
 		t.Fatal(err)
 	}
 	if r.Defaults.Harness != "codex" || r.Budget.MaxCostUSD != 9 || r.Stage("t").RunRef != "check" || r.Stage("a").MaxTurns != 7 ||
-		r.Stage("a").When == nil || r.Stage("a").When.Term != WhenNever || r.Phase("c").On.Start != StartManual || r.Hash != f.Hash || r.Bindings["mode"] != "manual" {
+		r.Stage("a").RunIf == nil || r.Stage("a").RunIf.Term != CondNever || r.Phase("c").On.Start != StartManual || r.Hash != f.Hash || r.Bindings["mode"] != "manual" {
 		t.Errorf("resolved: defaults %+v budget %+v t %+v a %+v c %+v hash %v", r.Defaults, r.Budget, r.Stage("t"), r.Stage("a"), r.Phase("c").On, r.Hash == f.Hash)
 	}
 	if f.Stage("t").RunRef != "verify" || f.Bindings != nil || f.Defaults.Harness != "fake" {
@@ -1641,64 +1668,59 @@ outcomes:
 	}
 }
 
-// when: a run fact or a bool parameter (which folds), optionally negated as
-// `not x`; a conditional producer is no longer a definite one.
+// run_if: a run fact or a bool parameter (which folds), optionally negated as
+// `not x`; a conditional writer is no longer a definite one.
 func TestWhen(t *testing.T) {
-	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, yes: true, no: false, s: x }\n"
+	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, yes: { type: bool, default: true }, no: { type: bool, default: false }, s: { type: string, default: x } }\n"
 	f, err := Parse("t.yaml", []byte(head+"main:\n"+
-		"  - { id: a, type: command, run: x, when: tracker }\n"+
-		"  - { id: b, type: command, run: x, when: not subject }\n"+
-		"  - { id: c, type: command, run: x, when: $yes }\n"+
-		"  - { id: d, type: command, run: x, when: $no }\n"+
-		"  - { id: e, type: command, run: x, when: not $no }\n"+
-		"  - { id: g, type: command, run: x, when: not $yes }\n"))
+		"  - { id: a, type: command, run: x, run_if: tracker }\n"+
+		"  - { id: b, type: command, run: x, run_if: not subject }\n"+
+		"  - { id: c, type: command, run: x, run_if: $yes }\n"+
+		"  - { id: d, type: command, run: x, run_if: $no }\n"+
+		"  - { id: e, type: command, run: x, run_if: not $no }\n"+
+		"  - { id: g, type: command, run: x, run_if: not $yes }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, b := f.Stage("a").When, f.Stage("b").When
-	if a == nil || a.Term != WhenTracker || a.Not || !a.Holds(true, false) || a.Holds(false, true) || a.String() != "tracker" {
+	a, b := f.Stage("a").RunIf, f.Stage("b").RunIf
+	if a == nil || a.Term != CondTracker || a.Not || !a.Holds(true, false) || a.Holds(false, true) || a.String() != "tracker" {
 		t.Errorf("a = %+v", a)
 	}
-	if b == nil || b.Term != WhenSubject || !b.Not || b.Holds(false, true) || !b.Holds(true, false) || b.String() != "not subject" {
+	if b == nil || b.Term != CondSubject || !b.Not || b.Holds(false, true) || !b.Holds(true, false) || b.String() != "not subject" {
 		t.Errorf("b = %+v", b)
 	}
-	if f.Stage("c").When != nil || f.Stage("e").When != nil {
-		t.Errorf("true folds to no condition: c %+v e %+v", f.Stage("c").When, f.Stage("e").When)
+	if f.Stage("c").RunIf != nil || f.Stage("e").RunIf != nil {
+		t.Errorf("true folds to no condition: c %+v e %+v", f.Stage("c").RunIf, f.Stage("e").RunIf)
 	}
 	for _, id := range []string{"d", "g"} {
-		if w := f.Stage(id).When; w == nil || w.Term != WhenNever || w.Holds(true, true) {
+		if w := f.Stage(id).RunIf; w == nil || w.Term != CondNever || w.Holds(true, true) {
 			t.Errorf("%s = %+v, want never", id, w)
 		}
 	}
 	for _, tc := range []struct{ doc, substr string }{
-		{head + "main:\n  - { id: a, type: command, run: x, when: maybe }\n", "is not a condition"},
-		{head + "main:\n  - { id: a, type: command, run: x, when: $s }\n", "is a string, and this field takes a bool"},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: maybe }\n", "is not a condition"},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: $s }\n", "is a string, and this field takes a bool"},
 	} {
 		if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.substr) {
 			t.Errorf("err = %v, want %q", err, tc.substr)
 		}
 	}
-	cond := header + commonAgents + "main:\n  - { id: p, type: agent, agent: builder, when: tracker }\n  - { id: c, type: command, run: x, input: { patch: artifacts/patch.md } }\n"
-	f, err = Parse("t.yaml", []byte(cond))
-	if err != nil {
-		t.Fatal(err)
+	cond := header + commonAgents + "main:\n  - { id: p, type: agent, agent: builder, run_if: tracker, output: { patch: { to: artifacts/patch.md, type: file } } }\n" +
+		"  - { id: c, type: command, run: x, input: { patch: { from: artifacts/patch.md, type: file } } }\n"
+	if _, err := Parse("t.yaml", []byte(cond)); err == nil || !strings.Contains(err.Error(), `"artifacts/patch.md" is not written on every route reaching this stage`) {
+		t.Errorf("a conditional writer should not count: %v", err)
 	}
-	found := false
-	for _, w := range f.Warnings {
-		if strings.Contains(w, "not produced on every path") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("a conditional producer should not count: %v", f.Warnings)
+	// A reader that does without it says so.
+	if _, err := Parse("t.yaml", []byte(strings.Replace(cond, "{ from: artifacts/patch.md, type: file }", "{ from: artifacts/patch.md, type: file, optional: true }", 1))); err != nil {
+		t.Errorf("optional reader of a conditional writer: %v", err)
 	}
 }
 
 // The editor's document shape: parameters as an ordered object of long
 // forms with typed defaults, int fields as a number or a "$name" string.
 func TestDocJSONShapes(t *testing.T) {
-	doc := "name: t\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  turns: 3\n  cost: 1.5\n  gate: true\n  mode: { default: a, enum: [a, b], description: pick }\n" + commonAgents +
-		"main:\n  - { id: s, type: agent, agent: b, max_turns: $turns, when: $gate }\n" +
+	doc := "name: t\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  turns: { type: int, default: 3 }\n  cost: { type: float, default: 1.5 }\n  gate: { type: bool, default: true }\n  mode: { type: string, default: a, enum: [a, b], description: pick }\n  labels: { type: string, list: true, default: [x, y] }\n" + commonAgents +
+		"main:\n  - { id: s, type: agent, agent: b, max_turns: $turns, run_if: $gate }\n" +
 		"watchers:\n  - id: c\n    on: { signal: mr_conflicts, max: $turns }\n    stages: [{ id: x, type: command, run: x }]\n" +
 		"outcomes:\n  - { id: o, on: mr_merged, then: done }\n"
 	d, err := ParseDoc("t.yaml", []byte(doc))
@@ -1710,8 +1732,8 @@ func TestDocJSONShapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"parameters":{"harness":{"default":"fake"},"model":{"default":"a/b"},"turns":{"default":3},"cost":{"default":1.5},"gate":{"default":true},"mode":{"default":"a","description":"pick","enum":["a","b"]}}`,
-		`"max_turns":"$turns"`, `"when":"$gate"`, `"main":[{"id":"s"`, `"on":{"signal":"mr_conflicts","max":"$turns"}`,
+		`"parameters":{"harness":{"default":"fake"},"model":{"default":"a/b"},"turns":{"type":"int","default":3},"cost":{"type":"float","default":1.5},"gate":{"type":"bool","default":true},"mode":{"type":"string","default":"a","description":"pick","enum":["a","b"]},"labels":{"type":"string","list":true,"default":["x","y"]}}`,
+		`"max_turns":"$turns"`, `"run_if":"$gate"`, `"main":[{"id":"s"`, `"on":{"signal":"mr_conflicts","max":"$turns"}`,
 		`{"id":"o","on":{"signal":"mr_merged"},"then":"done"}`,
 	} {
 		if !strings.Contains(string(b), want) {
@@ -1728,7 +1750,7 @@ func TestDocJSONShapes(t *testing.T) {
 	}
 	// Short forms read back too.
 	var short Doc
-	if err := json.Unmarshal([]byte(`{"name":"t","version":5,"parameters":{"harness":"fake","n":2}}`), &short); err != nil || len(short.Parameters.Entries) != 2 || short.Parameters.Entries[1].Param.Default.Kind != ParamInt {
+	if err := json.Unmarshal([]byte(`{"name":"t","version":5,"parameters":{"harness":"fake","n":2}}`), &short); err != nil || len(short.Parameters.Entries) != 2 || short.Parameters.Entries[1].Param.Default.Hint != ParamInt {
 		t.Errorf("short form: %v %+v", err, short.Parameters.Entries)
 	}
 }

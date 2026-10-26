@@ -23,9 +23,9 @@ version: 5
 parameters:
   harness: fake
   model: anthropic/claude-sonnet-4-6
-  verify: verify
-  gate: true
-  mode: { default: confirm, enum: [auto, confirm, manual] }
+  verify: { type: string, default: verify }
+  gate: { type: bool, default: true }
+  mode: { type: string, default: confirm, enum: [auto, confirm, manual] }
 main:
   - { id: test, type: command, run_ref: $verify, on_success: done }
 `

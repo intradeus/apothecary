@@ -10,17 +10,22 @@
 	import { ms } from '$lib/ui/motion';
 	import { fade } from 'svelte/transition';
 	import { untrack } from 'svelte';
-	import BindingRows from '$lib/flow/BindingRows.svelte';
+	import PortRows from '$lib/flow/PortRows.svelte';
 	import OptionalDuration from '$lib/ui/OptionalDuration.svelte';
 	import OptionalNumber from '$lib/ui/OptionalNumber.svelte';
 	import ParamsEditor from '$lib/flow/ParamsEditor.svelte';
+	import KeyValueEditor, { type KVRow } from '$lib/ui/KeyValueEditor.svelte';
+	import YamlEditor from '$lib/flow/YamlEditor.svelte';
+	import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 	import {
 		boolParams,
 		enumParamsWithin,
 		intParams,
 		isParamRef,
 		policyParams,
-		stringParams
+		stringParams,
+		durationParams,
+		stringListParams
 	} from '$lib/flow/params';
 	import type { ActionSpec, SignalSpec } from '$lib/domain';
 	import {
@@ -36,22 +41,36 @@
 		OPERATES_ON,
 		START_POLICIES,
 		AGENT_NAME,
+		SCHEMA_NAME,
+		MCP_BUILTINS,
+		MCP_KINDS,
+		MCP_NAME,
+		SERVICE_DOS,
 		addAgent,
+		addMCPServer,
+		flowServices,
+		mcpKind,
+		mcpUsers,
+		removeMCPServer,
+		renameMCPServer,
+		serviceSource,
+		addSchema,
+		allStages,
 		addMainChain,
 		addOutcome,
 		addSequence,
 		addWatcher,
-		agentUsers,
 		appendSequenceStage,
 		appendStage,
 		chainSequence,
 		hasMain,
 		moveSequenceStage,
 		removePhase,
+		removeSchema,
 		removeSequence,
-		renameAgent,
-		renameAgentPort,
+		renameSchema,
 		renameSequence,
+		schemaUsers,
 		sequenceUsers,
 		setChainSequence,
 		stagesOf,
@@ -59,27 +78,33 @@
 		paramDefault,
 		routableFrom,
 		EDGE_KINDS,
-		SENTINEL_DECISION,
-		SENTINEL_FAILURE,
+		SOURCE_VERDICT,
+		FILE_TYPES,
+		GATE_TYPES,
+		VALUE_TYPES,
 		chainLinks,
 		edgeKindsFor,
 		edgeOf,
-		feedSentinelFor,
-		ioEntries,
-		isFeedSentinel,
+		feedSourceFor,
 		pruneEdgeTarget,
-		sentinelsFor,
+		sourcesFor,
+		phaseOf,
 		setEdge,
 		movePhase,
 		triggerLabel,
 		verdictOutput,
+		givesVerdict,
 		type DocEdge,
 		type DocPhase,
 		type DocStage,
 		type EdgeKind,
 		type DocAgent,
+		type DocMCPServer,
+		type DocPort,
 		type DocSequence,
 		type FlowDoc,
+		type MCPKind,
+		type ServiceDo,
 		type StageKind
 	} from '$lib/flowdoc';
 
@@ -187,7 +212,7 @@
 				: ph.then === ABORT
 					? 'ros'
 					: 'grn';
-	const WHEN_TERMS = ['tracker', 'not tracker', 'subject', 'not subject'];
+	const RUN_IF_TERMS = ['tracker', 'not tracker', 'subject', 'not subject'];
 
 	const phaseSel = $derived(
 		selection?.kind === 'phase' ? doc.phases?.find((p) => p.id === selection.id) : undefined
@@ -292,81 +317,191 @@
 	}
 
 	// ---- agents: the flow carries their definitions (FLOWLANG §1) ----------
-	const agentSel = $derived(
-		selection?.kind === 'agent' ? doc.agents?.find((a) => a.name === selection.name) : undefined
-	);
+	// They are edited in the page's Agents tab: opening one goes there.
 	function newAgent(name?: string) {
 		const a = addAgent(doc, name);
 		onchange();
 		onopen({ kind: 'agent', name: a.name });
 	}
-	function renameAgentTo(from: string, to: string): boolean {
-		to = to.trim();
-		if (!to || to === from || !AGENT_NAME.test(to) || doc.agents?.some((a) => a.name === to))
-			return false;
-		renameAgent(doc, from, to);
+	// ---- schemas: the structures the flow's own files hold (FLOWLANG §4) ---
+	const schemaSel = $derived(
+		selection?.kind === 'schema' ? doc.schemas?.find((q) => q.name === selection.name) : undefined
+	);
+	function newSchema() {
+		const q = addSchema(doc);
 		onchange();
-		onselect({ kind: 'agent', name: to }, 'rename');
+		onopen({ kind: 'schema', name: q.name });
+	}
+	function renameSchemaTo(from: string, to: string): boolean {
+		to = to.trim();
+		if (!to || to === from || !SCHEMA_NAME.test(to) || doc.schemas?.some((q) => q.name === to))
+			return false;
+		renameSchema(doc, from, to);
+		onchange();
+		onselect({ kind: 'schema', name: to }, 'rename');
 		return true;
 	}
-	async function deleteAgent(name: string) {
-		const used = agentUsers(doc, name);
+	async function deleteSchema(name: string) {
+		if (schemaUsers(doc, name).length) return;
 		const ok = await confirmDialog({
-			title: t('flow.insp.deleteAgentTitle', { name }),
-			body: [
-				used.length
-					? th('flow.insp.deleteAgentUsed', { name, count: used.length, stages: used.join(', ') })
-					: th('flow.insp.deleteAgentBody', { name }),
-				t('flow.insp.deleteNote')
-			].join(' '),
-			action: t('flow.insp.deleteAgent')
+			title: t('flow.insp.deleteSchemaTitle', { name }),
+			body: [th('flow.insp.deleteSchemaBody', { name }), t('flow.insp.deleteNote')].join(' '),
+			action: t('flow.insp.deleteSchema')
 		});
 		if (!ok) return;
-		doc.agents = doc.agents?.filter((a) => a.name !== name);
-		if (!doc.agents?.length) doc.agents = undefined;
+		removeSchema(doc, name);
 		onchange();
 		leave(null);
 	}
-	// A port is one declared input or output: a slug unique on its agent.
-	const portName = (taken: { name: string }[], base: string) => {
-		let n = 1;
-		while (taken.some((p) => p.name === `${base}_${n}`)) n++;
-		return `${base}_${n}`;
+	// The schema's body is edited as YAML text; the document takes it only
+	// once it parses, so a half-typed line never reaches the draft.
+	let schemaText = $state('');
+	let schemaError = $state('');
+	$effect(() => {
+		const q = schemaSel;
+		untrack(() => {
+			schemaText = q ? stringifyYaml(q.json_schema ?? {}, { lineWidth: 0 }) : '';
+			schemaError = '';
+		});
+	});
+	$effect(() => {
+		const text = schemaText;
+		untrack(() => {
+			const q = schemaSel;
+			if (!q) return;
+			let v: unknown;
+			try {
+				v = parseYaml(text) ?? {};
+			} catch (err) {
+				schemaError = err instanceof Error ? err.message.split('\n')[0] : String(err);
+				return;
+			}
+			schemaError = '';
+			if (JSON.stringify(v) === JSON.stringify(q.json_schema)) return;
+			q.json_schema = v;
+			onchange();
+		});
+	});
+	// Which structure a port may name: the flow's schemas, and whatever it
+	// names now even if no schema of that name is declared (shown as is).
+	const schemaChoices = (current?: string) => {
+		const names = (doc.schemas ?? []).map((q) => q.name);
+		return current && !names.includes(current) ? [...names, current] : names;
 	};
-	function addInput(a: DocAgent) {
-		a.inputs = [...(a.inputs ?? []), { name: portName(a.inputs ?? [], 'input') }];
+
+	// ---- MCP servers: tools the flow's agents may call (FLOWLANG §1) -------
+	// A server is reached one way — builtin, command or url — and given env
+	// (a command) or headers (a url) whose values may read a project secret.
+	const mcpSel = $derived(
+		selection?.kind === 'mcp' ? doc.mcp_servers?.find((m) => m.name === selection.name) : undefined
+	);
+	function newMCP() {
+		const m = addMCPServer(doc);
 		onchange();
+		onopen({ kind: 'mcp', name: m.name });
 	}
-	function addOutput(a: DocAgent) {
-		const name = portName(a.outputs ?? [], 'output');
-		a.outputs = [...(a.outputs ?? []), { name, path: `artifacts/${name}.md` }];
-		onchange();
-	}
-	function renamePort(a: DocAgent, field: 'input' | 'output', from: string, to: string): boolean {
+	function renameMCPTo(from: string, to: string): boolean {
 		to = to.trim();
-		const list = (field === 'input' ? a.inputs : a.outputs) ?? [];
-		const port = list.find((p) => p.name === from);
-		if (!port || !to || to === from || !AGENT_NAME.test(to) || list.some((p) => p.name === to))
+		if (!to || to === from || !MCP_NAME.test(to) || doc.mcp_servers?.some((m) => m.name === to))
 			return false;
-		port.name = to;
-		renameAgentPort(doc, a.name, field, from, to);
+		renameMCPServer(doc, from, to);
 		onchange();
+		onselect({ kind: 'mcp', name: to }, 'rename');
 		return true;
 	}
-	function removeInput(a: DocAgent, name: string) {
-		a.inputs = a.inputs?.filter((p) => p.name !== name);
-		if (!a.inputs?.length) a.inputs = undefined;
+	async function deleteMCP(name: string) {
+		const users = mcpUsers(doc, name);
+		const ok = await confirmDialog({
+			title: t('flow.insp.deleteMCPTitle', { name }),
+			body: [
+				users.length
+					? th('flow.insp.deleteMCPUsed', { name, count: users.length, agents: users.join(', ') })
+					: th('flow.insp.deleteMCPBody', { name }),
+				t('flow.insp.deleteNote')
+			].join(' '),
+			action: t('flow.insp.deleteMCP')
+		});
+		if (!ok) return;
+		removeMCPServer(doc, name);
+		onchange();
+		leave(null);
+	}
+	// Switching how a server is reached keeps what still applies: a
+	// command's words and env, a url's address and headers.
+	function setMCPKind(m: DocMCPServer, kind: MCPKind) {
+		if (kind === mcpKind(m)) return;
+		m.builtin = kind === 'builtin' ? (m.builtin ?? MCP_BUILTINS[0]) : undefined;
+		m.command = kind === 'command' ? (m.command ?? []) : undefined;
+		m.url = kind === 'url' ? (m.url ?? '') : undefined;
+		if (kind !== 'command') m.env = undefined;
+		if (kind !== 'url') m.headers = undefined;
 		onchange();
 	}
-	function removeOutput(a: DocAgent, name: string) {
-		a.outputs = a.outputs?.filter((p) => p.name !== name);
-		if (!a.outputs?.length) a.outputs = undefined;
+	// The command and the env or headers are typed as text and rows, and
+	// reach the document as they parse: a word per line, rows with a name.
+	let mcpCommand = $state('');
+	let mcpRows = $state<KVRow[]>([]);
+	$effect(() => {
+		const m = mcpSel;
+		const kind = m ? mcpKind(m) : undefined;
+		untrack(() => {
+			mcpCommand = m ? (m.command ?? []).join('\n') : '';
+			const kv = kind === 'url' ? m?.headers : kind === 'command' ? m?.env : undefined;
+			mcpRows = Object.entries(kv ?? {}).map(([key, value]) => ({ key, value }));
+		});
+	});
+	$effect(() => {
+		const text = mcpCommand;
+		untrack(() => {
+			const m = mcpSel;
+			if (!m || mcpKind(m) !== 'command') return;
+			const words = text
+				.split('\n')
+				.map((w) => w.trim())
+				.filter(Boolean);
+			if (JSON.stringify(words) === JSON.stringify(m.command ?? [])) return;
+			m.command = words;
+			onchange();
+		});
+	});
+	$effect(() => {
+		const rows = mcpRows;
+		untrack(() => {
+			const m = mcpSel;
+			const kind = m ? mcpKind(m) : 'builtin';
+			if (!m || kind === 'builtin') return;
+			const kv: Record<string, string> = {};
+			for (const r of rows) if (r.key.trim()) kv[r.key.trim()] = r.value;
+			const next = Object.keys(kv).length ? kv : undefined;
+			const field = kind === 'url' ? 'headers' : 'env';
+			if (JSON.stringify(next) === JSON.stringify(m[field])) return;
+			m[field] = next;
+			onchange();
+		});
+	});
+	// A key the parser refuses: one given twice, or not a name — an
+	// environment variable's, a header's.
+	const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+	const HEADER_KEY = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+	const badKeys = $derived.by(() => {
+		const re = mcpSel && mcpKind(mcpSel) === 'url' ? HEADER_KEY : ENV_KEY;
+		const keys = mcpRows.map((r) => r.key.trim()).filter(Boolean);
+		return new Set(keys.filter((k, i) => !re.test(k) || keys.indexOf(k) !== i));
+	});
+
+	// ---- services: the project's, named by a stage or read as a source -----
+	// What a service stage may name: a string parameter (usually $app), or a
+	// service the flow names already.
+	const services = $derived(flowServices(doc));
+	const serviceChoices = $derived([
+		...new Set([...stringParams(doc).map((p) => '$' + p), ...services])
+	]);
+	function setServiceDo(s: DocStage, v: ServiceDo) {
+		s.do = v === 'start' ? undefined : v;
+		// A stop takes no time to be healthy.
+		if (v === 'stop') s.timeout = undefined;
 		onchange();
 	}
-	// What an output's type makes of the file (agentspec): an opaque file,
-	// the verdict on_reject routes on, a review for post_review, or a review
-	// round's replies.
-	const OUTPUT_TYPES = ['', 'verdict', 'review_threads', 'review_replies'] as const;
 
 	// ---- sequences: chains written once, run where a stage names them -----
 	const seqSel = $derived(
@@ -427,50 +562,40 @@
 		)
 	];
 
-	// Bindings are one form everywhere (FLOWLANG §4), so there is one editor:
-	// read a name's value, write it back preserving order.
-	function bindingValue(s: DocStage, field: 'input' | 'output', name: string): string {
-		return s[field]?.[name] ?? '';
+	// What an input may read besides the engine's sources: every path a stage
+	// of the flow writes.
+	const writtenPaths = $derived(
+		[
+			...new Set(
+				allStages(doc).flatMap((x) =>
+					Object.values(x.output ?? {})
+						.map((p) => p.to ?? '')
+						.filter(Boolean)
+				)
+			)
+		].sort()
+	);
+	const schemaNames = $derived((doc.schemas ?? []).map((q) => q.name));
+	// An action's settings (`with:`): read one, write it back preserving order.
+	function settingValue(s: DocStage, name: string): string {
+		const v = s.with?.[name];
+		return typeof v === 'string' ? v : '';
 	}
-	function setBinding(s: DocStage, field: 'input' | 'output', name: string, value: string) {
-		const cur = { ...(s[field] ?? {}) };
-		if (value) cur[name] = value;
+	// A list setting holds items written here, or a list $parameter.
+	function setSettingList(s: DocStage, name: string, value: string | string[]) {
+		const cur = { ...(s.with ?? {}) };
+		if (Array.isArray(value) ? value.length : value) cur[name] = value;
 		else delete cur[name];
-		s[field] = Object.keys(cur).length ? cur : undefined;
+		s.with = Object.keys(cur).length ? cur : undefined;
 		onchange();
 	}
-	// Reorder a contract's bindings into declaration order, so the YAML reads
-	// like the contract and a round-trip never churns the flow hash.
-	function orderBindings(s: DocStage, field: 'input' | 'output', names: string[]) {
-		const cur = s[field];
-		if (!cur) return;
-		const rec: Record<string, string> = {};
-		for (const n of names) if (cur[n]) rec[n] = cur[n];
-		for (const [k, v] of Object.entries(cur)) if (!(k in rec)) rec[k] = v;
-		s[field] = rec;
+	function setSetting(s: DocStage, name: string, value: string) {
+		const cur = { ...(s.with ?? {}) };
+		if (value) cur[name] = value;
+		else delete cur[name];
+		s.with = Object.keys(cur).length ? cur : undefined;
+		onchange();
 	}
-	const freeBindings = $derived.by(() => {
-		if (!stage) return [] as [string, string][];
-		const declared = new Set(
-			stage.type === 'agent'
-				? declInputs.map((d) => d.name)
-				: stage.type === 'action'
-					? (actionSig?.inputs ?? []).map((d) => d.name)
-					: []
-		);
-		return ioEntries(stage.input).filter(([k]) => !declared.has(k));
-	});
-	const isDeclared = (k: string) =>
-		stage?.type === 'agent'
-			? declInputs.some((d) => d.name === k)
-			: (actionSig?.inputs ?? []).some((d) => d.name === k);
-	// Once a stage shows its unrecognized bindings, the section stays while
-	// the stage is selected — clearing the last row mid-edit must not unmount
-	// the editor under the cursor.
-	let freeShown = $state<Record<string, boolean>>({});
-	$effect(() => {
-		if (stage && freeBindings.length && !freeShown[stage.id]) freeShown[stage.id] = true;
-	});
 
 	// The inspector cross-fades between selections instead of jumping: the
 	// outgoing and incoming views share one grid cell for the moment.
@@ -481,11 +606,13 @@
 				? `s:${selection.sequence ?? ''}:${selection.stage}`
 				: selection?.kind === 'phase'
 					? `p:${selection.id}`
-					: selection?.kind === 'agent'
-						? `a:${selection.name}`
-						: selection?.kind === 'sequence'
-							? `q:${selection.id}`
-							: 'flow'
+					: selection?.kind === 'sequence'
+						? `q:${selection.id}`
+						: selection?.kind === 'schema'
+							? `j:${selection.name}`
+							: selection?.kind === 'mcp'
+								? `m:${selection.name}`
+								: 'flow'
 	);
 	const xf = () => ({ duration: ms('--dur-fade', 160) });
 	// The stages a chain or a sequence may add: a sequence stage once there
@@ -501,6 +628,7 @@
 			'human_gate',
 			'action',
 			'wait',
+			'service',
 			...(runs ? ['sequence' as const] : [])
 		];
 	};
@@ -633,23 +761,9 @@
 			onchange();
 			onselect({ kind: 'stage', id: s.id, ...inSeq });
 		} else if (phaseSel && phaseSel.kind !== 'main') void deletePhase(phaseSel);
-		else if (agentSel) void deleteAgent(agentSel.name);
 		else if (seqSel) void deleteSequence(seqSel);
+		else if (mcpSel) void deleteMCP(mcpSel.name);
 	}
-
-	// What an action output produces: its name, then whichever of sentinel,
-	// path and description it declares.
-	const producesHtml = (d: {
-		name: string;
-		sentinel?: string;
-		path?: string;
-		description?: string;
-	}) =>
-		th('flow.insp.produces', { name: d.name }) +
-		(d.sentinel ? th('flow.insp.producesSentinel', { sentinel: d.sentinel }) : '') +
-		(d.path ? th('flow.insp.producesPath', { path: d.path }) : '') +
-		(d.description ? th('flow.insp.producesDesc', { description: d.description }) : '') +
-		'.';
 
 	// appendLink adds a fallback ("then") after the chain's last link.
 	function appendLink(e: DocEdge) {
@@ -707,6 +821,10 @@
 				return t('flow.insp.backAgent', { name: b.name });
 			case 'sequence':
 				return t('flow.insp.backSequence', { id: b.id });
+			case 'schema':
+				return t('flow.insp.backSchema', { name: b.name });
+			case 'mcp':
+				return t('flow.insp.backMCP', { name: b.name });
 		}
 	});
 </script>
@@ -789,29 +907,29 @@
 
 				{#if s.type !== 'sequence'}
 					<div class="field">
-						<label for="st-when">{t('flow.insp.when')}</label>
+						<label for="st-run-if">{t('flow.insp.runIf')}</label>
 						<select
-							id="st-when"
-							value={s.when ?? ''}
+							id="st-run-if"
+							value={s.run_if ?? ''}
 							onchange={(e) => {
-								s.when = e.currentTarget.value || undefined;
+								s.run_if = e.currentTarget.value || undefined;
 								onchange();
 							}}
 						>
-							<option value="">{t('flow.insp.when.none')}</option>
-							<option value="tracker">{t('flow.insp.when.tracker')}</option>
-							<option value="not tracker">{t('flow.insp.when.notTracker')}</option>
-							<option value="subject">{t('flow.insp.when.subject')}</option>
-							<option value="not subject">{t('flow.insp.when.notSubject')}</option>
+							<option value="">{t('flow.insp.runIf.none')}</option>
+							<option value="tracker">{t('flow.insp.runIf.tracker')}</option>
+							<option value="not tracker">{t('flow.insp.runIf.notTracker')}</option>
+							<option value="subject">{t('flow.insp.runIf.subject')}</option>
+							<option value="not subject">{t('flow.insp.runIf.notSubject')}</option>
 							{#each boolParams(doc) as p (p)}
 								<option value={'$' + p}>${p}</option>
 								<option value={'not $' + p}>not ${p}</option>
 							{/each}
-							{#if s.when && !WHEN_TERMS.includes(s.when) && !boolParams(doc).some((p) => s.when === '$' + p || s.when === 'not $' + p)}
-								<option value={s.when}>{s.when}</option>
+							{#if s.run_if && !RUN_IF_TERMS.includes(s.run_if) && !boolParams(doc).some((p) => s.run_if === '$' + p || s.run_if === 'not $' + p)}
+								<option value={s.run_if}>{s.run_if}</option>
 							{/if}
 						</select>
-						<div class="help">{t('flow.insp.whenHelp')}</div>
+						<div class="help">{t('flow.insp.runIfHelp')}</div>
 					</div>
 				{/if}
 				<datalist id="flow-params">
@@ -819,6 +937,9 @@
 				</datalist>
 				<datalist id="flow-int-params">
 					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
+				</datalist>
+				<datalist id="flow-duration-params">
+					{#each durationParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
 				</datalist>
 
 				{#if s.type === 'agent'}
@@ -903,7 +1024,7 @@
 						<input
 							id="st-timeout"
 							class="mono"
-							list="flow-params"
+							list="flow-duration-params"
 							bind:value={s.timeout}
 							oninput={onchange}
 							placeholder={paramDefault(doc, 'timeout') ?? '30m'}
@@ -915,31 +1036,17 @@
 							<div class="lbl">{t('flow.insp.inputs')}</div>
 							<div class="help">{t('flow.insp.inputsHelp')}</div>
 						</div>
-						{#each declInputs as d (d.name)}
-							{@const val = bindingValue(s, 'input', d.name)}
-							<div class="io-bind card-in field">
-								<label for="in-{d.name}"
-									><span class="mono">{d.name}</span>
-									{#if d.optional}<span class="fnt">{t('flow.insp.optional')}</span>{:else}<span
-											class="hue-amb">{t('flow.insp.required')}</span
-										>{/if}</label
-								>
-								{#if d.description}<div class="help">{d.description}</div>{/if}
-								<input
-									id="in-{d.name}"
-									list="agent-sentinels"
-									placeholder="artifacts/…"
-									value={val}
-									oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
-								/>
-								{#if isFeedSentinel(val)}
-									<div class="help">{t('flow.insp.feedHelp')}</div>
-								{/if}
-							</div>
-						{/each}
-						<datalist id="agent-sentinels">
-							{#each sentinelsFor('agent') as v (v)}<option value={v}></option>{/each}
-						</datalist>
+						{#key s.agent}
+							<PortRows
+								stage={s}
+								field="input"
+								declared={declInputs}
+								sources={sourcesFor('agent', services, phaseOf(doc, s)?.on.signal === 'ci_failed')}
+								paths={writtenPaths}
+								schemas={schemaNames}
+								{onchange}
+							/>
+						{/key}
 					{:else if s.agent}
 						<div class="help" class:hue-amb={!agentDecl}>
 							{agentDecl
@@ -947,36 +1054,24 @@
 								: t('flow.insp.unknownAgent', { name: s.agent })}
 						</div>
 					{/if}
-
 					{#if declOutputs.length > 0}
 						<div class="grp">
 							<div class="lbl">{t('flow.insp.outputs')}</div>
 							<div class="help">{t('flow.insp.outputsHelp')}</div>
 						</div>
-						{#each declOutputs as d (d.name)}
-							<div class="io-bind card-in field">
-								<label for="out-{d.name}"
-									><span class="mono">{d.name}</span>
-									{#if d.type === 'verdict'}<span class="pill sm t-vio"
-											>{t('flow.insp.verdict')}</span
-										>{/if}</label
-								>
-								{#if d.description}<div class="help">{d.description}</div>{/if}
-								<input
-									id="out-{d.name}"
-									value={bindingValue(s, 'output', d.name) || (d.path ?? '')}
-									placeholder={d.path}
-									oninput={(e) => {
-										const v = e.currentTarget.value.trim();
-										setBinding(s, 'output', d.name, v === d.path ? '' : v);
-									}}
-								/>
-							</div>
-						{/each}
+						{#key s.agent}
+							<PortRows
+								stage={s}
+								field="output"
+								declared={declOutputs}
+								schemas={schemaNames}
+								{onchange}
+							/>
+						{/key}
 					{/if}
 					{#if declVerdict}
 						<div class="help">
-							{@html th('flow.insp.verdictHelp', { sentinel: SENTINEL_DECISION })}
+							{@html th('flow.insp.verdictHelp', { sentinel: SOURCE_VERDICT })}
 						</div>
 					{:else if s.agent && agentDecl && edgeOf(s, 'on_reject')}
 						<div class="help hue-amb">{@html th('flow.insp.neverFires', { agent: s.agent })}</div>
@@ -1009,7 +1104,7 @@
 						<input
 							id="st-cmd-timeout"
 							class="mono"
-							list="flow-params"
+							list="flow-duration-params"
 							bind:value={s.timeout}
 							oninput={onchange}
 							placeholder={paramDefault(doc, 'timeout') ?? '30m'}
@@ -1029,15 +1124,23 @@
 						<div class="lbl">{t('flow.insp.reads')}</div>
 						<div class="help">{t('flow.insp.readsHelp')}</div>
 					</div>
-					<BindingRows stage={s} field="input" valuePlaceholder="artifacts/commit.md" {onchange} />
+					<PortRows
+						stage={s}
+						field="input"
+						paths={writtenPaths}
+						schemas={schemaNames}
+						valuePlaceholder="artifacts/thresholds.json"
+						{onchange}
+					/>
 					<div class="grp">
 						<div class="lbl">{t('flow.insp.writes')}</div>
 						<div class="help">{t('flow.insp.writesHelp')}</div>
 					</div>
-					<BindingRows
+					<PortRows
 						stage={s}
 						field="output"
-						valuePlaceholder="artifacts/report.txt"
+						schemas={schemaNames}
+						valuePlaceholder="artifacts/report.json"
 						{onchange}
 					/>
 					<div class="help">{t('flow.insp.nameLabelHelp')}</div>
@@ -1056,11 +1159,14 @@
 						<div class="lbl">{t('flow.insp.shows')}</div>
 						<div class="help">{@html th('flow.insp.showsHelp')}</div>
 					</div>
-					<BindingRows
+					<PortRows
 						stage={s}
 						field="input"
-						valuePlaceholder="artifacts/…"
-						addLabel={t('flow.insp.addShows')}
+						sources={sourcesFor('human_gate', services)}
+						paths={writtenPaths}
+						schemas={schemaNames}
+						types={GATE_TYPES}
+						links={1}
 						{onchange}
 					/>
 					<div class="grp">
@@ -1115,11 +1221,17 @@
 							value={s.action ?? ''}
 							onchange={(e) => {
 								s.action = e.currentTarget.value || undefined;
-								// Prefill the new action's file inputs with their conventional paths.
+								// Prefill the new action's ports with their conventional paths.
 								const sig = actions.find((a) => a.slug === s.action);
-								const rec: Record<string, string> = {};
-								for (const d of sig?.inputs ?? []) if (d.defaultPath) rec[d.name] = d.defaultPath;
-								s.input = Object.keys(rec).length ? rec : undefined;
+								const ins: Record<string, DocPort> = {};
+								for (const d of sig?.inputs ?? [])
+									if (d.defaultPath) ins[d.name] = { from: d.defaultPath, type: d.type };
+								const outs: Record<string, DocPort> = {};
+								for (const d of sig?.outputs ?? [])
+									outs[d.name] = { to: d.defaultPath ?? `artifacts/${d.name}`, type: d.type };
+								s.input = Object.keys(ins).length ? ins : undefined;
+								s.output = Object.keys(outs).length ? outs : undefined;
+								s.with = undefined;
 								onchange();
 							}}
 						>
@@ -1145,8 +1257,8 @@
 								{t('flow.insp.exactlyOne', { names: actionSig.exactlyOne.join(' / ') })}
 							</div>
 						{/if}
-						{#each actionSig.inputs ?? [] as d (d.name)}
-							{@const cur = bindingValue(s, 'input', d.name)}
+						{#each actionSig.settings as d (d.name)}
+							{@const cur = settingValue(s, d.name)}
 							{@const fits = d.kind === 'enum' ? enumParamsWithin(doc, d.values ?? []) : []}
 							<div class="io-bind card-in field">
 								<label for="act-{d.name}"
@@ -1159,11 +1271,8 @@
 								{#if d.kind === 'enum'}
 									<select
 										id="act-{d.name}"
-										value={bindingValue(s, 'input', d.name) || d.defaultValue || ''}
-										onchange={(e) => {
-											setBinding(s, 'input', d.name, e.currentTarget.value);
-											onchange();
-										}}
+										value={cur || d.defaultValue || ''}
+										onchange={(e) => setSetting(s, d.name, e.currentTarget.value)}
 									>
 										{#if !d.required && !d.defaultValue}<option value="">—</option>{/if}
 										{#each d.values ?? [] as v (v)}<option value={v}>{v}</option>{/each}
@@ -1173,32 +1282,143 @@
 										{/if}
 									</select>
 									{#if fits.length}<div class="help">{t('flow.insp.enumParamHelp')}</div>{/if}
-								{:else if d.kind === 'text'}
-									<input
+								{:else if d.kind === 'list'}
+									{@const items = s.with?.[d.name]}
+									<select
 										id="act-{d.name}"
-										list="flow-params"
-										value={cur}
-										placeholder={t('flow.insp.textPlaceholder')}
-										oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
-									/>
-									<div class="help">{t('flow.insp.textInputHelp')}</div>
+										value={typeof items === 'string' ? items : ''}
+										onchange={(e) =>
+											setSettingList(
+												s,
+												d.name,
+												e.currentTarget.value || (Array.isArray(items) ? items : [])
+											)}
+									>
+										<option value="">{t('flow.insp.listWritten')}</option>
+										{#each stringListParams(doc) as p (p)}<option value={'$' + p}>${p}</option
+											>{/each}
+										{#if typeof items === 'string' && !stringListParams(doc).includes(items.slice(1))}
+											<option value={items}>{items}</option>
+										{/if}
+									</select>
+									{#if typeof items !== 'string'}
+										<input
+											class="mono"
+											aria-label={d.name}
+											value={(items ?? []).join(', ')}
+											placeholder={t('flow.insp.paramListPlaceholder')}
+											onchange={(e) =>
+												setSettingList(
+													s,
+													d.name,
+													e.currentTarget.value
+														.split(',')
+														.map((v) => v.trim())
+														.filter(Boolean)
+												)}
+										/>
+									{/if}
+									<div class="help">{t('flow.insp.listSettingHelp')}</div>
 								{:else}
 									<input
 										id="act-{d.name}"
 										list="flow-params"
 										value={cur}
-										placeholder={d.defaultPath ?? ''}
-										oninput={(e) => setBinding(s, 'input', d.name, e.currentTarget.value.trim())}
+										placeholder={t('flow.insp.textPlaceholder')}
+										oninput={(e) => setSetting(s, d.name, e.currentTarget.value.trim())}
 									/>
+									<div class="help">{t('flow.insp.textInputHelp')}</div>
 								{/if}
 							</div>
 						{/each}
-						{#each actionSig.outputs ?? [] as d (d.name)}
-							<div class="help">{@html producesHtml(d)}</div>
-						{/each}
+						{#key s.action}
+							{#if actionSig.inputs.length}
+								<div class="grp"><div class="lbl">{t('flow.insp.reads')}</div></div>
+								<PortRows
+									stage={s}
+									field="input"
+									declared={actionSig.inputs}
+									paths={writtenPaths}
+									schemas={schemaNames}
+									{onchange}
+								/>
+							{/if}
+							{#if actionSig.outputs.length}
+								<div class="grp"><div class="lbl">{t('flow.insp.writes')}</div></div>
+								<PortRows
+									stage={s}
+									field="output"
+									declared={actionSig.outputs}
+									schemas={schemaNames}
+									{onchange}
+								/>
+							{/if}
+						{/key}
 					{:else if s.action}
 						<div class="help hue-amb">{t('flow.insp.unknownAction', { name: s.action })}</div>
 					{/if}
+				{:else if s.type === 'service'}
+					{@const readers = runners((x) =>
+						Object.values(x.input ?? {}).some(
+							(p) => !!s.service && p.from === serviceSource(s.service)
+						)
+					)}
+					<div class="field">
+						<label for="st-service">{t('flow.insp.service')}</label>
+						<input
+							id="st-service"
+							class="mono"
+							list="flow-services"
+							bind:value={s.service}
+							oninput={onchange}
+							placeholder="$app"
+						/>
+						<datalist id="flow-services">
+							{#each serviceChoices as v (v)}<option value={v}></option>{/each}
+						</datalist>
+						<div class="help">{t('flow.insp.serviceHelp')}</div>
+					</div>
+					<div class="field">
+						<label for="st-do">{t('flow.insp.serviceDo')}</label>
+						<select
+							id="st-do"
+							value={s.do ?? 'start'}
+							onchange={(e) => setServiceDo(s, e.currentTarget.value as ServiceDo)}
+						>
+							{#each SERVICE_DOS as d (d)}<option value={d}>{t(`flow.insp.serviceDo.${d}`)}</option
+								>{/each}
+						</select>
+					</div>
+					{#if s.do !== 'stop'}
+						<div class="field">
+							<label for="st-svc-timeout">{t('flow.insp.timeout')}</label>
+							<input
+								id="st-svc-timeout"
+								class="mono"
+								list="flow-duration-params"
+								bind:value={s.timeout}
+								oninput={onchange}
+								placeholder={t('flow.insp.serviceOwnTimeout')}
+							/>
+							<div class="help">{t('flow.insp.serviceTimeoutHelp')}</div>
+						</div>
+					{/if}
+					<div class="grp">
+						<div class="lbl">{t('flow.insp.serviceAddress')}</div>
+						<div class="help">
+							{@html th('flow.insp.serviceAddressHelp', {
+								source: serviceSource(s.service || '$app')
+							})}
+						</div>
+						{#if readers.length}
+							<div class="chips">
+								{#each readers as u (u.label)}<button
+										class="btn-sm mono"
+										onclick={() => onopen(u.sel)}>{u.label}</button
+									>{/each}
+							</div>
+						{/if}
+					</div>
 				{:else if s.type === 'sequence'}
 					{@const options = runnable(s)}
 					<div class="field">
@@ -1281,20 +1501,6 @@
 					</div>
 				{/if}
 
-				{#if (freeBindings.length > 0 || freeShown[s.id]) && (s.type === 'agent' || s.type === 'action')}
-					<div class="grp">
-						<div class="lbl">{t('flow.insp.unrecognized')}</div>
-						<div class="help hue-amb">
-							{s.type === 'agent'
-								? t('flow.insp.unrecognizedAgent')
-								: t('flow.insp.unrecognizedAction')}
-						</div>
-					</div>
-					{#key s.type === 'agent' ? s.agent : s.action}
-						<BindingRows stage={s} field="input" keep={isDeclared} {onchange} />
-					{/key}
-				{/if}
-
 				<div class="field">
 					<label for="st-desc">{t('flow.insp.description')}</label>
 					<input
@@ -1313,8 +1519,11 @@
 					<div class="lbl">{t('flow.insp.routes')}</div>
 					<div class="route" class:hl={focusRoute === 'success'} data-route="success">
 						<div class="link">
-							<span class="rk mono t-{EDGE_HUE.success}" title={t('flow.insp.successTitle')}
-								>success</span
+							<span
+								class="rk mono t-{EDGE_HUE.success}"
+								title={givesVerdict(s, agents)
+									? t('flow.insp.successCarries')
+									: t('flow.insp.successTitle')}>success</span
 							>
 							<select
 								id="st-succ"
@@ -1359,7 +1568,7 @@
 											class:then={depth > 0}
 											title={t('flow.insp.routeCarries', {
 												kind,
-												sentinel: feedSentinelFor(kind)
+												sentinel: feedSourceFor(kind)
 											})}>{depth > 0 ? 'then' : kind}</span
 										>
 										<select
@@ -1571,7 +1780,7 @@
 									bind:value={ph.on.quiet_for}
 									empty={t('flow.insp.noQuiet')}
 									fallback="1h"
-									params={stringParams(doc)}
+									params={durationParams(doc)}
 									{onchange}
 								/>
 								<div class="help">{t('flow.insp.quietForHelp')}</div>
@@ -1645,195 +1854,6 @@
 				<datalist id="flow-int-params">
 					{#each intParams(doc) as p (p)}<option value={'$' + p}></option>{/each}
 				</datalist>
-			{:else if agentSel}
-				{@const a = agentSel}
-				{@const used = runners((x) => x.type === 'agent' && x.agent === a.name)}
-				<div class="ih">
-					<span class="pill sm mono t-{STAGE_HUE.agent}">{t('flow.insp.kind.agent')}</span>
-					<span class="mono iid ell">{a.name}</span>
-					<span class="spacer"></span>
-					<span class="fnt tiny">{t('flow.insp.runByCount', { count: used.length })}</span>
-					<button
-						class="btn-danger btn-sm"
-						onclick={() => deleteAgent(a.name)}
-						title={t('flow.insp.deleteAgent')}>{t('flow.insp.delete')}</button
-					>
-				</div>
-				<div class="help">{t('flow.insp.agentPanelHelp')}</div>
-				<div class="field">
-					<label for="ag-name">{t('flow.insp.agentName')}</label>
-					<input
-						id="ag-name"
-						class="mono"
-						value={a.name}
-						onchange={(e) =>
-							renamed(e.currentTarget, a.name, renameAgentTo(a.name, e.currentTarget.value))}
-					/>
-					<div class="help">{t('flow.insp.agentRenameHelp')}</div>
-				</div>
-				<div class="field">
-					<label for="ag-desc">{t('flow.insp.description')}</label>
-					<input
-						id="ag-desc"
-						value={a.description ?? ''}
-						placeholder={t('flow.insp.agentDescPlaceholder')}
-						oninput={(e) => {
-							a.description = e.currentTarget.value || undefined;
-							onchange();
-						}}
-					/>
-				</div>
-				<Toggle
-					checked={!!a.read_only}
-					label={t('flow.insp.readOnly')}
-					title={t('flow.insp.readOnlyTitle')}
-					onchange={(v) => {
-						a.read_only = v || undefined;
-						onchange();
-					}}
-				/>
-				<Toggle
-					checked={!!a.allow_bash}
-					label={t('flow.insp.allowBash')}
-					title={t('flow.insp.allowBashTitle')}
-					onchange={(v) => {
-						a.allow_bash = v || undefined;
-						onchange();
-					}}
-				/>
-				<div class="field">
-					<label for="ag-prompt">{t('flow.insp.prompt')}</label>
-					<textarea
-						id="ag-prompt"
-						class="mono prompt"
-						rows="12"
-						bind:value={a.prompt}
-						oninput={onchange}
-						placeholder={t('flow.insp.promptPlaceholder')}></textarea>
-					<div class="help">{t('flow.insp.promptHelp')}</div>
-				</div>
-				<div class="grp">
-					<div class="lbl">{t('flow.insp.inputs')}</div>
-					<div class="help">{t('flow.insp.agentInputsHelp')}</div>
-				</div>
-				{#each a.inputs ?? [] as d, i (i)}
-					<div class="io-bind card-in port">
-						<div class="row nowrap">
-							<input
-								class="mono grow"
-								value={d.name}
-								aria-label={t('flow.insp.portName')}
-								onchange={(e) =>
-									renamed(
-										e.currentTarget,
-										d.name,
-										renamePort(a, 'input', d.name, e.currentTarget.value)
-									)}
-							/>
-							<button class="btn-sm btn-ghost" onclick={() => removeInput(a, d.name)}
-								>{t('flow.insp.removePort')}</button
-							>
-						</div>
-						<input
-							value={d.description ?? ''}
-							aria-label={t('flow.insp.description')}
-							placeholder={t('flow.insp.portDescPlaceholder')}
-							oninput={(e) => {
-								d.description = e.currentTarget.value || undefined;
-								onchange();
-							}}
-						/>
-						<Toggle
-							checked={!!d.optional}
-							label={t('flow.insp.optional')}
-							title={t('flow.insp.optionalTitle')}
-							onchange={(v) => {
-								d.optional = v || undefined;
-								onchange();
-							}}
-						/>
-					</div>
-				{/each}
-				<div class="chips">
-					<button class="btn-sm" onclick={() => addInput(a)}
-						>{I.add} {t('flow.insp.addInput')}</button
-					>
-				</div>
-				<div class="grp">
-					<div class="lbl">{t('flow.insp.outputs')}</div>
-					<div class="help">{t('flow.insp.agentOutputsHelp')}</div>
-				</div>
-				{#each a.outputs ?? [] as d, i (i)}
-					<div class="io-bind card-in port">
-						<div class="row nowrap">
-							<input
-								class="mono grow"
-								value={d.name}
-								aria-label={t('flow.insp.portName')}
-								onchange={(e) =>
-									renamed(
-										e.currentTarget,
-										d.name,
-										renamePort(a, 'output', d.name, e.currentTarget.value)
-									)}
-							/>
-							<button class="btn-sm btn-ghost" onclick={() => removeOutput(a, d.name)}
-								>{t('flow.insp.removePort')}</button
-							>
-						</div>
-						<input
-							class="mono"
-							value={d.path}
-							aria-label={t('flow.insp.portPath')}
-							placeholder="artifacts/…"
-							oninput={(e) => {
-								d.path = e.currentTarget.value.trim();
-								onchange();
-							}}
-						/>
-						<select
-							value={d.type ?? ''}
-							aria-label={t('flow.insp.portType')}
-							onchange={(e) => {
-								d.type = e.currentTarget.value || undefined;
-								onchange();
-							}}
-						>
-							{#each OUTPUT_TYPES as ty (ty)}<option value={ty}
-									>{t(`flow.insp.outputType.${ty || 'file'}`)}</option
-								>{/each}
-							{#if d.type && !(OUTPUT_TYPES as readonly string[]).includes(d.type)}
-								<option value={d.type}>{d.type}</option>
-							{/if}
-						</select>
-						<input
-							value={d.description ?? ''}
-							aria-label={t('flow.insp.description')}
-							placeholder={t('flow.insp.portDescPlaceholder')}
-							oninput={(e) => {
-								d.description = e.currentTarget.value || undefined;
-								onchange();
-							}}
-						/>
-					</div>
-				{/each}
-				<div class="chips">
-					<button class="btn-sm" onclick={() => addOutput(a)}
-						>{I.add} {t('flow.insp.addOutput')}</button
-					>
-				</div>
-				<div class="grp">
-					<div class="lbl">{t('flow.insp.runBy')}</div>
-					{#if used.length}
-						<div class="chips">
-							{#each used as u (u.label)}<button class="btn-sm mono" onclick={() => onopen(u.sel)}
-									>{u.label}</button
-								>{/each}
-						</div>
-					{:else}
-						<div class="help">{t('flow.insp.agentUnused')}</div>
-					{/if}
-				</div>
 			{:else if seqSel}
 				{@const q = seqSel}
 				{@const users = runners((x) => x.type === 'sequence' && x.sequence === q.id)}
@@ -1930,6 +1950,200 @@
 						<div class="help">{t('flow.insp.sequenceUnused')}</div>
 					{/if}
 				</div>
+			{:else if schemaSel}
+				{@const q = schemaSel}
+				{@const users = schemaUsers(doc, q.name)}
+				<div class="ih">
+					<span class="pill sm mono t-az">{t('flow.insp.kind.schema')}</span>
+					<span class="mono iid ell">{q.name}</span>
+					<span class="spacer"></span>
+					<button
+						class="btn-danger btn-sm"
+						disabled={users.length > 0}
+						onclick={() => deleteSchema(q.name)}
+						title={users.length ? t('flow.insp.schemaInUse') : t('flow.insp.deleteSchema')}
+						>{t('flow.insp.delete')}</button
+					>
+				</div>
+				<div class="help">{t('flow.insp.schemaPanelHelp')}</div>
+				<div class="field">
+					<label for="sc-name">{t('flow.insp.schemaName')}</label>
+					<input
+						id="sc-name"
+						class="mono"
+						value={q.name}
+						onchange={(e) =>
+							renamed(e.currentTarget, q.name, renameSchemaTo(q.name, e.currentTarget.value))}
+					/>
+					<div class="help">{t('flow.insp.schemaRenameHelp')}</div>
+				</div>
+				<div class="field">
+					<label for="sc-desc">{t('flow.insp.description')}</label>
+					<input
+						id="sc-desc"
+						value={q.description ?? ''}
+						placeholder={t('flow.insp.schemaDescPlaceholder')}
+						oninput={(e) => {
+							q.description = e.currentTarget.value || undefined;
+							onchange();
+						}}
+					/>
+				</div>
+				<div class="field">
+					<div class="lbl">{t('flow.insp.schemaBody')}</div>
+					<div class="schema-body card-in">
+						<YamlEditor bind:value={schemaText} label={t('flow.insp.schemaBody')} />
+					</div>
+					{#if schemaError}
+						<div class="help hue-amb">
+							{t('flow.insp.schemaBodyInvalid', { error: schemaError })}
+						</div>
+					{/if}
+				</div>
+				<div class="grp">
+					<div class="lbl">{t('flow.insp.schemaUsedBy')}</div>
+					{#if users.length}
+						<div class="chips">
+							{#each users as u, i (i)}{#if 'agent' in u}<button
+										class="btn-sm mono"
+										onclick={() => onopen({ kind: 'agent', name: u.agent })}
+										>{u.agent}.{u.port}</button
+									>{:else}<button
+										class="btn-sm mono"
+										onclick={() => onopen({ kind: 'stage', id: u.stage, sequence: u.sequence })}
+										>{u.stage}.{u.port}</button
+									>{/if}{/each}
+						</div>
+					{:else}
+						<div class="help">{t('flow.insp.schemaUnused')}</div>
+					{/if}
+				</div>
+			{:else if mcpSel}
+				{@const m = mcpSel}
+				{@const users = mcpUsers(doc, m.name)}
+				{@const kind = mcpKind(m)}
+				<div class="ih">
+					<span class="pill sm mono t-tea">{t('flow.insp.kind.mcp')}</span>
+					<span class="mono iid ell">{m.name}</span>
+					<span class="spacer"></span>
+					<button
+						class="btn-danger btn-sm"
+						onclick={() => deleteMCP(m.name)}
+						title={t('flow.insp.deleteMCP')}>{t('flow.insp.delete')}</button
+					>
+				</div>
+				<div class="help">{t('flow.insp.mcpPanelHelp')}</div>
+				<div class="field">
+					<label for="mc-name">{t('flow.insp.schemaName')}</label>
+					<input
+						id="mc-name"
+						class="mono"
+						value={m.name}
+						onchange={(e) =>
+							renamed(e.currentTarget, m.name, renameMCPTo(m.name, e.currentTarget.value))}
+					/>
+					<div class="help">{t('flow.insp.mcpRenameHelp')}</div>
+				</div>
+				<div class="field">
+					<label for="mc-desc">{t('flow.insp.description')}</label>
+					<input
+						id="mc-desc"
+						value={m.description ?? ''}
+						placeholder={t('flow.insp.mcpDescPlaceholder')}
+						oninput={(e) => {
+							m.description = e.currentTarget.value || undefined;
+							onchange();
+						}}
+					/>
+				</div>
+				<div class="field">
+					<label for="mc-kind">{t('flow.insp.mcpKind')}</label>
+					<select
+						id="mc-kind"
+						value={kind}
+						onchange={(e) => setMCPKind(m, e.currentTarget.value as MCPKind)}
+					>
+						{#each MCP_KINDS as k (k)}<option value={k}>{t(`flow.insp.mcpKind.${k}`)}</option
+							>{/each}
+					</select>
+				</div>
+				{#if kind === 'builtin'}
+					<div class="field">
+						<label for="mc-builtin">{t('flow.insp.mcpBuiltin')}</label>
+						<select
+							id="mc-builtin"
+							value={m.builtin ?? ''}
+							onchange={(e) => {
+								m.builtin = e.currentTarget.value;
+								onchange();
+							}}
+						>
+							{#each MCP_BUILTINS as b (b)}<option value={b}
+									>{t(`flow.insp.mcpBuiltin.${b}` as 'flow.insp.mcpBuiltin.browser')}</option
+								>{/each}
+							{#if m.builtin && !MCP_BUILTINS.includes(m.builtin)}
+								<option value={m.builtin}>{m.builtin}</option>
+							{/if}
+						</select>
+						<div class="help">{t('flow.insp.mcpBuiltinHelp')}</div>
+					</div>
+				{:else if kind === 'command'}
+					<div class="field">
+						<label for="mc-command">{t('flow.insp.mcpCommand')}</label>
+						<textarea
+							id="mc-command"
+							class="mono"
+							rows="3"
+							bind:value={mcpCommand}
+							placeholder={'npx\n-y\n@modelcontextprotocol/server-github'}></textarea>
+						<div class="help">{t('flow.insp.mcpCommandHelp')}</div>
+					</div>
+				{:else}
+					<div class="field">
+						<label for="mc-url">{t('flow.insp.mcpUrl')}</label>
+						<input
+							id="mc-url"
+							class="mono"
+							type="url"
+							value={m.url ?? ''}
+							placeholder="https://mcp.example.com/"
+							oninput={(e) => {
+								m.url = e.currentTarget.value.trim();
+								onchange();
+							}}
+						/>
+						<div class="help">{t('flow.insp.mcpUrlHelp')}</div>
+					</div>
+				{/if}
+				{#if kind !== 'builtin'}
+					<div class="field">
+						<div class="lbl">
+							{kind === 'url' ? t('flow.insp.mcpHeaders') : t('flow.insp.mcpEnv')}
+						</div>
+						<KeyValueEditor
+							bind:rows={mcpRows}
+							keyPlaceholder={kind === 'url' ? 'Authorization' : 'TOKEN'}
+							valuePlaceholder={kind === 'url' ? 'Bearer ${secrets.name}' : '${secrets.name}'}
+							keyWidth={120}
+							addLabel={kind === 'url' ? t('flow.insp.mcpAddHeader') : t('flow.insp.mcpAddEnv')}
+							invalid={badKeys}
+						/>
+						<div class="help">{t('flow.insp.mcpSecretsHelp')}</div>
+					</div>
+				{/if}
+				<div class="grp">
+					<div class="lbl">{t('flow.insp.mcpUsedBy')}</div>
+					{#if users.length}
+						<div class="chips">
+							{#each users as name (name)}<button
+									class="btn-sm mono"
+									onclick={() => onopen({ kind: 'agent', name })}>{name}</button
+								>{/each}
+						</div>
+					{:else}
+						<div class="help">{t('flow.insp.mcpUnused')}</div>
+					{/if}
+				</div>
 			{:else}
 				<div class="ih">
 					<span class="serif ttl">{t('flow.insp.formula')}</span>
@@ -1962,6 +2176,24 @@
 				<div class="lbl">{t('flow.insp.params')}</div>
 				<div class="help">{t('flow.insp.paramsHelp')}</div>
 				<ParamsEditor {doc} {onchange} />
+				<div class="lbl">{t('flow.insp.schemas')}</div>
+				<div class="help">{t('flow.insp.schemasHelp')}</div>
+				<div class="chips">
+					{#each doc.schemas ?? [] as q (q.name)}<button
+							class="btn-sm mono"
+							onclick={() => onopen({ kind: 'schema', name: q.name })}>{q.name}</button
+						>{/each}
+					<button class="btn-sm" onclick={newSchema}>{I.add} {t('flow.insp.addSchema')}</button>
+				</div>
+				<div class="lbl">{t('flow.insp.mcpServers')}</div>
+				<div class="help">{t('flow.insp.mcpServersHelp')}</div>
+				<div class="chips">
+					{#each doc.mcp_servers ?? [] as m (m.name)}<button
+							class="btn-sm mono"
+							onclick={() => onopen({ kind: 'mcp', name: m.name })}>{m.name}</button
+						>{/each}
+					<button class="btn-sm" onclick={newMCP}>{I.add} {t('flow.insp.addMCP')}</button>
+				</div>
 				<div class="lbl">{t('flow.insp.agents')}</div>
 				<div class="help">{t('flow.insp.agentsHelp')}</div>
 				<div class="chips">
@@ -2172,5 +2404,10 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+	}
+	.schema-body {
+		height: 260px;
+		padding: 0;
+		overflow: hidden;
 	}
 </style>

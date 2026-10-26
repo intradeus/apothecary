@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The live run (DESIGN 7.1): header, an alert banner when something needs
-	// a decision, and the window desk with the run's fourteen views.
+	// a decision, and the window desk with the run's fifteen views.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
@@ -24,7 +24,7 @@
 	import LogsView from './views/LogsView.svelte';
 	import EgressView from './views/EgressView.svelte';
 	import PortsView from './views/PortsView.svelte';
-	import ResourcesView from './views/ResourcesView.svelte';
+	import ServicesView from './views/ServicesView.svelte';
 	import VitalsView from './views/VitalsView.svelte';
 	import { TRANSCRIPT_TYPES } from './derive';
 	import { RunStore } from './store.svelte';
@@ -87,9 +87,16 @@
 				return rs.newDenials.length
 					? { count: rs.newDenials.length, alert: 'ros', hint: t('run.page.rulesLive') }
 					: { hint: t('run.page.rulesLive') };
+			case 'services': {
+				const svcs = rs.services?.services ?? [];
+				const up = svcs.filter((s) => s.state === 'healthy').length;
+				const hint = up ? t('run.page.servicesHint') : '';
+				return svcs.some((s) => s.state === 'unhealthy')
+					? { count: up || '', alert: 'ros', hint }
+					: { count: up || '', hint };
+			}
 			case 'ports':
 				return { count: rs.observed.length || '' };
-			case 'resources':
 			case 'vitals':
 				return { hint: t('run.page.sampled') };
 		}
@@ -192,12 +199,12 @@
 					<LogsView {rs} visible={p.visible} />
 				{:else if v === 'egress'}
 					<EgressView {rs} visible={p.visible} />
+				{:else if v === 'services'}
+					<ServicesView {rs} visible={p.visible} onstage={openStage} />
 				{:else if !rs.hasWorkspace && (v === 'ports' || rs.samples.length < 2)}
 					<NoWorkspace {rs} onrecord={openRecord} />
 				{:else if v === 'ports'}
 					<PortsView {rs} visible={p.visible} />
-				{:else if v === 'resources'}
-					<ResourcesView {rs} visible={p.visible} />
 				{:else if v === 'vitals'}
 					<VitalsView {rs} visible={p.visible} />
 				{/if}

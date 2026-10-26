@@ -11,13 +11,13 @@ components:
           type: array
         inputs:
           items:
-            $ref: '#/components/schemas/InputSig'
+            $ref: '#/components/schemas/PortSig'
           type: array
         needs:
           type: string
         outputs:
           items:
-            $ref: '#/components/schemas/OutputSig'
+            $ref: '#/components/schemas/PortSig'
           type: array
         provides:
           type: string
@@ -25,6 +25,10 @@ components:
           type: boolean
         requires:
           type: string
+        settings:
+          items:
+            $ref: '#/components/schemas/SettingSig'
+          type: array
         single:
           type: boolean
         slug:
@@ -74,6 +78,10 @@ components:
           type: array
         feedback:
           type: string
+        review:
+          items:
+            $ref: '#/components/schemas/ReviewComment'
+          type: array
       required:
         - answer
       type: object
@@ -220,6 +228,34 @@ components:
         - default
         - name
       type: object
+    BrowserConfig:
+      properties:
+        enabled:
+          type: boolean
+      type: object
+    BrowserInfo:
+      properties:
+        available:
+          type: boolean
+        container:
+          type: string
+        current:
+          type: string
+        enabled:
+          type: boolean
+        error:
+          type: string
+        image:
+          type: string
+        sessions:
+          type: integer
+        state:
+          type: string
+      required:
+        - available
+        - enabled
+        - sessions
+      type: object
     BuildCacheInfo:
       properties:
         available:
@@ -328,6 +364,32 @@ components:
       oneOf:
         - type: integer
         - type: string
+    DocJSON: {}
+    DocMCPServer:
+      properties:
+        builtin:
+          type: string
+        command:
+          items:
+            type: string
+          type: array
+        description:
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        headers:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          type: string
+        url:
+          type: string
+      required:
+        - name
+      type: object
     DocParam:
       properties:
         default:
@@ -338,6 +400,10 @@ components:
           items:
             type: string
           type: array
+        list:
+          type: boolean
+        type:
+          type: string
       required:
         - default
       type: object
@@ -359,6 +425,12 @@ components:
         - type: boolean
         - type: number
         - type: string
+        - items:
+            oneOf:
+              - type: boolean
+              - type: number
+              - type: string
+          type: array
     DocParams:
       additionalProperties:
         properties:
@@ -367,15 +439,60 @@ components:
               - type: boolean
               - type: number
               - type: string
+              - items:
+                  oneOf:
+                    - type: boolean
+                    - type: number
+                    - type: string
+                type: array
           description:
             type: string
           enum:
             items:
               type: string
             type: array
+          list:
+            type: boolean
+          type:
+            enum:
+              - bool
+              - int
+              - float
+              - string
+              - duration
+            type: string
         required:
           - default
         type: object
+      type: object
+    DocPorts:
+      additionalProperties:
+        properties:
+          description:
+            type: string
+          from:
+            type: string
+          optional:
+            type: boolean
+          schema:
+            type: string
+          to:
+            type: string
+          type:
+            type: string
+        type: object
+      type: object
+    DocSchema:
+      properties:
+        description:
+          type: string
+        json_schema:
+          $ref: '#/components/schemas/DocJSON'
+        name:
+          type: string
+      required:
+        - json_schema
+        - name
       type: object
     DocSequence:
       properties:
@@ -404,6 +521,8 @@ components:
           type: string
         description:
           type: string
+        do:
+          type: string
         each_repo:
           type: boolean
         for:
@@ -413,7 +532,7 @@ components:
         id:
           type: string
         input:
-          $ref: '#/components/schemas/DocIO'
+          $ref: '#/components/schemas/DocPorts'
         max_turns:
           $ref: '#/components/schemas/DocInt'
         model:
@@ -427,21 +546,25 @@ components:
         on_timeout:
           $ref: '#/components/schemas/DocEdge'
         output:
-          $ref: '#/components/schemas/DocIO'
+          $ref: '#/components/schemas/DocPorts'
         question:
           type: string
         run:
+          type: string
+        run_if:
           type: string
         run_ref:
           type: string
         sequence:
           type: string
+        service:
+          type: string
         timeout:
           type: string
         type:
           type: string
-        when:
-          type: string
+        with:
+          $ref: '#/components/schemas/DocIO'
       required:
         - id
       type: object
@@ -823,6 +946,10 @@ components:
           items:
             $ref: '#/components/schemas/DocStage'
           type: array
+        mcp_servers:
+          items:
+            $ref: '#/components/schemas/DocMCPServer'
+          type: array
         name:
           type: string
         operates_on:
@@ -833,6 +960,10 @@ components:
           type: array
         parameters:
           $ref: '#/components/schemas/DocParams'
+        schemas:
+          items:
+            $ref: '#/components/schemas/DocSchema'
+          type: array
         sequences:
           items:
             $ref: '#/components/schemas/DocSequence'
@@ -908,6 +1039,13 @@ components:
       type: object
     IOPair:
       properties:
+        IsList:
+          type: boolean
+        Items:
+          items:
+            type: string
+          nullable: true
+          type: array
         Line:
           type: integer
         Name:
@@ -915,6 +1053,8 @@ components:
         Value:
           type: string
       required:
+        - IsList
+        - Items
         - Line
         - Name
         - Value
@@ -927,29 +1067,11 @@ components:
           type: string
         optional:
           type: boolean
+        schema:
+          type: string
+        type:
+          type: string
       required:
-        - name
-      type: object
-    InputSig:
-      properties:
-        default:
-          type: string
-        default_path:
-          type: string
-        description:
-          type: string
-        kind:
-          type: string
-        name:
-          type: string
-        required:
-          type: boolean
-        values:
-          items:
-            type: string
-          type: array
-      required:
-        - kind
         - name
       type: object
     Integration:
@@ -1222,28 +1344,11 @@ components:
           type: string
         name:
           type: string
-        path:
+        schema:
           type: string
         type:
           type: string
       required:
-        - name
-        - path
-      type: object
-    OutputSig:
-      properties:
-        description:
-          type: string
-        kind:
-          type: string
-        name:
-          type: string
-        path:
-          type: string
-        sentinel:
-          type: string
-      required:
-        - kind
         - name
       type: object
     Param:
@@ -1257,6 +1362,8 @@ components:
             type: string
           type: array
         known:
+          type: boolean
+        list:
           type: boolean
         name:
           type: string
@@ -1462,6 +1569,10 @@ components:
         raised_at:
           format: date-time
           type: string
+        review:
+          items:
+            $ref: '#/components/schemas/ReviewComment'
+          type: array
         run_id:
           type: string
         stage_id:
@@ -1488,6 +1599,22 @@ components:
       required:
         - port
         - url
+      type: object
+    PortSig:
+      properties:
+        default_path:
+          type: string
+        description:
+          type: string
+        name:
+          type: string
+        required:
+          type: boolean
+        type:
+          type: string
+      required:
+        - name
+        - type
       type: object
     PreflightResult:
       properties:
@@ -1600,6 +1727,24 @@ components:
         - repo
         - repo_account_id
         - workspace
+      type: object
+    ProjectSecret:
+      properties:
+        name:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - name
+        - updated_at
+      type: object
+    ProjectSecretRequest:
+      properties:
+        value:
+          type: string
+      required:
+        - value
       type: object
     RaisePingRequest:
       properties:
@@ -1719,6 +1864,28 @@ components:
         - net_tx
         - pids
       type: object
+    ReviewComment:
+      properties:
+        attachment_ids:
+          items:
+            type: string
+          type: array
+        body:
+          type: string
+        end_line:
+          type: integer
+        heading:
+          type: string
+        path:
+          type: string
+        quote:
+          type: string
+        start_line:
+          type: integer
+      required:
+        - body
+        - path
+      type: object
     RunCheckout:
       properties:
         branch:
@@ -1837,6 +2004,21 @@ components:
       required:
         - samples
       type: object
+    RunServices:
+      properties:
+        error:
+          type: string
+        services:
+          items:
+            $ref: '#/components/schemas/ServiceInfo'
+          nullable: true
+          type: array
+        workspace:
+          type: boolean
+      required:
+        - services
+        - workspace
+      type: object
     RunView:
       properties:
         adopted:
@@ -1924,6 +2106,135 @@ components:
           type: string
       required:
         - text
+      type: object
+    ServiceConfig:
+      properties:
+        description:
+          type: string
+        health:
+          $ref: '#/components/schemas/ServiceHealth'
+        name:
+          type: string
+        ports:
+          items:
+            $ref: '#/components/schemas/ServicePort'
+          type: array
+        start:
+          type: string
+        stop:
+          type: string
+      required:
+        - name
+        - start
+      type: object
+    ServiceHealth:
+      properties:
+        command:
+          type: string
+        http:
+          type: string
+        interval:
+          type: string
+        tcp:
+          type: integer
+        timeout:
+          type: string
+      type: object
+    ServiceInfo:
+      properties:
+        by:
+          type: string
+        description:
+          type: string
+        ended_at:
+          format: date-time
+          type: string
+        exit_code:
+          nullable: true
+          type: integer
+        flow_phase:
+          type: string
+        healthy:
+          type: boolean
+        healthy_at:
+          format: date-time
+          type: string
+        last_error:
+          type: string
+        last_probe_at:
+          format: date-time
+          type: string
+        last_probe_ok:
+          type: boolean
+        name:
+          type: string
+        ports:
+          items:
+            $ref: '#/components/schemas/ServicePortInfo'
+          nullable: true
+          type: array
+        probe:
+          type: string
+        stage_id:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        state:
+          type: string
+      required:
+        - healthy
+        - last_probe_ok
+        - name
+        - ports
+        - state
+      type: object
+    ServicePort:
+      properties:
+        label:
+          type: string
+        path:
+          type: string
+        port:
+          type: integer
+      required:
+        - port
+      type: object
+    ServicePortInfo:
+      properties:
+        address:
+          type: string
+        label:
+          type: string
+        path:
+          type: string
+        port:
+          type: integer
+        url:
+          type: string
+      required:
+        - address
+        - port
+      type: object
+    SettingSig:
+      properties:
+        default:
+          type: string
+        description:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        required:
+          type: boolean
+        values:
+          items:
+            type: string
+          type: array
+      required:
+        - kind
+        - name
       type: object
     Settings:
       properties:
@@ -2048,6 +2359,10 @@ components:
         inputs:
           items:
             $ref: '#/components/schemas/InputDecl'
+          type: array
+        mcp:
+          items:
+            type: string
           type: array
         name:
           type: string
@@ -2338,6 +2653,8 @@ components:
           items:
             type: string
           type: array
+        browser:
+          $ref: '#/components/schemas/BrowserConfig'
         code_server_extensions:
           items:
             type: string
@@ -2361,6 +2678,10 @@ components:
         extra_domains:
           items:
             type: string
+          type: array
+        services:
+          items:
+            $ref: '#/components/schemas/ServiceConfig'
           type: array
       type: object
     WorkspaceDiff:
@@ -3751,6 +4072,38 @@ paths:
       summary: Branches of the project's repository
       tags:
         - projects
+  /api/projects/{id}/browser:
+    get:
+      description: One container per project, a Chromium per agent session (the builtin browser MCP server). The toggle is the project's workspace.browser.enabled; this says whether the container runs, with what image, and how many sessions use it.
+      operationId: getProjectBrowser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserInfo'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: 'The project''s browser: its toggle and its container'
+      tags:
+        - projects
   /api/projects/{id}/build-cache:
     delete:
       description: 'Safe: the next build repopulates it, so the cost of clearing needlessly is one slow build.'
@@ -4524,6 +4877,124 @@ paths:
             application/json: {}
           description: error
       summary: Check a project is ready to run, step by step
+      tags:
+        - projects
+  /api/projects/{id}/secrets:
+    get:
+      description: What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.
+      operationId: listProjectSecrets
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ProjectSecret'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The project's secrets, by name
+      tags:
+        - projects
+  /api/projects/{id}/secrets/{name}:
+    delete:
+      description: A flow that reads it is refused at its next run's creation.
+      operationId: deleteProjectSecret
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Remove one project secret
+      tags:
+        - projects
+    put:
+      description: Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.
+      operationId: setProjectSecret
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSecretRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectSecret'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Set one project secret
       tags:
         - projects
   /api/runs:
@@ -5568,6 +6039,200 @@ paths:
       summary: 'Try again: re-enter the failed stage in the same workspace'
       tags:
         - runs
+  /api/runs/{id}/services:
+    get:
+      description: Live state read from the workspace's supervisor on each call — poll it while the pane is open; service_started, service_ready, service_stopped and service_failed also arrive on the run's event stream. A healthy service's ports carry their preview links. workspace is false when the run has none; error says its services could not be read just now.
+      operationId: getRunServices
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunServices'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The project's services and how each stands in the run's workspace
+      tags:
+        - workspace
+  /api/runs/{id}/services/{name}/logs:
+    get:
+      operationId: getRunServiceLogs
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: lines (default 200, at most 5000)
+          in: query
+          name: tail
+          schema:
+            type: integer
+      responses:
+        "204":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: The last lines of a service's output
+      tags:
+        - workspace
+  /api/runs/{id}/services/{name}/restart:
+    post:
+      operationId: restartRunService
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceInfo'
+          description: Accepted
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Stop a service and start it again
+      tags:
+        - workspace
+  /api/runs/{id}/services/{name}/start:
+    post:
+      description: 'Returns once the workspace runs it (already up: left alone); whether it comes up is its state on the services list, and service_ready or service_failed on the event stream. A service started by hand stays up until someone stops it or the workspace goes. 409 when the run has no workspace.'
+      operationId: startRunService
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceInfo'
+          description: Accepted
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Start a service by hand
+      tags:
+        - workspace
+  /api/runs/{id}/services/{name}/stop:
+    post:
+      operationId: stopRunService
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceInfo'
+          description: Accepted
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      summary: Stop a service, whoever started it
+      tags:
+        - workspace
   /api/runs/{id}/workspace-log:
     get:
       operationId: getWorkspaceLog

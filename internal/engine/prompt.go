@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"apothecary/internal/agentspec"
@@ -27,10 +28,11 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 			// was asked, and a path in the prompt that resolves to nothing is
 			// worse than no path at all.
 			kind := ""
+			var shown []string
 			if r := x.rs.raisedPings[a.id]; r != nil {
-				kind = r.Kind()
+				kind, shown = r.Kind(), r.Files
 			}
-			text = composeAnswerText(kind, a.answer.Answer, a.answer.Feedback, x.pingAnswerPaths(a.id))
+			text = composeAnswerText(kind, a.answer.Answer, a.answer.Feedback, shown, a.answer.Review, x.pingAnswerFiles(a.id))
 		}
 		fmt.Fprintf(&b, "\nYou asked: %s\nThey answered: %s\n", a.question, text)
 	}
@@ -53,52 +55,70 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 }
 
 // assemblePrompt builds the agent prompt per the §3.2 template. The ticket
-// always forms the TASK section. Each of the stage's bound inputs renders as a
-// named, described INPUT section (FLOWLANG §4); a git sentinel is a file
-// list, never the full diff.
+// is assembled from the stage's ports (FLOWLANG §4): each input renders by
+// its type — a ticket as the TASK section, a file as its content, a
+// changeset as its file list (never the full diff), a failure or a verdict
+// as what the entering edge carried — and the outputs as the OUTPUT CONTRACT.
+// An agent sees the ticket only through a ticket port.
 func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	rs := x.rs
 	var b strings.Builder
-	fmt.Fprintf(&b, "# TASK\n%s\n\n%s\n", rs.view.TicketTitle, rs.view.TicketGoal)
-
-	// Per-attempt direction from the human (ticket goal stays the spec; this
-	// is additive — "last try broke the router, use the middleware instead").
-	if rs.view.RunGoal != "" {
-		fmt.Fprintf(&b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.view.RunGoal)
-	}
-
 	spec := rs.fl.Agent(st.Agent)
 	for _, in := range st.Inputs {
-		if flow.IsFeedSentinel(in.Value) {
+		if flow.IsEdgeSource(in.Value) {
 			// The content of the edge that re-entered this stage. Only one of
 			// $DECISION / $FAILURE can be filled at a time (the edge kind
 			// decides which), and neither on a first attempt.
 			if in.Value != rs.feedSentinel || rs.feed == "" {
 				continue
 			}
+			// Both were capped where they were taken: a failure to its tail,
+			// a verdict to its head.
 			fmt.Fprintf(&b, "# INPUT: %s%s (%s)\n%s\n",
-				in.Name, inputDesc(spec, in.Name), attemptOf(iter, rs.feedAttempts), tail(rs.feed, 8<<10))
+				in.Name, inputDesc(spec, in.Name), attemptOf(iter, rs.feedAttempts), strings.TrimRight(rs.feed, "\n"))
+			continue
+		}
+		if name := flow.SourceService(in.Value); name != "" {
+			fmt.Fprintf(&b, "# INPUT: %s%s (link)\n%s\n", in.Name, inputDesc(spec, in.Name), x.serviceInput(name))
 			continue
 		}
 		switch in.Value {
-		case flow.SentinelDiffTarget:
+		case flow.SourceTicket:
+			x.ticketSection(&b)
+			continue
+		case flow.SourceCIFailure:
+			fmt.Fprintf(&b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, inputDesc(spec, in.Name), ciFailureText(rs.ci))
+			continue
+		case flow.SourceMRURL, flow.SourceWorkspace:
+			if link := x.sourceLink(in.Value); link != "" {
+				fmt.Fprintf(&b, "# INPUT: %s%s (link)\n%s\n", in.Name, inputDesc(spec, in.Name), link)
+			}
+			continue
+		case flow.SourceDiffTarget:
 			fmt.Fprintf(&b, "# INPUT: %s%s (git diff --name-status <target>...HEAD: what the branch changes against its target)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
 				in.Name, inputDesc(spec, in.Name), x.diffTarget())
 			continue
-		case flow.SentinelDiffPhase:
+		case flow.SourceDiffPhase:
 			fmt.Fprintf(&b, "# INPUT: %s%s (git diff --name-status <phase start>...HEAD: what this phase committed since it began)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
 				in.Name, inputDesc(spec, in.Name), x.diffPhase())
 			continue
-		case flow.SentinelStatus:
+		case flow.SourceStatus:
 			fmt.Fprintf(&b, "# INPUT: %s%s (git status --short)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
 				in.Name, inputDesc(spec, in.Name), x.statusFiles())
 			continue
 		}
-		content := "(artifact missing)"
-		if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, in.Value); err == nil {
+		path := flow.FilePath(in.Value)
+		if in.Type == agentspec.TypeFiles {
+			// A directory: what it holds, by name — screenshots are read with
+			// the agent's own tools, never pasted into a prompt.
+			fmt.Fprintf(&b, "# INPUT: %s%s (files: %s)\n%s", in.Name, inputDesc(spec, in.Name), path, x.filesListing(path))
+			continue
+		}
+		content := "(file missing)"
+		if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, path); err == nil {
 			content = tail(string(data), 16<<10)
 		}
-		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), in.Value, content)
+		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), path, content)
 	}
 
 	if sec := x.subjectSection(); sec != "" {
@@ -116,14 +136,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		b.WriteString("Change only the repositories the task needs; each one that changes gets its own merge request.\n")
 	}
 
-	if goals := x.goalAttachments(); len(goals) > 0 {
-		b.WriteString("# ATTACHED FILES\nThe human attached these files to the task; read them with your tools:\n")
-		for _, a := range goals {
-			fmt.Fprintf(&b, "- %s (%s, %s)\n", attachmentPath(a), a.Filename, a.Mime)
-		}
-	}
-
-	outs := flow.EffectiveOutputs(st, spec)
+	outs := st.Outputs
 	if len(outs) > 0 {
 		b.WriteString("# OUTPUT CONTRACT\n")
 		b.WriteString("Before finishing you MUST write these files (relative to repo root):\n")
@@ -134,13 +147,82 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 				fmt.Fprintf(&b, "- %s — %s%s\n", o.Value, o.Name, outputDesc(spec, o.Name))
 			}
 		}
-		// A verdict output is a file like any other, plus a shape contract.
-		if vpath := flow.VerdictPath(st, spec); vpath != "" {
-			fmt.Fprintf(&b, "%s must contain exactly {\"verdict\":\"APPROVE\"|\"REJECT\",\"comments\":[\"...\"]} — comments required when REJECT.\n", vpath)
+		// A files output is a directory the agent fills.
+		for _, o := range outs {
+			if o.Type == agentspec.TypeFiles {
+				fmt.Fprintf(&b, "%s is a directory: write one or more files into it (it starts empty). Leaving it empty fails the stage.\n", o.Value)
+			}
+		}
+		// A verdict output is a file like any other, plus a shape contract
+		// (its schema, below).
+		if vpath := flow.TypedPath(st, agentspec.TypeVerdict); vpath != "" {
+			fmt.Fprintf(&b, "%s is your verdict: APPROVE or REJECT; a REJECT says why — a summary, comments, or both. A comment is a remark on the whole change, or {path, line, end_line, quote, body} on a file (line and end_line optional: without them, the whole file).\n", vpath)
 			b.WriteString("Printing the JSON in your reply does NOT satisfy this contract; the file itself must exist on disk.\n")
+		}
+		// So is every output with a structure: the agent sees exactly what the
+		// engine checks the file against when the stage ends.
+		for _, o := range outs {
+			for _, s := range rs.fl.PortSchemas(o) {
+				format := "JSON"
+				if !strings.HasSuffix(o.Value, ".json") {
+					format = "YAML"
+				}
+				fmt.Fprintf(&b, "%s must be %s satisfying this JSON Schema — it is checked when you finish, and a file that does not satisfy it fails the stage:\n%s\n",
+					o.Value, format, s.Source)
+			}
 		}
 	}
 	return b.String()
+}
+
+// promptFilesListed caps the files a files input lists in a prompt.
+const promptFilesListed = 50
+
+// filesListing renders a files input: each file it holds and its size, one
+// per line, at most promptFilesListed of them.
+func (x *exec) filesListing(dir string) string {
+	files, err := x.dirFiles(dir)
+	if err != nil || len(files) == 0 {
+		return "(no files)\n"
+	}
+	var b strings.Builder
+	for i, f := range files {
+		if i == promptFilesListed {
+			fmt.Fprintf(&b, "… and %d more\n", len(files)-i)
+			break
+		}
+		fmt.Fprintf(&b, "- %s (%s)\n", f.Path, humanSize(f.Size))
+	}
+	return b.String()
+}
+
+// humanSize renders a byte count the way a person reads one.
+func humanSize(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
+}
+
+// ticketSection renders a ticket port: the TASK — its title and goal — with
+// the human's direction for this attempt and the files attached to it.
+func (x *exec) ticketSection(b *strings.Builder) {
+	rs := x.rs
+	fmt.Fprintf(b, "# TASK\n%s\n\n%s\n", rs.view.TicketTitle, rs.view.TicketGoal)
+	// Per-attempt direction from the human (ticket goal stays the spec; this
+	// is additive — "last try broke the router, use the middleware instead").
+	if rs.view.RunGoal != "" {
+		fmt.Fprintf(b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.view.RunGoal)
+	}
+	if goals := x.goalAttachments(); len(goals) > 0 {
+		b.WriteString("# ATTACHED FILES\nThe human attached these files to the task; read them with your tools:\n")
+		for _, a := range goals {
+			fmt.Fprintf(b, "- %s (%s, %s)\n", attachmentPath(a), a.Filename, a.Mime)
+		}
+	}
 }
 
 // attemptOf renders the retry counter for a feed section. An unlimited link
@@ -193,25 +275,60 @@ func declDesc(desc string) string {
 
 // parseVerdict enforces the §3/§5.3 verdict contract:
 // {"verdict":"APPROVE"|"REJECT","comments":["..."]}, comments required on REJECT.
+// parseVerdict reads a verdict file: its shape is the type's JSON Schema
+// (flow.TypeSchema, checked with the outputs); here what a schema cannot
+// say — a rejection says why, a path stays in the repository, a range runs
+// forward.
 func parseVerdict(data []byte) (*ports.Verdict, error) {
 	var v struct {
-		Verdict  string   `json:"verdict"`
-		Comments []string `json:"comments"`
+		Verdict  string            `json:"verdict"`
+		Summary  string            `json:"summary"`
+		Comments []json.RawMessage `json:"comments"`
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return nil, fmt.Errorf("verdict.json unparsable: %w", err)
 	}
+	out := &ports.Verdict{Summary: strings.TrimSpace(v.Summary)}
 	switch v.Verdict {
 	case "APPROVE":
-		return &ports.Verdict{Approve: true, Comments: v.Comments}, nil
+		out.Approve = true
 	case "REJECT":
-		if len(v.Comments) == 0 {
-			return nil, fmt.Errorf("verdict.json: REJECT requires comments")
-		}
-		return &ports.Verdict{Approve: false, Comments: v.Comments}, nil
 	default:
 		return nil, fmt.Errorf("verdict.json: verdict must be APPROVE or REJECT, got %q", v.Verdict)
 	}
+	for i, raw := range v.Comments {
+		var remark string
+		if json.Unmarshal(raw, &remark) == nil {
+			if strings.TrimSpace(remark) == "" {
+				return nil, fmt.Errorf("verdict.json: comment %d is empty", i+1)
+			}
+			out.Comments = append(out.Comments, ports.VerdictComment{Body: remark})
+			continue
+		}
+		var c struct {
+			Path    string `json:"path"`
+			Line    int    `json:"line"`
+			EndLine int    `json:"end_line"`
+			Quote   string `json:"quote"`
+			Body    string `json:"body"`
+		}
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("verdict.json: comment %d is neither a remark nor {path, line, body}: %w", i+1, err)
+		}
+		switch {
+		case strings.TrimSpace(c.Body) == "":
+			return nil, fmt.Errorf("verdict.json: comment %d is empty", i+1)
+		case !filepath.IsLocal(c.Path):
+			return nil, fmt.Errorf("verdict.json: comment %d: path %q must be a file of the repository, relative to its root", i+1, c.Path)
+		case c.Line < 0 || (c.EndLine != 0 && (c.Line == 0 || c.EndLine < c.Line)):
+			return nil, fmt.Errorf("verdict.json: comment %d: lines %d–%d are not a range", i+1, c.Line, c.EndLine)
+		}
+		out.Comments = append(out.Comments, ports.VerdictComment{Path: c.Path, Line: c.Line, EndLine: c.EndLine, Quote: c.Quote, Body: c.Body})
+	}
+	if !out.Approve && len(out.Comments) == 0 && out.Summary == "" {
+		return nil, fmt.Errorf("verdict.json: REJECT requires comments, or a summary saying why")
+	}
+	return out, nil
 }
 
 // gitDiff is `git diff --name-status <base>...HEAD` in a checkout: the

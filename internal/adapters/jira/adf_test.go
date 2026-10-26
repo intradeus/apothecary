@@ -2,6 +2,7 @@ package jira
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,14 @@ func TestToMarkdownUnknownNodeKeepsText(t *testing.T) {
 	]}`
 	if got := ToMarkdown(json.RawMessage(doc)); got != "still here" {
 		t.Errorf("unknown node = %q", got)
+	}
+}
+
+// A markdown image becomes a link to it: ADF embeds media by Media API id,
+// which a URL is not.
+func TestFromMarkdownImageIsALink(t *testing.T) {
+	doc, _ := json.Marshal(FromMarkdown("See ![home](https://x/home.png)."))
+	if got := string(doc); !strings.Contains(got, `{"marks":[{"attrs":{"href":"https://x/home.png"},"type":"link"}],"text":"home","type":"text"}`) || strings.Contains(got, "!") {
+		t.Errorf("adf = %s", got)
 	}
 }

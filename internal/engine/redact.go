@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 )
 
 // redactor scrubs the secrets the engine itself injected into a workspace out
@@ -19,6 +20,10 @@ import (
 // tooling prints). Pattern-based scrubbing would be a second, independent
 // layer; this one closes the hole the factory itself opens.
 type redactor struct {
+	// mu guards values: a project secret first read when an agent stage
+	// starts (it was rotated since the run began) is learned mid-run, while
+	// other goroutines scrub.
+	mu sync.RWMutex
 	// values are the literal secrets to remove, longest first so a token that
 	// contains another (a URL embedding a password) is replaced whole rather
 	// than leaving a mangled remainder.
@@ -53,15 +58,15 @@ func newRedactor(res *Resolution, tokens ...string) *redactor {
 			}
 		}
 	}
+	if res != nil {
+		// Every project secret, not only those this run's flow reads: what
+		// an MCP server was handed is what its tool output may echo.
+		for name, v := range res.Secrets {
+			r.add(v, "secret:"+name)
+		}
+	}
 	for _, t := range tokens {
 		r.add(t, "run-token")
-	}
-	// Longest first: a value that contains another must be matched before its
-	// substring, or the outer match would find only a partially-scrubbed string.
-	for i := 1; i < len(r.values); i++ {
-		for j := i; j > 0 && len(r.values[j].secret) > len(r.values[j-1].secret); j-- {
-			r.values[j], r.values[j-1] = r.values[j-1], r.values[j]
-		}
 	}
 	return r
 }
@@ -105,12 +110,19 @@ func (r *redactor) add(secret, label string) {
 	if len(secret) < minSecretLen {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, v := range r.values {
 		if v.secret == secret {
 			return
 		}
 	}
 	r.values = append(r.values, redactValue{secret: secret, label: label})
+	// Longest first: a value that contains another must be matched before its
+	// substring, or the outer match would find only a partially-scrubbed string.
+	for j := len(r.values) - 1; j > 0 && len(r.values[j].secret) > len(r.values[j-1].secret); j-- {
+		r.values[j], r.values[j-1] = r.values[j-1], r.values[j]
+	}
 }
 
 // scrub replaces every known secret in s. Safe on a nil receiver so callers
@@ -119,6 +131,8 @@ func (r *redactor) scrub(s string) string {
 	if r == nil || s == "" {
 		return s
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, v := range r.values {
 		if strings.Contains(s, v.secret) {
 			s = strings.ReplaceAll(s, v.secret, "[redacted:"+v.label+"]")

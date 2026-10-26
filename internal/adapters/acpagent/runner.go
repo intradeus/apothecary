@@ -19,8 +19,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -73,12 +75,60 @@ func (r *Runner) client(ctx context.Context, env ports.EnvID) (*sidecar.Client, 
 	return sidecar.New(conn), nil
 }
 
-func (r *Runner) start(ctx context.Context, c *sidecar.Client) error {
-	_, err := c.Start(ctx, sidecar.StartRequest{Argv: []string{"bash", "-c", envPrelude + "exec " + r.p.Command}})
+func (r *Runner) start(ctx context.Context, c *sidecar.Client) (sidecar.StartResponse, error) {
+	st, err := c.Start(ctx, sidecar.StartRequest{Argv: []string{"bash", "-c", envPrelude + "exec " + r.p.Command}})
 	if err != nil {
-		return fmt.Errorf("%s: start agent: %w", r.p.Harness, err)
+		return st, fmt.Errorf("%s: start agent: %w", r.p.Harness, err)
 	}
-	return nil
+	return st, nil
+}
+
+// mcpServers maps a stage's MCP servers onto the session: ACP carries them
+// on session/new and session/load, so they belong to the session — the
+// agent's — rather than to a config file every agent in the workspace
+// reads. A remote server needs the agent to say it takes one (initialize:
+// agentCapabilities.mcpCapabilities.http); one that does not is refused
+// here, before the session, rather than silently dropped by the agent.
+func (r *Runner) mcpServers(init json.RawMessage, servers []ports.MCPServer) ([]sidecar.MCPServer, error) {
+	if len(servers) == 0 {
+		return nil, nil
+	}
+	var caps struct {
+		AgentCapabilities struct {
+			MCPCapabilities struct {
+				HTTP bool `json:"http"`
+			} `json:"mcpCapabilities"`
+		} `json:"agentCapabilities"`
+	}
+	_ = json.Unmarshal(init, &caps)
+	out := make([]sidecar.MCPServer, 0, len(servers))
+	for _, m := range servers {
+		if m.URL != "" {
+			if !caps.AgentCapabilities.MCPCapabilities.HTTP {
+				return nil, fmt.Errorf("%s: mcp server %q is remote (url), and this harness takes only local (command) MCP servers", r.p.Harness, m.Name)
+			}
+			out = append(out, sidecar.MCPServer{Name: m.Name, URL: m.URL, Headers: pairs(m.Headers)})
+			continue
+		}
+		if len(m.Command) == 0 {
+			return nil, fmt.Errorf("%s: mcp server %q has neither a command nor a url", r.p.Harness, m.Name)
+		}
+		out = append(out, sidecar.MCPServer{Name: m.Name, Command: m.Command[0], Args: m.Command[1:], Env: pairs(m.Env)})
+	}
+	return out, nil
+}
+
+// pairs lists a map as ACP's name/value pairs, in name order.
+func pairs(m map[string]string) []sidecar.EnvVar {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]sidecar.EnvVar, 0, len(m))
+	for k, v := range m {
+		out = append(out, sidecar.EnvVar{Name: k, Value: v})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
@@ -86,14 +136,19 @@ func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec,
 	if err != nil {
 		return ports.AgentResult{}, err
 	}
-	if err := r.start(ctx, c); err != nil {
+	st, err := r.start(ctx, c)
+	if err != nil {
+		return ports.AgentResult{}, err
+	}
+	mcp, err := r.mcpServers(st.Init, in.MCPServers)
+	if err != nil {
 		return ports.AgentResult{}, err
 	}
 	mode := ""
 	if r.p.Mode != nil {
 		mode = r.p.Mode(spec)
 	}
-	sess, err := c.Session(ctx, sidecar.SessionRequest{Mode: mode, Model: spec.Model})
+	sess, err := c.Session(ctx, sidecar.SessionRequest{Mode: mode, Model: spec.Model, MCPServers: mcp})
 	if err != nil {
 		return ports.AgentResult{}, fmt.Errorf("%s: %w", r.p.Harness, err)
 	}
@@ -116,12 +171,18 @@ func (r *Runner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID,
 	if err != nil {
 		return ports.AgentResult{}, err
 	}
-	if err := r.start(ctx, c); err != nil {
+	st, err := r.start(ctx, c)
+	if err != nil {
 		return ports.AgentResult{}, err
 	}
+	mcp, err := r.mcpServers(st.Init, in.MCPServers)
+	if err != nil {
+		return ports.AgentResult{Session: s}, err
+	}
 	// Live in the process: a no-op. Otherwise (the container restarted, the
-	// harness was swapped) the agent reloads it from its own store.
-	sess, err := c.Session(ctx, sidecar.SessionRequest{SessionID: string(s)})
+	// harness was swapped) the agent reloads it from its own store — with the
+	// stage's MCP servers again, which a reloaded session does not keep.
+	sess, err := c.Session(ctx, sidecar.SessionRequest{SessionID: string(s), MCPServers: mcp})
 	if err != nil {
 		return ports.AgentResult{Session: s}, fmt.Errorf("%s: resume session: %w", r.p.Harness, err)
 	}
@@ -197,7 +258,7 @@ func (r *Runner) AgentModels(ctx context.Context, env ports.EnvID) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	if err := r.start(ctx, c); err != nil {
+	if _, err := r.start(ctx, c); err != nil {
 		return nil, err
 	}
 	sess, err := c.Session(ctx, sidecar.SessionRequest{})

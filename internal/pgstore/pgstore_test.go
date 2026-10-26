@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func open(t *testing.T) *Store {
 	}
 	t.Cleanup(s.Close)
 	if _, err := s.pool.Exec(context.Background(),
-		`TRUNCATE events, runs, pings, channels, run_exposed_ports, attachments, snapshots, tickets CASCADE`); err != nil {
+		`TRUNCATE events, runs, pings, ping_review_comments, channels, run_exposed_ports, attachments, snapshots, tickets CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -184,6 +185,41 @@ func TestPingsProjection(t *testing.T) {
 	if _, err := s.GetPing(ctx, "nope"); !errors.Is(err, ErrPingNotFound) {
 		t.Errorf("missing ping err = %v", err)
 	}
+}
+
+// A review's comments are projected one row each, with the file they are
+// on, and come back with their ping — listed or fetched — and after a
+// rebuild.
+func TestPingReviewProjection(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	review := []event.ReviewComment{
+		{Path: "artifacts/plan.md", StartLine: 3, EndLine: 5, Heading: "Steps", Quote: "do it", Body: "how?", AttachmentIDs: []string{"a1"}},
+		{Path: "artifacts/shots/home.png", Body: "the header is cut"},
+	}
+	if _, err := s.Append(ctx, "r1",
+		&event.RunCreated{TicketTitle: "T"},
+		&event.PingRaised{PingID: "g1", Type: "gate", Question: "ok?", Files: []string{"artifacts/plan.md", "artifacts/shots/home.png"}},
+		&event.PingAnswered{PingID: "g1", Answer: "reject", Feedback: "two things", AttachmentIDs: []string{"a1"}, Review: review},
+	); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string) {
+		t.Helper()
+		one, err := s.GetPing(ctx, "g1")
+		if err != nil || !reflect.DeepEqual(one.Review, review) {
+			t.Errorf("%s: GetPing review = %+v, %v", when, one.Review, err)
+		}
+		list, _ := s.ListPings(ctx, "answered", 0)
+		if len(list) != 1 || !reflect.DeepEqual(list[0].Review, review) {
+			t.Errorf("%s: ListPings = %+v", when, list)
+		}
+	}
+	check("projected")
+	if _, err := s.RebuildProjections(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check("rebuilt")
 }
 
 func TestWatchReplaysThenStreams(t *testing.T) {

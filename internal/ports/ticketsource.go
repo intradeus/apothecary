@@ -166,6 +166,16 @@ type TicketWriter interface {
 	AddLink(ctx context.Context, key string, link TicketLink) error
 }
 
+// TicketAttacher is an OPTIONAL TicketWriter capability: the tracker hosts a
+// file for a comment to show (ticket_comment's attachments). Jira attaches
+// it to the issue; GitHub Issues uploads it beside the repository's own. A
+// tracker without it cannot take a comment with attachments, and the stage
+// fails saying so.
+type TicketAttacher interface {
+	// Attach uploads one file for the issue and says how a comment links it.
+	Attach(ctx context.Context, key, name, contentType string, data []byte) (Attachment, error)
+}
+
 // ErrStatusUnreachable: the status a flow names is not one the issue can
 // move to from where it is. Reachable lists what is, so the message names
 // the fix.

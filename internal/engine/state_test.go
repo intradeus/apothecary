@@ -15,7 +15,7 @@ version: 5
 parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
 main:
   - { id: build, type: command, run: "true" }
-  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } } }
   - { id: merged, type: wait, for: mr_merged }
   - { id: after, type: command, run: "true", on_success: done }
 watchers:
@@ -91,7 +91,7 @@ func TestReplayPinsThePhaseRunsNewestHead(t *testing.T) {
 	}
 	evs = append(evs, ev(&event.BranchPushed{Repo: "repo", Branch: "b", Tip: "p2"}))
 	if rs := replay(evs, fl); rs.phaseTip != "t1" || rs.phaseHead != "p2" {
-		t.Fatalf("after its push: tip %q head %q — $DIFF_PHASE still counts from t1, a merge pins p2", rs.phaseTip, rs.phaseHead)
+		t.Fatalf("after its push: tip %q head %q — run.git.diff_phase still counts from t1, a merge pins p2", rs.phaseTip, rs.phaseHead)
 	}
 	evs = append(evs,
 		ev(&event.PhaseCompleted{Phase: "conflicts", Subject: "repo"}),

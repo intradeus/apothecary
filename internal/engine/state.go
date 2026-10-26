@@ -76,6 +76,11 @@ type runState struct {
 	feed         string
 	feedSentinel string
 	feedAttempts int // total allowed attempts, for the "(iteration n of m)" line
+	// completedFeed is the verdict the last replayed stage_completed
+	// carries (an approval's), for recovery's routing of it.
+	completedFeed string
+	// ci is what failed in CI as the phase run started (run.ci.failure).
+	ci *event.CIReport
 
 	// lastFailure is the open stage_failed when the crash hit before its
 	// edge decision; recovery routes it directly (runloop.routeAfterFail).
@@ -229,6 +234,7 @@ type phaseRun struct {
 	roundThreads              []string
 	roundLoaded               bool
 	selectPing                *event.PingRaised
+	ci                        *event.CIReport
 	// parkedAt is the stage the run waits at (a wait or a gate), ping the
 	// decision a gate waits on, since when it parked (a wait's timeout runs
 	// from there).
@@ -247,7 +253,7 @@ func (rs *runState) park(stage, ping string, since time.Time) {
 		phase: rs.phase, subject: rs.subject, tip: rs.phaseTip, head: rs.phaseHead, pos: rs.pos, ph: rs.ph,
 		feed: rs.feed, feedSentinel: rs.feedSentinel, feedAttempts: rs.feedAttempts,
 		lastFailure: rs.lastFailure, gateAnswer: rs.gateAnswer,
-		roundThreads: rs.roundThreads, roundLoaded: rs.roundLoaded, selectPing: rs.selectPing,
+		roundThreads: rs.roundThreads, roundLoaded: rs.roundLoaded, selectPing: rs.selectPing, ci: rs.ci,
 		parkedAt: stage, ping: ping, since: since,
 	}
 	rs.idle = true
@@ -265,6 +271,7 @@ func (rs *runState) unpark(phase string) bool {
 	rs.feed, rs.feedSentinel, rs.feedAttempts = pr.feed, pr.feedSentinel, pr.feedAttempts
 	rs.lastFailure, rs.gateAnswer = pr.lastFailure, pr.gateAnswer
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = pr.roundThreads, pr.roundLoaded, pr.selectPing
+	rs.ci = pr.ci
 	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.idle = false
 	return true
@@ -278,6 +285,7 @@ func (rs *runState) anyParked() bool { return len(rs.parked) > 0 }
 // cleared. Shared by replay and the live start so they cannot disagree.
 func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	rs.phase, rs.subject, rs.phaseTip, rs.phaseHead, rs.idle = p.Phase, p.Subject, p.Tip, p.Tip, false
+	rs.ci = p.CI
 	rs.roundThreads, rs.roundLoaded, rs.selectPing = nil, false, nil
 	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
@@ -383,6 +391,14 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			delete(rs.pausedAsks, p.StageID)
 		case *event.StageCompleted:
 			rs.ph = phAfterComplete
+			// What the routing that follows (advance) sets: the verdict the
+			// approval carries, or nothing — a feed the stage was entered with
+			// is spent.
+			rs.completedFeed = p.Feed
+			rs.feed, rs.feedSentinel, rs.feedAttempts = p.Feed, "", 0
+			if p.Feed != "" {
+				rs.feedSentinel = flow.SourceVerdict
+			}
 			if p.Skipped {
 				rs.elided[p.StageID] = true
 			}
@@ -444,7 +460,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 				}
 				rs.ph = phDebug
 				rs.feed = p.Feed
-				rs.feedSentinel = flow.FeedSentinel(p.Edge)
+				rs.feedSentinel = flow.FeedSource(p.Edge)
 				rs.feedAttempts = 0
 				break
 			}
@@ -453,7 +469,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			}
 			rs.ph = phStart
 			rs.feed = p.Feed
-			rs.feedSentinel = flow.FeedSentinel(p.Edge)
+			rs.feedSentinel = flow.FeedSource(p.Edge)
 			rs.feedAttempts = p.Max + 1
 		case *event.PhaseStarted:
 			if rs.phase == "" && rs.anyStarted {
@@ -637,12 +653,8 @@ func needsWorkspace(st *flow.Stage) bool {
 		if act == nil || !act.Remote {
 			return true
 		}
-		for _, in := range st.Inputs {
-			if sig := act.Input(in.Name); sig != nil && sig.Kind == actionspec.KindFile {
-				return true
-			}
-		}
-		return false
+		// Every input of an action is a file it reads in the workspace.
+		return len(st.Inputs) > 0
 	}
 	return true
 }

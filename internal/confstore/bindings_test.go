@@ -14,13 +14,13 @@ version: 5
 parameters:
   harness: fake
   model: anthropic/claude-sonnet-4-6
-  verify: { default: verify, description: "the project command that runs the tests" }
-  gate: { default: true }
-  mode: { default: confirm, enum: [auto, confirm, manual] }
+  verify: { type: string, default: verify, description: "the project command that runs the tests" }
+  gate: { type: bool, default: true }
+  mode: { type: string, default: confirm, enum: [auto, confirm, manual] }
 agents: []
 main:
   - { id: check, type: command, run_ref: $verify }
-  - { id: ask, type: human_gate, when: $gate, question: "ok?", on_reject: abort }
+  - { id: ask, type: human_gate, run_if: $gate, question: "ok?", on_reject: abort }
 `
 
 // A binding is the project's layer over a flow's declared parameters: any

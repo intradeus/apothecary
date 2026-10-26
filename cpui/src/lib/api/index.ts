@@ -23,6 +23,7 @@ import type {
 	Automation,
 	AutomationDraft,
 	Branch,
+	BrowserStatus,
 	BuildCache,
 	ChannelEntry,
 	EgressAuditRow,
@@ -44,9 +45,11 @@ import type {
 	Model,
 	Ping,
 	PingPayload,
+	ReviewComment,
 	Preflight,
 	Project,
 	ProjectDraft,
+	ProjectSecret,
 	Repo,
 	ResourceSample,
 	Run,
@@ -57,6 +60,9 @@ import type {
 	RunInput,
 	RunPhase,
 	RunPorts,
+	RunServices,
+	ServiceConfig,
+	ServiceStatus,
 	Settings,
 	SignalSpec,
 	SourceTicket,
@@ -99,6 +105,35 @@ const ticketBody = (t: TicketDraft): Wire.TicketRequest => ({
 	source_key: t.sourceKey ?? ''
 });
 
+// Empty optionals stay off the wire: the engine reads an absent probe as
+// "up once started", and the name check is the engine's.
+const serviceBody = (s: ServiceConfig): Wire.ServiceConfig => {
+	const h = s.health;
+	const health: Wire.ServiceHealth = {
+		...(h?.http ? { http: h.http } : {}),
+		...(h?.tcp ? { tcp: h.tcp } : {}),
+		...(h?.command ? { command: h.command } : {}),
+		...(h?.timeout ? { timeout: h.timeout } : {}),
+		...(h?.interval ? { interval: h.interval } : {})
+	};
+	return {
+		name: s.name,
+		start: s.start,
+		...(s.description ? { description: s.description } : {}),
+		...(s.stop ? { stop: s.stop } : {}),
+		...(Object.keys(health).length ? { health } : {}),
+		...(s.ports.length
+			? {
+					ports: s.ports.map((p) => ({
+						port: p.port,
+						...(p.label ? { label: p.label } : {}),
+						...(p.path ? { path: p.path } : {})
+					}))
+				}
+			: {})
+	};
+};
+
 const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 	name: p.name,
 	repo_account_id: p.repoAccountId,
@@ -126,6 +161,8 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 		egress_allowed_cidrs: p.workspace.allowedCidrs,
 		egress_allowed_ports: p.workspace.allowedPorts,
 		code_server_extensions: p.workspace.codeServerExtensions,
+		services: p.workspace.services.map(serviceBody),
+		browser: { enabled: p.workspace.browserEnabled },
 		...(p.workspace.egressMode ? { egress_mode: p.workspace.egressMode } : {}),
 		editor: {
 			theme: p.workspace.editor?.theme,
@@ -205,6 +242,28 @@ export const runs = {
 		const r = await unwrap(gen.exposeRunPort({ path: { id }, body: { port } }));
 		return { port: r.port, url: r.url };
 	},
+
+	/** The workshop's services and how each stands in the run's workspace,
+	 *  read live on each call (poll while on screen). */
+	services: async (id: string): Promise<RunServices> =>
+		map.toRunServices(await unwrap(gen.getRunServices({ path: { id } }))),
+
+	/** Start a service by hand: it stays up until a person stops it or the
+	 *  workspace goes. Resolves once the workspace runs it (state starting);
+	 *  whether it comes up shows on the list. */
+	startService: async (id: string, name: string): Promise<ServiceStatus> =>
+		map.toServiceStatus(await unwrap(gen.startRunService({ path: { id, name } }))),
+
+	restartService: async (id: string, name: string): Promise<ServiceStatus> =>
+		map.toServiceStatus(await unwrap(gen.restartRunService({ path: { id, name } }))),
+
+	/** Stop a service, whoever started it. */
+	stopService: async (id: string, name: string): Promise<ServiceStatus> =>
+		map.toServiceStatus(await unwrap(gen.stopRunService({ path: { id, name } }))),
+
+	/** The last `tail` lines of a service's output (at most 5000). */
+	serviceLog: (id: string, name: string, tail = 200): Promise<string> =>
+		unwrap(gen.getRunServiceLogs({ path: { id, name }, query: { tail } })) as Promise<string>,
 
 	/** A stage's captured log (latest attempt). */
 	stageLog: (id: string, stage: string, n = 65536): Promise<string> =>
@@ -357,14 +416,24 @@ export const pings = {
 	payload: async (pingId: string): Promise<PingPayload> =>
 		map.toPingPayload(await unwrap(gen.getPingFiles({ path: { pid: pingId } }))),
 
-	answer: (pingId: string, answer: string, feedback?: string, attachmentIds?: string[]) =>
+	/** An answer; with `review`, the person's comments on the files shown
+	 *  (feedback is then the review's summary). A comment's attachments are
+	 *  among `attachmentIds`. */
+	answer: (
+		pingId: string,
+		answer: string,
+		feedback?: string,
+		attachmentIds?: string[],
+		review?: ReviewComment[]
+	) =>
 		unwrapVoid(
 			gen.answerPing({
 				path: { pid: pingId },
 				body: {
 					answer,
 					...(feedback ? { feedback } : {}),
-					...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {})
+					...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
+					...(review?.length ? { review: review.map(map.fromReviewComment) } : {})
 				}
 			})
 		)
@@ -474,7 +543,24 @@ export const projects = {
 
 	/** Empty it. The next build repopulates it, so the cost of being wrong is
 	 *  one slow build. */
-	clearBuildCache: (id: string) => unwrapVoid(gen.clearBuildCache({ path: { id } }))
+	clearBuildCache: (id: string) => unwrapVoid(gen.clearBuildCache({ path: { id } })),
+
+	/** The workshop's secrets: names and when each was last set, never a value. */
+	secrets: async (id: string): Promise<ProjectSecret[]> =>
+		many(await unwrap(gen.listProjectSecrets({ path: { id } })), map.toProjectSecret),
+
+	/** Set (or replace) a secret's value. */
+	setSecret: async (id: string, name: string, value: string): Promise<ProjectSecret> =>
+		map.toProjectSecret(
+			await unwrap(gen.setProjectSecret({ path: { id, name }, body: { value } }))
+		),
+
+	deleteSecret: (id: string, name: string) =>
+		unwrapVoid(gen.deleteProjectSecret({ path: { id, name } })),
+
+	/** The workshop's browser: its toggle, and whether its container runs. */
+	browser: async (id: string): Promise<BrowserStatus> =>
+		map.toBrowserStatus(await unwrap(gen.getProjectBrowser({ path: { id } })))
 };
 
 // --- integrations ------------------------------------------------------------

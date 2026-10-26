@@ -1,11 +1,11 @@
 // What the run page reads out of a run's event log. Pure functions: the
 // store holds the events, the views render what comes out of here.
 
-import type { Run, RunEvent } from '$lib/domain';
+import type { Run, RunEvent, ServiceStatus } from '$lib/domain';
 import { MAIN } from '$lib/flowdoc';
 import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/format';
 import { t } from '$lib/i18n/index.svelte';
-import { answerKindOf, toPingOption, type PingLike } from '$lib/ping';
+import { answerKindOf, toPingOption, toReviewComment, type PingLike } from '$lib/ping';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
 /** The provisioning log (clone + build + bootstrap) is filed under a
@@ -57,7 +57,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				files,
 				link: p.link as string | undefined,
 				// The engine's derivation for the inbox projection: the link,
-				// else the first file. With a file, PingCard offers review.
+				// else the first file. With files, PingCard offers review.
 				primaryRef: (p.link as string | undefined) || files?.[0],
 				options: ((p.options as unknown[] | undefined) ?? []).map(toPingOption),
 				phase: (p.phase as string | undefined) || undefined,
@@ -68,6 +68,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				status: a ? 'answered' : over ? 'withdrawn' : 'pending',
 				answer: a ? String(a.payload.answer ?? '') : undefined,
 				feedback: a ? (a.payload.feedback as string | undefined) : undefined,
+				review: ((a?.payload.review as unknown[] | undefined) ?? []).map(toReviewComment),
 				answeredAt: a?.ts,
 				attachmentIds: a ? (a.payload.attachment_ids as string[] | undefined) : undefined
 			} satisfies RunPing;
@@ -522,6 +523,42 @@ export function describe(e: RunEvent): Described {
 			return { text: t('run.event.archived'), tone: '' };
 		case 'env_destroyed':
 			return { text: t('run.event.destroyed'), tone: '' };
+		case 'service_started': {
+			const by =
+				p.by === 'stage' && p.stage_id
+					? t('run.event.serviceByStage', { stage: String(p.stage_id) })
+					: t('run.event.serviceByHuman');
+			return {
+				text: t(p.restart ? 'run.event.serviceRestarted' : 'run.event.serviceStarted', {
+					service: String(p.service),
+					by
+				}),
+				tone: 'info'
+			};
+		}
+		case 'service_ready':
+			return {
+				text: t('run.event.serviceReady', { service: String(p.service) }),
+				tone: 'ok'
+			};
+		case 'service_stopped':
+			return {
+				text: p.reason
+					? t('run.event.serviceStoppedWhy', {
+							service: String(p.service),
+							reason: String(p.reason)
+						})
+					: t('run.event.serviceStopped', { service: String(p.service) }),
+				tone: ''
+			};
+		case 'service_failed':
+			return {
+				text: t('run.event.serviceFailed', {
+					service: String(p.service),
+					reason: String(p.reason ?? '')
+				}),
+				tone: 'bad'
+			};
 		default:
 			return { text: e.type.replace(/_/g, ' '), tone: '' };
 	}
@@ -566,14 +603,27 @@ export const CODE_SERVER_PORT = 8471;
 
 /** The workspace's links: env_ready's, with app ports from the LIVE
  *  registry (env_ready's copies go stale when the engine restarts). */
-export function envLinks(events: RunEvent[], exposed: { port: number; url: string }[]): EnvLink[] {
+export function envLinks(
+	events: RunEvent[],
+	exposed: { port: number; url: string }[],
+	services: ServiceStatus[] = []
+): EnvLink[] {
 	const fromEvent =
 		(events.findLast((e) => e.type === 'env_ready')?.payload.links as EnvLink[] | undefined) ?? [];
 	const base = exposed.length ? fromEvent.filter((l) => l.kind !== 'app') : fromEvent;
+	// A healthy service's preview links, named for it; its port may also be
+	// on the exposed list — the service's name wins.
+	const fromServices = services.flatMap((s) =>
+		s.ports
+			.filter((p) => p.url)
+			.map((p) => ({ kind: `${s.name}${p.label ? ` · ${p.label}` : ''} :${p.port}`, url: p.url }))
+	);
+	const taken = new Set(fromServices.map((l) => l.url));
 	return [
 		...base,
+		...fromServices,
 		...exposed
-			.filter((p) => p.port !== CODE_SERVER_PORT)
+			.filter((p) => p.port !== CODE_SERVER_PORT && !taken.has(p.url))
 			.map((p) => ({ kind: `app :${p.port}`, url: p.url }))
 	];
 }

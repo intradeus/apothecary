@@ -1,10 +1,11 @@
-// Document review support (DESIGN3 §3): any file a ping hands over — a
-// markdown document, YAML, code — split into line-tracked blocks for
-// anchoring, and the deterministic composition of accumulated comments into
-// ONE feedback prompt for the existing on_reject feed path — the engine
-// learns nothing new.
+// Review support (DESIGN3 §3): the files a ping shows — a markdown
+// document, YAML, code, an image — each text one split into line-tracked
+// blocks for anchoring comments, and the comments themselves: kept as a
+// draft in this browser, sent as structure. The engine renders the review
+// into what the agent reads; nothing here writes the agent's prompt.
 import type { Token } from 'marked';
 import { marked } from '$lib/markdown';
+import type { PingFile, ReviewComment } from '$lib/domain';
 
 export interface DocBlock {
 	/** The block's own markdown (a fenced listing for a non-markdown file);
@@ -26,9 +27,12 @@ export interface CommentAnchor {
 	endOffset: number;
 }
 
-export interface ReviewComment {
-	/** Stable identity for the list (edits keep it); absent in old drafts. */
-	id?: string;
+/** One comment as the review page holds it: on one file, on the stretch of
+ *  text selected (startLine 0, no quote: the whole file). */
+export interface DraftComment {
+	/** Stable identity for the list (edits keep it); never sent. */
+	id: string;
+	path: string;
 	quote: string;
 	heading: string;
 	startLine: number;
@@ -36,6 +40,86 @@ export interface ReviewComment {
 	text: string;
 	anchor?: CommentAnchor;
 	files?: File[]; // per-comment attachments — live only, never persisted
+	/** A submitted comment's attachments (history). */
+	attachmentIds?: string[];
+}
+
+export const isWholeFile = (c: Pick<DraftComment, 'startLine'>) => !c.startLine;
+
+/** A fresh comment id (list identity only; never sent). */
+export const commentId = () => Math.random().toString(36).slice(2, 10);
+
+/** A draft comment as the answer carries it, its attachments by id. */
+export function commentToSend(c: DraftComment, attachmentIds: string[] = []): ReviewComment {
+	const whole = isWholeFile(c);
+	return {
+		path: c.path,
+		startLine: whole ? undefined : c.startLine,
+		endLine: whole ? undefined : c.endLine,
+		heading: c.heading || undefined,
+		quote: whole ? undefined : c.quote || undefined,
+		body: c.text.trim(),
+		attachmentIds
+	};
+}
+
+/** A submitted comment, held the way the page shows one. */
+export const commentAsShown = (c: ReviewComment, i: number): DraftComment => ({
+	id: `r${i}`,
+	path: c.path,
+	quote: c.quote ?? '',
+	heading: c.heading ?? '',
+	startLine: c.startLine ?? 0,
+	endLine: c.endLine ?? c.startLine ?? 0,
+	text: c.body,
+	attachmentIds: c.attachmentIds
+});
+
+// ---- the files a review shows ---------------------------------------------
+
+/** text: shown and commented line by line; image: shown, commented as a
+ *  whole; other: offered as a download. */
+export type FileKind = 'text' | 'image' | 'other';
+
+// The files the engine reads as pictures (mirror of the Go list): a comment
+// on one is about the whole image.
+const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp', '.ico'];
+export const isImagePath = (path: string) => {
+	const p = path.toLowerCase();
+	return IMAGE_EXTS.some((e) => p.endsWith(e));
+};
+
+// Plainly not text: never fetched to find out. Anything else is read and
+// sniffed (a NUL in its head makes it binary) — the snapshot's type comes
+// from the extension first, which says nothing useful of .ts or .lock.
+const BINARY_MIME =
+	/^(audio|font)\/|^video\/(?!mp2t)|^application\/(pdf|zip|gzip|x-tar|x-7z|wasm|vnd\.)/;
+
+/** What a shown file is, before its content is read. */
+export function fileKind(f: Pick<PingFile, 'path' | 'mime'>): FileKind {
+	if (isImagePath(f.path) || f.mime?.startsWith('image/')) return 'image';
+	return f.mime && BINARY_MIME.test(f.mime) ? 'other' : 'text';
+}
+
+/** A file's head holds a NUL: binary, however it is named. */
+export const looksBinary = (bytes: Uint8Array) => bytes.subarray(0, 8192).includes(0);
+
+/** How many comments each file carries, by path. */
+export const perFile = (comments: Pick<DraftComment, 'path'>[]) =>
+	comments.reduce<Record<string, number>>((m, c) => ((m[c.path] = (m[c.path] ?? 0) + 1), m), {});
+
+/** The comparator that orders comments as the review reads: by file, in the
+ *  order the files are shown; then whole-file comments; then by position. */
+export function byPlace(order: string[]) {
+	const at = (p: string) => {
+		const i = order.indexOf(p);
+		return i < 0 ? order.length : i;
+	};
+	return (a: DraftComment, b: DraftComment) =>
+		at(a.path) - at(b.path) ||
+		a.startLine - b.startLine ||
+		(a.anchor?.startOffset ?? 0) - (b.anchor?.startOffset ?? 0) ||
+		a.endLine - b.endLine;
 }
 
 /** Markdown is rendered; every other file (YAML, JSON, code, plain text) is
@@ -53,10 +137,6 @@ export function listing(src: string, path: string): string {
 	const lang = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? '';
 	return `${fence}${lang}\n${src.replace(/\n$/, '')}\n${fence}`;
 }
-
-/** The whole file as markdown to render: itself, or its listing. */
-export const asMarkdown = (src: string, path: string) =>
-	isMarkdown(path) ? src : listing(src, path);
 
 // docBlocks splits a file into the blocks comments anchor to. Markdown is
 // lexed into top-level blocks, each carrying its source line range and
@@ -146,67 +226,97 @@ export function rangeAt(root: Element, start: number, end: number): Range | null
 	return range;
 }
 
-// byPosition orders comments the way they read in the document: block order,
-// then position inside the block.
-export function byPosition(a: ReviewComment, b: ReviewComment): number {
-	return (
-		a.startLine - b.startLine ||
-		(a.anchor?.startOffset ?? 0) - (b.anchor?.startOffset ?? 0) ||
-		a.endLine - b.endLine
-	);
+// locate finds a submitted comment's quote again in its file's rendered
+// blocks (texts = each block's textContent), within the blocks its lines
+// span: the anchor the person's selection had, rebuilt from what was sent.
+// Whitespace is compared loosely — a selection's text breaks lines where the
+// blocks do. Null when the quote is not there to find.
+export function locate(
+	texts: string[],
+	blocks: DocBlock[],
+	c: Pick<DraftComment, 'quote' | 'startLine' | 'endLine'>
+): CommentAnchor | null {
+	const needle = c.quote.replace(/\s+/g, ' ').trim();
+	if (!needle || !blocks.length) return null;
+	const inLines = blocks
+		.map((b, i) => (b.endLine >= c.startLine && b.startLine <= c.endLine ? i : -1))
+		.filter((i) => i >= 0);
+	const from = inLines[0] ?? 0;
+	const to = inLines[inLines.length - 1] ?? blocks.length - 1;
+	// The blocks' text with each run of whitespace one space, and where each
+	// of its characters came from.
+	let hay = '';
+	const at: [number, number][] = [];
+	for (let b = from; b <= to; b++) {
+		const s = texts[b] ?? '';
+		for (let o = 0; o <= s.length; o++) {
+			const ch = o < s.length ? s[o] : ' '; // a block ends a word
+			if (!/\s/.test(ch)) {
+				hay += ch;
+				at.push([b, o]);
+			} else if (hay && !hay.endsWith(' ')) {
+				hay += ' ';
+				at.push([b, o]);
+			}
+		}
+	}
+	const i = hay.indexOf(needle);
+	if (i < 0) return null;
+	const [startBlock, startOffset] = at[i];
+	const [endBlock, end] = at[i + needle.length - 1];
+	return { startBlock, startOffset, endBlock, endOffset: end + 1 };
 }
 
-// composeFeedback renders the single structured feedback string (§3.2),
-// headed by the file it is about. Attachments are named, not inlined: the
-// files themselves are uploaded with the answer and delivered into the
-// workspace, so naming them here is how the agent correlates a file with the
-// comment that motivated it.
-export function composeFeedback(
-	path: string,
-	comments: ReviewComment[],
-	reviewFiles: string[] = []
-): string {
-	const n = `${comments.length} comment${comments.length === 1 ? '' : 's'}`;
-	const parts = [path ? `REVIEW OF ${path} — ${n}:` : `REVIEW — ${n}:`, ''];
-	comments.forEach((c, i) => {
-		const where = c.heading
-			? `§ ${c.heading}, lines ${c.startLine}–${c.endLine}`
-			: `lines ${c.startLine}–${c.endLine}`;
-		const quote = c.quote.length > 200 ? c.quote.slice(0, 200) + '…' : c.quote;
-		parts.push(`${i + 1}. [${where}]`);
-		for (const ql of quote.trim().split('\n')) parts.push(`   > ${ql}`);
-		parts.push(`   ${c.text.trim().split('\n').join('\n   ')}`);
-		if (c.files?.length) parts.push(`   attached: ${c.files.map((f) => f.name).join(', ')}`);
-		parts.push('');
-	});
-	if (reviewFiles.length) parts.push(`ATTACHED TO THE REVIEW: ${reviewFiles.join(', ')}`);
-	return parts.join('\n').trimEnd() + '\n';
-}
+// ---- drafts ---------------------------------------------------------------
 
+// A draft lives in this browser only: the comments, each on its file, and
+// the summary. A draft from before comments named their file (a bare list)
+// is read as being on the primary file.
 const draftKey = (pingId: string) => `doc-review-${pingId}`;
 
-/** A fresh comment id (list identity only; never sent). */
-export const commentId = () => Math.random().toString(36).slice(2, 10);
+export interface Draft {
+	comments: DraftComment[];
+	summary: string;
+}
 
-export function loadDraft(pingId: string): ReviewComment[] {
+export function loadDraft(pingId: string, primary: string): Draft {
 	try {
 		const raw = localStorage.getItem(draftKey(pingId));
-		const list = raw ? (JSON.parse(raw) as ReviewComment[]) : [];
-		return list.map((c) => ({ ...c, id: c.id ?? commentId() }));
+		const v = raw ? (JSON.parse(raw) as unknown) : null;
+		const list = (
+			Array.isArray(v) ? v : ((v as Draft | null)?.comments ?? [])
+		) as Partial<DraftComment>[];
+		const summary = Array.isArray(v) ? '' : ((v as Draft | null)?.summary ?? '');
+		return {
+			summary,
+			comments: list.map((c) => ({
+				quote: '',
+				heading: '',
+				startLine: 0,
+				endLine: 0,
+				text: '',
+				...c,
+				id: c.id ?? commentId(),
+				path: c.path ?? primary
+			}))
+		};
 	} catch {
-		return [];
+		return { comments: [], summary: '' };
 	}
 }
 
-export function saveDraft(pingId: string, comments: ReviewComment[]) {
+export function saveDraft(pingId: string, d: Draft) {
 	try {
-		if (comments.length === 0) localStorage.removeItem(draftKey(pingId));
+		if (d.comments.length === 0 && !d.summary.trim()) localStorage.removeItem(draftKey(pingId));
 		// Attachments are dropped: File handles can't be revived from JSON, and
 		// re-picking is better than a chip that points at nothing.
 		else
 			localStorage.setItem(
 				draftKey(pingId),
-				JSON.stringify(comments.map(({ files, ...rest }) => rest))
+				JSON.stringify({
+					summary: d.summary,
+					comments: d.comments.map(({ files, ...rest }) => rest)
+				})
 			);
 	} catch {
 		/* private mode etc. — drafts are best-effort */

@@ -68,8 +68,29 @@ func schema() obj {
 			},
 		},
 	}
-	bindings := func(desc string) obj {
-		return obj{"type": "object", "description": desc, "additionalProperties": obj{"type": "string"}}
+	allTypes := append(slices.Clone(agentspec.FileTypes), agentspec.ValueTypes...)
+	typeOrSchema := []any{obj{"required": []string{"type"}}, obj{"required": []string{"schema"}}}
+	ports := func(desc, ref string) obj {
+		return obj{"type": "object", "description": desc, "additionalProperties": obj{"$ref": "#/$defs/" + ref}}
+	}
+	portIn := obj{
+		"type": "object", "additionalProperties": false, "required": []string{"from"}, "anyOf": typeOrSchema,
+		"properties": obj{
+			"from":        obj{"type": "string", "description": "where it comes from: a path some stage writes, repo:<path> (a file of the repository), a value the engine provides, or run.service.<name> (a running service's address — the name may be a $parameter)", "examples": append(slices.Clone(EngineSources), ServiceSourcePrefix+"$app")},
+			"type":        stringsOf("what it is: a file type, or a value the engine provides", allTypes...),
+			"schema":      str("a schema declared under schemas, which the file holds"),
+			"description": str("what it is for — documentation"),
+			"optional":    obj{"type": "boolean", "description": "it may be empty: an edge source, or a file not written on every route here"},
+		},
+	}
+	portOut := obj{
+		"type": "object", "additionalProperties": false, "required": []string{"to"}, "anyOf": typeOrSchema,
+		"properties": obj{
+			"to":          str("the path it is written to, relative to the workspace"),
+			"type":        stringsOf("what the file is", agentspec.FileTypes...),
+			"schema":      str("a schema declared under schemas, which the file holds"),
+			"description": str("what it is for — documentation"),
+		},
 	}
 	stage := obj{
 		"type":                 "object",
@@ -77,17 +98,18 @@ func schema() obj {
 		"required":             []string{"id"},
 		"properties": obj{
 			"id":           withDesc(slug, "the stage's id: lowercase, unique in its chain (or its sequence)"),
-			"type":         stringsOf("what the stage is (a sequence stage has none: it names a sequence)", string(StageAgent), string(StageCommand), string(StageHumanGate), string(StageAction), string(StageWait)),
+			"type":         stringsOf("what the stage is (a sequence stage has none: it names a sequence)", string(StageAgent), string(StageCommand), string(StageHumanGate), string(StageAction), string(StageWait), string(StageService)),
 			"sequence":     str("run this sequence in the stage's place (a stage that does has no type)"),
 			"description":  str("what the stage is for — documentation only"),
-			"when":         str("run only when this holds: tracker, subject, or a bool $parameter — each may be negated, `not x`"),
+			"run_if":       str("run only when this holds: tracker, subject, or a bool $parameter — each may be negated, `not x`"),
 			"agent":        str("agent: the agent it runs, declared under agents"),
 			"model":        str("agent: the model, provider/model, or a $parameter (default: the model parameter)"),
 			"harness":      str("agent: the harness, or a $parameter (default: the harness parameter)"),
 			"max_turns":    intOrParam("agent: the turn budget (default: the max_turns parameter)"),
-			"timeout":      str("how long it may take: a duration (30m) or a $parameter — agent and command (default: the timeout parameter), wait (default: forever)"),
-			"input":        bindings("its inputs by name: an agent's declared inputs, a command's files, what a gate shows, an action's inputs"),
-			"output":       bindings("its outputs by name: an agent's declared outputs moved elsewhere, a command's files"),
+			"timeout":      str("how long it may take: a duration (30m) or a $parameter — agent and command (default: the timeout parameter), wait (default: forever), service (how long a start may take to be healthy; default: the service's own)"),
+			"input":        ports("what it reads, each port with where it comes from and what it is (a human_gate: the files and folders the person reviews, and at most one link)", "port_in"),
+			"output":       ports("what it writes, each port with where it goes and what it is", "port_out"),
+			"with":         obj{"type": "object", "description": "action: its settings — literals, or $parameters", "additionalProperties": obj{"type": "string"}},
 			"run":          str("command: a script, run in the workspace"),
 			"run_ref":      str("command: one of the project's commands, or a $parameter naming one"),
 			"each_repo":    obj{"type": "boolean", "description": "command: run once per repository of a multi-repo run"},
@@ -96,10 +118,12 @@ func schema() obj {
 			"auto_reject":  stringsOf("human_gate: a signal that rejects it for the person", observed...),
 			"action":       stringsOf("action: the action it performs", actionSlugs...),
 			"for":          stringsOf("wait: the signal it waits for", observed...),
-			"on_success":   str("where the chain goes once it succeeds: a stage of the same chain, end, done or abort (default: the next stage)"),
-			"on_fail":      obj{"$ref": "#/$defs/edge", "description": "where the run goes when it fails — carries $FAILURE"},
-			"on_reject":    obj{"$ref": "#/$defs/edge", "description": "agent (with a verdict) or human_gate: where the run goes on a rejection — carries $DECISION"},
-			"on_timeout":   obj{"$ref": "#/$defs/edge", "description": "agent, command or wait: where the run goes when it times out (default: on_fail)"},
+			"service":      str("service: one of the project's services, or a $parameter naming one (service: $app)"),
+			"do":           stringsOf("service: what to do with it (default: start — and wait until it is healthy)", ServiceDos...),
+			"on_success":   str("where the chain goes once it succeeds: a stage of the same chain, end, done or abort (default: the next stage); a gate's or a verdict's approval carries its comments there as edge.verdict"),
+			"on_fail":      obj{"$ref": "#/$defs/edge", "description": "where the run goes when it fails — carries edge.failure"},
+			"on_reject":    obj{"$ref": "#/$defs/edge", "description": "agent (with a verdict) or human_gate: where the run goes on a rejection — carries edge.verdict"},
+			"on_timeout":   obj{"$ref": "#/$defs/edge", "description": "agent, command, wait or service: where the run goes when it times out (default: on_fail)"},
 		},
 		"allOf": stageRules(),
 	}
@@ -137,18 +161,26 @@ func schema() obj {
 	for _, name := range KnownParamOrder {
 		known[name] = obj{"description": knownParamDocs[name]}
 	}
+	types := make([]string, len(ParamTypes))
+	for i, t := range ParamTypes {
+		types[i] = string(t)
+	}
+	scalar := obj{"type": []string{"string", "number", "boolean"}}
+	// A flow's own parameter declares what it holds; the engine's six take
+	// a bare default (their entries under properties).
 	param := obj{
-		"description": "a parameter: its default alone, or {default, description, enum} — read where $name appears",
+		"description": "a parameter of the flow's own: {type, list, default, description, enum} — read where $name appears",
 		"anyOf": []any{
-			obj{"type": []string{"string", "number", "boolean"}},
 			obj{
 				"type":                 "object",
 				"additionalProperties": false,
-				"required":             []string{"default"},
+				"required":             []string{"type", "default"},
 				"properties": obj{
-					"default":     obj{"type": []string{"string", "number", "boolean"}, "description": "its value unless a workshop or a run binds another; its type is the parameter's"},
+					"type":        stringsOf("what it holds", types...),
+					"list":        obj{"type": "boolean", "description": "any number of values of its type (default: one)"},
+					"default":     obj{"anyOf": []any{scalar, obj{"type": "array", "items": scalar}}, "description": "its value unless a workshop or a run binds another — read as its type; a list's is a list"},
 					"description": str("what the parameter is for"),
-					"enum":        obj{"type": "array", "items": obj{"type": "string"}, "description": "the values it may take (a string parameter)"},
+					"enum":        obj{"type": "array", "items": obj{"type": "string"}, "description": "the values it may take (a string parameter, or each item of a list of strings)"},
 				},
 			},
 		},
@@ -163,22 +195,27 @@ func schema() obj {
 			"read_only":   obj{"type": "boolean", "description": "deny the harness its edit and write tools"},
 			"allow_bash":  obj{"type": "boolean", "description": "let it run shell commands"},
 			"prompt":      str("its instructions; the inputs a stage binds and the outputs it must write are added to them"),
+			"mcp":         obj{"type": "array", "items": slug, "uniqueItems": true, "description": "the MCP servers it may use, declared under mcp_servers"},
 			"inputs": obj{"type": "array", "description": "what a stage running it binds by name", "items": obj{
 				"type": "object", "additionalProperties": false, "required": []string{"name"},
 				"properties": obj{
 					"name":        str("the input's name"),
 					"description": str("what it is — the agent reads this"),
-					"optional":    obj{"type": "boolean", "description": "a stage may leave it unbound (required to bind $FAILURE or $DECISION)"},
+					"optional":    obj{"type": "boolean", "description": "a stage running it may leave it out"},
+					"type":        stringsOf("what it reads", allTypes...),
+					"schema":      str("a schema declared under schemas, which the file holds"),
 				},
+				"anyOf": typeOrSchema,
 			}},
 			"outputs": obj{"type": "array", "description": "files it must write", "items": obj{
-				"type": "object", "additionalProperties": false, "required": []string{"name", "path"},
+				"type": "object", "additionalProperties": false, "required": []string{"name"},
 				"properties": obj{
 					"name":        str("the output's name"),
 					"description": str("what it is — the agent reads this"),
-					"path":        str("where it is written, relative to the workspace (a stage may move it)"),
-					"type":        stringsOf("what the file is: a verdict (APPROVE or REJECT, routed by on_reject), a review to post, a review round's replies", agentspec.OutputTypeVerdict, agentspec.OutputTypeReviewThreads, agentspec.OutputTypeReviewReplies),
+					"type":        stringsOf("what the file is: any file, or a structure something built in reads — a verdict (routed by on_reject), a review to post, a review round's replies, a commit message", agentspec.FileTypes...),
+					"schema":      str("a schema declared under schemas, which the file holds (beside a type it narrows it)"),
 				},
+				"anyOf": typeOrSchema,
 			}},
 		},
 	}
@@ -202,13 +239,34 @@ func schema() obj {
 				"additionalProperties": obj{"$ref": "#/$defs/param"},
 				"required":             []string{"harness", "model"},
 			},
+			"schemas": obj{"type": "array", "description": "the structures the flow's own files hold, named by the agents' inputs and outputs", "items": obj{
+				"type": "object", "additionalProperties": false, "required": []string{"name", "json_schema"},
+				"properties": obj{
+					"name":        obj{"type": "string", "pattern": `^[a-z0-9][a-z0-9._-]*$`, "description": "the schema's name, which an input's or an output's schema: names"},
+					"description": str("what the structure is"),
+					"json_schema": obj{"type": []string{"object", "boolean"}, "description": "a JSON Schema (draft 2020-12), written in YAML; $ref resolves inside it only"},
+				},
+			}},
+			"mcp_servers": obj{"type": "array", "description": "MCP servers the flow's agents may use, each agent listing its own under mcp", "items": obj{
+				"type": "object", "additionalProperties": false, "required": []string{"name"},
+				"oneOf": []any{obj{"required": []string{"builtin"}}, obj{"required": []string{"command"}}, obj{"required": []string{"url"}}},
+				"properties": obj{
+					"name":        withDesc(slug, "the server's name, which an agent's mcp lists"),
+					"description": str("what it offers"),
+					"builtin":     stringsOf("one apothecary runs: browser — the project's browser, reaching the run's services at localhost", MCPBuiltins...),
+					"command":     obj{"type": "array", "items": obj{"type": "string"}, "minItems": 1, "description": "a program speaking MCP on stdio, run in the workspace: [program, args…]"},
+					"url":         str("a remote MCP server (streamable HTTP)"),
+					"env":         obj{"type": "object", "additionalProperties": obj{"type": "string"}, "description": "command: its environment — ${secrets.<name>} reads a project secret"},
+					"headers":     obj{"type": "object", "additionalProperties": obj{"type": "string"}, "description": "url: request headers — ${secrets.<name>} reads a project secret"},
+				},
+			}},
 			"agents":    obj{"type": "array", "items": agent, "description": "the agents the flow carries"},
 			"sequences": obj{"type": "array", "description": "chains written once, run in place by a stage's sequence:", "items": obj{"type": "object", "additionalProperties": false, "required": []string{"id", "stages"}, "properties": obj{"id": withDesc(slug, "the sequence's id"), "description": str("what it is for"), "stages": obj{"type": "array", "items": obj{"$ref": "#/$defs/stage"}}}}},
 			"main":      obj{"type": "array", "items": obj{"$ref": "#/$defs/stage"}, "description": "the chain a run starts with"},
 			"watchers":  obj{"type": "array", "items": chain("watcher", false), "description": "chains run while the run is open, on what happens to its merge requests — never ending it"},
 			"outcomes":  obj{"type": "array", "items": chain("outcome", true), "description": "what ends the run: each fires once"},
 		},
-		"$defs": obj{"stage": stage, "edge": edge, "wait": wait, "param": param},
+		"$defs": obj{"stage": stage, "edge": edge, "wait": wait, "param": param, "port_in": portIn, "port_out": portOut},
 	}
 }
 
@@ -221,27 +279,63 @@ func stageRules() []any {
 			"then": obj{"required": []string{field}},
 		}
 	}
-	rules := []any{need(StageAgent, "agent"), need(StageAction, "action"), need(StageWait, "for")}
+	rules := []any{need(StageAgent, "agent"), need(StageAction, "action"), need(StageWait, "for"), need(StageService, "service")}
 	for _, a := range actionspec.Registry() {
-		inputs := obj{}
-		var required []string
-		for _, in := range a.Inputs {
-			p := obj{"type": "string", "description": in.Description}
-			if in.Kind == actionspec.KindEnum {
-				p["anyOf"] = []any{obj{"enum": slices.Clone(in.Values)}, obj{"pattern": `^\$[a-z][a-z0-9_]*$`}}
+		names := func(ps []actionspec.PortSig, required bool) (obj, []string) {
+			props := obj{}
+			var req []string
+			for _, pt := range ps {
+				props[pt.Name] = obj{"description": pt.Description}
+				if pt.Required || required {
+					req = append(req, pt.Name)
+				}
 			}
-			inputs[in.Name] = p
-			if in.Required {
-				required = append(required, in.Name)
+			return props, req
+		}
+		then := obj{}
+		inProps, inReq := names(a.Inputs, false)
+		input := obj{"type": "object", "properties": inProps, "additionalProperties": false}
+		if len(inReq) > 0 {
+			input["required"] = inReq
+		}
+		then["input"] = input
+		outProps, outReq := names(a.Outputs, true) // the action writes them all
+		output := obj{"type": "object", "properties": outProps, "additionalProperties": false}
+		if len(outReq) > 0 {
+			output["required"] = outReq
+		}
+		then["output"] = output
+		settings := obj{}
+		var required []string
+		for _, st := range a.Settings {
+			p := obj{"type": "string", "description": st.Description}
+			if st.Kind == actionspec.KindEnum {
+				p["anyOf"] = []any{obj{"enum": slices.Clone(st.Values)}, obj{"pattern": `^\$[a-z][a-z0-9_]*$`}}
+			}
+			settings[st.Name] = p
+			if st.Required {
+				required = append(required, st.Name)
 			}
 		}
-		input := obj{"type": "object", "properties": inputs, "additionalProperties": false}
+		with := obj{"type": "object", "properties": settings, "additionalProperties": false}
 		if len(required) > 0 {
-			input["required"] = required
+			with["required"] = required
+		}
+		then["with"] = with
+		rule := obj{"properties": then}
+		var needs []string
+		if len(inReq) > 0 {
+			needs = append(needs, "input")
+		}
+		if len(outReq) > 0 {
+			needs = append(needs, "output")
+		}
+		if len(needs) > 0 {
+			rule["required"] = needs
 		}
 		rules = append(rules, obj{
 			"if":   obj{"properties": obj{"action": obj{"const": a.Slug}}, "required": []string{"action"}},
-			"then": obj{"properties": obj{"input": input}},
+			"then": rule,
 		})
 	}
 	return rules

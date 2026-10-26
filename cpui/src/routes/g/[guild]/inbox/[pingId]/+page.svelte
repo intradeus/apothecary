@@ -1,8 +1,8 @@
-<!-- A ping by id (DESIGN 7.5). A pending ping with a file opens the document
-     review workbench; any other pending ping opens the inbox with it
-     selected; an answered one shows what was answered — and the document
-     "as reviewed", from its raise-time snapshot, long after the workspace is
-     gone (DESIGN-FILES §9). -->
+<!-- A ping by id (DESIGN 7.5). A pending ping with files opens the review
+     workbench; any other pending ping opens the inbox with it selected; an
+     answered one shows what was answered — and, when it showed files, the
+     review as submitted over the files "as reviewed", from their raise-time
+     snapshots, long after the workspace is gone (DESIGN-FILES §9). -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -11,13 +11,11 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
-	import { answerMeta, isDocumentPing } from '$lib/ping';
-	import { asMarkdown } from '$lib/docreview';
-	import type { Ping, PingFile } from '$lib/domain';
+	import { answerMeta, isDocumentPing, primaryFile } from '$lib/ping';
+	import type { Ping } from '$lib/domain';
 	import DocReview from '$lib/DocReview.svelte';
+	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
 	import Inbox from '$lib/inbox/Inbox.svelte';
-	import DocHead from '$lib/inbox/DocHead.svelte';
-	import AgentFiles from '$lib/inbox/AgentFiles.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
@@ -29,38 +27,15 @@
 	let ping = $state<Ping | null>(null);
 	let gone = $state(false);
 
-	let reviewed = $state<{ path: string; text: string } | null>(null);
-	let answeredFiles = $state<PingFile[]>([]);
-
-	async function loadAnswered(pid: string) {
-		try {
-			const { files } = await api.pings.payload(pid);
-			answeredFiles = files;
-			const primary = files[0];
-			if (primary?.captured && primary.snapshotId) {
-				const res = await fetch(api.files.snapshotUrl(primary.snapshotId));
-				if (res.ok) {
-					reviewed = { path: primary.path, text: await res.text() };
-				}
-			}
-		} catch {
-			/* no files — the answer alone renders */
-		}
-	}
-
 	// Keyed on the id: moving between pings reuses this component.
 	$effect(() => {
 		const id = page.params.pingId!;
 		ping = null;
 		gone = false;
-		reviewed = null;
-		answeredFiles = [];
 		api.pings
 			.get(id)
-			.then(async (p) => {
-				if (page.params.pingId !== id) return;
-				ping = p;
-				if (p.status !== 'pending') await loadAnswered(p.id);
+			.then((p) => {
+				if (page.params.pingId === id) ping = p;
 			})
 			.catch(() => {
 				if (page.params.pingId === id) gone = true;
@@ -74,10 +49,15 @@
 		{ label: ping ? shortId(ping.id, 'p_') : '…', mono: true }
 	]);
 	const verdict = $derived(ping ? answerMeta(ping) : answerMeta({}));
-	// The title's accent names the file under review, when there is one.
+	// The title's accent names the file under review — or how many.
 	const reviewing = $derived(
-		(ping?.primaryRef ?? ping?.files[0] ?? reviewed?.path ?? '').split('/').pop() ?? ''
+		!ping
+			? ''
+			: ping.files.length > 1
+				? t('page.ping.nFiles', { count: ping.files.length })
+				: (primaryFile(ping).split('/').pop() ?? '')
 	);
+	const showsFiles = $derived(!!ping && isDocumentPing(ping));
 </script>
 
 <svelte:head><title>{t('page.ping.docTitle')}</title></svelte:head>
@@ -107,6 +87,12 @@
 			{#if ping!.status === 'pending'}<span class="hue-amb">{t('page.ping.waiting')}</span>{/if}
 		{/snippet}
 		{#snippet actions()}
+			{#if ping!.link}
+				<!-- A gate shows a link beside its files: the merge request, a preview. -->
+				<a class="btn" href={ping!.link} target="_blank" rel="noreferrer" title={ping!.link}
+					>{t('page.ping.openLink')} {I.external}</a
+				>
+			{/if}
 			<a class="btn" href={to.run(ping!.runId)}>{t('page.ping.openRun')} {I.forward}</a>
 		{/snippet}
 	</PageHeader>
@@ -124,7 +110,7 @@
 			}}
 		/>
 	{:else}
-		<div class="page ans">
+		<div class="page ans" class:withfiles={showsFiles}>
 			<section
 				class="c pane wash h-{verdict.hue} verdict"
 				style:border-color="var(--{verdict.hue}Ln, var(--cLn))"
@@ -144,24 +130,24 @@
 					{/if}
 				</div>
 				<Markdown src={ping.question} quiet />
-				{#if ping.feedback}
+				{#if ping.feedback && !showsFiles}
 					<div class="fb">
 						<div class="lbl">{t('page.ping.feedbackSent')}</div>
 						<Markdown src={ping.feedback} />
 					</div>
 				{/if}
 			</section>
-
-			{#if reviewed}
-				<section class="c pane">
-					<DocHead path={reviewed.path} raisedAt={ping.raisedAt} reviewed />
-					<div class="paper doc">
-						<Markdown src={asMarkdown(reviewed.text, reviewed.path)} doc />
-					</div>
-				</section>
-			{/if}
-			<AgentFiles files={answeredFiles.slice(1)} label={t('page.ping.alsoAttached')} />
 		</div>
+		{#if showsFiles}
+			<ReviewHistory
+				pingId={ping.id}
+				runId={ping.runId}
+				review={ping.review}
+				summary={ping.feedback}
+				attachmentIds={ping.answerAttachmentIds}
+				raisedAt={ping.raisedAt}
+			/>
+		{/if}
 	{/if}
 {/if}
 
@@ -204,7 +190,10 @@
 	.fb .lbl {
 		margin-bottom: 4px;
 	}
-	.doc {
-		padding: 18px 22px 28px;
+	/* Above a submitted review: the verdict only, the review fills the rest. */
+	.withfiles {
+		flex: none;
+		max-height: 38vh;
+		padding-bottom: 10px;
 	}
 </style>

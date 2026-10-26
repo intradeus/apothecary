@@ -28,15 +28,10 @@ import (
 	"strings"
 )
 
-// Kind is what an action input or output carries.
+// Kind is what an action setting is.
 type Kind string
 
 const (
-	// KindFile is a repo-relative workspace artifact path.
-	KindFile Kind = "file"
-	// KindValue is a value the engine holds rather than a file; a value
-	// output is surfaced to later stages as its Sentinel (e.g. $MR_URL).
-	KindValue Kind = "value"
 	// KindEnum is a literal the stage writes in the flow, one of Values —
 	// a choice the author makes (sync_target's strategy), visible in the
 	// graph rather than hidden in project settings.
@@ -44,37 +39,40 @@ const (
 	// KindText is a free literal the stage writes in the flow — a status
 	// name, a field's display name. Like an enum it is the author's choice,
 	// visible in the graph; unlike one its vocabulary belongs to the
-	// tracker, so the parser checks only that it is not blank. Not part of
-	// the dataflow: no io dot, no produced-path check.
+	// tracker, so the parser checks only that it is not blank.
 	KindText Kind = "text"
+	// KindList is any number of free literals — a merge request's labels:
+	// a YAML list in the flow, or a list $parameter, each item non-blank.
+	KindList Kind = "list"
 )
 
-// InputSig is one input a stage must bind when it invokes the action.
-type InputSig struct {
+// PortSig is one file the action reads or writes: a port a stage invoking it
+// states with its path and type, like an agent's (FLOWLANG §4).
+type PortSig struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Type is the port type of the file (agentspec.FileTypes; a test holds
+	// them equal). A structure the action reads gets a type of its own, so
+	// whatever writes the file must declare that type — checked when the
+	// flow is parsed.
+	Type     string `json:"type"`
+	Required bool   `json:"required,omitempty"`
+	// DefaultPath is the conventional path the editor prefills. Never a
+	// fallback: the stage states every port.
+	DefaultPath string `json:"default_path,omitempty"`
+}
+
+// SettingSig is one literal a stage gives the action under `with:` — not
+// data, a choice: how to merge, which status, which field.
+type SettingSig struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Kind        Kind   `json:"kind"`
 	Required    bool   `json:"required,omitempty"`
-	// DefaultPath is the conventional path the editor prefills for a file
-	// input. Unlike an agent output decl it is not a fallback: an action
-	// input is bound by the stage or it is unbound.
-	DefaultPath string `json:"default_path,omitempty"`
-	// Values are the literals a KindEnum input accepts; Default is used when
-	// the stage does not bind it.
+	// Values are the literals a KindEnum setting accepts; Default is used
+	// when the stage does not give it.
 	Values  []string `json:"values,omitempty"`
 	Default string   `json:"default,omitempty"`
-}
-
-// OutputSig is one thing the action produces.
-type OutputSig struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Kind        Kind   `json:"kind"`
-	// Sentinel is the flow-language token later stages use to consume a
-	// value output (KindValue only).
-	Sentinel string `json:"sentinel,omitempty"`
-	// Path is where a KindFile output is written.
-	Path string `json:"path,omitempty"`
 }
 
 // Action is one registered action.
@@ -88,9 +86,9 @@ type Action struct {
 	// Single caps the action at one stage per phase (a phase run opens one
 	// merge request).
 	Single bool `json:"single,omitempty"`
-	// ExactlyOne names inputs of which a stage binds exactly one: the value
-	// comes from an artifact OR from the flow, the way a command takes run
-	// OR run_ref.
+	// ExactlyOne names inputs or settings of which a stage gives exactly
+	// one: the value comes from a file OR from the flow, the way a command
+	// takes run OR run_ref.
 	ExactlyOne []string `json:"exactly_one,omitempty"`
 	// Provides names the run fact this action establishes, mirroring a
 	// signal's Needs (signalspec): the validator pairs them to catch a wait
@@ -108,13 +106,17 @@ type Action struct {
 	Needs string `json:"needs,omitempty"`
 	// Remote marks an action whose effect lands on an external service only
 	// (the ticket tracker, a merge on the repository host): it needs no
-	// workspace unless one of its FILE inputs is bound, so the engine runs it
+	// workspace unless one of its file inputs is bound, so the engine runs it
 	// without provisioning one — a "move to In Progress" lands seconds after
 	// the run starts, and a "Done" after the final gate never re-provisions a
 	// reaped workspace.
-	Remote  bool        `json:"remote,omitempty"`
-	Inputs  []InputSig  `json:"inputs,omitempty"`
-	Outputs []OutputSig `json:"outputs,omitempty"`
+	Remote bool `json:"remote,omitempty"`
+	// Inputs and Outputs are the files it reads and writes; Settings the
+	// literals it takes. A value it establishes for the run (create_mr's
+	// merge request) is the engine's to provide — run.mr.url — not an output.
+	Inputs   []PortSig    `json:"inputs,omitempty"`
+	Outputs  []PortSig    `json:"outputs,omitempty"`
+	Settings []SettingSig `json:"settings,omitempty"`
 }
 
 // Statuses lists the canonical ticket statuses in lifecycle order.
@@ -126,6 +128,7 @@ const (
 	LoadReviewComments  = "load_review_comments"
 	ReplyReviewComments = "reply_review_comments"
 	SyncTarget          = "sync_target"
+	Commit              = "commit"
 	PushBranch          = "push_branch"
 	MRMerge             = "mr_merge"
 	PostReview          = "post_review"
@@ -185,22 +188,26 @@ const (
 var registry = []Action{{
 	Slug:        CreateMR,
 	Title:       "Create merge request",
-	Description: "Opens a draft merge request for the run's branch. The body artifact's first `# ` heading becomes the title (the ticket title when it has none).",
+	Description: "Opens a draft merge request for the run's branch. The body artifact's first `# ` heading becomes the title (the ticket title when it has none). The merge request is then the run's: later stages read its link as run.mr.url.",
 	Requires:    RequiresRepository,
 	Single:      true,
 	Provides:    ProvidesMR,
-	Inputs: []InputSig{{
+	Inputs: []PortSig{{
 		Name:        "body",
 		Description: "markdown description of the change; its first heading is the MR title",
-		Kind:        KindFile,
 		Required:    true,
 		DefaultPath: "artifacts/mr.md",
+		Type:        "file",
+	}, {
+		Name:        "attachments",
+		Description: "files to show in the merge request (screenshots): each is uploaded to the repository host, and the body's references to its path become its link — the rest are listed after the body",
+		Type:        "files",
+		DefaultPath: "artifacts/attachments/",
 	}},
-	Outputs: []OutputSig{{
-		Name:        "mr_url",
-		Description: "link to the created merge request",
-		Kind:        KindValue,
-		Sentinel:    "$MR_URL",
+	Settings: []SettingSig{{
+		Name:        "labels",
+		Description: "labels the merge request gets once it is open — the repository host creates one it does not have yet",
+		Kind:        KindList,
 	}},
 }, {
 	Slug:        LoadReviewComments,
@@ -208,18 +215,18 @@ var registry = []Action{{
 	Description: "Writes the merge request's pending review threads — unresolved, last word a reviewer's — to a file the fixing agent reads: file, line, diff hunk, the comments in order, and the thread id a reply names. With select: human (the default) a person first picks which threads to fix in the inbox; the others are skipped until someone comments on them again, and picking none ends the round. Re-entry rewrites the same set, so one phase run fixes what it started with.",
 	Requires:    RequiresRepository,
 	Subject:     true,
-	Inputs: []InputSig{{
+	Settings: []SettingSig{{
 		Name:        "select",
 		Description: "human: a person picks the threads to fix (some may be wrong, or already handled); all: every pending thread",
 		Kind:        KindEnum,
 		Values:      []string{SelectHuman, SelectAll},
 		Default:     SelectHuman,
 	}},
-	Outputs: []OutputSig{{
+	Outputs: []PortSig{{
 		Name:        "review",
 		Description: "the pending review threads, as markdown",
-		Kind:        KindFile,
-		Path:        "artifacts/review.md",
+		Type:        "file",
+		DefaultPath: "artifacts/review.md",
 	}},
 }, {
 	Slug:        ReplyReviewComments,
@@ -227,10 +234,10 @@ var registry = []Action{{
 	Description: "Posts the replies file — one reply per loaded thread, optionally resolving it — on the merge request. Each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice.",
 	Requires:    RequiresRepository,
 	Subject:     true,
-	Inputs: []InputSig{{
+	Inputs: []PortSig{{
 		Name:        "replies",
-		Description: "the replies (a review_replies-typed agent output)",
-		Kind:        KindFile,
+		Description: "the replies: one per thread the round loaded",
+		Type:        "review_replies",
 		Required:    true,
 		DefaultPath: "artifacts/replies.yaml",
 	}},
@@ -239,12 +246,23 @@ var registry = []Action{{
 	Title:       "Take the target branch in",
 	Description: "Brings the merge request's target branch into its branch, in the engine: nothing to do when it is already contained; a conflict pauses the merge (or rebase) in the working tree and fails the stage with the files named, for an agent or a human to resolve by editing them — the retried stage continues it.",
 	Subject:     true,
-	Inputs: []InputSig{{
+	Settings: []SettingSig{{
 		Name:        "strategy",
 		Description: "merge (no history rewrite) or rebase (linear history; the branch is force-pushed, leased)",
 		Kind:        KindEnum,
 		Values:      []string{StrategyMerge, StrategyRebase},
 		Default:     StrategyMerge,
+	}},
+}, {
+	Slug:        Commit,
+	Title:       "Commit the changes",
+	Description: "Commits everything uncommitted — staged, unstaged and untracked — with the message file (a commit_message): in the subject's checkout when the chain acts on one merge request, in every checkout otherwise. A checkout with nothing to commit is left alone, so a re-entry after the commit landed does nothing. A refused commit (a hook, the git identity) fails the stage with git's words.",
+	Inputs: []PortSig{{
+		Name:        "message",
+		Description: "the commit message: a subject, and an optional body",
+		Type:        "commit_message",
+		Required:    true,
+		DefaultPath: "artifacts/commit.json",
 	}},
 }, {
 	Slug:        PushBranch,
@@ -257,7 +275,7 @@ var registry = []Action{{
 	Requires:    RequiresTracker,
 	Remote:      true,
 	ExactlyOne:  []string{"to", "status"},
-	Inputs: []InputSig{{
+	Settings: []SettingSig{{
 		Name:        "to",
 		Description: "a canonical status, translated by the ticket's tracker; one it has no word for skips the stage. Exactly one of to / status",
 		Kind:        KindEnum,
@@ -273,12 +291,17 @@ var registry = []Action{{
 	Description: "Posts a markdown artifact as a comment on the ticket's tracker issue, with a short apothecary trailer naming the run and stage — which is also how a crash between posting and recording is reconciled, so nothing is posted twice. A ticket written by hand skips the stage.",
 	Requires:    RequiresTracker,
 	Remote:      true,
-	Inputs: []InputSig{{
+	Inputs: []PortSig{{
 		Name:        "body",
 		Description: "markdown to post as the comment",
-		Kind:        KindFile,
 		Required:    true,
 		DefaultPath: "artifacts/ticket_comment.md",
+		Type:        "file",
+	}, {
+		Name:        "attachments",
+		Description: "files to show in the comment (screenshots): uploaded to the tracker, linked where the body names their path, listed after it otherwise",
+		Type:        "files",
+		DefaultPath: "artifacts/attachments/",
 	}},
 }, {
 	Slug:        TicketSetField,
@@ -287,16 +310,17 @@ var registry = []Action{{
 	Requires:    RequiresTracker,
 	Remote:      true,
 	ExactlyOne:  []string{"value", "text"},
-	Inputs: []InputSig{{
+	Inputs: []PortSig{{
+		Name:        "value",
+		Description: "an artifact whose text is the value (comma-separated for list fields); exactly one of value / text",
+		DefaultPath: "artifacts/ticket_field.txt",
+		Type:        "file",
+	}},
+	Settings: []SettingSig{{
 		Name:        "field",
 		Description: "the field's display name (or its raw id), as the tracker shows it",
 		Kind:        KindText,
 		Required:    true,
-	}, {
-		Name:        "value",
-		Description: "an artifact whose text is the value (comma-separated for list fields); exactly one of value / text",
-		Kind:        KindFile,
-		DefaultPath: "artifacts/ticket_field.txt",
 	}, {
 		Name:        "text",
 		Description: "the value written in the flow itself; exactly one of value / text",
@@ -322,7 +346,7 @@ var registry = []Action{{
 	Requires:    RequiresRepository,
 	Subject:     true,
 	Remote:      true,
-	Inputs: []InputSig{{
+	Settings: []SettingSig{{
 		Name:        "method",
 		Description: "merge (a merge commit), squash (one commit) or rebase (the branch's commits on top of the target; GitHub only — GitLab merges by the project's merge method)",
 		Kind:        KindEnum,
@@ -338,13 +362,13 @@ var registry = []Action{{
 }, {
 	Slug:        PostReview,
 	Title:       "Post a review",
-	Description: "Posts a review on the phase's merge request from a review file (a review_threads-typed agent output): a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place. Never approves nor requests changes — that decision stays a person's. Every part is marked, so a retry after a crash posts only what is missing.",
+	Description: "Posts a review on the phase's merge request from a review file (a review_threads): a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place. Never approves nor requests changes — that decision stays a person's. Every part is marked, so a retry after a crash posts only what is missing.",
 	Requires:    RequiresRepository,
 	Subject:     true,
-	Inputs: []InputSig{{
+	Inputs: []PortSig{{
 		Name:        "review",
-		Description: "the review (a review_threads-typed agent output)",
-		Kind:        KindFile,
+		Description: "the review: a summary, and notes on lines of the change",
+		Type:        "review_threads",
 		Required:    true,
 		DefaultPath: "artifacts/review.yaml",
 	}},
@@ -372,34 +396,44 @@ func Slugs() string {
 	return strings.Join(names, "|")
 }
 
-// Input returns the named input signature, or nil.
-func (a *Action) Input(name string) *InputSig {
-	for i := range a.Inputs {
-		if a.Inputs[i].Name == name {
-			return &a.Inputs[i]
+// Input returns the named input port, or nil.
+func (a *Action) Input(name string) *PortSig { return portNamed(a.Inputs, name) }
+
+// Output returns the named output port, or nil.
+func (a *Action) Output(name string) *PortSig { return portNamed(a.Outputs, name) }
+
+func portNamed(ps []PortSig, name string) *PortSig {
+	for i := range ps {
+		if ps[i].Name == name {
+			return &ps[i]
 		}
 	}
 	return nil
 }
 
-// Output returns the named output signature, or nil.
-func (a *Action) Output(name string) *OutputSig {
-	for i := range a.Outputs {
-		if a.Outputs[i].Name == name {
-			return &a.Outputs[i]
+// Setting returns the named setting, or nil.
+func (a *Action) Setting(name string) *SettingSig {
+	for i := range a.Settings {
+		if a.Settings[i].Name == name {
+			return &a.Settings[i]
 		}
 	}
 	return nil
 }
 
-// InputNames lists the action's input names for error messages.
-func (a *Action) InputNames() string {
-	names := make([]string, 0, len(a.Inputs))
-	for i := range a.Inputs {
-		names = append(names, a.Inputs[i].Name)
+// Names lists port or setting names for error messages ("none" when empty).
+func Names[T PortSig | SettingSig](xs []T) string {
+	if len(xs) == 0 {
+		return "none"
 	}
-	if len(names) == 0 {
-		return "(none)"
+	names := make([]string, 0, len(xs))
+	for _, x := range xs {
+		switch v := any(x).(type) {
+		case PortSig:
+			names = append(names, v.Name)
+		case SettingSig:
+			names = append(names, v.Name)
+		}
 	}
-	return strings.Join(names, "|")
+	return strings.Join(names, ", ")
 }

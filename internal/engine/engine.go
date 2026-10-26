@@ -188,6 +188,12 @@ type Engine struct {
 	// last, append, and wake it twice.
 	wakeMu      sync.Mutex
 	egressAudit EgressAuditStore
+	// projectSecrets re-reads a project's secrets when an agent stage opens
+	// its MCP servers; browser is the project browser and browserPorts the
+	// workspace ports it reaches (mcp.go). nil = off.
+	projectSecrets ProjectSecretSource
+	browser        ports.Browser
+	browserPorts   *portCache
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -245,6 +251,10 @@ type Engine struct {
 	// a crash mid-op leaves no stuck state (re-appears as unreconciled).
 	opMu sync.Mutex
 	ops  map[string]*envOp
+
+	// appendLocks holds one mutex per run serializing its appends (see
+	// appendLock): runID -> *sync.Mutex.
+	appendLocks sync.Map
 }
 
 // envOp is a run's in-flight (or recently-failed) workspace operation.
@@ -336,10 +346,10 @@ type Ping struct {
 	EndsPhase bool
 	RaisedAt  time.Time
 
-	key            string      // the raiser's idempotency key (RaisePing)
-	answered       bool        // guarded by Engine.mu
-	answer         *PingAnswer // set before done closes; read only after <-done
-	deliveredPaths []string    // workspace paths of the answer's attachments; set before done closes
+	key            string       // the raiser's idempotency key (RaisePing)
+	answered       bool         // guarded by Engine.mu
+	answer         *PingAnswer  // set before done closes; read only after <-done
+	deliveredFiles []answerFile // the answer's attachments, where delivered; set before done closes
 	done           chan struct{}
 	// handedBack: the agent's turn ended without the answer — the engine
 	// parked the run after the live hold (Config.AskHumanHold), or the turn
@@ -375,7 +385,7 @@ func (p *Ping) Primary() string {
 
 // DeliveredArtifacts are the workspace paths the human's answer attachments
 // were written to. Valid only after Await returns true (set before done closes).
-func (p *Ping) DeliveredArtifacts() []string { return p.deliveredPaths }
+func (p *Ping) DeliveredArtifacts() []string { return answerPaths(p.deliveredFiles) }
 
 // PingAnswerOther is the hardcoded escape hatch on option pings: always
 // answerable, never declared by the agent (RaisePing strips it), and the
@@ -391,6 +401,9 @@ type PingAnswer struct {
 	// the API before the answer is submitted); recorded on ping_answered so
 	// the association is a replayable fact.
 	AttachmentIDs []string
+	// Review is the person's comments on the files the ping showed
+	// (validateReview); Feedback is then its summary.
+	Review []event.ReviewComment
 }
 
 // Await blocks until the ping is answered or ctx expires. It is safe to call
@@ -424,7 +437,7 @@ func ComposeAnswer(p *Ping) string {
 	if !ok {
 		return ""
 	}
-	return composeAnswerText(p.AnswerKind, ans.Answer, ans.Feedback, p.DeliveredArtifacts())
+	return composeAnswerText(p.AnswerKind, ans.Answer, ans.Feedback, p.Files, ans.Review, p.deliveredFiles)
 }
 
 // composeAnswerText is the renderer proper. It takes the two answer fields
@@ -433,7 +446,7 @@ func ComposeAnswer(p *Ping) string {
 // ping to ask. Both forms map onto the same cases: the event stores a
 // free-text agent answer as answer:"text" with the words in feedback, and the
 // live path's raw answer falls through to the default.
-func composeAnswerText(kind, answer, feedback string, delivered []string) string {
+func composeAnswerText(kind, answer, feedback string, shown []string, review []event.ReviewComment, delivered []answerFile) string {
 	var text string
 	switch {
 	case kind == event.AnswerMulti:
@@ -456,7 +469,17 @@ func composeAnswerText(kind, answer, feedback string, delivered []string) string
 	default:
 		text = answer
 	}
-	return text + attachedFilesNote(delivered)
+	// A review of the files the question showed follows the answer, each
+	// comment where it was made.
+	var b strings.Builder
+	if len(review) > 0 {
+		if text != "" {
+			b.WriteString("\n\n")
+		}
+		named := renderReview(&b, shown, review, delivered)
+		return text + strings.TrimRight(b.String(), "\n") + attachedFilesNote(unnamed(delivered, named))
+	}
+	return text + attachedFilesNote(answerPaths(delivered))
 }
 
 type raiseReq struct {
@@ -944,7 +967,9 @@ func (e *Engine) emit(evs []event.Event) {
 // appendAndEmit is the store append for engine-side writers outside a run
 // goroutine (Archive, ReapOnce).
 func (e *Engine) appendAndEmit(ctx context.Context, runID string, ps ...event.Payload) error {
+	unlock := e.appendLock(runID)
 	evs, err := e.store.Append(ctx, runID, ps...)
+	unlock()
 	if err != nil {
 		return err
 	}
@@ -1002,6 +1027,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if err := e.preflightTicket(ctx, res, fl, t); err != nil {
 		return "", err
 	}
+	e.warmBrowser(res, fl)
 	by := in.By
 	if by == "" {
 		by = "human"
@@ -1441,7 +1467,8 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	if e.portRelay != nil {
 		e.portRelay.CloseRun(v.RunID) // exposures die with the env
 	}
-	e.forgetObserved(v.RunID) // discovered-port snapshot dies with the env
+	e.browserPorts.forget(v.RunID) // and so do the browser's
+	e.forgetObserved(v.RunID)      // discovered-port snapshot dies with the env
 	if v.ProjectID == "" {
 		return fmt.Errorf("run %s has no project (pre-v2); destroy its environment manually", v.RunID)
 	}
@@ -1513,6 +1540,9 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 			return fmt.Errorf("preflight: %s: %w", fl.Phases[i].Label(), err)
 		}
 	}
+	if err := res.servicesAvailable(fl); err != nil {
+		return fmt.Errorf("preflight: %w", err)
+	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
@@ -1543,6 +1573,9 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 				return fmt.Errorf("preflight: stage %q: %w", st.ID, err)
 			}
 		}
+	}
+	if err := res.mcpAvailable(fl, e.browser != nil); err != nil {
+		return fmt.Errorf("preflight: %w", err)
 	}
 	// Every agent stage's model must be one its harness can reach — checked
 	// now, before a workspace is built, not when the stage opens its session.
@@ -2095,7 +2128,7 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 func validateAnswer(kind string, options []event.Option, ans PingAnswer) error {
 	ids := event.OptionIDs(options)
 	switch kind {
-	case event.AnswerDecision:
+	case event.AnswerYesNo:
 		if ans.Answer != "approve" && ans.Answer != "reject" {
 			return fmt.Errorf("this question is answered approve|reject")
 		}
@@ -2174,6 +2207,9 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if err := validateAnswer(p.AnswerKind, p.Options, ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
+	if err := validateReview(p.Files, ans); err != nil {
+		return fmt.Errorf("ping %s: %w", pingID, err)
+	}
 	// The answers channel is drained only in agent stages and gates. Don't
 	// report success for an answer nobody will ever process, and don't wedge
 	// the HTTP handler if the buffer is full.
@@ -2230,6 +2266,9 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 	if err := validateAnswer(v.AnswerKind, v.Options, ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
+	if err := validateReview(v.Files, ans); err != nil {
+		return fmt.Errorf("ping %s: %w", pingID, err)
+	}
 
 	e.mu.Lock()
 	_, active := e.handles[v.RunID]
@@ -2256,7 +2295,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 
 	answer, feedback := recordedAnswer(v.AnswerKind, ans)
 	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: answer,
-		Feedback: feedback, AttachmentIDs: ans.AttachmentIDs}}
+		Feedback: feedback, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review}}
 	// Wake only when this was the last thing the run was waiting for, and only
 	// if a human has not deliberately parked it: an agent may have asked two
 	// questions, and pause means pause.
@@ -2737,6 +2776,12 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 		if err := res.phaseAvailable(&fl.Phases[i]); err != nil {
 			return fmt.Errorf("%s: %w", fl.Phases[i].Label(), err)
 		}
+	}
+	if err := res.servicesAvailable(fl); err != nil {
+		return err
+	}
+	if err := res.mcpAvailable(fl, e.browser != nil); err != nil {
+		return err
 	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]

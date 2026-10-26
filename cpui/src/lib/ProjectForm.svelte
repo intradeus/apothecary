@@ -1,8 +1,9 @@
 <script lang="ts">
 	// Workshop setup (DESIGN 7.9), create and edit: a stepped form with a left
 	// step-rail and section anchors — 1 Repository → 2 Workshop → 3 Execution
-	// → 4 Workspace — and a sticky footer (Cancel / Save, plus "Run envcheck
-	// after saving").
+	// → 4 Workspace → 5 Services → 6 Browser (→ 7 Secrets, once the workshop
+	// exists) — and a sticky footer (Cancel / Save, plus "Run envcheck after
+	// saving"). Secrets are saved one by one as they are set, not by Save.
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { ExtraRepo, Flow, Integration, Project, ProjectDraft, Repo } from '$lib/domain';
@@ -17,6 +18,14 @@
 	import StatusMark from '$lib/ui/StatusMark.svelte';
 	import KeyValueEditor, { type KVRow } from '$lib/ui/KeyValueEditor.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
+	import ServicesEditor, {
+		serviceConfigs,
+		serviceIssues,
+		serviceRows,
+		type ServiceRow
+	} from '$lib/workshop/ServicesEditor.svelte';
+	import SecretsEditor from '$lib/workshop/SecretsEditor.svelte';
+	import BrowserStatusCard from '$lib/workshop/BrowserStatusCard.svelte';
 	import { I } from '$lib/ui/icons';
 	import { t, th } from '$lib/i18n/index.svelte';
 
@@ -83,16 +92,13 @@
 	let defaultBranch = $state(init?.repo.defaultBranch ?? 'main');
 	let agentsMD = $state(init?.repo.agentsMdPath ?? 'AGENTS.md');
 
-	// Commands as editable key → script rows. `setup` is pinned first (its
-	// name locked, never removed): it runs at workspace bootstrap and stays
-	// optional (empty = skipped).
+	// Commands as editable key → script rows; flows run them by name.
 	const initCommands = Object.entries(init?.commands ?? {});
-	let commandRows = $state<KVRow[]>([
-		{ key: 'setup', value: init?.commands?.setup ?? '' },
-		...(init
-			? initCommands.filter(([k]) => k !== 'setup').map(([key, value]) => ({ key, value }))
-			: [{ key: '', value: '' }])
-	]);
+	let commandRows = $state<KVRow[]>(
+		initCommands.length
+			? initCommands.map(([key, value]) => ({ key, value }))
+			: [{ key: '', value: '' }]
+	);
 	const dupKeys = $derived.by(() => {
 		const seen = new Set<string>();
 		const dup = new Set<string>();
@@ -104,9 +110,7 @@
 		}
 		return dup;
 	});
-	const commandCount = $derived(
-		commandRows.filter((r) => r.key.trim() && (r.key.trim() !== 'setup' || r.value.trim())).length
-	);
+	const commandCount = $derived(commandRows.filter((r) => r.key.trim()).length);
 
 	// Egress firewall. Allowlist (deny-all, permit these) vs denylist
 	// (allow-all, block these). Both lists are kept so flipping the mode never
@@ -167,6 +171,12 @@
 	let editorFormatOnSave = $state(init?.workspace.editor?.formatOnSave ?? false);
 	let editorWordWrap = $state(init?.workspace.editor?.wordWrap ?? false);
 	let editorTrustWorkspace = $state(init?.workspace.editor?.trustWorkspace ?? false);
+	// The workshop's services (its app, a database), in the order the run
+	// page lists them.
+	let serviceList = $state<ServiceRow[]>(serviceRows(init?.workspace.services ?? []));
+	const svcIssues = $derived(serviceIssues(serviceList));
+	let svcStrict = $state(false);
+	let browserEnabled = $state(init?.workspace.browserEnabled ?? false);
 	// Flows are user-defined — no built-in fallback exists.
 	let defaultFlow = $state(init?.defaultFlow ?? flowNames[0] ?? '');
 
@@ -233,6 +243,12 @@
 			jump('workshop');
 			return;
 		}
+		if (svcIssues.size) {
+			svcStrict = true;
+			error = t('form.services.fixFirst');
+			jump('services');
+			return;
+		}
 		busy = true;
 		error = '';
 		try {
@@ -258,6 +274,8 @@
 			onsaved(saved, checked);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
+			// The engine names the service it refused: show where it is.
+			if (/^project: service/.test(error)) jump('services');
 		} finally {
 			busy = false;
 		}
@@ -305,7 +323,9 @@
 					formatOnSave: editorFormatOnSave,
 					wordWrap: editorWordWrap,
 					trustWorkspace: editorTrustWorkspace
-				}
+				},
+				services: serviceConfigs(serviceList),
+				browserEnabled
 			},
 			defaultFlow
 		};
@@ -319,7 +339,17 @@
 
 	// --- step rail --------------------------------------------------------------
 
-	type StepId = 'repository' | 'workshop' | 'execution' | 'workspace';
+	type StepId =
+		'repository' | 'workshop' | 'execution' | 'workspace' | 'services' | 'browser' | 'secrets';
+	const STEP_IDS: StepId[] = [
+		'repository',
+		'workshop',
+		'execution',
+		'workspace',
+		'services',
+		'browser',
+		'secrets'
+	];
 	const steps = $derived<{ id: StepId; n: number; label: string; done: boolean; sub: string }[]>([
 		{
 			id: 'repository',
@@ -350,7 +380,34 @@
 			label: t('form.project.step.workspace'),
 			done: true,
 			sub: egressMode === 'deny' ? t('form.project.step.denySub') : t('form.project.step.allowSub')
-		}
+		},
+		{
+			id: 'services',
+			n: 5,
+			label: t('form.project.step.services'),
+			done: svcIssues.size === 0,
+			sub: serviceList.length
+				? t('form.project.step.servicesSub', { count: serviceList.length })
+				: t('form.project.step.noServices')
+		},
+		{
+			id: 'browser',
+			n: 6,
+			label: t('form.project.step.browser'),
+			done: true,
+			sub: browserEnabled ? t('form.project.step.browserOn') : t('form.project.step.browserOff')
+		},
+		...(existing
+			? [
+					{
+						id: 'secrets' as const,
+						n: 7,
+						label: t('form.project.step.secrets'),
+						done: true,
+						sub: t('form.project.step.secretsSub')
+					}
+				]
+			: [])
 	]);
 	let active = $state<StepId>('repository');
 	let formEl = $state<HTMLFormElement | null>(null);
@@ -363,7 +420,7 @@
 
 	onMount(() => {
 		const hash = location.hash.slice(1) as StepId;
-		if (['repository', 'workshop', 'execution', 'workspace'].includes(hash)) {
+		if (STEP_IDS.includes(hash)) {
 			requestAnimationFrame(() => {
 				formEl?.querySelector(`#${hash}`)?.scrollIntoView({ block: 'start' });
 				active = hash;
@@ -618,7 +675,6 @@
 						keyPlaceholder={t('form.project.cmdKey')}
 						valuePlaceholder="make test"
 						addLabel={t('form.project.addCommand')}
-						locked={(k, i) => i === 0 && k === 'setup'}
 						invalid={dupKeys}
 					/>
 					{#if dupKeys.size}<div class="err">
@@ -822,6 +878,62 @@
 				</div>
 			</div>
 		</section>
+
+		<!-- 5 · Services ------------------------------------------------------->
+		<section id="services" class="c pane">
+			<div class="pane-head">
+				<span class="tag">5</span>
+				<h2>{t('form.services.head')}</h2>
+				<span class="mut small">{t('form.services.sub')}</span>
+			</div>
+			<div class="pane-body stack">
+				<div class="sub">
+					<div class="row">
+						<h3>{t('form.services.listHead')}</h3>
+						<span class="count">{serviceList.length}</span>
+					</div>
+					<div class="help">{@html th('form.services.help')}</div>
+					<div class="help">{@html th('form.services.flowHelp')}</div>
+					<ServicesEditor bind:rows={serviceList} issues={svcIssues} strict={svcStrict} />
+				</div>
+			</div>
+		</section>
+
+		<!-- 6 · Browser --------------------------------------------------------->
+		<section id="browser" class="c pane">
+			<div class="pane-head">
+				<span class="tag">6</span>
+				<h2>{t('form.browser.head')}</h2>
+				<span class="mut small">{t('form.browser.sub')}</span>
+			</div>
+			<div class="pane-body stack">
+				<div class="sub">
+					<Toggle bind:checked={browserEnabled} label={t('form.browser.toggle')} />
+					<div class="help">{@html th('form.browser.help')}</div>
+					<div class="help">{t('form.browser.preflightHelp')}</div>
+					{#if existing}
+						<BrowserStatusCard projectId={existing.id} enabled={browserEnabled} {savedAt} />
+					{/if}
+				</div>
+			</div>
+		</section>
+
+		<!-- 7 · Secrets (saved as they are set) ---------------------------------->
+		{#if existing}
+			<section id="secrets" class="c pane">
+				<div class="pane-head">
+					<span class="tag">7</span>
+					<h2>{t('form.secrets.head')}</h2>
+					<span class="mut small">{t('form.secrets.sub')}</span>
+				</div>
+				<div class="pane-body stack">
+					<div class="sub">
+						<div class="help">{@html th('form.secrets.help')}</div>
+						<SecretsEditor projectId={existing.id} />
+					</div>
+				</div>
+			</section>
+		{/if}
 
 		{#if error}<ErrorCard cause={t('form.project.saveFail')} detail={error} />{/if}
 

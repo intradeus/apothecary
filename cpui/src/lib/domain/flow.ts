@@ -71,7 +71,10 @@ export interface FlowBinding {
 /** One declared parameter of a flow (FLOWLANG §1). */
 export interface ParamDecl {
 	name: string;
-	type: 'bool' | 'int' | 'float' | 'string';
+	type: 'bool' | 'int' | 'float' | 'string' | 'duration';
+	/** Any number of values of its type: default and values are then JSON
+	 *  arrays (`["apothecary"]`). */
+	list?: boolean;
 	default: string;
 	description?: string;
 	enum?: string[];
@@ -108,21 +111,28 @@ export interface PhaseSummary {
 /** One input or output in a built-in action's signature. A 'file' carries an
  *  artifact path; a 'value' is engine-held and reaches later stages through
  *  its $SENTINEL. */
-export interface ActionIO {
+/** One file an action reads or writes: a port a stage states (FLOWLANG §4). */
+export interface ActionPort {
 	name: string;
 	description?: string;
-	/** enum: a literal the stage writes, one of `values` (sync_target's
-	 *  strategy); `defaultValue` applies when the stage leaves it unbound.
-	 *  text: a free literal the stage writes (a tracker's status or field
-	 *  name) — the author's choice, not dataflow. */
-	kind: 'file' | 'value' | 'enum' | 'text';
+	/** The port type of the file (`file`, `commit_message`, …). */
+	type: string;
 	required: boolean;
+	/** The conventional path the editor prefills. */
 	defaultPath?: string;
-	sentinel?: string;
+}
+
+/** One literal an action takes under `with:` — a choice, not data. */
+export interface ActionSetting {
+	name: string;
+	description?: string;
+	/** enum: one of `values` (sync_target's strategy), `defaultValue` when
+	 *  the stage gives none; text: a free literal (a tracker's status or
+	 *  field name). */
+	kind: 'enum' | 'text' | 'list';
+	required: boolean;
 	values?: string[];
 	defaultValue?: string;
-	/** A file output's path. */
-	path?: string;
 }
 
 /** What an `action` stage may name. Compiled in, not project data. */
@@ -134,16 +144,17 @@ export interface ActionSpec {
 	requires?: string;
 	/** At most one stage per phase may use it. */
 	single: boolean;
-	/** Inputs of which a stage binds exactly one (ticket_transition's
-	 *  to / status, ticket_set_field's value / text). */
+	/** Inputs or settings of which a stage gives exactly one
+	 *  (ticket_transition's to / status, ticket_set_field's value / text). */
 	exactlyOne?: string[];
 	/** Acts on an external service only (the ticket tracker): needs no
 	 *  workspace unless a file input is bound. */
 	remote: boolean;
 	/** A run fact the action depends on ('merge_request' for ticket_link). */
 	needs?: string;
-	inputs: ActionIO[];
-	outputs: ActionIO[];
+	inputs: ActionPort[];
+	outputs: ActionPort[];
+	settings: ActionSetting[];
 }
 
 /** A signal (FLOWLANG §1): what it is, never what it does — the section

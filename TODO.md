@@ -1,6 +1,8 @@
 - 7) redo everything in clean architecture
-- 23) new run on observability (full flow data + resource stats)
 - 25) multi-user / org based
-- 30) k8s/k3s deployment
-- 31) "Review the recipe" page and recipe word everywhere to point to the "plan" step, but it shouldnt. The app should be flexible based on flows - the "plan step = recipe" relation should NOT exist, a plan is part of the flow which is flexible so there is no reason to have custom logic for "plans". We should definitely have a 'review text' system, which can be used to annotate any kind of markdown, but that's it, it should work for all kind of stages which have text-review steps, not specific for plans only. We should not assume that a user will create a flow which has a plan, it could be anything else.
-- 32) setup is pinned: it runs when a workspace boots — leave it empty to skip. (????)
+- 30) k8s/k3s deployment / worktree
+- 23) new run on observability (full flow data + resource stats)
+- 34) Map the ACP to automatically redirect to the ask_human shim, whenever there are questions or something - if not already done ! And make sure all ACP question types are supported by the ask_human shim. So if codex asks for a multi-answer question, we can show checkboxes etc. 
+- 35) Discord channel integration, gitlab&github issue integration  
+- 36) Resquash migrations
+- 37) Test cleanup & redo.

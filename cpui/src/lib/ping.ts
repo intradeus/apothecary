@@ -6,7 +6,7 @@
 // confirmation, a thread selection, an agent's clarification/blocker/
 // permission); its ANSWER KIND says what shape the answer takes. The card
 // renders the kind; the type only colours the badge and tunes the wording.
-import type { AnswerKind, PingOption } from '$lib/domain';
+import type { AnswerKind, PingOption, ReviewComment } from '$lib/domain';
 import type { Hue } from '$lib/ui/hues';
 import { I } from '$lib/ui/icons';
 import { t } from '$lib/i18n/index.svelte';
@@ -35,11 +35,34 @@ export function toPingOption(o: unknown): PingOption {
 	return { id, label: r.label || id, detail: r.detail || undefined };
 }
 
+/** A review comment as the wire or a ping_answered payload carries it, in
+ *  the frontend's shape. */
+export function toReviewComment(o: unknown): ReviewComment {
+	const r = (o ?? {}) as {
+		path?: string;
+		start_line?: number;
+		end_line?: number;
+		heading?: string;
+		quote?: string;
+		body?: string;
+		attachment_ids?: string[] | null;
+	};
+	return {
+		path: r.path ?? '',
+		startLine: r.start_line || undefined,
+		endLine: r.end_line || undefined,
+		heading: r.heading || undefined,
+		quote: r.quote || undefined,
+		body: r.body ?? '',
+		attachmentIds: r.attachment_ids ?? []
+	};
+}
+
 /** The declared answer kind, inferred (as the engine does) when the source
  *  predates the field. */
 export function answerKindOf(kind: unknown, type: string, options: unknown): AnswerKind {
-	if (kind === 'decision' || kind === 'choice' || kind === 'multi' || kind === 'text') return kind;
-	if (type === 'gate' || type === 'phase_confirm' || type === 'debug') return 'decision';
+	if (kind === 'yes_no' || kind === 'choice' || kind === 'multi' || kind === 'text') return kind;
+	if (type === 'gate' || type === 'phase_confirm' || type === 'debug') return 'yes_no';
 	if (type === 'select') return 'multi';
 	return Array.isArray(options) && options.length ? 'choice' : 'text';
 }
@@ -62,6 +85,8 @@ export interface PingLike {
 	status?: string; // pending | answered | withdrawn
 	answer?: string;
 	feedback?: string;
+	/** The answer's comments on the files shown. */
+	review?: ReviewComment[];
 	answeredAt?: string;
 	// Optional: shown in the card head when present.
 	stageId?: string;
@@ -72,11 +97,16 @@ export interface PingLike {
 	endsPhase?: boolean;
 }
 
-/** A ping whose primary payload is a captured file (a document, a YAML
- *  file, code), reviewed in the document workbench rather than answered
+/** A ping that shows files (documents, YAML, code, images — and maybe a
+ *  link beside them), reviewed in the review workbench rather than answered
  *  inline. */
 export const isDocumentPing = (p: Pick<PingLike, 'files' | 'link' | 'primaryRef'>) =>
-	!p.link && !!(p.files?.length || p.primaryRef);
+	!!(p.files?.length || (!p.link && p.primaryRef));
+
+/** The file a review opens on: the first shown. A ping's primaryRef is its
+ *  link when it has one, so the files come first. */
+export const primaryFile = (p: Pick<PingLike, 'files' | 'link' | 'primaryRef'>) =>
+	p.files?.[0] ?? (p.link ? '' : (p.primaryRef ?? ''));
 
 /** The call to action a ping row offers (DESIGN 7.2): a file to review
  *  (named), a decision to make, or a question to answer. */
@@ -84,10 +114,11 @@ export function pingCta(
 	p: Pick<PingLike, 'type' | 'answerKind' | 'files' | 'link' | 'primaryRef'>
 ): string {
 	if (isDocumentPing(p)) {
-		const name = (p.primaryRef ?? p.files?.[0] ?? '').split('/').pop();
+		if ((p.files?.length ?? 0) > 1) return t('ping.cta.reviewFiles', { count: p.files!.length });
+		const name = primaryFile(p).split('/').pop();
 		return name ? t('ping.cta.reviewFile', { name }) : t('ping.cta.review');
 	}
-	if (p.type === 'permission' || p.answerKind === 'decision') return t('ping.cta.decide');
+	if (p.type === 'permission' || p.answerKind === 'yes_no') return t('ping.cta.decide');
 	return t('ping.cta.answer');
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"apothecary/internal/actionspec"
+	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 	"apothecary/internal/signalspec"
 )
@@ -139,7 +140,7 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 		review == nil || review.Kind != flow.PhaseWatcher || review.On.QuietFor == 0 {
 		t.Errorf("watchers: conflicts %+v review %+v", conflicts, review)
 	}
-	if f.Agent("replier").ReviewRepliesOutput() == nil {
+	if f.Agent("replier").TypedOutput(agentspec.TypeReviewReplies) == nil {
 		t.Error("the replier must declare a review_replies output, or bad replies reach the repository")
 	}
 	// The run ends in an outcome: merged finishes it (the ticket's done is
@@ -176,12 +177,15 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	if f.Agent("reviewer").VerdictOutput() == nil {
 		t.Error("the reviewer must declare a verdict output, or review.on_reject can never fire")
 	}
+	if st := f.Stage("review"); st == nil || st.TypedOutput(agentspec.TypeVerdict) == nil {
+		t.Error("the review stage must state where its verdict goes, or on_reject has nothing to read")
+	}
 }
 
 // showsWorkspace reports whether a gate hands the human the workspace links.
 func showsWorkspace(st *flow.Stage) bool {
 	for _, in := range st.Inputs {
-		if in.Value == flow.SentinelWorkspace {
+		if in.Value == flow.SourceWorkspace {
 			return true
 		}
 	}
@@ -200,7 +204,7 @@ func TestDefaultFlowRetryChannelDeclared(t *testing.T) {
 				if tgt == nil || tgt.Type != flow.StageAgent {
 					continue // gates and commands cannot read feedback
 				}
-				want := flow.FeedSentinel(kind)
+				want := flow.FeedSource(kind)
 				bound := false
 				for _, in := range tgt.Inputs {
 					if in.Value == want {
@@ -345,7 +349,7 @@ func TestReviewerTemplate(t *testing.T) {
 			t.Errorf("stage %s: the reviewer never pushes, opens or merges", st.ID)
 		}
 	}
-	if sp := f.Agent("pr_reviewer"); sp == nil || !sp.ReadOnly || sp.ReviewThreadsOutput() == nil {
+	if sp := f.Agent("pr_reviewer"); sp == nil || !sp.ReadOnly || sp.TypedOutput(agentspec.TypeReviewThreads) == nil {
 		t.Errorf("pr_reviewer = %+v", sp)
 	}
 	if p := f.Param("review_gate"); p == nil || p.Default != "false" {
