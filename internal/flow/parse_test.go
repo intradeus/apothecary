@@ -1467,6 +1467,57 @@ outcomes:
 	}
 }
 
+// A field that reads no parameter refuses one: written there, $name would
+// stay the text "$name", never the value a workshop binds.
+func TestNoParamWhereNoneIsRead(t *testing.T) {
+	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: text }\n"
+	stage := "main:\n  - { id: a, type: command, run: x }\n"
+	agent := func(fields string) string {
+		return "agents:\n  - { name: b, prompt: do b" + fields + " }\n" + stage
+	}
+	const refused = "$s is a parameter, and this field reads none"
+	for _, tc := range []struct{ name, doc string }{
+		{"flow description", "name: t\nversion: 5\ndescription: $s\nparameters: { harness: fake, model: a/b, s: text }\n" + stage},
+		{"parameter description", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: { default: text, description: $s } }\n" + stage},
+		{"stage description", head + "main:\n  - { id: a, type: command, run: x, description: $s }\n"},
+		{"gate question", head + "main:\n  - { id: a, type: human_gate, question: $s }\n"},
+		{"command script", head + "main:\n  - { id: a, type: command, run: $s }\n"},
+		{"command reads", head + "main:\n  - { id: a, type: command, run: x, input: { f: $s } }\n"},
+		{"gate shows", head + "main:\n  - { id: a, type: human_gate, question: ok, input: { show: $s } }\n"},
+		{"agent description", head + agent(", description: $s")},
+		{"agent prompt", strings.Replace(head+agent(""), "prompt: do b", "prompt: $s", 1)},
+		{"agent input description", head + agent(", inputs: [ { name: i, description: $s, optional: true } ]")},
+		{"agent output path", head + agent(", outputs: [ { name: o, path: $s } ]")},
+		{"watcher description", head + "operates_on: merge_request\n" + stage + "watchers:\n  - { id: w, description: $s, on: manual, stages: [ { id: t, type: command, run: y } ] }\n"},
+		{"sequence description", head + "sequences:\n  - { id: q, description: $s, stages: [ { id: z, type: command, run: z } ] }\nmain:\n  - { id: a, sequence: q }\n"},
+		{"sequence stage description", head + "sequences:\n  - { id: q, stages: [ { id: z, type: command, run: z } ] }\nmain:\n  - { id: a, sequence: q, description: $s }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse("t.yaml", []byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), refused) {
+				t.Errorf("err = %v, want %q", err, refused)
+			}
+		})
+	}
+	// A declared parameter named inside a script or a prompt is not read
+	// either: a warning says so.
+	mention := strings.Replace(head+agent(""), "prompt: do b", "prompt: \"use ${s} here\"", 1)
+	mention = strings.Replace(mention, "run: x", "run: \"echo $s\"", 1)
+	f, err := Parse("t.yaml", []byte(mention))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := strings.Join(f.Warnings, "\n"); !strings.Contains(w, `stage "a": its script names $s`) || !strings.Contains(w, `agent "b": its prompt names $s`) {
+		t.Errorf("warnings = %q", f.Warnings)
+	}
+	// Text that only mentions a $ — a shell variable, a sentinel in prose —
+	// is text.
+	ok := head + "main:\n  - { id: a, type: command, run: \"echo $HOME\", description: \"costs $5\" }\n"
+	if _, err := Parse("t.yaml", []byte(ok)); err != nil {
+		t.Errorf("text with a $ in it: %v", err)
+	}
+}
+
 // Where a $parameter may be read, and the checks at each site: declared, of
 // the site's type, an enum within an enum site's values, and then the site's
 // own rule on the value it yields.
@@ -1477,7 +1528,7 @@ func TestParamSites(t *testing.T) {
 		{"undeclared", head + "main:\n  - { id: a, type: agent, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
 		{"wrong type", head + "main:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
 		{"bool at a string site", head + "main:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},
-		{"param in a path", head + "main:\n  - { id: a, type: agent, agent: b, input: { plan: $s } }\n", "must be a relative artifact path"},
+		{"param in a path", head + "main:\n  - { id: a, type: agent, agent: b, input: { plan: $s } }\n", "$s is a parameter, and this field reads none"},
 		{"enum site needs an enum", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: artifacts/mr.md } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, start: $s }, stages: [{ id: x, type: command, run: x }] }\n", "needs an enum within"},
 		{"enum wider than the site", head + "main:\n  - { id: s, type: action, action: sync_target, input: { strategy: $big } }\n", `allows "auto", which this field does not`},
 		{"mixed case ref", head + "main:\n  - { id: a, type: agent, agent: b, model: $Mixed }\n", "is not a parameter reference"},

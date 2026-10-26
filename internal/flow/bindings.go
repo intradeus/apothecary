@@ -2,6 +2,7 @@ package flow
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -121,6 +122,45 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 	warns = append(warns, phaseShapeWarnings(f)...)
 	warns = append(warns, endingWarnings(f)...)
 	return warns, nil
+}
+
+// mentionRe finds what reads like a parameter inside text: $name or ${name}.
+var mentionRe = regexp.MustCompile(`\$\{?([a-z][a-z0-9_]*)\}?`)
+
+// untemplatedWarnings: a declared parameter named inside a command's script
+// or an agent's prompt. Neither is templated — the shell reads $name as its
+// own variable, the agent reads the text — so it looks like it passes the
+// value and does not. (A whole field that is $name is refused outright.)
+func untemplatedWarnings(f *Flow) []string {
+	declared := map[string]bool{}
+	for _, pr := range f.Params {
+		declared[pr.Name] = true
+	}
+	mentioned := func(text string) []string {
+		var out []string
+		for _, m := range mentionRe.FindAllStringSubmatch(text, -1) {
+			if declared[m[1]] && !slices.Contains(out, "$"+m[1]) {
+				out = append(out, "$"+m[1])
+			}
+		}
+		return out
+	}
+	var warns []string
+	for i := range f.Stages {
+		st := &f.Stages[i]
+		if names := mentioned(st.Run); len(names) > 0 {
+			warns = append(warns, fmt.Sprintf("stage %q: its script names %s, a parameter — a script is not templated: the shell reads %s as its own variable, not the parameter (a command reads one with run_ref)",
+				st.ID, strings.Join(names, ", "), names[0]))
+		}
+	}
+	for i := range f.Agents {
+		a := &f.Agents[i]
+		if names := mentioned(a.Prompt); len(names) > 0 {
+			warns = append(warns, fmt.Sprintf("agent %q: its prompt names %s, a parameter — a prompt is not templated: the agent reads the text %q, not the parameter's value",
+				a.Name, strings.Join(names, ", "), names[0]))
+		}
+	}
+	return warns
 }
 
 // endingWarnings: the run's end written where it does not belong. A watcher

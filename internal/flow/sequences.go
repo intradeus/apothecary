@@ -79,6 +79,9 @@ func sequenceStageProblem(st *DocStage) string {
 	if msgs := st.retired(); len(msgs) > 0 {
 		return msgs[0]
 	}
+	if err := notAParam(st.Description); err != nil {
+		return "description: " + err.Error()
+	}
 	if st.Type != "" {
 		return fmt.Sprintf("a sequence stage has no type — it runs sequence %q's stages", st.Sequence)
 	}
@@ -120,6 +123,9 @@ func (p *parser) buildSequences(raw []DocSequence) error {
 		}
 		if !slugRe.MatchString(s.ID) {
 			return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
+		}
+		if err := notAParam(s.Description); err != nil {
+			return fail("description: %v", err)
 		}
 		if prev, dup := p.sequences[s.ID]; dup {
 			return fail("duplicate sequence id (first declared at line %d)", prev.line)

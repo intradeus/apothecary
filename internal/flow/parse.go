@@ -982,6 +982,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if raw.Name == "" {
 		return nil, p.errf(1, "flow name is required")
 	}
+	if err := notAParam(raw.Description); err != nil {
+		return nil, p.errf(p.keyLine("description"), "description: %v", err)
+	}
 	if !slugRe.MatchString(raw.Name) {
 		return nil, p.errf(p.keyLine("name"), "flow name %q is not a slug (lowercase [a-z0-9_-], starting with a letter)", raw.Name)
 	}
@@ -1120,6 +1123,7 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		return nil, err
 	}
 	f.Params, f.Refs = p.plist, p.refs
+	warns = append(warns, untemplatedWarnings(f)...)
 	for i := range f.Params {
 		if pr := &f.Params[i]; !pr.Known && !p.used[pr.Name] {
 			warns = append(warns, fmt.Sprintf("parameter %q is declared but nothing reads it ($%s)", pr.Name, pr.Name))
@@ -1171,6 +1175,9 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 		}
 		if len(pr.Description) > 500 {
 			return errf(e.Line, "%s: description is longer than 500 characters", e.Name)
+		}
+		if err := notAParam(pr.Description); err != nil {
+			return errf(e.Line, "%s: description: %v", e.Name, err)
 		}
 		if len(pr.Enum) > 0 {
 			if pr.Type != ParamString {
@@ -1402,6 +1409,9 @@ func (p *parser) buildAgents(raw []agentspec.Spec) ([]agentspec.Spec, error) {
 		if sp.Name == "" {
 			return nil, p.errf(at, "agent #%d: name is required", i+1)
 		}
+		if err := agentFreeText(sp); err != nil {
+			return nil, p.errf(at, "agent %q: %v", sp.Name, err)
+		}
 		if err := agentspec.Validate(sp); err != nil {
 			return nil, p.errf(at, "agent %q: %v", sp.Name, err)
 		}
@@ -1411,6 +1421,38 @@ func (p *parser) buildAgents(raw []agentspec.Spec) ([]agentspec.Spec, error) {
 		seen[sp.Name] = at
 	}
 	return raw, nil
+}
+
+// agentFreeText refuses a $parameter as an agent's text — its description,
+// prompt, an input's or an output's description, an output's path: an agent
+// is pinned as written, and nothing in it is read from the parameters.
+func agentFreeText(sp *agentspec.Spec) error {
+	check := func(field, v string) error {
+		if err := notAParam(v); err != nil {
+			return fmt.Errorf("%s: %v", field, err)
+		}
+		return nil
+	}
+	if err := check("description", sp.Description); err != nil {
+		return err
+	}
+	if err := check("prompt", sp.Prompt); err != nil {
+		return err
+	}
+	for _, in := range sp.Inputs {
+		if err := check(fmt.Sprintf("input %q: description", in.Name), in.Description); err != nil {
+			return err
+		}
+	}
+	for _, out := range sp.Outputs {
+		if err := check(fmt.Sprintf("output %q: description", out.Name), out.Description); err != nil {
+			return err
+		}
+		if err := check(fmt.Sprintf("output %q: path", out.Name), out.Path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) {
@@ -1479,6 +1521,14 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 	}
 
+	for _, ft := range []struct{ name, v string }{{"description", raw.Description}, {"question", raw.Question}, {"run", raw.Run}} {
+		if err := notAParam(ft.v); err != nil {
+			if ft.name == "run" {
+				return fail("run: %v — a command reads a parameter with run_ref", err)
+			}
+			return fail("%s: %v", ft.name, err)
+		}
+	}
 	s := &Stage{ID: raw.ID, Type: st, Line: line, Description: raw.Description, Sequence: raw.scope}
 	// site describes a field of this stage that may read a $parameter.
 	site := func(field string, typ ParamType, values []string) paramSite {
@@ -1753,9 +1803,24 @@ func bindings(io *DocIO, field string, valueOK func(v string) error) ([]IOBindin
 	return out, nil
 }
 
+// paramFields names where a $parameter is read (FLOWLANG §1 Parameters).
+const paramFields = "a stage's model, harness, max_turns, timeout, run_ref and when, an action's inputs, and a watcher's or an outcome's start, quiet_for and max"
+
+// notAParam refuses a $parameter in a field that reads none: written there,
+// $name would stay the text "$name" — never the parameter's value.
+func notAParam(v string) error {
+	if IsParamRef(strings.TrimSpace(v)) {
+		return fmt.Errorf("%s is a parameter, and this field reads none — it would stay the text %q (parameters are read in %s)", strings.TrimSpace(v), strings.TrimSpace(v), paramFields)
+	}
+	return nil
+}
+
 // pathValue accepts a repo-relative artifact path and nothing else: a command
 // reads and writes files, and an agent's outputs are files.
 func pathValue(v string) error {
+	if err := notAParam(v); err != nil {
+		return err
+	}
 	if !validArtifactPath(v) {
 		return fmt.Errorf("%q must be a relative artifact path", v)
 	}
@@ -1778,6 +1843,9 @@ func retiredSentinel(v string) string {
 // render: the git file lists, and the content of the edge that re-entered
 // the stage.
 func agentInputValue(v string) error {
+	if err := notAParam(v); err != nil {
+		return err
+	}
 	switch v {
 	case SentinelDiffTarget, SentinelDiffPhase, SentinelStatus, SentinelDecision, SentinelFailure:
 		return nil
@@ -1798,6 +1866,9 @@ func agentInputValue(v string) error {
 
 // gateInputValue accepts a path to review or a link the engine resolves.
 func gateInputValue(v string) error {
+	if err := notAParam(v); err != nil {
+		return err
+	}
 	switch v {
 	case SentinelMRURL, SentinelWorkspace:
 		return nil
@@ -2103,6 +2174,9 @@ func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, err
 				return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
 			case rp.id == MainPhase:
 				return fail("id %q is the main chain's", MainPhase)
+			}
+			if err := notAParam(rp.description); err != nil {
+				return fail("description: %v", err)
 			}
 			if prev, dup := seen[rp.id]; dup {
 				return fail("duplicate id (first declared at line %d) — watchers and outcomes are one namespace", prev)

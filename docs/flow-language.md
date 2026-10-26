@@ -218,10 +218,17 @@ at the top of the block.
 | a watcher's or an outcome's `on.start`, a watcher's `on.quiet_for`, `on.max` | an enum within `auto \| confirm \| manual`; a string; an int |
 | a stage's `when` | a bool |
 
-Never in a prompt, a stage id, a path or a `run:` script. The parser checks a
-reference the way it checks a literal — the resolved value goes through the
-same validators, with the parameter named in the error — and warns about a
-parameter nothing reads.
+Nowhere else. A field that reads no parameter refuses one written as its
+whole value — a description (the flow's, a stage's, a watcher's, an
+outcome's, a sequence's, a parameter's), a gate's `question`, a `run:`
+script, an agent's prompt and descriptions, a path: there `$name` would stay
+the text "$name", never the bound value. Names — stage ids, signals,
+sequences, agents — refuse it as the names they are not. A declared
+parameter named *inside* a `run:` script or a prompt is warned about: neither
+is templated, so the shell reads `$name` as its own variable and the agent
+reads the text. The parser checks a reference the way it checks a literal —
+the resolved value goes through the same validators, with the parameter named
+in the error — and warns about a parameter nothing reads.
 
 **Resolution.** Binding is a re-parse of the pinned bytes with the values, so
 parse-time and resolve-time validation are one code path. A binding that
