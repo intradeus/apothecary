@@ -138,6 +138,12 @@ type ProvisionerDeps struct {
 	// in-workspace shim binary (wsimage.EnsureShim); the devcontainer
 	// provisioner bind-mounts it at provision time.
 	ShimBin func(ctx context.Context) (string, error)
+	// ToolsDir builds (cached) and returns the host directory of the tools
+	// bundle (wsimage.EnsureTools): every harness CLI and code-server as
+	// standalone builds, which the docker provisioner bind-mounts into every
+	// workspace at /opt/apothecary/tools. The parent of that directory is
+	// what each sandbox mounts (every bundle version, read-only).
+	ToolsDir func(ctx context.Context) (string, error)
 	// GatewayImage builds (cached) and returns the tag of the per-project egress
 	// gateway image (wsimage.EnsureGatewayImage); the devcontainer provisioner
 	// runs one gateway container per project to filter all workspace egress.
@@ -161,10 +167,10 @@ type Harness interface {
 	// Test statically validates config/auth material (no remote call — a
 	// harness has no server to probe).
 	Test(ctx context.Context) error
-	// Binary is the executable envcheck probes with `command -v`.
+	// Binary is the executable envcheck probes with `command -v`. Every
+	// harness kind ships in the tools bundle mounted into each workspace
+	// (workspace/images/tools), at the version its kind pins.
 	Binary() string
-	// InstallLayer returns Dockerfile lines installing the harness (§8.2).
-	InstallLayer() []string
 	EgressDomains() []string
 	// Models lists the models this harness can route to given its
 	// configured auth — the exact strings flows may use. Engine-side (no

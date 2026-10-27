@@ -31,6 +31,11 @@ type Definition interface {
 	// ConfigFiles are the files (relative to src, sorted) whose contents
 	// decide what Up builds — the "config changed, rebuild?" digest inputs.
 	ConfigFiles(ctx context.Context, fsys sandboxFS, src string) ([]string, error)
+	// EditorExtensions are the VS Code extension ids the definition itself
+	// declares (devcontainer: customizations.vscode.extensions). Best-effort,
+	// nil on any miss; the adapter unions them with the project's list when
+	// the browser editor starts.
+	EditorExtensions(ctx context.Context, e defEnv) []string
 }
 
 // defEnv is what a definition gets from the adapter: the env, its checkout,
@@ -41,10 +46,12 @@ type defEnv struct {
 	run       func(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, extraEnv ...string) ([]byte, []byte, int, error)
 }
 
-// upOptions are the adapter's demands on a build: mount the shim, use the
-// project's build cache behind the gateway, recreate, skip the cache.
+// upOptions are the adapter's demands on a build: mount the shim and the
+// tools bundle, use the project's build cache behind the gateway, recreate,
+// skip the cache.
 type upOptions struct {
 	shimDir        string
+	toolsDir       string // mounted at /opt/apothecary/tools
 	gwIP, project  string
 	removeExisting bool
 	noCache        bool

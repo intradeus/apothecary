@@ -30,6 +30,7 @@ func (Docker) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		RunsDir:         deps.RunsDir,
 		EnginePort:      deps.EnginePort,
 		ShimBin:         deps.ShimBin,
+		ToolsDir:        deps.ToolsDir,
 		GatewayImage:    deps.GatewayImage,
 		GatewayOff:      cfg.Str("firewall", "on") == "off",
 		DinDImage:       cfg.Str("dind_image", ""), // "" ⇒ adapter default

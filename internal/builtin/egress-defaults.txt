@@ -58,16 +58,18 @@ index.crates.io
 *.rubygems.org
 rubygems.org
 
-# GitHub — apothecary's OWN injected tooling (code-server, harnesses) pulls
-# from GitHub releases REGARDLESS of the project's repository host, so these
-# are useful even for a GitLab-hosted repo.
+# GitHub — many dev tools install from GitHub releases REGARDLESS of the
+# project's repository host, so these are useful even for a GitLab-hosted
+# repo. (apothecary's own harnesses and code-server no longer need them: they
+# arrive pre-built in the tools bundle.)
 github.com
 api.github.com
 codeload.github.com
 objects.githubusercontent.com
 
-# Dev-tool CDNs (apothecary's injected code-server feature + VS Code extensions).
-code-server.dev
+# VS Code extension marketplaces. With a gateway the browser editor reaches
+# Open VSX through the gateway's own cache, so these only matter for a
+# project without one.
 open-vsx.org
 *.open-vsx.org
 openvsx.eclipsecontent.org

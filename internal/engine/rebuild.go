@@ -76,23 +76,21 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		nameBranch = v.Branch
 	}
 	spec := ports.EnvSpec{
-		RunID:                runID,
-		NoCache:              noCache,
-		RepoURL:              res.RepoRef.URL,
-		Branch:               v.Branch,
-		Name:                 workspaceName(nameBranch, runID),
-		Project:              res.ProjectID,
-		ProjectName:          res.ProjectName,
-		HarnessInstall:       res.HarnessInstall,
-		EgressDomains:        res.EgressDomains,
-		EgressMode:           res.EgressMode,
-		EgressDenylist:       res.EgressDenylist,
-		EgressBlocked:        res.EgressBlocked,
-		EgressAllowedCIDRs:   res.EgressAllowedCIDRs,
-		EgressAllowedPorts:   res.EgressAllowedPorts,
-		CodeServerExtensions: res.CodeServerExtensions,
-		GitUser:              res.GitUser,
-		GitPass:              res.GitPass,
+		RunID:              runID,
+		NoCache:            noCache,
+		RepoURL:            res.RepoRef.URL,
+		Branch:             v.Branch,
+		Name:               workspaceName(nameBranch, runID),
+		Project:            res.ProjectID,
+		ProjectName:        res.ProjectName,
+		EgressDomains:      res.EgressDomains,
+		EgressMode:         res.EgressMode,
+		EgressDenylist:     res.EgressDenylist,
+		EgressBlocked:      res.EgressBlocked,
+		EgressAllowedCIDRs: res.EgressAllowedCIDRs,
+		EgressAllowedPorts: res.EgressAllowedPorts,
+		GitUser:            res.GitUser,
+		GitPass:            res.GitPass,
 	}
 	// Egress policy is delivered to the per-project gateway by the provisioner's
 	// Rebuild (from the EnvSpec egress fields) — nothing to prime here.

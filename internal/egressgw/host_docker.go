@@ -194,7 +194,7 @@ func (h *DockerHost) EnsureGateway(ctx context.Context, project, projectName str
 		"-v", buildCacheVolume(project)+":"+buildCacheDir,
 		img,
 		"--state-dir", "/state",
-		"--mirror", "--buildcache", "--buildcache-dir", buildCacheDir,
+		"--mirror", "--buildcache", "--buildcache-dir", buildCacheDir, "--gallery",
 		"--control-listen", ":"+controlPort,
 		"--listen-port", "9040",
 		"--dns-upstream", "1.1.1.1:53",

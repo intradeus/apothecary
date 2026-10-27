@@ -418,7 +418,7 @@ func TestDockerHostCreatesOneGatewayPerProject(t *testing.T) {
 		"-v apo-gw-acme-state:/state",
 		"-v apo-gw-acme-cache:/var/lib/registry",
 		"-v apo-gw-acme-buildcache:" + buildCacheDir,
-		"--state-dir /state --mirror --buildcache",
+		"--state-dir /state --mirror --buildcache --buildcache-dir /var/lib/buildcache --gallery",
 		"--control-listen :9041",
 	} {
 		if !strings.Contains(run, want) {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/egressgw"
 	"apothecary/internal/ports"
 )
 
@@ -348,64 +349,136 @@ func (a *Adapter) startPortScan(ctx context.Context, name, cid string) {
 	}
 }
 
+// Where the browser editor lives in a workspace. The binary comes from the
+// tools bundle (rootInit links it into /opt/apothecary; glibc images only —
+// code-server has no musl build), and its per-run state — the extensions it
+// installed, their marker and its log — under /apothecary, the run's writable
+// state dir (rootInit creates it, owned by the remote user).
+const (
+	codeServerBin    = "/opt/apothecary/code-server"
+	codeServerState  = "/apothecary/code-server"
+	codeServerExtDir = codeServerState + "/extensions"
+	// codeServerMissingExit is what the start script exits with when the
+	// image has no code-server link (a musl image).
+	codeServerMissingExit = 61
+	// editorStartTimeout bounds one StartEditor exec: the extension installs
+	// (the first open of a run) plus the 20 s listener wait.
+	editorStartTimeout = 5 * time.Minute
+)
+
 // StartEditor (ports.EditorStarter) launches code-server in the workspace on
-// the given loopback port, ready to be exposed. Lazy + idempotent: it first
-// probes the port (image-agnostic, via the static shim) and no-ops if
-// code-server is already listening; otherwise it starts it detached and waits
-// for the listener. code-server itself is installed by the injected feature;
-// the baked --extensions-dir carries the pre-installed extensions. It opens
-// $HOME/repo (the checkout symlink) — a shell expands $HOME for the container's
-// own user. The project's UI settings (theme + prefs) are written as VS Code
-// user settings on EVERY call: code-server live-watches settings.json, so this
-// also refreshes an already-running editor with the latest project config.
+// the given loopback port, ready to be exposed. Lazy + idempotent: the script
+// probes the port (image-agnostic, via the static shim) and leaves a listening
+// code-server alone; otherwise it starts it detached and waits for the
+// listener. It opens $HOME/repo (the checkout symlink).
+//
+// It runs through Exec — `devcontainer exec` semantics: the remote user, the
+// definition's containerEnv/remoteEnv, the probed login PATH plus
+// /opt/apothecary — so the editor's integrated terminal is a real shell in
+// the workspace: the repo's toolchain and the bundled harness CLIs on PATH,
+// in $HOME/repo, as the agent sees it. One exec (they count on Kubernetes)
+// does everything: the project's UI settings, re-applied on EVERY call
+// (code-server live-watches settings.json, so this also refreshes a running
+// editor); the extensions — the definition's own list ∪ the project's,
+// installed into the per-run extensions dir the first time this exact list
+// is asked for (a marker holds the installed list; a Rebuild starts over),
+// through the project gateway's gallery cache when the run has one; then
+// the start, then the wait.
 func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int, settings ports.EditorSettings) error {
 	name := string(env)
-	cid, err := a.containerID(ctx, name)
+	exts := extensionUnion(a.defFor(name).EditorExtensions(ctx, a.defEnv(name, a.srcDir(name))), settings.Extensions)
+	script := editorScript(port, codeServerSettingsJSON(settings), exts, a.gatewayIPFor(name))
+	res, err := a.Exec(ctx, env, ports.Command{Script: script, Timeout: editorStartTimeout})
 	if err != nil {
 		return err
 	}
-	a.applyEditorSettings(ctx, name, cid, settings)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	// Already up? (e.g. a prior Open editor, or code-server survived a plain
-	// engine restart.)
-	if _, _, code, _ := a.runInner(ctx, name, a.cfg.DockerBin,
-		[]string{"exec", cid, "/opt/apothecary/shim", "probe", addr}, nil, nil); code == 0 {
+	switch res.ExitCode {
+	case 0:
 		return nil
+	case codeServerMissingExit:
+		return fmt.Errorf("open editor in %s: the browser editor needs a glibc-based workspace image (the tools bundle has no code-server build for musl)", name)
+	default:
+		return fmt.Errorf("start code-server in %s: exit %d: %s", name, res.ExitCode, tail(res.Output, 1024))
 	}
-	start := fmt.Sprintf(
-		`exec code-server --auth none --disable-telemetry --bind-addr %s --extensions-dir %s "$HOME/repo"`,
-		addr, codeServerExtDir)
-	if _, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
-		[]string{"exec", "-d", cid, "sh", "-c", start}, nil, nil); err != nil || code != 0 {
-		return fmt.Errorf("start code-server in %s: exit %d: %s", name, code, tail(string(stderr), 512))
-	}
-	// Wait (bounded) for the listener before the engine exposes it, so the
-	// first browser load succeeds.
-	if _, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
-		[]string{"exec", cid, "/opt/apothecary/shim", "probe", "--wait", "20s", addr}, nil, nil); err != nil || code != 0 {
-		return fmt.Errorf("code-server in %s did not start listening on %d within 20s", name, port)
-	}
-	return nil
 }
 
-// applyEditorSettings writes the project's editor UI defaults (theme + prefs)
-// as VS Code user settings into the container user's own writable code-server
-// data dir. code-server live-watches settings.json, so this both seeds the
-// first launch and refreshes a running editor. Best-effort: a settings failure
-// must never block opening the editor, so errors are logged, not returned.
-func (a *Adapter) applyEditorSettings(ctx context.Context, name, cid string, settings ports.EditorSettings) {
-	blob := codeServerSettingsJSON(settings)
-	if blob == nil {
-		return
+// editorScript is the one script StartEditor runs (Exec's `bash -e`: every
+// unguarded failure is reported). settings is nil when the project sets
+// nothing (the user's own settings.json is then left alone); gwIP "" means
+// no gateway — code-server then reaches Open VSX itself, as egress is open.
+func editorScript(port int, settings []byte, exts []string, gwIP string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `cs=%s
+if [ ! -x "$cs" ]; then
+  echo "apothecary: no code-server for this image's libc" >&2
+  exit %d
+fi
+state=%s
+addr=127.0.0.1:%d
+mkdir -p "$state/extensions"
+`, codeServerBin, codeServerMissingExit, codeServerState, port)
+	if settings != nil {
+		fmt.Fprintf(&b, `mkdir -p "$HOME/.local/share/code-server/User"
+printf '%%s\n' %s > "$HOME/.local/share/code-server/User/settings.json"
+`, shellQuote(string(settings)))
 	}
-	// settings.json rides on stdin (bash -i cat): no CLI quoting of the JSON.
-	script := `mkdir -p "$HOME/.local/share/code-server/User" && ` +
-		`cat > "$HOME/.local/share/code-server/User/settings.json"`
-	if _, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
-		[]string{"exec", "-i", cid, "sh", "-c", script}, blob, nil); err != nil || code != 0 {
-		slog.Warn("devcontainer: could not apply code-server settings",
-			"env", name, "exit", code, "err", err, "stderr", tail(string(stderr), 256))
+	if gwIP != "" {
+		fmt.Fprintf(&b, "export EXTENSIONS_GALLERY=%s\n", shellQuote(extensionsGalleryJSON(egressgw.GalleryURL(gwIP))))
 	}
+	fmt.Fprintf(&b, `want=%s
+if [ "$(cat "$state/extensions.installed" 2>/dev/null)" != "$want" ]; then
+  printf '%%s\n' "$want" | while IFS= read -r ext; do
+    [ -n "$ext" ] || continue
+    echo "apothecary: installing extension $ext"
+    "$cs" --install-extension "$ext" --extensions-dir "$state/extensions" \
+      || echo "apothecary: could not install '$ext' (not on Open VSX?)" >&2
+  done
+  printf '%%s' "$want" > "$state/extensions.installed"
+fi
+`, shellQuote(strings.Join(exts, "\n")))
+	b.WriteString(`if ! apothecary-shim probe "$addr"; then
+  echo "apothecary: starting code-server on $addr"
+  ( exec "$cs" --auth none --disable-telemetry --bind-addr "$addr" --extensions-dir "$state/extensions" "$HOME/repo" ) </dev/null >>"$state/code-server.log" 2>&1 &
+fi
+apothecary-shim probe --wait 20s "$addr"
+`)
+	return b.String()
+}
+
+// extensionUnion is the deduplicated, sorted union of extension id lists
+// (trimmed, empties dropped): a stable list, so the marker comparison and the
+// install order never depend on where an id came from.
+func extensionUnion(lists ...[]string) []string {
+	set := map[string]bool{}
+	for _, l := range lists {
+		for _, e := range l {
+			if e = strings.TrimSpace(e); e != "" {
+				set[e] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for e := range set {
+		out = append(out, e)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// extensionsGalleryJSON is code-server's EXTENSIONS_GALLERY value (VS Code's
+// product.json extensionsGallery shape) for a gallery served at base — the
+// gateway's Open VSX proxy, whose paths mirror open-vsx.org's.
+func extensionsGalleryJSON(base string) string {
+	b, _ := json.Marshal(struct {
+		ServiceURL          string `json:"serviceUrl"`
+		ItemURL             string `json:"itemUrl"`
+		ResourceURLTemplate string `json:"resourceUrlTemplate"`
+	}{
+		ServiceURL:          base + "/vscode/gallery",
+		ItemURL:             base + "/vscode/item",
+		ResourceURLTemplate: base + "/vscode/unpkg/{publisher}/{name}/{version}/{path}",
+	})
+	return string(b)
 }
 
 // codeServerSettingsJSON renders the neutral EditorSettings to a VS Code

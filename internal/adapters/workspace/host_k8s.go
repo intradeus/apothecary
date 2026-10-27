@@ -30,9 +30,10 @@ type KubeConfig struct {
 	// secrets live in.
 	Kube *kube.Client
 	// Images (cluster-pullable): the sandbox (docker:dind + git + node +
-	// @devcontainers/cli + WireGuard), the shim and the egress gateway.
-	SandboxImage, ShimImage, GatewayImage string
-	PullPolicy                            string // "" = the cluster default
+	// @devcontainers/cli + WireGuard), the shim, the tools bundle (harness
+	// CLIs + code-server, seeded onto the run volume) and the egress gateway.
+	SandboxImage, ShimImage, ToolsImage, GatewayImage string
+	PullPolicy                                        string // "" = the cluster default
 	// EngineURL is how a workspace reaches the engine (its Service, as a
 	// FQDN so it resolves from any container in the sandbox).
 	EngineURL string
@@ -154,7 +155,7 @@ func (h *k8sHost) prepare(ctx context.Context, name string, spec ports.EnvSpec, 
 		if att, err = a.gw.EnsureRunEgress(ctx, spec.Project, spec.ProjectName, name, policyFor(spec)); err != nil {
 			return prep{}, err
 		}
-		a.recordProject(name, spec.Project)
+		a.recordGateway(name, spec.Project, att.GatewayIP)
 	}
 	plog("→ bringing up the sandbox pod\n")
 	if err := h.ensurePod(ctx, name, spec, att); err != nil {
@@ -171,7 +172,10 @@ func (h *k8sHost) prepare(ctx context.Context, name string, spec ports.EnvSpec, 
 	if err := h.checkShim(ctx, name); err != nil {
 		return prep{}, err
 	}
-	return prep{src: src, shimDir: filepath.Join(folder, "shim"), gwIP: att.GatewayIP, def: def}, nil
+	if err := h.checkTools(ctx, name); err != nil {
+		return prep{}, err
+	}
+	return prep{src: src, shimDir: filepath.Join(folder, "shim"), toolsDir: filepath.Join(folder, "tools"), gwIP: att.GatewayIP, def: def}, nil
 }
 
 // relayToken is the run's dial-in token (Secret apo-run-<name>), created once.
@@ -372,6 +376,10 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec ports.EnvSp
 	}
 	seed := kube.Container{Name: "shim-seed", Image: h.cfg.ShimImage, ImagePullPolicy: h.cfg.PullPolicy,
 		Args: []string{"seed", filepath.Join(folder, "shim")}, VolumeMounts: []kube.VolumeMount{runMount}}
+	// The tools bundle, copied onto the run volume once per bundle version
+	// (seed.sh skips a volume that already holds this image's TOOLS_HASH).
+	tools := kube.Container{Name: "tools-seed", Image: h.cfg.ToolsImage, ImagePullPolicy: h.cfg.PullPolicy,
+		Args: []string{filepath.Join(folder, "tools")}, VolumeMounts: []kube.VolumeMount{runMount}}
 	relay := kube.Container{Name: "relay", Image: h.cfg.ShimImage, ImagePullPolicy: h.cfg.PullPolicy,
 		RestartPolicy: "Always", // a native sidecar: up before the sandbox, restarted on its own
 		Args: []string{"relay", "--serve", "0.0.0.0:" + strconv.Itoa(relayPort),
@@ -386,7 +394,7 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec ports.EnvSp
 			AutomountServiceAccountToken:  kube.Ptr(false),
 			EnableServiceLinks:            kube.Ptr(false),
 			Hostname:                      name,
-			InitContainers:                []kube.Container{seed},
+			InitContainers:                []kube.Container{seed, tools},
 			Containers:                    []kube.Container{sandbox},
 			Volumes: []kube.Volume{
 				{Name: "apo", EmptyDir: &kube.EmptyDirVolumeSource{}},
@@ -484,6 +492,22 @@ func (h *k8sHost) checkShim(ctx context.Context, name string) error {
 	got, want := strings.TrimSpace(string(b)), wsassets.ShimSourceHash()
 	if got != want {
 		return fmt.Errorf("sandbox %s: shim image %s was built from shim sources %s, this engine expects %s — publish the shim image of this engine's version", name, h.cfg.ShimImage, got, want)
+	}
+	return nil
+}
+
+// checkTools makes sure the tools bundle was seeded, and only WARNS when it
+// is not the one this engine expects: a bundle of another version still
+// works (the harness versions differ, nothing of the engine's protocol), and
+// the next pod start reseeds from whatever image the integration names.
+func (h *k8sHost) checkTools(ctx context.Context, name string) error {
+	b, err := h.fs(name).ReadFile(ctx, filepath.Join(h.a.folderFor(name), "tools", "TOOLS_HASH"))
+	if err != nil {
+		return fmt.Errorf("sandbox %s: no seeded tools bundle (%v) — is %s an apothecary tools image?", name, err, h.cfg.ToolsImage)
+	}
+	if got, want := strings.TrimSpace(string(b)), wsassets.ToolsHash(); got != want {
+		slog.Warn("kubernetes: the seeded tools bundle is not this engine's (harness/code-server versions may differ)",
+			"env", name, "image", h.cfg.ToolsImage, "seeded", got, "expected", want)
 	}
 	return nil
 }
@@ -831,8 +855,8 @@ func (h *k8sHost) test(ctx context.Context) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("kubernetes: may not create %s in namespace %s (see the chart's RBAC)", strings.Join(missing, ", "), k.Namespace)
 	}
-	if h.cfg.SandboxImage == "" || h.cfg.ShimImage == "" || (h.cfg.Firewall && h.cfg.GatewayImage == "") {
-		return errors.New("kubernetes: sandbox, shim and gateway images must be set")
+	if h.cfg.SandboxImage == "" || h.cfg.ShimImage == "" || h.cfg.ToolsImage == "" || (h.cfg.Firewall && h.cfg.GatewayImage == "") {
+		return errors.New("kubernetes: sandbox, shim, tools and gateway images must be set")
 	}
 	if _, _, err := h.engineAddr(); err != nil {
 		return err

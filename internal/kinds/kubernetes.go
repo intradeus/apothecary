@@ -12,12 +12,12 @@ import (
 // KubernetesDefaults are the deployment's answers (boot env) to everything a
 // Kubernetes integration leaves empty.
 type KubernetesDefaults struct {
-	Namespace, EngineNamespace, EngineURL string
-	Kubeconfig                            string
-	SandboxImage, ShimImage, GatewayImage string
-	PullPolicy                            string
-	ProtectCIDRs                          []string
-	Transport                             string // direct | portforward
+	Namespace, EngineNamespace, EngineURL             string
+	Kubeconfig                                        string
+	SandboxImage, ShimImage, ToolsImage, GatewayImage string
+	PullPolicy                                        string
+	ProtectCIDRs                                      []string
+	Transport                                         string // direct | portforward
 }
 
 // Kubernetes is the provisioner/kubernetes kind: each run's sandbox is a pod
@@ -41,6 +41,7 @@ func (k Kubernetes) Descriptor() Descriptor {
 				Help: "Only when the engine runs outside the cluster: its address as pods see it, e.g. 172.18.0.1/32."},
 			{Name: "sandbox_image", Label: "Sandbox image", Placeholder: d.SandboxImage},
 			{Name: "shim_image", Label: "Shim image", Placeholder: d.ShimImage},
+			{Name: "tools_image", Label: "Tools image (harnesses + code-server)", Placeholder: d.ToolsImage},
 			{Name: "gateway_image", Label: "Egress gateway image", Placeholder: d.GatewayImage},
 			{Name: "image_pull_policy", Label: "Image pull policy", Placeholder: orDefault(d.PullPolicy, "IfNotPresent")},
 			{Name: "storage", Label: "Workspace storage (pvc/emptydir)", Placeholder: "pvc", Default: "pvc"},
@@ -109,6 +110,7 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 			Kube:            &kube.Client{Kubeconfig: path, Context: cfg.Str("context", ""), Namespace: ns},
 			SandboxImage:    cfg.Str("sandbox_image", d.SandboxImage),
 			ShimImage:       cfg.Str("shim_image", d.ShimImage),
+			ToolsImage:      cfg.Str("tools_image", d.ToolsImage),
 			GatewayImage:    cfg.Str("gateway_image", d.GatewayImage),
 			PullPolicy:      cfg.Str("image_pull_policy", d.PullPolicy),
 			EngineURL:       engineURL,

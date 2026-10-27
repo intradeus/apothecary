@@ -8,8 +8,8 @@ package workspace
 //   - APOTHECARY_LIVE_KUBECONFIG: a kubeconfig for a THROWAWAY cluster. The
 //     test creates and deletes its own namespace; it never uses kubectl's
 //     default config.
-//   - APOTHECARY_LIVE_IMAGE_PREFIX: where the sandbox, shim and egress-gw
-//     images of this tree were pushed (tag :local).
+//   - APOTHECARY_LIVE_IMAGE_PREFIX: where the sandbox, shim, tools and
+//     egress-gw images of this tree were pushed (tag :local).
 //   - APOTHECARY_LIVE_K8S_NAMESPACE (default apothecary-live).
 //   - APOTHECARY_LIVE_GATEWAY=0 to skip the egress gateway (default on).
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
@@ -155,7 +155,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		RunsDir: runsDir, ProvisionTimeout: 20 * time.Minute,
 		Kube: &KubeConfig{
 			Kube:         c,
-			SandboxImage: img("sandbox"), ShimImage: img("shim"), GatewayImage: img("egress-gw"),
+			SandboxImage: img("sandbox"), ShimImage: img("shim"), ToolsImage: img("tools"), GatewayImage: img("egress-gw"),
 			PullPolicy:      "Always",
 			EngineURL:       "http://" + engineIP + ":8080",
 			EngineNamespace: ns,
@@ -171,9 +171,10 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	spec := ports.EnvSpec{
 		RunID: "01LIVE" + name, Name: name, Project: "LIVEPROJ", ProjectName: "live",
 		RepoURL: "git://git." + ns + ".svc.cluster.local/repo",
-		// Docker Hub (the image), code-server and Open VSX (the injected
-		// feature) — plus the raw git port, the escape hatch's job.
-		EgressDomains:      append(builtin.EgressDefaults(), "code-server.dev"),
+		// Docker Hub (the image; the harnesses and code-server ride in as the
+		// tools bundle, nothing else is fetched into the image) — plus the raw
+		// git port, the escape hatch's job.
+		EgressDomains:      builtin.EgressDefaults(),
 		EgressAllowedPorts: []int{9418},
 	}
 	start := time.Now()
@@ -220,6 +221,21 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	}
 	if got := a.AppPorts(ctx, env); len(got) != 1 || got[0] != 3000 {
 		t.Errorf("AppPorts = %v", got)
+	}
+	// The tools bundle, seeded onto the run volume and linked into
+	// /opt/apothecary; the browser editor, started through Exec with the
+	// project's extension installed through the gateway's gallery.
+	if res, err := a.Exec(ctx, env, ports.Command{Script: `command -v opencode codex-acp omp code-server && opencode --version && codex --version`}); err != nil || res.ExitCode != 0 ||
+		!strings.Contains(res.Output, "/opt/apothecary/opencode") || !strings.Contains(res.Output, "/opt/apothecary/code-server") {
+		t.Fatalf("tools bundle: %+v %v", res, err)
+	} else {
+		t.Logf("tools: %s", strings.TrimSpace(res.Output))
+	}
+	if err := a.StartEditor(ctx, env, ports.CodeServerPort, ports.EditorSettings{Extensions: []string{"golang.go"}}); err != nil {
+		t.Fatalf("editor: %v", err)
+	}
+	if res, err := a.Exec(ctx, env, ports.Command{Script: `cat /apothecary/code-server/extensions.installed; ls /apothecary/code-server/extensions`}); err != nil || !strings.Contains(res.Output, "golang.go") {
+		t.Errorf("editor extensions: %+v %v", res, err)
 	}
 	// The workspace reaches the engine at its Service.
 	if res, err := a.Exec(ctx, env, ports.Command{Script: fmt.Sprintf(`exec 3<>/dev/tcp/%s/8080; printf 'GET / HTTP/1.0\r\n\r\n' >&3; cat <&3`, engineIP)}); err != nil || !strings.Contains(res.Output, "live-pong") {

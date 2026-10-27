@@ -63,11 +63,14 @@ type Resolution struct {
 	EgressBlocked      []string
 	EgressAllowedCIDRs []string
 	EgressAllowedPorts []int
-	// CodeServerExtensions are project-declared VS Code extension ids baked
-	// into the workspace's code-server (§ code-server integration).
+	// CodeServerExtensions are the project-declared VS Code extension ids
+	// (also carried by EditorSettings.Extensions, which is what reaches the
+	// adapter): installed into the browser editor when it first opens in a
+	// run, together with the definition's own list.
 	CodeServerExtensions []string
 	// EditorSettings are the project's code-server UI defaults (theme + common
-	// prefs), applied to the browser editor at OpenEditor time (no rebuild).
+	// prefs) and extensions, applied to the browser editor at OpenEditor time
+	// (no rebuild).
 	EditorSettings ports.EditorSettings
 	// Secrets are the project's secrets, opened: what a flow's MCP servers
 	// read where they say ${secrets.<name>}. Checked at run creation, fed to
@@ -100,14 +103,9 @@ type Resolution struct {
 	// or it said nothing either way. A nil func: auth checks are skipped.
 	CheckAuth func(ctx context.Context, harnessKind string, models []string) (rejected, unverified []string)
 	// HarnessBinary is the fallback harness executable (envcheck probes it
-	// with `command -v`, §9).
+	// with `command -v`, §9); the tools bundle mounted into every workspace
+	// provides it.
 	HarnessBinary string
-	// HarnessInstall is how to install each harness INSIDE the workspace,
-	// for provisioners that don't get the §8 image (a repo-authored
-	// devcontainer runs the repo's own image, which has no harness). Handed
-	// to the adapter via EnvSpec; ignored by provisioners whose image
-	// already carries them.
-	HarnessInstall []ports.HarnessInstall
 	// HarnessBinaries is every harness's executable — envcheck probes them all,
 	// since any set member may run. Empty ⇒ just HarnessBinary.
 	HarnessBinaries []string

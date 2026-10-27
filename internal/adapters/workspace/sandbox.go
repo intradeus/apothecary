@@ -36,10 +36,27 @@ func (a *Adapter) hostRun(ctx context.Context, args []string) ([]byte, []byte, i
 	return a.run(ctx, a.cfg.DockerBin, args, nil, nil)
 }
 
+// sandboxShapeLabel records how a sandbox was created (its mounts and
+// flags), so a sandbox of an older shape is recreated on first use instead of
+// failing later on what it lacks — the same mechanism as the gateway's
+// apothecary.gw.shape. Shape 2 added the tools-cache parity mount.
+const (
+	sandboxShapeLabel = "apothecary.sandbox.shape"
+	sandboxShape      = "2"
+)
+
 // sandboxIDs lists the run's sandbox container ids on the host daemon (0 or 1).
 func (a *Adapter) sandboxIDs(ctx context.Context, name string) ([]string, error) {
-	out, stderr, code, err := a.hostRun(ctx, []string{"ps", "-aq",
-		"--filter", "label=" + label(name), "--filter", "label=" + sandboxLabel + "=true"})
+	return a.sandboxIDsWith(ctx, name)
+}
+
+// sandboxIDsWith is sandboxIDs narrowed by extra label filters.
+func (a *Adapter) sandboxIDsWith(ctx context.Context, name string, labels ...string) ([]string, error) {
+	args := []string{"ps", "-aq", "--filter", "label=" + label(name), "--filter", "label=" + sandboxLabel + "=true"}
+	for _, l := range labels {
+		args = append(args, "--filter", "label="+l)
+	}
+	out, stderr, code, err := a.hostRun(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +143,7 @@ func (a *Adapter) checkRuntime(ctx context.Context) error {
 // (a gateway is active), the sandbox joins the run's --internal network and is
 // default-routed to the gateway, so no inner container can bypass egress
 // filtering; gwIP=="" keeps the legacy default-bridge behaviour.
-func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP string) error {
+func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP, toolsCache string) error {
 	runRoot := a.folderFor(name)
 	sock := a.sockPath(name)
 	// Guard the two externally-imposed limits the spike surfaced:
@@ -149,6 +166,25 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.Env
 	if err != nil {
 		return err
 	}
+	if len(ids) > 0 {
+		// A sandbox of an older shape lacks a mount `up` needs (docker refuses
+		// a bind whose source is missing), and both Rebuild and recovery
+		// re-enter here on an existing sandbox: recreate it. The inner
+		// /var/lib/docker volume stays, so the image cache and the stopped
+		// workspace container survive; `up` restarts the latter.
+		cur, err := a.sandboxIDsWith(ctx, name, sandboxShapeLabel+"="+sandboxShape)
+		if err != nil {
+			return err
+		}
+		if len(cur) == 0 {
+			if _, stderr, code, err := a.hostRun(ctx, append([]string{"rm", "-f"}, ids...)); err != nil {
+				return err
+			} else if code != 0 {
+				return fmt.Errorf("sandbox %s: remove the previous-shape sandbox: %s", name, tail(string(stderr), 512))
+			}
+			ids = nil
+		}
+	}
 	switch {
 	case len(ids) > 0:
 		// Exists (running or stopped): a start is a cheap no-op when already up.
@@ -156,7 +192,7 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.Env
 			return err
 		}
 	default:
-		if err := a.createSandbox(ctx, name, spec, gwIP); err != nil {
+		if err := a.createSandbox(ctx, name, spec, gwIP, toolsCache); err != nil {
 			return err
 		}
 	}
@@ -182,7 +218,10 @@ func (a *Adapter) wireSandboxEgress(ctx context.Context, name, gwIP string) erro
 	return nil
 }
 
-func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP string) error {
+// createSandbox runs the sandbox container. toolsCache is the engine-wide
+// tools-cache directory (every bundle version), mounted read-only at its own
+// path so a workspace can bind-mount the bundle its engine expects.
+func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP, toolsCache string) error {
 	runRoot := a.folderFor(name)
 	// Named volume for the inner /var/lib/docker (idempotent create).
 	if _, stderr, code, err := a.hostRun(ctx, []string{"volume", "create",
@@ -209,6 +248,7 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 		"--label", managedLabel+"=true",
 		"--label", label(name),
 		"--label", sandboxLabel+"=true",
+		"--label", sandboxShapeLabel+"="+sandboxShape,
 	)
 	if spec.Project != "" {
 		args = append(args, "--label", projectLabel+"="+spec.Project)
@@ -224,6 +264,11 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 	args = append(args,
 		"-v", a.sandboxVolume(name)+":/var/lib/docker",
 		"-v", runRoot+":"+runRoot, // Invariant A: identical path in host + sandbox
+		// The tools bundles, same invariant, read-only: the PARENT of the
+		// bundle dirs, so an engine upgrade's new bundle is visible to a
+		// Rebuild without recreating the sandbox — and why no bundle dir is
+		// ever swept while a sandbox may be running from it.
+		"-v", toolsCache+":"+toolsCache+":ro",
 		a.cfg.DinDImage,
 		// Explicit `dockerd` arg1 makes the entrypoint SKIP its default host
 		// injection (which would add an insecure tcp://0.0.0.0:2375 listener,

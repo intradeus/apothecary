@@ -21,29 +21,12 @@ import (
 //go:embed shim gateway
 var BaseContext embed.FS
 
-// HarnessFeature is the injected devcontainer feature that installs the
-// project's coding harness into repo-authored dev containers, which run the
-// REPO's image and so never get the §8 pipeline image that bakes it in. The
-// per-project install commands are NOT here — the adapter generates them
-// into the materialized feature dir (harness-binaries + harness-install.sh).
-//
-//go:embed harness-feature
-var HarnessFeature embed.FS
-
-// CodeServer is the injected devcontainer feature that installs code-server
-// (VS Code in the browser) + the project's/repo's VS Code extensions at build
-// time. The extension list is NOT here — the adapter generates the
-// `extensions` file into the materialized feature dir. Always injected;
-// code-server is started lazily on demand ("Open editor"), not at build.
-//
-//go:embed codeserver-feature
-var CodeServer embed.FS
-
 // Images holds the Dockerfiles of the images apothecary builds from the
 // sources above (shim, gateway, browser), each with this directory as its
-// build context. The engine builds them at runtime on a docker host
-// (internal/wsimage); CI publishes the same files for Kubernetes, where the
-// engine cannot build.
+// build context, and the tools bundle (images/tools: its Dockerfile plus the
+// scripts it copies, built with that directory as the context). The engine
+// builds them at runtime on a docker host (internal/wsimage); CI publishes
+// the same files for Kubernetes, where the engine cannot build.
 //
 //go:embed images
 var Images embed.FS
@@ -61,9 +44,20 @@ func Dockerfile(name string) string {
 // shim build (main.sourceHash) and is what `shim version` prints, so a shim
 // seeded from a published image can be checked against the engine that
 // expects it.
-func ShimSourceHash() string {
+func ShimSourceHash() string { return hashTree(BaseContext, "shim") }
+
+// ToolsHash identifies the tools bundle: the hash of images/tools (its
+// Dockerfile — whose ARG defaults are the version pins — and the scripts it
+// copies). Baked into every bundle as /tools/TOOLS_HASH (`apothecaryd
+// tools-hash` prints it for CI), so a bundle seeded from a published image
+// can be compared with the one the engine expects; a bumped pin moves it.
+func ToolsHash() string { return hashTree(Images, "images/tools") }
+
+// hashTree is the first 16 hex chars of a sha256 over every file of dir in
+// fsys (path, length and contents, in walk order).
+func hashTree(fsys fs.FS, dir string) string {
 	h := sha256.New()
-	sub, err := fs.Sub(BaseContext, "shim")
+	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
 		return ""
 	}

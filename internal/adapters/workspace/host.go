@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"apothecary/internal/ports"
 )
@@ -73,16 +72,17 @@ type Host interface {
 }
 
 // prep is what Host.prepare hands the definition: the checkout (as the sandbox
-// sees it), the shim dir to mount at /opt/apothecary, the egress gateway's IP
-// on the run's link ("" when the firewall is off) and the detected definition.
+// sees it), the shim dir to mount at /opt/apothecary, the tools bundle to
+// mount at /opt/apothecary/tools, the egress gateway's IP on the run's link
+// ("" when the firewall is off) and the detected definition.
 type prep struct {
-	src, shimDir, gwIP string
-	def                Definition
+	src, shimDir, toolsDir, gwIP string
+	def                          Definition
 }
 
 // sandboxFS is the small file surface the definition needs on the run folder:
-// the checkout's config files, the injected features, git's exclude file.
-// Paths are absolute and identical on every host (path parity).
+// the checkout's config files. Paths are absolute and identical on every host
+// (path parity).
 type sandboxFS interface {
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	WriteFile(ctx context.Context, path string, data []byte, mode fs.FileMode) error
@@ -94,9 +94,6 @@ type sandboxFS interface {
 	// Walk lists the regular files under dir, recursively (absolute paths);
 	// a missing dir is no files, not an error.
 	Walk(ctx context.Context, dir string) ([]string, error)
-	// AppendLineOnce appends line to the file unless a line equal to it (after
-	// trimming) is already there, creating the file and its parents.
-	AppendLineOnce(ctx context.Context, path, line string) error
 }
 
 // osFS is sandboxFS on the engine's own filesystem — the docker host, whose
@@ -136,25 +133,6 @@ func (osFS) Walk(_ context.Context, dir string) ([]string, error) {
 		return nil
 	})
 	return out, err
-}
-
-func (osFS) AppendLineOnce(_ context.Context, path, line string) error {
-	existing, _ := os.ReadFile(path)
-	for _, l := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(l) == line {
-			return nil
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString(line + "\n")
-	return err
 }
 
 var _ sandboxFS = osFS{}

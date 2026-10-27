@@ -33,7 +33,6 @@ func TestRunEnvCheckDerivedCatalog(t *testing.T) {
 	h.envp.ExecFunc = firewallAwareExec()
 	h.res.EgressDomains = []string{"gitlab.local", "openrouter.ai", "*.docker.io"}
 	h.res.HarnessBinary = "opencode"
-	h.res.HarnessInstall = []ports.HarnessInstall{{Binary: "opencode", Commands: []string{"npm install -g opencode-ai"}}}
 
 	var steps []CheckStep
 	failed := RunEnvCheck(context.Background(), h.res, "envck-test",
@@ -139,26 +138,6 @@ func TestEngineEnvCheckRegistry(t *testing.T) {
 		<-time.After(10 * time.Millisecond)
 	}
 	t.Fatal("envcheck never finished")
-}
-
-// The check provisions the workspace a run would get — harness install
-// included, or a repo image without the harness can never pass harness_binary.
-func TestEnvCheckInstallsTheHarnessLikeARun(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.envp.ExecFunc = firewallAwareExec()
-	h.res.HarnessInstall = []ports.HarnessInstall{{Binary: "opencode", Commands: []string{"npm install -g opencode-ai"}}}
-	var prov CheckStep
-	RunEnvCheck(context.Background(), h.res, "envck-hi",
-		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", Keep: true},
-		func(s CheckStep) {
-			if s.ID == "provision" {
-				prov = s
-			}
-		})
-	env := h.envp.Env(ports.EnvID(prov.Detail))
-	if env == nil || len(env.Spec.HarnessInstall) != 1 || env.Spec.HarnessInstall[0].Binary != "opencode" {
-		t.Fatalf("provisioned env = %+v", env)
-	}
 }
 
 func waitCheck(t *testing.T, h *harness, id string, done func(CheckRun) bool) CheckRun {

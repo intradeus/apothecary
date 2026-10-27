@@ -346,7 +346,7 @@ export default {
 	'form.project.forceBlocked': 'Force-blocked ({count}):',
 	'form.project.extensions': 'code-server extensions',
 	'form.project.extensionsHelp':
-		"VS Code extension ids from Open VSX, baked into the browser editor's image (together with the repo's devcontainer customizations).",
+		"VS Code extension ids from Open VSX, installed the first time the browser editor opens in a run (together with the repo's devcontainer customizations) — no rebuild.",
 	'form.project.editorDefaults': 'Editor defaults',
 	'form.project.editorHelp':
 		'code-server settings, applied each time the browser editor opens — no rebuild.',

@@ -176,7 +176,7 @@ func (h *K8sHost) deployment(project string, labels, annotations map[string]stri
 		"--control-listen", ":" + controlPort,
 		"--control-token-file", "/secrets/control-token",
 		"--state-dir", "/state",
-		"--mirror", "--buildcache", "--buildcache-dir", buildCacheDir,
+		"--mirror", "--buildcache", "--buildcache-dir", buildCacheDir, "--gallery",
 		"--listen-port", "9040",
 		"--dns-upstream", "resolv.conf",
 	}

@@ -8,7 +8,7 @@
 #
 # The compose file honors APOTHECARY_IMAGE, so a docker deployment pins a
 # release with e.g. APOTHECARY_IMAGE=apothecary/apothecaryd:v2.0.0 in
-# deploy/.env; the Helm chart pins all five with image.tag.
+# deploy/.env; the Helm chart pins all six with image.tag.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

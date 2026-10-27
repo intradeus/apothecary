@@ -2,11 +2,11 @@
 // runs as inside a workspace.
 //
 // Harness-native config — opencode's auth.json and agent markdown, codex's
-// config.toml — is only found if it lands in THAT user's home. The §8
-// pipeline image runs as `apothecary`, so a hardcoded /home/apothecary held
-// for the devcontainer fallback image; but a repo-authored
-// devcontainer runs the REPO's image as the repo's own user (root, vscode,
-// node…). Files written to the wrong home are silently invisible: the
+// config.toml — is only found if it lands in THAT user's home, and a
+// repo-authored devcontainer runs the REPO's image as the repo's own user
+// (root, vscode, node…) — never a fixed one of apothecary's (the old
+// /home/apothecary is only a last-resort fallback now). Files written to
+// the wrong home are silently invisible: the
 // harness starts with no provider configured and no agents, failing later
 // and confusingly ("agent planner not found", "Model not found").
 package wshome

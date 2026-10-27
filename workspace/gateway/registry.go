@@ -19,7 +19,8 @@ package main
 // nft ruleset only hooks prerouting/forward — so a gateway-local listener is
 // reachable from every run with no new rules, and the registry's own upstream
 // fetch (gateway-originated, output path) is unfiltered by construction. That
-// last part is a deliberate policy carve-out, documented in README.
+// last part is a deliberate policy carve-out, documented in README. The
+// extension gallery on :5002 (gallery.go) is the third such cache.
 
 import (
 	"bufio"

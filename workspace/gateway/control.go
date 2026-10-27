@@ -218,6 +218,10 @@ func (g *gateway) clearBuildCache() error {
 		now := time.Now()
 		_ = os.Chtimes(g.buildCacheConfig, now, now)
 	}
+	// One wipe for every project cache: the extension gallery's too.
+	if g.gallery != nil {
+		return g.gallery.clear()
+	}
 	return nil
 }
 

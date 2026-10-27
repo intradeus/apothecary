@@ -93,9 +93,9 @@ type K8s struct {
 	// direct when running in a pod, portforward otherwise.
 	Transport string
 	// Images apothecary runs on the cluster (it cannot build there).
-	// APOTHECARY_SANDBOX_IMAGE, _SHIM_IMAGE, _GATEWAY_IMAGE, _BROWSER_IMAGE;
-	// defaults are the engine's own release (see DefaultImage).
-	SandboxImage, ShimImage, GatewayImage, BrowserImage string
+	// APOTHECARY_SANDBOX_IMAGE, _SHIM_IMAGE, _TOOLS_IMAGE, _GATEWAY_IMAGE,
+	// _BROWSER_IMAGE; defaults are the engine's own release (see DefaultImage).
+	SandboxImage, ShimImage, ToolsImage, GatewayImage, BrowserImage string
 	// PullPolicy for those images (APOTHECARY_K8S_IMAGE_PULL_POLICY): ""
 	// = the cluster default; Always for a reused tag like :local.
 	PullPolicy string
@@ -190,6 +190,7 @@ func FromEnv() (*Boot, error) {
 		Transport:          strings.TrimSpace(os.Getenv("APOTHECARY_K8S_TRANSPORT")),
 		SandboxImage:       strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_IMAGE")),
 		ShimImage:          strings.TrimSpace(os.Getenv("APOTHECARY_SHIM_IMAGE")),
+		ToolsImage:         strings.TrimSpace(os.Getenv("APOTHECARY_TOOLS_IMAGE")),
 		GatewayImage:       strings.TrimSpace(os.Getenv("APOTHECARY_GATEWAY_IMAGE")),
 		BrowserImage:       strings.TrimSpace(os.Getenv("APOTHECARY_BROWSER_IMAGE")),
 		PullPolicy:         strings.TrimSpace(os.Getenv("APOTHECARY_K8S_IMAGE_PULL_POLICY")),

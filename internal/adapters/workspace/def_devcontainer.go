@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -13,14 +12,14 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/ports"
-	wsassets "apothecary/workspace"
 )
 
 // devcontainerDef is the repo's own .devcontainer/devcontainer.json (or a root
 // .devcontainer.json), built and entered with the reference @devcontainers/cli
 // running against the sandbox's docker daemon. Image, Dockerfile and compose
-// configurations all work, compose siblings included; apothecary's harness and
-// code-server ride in as injected devcontainer features.
+// configurations all work, compose siblings included. Nothing of apothecary's
+// is injected into the repo's build: the harnesses and code-server arrive as
+// the bind-mounted tools bundle (/opt/apothecary/tools), like the shim.
 type devcontainerDef struct {
 	bin string // the devcontainer CLI
 }
@@ -68,6 +67,11 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec ports.EnvSpec, o
 		"--id-label", label(e.name),
 		"--id-label", managedLabel + "=true",
 		"--mount", "type=bind,source=" + o.shimDir + ",target=/opt/apothecary",
+		// The tools bundle (harness CLIs + code-server), read-only by way of
+		// the sandbox's own mount of it: the CLI's --mount knows only
+		// type/source/target. Nested under the shim mount — docker orders
+		// mounts by target, and a compose override lists both as volumes.
+		"--mount", "type=bind,source=" + o.toolsDir + ",target=/opt/apothecary/tools",
 		"--log-format", "json",
 	}
 	if spec.Project != "" {
@@ -79,31 +83,9 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec ports.EnvSpec, o
 		// is untouched; only the container is rebuilt.
 		args = append(args, "--remove-existing-container")
 	}
-	// The repo is honored untouched; anything apothecary needs rides in as an
-	// injected devcontainer feature (harness + code-server). Egress is enforced
-	// externally by the per-project gateway, so the workspace container needs
-	// no NET_ADMIN and compose siblings are covered too.
-	features := map[string]any{}
-	// The repo's image has no harness — install it as a feature.
-	if len(spec.HarnessInstall) > 0 {
-		if err := materializeHarnessFeature(ctx, e.fs, e.src, spec.HarnessInstall); err != nil {
-			return Workspace{}, err
-		}
-		features["./apothecary-harness"] = map[string]any{}
-	}
-	// code-server (VS Code in the browser) is ALWAYS injected — installed at
-	// build time, started lazily on demand. Extensions = the repo
-	// devcontainer's own customizations.vscode.extensions ∪ the project list,
-	// baked into the image (cached per list).
-	if err := materializeCodeServerFeature(ctx, e.fs, e.src, spec.CodeServerExtensions); err != nil {
-		return Workspace{}, err
-	}
-	features["./apothecary-codeserver"] = map[string]any{}
-	blob, err := json.Marshal(features)
-	if err != nil {
-		return Workspace{}, err
-	}
-	args = append(args, "--additional-features", string(blob))
+	// The repo is honored untouched: no features, no override config. Egress
+	// is enforced externally by the per-project gateway, so the workspace
+	// container needs no NET_ADMIN and compose siblings are covered too.
 	if o.noCache {
 		// The CLI drops every --cache-from of its own accord when this is set,
 		// so the flags below stay harmless — and --cache-to still runs, which
@@ -121,8 +103,8 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec ports.EnvSpec, o
 	//   * ignore-error: a wiped, restarting or wedged cache registry must cost
 	//     a cache miss, never a failed build (verified: the export error is
 	//     swallowed and the build exits 0).
-	//   * mode=max: intermediate stages too, which is where devcontainer
-	//     features and the code-server install live.
+	//   * mode=max: intermediate stages too (a multi-stage Dockerfile's
+	//     builders, the repo's own features).
 	//   * only with a gateway: no gateway, no registry to talk to, so the
 	//     flags are simply absent and the build behaves as it always did.
 	//
@@ -149,7 +131,7 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec ports.EnvSpec, o
 	// build aborts with "additional privileges requested". Disabling the
 	// filesystem entitlement check restores the pre-0.17 behavior. Scoped to
 	// this call so it never affects the other docker/git subprocesses.
-	plog("→ building devcontainer (image + features; can take several minutes)\n")
+	plog("→ building devcontainer (can take several minutes)\n")
 	stdout, stderr, code, err := e.run(ctx, d.bin, args, nil, o.log, "BUILDX_BAKE_ENTITLEMENTS_FS=0")
 	if err != nil {
 		return Workspace{}, err
@@ -340,126 +322,17 @@ func referencedBuildFiles(cfgPath string, raw []byte) []string {
 	return out
 }
 
-// writeEmbedded copies an embedded feature directory into dir (scripts 0755).
-func writeEmbedded(ctx context.Context, fsys sandboxFS, src fs.FS, root, dir string) error {
-	if err := fsys.MkdirAll(ctx, dir); err != nil {
-		return err
-	}
-	return fs.WalkDir(src, root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, rerr := fs.ReadFile(src, p)
-		if rerr != nil {
-			return rerr
-		}
-		mode := fs.FileMode(0o644)
-		if strings.HasSuffix(p, ".sh") {
-			mode = 0o755
-		}
-		return fsys.WriteFile(ctx, filepath.Join(dir, filepath.Base(p)), data, mode)
-	})
-}
-
-// materializeHarnessFeature writes the harness feature into the repo's
-// .devcontainer so `up --additional-features` can install it. A repo-authored
-// dev container runs the REPO's image, which knows nothing about
-// opencode/codex — without this the first agent stage exits 127.
-//
-// The static feature (install.sh) owns the Node bootstrap; the per-project
-// install commands are generated here into two files it reads:
-// harness-binaries (what to probe) and harness-install.sh (guarded installs,
-// so a harness already in the image is left alone).
-func materializeHarnessFeature(ctx context.Context, fsys sandboxFS, src string, steps []ports.HarnessInstall) error {
-	dir := filepath.Join(src, ".devcontainer", "apothecary-harness")
-	if err := writeEmbedded(ctx, fsys, wsassets.HarnessFeature, "harness-feature", dir); err != nil {
-		return err
-	}
-	var bins, reqs, script strings.Builder
-	seenReq := map[string]bool{}
-	script.WriteString("#!/bin/sh\n# Generated by apothecary — per-project harness installs.\nset -e\n")
-	for _, s := range steps {
-		if s.Binary != "" {
-			bins.WriteString(s.Binary + "\n")
-		}
-		// Prerequisites are per-harness, so the feature installs only what
-		// this project's harnesses actually need — no runtime is assumed.
-		for _, r := range s.Requires {
-			if r != "" && !seenReq[r] {
-				seenReq[r] = true
-				reqs.WriteString(r + "\n")
-			}
-		}
-		for _, cmd := range s.Commands {
-			if s.Binary == "" {
-				fmt.Fprintf(&script, "%s\n", cmd)
-				continue
-			}
-			// Guarded: an image that already ships the harness is untouched.
-			fmt.Fprintf(&script, "if command -v %s >/dev/null 2>&1; then\n"+
-				"  echo \"apothecary-harness: %s already present\"\nelse\n  %s\nfi\n",
-				s.Binary, s.Binary, cmd)
-		}
-	}
-	if err := fsys.WriteFile(ctx, filepath.Join(dir, "harness-binaries"), []byte(bins.String()), 0o644); err != nil {
-		return err
-	}
-	if err := fsys.WriteFile(ctx, filepath.Join(dir, "harness-requires"), []byte(reqs.String()), 0o644); err != nil {
-		return err
-	}
-	if err := fsys.WriteFile(ctx, filepath.Join(dir, "harness-install.sh"), []byte(script.String()), 0o755); err != nil {
-		return err
-	}
-	return gitExclude(ctx, fsys, src, ".devcontainer/apothecary-harness/")
-}
-
-// codeServerExtDir is the image-baked, shared extensions dir the code-server
-// feature installs into at build time and the engine starts code-server with.
-// MUST match workspace/codeserver-feature/install.sh's EXT_DIR.
-const codeServerExtDir = "/usr/local/share/apothecary-code-server/extensions"
-
-// materializeCodeServerFeature writes the code-server feature into the repo's
-// .devcontainer so `up --additional-features` installs it at build time. The
-// extensions the feature pre-installs are the UNION of the repo devcontainer's
-// own customizations.vscode.extensions and the project list — sorted+deduped
-// into a generated `extensions` file, so an unchanged list is a build-cache hit.
-func materializeCodeServerFeature(ctx context.Context, fsys sandboxFS, src string, projectExts []string) error {
-	dir := filepath.Join(src, ".devcontainer", "apothecary-codeserver")
-	if err := writeEmbedded(ctx, fsys, wsassets.CodeServer, "codeserver-feature", dir); err != nil {
-		return err
-	}
-	set := map[string]bool{}
-	for _, e := range append(repoExtensions(ctx, fsys, src), projectExts...) {
-		if e = strings.TrimSpace(e); e != "" {
-			set[e] = true
-		}
-	}
-	exts := make([]string, 0, len(set))
-	for e := range set {
-		exts = append(exts, e)
-	}
-	sort.Strings(exts) // deterministic → stable feature content → stable build cache
-	var b strings.Builder
-	for _, e := range exts {
-		b.WriteString(e + "\n")
-	}
-	if err := fsys.WriteFile(ctx, filepath.Join(dir, "extensions"), []byte(b.String()), 0o644); err != nil {
-		return err
-	}
-	return gitExclude(ctx, fsys, src, ".devcontainer/apothecary-codeserver/")
-}
-
-// repoExtensions reads customizations.vscode.extensions straight from the
+// EditorExtensions reads customizations.vscode.extensions straight from the
 // repo's devcontainer.json (the author's declared list — not extensions other
-// features pull in). Reads the raw file (no CLI call) so it never disturbs the
-// provision command sequence; devcontainer.json is JSONC, so comments +
-// trailing commas are stripped first. Best-effort: empty on any miss.
-func repoExtensions(ctx context.Context, fsys sandboxFS, src string) []string {
-	cfg := devcontainerConfig(ctx, fsys, src)
+// features pull in). Reads the raw file (no CLI call); devcontainer.json is
+// JSONC, so comments + trailing commas are stripped first. Best-effort: nil
+// on any miss.
+func (devcontainerDef) EditorExtensions(ctx context.Context, e defEnv) []string {
+	cfg := devcontainerConfig(ctx, e.fs, e.src)
 	if cfg == "" {
 		return nil
 	}
-	data, err := fsys.ReadFile(ctx, cfg)
+	data, err := e.fs.ReadFile(ctx, cfg)
 	if err != nil {
 		return nil
 	}
@@ -474,12 +347,6 @@ func repoExtensions(ctx context.Context, fsys sandboxFS, src string) []string {
 		return rc.Customizations.VSCode.Extensions
 	}
 	return nil
-}
-
-// gitExclude appends an entry to .git/info/exclude (idempotent) so the
-// injected feature is invisible to `git status` and uncommittable.
-func gitExclude(ctx context.Context, fsys sandboxFS, src, entry string) error {
-	return fsys.AppendLineOnce(ctx, filepath.Join(src, ".git", "info", "exclude"), entry)
 }
 
 // stripJSONC turns JSONC into JSON stdlib encoding/json accepts: it removes

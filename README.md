@@ -119,7 +119,7 @@ Locally, with [k3d](https://k3d.io) and [helm](https://helm.sh) installed:
 
 ```sh
 task k8s:cluster    # a k3d cluster + image registry; never touches ~/.kube/config
-task k8s:images     # build the five images from the working tree, push as :local
+task k8s:images     # build the six images from the working tree, push as :local
 task k8s:deploy     # helm install with values-k3d.yaml
 # → http://apothecary.localhost:8090
 task k8s:test-live  # the provisioner's live test against the cluster
@@ -387,6 +387,7 @@ one-offs):
 | `apothecaryd user reset-password <handle>` | set an account's password from the terminal (the way back in after a lockout) |
 | `apothecaryd user set-admin <handle> [-off]` | make or unmake an instance admin |
 | `apothecaryd shim-hash` | the shim source hash a published shim image must carry |
+| `apothecaryd tools-hash` | the tools bundle hash a published tools image carries |
 | `apothecaryd version` | build version |
 
 Boot environment (the whole deployment plane): `APOTHECARY_POSTGRES_DSN`,
@@ -485,12 +486,17 @@ re-verify it with the live test described at the top of
 recommended setting; it stays opt-in only because it is a host install we
 don't ship.
 
-**One deliberate carve-out:** the gateway also hosts the project's
-pull-through Docker Hub cache on `:5000`, and each run's inner dockerd pulls
-through it (`--registry-mirror`). Those upstream fetches originate in the
-gateway itself, so they are *not* subject to the hostname policy — a project
-whose policy denies `registry-1.docker.io` can still pull public Hub images
-via the mirror. Everything the workspace itself dials is filtered as before.
+**One deliberate carve-out:** the gateway also hosts the project's caches:
+the pull-through Docker Hub cache on `:5000` (each run's inner dockerd pulls
+through it, `--registry-mirror`), the devcontainer build cache on `:5001`,
+and the VS Code extension gallery on `:5002` — an Open VSX proxy the run's
+code-server is pointed at, so the browser editor's marketplace works inside
+allow-mode projects and a project's runs share one copy of every extension.
+Those upstream fetches originate in the gateway itself, so they are *not*
+subject to the hostname policy — a project whose policy denies
+`registry-1.docker.io` or `open-vsx.org` can still pull public Hub images
+via the mirror and install extensions via the gallery. Everything the
+workspace itself dials is filtered as before.
 
 ## Image cache
 

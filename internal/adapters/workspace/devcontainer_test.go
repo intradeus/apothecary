@@ -58,9 +58,16 @@ func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 	if err := os.WriteFile(shimSrc, []byte("#!fake-shim"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	runs := t.TempDir()
+	// The tools bundle, pre-"built": the dir a real EnsureTools returns.
+	toolsDir := filepath.Join(runs, "tools-cache", "t0st")
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	a := NewWithRunner(Config{
-		RunsDir: t.TempDir(),
-		ShimBin: func(context.Context) (string, error) { return shimSrc, nil },
+		RunsDir:  runs,
+		ShimBin:  func(context.Context) (string, error) { return shimSrc, nil },
+		ToolsDir: func(context.Context) (string, error) { return toolsDir, nil },
 		// No GatewayImage ⇒ a.gw is nil ⇒ the egress gateway path is skipped and
 		// the sandbox runs on the default bridge, keeping the scripted-runner
 		// lifecycle tests independent of the (docker-heavy) gateway.
@@ -211,6 +218,9 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 		"--workspace-folder " + filepath.Join(a.folderFor("apothecary-run1"), "apothecary-run1"),
 		"--id-label apothecary.env=apothecary-run1",
 		"target=/opt/apothecary",
+		// The tools bundle (harness CLIs + code-server) rides in beside the
+		// shim — nothing is injected into the repo's build.
+		"source=" + filepath.Join(a.cfg.RunsDir, "tools-cache", "t0st") + ",target=/opt/apothecary/tools",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("up args missing %q: %v", want, up.args)
@@ -231,7 +241,11 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 
 	init := find(t, r.calls, "docker", "exec")
 	joined = strings.Join(init.args, " ")
-	for _, want := range []string{"-u root", "cid1", "mkdir -p /apothecary", "ln -sfn '/workspaces/src'"} {
+	for _, want := range []string{"-u root", "cid1", "mkdir -p /apothecary", "ln -sfn '/workspaces/src'",
+		// The bundle's entries, linked into /opt/apothecary for the libc the
+		// image can run; the editor's per-run state dir, owned by the remote user.
+		"/opt/apothecary/tools/$libc/bin", "ld-musl-x86_64", "/apothecary/code-server", "chown 'vscode' /apothecary /apothecary/code-server",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("root-init missing %q: %v", want, init.args)
 		}
@@ -353,9 +367,8 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	// .git is a real dir (the always-injected code-server feature appends to
-	// .git/info/exclude; its presence also makes ensureSrc skip cloning).
-	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git", "info")} {
+	// .git is a real dir: its presence makes ensureSrc skip cloning.
+	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -382,9 +395,9 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 func seedRepoDevcontainer(t *testing.T, a *Adapter, name string) string {
 	t.Helper()
 	src := filepath.Join(a.folderFor(name), "src")
-	// .git is a real directory here (unlike the minimal fixtures elsewhere):
-	// the injected features append to .git/info/exclude.
-	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git", "info")} {
+	// .git is a real directory here (unlike the minimal fixtures elsewhere),
+	// so the checkout counts as cloned.
+	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -395,89 +408,13 @@ func seedRepoDevcontainer(t *testing.T, a *Adapter, name string) string {
 	return src
 }
 
-// A repo-authored dev container runs the REPO's image, which has no harness —
-// so the engine injects one as a feature. Without it the first agent stage
-// dies with "opencode: command not found".
-func TestRepoDevcontainerGetsHarnessFeature(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: upOK}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0},
-	})}
-	a := newTestAdapter(t, r)
-	armSandbox(t, a, "apothecary-run1")
-	src := seedRepoDevcontainer(t, a, "apothecary-run1")
-
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "https://g.local/r.git",
-		HarnessInstall: []ports.HarnessInstall{
-			{Binary: "opencode", Requires: []string{"npm"}, Commands: []string{"npm install -g opencode-ai@1.2.3"}},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	up := find(t, r.calls, "devcontainer", "up")
-	if !strings.Contains(strings.Join(up.args, " "), "./apothecary-harness") {
-		t.Fatalf("up must inject the harness feature: %v", up.args)
-	}
-	dir := filepath.Join(src, ".devcontainer", "apothecary-harness")
-	script, err := os.ReadFile(filepath.Join(dir, "harness-install.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(script), "npm install -g opencode-ai@1.2.3") {
-		t.Errorf("generated install missing the command:\n%s", script)
-	}
-	// Guarded: an image that already ships the harness is left alone.
-	if !strings.Contains(string(script), "command -v opencode") {
-		t.Errorf("generated install must skip an already-present harness:\n%s", script)
-	}
-	bins, err := os.ReadFile(filepath.Join(dir, "harness-binaries"))
-	if err != nil || strings.TrimSpace(string(bins)) != "opencode" {
-		t.Errorf("harness-binaries = %q, %v", bins, err)
-	}
-	// Prerequisites are declared per harness, not assumed by the script.
-	reqs, err := os.ReadFile(filepath.Join(dir, "harness-requires"))
-	if err != nil || strings.TrimSpace(string(reqs)) != "npm" {
-		t.Errorf("harness-requires = %q, %v", reqs, err)
-	}
-	// The static feature (prereq bootstrap) rides along.
-	if _, err := os.Stat(filepath.Join(dir, "install.sh")); err != nil {
-		t.Errorf("static feature install.sh not materialized: %v", err)
-	}
-}
-
-// The installer is runtime-agnostic: a harness that installs without Node
-// declares its own prerequisite and never drags Node in.
-func TestHarnessFeatureRequiresAreHarnessDeclared(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: upOK}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0},
-	})}
-	a := newTestAdapter(t, r)
-	armSandbox(t, a, "apothecary-run1")
-	src := seedRepoDevcontainer(t, a, "apothecary-run1")
-
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "https://g.local/r.git",
-		HarnessInstall: []ports.HarnessInstall{
-			{Binary: "clyde", Requires: []string{"curl"}, Commands: []string{"curl -fsSL https://x.dev/install | sh"}},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	reqs, err := os.ReadFile(filepath.Join(src, ".devcontainer", "apothecary-harness", "harness-requires"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(string(reqs)); got != "curl" {
-		t.Errorf("harness-requires = %q, want curl (no Node assumption)", got)
-	}
-}
-
-// The harness feature is injected into the repo's devcontainer (its own image
-// knows nothing about opencode). Egress is NO LONGER a feature — it is enforced
-// by the external per-project gateway — so `up` must carry the harness (and
-// code-server) but never an apothecary-firewall feature.
-func TestRepoDevcontainerInjectsHarnessNotFirewall(t *testing.T) {
+// A repo-authored dev container runs the REPO's image, which has no harness
+// and no code-server. They arrive as the bind-mounted tools bundle, exactly
+// like the shim: `up` carries the mount and injects NOTHING into the repo's
+// build — no features (the firewall is the external gateway, the harness and
+// code-server are the bundle), no override config, nothing written under
+// .devcontainer/.
+func TestRepoDevcontainerMountsToolsNotFeatures(t *testing.T) {
 	r := &scriptRunner{responses: sandboxResp([]response{
 		{stdout: upOK},     // up
 		{code: 0},          // root-init
@@ -488,26 +425,35 @@ func TestRepoDevcontainerInjectsHarnessNotFirewall(t *testing.T) {
 	})}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
-	seedRepoDevcontainer(t, a, "apothecary-run1")
+	src := seedRepoDevcontainer(t, a, "apothecary-run1")
 
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "https://g.local/r.git",
-		HarnessInstall: []ports.HarnessInstall{
-			{Binary: "opencode", Commands: []string{"npm install -g opencode-ai@1.2.3"}},
-		},
-	}); err != nil {
+	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
 		t.Fatal(err)
 	}
 	up := find(t, r.calls, "devcontainer", "up")
 	joined := strings.Join(up.args, " ")
-	if !strings.Contains(joined, "./apothecary-harness") {
-		t.Errorf("up args missing harness feature: %v", up.args)
+	for _, want := range []string{
+		"--mount type=bind,source=" + filepath.Join(a.folderFor("apothecary-run1"), "shim") + ",target=/opt/apothecary",
+		"--mount type=bind,source=" + filepath.Join(a.cfg.RunsDir, "tools-cache", "t0st") + ",target=/opt/apothecary/tools",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("up args missing %q: %v", want, up.args)
+		}
 	}
-	if strings.Contains(joined, "apothecary-firewall") {
-		t.Errorf("egress is external now; no firewall feature should be injected: %v", up.args)
+	for _, banned := range []string{"--additional-features", "apothecary-harness", "apothecary-codeserver", "apothecary-firewall", "--override-config"} {
+		if strings.Contains(joined, banned) {
+			t.Errorf("up must inject nothing (%q): %v", banned, up.args)
+		}
 	}
-	if n := strings.Count(joined, "--additional-features"); n != 1 {
-		t.Errorf("features must ride in ONE --additional-features object, got %d", n)
+	entries, err := os.ReadDir(filepath.Join(src, ".devcontainer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "devcontainer.json" {
+		t.Errorf("the repo's .devcontainer must stay untouched, got %v", entries)
+	}
+	if _, err := os.Stat(filepath.Join(src, ".git", "info", "exclude")); err == nil {
+		t.Error("nothing is materialised into the checkout, so there is nothing to git-exclude")
 	}
 }
 
@@ -698,18 +644,27 @@ func TestRebuildNonComposeRemovesContainer(t *testing.T) {
 	}
 }
 
-// code-server is ALWAYS injected as a feature, and its generated `extensions`
-// file is the dedup union of the repo's devcontainer.json customizations and
-// the project list.
-func TestCodeServerFeatureInjectedWithExtensions(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // clone
-		sandboxResp([]response{
-			{stdout: upOK}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0}, {code: 0},
-		})...)}
+// editorExec is the one call StartEditor makes: an Exec (devcontainer exec,
+// the script on stdin), so the editor runs as the remote user with the
+// workspace's own environment — what makes its integrated terminal a real
+// workspace shell.
+func editorExec(t *testing.T, r *scriptRunner) string {
+	t.Helper()
+	c := find(t, r.calls, "devcontainer", "exec")
+	if !strings.Contains(strings.Join(c.args, " "), "--id-label apothecary.env=apothecary-run1") {
+		t.Errorf("editor must start through the workspace exec path: %v", c.args)
+	}
+	return string(c.stdin)
+}
+
+// The extensions the editor installs are the dedup union of the repo's
+// devcontainer.json customizations and the project list (sorted, so the
+// installed-list marker is stable), installed on first open into the per-run
+// extensions dir — never baked into an image.
+func TestStartEditorInstallsExtensionUnion(t *testing.T) {
+	r := &scriptRunner{responses: []response{{code: 0}}} // the one exec
 	a := newTestAdapter(t, r)
-	armSandbox(t, a, "apothecary-run1")
-	// Repo devcontainer declares an extension (JSONC with a comment + trailing
+	// Repo devcontainer declares extensions (JSONC with a comment + trailing
 	// comma); the project adds one, with an overlap to dedup.
 	dc := filepath.Join(a.srcDir("apothecary-run1"), ".devcontainer")
 	if err := os.MkdirAll(dc, 0o755); err != nil {
@@ -720,71 +675,106 @@ func TestCodeServerFeatureInjectedWithExtensions(t *testing.T) {
   "customizations": { "vscode": { "extensions": ["golang.go", "ms-python.python",] } } }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", RepoURL: "https://g.local/r.git",
-		CodeServerExtensions: []string{"ms-python.python", "esbenp.prettier-vscode"},
+	if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{
+		Extensions: []string{"ms-python.python", " esbenp.prettier-vscode "},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	up := find(t, r.calls, "devcontainer", "up")
-	if !strings.Contains(strings.Join(up.args, " "), `"./apothecary-codeserver":{}`) {
-		t.Errorf("code-server feature must always be injected: %v", up.args)
+	script := editorExec(t, r)
+	for _, want := range []string{
+		"want='esbenp.prettier-vscode\ngolang.go\nms-python.python'",
+		`"$cs" --install-extension "$ext" --extensions-dir "$state/extensions"`,
+		"state=/apothecary/code-server",
+		`"$state/extensions.installed"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("editor script missing %q:\n%s", want, script)
+		}
 	}
-	exts, err := os.ReadFile(filepath.Join(dc, "apothecary-codeserver", "extensions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Fields(string(exts))
-	slices.Sort(got)
-	want := []string{"esbenp.prettier-vscode", "golang.go", "ms-python.python"}
-	if !slices.Equal(got, want) {
-		t.Errorf("extensions = %v, want %v (repo ∪ project, deduped)", got, want)
+	// No gateway marker: code-server reaches Open VSX itself.
+	if strings.Contains(script, "EXTENSIONS_GALLERY") {
+		t.Errorf("no gateway, so no gallery override:\n%s", script)
 	}
 }
 
-// StartEditor is a no-op when code-server already listens, else it starts it
-// detached and waits for the listener.
+func TestExtensionUnion(t *testing.T) {
+	got := extensionUnion([]string{"b.x", " a.y ", ""}, []string{"a.y", "c.z"}, nil)
+	if want := []string{"a.y", "b.x", "c.z"}; !slices.Equal(got, want) {
+		t.Errorf("union = %v, want %v", got, want)
+	}
+	if got := extensionUnion(nil, []string{" "}); len(got) != 0 {
+		t.Errorf("union of nothing = %v", got)
+	}
+}
+
+// StartEditor's script: the bundle's code-server (an image without it — musl
+// — exits with the dedicated code, reported as such), the project's settings
+// re-applied on every call, a probe that leaves a listening code-server
+// alone, otherwise a detached start and a bounded wait; with a gateway, the
+// extension gallery is the gateway's cache.
 func TestStartEditor(t *testing.T) {
-	t.Run("already listening → no start", func(t *testing.T) {
-		r := &scriptRunner{responses: []response{
-			{stdout: "cid1\n"}, // containerID
-			{code: 0},          // shim probe → already up
-		}}
+	t.Run("script shape", func(t *testing.T) {
+		r := &scriptRunner{responses: []response{{code: 0}}}
 		a := newTestAdapter(t, r)
-		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{}); err != nil {
+		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{Theme: "Monokai"}); err != nil {
 			t.Fatal(err)
 		}
-		for _, c := range r.calls {
-			if strings.Contains(strings.Join(c.args, " "), "code-server") {
-				t.Errorf("must not start code-server when already listening: %v", c.args)
+		script := editorExec(t, r)
+		for _, want := range []string{
+			"cs=/opt/apothecary/code-server",
+			"addr=127.0.0.1:8471",
+			`if ! apothecary-shim probe "$addr"; then`,
+			`exec "$cs" --auth none --disable-telemetry --bind-addr "$addr" --extensions-dir "$state/extensions" "$HOME/repo"`,
+			`</dev/null >>"$state/code-server.log" 2>&1 &`,
+			`apothecary-shim probe --wait 20s "$addr"`,
+			`"workbench.colorTheme": "Monokai"`,
+			`"$HOME/.local/share/code-server/User/settings.json"`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Errorf("editor script missing %q:\n%s", want, script)
 			}
 		}
 	})
-	t.Run("not listening → start + wait", func(t *testing.T) {
-		r := &scriptRunner{responses: []response{
-			{stdout: "cid1\n"}, // containerID
-			{code: 1},          // probe → not up
-			{code: 0},          // exec -d code-server
-			{code: 0},          // probe --wait → came up
-		}}
+	t.Run("no settings → settings.json untouched", func(t *testing.T) {
+		r := &scriptRunner{responses: []response{{code: 0}}}
 		a := newTestAdapter(t, r)
 		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{}); err != nil {
 			t.Fatal(err)
 		}
-		var start *call
-		for i := range r.calls {
-			if strings.Contains(strings.Join(r.calls[i].args, " "), "code-server") {
-				start = &r.calls[i]
+		if script := editorExec(t, r); strings.Contains(script, "settings.json") {
+			t.Errorf("nothing set, yet the script writes settings.json:\n%s", script)
+		}
+	})
+	t.Run("gateway → gallery through its cache", func(t *testing.T) {
+		r := &scriptRunner{responses: []response{{code: 0}}}
+		a := newTestAdapter(t, r)
+		a.recordGateway("apothecary-run1", "01HACME", "172.20.0.2")
+		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{}); err != nil {
+			t.Fatal(err)
+		}
+		script := editorExec(t, r)
+		for _, want := range []string{
+			`export EXTENSIONS_GALLERY='{"serviceUrl":"http://172.20.0.2:5002/vscode/gallery","itemUrl":"http://172.20.0.2:5002/vscode/item","resourceUrlTemplate":"http://172.20.0.2:5002/vscode/unpkg/{publisher}/{name}/{version}/{path}"}'`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Errorf("editor script missing %q:\n%s", want, script)
 			}
 		}
-		if start == nil {
-			t.Fatal("code-server never started")
+	})
+	t.Run("musl image → no code-server", func(t *testing.T) {
+		r := &scriptRunner{responses: []response{{code: codeServerMissingExit, stderr: "no code-server"}}}
+		a := newTestAdapter(t, r)
+		err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{})
+		if err == nil || !strings.Contains(err.Error(), "glibc") {
+			t.Fatalf("err = %v, want the glibc explanation", err)
 		}
-		joined := strings.Join(start.args, " ")
-		for _, want := range []string{"exec -d cid1", "code-server", "--bind-addr 127.0.0.1:8471", "--extensions-dir " + codeServerExtDir} {
-			if !strings.Contains(joined, want) {
-				t.Errorf("start args missing %q: %v", want, start.args)
-			}
+	})
+	t.Run("other failure → reported", func(t *testing.T) {
+		r := &scriptRunner{responses: []response{{code: 1, stderr: "did not start listening"}}}
+		a := newTestAdapter(t, r)
+		err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{})
+		if err == nil || !strings.Contains(err.Error(), "did not start listening") {
+			t.Fatalf("err = %v", err)
 		}
 	})
 }
@@ -925,6 +915,10 @@ func TestProvisionCreatesSandbox(t *testing.T) {
 		"--label apothecary.project.name=Acme",
 		"-v apothecary-run1-docker:/var/lib/docker",
 		"-v " + root + ":" + root,
+		// The tools bundles (every version, read-only), same path in host +
+		// sandbox; and the shape label that says this sandbox has the mount.
+		"-v " + filepath.Join(a.cfg.RunsDir, "tools-cache") + ":" + filepath.Join(a.cfg.RunsDir, "tools-cache") + ":ro",
+		"--label apothecary.sandbox.shape=2",
 		"docker:29-dind dockerd --host=unix://" + a.sockPath("apothecary-run1"),
 	} {
 		if !strings.Contains(joined, want) {
@@ -956,7 +950,7 @@ func TestSandboxRuntimeReplacesPrivileged(t *testing.T) {
 	a.cfg.SandboxRuntime = "sysbox-runc"
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, ""); err != nil {
+	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, "", "/tc"); err != nil {
 		t.Fatal(err)
 	}
 	run := find(t, r.calls, "docker", "run")
@@ -986,7 +980,7 @@ func TestSandboxRuntimeMissingFailsEarly(t *testing.T) {
 	r := &scriptRunner{responses: []response{{stdout: `{"runc":{},"nvidia":{}}`}}}
 	a := newTestAdapter(t, r)
 	a.cfg.SandboxRuntime = "sysbox-runc"
-	err := a.ensureSandbox(context.Background(), "apothecary-run1", ports.EnvSpec{}, "")
+	err := a.ensureSandbox(context.Background(), "apothecary-run1", ports.EnvSpec{}, "", "/tc")
 	if err == nil {
 		t.Fatal("expected a runtime-not-installed error")
 	}
@@ -1017,13 +1011,86 @@ func TestSandboxRuntimeUnsetKeepsPrivileged(t *testing.T) {
 	}
 }
 
+// A sandbox created before the tools-cache parity mount existed (no shape
+// label) would make `up` fail on the missing bind source — on a Rebuild or a
+// recovery re-provision, both of which reuse an existing sandbox. It is
+// recreated on first use instead; its /var/lib/docker volume stays.
+func TestPreBundleSandboxIsRecreated(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: "sbx0\n"}, // sandboxIDs: an existing sandbox...
+		{stdout: ""},       // ...without the current shape label
+		{code: 0},          // docker rm -f sbx0
+		{code: 0},          // volume create (idempotent)
+		{stdout: "sbx1\n"}, // docker run
+		{stdout: "29.6.2"}, // readiness probe
+	}}
+	a := newTestAdapter(t, r)
+	const name = "apothecary-run1"
+	armSandbox(t, a, name)
+	tc := filepath.Join(a.cfg.RunsDir, "tools-cache")
+	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, "", tc); err != nil {
+		t.Fatal(err)
+	}
+	rmAt, runAt := -1, -1
+	for i, c := range r.calls {
+		joined := strings.Join(c.args, " ")
+		switch {
+		case strings.HasPrefix(joined, "rm -f"):
+			rmAt = i
+			if !strings.Contains(joined, "sbx0") {
+				t.Errorf("must remove the old sandbox: %v", c.args)
+			}
+		case strings.HasPrefix(joined, "run "):
+			runAt = i
+			if !strings.Contains(joined, "-v "+tc+":"+tc+":ro") || !strings.Contains(joined, "--label apothecary.sandbox.shape=2") {
+				t.Errorf("recreated sandbox lacks the mount or the shape label: %v", c.args)
+			}
+		case strings.HasPrefix(joined, "start"):
+			t.Errorf("a previous-shape sandbox must be recreated, not started: %v", c.args)
+		case strings.HasPrefix(joined, "volume rm"):
+			t.Errorf("the inner daemon's volume must survive: %v", c.args)
+		}
+	}
+	if rmAt < 0 || runAt < 0 || rmAt > runAt {
+		t.Errorf("expected rm -f then run, got rm@%d run@%d: %v", rmAt, runAt, r.calls)
+	}
+}
+
+// A sandbox of the current shape is simply started (a no-op when up).
+func TestCurrentShapeSandboxIsStarted(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: "sbx1\n"}, // sandboxIDs
+		{stdout: "sbx1\n"}, // ...and it carries the shape label
+		{code: 0},          // docker start
+		{stdout: "29.6.2"}, // readiness probe
+	}}
+	a := newTestAdapter(t, r)
+	const name = "apothecary-run1"
+	armSandbox(t, a, name)
+	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, "", "/tc"); err != nil {
+		t.Fatal(err)
+	}
+	started := false
+	for _, c := range r.calls {
+		switch c.args[0] {
+		case "start":
+			started = true
+		case "rm", "run":
+			t.Errorf("a current sandbox must be reused: %v", c.args)
+		}
+	}
+	if !started {
+		t.Errorf("sandbox never started: %v", r.calls)
+	}
+}
+
 // With a gateway the inner daemon is pointed at the project's pull-through
 // cache on the gateway, over plain HTTP inside the run's --internal network.
 func TestCreateSandboxWiresGatewayMirror(t *testing.T) {
 	r := &scriptRunner{}
 	a := newTestAdapter(t, r)
 	const name = "apothecary-run1"
-	if err := a.createSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, "172.20.0.2"); err != nil {
+	if err := a.createSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, "172.20.0.2", "/tc"); err != nil {
 		t.Fatal(err)
 	}
 	run := find(t, r.calls, "docker", "run")
@@ -1086,7 +1153,7 @@ func TestSandboxGuardsRejectTmp(t *testing.T) {
 	a := newTestAdapter(t, &scriptRunner{})
 	a.noSandboxGuard = false
 	a.cfg.RunsDir = filepath.Join(os.TempDir(), "apothecary-runs")
-	err := a.ensureSandbox(context.Background(), "run1", ports.EnvSpec{}, "")
+	err := a.ensureSandbox(context.Background(), "run1", ports.EnvSpec{}, "", "/tc")
 	if err == nil || !strings.Contains(err.Error(), "masks /tmp") {
 		t.Fatalf("want /tmp guard error, got %v", err)
 	}

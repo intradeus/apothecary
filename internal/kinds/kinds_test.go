@@ -68,10 +68,6 @@ func TestOpencodeHarnessCapabilities(t *testing.T) {
 	if h.Binary() != "opencode" {
 		t.Errorf("binary = %q", h.Binary())
 	}
-	layer := strings.Join(h.InstallLayer(), "\n")
-	if !strings.Contains(layer, "npm install -g opencode-ai@"+OpencodeVersion) {
-		t.Errorf("install layer = %q", layer)
-	}
 	// Harness-owned auth: the derived egress allowlist (also the M18 proxy
 	// allowlist) carries the provider's domain — auth.json credentials are
 	// never firewalled out. The opencode provider maps to opencode.ai.
@@ -269,10 +265,6 @@ func TestCodexKindCapabilities(t *testing.T) {
 	if h.Binary() != "codex-acp" {
 		t.Errorf("binary = %q", h.Binary())
 	}
-	if layer := strings.Join(h.InstallLayer(), "\n"); !strings.Contains(layer, "@openai/codex@"+CodexVersion) ||
-		!strings.Contains(layer, "@agentclientprotocol/codex-acp@"+CodexACPVersion) {
-		t.Errorf("install layer = %q", layer)
-	}
 	// Both harnesses run as ACP agents in the workspace sidecar.
 	if _, ok := h.(ports.AgentReattacher); !ok {
 		t.Error("codex harness cannot reattach after an engine restart")
@@ -323,12 +315,6 @@ func TestOmpKindCapabilities(t *testing.T) {
 	}
 	if h.Binary() != "omp" {
 		t.Errorf("binary = %q", h.Binary())
-	}
-	// The standalone binary, checksum-verified; curl is the only prerequisite.
-	layer := strings.Join(h.InstallLayer(), "\n")
-	if !strings.HasPrefix(layer, "RUN curl ") || !strings.Contains(layer, "/releases/download/v"+OmpVersion+"/") ||
-		!strings.Contains(layer, "sha256sum -c") || !strings.Contains(layer, "/usr/local/bin/omp") {
-		t.Errorf("install layer = %q", layer)
 	}
 	// API keys ride provider.env verbatim (quotes and export stripped).
 	if env := h.EnvVars(); env["ANTHROPIC_API_KEY"] != "sk-ant-x" || env["OPENCODE_API_KEY"] != "oc-x" || len(env) != 2 {

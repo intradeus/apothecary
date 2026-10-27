@@ -14,9 +14,8 @@ import (
 // build/ instead (`task build`).
 func TestEmbedsNoBinaries(t *testing.T) {
 	for name, fsys := range map[string]embed.FS{
-		"BaseContext":    BaseContext,
-		"HarnessFeature": HarnessFeature,
-		"CodeServer":     CodeServer,
+		"BaseContext": BaseContext,
+		"Images":      Images,
 	} {
 		_ = fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {

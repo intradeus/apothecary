@@ -35,9 +35,9 @@ func envWith(t *testing.T, files map[string]string) (*fake.EnvProvisioner, ports
 	return envp, id
 }
 
-// opencode reads its config and auth from $HOME. The §8 pipeline image runs
-// as `apothecary`, but a repo-authored devcontainer runs the REPO's user
-// (root, vscode, node…) — writing to a hardcoded /home/apothecary there left
+// opencode reads its config and auth from $HOME. A repo-authored devcontainer
+// runs the REPO's user (root, vscode, node…) — writing to a hardcoded
+// /home/apothecary there left
 // opencode with no provider and no agents ("agent planner not found",
 // "Model not found"). Config must follow the workspace's real $HOME.
 func TestConfigFollowsWorkspaceHome(t *testing.T) {

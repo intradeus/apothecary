@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strings"
@@ -49,8 +50,9 @@ type provEntry struct {
 	stale bool
 }
 
-// New builds the resolver. The builder exists solely to compile + cache the
-// static in-workspace shim (wsimage.EnsureShim → ProvisionerDeps.ShimBin).
+// New builds the resolver. The builder compiles + caches the apothecary-owned
+// images a docker host needs (the shim, the tools bundle, the gateway and
+// browser images → ProvisionerDeps).
 // sandboxRuntime is APOTHECARY_SANDBOX_RUNTIME (empty ⇒ privileged sandbox).
 func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, sandboxRuntime string) *Resolver {
 	return &Resolver{
@@ -66,6 +68,20 @@ func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePor
 
 // SetImageBuilder swaps the image builder (tests).
 func (r *Resolver) SetImageBuilder(b *wsimage.Builder) { r.builder = b }
+
+// WarmImages builds, in the background, what every docker-host provision
+// needs and would otherwise pay for on its first run after an upgrade — the
+// tools bundle (~1 GB of downloads and a codex-acp compile). Same Builder as
+// the provisioners', so its lock serialises the warm-up with a concurrent
+// provision instead of racing it. Failures are logged; the provision that
+// needs the bundle retries the build and reports its own error.
+func (r *Resolver) WarmImages(ctx context.Context) {
+	go func() {
+		if _, err := r.builder.EnsureTools(ctx); err != nil {
+			slog.Warn("tools bundle warm-up failed (the first provision will retry it)", "err", err)
+		}
+	}()
+}
 
 // unresolvable wraps errors that no retry will heal (§6.1): missing
 // project/integration rows and unregistered kinds.
@@ -164,8 +180,8 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	if len(byKind) == 0 {
 		return nil, unresolvable(fmt.Errorf("project %s has no harness integrations", p.Name))
 	}
-	// Deterministic unions by sorted kind: the image tag is content-addressed,
-	// so the install-layer order must not depend on set/map ordering.
+	// Deterministic unions by sorted kind: HarnessBinaries and the egress
+	// allowlist must not depend on set/map ordering.
 	kindList := make([]string, 0, len(byKind))
 	for k := range byKind {
 		kindList = append(kindList, k)
@@ -182,20 +198,10 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	providerEnv := map[string]string{}
 	var harnessSecrets []string
 	var harnessBinaries []string
-	var harnessInstall []ports.HarnessInstall
 	egressContribs := [][]string{account.EgressDomains()}
 	for _, k := range kindList {
 		h := byKind[k]
 		runners[k] = h
-		layer := h.InstallLayer()
-		// A repo-authored devcontainer runs the repo's own image, which knows
-		// nothing about opencode/codex — the harness is installed in-workspace
-		// via an injected feature, and it needs shell, not Dockerfile syntax.
-		if cmds := shellLines(layer); len(cmds) > 0 {
-			harnessInstall = append(harnessInstall, ports.HarnessInstall{
-				Binary: h.Binary(), Requires: requiredTools(cmds), Commands: cmds,
-			})
-		}
 		egressContribs = append(egressContribs, h.EgressDomains())
 		for ek, ev := range h.EnvVars() {
 			providerEnv[ek] = ev
@@ -239,6 +245,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		EgressAllowedPorts:   p.Workspace.EgressAllowedPorts,
 		CodeServerExtensions: p.Workspace.CodeServerExtensions,
 		EditorSettings: ports.EditorSettings{
+			Extensions:     p.Workspace.CodeServerExtensions,
 			Theme:          p.Workspace.Editor.Theme,
 			FontSize:       p.Workspace.Editor.FontSize,
 			TabSize:        p.Workspace.Editor.TabSize,
@@ -280,7 +287,6 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		},
 		HarnessBinary:   harness.Binary(),
 		HarnessBinaries: harnessBinaries,
-		HarnessInstall:  harnessInstall,
 		Envp:            prov,
 		Runner:          harness,
 		Runners:         runners,
@@ -385,6 +391,7 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provision
 			RunsDir:        r.runsDir,
 			EnginePort:     r.enginePort,
 			ShimBin:        r.builder.EnsureShim,
+			ToolsDir:       r.builder.EnsureTools,
 			GatewayImage:   r.builder.EnsureGatewayImage,
 			SandboxRuntime: r.sandboxRuntime,
 		})
@@ -418,46 +425,6 @@ func (r *Resolver) Close() {
 		e.prov.Close()
 	}
 	r.cache = map[string]*provEntry{}
-}
-
-// shellLines converts a harness's Dockerfile InstallLayer into plain shell.
-// The kinds layer speaks Dockerfile because the §8 image build is its usual
-// consumer; a provisioner that installs the harness IN the workspace (a
-// repo-authored devcontainer runs the repo's own image) needs the command
-// itself. Directives with no shell equivalent (ENV, COPY…) are dropped.
-func shellLines(layer []string) []string {
-	var out []string
-	for _, l := range layer {
-		if cmd, ok := strings.CutPrefix(strings.TrimSpace(l), "RUN "); ok {
-			if cmd = strings.TrimSpace(cmd); cmd != "" {
-				out = append(out, cmd)
-			}
-		}
-	}
-	return out
-}
-
-// requiredTools names the tools an install command needs present before it
-// can run. An install command's FIRST token is exactly its prerequisite —
-// `npm install -g x` needs npm, `pip install x` needs pip, `curl … | sh`
-// needs curl — so nothing here assumes a particular runtime: a harness that
-// installs without Node never asks for Node. Deduped, order preserved.
-func requiredTools(cmds []string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, c := range cmds {
-		tool, _, _ := strings.Cut(strings.TrimSpace(c), " ")
-		// Skip shell noise that is always present anyway.
-		switch tool {
-		case "", "sh", "bash", "env", "set", "cd", "true":
-			continue
-		}
-		if !seen[tool] {
-			seen[tool] = true
-			out = append(out, tool)
-		}
-	}
-	return out
 }
 
 // egressDomains derives the allow-mode allowlist WITHOUT any convenience
@@ -556,8 +523,8 @@ func (r *Resolver) testIntegration(ctx context.Context, in confstore.Integration
 		}
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
 			RunsDir: r.runsDir, EnginePort: r.enginePort,
-			ShimBin: r.builder.EnsureShim, GatewayImage: r.builder.EnsureGatewayImage,
-			SandboxRuntime: r.sandboxRuntime,
+			ShimBin: r.builder.EnsureShim, ToolsDir: r.builder.EnsureTools,
+			GatewayImage: r.builder.EnsureGatewayImage, SandboxRuntime: r.sandboxRuntime,
 		})
 		if err != nil {
 			return err

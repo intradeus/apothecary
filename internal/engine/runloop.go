@@ -2106,17 +2106,13 @@ func (x *exec) ensureEnv() error {
 		Name:    workspaceName(nameBranch, rs.runID),
 		Project: x.res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.
-		ProjectName: x.res.ProjectName,
-		// Only used by provisioners that don't get the §8 image: a
-		// repo-authored devcontainer must install the harness itself.
-		HarnessInstall:       x.res.HarnessInstall,
-		EgressDomains:        x.res.EgressDomains,
-		EgressMode:           x.res.EgressMode,
-		EgressDenylist:       x.res.EgressDenylist,
-		EgressBlocked:        x.res.EgressBlocked,
-		EgressAllowedCIDRs:   x.res.EgressAllowedCIDRs,
-		EgressAllowedPorts:   x.res.EgressAllowedPorts,
-		CodeServerExtensions: x.res.CodeServerExtensions,
+		ProjectName:        x.res.ProjectName,
+		EgressDomains:      x.res.EgressDomains,
+		EgressMode:         x.res.EgressMode,
+		EgressDenylist:     x.res.EgressDenylist,
+		EgressBlocked:      x.res.EgressBlocked,
+		EgressAllowedCIDRs: x.res.EgressAllowedCIDRs,
+		EgressAllowedPorts: x.res.EgressAllowedPorts,
 		// For clone-first provisioners (devcontainer): the engine-side
 		// checkout needs the repository host credential before the env exists.
 		GitUser: x.res.GitUser,

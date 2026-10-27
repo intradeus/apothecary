@@ -35,8 +35,8 @@ func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
 }
 
 const (
-	// defaultHome is the §8 pipeline image's workspace user. Repo-authored
-	// devcontainers run the REPO's user instead, so the real home is probed
+	// defaultHome is a last-resort fallback: a repo-authored devcontainer
+	// runs the REPO's user, so the real home is probed
 	// per env and this is only the fallback.
 	defaultHome = "/home/apothecary"
 )

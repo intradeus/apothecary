@@ -104,9 +104,11 @@ type Config struct {
 	// at is where workspaces run; remote daemons work via the engine
 	// process's DOCKER_HOST.
 	DockerBin string
-	// RunsDir receives per-env state: src/ (the checkout), shim/, the
-	// generated fallback config and exec.log. Empty = system temp dir for
-	// state and no exec log.
+	// RunsDir receives per-env state: the checkout, shim/, the markers
+	// (definition, gwproject, gwip, devcontainer.sum) and exec.log — and,
+	// beside the env folders, the engine-wide caches (shim-cache/,
+	// tools-cache/, builds/). Empty = system temp dir for state and no exec
+	// log.
 	RunsDir string
 	// ProvisionTimeout bounds clone+build+up+ready (default 15m; first
 	// builds of heavy devcontainers can be slow).
@@ -119,6 +121,11 @@ type Config struct {
 	// in-workspace shim binary (wsimage.EnsureShim), bind-mounted into
 	// every workspace at /opt/apothecary/shim. Required.
 	ShimBin func(ctx context.Context) (string, error)
+	// ToolsDir builds (cached) and returns the host directory of the tools
+	// bundle (wsimage.EnsureTools): every harness CLI and code-server as
+	// standalone builds, bind-mounted into every workspace at
+	// /opt/apothecary/tools. Required on the docker host.
+	ToolsDir func(ctx context.Context) (string, error)
 	// GatewayImage builds (cached) and returns the tag of the per-project
 	// egress gateway image (wsimage.EnsureGatewayImage). Required for egress
 	// filtering; nil ⇒ no gateway (the sandbox runs on the default bridge,
@@ -461,6 +468,7 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 
 	ws, err := p.def.Up(ctx, a.defEnv(name, p.src), spec, upOptions{
 		shimDir:        p.shimDir,
+		toolsDir:       p.toolsDir,
 		gwIP:           p.gwIP,
 		project:        spec.Project,
 		removeExisting: removeExisting,
@@ -652,11 +660,31 @@ func policyFor(spec ports.EnvSpec) policyfile.File {
 	}
 }
 
-// recordProject persists which project (by id) owns an env — a tiny marker in
-// the run folder — so EgressDenials/AllowEgress can locate the per-project
-// gateway after an engine restart without a docker call.
-func (a *Adapter) recordProject(name, project string) {
-	_ = os.WriteFile(filepath.Join(a.folderFor(name), "gwproject"), []byte(project), 0o644)
+// recordGateway persists which project (by id) owns an env and the address
+// its gateway has on the run's link — two tiny markers in the run folder — so
+// EgressDenials/AllowEgress can locate the per-project gateway after an
+// engine restart without a docker call, and StartEditor can point
+// code-server at the gateway's extension gallery. gwIP is "" when the run
+// has no gateway (the marker is then absent).
+func (a *Adapter) recordGateway(name, project, gwIP string) {
+	folder := a.folderFor(name)
+	_ = os.MkdirAll(folder, 0o755)
+	_ = os.WriteFile(filepath.Join(folder, "gwproject"), []byte(project), 0o644)
+	if gwIP == "" {
+		_ = os.Remove(filepath.Join(folder, "gwip"))
+		return
+	}
+	_ = os.WriteFile(filepath.Join(folder, "gwip"), []byte(gwIP), 0o644)
+}
+
+// gatewayIPFor reads the gateway's address on the env's link (from the
+// marker); "" when the env has no gateway.
+func (a *Adapter) gatewayIPFor(name string) string {
+	b, err := os.ReadFile(filepath.Join(a.folderFor(name), "gwip"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // projectFor reads the env's owning project id (from the marker); "" when
@@ -712,22 +740,48 @@ func (a *Adapter) ensureShim(ctx context.Context, name string) (string, error) {
 // shimAlias is the shim's callable name in workspaces (see ensureShim).
 const shimAlias = "apothecary-shim"
 
+// ensureTools builds (cached) the tools bundle on the engine host and returns
+// its directory (cfg.ToolsDir); its PARENT is what the sandbox mounts, the
+// dir itself is what the workspace mounts at /opt/apothecary/tools.
+func (a *Adapter) ensureTools(ctx context.Context) (string, error) {
+	if a.cfg.ToolsDir == nil {
+		return "", fmt.Errorf("devcontainer: no tools builder configured")
+	}
+	dir, err := a.cfg.ToolsDir(ctx)
+	if err != nil {
+		return "", fmt.Errorf("build tools bundle: %w", err)
+	}
+	return dir, nil
+}
+
 // rootInit performs the one-time (idempotent) root-level setup the §11
 // contract needs inside an arbitrary user image: the /apothecary state dir
-// owned by the remote user, and the $HOME/repo symlink onto the mounted
-// workspace folder. `devcontainer exec` has no --user, so this one call
-// goes through docker directly.
+// (and the editor's state under it) owned by the remote user, the $HOME/repo
+// symlink onto the mounted workspace folder, and the tools bundle's entries
+// linked into /opt/apothecary — the libc variant the image can run, picked by
+// probing for musl's loader; the links are absolute container paths into the
+// mount, so they stay valid across engine upgrades (the mount target never
+// changes) and Rebuild simply relinks. /opt/apothecary is APPENDED to every
+// Exec'd PATH, so an image that ships its own harness still wins. A musl
+// image gets no code-server link (there is no musl build). `devcontainer
+// exec` has no --user, so this one call goes through docker directly.
 func (a *Adapter) rootInit(ctx context.Context, name string, res Workspace) error {
 	user := res.RemoteUser
 	if user == "" {
 		user = "root"
 	}
 	script := fmt.Sprintf(`set -e
-mkdir -p /apothecary
-chown %[1]s /apothecary
+mkdir -p /apothecary %[3]s
+chown %[1]s /apothecary %[3]s
 H="$(getent passwd %[1]s | cut -d: -f6)"
 [ -n "$H" ] || H=/root
-ln -sfn %[2]s "$H/repo"`, shellQuote(user), shellQuote(res.WorkspaceFolder))
+ln -sfn %[2]s "$H/repo"
+libc=gnu
+if [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ]; then libc=musl; fi
+for f in /opt/apothecary/tools/$libc/bin/*; do
+  [ -e "$f" ] && ln -sfn "$f" "/opt/apothecary/$(basename "$f")"
+done
+true`, shellQuote(user), shellQuote(res.WorkspaceFolder), codeServerState)
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"exec", "-u", "root", res.ContainerID, "sh", "-c", script}, nil, nil)
 	if err != nil {

@@ -73,6 +73,8 @@ spec:
               value: {{ include "apothecary.image" (dict "root" . "key" "sandbox" "name" "sandbox") }}
             - name: APOTHECARY_SHIM_IMAGE
               value: {{ include "apothecary.image" (dict "root" . "key" "shim" "name" "shim") }}
+            - name: APOTHECARY_TOOLS_IMAGE
+              value: {{ include "apothecary.image" (dict "root" . "key" "tools" "name" "tools") }}
             - name: APOTHECARY_GATEWAY_IMAGE
               value: {{ include "apothecary.image" (dict "root" . "key" "gateway" "name" "egress-gw") }}
             - name: APOTHECARY_BROWSER_IMAGE

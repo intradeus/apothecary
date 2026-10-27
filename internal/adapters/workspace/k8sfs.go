@@ -95,14 +95,4 @@ func (e execFS) Walk(ctx context.Context, dir string) ([]string, error) {
 	return files, nil
 }
 
-func (e execFS) AppendLineOnce(ctx context.Context, path, line string) error {
-	p := shellQuote(path)
-	script := fmt.Sprintf(`IFS= read -r L; mkdir -p "$(dirname %[1]s)" && touch %[1]s && { grep -qxF -- "$L" %[1]s || printf '%%s\n' "$L" >> %[1]s; }`, p)
-	_, code, err := e.sh(ctx, script, []byte(line+"\n"))
-	if err == nil && code != 0 {
-		err = fmt.Errorf("append %s: exit %d", path, code)
-	}
-	return err
-}
-
 var _ sandboxFS = execFS{}

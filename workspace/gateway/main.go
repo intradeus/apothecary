@@ -12,6 +12,10 @@
 // out. The same state also lives as files under --state-dir, so a restarted
 // gateway comes back with its policy, its routes and its WireGuard peers.
 //
+// It also hosts the project's caches (one gateway, every run reaches it):
+// the Docker Hub mirror and the build cache (registry.go) and the VS Code
+// extension gallery (gallery.go).
+//
 // Self-contained (pure stdlib), like workspace/shim: it is built standalone by
 // wsimage.EnsureGatewayImage and cannot import apothecary packages.
 package main
@@ -37,6 +41,9 @@ type gateway struct {
 	// buildCacheDir / buildCacheConfig: the writable registry's storage and
 	// config (the control API sizes and wipes it).
 	buildCacheDir, buildCacheConfig string
+	// gallery is the extension gallery proxy (gallery.go); nil when off. The
+	// build-cache wipe clears its cache too.
+	gallery *gallery
 	// protect are destinations no run may reach, whatever the policy says —
 	// the cluster's pod and service ranges and link-local metadata, so the
 	// gateway is never a pivot into the network it runs on.
@@ -84,6 +91,10 @@ func main() {
 	flag.BoolVar(&mirror, "mirror", false, "run the Docker Hub pull-through mirror on :5000, config generated into --state-dir")
 	flag.BoolVar(&buildCache, "buildcache", false, "run the writable build-cache registry on :5001, config generated into --state-dir")
 	flag.StringVar(&g.buildCacheDir, "buildcache-dir", "/var/lib/buildcache", "build-cache registry storage")
+	var galleryOn bool
+	var galleryUpstream string
+	flag.BoolVar(&galleryOn, "gallery", false, "serve the VS Code extension gallery (an Open VSX proxy + cache) on :"+galleryPort+", cache under --state-dir")
+	flag.StringVar(&galleryUpstream, "gallery-upstream", "https://open-vsx.org", "the marketplace the gallery proxies")
 	flag.StringVar(&controlListen, "control-listen", "", "control API address, e.g. :9041 (empty = no API)")
 	flag.StringVar(&controlTokenFile, "control-token-file", "", "file holding the control API bearer token (else $APO_GW_TOKEN)")
 	flag.StringVar(&wgKey, "wg-key", "", "WireGuard private key file: enables the wg0 run link (Kubernetes)")
@@ -119,6 +130,16 @@ func main() {
 		}
 	}
 	g.buildCacheConfig = buildCacheConfig
+	if galleryOn {
+		if err := galleryUpstreamOK(galleryUpstream); err != nil {
+			log.Fatalf("gateway: --gallery-upstream: %v", err)
+		}
+		dir := ""
+		if stateDir != "" {
+			dir = filepath.Join(stateDir, "gallery")
+		}
+		g.gallery = newGallery(galleryUpstream, dir)
+	}
 	if controlListen != "" {
 		_, p, err := net.SplitHostPort(controlListen)
 		if err != nil {
@@ -177,6 +198,12 @@ func main() {
 	if buildCacheConfig != "" {
 		log.Printf("gateway: build cache on :5001 (config %s)", buildCacheConfig)
 		go superviseRegistry("buildcache", buildCacheConfig)
+	}
+	// The extension gallery: Open VSX, proxied and cached per project, so a
+	// run's code-server installs extensions inside allow-mode projects and a
+	// project's runs warm each other's — the same shape as the image mirror.
+	if g.gallery != nil {
+		go serveGallery(g.gallery)
 	}
 
 	if controlListen != "" {

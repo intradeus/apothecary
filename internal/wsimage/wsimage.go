@@ -1,7 +1,10 @@
-// Package wsimage compiles and caches the static in-workspace shim binary
-// (EnsureShim, shimbin.go) — the only artifact apothecary builds, now that
-// every workspace runs the target repo's OWN devcontainer image. The Builder
-// and its docker/log helpers exist to serve that one build.
+// Package wsimage builds and caches, on a docker host, the images apothecary
+// owns: the static in-workspace shim (EnsureShim), the per-project egress
+// gateway (EnsureGatewayImage), the project browser (EnsureBrowserImage) and
+// the tools bundle (EnsureTools) — every workspace runs the target repo's OWN
+// devcontainer image, so these are the only builds. On Kubernetes CI
+// publishes the same Dockerfiles (deploy/images.sh) and the engine builds
+// nothing.
 package wsimage
 
 import (

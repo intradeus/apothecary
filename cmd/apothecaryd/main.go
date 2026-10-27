@@ -82,6 +82,10 @@ func main() {
 		// The shim source hash a published shim image must carry (CI passes it
 		// as SHIM_HASH; a Kubernetes sandbox's seeded shim is checked against it).
 		fmt.Println(wsassets.ShimSourceHash())
+	case "tools-hash":
+		// Likewise for the tools bundle (TOOLS_HASH; a seeded bundle that
+		// differs is only warned about — tool versions are not an ABI).
+		fmt.Println(wsassets.ToolsHash())
 	default:
 		usage()
 		os.Exit(2)
@@ -103,6 +107,7 @@ commands:
   envcheck -project <name|id> [-keep]
   user list | user reset-password <handle> | user set-admin <handle> [-off]
   shim-hash                        print the shim source hash (for publishing shim images)
+  tools-hash                       print the tools bundle hash (for publishing tools images)
   version`)
 }
 
@@ -220,6 +225,11 @@ func cmdServe(args []string) error {
 	// provisioner brings up (internal/egressgw) — no engine-side proxy.
 	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
 	defer resolver.Close()
+	if boot.K8s.Namespace == "" {
+		// A docker host builds the tools bundle itself; start now rather
+		// than inside the first provision after an upgrade.
+		resolver.WarmImages(ctx)
+	}
 
 	ecfg := engine.Config{
 		EngineURL:               engineURL(boot.Listen),
@@ -672,6 +682,7 @@ func kubernetesDefaults(boot *config.Boot) kinds.KubernetesDefaults {
 		Kubeconfig:      k.Kubeconfig,
 		SandboxImage:    img(k.SandboxImage, "sandbox"),
 		ShimImage:       img(k.ShimImage, "shim"),
+		ToolsImage:      img(k.ToolsImage, "tools"),
 		GatewayImage:    img(k.GatewayImage, "egress-gw"),
 		PullPolicy:      k.PullPolicy,
 		ProtectCIDRs:    k.ProtectCIDRs,

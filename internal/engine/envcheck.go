@@ -128,20 +128,15 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		Name:    name,
 		Project: res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.
-		ProjectName: res.ProjectName,
-		// The workspace a run would get: a repo-authored devcontainer
-		// installs the harness itself, so without this the harness_binary
-		// probe could only ever fail on images that don't ship it.
-		HarnessInstall:       res.HarnessInstall,
-		EgressDomains:        res.EgressDomains,
-		EgressMode:           res.EgressMode,
-		EgressDenylist:       res.EgressDenylist,
-		EgressBlocked:        res.EgressBlocked,
-		EgressAllowedCIDRs:   res.EgressAllowedCIDRs,
-		EgressAllowedPorts:   res.EgressAllowedPorts,
-		CodeServerExtensions: res.CodeServerExtensions,
-		GitUser:              res.GitUser,
-		GitPass:              res.GitPass,
+		ProjectName:        res.ProjectName,
+		EgressDomains:      res.EgressDomains,
+		EgressMode:         res.EgressMode,
+		EgressDenylist:     res.EgressDenylist,
+		EgressBlocked:      res.EgressBlocked,
+		EgressAllowedCIDRs: res.EgressAllowedCIDRs,
+		EgressAllowedPorts: res.EgressAllowedPorts,
+		GitUser:            res.GitUser,
+		GitPass:            res.GitPass,
 	})
 	if !step("provision", err, string(env)) {
 		if opts.Keep {

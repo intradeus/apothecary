@@ -16,8 +16,9 @@ import (
 	"apothecary/internal/ports"
 )
 
-// OpencodeVersion is the pinned harness version (kept in lockstep with the
-// M2 image pin; the harness layer installs exactly this).
+// OpencodeVersion is the pinned opencode release: the tools bundle mounted
+// into every workspace ships exactly this build (workspace/images/tools;
+// TestToolsDockerfilePinsMatchKinds holds the Dockerfile's ARG to it).
 const OpencodeVersion = "1.17.8"
 
 // Opencode is the harness/opencode kind (DESIGN2 §4.1).
@@ -26,8 +27,8 @@ type Opencode struct{}
 func (Opencode) Descriptor() Descriptor {
 	return Descriptor{
 		Port: "harness", Kind: "opencode", Label: "opencode",
+		Help: "Runs opencode " + OpencodeVersion + ", the version pinned by this apothecary release.",
 		Fields: []Field{
-			{Name: "version", Label: "Version", Default: OpencodeVersion},
 			// Harness-owned auth (user decision, post-M8): this one field
 			// carries ALL model credentials — API keys and/or subscription
 			// logins — in opencode's native format. The separate provider
@@ -43,7 +44,6 @@ func (Opencode) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 	return &opencodeHarness{
 		Runner:   acpagent.New(envp, opencodeadapter.Profile()),
 		adapter:  opencodeadapter.New(envp, opencodeadapter.Config{}),
-		version:  cfg.Str("version", OpencodeVersion),
 		authJSON: cfg.Secrets["auth_json"],
 	}, nil
 }
@@ -54,7 +54,6 @@ func (Opencode) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 type opencodeHarness struct {
 	*acpagent.Runner
 	adapter  *opencodeadapter.Adapter
-	version  string
 	authJSON string
 }
 
@@ -72,10 +71,6 @@ func (h *opencodeHarness) Test(_ context.Context) error {
 }
 
 func (h *opencodeHarness) Binary() string { return "opencode" }
-
-func (h *opencodeHarness) InstallLayer() []string {
-	return []string{fmt.Sprintf("RUN npm install -g opencode-ai@%s", h.version)}
-}
 
 // providerDomains maps opencode/models.dev provider ids (auth_json top-level
 // keys — the same ids Models() filters by) to their API hosts. Providers

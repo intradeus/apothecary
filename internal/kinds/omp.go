@@ -17,8 +17,10 @@ import (
 	"apothecary/internal/ports"
 )
 
-// OmpVersion is the pinned omp release; the harness layer installs exactly
-// this standalone binary (the npm package needs bun at runtime).
+// OmpVersion is the pinned omp release: the tools bundle ships exactly this
+// standalone binary (the npm package needs bun at runtime; see
+// workspace/images/tools — TestToolsDockerfilePinsMatchKinds holds the
+// Dockerfile's ARG to it). Its model catalog is read at this tag too.
 const OmpVersion = "18.13.1"
 
 // Omp is the harness/omp kind: oh-my-pi (github.com/can1357/oh-my-pi), driven
@@ -31,10 +33,9 @@ type Omp struct{}
 func (Omp) Descriptor() Descriptor {
 	return Descriptor{
 		Port: "harness", Kind: "omp", Label: "omp (oh-my-pi)",
-		Help: "oh-my-pi coding agent, installed as its standalone binary. Give it provider API keys, " +
+		Help: "oh-my-pi coding agent " + OmpVersion + " (the version pinned by this apothecary release). Give it provider API keys, " +
 			"subscription logins, or both — omp holds no other credential.",
 		Fields: []Field{
-			{Name: "version", Label: "Version", Default: OmpVersion},
 			{Name: "env", Label: "Provider API keys — one KEY=VALUE per line", Secret: true, Multiline: true,
 				Placeholder: "ANTHROPIC_API_KEY=sk-ant-…\nOPENROUTER_API_KEY=sk-or-…",
 				Help:        "Read natively by omp: " + strings.Join(ompEnvKeyNames(), ", ") + "."},
@@ -52,7 +53,6 @@ func (Omp) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 	return &ompHarness{
 		Runner:    acpagent.New(envp, adapter.Profile()),
 		adapter:   adapter,
-		version:   cfg.Str("version", OmpVersion),
 		env:       cfg.Secrets["env"],
 		oauthJSON: cfg.Secrets["oauth_json"],
 	}, nil
@@ -63,7 +63,6 @@ func (Omp) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 type ompHarness struct {
 	*acpagent.Runner
 	adapter   *ompadapter.Adapter
-	version   string
 	env       string
 	oauthJSON string
 }
@@ -255,20 +254,6 @@ func (h *ompHarness) Test(_ context.Context) error {
 
 func (h *ompHarness) Binary() string { return "omp" }
 
-// InstallLayer downloads the release's standalone binary for this platform
-// (glibc or musl, x64 or arm64) and checks it against the release's
-// SHA256SUMS. curl is the line's first token, so it is the only prerequisite
-// the harness feature provides.
-func (h *ompHarness) InstallLayer() []string {
-	base := "https://github.com/can1357/oh-my-pi/releases/download/v" + h.version
-	return []string{"RUN curl -fsSL -o /tmp/omp-SHA256SUMS " + base + "/SHA256SUMS.txt" +
-		` && a=omp-linux-$([ -f /etc/alpine-release ] && echo musl-)$(uname -m | sed -e s/x86_64/x64/ -e s/aarch64/arm64/)` +
-		` && curl -fsSL -o /tmp/$a ` + base + `/$a` +
-		` && (cd /tmp && grep " $a\$" omp-SHA256SUMS | sha256sum -c -)` +
-		` && install -m 0755 /tmp/$a /usr/local/bin/omp && rm -f /tmp/$a /tmp/omp-SHA256SUMS` +
-		` && { [ ! -f /etc/alpine-release ] || apk add --no-cache libstdc++ libgcc; }`}
-}
-
 // EgressDomains derives the allowlist from the same auth the models come
 // from — whatever omp can route to must not be blocked by the firewall that
 // ships with it — plus omp's own infrastructure.
@@ -305,7 +290,7 @@ func (h *ompHarness) Models(ctx context.Context) ([]ModelInfo, error) {
 	if len(held) == 0 {
 		return nil, fmt.Errorf("omp: no providers configured — set env or oauth_json on the integration first")
 	}
-	catalog, err := fetchOmpCatalog(ctx, h.version)
+	catalog, err := fetchOmpCatalog(ctx, OmpVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +397,7 @@ func (h *ompHarness) checkAuth(ctx context.Context, want map[string]string, cred
 			continue
 		}
 		if catalog == nil {
-			c, err := fetchOmpCatalog(ctx, h.version)
+			c, err := fetchOmpCatalog(ctx, OmpVersion)
 			if err != nil {
 				out.Unverified = append(out.Unverified, "omp: "+err.Error())
 				return out

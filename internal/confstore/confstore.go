@@ -105,15 +105,15 @@ type WorkspaceConfig struct {
 	// legitimate raw (non-HTTP/TLS) external egress the default backstop drops.
 	EgressAllowedCIDRs []string `json:"egress_allowed_cidrs,omitempty"`
 	EgressAllowedPorts []int    `json:"egress_allowed_ports,omitempty"`
-	// CodeServerExtensions are VS Code extension ids pre-installed into the
-	// workspace's code-server at build time (union with the repo devcontainer's
-	// own customizations.vscode.extensions). Baked into the image, so they are
-	// not reinstalled every run.
+	// CodeServerExtensions are VS Code extension ids (Open VSX) installed into
+	// the workspace's code-server the first time the browser editor opens in
+	// a run (union with the repo devcontainer's own
+	// customizations.vscode.extensions), through the project gateway's
+	// extension cache — so a changed list needs no rebuild.
 	CodeServerExtensions []string `json:"code_server_extensions,omitempty"`
 	// Editor holds the workspace's code-server UI defaults (color theme + common
-	// editor prefs). Unlike the extensions above, these are applied as VS Code
-	// user settings when the browser editor is opened — so changing them needs
-	// no image rebuild.
+	// editor prefs), applied as VS Code user settings each time the browser
+	// editor is opened.
 	Editor EditorConfig `json:"editor,omitzero"`
 	// Services are the project's long-running processes — its app, a
 	// database — named by a flow's service stages (usually through a
@@ -175,8 +175,7 @@ type BrowserConfig struct {
 // EditorConfig is the per-project code-server UI defaults (§ code-server
 // integration). Neutral, curated fields the devcontainer adapter maps to VS
 // Code user settings; applied at editor-start, so changing them needs no
-// rebuild. Kept separate from CodeServerExtensions, which must install at
-// build time.
+// rebuild.
 type EditorConfig struct {
 	Theme        string `json:"theme,omitempty"`          // workbench.colorTheme
 	FontSize     int    `json:"font_size,omitempty"`      // editor.fontSize

@@ -4,8 +4,8 @@
 # in the workspaces namespace.
 
 image:
-  # Five images per release, all under this prefix: apothecaryd, sandbox,
-  # shim, egress-gw, browser (see deploy/images.sh).
+  # Six images per release, all under this prefix: apothecaryd, sandbox,
+  # shim, tools, egress-gw, browser (see deploy/images.sh).
   repository: ghcr.io/intradeus/apothecary
   tag: ""            # default: the chart's appVersion
   pullPolicy: IfNotPresent
@@ -14,6 +14,7 @@ image:
     apothecaryd: ""
     sandbox: ""
     shim: ""
+    tools: ""
     gateway: ""
     browser: ""
 imagePullSecrets: []

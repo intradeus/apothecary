@@ -36,6 +36,13 @@ func (h dockerHost) prepare(ctx context.Context, name string, spec ports.EnvSpec
 	if err != nil {
 		return prep{}, err
 	}
+	// The tools bundle: cached per engine version; the first provision after
+	// an upgrade pays for the build unless cmdServe warmed it at boot.
+	plog("→ preparing the tools bundle (first time after an upgrade: a download of every harness + code-server)\n")
+	toolsDir, err := a.ensureTools(ctx)
+	if err != nil {
+		return prep{}, err
+	}
 	// Egress firewall: the run's DinD sandbox routes ALL egress (the workspace
 	// AND every compose sibling) through the per-project gateway
 	// (internal/egressgw). Bring it up BEFORE the sandbox so the sandbox can join
@@ -53,16 +60,16 @@ func (h dockerHost) prepare(ctx context.Context, name string, spec ports.EnvSpec
 		// Record the owning project NOW (not after the build): if the build is
 		// blocked on a denied domain, "add to egress" must be able to find this
 		// run's gateway mid-provision to unblock it.
-		a.recordProject(name, spec.Project)
+		a.recordGateway(name, spec.Project, gwIP)
 	}
 	// Each run gets its own nested docker daemon. Everything from here —
 	// devcontainer up, exec, docker ps/inspect/rename — targets that inner
 	// daemon (via runInner), so the repo's compose runs verbatim with no
 	// host-daemon collisions and Destroy is total.
-	if err := a.ensureSandbox(ctx, name, spec, gwIP); err != nil {
+	if err := a.ensureSandbox(ctx, name, spec, gwIP, filepath.Dir(toolsDir)); err != nil {
 		return prep{}, err
 	}
-	return prep{src: src, shimDir: shimDir, gwIP: gwIP, def: def}, nil
+	return prep{src: src, shimDir: shimDir, toolsDir: toolsDir, gwIP: gwIP, def: def}, nil
 }
 
 // runInner is a.run against the run's inner daemon (host daemon for legacy

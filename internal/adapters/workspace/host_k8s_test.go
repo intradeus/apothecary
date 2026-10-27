@@ -102,7 +102,7 @@ func newK8sTestAdapter(t *testing.T, k *kubeFake, firewall bool) *Adapter {
 		RunsDir: t.TempDir(),
 		Kube: &KubeConfig{
 			Kube:         &kube.Client{Namespace: "ws", R: k},
-			SandboxImage: "sbx:1", ShimImage: "shim:1", GatewayImage: "gw:1",
+			SandboxImage: "sbx:1", ShimImage: "shim:1", ToolsImage: "tools:1", GatewayImage: "gw:1",
 			EngineURL:       "http://10.43.0.20:8080",
 			EngineNamespace: "apothecary",
 			Privileged:      true,
@@ -130,6 +130,8 @@ func inPod(seen *[]string, stdins *[][]byte) func([]string, []byte) (string, str
 			return "", "", 1 // not cloned yet
 		case argv[0] == "bash" && strings.Contains(string(stdin), "shim.hash") && strings.Contains(string(stdin), "base64 <"):
 			return base64.StdEncoding.EncodeToString([]byte(wsassets.ShimSourceHash()+"\n")) + "\n", "", 0
+		case argv[0] == "bash" && strings.Contains(string(stdin), "TOOLS_HASH") && strings.Contains(string(stdin), "base64 <"):
+			return base64.StdEncoding.EncodeToString([]byte(wsassets.ToolsHash()+"\n")) + "\n", "", 0
 		case argv[0] == "bash" && strings.Contains(string(stdin), "devcontainer.json") && strings.Contains(string(stdin), "[ -e"):
 			return "", "", 0
 		case argv[0] == "bash" && strings.Contains(string(stdin), "[ -e"):
@@ -192,6 +194,7 @@ func TestK8sProvisionSequence(t *testing.T) {
 		`"privileged":true`, `"image":"sbx:1"`, `"command":["apo-dockerd"]`,
 		`"mountPath":"` + folder + `","name":"data","subPath":"run"`, `"mountPath":"/var/lib/docker","name":"data","subPath":"docker"`,
 		`"args":["seed","` + filepath.Join(folder, "shim") + `"]`,
+		`"name":"tools-seed"`, `"image":"tools:1"`, `"args":["` + filepath.Join(folder, "tools") + `"]`,
 		`"name":"relay"`, `"restartPolicy":"Always"`, `"--serve","0.0.0.0:7070"`,
 		`"claimName":"apo-x-data"`, `"automountServiceAccountToken":false`,
 	} {
@@ -213,7 +216,8 @@ func TestK8sProvisionSequence(t *testing.T) {
 			up = l
 		}
 	}
-	if !strings.Contains(up, "--mount type=bind,source="+filepath.Join(folder, "shim")+",target=/opt/apothecary") ||
+	if !strings.Contains(up, "--mount type=bind,source="+filepath.Join(folder, "shim")+",target=/opt/apothecary ") ||
+		!strings.Contains(up, "--mount type=bind,source="+filepath.Join(folder, "tools")+",target=/opt/apothecary/tools") ||
 		!strings.Contains(up, "--workspace-folder "+filepath.Join(folder, "apo-x")) {
 		t.Errorf("up = %s", up)
 	}
@@ -252,10 +256,10 @@ func TestK8sPodWithGatewayIsTunnelled(t *testing.T) {
 	for _, c := range pod.Spec.InitContainers {
 		names = append(names, c.Name)
 	}
-	if strings.Join(names, ",") != "shim-seed,wg,relay" {
+	if strings.Join(names, ",") != "shim-seed,tools-seed,wg,relay" {
 		t.Fatalf("init order = %v (the tunnel must be up before the relay and the sandbox)", names)
 	}
-	wg := pod.Spec.InitContainers[1]
+	wg := pod.Spec.InitContainers[2]
 	env := map[string]string{}
 	for _, e := range wg.Env {
 		env[e.Name] = e.Value
@@ -278,6 +282,26 @@ func TestK8sPodWithGatewayIsTunnelled(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("network policy missing %s: %s", want, b)
 		}
+	}
+}
+
+// The seeded tools bundle is checked like the shim, with one difference: a
+// bundle of another version is a warning (the harness versions differ,
+// nothing of the engine's protocol), while a missing one is an error.
+func TestK8sToolsHashMismatchWarnsMissingFails(t *testing.T) {
+	k := &kubeFake{secrets: map[string]string{}}
+	a := newK8sTestAdapter(t, k, false)
+	h := a.host.(*k8sHost)
+	k.exec = func(argv []string, stdin []byte) (string, string, int) {
+		return base64.StdEncoding.EncodeToString([]byte("0123456789abcdef\n")) + "\n", "", 0
+	}
+	if err := h.checkTools(context.Background(), "apo-x"); err != nil {
+		t.Errorf("another bundle version must only warn: %v", err)
+	}
+	k.exec = func(argv []string, stdin []byte) (string, string, int) { return "", "", 44 }
+	err := h.checkTools(context.Background(), "apo-x")
+	if err == nil || !strings.Contains(err.Error(), "tools:1") {
+		t.Errorf("a missing bundle must fail naming the image: %v", err)
 	}
 }
 

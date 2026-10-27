@@ -288,6 +288,17 @@ func remove(xs []string, x string) []string {
 	return out
 }
 
+// --- extension gallery -------------------------------------------------------
+
+// GalleryPort is the gateway-local port of its Open VSX gallery proxy: the
+// VS Code extension marketplace a run's code-server is pointed at, cached
+// per project on the gateway's state volume (workspace/gateway/gallery.go).
+const GalleryPort = "5002"
+
+// GalleryURL is the gallery proxy's base URL as seen from inside a run's
+// sandbox; gwIP is the gateway's address as THAT run reaches it.
+func GalleryURL(gwIP string) string { return "http://" + gwIP + ":" + GalleryPort }
+
 // --- build cache -------------------------------------------------------------
 
 // BuildCachePort is the gateway-local port of the writable build-cache

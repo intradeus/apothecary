@@ -17,22 +17,6 @@ import (
 
 type EnvID string
 
-// HarnessInstall is one harness's in-workspace install. Binary is what the
-// engine probes with `command -v` (envcheck, §9); Commands are the shell
-// lines that install it. Kept vendor-neutral (no Dockerfile syntax) so an
-// adapter can run them however its environment allows — a devcontainer
-// feature, an exec, or a build layer.
-type HarnessInstall struct {
-	Binary string
-	// Requires are the tools Commands need present first (`npm` for an
-	// npm-installed harness, `curl` for a script-installed one). The
-	// installer provides each missing one before running Commands, so
-	// nothing assumes a particular runtime: a harness that needs no Node
-	// never triggers a Node install.
-	Requires []string
-	Commands []string
-}
-
 // ProjectHostKey is the ONE token host-side, per-project resources are named
 // by: the egress gateway and browser containers, their volumes and folders
 // (<RunsDir>/gw/<key>, <RunsDir>/browser/<key>) and the build-cache registry's
@@ -95,15 +79,6 @@ type EnvSpec struct {
 	// an `apt-get update` layer from three months ago. The fresh layers still
 	// REPLACE the cached ones, so one no-cache build fixes the next ten.
 	NoCache bool
-	// HarnessInstall is how to install the project's harnesses INSIDE the
-	// workspace — a repo-authored devcontainer runs the repo's own image,
-	// which knows nothing about opencode/codex, so the harness is injected as
-	// a feature. Empty means the image already carries them.
-	HarnessInstall []HarnessInstall
-	// CodeServerExtensions are project-declared VS Code extension ids baked
-	// into the workspace's code-server (union with the repo devcontainer's own
-	// customizations.vscode.extensions, which the adapter reads). Non-secret.
-	CodeServerExtensions []string
 	// EgressDomains is the fully derived firewall allowlist (deny-all + allowlist
 	// mode): repo host ∪ adapter contributions ∪ registry defaults ∪ project
 	// extras. Non-secret.
@@ -931,14 +906,19 @@ type BrowserStatus struct {
 // (avoids the engine 8080 / egress-proxy 8079 loopback ports the bridge uses).
 const CodeServerPort = 8471
 
-// EditorSettings are neutral, editor-agnostic UI preferences applied to the
-// in-workspace editor when it starts — written as the editor's user settings,
-// so changing them needs NO image rebuild (unlike CodeServerExtensions, which
-// are baked at build time). The adapter maps these to its editor's native
-// config (code-server → VS Code settings.json keys); a future editor adapter
-// maps the same neutral fields to its own. Zero value ⇒ leave the editor's own
-// defaults untouched.
+// EditorSettings are neutral, editor-agnostic UI preferences and extensions
+// applied to the in-workspace editor when it starts — written as the editor's
+// user settings and installed into its per-run extensions dir, so changing
+// them needs NO image rebuild. The adapter maps these to its editor's native
+// config (code-server → VS Code settings.json keys, Open VSX ids); a future
+// editor adapter maps the same neutral fields to its own. Zero value ⇒ leave
+// the editor's own defaults untouched.
 type EditorSettings struct {
+	// Extensions are the project-declared VS Code extension ids; the adapter
+	// unions them with the ones the workspace definition itself declares
+	// (a devcontainer's customizations.vscode.extensions) and installs the
+	// union when the editor first opens in a run. Non-secret.
+	Extensions []string
 	// Theme is the color theme name (code-server: workbench.colorTheme); must be
 	// a built-in theme or one carried by an installed extension.
 	Theme string
@@ -955,15 +935,13 @@ type EditorSettings struct {
 	TrustWorkspace bool
 }
 
-// IsZero reports that no setting is set, so callers may skip applying them.
-func (s EditorSettings) IsZero() bool { return s == EditorSettings{} }
-
 // EditorStarter is an OPTIONAL EnvProvisioner capability: start an in-workspace
 // code-server (VS Code in the browser) listening on the given loopback port, so
 // the engine can expose it (the "Open editor" path). Idempotent — a no-op when
 // code-server is already listening; returns when the port accepts connections.
-// The binary is installed by the injected code-server devcontainer feature.
-// settings are the project's editor UI defaults, (re)applied on each start.
+// The binary comes from the tools bundle mounted into every workspace (glibc
+// images only). settings are the project's editor UI defaults and extensions,
+// (re)applied on each start.
 type EditorStarter interface {
 	StartEditor(ctx context.Context, env EnvID, port int, settings EditorSettings) error
 }

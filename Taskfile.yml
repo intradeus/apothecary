@@ -86,7 +86,7 @@ tasks:
       - chmod 600 {{.K3D_KUBECONFIG}}
 
   k8s:images:
-    desc: Build the five images from the working tree and push them to the k3d registry as :local
+    desc: Build the six images from the working tree and push them to the k3d registry as :local
     cmds:
       - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local --push
 

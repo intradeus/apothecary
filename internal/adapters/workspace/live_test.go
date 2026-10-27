@@ -122,8 +122,16 @@ func TestLiveLifecycle(t *testing.T) {
 	cfg := Config{
 		RunsDir: runsDir, ProvisionTimeout: 8 * time.Minute, EnginePort: enginePort,
 		ShimBin:        builder.EnsureShim,
+		ToolsDir:       builder.EnsureTools,
 		SandboxRuntime: sandboxRuntime,
 	}
+	// The tools bundle: a one-time build of minutes (every harness release +
+	// code-server + a codex-acp compile), cached under RunsDir afterwards.
+	// Warmed here, as cmdServe does at boot, so it is not on the provision clock.
+	t0 := time.Now()
+	toolsDir, err := builder.EnsureTools(ctx)
+	must(err)
+	t.Logf("tools bundle %s ready in %s", toolsDir, time.Since(t0).Truncate(time.Second))
 	if os.Getenv("APOTHECARY_LIVE_GATEWAY") == "1" {
 		cfg.GatewayImage = builder.EnsureGatewayImage
 		// Nothing reaps a project's gateway (egressgw/manager.go); this test
@@ -142,10 +150,10 @@ func TestLiveLifecycle(t *testing.T) {
 	defer a.Close()
 
 	// EgressDomains mirrors a project created with the offered defaults
-	// (builtin.EgressDefaults, copied into ExtraDomains by the project form):
-	// the gateway filters the devcontainer BUILD too, and without the OS
-	// package repos the injected code-server feature's apt-get stalls for
-	// minutes against a deny verdict before the build limps on without it.
+	// (builtin.EgressDefaults, copied into ExtraDomains by the project form).
+	// The gateway filters the devcontainer BUILD too; the base image comes
+	// through the mirror and nothing else is installed into the image — the
+	// harnesses and code-server ride in as the tools bundle.
 	id, err := a.Provision(ctx, ports.EnvSpec{
 		RunID: "LIVETEST1", RepoURL: "file://" + repo, Project: project,
 		EgressDomains: builtin.EgressDefaults(),
@@ -205,6 +213,46 @@ func TestLiveLifecycle(t *testing.T) {
 	must(err)
 	if string(got) != "from-the-repo\n" {
 		t.Errorf("relative read = %q", got)
+	}
+
+	// The tools bundle: every harness CLI and code-server, bind-mounted and
+	// linked into /opt/apothecary (on PATH through Exec's prelude) — nothing
+	// installed into the repo's image, which has neither node nor curl.
+	res, err = a.Exec(ctx, id, ports.Command{Script: `command -v opencode codex codex-acp omp code-server
+opencode --version && omp --version && codex --version && code-server --version | head -1`})
+	must(err)
+	for _, want := range []string{"/opt/apothecary/opencode", "/opt/apothecary/codex", "/opt/apothecary/codex-acp", "/opt/apothecary/omp", "/opt/apothecary/code-server"} {
+		if !strings.Contains(res.Output, want) {
+			t.Errorf("tools bundle: %q not on PATH: %q (exit %d)", want, res.Output, res.ExitCode)
+		}
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("tools bundle versions: exit %d: %q", res.ExitCode, res.Output)
+	}
+	t.Logf("tools: %s", strings.TrimSpace(res.Output))
+
+	// The browser editor: started through Exec as the workspace user, the
+	// project's extension installed on first open — through the gateway's
+	// gallery cache when the run has a gateway, straight from Open VSX
+	// otherwise (egress is open then).
+	t0 = time.Now()
+	must(a.StartEditor(ctx, id, ports.CodeServerPort, ports.EditorSettings{Extensions: []string{"golang.go"}, Theme: "Default Dark Modern"}))
+	t.Logf("editor up in %s", time.Since(t0).Truncate(time.Second))
+	res, err = a.Exec(ctx, id, ports.Command{Script: `cat /apothecary/code-server/extensions.installed; echo; ls /apothecary/code-server/extensions; cat "$HOME/.local/share/code-server/User/settings.json"`})
+	must(err)
+	for _, want := range []string{"golang.go", "Default Dark Modern"} {
+		if !strings.Contains(res.Output, want) {
+			t.Errorf("editor state missing %q: %q", want, res.Output)
+		}
+	}
+	if os.Getenv("APOTHECARY_LIVE_GATEWAY") == "1" {
+		out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", "apo-gw-"+ports.ProjectHostKey(project)+"-state:/state",
+			"alpine:3.21", "sh", "-c", "ls /state/gallery 2>/dev/null | wc -l").Output()
+		must(err)
+		if strings.TrimSpace(string(out)) == "0" {
+			t.Error("the gateway's gallery cache is empty after an extension install")
+		}
+		t.Logf("gallery cache entries: %s", strings.TrimSpace(string(out)))
 	}
 
 	// Loopback parity: the engine answers on the WORKSPACE's own
