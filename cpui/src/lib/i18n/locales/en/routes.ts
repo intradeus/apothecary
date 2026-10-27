@@ -176,6 +176,8 @@ export default {
 	'page.channels.tokenHelp': 'Write-only: stored encrypted, never shown again.',
 	'page.channels.webhookUrl': 'Incoming webhook URL',
 	'page.channels.webhookHelp': 'From a Slack app’s Incoming Webhooks page. Its path is the secret.',
+	'page.channels.discordHelp':
+		'From the channel’s Edit Channel → Integrations → Webhooks. Its path is the secret.',
 	'page.channels.adding': 'Adding…',
 	'page.channels.addKind': 'Add {kind} channel',
 	'page.channels.mirrorsTo': 'mirrors pings to {where}',
@@ -184,7 +186,7 @@ export default {
 	'page.channels.remove': 'Remove…',
 	'page.channels.empty': 'No channels yet',
 	'page.channels.emptyText':
-		'Pings show up in the inbox either way. Add Matrix or Slack to hear about them there too.',
+		'Pings show up in the inbox either way. Add Matrix, Slack or Discord to hear about them there too.',
 	'page.reaper.head': 'Workspaces of finished runs',
 	'page.reaper.headSub': 'the run itself is never touched — only its machine',
 	'page.reaper.afterLabel': 'Destroy completed environments after',

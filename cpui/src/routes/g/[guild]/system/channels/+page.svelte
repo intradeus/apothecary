@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Channels (DESIGN 7.10): Matrix and Slack as one-way mirrors of the
+	// Channels (DESIGN 7.10): Matrix, Slack and Discord as one-way mirrors of the
 	// inbox. Pings are always answered in Apothecary, never in the channel.
 	//
 	// The engine can list, add and remove channels; it has no test or edit
@@ -27,7 +27,7 @@
 	let loaded = $state(false);
 	let loadError = $state('');
 	let adding = $state(false);
-	let kind = $state<'matrix' | 'slack'>('matrix');
+	let kind = $state<'matrix' | 'slack' | 'discord'>('matrix');
 	let homeserver = $state('https://matrix.org');
 	let accessToken = $state('');
 	let roomId = $state('');
@@ -62,7 +62,7 @@
 				});
 				accessToken = roomId = '';
 			} else {
-				await api.system.addChannel('slack', { webhook_url: webhookUrl.trim() });
+				await api.system.addChannel(kind, { webhook_url: webhookUrl.trim() });
 				webhookUrl = '';
 			}
 			adding = false;
@@ -95,13 +95,17 @@
 		}
 	}
 
-	const label = (k: string) => (k === 'matrix' ? 'Matrix' : k === 'slack' ? 'Slack' : k);
-	const hue = (k: string): Hue => (k === 'matrix' ? 'tea' : k === 'slack' ? 'vio' : 'mut');
+	const labels: Record<string, string> = { matrix: 'Matrix', slack: 'Slack', discord: 'Discord' };
+	const hues: Record<string, Hue> = { matrix: 'tea', slack: 'vio', discord: 'az' };
+	const label = (k: string) => labels[k] ?? k;
+	const hue = (k: string): Hue => hues[k] ?? 'mut';
+	/** Slack and Discord are both a webhook whose URL is the secret. */
+	const isWebhook = (k: string) => k === 'slack' || k === 'discord';
 
 	/** Where pings land, without leaking the webhook's secret path. */
 	function where(c: ChannelEntry): string {
 		if (c.kind === 'matrix') return `${c.config.room_id ?? t('page.channels.room').toLowerCase()}`;
-		if (c.kind === 'slack') {
+		if (isWebhook(c.kind)) {
 			try {
 				return t('page.channels.hostWebhook', {
 					host: new URL(String(c.config.webhook_url ?? '')).host
@@ -119,7 +123,7 @@
 				{ k: t('page.channels.room'), v: String(c.config.room_id ?? '') },
 				{ k: t('page.channels.accessToken'), v: t('page.channels.tokenSet'), secret: true }
 			];
-		if (c.kind === 'slack')
+		if (isWebhook(c.kind))
 			return [{ k: t('page.channels.webhook'), v: `•••• ${where(c)}`, secret: true }];
 		return Object.entries(c.config).map(([k, v]) => ({ k, v: String(v) }));
 	}
@@ -160,7 +164,8 @@
 					label={t('page.channels.kind')}
 					options={[
 						{ value: 'matrix', label: 'Matrix' },
-						{ value: 'slack', label: 'Slack' }
+						{ value: 'slack', label: 'Slack' },
+						{ value: 'discord', label: 'Discord' }
 					]}
 					bind:value={kind}
 				/>
@@ -204,10 +209,14 @@
 							type="password"
 							bind:value={webhookUrl}
 							required
-							placeholder="https://hooks.slack.com/services/T…/B…/…"
+							placeholder={kind === 'discord'
+								? 'https://discord.com/api/webhooks/…/…'
+								: 'https://hooks.slack.com/services/T…/B…/…'}
 							autocomplete="off"
 						/>
-						<div class="help">{t('page.channels.webhookHelp')}</div>
+						<div class="help">
+							{t(kind === 'discord' ? 'page.channels.discordHelp' : 'page.channels.webhookHelp')}
+						</div>
 					</div>
 				{/if}
 				{#if error}<div class="err">{error}</div>{/if}

@@ -900,7 +900,7 @@ Layout: row [section nav 220px | content]. The section nav is a vertical list in
   - **Integration card** (content glass): name, kind chip, config summary (secrets masked), **persisted test result** chip (✓ ok / ✕ error + "tested 3h ago"), Test (secondary), Edit (inline expand), Delete….
   - Forms are generated from descriptors: a "How to set this up" help panel, then fields (text / secret / JSON secret).
   - A skeleton list shows while loading.
-- **Channels** (folded in from the old page): Matrix and Slack, as one-way mirrors ("Pings are always answered in Apothecary"). Each card has Test, Edit and Remove… (confirm).
+- **Channels** (folded in from the old page): Matrix, Slack and Discord, as one-way mirrors ("Pings are always answered in Apothecary"). Each card has Test, Edit and Remove… (confirm).
 - **Members & roles:** a table of avatar, name, email, role select (Owner / Maintainer / Engineer / Viewer) and last active; an Invite button. (This is new for multi-tenant.)
 - **Limits:** max concurrent runs (stepper; "beyond this, runs queue as pending, FIFO") and max environments ("at the cap, new runs are refused").
 - **Reaper:** destroy completed environments after a duration; destroy abandoned environments (`never` only today, shown disabled with a reason).

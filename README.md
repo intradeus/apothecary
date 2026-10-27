@@ -216,7 +216,7 @@ automatically. Database migrations apply at boot.
    merge — all of them, for a multi-repo project).
 
 Settings (concurrency, environment caps, reaper) live under *Settings*
-and apply without a restart. Notification mirrors (Matrix) live under
+and apply without a restart. Notification mirrors (Matrix, Slack, Discord) live under
 *Channels*.
 
 ## Releases & upgrade

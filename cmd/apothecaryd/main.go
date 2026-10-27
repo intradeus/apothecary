@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	discordadapter "apothecary/internal/adapters/discord"
 	matrixadapter "apothecary/internal/adapters/matrix"
 	slackadapter "apothecary/internal/adapters/slack"
 	"apothecary/internal/automation"
@@ -182,6 +183,7 @@ func cmdServe(args []string) error {
 	chreg := channels.NewRegistry()
 	chreg.Register("matrix", matrixadapter.Factory)
 	chreg.Register("slack", slackadapter.Factory)
+	chreg.Register("discord", discordadapter.Factory)
 	chreg.Persist(store)
 	rows, err := store.LoadChannels(ctx)
 	if err != nil {
