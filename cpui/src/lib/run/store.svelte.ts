@@ -11,6 +11,7 @@ import { api } from '$lib/api';
 import type {
 	Attachment,
 	EgressDenial,
+	FormContent,
 	ObservedPort,
 	ResourceSample,
 	Run,
@@ -295,11 +296,24 @@ export class RunStore {
 		}
 	}
 
-	async answer(pingId: string, ans: string, note?: string, attachmentIds?: string[]) {
+	async answer(
+		pingId: string,
+		ans: string,
+		note?: string,
+		attachmentIds?: string[],
+		content?: FormContent
+	) {
 		this.answering = true;
 		this.error = '';
 		try {
-			await api.pings.answer(pingId, ans, note?.trim() || undefined, attachmentIds);
+			await api.pings.answer(
+				pingId,
+				ans,
+				note?.trim() || undefined,
+				attachmentIds,
+				undefined,
+				content
+			);
 			toast(t('run.store.answerSent'));
 			void fleet.refresh();
 		} catch (e) {

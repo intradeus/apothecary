@@ -14,8 +14,8 @@
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, age, fmtAbs, fmtCost, shortId } from '$lib/format';
-	import { answerMeta, pingHeadline } from '$lib/ping';
-	import type { Ping, Ticket } from '$lib/domain';
+	import { answerMeta, answerSummary, pingHeadline } from '$lib/ping';
+	import type { FormContent, Ping, Ticket } from '$lib/domain';
 	import PingCard from '$lib/PingCard.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -145,11 +145,17 @@
 		}
 	}
 
-	async function answer(p: Ping, ans: string, note?: string, artifactIds?: string[]) {
+	async function answer(
+		p: Ping,
+		ans: string,
+		note?: string,
+		artifactIds?: string[],
+		content?: FormContent
+	) {
 		busy[p.id] = true;
 		error = '';
 		try {
-			await api.pings.answer(p.id, ans, note?.trim() || undefined, artifactIds);
+			await api.pings.answer(p.id, ans, note?.trim() || undefined, artifactIds, undefined, content);
 			// The deep link named the ping just answered: point it at the inbox.
 			if (location.pathname.endsWith(p.id) || location.search.includes(p.id)) {
 				try {
@@ -312,7 +318,7 @@
 						<PingCard
 							ping={current}
 							busy={busy[current.id] ?? false}
-							onanswer={(a, n, ids) => answer(current, a, n, ids)}
+							onanswer={(a, n, ids, content) => answer(current, a, n, ids, content)}
 							runTitle={run?.title}
 							ticketKey={ticketOf(current.runId)?.source?.key}
 							ticketTitle={ticketOf(current.runId)?.title}
@@ -363,9 +369,8 @@
 									>{/if}</span
 							>
 							<span class="ans ell hide-sm"
-								><span class="hue-{v.hue}">{v.glyph} {p.answer ?? '—'}</span>{#if p.feedback}<span
-										class="fnt">{' · '}{p.feedback}</span
-									>{/if}</span
+								><span class="hue-{v.hue}">{v.glyph} {p.answer ? answerSummary(p) : '—'}</span
+								>{#if p.feedback}<span class="fnt">{' · '}{p.feedback}</span>{/if}</span
 							>
 							<span class="mono mut num" title={p.answeredAt ? fmtAbs(p.answeredAt) : ''}
 								>{p.answeredAt ? ago(p.answeredAt) : ''}</span

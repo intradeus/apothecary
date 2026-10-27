@@ -5,7 +5,7 @@ import type { Run, RunEvent, ServiceStatus } from '$lib/domain';
 import { MAIN } from '$lib/flowdoc';
 import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/format';
 import { t } from '$lib/i18n/index.svelte';
-import { answerKindOf, toPingOption, toReviewComment, type PingLike } from '$lib/ping';
+import { answerKindOf, toFormContent, toPingForm, toReviewComment, type PingLike } from '$lib/ping';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
 /** The provisioning log (clone + build + bootstrap) is filed under a
@@ -51,7 +51,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 			return {
 				id: String(p.ping_id),
 				type: String(p.type ?? ''),
-				answerKind: answerKindOf(p.answer_kind, String(p.type ?? ''), p.options),
+				answerKind: answerKindOf(p.answer_kind, String(p.type ?? '')),
 				question: String(p.question ?? ''),
 				context: p.context as string | undefined,
 				files,
@@ -59,7 +59,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				// The engine's derivation for the inbox projection: the link,
 				// else the first file. With files, PingCard offers review.
 				primaryRef: (p.link as string | undefined) || files?.[0],
-				options: ((p.options as unknown[] | undefined) ?? []).map(toPingOption),
+				form: toPingForm(p.form),
 				phase: (p.phase as string | undefined) || undefined,
 				endsPhase: p.ends_phase === true,
 				stageId: p.stage_id as string | undefined,
@@ -68,6 +68,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				status: a ? 'answered' : over ? 'withdrawn' : 'pending',
 				answer: a ? String(a.payload.answer ?? '') : undefined,
 				feedback: a ? (a.payload.feedback as string | undefined) : undefined,
+				content: a ? toFormContent(a.payload.content) : undefined,
 				review: ((a?.payload.review as unknown[] | undefined) ?? []).map(toReviewComment),
 				answeredAt: a?.ts,
 				attachmentIds: a ? (a.payload.attachment_ids as string[] | undefined) : undefined
@@ -397,11 +398,21 @@ export function describe(e: RunEvent): Described {
 				text: t('run.event.ping', { type: String(p.type), question: String(p.question) }),
 				tone: 'warn'
 			};
-		case 'ping_answered':
+		case 'ping_answered': {
+			// A form's answer reads as its values; the field names and option
+			// labels live on the raise, which one event line does not see.
+			const content = toFormContent(p.content);
+			const answer =
+				p.answer === 'accept' && content
+					? Object.entries(content)
+							.map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') || '—' : String(v)}`)
+							.join(' · ')
+					: String(p.answer);
 			return {
-				text: `${t('run.event.answered', { answer: String(p.answer) })}${p.feedback ? ` — ${p.feedback}` : ''}`,
+				text: `${t('run.event.answered', { answer })}${p.feedback ? ` — ${p.feedback}` : ''}`,
 				tone: 'ok'
 			};
+		}
 		case 'verdict_received':
 			return {
 				text: p.approve

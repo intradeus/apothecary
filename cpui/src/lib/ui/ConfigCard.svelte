@@ -64,7 +64,7 @@
 			<div class="who">
 				<div class="nmrow">
 					<span class="nm ell">{title}</span>
-					{#if kind}<span class="pill sm t-mut">{kind}</span>{/if}
+					{#if kind}<span class="pill sm flat sq t-mut">{kind}</span>{/if}
 				</div>
 				{#if sub}
 					<div class="sub ell">

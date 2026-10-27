@@ -817,7 +817,7 @@
 				<button
 					bind:this={validateBtn}
 					class="btn-sm"
-					class:warnb={validation && !validation.ok}
+					class:btn-danger={validation && !validation.ok}
 					aria-busy={validating}
 					onclick={validate}
 					>{t('page.flow.validate')}{#if validation?.warnings?.length}<span
@@ -827,6 +827,7 @@
 				<button
 					class="btn-sm"
 					class:btn-sel={showVersions}
+					aria-pressed={showVersions}
 					onclick={() => (showVersions = !showVersions)}
 					>{t('page.flow.versions')} <span class="mono fnt">{versions.length}</span></button
 				>
@@ -940,7 +941,7 @@
 				/>
 			{:else if tab === 'graph' && doc}
 				<div class="split">
-					<div class="pane">
+					<div class="half">
 						<FlowGraph
 							{doc}
 							{layout}
@@ -960,7 +961,7 @@
 					</div>
 					{#if open && sequenceDoc}
 						<section
-							class="pane seq"
+							class="half seq"
 							aria-label={t('page.flow.sequencePane', { sequence: open.sequence.id })}
 							in:slide={{ from: 'right', distance: 32 }}
 						>
@@ -1035,7 +1036,7 @@
 						onclick={() => (showVersions = false)}>{I.close}</button
 					>
 				</div>
-				<p class="sp">
+				<p class="help sp">
 					{t('page.flow.versionsHelp')}
 				</p>
 				<div class="vers">
@@ -1122,10 +1123,6 @@
 	.desc {
 		max-width: 60ch;
 	}
-	.warnb {
-		border-color: var(--rosLn);
-		color: var(--ros);
-	}
 	.vp {
 		padding: 2px 8px 8px;
 		display: flex;
@@ -1186,18 +1183,18 @@
 		display: flex;
 		height: 100%;
 	}
-	.pane {
+	.half {
 		position: relative;
 		flex: 1;
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
 	}
-	.pane :global(.graph-wrap) {
+	.half :global(.graph-wrap) {
 		flex: 1;
 		min-height: 0;
 	}
-	.pane.seq {
+	.half.seq {
 		flex: 0 0 55%;
 		border-left: 1px solid var(--cLn);
 	}
@@ -1257,8 +1254,6 @@
 	.sp {
 		margin: 0;
 		padding: 0 14px 10px;
-		font-size: var(--fs-help);
-		color: var(--mut);
 	}
 	.vers {
 		display: flex;
@@ -1290,7 +1285,7 @@
 		.split {
 			flex-direction: column;
 		}
-		.pane.seq {
+		.half.seq {
 			flex-basis: 50%;
 			border-left: none;
 			border-top: 1px solid var(--cLn);

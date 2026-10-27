@@ -50,6 +50,19 @@ export const stateHue: Record<RunState, string> = {
 	failed: 'var(--ros)',
 	archived: 'var(--fnt)'
 };
+/** The same, as a text-colour class (`.hue-*`; `.fnt` for archived). */
+export const stateHueClass: Record<RunState, string> = {
+	pending: 'hue-mut',
+	provisioning: 'hue-az',
+	running: 'hue-az',
+	waiting_on_human: 'hue-amb',
+	in_review: 'hue-vio',
+	paused: 'hue-mut',
+	completed: 'hue-grn',
+	abandoned: 'hue-amb',
+	failed: 'hue-ros',
+	archived: 'fnt'
+};
 /** @deprecated use stateHue. */
 export const stateColors = stateHue;
 

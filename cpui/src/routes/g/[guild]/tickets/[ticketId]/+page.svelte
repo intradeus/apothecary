@@ -16,6 +16,7 @@
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -41,6 +42,9 @@
 	let runMR = $state(0); // the merge request to start the run on, for a flow started on one
 	let sourceBranch = $state(''); // branch to fork this run off from; '' until branches load
 	let branches = $state<Branch[]>([]);
+	const branchOptions = $derived<SelectOption[]>(
+		branches.map((b) => ({ value: b.name, label: b.isDefault ? `${I.star} ${b.name}` : b.name }))
+	);
 	let branchesErr = $state(''); // repository host unreachable ⇒ fall back to project default
 	let runGoal = $state(''); // direction for THIS attempt (additive to the ticket goal)
 	let runFiles = $state<File[]>([]);
@@ -288,11 +292,7 @@
 						<div class="field">
 							<label for="source-branch">{t('page.ticket.sourceBranch')}</label>
 							{#if branches.length}
-								<select id="source-branch" bind:value={sourceBranch} class="mono">
-									{#each branches as b (b.name)}
-										<option value={b.name}>{b.isDefault ? `${I.star} ${b.name}` : b.name}</option>
-									{/each}
-								</select>
+								<Select id="source-branch" mono options={branchOptions} bind:value={sourceBranch} />
 							{:else}
 								<input
 									id="source-branch"
@@ -386,10 +386,6 @@
 		align-items: baseline;
 		gap: 10px;
 		flex-wrap: wrap;
-	}
-	.flabel {
-		font-size: var(--fs-label);
-		font-weight: 500;
 	}
 	.sb {
 		display: flex;

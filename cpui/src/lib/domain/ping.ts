@@ -1,5 +1,5 @@
 // A ping: a question waiting on a human — a flow's gate, or an agent's own
-// ask_human.
+// question (ask_human, or its harness's own question tool over ACP).
 
 /** 'gate' is every human_gate stage (approve / reject with feedback; what it
  *  asks lives in its question). 'debug' is the flow's debug leaf: the failing
@@ -12,9 +12,46 @@ export type PingStatus = 'pending' | 'answered' | 'withdrawn';
 
 /** The shape of the answer a ping takes — declared on the ping, rendered by
  *  the card, validated by the engine from the same vocabulary:
- *  yes_no = approve | reject (+ feedback); choice = one option id | other;
- *  multi = any option ids | none; text = free text. */
-export type AnswerKind = 'yes_no' | 'choice' | 'multi' | 'text';
+ *  yes_no = approve | reject (+ feedback); form = accept with a value per
+ *  field | decline (+ the reason, in feedback). */
+export type AnswerKind = 'yes_no' | 'form';
+
+/** A form field's type — ACP's elicitation form (MCP elicitation's JSON
+ *  Schema): string (free text; with options, pick one), array (with
+ *  options, pick any), number, integer, boolean. */
+export type FieldType = 'string' | 'number' | 'integer' | 'boolean' | 'array';
+
+/** One field of a question's form. `id` keys its answer; `title` is the
+ *  question it asks (the id when absent). */
+export interface PingField {
+	id: string;
+	type: FieldType;
+	title?: string;
+	description?: string;
+	required: boolean;
+	/** A string's choices (pick one) or an array's (pick any). */
+	options: PingOption[];
+	format?: 'email' | 'uri' | 'date' | 'date-time';
+	pattern?: string;
+	minLength?: number;
+	maxLength?: number;
+	minimum?: number;
+	maximum?: number;
+	minItems?: number;
+	maxItems?: number;
+	/** Pre-fills the field: its type's value, or an array's option ids. */
+	default?: FormValue;
+}
+
+/** What a question asks: its fields, in the order they are read. */
+export interface PingForm {
+	fields: PingField[];
+}
+
+/** One field's answer: text or a picked option id, a number, yes/no, or an
+ *  array's picked option ids. */
+export type FormValue = string | number | boolean | string[];
+export type FormContent = Record<string, FormValue>;
 
 /** One answer choice: the id is what the answer names, the label what the
  *  human reads, the detail an optional second line. */
@@ -39,8 +76,8 @@ export interface Ping {
 	/** The derived primary: the link, else the first file. */
 	primaryRef?: string;
 	answerKind: AnswerKind;
-	/** The answer choices of a choice or multi ping. */
-	options: PingOption[];
+	/** What a form ping asks. */
+	form?: PingForm;
 	/** The phase the ping belongs to (a confirmation's phase to start, the
 	 *  debug leaf's phase). */
 	phase?: string;
@@ -48,9 +85,13 @@ export interface Ping {
 	 *  to waiting — the phase is a watcher. False: giving up abandons the
 	 *  run. */
 	endsPhase: boolean;
+	/** approve | reject (yes_no), accept | decline (form). */
 	answer?: string;
-	/** The answer's note — on a review of the files shown, its summary. */
+	/** The answer's note — a decline's reason; on a review of the files
+	 *  shown, its summary. */
 	feedback?: string;
+	/** An accepted form's values, by field id. */
+	content?: FormContent;
 	answerAttachmentIds: string[];
 	/** What the person said about the files shown, comment by comment. */
 	review: ReviewComment[];

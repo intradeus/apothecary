@@ -18,6 +18,7 @@
 	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -66,6 +67,17 @@
 	// the extras by name.
 	const repoNames = $derived(['', ...(project.repos ?? []).map((r) => r.name)]);
 	const repoLabel = (r: string) => (r ? r : t('workshop.automations.repoPrimary'));
+	// '' is the primary repository (draft.repo unset).
+	const repoOptions = $derived<SelectOption[]>(
+		repoNames.map((r) => ({ value: r, label: repoLabel(r) }))
+	);
+	const sourceOptions = $derived<SelectOption[]>(
+		sources.map((s) => ({ value: s.id, label: `${s.name} · ${s.kind}` }))
+	);
+	const ticketOptions = $derived<SelectOption[]>([
+		{ value: '', label: '—' },
+		...(tickets ?? []).map((tk) => ({ value: tk.id, label: tk.title }))
+	]);
 
 	// --- the form ---
 	let open = $state(false);
@@ -300,9 +312,7 @@
 				<div class="field">
 					<label for="au-source">{t('workshop.automations.source')}</label>
 					{#if sources.length}
-						<select id="au-source" bind:value={draft.sourceId}>
-							{#each sources as s (s.id)}<option value={s.id}>{s.name} · {s.kind}</option>{/each}
-						</select>
+						<Select id="au-source" options={sourceOptions} bind:value={draft.sourceId} />
 					{:else}
 						<div class="help hue-amb">{t('workshop.automations.noSources')}</div>
 					{/if}
@@ -316,9 +326,12 @@
 			{:else if draft.kind === 'merge_request'}
 				<div class="field">
 					<label for="au-repo">{t('workshop.automations.repo')}</label>
-					<select id="au-repo" bind:value={draft.repo}>
-						{#each repoNames as r (r)}<option value={r || undefined}>{repoLabel(r)}</option>{/each}
-					</select>
+					<Select
+						id="au-repo"
+						options={repoOptions}
+						value={draft.repo ?? ''}
+						onchange={(v) => (draft.repo = v || undefined)}
+					/>
 					<span class="help">{t('workshop.automations.repoHelp')}</span>
 				</div>
 			{:else}
@@ -335,10 +348,12 @@
 				<div class="field">
 					<label for="au-ticket">{t('workshop.automations.ticket')}</label>
 					{#if tickets?.length}
-						<select id="au-ticket" bind:value={draft.ticketId}>
-							<option value="">—</option>
-							{#each tickets as tk (tk.id)}<option value={tk.id}>{tk.title}</option>{/each}
-						</select>
+						<Select
+							id="au-ticket"
+							options={ticketOptions}
+							value={draft.ticketId ?? ''}
+							onchange={(v) => (draft.ticketId = v)}
+						/>
 					{:else}
 						<div class="help hue-amb">{t('workshop.automations.noTickets')}</div>
 					{/if}

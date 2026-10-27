@@ -28,7 +28,7 @@
 	<div class="c in">
 		<div class="row nowrap">
 			<span class="serif at">{title}</span>
-			{#if kind}<span class="pill sm t-mut">{kind}</span>{/if}
+			{#if kind}<span class="pill sm flat sq t-mut">{kind}</span>{/if}
 			<span class="spacer"></span>
 			{#if head}{@render head()}{/if}
 		</div>

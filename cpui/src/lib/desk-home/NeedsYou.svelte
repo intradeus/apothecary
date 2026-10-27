@@ -66,18 +66,6 @@
 	.ny {
 		border-radius: var(--r-group);
 	}
-	/* The round amber count: the same mark as the ping card's "?". */
-	.mark {
-		flex: none;
-		width: 20px;
-		height: 20px;
-		padding: 0;
-		border-radius: 50%;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		box-shadow: 0 0 var(--glow-sm) var(--ambGlow);
-	}
 	h2 {
 		white-space: nowrap;
 	}

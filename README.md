@@ -99,7 +99,7 @@ automatically. Database migrations apply at boot.
      > one can then be revoked with `coder tokens remove <name>`.
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
      credentials) or codex (API key and/or ChatGPT `auth.json`).
-   - *Ticket source* (optional): Jira or GitHub Issues. Lets you create a
+   - *Ticket source* (optional): Jira, GitHub Issues or GitLab Issues. Lets you create a
      ticket **from** a tracker issue — search the tracker on the New Ticket
      form, pick an issue, and its summary, description and attachments are
      copied in. The copy is taken once (edit the apothecary ticket freely
@@ -114,6 +114,13 @@ automatically. Database migrations apply at boot.
      > on the repositories (read-only is enough to import). Keys are
      > `owner/repo#123`; the only statuses are `open` and `closed`, the only
      > writable fields `labels`, `assignees` and `milestone`.
+
+     > **GitLab Issues:** an access token with the `api` scope (`read_api`
+     > is enough to import). Keys are GitLab's full reference,
+     > `group/project#123`; GitLab's newer "work items" (issues, incidents,
+     > tasks) all import through its issues API. The only statuses are
+     > `opened` and `closed`, the only writable fields `labels`, `assignees`
+     > and `milestone`; files uploaded into the description come along.
 
      > **Which Jira?** *Cloud* is the Atlassian-hosted one, at
      > `<site>.atlassian.net` — credential is an **account email + API

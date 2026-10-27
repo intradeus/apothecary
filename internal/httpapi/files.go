@@ -204,7 +204,7 @@ func (s *Server) pingView(r *http.Request, pid string) (run.PingView, error) {
 			PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID,
 			Question: p.Question, Context: p.Context,
 			Files: p.Files, Link: p.Link, PayloadRef: p.Primary(),
-			Options: p.Options, Status: "pending", RaisedAt: p.RaisedAt,
+			Form: p.Form, AnswerKind: p.AnswerKind, Status: "pending", RaisedAt: p.RaisedAt,
 		}, nil
 	}
 	return run.PingView{}, fmt.Errorf("ping %s not found", pid)

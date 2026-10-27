@@ -55,10 +55,9 @@
 {:else}
 	<div class="bs card-in">
 		<div class="row hd">
-			<span class="ldot hue-{tone}" class:hollow={info.state !== 'running'}></span>
 			<span class="lbl">{t('form.browser.container')}</span>
 			<span class="pill sm t-{tone}"
-				>{info.state === 'running'
+				><span class="dot"></span>{info.state === 'running'
 					? t('form.browser.state.running')
 					: info.state === 'stopped'
 						? t('form.browser.state.stopped')

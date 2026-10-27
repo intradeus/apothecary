@@ -160,9 +160,7 @@
 	<div class="pickbox">
 		<span class="mut fnt small">{t('workshop.repos.pick', { iid: pickFor?.mr.iid ?? '' })}</span>
 		{#each starts as f (f.name)}
-			<button class="opt" onclick={() => pickFor && start(pickFor, f.name)}>
-				<span class="mono">{f.name}</span>
-			</button>
+			<button class="mi mono" onclick={() => pickFor && start(pickFor, f.name)}>{f.name}</button>
 		{/each}
 	</div>
 </Popover>
@@ -199,18 +197,5 @@
 		padding: 8px;
 		min-width: 220px;
 		max-width: 360px;
-	}
-	.opt {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 1px;
-		padding: 6px 8px;
-		border-radius: var(--r-sm, 8px);
-		text-align: left;
-		cursor: pointer;
-	}
-	.opt:hover {
-		background: var(--p3);
 	}
 </style>

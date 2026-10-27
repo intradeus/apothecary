@@ -15,6 +15,7 @@
 	import Callout from '$lib/ui/Callout.svelte';
 	import FileChip from '$lib/ui/FileChip.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
 	import { onMount } from 'svelte';
@@ -126,6 +127,13 @@
 	}
 
 	const sourceName = (id: string) => sources.find((s) => s.id === id)?.name ?? id;
+	const projectOptions = $derived<SelectOption[]>(
+		projects.map((p) => ({ value: p.id, label: p.name }))
+	);
+	const sourceOptions = $derived<SelectOption[]>([
+		{ value: '', label: t('form.ticket.chooseTracker') },
+		...sources.map((s) => ({ value: s.id, label: `${s.name} (${s.kind})` }))
+	]);
 
 	// Prefill the branch from a slug of the title until the user edits it.
 	let branchEdited = $state(init != null);
@@ -199,9 +207,13 @@
 
 		<div class="field">
 			<label for="t-project">{t('form.ticket.workshop')}</label>
-			<select id="t-project" bind:value={projectId} required disabled={init != null}>
-				{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-			</select>
+			<Select
+				id="t-project"
+				options={projectOptions}
+				bind:value={projectId}
+				required
+				disabled={init != null}
+			/>
 			{#if init}<span class="help">{t('form.ticket.locked')}</span>{/if}
 		</div>
 
@@ -350,18 +362,15 @@
 				{:else}
 					<div class="field">
 						<label for="t-src">{t('form.ticket.tracker')}</label>
-						<select
+						<Select
 							id="t-src"
+							options={sourceOptions}
 							value={sourceId}
-							onchange={(e) => {
-								const v = (e.target as HTMLSelectElement).value;
+							onchange={(v) => {
 								if (v) openSource(v);
 								else clearImport();
 							}}
-						>
-							<option value="">{t('form.ticket.chooseTracker')}</option>
-							{#each sources as s (s.id)}<option value={s.id}>{s.name} ({s.kind})</option>{/each}
-						</select>
+						/>
 					</div>
 					{#if sourceId}
 						<!-- Enter searches; it must never submit the ticket form around it. -->
@@ -431,10 +440,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
-	}
-	.flabel {
-		font-size: var(--fs-label);
-		font-weight: 500;
 	}
 	.goal {
 		min-height: 180px;

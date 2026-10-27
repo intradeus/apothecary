@@ -817,7 +817,7 @@ the project must have — a repository (GitLab, GitHub) or a tracker:
 | `reply_review_comments` | repository | `replies` (`review_replies`, required) | — | — | a subject action. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice |
 | `post_review` | repository | `review` (`review_threads`, required) | — | — | a subject action. Posts a `review_threads` file as a review: a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker, so a retry posts only what is missing, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
 | `mr_merge` | repository | — | `method` (`merge` \| `squash` \| `rebase`, default `merge`), `branch` (`keep` \| `delete`, default `keep`) | — | a subject action, needing no workspace. Merges the subject merge request at the newest head the chain knows: the tip it pushed, else the head it began on — a head someone else pushed is not merged. The repository's rules apply: a merge it declines (a draft, checks or approvals missing, the head moved) fails the stage with its reason, for `on_fail`. `rebase` is GitHub's; GitLab merges by the project's merge method (fast-forward for a linear history), so it refuses it. The merge is what the `merged` outcome then sees |
-| `ticket_transition` | `tracker` | — | `to` (`todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`) **or** `status` (text), exactly one | — | moves the ticket's tracker issue. `to` is a **canonical** status the ticket's tracker translates into its own vocabulary — Jira through the integration's status map (the stock words by default; `done=Ready for prod` for a team whose Done is a deploy away), GitHub Issues to open/closed — and a status the tracker has no word for **skips** the stage with a note. `status` is the tracker's own status or transition name, verbatim (case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
+| `ticket_transition` | `tracker` | — | `to` (`todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`) **or** `status` (text), exactly one | — | moves the ticket's tracker issue. `to` is a **canonical** status the ticket's tracker translates into its own vocabulary — Jira through the integration's status map (the stock words by default; `done=Ready for prod` for a team whose Done is a deploy away), GitHub and GitLab Issues to open/closed — and a status the tracker has no word for **skips** the stage with a note. `status` is the tracker's own status or transition name, verbatim (case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
 | `ticket_comment` | `tracker` | `body` (`file`, required), `attachments` (`files`) | — | — | attaches each file to the issue and links it where the body names its path (the rest listed after it), then posts the markdown artifact as a comment, ending with a short trailer naming the run, the chain run and the stage — also how a crash between posting and recording is reconciled, so nothing is posted twice |
 | `ticket_set_field` | `tracker` | `value` (`file`) — exactly one of `value` / `text` | `field` (text, required); `text` (text); `mode` (`replace` \| `append`, default `replace`) | — | writes one field by its display name (`"Feature flags"`, `labels`). `append` merges comma-separated items into the current value (a union: re-applying changes nothing). A field the tracker has no name for, or cannot write from text, fails the stage with `input_invalid` |
 | `ticket_link` | `tracker` | — | — | — | attaches every merge request the run opened (the subject's on a subject) to the issue — a remote link on Jira, a comment on GitHub — titled with the branch; an upsert, so a re-entry attaches nothing twice. Needs a merge request: `input_missing` without one, and the validator warns when no `create_mr` precedes it |
@@ -831,7 +831,7 @@ body will be read: GitLab's project uploads, GitHub's user attachments (which
 need a **classic** personal access token with the `repo` scope — a
 fine-grained or an app's token cannot upload, and GitHub Enterprise Server has
 no such endpoint, so both fail the stage saying so), Jira's issue
-attachments, GitHub Issues as GitHub. Where the body names a file by its path —
+attachments, GitHub Issues as GitHub, GitLab Issues as GitLab. Where the body names a file by its path —
 a link or an image `![home](artifacts/shots/home.png)`, or the bare path — the
 reference becomes the uploaded file's link; a file it never names is listed
 after it, images under *Screenshots*, the rest under *Attachments*. At most 20
@@ -1934,14 +1934,17 @@ A stage's agent can stop and ask. This is not a stage type and needs no
 grammar — it is a property of every agent stage, and it is worth stating
 because it changes how a stage behaves in flight.
 
-The agent calls `ask_human{type, question, context?, options?, multi?,
-artifacts?}` through an MCP tool in its workspace. The engine, not the
+The agent calls `ask_human{type, question, context?, fields?,
+artifacts?}` through an MCP tool in its workspace. A harness's own question
+tool reaches the same place: the workspace sidecar advertises ACP form
+elicitation, and an `elicitation/create` it receives is put to the human as
+the same ping and answered with the human's form. The engine, not the
 harness, owns the exchange:
 
 - **The request is an event.** `ping_raised` records the type
   (`clarification` | `blocker` | `permission`), the question, any attached
-  workspace files, the declared answer options, and the stage in flight; the
-  answer is `ping_answered`. Both are durable, so an interrupted run re-arms
+  workspace files, the form, and the stage in flight; the answer is
+  `ping_answered`. Both are durable, so an interrupted run re-arms
   its open questions on recovery and a late answer still lands.
 - **The stage keeps running; its clock does not.** The agent process stays
   alive waiting for its tool call to return, and the stage's `timeout` is
@@ -1949,19 +1952,30 @@ harness, owns the exchange:
   hour to answer cannot time the stage out. The run projects as
   `waiting_on_human`. Unlike a gate, an open question **holds the workspace**:
   the agent's turn is still open, so no other chain runs until it is answered.
-- **`options` make the answer closed.** When the agent declares them, the
-  answer must be one of their ids (or the reserved `other`, whose free text
-  rides in the feedback) — the agent asked a closed question so it can branch
-  deterministically. An option is a string, or `{id, label, detail}` when the
-  human needs a word more than the id. With **`multi: true`** the human may
-  pick any number of them, or none: the tool returns `selected: id, id` or
-  `none selected`.
+- **A question is a form** — ACP's elicitation form, MCP elicitation's
+  restricted JSON Schema, kept as an ordered list of `fields`. Each has an
+  `id` the answer is keyed by and a `type`: `string` (free text, with
+  `format` / `pattern` / `min_length` / `max_length`), `string` with
+  `options` (pick one — the agent branches on the id), `array` with
+  `options` (pick any, `min_items` / `max_items`), `number` / `integer`
+  (`minimum` / `maximum`) or `boolean`; plus `title`, `description`,
+  `required`, `default`. An option is a string, or `{id, label, detail}`.
+  Asked without fields, the question is one free-text answer. The tool
+  returns a lone field's value (`selected: id, id` / `none selected` for an
+  array), several as one `id: value` line each.
+- **The human may decline** instead of answering, with a note: the tool then
+  returns `declined —` and their reason. "None of these fit" is a decline,
+  never an option the agent declares.
 - **Every ping declares the shape of its answer** — `ping_raised.answer_kind`:
-  `yes_no` (approve | reject, a gate, a watcher's or outcome's
-  confirmation, the debug leaf), `choice`
-  (one option id | other), `multi` (option ids | none) or `text`. The inbox
-  renders that shape and the engine validates against it; nothing is inferred
-  from a ping's type.
+  `yes_no` (approve | reject: a gate, a watcher's or outcome's
+  confirmation, the debug leaf) or `form` (accept with `content`, the value
+  of each field, or decline with a note: every question — an agent's, a
+  harness's own, a review round's thread selection). The inbox renders that
+  shape and the engine validates against it; nothing is inferred from a
+  ping's type.
+- **Secrets are never asked.** A field a harness marks secret is not put to
+  the human (an answer is kept in the run's log); the agent is told to have
+  it configured as a project secret.
 - **Answers can carry files**, delivered into the workspace under
   `.apothecary/attachments/`, kept separate from the agent's own `artifacts/`.
 - If the engine is unreachable for more than 10 minutes the tool returns an

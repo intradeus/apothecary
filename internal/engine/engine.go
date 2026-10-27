@@ -334,8 +334,8 @@ type Ping struct {
 	// sentinel). Typed at the source — never sniffed apart (DESIGN-FILES §4).
 	Files   []string
 	Link    string
-	StageID string         // flow stage in flight when raised (PLAN4 M15)
-	Options []event.Option // the answer choices (PLAN4 M16)
+	StageID string      // flow stage in flight when raised (PLAN4 M15)
+	Form    *event.Form // what a question asks (AnswerKind form)
 	// AnswerKind is the shape of the answer this ping takes (event.Answer*):
 	// what the UI renders and the one thing validation reads.
 	AnswerKind string
@@ -387,16 +387,11 @@ func (p *Ping) Primary() string {
 // were written to. Valid only after Await returns true (set before done closes).
 func (p *Ping) DeliveredArtifacts() []string { return answerPaths(p.deliveredFiles) }
 
-// PingAnswerOther is the hardcoded escape hatch on option pings: always
-// answerable, never declared by the agent (RaisePing strips it), and the
-// note carries the human's actual free-text answer. Closed questions stay
-// deterministic — the agent branches on its options plus the one literal
-// "other" — without ever trapping the human in a wrong option set.
-const PingAnswerOther = "other"
-
 type PingAnswer struct {
-	Answer   string // approve|reject for gates, free text for agent pings
+	Answer   string // approve|reject (yes_no), accept|decline (form)
 	Feedback string
+	// Content is an accepted form's values, by field id (validateForm).
+	Content map[string]any
 	// AttachmentIDs are the answer's attached files (claimed for the ping by
 	// the API before the answer is submitted); recorded on ping_answered so
 	// the association is a replayable fact.
@@ -437,46 +432,31 @@ func ComposeAnswer(p *Ping) string {
 	if !ok {
 		return ""
 	}
-	return composeAnswerText(p.AnswerKind, ans.Answer, ans.Feedback, p.Files, ans.Review, p.deliveredFiles)
+	return composeAnswerText(p.AnswerKind, p.Form, ans, p.Files, p.deliveredFiles)
 }
 
-// composeAnswerText is the renderer proper. It takes the two answer fields
-// rather than a Ping because the resume path reads them off a ping_answered
-// EVENT — the run had no loop when the human answered, so there is no live
-// ping to ask. Both forms map onto the same cases: the event stores a
-// free-text agent answer as answer:"text" with the words in feedback, and the
-// live path's raw answer falls through to the default.
-func composeAnswerText(kind, answer, feedback string, shown []string, review []event.ReviewComment, delivered []answerFile) string {
+// composeAnswerText is the renderer proper. It takes the form and the answer
+// rather than a Ping because the resume path reads them off the ping_raised
+// and ping_answered EVENTS — the run had no loop when the human answered, so
+// there is no live ping to ask.
+func composeAnswerText(kind string, form *event.Form, ans PingAnswer, shown []string, delivered []answerFile) string {
 	var text string
 	switch {
-	case kind == event.AnswerMulti:
-		if ids := selectedOptions(answer); len(ids) > 0 {
-			text = "selected: " + strings.Join(ids, ", ")
-		} else {
-			text = "none selected"
-		}
-		if feedback != "" {
-			text += "\n(note: " + feedback + ")"
-		}
-	case answer == "text":
-		text = feedback
-	case answer == PingAnswerOther:
-		// The human rejected every offered option and the note IS the answer:
-		// spell that out so it cannot be misread as a chosen option.
-		text = "other — none of the offered options fit; the human answered: " + feedback
-	case feedback != "":
-		text = answer + "\n(note: " + feedback + ")"
+	case kind == event.AnswerForm:
+		text = composeFormText(form, ans.Answer, ans.Feedback, ans.Content)
+	case ans.Feedback != "":
+		text = ans.Answer + "\n(note: " + ans.Feedback + ")"
 	default:
-		text = answer
+		text = ans.Answer
 	}
 	// A review of the files the question showed follows the answer, each
 	// comment where it was made.
 	var b strings.Builder
-	if len(review) > 0 {
+	if len(ans.Review) > 0 {
 		if text != "" {
 			b.WriteString("\n\n")
 		}
-		named := renderReview(&b, shown, review, delivered)
+		named := renderReview(&b, shown, ans.Review, delivered)
 		return text + strings.TrimRight(b.String(), "\n") + attachedFilesNote(unnamed(delivered, named))
 	}
 	return text + attachedFilesNote(answerPaths(delivered))
@@ -1943,20 +1923,23 @@ func (e *Engine) Wait(runID string) {
 
 // RaisePing is the ask_human entry point (§10): an agent in the workspace
 // asks a question; the stage parks (its timeout suspends) until answered.
-// options (PLAN4 M16) declare a closed answer set the human must pick
-// from; artifact points the question at a workspace file for the review
+// options declare a closed answer set the human picks one of (a one-field
+// form); artifact points the question at a workspace file for the review
 // workbench. The returned Ping's Result channel yields the answer exactly
 // once.
 func (e *Engine) RaisePing(runID, ptype, question, context_ string, options, artifactRefs []string) (*Ping, error) {
 	return e.RaisePingKeyed(runID, "", ptype, question, context_, options, artifactRefs)
 }
 
-// RaisePingKeyed is RaisePing with the raiser's idempotency key (string
-// options; kept for callers that predate structured options).
+// RaisePingKeyed is RaisePing with the raiser's idempotency key.
 func (e *Engine) RaisePingKeyed(runID, key, ptype, question, context_ string, options, artifactRefs []string) (*Ping, error) {
 	q := Question{Key: key, Type: ptype, Question: question, Context: context_, Artifacts: artifactRefs}
-	for _, o := range options {
-		q.Options = append(q.Options, event.Option{ID: o, Label: o})
+	if len(options) > 0 {
+		fd := event.Field{ID: AnswerField, Type: event.FieldString, Required: true}
+		for _, o := range options {
+			fd.Options = append(fd.Options, event.Option{ID: o, Label: o})
+		}
+		q.Fields = []event.Field{fd}
 	}
 	return e.RaiseQuestion(runID, q)
 }
@@ -1970,17 +1953,16 @@ type Question struct {
 	Type     string // clarification|blocker|permission
 	Question string
 	Context  string
-	// Options make it a closed question (choice), or with Multi a selection
-	// of any number of them.
-	Options   []event.Option
-	Multi     bool
+	// Fields are what it asks, in order (event.Form); none is one free-text
+	// answer.
+	Fields    []event.Field
 	Artifacts []string
 }
 
 // RaiseQuestion raises an agent's question and hands it to the running
 // agent stage.
 func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
-	key, ptype, question, context_, options, artifactRefs := q.Key, q.Type, q.Question, q.Context, q.Options, q.Artifacts
+	key, ptype, question, context_, artifactRefs := q.Key, q.Type, q.Question, q.Context, q.Artifacts
 	if key != "" {
 		e.mu.Lock()
 		for _, p := range e.pings {
@@ -1996,39 +1978,12 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 	default:
 		return nil, fmt.Errorf("invalid ask_human ping type %q", ptype)
 	}
-	if len(options) > 16 {
-		return nil, fmt.Errorf("ask_human: at most 16 options (got %d)", len(options))
+	form := &event.Form{Fields: q.Fields}
+	if len(form.Fields) == 0 {
+		form.Fields = []event.Field{{ID: AnswerField, Type: event.FieldString, Required: true}}
 	}
-	seen := map[string]bool{}
-	var opts []event.Option
-	for _, o := range options {
-		o.ID, o.Label, o.Detail = strings.TrimSpace(o.ID), strings.TrimSpace(o.Label), strings.TrimSpace(o.Detail)
-		if o.Label == "" {
-			o.Label = o.ID
-		}
-		if o.ID == "" || len(o.ID) > 200 || len(o.Label) > 200 || len(o.Detail) > 500 || strings.ContainsAny(o.ID, "\n\r") {
-			return nil, fmt.Errorf("ask_human: options need a non-empty id (one line, at most 200 chars), a label of at most 200 and a detail of at most 500")
-		}
-		// "other" is system-provided on every choice; a declared one would
-		// duplicate the UI affordance. (Stripping every option this way
-		// leaves a free-text ping — which is what a question whose only
-		// option is "other" actually is.)
-		if strings.EqualFold(o.ID, PingAnswerOther) {
-			continue
-		}
-		if !seen[o.ID] {
-			seen[o.ID] = true
-			opts = append(opts, o)
-		}
-	}
-	kind := event.AnswerText
-	switch {
-	case q.Multi && len(opts) == 0:
-		return nil, fmt.Errorf("ask_human: multi needs options to select from")
-	case q.Multi:
-		kind = event.AnswerMulti
-	case len(opts) > 0:
-		kind = event.AnswerChoice
+	if err := normalizeForm(form); err != nil {
+		return nil, fmt.Errorf("ask_human: %w", err)
 	}
 	var refs []string
 	for _, a := range artifactRefs {
@@ -2051,7 +2006,7 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 	}
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Options: opts, AnswerKind: kind, Files: refs, key: key,
+		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
@@ -2121,68 +2076,21 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 	}
 }
 
-// validateAnswer enforces the answer contract: gates take approve|reject, an
-// option ping takes one of its options or the "other" escape hatch with the
-// human's actual answer in the note. One implementation, because the live and
-// dormant paths must not be able to disagree about what a valid answer is.
-func validateAnswer(kind string, options []event.Option, ans PingAnswer) error {
-	ids := event.OptionIDs(options)
+// validateAnswer enforces the answer contract: a yes/no takes
+// approve|reject, a form accept with its fields or decline with a note
+// (validateForm, which tidies the content in place). One implementation,
+// because the live and dormant paths must not be able to disagree about what
+// a valid answer is.
+func validateAnswer(kind string, form *event.Form, ans *PingAnswer) error {
 	switch kind {
 	case event.AnswerYesNo:
 		if ans.Answer != "approve" && ans.Answer != "reject" {
 			return fmt.Errorf("this question is answered approve|reject")
 		}
-	case event.AnswerMulti:
-		// Any number of the options, one id per line, or none.
-		if strings.TrimSpace(ans.Answer) == event.SelectNone {
-			return nil
-		}
-		picked := selectedOptions(ans.Answer)
-		if len(picked) == 0 {
-			return fmt.Errorf("select at least one option, or answer %q", event.SelectNone)
-		}
-		for _, o := range picked {
-			if !slices.Contains(ids, o) {
-				return fmt.Errorf("%q is not one of the options", o)
-			}
-		}
-	case event.AnswerChoice:
-		// A closed question (PLAN4 M16): determinism is the point — the note
-		// carries anything beyond the choice.
-		if slices.Contains(ids, ans.Answer) {
-			return nil
-		}
-		if ans.Answer != PingAnswerOther {
-			return fmt.Errorf("answer must be one of: %s | %s (with your answer in the note)",
-				strings.Join(ids, " | "), PingAnswerOther)
-		}
-		if strings.TrimSpace(ans.Feedback) == "" {
-			return fmt.Errorf("answer %q needs the note to carry your actual answer", PingAnswerOther)
-		}
+	case event.AnswerForm:
+		return validateForm(form, ans)
 	}
 	return nil
-}
-
-// selectedOptions splits a selection answer into its chosen options.
-func selectedOptions(answer string) []string {
-	var out []string
-	for _, l := range strings.Split(answer, "\n") {
-		if l = strings.TrimSpace(l); l != "" && l != event.SelectNone {
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
-// recordedAnswer is how an answer is written to the log. Free-text agent
-// answers are recorded as answer:"text" with the words in feedback (§6);
-// gates and option pings keep the choice in answer. Shared for the same
-// reason as validateAnswer: two writers, one shape.
-func recordedAnswer(kind string, ans PingAnswer) (string, string) {
-	if kind == event.AnswerText {
-		return "text", ans.Answer
-	}
-	return ans.Answer, ans.Feedback
 }
 
 // answerLive hands the answer to the run's loop and waits to hear that it
@@ -2204,7 +2112,7 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if !active {
 		return errNoLoop
 	}
-	if err := validateAnswer(p.AnswerKind, p.Options, ans); err != nil {
+	if err := validateAnswer(p.AnswerKind, p.Form, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(p.Files, ans); err != nil {
@@ -2263,7 +2171,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 		// The run ended without it; the projection already says so.
 		return fmt.Errorf("run %s: %w", v.RunID, ErrRunNotActive)
 	}
-	if err := validateAnswer(v.AnswerKind, v.Options, ans); err != nil {
+	if err := validateAnswer(v.AnswerKind, v.Form, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(v.Files, ans); err != nil {
@@ -2293,9 +2201,8 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 		return fmt.Errorf("run %s: %w", v.RunID, errRunBusy)
 	}
 
-	answer, feedback := recordedAnswer(v.AnswerKind, ans)
-	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: answer,
-		Feedback: feedback, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review}}
+	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: ans.Answer,
+		Feedback: ans.Feedback, Content: ans.Content, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review}}
 	// Wake only when this was the last thing the run was waiting for, and only
 	// if a human has not deliberately parked it: an agent may have asked two
 	// questions, and pause means pause.
@@ -2391,7 +2298,7 @@ func (e *Engine) PendingPings() []*Ping {
 		out = append(out, &Ping{
 			ID: v.PingID, RunID: v.RunID, Type: v.Type, Question: v.Question,
 			Context: v.Context, Files: v.Files, Link: v.Link, StageID: v.StageID,
-			Options: v.Options, AnswerKind: v.AnswerKind, Phase: v.Phase, EndsPhase: v.EndsPhase,
+			Form: v.Form, AnswerKind: v.AnswerKind, Phase: v.Phase, EndsPhase: v.EndsPhase,
 			RaisedAt: v.RaisedAt,
 		})
 	}

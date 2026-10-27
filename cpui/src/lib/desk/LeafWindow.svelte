@@ -124,24 +124,24 @@
 					{VIEW_LABEL[v]}
 					{#if m.count !== undefined && m.count !== '' && m.count !== 0}
 						<span
-							class="count"
+							class="count sm"
 							class:hot={m.alert === 'amb'}
 							class:bad={m.alert === 'ros'}
 							use:bump={num(m.count)}>{m.count}</span
 						>
 					{/if}
-					{#if !compact}<span
-							class="x"
-							role="button"
+					{#if !compact}<button
+							type="button"
+							class="btn-icon btn-sm x"
 							tabindex="-1"
 							title={t('desk.tab.hide')}
 							aria-label={t('desk.tab.hideNamed', { name: VIEW_LABEL[v] })}
 							onpointerdown={stop}
+							onkeydown={(e) => e.stopPropagation()}
 							onclick={(e) => {
 								e.stopPropagation();
 								onclosetab(v);
-							}}
-							onkeydown={(e) => e.key === 'Enter' && onclosetab(v)}>{I.close}</span
+							}}>{I.close}</button
 						>{/if}
 				</div>
 			{/each}
@@ -151,6 +151,7 @@
 				<button
 					class="btn-icon"
 					class:dim={!multi}
+					aria-disabled={!multi || undefined}
 					title={multi ? t('desk.leaf.splitRight') : t('desk.leaf.splitRightNeeds')}
 					aria-label={t('desk.leaf.splitRight')}
 					onpointerdown={stop}
@@ -159,6 +160,7 @@
 				<button
 					class="btn-icon"
 					class:dim={!multi}
+					aria-disabled={!multi || undefined}
 					title={multi ? t('desk.leaf.splitDown') : t('desk.leaf.splitDownNeeds')}
 					aria-label={t('desk.leaf.splitDown')}
 					onpointerdown={stop}
@@ -276,25 +278,12 @@
 		opacity: var(--o-ghost);
 		cursor: grabbing;
 	}
-	.count {
-		padding: 0 5px;
-		min-width: 0;
-	}
+	/* A small .btn-icon, a size down to sit in the tab. */
 	.x {
 		width: 17px;
 		height: 17px;
-		border-radius: var(--r-tag);
-		display: flex;
-		align-items: center;
-		justify-content: center;
 		font-size: var(--fs-body);
-		line-height: 1;
 		color: var(--fnt);
-		cursor: pointer;
-	}
-	.x:hover {
-		background: var(--p3);
-		color: var(--tx);
 	}
 	.hint {
 		/* Gives way to the tabs first. */

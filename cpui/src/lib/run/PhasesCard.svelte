@@ -141,12 +141,12 @@
 						<span class="mono pid" title={p.kind === 'main' ? t('run.phases.mainTitle') : undefined}
 							>{p.id}</span
 						>
-						{#if p.kind === 'outcome'}<span class="pill fnt" title={t('run.phases.outcomeTitle')}
-								>{t('run.phases.outcomePill')}</span
+						{#if p.kind === 'outcome'}<span
+								class="pill sm t-mut"
+								title={t('run.phases.outcomeTitle')}>{t('run.phases.outcomePill')}</span
 							>{/if}
-						{#if waits.length}<span
-								class="pill t-hot fnt"
-								title={waits.map((h) => h.why).join('\n')}>{t('run.phases.pending')}</span
+						{#if waits.length}<span class="pill sm t-hot" title={waits.map((h) => h.why).join('\n')}
+								>{t('run.phases.pending')}</span
 							>{/if}
 					</div>
 					<span class="mut ell"

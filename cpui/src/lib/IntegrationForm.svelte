@@ -107,7 +107,7 @@
 	{#if descriptor.help}
 		<details class="howto card-in" open={!existing}>
 			<summary class="disclosure">{t('form.int.howTo')}</summary>
-			<div class="helptext">
+			<div class="help helptext">
 				{#each linkify(descriptor.help) as p, i (i)}
 					{#if p.href}
 						<a class="link" href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
@@ -221,16 +221,12 @@
 		font-size: var(--fs-label);
 		font-weight: 600;
 	}
+	/* .help, kept as written (line breaks) and indented under its row. */
 	.helptext {
 		white-space: pre-wrap;
-		font-size: var(--fs-ui);
 		line-height: 1.55;
 		padding: 0 12px 10px 28px;
-		color: var(--mut);
 		overflow-wrap: anywhere;
-	}
-	.req {
-		color: var(--fnt);
 	}
 	.secret-set {
 		display: flex;

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Checkbox from '$lib/ui/Checkbox.svelte';
 	// Typed inputs for a flow's declared parameters, shared by the workshop's
 	// Configure sheet and the start-run form. Each value is a string the
 	// engine parses by the parameter's type; empty means "not set here", and
@@ -8,6 +9,7 @@
 	// the model from what that harness lists, the timeout as a duration.
 	import type { Model, ParamDecl } from '$lib/domain';
 	import DurationInput from '$lib/ui/DurationInput.svelte';
+	import Select from '$lib/ui/Select.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -87,13 +89,8 @@
 			{@const on = items(v) ?? items(under?.[p.name] ?? p.default) ?? []}
 			<div class="checks" id={id(p)}>
 				{#each p.enum as o (o)}
-					<label class="chk"
-						><input
-							type="checkbox"
-							checked={on.includes(o)}
-							onchange={(e) => toggle(p, v, o, e.currentTarget.checked)}
-						/>
-						<span class="mono">{o}</span></label
+					<Checkbox checked={on.includes(o)} onchange={(c) => toggle(p, v, o, c)}
+						><span class="mono">{o}</span></Checkbox
 					>
 				{/each}
 				{#if v}<button type="button" class="btn-sm" onclick={() => onchange(p.name, '')}
@@ -116,22 +113,37 @@
 			/>
 			<div class="help">{t('flow.fields.listHelp')}</div>
 		{:else if kind === 'bool'}
-			<select id={id(p)} value={v} onchange={(e) => onchange(p.name, e.currentTarget.value)}>
-				<option value="">{t('flow.fields.unset')}</option>
-				<option value="true">true</option>
-				<option value="false">false</option>
-			</select>
+			<Select
+				id={id(p)}
+				value={v}
+				options={[
+					{ value: '', label: t('flow.fields.unset') },
+					{ value: 'true', label: 'true' },
+					{ value: 'false', label: 'false' }
+				]}
+				onchange={(nv) => onchange(p.name, nv)}
+			/>
 		{:else if kind === 'enum'}
-			<select id={id(p)} value={v} onchange={(e) => onchange(p.name, e.currentTarget.value)}>
-				<option value="">{t('flow.fields.unset')}</option>
-				{#each p.enum ?? [] as o (o)}<option value={o}>{o}</option>{/each}
-			</select>
+			<Select
+				id={id(p)}
+				value={v}
+				options={[
+					{ value: '', label: t('flow.fields.unset') },
+					...(p.enum ?? []).map((o) => ({ value: o, label: o }))
+				]}
+				onchange={(nv) => onchange(p.name, nv)}
+			/>
 		{:else if kind === 'harness'}
-			<select id={id(p)} value={v} onchange={(e) => onchange(p.name, e.currentTarget.value)}>
-				<option value="">{t('flow.fields.unset')}</option>
-				{#each harnesses as h (h.kind)}<option value={h.kind}>{h.label}</option>{/each}
-				{#if v && !harnesses.some((h) => h.kind === v)}<option value={v}>{v}</option>{/if}
-			</select>
+			<Select
+				id={id(p)}
+				value={v}
+				options={[
+					{ value: '', label: t('flow.fields.unset') },
+					...harnesses.map((h) => ({ value: h.kind, label: h.label })),
+					...(v && !harnesses.some((h) => h.kind === v) ? [{ value: v, label: v }] : [])
+				]}
+				onchange={(nv) => onchange(p.name, nv)}
+			/>
 		{:else if kind === 'model'}
 			<input
 				id={id(p)}
@@ -192,10 +204,5 @@
 		flex-wrap: wrap;
 		gap: 6px 12px;
 		align-items: center;
-	}
-	.chk {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
 	}
 </style>

@@ -118,7 +118,7 @@
 <div class="attach">
 	<button
 		type="button"
-		class="drop"
+		class="btn-dashed drop"
 		class:over
 		class:compact
 		onclick={() => inputEl?.click()}
@@ -169,10 +169,6 @@
 		flex-wrap: wrap;
 		white-space: normal;
 		padding: 12px;
-		background: transparent;
-		box-shadow: none;
-		border: 1px dashed var(--ln2);
-		color: var(--mut);
 		text-align: center;
 	}
 	.drop.compact {

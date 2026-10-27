@@ -44,7 +44,6 @@
 		min-width: 0;
 	}
 	.pill {
-		font-weight: 500;
 		max-width: 300px;
 		overflow: hidden;
 		text-overflow: ellipsis;

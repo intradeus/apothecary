@@ -23,7 +23,7 @@
 	<div class="txt">
 		<label for={forId}>{label}</label>
 		{#if help}<div class="help">{help}</div>{/if}
-		{#if note}<div class="sr-note">{@render note()}</div>{/if}
+		{#if note}<div class="help fnt">{@render note()}</div>{/if}
 	</div>
 	<div class="ctl">{@render children()}</div>
 </div>
@@ -54,10 +54,6 @@
 	.help {
 		max-width: 62ch;
 		text-wrap: pretty;
-	}
-	.sr-note {
-		font-size: var(--fs-help);
-		color: var(--fnt);
 	}
 	.ctl {
 		display: flex;

@@ -3,7 +3,7 @@
 	// Run state chip (DESIGN 3.1). The workspace has its own badge: never merge
 	// the two axes into one chip.
 	import type { RunState } from '$lib/domain';
-	import { stateHue, stateLabel } from '$lib/format';
+	import { stateHueClass, stateLabel } from '$lib/format';
 
 	let {
 		state,
@@ -14,18 +14,19 @@
 		compact = false
 	}: { state: RunState; suffix?: boolean; size?: 'sm' | 'md'; compact?: boolean } = $props();
 
+	// DESIGN 3.1: a tinted .pill per state; waiting is the solid amber .t-hot.
 	const tone = $derived(
 		(
 			{
-				pending: 'pending',
-				provisioning: 'az',
-				running: 'az',
-				waiting_on_human: 'wait',
-				in_review: 'vio',
-				paused: 'pending',
-				completed: 'grn',
-				abandoned: 'amb',
-				failed: 'ros',
+				pending: 't-mut',
+				provisioning: 't-az',
+				running: 't-az',
+				waiting_on_human: 't-hot',
+				in_review: 't-vio',
+				paused: 't-mut',
+				completed: 't-grn',
+				abandoned: 't-amb',
+				failed: 't-ros',
 				archived: 'archived'
 			} as const
 		)[state]
@@ -46,15 +47,15 @@
 
 {#if compact}
 	<span
-		class="ldot {state === 'archived' || state === 'pending' || state === 'paused' ? 'flat' : ''}"
+		class="ldot {stateHueClass[state]}"
+		class:flat={state === 'archived' || state === 'pending' || state === 'paused'}
 		class:pulse={live}
-		style:color={stateHue[state]}
 		title={stateLabel[state]}
 		role="img"
 		aria-label={stateLabel[state]}
 	></span>
 {:else}
-	<span class="sc {tone} {size}" title={state}>
+	<span class="pill sc {tone}" class:dense={size === 'sm'} title={state}>
 		{#if state === 'completed'}
 			<span class="g">✓</span>
 		{:else if state === 'failed'}
@@ -62,85 +63,31 @@
 		{:else if state === 'paused'}
 			<span class="g">❚❚</span>
 		{:else if state !== 'archived'}
-			<span class="d" class:pulse={live}></span>
+			<!-- Only the running/provisioning dot glows; waiting's ink dot just pulses. -->
+			<span class="ldot" class:flat={tone !== 't-az'} class:pulse={live}></span>
 		{/if}
 		{stateLabel[state]}
-		{#if aside}<span class="aside">· {aside}</span>{/if}
+		{#if aside}<span class="serif aside">· {aside}</span>{/if}
 	</span>
 {/if}
 
 <style>
+	/* .pill at DESIGN 3.1's metrics (12px); size sm keeps .pill's 11px. */
 	.sc {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 3px 11px 3px 9px;
-		border-radius: var(--r-pill);
 		font-size: var(--fs-label);
-		font-weight: 600;
-		white-space: nowrap;
-		border: 1px solid transparent;
 		line-height: 1.35;
+		padding: 3px 11px 3px 9px;
 	}
-	.sc.sm {
+	.sc.dense {
 		font-size: var(--fs-meta);
 		padding: 1px 9px 1px 7px;
-	}
-	.d {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: currentColor;
-		flex: none;
 	}
 	.g {
 		font-size: var(--fs-id);
 	}
 	.aside {
-		font-family: var(--serif);
-		font-style: italic;
-		font-weight: 400;
 		font-size: var(--fs-aside);
 		opacity: 0.85;
-	}
-	.pending {
-		background: var(--p2);
-		color: var(--mut);
-		border-color: var(--ln);
-	}
-	.az {
-		background: var(--azBg);
-		color: var(--az);
-		border-color: var(--azLn);
-	}
-	.az .d {
-		box-shadow: 0 0 8px var(--az);
-	}
-	.wait {
-		background: var(--amb);
-		color: var(--ink);
-		font-weight: 700;
-		box-shadow: 0 0 14px var(--ambLn);
-	}
-	.vio {
-		background: var(--vioBg);
-		color: var(--vio);
-		border-color: var(--vioLn);
-	}
-	.grn {
-		background: var(--grnBg);
-		color: var(--grn);
-		border-color: var(--grnLn);
-	}
-	.amb {
-		background: var(--ambBg);
-		color: var(--amb);
-		border-color: var(--ambLn);
-	}
-	.ros {
-		background: var(--rosBg);
-		color: var(--ros);
-		border-color: var(--rosLn);
 	}
 	.archived {
 		background: transparent;

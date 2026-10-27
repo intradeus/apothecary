@@ -42,7 +42,7 @@
 		{@render body()}
 		{#if onremove}<button
 				type="button"
-				class="btn-icon x"
+				class="btn-icon btn-sm"
 				aria-label={t('ui.tags.remove', { value: name })}
 				onclick={onremove}>{I.close}</button
 			>{/if}
@@ -67,7 +67,7 @@
 		background: var(--p3);
 		text-decoration: none;
 	}
-	.fc:has(.x) {
+	.fc:has(.btn-icon) {
 		padding-right: 3px;
 	}
 	.refused {
@@ -107,9 +107,5 @@
 	}
 	.refused .size {
 		color: var(--ros);
-	}
-	.x {
-		width: 20px;
-		height: 20px;
 	}
 </style>

@@ -2,8 +2,10 @@
 	// Ping card (DESIGN 4.11): control glass with an amber wash, because a
 	// human must act now. Head: badge, type, stage and age, and — in the inbox —
 	// the run and ticket it belongs to. Body: the question, then actions shaped
-	// by the ping's ANSWER KIND (the type only tunes wording). Answered and
-	// withdrawn pings collapse to a single muted line.
+	// by the ping's ANSWER KIND (the type only tunes wording): a yes/no, or a
+	// form — one option to pick (a button each), one free-text answer, or its
+	// fields drawn (PingFormFields); any form may be declined with a reason.
+	// Answered and withdrawn pings collapse to a single muted line.
 	//
 	// Used by the inbox and the run page. The required props (ping, busy,
 	// onanswer) keep their old semantics; the rest are optional context.
@@ -11,20 +13,27 @@
 	import { api } from '$lib/api';
 	import { ago, fmtAbs } from '$lib/format';
 	import AttachFiles from '$lib/AttachFiles.svelte';
+	import PingFormFields from '$lib/PingFormFields.svelte';
 	import { pingMeta } from '$lib/ui/PingPill.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import FileChip from '$lib/ui/FileChip.svelte';
 	import { I } from '$lib/ui/icons';
 	import { t, th } from '$lib/i18n/index.svelte';
+	import { untrack } from 'svelte';
 	import {
 		answerMeta,
+		answerSummary,
+		formContent,
+		formDefaults,
+		formMissing,
+		formShape,
 		isAgentPing,
 		isDocumentPing,
 		primaryFile,
 		isPhaseConfirm,
-		SELECT_NONE,
 		type PingLike
 	} from '$lib/ping';
+	import type { FormContent } from '$lib/domain';
 
 	let {
 		ping,
@@ -39,10 +48,16 @@
 	}: {
 		ping: PingLike;
 		busy?: boolean;
-		// answer is the choice (approve|reject|option|free text); note is the
-		// optional feedback that rides along (required only when rejecting);
-		// artifactIds are files the human attached to the answer.
-		onanswer: (answer: string, note?: string, artifactIds?: string[]) => void;
+		// answer is approve|reject (yes/no) or accept|decline (a form); note
+		// is the feedback that rides along (required when rejecting or
+		// declining); artifactIds are files the human attached to the
+		// answer; content is an accepted form's values.
+		onanswer: (
+			answer: string,
+			note?: string,
+			artifactIds?: string[],
+			content?: FormContent
+		) => void;
 		/** The run's title, shown in the head (inbox cards always say which run). */
 		runTitle?: string;
 		/** Where the run title links; defaults to the run page when runId is known. */
@@ -62,21 +77,23 @@
 	let uploading = $state(false);
 	let uploadErr = $state('');
 	let showAttach = $state(false);
-	/** yes_no: "Request changes…" opens the feedback box. choice: "Other…". */
+	/** yes_no: "Request changes…" opens the feedback box. */
 	let noteOpen = $state(false);
+	/** A form: "Decline…" swaps the form for the reason box. */
+	let declining = $state(false);
 
 	// Upload any attached files first, then hand the answer up. A failed
 	// upload SURFACES and keeps the draft — it used to be swallowed, leaving
 	// the card idle with the answer silently unsent.
 	/** The answer in flight, so only its button shows busy. */
 	let sending = $state('');
-	async function submit(answer: string) {
-		sending = answer;
+	async function submit(answer: string, content?: FormContent, key = answer) {
+		sending = key;
 		uploading = true;
 		uploadErr = '';
 		try {
 			const ids = files.length ? (await api.files.upload(files)).map((a) => a.id) : undefined;
-			onanswer(answer, note, ids);
+			onanswer(answer, note, ids, content);
 		} catch (e) {
 			uploadErr = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -88,13 +105,19 @@
 	// phase confirmation is a yes/no read as "run it / not now").
 	const kind = $derived(ping.answerKind);
 	const confirmPhase = $derived(isPhaseConfirm(ping.type));
-	const options = $derived(ping.options ?? []);
-	// multi: every option starts checked — unchecking is the deliberate act.
-	let picked = $state<Record<string, boolean>>({});
-	$effect(() => {
-		for (const o of options) if (!(o.id in picked)) picked[o.id] = true;
-	});
-	const pickedIds = $derived(options.filter((o) => picked[o.id]).map((o) => o.id));
+	// A form's values start at its defaults (a thread selection: every
+	// thread picked — unpicking is the deliberate act).
+	const shape = $derived(formShape(ping.form));
+	const lone = $derived(ping.form?.fields[0]);
+	let values = $state(formDefaults(untrack(() => ping.form)));
+	const missing = $derived(formMissing(ping.form, values));
+	// One field to pick any of: the button says how many.
+	const pickCount = $derived(
+		ping.form?.fields.length === 1 && lone?.type === 'array'
+			? ((values[lone.id] as string[] | undefined)?.length ?? 0)
+			: null
+	);
+	const accept = () => submit('accept', formContent(ping.form, values));
 	const status = $derived(ping.status ?? 'pending');
 	const isPending = $derived(status === 'pending');
 	const meta = $derived(pingMeta(ping.type));
@@ -132,7 +155,7 @@
 
 {#if !isPending}
 	<!-- Answered / withdrawn: one muted line. -->
-	<div class="pc-done" class:withdrawn={status === 'withdrawn'}>
+	<div class="card-in pc-done" class:withdrawn={status === 'withdrawn'}>
 		<span class="hue-{verdict.hue} glyph">{verdict.glyph}</span>
 		<span class="ty">{meta.label}</span>
 		{#if stageId}<span class="mono fnt">{stageId}</span>{/if}
@@ -143,7 +166,7 @@
 				{ping.answeredAt
 					? t('ping.answeredAgo', { ago: ago(ping.answeredAt) })
 					: t('ping.answered')}
-				<b class="hue-{verdict.hue}">{ping.answer}</b>{#if ping.feedback}<span
+				<b class="hue-{verdict.hue}">{answerSummary(ping)}</b>{#if ping.feedback}<span
 						class="fnt"
 						title={ping.feedback}>{' · '}{ping.feedback}</span
 					>{/if}
@@ -181,7 +204,7 @@
 		<div class="body">
 			{#if debug}
 				<div class="q">{@html th('ping.debugFailed', { stage: stageId })}</div>
-				{#if ping.context}<pre class="out">{ping.context}</pre>{/if}
+				{#if ping.context}<pre class="log out">{ping.context}</pre>{/if}
 			{:else}
 				<div class="q"><Markdown src={ping.question} /></div>
 				{#if ping.context}<Markdown src={ping.context} quiet />{/if}
@@ -207,35 +230,7 @@
 				</div>
 			{/if}
 
-			{#if kind === 'multi'}
-				<div class="picklist">
-					{#each options as o (o.id)}
-						<label class="pick">
-							<input type="checkbox" bind:checked={picked[o.id]} />
-							<span
-								>{o.label}{#if o.detail}<span class="mut"> — {o.detail}</span>{/if}</span
-							>
-						</label>
-					{/each}
-				</div>
-				<textarea bind:value={note} rows="2" placeholder={t('ping.optionalNote')}></textarea>
-				<div class="acts">
-					<button
-						class="btn-hot btn-md"
-						disabled={off || pickedIds.length === 0}
-						aria-busy={busyOn(pickedIds.join('\n'))}
-						onclick={() => submit(pickedIds.join('\n'))}
-						>{t('ping.confirmSelected', { count: pickedIds.length })}</button
-					>
-					<button
-						class="btn-hot-outline btn-md"
-						disabled={off}
-						aria-busy={busyOn(SELECT_NONE)}
-						onclick={() => submit(SELECT_NONE)}>{t('ping.selectNone')}</button
-					>
-					{@render attachBtn()}
-				</div>
-			{:else if kind === 'yes_no' && confirmPhase}
+			{#if kind === 'yes_no' && confirmPhase}
 				<div class="acts">
 					<button
 						class="btn-hot btn-md"
@@ -255,6 +250,11 @@
 			{:else if kind === 'yes_no'}
 				{#if noteOpen}
 					<textarea
+						aria-label={debug
+							? endsRound
+								? t('ping.debugEndPlaceholder', { phase: phaseName })
+								: t('ping.debugReasonPlaceholder')
+							: t('ping.changesPlaceholder')}
 						bind:value={note}
 						rows="3"
 						placeholder={debug
@@ -298,49 +298,80 @@
 					{/if}
 					{@render attachBtn()}
 				</div>
-			{:else if kind === 'choice'}
-				{#if noteOpen}
-					<textarea bind:value={note} rows="2" placeholder={t('ping.otherPlaceholder')}></textarea>
-				{/if}
+			{:else if declining}
+				<textarea
+					aria-label={t('ping.declinePlaceholder')}
+					bind:value={note}
+					rows="3"
+					placeholder={t('ping.declinePlaceholder')}
+					onkeydown={(e) => keys(e, () => note.trim() && !off && submit('decline'))}></textarea>
 				<div class="acts">
-					{#each options as opt, i (opt.id)}
+					<button
+						class="btn-hot-outline btn-md"
+						disabled={off || !note.trim()}
+						aria-busy={busyOn('decline')}
+						onclick={() => submit('decline')}>{t('ping.sendDecline')}</button
+					>
+					<button class="btn-ghost btn-sm" onclick={() => (declining = false)}
+						>{t('common.cancel')}</button
+					>
+					{@render attachBtn()}
+				</div>
+			{:else if shape === 'pick' && lone}
+				<div class="acts">
+					{#each lone.options as opt, i (opt.id)}
 						<button
 							class="{i === 0 ? 'btn-hot' : 'btn-hot-outline'} btn-md"
 							disabled={off}
 							aria-busy={busyOn(opt.id)}
 							title={opt.detail ?? ''}
-							onclick={() => submit(opt.id)}>{opt.label}</button
+							onclick={() => submit('accept', { [lone.id]: opt.id }, opt.id)}>{opt.label}</button
 						>
 					{/each}
-					{#if noteOpen}
-						<button
-							class="btn-dashed btn-md"
-							disabled={off || !note.trim()}
-							aria-busy={busyOn('other')}
-							title={t('ping.otherTitle')}
-							onclick={() => submit('other')}>{t('ping.sendAsAnswer')}</button
-						>
-					{:else}
-						<button class="btn-dashed btn-md" disabled={off} onclick={() => (noteOpen = true)}
-							>{t('ping.other')}</button
-						>
-					{/if}
+					{@render declineBtn()}
 					{@render attachBtn()}
 				</div>
-			{:else}
+			{:else if shape === 'text' && lone}
 				<textarea
-					bind:value={note}
+					aria-label={t('ping.answerPlaceholder')}
+					bind:value={values[lone.id]}
 					rows="3"
 					placeholder={t('ping.answerPlaceholder')}
-					onkeydown={(e) => keys(e, () => note.trim() && !off && submit(note.trim()))}></textarea>
+					onkeydown={(e) => keys(e, () => !missing.length && !off && accept())}></textarea>
 				<div class="acts">
 					<button
 						class="btn-hot btn-md"
-						disabled={off || !note.trim()}
-						aria-busy={off && sending === note.trim()}
-						onclick={() => submit(note.trim())}>{t('ping.sendAnswer')}</button
+						disabled={off || missing.length > 0}
+						aria-busy={busyOn('accept')}
+						onclick={accept}>{t('ping.sendAnswer')}</button
 					>
 					<span class="help"><span class="kbd">⌘↵</span> {t('ping.sendHint')}</span>
+					{@render declineBtn()}
+					{@render attachBtn()}
+				</div>
+			{:else if ping.form}
+				<PingFormFields form={ping.form} bind:values disabled={off} />
+				<textarea
+					aria-label={t('ping.optionalNote')}
+					bind:value={note}
+					rows="2"
+					placeholder={t('ping.optionalNote')}></textarea>
+				<div class="acts">
+					<button
+						class="btn-hot btn-md"
+						disabled={off || missing.length > 0}
+						aria-busy={busyOn('accept')}
+						title={missing.length
+							? t('ping.missing', { fields: missing.map((f) => f.title || f.id).join(', ') })
+							: ''}
+						onclick={accept}
+						>{pickCount === null
+							? t('ping.sendAnswer')
+							: pickCount
+								? t('ping.confirmSelected', { count: pickCount })
+								: t('ping.selectNone')}</button
+					>
+					{@render declineBtn()}
 					{@render attachBtn()}
 				</div>
 			{/if}
@@ -352,6 +383,15 @@
 		</div>
 	</div>
 {/if}
+
+{#snippet declineBtn()}
+	<button
+		class="btn-dashed btn-md"
+		disabled={off}
+		title={t('ping.declineTitle')}
+		onclick={() => (declining = true)}>{t('ping.decline')}</button
+	>
+{/snippet}
 
 {#snippet attachBtn()}
 	<span class="spacer"></span>
@@ -382,18 +422,6 @@
 		row-gap: 4px;
 	}
 	/* The round amber "?" — the same mark as the desk's needs-you count. */
-	.mark {
-		flex: none;
-		width: 22px;
-		height: 22px;
-		padding: 0;
-		border-radius: 50%;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		font-size: var(--fs-label);
-		box-shadow: 0 0 var(--glow-sm) var(--ambLn);
-	}
 	.ty {
 		font-family: var(--serif);
 		font-size: var(--fs-section);
@@ -445,18 +473,8 @@
 	}
 	/* What the failed stage printed: verbatim, scrollable. */
 	.out {
-		margin: 0;
-		padding: 8px 10px;
 		max-height: 240px;
-		overflow: auto;
-		font-family: var(--mono, ui-monospace, monospace);
-		font-size: var(--fs-label);
-		white-space: pre-wrap;
 		word-break: break-word;
-		color: var(--tx);
-		background: var(--cBg);
-		border: 1px solid var(--ln2);
-		border-radius: 8px;
 	}
 	.ref {
 		display: inline-flex;
@@ -483,34 +501,12 @@
 	.help {
 		margin: 0;
 	}
-	.picklist {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-	.pick {
-		display: flex;
-		gap: 8px;
-		align-items: flex-start;
-		font-size: var(--fs-body);
-		font-weight: 400;
-		margin: 0;
-		cursor: pointer;
-	}
-	.pick input {
-		width: auto;
-		margin-top: 3px;
-	}
-
 	/* answered / withdrawn */
 	.pc-done {
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		padding: 7px 12px;
-		border-radius: var(--r-card);
-		border: 1px solid var(--ln);
-		background: var(--p1);
 		color: var(--mut);
 		font-size: var(--fs-label);
 		min-width: 0;

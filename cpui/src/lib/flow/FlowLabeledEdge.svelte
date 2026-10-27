@@ -46,7 +46,7 @@
 	<EdgeLabel x={at.x} y={at.y} style={labelStyle} class="e-lbl" transparent selectEdgeOnClick>
 		<button
 			type="button"
-			class="e-lbl-pill"
+			class="e-lbl-pill pill sm mono"
 			tabindex="-1"
 			onclick={() => (data?.pick as (() => void) | undefined)?.()}>{label}</button
 		>

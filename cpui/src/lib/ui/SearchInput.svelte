@@ -8,6 +8,8 @@
 		placeholder,
 		width = 280,
 		label,
+		/** sm: in a toolbar. */
+		size = 'md',
 		onenter
 	}: {
 		value: string;
@@ -15,11 +17,12 @@
 		/** Max width in px; it shrinks below that on narrow screens. */
 		width?: number;
 		label?: string;
+		size?: 'sm' | 'md';
 		onenter?: (v: string) => void;
 	} = $props();
 </script>
 
-<label class="si" style:--w="{width}px">
+<label class="fieldbox si" class:sm={size === 'sm'} style:--w="{width}px">
 	<span class="g" aria-hidden="true">{I.search}</span>
 	<input
 		class="bare"
@@ -49,14 +52,7 @@
 		min-width: 120px;
 		margin: 0;
 		padding: 0 10px;
-		border-radius: var(--r-row);
-		background: var(--p1);
-		border: 1px solid var(--ln2);
 		cursor: text;
-	}
-	.si:focus-within {
-		border-color: var(--brand);
-		box-shadow: 0 0 0 3px var(--brandBg);
 	}
 	.g {
 		color: var(--mut);
@@ -65,6 +61,18 @@
 	input {
 		padding: 6px 0;
 		font-size: var(--fs-ui);
+	}
+	.sm {
+		min-width: 100px;
+		padding: 0 8px;
+		border-radius: var(--r-tab);
+	}
+	.sm .g {
+		font-size: var(--fs-body);
+	}
+	.sm input {
+		padding: 2px 0;
+		font-size: var(--fs-label);
 	}
 	input::-webkit-search-cancel-button {
 		filter: grayscale(1);

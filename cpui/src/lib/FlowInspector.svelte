@@ -2,6 +2,7 @@
 	import type { Selection } from '$lib/FlowGraph.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import StageChip from '$lib/ui/StageChip.svelte';
+	import Select from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { portLabel } from '$lib/format';
@@ -882,25 +883,24 @@
 				{:else if doc.phases?.length}
 					<div class="field">
 						<label for="st-phase">{t('flow.insp.chain')}</label>
-						<select
+						<Select
 							id="st-phase"
 							value={s.phase}
-							onchange={(e) => {
-								movePhase(doc, s.id, e.currentTarget.value);
-								onchange();
-							}}
-						>
-							{#each doc.phases as ph (ph.id)}
-								<option value={ph.id}
-									>{ph.kind === 'main'
+							options={doc.phases.map((ph) => ({
+								value: ph.id,
+								label:
+									ph.kind === 'main'
 										? t('flow.insp.chainMain')
 										: t(`flow.insp.chainOption.${ph.kind}`, {
 												id: ph.id,
 												trigger: triggerLabel(ph.on)
-											})}</option
-								>
-							{/each}
-						</select>
+											})
+							}))}
+							onchange={(v) => {
+								movePhase(doc, s.id, v);
+								onchange();
+							}}
+						/>
 						<div class="help">{t('flow.insp.phaseHelp')}</div>
 					</div>
 				{/if}
@@ -908,27 +908,30 @@
 				{#if s.type !== 'sequence'}
 					<div class="field">
 						<label for="st-run-if">{t('flow.insp.runIf')}</label>
-						<select
+						<Select
 							id="st-run-if"
 							value={s.run_if ?? ''}
-							onchange={(e) => {
-								s.run_if = e.currentTarget.value || undefined;
+							options={[
+								{ value: '', label: t('flow.insp.runIf.none') },
+								{ value: 'tracker', label: t('flow.insp.runIf.tracker') },
+								{ value: 'not tracker', label: t('flow.insp.runIf.notTracker') },
+								{ value: 'subject', label: t('flow.insp.runIf.subject') },
+								{ value: 'not subject', label: t('flow.insp.runIf.notSubject') },
+								...boolParams(doc).flatMap((p) => [
+									{ value: '$' + p, label: '$' + p },
+									{ value: 'not $' + p, label: 'not $' + p }
+								]),
+								...(s.run_if &&
+								!RUN_IF_TERMS.includes(s.run_if) &&
+								!boolParams(doc).some((p) => s.run_if === '$' + p || s.run_if === 'not $' + p)
+									? [{ value: s.run_if, label: s.run_if }]
+									: [])
+							]}
+							onchange={(v) => {
+								s.run_if = v || undefined;
 								onchange();
 							}}
-						>
-							<option value="">{t('flow.insp.runIf.none')}</option>
-							<option value="tracker">{t('flow.insp.runIf.tracker')}</option>
-							<option value="not tracker">{t('flow.insp.runIf.notTracker')}</option>
-							<option value="subject">{t('flow.insp.runIf.subject')}</option>
-							<option value="not subject">{t('flow.insp.runIf.notSubject')}</option>
-							{#each boolParams(doc) as p (p)}
-								<option value={'$' + p}>${p}</option>
-								<option value={'not $' + p}>not ${p}</option>
-							{/each}
-							{#if s.run_if && !RUN_IF_TERMS.includes(s.run_if) && !boolParams(doc).some((p) => s.run_if === '$' + p || s.run_if === 'not $' + p)}
-								<option value={s.run_if}>{s.run_if}</option>
-							{/if}
-						</select>
+						/>
 						<div class="help">{t('flow.insp.runIfHelp')}</div>
 					</div>
 				{/if}
@@ -1176,38 +1179,41 @@
 					<div class="grid2">
 						<div class="field">
 							<label for="st-auto-ok">{t('flow.insp.approveWhen')}</label>
-							<select
+							<Select
 								id="st-auto-ok"
 								value={s.auto_approve ?? ''}
-								onchange={(e) => {
-									s.auto_approve = e.currentTarget.value || undefined;
+								options={[
+									{ value: '', label: '—' },
+									...observed.map((sig) => ({
+										value: sig.slug,
+										label: sig.title,
+										disabled: sig.slug === s.auto_reject
+									}))
+								]}
+								onchange={(v) => {
+									s.auto_approve = v || undefined;
 									onchange();
 								}}
-							>
-								<option value="">—</option>
-								{#each observed as sig (sig.slug)}
-									<option value={sig.slug} disabled={sig.slug === s.auto_reject}>{sig.title}</option
-									>
-								{/each}
-							</select>
+							/>
 						</div>
 						<div class="field">
 							<label for="st-auto-no">{t('flow.insp.rejectWhen')}</label>
-							<select
+							<Select
 								id="st-auto-no"
 								value={s.auto_reject ?? ''}
-								onchange={(e) => {
-									s.auto_reject = e.currentTarget.value || undefined;
+								options={[
+									{ value: '', label: '—' },
+									...observed.map((sig) => ({
+										value: sig.slug,
+										label: sig.title,
+										disabled: sig.slug === s.auto_approve
+									}))
+								]}
+								onchange={(v) => {
+									s.auto_reject = v || undefined;
 									onchange();
 								}}
-							>
-								<option value="">—</option>
-								{#each observed as sig (sig.slug)}
-									<option value={sig.slug} disabled={sig.slug === s.auto_approve}
-										>{sig.title}</option
-									>
-								{/each}
-							</select>
+							/>
 						</div>
 					</div>
 					{#if s.auto_approve || s.auto_reject}
@@ -1216,11 +1222,15 @@
 				{:else if s.type === 'action'}
 					<div class="field">
 						<label for="st-action">{t('flow.insp.action')}</label>
-						<select
+						<Select
 							id="st-action"
 							value={s.action ?? ''}
-							onchange={(e) => {
-								s.action = e.currentTarget.value || undefined;
+							options={[
+								{ value: '', label: '—' },
+								...actions.map((a) => ({ value: a.slug, label: a.title }))
+							]}
+							onchange={(v) => {
+								s.action = v || undefined;
 								// Prefill the new action's ports with their conventional paths.
 								const sig = actions.find((a) => a.slug === s.action);
 								const ins: Record<string, DocPort> = {};
@@ -1234,10 +1244,7 @@
 								s.with = undefined;
 								onchange();
 							}}
-						>
-							<option value="">—</option>
-							{#each actions as a (a.slug)}<option value={a.slug}>{a.title}</option>{/each}
-						</select>
+						/>
 						<div class="help">{t('flow.insp.actionHelp')}</div>
 					</div>
 					{#if actionSig}
@@ -1269,38 +1276,37 @@
 								>
 								{#if d.description}<div class="help">{d.description}</div>{/if}
 								{#if d.kind === 'enum'}
-									<select
+									<Select
 										id="act-{d.name}"
 										value={cur || d.defaultValue || ''}
-										onchange={(e) => setSetting(s, d.name, e.currentTarget.value)}
-									>
-										{#if !d.required && !d.defaultValue}<option value="">—</option>{/if}
-										{#each d.values ?? [] as v (v)}<option value={v}>{v}</option>{/each}
-										{#each fits as p (p)}<option value={'$' + p}>${p}</option>{/each}
-										{#if isParamRef(cur) && !fits.includes(cur.slice(1))}
-											<option value={cur}>{cur}</option>
-										{/if}
-									</select>
+										options={[
+											...(!d.required && !d.defaultValue ? [{ value: '', label: '—' }] : []),
+											...(d.values ?? []).map((v) => ({ value: v, label: v })),
+											...fits.map((p) => ({ value: '$' + p, label: '$' + p })),
+											...(isParamRef(cur) && !fits.includes(cur.slice(1))
+												? [{ value: cur, label: cur }]
+												: [])
+										]}
+										onchange={(v) => setSetting(s, d.name, v)}
+									/>
 									{#if fits.length}<div class="help">{t('flow.insp.enumParamHelp')}</div>{/if}
 								{:else if d.kind === 'list'}
 									{@const items = s.with?.[d.name]}
-									<select
+									<Select
 										id="act-{d.name}"
 										value={typeof items === 'string' ? items : ''}
-										onchange={(e) =>
-											setSettingList(
-												s,
-												d.name,
-												e.currentTarget.value || (Array.isArray(items) ? items : [])
-											)}
-									>
-										<option value="">{t('flow.insp.listWritten')}</option>
-										{#each stringListParams(doc) as p (p)}<option value={'$' + p}>${p}</option
-											>{/each}
-										{#if typeof items === 'string' && !stringListParams(doc).includes(items.slice(1))}
-											<option value={items}>{items}</option>
-										{/if}
-									</select>
+										options={[
+											{ value: '', label: t('flow.insp.listWritten') },
+											...stringListParams(doc).map((p) => ({ value: '$' + p, label: '$' + p })),
+											...(typeof items === 'string' &&
+											items &&
+											!stringListParams(doc).includes(items.slice(1))
+												? [{ value: items, label: items }]
+												: [])
+										]}
+										onchange={(v) =>
+											setSettingList(s, d.name, v || (Array.isArray(items) ? items : []))}
+									/>
 									{#if typeof items !== 'string'}
 										<input
 											class="mono"
@@ -1380,14 +1386,12 @@
 					</div>
 					<div class="field">
 						<label for="st-do">{t('flow.insp.serviceDo')}</label>
-						<select
+						<Select
 							id="st-do"
 							value={s.do ?? 'start'}
-							onchange={(e) => setServiceDo(s, e.currentTarget.value as ServiceDo)}
-						>
-							{#each SERVICE_DOS as d (d)}<option value={d}>{t(`flow.insp.serviceDo.${d}`)}</option
-								>{/each}
-						</select>
+							options={SERVICE_DOS.map((d) => ({ value: d, label: t(`flow.insp.serviceDo.${d}`) }))}
+							onchange={(v) => setServiceDo(s, v as ServiceDo)}
+						/>
 					</div>
 					{#if s.do !== 'stop'}
 						<div class="field">
@@ -1423,21 +1427,23 @@
 					{@const options = runnable(s)}
 					<div class="field">
 						<label for="st-sequence">{t('flow.insp.sequence')}</label>
-						<select
+						<Select
 							id="st-sequence"
 							value={s.sequence ?? ''}
-							onchange={(e) => {
-								s.sequence = e.currentTarget.value;
+							options={[
+								...options.map((id) => ({
+									value: id,
+									label: id === MAIN ? t('flow.insp.runsMain') : id
+								})),
+								...(s.sequence && !options.includes(s.sequence)
+									? [{ value: s.sequence, label: s.sequence }]
+									: [])
+							]}
+							onchange={(v) => {
+								s.sequence = v;
 								onchange();
 							}}
-						>
-							{#each options as id (id)}<option value={id}
-									>{id === MAIN ? t('flow.insp.runsMain') : id}</option
-								>{/each}
-							{#if s.sequence && !options.includes(s.sequence)}
-								<option value={s.sequence}>{s.sequence}</option>
-							{/if}
-						</select>
+						/>
 						<div class="help">{t('flow.insp.sequenceHelp')}</div>
 						{#if sequenceSel}
 							{@const id = sequenceSel.id}
@@ -1465,17 +1471,18 @@
 				{:else if s.type === 'wait'}
 					<div class="field">
 						<label for="st-for">{t('flow.insp.waitFor')}</label>
-						<select
+						<Select
 							id="st-for"
 							value={s.for ?? ''}
-							onchange={(e) => {
-								s.for = e.currentTarget.value || undefined;
+							options={[
+								{ value: '', label: '—' },
+								...observed.map((sig) => ({ value: sig.slug, label: sig.title }))
+							]}
+							onchange={(v) => {
+								s.for = v || undefined;
 								onchange();
 							}}
-						>
-							<option value="">—</option>
-							{#each observed as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
-						</select>
+						/>
 						<div class="help">{t('flow.insp.waitHelp')}</div>
 					</div>
 					{#if waitSig}
@@ -1525,34 +1532,40 @@
 									? t('flow.insp.successCarries')
 									: t('flow.insp.successTitle')}>success</span
 							>
-							<select
-								id="st-succ"
-								class="to"
-								aria-label={t('flow.insp.successTitle')}
-								value={s.on_success ?? ''}
-								onchange={(e) => {
-									s.on_success = e.currentTarget.value || undefined;
-									onchange();
-								}}
-							>
-								{#if scopeSeq}
-									<!-- In a sequence, saying nothing goes on to the next stage —
-									     or, from the last, out by the sequence stage's success. -->
-									<option value=""
-										>{scopeSeq.stages.at(-1)?.id === s.id
-											? t('flow.insp.leaveOption')
-											: t('flow.insp.nextOption', {
-													next: scopeSeq.stages[scopeSeq.stages.indexOf(s) + 1]?.id ?? ''
-												})}</option
-									>
-								{/if}
-								{#each routable(s).filter((x) => x.id !== s.id) as x (x.id)}<option value={x.id}
-										>{x.id}</option
-									>{/each}
-								<option value={END}>{t('flow.insp.endOption')}</option>
-								<option value={DONE}>{t('flow.insp.doneOption')}</option>
-								<option value={ABORT}>{t('flow.insp.abortOption')}</option>
-							</select>
+							<span class="to">
+								<Select
+									id="st-succ"
+									label={t('flow.insp.successTitle')}
+									value={s.on_success ?? ''}
+									options={[
+										// In a sequence, saying nothing goes on to the next stage —
+										// or, from the last, out by the sequence stage's success.
+										...(scopeSeq
+											? [
+													{
+														value: '',
+														label:
+															scopeSeq.stages.at(-1)?.id === s.id
+																? t('flow.insp.leaveOption')
+																: t('flow.insp.nextOption', {
+																		next: scopeSeq.stages[scopeSeq.stages.indexOf(s) + 1]?.id ?? ''
+																	})
+													}
+												]
+											: []),
+										...routable(s)
+											.filter((x) => x.id !== s.id)
+											.map((x) => ({ value: x.id, label: x.id })),
+										{ value: END, label: t('flow.insp.endOption') },
+										{ value: DONE, label: t('flow.insp.doneOption') },
+										{ value: ABORT, label: t('flow.insp.abortOption') }
+									]}
+									onchange={(v) => {
+										s.on_success = v || undefined;
+										onchange();
+									}}
+								/>
+							</span>
 						</div>
 					</div>
 					{#each edgeKindsFor(s.type) as kind (kind)}
@@ -1571,22 +1584,22 @@
 												sentinel: feedSourceFor(kind)
 											})}>{depth > 0 ? 'then' : kind}</span
 										>
-										<select
-											id="rt-{kind}-{depth}"
-											class="to"
-											aria-label={depth > 0 ? `${kind} · then #${depth}` : kind}
-											value={link.to}
-											onchange={(ev) => retarget(s.type, link, ev.currentTarget.value)}
-										>
-											{#each routable(s) as x (x.id)}<option value={x.id}>{x.id}</option>{/each}
-											{#if scopeSeq}
-												<option value={FAIL}>{t('flow.insp.failOption')}</option>
-											{/if}
-											<option value={END}>{t('flow.insp.endOption')}</option>
-											<option value={DONE}>{t('flow.insp.doneOption')}</option>
-											<option value={ABORT}>{t('flow.insp.abortOption')}</option>
-											<option value={DEBUG}>{t('flow.insp.debugOption')}</option>
-										</select>
+										<span class="to">
+											<Select
+												id="rt-{kind}-{depth}"
+												label={depth > 0 ? `${kind} · then #${depth}` : kind}
+												value={link.to}
+												options={[
+													...routable(s).map((x) => ({ value: x.id, label: x.id })),
+													...(scopeSeq ? [{ value: FAIL, label: t('flow.insp.failOption') }] : []),
+													{ value: END, label: t('flow.insp.endOption') },
+													{ value: DONE, label: t('flow.insp.doneOption') },
+													{ value: ABORT, label: t('flow.insp.abortOption') },
+													{ value: DEBUG, label: t('flow.insp.debugOption') }
+												]}
+												onchange={(v) => retarget(s.type, link, v)}
+											/>
+										</span>
 										{#if !isReservedTarget(link.to)}
 											{#if link.max === -1}
 												<button
@@ -1655,7 +1668,7 @@
 				{@const ph = phaseSel}
 				{@const firing = fires(ph.on)}
 				<div class="ih">
-					<span class="pill sm mono t-{kindHue(ph)}">{t(`flow.insp.kind.${ph.kind}`)}</span>
+					<span class="pill sm flat sq mono t-{kindHue(ph)}">{t(`flow.insp.kind.${ph.kind}`)}</span>
 					{#if ph.kind !== 'main'}<span class="mono iid ell">{ph.id}</span>{/if}
 					<span class="spacer"></span>
 					<span class="fnt tiny"
@@ -1677,14 +1690,15 @@
 					<div class="help">{t('flow.insp.mainHelp')}</div>
 					<div class="field">
 						<label for="ph-operates">{t('flow.insp.operatesOn')}</label>
-						<select
+						<Select
 							id="ph-operates"
 							value={doc.operates_on ?? 'ticket'}
-							onchange={(e) => setOperatesOn(e.currentTarget.value)}
-						>
-							{#each OPERATES_ON as r (r)}<option value={r}>{t(`flow.insp.operatesOn.${r}`)}</option
-								>{/each}
-						</select>
+							options={OPERATES_ON.map((r) => ({
+								value: r,
+								label: t(`flow.insp.operatesOn.${r}`)
+							}))}
+							onchange={(v) => setOperatesOn(v)}
+						/>
 						<div class="help">{t('flow.insp.operatesOnHelp')}</div>
 					</div>
 					{@render addTo(ph)}
@@ -1718,11 +1732,20 @@
 						<label for="ph-on"
 							>{t(ph.kind === 'outcome' ? 'flow.insp.firesOn' : 'flow.insp.opensOn')}</label
 						>
-						<select
+						<Select
 							id="ph-on"
 							value={ph.on.signal}
-							onchange={(e) => {
-								ph.on.signal = e.currentTarget.value;
+							options={[
+								...(ph.kind === 'watcher'
+									? [{ value: MANUAL, label: t('flow.insp.opensOn.manual') }]
+									: []),
+								...observed.map((sig) => ({ value: sig.slug, label: sig.title })),
+								...(firing && !observed.some((g) => g.slug === ph.on.signal)
+									? [{ value: ph.on.signal, label: ph.on.signal }]
+									: [])
+							]}
+							onchange={(v) => {
+								ph.on.signal = v;
 								const sig = signals.find((g) => g.slug === ph.on.signal);
 								if (!fires(ph.on)) {
 									// A person's act is the start: no policy, nothing to debounce.
@@ -1733,15 +1756,7 @@
 								}
 								onchange();
 							}}
-						>
-							{#if ph.kind === 'watcher'}
-								<option value={MANUAL}>{t('flow.insp.opensOn.manual')}</option>
-							{/if}
-							{#each observed as sig (sig.slug)}<option value={sig.slug}>{sig.title}</option>{/each}
-							{#if firing && !observed.some((g) => g.slug === ph.on.signal)}
-								<option value={ph.on.signal}>{ph.on.signal}</option>
-							{/if}
-						</select>
+						/>
 						<div class="help">
 							{ph.on.signal === MANUAL
 								? t('flow.insp.opensOnHelp.manual')
@@ -1751,22 +1766,21 @@
 					{#if firing}
 						<div class="field">
 							<label for="ph-start">{t('flow.insp.start')}</label>
-							<select
+							<Select
 								id="ph-start"
 								value={ph.on.start ?? 'auto'}
-								onchange={(e) => {
-									const v = e.currentTarget.value;
+								options={[
+									...START_POLICIES.map((p) => ({ value: p, label: t(`flow.insp.start.${p}`) })),
+									...policyParams(doc).map((p) => ({ value: '$' + p, label: '$' + p })),
+									...(isParamRef(ph.on.start) && !policyParams(doc).includes(ph.on.start.slice(1))
+										? [{ value: ph.on.start, label: ph.on.start }]
+										: [])
+								]}
+								onchange={(v) => {
 									ph.on.start = v === 'auto' ? undefined : v;
 									onchange();
 								}}
-							>
-								{#each START_POLICIES as p (p)}<option value={p}>{t(`flow.insp.start.${p}`)}</option
-									>{/each}
-								{#each policyParams(doc) as p (p)}<option value={'$' + p}>${p}</option>{/each}
-								{#if isParamRef(ph.on.start) && !policyParams(doc).includes(ph.on.start.slice(1))}
-									<option value={ph.on.start}>{ph.on.start}</option>
-								{/if}
-							</select>
+							/>
 							<div class="help">
 								{t(ph.kind === 'outcome' ? 'flow.insp.startHelpOutcome' : 'flow.insp.startHelp')}
 							</div>
@@ -1790,14 +1804,15 @@
 					{#if ph.kind === 'outcome'}
 						<div class="field">
 							<label for="ph-then">{t('flow.insp.then')}</label>
-							<select
+							<Select
 								id="ph-then"
 								value={ph.then ?? DONE}
-								onchange={(e) => setThen(ph, e.currentTarget.value)}
-							>
-								<option value={DONE}>{t('flow.insp.then.done')}</option>
-								<option value={ABORT}>{t('flow.insp.then.abort')}</option>
-							</select>
+								options={[
+									{ value: DONE, label: t('flow.insp.then.done') },
+									{ value: ABORT, label: t('flow.insp.then.abort') }
+								]}
+								onchange={(v) => setThen(ph, v)}
+							/>
 							<div class="help">
 								{t(phaseStageCount ? 'flow.insp.outcomeStagesHelp' : 'flow.insp.phaseThenHelp')}
 							</div>
@@ -1826,25 +1841,25 @@
 					]}
 					<div class="field">
 						<label for="ph-runs">{t('flow.insp.runs')}</label>
-						<select
+						<!-- Bound through phaseRuns: a replacement refused leaves the field on
+						     what the chain runs. -->
+						<Select
 							id="ph-runs"
-							value={phaseRuns}
-							onchange={(e) => {
-								const el = e.currentTarget;
-								void setRuns(ph, el.value).then(() => (el.value = phaseRuns));
-							}}
-						>
-							<option value=""
-								>{ph.kind === 'outcome' && !phaseStageCount
-									? t('flow.insp.runsNothing')
-									: t('flow.insp.runsOwn', { count: phaseStageCount })}</option
-							>
-							{#each choices as id (id)}<option value={id}
-									>{id === MAIN
-										? t('flow.insp.runsMain')
-										: t('flow.insp.runsSequence', { id })}</option
-								>{/each}
-						</select>
+							bind:value={() => phaseRuns, (v) => void setRuns(ph, v)}
+							options={[
+								{
+									value: '',
+									label:
+										ph.kind === 'outcome' && !phaseStageCount
+											? t('flow.insp.runsNothing')
+											: t('flow.insp.runsOwn', { count: phaseStageCount })
+								},
+								...choices.map((id) => ({
+									value: id,
+									label: id === MAIN ? t('flow.insp.runsMain') : t('flow.insp.runsSequence', { id })
+								}))
+							]}
+						/>
 						<div class="help">
 							{choices.length ? t('flow.insp.runsHelp') : t('flow.insp.runsHelpNone')}
 						</div>
@@ -1858,7 +1873,9 @@
 				{@const q = seqSel}
 				{@const users = runners((x) => x.type === 'sequence' && x.sequence === q.id)}
 				<div class="ih">
-					<span class="pill sm mono t-{STAGE_HUE.sequence}">{t('flow.insp.kind.sequence')}</span>
+					<span class="pill sm flat sq mono t-{STAGE_HUE.sequence}"
+						>{t('flow.insp.kind.sequence')}</span
+					>
 					<span class="mono iid ell">{q.id}</span>
 					<span class="spacer"></span>
 					<span class="fnt tiny">{t('flow.insp.phaseStages', { count: q.stages.length })}</span>
@@ -1954,7 +1971,7 @@
 				{@const q = schemaSel}
 				{@const users = schemaUsers(doc, q.name)}
 				<div class="ih">
-					<span class="pill sm mono t-az">{t('flow.insp.kind.schema')}</span>
+					<span class="pill sm flat sq mono t-az">{t('flow.insp.kind.schema')}</span>
 					<span class="mono iid ell">{q.name}</span>
 					<span class="spacer"></span>
 					<button
@@ -2023,7 +2040,7 @@
 				{@const users = mcpUsers(doc, m.name)}
 				{@const kind = mcpKind(m)}
 				<div class="ih">
-					<span class="pill sm mono t-tea">{t('flow.insp.kind.mcp')}</span>
+					<span class="pill sm flat sq mono t-tea">{t('flow.insp.kind.mcp')}</span>
 					<span class="mono iid ell">{m.name}</span>
 					<span class="spacer"></span>
 					<button
@@ -2058,33 +2075,33 @@
 				</div>
 				<div class="field">
 					<label for="mc-kind">{t('flow.insp.mcpKind')}</label>
-					<select
+					<Select
 						id="mc-kind"
 						value={kind}
-						onchange={(e) => setMCPKind(m, e.currentTarget.value as MCPKind)}
-					>
-						{#each MCP_KINDS as k (k)}<option value={k}>{t(`flow.insp.mcpKind.${k}`)}</option
-							>{/each}
-					</select>
+						options={MCP_KINDS.map((k) => ({ value: k, label: t(`flow.insp.mcpKind.${k}`) }))}
+						onchange={(v) => setMCPKind(m, v as MCPKind)}
+					/>
 				</div>
 				{#if kind === 'builtin'}
 					<div class="field">
 						<label for="mc-builtin">{t('flow.insp.mcpBuiltin')}</label>
-						<select
+						<Select
 							id="mc-builtin"
 							value={m.builtin ?? ''}
-							onchange={(e) => {
-								m.builtin = e.currentTarget.value;
+							options={[
+								...MCP_BUILTINS.map((b) => ({
+									value: b,
+									label: t(`flow.insp.mcpBuiltin.${b}` as 'flow.insp.mcpBuiltin.browser')
+								})),
+								...(m.builtin && !MCP_BUILTINS.includes(m.builtin)
+									? [{ value: m.builtin, label: m.builtin }]
+									: [])
+							]}
+							onchange={(v) => {
+								m.builtin = v;
 								onchange();
 							}}
-						>
-							{#each MCP_BUILTINS as b (b)}<option value={b}
-									>{t(`flow.insp.mcpBuiltin.${b}` as 'flow.insp.mcpBuiltin.browser')}</option
-								>{/each}
-							{#if m.builtin && !MCP_BUILTINS.includes(m.builtin)}
-								<option value={m.builtin}>{m.builtin}</option>
-							{/if}
-						</select>
+						/>
 						<div class="help">{t('flow.insp.mcpBuiltinHelp')}</div>
 					</div>
 				{:else if kind === 'command'}
@@ -2163,14 +2180,12 @@
 				</div>
 				<div class="field">
 					<label for="fl-operates">{t('flow.insp.operatesOn')}</label>
-					<select
+					<Select
 						id="fl-operates"
 						value={doc.operates_on ?? 'ticket'}
-						onchange={(e) => setOperatesOn(e.currentTarget.value)}
-					>
-						{#each OPERATES_ON as r (r)}<option value={r}>{t(`flow.insp.operatesOn.${r}`)}</option
-							>{/each}
-					</select>
+						options={OPERATES_ON.map((r) => ({ value: r, label: t(`flow.insp.operatesOn.${r}`) }))}
+						onchange={(v) => setOperatesOn(v)}
+					/>
 					<div class="help">{t('flow.insp.operatesOnHelp')}</div>
 				</div>
 				<div class="lbl">{t('flow.insp.params')}</div>

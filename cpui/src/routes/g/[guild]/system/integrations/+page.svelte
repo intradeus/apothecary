@@ -111,6 +111,7 @@
 						<button
 							class="btn-sm"
 							class:btn-sel={adding[g.port] === d.kind}
+							aria-pressed={adding[g.port] === d.kind}
 							onclick={() =>
 								(adding = {
 									...adding,

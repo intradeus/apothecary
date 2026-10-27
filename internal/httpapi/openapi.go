@@ -263,6 +263,8 @@ var typeNameOverrides = map[string]string{
 	"run.View":                 "RunView",
 	"run.PingView":             "PingView",
 	"event.Option":             "PingOption",
+	"event.Form":               "PingForm",
+	"event.Field":              "PingField",
 	"event.Event":              "Event",
 	"flow.Doc":                 "FlowDoc",
 	"channels.Entry":           "ChannelEntry",

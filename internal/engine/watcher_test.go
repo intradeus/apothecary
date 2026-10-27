@@ -321,27 +321,24 @@ func (rh *watcherHarness) conflict(t *testing.T) {
 func (rh *watcherHarness) pick(t *testing.T, ids ...string) []string {
 	t.Helper()
 	p := rh.waitPing(t, event.PingSelect)
-	var chosen []string
-	for _, o := range p.Options {
+	if p.AnswerKind != event.AnswerForm || len(p.Form.Fields) != 1 || p.Form.Fields[0].ID != event.SelectField {
+		t.Fatalf("selection ping = kind %q form %+v", p.AnswerKind, p.Form)
+	}
+	opts := p.Form.Fields[0].Options
+	chosen := []any{}
+	for _, o := range opts {
 		for _, id := range ids {
 			if o.ID == id {
 				chosen = append(chosen, o.ID)
 			}
 		}
 	}
-	ans := strings.Join(chosen, "\n")
-	if len(ids) == 0 {
-		ans = event.SelectNone
-	}
-	if p.AnswerKind != event.AnswerMulti {
-		t.Fatalf("selection ping kind = %q", p.AnswerKind)
-	}
-	if err := rh.e.AnswerPing(p.ID, PingAnswer{Answer: ans}); err != nil {
+	if err := rh.e.AnswerPing(p.ID, PingAnswer{Answer: "accept", Content: map[string]any{event.SelectField: chosen}}); err != nil {
 		t.Fatal(err)
 	}
 	// What was offered, as "<id> — <label>: <detail>" for assertions.
-	out := make([]string, len(p.Options))
-	for i, o := range p.Options {
+	out := make([]string, len(opts))
+	for i, o := range opts {
 		out[i] = o.ID + " — " + o.Label + ": " + o.Detail
 	}
 	return out
@@ -675,9 +672,10 @@ func TestSelectionAnswerIsValidated(t *testing.T) {
 	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	p := rh.waitPing(t, event.PingSelect)
-	for _, bad := range []string{"", "d9", "approve"} {
-		if err := rh.e.AnswerPing(p.ID, PingAnswer{Answer: bad}); err == nil {
-			t.Errorf("answer %q accepted", bad)
+	for _, bad := range []PingAnswer{{}, {Answer: "approve"}, {Answer: "accept", Content: map[string]any{event.SelectField: []any{"d9"}}},
+		{Answer: "accept", Content: map[string]any{event.SelectField: "d1"}}} {
+		if err := rh.e.AnswerPing(p.ID, bad); err == nil {
+			t.Errorf("answer %+v accepted", bad)
 		}
 	}
 }

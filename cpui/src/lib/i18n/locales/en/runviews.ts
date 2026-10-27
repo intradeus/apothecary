@@ -116,7 +116,6 @@ export default {
 		"No pings. Gates and the agent's own questions land here — and in the inbox — when the run needs you.",
 	'runview.pings.unwanted': 'unwanted',
 	'runview.pings.wanted': 'wanted',
-	'runview.pings.st_answered': 'answered',
 	'runview.pings.st_withdrawn': 'withdrawn',
 	'runview.pings.you': 'You:',
 	'runview.pings.open_inbox': 'Open in inbox',

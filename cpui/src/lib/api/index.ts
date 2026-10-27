@@ -46,6 +46,7 @@ import type {
 	Ping,
 	PingPayload,
 	ReviewComment,
+	FormContent,
 	Preflight,
 	Project,
 	ProjectDraft,
@@ -416,15 +417,17 @@ export const pings = {
 	payload: async (pingId: string): Promise<PingPayload> =>
 		map.toPingPayload(await unwrap(gen.getPingFiles({ path: { pid: pingId } }))),
 
-	/** An answer; with `review`, the person's comments on the files shown
-	 *  (feedback is then the review's summary). A comment's attachments are
-	 *  among `attachmentIds`. */
+	/** An answer: approve|reject, or a form's accept (with its `content`)
+	 *  or decline (the reason in `feedback`). With `review`, the person's
+	 *  comments on the files shown (feedback is then the review's summary);
+	 *  a comment's attachments are among `attachmentIds`. */
 	answer: (
 		pingId: string,
 		answer: string,
 		feedback?: string,
 		attachmentIds?: string[],
-		review?: ReviewComment[]
+		review?: ReviewComment[],
+		content?: FormContent
 	) =>
 		unwrapVoid(
 			gen.answerPing({
@@ -432,6 +435,7 @@ export const pings = {
 				body: {
 					answer,
 					...(feedback ? { feedback } : {}),
+					...(content ? { content } : {}),
 					...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
 					...(review?.length ? { review: review.map(map.fromReviewComment) } : {})
 				}

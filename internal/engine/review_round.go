@@ -218,17 +218,23 @@ func threadOption(t ports.ReviewThread) event.Option {
 func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []ports.ReviewThread) (picked []ports.ReviewThread, waiting bool, err error) {
 	rs := x.rs
 	if rs.selectPing == nil {
-		opts := make([]event.Option, len(pending))
+		// One array field offering every pending thread, all of them picked
+		// to start with: unpicking is the deliberate act.
+		fd := event.Field{ID: event.SelectField, Type: event.FieldArray, Options: make([]event.Option, len(pending))}
+		all := make([]any, len(pending))
 		for i, t := range pending {
-			opts[i] = threadOption(t)
+			fd.Options[i] = threadOption(t)
+			all[i] = t.ID
 		}
+		fd.Default = all
+		form := &event.Form{Fields: []event.Field{fd}}
 		q := fmt.Sprintf("Which review comments on %s should be fixed? Uncheck the ones that are wrong, already handled, or not worth changing — they are left alone until someone comments on them again. Selecting none ends this round.", mr.Ref.URL)
 		p := &Ping{ID: x.e.newID(), RunID: rs.runID, Type: event.PingSelect, Question: q, Link: mr.Ref.URL,
-			StageID: st.ID, Options: opts, AnswerKind: event.AnswerMulti, RaisedAt: x.e.clock(), done: make(chan struct{})}
+			StageID: st.ID, Form: form, AnswerKind: event.AnswerForm, RaisedAt: x.e.clock(), done: make(chan struct{})}
 		x.e.mu.Lock()
 		x.e.pings[p.ID] = p
 		x.e.mu.Unlock()
-		raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: q, Link: p.Link, StageID: st.ID, Options: opts, AnswerKind: event.AnswerMulti}
+		raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: q, Link: p.Link, StageID: st.ID, Form: form, AnswerKind: event.AnswerForm}
 		if err := x.append(raised); err != nil {
 			return nil, true, err
 		}
@@ -240,7 +246,8 @@ func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []ports.Revie
 	if ans == nil {
 		return nil, true, errWaitingOnHuman
 	}
-	for _, id := range selectedOptions(ans.Answer) {
+	// A decline fixes none of them, as selecting none does.
+	for _, id := range formPicks(ans.Content, event.SelectField) {
 		for _, t := range pending {
 			if t.ID == id {
 				picked = append(picked, t)

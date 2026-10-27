@@ -1,8 +1,6 @@
 package kinds
 
 import (
-	"strings"
-
 	githubadapter "apothecary/internal/adapters/github"
 	"apothecary/internal/ports"
 )
@@ -45,16 +43,10 @@ func (GitHubIssues) Descriptor() Descriptor {
 }
 
 func (GitHubIssues) New(cfg Config) (ports.TicketSource, error) {
-	var repos []string
-	for part := range strings.SplitSeq(cfg.Str("repos", ""), ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			repos = append(repos, p)
-		}
-	}
 	return githubadapter.NewIssues(githubadapter.IssuesConfig{
 		BaseURL: cfg.Str("base_url", "https://api.github.com"),
 		Token:   cfg.Secrets["token"],
-		Repos:   repos,
+		Repos:   splitList(cfg.Str("repos", "")),
 	}), nil
 }
 

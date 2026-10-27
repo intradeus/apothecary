@@ -291,8 +291,10 @@ func TestAVerdictsApprovalCarriesItsComments(t *testing.T) {
 // A question an agent asked about its files is answered with a review the
 // same way: the answer, then the comments where they were made.
 func TestAnAnswerCarriesItsReview(t *testing.T) {
-	got := composeAnswerText(event.AnswerText, "text", "Mostly right.", []string{"docs/a.md"},
-		[]event.ReviewComment{{Path: "docs/a.md", StartLine: 2, EndLine: 2, Body: "this is wrong", AttachmentIDs: []string{"a1"}}},
+	form := &event.Form{Fields: []event.Field{{ID: AnswerField, Type: event.FieldString}}}
+	got := composeAnswerText(event.AnswerForm, form, PingAnswer{Answer: "accept", Content: map[string]any{AnswerField: "Mostly right."},
+		Review: []event.ReviewComment{{Path: "docs/a.md", StartLine: 2, EndLine: 2, Body: "this is wrong", AttachmentIDs: []string{"a1"}}}},
+		[]string{"docs/a.md"},
 		[]answerFile{{id: "a1", path: ".apothecary/attachments/ping-p/a1/fix.txt"}, {id: "a2", path: ".apothecary/attachments/ping-p/a2/more.txt"}})
 	want := "Mostly right.\n\n1 comment, on 1 file:\n\ndocs/a.md\n1. [line 2]\n   this is wrong\n   attached: .apothecary/attachments/ping-p/a1/fix.txt" +
 		"\n\nThe human attached these files — read them with your tools:\n- .apothecary/attachments/ping-p/a2/more.txt\n"

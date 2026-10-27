@@ -386,24 +386,20 @@ const (
 	// `confirm: true`). Answered like a gate — approve | reject — but it
 	// belongs to no stage: it is raised while the run is between phases.
 	PingPhaseConfirm = "phase_confirm"
-	// PingSelect asks a human to pick any number of its Options (which
-	// review threads a round should fix). The answer is the chosen options,
-	// one per line, or SelectNone.
-	PingSelect = "select"
-	SelectNone = "none"
+	// PingSelect asks a human which review threads a round should fix: a
+	// form of one array field (SelectField) offering the pending threads.
+	PingSelect  = "select"
+	SelectField = "threads"
 
 	// Answer kinds: the shape of the answer a ping takes, declared on the
 	// ping when it is raised (PingRaised.AnswerKind). One field, one table
 	// of rules — the UI renders it, the engine validates it, no caller
-	// infers it from the ping's type or its options.
+	// infers it from the ping's type.
 	//   yes_no    approve | reject (+ feedback)        gates, phase confirmations, the debug leaf
-	//   choice    one option id | "other" (+ note)     ask_human closed questions
-	//   multi     option ids, one per line | "none"    which review threads to fix
-	//   text      free text                            ask_human open questions
+	//   form      accept + content | decline + note    every question (Form): an agent's, a
+	//                                                  harness's own over ACP, which threads to fix
 	AnswerYesNo       = "yes_no"
-	AnswerChoice      = "choice"
-	AnswerMulti       = "multi"
-	AnswerText        = "text"
+	AnswerForm        = "form"
 	PingClarification = "clarification"
 	PingBlocker       = "blocker"
 	PingPermission    = "permission"
@@ -429,14 +425,9 @@ type PingRaised struct {
 	// was lost) carries the same key and gets the same ping back instead of
 	// asking the human twice.
 	Key string `json:"key,omitempty"`
-	// Options are the answer choices (PLAN4 M16): for a choice the answer
-	// is one of their ids — the agent asked a closed question so it can
-	// branch deterministically — or the reserved "other" escape hatch
-	// (system-provided, never declared; the feedback then carries the
-	// human's actual answer); for a multi, any subset of their ids.
-	Options []Option `json:"options,omitempty"`
-	// AnswerKind is the shape of the answer (the Answer* constants). Empty
-	// on pings raised before it existed; Kind() infers those.
+	// Form is what a question asks (AnswerForm): its fields, in order.
+	Form *Form `json:"form,omitempty"`
+	// AnswerKind is the shape of the answer (the Answer* constants).
 	AnswerKind string `json:"answer_kind,omitempty"`
 	// Phase, Subject and TriggerKey identify what a phase_confirm ping asks
 	// to start: which phase, on which checkout's merge request, for which
@@ -626,28 +617,26 @@ func OptionIDs(opts []Option) []string {
 	return out
 }
 
-// Kind is the ping's answer kind, inferred for pings recorded before the
-// field existed: a gate or phase confirmation is a yes/no, a selection a
-// multi, a question with options a choice, anything else free text.
+// Kind is the ping's answer kind: a gate, phase confirmation or debug leaf
+// is a yes/no, anything else a form.
 func (p *PingRaised) Kind() string {
 	if p.AnswerKind != "" {
 		return p.AnswerKind
 	}
-	switch {
-	case p.Type == PingGate || p.Type == PingPhaseConfirm || p.Type == PingDebug:
+	switch p.Type {
+	case PingGate, PingPhaseConfirm, PingDebug:
 		return AnswerYesNo
-	case p.Type == PingSelect:
-		return AnswerMulti
-	case len(p.Options) > 0:
-		return AnswerChoice
 	}
-	return AnswerText
+	return AnswerForm
 }
 
 type PingAnswered struct {
 	PingID   string `json:"ping_id"`
-	Answer   string `json:"answer"` // approve|reject|text
+	Answer   string `json:"answer"` // approve|reject (yes_no), accept|decline (form)
 	Feedback string `json:"feedback,omitempty"`
+	// Content is an accepted form's values, by field id: a string, number,
+	// bool, or (array) a list of option ids.
+	Content map[string]any `json:"content,omitempty"`
 	// AttachmentIDs are the files the human attached to this answer — the
 	// association is a replayable fact of the run, not just a side-table
 	// write (DESIGN-FILES §4).

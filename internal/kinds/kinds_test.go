@@ -372,6 +372,34 @@ func TestGitHubIssuesKind(t *testing.T) {
 	}
 }
 
+func TestGitLabIssuesKind(t *testing.T) {
+	gi := GitLabIssues{}
+	d := gi.Descriptor()
+	if d.Port != "ticketsource" || d.Kind != "gitlab" || d.Help == "" {
+		t.Errorf("descriptor = %+v", d)
+	}
+	src, err := gi.New(Config{
+		Values:  map[string]any{"projects": "acme/app, acme/platform/api,", "groups": "acme"},
+		Secrets: map[string]string{"token": "glpat-x"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := src.(ports.TicketWriter); !ok {
+		t.Error("the GitLab Issues source does not implement ports.TicketWriter")
+	}
+	if _, ok := src.(ports.TicketAttacher); !ok {
+		t.Error("the GitLab Issues source does not implement ports.TicketAttacher")
+	}
+	// The ticketsource kind shares its name with the repository kind.
+	reg := NewRegistry()
+	reg.RegisterTicketSource(gi)
+	reg.RegisterRepoHost(GitLab{})
+	if !reg.Valid("ticketsource", "gitlab") || !reg.Valid("repository", "gitlab") {
+		t.Error("gitlab kinds not valid in the registry")
+	}
+}
+
 func must[T any](v T, err error) T {
 	if err != nil {
 		panic(err)

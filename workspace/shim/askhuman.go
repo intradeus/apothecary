@@ -2,8 +2,10 @@ package main
 
 // ask_human MCP stdio server (DESIGN.md §10).
 //
-// Exposes one tool: ask_human{type, question, context?, options?,
-// artifacts?}. The tool call BLOCKS until the human answers: the agent runs
+// Exposes one tool: ask_human{type, question, context?, fields?,
+// artifacts?}. Its fields are ACP's elicitation form — the same kinds of
+// question a harness's own question tool asks over ACP (elicitation.go), so
+// both reach the human as one kind of ping. The tool call BLOCKS until the human answers: the agent runs
 // as a long-lived ACP session the engine follows, so nothing needs the turn
 // handed back any more, and the model never sees a "posted, stop now" notice
 // it might ignore.
@@ -91,39 +93,25 @@ func callEngine(method, path string, body any, env map[string]string) (*http.Res
 }
 
 type askArgs struct {
-	Type      string      `json:"type"`
-	Question  string      `json:"question"`
-	Context   string      `json:"context"`
-	Options   []askOption `json:"options"`
-	Multi     bool        `json:"multi"`
-	Artifact  string      `json:"artifact"`  // legacy single ref
-	Artifacts []string    `json:"artifacts"` // multi refs
+	Type     string `json:"type"`
+	Question string `json:"question"`
+	Context  string `json:"context"`
+	// Fields are the form, passed to the engine as given — it validates
+	// them (internal/event.Field is the shape).
+	Fields    []json.RawMessage `json:"fields"`
+	Artifact  string            `json:"artifact"`  // legacy single ref
+	Artifacts []string          `json:"artifacts"` // multi refs
 }
 
-// askOption is one answer choice: a bare string (id = label) or
-// {id, label, detail}. Passed to the engine as given.
-type askOption struct {
-	ID     string `json:"id"`
-	Label  string `json:"label,omitempty"`
-	Detail string `json:"detail,omitempty"`
-}
-
-func (o *askOption) UnmarshalJSON(data []byte) error {
-	if len(data) > 0 && data[0] == '"' {
-		var s string
-		if err := json.Unmarshal(data, &s); err != nil {
-			return err
-		}
-		*o = askOption{ID: s}
-		return nil
-	}
-	type plain askOption
-	var p plain
-	if err := json.Unmarshal(data, &p); err != nil {
-		return err
-	}
-	*o = askOption(p)
-	return nil
+// humanAnswer is what came back: Text is the engine-composed answer the
+// agent reads; Answer (accept|decline) and Content are the raw form answer
+// an elicitation is answered with. Parked: the run was parked before an
+// answer came, which the session receives when it resumes.
+type humanAnswer struct {
+	Text    string
+	Answer  string
+	Content map[string]any
+	Parked  bool
 }
 
 // errCancelled: the client cancelled the call (the engine parked the run and
@@ -139,7 +127,7 @@ func newKey() string {
 // askHuman drives the protocol until the human answers, the call is
 // cancelled (done closes), or the engine stays unreachable too long. tick is
 // called while waiting (MCP progress).
-func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
+func askHuman(args askArgs, done <-chan struct{}, tick func()) (humanAnswer, error) {
 	env := readRunEnv()
 	refs := args.Artifacts
 	if len(refs) == 0 && args.Artifact != "" {
@@ -180,7 +168,7 @@ func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
 	for {
 		select {
 		case <-done:
-			return "", errCancelled
+			return humanAnswer{}, errCancelled
 		default:
 		}
 		var res *http.Response
@@ -190,8 +178,7 @@ func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
 				"type":      args.Type,
 				"question":  args.Question,
 				"context":   args.Context,
-				"options":   append([]askOption{}, args.Options...),
-				"multi":     args.Multi,
+				"fields":    append([]json.RawMessage{}, args.Fields...),
 				"artifacts": append([]string{}, refs...),
 				"hold_ms":   graceHold.Milliseconds(),
 				"key":       key,
@@ -204,10 +191,10 @@ func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
 				downSince = time.Now()
 			}
 			if time.Since(downSince) > unreachableLimit {
-				return "", fmt.Errorf("ask_human unavailable: %v", err)
+				return humanAnswer{}, fmt.Errorf("ask_human unavailable: %v", err)
 			}
 			if !sleep(backoff) {
-				return "", errCancelled
+				return humanAnswer{}, errCancelled
 			}
 			backoff = min(backoff*2, backoffCap)
 			continue
@@ -220,7 +207,7 @@ func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
 			// Engine restarted and rotated the run token; pick up the fresh one.
 			drain(res)
 			if !sleep(pollInterval) {
-				return "", errCancelled
+				return humanAnswer{}, errCancelled
 			}
 			env = readRunEnv()
 		case http.StatusOK:
@@ -231,56 +218,33 @@ func askHuman(args askArgs, done <-chan struct{}, tick func()) (string, error) {
 			}
 			drain(res)
 			if pingID == "" {
-				return "", errors.New("ask_human failed: engine did not return the question's id")
+				return humanAnswer{}, errors.New("ask_human failed: engine did not return the question's id")
 			}
 		case http.StatusGone:
 			drain(res)
 			// Parked: the engine is ending this turn and will deliver the
 			// answer when the session resumes.
-			return parkedNotice(pingID), nil
+			return humanAnswer{Text: parkedNotice(pingID), Parked: true}, nil
 		default:
 			text, _ := io.ReadAll(io.LimitReader(res.Body, 300))
 			res.Body.Close()
-			return "", fmt.Errorf("ask_human failed: engine returned %d: %s", res.StatusCode, text)
+			return humanAnswer{}, fmt.Errorf("ask_human failed: engine returned %d: %s", res.StatusCode, text)
 		}
 	}
 }
 
-func decodeAnswer(res *http.Response) (string, error) {
+func decodeAnswer(res *http.Response) (humanAnswer, error) {
 	var body struct {
-		Text      string   `json:"text"` // engine-composed answer
-		Answer    string   `json:"answer"`
-		Feedback  string   `json:"feedback"`
-		Artifacts []string `json:"artifacts"` // workspace paths of the human's attachments
+		Text    string         `json:"text"` // engine-composed answer
+		Answer  string         `json:"answer"`
+		Content map[string]any `json:"content"`
 	}
 	err := json.NewDecoder(res.Body).Decode(&body)
 	res.Body.Close()
 	if err != nil {
-		return "", fmt.Errorf("ask_human failed: bad engine response: %v", err)
+		return humanAnswer{}, fmt.Errorf("ask_human failed: bad engine response: %v", err)
 	}
-	if body.Text != "" {
-		return body.Text, nil
-	}
-	// Fallback for an engine that predates the composed field: free-text
-	// answers arrive as answer:"text" + the text in feedback; option answers
-	// keep the chosen option in answer with an optional note in feedback
-	// (PLAN4 M16). "other" is the hardcoded escape hatch: the human rejected
-	// every offered option and the note IS their answer.
-	var answer string
-	switch {
-	case body.Answer == "text":
-		answer = body.Feedback
-	case body.Answer == "other":
-		answer = "other — none of the offered options fit; the human answered: " + body.Feedback
-	case body.Feedback != "":
-		answer = body.Answer + "\n(note: " + body.Feedback + ")"
-	default:
-		answer = body.Answer
-	}
-	if len(body.Artifacts) > 0 {
-		answer += "\n\nThe human attached these files — read them with your tools:\n- " + strings.Join(body.Artifacts, "\n- ")
-	}
-	return answer, nil
+	return humanAnswer{Text: body.Text, Answer: body.Answer, Content: body.Content}, nil
 }
 
 // parkedNotice is returned in the rare race where the call outlives the park
@@ -309,40 +273,59 @@ var toolDef = map[string]any{
 		"cannot resolve (type=blocker), or an action needing approval " +
 		"(type=permission). The call waits until the human answers and returns " +
 		"their answer as text, so you never have to guess — do not work around " +
-		"a slow answer. For closed " +
-		"questions, pass options — the human picks exactly one (buttons in " +
-		"their UI) and you can branch on the returned option id deterministically. " +
-		"The human ALWAYS also has an automatic 'other' escape hatch: if none " +
-		"of your options fit, the result starts with 'other —' followed by " +
-		"their free-text answer — handle that case rather than assuming one of " +
-		"your options. With multi: true the human may pick any number of the " +
-		"options (or none): the result is 'selected: id, id' or 'none selected'. " +
-		"An option is a string, or {id, label, detail} when the human needs a " +
-		"word more than the id. To have the human review documents you wrote, pass " +
-		"artifacts with repo-relative paths (e.g. [\"artifacts/comparison.md\"]): " +
-		"they see them rendered with inline commenting.",
+		"a slow answer. Without fields the human answers in free text. With " +
+		"fields you get a form, answered field by field: a string field with " +
+		"options is one pick (radio buttons — branch on the returned option id), " +
+		"an array field with options any number of picks (checkboxes; the " +
+		"result reads 'selected: id, id' or 'none selected'), and string, " +
+		"number, integer and boolean fields are typed inputs. One field returns " +
+		"its value; several return one 'id: value' line each. The human may " +
+		"always decline instead: the result then starts with 'declined —' " +
+		"followed by their reason — handle that rather than assuming an answer. " +
+		"Never add an 'other' option yourself. To have the human review " +
+		"documents you wrote, pass artifacts with repo-relative paths (e.g. " +
+		"[\"artifacts/comparison.md\"]): they see them rendered with inline commenting.",
 	"inputSchema": map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"type":     map[string]any{"type": "string", "enum": []string{"clarification", "blocker", "permission"}},
 			"question": map[string]any{"type": "string", "description": "The question for the human"},
 			"context":  map[string]any{"type": "string", "description": "Optional supporting context (markdown renders)"},
-			"options": map[string]any{
-				"type": "array",
-				"items": map[string]any{"anyOf": []any{
-					map[string]any{"type": "string"},
-					map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
-						"id":     map[string]any{"type": "string", "description": "what the answer names; one line"},
-						"label":  map[string]any{"type": "string", "description": "what the human reads (defaults to the id)"},
-						"detail": map[string]any{"type": "string", "description": "an optional second line"},
-					}},
-				}},
-				"description": "Optional closed answer set (max 16); the answer will be one of these ids, or 'other' " +
-					"with the human's own text (added automatically — never declare 'other' yourself)",
-			},
-			"multi": map[string]any{
-				"type":        "boolean",
-				"description": "With options: the human may pick any number of them, or none",
+			"fields": map[string]any{
+				"type":        "array",
+				"description": "Optional form (at most 20 fields), in the order the human reads them; omit for one free-text answer",
+				"items": map[string]any{
+					"type":     "object",
+					"required": []string{"id", "type"},
+					"properties": map[string]any{
+						"id":          map[string]any{"type": "string", "description": "what the answer is keyed by; one line"},
+						"type":        map[string]any{"type": "string", "enum": []string{"string", "number", "integer", "boolean", "array"}},
+						"title":       map[string]any{"type": "string", "description": "the question this field asks (defaults to the id)"},
+						"description": map[string]any{"type": "string", "description": "an optional second line"},
+						"required":    map[string]any{"type": "boolean"},
+						"options": map[string]any{
+							"type":        "array",
+							"description": "string: pick one; array: pick any (required for array). At most 50.",
+							"items": map[string]any{"anyOf": []any{
+								map[string]any{"type": "string"},
+								map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
+									"id":     map[string]any{"type": "string", "description": "what the answer names; one line"},
+									"label":  map[string]any{"type": "string", "description": "what the human reads (defaults to the id)"},
+									"detail": map[string]any{"type": "string", "description": "an optional second line"},
+								}},
+							}},
+						},
+						"format":     map[string]any{"type": "string", "enum": []string{"email", "uri", "date", "date-time"}},
+						"pattern":    map[string]any{"type": "string", "description": "string: a regular expression the answer must match"},
+						"min_length": map[string]any{"type": "integer"},
+						"max_length": map[string]any{"type": "integer"},
+						"minimum":    map[string]any{"type": "number"},
+						"maximum":    map[string]any{"type": "number"},
+						"min_items":  map[string]any{"type": "integer"},
+						"max_items":  map[string]any{"type": "integer"},
+						"default":    map[string]any{"description": "pre-fills the field: a value of its type, or (array) a list of option ids"},
+					},
+				},
 			},
 			"artifacts": map[string]any{
 				"type":        "array",
@@ -486,7 +469,7 @@ func serveMCP(in io.Reader) {
 								"message": "waiting for the human to answer"}})
 					}
 				}
-				answer, err := askHuman(args, done, tick)
+				ans, err := askHuman(args, done, tick)
 				if errors.Is(err, errCancelled) {
 					return // the client gave up on this call; nothing is owed
 				}
@@ -500,7 +483,7 @@ func serveMCP(in io.Reader) {
 					return
 				}
 				reply(id, map[string]any{
-					"content": []any{map[string]any{"type": "text", "text": answer}},
+					"content": []any{map[string]any{"type": "text", "text": ans.Text}},
 				})
 			}(msg.ID, p.Arguments, p.Meta.ProgressToken)
 		case "ping":

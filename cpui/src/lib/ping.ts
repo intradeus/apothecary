@@ -4,9 +4,19 @@
 //
 // A ping's TYPE says who asked and why (a stage's gate, a phase
 // confirmation, a thread selection, an agent's clarification/blocker/
-// permission); its ANSWER KIND says what shape the answer takes. The card
-// renders the kind; the type only colours the badge and tunes the wording.
-import type { AnswerKind, PingOption, ReviewComment } from '$lib/domain';
+// permission); its ANSWER KIND says what shape the answer takes — a yes/no,
+// or a form (ACP's elicitation form: every question). The card renders the
+// kind; the type only colours the badge and tunes the wording.
+import type {
+	AnswerKind,
+	FieldType,
+	FormContent,
+	FormValue,
+	PingField,
+	PingForm,
+	PingOption,
+	ReviewComment
+} from '$lib/domain';
 import type { Hue } from '$lib/ui/hues';
 import { I } from '$lib/ui/icons';
 import { t } from '$lib/i18n/index.svelte';
@@ -17,7 +27,6 @@ export const DEBUG_TYPE = 'debug';
 export const isDebug = (type: string) => type === DEBUG_TYPE;
 export const PHASE_CONFIRM_TYPE = 'phase_confirm';
 export const SELECT_TYPE = 'select';
-export const SELECT_NONE = 'none';
 export const isPhaseConfirm = (type: string) => type === PHASE_CONFIRM_TYPE;
 /** A question an agent raised through ask_human — the kind a well-briefed
  *  agent should not need (shown as "unwanted"); everything else the engine
@@ -58,13 +67,123 @@ export function toReviewComment(o: unknown): ReviewComment {
 	};
 }
 
-/** The declared answer kind, inferred (as the engine does) when the source
- *  predates the field. */
-export function answerKindOf(kind: unknown, type: string, options: unknown): AnswerKind {
-	if (kind === 'yes_no' || kind === 'choice' || kind === 'multi' || kind === 'text') return kind;
-	if (type === 'gate' || type === 'phase_confirm' || type === 'debug') return 'yes_no';
-	if (type === 'select') return 'multi';
-	return Array.isArray(options) && options.length ? 'choice' : 'text';
+/** The declared answer kind; absent, as the engine reads it: the engine's
+ *  own decisions are yes/no, anything else a form. */
+export function answerKindOf(kind: unknown, type: string): AnswerKind {
+	if (kind === 'yes_no' || kind === 'form') return kind;
+	return type === 'gate' || type === 'phase_confirm' || type === 'debug' ? 'yes_no' : 'form';
+}
+
+const FIELD_TYPES: FieldType[] = ['string', 'number', 'integer', 'boolean', 'array'];
+const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+
+/** A form as the wire or a ping_raised payload carries it, in the
+ *  frontend's shape. */
+export function toPingForm(o: unknown): PingForm | undefined {
+	const r = o as { fields?: unknown[] | null } | null | undefined;
+	if (!r || !Array.isArray(r.fields)) return undefined;
+	return {
+		fields: r.fields.map((raw): PingField => {
+			const f = (raw ?? {}) as Record<string, unknown>;
+			const type = FIELD_TYPES.includes(f.type as FieldType) ? (f.type as FieldType) : 'string';
+			return {
+				id: String(f.id ?? ''),
+				type,
+				title: (f.title as string) || undefined,
+				description: (f.description as string) || undefined,
+				required: f.required === true,
+				options: ((f.options as unknown[] | null) ?? []).map(toPingOption),
+				format: (f.format as PingField['format']) || undefined,
+				pattern: (f.pattern as string) || undefined,
+				minLength: num(f.min_length),
+				maxLength: num(f.max_length),
+				minimum: num(f.minimum),
+				maximum: num(f.maximum),
+				minItems: num(f.min_items),
+				maxItems: num(f.max_items),
+				default: (f.default ?? undefined) as FormValue | undefined
+			};
+		})
+	};
+}
+
+/** An answer's content as the wire or a ping_answered payload carries it. */
+export function toFormContent(o: unknown): FormContent | undefined {
+	return o && typeof o === 'object' && !Array.isArray(o) ? (o as FormContent) : undefined;
+}
+
+/** How the card asks a form: `text` — one free-text field, the textarea is
+ *  the answer; `pick` — one field to pick one option of, a button each;
+ *  `fields` — anything else, every field drawn. */
+export function formShape(form: PingForm | undefined): 'text' | 'pick' | 'fields' {
+	const f = form?.fields ?? [];
+	if (f.length !== 1) return 'fields';
+	if (f[0].type === 'string' && !f[0].format && !f[0].pattern)
+		return f[0].options.length ? 'pick' : 'text';
+	return 'fields';
+}
+
+/** The values a form starts with: each field's default; an array none
+ *  picked unless it says otherwise. */
+export function formDefaults(form: PingForm | undefined): Record<string, FormValue | undefined> {
+	const out: Record<string, FormValue | undefined> = {};
+	for (const f of form?.fields ?? []) {
+		if (f.type === 'array') out[f.id] = Array.isArray(f.default) ? [...f.default] : [];
+		else out[f.id] = f.default;
+	}
+	return out;
+}
+
+const blank = (v: FormValue | undefined) =>
+	v === undefined || (typeof v === 'string' && v.trim() === '') || Number.isNaN(v);
+
+/** The answers a form is sent with: blanks dropped, text trimmed. */
+export function formContent(
+	form: PingForm | undefined,
+	values: Record<string, FormValue | undefined>
+): FormContent {
+	const out: FormContent = {};
+	for (const f of form?.fields ?? []) {
+		const v = values[f.id];
+		if (blank(v)) continue;
+		out[f.id] = typeof v === 'string' ? v.trim() : v!;
+	}
+	return out;
+}
+
+/** The required fields still unanswered (an array's empty pick is an
+ *  answer — "none"). */
+export function formMissing(
+	form: PingForm | undefined,
+	values: Record<string, FormValue | undefined>
+): PingField[] {
+	return (form?.fields ?? []).filter((f) => f.required && blank(values[f.id]));
+}
+
+/** What a field says it asks. */
+export const fieldLabel = (f: PingField) => f.title || f.id;
+
+/** One field's answer as a person reads it: option labels, yes/no. */
+export function fieldAnswerText(f: PingField, v: FormValue | undefined): string {
+	const label = (id: string) => f.options.find((o) => o.id === id)?.label ?? id;
+	if (v === undefined) return '—';
+	if (Array.isArray(v)) return v.length ? v.map(label).join(', ') : t('ping.noneSelected');
+	if (typeof v === 'boolean') return v ? t('ping.yes') : t('ping.no');
+	return typeof v === 'string' ? label(v) : String(v);
+}
+
+/** A form answer in one line, for the answered row and the transcript. */
+export function answerSummary(
+	p: Pick<PingLike, 'answerKind' | 'form' | 'answer' | 'content' | 'feedback'>
+): string {
+	if (p.answerKind !== 'form') return p.answer ?? '';
+	if (p.answer === 'decline') return t('ping.verdict.declined');
+	const fields = p.form?.fields ?? [];
+	if (fields.length === 1) return fieldAnswerText(fields[0], p.content?.[fields[0].id]);
+	return fields
+		.filter((f) => p.content?.[f.id] !== undefined)
+		.map((f) => `${fieldLabel(f)}: ${fieldAnswerText(f, p.content?.[f.id])}`)
+		.join(' · ');
 }
 
 // PingLike is the subset PingCard needs, in the frontend's own vocabulary: a
@@ -81,10 +200,13 @@ export interface PingLike {
 	files?: string[];
 	link?: string;
 	primaryRef?: string;
-	options?: PingOption[];
+	/** What a form ping asks. */
+	form?: PingForm;
 	status?: string; // pending | answered | withdrawn
 	answer?: string;
 	feedback?: string;
+	/** An accepted form's values. */
+	content?: FormContent;
 	/** The answer's comments on the files shown. */
 	review?: ReviewComment[];
 	answeredAt?: string;
@@ -147,5 +269,7 @@ export function answerMeta(p: Pick<PingLike, 'status' | 'answer'>): {
 		return { glyph: I.none, word: t('ping.verdict.withdrawn'), hue: 'mut' };
 	if (p.answer === 'approve') return { glyph: I.ok, word: t('ping.verdict.approved'), hue: 'grn' };
 	if (p.answer === 'reject') return { glyph: I.loop, word: t('ping.verdict.rejected'), hue: 'amb' };
+	if (p.answer === 'decline')
+		return { glyph: I.none, word: t('ping.verdict.declined'), hue: 'amb' };
 	return { glyph: I.ok, word: t('ping.verdict.answered'), hue: 'grn' };
 }

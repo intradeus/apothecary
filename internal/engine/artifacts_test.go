@@ -272,7 +272,7 @@ main:
 	runIDCh <- runID
 
 	p := h.waitPing(t, "clarification")
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)

@@ -8,6 +8,7 @@
 	import { fileLines } from '$lib/diff';
 	import { fmtBytes } from '$lib/format';
 	import { I } from '$lib/ui/icons';
+	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import CodeView from '$lib/ui/CodeView.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
@@ -85,7 +86,7 @@
 				{#each rows as r (r.entry.path)}
 					<button
 						class="rowbtn node mono"
-						class:sel={r.entry.path === selected}
+						class:on={r.entry.path === selected}
 						class:ignored={r.entry.ignored}
 						style:padding-left="{8 + r.depth * 12}px"
 						aria-expanded={r.entry.dir ? !!open[r.entry.path] : undefined}
@@ -102,9 +103,7 @@
 				{/each}
 			</div>
 			<div class="tf">
-				<label class="ig"
-					><input type="checkbox" bind:checked={showIgnored} /> {t('run.files.showIgnored')}</label
-				>
+				<Checkbox size="sm" bind:checked={showIgnored} label={t('run.files.showIgnored')} />
 				<button
 					class="btn-icon"
 					title={t('run.files.refresh')}
@@ -192,16 +191,6 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-	}
-	.ig {
-		margin: 0;
-		display: flex;
-		gap: 6px;
-		align-items: center;
-		font-size: var(--fs-help);
-		color: var(--fnt);
-		font-weight: 400;
-		cursor: pointer;
 	}
 	.viewer {
 		min-width: 0;

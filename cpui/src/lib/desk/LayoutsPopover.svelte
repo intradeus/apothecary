@@ -101,8 +101,6 @@
 	}
 	.help {
 		padding: 4px 8px 4px;
-		font-size: var(--fs-meta);
-		color: var(--mut);
 		line-height: 1.45;
 		white-space: normal;
 	}

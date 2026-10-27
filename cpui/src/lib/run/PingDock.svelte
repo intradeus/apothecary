@@ -4,6 +4,7 @@
 	// docks it and says when earlier pings queue behind it.
 	import PingCard from '$lib/PingCard.svelte';
 	import type { RunPing } from './derive';
+	import type { FormContent } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -16,7 +17,7 @@
 		/** Earlier pings of this run still waiting behind this one. */
 		queued: number;
 		busy: boolean;
-		onanswer: (answer: string, note?: string, files?: string[]) => void;
+		onanswer: (answer: string, note?: string, files?: string[], content?: FormContent) => void;
 	} = $props();
 </script>
 

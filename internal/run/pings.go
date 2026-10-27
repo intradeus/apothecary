@@ -20,10 +20,10 @@ type PingView struct {
 	// Files are attached workspace paths (first = the primary reviewed
 	// document), Link a resolved URL payload. PayloadRef is the DERIVED
 	// primary (Link, else Files[0]) kept for the current API shape.
-	Files      []string       `json:"files,omitempty"`
-	Link       string         `json:"link,omitempty"`
-	PayloadRef string         `json:"payload_ref,omitempty"`
-	Options    []event.Option `json:"options,omitempty"`
+	Files      []string    `json:"files,omitempty"`
+	Link       string      `json:"link,omitempty"`
+	PayloadRef string      `json:"payload_ref,omitempty"`
+	Form       *event.Form `json:"form,omitempty"`
 	// AnswerKind is the shape of the answer the ping takes (event.Answer*).
 	AnswerKind string `json:"answer_kind"`
 	// Phase is the phase the ping belongs to (a confirmation's phase to
@@ -35,6 +35,8 @@ type PingView struct {
 	Status    string `json:"status"` // pending|answered|withdrawn (run ended unanswered)
 	Answer    string `json:"answer,omitempty"`
 	Feedback  string `json:"feedback,omitempty"`
+	// Content is an accepted form's values, by field id.
+	Content map[string]any `json:"content,omitempty"`
 	// AnswerAttachmentIDs are the files the human attached to the answer
 	// (projected from ping_answered).
 	AnswerAttachmentIDs []string `json:"answer_attachment_ids,omitempty"`
@@ -67,7 +69,7 @@ func ReducePings(evs []event.Event) []PingView {
 				PingID: p.PingID, RunID: evs[i].RunID, Type: p.Type, StageID: p.StageID,
 				Question: p.Question, Context: p.Context,
 				Files: p.Files, Link: p.Link, PayloadRef: Primary(p.Files, p.Link),
-				Options: p.Options, AnswerKind: p.Kind(), Phase: p.Phase, EndsPhase: p.EndsPhase,
+				Form: p.Form, AnswerKind: p.Kind(), Phase: p.Phase, EndsPhase: p.EndsPhase,
 				Status: "pending", RaisedAt: evs[i].TS,
 			})
 		case *event.PingAnswered:
@@ -76,6 +78,7 @@ func ReducePings(evs []event.Event) []PingView {
 				out[j].Status = "answered"
 				out[j].Answer = p.Answer
 				out[j].Feedback = p.Feedback
+				out[j].Content = p.Content
 				out[j].AnswerAttachmentIDs = p.AttachmentIDs
 				out[j].Review = p.Review
 				out[j].AnsweredAt = &ts

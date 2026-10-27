@@ -11,6 +11,7 @@ import { toAgentToolCall } from '$lib/api/mappers';
 import type { Tone as AnyTone } from '$lib/ui/hues';
 import { I } from '$lib/ui/icons';
 import { t } from '$lib/i18n/index.svelte';
+import { answerKindOf, answerSummary, fieldLabel, toFormContent, toPingForm } from '$lib/ping';
 
 /** A status line's tone; its hue comes from TONE_HUE. */
 export type Tone = Exclude<AnyTone, 'mut'>;
@@ -137,7 +138,7 @@ const dur = (ms: unknown) => {
 export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[] {
 	const items: ChatItem[] = [];
 	const delivered = new Map<string, string>();
-	const answers = new Map<string, string>();
+	const answered = new Map<string, Record<string, unknown>>();
 	const persistedSegments = new Set<string>();
 	const persistedTools = new Set<string>();
 	for (const e of events) {
@@ -145,9 +146,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 			for (const id of (e.payload.message_ids as string[] | undefined) ?? [])
 				delivered.set(id, e.ts);
 		} else if (e.type === 'ping_answered') {
-			const fb = e.payload.feedback as string | undefined;
-			const a = String(e.payload.answer ?? '');
-			answers.set(String(e.payload.ping_id), a === 'text' ? (fb ?? '') : fb ? `${a} — ${fb}` : a);
+			answered.set(String(e.payload.ping_id), e.payload);
 		} else if (e.type === 'agent_message') {
 			persistedSegments.add(String(e.payload.segment ?? ''));
 		} else if (e.type === 'agent_tool') {
@@ -355,21 +354,34 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				break;
 			case 'ping_raised':
 				if (p.type === 'gate' || p.type === 'phase_confirm' || p.type === 'debug') break;
-				items.push({
-					kind: 'question',
-					key,
-					pingId: String(p.ping_id),
-					type: String(p.type ?? ''),
-					question: String(p.question ?? ''),
-					options: ((p.options as unknown[] | undefined) ?? []).map((o) =>
-						typeof o === 'string'
-							? o
-							: String(
-									(o as { label?: string; id?: string })?.label ?? (o as { id?: string })?.id ?? ''
-								)
-					),
-					answer: answers.get(String(p.ping_id))
-				});
+				{
+					const form = toPingForm(p.form);
+					const a = answered.get(String(p.ping_id));
+					// What it offered: a lone field's options, else the fields.
+					const offered =
+						form?.fields.length === 1
+							? form.fields[0].options.map((o) => o.label)
+							: (form?.fields ?? []).map(fieldLabel);
+					let answer: string | undefined;
+					if (a) {
+						answer = answerSummary({
+							answerKind: answerKindOf(p.answer_kind, String(p.type ?? '')),
+							form,
+							answer: String(a.answer ?? ''),
+							content: toFormContent(a.content)
+						});
+						if (a.feedback) answer += ` — ${a.feedback}`;
+					}
+					items.push({
+						kind: 'question',
+						key,
+						pingId: String(p.ping_id),
+						type: String(p.type ?? ''),
+						question: String(p.question ?? ''),
+						options: offered,
+						answer
+					});
+				}
 				break;
 		}
 	}

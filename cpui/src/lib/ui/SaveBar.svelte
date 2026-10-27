@@ -42,7 +42,7 @@
 </script>
 
 <div class="sb lg">
-	{#if note}<span class="note-t">{note}</span>{/if}
+	{#if note}<span class="help">{note}</span>{/if}
 	<span class="grow"></span>
 	{#if dirty}
 		<span class="unsaved">{t('ui.save.unsaved')}</span>
@@ -76,10 +76,6 @@
 		flex-wrap: wrap;
 		padding: 8px 10px 8px 14px;
 		border-radius: var(--r-group);
-	}
-	.note-t {
-		font-size: var(--fs-help);
-		color: var(--mut);
 	}
 	.saved {
 		font-size: var(--fs-meta);

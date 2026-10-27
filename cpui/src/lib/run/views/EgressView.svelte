@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SearchInput from '$lib/ui/SearchInput.svelte';
 	// Egress (DESIGN §6): every host this workspace reached or was refused,
 	// and the rule in force NOW per host — toggled live, saved to the
 	// workshop's policy. "Seen" is history and never changes; "rule now" is
@@ -143,12 +144,15 @@
 				{ value: 'deny', label: t('runview.egress.denied'), count: nDeny }
 			]}
 		/>
-		<input
-			class="q"
-			placeholder={t('runview.egress.filter_ph')}
-			bind:value={host}
-			aria-label={t('runview.egress.filter_aria')}
-		/>
+		<span class="q"
+			><SearchInput
+				size="sm"
+				width={180}
+				bind:value={host}
+				placeholder={t('runview.egress.filter_ph')}
+				label={t('runview.egress.filter_aria')}
+			/></span
+		>
 	</div>
 	{#if error}
 		<div class="pad">
@@ -244,10 +248,9 @@
 <style>
 	.q {
 		margin-left: auto;
-		flex: 1 1 100px;
-		max-width: 180px;
-		padding: 3px 10px;
-		font-size: var(--fs-label);
+		display: flex;
+		flex: 0 1 180px;
+		min-width: 0;
 	}
 	.pad {
 		padding: 0 8px 8px;

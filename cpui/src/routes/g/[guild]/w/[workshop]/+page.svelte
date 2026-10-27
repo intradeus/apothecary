@@ -16,8 +16,7 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
-	import { indicator } from '$lib/ui/motion';
-	import { keepInView } from '$lib/ui/inview';
+	import Tabs from '$lib/ui/Tabs.svelte';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
 	import WorkshopBadge from '$lib/workshop/WorkshopBadge.svelte';
 	import OverviewTab from '$lib/workshop/OverviewTab.svelte';
@@ -212,17 +211,18 @@
 	</div>
 </Popover>
 
-<nav class="tabs wt" aria-label={t('page.workshop.sections')} use:indicator use:keepInView>
-	{#each TABS as tb (tb)}
-		<a
-			href={to.workshop(projectId, tb)}
-			class:on={tab === tb}
-			aria-current={tab === tb ? 'page' : undefined}
-			data-sveltekit-noscroll
-			>{LABELS[tb]}{#if counts[tb] !== undefined}<span class="count">{counts[tb]}</span>{/if}</a
-		>
-	{/each}
-</nav>
+<div class="wt">
+	<Tabs
+		label={t('page.workshop.sections')}
+		value={tab}
+		items={TABS.map((tb) => ({
+			value: tb,
+			label: LABELS[tb],
+			count: counts[tb],
+			href: to.workshop(projectId, tb)
+		}))}
+	/>
+</div>
 
 <div class="page">
 	{#if error && !project}
@@ -270,28 +270,11 @@
 	.wt {
 		flex: none;
 		margin: 0 22px;
-		padding: 0;
-		gap: 4px;
-		overflow-x: auto;
-		scrollbar-width: none;
-	}
-	.wt > a {
-		padding: 5px 11px;
 	}
 	@media (max-width: 760px) {
 		.wt {
 			margin: 0 12px;
-			mask-image: linear-gradient(
-				to right,
-				transparent,
-				#000 12px,
-				#000 calc(100% - 12px),
-				transparent
-			);
 		}
-	}
-	.wt .count {
-		padding: 0 5px;
 	}
 	/* The tab's panes clip (overflow: hidden), so they must not shrink in the
 	   page's flex column. */

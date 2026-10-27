@@ -149,6 +149,7 @@
 	--z-modal: 50; /* modal scrims */
 	--z-drawer: 55; /* the mobile drawer */
 	--z-palette: 60; /* the command palette, above everything */
+	--z-dropdown: 65; /* an open dropdown list, portaled above whatever opened it */
 
 	/* layout */
 	--sidebar-w: 232px;

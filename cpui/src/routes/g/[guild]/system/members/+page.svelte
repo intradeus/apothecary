@@ -5,10 +5,12 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import UserAvatar from '$lib/ui/UserAvatar.svelte';
+	import Select from '$lib/ui/Select.svelte';
 	import { I } from '$lib/ui/icons';
 
 	const guild = $derived(currentGuild());
 	const ROLES = ['Owner', 'Maintainer', 'Engineer', 'Viewer'] as const;
+	const roleOptions = $derived(ROLES.map((r) => ({ value: r, label: t(`page.members.role${r}`) })));
 </script>
 
 <section class="c pane form-dense">
@@ -27,9 +29,13 @@
 			<span class="nm ell">{ME.name} <span class="you">{t('page.members.you')}</span></span>
 			<span class="mut ell">{t('page.members.localOperator')}</span>
 			<span>
-				<select disabled aria-label={t('page.members.role')} value={guild.role}>
-					{#each ROLES as r (r)}<option value={r}>{t(`page.members.role${r}`)}</option>{/each}
-				</select>
+				<Select
+					disabled
+					size="sm"
+					label={t('page.members.role')}
+					options={roleOptions}
+					value={guild.role}
+				/>
 			</span>
 			<span class="num mut">{t('page.members.now')}</span>
 		</div>

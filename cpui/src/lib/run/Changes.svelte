@@ -165,7 +165,7 @@
 					{#each changes.files as f (f.path)}
 						<button
 							class="rowbtn file"
-							class:sel={f.path === selected}
+							class:on={f.path === selected}
 							onclick={() => select(f.path)}
 						>
 							<span class="st mono hue-{hueOf(GIT_HUE, f.status)}" title={statusLabel(f.status)}

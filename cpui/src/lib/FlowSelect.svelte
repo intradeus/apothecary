@@ -9,6 +9,7 @@
 	import type { Flow } from '$lib/domain';
 	import type { OperatesOn } from '$lib/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 
 	let {
 		projectId,
@@ -60,6 +61,23 @@
 	const templates = $derived(
 		fits.filter((f) => f.builtin).sort((a, b) => a.name.localeCompare(b.name))
 	);
+	const options = $derived<SelectOption[]>(
+		!flows
+			? []
+			: [
+					...(fallbackFits ? [{ value: '', label: fallbackLabel }] : []),
+					...owned.map((f) => ({
+						value: f.name,
+						label: `${f.name}${f.shadowsBuiltin ? t('flowselect.customised') : ''}`,
+						group: t('flowselect.workshopFlows')
+					})),
+					...templates.map((f) => ({
+						value: f.name,
+						label: f.name,
+						group: t('flowselect.templates')
+					}))
+				]
+	);
 </script>
 
 {#if failed}
@@ -68,25 +86,14 @@
 		<span class="help">{t('flowselect.failed')}</span>
 	</div>
 {:else}
-	<select {id} bind:value class="mono" disabled={!flows}>
-		{#if !flows}
-			<option {value}>{t('flowselect.loading')}</option>
-		{:else}
-			{#if fallbackFits}<option value="">{fallbackLabel}</option>{/if}
-			{#if owned.length}
-				<optgroup label={t('flowselect.workshopFlows')}>
-					{#each owned as f (f.name)}<option value={f.name}
-							>{f.name}{f.shadowsBuiltin ? t('flowselect.customised') : ''}</option
-						>{/each}
-				</optgroup>
-			{/if}
-			{#if templates.length}
-				<optgroup label={t('flowselect.templates')}>
-					{#each templates as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
-				</optgroup>
-			{/if}
-		{/if}
-	</select>
+	<Select
+		{id}
+		{options}
+		bind:value
+		mono
+		disabled={!flows}
+		placeholder={flows ? undefined : t('flowselect.loading')}
+	/>
 {/if}
 
 <style>

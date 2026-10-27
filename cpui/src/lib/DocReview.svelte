@@ -10,8 +10,10 @@
 	// answers its declared option, or its text, with the review alongside.
 	import { tick, untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { Ping } from '$lib/domain';
+	import type { FormContent, Ping } from '$lib/domain';
 	import AttachFiles from '$lib/AttachFiles.svelte';
+	import PingFormFields from '$lib/PingFormFields.svelte';
+	import { fieldLabel, formContent, formDefaults, formMissing, formShape } from '$lib/ping';
 	import {
 		byPlace,
 		clearDraft,
@@ -44,6 +46,12 @@
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
 
 	const isGate = $derived(ping.answerKind === 'yes_no');
+	// A question's form: one free-text answer is the summary itself; one
+	// option to pick is a button each; anything else its fields, drawn.
+	const shape = $derived(formShape(ping.form));
+	const lone = $derived(ping.form?.fields[0]);
+	let values = $state(formDefaults(untrack(() => ping.form)));
+	const missing = $derived(formMissing(ping.form, values));
 
 	// One ping per mount: the page remounts this for another.
 	const set = new ReviewFiles(untrack(() => ping.id));
@@ -274,8 +282,13 @@
 	let sending = $state('');
 	const said = $derived(comments.length > 0 || summary.trim() !== '');
 
-	async function submit(answer: string, feedback = summary.trim()) {
-		sending = answer;
+	async function submit(
+		answer: string,
+		feedback = summary.trim(),
+		content?: FormContent,
+		key = answer
+	) {
+		sending = key;
 		busy = true;
 		error = '';
 		try {
@@ -296,7 +309,8 @@
 				answer,
 				feedback || undefined,
 				up.map((a) => a.id),
-				review
+				review,
+				content
 			);
 			clearDraft(ping.id);
 			onanswered();
@@ -307,8 +321,9 @@
 		}
 	}
 
-	// A free-text ask_human: the summary is the answer itself.
-	const sendText = () => submit(summary.trim(), '');
+	// A free-text question: the summary is the answer itself.
+	const sendText = () => lone && submit('accept', '', { [lone.id]: summary.trim() }, 'accept');
+	const sendForm = () => submit('accept', summary.trim(), formContent(ping.form, values));
 
 	// "Draft saved" flashes after each change to the draft.
 	let savedAt = $state<number | null>(null);
@@ -420,13 +435,19 @@
 		</div>
 
 		<footer class="pane-foot sf">
+			{#if !isGate && shape === 'fields' && ping.form}
+				<PingFormFields form={ping.form} bind:values disabled={busy} />
+			{/if}
 			<label class="sum">
 				<span class="lbl">{t('doc.summary')}</span>
 				<textarea
+					aria-label={!isGate && shape === 'text'
+						? t('doc.answerPlaceholder')
+						: t('doc.summaryPlaceholder')}
 					bind:value={summary}
 					oninput={persist}
 					rows="2"
-					placeholder={ping.answerKind === 'text'
+					placeholder={!isGate && shape === 'text'
 						? t('doc.answerPlaceholder')
 						: t('doc.summaryPlaceholder')}></textarea>
 			</label>
@@ -451,27 +472,50 @@
 						{t('doc.requestChanges')}
 					</button>
 				</div>
-			{:else if ping.answerKind === 'choice' && ping.options.length}
+			{:else if shape === 'pick' && lone}
 				<div class="acts">
-					{#each ping.options as opt, i (opt.id)}
+					{#each lone.options as opt, i (opt.id)}
 						<button
 							class={i === 0 ? 'btn-primary' : ''}
 							disabled={busy}
 							aria-busy={busy && sending === opt.id}
 							title={opt.detail ?? ''}
-							onclick={() => submit(opt.id)}>{opt.label}</button
+							onclick={() => submit('accept', summary.trim(), { [lone.id]: opt.id }, opt.id)}
+							>{opt.label}</button
 						>
 					{/each}
+					{@render decline()}
 				</div>
-				<p class="cap">{t('doc.pickHint')}</p>
-			{:else}
+				<p class="help fnt cap">{t('doc.pickHint')}</p>
+			{:else if shape === 'text'}
 				<div class="acts">
-					<button class="btn-primary" disabled={busy || !said} aria-busy={busy} onclick={sendText}>
+					<button
+						class="btn-primary"
+						disabled={busy || !summary.trim()}
+						aria-busy={busy && sending === 'accept'}
+						onclick={sendText}
+					>
 						{t('doc.sendReview')}
 					</button>
+					{@render decline()}
+				</div>
+			{:else}
+				<div class="acts">
+					<button
+						class="btn-primary"
+						disabled={busy || missing.length > 0}
+						aria-busy={busy && sending === 'accept'}
+						title={missing.length
+							? t('ping.missing', { fields: missing.map(fieldLabel).join(', ') })
+							: ''}
+						onclick={sendForm}
+					>
+						{t('doc.sendReview')}
+					</button>
+					{@render decline()}
 				</div>
 			{/if}
-			<p class="cap">
+			<p class="help fnt cap">
 				{#if said && savedAt}
 					<span class="hue-grn">{I.ok} {t('doc.draftSaved')}</span>{t('doc.draftKept')}
 				{:else}
@@ -481,6 +525,16 @@
 		</footer>
 	{/snippet}
 </ReviewLayout>
+
+{#snippet decline()}
+	<button
+		class="btn-ghost"
+		disabled={busy || !summary.trim()}
+		aria-busy={busy && sending === 'decline'}
+		title={summary.trim() ? t('ping.declineTitle') : t('doc.declineNeeds')}
+		onclick={() => submit('decline')}>{t('doc.decline')}</button
+	>
+{/snippet}
 
 <!-- The floating composer: sticky (only Add/Save, Close or Esc dismiss it, so
      clicking away to re-read the file never throws away what was typed), and
@@ -511,6 +565,7 @@
 			</div>
 			{#if composer.quote}<blockquote class="mono">{trunc(composer.quote, 180)}</blockquote>{/if}
 			<textarea
+				aria-label={t('doc.commentPlaceholder')}
 				bind:this={composerEl}
 				bind:value={composer.text}
 				rows="3"
@@ -582,17 +637,12 @@
 		flex-direction: column;
 		gap: 4px;
 	}
-	.sum textarea {
-		resize: vertical;
-	}
 	.acts {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 6px;
 	}
 	.cap {
-		font-size: var(--fs-meta);
-		color: var(--fnt);
 		margin: 0;
 	}
 	blockquote {

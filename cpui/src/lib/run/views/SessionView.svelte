@@ -114,7 +114,7 @@
 						>{t('runview.session.openPhases')} {I.forward}</button
 					>
 					<button
-						class="x"
+						class="btn-icon btn-sm"
 						title={t('runview.session.dismissNudge')}
 						aria-label={t('runview.session.dismissNudge')}
 						onclick={() => (rs.phasesNudgeDismissedAt = phasesDone)}>{I.close}</button
@@ -125,7 +125,7 @@
 		{#if !stick}
 			<div class="followbar">
 				<button
-					class="follow"
+					class="bead follow"
 					transition:materialize={{ origin: 'center bottom', y: 8 }}
 					onclick={() => follow()}>{I.follow} {t('runview.session.follow')}</button
 				>
@@ -138,7 +138,7 @@
 			{ping}
 			queued={rs.pendingPings.length - 1}
 			busy={rs.answering}
-			onanswer={(a, note, files) => rs.answer(ping.id, a, note, files)}
+			onanswer={(a, note, files, content) => rs.answer(ping.id, a, note, files, content)}
 		/>
 	{/if}
 	{#if rs.run && !rs.terminal}
@@ -182,20 +182,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-	.nudge .x {
-		width: 20px;
-		height: 20px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border-radius: var(--r-tag);
-		color: var(--fnt);
-		cursor: pointer;
-	}
-	.nudge .x:hover {
-		background: var(--p3);
-		color: var(--tx);
 	}
 	.session {
 		flex: 1;
@@ -243,12 +229,13 @@
 		justify-content: center;
 		pointer-events: none;
 	}
+	/* The selected look (.bead), floating over the transcript. */
 	.follow {
 		pointer-events: auto;
-		background: var(--sel);
-		border: 1px solid var(--selLn);
-		box-shadow: var(--selSh), var(--floatSh);
-		font-weight: 600;
+		box-shadow:
+			inset 0 0 0 1px var(--selLn),
+			var(--selSh),
+			var(--floatSh);
 	}
 	.closed {
 		flex: none;

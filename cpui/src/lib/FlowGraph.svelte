@@ -862,12 +862,12 @@
 		<ViewportPortal target="front">
 			{#each frames as f (f.id)}
 				<button
-					class="fold h-{f.hue}"
+					class="btn btn-icon fold h-{f.hue}"
 					style="transform: translate({f.x + f.w - 30}px, {f.y + 6}px)"
 					title={t(f.folded ? 'flow.graph.unfold' : 'flow.graph.fold', { phase: f.id })}
 					aria-label={t(f.folded ? 'flow.graph.unfold' : 'flow.graph.fold', { phase: f.id })}
 					aria-expanded={!f.folded}
-					onclick={() => fold(f.id)}>{f.folded ? '▸' : '▾'}</button
+					onclick={() => fold(f.id)}>{f.folded ? I.caret : I.menu}</button
 				>
 			{/each}
 		</ViewportPortal>
@@ -964,25 +964,19 @@
 		stroke-width: var(--edge-w-hover);
 		filter: drop-shadow(0 0 var(--glow-xs) var(--eh, var(--brand)));
 	}
-	/* Edge labels: "fail ×3" as a mono pill in the edge's hue. FlowLabeledEdge
-	 * centres a transparent box at its anchor and the pill inside shifts back
-	 * by half its own width, so the label starts at the anchor. */
+	/* Edge labels: "fail ×3" as a .pill.sm.mono in the edge's hue. It is a
+	 * <button> (app button styles skip .svelte-flow), so it drops the UA look
+	 * here. FlowLabeledEdge centres a transparent box at its anchor and the
+	 * pill inside shifts back by half its own width, so the label starts at
+	 * the anchor. */
 	.graph-wrap :global(.e-lbl-pill) {
 		appearance: none;
 		margin: 0;
-		line-height: inherit;
 		cursor: pointer;
-		display: inline-block;
 		transform: translateX(50%);
 		background: var(--xy-edge-label-background-color);
-		font-family: var(--mono);
-		font-size: var(--fs-id);
-		font-weight: 600;
-		padding: 0 6px;
-		border-radius: var(--r-pill);
-		border: 1px solid var(--eh-ln, var(--ln2));
+		border-color: var(--eh-ln, var(--ln2));
 		color: var(--eh, var(--tx));
-		white-space: nowrap;
 	}
 
 	/* Handles: dots in their edge's hue (--xy-handle-background-color, set
@@ -1013,26 +1007,21 @@
 	.frame.folded {
 		border-style: solid;
 	}
+	/* A .btn-icon (svelte-flow keeps its own button defaults, so .btn opts
+	 * in), pinned to the band's corner and tinted in its hue. */
 	.fold {
-		all: unset;
 		position: absolute;
 		top: 0;
 		left: 0;
 		width: 22px;
 		height: 22px;
-		display: grid;
-		place-items: center;
-		border-radius: var(--r-row);
 		color: var(--h);
 		font-size: var(--fs-badge);
-		cursor: pointer;
 		pointer-events: all;
 	}
 	.fold:hover {
+		color: var(--h);
 		background: color-mix(in oklch, var(--h) 14%, transparent);
-	}
-	.fold:focus-visible {
-		outline: 2px solid var(--brand);
 	}
 	/* Controls: a popover-glass stack (.lg-pop) with rounded corners. */
 	.graph-wrap :global(.fg-ctl) {

@@ -56,13 +56,12 @@ func TestAskHumanAnsweredInBand(t *testing.T) {
 			posts++
 			var body struct {
 				Type, Question string
-				Options        []askOption
-				Multi          bool
+				Fields         []map[string]any
 				HoldMS         int64 `json:"hold_ms"`
 				Key            string
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body.Type != "clarification" || body.Question != "which db?" || len(body.Options) != 2 {
+			if body.Type != "clarification" || body.Question != "which db?" || len(body.Fields) != 1 || body.Fields[0]["id"] != "db" {
 				t.Errorf("ping body = %+v", body)
 			}
 			holdMS = body.HoldMS
@@ -80,14 +79,15 @@ func TestAskHumanAnsweredInBand(t *testing.T) {
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "tok1")
 
-	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?", Options: []askOption{{ID: "postgres"}, {ID: "mysql"}}}, nil, nil)
+	field := json.RawMessage(`{"id":"db","type":"string","options":["postgres","mysql"]}`)
+	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?", Fields: []json.RawMessage{field}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A human who is already there answers inside the grace hold, and the
 	// agent never loses its turn over it.
-	if got != "postgres\n(note: use v16)" {
-		t.Errorf("answer = %q", got)
+	if got.Text != "postgres\n(note: use v16)" {
+		t.Errorf("answer = %q", got.Text)
 	}
 	if posts != 1 || gets != 0 {
 		t.Errorf("posts=%d gets=%d", posts, gets)
@@ -129,8 +129,8 @@ func TestAskHumanWaitsForTheAnswer(t *testing.T) {
 
 	var ticks atomic.Int32
 	got, err := askHuman(askArgs{Type: "clarification", Question: "which db?"}, nil, func() { ticks.Add(1) })
-	if err != nil || got != "use postgres" {
-		t.Fatalf("got %q, %v", got, err)
+	if err != nil || got.Text != "use postgres" {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -157,8 +157,8 @@ func TestAskHumanParked(t *testing.T) {
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "t")
 	got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
-	if err != nil || !strings.Contains(got, "parked") || !strings.Contains(got, "p3") {
-		t.Fatalf("got %q, %v", got, err)
+	if err != nil || !got.Parked || !strings.Contains(got.Text, "parked") || !strings.Contains(got.Text, "p3") {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 }
 
@@ -205,8 +205,8 @@ func TestAskHumanRetryKeepsKey(t *testing.T) {
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "t")
 	got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
-	if err != nil || got != "ok" {
-		t.Fatalf("got %q, %v", got, err)
+	if err != nil || got.Text != "ok" {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -215,25 +215,18 @@ func TestAskHumanRetryKeepsKey(t *testing.T) {
 	}
 }
 
-func TestAskHumanAnswerRendering(t *testing.T) {
+// The engine's composed text is what the agent reads; the raw form answer
+// rides along for an elicitation to be answered with.
+func TestAskHumanReturnsTheFormAnswer(t *testing.T) {
 	fastProtocol(t)
-	cases := []struct {
-		answer, feedback, want string
-	}{
-		{"text", "free-form reply", "free-form reply"},
-		{"other", "none fit", "other — none of the offered options fit; the human answered: none fit"},
-		{"yes", "", "yes"},
-	}
-	for _, c := range cases {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = json.NewEncoder(w).Encode(map[string]string{"answer": c.answer, "feedback": c.feedback})
-		}))
-		writeTestEnv(t, srv.URL, "t")
-		got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
-		srv.Close()
-		if err != nil || got != c.want {
-			t.Errorf("answer %q/%q -> %q, %v (want %q)", c.answer, c.feedback, got, err, c.want)
-		}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"text":"db: pg\nn: 2","answer":"accept","content":{"db":"pg","n":2}}`))
+	}))
+	defer srv.Close()
+	writeTestEnv(t, srv.URL, "t")
+	got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
+	if err != nil || got.Text != "db: pg\nn: 2" || got.Answer != "accept" || got.Content["db"] != "pg" || got.Content["n"] != 2.0 {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 }
 
@@ -248,7 +241,7 @@ func TestAskHumanRereadsEnvOn401(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"answer": "text", "feedback": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"text": "ok"})
 	}))
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "stale")
@@ -264,8 +257,8 @@ func TestAskHumanRereadsEnvOn401(t *testing.T) {
 	}()
 	got, err := askHuman(askArgs{Type: "blocker", Question: "q"}, nil, nil)
 	<-done
-	if err != nil || got != "ok" || !rotated.Load() {
-		t.Fatalf("got=%q err=%v rotated=%v", got, err, rotated.Load())
+	if err != nil || got.Text != "ok" || !rotated.Load() {
+		t.Fatalf("got=%+v err=%v rotated=%v", got, err, rotated.Load())
 	}
 }
 
@@ -281,7 +274,7 @@ func TestAskHumanUnreachableGivesToolError(t *testing.T) {
 func TestServeMCPFraming(t *testing.T) {
 	fastProtocol(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"answer": "text", "feedback": "mcp-ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"text": "mcp-ok"})
 	}))
 	defer srv.Close()
 	writeTestEnv(t, srv.URL, "t")

@@ -60,6 +60,7 @@
 
 <div class="comp lg">
 	<textarea
+		class="bare"
 		bind:this={ta}
 		bind:value={draft}
 		rows="1"
@@ -75,14 +76,14 @@
 		{#if error}<span class="err" title={error}>{error}</span>{/if}
 		<span class="spacer"></span>
 		<button
-			class="now"
+			class="btn-md"
 			onclick={() => send(true)}
 			aria-busy={sending === 'now'}
 			disabled={!!sending || !draft.trim()}
 			title={t('run.composer.sendNowTitle')}>{t('run.composer.sendNow')}</button
 		>
 		<button
-			class="btn-primary"
+			class="btn-primary btn-md"
 			onclick={() => send(false)}
 			aria-busy={sending === 'queue'}
 			disabled={!!sending || !draft.trim()}
@@ -99,29 +100,15 @@
 		display: flex;
 		flex-direction: column;
 	}
+	/* .bare: the composer's glass is the field. */
 	textarea {
-		all: unset;
-		box-sizing: border-box;
-		width: 100%;
 		min-height: 44px;
 		padding: 11px 14px;
-		font-size: var(--fs-body);
-		line-height: 1.5;
-		color: var(--tx);
-		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		resize: none;
 	}
-	textarea:focus {
-		border: 0;
-		box-shadow: none;
-		outline: none;
-	}
 	.comp:focus-within {
 		border-color: var(--brandLn);
-	}
-	textarea::placeholder {
-		color: var(--fnt);
 	}
 	.foot {
 		display: flex;
@@ -149,15 +136,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		min-width: 0;
-	}
-	.now {
-		padding: 5px 12px;
-		background: var(--p3);
-		border-color: transparent;
-		box-shadow: none;
-	}
-	.btn-primary {
-		padding: 5px 14px;
 	}
 	/* Drop key hints as the Session window narrows (a container query on
 	 * the window, so its own threshold). */

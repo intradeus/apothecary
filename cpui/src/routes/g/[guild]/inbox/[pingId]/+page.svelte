@@ -11,7 +11,7 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
-	import { answerMeta, isDocumentPing, primaryFile } from '$lib/ping';
+	import { answerMeta, answerSummary, isDocumentPing, primaryFile } from '$lib/ping';
 	import type { Ping } from '$lib/domain';
 	import DocReview from '$lib/DocReview.svelte';
 	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
@@ -121,8 +121,8 @@
 					{#if ping.status === 'withdrawn'}
 						<span class="mut">{t('page.ping.moved')}</span>
 					{:else}
-						{#if ping.answer && ping.answer !== 'approve' && ping.answer !== 'reject'}
-							<span class="tag">{ping.answer}</span>
+						{#if ping.answer === 'accept'}
+							<span class="tag">{answerSummary(ping)}</span>
 						{/if}
 						<span class="mut" title={ping.answeredAt ? fmtAbs(ping.answeredAt) : ''}
 							>{ping.answeredAt ? ago(ping.answeredAt) : ''}</span

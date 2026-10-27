@@ -9,6 +9,7 @@
 	import type { ExtraRepo, Flow, Integration, Project, ProjectDraft, Repo } from '$lib/domain';
 	import { to } from '$lib/guild';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import TagInput from '$lib/ui/TagInput.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -437,6 +438,26 @@
 	});
 
 	const intLabel = (i: Integration) => `${i.name} (${i.kind})`;
+	const repoAccountOptions: SelectOption[] = repoAccounts.map((f) => ({
+		value: f.id,
+		label: intLabel(f)
+	}));
+	const provisionerOptions: SelectOption[] = provisioners.map((p) => ({
+		value: p.id,
+		label: intLabel(p)
+	}));
+	const flowOptions = $derived<SelectOption[]>([
+		...ownFlows.map((f) => ({ value: f.name, label: f.name, group: t('form.project.ownFlows') })),
+		...templateFlows.map((f) => ({
+			value: f.name,
+			label: f.name,
+			group: t('form.project.templates')
+		}))
+	]);
+	const themeOptions = $derived<SelectOption[]>([
+		{ value: '', label: t('form.project.themeDefault') },
+		...editorThemes.map((theme) => ({ value: theme, label: theme }))
+	]);
 </script>
 
 <form class="pf" bind:this={formEl} onsubmit={submit}>
@@ -460,9 +481,12 @@
 					<div class="field">
 						<label for="p-repo-account">{t('form.project.repoAccount')}</label>
 						<div class="row nowrap">
-							<select id="p-repo-account" bind:value={repoAccountId} required>
-								{#each repoAccounts as f (f.id)}<option value={f.id}>{intLabel(f)}</option>{/each}
-							</select>
+							<Select
+								id="p-repo-account"
+								options={repoAccountOptions}
+								bind:value={repoAccountId}
+								required
+							/>
 							<button
 								type="button"
 								class="btn-sel"
@@ -642,18 +666,7 @@
 					</div>
 					<div class="field">
 						<label for="p-flow">{t('form.project.defaultFlow')}</label>
-						<select id="p-flow" class="mono" bind:value={defaultFlow} required>
-							{#if ownFlows.length}
-								<optgroup label={t('form.project.ownFlows')}>
-									{#each ownFlows as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
-								</optgroup>
-							{/if}
-							{#if templateFlows.length}
-								<optgroup label={t('form.project.templates')}>
-									{#each templateFlows as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
-								</optgroup>
-							{/if}
-						</select>
+						<Select id="p-flow" mono options={flowOptions} bind:value={defaultFlow} required />
 						{#if flows.length === 0}
 							<div class="err">{t('form.project.noFlows')}</div>
 						{:else}
@@ -695,9 +708,7 @@
 				<div class="grid2">
 					<div class="field">
 						<label for="p-prov">{t('form.project.provisioner')}</label>
-						<select id="p-prov" bind:value={provisionerId} required>
-							{#each provisioners as p (p.id)}<option value={p.id}>{intLabel(p)}</option>{/each}
-						</select>
+						<Select id="p-prov" options={provisionerOptions} bind:value={provisionerId} required />
 						{#if provisioners.length === 0}
 							<div class="err">
 								{@html th('form.project.noProvisioner', { href: to.system('integrations') })}
@@ -838,10 +849,7 @@
 					<div class="ed">
 						<div class="field">
 							<label for="p-theme">{t('form.project.colorTheme')}</label>
-							<select id="p-theme" bind:value={editorTheme}>
-								<option value="">{t('form.project.themeDefault')}</option>
-								{#each editorThemes as theme (theme)}<option value={theme}>{theme}</option>{/each}
-							</select>
+							<Select id="p-theme" options={themeOptions} bind:value={editorTheme} />
 						</div>
 						<div class="field">
 							<label for="p-font">{t('form.project.fontSize')}</label>

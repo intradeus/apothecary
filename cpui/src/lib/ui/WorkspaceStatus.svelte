@@ -65,17 +65,27 @@
 	const hue = $derived(
 		(
 			{
-				live: 'grn',
-				starting: 'az',
-				provisioning: 'az',
-				rebuilding: 'az',
-				destroying: 'amb',
-				error: 'ros',
-				stopped: 'mut',
-				unknown: 'amb',
+				live: 'hue-grn',
+				starting: 'hue-az',
+				provisioning: 'hue-az',
+				rebuilding: 'hue-az',
+				destroying: 'hue-amb',
+				error: 'hue-ros',
+				stopped: 'hue-mut',
+				unknown: 'hue-amb',
 				none: 'fnt'
 			} as const
 		)[v]
+	);
+	// DESIGN 3.2: live glows, stopped is a ring, unknown/none a dashed ring.
+	const dot = $derived(
+		v === 'live'
+			? 'ldot'
+			: v === 'stopped'
+				? 'ldot hollow'
+				: v === 'unknown' || v === 'none'
+					? 'ldot dashed'
+					: 'ldot flat'
 	);
 	const word = $derived(v === 'none' ? t('ui.ws.none') : v);
 	const tip = $derived(
@@ -91,11 +101,11 @@
 </script>
 
 {#if compact}
-	<span class="dot-only {hue} {v}" title={tip}><span class="d" class:pulse={pulsing}></span></span>
+	<span class="dot-only {hue}" title={tip}><span class={dot} class:pulse={pulsing}></span></span>
 {:else}
 	<span class="ws {hue}" title={tip}>
 		{#if !bare}<span class="lbl">{t('ui.ws.label')}</span>{/if}
-		{#if v !== 'none'}<span class="d {v}" class:pulse={pulsing}></span>{/if}
+		{#if v !== 'none'}<span class={dot} class:pulse={pulsing}></span>{/if}
 		<span class="v">{word}</span>
 		{#if envId && v !== 'none'}<span class="id mono">{envId}</span>{/if}
 	</span>
@@ -124,13 +134,6 @@
 		text-overflow: ellipsis;
 		max-width: 160px;
 	}
-	.d {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: currentColor;
-		flex: none;
-	}
 	.dot-only {
 		display: inline-flex;
 		width: 12px;
@@ -138,46 +141,9 @@
 		align-items: center;
 		justify-content: center;
 	}
-	.dot-only .d {
+	/* The compact dot is 8px (DESIGN 3.2), a touch over the shared 7px. */
+	.dot-only .ldot {
 		width: 8px;
 		height: 8px;
-	}
-	.grn {
-		color: var(--grn);
-	}
-	.grn .d {
-		box-shadow: 0 0 8px var(--grn);
-	}
-	.az {
-		color: var(--az);
-	}
-	.amb {
-		color: var(--amb);
-	}
-	.ros {
-		color: var(--ros);
-	}
-	.mut {
-		color: var(--mut);
-	}
-	.fnt {
-		color: var(--fnt);
-	}
-	.ws .lbl {
-		color: var(--mut);
-	}
-	.d.stopped,
-	.stopped .d {
-		background: transparent;
-		border: 1.5px solid currentColor;
-	}
-	.d.unknown,
-	.unknown .d {
-		background: transparent;
-		border: 1.5px dashed currentColor;
-	}
-	.none .d {
-		background: transparent;
-		border: 1px dashed var(--ln2);
 	}
 </style>

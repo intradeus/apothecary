@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
+	import { I } from './icons';
 	// Domain / tag list input (DESIGN 4.14): chips with ×; paste splits on
 	// whitespace and commas; Enter or comma commits; Backspace on empty pops.
 	let {
@@ -54,14 +55,14 @@
 	}
 </script>
 
-<div class="ti">
+<div class="fieldbox ti">
 	{#each values as v (v)}
-		<span class="chip" class:mono
+		<span class="pill sm t-mut" class:mono
 			>{v}<button
 				type="button"
-				class="x"
+				class="btn-icon btn-sm"
 				aria-label={t('ui.tags.remove', { value: v })}
-				onclick={() => (values = values.filter((x) => x !== v))}>×</button
+				onclick={() => (values = values.filter((x) => x !== v))}>{I.close}</button
 			></span
 		>
 	{/each}
@@ -81,49 +82,10 @@
 
 <style>
 	.ti {
-		display: flex;
 		flex-wrap: wrap;
 		gap: 5px;
 		padding: 5px 6px;
-		border-radius: var(--r-row);
-		background: var(--p1);
-		border: 1px solid var(--ln2);
 		min-height: 36px;
-		align-items: center;
-	}
-	.ti:focus-within {
-		border-color: var(--brand);
-		box-shadow: 0 0 0 3px var(--brandBg);
-	}
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 1px 4px 1px 9px;
-		border-radius: var(--r-pill);
-		background: var(--p2);
-		border: 1px solid var(--ln);
-		font-size: var(--fs-label);
-		font-weight: 500;
-	}
-	.chip.mono {
-		font-family: var(--mono);
-		font-size: var(--fs-meta);
-	}
-	.x {
-		all: unset;
-		cursor: pointer;
-		width: 16px;
-		height: 16px;
-		border-radius: 50%;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--mut);
-	}
-	.x:hover {
-		background: var(--p3);
-		color: var(--tx);
 	}
 	.ti input {
 		flex: 1;

@@ -12,8 +12,13 @@
 	//
 	//   <button bind:this={btn} onclick={() => (open = !open)}>Env ▾</button>
 	//   <Popover anchor={btn} bind:open placement="below-end">…</Popover>
-	import type { Snippet } from 'svelte';
+	//
+	// A dropdown list (Select) also sets `portal` (glass panes would clip a
+	// fixed child), `matchWidth` and `flip` (opens upward when there is more
+	// room above).
+	import { tick, untrack, type Snippet } from 'svelte';
 	import { materialize } from './motion';
+	import { portal as toBody } from './portal';
 
 	let {
 		anchor,
@@ -27,6 +32,14 @@
 		at,
 		/** Stay open on outside clicks (a floating composer); Esc still closes. */
 		sticky = false,
+		/** Render under <body>, above everything that opened it. */
+		portal = false,
+		/** At least as wide as the anchor. */
+		matchWidth = false,
+		/** Open on the other side (below ↔ above) when this one is short. */
+		flip = false,
+		role = 'dialog',
+		id,
 		onclose
 	}: {
 		anchor?: HTMLElement | null;
@@ -38,8 +51,16 @@
 		children: Snippet;
 		at?: { left?: number; top?: number; right?: number; bottom?: number };
 		sticky?: boolean;
+		portal?: boolean;
+		matchWidth?: boolean;
+		flip?: boolean;
+		role?: string;
+		id?: string;
 		onclose?: () => void;
 	} = $props();
+
+	// The side it actually opened on (flip may turn below into above).
+	let side = $state<typeof placement>(untrack(() => placement));
 
 	// Grow from the side the trigger is on, travelling a few px away from it.
 	const motion = $derived.by(() => {
@@ -52,7 +73,7 @@
 				'above-end': { origin: 'right bottom', x: 0, y: 6 },
 				right: { origin: 'left top', x: -6, y: 0 }
 			} as const
-		)[placement];
+		)[side];
 	});
 
 	function close() {
@@ -62,6 +83,8 @@
 
 	let el = $state<HTMLDivElement | null>(null);
 	let pos = $state<{ left?: number; top?: number; right?: number; bottom?: number }>({});
+	let minW = $state<number | null>(null);
+	let maxH = $state<number | null>(null);
 
 	function place() {
 		if (at) {
@@ -73,7 +96,19 @@
 		const vw = window.innerWidth;
 		const vh = window.innerHeight;
 		const gap = 6;
-		switch (placement) {
+		minW = matchWidth ? r.width : null;
+		side = placement;
+		maxH = null;
+		if (flip && placement !== 'right') {
+			const below = vh - r.bottom - gap - 8;
+			const above = r.top - gap - 8;
+			const want = el?.scrollHeight ?? 0;
+			const down = placement.startsWith('below');
+			if (want > (down ? below : above) && (down ? above : below) > (down ? below : above))
+				side = ((down ? 'above-' : 'below-') + placement.split('-')[1]) as typeof placement;
+			maxH = side.startsWith('below') ? below : above;
+		}
+		switch (side) {
 			case 'below-start':
 				pos = { left: Math.max(8, r.left), top: r.bottom + gap };
 				break;
@@ -95,6 +130,8 @@
 	$effect(() => {
 		if (!open) return;
 		place();
+		// Measured once rendered: flip needs the list's own height.
+		if (flip) void tick().then(place);
 		const down = (e: PointerEvent) => {
 			const t = e.target as Node;
 			if (sticky || el?.contains(t) || anchor?.contains(t)) return;
@@ -113,11 +150,14 @@
 		window.addEventListener('pointerdown', down, true);
 		window.addEventListener('keydown', key);
 		window.addEventListener('resize', reflow);
+		// A portaled list follows its anchor when the page under it scrolls.
+		if (portal) window.addEventListener('scroll', reflow, true);
 		return () => {
 			stack.splice(stack.indexOf(me), 1);
 			window.removeEventListener('pointerdown', down, true);
 			window.removeEventListener('keydown', key);
 			window.removeEventListener('resize', reflow);
+			window.removeEventListener('scroll', reflow, true);
 		};
 	});
 </script>
@@ -125,14 +165,19 @@
 {#if open}
 	<div
 		bind:this={el}
+		{id}
 		class="pop lg-pop"
-		role="dialog"
+		class:top={portal}
+		{role}
+		use:toBody={portal}
 		transition:materialize={motion}
 		style:left={pos.left !== undefined ? `${pos.left}px` : null}
 		style:top={pos.top !== undefined ? `${pos.top}px` : null}
 		style:right={pos.right !== undefined ? `${pos.right}px` : null}
 		style:bottom={pos.bottom !== undefined ? `${pos.bottom}px` : null}
 		style:width={width ? `${width}px` : null}
+		style:min-width={minW ? `${minW}px` : null}
+		style:max-height={maxH ? `${maxH}px` : null}
 	>
 		{#if title}
 			<div class="ph">
@@ -156,6 +201,9 @@
 		max-height: calc(100vh - 24px);
 		overflow: auto;
 		min-width: 180px;
+	}
+	.top {
+		z-index: var(--z-dropdown);
 	}
 	.ph {
 		display: flex;

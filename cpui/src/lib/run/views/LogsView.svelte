@@ -5,6 +5,7 @@
 	import { tick } from 'svelte';
 	import { api } from '$lib/api';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import Select from '$lib/ui/Select.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import { I } from '$lib/ui/icons';
 	import { PROVISION_STAGE } from '../derive';
@@ -116,9 +117,14 @@
 			]}
 		/>
 		{#if kind === 'stage'}
-			<select class="sel mono" bind:value={rs.logSource} aria-label={t('runview.logs.stage')}>
-				{#each stages as s (s)}<option value={s}>{s}</option>{/each}
-			</select>
+			<Select
+				size="sm"
+				mono
+				inline
+				label={t('runview.logs.stage')}
+				options={stages.map((s) => ({ value: s, label: s }))}
+				bind:value={rs.logSource}
+			/>
 		{/if}
 		{#if kind !== 'workspace' || rs.terminal}
 			<span class="spacer"></span>
@@ -133,7 +139,7 @@
 			<span class="hint live"><span class="ldot sm pulse hue-az"></span>tail -f</span>
 		{/if}
 	</div>
-	<div class="out" bind:this={pre} onscroll={onScroll}>
+	<div class="log out" bind:this={pre} onscroll={onScroll}>
 		{#if text === null}
 			{#if loading}<Loading text={t('runview.connecting')} />{:else}<div class="empty-line">
 					{note || t('runview.logs.nothing_yet')}
@@ -149,11 +155,6 @@
 </div>
 
 <style>
-	.sel {
-		width: auto;
-		padding: 3px 26px 3px 8px;
-		border-radius: var(--r-sm);
-	}
 	.live {
 		display: flex;
 		gap: 6px;
@@ -162,15 +163,9 @@
 	.out {
 		flex: 1;
 		min-height: 0;
-		overflow: auto;
+		max-height: none;
 		margin: 0 8px 8px;
-		padding: 10px 12px;
-		border-radius: var(--r-card);
-		background: var(--code);
-		font-family: var(--mono);
-		font-size: var(--fs-meta);
 		line-height: 1.75;
-		color: var(--mut);
 	}
 	.out > .empty-line {
 		font-family: var(--sans);

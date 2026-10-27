@@ -139,7 +139,11 @@
 {:else}
 	<SectionHeader title={t('page.system.channels.title')} count={entries.length}>
 		{#snippet actions()}
-			<button class="btn-sm" class:btn-sel={adding} onclick={() => (adding = !adding)}
+			<button
+				class="btn-sm"
+				class:btn-sel={adding}
+				aria-pressed={adding}
+				onclick={() => (adding = !adding)}
 				>{adding ? t('page.channels.close') : `${I.add} ${t('page.channels.add')}`}</button
 			>
 		{/snippet}

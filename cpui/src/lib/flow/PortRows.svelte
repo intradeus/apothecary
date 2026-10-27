@@ -31,6 +31,7 @@
 		type IODecl
 	} from '$lib/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
+	import Select from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import { I } from '$lib/ui/icons';
 
@@ -161,7 +162,7 @@
 			{#if free}
 				<input
 					class="mono grow"
-					class:bad={invalid(r)}
+					class:invalid={invalid(r)}
 					value={r.key}
 					placeholder={t('flow.binding.keyPlaceholder')}
 					aria-label={t('flow.insp.portName')}
@@ -191,7 +192,7 @@
 		{#if r.decl?.description}<div class="help">{r.decl.description}</div>{/if}
 		<input
 			class="mono"
-			class:bad={overLinks(r)}
+			class:invalid={overLinks(r)}
 			list={isInput ? (offersEngine(r) ? listId : `${listId}-paths`) : undefined}
 			value={r.value}
 			placeholder={r.decl?.defaultPath ??
@@ -200,37 +201,41 @@
 			oninput={(e) => setValue(r, e.currentTarget.value)}
 		/>
 		<div class="row nowrap">
-			<select
-				class="grow"
-				value={r.type ?? ''}
-				disabled={engine}
-				aria-label={t('flow.insp.portType')}
-				onchange={(e) => {
-					r.type = e.currentTarget.value || undefined;
-					if (!takesSchema(r.type)) r.schema = undefined;
-					write();
-				}}
-			>
-				<option value="">{t('flow.insp.noType')}</option>
-				{#each typeChoices(r) as ty (ty)}<option value={ty}>{ty}</option>{/each}
-			</select>
-			{#if !engine && r.type !== 'file' && r.type !== 'files' && (schemas.length || r.schema)}
-				<select
-					class="grow"
-					value={r.schema ?? ''}
-					aria-label={t('flow.insp.portSchema')}
-					onchange={(e) => {
-						r.schema = e.currentTarget.value || undefined;
+			<span class="grow">
+				<Select
+					value={r.type ?? ''}
+					disabled={engine}
+					label={t('flow.insp.portType')}
+					options={[
+						{ value: '', label: t('flow.insp.noType') },
+						...typeChoices(r).map((ty) => ({ value: ty, label: ty }))
+					]}
+					onchange={(v) => {
+						r.type = v || undefined;
+						if (!takesSchema(r.type)) r.schema = undefined;
 						write();
 					}}
-				>
-					<option value="">{t('flow.insp.noSchema')}</option>
-					{#each schemaChoices(r) as n (n)}<option value={n}>{n}</option>{/each}
-				</select>
+				/>
+			</span>
+			{#if !engine && r.type !== 'file' && r.type !== 'files' && (schemas.length || r.schema)}
+				<span class="grow">
+					<Select
+						value={r.schema ?? ''}
+						label={t('flow.insp.portSchema')}
+						options={[
+							{ value: '', label: t('flow.insp.noSchema') },
+							...schemaChoices(r).map((n) => ({ value: n, label: n }))
+						]}
+						onchange={(v) => {
+							r.schema = v || undefined;
+							write();
+						}}
+					/>
+				</span>
 			{/if}
 		</div>
 		{#if overLinks(r)}
-			<div class="help hue-ros">{t('flow.insp.oneLink', { count: links ?? 0 })}</div>
+			<div class="err">{t('flow.insp.oneLink', { count: links ?? 0 })}</div>
 		{/if}
 		{#if dirMismatch(r)}
 			<div class="help hue-amb">
@@ -271,8 +276,5 @@
 	}
 	.io-bind {
 		padding: 7px 9px;
-	}
-	.bad {
-		border-color: var(--ros);
 	}
 </style>

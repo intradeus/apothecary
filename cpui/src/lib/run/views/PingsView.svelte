@@ -6,7 +6,7 @@
 	import PingCard from '$lib/PingCard.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
 	import { ago, fmtAbs, fmtClock } from '$lib/format';
-	import { isAgentPing, isDocumentPing } from '$lib/ping';
+	import { answerMeta, isAgentPing, isDocumentPing } from '$lib/ping';
 	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
 	import { to } from '$lib/guild';
 	import Markdown from '$lib/ui/Markdown.svelte';
@@ -47,7 +47,7 @@
 				<PingCard
 					ping={p}
 					busy={rs.answering}
-					onanswer={(a, note, files) => rs.answer(p.id, a, note, files)}
+					onanswer={(a, note, files, content) => rs.answer(p.id, a, note, files, content)}
 				/>
 			{/key}
 		{:else}
@@ -70,8 +70,8 @@
 						>
 					</span>
 					<span class="st" class:fnt={p.status === 'withdrawn'}>
-						{#if p.status === 'answered'}{p.answer === 'text'
-								? t('runview.pings.st_answered')
+						{#if p.status === 'answered'}{p.answerKind === 'form'
+								? answerMeta(p).word
 								: p.answer}{p.answeredAt ? ` · ${ago(p.answeredAt)}` : ''}
 						{:else}{t('runview.pings.st_withdrawn')}{/if}
 					</span>

@@ -264,7 +264,7 @@ func TestQuestionAnsweredDuringTheLiveHold(t *testing.T) {
 	if again, err := h.e.RaisePingKeyed(runID, "k1", "clarification", "which db?", "", nil, nil); err != nil || again.ID != p.ID {
 		t.Fatalf("keyed re-raise = %v, %v", again, err)
 	}
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
 		t.Fatal(err)
 	}
 	if a := <-answer; !strings.Contains(a, "postgres") {
@@ -329,7 +329,7 @@ func TestUnansweredQuestionParksAfterTheHold(t *testing.T) {
 	if v := h.view(t, runID); v.State != run.WaitingOnHuman {
 		t.Fatalf("state while parked = %s", v.State)
 	}
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "two"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("two")); err != nil {
 		t.Fatal(err)
 	}
 	waitEvent[*event.RunCompleted](t, h, runID)
@@ -427,7 +427,7 @@ func TestRestartWithALiveQuestionButNoTurnParksOnIt(t *testing.T) {
 		return ports.AgentResult{Session: "sess-r", TurnsUsed: 1}, nil
 	}
 	seedLiveAttempt(t, h, "r-q",
-		&event.PingRaised{PingID: "p-live", Type: "clarification", Question: "rename it?", StageID: "build"})
+		&event.PingRaised{PingID: "p-live", Type: "clarification", Question: "rename it?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm})
 	if err := h.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestRestartWithALiveQuestionButNoTurnParksOnIt(t *testing.T) {
 		t.Fatalf("stage_paused = %+v", paused)
 	}
 	h.e.Wait("r-q")
-	if err := h.e.AnswerPing("p-live", PingAnswer{Answer: "yes"}); err != nil {
+	if err := h.e.AnswerPing("p-live", textAnswer("yes")); err != nil {
 		t.Fatal(err)
 	}
 	waitEvent[*event.RunCompleted](t, h, "r-q")

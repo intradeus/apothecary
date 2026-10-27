@@ -133,7 +133,11 @@
 		<button class="btn-sm" onclick={test} disabled={testing} aria-busy={testing}
 			>{t('system.int.test')}</button
 		>
-		<button class="btn-sm" class:btn-sel={editing} onclick={() => (editing = !editing)}
+		<button
+			class="btn-sm"
+			class:btn-sel={editing}
+			aria-pressed={editing}
+			onclick={() => (editing = !editing)}
 			>{editing ? t('system.int.close') : t('system.int.edit')}</button
 		>
 		<span class="spacer"></span>

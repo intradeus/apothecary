@@ -153,7 +153,10 @@ func TestPingsProjection(t *testing.T) {
 	ctx := context.Background()
 	_, err := s.Append(ctx, "r1",
 		&event.RunCreated{TicketTitle: "T"},
-		&event.PingRaised{PingID: "p1", Type: "clarification", Question: "db?", Context: "pg or sqlite", StageID: "build"},
+		&event.PingRaised{PingID: "p1", Type: "clarification", Question: "db?", Context: "pg or sqlite", StageID: "build",
+			AnswerKind: event.AnswerForm, Form: &event.Form{Fields: []event.Field{
+				{ID: "db", Type: event.FieldString, Options: []event.Option{{ID: "pg", Label: "Postgres"}}},
+				{ID: "n", Type: event.FieldInteger}}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -162,11 +165,13 @@ func TestPingsProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pending) != 1 || pending[0].PingID != "p1" || pending[0].Context != "pg or sqlite" || pending[0].StageID != "build" {
+	if len(pending) != 1 || pending[0].PingID != "p1" || pending[0].Context != "pg or sqlite" || pending[0].StageID != "build" ||
+		pending[0].AnswerKind != event.AnswerForm || pending[0].Form == nil || pending[0].Form.Fields[0].Options[0].Label != "Postgres" {
 		t.Errorf("pending = %+v", pending)
 	}
 
-	if _, err := s.Append(ctx, "r1", &event.PingAnswered{PingID: "p1", Answer: "text", Feedback: "pg"}); err != nil {
+	if _, err := s.Append(ctx, "r1", &event.PingAnswered{PingID: "p1", Answer: "accept", Feedback: "v16",
+		Content: map[string]any{"db": "pg", "n": 2.0}}); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ = s.ListPings(ctx, "pending", 0)
@@ -175,7 +180,8 @@ func TestPingsProjection(t *testing.T) {
 	}
 	// The pair is durable (PLAN4 M15): answered listing + by-id fetch.
 	answered, _ := s.ListPings(ctx, "answered", 0)
-	if len(answered) != 1 || answered[0].Answer != "text" || answered[0].Feedback != "pg" || answered[0].AnsweredAt == nil {
+	if len(answered) != 1 || answered[0].Answer != "accept" || answered[0].Feedback != "v16" || answered[0].AnsweredAt == nil ||
+		answered[0].Content["db"] != "pg" || answered[0].Content["n"] != 2.0 {
 		t.Errorf("answered = %+v", answered)
 	}
 	one, err := s.GetPing(ctx, "p1")

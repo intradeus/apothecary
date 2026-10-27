@@ -6,6 +6,7 @@
 	// that returns it to unset. Where the site reads a parameter, the value
 	// may instead be one of `params` ($name), picked from a list.
 	import DurationInput from './DurationInput.svelte';
+	import Select, { type SelectOption } from './Select.svelte';
 	import { I } from './icons';
 
 	let {
@@ -30,6 +31,15 @@
 	} = $props();
 
 	const isParam = $derived(!!value && value.startsWith('$'));
+	const paramOptions = $derived<SelectOption[]>(
+		params.map((p) => ({ value: '$' + p, label: '$' + p }))
+	);
+	// A parameter the site no longer offers stays listed while it is chosen.
+	const chosenOptions = $derived<SelectOption[]>(
+		value && !params.includes(value.slice(1))
+			? [...paramOptions, { value, label: value }]
+			: paramOptions
+	);
 
 	function set(v: string | undefined) {
 		value = v || undefined;
@@ -39,10 +49,7 @@
 
 {#if value && isParam}
 	<div class="od">
-		<select {id} class="mono" {value} onchange={(e) => set(e.currentTarget.value)}>
-			{#each params as p (p)}<option value={'$' + p}>${p}</option>{/each}
-			{#if !params.includes(value.slice(1))}<option {value}>{value}</option>{/if}
-		</select>
+		<Select {id} mono options={chosenOptions} {value} onchange={(v) => set(v)} />
 		<button
 			type="button"
 			class="btn-icon"
@@ -67,15 +74,18 @@
 			>{t('ui.optional.set')}</button
 		>
 		{#if params.length}
-			<select
-				class="btn-sm mono"
-				aria-label={t('ui.optional.param', { label: label ?? t('ui.optional.value') })}
+			<!-- A menu, not a value: picking a parameter sets it (and this row
+			     gives way to the chosen one), so it always reads its prompt. -->
+			<Select
+				size="sm"
+				mono
+				inline
+				label={t('ui.optional.param', { label: label ?? t('ui.optional.value') })}
+				placeholder={t('ui.optional.orParam')}
+				options={paramOptions}
 				value=""
-				onchange={(e) => set(e.currentTarget.value)}
-			>
-				<option value="">{t('ui.optional.orParam')}</option>
-				{#each params as p (p)}<option value={'$' + p}>${p}</option>{/each}
-			</select>
+				onchange={(v) => set(v)}
+			/>
 		{/if}
 	</div>
 {/if}

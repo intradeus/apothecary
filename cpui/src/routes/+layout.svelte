@@ -97,7 +97,7 @@
 			{@const n = tab.id === 'inbox' ? fleet.pending.length : 0}
 			<a class:on href={tab.href()} aria-current={on ? 'page' : undefined}
 				><span class="ti">{tab.icon}</span>{tab.label}{#if tab.id === 'inbox'}<span
-						class="count hot"
+						class="count hot sm"
 						class:gone={!n}
 						use:bump={n}>{n}</span
 					>{/if}</a
@@ -218,9 +218,6 @@
 			position: absolute;
 			top: 3px;
 			right: 18%;
-			min-width: 0;
-			font-size: var(--fs-badge);
-			padding: 0 5px;
 		}
 	}
 </style>

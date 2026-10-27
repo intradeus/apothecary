@@ -93,7 +93,7 @@ func TestAgentEndingTurnOnOpenQuestionPausesAttempt(t *testing.T) {
 		t.Errorf("state while paused = %s", v.State)
 	}
 
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "two: /health and /healthz"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("two: /health and /healthz")); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
@@ -176,7 +176,7 @@ func TestPausedAttemptResumesAfterRestart(t *testing.T) {
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.PingRaised{PingID: "p-1", Type: "clarification", Question: "one endpoint or two?", StageID: "build"},
+		&event.PingRaised{PingID: "p-1", Type: "clarification", Question: "one endpoint or two?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
 		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman,
 			PingIDs: []string{"p-1"}, TurnsUsed: 2, SessionID: "sess-x"},
 		// kill -9 here, with the human still thinking
@@ -204,7 +204,7 @@ func TestPausedAttemptResumesAfterRestart(t *testing.T) {
 		t.Fatalf("run calls before the answer = %d, want 0 (the agent must not be restarted)", n)
 	}
 
-	if err := h.e.AnswerPing("p-1", PingAnswer{Answer: "two of them"}); err != nil {
+	if err := h.e.AnswerPing("p-1", textAnswer("two of them")); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait("r-p")
@@ -243,7 +243,7 @@ func TestAnswerWithNoSessionToResumeFailsTheAttempt(t *testing.T) {
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.PingRaised{PingID: "p-2", Type: "clarification", Question: "which db?", StageID: "build"},
+		&event.PingRaised{PingID: "p-2", Type: "clarification", Question: "which db?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
 		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman, PingIDs: []string{"p-2"}},
 	} {
 		if _, err := h.store.Append(ctx, "r-n", p); err != nil {
@@ -257,7 +257,7 @@ func TestAnswerWithNoSessionToResumeFailsTheAttempt(t *testing.T) {
 	for time.Now().Before(deadline) && len(h.e.PendingPings()) == 0 {
 		time.Sleep(2 * time.Millisecond)
 	}
-	if err := h.e.AnswerPing("p-2", PingAnswer{Answer: "postgres"}); err != nil {
+	if err := h.e.AnswerPing("p-2", textAnswer("postgres")); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait("r-n")
@@ -317,7 +317,7 @@ main:
 
 	p := h.waitPing(t, "clarification")
 	waitEvent[*event.StagePaused](t, h, runID) // paused anyway — the engine does not trust the prompt
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "two of them"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("two of them")); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
@@ -404,7 +404,7 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 	}
 
 	// The answer alone brings the parked run back.
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "two of them"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("two of them")); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(first)
@@ -481,13 +481,13 @@ func TestPauseOnAParkedRunHoldsItThroughTheAnswer(t *testing.T) {
 	}
 	// Play is the only way out of a user pause — and it is refused for a run
 	// that is merely waiting, which this one no longer is.
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
 		t.Fatal(err)
 	}
 	if v := h.view(t, runID); v.State != run.Paused {
 		t.Errorf("an answer must not un-pause a run a human parked: %s", v.State)
 	}
-	if pa, ok := findPayload[*event.PingAnswered](h.events(t, runID)); !ok || pa.Feedback != "postgres" {
+	if pa, ok := findPayload[*event.PingAnswered](h.events(t, runID)); !ok || pa.Content[AnswerField] != "postgres" {
 		t.Errorf("the answer must still be recorded: %+v (ok=%v)", pa, ok)
 	}
 	if _, ok := findPayload[*event.RunUnpaused](h.events(t, runID)); ok {
@@ -534,7 +534,7 @@ func TestRecoverAdmitsAParkedRunWhoseAnswerLanded(t *testing.T) {
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.PingRaised{PingID: "p-w", Type: "clarification", Question: "which db?", StageID: "build"},
+		&event.PingRaised{PingID: "p-w", Type: "clarification", Question: "which db?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
 		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman,
 			PingIDs: []string{"p-w"}, TurnsUsed: 1, SessionID: "sess-w"},
 		&event.RunPaused{StageID: "build", Reason: event.PauseWaiting},
@@ -577,7 +577,7 @@ func TestRecoverLeavesAnUnansweredParkedRunAlone(t *testing.T) {
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.PingRaised{PingID: "p-u", Type: "clarification", Question: "which db?", StageID: "build"},
+		&event.PingRaised{PingID: "p-u", Type: "clarification", Question: "which db?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
 		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman,
 			PingIDs: []string{"p-u"}, TurnsUsed: 1, SessionID: "sess-u"},
 		&event.RunPaused{StageID: "build", Reason: event.PauseWaiting},
@@ -608,7 +608,7 @@ func TestRecoverLeavesAnUnansweredParkedRunAlone(t *testing.T) {
 		t.Error("a parked run's question vanished from the inbox")
 	}
 	// Answering it now wakes it, restart or no restart.
-	if err := h.e.AnswerPing("p-u", PingAnswer{Answer: "postgres"}); err != nil {
+	if err := h.e.AnswerPing("p-u", textAnswer("postgres")); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait("r-u")
@@ -633,7 +633,7 @@ func TestAnswerAfterTheTurnWasHandedBackStillPausesTheAttempt(t *testing.T) {
 		// The grace hold expired: the agent was told to stop and wait.
 		p.HandOff(false)
 		// ...and the human answers while it is still ending its turn.
-		if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres"}); err != nil {
+		if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
 			return ports.AgentResult{}, err
 		}
 		return ports.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil

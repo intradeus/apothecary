@@ -10,7 +10,7 @@
 
 import type * as Wire from './generated/types.gen';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
-import { answerKindOf, toPingOption, toReviewComment } from '$lib/ping';
+import { answerKindOf, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
 import type {
 	ActionPort,
 	ActionSetting,
@@ -383,12 +383,13 @@ export function toPing(w: Wire.PingView): Ping {
 		files: list(w.files),
 		link: w.link,
 		primaryRef: w.payload_ref,
-		answerKind: answerKindOf(w.answer_kind, w.type, w.options),
-		options: list(w.options).map(toPingOption),
+		answerKind: answerKindOf(w.answer_kind, w.type),
+		form: toPingForm(w.form),
 		phase: w.phase || undefined,
 		endsPhase: w.ends_phase ?? false,
 		answer: w.answer,
 		feedback: w.feedback,
+		content: toFormContent(w.content),
 		answerAttachmentIds: list(w.answer_attachment_ids),
 		review: list(w.review).map(toReviewComment),
 		raisedAt: w.raised_at,

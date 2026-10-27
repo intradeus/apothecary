@@ -270,17 +270,14 @@
 				{@const log = logs[s.name]}
 				<article class="svc card-in" class:off={!on}>
 					<div class="head">
-						<span
-							class="ldot hue-{hue}"
-							class:pulse={s.state === 'starting' || s.state === 'stopping'}
-							class:hollow={!on}
-						></span>
 						<span class="nm mono">{s.name}</span>
 						<span
 							class="pill sm t-{hue}"
 							title={s.healthyAt && s.state === 'healthy'
 								? t('runview.services.healthy_since', { at: fmtAbs(s.healthyAt) })
-								: undefined}>{stateWord(s)}</span
+								: undefined}
+							><span class="dot" class:pulse={s.state === 'starting' || s.state === 'stopping'}
+							></span>{stateWord(s)}</span
 						>
 						<span class="spacer"></span>
 						<div class="acts">
@@ -314,6 +311,7 @@
 							<button
 								class="btn-sm"
 								class:btn-sel={!!log}
+								aria-pressed={!!log}
 								aria-expanded={!!log}
 								disabled={!canAct && !log}
 								onclick={() => toggleLog(s.name)}
@@ -420,7 +418,7 @@
 								onclick={() => loadLog(s.name)}>{I.retry}</button
 							>
 						</div>
-						<div class="out" bind:this={outs[s.name]}>
+						<div class="log out" bind:this={outs[s.name]}>
 							{#if log.text === null}
 								{#if log.note}<div class="empty-line">{log.note}</div>{:else}<Loading
 										text={t('runview.connecting')}
@@ -551,14 +549,7 @@
 	}
 	.out {
 		max-height: 260px;
-		overflow: auto;
-		padding: 8px 10px;
-		border-radius: var(--r-card);
-		background: var(--code);
-		font-family: var(--mono);
-		font-size: var(--fs-meta);
 		line-height: 1.65;
-		color: var(--mut);
 	}
 	.out pre {
 		margin: 0;

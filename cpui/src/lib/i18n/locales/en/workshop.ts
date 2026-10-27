@@ -157,7 +157,7 @@ export default {
 		'No ticket-source integration is configured. Add one under System → Integrations.',
 	'workshop.automations.query': 'Query',
 	'workshop.automations.queryHelp':
-		'In the tracker’s own words (JQL on Jira, GitHub’s issue search); empty means the tracker’s default search.',
+		'In the tracker’s own words (JQL on Jira, GitHub’s issue search, GitLab’s ~label/assignee: filter words); empty means the tracker’s default search.',
 	'workshop.automations.schedule': 'Schedule',
 	'workshop.automations.scheduleHelp':
 		'Five cron fields, UTC: minute hour day-of-month month day-of-week. “0 9 * * 1-5” is weekday mornings at nine.',

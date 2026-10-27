@@ -157,12 +157,11 @@ type RaisePingRequest struct {
 	Type     string `json:"type"` // clarification|blocker|permission
 	Question string `json:"question"`
 	Context  string `json:"context,omitempty"`
-	// Options make it a closed question: each a string, or {id, label,
-	// detail}; the answer is one id (or "other"), or with Multi any subset.
-	Options   []event.Option `json:"options,omitempty"`
-	Multi     bool           `json:"multi,omitempty"`
-	Artifact  string         `json:"artifact,omitempty"`  // legacy single workspace file
-	Artifacts []string       `json:"artifacts,omitempty"` // workspace files to review
+	// Fields are what it asks, in order (ACP's elicitation form); none is
+	// one free-text answer.
+	Fields    []event.Field `json:"fields,omitempty"`
+	Artifact  string        `json:"artifact,omitempty"`  // legacy single workspace file
+	Artifacts []string      `json:"artifacts,omitempty"` // workspace files to review
 	// HoldMS is how long this request may hold for an answer, clamped to the
 	// server's own limit; the caller long-polls the rest of the wait.
 	HoldMS int `json:"hold_ms,omitempty"`
@@ -176,20 +175,25 @@ type RaisePingRequest struct {
 type PingHold struct {
 	PingID string `json:"ping_id"`
 	// Text is the composed answer, rendered server-side so the tool return and
-	// a resumed stage's message say the same thing; Answer/Feedback are the
-	// raw fields behind it.
-	Text      string   `json:"text"`
-	Answer    string   `json:"answer"`
-	Feedback  string   `json:"feedback,omitempty"`
-	Artifacts []string `json:"artifacts,omitempty"` // workspace paths of the human's files
+	// a resumed stage's message say the same thing; Answer (accept|decline),
+	// Feedback and Content are the raw fields behind it — what a harness's
+	// own question (an ACP elicitation) is answered with.
+	Text      string         `json:"text"`
+	Answer    string         `json:"answer"`
+	Feedback  string         `json:"feedback,omitempty"`
+	Content   map[string]any `json:"content,omitempty"`
+	Artifacts []string       `json:"artifacts,omitempty"` // workspace paths of the human's files
 }
 
-// AnswerPingRequest answers a question: approve|reject for a gate, the chosen
-// option (or the human's own words) for an agent's question.
+// AnswerPingRequest answers a question: approve|reject for a gate, accept
+// with the form's content or decline with a note for a form.
 type AnswerPingRequest struct {
-	Answer        string   `json:"answer"`
-	Feedback      string   `json:"feedback,omitempty"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	Answer   string `json:"answer"`
+	Feedback string `json:"feedback,omitempty"`
+	// Content is an accepted form's values, by field id: a string, number,
+	// boolean, or (array field) a list of option ids.
+	Content       map[string]any `json:"content,omitempty"`
+	AttachmentIDs []string       `json:"attachment_ids,omitempty"`
 	// Review is the comments on the files the ping shows, each on one of
 	// them (feedback is then the review's summary): on its lines, or on the
 	// whole file — always, on an image.

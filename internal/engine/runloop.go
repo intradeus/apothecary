@@ -143,7 +143,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
 				Context: op.Context, Files: op.Files, Link: op.Link, StageID: op.StageID,
-				Options: op.Options, AnswerKind: op.Kind(), key: op.Key,
+				Form: op.Form, AnswerKind: op.Kind(), key: op.Key,
 				Phase: op.Phase, EndsPhase: op.EndsPhase,
 				RaisedAt: e.clock(), done: make(chan struct{}),
 			}
@@ -1178,7 +1178,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			x.e.mu.Unlock()
 			raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
 				Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
-				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Options: req.p.Options, AnswerKind: req.p.AnswerKind}
+				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Form: req.p.Form, AnswerKind: req.p.AnswerKind}
 			if err := x.append(raised); err != nil {
 				close(req.ack)
 				return invocation{}, err
@@ -1338,11 +1338,8 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 	ar.p.answer = &ans
 	x.e.mu.Unlock()
 
-	// §6: free-text agent (ask_human) answers are recorded as answer:"text";
-	// every other kind keeps the choice in answer and the note in feedback.
-	answer, feedback := recordedAnswer(ar.p.AnswerKind, ar.ans)
-	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: answer, Feedback: feedback,
-		AttachmentIDs: ar.ans.AttachmentIDs, Review: ar.ans.Review}
+	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: ar.ans.Answer, Feedback: ar.ans.Feedback,
+		Content: ar.ans.Content, AttachmentIDs: ar.ans.AttachmentIDs, Review: ar.ans.Review}
 	if err := x.append(recorded); err != nil {
 		// Roll the in-memory claim back so a retried answer can succeed
 		// after recovery (the event log has no ping_answered).

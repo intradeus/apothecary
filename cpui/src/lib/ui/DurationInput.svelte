@@ -3,6 +3,7 @@
 	// Number + unit (m / h / d / never) over an engine duration string
 	// (DESIGN 7.10). Replaces free text: nothing to mistype.
 	import { fromDur, toDur, type DurUnit } from './duration';
+	import Select, { type SelectOption } from './Select.svelte';
 
 	let {
 		value = $bindable(''),
@@ -46,6 +47,15 @@
 		value = fromDur({ n, unit: u });
 	}
 
+	const unitOptions = $derived<SelectOption<DurUnit>[]>([
+		{ value: 'm', label: t('ui.dur.minutes') },
+		{ value: 'h', label: t('ui.dur.hours') },
+		{ value: 'd', label: t('ui.dur.days') },
+		...(allowNever || unit === 'never'
+			? [{ value: 'never' as const, label: t('ui.dur.never') }]
+			: [])
+	]);
+
 	const invalid = $derived(
 		!disabled &&
 			(parsed === null ||
@@ -53,8 +63,10 @@
 	);
 </script>
 
-<div class="dur" class:invalid>
+<div class="dur">
 	<input
+		class="mono"
+		class:invalid
 		{id}
 		type="number"
 		min="1"
@@ -67,17 +79,14 @@
 		oninput={(e) => setN(e.currentTarget.value)}
 		onblur={() => (draft = null)}
 	/>
-	<select
+	<Select
+		{invalid}
+		options={unitOptions}
 		value={unit}
 		{disabled}
-		aria-label={t('ui.dur.unit')}
-		onchange={(e) => setUnit(e.currentTarget.value as DurUnit)}
-	>
-		<option value="m">{t('ui.dur.minutes')}</option>
-		<option value="h">{t('ui.dur.hours')}</option>
-		<option value="d">{t('ui.dur.days')}</option>
-		{#if allowNever || unit === 'never'}<option value="never">{t('ui.dur.never')}</option>{/if}
-	</select>
+		label={t('ui.dur.unit')}
+		onchange={(u) => setUnit(u)}
+	/>
 </div>
 {#if parsed === null && value}
 	<div class="err">
@@ -92,11 +101,6 @@
 		gap: 6px;
 	}
 	.dur input {
-		font-family: var(--mono);
-		font-size: var(--fs-ui);
 		text-align: right;
-	}
-	.invalid input {
-		border-color: var(--ros);
 	}
 </style>

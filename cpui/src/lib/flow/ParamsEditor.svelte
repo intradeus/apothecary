@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Checkbox from '$lib/ui/Checkbox.svelte';
 	// The flow's parameters (FLOWLANG §1): the six the engine reads itself,
 	// pinned at the top, and the flow's own knobs — each declared here with
 	// what it holds (a type, a list of it) and its default, and read where
@@ -6,6 +7,7 @@
 	// them, a run may override them.
 	import { t } from '$lib/i18n/index.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
+	import Select from '$lib/ui/Select.svelte';
 	import { KNOWN_PARAMS, type DocParam, type FlowDoc } from '$lib/flowdoc';
 	import {
 		customParams,
@@ -172,35 +174,35 @@
 		</div>
 		<div class="row">
 			<label class="fnt small" for="pt-{name}">{t('flow.insp.paramType')}</label>
-			<select
+			<Select
 				id="pt-{name}"
 				value={p.type ?? ''}
-				onchange={(e) => setType(name, p, e.currentTarget.value as ParamType)}
-			>
-				{#if !p.type}<option value="">—</option>{/if}
-				{#each PARAM_TYPES as ty (ty)}<option value={ty}>{ty}</option>{/each}
-			</select>
-			<label class="chk fnt small"
-				><input
-					type="checkbox"
-					checked={!!p.list}
-					onchange={(e) => setList(name, p, e.currentTarget.checked)}
-				/>
-				{t('flow.insp.paramList')}</label
-			>
+				options={[
+					...(!p.type ? [{ value: '', label: '—' }] : []),
+					...PARAM_TYPES.map((ty) => ({ value: ty, label: ty }))
+				]}
+				onchange={(v) => setType(name, p, v as ParamType)}
+			/>
+			<Checkbox
+				size="sm"
+				checked={!!p.list}
+				label={t('flow.insp.paramList')}
+				onchange={(c) => setList(name, p, c)}
+			/>
 		</div>
 		{#if !p.type}<div class="help hue-amb">{t('flow.insp.paramTypeRequired')}</div>{/if}
 		<div class="field">
 			<label for="pd-{name}">{t('flow.insp.paramDefault')}</label>
 			{#if type === 'bool' && !p.list}
-				<select
+				<Select
 					id="pd-{name}"
 					value={String(p.default)}
-					onchange={(e) => setField(name, { default: e.currentTarget.value === 'true' })}
-				>
-					<option value="true">true</option>
-					<option value="false">false</option>
-				</select>
+					options={[
+						{ value: 'true', label: 'true' },
+						{ value: 'false', label: 'false' }
+					]}
+					onchange={(v) => setField(name, { default: v === 'true' })}
+				/>
 			{:else}
 				<input
 					id="pd-{name}"
@@ -280,11 +282,6 @@
 	}
 	.name {
 		max-width: 14ch;
-	}
-	.chk {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
 	}
 	.spacer {
 		flex: 1;

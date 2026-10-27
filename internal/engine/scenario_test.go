@@ -644,8 +644,8 @@ main:
 		if err != nil {
 			return ports.AgentResult{}, err
 		}
-		ans, _ := p.Await(context.Background())
-		gotAnswer <- ans.Answer
+		p.Await(context.Background())
+		gotAnswer <- ComposeAnswer(p)
 		return ports.AgentResult{TurnsUsed: 2}, nil
 	}
 
@@ -663,7 +663,7 @@ main:
 	if v := h.view(t, runID); v.State != run.WaitingOnHuman {
 		t.Errorf("state while parked = %s", v.State)
 	}
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "use postgres"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, textAnswer("use postgres")); err != nil {
 		t.Fatal(err)
 	}
 	if got := <-gotAnswer; got != "use postgres" {
@@ -673,7 +673,7 @@ main:
 
 	evs := h.events(t, runID)
 	pa, ok := findPayload[*event.PingAnswered](evs)
-	if !ok || pa.Answer != "text" || pa.Feedback != "use postgres" {
+	if !ok || pa.Answer != "accept" || pa.Content[AnswerField] != "use postgres" {
 		t.Errorf("ping_answered = %+v", pa)
 	}
 	rc, _ := findPayload[*event.RunCompleted](evs)
@@ -1813,36 +1813,35 @@ main:
 	runIDCh <- runID
 
 	p := h.waitPing(t, "clarification")
-	if len(p.Options) != 2 || p.Options[0].ID != "postgres" || p.Options[1].ID != "sqlite" || p.AnswerKind != event.AnswerChoice { // deduped
-		t.Errorf("options = %v", p.Options)
+	if f := p.Form.Fields; len(f) != 1 || len(f[0].Options) != 2 || f[0].Options[0].ID != "postgres" || f[0].Options[1].ID != "sqlite" || p.AnswerKind != event.AnswerForm { // deduped
+		t.Errorf("form = %+v", p.Form)
 	}
 	if len(p.Files) != 1 || p.Files[0] != "artifacts/dbs.md" {
 		t.Errorf("ping files = %v", p.Files)
 	}
-	// Free text refused for a closed question — the error offers the
-	// hardcoded escape hatch alongside the declared options.
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "mysql"}); err == nil || !strings.Contains(err.Error(), "postgres | sqlite | other") {
+	// An answer off the options is refused for a closed question.
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "accept", Content: map[string]any{AnswerField: "mysql"}}); err == nil || !strings.Contains(err.Error(), "not one of the options") {
 		t.Errorf("off-option answer err = %v", err)
 	}
-	// "other" without the note is useless — the note IS the answer.
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "other", Feedback: "  "}); err == nil || !strings.Contains(err.Error(), "note") {
-		t.Errorf("bare other err = %v", err)
+	// Declining without the note is useless — the note is what the agent reads.
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "decline", Feedback: "  "}); err == nil || !strings.Contains(err.Error(), "note") {
+		t.Errorf("bare decline err = %v", err)
 	}
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "postgres", Feedback: "use v16"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "accept", Feedback: "use v16", Content: map[string]any{AnswerField: "postgres"}}); err != nil {
 		t.Fatal(err)
 	}
 	ans := <-gotAnswer
-	if ans.Answer != "postgres" || ans.Feedback != "use v16" {
+	if ans.Answer != "accept" || ans.Content[AnswerField] != "postgres" || ans.Feedback != "use v16" {
 		t.Errorf("agent received %+v", ans)
 	}
 	h.e.Wait(runID)
 	pa, ok := findPayload[*event.PingAnswered](h.events(t, runID))
-	if !ok || pa.Answer != "postgres" || pa.Feedback != "use v16" {
+	if !ok || pa.Answer != "accept" || pa.Content[AnswerField] != "postgres" || pa.Feedback != "use v16" {
 		t.Errorf("ping_answered = %+v", pa)
 	}
 	pr, _ := findPayload[*event.PingRaised](h.events(t, runID))
-	if len(pr.Options) != 2 {
-		t.Errorf("ping_raised options = %v", pr.Options)
+	if pr.Form == nil || len(pr.Form.Fields[0].Options) != 2 {
+		t.Errorf("ping_raised form = %+v", pr.Form)
 	}
 
 	// Invalid raises are refused up front.
@@ -1865,9 +1864,8 @@ main:
 	run2 <- rid
 	h2.e.Wait(rid)
 
-	// The "other" escape hatch end-to-end: an agent-declared "other" is
-	// stripped (it is system-provided), and answering with it carries the
-	// human's actual answer to the agent in the note.
+	// "None of these fit" end-to-end: declining carries the human's actual
+	// answer to the agent in the note.
 	h3 := newHarness(t, mustFlow(t, doc))
 	run3 := make(chan string, 1)
 	got3 := make(chan PingAnswer, 1)
@@ -1887,18 +1885,15 @@ main:
 	}
 	run3 <- rid3
 	p3 := h3.waitPing(t, "clarification")
-	if len(p3.Options) != 2 || p3.Options[0].ID != "a" || p3.Options[1].ID != "b" {
-		t.Errorf("declared 'Other' not stripped: %v", p3.Options)
-	}
-	if err := h3.e.AnswerPing(p3.ID, PingAnswer{Answer: "other", Feedback: "neither — use c"}); err != nil {
+	if err := h3.e.AnswerPing(p3.ID, PingAnswer{Answer: "decline", Feedback: "neither — use c"}); err != nil {
 		t.Fatal(err)
 	}
-	if ans := <-got3; ans.Answer != "other" || ans.Feedback != "neither — use c" {
+	if ans := <-got3; ans.Answer != "decline" || ans.Feedback != "neither — use c" {
 		t.Errorf("agent received %+v", ans)
 	}
 	h3.e.Wait(rid3)
 	pa3, _ := findPayload[*event.PingAnswered](h3.events(t, rid3))
-	if pa3.Answer != "other" || pa3.Feedback != "neither — use c" {
+	if pa3.Answer != "decline" || pa3.Feedback != "neither — use c" {
 		t.Errorf("ping_answered = %+v", pa3)
 	}
 }

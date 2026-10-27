@@ -10,6 +10,7 @@
 	import { KNOWN_PARAMS } from '$lib/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { t } from '$lib/i18n/index.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 
 	let {
 		projectId,
@@ -159,6 +160,15 @@
 		else delete next[name];
 		params = next;
 	}
+	// iids are numbers; the picker's values are strings.
+	const mrOptions = $derived<SelectOption[]>(
+		(openMRs ?? []).map((m) => ({
+			value: String(m.iid),
+			label: `!${m.iid} · ${m.title} — ${m.author}${m.draft ? ` · ${t('run.start.mrDraft')}` : ''}${
+				m.fork ? ` · ${t('run.start.mrFork')}` : ''
+			}`
+		}))
+	);
 </script>
 
 {#if flow}
@@ -168,22 +178,19 @@
 			{#if openMRs === null}
 				<span class="help">{t('run.start.mrLoading')}</span>
 			{:else if openMRs.length}
-				<select id="{idPrefix}-mr" bind:value={mr}>
-					{#each openMRs as m (m.iid)}
-						<option value={m.iid}
-							>!{m.iid} · {m.title} — {m.author}{m.draft
-								? ` · ${t('run.start.mrDraft')}`
-								: ''}{m.fork ? ` · ${t('run.start.mrFork')}` : ''}</option
-						>
-					{/each}
-				</select>
+				<Select
+					id="{idPrefix}-mr"
+					options={mrOptions}
+					value={String(mr)}
+					onchange={(v) => (mr = Number(v))}
+				/>
 				<span class="help">{t('run.start.mrHelp')}</span>
 			{:else}
 				<span class="help hue-amb">{mrError || t('run.start.mrNone')}</span>
 			{/if}
 		</div>
 	{/if}
-	<details class="adv">
+	<details class="card-in adv">
 		<summary>
 			{t('run.start.advanced')}
 			{#if overridden}<span class="pill sm t-brand"
@@ -220,8 +227,6 @@
 
 <style>
 	.adv {
-		border: 1px solid var(--ln);
-		border-radius: var(--r-sm, 8px);
 		padding: 8px 12px;
 	}
 	.adv summary {

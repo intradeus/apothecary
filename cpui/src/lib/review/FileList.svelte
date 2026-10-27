@@ -20,6 +20,7 @@
 	// picker above the file (each variant shows only at its own width).
 	import type { ShownFile } from './files.svelte';
 	import { t } from '$lib/i18n/index.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 
 	let {
 		files,
@@ -38,6 +39,18 @@
 		variant?: 'list' | 'select';
 		onpick: (path: string) => void;
 	} = $props();
+
+	const fileOptions = $derived<SelectOption[]>(
+		files.map((f) => {
+			const n = counts[f.path] ?? 0;
+			return {
+				value: f.path,
+				label: `${KIND_ICON[f.kind]} ${f.path}${n ? ` · ${t('doc.commentCount', { count: n })}` : ''}${
+					viewed?.has(f.path) ? ` · ${t('doc.viewed')}` : ''
+				}`
+			};
+		})
+	);
 </script>
 
 {#if variant === 'list'}
@@ -68,21 +81,14 @@
 	</nav>
 {:else if files.length > 1}
 	<div class="pick">
-		<select
-			aria-label={t('doc.filesLabel')}
-			value={current}
-			onchange={(e) => onpick(e.currentTarget.value)}
-		>
-			{#each files as f (f.path)}
-				{@const n = counts[f.path] ?? 0}
-				<option value={f.path}
-					>{KIND_ICON[f.kind]}
-					{f.path}{n ? ` · ${t('doc.commentCount', { count: n })}` : ''}{viewed?.has(f.path)
-						? ` · ${t('doc.viewed')}`
-						: ''}</option
-				>
-			{/each}
-		</select>
+		<span class="sel">
+			<Select
+				label={t('doc.filesLabel')}
+				options={fileOptions}
+				value={current}
+				onchange={(v) => onpick(v)}
+			/>
+		</span>
 		<span class="help"
 			>{t('doc.fileOf', {
 				n: files.findIndex((f) => f.path === current) + 1,
@@ -135,7 +141,7 @@
 		padding: 8px 12px;
 		border-bottom: 1px solid var(--ln);
 	}
-	.pick select {
+	.pick .sel {
 		flex: 1;
 		min-width: 0;
 	}

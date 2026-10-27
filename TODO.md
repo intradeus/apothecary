@@ -2,7 +2,6 @@
 - 25) multi-user / org based
 - 30) k8s/k3s deployment / worktree
 - 23) new run on observability (full flow data + resource stats)
-- 34) Map the ACP to automatically redirect to the ask_human shim, whenever there are questions or something - if not already done ! And make sure all ACP question types are supported by the ask_human shim. So if codex asks for a multi-answer question, we can show checkboxes etc. 
-- 35) Discord channel integration, gitlab&github issue integration  
+- 35) Discord channel integration
 - 36) Resquash migrations
 - 37) Test cleanup & redo.

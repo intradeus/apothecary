@@ -8,6 +8,7 @@
 	import { api } from '$lib/api';
 	import type { Flow, Project } from '$lib/domain';
 	import Modal from '$lib/ui/Modal.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import { I } from '$lib/ui/icons';
 	import SlugField, { slugOk } from '$lib/flow/SlugField.svelte';
 	import { untrack } from 'svelte';
@@ -48,6 +49,12 @@
 	let busy = $state(false);
 	let error = $state('');
 	let open = $state(true);
+	const targetOptions = $derived<SelectOption[]>(
+		projects.map((p) => ({
+			value: p.id,
+			label: p.name + (p.id === flow.projectId ? t('copyflow.same') : '')
+		}))
+	);
 
 	const sameProject = $derived(target === flow.projectId);
 	const clash = $derived(sameProject && name.trim() === flow.name);
@@ -84,11 +91,7 @@
 		<p>{@html th('copyflow.intro', { source: sourceLabel })}</p>
 		<div class="field">
 			<label for="cf-project">{t('copyflow.into')}</label>
-			<select id="cf-project" bind:value={target}>
-				{#each projects as p (p.id)}
-					<option value={p.id}>{p.name}{p.id === flow.projectId ? t('copyflow.same') : ''}</option>
-				{/each}
-			</select>
+			<Select id="cf-project" options={targetOptions} bind:value={target} />
 		</div>
 		<SlugField
 			id="cf-name"

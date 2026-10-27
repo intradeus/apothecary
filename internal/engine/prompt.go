@@ -28,11 +28,13 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 			// was asked, and a path in the prompt that resolves to nothing is
 			// worse than no path at all.
 			kind := ""
+			var form *event.Form
 			var shown []string
 			if r := x.rs.raisedPings[a.id]; r != nil {
-				kind, shown = r.Kind(), r.Files
+				kind, form, shown = r.Kind(), r.Form, r.Files
 			}
-			text = composeAnswerText(kind, a.answer.Answer, a.answer.Feedback, shown, a.answer.Review, x.pingAnswerFiles(a.id))
+			ans := PingAnswer{Answer: a.answer.Answer, Feedback: a.answer.Feedback, Content: a.answer.Content, Review: a.answer.Review}
+			text = composeAnswerText(kind, form, ans, shown, x.pingAnswerFiles(a.id))
 		}
 		fmt.Fprintf(&b, "\nYou asked: %s\nThey answered: %s\n", a.question, text)
 	}

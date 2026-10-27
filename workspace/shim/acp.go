@@ -59,7 +59,7 @@ type rpcFrame struct {
 
 // rpcConn is a bidirectional JSON-RPC peer: we call the agent (initialize,
 // session/*), and the agent calls us (session/update notifications,
-// session/request_permission requests).
+// session/request_permission and elicitation/create requests).
 type rpcConn struct {
 	w      io.Writer
 	wmu    sync.Mutex
@@ -68,13 +68,28 @@ type rpcConn struct {
 	pmu     sync.Mutex
 	pending map[int64]chan rpcResult
 	closed  bool
+	// serving holds the agent's requests in flight, by id: their channel
+	// closes when the agent cancels one ($/cancel_request) or goes away, so
+	// a handler that waits — a question waiting on the human — stops.
+	serving map[string]chan struct{}
 
-	onNotify  func(method string, params json.RawMessage)
-	onRequest func(method string, params json.RawMessage) (any, *rpcError)
+	onNotify func(method string, params json.RawMessage)
+	// onRequest answers a request; done closes when it is cancelled.
+	onRequest func(method string, params json.RawMessage, done <-chan struct{}) (any, *rpcError)
 }
 
 func newRPCConn(w io.Writer) *rpcConn {
-	return &rpcConn{w: w, pending: map[int64]chan rpcResult{}}
+	return &rpcConn{w: w, pending: map[int64]chan rpcResult{}, serving: map[string]chan struct{}{}}
+}
+
+// cancelServing stops the handler of the agent's request id, if it runs.
+func (c *rpcConn) cancelServing(id string) {
+	c.pmu.Lock()
+	defer c.pmu.Unlock()
+	if ch, ok := c.serving[id]; ok {
+		close(ch)
+		delete(c.serving, id)
+	}
 }
 
 func (c *rpcConn) write(f rpcFrame) error {
@@ -153,6 +168,10 @@ func (c *rpcConn) readLoop(r io.Reader) {
 		ch <- rpcResult{err: errAgentGone}
 		delete(c.pending, id)
 	}
+	for id, ch := range c.serving {
+		close(ch)
+		delete(c.serving, id)
+	}
 	c.pmu.Unlock()
 }
 
@@ -164,11 +183,23 @@ func (c *rpcConn) dispatch(line []byte) {
 	hasID := len(f.ID) > 0 && string(f.ID) != "null"
 	switch {
 	case f.Method != "" && hasID: // a request from the agent
+		key := string(f.ID)
+		done := make(chan struct{})
+		c.pmu.Lock()
+		c.serving[key] = done
+		c.pmu.Unlock()
 		go func() {
+			defer func() {
+				c.pmu.Lock()
+				if c.serving[key] == done {
+					delete(c.serving, key)
+				}
+				c.pmu.Unlock()
+			}()
 			var result any
 			var rerr *rpcError
 			if c.onRequest != nil {
-				result, rerr = c.onRequest(f.Method, f.Params)
+				result, rerr = c.onRequest(f.Method, f.Params, done)
 			} else {
 				rerr = &rpcError{Code: -32601, Message: "method not found"}
 			}
@@ -179,6 +210,13 @@ func (c *rpcConn) dispatch(line []byte) {
 			raw, _ := json.Marshal(result)
 			_ = c.write(rpcFrame{ID: f.ID, Result: raw})
 		}()
+	case f.Method == "$/cancel_request": // the agent gave up on one of its requests
+		var p struct {
+			RequestID json.RawMessage `json:"requestId"`
+		}
+		if json.Unmarshal(f.Params, &p) == nil {
+			c.cancelServing(string(p.RequestID))
+		}
 	case f.Method != "": // a notification
 		if c.onNotify != nil {
 			c.onNotify(f.Method, f.Params)
@@ -457,10 +495,14 @@ func (h *agentHost) start(req startReq) (json.RawMessage, error) {
 	res, err := p.conn.call("initialize", map[string]any{
 		"protocolVersion": 1,
 		// No client-side fs or terminal: the agent works on the workspace
-		// directly, as it does on a developer's machine.
+		// directly, as it does on a developer's machine. Form elicitation:
+		// a harness's own question tool asks the human through a ping, as
+		// ask_human does (elicitation.go). No url mode — nobody here can
+		// open a link mid-turn.
 		"clientCapabilities": map[string]any{
-			"fs":       map[string]any{"readTextFile": false, "writeTextFile": false},
-			"terminal": false,
+			"fs":          map[string]any{"readTextFile": false, "writeTextFile": false},
+			"terminal":    false,
+			"elicitation": map[string]any{"form": map[string]any{}},
 		},
 		"clientInfo": map[string]any{"name": "apothecary", "version": "1"},
 	}, p.exited)
@@ -927,9 +969,12 @@ func (h *agentHost) status() hostStatus {
 // onRequest answers what the agent asks of the client. Permissions are
 // granted: the workspace is the sandbox (container + egress gateway), and the
 // harnesses are configured not to ask in the first place — this is the
-// backstop that keeps a stray prompt from hanging a turn forever.
-func (h *agentHost) onRequest(method string, params json.RawMessage) (any, *rpcError) {
+// backstop that keeps a stray prompt from hanging a turn forever. A question
+// (elicitation/create) goes to the human as a ping.
+func (h *agentHost) onRequest(method string, params json.RawMessage, done <-chan struct{}) (any, *rpcError) {
 	switch method {
+	case "elicitation/create":
+		return h.onElicitation(params, done)
 	case "session/request_permission":
 		var r struct {
 			SessionID string          `json:"sessionId"`

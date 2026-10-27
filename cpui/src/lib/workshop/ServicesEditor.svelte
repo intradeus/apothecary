@@ -260,7 +260,7 @@
 					disabled={i === 0}
 					aria-label={t('form.services.moveUp', { name: r.name || t('form.services.unnamed') })}
 					title={t('form.services.orderTitle')}
-					onclick={() => move(r, -1)}>↑</button
+					onclick={() => move(r, -1)}>{I.up}</button
 				>
 				<button
 					type="button"
@@ -268,7 +268,7 @@
 					disabled={i === rows.length - 1}
 					aria-label={t('form.services.moveDown', { name: r.name || t('form.services.unnamed') })}
 					title={t('form.services.orderTitle')}
-					onclick={() => move(r, 1)}>↓</button
+					onclick={() => move(r, 1)}>{I.down}</button
 				>
 				<button
 					type="button"
@@ -564,7 +564,6 @@
 		border-top: 1px solid var(--ln);
 	}
 	.body textarea {
-		resize: vertical;
 		min-height: 54px;
 	}
 	.grp {

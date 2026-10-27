@@ -504,18 +504,21 @@ main:
 				return fail("re-poll = %d (%s)", resp.StatusCode, data)
 			}
 			var out struct {
-				Answer string `json:"answer"`
-				Text   string `json:"text"`
+				Answer  string         `json:"answer"`
+				Text    string         `json:"text"`
+				Content map[string]any `json:"content"`
 			}
 			if err := json.Unmarshal(data, &out); err != nil {
 				return fail("re-poll body: %v", err)
 			}
 			// text is the engine-composed answer the shim hands the agent
-			// verbatim; a free-text answer composes to itself.
-			if out.Text != out.Answer {
-				return fail("composed text = %q, answer = %q", out.Text, out.Answer)
+			// verbatim; a lone free-text field composes to its value, which
+			// the content carries raw (what an ACP elicitation is answered
+			// with).
+			if out.Answer != "accept" || out.Text != out.Content["answer"] {
+				return fail("composed text = %q, answer = %q, content = %v", out.Text, out.Answer, out.Content)
 			}
-			gotAnswer <- out.Answer
+			gotAnswer <- out.Text
 			return ports.AgentResult{TurnsUsed: 1}, nil
 		}
 	}
@@ -547,7 +550,7 @@ main:
 	// Let the first long-poll hold (5 ms) expire so the 204 + re-poll path
 	// is what the shim actually exercises.
 	time.Sleep(100 * time.Millisecond)
-	resp, data := x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]string{"answer": "yes, staging data only"}, nil)
+	resp, data := x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]any{"answer": "accept", "content": map[string]any{"answer": "yes, staging data only"}}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("answer = %d: %s", resp.StatusCode, data)
 	}
@@ -560,7 +563,7 @@ main:
 	// run's pings (they would otherwise be permanently unanswerable inbox
 	// zombies). A double answer while the run is live is refused with 409
 	// via the answered flag.
-	resp, _ = x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]string{"answer": "again"}, nil)
+	resp, _ = x.do(t, "POST", "/api/pings/"+pid+"/answer", map[string]any{"answer": "accept", "content": map[string]any{"answer": "again"}}, nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("post-run answer = %d, want 404", resp.StatusCode)
 	}
@@ -925,9 +928,9 @@ main:
 	}
 }
 
-// TestOptionPingOverHTTP covers the PLAN4 M16 surface: options travel to
-// the inbox, off-option answers are refused, and the recorded pair keeps
-// the chosen option verbatim.
+// TestOptionPingOverHTTP: a question's form travels to the inbox,
+// off-option answers are refused, and the recorded pair keeps the chosen
+// option in the content.
 func TestOptionPingOverHTTP(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	runIDCh := make(chan string, 1)
@@ -959,15 +962,15 @@ func TestOptionPingOverHTTP(t *testing.T) {
 	if ping.PingID == "" {
 		t.Fatal("no option ping appeared")
 	}
-	if len(ping.Options) != 2 || ping.PayloadRef != "artifacts/dbs.md" {
+	if ping.AnswerKind != "form" || ping.Form == nil || len(ping.Form.Fields[0].Options) != 2 || ping.PayloadRef != "artifacts/dbs.md" {
 		t.Errorf("ping = %+v", ping)
 	}
 
-	resp, data := x.do(t, "POST", "/api/pings/"+ping.PingID+"/answer", map[string]string{"answer": "mysql"}, nil)
-	if resp.StatusCode != 400 || !strings.Contains(string(data), "postgres | sqlite") {
+	resp, data := x.do(t, "POST", "/api/pings/"+ping.PingID+"/answer", map[string]any{"answer": "accept", "content": map[string]any{"answer": "mysql"}}, nil)
+	if resp.StatusCode != 400 || !strings.Contains(string(data), "not one of the options") {
 		t.Errorf("off-option = %d: %s", resp.StatusCode, data)
 	}
-	resp, _ = x.do(t, "POST", "/api/pings/"+ping.PingID+"/answer", map[string]string{"answer": "sqlite", "feedback": "keep it simple"}, nil)
+	resp, _ = x.do(t, "POST", "/api/pings/"+ping.PingID+"/answer", map[string]any{"answer": "accept", "feedback": "keep it simple", "content": map[string]any{"answer": "sqlite"}}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("answer = %d", resp.StatusCode)
 	}
@@ -977,7 +980,7 @@ func TestOptionPingOverHTTP(t *testing.T) {
 	_, d := x.do(t, "GET", "/api/pings/"+ping.PingID, nil, nil)
 	var stored run.PingView
 	_ = json.Unmarshal(d, &stored)
-	if stored.Answer != "sqlite" || stored.Feedback != "keep it simple" || len(stored.Options) != 2 {
+	if stored.Answer != "accept" || stored.Content["answer"] != "sqlite" || stored.Feedback != "keep it simple" || stored.Form == nil {
 		t.Errorf("stored = %+v", stored)
 	}
 }

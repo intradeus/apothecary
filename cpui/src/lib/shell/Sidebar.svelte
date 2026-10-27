@@ -23,6 +23,7 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import Vial from '$lib/ui/Vial.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
+	import Select from '$lib/ui/Select.svelte';
 	import { I } from '$lib/ui/icons';
 	import { bump, indicator, ms } from '$lib/ui/motion';
 
@@ -35,7 +36,9 @@
 
 	const localeIds = Object.keys(LOCALES) as Locale[];
 	const multiLocale = localeIds.length > 1;
-	const pickLocale = (e: Event) => void i18n.set((e.target as HTMLSelectElement).value as Locale);
+	const pickLocale = (v: Locale) => void i18n.set(v);
+	const localeCodes = localeIds.map((id) => ({ value: id, label: id.toUpperCase() }));
+	const localeNames = localeIds.map((id) => ({ value: id, label: LOCALES[id].label }));
 
 	const rail = $derived(prefs.collapsed && !drawer);
 	const guild = $derived(currentGuild());
@@ -104,7 +107,7 @@
 						aria-label={n.label}
 						aria-current={n.match(path) ? 'page' : undefined}
 						>{n.icon}{#if n.id === 'inbox'}<span
-								class="count hot rbadge"
+								class="count hot sm rbadge"
 								class:gone={!c}
 								use:bump={c}>{c}</span
 							>{/if}</a
@@ -122,21 +125,23 @@
 						title={fleet.projectName(p.id)}
 					>
 						<Vial projectId={p.id} idle={!fleet.liveByProject.get(p.id)?.length} />
-						<span class="count hot rbadge" class:gone={!pings} use:bump={pings}>{pings}</span>
+						<span class="count hot sm rbadge" class:gone={!pings} use:bump={pings}>{pings}</span>
 					</a>
 				{/each}
 			</div>
 			<span class="grow"></span>
 			{#if multiLocale}
-				<select
-					class="lang rlang"
-					aria-label={t('shell.sidebar.language')}
-					title={t('shell.sidebar.language')}
-					value={i18n.locale}
-					onchange={pickLocale}
-				>
-					{#each localeIds as id (id)}<option value={id}>{id.toUpperCase()}</option>{/each}
-				</select>
+				<span class="lang rlang">
+					<Select
+						size="sm"
+						inline
+						label={t('shell.sidebar.language')}
+						title={t('shell.sidebar.language')}
+						options={localeCodes}
+						value={i18n.locale}
+						onchange={pickLocale}
+					/>
+				</span>
 			{/if}
 			<button
 				class="btn-icon rb"
@@ -270,15 +275,17 @@
 					<span class="ur ell">{guild.role} · {guild.name}</span>
 				</span>
 				{#if multiLocale}
-					<select
-						class="lang"
-						aria-label={t('shell.sidebar.language')}
-						title={t('shell.sidebar.language')}
-						value={i18n.locale}
-						onchange={pickLocale}
-					>
-						{#each localeIds as id (id)}<option value={id}>{LOCALES[id].label}</option>{/each}
-					</select>
+					<span class="lang">
+						<Select
+							size="sm"
+							inline
+							label={t('shell.sidebar.language')}
+							title={t('shell.sidebar.language')}
+							options={localeNames}
+							value={i18n.locale}
+							onchange={pickLocale}
+						/>
+					</span>
 				{/if}
 				<button
 					class="btn-sel btn-sm theme"
@@ -451,10 +458,6 @@
 		position: absolute;
 		top: 2px;
 		right: 1px;
-		min-width: 0;
-		padding: 0 4px;
-		font-size: var(--fs-badge);
-		line-height: 14px;
 	}
 	.gone {
 		display: none;
@@ -695,13 +698,12 @@
 		color: var(--railMut);
 	}
 	.lang {
-		width: auto;
+		display: inline-flex;
 		max-width: 96px;
-		font-size: var(--fs-meta);
 	}
+	/* The rail is 60px: room for the code and the chevron. */
 	.rlang {
-		max-width: 44px;
-		padding: 2px;
+		max-width: 52px;
 	}
 	.theme {
 		font-size: var(--fs-meta);

@@ -3,6 +3,7 @@
 	// with the room it needs and a preview of the sections a stage appends to
 	// it, beside its settings and its contract — what it reads and writes,
 	// typed, never where — and the flow's MCP servers it may call.
+	import Select from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import { I } from '$lib/ui/icons';
 	import { STAGE_HUE } from '$lib/ui/hues';
@@ -148,7 +149,7 @@
 
 {#snippet header()}
 	<div class="ih">
-		<span class="pill sm mono t-{STAGE_HUE.agent}">{t('flow.insp.kind.agent')}</span>
+		<span class="pill sm flat sq mono t-{STAGE_HUE.agent}">{t('flow.insp.kind.agent')}</span>
 		<input
 			id={id('name')}
 			class="mono name-in"
@@ -251,34 +252,38 @@
 				>
 			</div>
 			<div class="row nowrap">
-				<select
-					class="grow"
-					value={d.type ?? ''}
-					aria-label={t('flow.insp.portType')}
-					onchange={(e) => {
-						d.type = e.currentTarget.value || undefined;
-						// A schema says what a file is: never beside `file`, a directory or a value.
-						if (!takesSchema(d.type)) d.schema = undefined;
-						onchange();
-					}}
-				>
-					<option value="">{t('flow.insp.noType')}</option>
-					{#each [...FILE_TYPES, ...VALUE_TYPES] as ty (ty)}<option value={ty}>{ty}</option>{/each}
-				</select>
-				{#if (schemaNames.length || d.schema) && takesSchema(d.type)}
-					<select
-						class="grow"
-						value={d.schema ?? ''}
-						aria-label={t('flow.insp.portSchema')}
-						title={t('flow.insp.inputSchemaTitle')}
-						onchange={(e) => {
-							d.schema = e.currentTarget.value || undefined;
+				<span class="grow">
+					<Select
+						value={d.type ?? ''}
+						label={t('flow.insp.portType')}
+						options={[
+							{ value: '', label: t('flow.insp.noType') },
+							...[...FILE_TYPES, ...VALUE_TYPES].map((ty) => ({ value: ty, label: ty }))
+						]}
+						onchange={(v) => {
+							d.type = v || undefined;
+							// A schema says what a file is: never beside `file`, a directory or a value.
+							if (!takesSchema(d.type)) d.schema = undefined;
 							onchange();
 						}}
-					>
-						<option value="">{t('flow.insp.noSchema')}</option>
-						{#each schemaChoices(d.schema) as n (n)}<option value={n}>{n}</option>{/each}
-					</select>
+					/>
+				</span>
+				{#if (schemaNames.length || d.schema) && takesSchema(d.type)}
+					<span class="grow">
+						<Select
+							value={d.schema ?? ''}
+							label={t('flow.insp.portSchema')}
+							title={t('flow.insp.inputSchemaTitle')}
+							options={[
+								{ value: '', label: t('flow.insp.noSchema') },
+								...schemaChoices(d.schema).map((n) => ({ value: n, label: n }))
+							]}
+							onchange={(v) => {
+								d.schema = v || undefined;
+								onchange();
+							}}
+						/>
+					</span>
 				{/if}
 			</div>
 			<input
@@ -329,39 +334,42 @@
 				>
 			</div>
 			<div class="row nowrap">
-				<select
-					class="grow"
-					value={d.type ?? ''}
-					aria-label={t('flow.insp.portType')}
-					onchange={(e) => {
-						d.type = e.currentTarget.value || undefined;
-						// A schema says what a file is: never beside `file` or a directory.
-						if (!takesSchema(d.type)) d.schema = undefined;
-						onchange();
-					}}
-				>
-					<option value="">{t('flow.insp.noType')}</option>
-					{#each FILE_TYPES as ty (ty)}<option value={ty}
-							>{t(`flow.insp.outputType.${ty}` as 'flow.insp.outputType.file')}</option
-						>{/each}
-					{#if d.type && !FILE_TYPES.includes(d.type)}
-						<option value={d.type}>{d.type}</option>
-					{/if}
-				</select>
-				{#if (schemaNames.length || d.schema) && takesSchema(d.type)}
-					<select
-						class="grow"
-						value={d.schema ?? ''}
-						aria-label={t('flow.insp.portSchema')}
-						title={t('flow.insp.outputSchemaTitle')}
-						onchange={(e) => {
-							d.schema = e.currentTarget.value || undefined;
+				<span class="grow">
+					<Select
+						value={d.type ?? ''}
+						label={t('flow.insp.portType')}
+						options={[
+							{ value: '', label: t('flow.insp.noType') },
+							...FILE_TYPES.map((ty) => ({
+								value: ty,
+								label: t(`flow.insp.outputType.${ty}` as 'flow.insp.outputType.file')
+							})),
+							...(d.type && !FILE_TYPES.includes(d.type) ? [{ value: d.type, label: d.type }] : [])
+						]}
+						onchange={(v) => {
+							d.type = v || undefined;
+							// A schema says what a file is: never beside `file` or a directory.
+							if (!takesSchema(d.type)) d.schema = undefined;
 							onchange();
 						}}
-					>
-						<option value="">{t('flow.insp.noSchema')}</option>
-						{#each schemaChoices(d.schema) as n (n)}<option value={n}>{n}</option>{/each}
-					</select>
+					/>
+				</span>
+				{#if (schemaNames.length || d.schema) && takesSchema(d.type)}
+					<span class="grow">
+						<Select
+							value={d.schema ?? ''}
+							label={t('flow.insp.portSchema')}
+							title={t('flow.insp.outputSchemaTitle')}
+							options={[
+								{ value: '', label: t('flow.insp.noSchema') },
+								...schemaChoices(d.schema).map((n) => ({ value: n, label: n }))
+							]}
+							onchange={(v) => {
+								d.schema = v || undefined;
+								onchange();
+							}}
+						/>
+					</span>
 				{/if}
 			</div>
 			<input

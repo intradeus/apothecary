@@ -17,6 +17,8 @@
 	// Segmented control (DESIGN 4.4): filters and pickers. One bead springs
 	// between the options instead of the selection jumping (ui/motion
 	// `indicator`); clicking again mid-slide retargets it from where it is.
+	// A radio group to assistive tech: one stop on Tab, ← → Home End move
+	// the choice. A page's sections are Tabs, not this.
 	import { indicator } from './motion';
 
 	let {
@@ -42,6 +44,30 @@
 		/** Accessible name for the group. */
 		label?: string;
 	} = $props();
+
+	function choose(v: T) {
+		value = v;
+		onchange?.(v);
+	}
+
+	function keys(e: KeyboardEvent) {
+		const at = options.findIndex((o) => o.value === value);
+		const n = options.length;
+		const to =
+			e.key === 'ArrowRight' || e.key === 'ArrowDown'
+				? (at + 1) % n
+				: e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+					? (at - 1 + n) % n
+					: e.key === 'Home'
+						? 0
+						: e.key === 'End'
+							? n - 1
+							: -1;
+		if (to < 0 || disabled) return;
+		e.preventDefault();
+		choose(options[to].value);
+		(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="radio"]')[to]?.focus();
+	}
 </script>
 
 <div
@@ -51,23 +77,23 @@
 	class:mono
 	class:off={disabled}
 	aria-disabled={disabled || undefined}
-	role="tablist"
+	role="radiogroup"
+	tabindex="-1"
 	aria-label={label}
 	use:indicator
+	onkeydown={keys}
 >
 	{#each options as o (o.value)}
 		<button
 			type="button"
-			role="tab"
-			aria-selected={value === o.value}
+			role="radio"
+			aria-checked={value === o.value}
+			tabindex={value === o.value ? 0 : -1}
 			{disabled}
 			class:on={value === o.value}
 			style:color={value === o.value && o.tone ? `var(--${o.tone})` : null}
 			title={o.title}
-			onclick={() => {
-				value = o.value;
-				onchange?.(o.value);
-			}}
+			onclick={() => choose(o.value)}
 			>{#if o.dot}<span class="ldot sm flat hue-{o.dot}"
 				></span>{/if}{o.label}{#if o.count !== undefined}<span class="n">{o.count}</span
 				>{/if}</button

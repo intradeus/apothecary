@@ -76,6 +76,9 @@ components:
           items:
             type: string
           type: array
+        content:
+          additionalProperties: {}
+          type: object
         feedback:
           type: string
         review:
@@ -1469,6 +1472,51 @@ components:
         - stages
         - start
       type: object
+    PingField:
+      properties:
+        default: {}
+        description:
+          type: string
+        format:
+          type: string
+        id:
+          type: string
+        max_items:
+          nullable: true
+          type: integer
+        max_length:
+          nullable: true
+          type: integer
+        maximum:
+          format: double
+          nullable: true
+          type: number
+        min_items:
+          nullable: true
+          type: integer
+        min_length:
+          nullable: true
+          type: integer
+        minimum:
+          format: double
+          nullable: true
+          type: number
+        options:
+          items:
+            $ref: '#/components/schemas/PingOption'
+          type: array
+        pattern:
+          type: string
+        required:
+          type: boolean
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - type
+      type: object
     PingFile:
       properties:
         captured:
@@ -1498,6 +1546,16 @@ components:
       required:
         - files
       type: object
+    PingForm:
+      properties:
+        fields:
+          items:
+            $ref: '#/components/schemas/PingField'
+          nullable: true
+          type: array
+      required:
+        - fields
+      type: object
     PingHold:
       properties:
         answer:
@@ -1506,6 +1564,9 @@ components:
           items:
             type: string
           type: array
+        content:
+          additionalProperties: {}
+          type: object
         feedback:
           type: string
         ping_id:
@@ -1542,6 +1603,9 @@ components:
         answered_at:
           format: date-time
           type: string
+        content:
+          additionalProperties: {}
+          type: object
         context:
           type: string
         ends_phase:
@@ -1552,12 +1616,10 @@ components:
           items:
             type: string
           type: array
+        form:
+          $ref: '#/components/schemas/PingForm'
         link:
           type: string
-        options:
-          items:
-            $ref: '#/components/schemas/PingOption'
-          type: array
         payload_ref:
           type: string
         phase:
@@ -1756,16 +1818,14 @@ components:
           type: array
         context:
           type: string
+        fields:
+          items:
+            $ref: '#/components/schemas/PingField'
+          type: array
         hold_ms:
           type: integer
         key:
           type: string
-        multi:
-          type: boolean
-        options:
-          items:
-            $ref: '#/components/schemas/PingOption'
-          type: array
         question:
           type: string
         type:

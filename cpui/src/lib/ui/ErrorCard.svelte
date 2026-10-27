@@ -21,13 +21,13 @@
 
 <div class="ec materialize" role="alert">
 	<div class="row nowrap">
-		<span class="x">✕</span>
+		<span class="x">{I.bad}</span>
 		<span class="grow">{cause}</span>
 		{#if onretry}<button class="btn-sm" onclick={onretry}
 				>{action ?? `${I.retry} ${t('ui.error.retry')}`}</button
 			>{/if}
 		{#if ondismiss}<button class="btn-icon" aria-label={t('ui.dismiss')} onclick={ondismiss}
-				>×</button
+				>{I.close}</button
 			>{/if}
 	</div>
 	{#if detail}

@@ -12,6 +12,7 @@
 	import type { Ticket } from '$lib/domain';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -55,6 +56,11 @@
 	const kinds = $derived([
 		...new Set(tickets.map((t) => t.source?.kind).filter(Boolean))
 	] as string[]);
+	const sourceOptions = $derived<SelectOption[]>([
+		{ value: '', label: t('page.tickets.anySource') },
+		{ value: 'manual', label: t('page.tickets.writtenHere') },
+		...kinds.map((k) => ({ value: k, label: t('page.tickets.imported', { kind: k }) }))
+	]);
 
 	const shown = $derived.by(() => {
 		const s = q.trim().toLowerCase();
@@ -103,12 +109,9 @@
 	<div class="filters">
 		<SearchInput bind:value={q} placeholder={t('page.tickets.search')} />
 		<WorkshopFilter value={projectFilter} onchange={setProject} />
-		<select class="sel" aria-label={t('page.tickets.filterSource')} bind:value={source}>
-			<option value="">{t('page.tickets.anySource')}</option>
-			<option value="manual">{t('page.tickets.writtenHere')}</option>
-			{#each kinds as k (k)}<option value={k}>{t('page.tickets.imported', { kind: k })}</option
-				>{/each}
-		</select>
+		<span class="sel">
+			<Select label={t('page.tickets.filterSource')} options={sourceOptions} bind:value={source} />
+		</span>
 		<Toggle bind:checked={activeOnly} label={t('page.tickets.hasActive')} />
 	</div>
 
@@ -155,11 +158,12 @@
 		flex: none;
 	}
 	.sel {
-		width: auto;
+		display: inline-block;
 		min-width: 150px;
 	}
 	@media (max-width: 760px) {
 		.sel {
+			display: block;
 			width: 100%;
 		}
 	}

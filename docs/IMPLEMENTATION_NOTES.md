@@ -83,8 +83,9 @@ boring choice, recorded here). Newest at the bottom.
 - **Verdict source of truth**: `AgentResult.Verdict` if the adapter parsed
   one, else the engine reads `artifacts/verdict.json` itself. REJECT with no
   comments (or missing/unparsable file) is `stage_failed{output_contract}`.
-- **ask_human answers in events**: recorded as `answer:"text"` with the reply
-  text in `feedback` (matches the §6 enum); the shim receives the raw text.
+- **ask_human answers in events**: a form's `answer` is `accept` (values in
+  `content`, by field id) or `decline` (the reason in `feedback`); the shim
+  receives the engine-composed text.
 - **Gate reject on a gate with no `on_reject`** (e.g. final_gate) abandons the
   run (`unrecoverable failure with no on_reject`).
 - **Budget checks are strict-greater** and run after each agent stage
@@ -4190,3 +4191,72 @@ What a parameter holds is declared, never read off its default (2026-10-26).
   sheet and the start form draw a list as checkboxes (enum) or a
   comma-separated field, sending a JSON array; timeouts offer duration
   parameters, a list setting a list parameter or items written in place.
+
+## Questions are forms — ACP elicitation (2026-10-27, TODO 34)
+
+- **One question shape**: `event.Form` — an ordered list of `event.Field`
+  mirroring ACP `elicitation/create` / MCP elicitation properties (string
+  [format, pattern, length], string+options, array+options, number,
+  integer, boolean). `answer_kind` is `yes_no | form`; `choice`, `multi`,
+  `text`, `options`, `multi`, `SelectNone` and the `other` escape hatch are
+  gone. A form is answered `accept` + `content` or `decline` + note
+  (`validateForm`; one renderer, `composeFormText`, for the tool return and
+  the resume message). The review round's thread selection is a one-field
+  array form (`threads`, every thread picked by default).
+- **ask_human** takes `fields` (none = one free-text field `answer`).
+- **The sidecar bridges harness questions**: `initialize` advertises
+  `elicitation.form`; `elicitation/create` (workspace/shim/elicitation.go)
+  maps `requestedSchema.properties` IN ORDER onto fields, raises the ping
+  through ask_human's own client, and answers accept/decline — cancel when
+  parked or when the agent sends `$/cancel_request` (rpcConn now tracks the
+  agent's requests in flight). `url` mode is declined. A codex
+  `_meta.codex.isSecret` field is never asked; it is answered with a notice.
+  A message-only form becomes one `proceed` boolean.
+- **What actually uses it today**: codex-acp sends its `request_user_input`
+  here (it answered `{answers: {}}` while we advertised no forms), but codex
+  only offers that tool in Plan mode (or behind the under-development
+  `default_mode_request_user_input` flag) — left off on purpose. MCP
+  servers' elicitations codex forwards come the same way. opencode's
+  `question` tool is disabled under `OPENCODE_CLIENT=acp` and its ACP layer
+  has no bridge, so opencode asks only through ask_human.
+- **Migration 0012** adds `pings.form` / `pings.content`, drops
+  `pings.options`, and rewrites old `ping_raised` / `ping_answered` events
+  into forms (choice/multi/text; `other` → decline).
+
+## GitLab Issues as a ticket source (2026-10-27, TODO 355)
+
+A third `ticketsource` kind, `gitlab` (`kinds.GitLabIssues`,
+`internal/adapters/gitlab/issues.go`), with the read port, `TicketWriter` and
+`TicketAttacher` — the GitHub Issues shape, on the repository adapter's
+REST v4 client. Decisions worth recording:
+
+- **REST issues, not the work items GraphQL API.** GitLab is moving issues,
+  tasks, incidents and epics onto one "work items" framework whose native API
+  is GraphQL. The REST issues API still serves every issue-type work item and
+  is what the rest of the package speaks, so the adapter stays on it; epics
+  (group-level) are out. What only GraphQL reaches — the configurable work
+  item *Status* (in progress, in review…) — is why `TransitionTo` knows only
+  todo/done today; the other canonical statuses are `ErrStatusUnsupported`
+  and skip, as on GitHub. That is the natural next step if a team needs them,
+  likely beside a scoped-label (`workflow::…`) mapping for tiers without it.
+- **The key is GitLab's own full reference**, `group/project#123`
+  (`references.full`, falling back to the `web_url` path): an iid is unique
+  only within its project, and nested groups make the path any depth. It is
+  sent URL-encoded as `:id`, so no numeric-id lookup precedes a call.
+- **Search scope is projects and groups.** Each configured scope is one list
+  call, merged by key and re-sorted by `updated_at`; none configured falls
+  back to `/issues`. There is no query language on the REST side, so the
+  search box lifts GitLab's filter-bar words (`~label`, `is:`, `assignee:`,
+  `author:`, `milestone:`, `type:`) into parameters and searches the rest.
+- **Description uploads are attachments.** Unlike GitHub, GitLab hosts the
+  files pasted into an issue (`/uploads/<secret>/<file>`, project-relative).
+  Fetch lists them and rewrites the links absolute (the body is read outside
+  GitLab once imported); `OpenAttachment` downloads through
+  `GET /projects/:id/uploads/:secret/:filename` (GitLab 17.4+), host-checked
+  before the token goes along. A file that fails is the factory's usual
+  named warning.
+- **Write-back** is `state_event` close/reopen, notes for comments and links
+  (system notes are left out of `Comments`, so the link marker scan sees only
+  real notes), and labels / assignees (username → id via `/users`) /
+  milestone (title → id, ancestors included) for `ticket_set_field`.
+  `Attach` reads the issue's `project_id` and reuses `UploadAttachment`.

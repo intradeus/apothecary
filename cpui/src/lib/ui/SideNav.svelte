@@ -57,7 +57,7 @@
 			{/snippet}
 			{#if it.href}
 				<a
-					class="si"
+					class="rowbtn si"
 					class:on={it.id === active}
 					href={it.href}
 					aria-current={it.id === active ? 'page' : undefined}>{@render inner()}</a
@@ -65,7 +65,7 @@
 			{:else}
 				<button
 					type="button"
-					class="si"
+					class="rowbtn si"
 					class:on={it.id === active}
 					aria-current={it.id === active ? 'step' : undefined}
 					onclick={() => onselect?.(it.id)}>{@render inner()}</button
@@ -103,35 +103,12 @@
 	.list > :global(.ind) {
 		border-radius: var(--r-row);
 	}
+	/* A .rowbtn, a touch denser, in the nav's type. */
 	.si {
-		all: unset;
-		/* all: unset also drops the global .has-ind lift — without it the
-		   absolutely positioned bead paints over the selected item. */
-		position: relative;
-		z-index: var(--z-raise);
-		box-sizing: border-box;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
 		gap: 10px;
 		padding: 6px 10px;
-		border-radius: var(--r-row);
-		color: var(--tx);
 		font-size: var(--fs-ui);
 		font-weight: 500;
-		min-width: 0;
-		-webkit-tap-highlight-color: transparent;
-	}
-	.si:hover {
-		background: var(--p1);
-		text-decoration: none;
-	}
-	.si:active {
-		opacity: 0.75;
-	}
-	.si:focus-visible {
-		outline: 2px solid var(--brand);
-		outline-offset: -2px;
 	}
 	.si.on {
 		font-weight: 600;
@@ -202,6 +179,7 @@
 		}
 		.si {
 			flex: none;
+			width: auto;
 		}
 		.sub {
 			display: none;

@@ -322,29 +322,32 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 	for i := range evs {
 		switch p := evs[i].Payload.(type) {
 		case *event.PingRaised:
-			var opts []byte
-			if len(p.Options) > 0 {
-				opts, _ = json.Marshal(p.Options)
+			var form []byte
+			if p.Form != nil {
+				form, _ = json.Marshal(p.Form)
 			}
 			var files []byte
 			if len(p.Files) > 0 {
 				files, _ = json.Marshal(p.Files)
 			}
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, options, answer_kind, phase, ends_phase, status, raised_at)
+				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, form, answer_kind, phase, ends_phase, status, raised_at)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13)
 				ON CONFLICT (ping_id) DO NOTHING`,
-				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, opts, p.Kind(), p.Phase, p.EndsPhase, evs[i].TS); err != nil {
+				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, form, p.Kind(), p.Phase, p.EndsPhase, evs[i].TS); err != nil {
 				return err
 			}
 		case *event.PingAnswered:
-			var ids []byte
+			var ids, content []byte
 			if len(p.AttachmentIDs) > 0 {
 				ids, _ = json.Marshal(p.AttachmentIDs)
 			}
+			if len(p.Content) > 0 {
+				content, _ = json.Marshal(p.Content)
+			}
 			if _, err := tx.Exec(ctx, `
-				UPDATE pings SET status='answered', answer=$2, feedback=$3, answer_attachment_ids=$4, answered_at=$5 WHERE ping_id=$1`,
-				p.PingID, p.Answer, p.Feedback, ids, evs[i].TS); err != nil {
+				UPDATE pings SET status='answered', answer=$2, feedback=$3, content=$4, answer_attachment_ids=$5, answered_at=$6 WHERE ping_id=$1`,
+				p.PingID, p.Answer, p.Feedback, content, ids, evs[i].TS); err != nil {
 				return err
 			}
 			for j, c := range p.Review {
@@ -671,7 +674,7 @@ func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.
 		limit = 100
 	}
 	q := `SELECT ping_id, run_id, type, stage_id, question, context, files, link,
-	             options, answer_kind, phase, ends_phase, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
+	             form, answer_kind, phase, ends_phase, status, answer, feedback, content, answer_attachment_ids, raised_at, answered_at
 	      FROM pings`
 	args := []any{}
 	if status != "" && status != "all" {
@@ -738,7 +741,7 @@ func (s *Store) loadReviews(ctx context.Context, vs []run.PingView) error {
 func (s *Store) GetPing(ctx context.Context, id string) (run.PingView, error) {
 	v, err := scanPing(s.pool.QueryRow(ctx, `
 		SELECT ping_id, run_id, type, stage_id, question, context, files, link,
-		       options, answer_kind, phase, ends_phase, status, answer, feedback, answer_attachment_ids, raised_at, answered_at
+		       form, answer_kind, phase, ends_phase, status, answer, feedback, content, answer_attachment_ids, raised_at, answered_at
 		FROM pings WHERE ping_id=$1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.PingView{}, fmt.Errorf("ping %s: %w", id, ErrPingNotFound)
@@ -756,17 +759,19 @@ var ErrPingNotFound = errors.New("ping not found")
 
 func scanPing(row pgx.Row) (run.PingView, error) {
 	var v run.PingView
-	var opts, files, ansIDs []byte
+	var form, files, content, ansIDs []byte
 	var link sql.NullString
 	err := row.Scan(&v.PingID, &v.RunID, &v.Type, &v.StageID, &v.Question, &v.Context,
-		&files, &link, &opts, &v.AnswerKind, &v.Phase, &v.EndsPhase, &v.Status, &v.Answer, &v.Feedback, &ansIDs, &v.RaisedAt, &v.AnsweredAt)
+		&files, &link, &form, &v.AnswerKind, &v.Phase, &v.EndsPhase, &v.Status, &v.Answer, &v.Feedback, &content, &ansIDs, &v.RaisedAt, &v.AnsweredAt)
 	if err == nil {
-		if len(opts) > 0 {
-			_ = json.Unmarshal(opts, &v.Options)
+		if len(form) > 0 {
+			_ = json.Unmarshal(form, &v.Form)
+		}
+		if len(content) > 0 {
+			_ = json.Unmarshal(content, &v.Content)
 		}
 		if v.AnswerKind == "" {
-			// A row from before the column: infer as the event would.
-			v.AnswerKind = (&event.PingRaised{Type: v.Type, Options: v.Options}).Kind()
+			v.AnswerKind = (&event.PingRaised{Type: v.Type}).Kind()
 		}
 		if len(files) > 0 {
 			_ = json.Unmarshal(files, &v.Files)

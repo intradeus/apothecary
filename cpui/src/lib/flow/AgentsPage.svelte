@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SearchInput from '$lib/ui/SearchInput.svelte';
 	// The flow's agents, as a page of their own (beside Graph and YAML): the
 	// flow carries their definitions (FLOWLANG §1), and prompts are long —
 	// the graph's sidebar is no place to write one. The list on the left, the
@@ -60,13 +61,9 @@
 			<button class="btn-sm" onclick={create}>{I.add} {t('flow.insp.addAgent')}</button>
 		</div>
 		{#if agents.length > 4}
-			<input
-				class="search"
-				type="search"
-				bind:value={query}
-				placeholder={t('flow.agents.search')}
-				aria-label={t('flow.agents.search')}
-			/>
+			<div class="search">
+				<SearchInput bind:value={query} width={480} placeholder={t('flow.agents.search')} />
+			</div>
 		{/if}
 		{#each shown as a (a.name)}
 			{@const runs = runnersOf(doc, a.name).length}
@@ -153,11 +150,6 @@
 		text-align: left;
 		padding: 8px 10px;
 		border-radius: var(--r-row);
-		border: 1px solid transparent;
-	}
-	.item.on {
-		background: var(--p2);
-		border-color: var(--ln2);
 	}
 	.nm {
 		font-weight: 600;

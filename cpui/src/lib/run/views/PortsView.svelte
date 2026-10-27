@@ -56,12 +56,12 @@
 <div class="view pt">
 	<div class="lbl">{t('runview.ports.detected')}</div>
 	{#if rs.observed.length === 0}
-		<div class="note-line">{t('runview.ports.nothing_new')}</div>
+		<div class="help">{t('runview.ports.nothing_new')}</div>
 	{:else}
 		<div class="list">
 			{#each rs.observed as p (p.port)}
 				<button
-					class="port"
+					class="btn-md port"
 					disabled={busy !== null || rs.terminal}
 					aria-busy={busy === p.port}
 					title={p.service
@@ -82,7 +82,7 @@
 		<div class="lbl">{t('runview.ports.exposed')}</div>
 		<div class="list">
 			{#each exposed as p (p.port)}
-				<a class="btn port" href={p.url} target="_blank" rel="noreferrer" title={p.url}
+				<a class="btn btn-md port" href={p.url} target="_blank" rel="noreferrer" title={p.url}
 					><span class="pn mono">:{p.port}</span> {t('runview.ports.open')} {I.external}</a
 				>
 			{/each}
@@ -100,7 +100,7 @@
 				aria-label={t('runview.ports.aria')}
 			/>
 			<button
-				class="btn-primary"
+				class="btn-primary btn-md"
 				disabled={busy !== null || !input}
 				aria-busy={busy !== null && !rs.observed.some((p) => p.port === busy)}
 				onclick={exposeInput}>{t('runview.ports.expose_btn')}</button
@@ -124,20 +124,10 @@
 	.lbl:not(:first-child) {
 		margin-top: 6px;
 	}
-	.note-line {
-		font-size: var(--fs-label);
-		color: var(--mut);
-	}
-	.help {
-		color: var(--fnt);
-	}
 	.list {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 6px;
-	}
-	.port {
-		padding: 6px 11px;
 	}
 	.port:hover {
 		border-color: var(--tea);
@@ -151,10 +141,5 @@
 	}
 	.ex input {
 		width: 130px;
-		padding: 5px 11px;
-		border-radius: var(--r-btn);
-	}
-	.ex .btn-primary {
-		padding: 5px 14px;
 	}
 </style>

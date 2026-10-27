@@ -271,7 +271,7 @@
 			<!-- A narrow screen has one window: no layout to pick. -->
 			{#if !desk.compact}<button
 					bind:this={splitBtn}
-					class="btn-sel layout"
+					class="btn-sel btn-sm layout"
 					title={t('run.header.layouts')}
 					aria-expanded={desk.menuOpen}
 					onclick={() => (desk.menuOpen = !desk.menuOpen)}
@@ -576,9 +576,6 @@
 	.layout {
 		flex: none;
 		margin-left: auto;
-		padding: 3px 10px;
-		border-radius: var(--r-tab);
-		font-size: var(--fs-help);
 		gap: 7px;
 	}
 	.lg-ic {

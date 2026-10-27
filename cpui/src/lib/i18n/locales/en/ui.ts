@@ -26,6 +26,8 @@ export default {
 	'ui.ws.label': 'Workspace',
 	'ui.ws.none': 'no workspace',
 	'ui.dur.unit': 'unit',
+	'ui.select.filter': 'Filter…',
+	'ui.select.none': 'Nothing matches',
 	'ui.dur.minutes': 'minutes',
 	'ui.dur.hours': 'hours',
 	'ui.dur.days': 'days',

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
+	import { I } from './icons';
 	// Integer stepper: − value + (DESIGN 7.10, limits).
 	let {
 		value = $bindable(1),
@@ -12,13 +13,13 @@
 	const clamp = (n: number) => Math.min(max, Math.max(min, Math.round(n)));
 </script>
 
-<div class="st">
+<div class="fieldbox st">
 	<button
 		type="button"
 		class="b"
 		aria-label={t('ui.stepper.decrease')}
 		disabled={value <= min}
-		onclick={() => (value = clamp(Number(value) - 1))}>−</button
+		onclick={() => (value = clamp(Number(value) - 1))}>{I.remove}</button
 	>
 	<input
 		class="bare"
@@ -38,7 +39,7 @@
 		class="b"
 		aria-label={t('ui.stepper.increase')}
 		disabled={value >= max}
-		onclick={() => (value = clamp(Number(value) + 1))}>+</button
+		onclick={() => (value = clamp(Number(value) + 1))}>{I.add}</button
 	>
 </div>
 
@@ -46,14 +47,7 @@
 	.st {
 		display: inline-flex;
 		align-items: stretch;
-		border-radius: var(--r-row);
-		border: 1px solid var(--ln2);
-		background: var(--p1);
 		overflow: hidden;
-	}
-	.st:focus-within {
-		border-color: var(--brand);
-		box-shadow: 0 0 0 3px var(--brandBg);
 	}
 	.b {
 		width: 32px;
