@@ -42,6 +42,7 @@ import type {
 	MergeRequestLive,
 	CheckState,
 	OpenMergeRequest,
+	MergeRequestBase,
 	MergeRequestRow,
 	Model,
 	ParamDecl,
@@ -212,6 +213,7 @@ export function toMergeRequestRow(w: Wire.MrRow): MergeRequestRow {
 	return {
 		mr: toOpenMergeRequest(w.mr),
 		mine: w.mine ?? false,
+		stackedOn: w.stacked_on ? toMergeRequestBase(w.stacked_on) : undefined,
 		ticketId: w.ticket_id || undefined,
 		run: w.run
 			? {
@@ -223,6 +225,10 @@ export function toMergeRequestRow(w: Wire.MrRow): MergeRequestRow {
 			: undefined,
 		runs: w.runs ?? 0
 	};
+}
+
+export function toMergeRequestBase(w: Wire.MrBase): MergeRequestBase {
+	return { iid: w.iid, url: w.url, title: w.title, branch: w.branch };
 }
 
 export function toOpenMergeRequest(w: Wire.MrInfo): OpenMergeRequest {
@@ -263,6 +269,7 @@ export function toMergeRequestLive(w: Wire.MrLive): MergeRequestLive {
 				}
 			: undefined,
 		approval: w.approval ? { approved: w.approval.approved, by: w.approval.by ?? [] } : undefined,
+		stackedOn: w.stacked_on ? toMergeRequestBase(w.stacked_on) : undefined,
 		error: w.error || undefined
 	};
 }
@@ -822,6 +829,7 @@ function toKindField(w: Wire.Field): KindField {
 		default: w.default,
 		secret: w.secret ?? false,
 		required: w.required ?? false,
+		multiline: w.multiline,
 		help: w.help
 	};
 }

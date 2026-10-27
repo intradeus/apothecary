@@ -40,6 +40,7 @@ type AuthResult struct {
 var (
 	_ AuthChecker = (*opencodeHarness)(nil)
 	_ AuthChecker = (*codexHarness)(nil)
+	_ AuthChecker = (*ompHarness)(nil)
 )
 
 // authProbe is one zero-token request that only an accepted credential gets

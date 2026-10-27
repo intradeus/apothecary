@@ -581,6 +581,7 @@ export type {
 	Me,
 	MessageAccepted,
 	ModelInfo,
+	MrBase,
 	MrInfo,
 	MrLive,
 	MrRef,

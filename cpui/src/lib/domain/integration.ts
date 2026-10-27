@@ -33,6 +33,8 @@ export interface KindField {
 	default?: string;
 	secret: boolean;
 	required: boolean;
+	/** Multi-line input (a `*_json` secret always is). */
+	multiline?: boolean;
 	/** One-line hint under the input; bare URLs are linkified by the form. */
 	help?: string;
 }

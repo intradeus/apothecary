@@ -27,8 +27,8 @@ type Env struct {
 	Spec   ports.EnvSpec
 	Status ports.EnvStatus
 	Files  map[string][]byte
-	// execLog is the live transcript (ports.ExecLogTailer parity with the
-	// coder adapter): header + output per Exec.
+	// execLog is the live transcript (ports.ExecLogTailer): header + output
+	// per Exec.
 	execLog []byte
 }
 
@@ -254,8 +254,8 @@ func (p *EnvProvisioner) Links(_ context.Context, id ports.EnvID) ([]ports.Acces
 		return nil, err
 	}
 	return []ports.AccessLink{
-		{Kind: "ide", URL: fmt.Sprintf("http://coder.local/%s/ide", id)},
-		{Kind: "terminal", URL: fmt.Sprintf("http://coder.local/%s/terminal", id)},
+		{Kind: "ide", URL: fmt.Sprintf("http://workspace.local/%s/ide", id)},
+		{Kind: "terminal", URL: fmt.Sprintf("http://workspace.local/%s/terminal", id)},
 	}, nil
 }
 

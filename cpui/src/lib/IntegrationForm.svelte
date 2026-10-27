@@ -5,7 +5,7 @@
 	// Replace button; leaving it alone keeps the stored value.
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { Integration, KindDescriptor } from '$lib/domain';
+	import type { Integration, KindDescriptor, KindField } from '$lib/domain';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 
@@ -40,7 +40,7 @@
 	let busy = $state(false);
 	let error = $state('');
 
-	const isMultiline = (n: string) => n.endsWith('_json');
+	const isMultiline = (f: KindField) => f.multiline || f.name.endsWith('_json');
 	const storedMask = (n: string) => init.e?.secrets?.[n] ?? '';
 	const showSecretInput = (n: string) => !storedMask(n) || replacing[n];
 
@@ -124,7 +124,7 @@
 			<div class="help">{t('form.int.nameHelp')}</div>
 		</div>
 		{#each fields as f (f.name)}
-			<div class="field" class:wide={f.secret && isMultiline(f.name)}>
+			<div class="field" class:wide={f.secret && isMultiline(f)}>
 				<label for="if-{uid}-{f.name}"
 					>{f.label}{#if f.required && !(f.secret && storedMask(f.name))}<span class="req">
 							*</span
@@ -142,7 +142,7 @@
 							>{t('form.int.replace')}</button
 						>
 					</div>
-				{:else if f.secret && isMultiline(f.name)}
+				{:else if f.secret && isMultiline(f)}
 					<textarea
 						id="if-{uid}-{f.name}"
 						bind:value={secretValues[f.name]}

@@ -102,3 +102,40 @@ func TestMergeRequestsListAndStartARun(t *testing.T) {
 		t.Errorf("a run on the factory's own = %d: %s", resp.StatusCode, data)
 	}
 }
+
+// A merge request targeting another open one's branch is stacked on it: it
+// merges into that branch, and the row says so.
+func TestMergeRequestsListStackedOn(t *testing.T) {
+	x := newConfEnv(t)
+	pid := x.wizard(t)
+	repoHost := kinds.FakeRepoHostOf("1")
+	repoHost.Reset()
+	t.Cleanup(repoHost.Reset)
+	repoHost.AddOpenMR("alice", "Base", "feature/a", "main", "a1")
+	repoHost.AddOpenMR("alice", "On top", "feature/b", "feature/a", "b1")
+	resp, data := x.do(t, "GET", "/api/projects/"+pid+"/mrs", nil, nil)
+	var rows []struct {
+		MR struct {
+			Ref struct{ IID int }
+		} `json:"mr"`
+		StackedOn *struct {
+			IID    int    `json:"iid"`
+			Branch string `json:"branch"`
+		} `json:"stacked_on"`
+	}
+	if err := json.Unmarshal(data, &rows); err != nil || resp.StatusCode != 200 || len(rows) != 2 {
+		t.Fatalf("mrs = %d %v: %s", resp.StatusCode, err, data)
+	}
+	for _, r := range rows {
+		switch r.MR.Ref.IID {
+		case 1:
+			if r.StackedOn != nil {
+				t.Errorf("!1 targets main, stacked on %+v", r.StackedOn)
+			}
+		case 2:
+			if r.StackedOn == nil || r.StackedOn.IID != 1 || r.StackedOn.Branch != "feature/a" {
+				t.Errorf("!2 stacked on %+v, want !1 feature/a", r.StackedOn)
+			}
+		}
+	}
+}

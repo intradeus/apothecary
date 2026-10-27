@@ -881,6 +881,8 @@ components:
           type: string
         label:
           type: string
+        multiline:
+          type: boolean
         name:
           type: string
         placeholder:
@@ -1206,6 +1208,22 @@ components:
         - login
         - proof
       type: object
+    MRBase:
+      properties:
+        branch:
+          type: string
+        iid:
+          type: integer
+        title:
+          type: string
+        url:
+          type: string
+      required:
+        - branch
+        - iid
+        - title
+        - url
+      type: object
     MRInfo:
       properties:
         author:
@@ -1265,6 +1283,8 @@ components:
           type: integer
         repo:
           type: string
+        stacked_on:
+          $ref: '#/components/schemas/MRBase'
         state:
           type: string
         target:
@@ -1299,6 +1319,8 @@ components:
           $ref: '#/components/schemas/MRRun'
         runs:
           type: integer
+        stacked_on:
+          $ref: '#/components/schemas/MRBase'
         ticket_id:
           type: string
       required:

@@ -7,7 +7,7 @@
 // lifecycle hooks). A repo without one is unsupported — there is no
 // apothecary-built fallback image.
 //
-// The model inverts the coder/§11 clone order: the workspace definition
+// The model inverts the §11 clone order: the workspace definition
 // lives in the repo, so the adapter materializes an engine-side checkout
 // FIRST (EnvSpec.GitUser/GitPass; the credential rides a temp store file,
 // never argv, and never enters the container) and `devcontainer up`
@@ -327,8 +327,8 @@ func label(name string) string { return idLabel + "=" + name }
 
 // WorkspaceName is the FALLBACK env name, used only when EnvSpec.Name is
 // empty (direct/test callers); real runs get the engine's slug-of-branch
-// name. It derives a name from the run id, same scheme as the coder adapter:
-// "apothecary-" + the ULID's random tail.
+// name. It derives a name from the run id: "apothecary-" + the ULID's random
+// tail.
 func WorkspaceName(runID string) string {
 	id := strings.ToLower(runID)
 	if len(id) > 16 {

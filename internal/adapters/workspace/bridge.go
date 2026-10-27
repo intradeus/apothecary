@@ -18,8 +18,7 @@ import (
 )
 
 // The engine bridge: engine loopback ports are exposed INSIDE the
-// workspace at the same 127.0.0.1 addresses (loopback parity with the
-// coder reverse tunnel) via two hops that only use docker-sanctioned
+// workspace at the same 127.0.0.1 addresses (loopback parity) via two hops that only use docker-sanctioned
 // channels — no container->host IP networking, which hardened docker
 // hosts drop (found live: even a plain gateway-IP listener is unreachable
 // from containers on this class of host):

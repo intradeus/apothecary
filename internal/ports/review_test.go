@@ -35,3 +35,21 @@ func TestFoldedNotesAndMarkers(t *testing.T) {
 		t.Error("factory markers")
 	}
 }
+
+// A merge request is stacked on the open one whose branch it targets — never
+// on a fork's (that branch lives elsewhere) nor on a closed one.
+func TestStackedOn(t *testing.T) {
+	open := []MRInfo{
+		{Ref: MRRef{IID: 1, URL: "u1"}, Title: "base", Source: "feature/a", Target: "main", State: MROpen},
+		{Ref: MRRef{IID: 2}, Source: "feature/f", Target: "main", State: MROpen, Fork: true},
+		{Ref: MRRef{IID: 3}, Source: "feature/c", Target: "main", State: MRClosed},
+	}
+	if got := StackedOn("feature/a", open); got == nil || *got != (MRBase{IID: 1, URL: "u1", Title: "base", Branch: "feature/a"}) {
+		t.Errorf("on feature/a = %+v", got)
+	}
+	for _, target := range []string{"main", "feature/f", "feature/c", ""} {
+		if got := StackedOn(target, open); got != nil {
+			t.Errorf("on %q = %+v, want none", target, got)
+		}
+	}
+}

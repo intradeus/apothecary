@@ -264,6 +264,18 @@ func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 		got[0].LastCommentAt == nil || !got[0].LastCommentAt.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("status = %+v", got)
 	}
+	if got[0].StackedOn != nil {
+		t.Errorf("stacked on %+v with no merge request on its target", got[0].StackedOn)
+	}
+	// An open merge request whose branch the run's targets: the run's is
+	// stacked on it.
+	base := h.repoHost.AddOpenMR("bob", "The base", got[0].Target, "release", "z1")
+	if got, err = h.e.MRStatuses(context.Background(), runID); err != nil {
+		t.Fatal(err)
+	}
+	if s := got[0].StackedOn; s == nil || s.IID != base.IID || s.Branch != got[0].Target || s.Title != "The base" {
+		t.Errorf("stacked on = %+v, want !%d", s, base.IID)
+	}
 	if after := len(h.events(t, runID)); after != before {
 		t.Errorf("reading the status appended %d events", after-before)
 	}

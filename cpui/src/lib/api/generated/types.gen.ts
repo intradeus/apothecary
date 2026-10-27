@@ -409,6 +409,7 @@ export type Field = {
 	default?: string;
 	help?: string;
 	label: string;
+	multiline?: boolean;
 	name: string;
 	placeholder?: string;
 	required: boolean;
@@ -554,6 +555,13 @@ export type LoginRequest = {
 	proof: string;
 };
 
+export type MrBase = {
+	branch: string;
+	iid: number;
+	title: string;
+	url: string;
+};
+
 export type MrInfo = {
 	author: string;
 	body?: string;
@@ -580,6 +588,7 @@ export type MrLive = {
 	mergeable_now?: boolean;
 	pending_threads: number;
 	repo: string;
+	stacked_on?: MrBase;
 	state: string;
 	target?: string;
 	url: string;
@@ -595,6 +604,7 @@ export type MrRow = {
 	mr: MrInfo;
 	run?: MrRun;
 	runs?: number;
+	stacked_on?: MrBase;
 	ticket_id?: string;
 };
 

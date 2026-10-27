@@ -151,6 +151,8 @@ export interface MergeRequestLive {
 	checks?: MergeRequestChecks;
 	/** Its reviews' verdict, for an open one. */
 	approval?: { approved: boolean; by: string[] };
+	/** The open merge request whose branch this open one targets. */
+	stackedOn?: MergeRequestBase;
 	error?: string;
 }
 
@@ -215,9 +217,20 @@ export interface RunInput {
 export interface MergeRequestRow {
 	mr: OpenMergeRequest;
 	mine: boolean;
+	/** The open merge request whose branch it targets: it merges there. */
+	stackedOn?: MergeRequestBase;
 	ticketId?: string;
 	run?: { id: string; state: RunState; flow: string; createdAt: string };
 	runs: number;
+}
+
+/** The open merge request another is stacked on — the one whose branch it
+ *  targets, so merging the stacked one lands in that branch. */
+export interface MergeRequestBase {
+	iid: number;
+	url: string;
+	title: string;
+	branch: string;
 }
 
 /** An open merge request of a project's repository, to create a run on. */

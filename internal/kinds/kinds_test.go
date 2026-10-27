@@ -21,9 +21,10 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 	r.RegisterProvisioner(Docker{})
 	r.RegisterHarness(Opencode{})
 	r.RegisterHarness(Codex{})
+	r.RegisterHarness(Omp{})
 	for _, ok := range [][2]string{
 		{"repository", "gitlab"}, {"repository", "github"}, {"provisioner", "docker"},
-		{"harness", "opencode"}, {"harness", "codex"},
+		{"harness", "opencode"}, {"harness", "codex"}, {"harness", "omp"},
 	} {
 		if !r.Valid(ok[0], ok[1]) {
 			t.Errorf("%s/%s not valid", ok[0], ok[1])
@@ -33,8 +34,8 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 		t.Error("the provider port was removed (harness-owned auth); nothing may register it")
 	}
 	ds := r.Descriptors()
-	if len(ds) != 5 {
-		t.Fatalf("descriptors = %d, want 5", len(ds))
+	if len(ds) != 6 {
+		t.Fatalf("descriptors = %d, want 6", len(ds))
 	}
 	// Secret fields are flagged so the UI renders write-only inputs.
 	for _, d := range ds {
@@ -292,6 +293,146 @@ func TestCodexKindCapabilities(t *testing.T) {
 	oc, _ := Opencode{}.New(Config{Secrets: map[string]string{"auth_json": "{}"}}, nil)
 	if len(oc.EnvVars()) != 0 {
 		t.Errorf("opencode env vars = %v", oc.EnvVars())
+	}
+}
+
+func TestOmpKindCapabilities(t *testing.T) {
+	envp := fake.NewEnvProvisioner()
+	id, err := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imported string
+	envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "auth-broker import") {
+			imported = string(e.Files["/home/apothecary/.omp/agent/import/0.json"])
+			return ports.ExecResult{Output: `{"imported":[{"provider":"openai-codex"}],"skipped":[]}`}, nil
+		}
+		return ports.ExecResult{}, nil
+	}
+	login := `{"type":"codex","access_token":"at-123456","refresh_token":"rt-123456","expired":"2026-11-01T00:00:00Z"}`
+	h, err := Omp{}.New(Config{Secrets: map[string]string{
+		"env":        "# keys\nexport ANTHROPIC_API_KEY=\"sk-ant-x\"\n\nOPENCODE_API_KEY=oc-x\n",
+		"oauth_json": login,
+	}}, envp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Test(context.Background()); err != nil {
+		t.Fatalf("test = %v", err)
+	}
+	if h.Binary() != "omp" {
+		t.Errorf("binary = %q", h.Binary())
+	}
+	// The standalone binary, checksum-verified; curl is the only prerequisite.
+	layer := strings.Join(h.InstallLayer(), "\n")
+	if !strings.HasPrefix(layer, "RUN curl ") || !strings.Contains(layer, "/releases/download/v"+OmpVersion+"/") ||
+		!strings.Contains(layer, "sha256sum -c") || !strings.Contains(layer, "/usr/local/bin/omp") {
+		t.Errorf("install layer = %q", layer)
+	}
+	// API keys ride provider.env verbatim (quotes and export stripped).
+	if env := h.EnvVars(); env["ANTHROPIC_API_KEY"] != "sk-ant-x" || env["OPENCODE_API_KEY"] != "oc-x" || len(env) != 2 {
+		t.Errorf("env vars = %v", env)
+	}
+	// Egress follows the auth: key providers, the login's hosts, omp's catalog.
+	domains := h.EgressDomains()
+	for _, want := range []string{"api.anthropic.com", "opencode.ai", "chatgpt.com", "auth.openai.com", "catalog.stencil.so"} {
+		if !slices.Contains(domains, want) {
+			t.Errorf("egress %v missing %s", domains, want)
+		}
+	}
+	if sv, ok := h.(SecretHolder); !ok || !slices.Contains(sv.SecretValues(), login) {
+		t.Error("the logins are invisible to the redactor")
+	}
+	// The login is imported verbatim into agent.db; agent.db goes at run end.
+	if err := h.SeedAuth(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if imported != login {
+		t.Errorf("imported %q, want the login verbatim", imported)
+	}
+	if al, ok := h.(AuthLocator); !ok || !slices.Equal(al.AuthFiles(context.Background(), id), []string{"/home/apothecary/.omp/agent/agent.db"}) {
+		t.Error("agent.db is not removed at run end")
+	}
+
+	for name, secrets := range map[string]map[string]string{
+		"no auth":     {},
+		"bad env":     {"env": "not a line"},
+		"bad login":   {"oauth_json": `{"type":"claude"}`},
+		"login type":  {"oauth_json": `[{"type":"copilot","access_token":"a","refresh_token":"r","expired":"x"}]`},
+		"broken json": {"oauth_json": `[{`},
+	} {
+		bad, _ := Omp{}.New(Config{Secrets: secrets}, envp)
+		if err := bad.Test(context.Background()); err == nil {
+			t.Errorf("%s passed Test", name)
+		}
+	}
+}
+
+func TestOmpModels(t *testing.T) {
+	var asked string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.Path
+		_, _ = w.Write([]byte(`{
+			"anthropic": {"claude-sonnet-4-5": {"name": "Claude Sonnet 4.5", "baseUrl": "https://api.anthropic.com"}},
+			"openai": {"gpt-5": {"name": "GPT-5"}, "gpt-image": {"name": "Image"}},
+			"openai-codex": {"gpt-5.6-luna": {"name": "GPT-5.6 Luna", "baseUrl": "https://chatgpt.com/backend-api"}},
+			"together": {"kimi-k2": {"name": "Kimi K2"}},
+			"groq": {"llama": {"name": "Llama"}}
+		}`))
+	}))
+	defer ts.Close()
+	oldURL := ompCatalogURL
+	ompCatalogURL = ts.URL + "/v%s/models.json"
+	reset := func() {
+		ompCatalogs.Lock()
+		ompCatalogs.byVersion = nil
+		ompCatalogs.Unlock()
+	}
+	reset()
+	defer func() { ompCatalogURL = oldURL; reset() }()
+
+	// omp's own catalog and provider ids: a ChatGPT login lists
+	// openai-codex's models, not the API's; groq holds no key.
+	h, _ := Omp{}.New(Config{Secrets: map[string]string{
+		"env":        "ANTHROPIC_API_KEY=k\nTOGETHER_API_KEY=k",
+		"oauth_json": `{"type":"codex","access_token":"a","refresh_token":"r","expired":"2026-11-01T00:00:00Z"}`,
+	}}, nil)
+	models, err := h.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != "/v"+OmpVersion+"/models.json" {
+		t.Errorf("catalog fetched at %s, want the pinned version's", asked)
+	}
+	ids := make([]string, len(models))
+	for i, m := range models {
+		ids[i] = m.ID
+	}
+	want := []string{"anthropic/claude-sonnet-4-5", "openai-codex/gpt-5.6-luna", "together/kimi-k2"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+	// A login has no zero-token probe: unverified, never rejected.
+	res := h.(AuthChecker).CheckAuth(context.Background(), []string{"openai-codex/gpt-5.6-luna"})
+	if len(res.Rejected) != 0 || len(res.Unverified) != 1 || !strings.Contains(res.Unverified[0], "subscription login") {
+		t.Errorf("check auth = %+v", res)
+	}
+
+	bare, _ := Omp{}.New(Config{}, nil)
+	if _, err := bare.Models(context.Background()); err == nil || !strings.Contains(err.Error(), "oauth_json") {
+		t.Errorf("no-auth err = %v", err)
+	}
+}
+
+func TestOmpAPIBase(t *testing.T) {
+	got := ompAPIBase(map[string]ompModel{
+		"a": {BaseURL: "https://opencode.ai/inference/go"},
+		"b": {BaseURL: "https://opencode.ai/inference/go"},
+		"c": {BaseURL: "https://opencode.ai/inference/go/v1"},
+	})
+	if got != "https://opencode.ai/inference/go/v1" {
+		t.Errorf("api base = %s, want the OpenAI-compatible one", got)
 	}
 }
 

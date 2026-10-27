@@ -73,9 +73,8 @@ type EnvSpec struct {
 	Branch  string
 	// Name is the human-friendly workspace/container name the engine derives
 	// from the branch (engine.workspaceName: "apo-" + slugified branch + a
-	// short run-id tail for uniqueness, ≤32 chars for coder). Adapters use it
-	// verbatim as the coder workspace / devcontainer container name and the
-	// env identity. Empty ⇒ the adapter falls back to WorkspaceName(RunID),
+	// short run-id tail for uniqueness, ≤32 chars). Adapters use it verbatim
+	// as the container / pod name and the env identity. Empty ⇒ the adapter falls back to WorkspaceName(RunID),
 	// the legacy run-id scheme, so direct and test callers keep working.
 	Name string
 	// Project is the run's project ID (projects.id): what every host-side
@@ -123,8 +122,7 @@ type EnvSpec struct {
 	EgressAllowedCIDRs []string
 	EgressAllowedPorts []int
 	// GitUser/GitPass are the repository host git credential (see type
-	// comment). Empty for public repos; adapters without an engine-side source
-	// step (coder) ignore them.
+	// comment). Empty for public repos.
 	GitUser string
 	GitPass string
 }
@@ -549,6 +547,29 @@ type MRInfo struct {
 	Fork bool `json:"fork,omitempty"`
 }
 
+// MRBase is the open merge request another is stacked on: the one whose
+// branch it targets. Merging the stacked one lands it in that branch, not in
+// the branch the base itself goes to.
+type MRBase struct {
+	IID    int    `json:"iid"`
+	URL    string `json:"url"`
+	Title  string `json:"title"`
+	Branch string `json:"branch"`
+}
+
+// StackedOn finds, among a repository's open merge requests, the one a merge
+// request targeting target is stacked on — nil when target is no open merge
+// request's branch. A fork's branch lives in another repository, so a fork
+// is never a base.
+func StackedOn(target string, open []MRInfo) *MRBase {
+	for _, m := range open {
+		if !m.Fork && m.State != MRMerged && m.State != MRClosed && m.Source == target {
+			return &MRBase{IID: m.Ref.IID, URL: m.Ref.URL, Title: m.Title, Branch: m.Source}
+		}
+	}
+	return nil
+}
+
 // Merge methods: a merge commit, one squashed commit, or the branch's
 // commits rebased onto the target.
 const (
@@ -844,9 +865,8 @@ type PortConn interface {
 // WorkspacePortExposer is an OPTIONAL EnvProvisioner capability: reach a
 // TCP port inside the environment so the engine can publish it to the
 // human (the "browse the app under development" path). Adapters implement
-// whatever transport reaches their workspaces (coder: a supervised
-// port-forward subprocess; devcontainer: a reverse relay over the
-// bind-mounted unix sockets).
+// whatever transport reaches their workspaces (devcontainer: a reverse
+// relay over the bind-mounted unix sockets).
 type WorkspacePortExposer interface {
 	// ExposePort prepares access to the port AS SERVED BY the environment and
 	// returns the dial handle. Which container actually serves it is the
@@ -959,7 +979,7 @@ type WorkspaceRebuilder interface {
 
 // WorkspaceDirtyChecker is an OPTIONAL EnvProvisioner capability: whether the
 // environment's build inputs (its devcontainer configuration) have changed
-// since the container was built, so the UI can suggest a rebuild — Coder's
+// since the container was built, so the UI can suggest a rebuild — a
 // "dirty" workspace. External state like EnvStatus: polled by the engine's
 // reconciler, kept in memory, never in the event log. False when the adapter
 // cannot tell (an environment built before it recorded the inputs).

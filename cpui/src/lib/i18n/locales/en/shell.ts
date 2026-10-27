@@ -61,7 +61,8 @@ export default {
 	// Sign-in, setup, the account.
 	'auth.unreachable': 'The engine could not be reached',
 	'auth.handle': 'Handle',
-	'auth.handleHelp': 'Lowercase letters, digits and dashes. How you sign in, and how you are named.',
+	'auth.handleHelp':
+		'Lowercase letters, digits and dashes. How you sign in, and how you are named.',
 	'auth.name': 'Name',
 	'auth.email': 'Email',
 	'auth.password': 'Password',

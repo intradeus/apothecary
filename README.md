@@ -9,9 +9,7 @@ exactly two touchpoints — plan approval and final review.
   provisioning, the coding agent and its model auth, projects, flows —
   all live in the database, encrypted where secret. The daemon boots from
   five environment variables.
-- **Vendors behind ports.** GitLab or GitHub, opencode or codex, Coder
-  workspaces — each is an adapter; swapping one is a dropdown, not a
-  refactor.
+- **Vendors behind ports.** GitLab or GitHub, opencode, codex or omp; swapping one is a dropdown, not a refactor.
 - **Events are the source of truth.** Every transition is an event in
   Postgres; the UI is a projection; analytics are queries.
 - **Sandboxed by default.** Agents run in per-run Docker-in-Docker
@@ -40,8 +38,9 @@ exactly two touchpoints — plan approval and final review.
   project) or GitHub PAT (`repo` scope, or fine-grained Contents:RW +
   Pull requests:RW).
 - **Model auth for your coding agent**: an opencode `auth.json` (API keys
-  and/or subscription login) or, for codex, an OpenAI API key / ChatGPT
-  `auth.json`.
+  and/or subscription login), for codex an OpenAI API key / ChatGPT
+  `auth.json`, or for omp provider API keys (`KEY=VALUE` lines) and/or
+  subscription logins (CLIProxyAPI credential JSON).
 - A target repository containing `AGENTS.md` (the repo's conventions).
   Agents themselves are defined **per project in the UI** (v3 agent
   library) — five defaults (planner, builder, committer, reviewer,
@@ -67,8 +66,8 @@ to the host's loopback) and Postgres 16 on `127.0.0.1:15432`; both restart
 automatically. Database migrations apply at boot.
 
 > The docker socket mount makes the engine part of the trusted control
-> plane (it builds workspace images on your daemon — the same one Coder
-> uses). Workspaces themselves never see the socket.
+> plane (it builds workspace images on your daemon). Workspaces themselves
+> never see the socket.
 
 ## Kubernetes
 
@@ -140,7 +139,9 @@ explicitly; `task k8s:kubectl -- get pods -A` is the shortcut.
      `APOTHECARY_K8S_*` settings fill them). Either way the workspace inside
      the sandbox is the repo's own `.devcontainer/devcontainer.json`.
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
-     credentials) or codex (API key and/or ChatGPT `auth.json`).
+     credentials), codex (API key and/or ChatGPT `auth.json`) or omp
+     (oh-my-pi: provider API keys as `ANTHROPIC_API_KEY=…` lines and/or
+     Claude/ChatGPT/Gemini logins as CLIProxyAPI JSON).
    - *Ticket source* (optional): Jira, GitHub Issues or GitLab Issues. Lets you create a
      ticket **from** a tracker issue — search the tracker on the New Ticket
      form, pick an issue, and its summary, description and attachments are
@@ -286,8 +287,8 @@ APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v2.0.42
 (If the GHCR package is private: `docker login ghcr.io` with a
 `read:packages` PAT first, or make the package public in its settings.)
 
-Migrations apply at boot, and the workspace base image and Coder template
-are content-addressed — they rebuild/re-push themselves on first use after
+Migrations apply at boot, and the workspace shim and the gateway/browser
+images are content-addressed — they rebuild themselves on first use after
 their sources change.
 
 To run an **uncommitted tree** as the real containerized service, use the
@@ -314,7 +315,7 @@ per-run Docker-in-Docker sandbox ── egress only via the project gateway
   └─ the repo's own devcontainer (the workspace)
        ├─ shim sidecar   one per workspace: HTTP on /opt/apothecary/sidecar.sock
        │    ├─ the coding agent, long-lived, spoken to in ACP
-       │    │    (opencode acp · codex-acp) ── ask_human MCP server (shim)
+       │    │    (opencode acp · codex-acp · omp acp) ── ask_human MCP server (shim)
        │    ├─ files + git views of the checkout
        │    └─ terminals (PTY over WebSocket)
        └─ shim relay / portscan   engine bridge, app port discovery

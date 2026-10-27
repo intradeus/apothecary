@@ -112,6 +112,10 @@ export default {
 	'run.mrStatus.mergeable': 'no conflicts',
 	'run.mrStatus.readyToMerge': 'ready to merge',
 	'run.mrStatus.draft': 'draft',
+	'run.mrStatus.stacked': 'stacked on !{iid}',
+	'run.mrStatus.stackedLong': 'stacked on !{iid} — merges into {branch}, merge !{iid} first',
+	'run.mrStatus.stackedTitle':
+		'Stacked on !{iid} ({title}): it targets {branch}, that merge request’s branch, so merging it lands there — not on the main line.',
 	'run.mrStatus.ciPassed': 'CI passed',
 	'run.mrStatus.ciRunning': 'CI running',
 	'run.mrStatus.ciFailed': 'CI failed',

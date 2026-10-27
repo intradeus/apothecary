@@ -65,6 +65,9 @@ type MRLive struct {
 	Draft        bool            `json:"draft,omitempty"`
 	Checks       *ports.Checks   `json:"checks,omitempty"`
 	Approval     *ports.Approval `json:"approval,omitempty"`
+	// StackedOn is the open merge request whose branch an open one targets:
+	// merging it lands there, not on the repository's main line.
+	StackedOn *ports.MRBase `json:"stacked_on,omitempty"`
 	// Error is what the repository host said when it could not be asked.
 	Error string `json:"error,omitempty"`
 }
@@ -134,5 +137,21 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 		}(&out[i], ports.MRRef{IID: mr.IID, URL: mr.URL})
 	}
 	wg.Wait()
+	// Stacking is read off the repository's open merge requests, listed once
+	// per repository. Best effort: a list that fails leaves no notice rather
+	// than an error over a status that was read.
+	open := map[string][]ports.MRInfo{}
+	for i := range out {
+		l := &out[i]
+		if l.Error != "" || l.State != ports.MROpen || l.Target == "" {
+			continue
+		}
+		mrs, ok := open[l.Repo]
+		if !ok {
+			mrs, _ = res.repoHostFor(l.Repo).ListMRs(ctx)
+			open[l.Repo] = mrs
+		}
+		l.StackedOn = ports.StackedOn(l.Target, mrs)
+	}
 	return out, nil
 }

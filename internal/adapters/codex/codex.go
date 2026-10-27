@@ -16,7 +16,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"strings"
 
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
@@ -36,7 +35,6 @@ func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
 }
 
 const (
-	rolesDir = "/apothecary/agents"
 	// defaultHome is the §8 pipeline image's workspace user. Repo-authored
 	// devcontainers run the REPO's user instead, so the real home is probed
 	// per env and this is only the fallback.
@@ -57,10 +55,8 @@ func (a *Adapter) codexHome(ctx context.Context, env ports.EnvID) string {
 // (acpagent), and codex-acp keeps a session's servers to that session, so
 // each agent sees only its own.
 func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
-	for _, s := range specs {
-		if err := a.envp.WriteFile(ctx, env, path.Join(rolesDir, s.Name+".role"), []byte(roleText(s)), 0o644); err != nil {
-			return fmt.Errorf("write role %s: %w", s.Name, err)
-		}
+	if err := acpagent.WriteRoles(ctx, a.envp, env, specs); err != nil {
+		return err
 	}
 	// tool_timeout_sec: ask_human blocks until the human answers (the
 	// engine parks the run if that takes too long, by cancelling the turn),
@@ -99,25 +95,6 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 	return nil
 }
 
-// roleText renders the in-band system preamble. read_only/allow_bash are
-// instruction-level only for codex — weaker than opencode's tool config; a
-// documented residual (§13), mitigated as ever by human review of the
-// branch.
-func roleText(s *agentspec.Spec) string {
-	var b strings.Builder
-	b.WriteString("# ROLE\n")
-	b.WriteString(strings.TrimSpace(s.Prompt))
-	b.WriteString("\n")
-	if s.ReadOnly {
-		b.WriteString("\nIMPORTANT: This role is READ-ONLY with respect to the repository: do not modify, create or delete repository files except the explicitly required output artifacts.\n")
-	}
-	if !s.AllowBash {
-		b.WriteString("Do not run shell commands for this task.\n")
-	}
-	b.WriteString("\n")
-	return b.String()
-}
-
 // --- running it ----------------------------------------------------------------
 
 // fullAccessMode is codex-acp's session mode without approvals or sandbox.
@@ -126,18 +103,9 @@ const fullAccessMode = "agent-full-access"
 // Profile is how the ACP runner starts and addresses codex.
 func (a *Adapter) Profile() acpagent.Profile {
 	return acpagent.Profile{
-		Harness: "codex",
-		Command: "codex-acp",
-		Mode:    func(ports.AgentSpec) string { return fullAccessMode },
-		Preamble: func(ctx context.Context, env ports.EnvID, spec ports.AgentSpec) (string, error) {
-			if spec.Agent == "" {
-				return "", nil
-			}
-			role, err := a.envp.ReadFile(ctx, env, path.Join(rolesDir, spec.Agent+".role"))
-			if err != nil {
-				return "", fmt.Errorf("codex: role for agent %q: %w", spec.Agent, err)
-			}
-			return string(role), nil
-		},
+		Harness:  "codex",
+		Command:  "codex-acp",
+		Mode:     func(ports.AgentSpec) string { return fullAccessMode },
+		Preamble: acpagent.RolePreamble(a.envp, "codex"),
 	}
 }

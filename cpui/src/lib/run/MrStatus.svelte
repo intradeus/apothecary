@@ -1,7 +1,7 @@
 <script lang="ts">
 	// One merge request as its repository host sees it right now: does it merge
-	// cleanly — or would the host merge it now — is it merged, what its CI
-	// says, is it approved, are reviewers waiting. The header shows it short;
+	// cleanly — or would the host merge it now — is it merged, is it stacked
+	// on another, what its CI says, is it approved, are reviewers waiting. The header shows it short;
 	// the phases card spells it out (`long`).
 	import type { MergeRequestLive } from '$lib/domain';
 	import { ago } from '$lib/format';
@@ -69,6 +69,20 @@
 		<span class="fnt">{long ? t('run.mrStatus.pendingLong') : t('run.mrStatus.checking')}</span>
 	{/if}
 	{#if mr.draft && mr.state === 'open'}<span class="fnt">{t('run.mrStatus.draft')}</span>{/if}
+	{#if mr.stackedOn && mr.state === 'open'}<a
+			class="hue-amb linklike"
+			href={mr.stackedOn.url}
+			target="_blank"
+			rel="noreferrer"
+			title={t('run.mrStatus.stackedTitle', {
+				iid: mr.stackedOn.iid,
+				title: mr.stackedOn.title,
+				branch: mr.stackedOn.branch
+			})}
+			>{long
+				? t('run.mrStatus.stackedLong', { iid: mr.stackedOn.iid, branch: mr.stackedOn.branch })
+				: t('run.mrStatus.stacked', { iid: mr.stackedOn.iid })}</a
+		>{/if}
 	{#if ciText}
 		{#if long && ciLink}<a
 				class="{ciHue} linklike"

@@ -44,7 +44,7 @@ boring choice, recorded here). Newest at the bottom.
 
 ## Ports (§4)
 
-- `EnvSpec{RunID, RepoURL, Branch}` — exactly the non-secret Coder template
+- `EnvSpec{RunID, RepoURL, Branch}` — exactly the non-secret workspace
   parameters of §11. `Command{Script, Timeout}`; `ExecResult{ExitCode,
   Output}` where Output is the combined tail (adapters stream full logs to
   the runs dir per §12).
@@ -129,7 +129,7 @@ boring choice, recorded here). Newest at the bottom.
   inbox is served from the engine's in-memory registry until the Postgres
   pings projection lands.
 - Stage logs are written by the engine to `runs_dir/<run>/<stage>-<iter>.log`
-  (best-effort; §12 makes the Coder adapter stream there in M2);
+  (best-effort);
   `GET .../logs/{stage}` serves the highest iteration, `?n=` tails bytes
   (default 64 KB). 404 when runs_dir is unset or no file exists.
 - Channel CRUD accepts the §8 flat body ({kind, ...config}); the registry is
@@ -180,79 +180,6 @@ boring choice, recorded here). Newest at the bottom.
 - The §14 reaper runs hourly in serve; `destroy_completed_after` window,
   abandoned never reaped, failed runs kept (unspecified in the design —
   treated as inspection material like abandoned).
-
-## Coder adapter & workspace (M2, §11, §12)
-
-- **`ports.Command` gained `Dir`** ("" = home, "repo" = checkout): command
-  stages and `$CHANGED` run in the repo root explicitly instead of relying
-  on inline `cd` prefixes; the clone step runs in home. Adapters own the cwd
-  handling.
-- **Read/WriteFile path convention**: relative = repo-root-relative
-  (artifacts/…), absolute = absolute (/factory/…). Transfer is base64 over
-  `coder ssh` stdin; WriteFile sends a one-line script + payload on the same
-  stdin (bash consumes the first line, `base64 -d` the rest).
-- **Exec scripts travel on stdin** (`bash -eo pipefail -s`), sidestepping CLI
-  quoting entirely. Nonzero exit is a result; only transport failures
-  (process spawn error or ssh exit 255) go through the §12 3× retry.
-- **Status via `coder list --output json`** instead of REST (§12 lists REST)
-  — one code path with the rest of the CLI usage; Links stay REST. CLI flags
-  verified against Coder v2.35.2; behavior, not flags, is normative.
-- **Provision is idempotent**: an existing running workspace for the run id
-  is reused (crash recovery re-provision path); readiness = build status
-  `running` + an `ssh -- true` agent probe.
-- **Bootstrap extracted to `engine.RunBootstrap`** (pure port calls, no
-  events) so `apothecaryd envcheck` runs the identical sequence standalone; the
-  run loop wraps it and maps failures to env_failed. Added §11 step 3 git
-  auth: `GitToken` written to /factory/git-credentials + credential.helper
-  store — the token never lands in .git/config; omitted for public repos.
-- **Firewall (resolve-then-pin)**: allowed names resolve once at init, pin
-  into /etc/hosts, then ALL DNS is dropped — other names cannot resolve at
-  all. Host-gateway is allowed on the engine AND Coder ports (the workspace
-  agent's own websocket dies otherwise). The repo host is derived from
-  APOTHECARY_REPO_URL (container env, non-secret, via sudo env_keep — container
-  root cannot read /proc/1/environ without CAP_SYS_PTRACE). Sudoers allows
-  exactly `init-firewall.sh` with no arguments; a /run lock makes re-runs
-  no-ops. Plain per-IP iptables rules, no ipset (kernel-module dependency).
-  Two live-debugging findings baked into the script: (1) on user-defined
-  docker networks DNS goes to the embedded resolver at **127.0.0.11 through
-  a DNAT rule that rewrites the port before the filter chain** — the drop
-  must match the destination IP, not port 53; (2) the startup script is
-  `blocking`, so ssh (and therefore bootstrap) cannot run before the
-  firewall is up. Residuals: pinned IPs can go stale mid-run (CDN
-  rotation); NET_ADMIN stays granted (docker can't drop caps post-start)
-  but re-running the script cannot change the rule set.
-- **Workspace→engine path: reverse tunnel, not host.docker.internal**
-  (deviation from §8/§11, improvement over §15). The original design had
-  workspaces reach the engine at the host gateway, which requires opening
-  the engine port on the HOST firewall to all containers. Instead the Coder
-  adapter holds one supervised `coder ssh -R <port>:127.0.0.1:<port>` per
-  workspace: a listener inside the workspace on ITS localhost, forwarded to
-  the engine on the host's localhost, riding the agent's already-allowed
-  websocket to the Coder server. Consequences: `APOTHECARY_ENGINE_URL` is
-  `http://127.0.0.1:8080`; the engine (and §13 default `listen`) binds
-  127.0.0.1 — the §15 "API on 0.0.0.0 with no auth" residual disappears; no
-  UFW/host change needed; the firewall's gateway allowance shrinks to the
-  Coder port only. Tunnels auto-restart on drop (the shim's §10 backoff
-  covers the gap), stop on Destroy/Close, and re-establish via the
-  idempotent Provision on recovery. envcheck proves the path end-to-end
-  with a host-loopback probe listener fetched from inside the workspace.
-  The template's host.docker.internal mapping remains — the Coder agent
-  itself still needs it to reach the server.
-- **`apothecaryd envcheck`** is the M2 acceptance driver: provision → bootstrap
-  → verify command → firewall positive/negative checks (example.com blocked,
-  foreign DNS dead, provider APIs + repo host reachable, engine port not
-  filtered) → binary-safe Read/WriteFile round-trips → links, then destroy
-  (`-keep` to inspect).
-- Workspace image pins: Go 1.24.5, Node 22, opencode 1.17.8, code-server
-  latest-at-build. The ask_human shim (§10) ships in the image at
-  /opt/apothecary/ask-human.mjs — dependency-free Node MCP stdio server; it
-  re-reads /apothecary/run.env on 401 (token rotation after engine restart).
-- Template: params run_id/repo_url/branch only (non-secrets §11); per-run
-  docker network + persistent home volume; NET_ADMIN for firewall init; the
-  agent init script is rewritten to reach Coder via host.docker.internal.
-- **Coder caps workspace names at 32 chars** — names use the run id's last
-  16 chars (the ULID's full 80 random bits; the dropped prefix is only the
-  timestamp).
 
 ## opencode adapter (M3, §5.2) — flag/behavior drift vs the design sketch
 
@@ -371,15 +298,15 @@ Verified against opencode 1.17.8 (pinned in the image):
   on `StaticResolver` over the bare fakes — the M1 suite survived the
   refactor unchanged in substance.
 - **Provisioner cache key includes the effective template**
-  (project.workspace.template override), since coder adapters bind their
-  template at construction. Generations are refcounted by live
+  (project.workspace.template override), since provisioner adapters bind
+  their template at construction. Generations are refcounted by live
   resolutions; a config edit stales the old instance, closed on last
   release (locked by a resolve test). Repository host/harness/provider adapters are
   stateless and constructed per resolution.
 - **M7 requires `workspace.template` on every project** — the §8 image
   pipeline lands in M9; until then the §8.4 custom-template path is the
   only path. The validation moves behind the pipeline in M9.
-  `import-config` sets it to the v1 Coder template, keeping behavior
+  `import-config` sets it to the v1 template, keeping behavior
   byte-identical after migration.
 - The canonical v1 flow **no longer pins `harness: opencode`** — under
   §6.3 semantics an unpinned harness resolves to the project's kind, which
@@ -416,9 +343,6 @@ Verified against opencode 1.17.8 (pinned in the image):
 - `engine.CreateRun` resolves twice per run (preflight + run goroutine) —
   deliberate: the run goroutine must resolve anyway for recovery, and
   instances are cached.
-- **Coder release archives name their member `./coder`** — the deploy
-  image extracts `./coder`, not `coder` (found live: tar exit 2 in the
-  first image build).
 - **M7 acceptance evidence** (ephemeral Postgres 16 in docker): migration
   0002 applied; full store suite green; serve booted from APOTHECARY_* env
   vars alone; dev project seeded; ticket → 9-stage v1 flow → gates
@@ -427,8 +351,7 @@ Verified against opencode 1.17.8 (pinned in the image):
   project (template=factory, locator=123) + settings, zero plaintext at
   rest; the **containerized** engine (deploy/Dockerfile, host network,
   env-only boot) served the CPUI, seeded dev, and completed the same
-  9-stage flow, with coder v2.35.2 and the docker CLI verified inside the
-  image; `go test ./...` green.
+  9-stage flow, with the docker CLI verified inside the image; `go test ./...` green.
 - **Operator migration note**: a apothecaryd built from this commit no longer
   accepts `serve -config` — the v1 deployment must run `apothecaryd keygen`,
   export the §1 APOTHECARY_* vars, run `apothecaryd import-config -config
@@ -530,7 +453,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
 ## Workspace composability & dynamic envcheck (M9, DESIGN2 §8–§9)
 
 - **Single-copy embeds via `factory/workspace`**: the base-image context
-  (Dockerfile + shim + firewall) and the Coder template are `go:embed`ed by
+  (Dockerfile + shim + firewall) and the workspace template are `go:embed`ed by
   a package living IN workspace/ — no duplicated files, no cross-directory
   embed gymnastics. Base tag = `apothecary/base:<sha16 of embedded tree>`;
   template version = `v<sha16 of template tree>`.
@@ -555,7 +478,7 @@ in two steps (UI first, then full backend removal on his follow-up call):
   `extra_allowed_domains` carry defaults, so pre-M9 creates (custom path:
   v1 params only) keep working against the new active version. Fresh
   deployments fall back to `templates create` when push reports the
-  template missing. Flags verified against Coder v2.35.
+  template missing.
 - **Firewall names removed from the script**: init-firewall.sh keeps only
   mechanics; the allowlist arrives fully derived via APOTHECARY_EXTRA_DOMAINS
   (repo host kept as belt-and-braces for custom templates).
@@ -581,26 +504,18 @@ in two steps (UI first, then full backend removal on his follow-up call):
   open egress, which envcheck loudly caught (three failing deny steps).
   Two fixes: `|| true` on the resolution pipeline (a typo'd domain is
   simply not allowed; its egress step fails by name), and an ERR trap that
-  slams egress shut (loopback + established + Coder gateway only, no lock
+  slams egress shut (loopback + established only, no lock
   file) on any unexpected script failure — fail-closed by construction.
-- **Coder version-JSON drift (found live)**: `templates versions list -o
-  json` carries NO "active" field — the CLI's Active column derives from
-  the template's `active_version_id`. The first re-check therefore
-  re-pushed and collided on the version name. activeTemplateVersion now
-  joins templates-list (active_version_id) with versions-list (id→name),
-  and a name collision falls back to `templates versions promote
-  --template=… --template-version=…` (flags verified against v2.35.2).
 - **M9 acceptance evidence** (live, Lu's machine, deployed stack):
   greeter-factory-test (Go+make fragment) full envcheck PASS incl.
   `verify` (`make verify` on the real repo) — first pass built
   apothecary/base:e6830826… + ws:f9f248db… (cached=false), re-check
   cached=true; py-smoke (python preset) PASS on its own image
   (ws:987b4243…, base layer shared); the engine pushed template version
-  vc101fd0f… to the live Coder and provisioned real workspaces from the
-  built tags through the new parameters; induced failures produced named
-  steps — `egress:doesnotexist.invalid` (deny checks green, firewall
-  held) and a wrong Coder token surfacing Coder's 401 through the Test
-  endpoint. The make-not-found first attempt was itself the composability
+  vc101fd0f… and provisioned real workspaces from the built tags through
+  the new parameters; induced failures produced named steps —
+  `egress:doesnotexist.invalid` (deny checks green, firewall held) and a
+  wrong provisioner token surfacing its 401 through the Test endpoint. The make-not-found first attempt was itself the composability
   working: the stripped base genuinely lacks what fragments don't add.
 
 ## GitHub repository host + codex harness (M10, DESIGN2 §12–§13)
@@ -663,8 +578,8 @@ in two steps (UI first, then full backend removal on his follow-up call):
   `APOTHECARY_IMAGE` so deployments pin releases in `deploy/.env`; default
   tracks the working tree (`:dev`) — the right default for a single-repo
   self-hosted install with no registry (this repo has no git remote).
-- **README.md** is the M11 install path: prerequisites (docker, external
-  Coder, repository host PAT, harness auth, target repo with AGENTS.md +
+- **README.md** is the M11 install path: prerequisites (docker,
+  repository host PAT, harness auth, target repo with AGENTS.md +
   .apothecary/agents), compose install with keygen, the UI configuration
   walkthrough ending in envcheck + first ticket, upgrade notes
   (migrations at boot; base image + template are content-addressed and
@@ -703,8 +618,7 @@ Done pre-first-release — the only cheap moment. Renamed end to end:
 - Branch prefix `apothecary/<run>-<slug>`, workspace names
   `apothecary-<id>`, git identity `Apothecary <apothecary@local>`,
   telemetry `apothecary.*` attrs + `apothecary_*` metrics (Grafana
-  dashboards updated to match), Coder-kind default template name
-  `apothecary` (existing integrations keep their stored value).
+  dashboards updated to match).
 - Historical docs swept too (`factoryd`, `FACTORY_*`, `/factory` paths) —
   the design docs now read with current spellings.
 **Operational notes**: deploy/.env needs its two var names updated
@@ -728,9 +642,6 @@ pass. The load-bearing fixes, by area:
   APOTHECARY_MASTER_KEY refused to run keygen itself. Docs now use plain
   `docker run … keygen` (also avoids the orphan `deploy_` postgres the
   compose-run path spawned).
-- Coder Provision reuse never issued `coder start` on a stopped/failed
-  workspace — autostop or crash recovery spun for the full provision
-  timeout. Reuse now starts non-running workspaces (waitReady arbitrates).
 - Crash mid-bootstrap bricked the run: no env id is recorded before
   env_ready, so recovery re-provisioned (same workspace) and re-ran
   `git clone` → exit 128 → terminal env_failed. Bootstrap is now
@@ -780,11 +691,8 @@ pass. The load-bearing fixes, by area:
 - All shell interpolation into workspace scripts is single-quoted
   (`%q` left `$`/backticks live inside double quotes): model strings,
   session ids, agent/role paths, provider.env values (sourced file), and
-  coder ReadFile/WriteFile paths. Belt-and-braces: agent-spec names must
+  provisioner ReadFile/WriteFile paths. Belt-and-braces: agent-spec names must
   be lowercase slugs, flow model strings a strict charset.
-- Coder Exec no longer blind-retries ambiguous exit 255 (a re-run of a
-  side-effectful agent invocation); spawn failures still retry, probes
-  keep the 255 retry.
 - opencode: EgressDomains are now DERIVED from auth_json's provider keys
   (same keys Models() filters by — google/xai/mistral/… map to their API
   hosts) so the firewall can't block a model the UI itself offered; Test
@@ -797,10 +705,6 @@ pass. The load-bearing fixes, by area:
   convention), draft-PR 422 degrades to a "Draft: "-prefixed regular PR,
   rate-limit 403s are named as such, locator validation rejects URLs and
   strips .git.
-- coder template: `templates create` fallback re-pushes under the
-  content-addressed version name (no perpetual second-boot re-push); the
-  engine now passes `--var coder_port=<from integration URL>` so non-7080
-  Coder deployments keep agent reconnects.
 - workspace firewall: IPv6 is fail-closed (kernel-has-v6 + failing drop
   now trips the ERR trap; fail_closed also drops v6); release.yml checks
   the REMOTE for the version tag (re-runs were always red).
@@ -810,8 +714,6 @@ pass. The load-bearing fixes, by area:
   ceiling; codex uses stdin. Switching opencode to stdin is untested
   against the CLI — revisit with a live run.
 - Env-capacity admission is still check-then-create (single-user risk).
-- Coder Exec still concatenates stdout+stderr on success (changing it
-  would drop stderr from stage logs).
 
 ## M12 — Agent library (DESIGN3 §1)
 
@@ -994,19 +896,14 @@ neutral YAML specs in `examples/agents/`.
 ## Live run feedback (working card + workspace log tail)
 
 Between stage_started and a stage's end the UI used to show nothing —
-stage logs were post-hoc and the coder adapter buffered `coder ssh`
-output in memory. Now:
+stage logs were post-hoc and the provisioner buffered exec output in
+memory. Now:
 
 - `ports.ExecLogTailer` is an OPTIONAL EnvProvisioner capability
   (`TailExecLog(env, n)`). Read-side by design: a sink parameter on Exec
   would have rippled into the AgentRunner path (harness adapters call
   Envp.Exec directly); a tail lets each adapter capture however it wants
   and the API degrade honestly when a provisioner can't stream.
-- coder: `CmdRunner.Run` gained a tee writer; Exec streams header +
-  stdout/stderr into `<RunsDir>/<env>/exec.log` AS THE COMMAND RUNS
-  (mutex-serialized MultiWriter; the post-hoc writeLog is gone — same
-  file, same format, now incremental). TailExecLog reads the tail; the
-  file is a coder-internal detail again.
 - fake: in-memory per-env transcript, so dev mode and tests exercise the
   same surface.
 - `Engine.WorkspaceLogTail` (type-asserts the capability, ErrNoLiveLog
@@ -1033,8 +930,8 @@ proxy. Design:
   against a per-run allowlist; ports 443/80 only; records every denial
   (host ×count) for the run. Process-random signing secret.
 - Wiring: `main.go` starts the proxy (unless APOTHECARY_EGRESS_PROXY=off),
-  passes its port to the resolver (coder reverse-forwards it into every
-  workspace, like the engine port) and to the engine
+  passes its port to the resolver (forwarded into every workspace, like
+  the engine port) and to the engine
   (`SetEgress`/`EgressController`). The run loop sets the policy from
   `res.EgressDomains` (already = derived domains ∪ project extra_domains)
   before any workspace network use, and drops it at teardown.
@@ -1044,8 +941,8 @@ proxy. Design:
   git clone and agent invocations all leave through the proxy. The
   template gains an `egress_proxy` parameter → `APOTHECARY_EGRESS_PROXY`;
   when set, `init-firewall.sh` runs in PROXY MODE: OUTPUT drops everything
-  except loopback (reaches the tunneled proxy + shim + code-server),
-  established, and the coder gateway port. No IP pinning, no DNS, no
+  except loopback (reaches the tunneled proxy + shim + code-server) and
+  established. No IP pinning, no DNS, no
   per-provider guessing.
 - Visibility (the point): `GET /api/runs/{id}/egress-denials` +
   a Working-card banner list blocked hosts live — a silent 30-minute hang
@@ -1088,7 +985,7 @@ sourced proxy.env; command stages ran raw via Envp.Exec and went DIRECT,
 hitting the firewall DROP (dropped packets → long timeout, not a proxy
 403). The allowlist was fine — gitlab.com is contributed by the repository host
 account's EgressDomains (github: github.com/api/codeload; gitlab: the
-base_url host) and unioned into every run. Fix: coder.Exec sources
+base_url host) and unioned into every run. Fix: the provisioner's Exec sources
 proxy.env for EVERY workspace command (one chokepoint — bootstrap,
 command stages, agent runs all go through it). The explicit bootstrap/
 adapter sourcing stays (redundant, harmless). "Add to egress" button
@@ -1135,8 +1032,8 @@ workspace) refreshed run.env but never re-established the tunnel — so the
 workspace's engine/proxy loopback forwards were gone. The proxy also binds
 a random port with a process-random cred secret, so a restart invalidated
 the workspace's proxy.env. Fixes: (1) ports.WorkspaceReattacher optional
-capability — coder.Reattach re-establishes the tunnel (waitReady +
-ensureTunnel, idempotent); ensureEnv reuse path calls it. (2) reuse path
+capability — the provisioner's Reattach re-establishes the tunnel
+(idempotent); ensureEnv reuse path calls it. (2) reuse path
 also rewrites proxy.env (current port + creds) via a shared
 encodeEnvFile. This also fixes ask_human across restarts (same dead-tunnel
 cause). Fake provisioner doesn't implement Reattach (no tunnel) — no-op.
@@ -1224,11 +1121,9 @@ documentation; the embedded copies under internal/builtin are canonical.
 The TODO called for a DevPod adapter; research (2026-07-21, verified against
 GitHub) found loft-sh/devpod abandoned-in-fact (no development since 2025-06,
 v0.7 never shipped, maintainers silent) and the niche's only maintained
-pieces being Coder's devcontainer support and the reference
-@devcontainers/cli. Decision: the repo-devcontainer goal ("run whatever the
+piece being the reference @devcontainers/cli. Decision: the repo-devcontainer goal ("run whatever the
 target repo defines") is implemented on **@devcontainers/cli + docker CLI**
-(`internal/adapters/devcontainer`); a Coder+envbuilder template variant
-remains the server-shaped alternative if ever needed.
+(`internal/adapters/devcontainer`).
 
 Decisions and deviations:
 
@@ -1244,7 +1139,7 @@ Decisions and deviations:
   the §8 pipeline image (`--override-config`); repos with one are honored
   untouched. Custom `workspace.template` is rejected at kind construction.
 - **Exec transport** is `devcontainer exec` (script on stdin): exit codes
-  propagate verbatim and stdout/stderr stay separated — no coder exit-255
+  propagate verbatim and stdout/stderr stay separated — no exit-255
   ambiguity. Container state lives in docker labels (`apothecary.env=<ws>`);
   status/destroy/links go through `docker ps`/`rm`/`inspect`.
 - **Engine bridge instead of tunnels.** Hardened docker hosts drop
@@ -1296,9 +1191,7 @@ failure is gone). Decisions:
 - **Built by docker, not the host toolchain.** `wsimage.EnsureShim`
   (content-addressed `apothecary/shim:<sha16>`, `docker build` →
   `create`/`cp`/`rm` extract, cached under `<RunsDir>/shim-cache/`) compiles
-  the embedded source in a `golang:alpine` stage; the coder base image
-  (`workspace/Dockerfile`) does the same via a multi-stage `COPY
-  --from=shimbuild`. Same daemon that runs workspaces ⇒ arch always matches.
+  the embedded source in a `golang:alpine` stage. Same daemon that runs workspaces ⇒ arch always matches.
   `go:embed` of a prebuilt binary would be a chicken-and-egg; a nested
   `go.mod` would break embed, so the shim is a normal `package main` in the
   main module (`go mod init` happens inside the builder image).
@@ -1337,9 +1230,7 @@ conns through the PortConn). Applied to BOTH provisioners.
   single `env_ready` (appended on the writer goroutine). The CPUI merges the
   live registry over the event's `app` links (its 2.5 s poll), so restarts —
   which re-expose on fresh ports via the recovery path — stay correct.
-- coder: supervised `coder port-forward <ws> --tcp <alloc>:<port>`
-  subprocess (reuses the tunnel-supervision pattern; verified against Coder
-  v2.35). devcontainer: `shim relay --reverse` over a bind-mounted unix
+- devcontainer: `shim relay --reverse` over a bind-mounted unix
   socket (host→container IP is blocked on hardened hosts, so the reverse
   relay mirrors the engine bridge). The dead container-IP `app` links the
   devcontainer adapter used to emit are gone — unreachable off-host.
@@ -1349,7 +1240,7 @@ conns through the PortConn). Applied to BOTH provisioners.
   documented. This SUPERSEDES the earlier appPort/compose-collision
   follow-up: exposure needs no published host ports.
 
-## Devcontainer egress firewall (parity with the coder path)
+## Devcontainer egress firewall
 
 The §11 default-deny egress firewall now covers repo-authored dev
 containers. CLI gates verified live (@devcontainers/cli 0.86): a **relative**
@@ -1371,8 +1262,7 @@ configs.
   probes `/run/apothecary-firewall.done` when firewalled; fail-closed writes
   no lock, so a firewall failure times out into an honest `env_failed` with
   the container left up for inspection. Loopback is ACCEPTed first, so the
-  unix-socket bridge/relay survive the DROP (`APOTHECARY_CODER_PORT=1`
-  closes the Coder-only gateway hole).
+  unix-socket bridge/relay survive the DROP.
 - **`ports.EgressOpen` marker → `ports.EgressReporter` (per-env method).**
   The firewall varies per env, so a type-level marker no longer fits: the
   devcontainer adapter firewalls image/Dockerfile configs but leaves
@@ -1381,7 +1271,7 @@ configs.
   switch. It records the fact in memory + an on-disk marker (survives engine
   restart) and reports it; `envcheck` keys its firewall invariants on the
   reported value (skips honestly for open envs), defaulting to closed when
-  the capability is absent (coder).
+  the capability is absent.
 - **Limits:** compose stays egress-open (feature works, but firewalling
   would break sibling-service traffic — a future enhancement could allow the
   compose subnet); a non-root container user makes the entrypoint's iptables
@@ -2653,7 +2543,7 @@ state vs reconciled env status). What was left was clunk, fixed in one pass:
   (`--remote-env APOTHECARY_CMD=<run>:<stage>`) and, before the command,
   sweep /proc for an earlier attempt's tree still running (TERM, then KILL).
   The engine's script is untouched — tests match scripts by prefix.
-- **Config dirty hint** (Coder's "dirty workspace"): the adapter records a
+- **Config dirty hint** (a "dirty workspace"): the adapter records a
   digest of the build inputs (.devcontainer/**, root .devcontainer.json, the
   Dockerfile/compose files the config names) at provision/rebuild;
   `ports.WorkspaceDirtyChecker.ConfigDirty` compares. The reconciler keeps it
@@ -4512,3 +4402,74 @@ with no restart. `GET /api/limits` is for every user; `PUT /api/limits` is
 admin-only and validated (a positive count or -1). System → Limits is
 editable for admins (a number and a "No cap" toggle per cap) and read-only
 for everyone else. The compose file and the Helm chart no longer set them.
+
+## omp harness (TODO 42 retired, 2026-10-27)
+
+A third harness kind, `omp`: oh-my-pi (github.com/can1357/oh-my-pi, MIT, a
+Pi fork), pinned at 18.13.1 and driven through the same ACP runner as opencode
+and codex. Checked against the release binary in a Debian container: the
+install line, `initialize`, `session/new` and `omp auth-broker import --json`.
+No model turn has been run yet: that needs real credentials.
+
+- **Install.** The npm package's `omp` is `#!/usr/bin/env bun` (bun ≥1.3.14,
+  no Node build), so the harness layer downloads the release's standalone
+  binary instead: `omp-linux-[musl-]{x64,arm64}`, checked against the
+  release's `SHA256SUMS.txt`, into `/usr/local/bin/omp`. The line starts with
+  `curl`, so curl is the only prerequisite the harness feature provides.
+  musl gets `libstdc++ libgcc`. The binary is ~276 MB.
+- **Launch.** `env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --yolo`.
+  - Without an explicit approval mode, omp's ACP mode still sends
+    `session/request_permission` for bash and destructive edits; `--yolo`
+    turns that off. The shim's auto-approve stays as the backstop.
+  - `OMP_MCP_TIMEOUT_MS=0`: omp aborts an MCP call after 30 s by default,
+    and `ask_human` blocks.
+  - `~/.omp/agent/config.yml` repeats `tools.approvalMode: yolo` for a human
+    in the terminal, and turns off `startup.checkUpdate` and
+    `marketplace.autoUpdate`.
+- **MCP rides the session.** In ACP mode omp ignores every MCP config file
+  (`createAcpSessionFactory` forces `enableMCP: false`; upstream issue
+  #1234: disk servers shadowed the client's). Writing `ask_human` into
+  `~/.omp/agent/mcp.json` would be silently ignored. So `acpagent.Profile`
+  gained `MCPServers`: servers that ride every session (new and reloaded)
+  ahead of the stage's own. A stage server with the same name is refused.
+- **Model.** omp has no `session/set_model`. The model is a config option
+  (`configId: "model"`, values `provider/id`), and the shim's existing
+  fallback sets it. omp's ACP option list only offers providers it holds
+  credentials for.
+- **Roles are in-band.** omp's named agents (`~/.omp/agent/agents/*.md`) are
+  task subagents only. A session cannot start as one, and its modes are
+  `default`/`plan`. So the role preamble codex used is now shared, in
+  `acpagent.WriteRoles`/`RolePreamble`, and omp uses it too. `read_only` and
+  `allow_bash` are instruction-level, the same residual as codex.
+- **Auth: two secret fields.**
+  - `env` holds provider API keys as `KEY=VALUE` lines. They ride
+    provider.env, where omp reads them natively. The env-var → provider map
+    comes from omp's `providers/<id>.kdl`.
+  - `oauth_json` holds subscription logins as CLIProxyAPI credential JSON
+    (`type` claude|codex|gemini|antigravity, `access_token`,
+    `refresh_token`, `expired`), one object or an array. omp keeps
+    credentials in SQLite (`~/.omp/agent/agent.db`), so SeedAuth stages the
+    documents and runs `omp auth-broker import <dir> --json` as the
+    workspace user. A login omp skips fails bootstrap with omp's own
+    reason. The staging dir is removed.
+  - `agent.db` is the AuthFile, removed at run end; omp also writes
+    refreshed tokens there. The descriptor gained `Field.Multiline`, so a
+    non-`_json` secret can be a textarea.
+- **Models come from omp's own catalog, not models.dev.** A subscription
+  serves its own model set: a ChatGPT login is `openai-codex`, 9 models on
+  `chatgpt.com/backend-api`, not the API's 73. Antigravity serves Claude
+  models. Only omp's catalog knows this. `Models()` reads omp's bundled
+  `packages/catalog/src/models.json` at the pinned tag from
+  raw.githubusercontent.com (~12 MB, once per version per process). That is
+  what the binary ships and what its ACP option list offers. The shared
+  egress/probe tables are keyed by models.dev id, so `ompProvider` carries
+  both ids (`together`/`togetherai`, `fireworks`/`fireworks-ai`,
+  `opencode-zen`/`opencode`).
+- **Egress.** `catalog.stencil.so` (omp's catalog refresh), the key
+  providers' `providerDomains`, and per-login hosts: claude →
+  api.anthropic.com, console.anthropic.com, platform.claude.com; codex →
+  chatgpt.com, auth.openai.com; gemini → cloudcode-pa / oauth2.googleapis.com.
+  The Anthropic token-refresh host is not confirmed from source, so both
+  candidates are listed.
+- **Cost.** omp sends `usage_update` with a cumulative USD `cost`, so budgets
+  work as they do for opencode.

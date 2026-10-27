@@ -156,9 +156,9 @@ func (e *Engine) engineURLFor(envp ports.EnvProvisioner, env ports.EnvID) string
 func (c *Config) withDefaults() Config {
 	out := *c
 	if out.EngineURL == "" {
-		// Workspaces reach the engine through the Coder adapter's reverse
-		// tunnel: localhost on both ends (deviation from §8's
-		// host.docker.internal path — see IMPLEMENTATION_NOTES).
+		// Workspaces reach the engine through the provisioner's bridge:
+		// localhost on both ends (deviation from §8's host.docker.internal
+		// path — see IMPLEMENTATION_NOTES).
 		out.EngineURL = "http://127.0.0.1:8080"
 	}
 	if out.MRPollInterval == 0 {
@@ -2394,17 +2394,17 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 }
 
 // ReconcileEnvsOnce refreshes the live container status of every run that
-// still holds an env_id, by querying the provisioner (docker/coder) rather
+// still holds an env_id, by querying the provisioner (docker/kubernetes) rather
 // than the event log. This is what lets the workspace badge tell "live" from
 // "stopped/removed out-of-band" — the projection only knows an env was
 // provisioned and not yet destroyed, never whether the container is actually
 // up. The whole map is rebuilt each pass (runs whose env_id is gone drop out).
 //
 // A failed probe (Resolve or Status errored: provisioner unreachable, expired
-// coder session, deleted project) records EnvUnknown — NEVER the run's prior
-// value. Carrying the last-known status forward turns a persistent failure
-// into a permanent lie: a coder workspace last seen "running" before the
-// session expired would stay green "live" forever. Honest "unknown" beats a
+// cluster credentials, deleted project) records EnvUnknown — NEVER the run's
+// prior value. Carrying the last-known status forward turns a persistent
+// failure into a permanent lie: a workspace last seen "running" before the
+// credentials expired would stay green "live" forever. Honest "unknown" beats a
 // stale "live"; a genuinely transient blip self-heals on the next 30s pass.
 func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
 	views, err := e.views(ctx)
@@ -2841,7 +2841,7 @@ func runIDTail(runID string) string {
 // "apo-" marker, the slugified branch, and a 2-char run-id tail to keep two
 // runs that share a branch (branches are free-text per ticket, so not unique)
 // on distinct names — which keeps reuse-by-name a same-run operation. Capped
-// at 32 chars, coder's workspace-name limit; adapters use it verbatim.
+// at 32 chars; adapters use it verbatim.
 func workspaceName(branch, runID string) string {
 	suffix := runIDTail(runID)
 	s := slug(branch, 32-len("apo-")-1-len(suffix)) // room for prefix + "-" + suffix

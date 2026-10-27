@@ -14,8 +14,7 @@ import (
 )
 
 // EnsureShim builds (once, content-addressed) the static in-workspace shim
-// binary and returns its host path. The coder path gets the shim via the
-// base image's multi-stage build; the devcontainer path runs arbitrary
+// binary and returns its host path. The devcontainer path runs arbitrary
 // repo images, so the binary is built standalone by docker — same
 // compiler, same daemon, matching arch — and bind-mounted in. Cached at
 // <runsDir>/shim-cache/<sha16>/apothecary-shim; the hash covers the shim

@@ -454,6 +454,44 @@ func TestMCPServersRideTheSession(t *testing.T) {
 	}
 }
 
+// A harness's own MCP servers (omp reads no MCP config file in ACP mode) ride
+// every session ahead of the stage's, reloads included; a stage server of
+// the same name is refused rather than shadowed.
+func TestProfileMCPServersRideEverySession(t *testing.T) {
+	h := startSidecar(t)
+	r := h.runner()
+	r.p.MCPServers = []ports.MCPServer{{Name: "ask_human", Command: []string{"/opt/apothecary/shim", "ask-human"}}}
+	rec := newRecorder()
+	res, err := r.Run(context.Background(), "e", ports.AgentSpec{Agent: "planner"},
+		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
+			MCPServers: []ports.MCPServer{{Name: "db", Command: []string{"dbmcp"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `mcp: [{"name":"ask_human","command":"/opt/apothecary/shim","args":["ask-human"],"env":[]},` +
+		`{"name":"db","command":"dbmcp","args":[],"env":[]}]|`
+	if rec.text() != want {
+		t.Errorf("session saw\n%s\nwant\n%s", rec.text(), want)
+	}
+	if err := sidecar.New(unixConn(h.sock)).Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec2 := newRecorder()
+	if _, err := r.Resume(context.Background(), "e", res.Session,
+		ports.AgentInput{Prompt: "MCP", Events: rec2.on, Inbox: rec2}); err != nil {
+		t.Fatal(err)
+	}
+	if want := `mcp: [{"name":"ask_human","command":"/opt/apothecary/shim","args":["ask-human"],"env":[]}]|`; rec2.text() != want {
+		t.Errorf("reloaded session saw %s, want %s", rec2.text(), want)
+	}
+	_, err = r.Run(context.Background(), "e", ports.AgentSpec{},
+		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
+			MCPServers: []ports.MCPServer{{Name: "ask_human", Command: []string{"other"}}}})
+	if err == nil || !strings.Contains(err.Error(), `"ask_human" is the harness's own`) {
+		t.Errorf("err = %v, want the shadowing server refused", err)
+	}
+}
+
 // A remote server on a harness that takes none is refused before any session
 // is opened, naming the server.
 func TestRemoteMCPServerRefusedWhereTheAgentTakesNone(t *testing.T) {

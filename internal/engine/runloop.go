@@ -2037,7 +2037,7 @@ func (x *exec) ensureEnv() error {
 			if x.ctx.Err() != nil {
 				return context.Cause(x.ctx)
 			}
-			// Transient (host daemon blip, Coder unreachable): re-provisioning a
+			// Transient (host daemon blip, cluster unreachable): re-provisioning a
 			// healthy env and re-running bootstrap on top of it would be worse
 			// than waiting for the next boot.
 			return fmt.Errorf("recovery: env status: %w", err)

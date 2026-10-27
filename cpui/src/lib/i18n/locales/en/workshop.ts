@@ -117,6 +117,11 @@ export default {
 	'workshop.mrs.draft': 'draft',
 	'workshop.mrs.fork': 'from a fork',
 	'workshop.mrs.mine': 'opened by the factory',
+	'workshop.mrs.stacked': 'stacked on !{iid}',
+	'workshop.mrs.stackedTitle':
+		'Stacked on !{iid} ({title}): it targets {branch}, that merge request’s branch, so merging it lands there — not on the main line. Merge !{iid} first.',
+	'workshop.mrs.stackedPick':
+		'!{iid} is stacked on !{base}: what a run merges goes into {branch}, not the main line.',
 	'workshop.mrs.mineTitle':
 		'The repository account this workshop uses opened it: one of its runs did. A merge-request automation never picks these; a run started here is yours to start.',
 	'workshop.mrs.noRun': 'no run yet',

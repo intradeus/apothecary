@@ -1,6 +1,8 @@
 <script lang="ts">
 	// Workshop merge requests tab: the repository's open merge requests —
-	// what the repository integration brings in — and the runs done on each. Any
+	// what the repository integration brings in — and the runs done on each.
+	// One stacked on another (it targets that one's branch) says so, here and
+	// when a run is started on it: what it merges lands in that branch. Any
 	// flow of the workshop whose runs are started on a merge request
 	// (operates_on: merge_request) starts on one from here; which flow, and so
 	// what the run does, is the person's pick. A merge request's runs are filed under its own ticket,
@@ -88,11 +90,7 @@
 {:else if !rows.length}
 	<section class="c pane">
 		<div class="pane-body">
-			<EmptyState
-				compact
-				title={t('workshop.mrs.emptyTitle')}
-				text={t('workshop.mrs.emptyText')}
-			/>
+			<EmptyState compact title={t('workshop.mrs.emptyTitle')} text={t('workshop.mrs.emptyText')} />
 		</div>
 	</section>
 {:else}
@@ -118,9 +116,20 @@
 								· <span class="pill sm t-brand" title={t('workshop.mrs.mineTitle')}
 									>{t('workshop.mrs.mine')}</span
 								>{/if}{#if row.mr.draft}
-								· <span class="pill sm t-mut">{t('workshop.mrs.draft')}</span
-								>{/if}{#if row.mr.fork}
-								· <span class="pill sm t-mut">{t('workshop.mrs.fork')}</span>{/if}</span
+								· <span class="pill sm t-mut">{t('workshop.mrs.draft')}</span>{/if}{#if row.mr.fork}
+								· <span class="pill sm t-mut">{t('workshop.mrs.fork')}</span
+								>{/if}{#if row.stackedOn}
+								· <a
+									class="pill sm t-amb"
+									href={row.stackedOn.url}
+									target="_blank"
+									rel="noreferrer"
+									title={t('workshop.mrs.stackedTitle', {
+										iid: row.stackedOn.iid,
+										title: row.stackedOn.title,
+										branch: row.stackedOn.branch
+									})}>{t('workshop.mrs.stacked', { iid: row.stackedOn.iid })}</a
+								>{/if}</span
 						>
 					</span>
 					<span class="mono small ell" title="{row.mr.source} → {row.mr.target}"
@@ -158,6 +167,15 @@
 
 <Popover {anchor} bind:open={pickOpen} placement="below-end">
 	<div class="pickbox">
+		{#if pickFor?.stackedOn}
+			<span class="help hue-amb small"
+				>{t('workshop.mrs.stackedPick', {
+					iid: pickFor.mr.iid,
+					base: pickFor.stackedOn.iid,
+					branch: pickFor.stackedOn.branch
+				})}</span
+			>
+		{/if}
 		<span class="mut fnt small">{t('workshop.mrs.pick', { iid: pickFor?.mr.iid ?? '' })}</span>
 		{#each starts as f (f.name)}
 			<button class="mi mono" onclick={() => pickFor && start(pickFor, f.name)}>{f.name}</button>

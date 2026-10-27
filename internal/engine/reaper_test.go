@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/run"
 )
 
-// statusErrEnvp fails every Status probe (e.g. an expired coder session),
+// statusErrEnvp fails every Status probe (e.g. an expired cluster credential),
 // delegating everything else to the fake.
 type statusErrEnvp struct{ *fake.EnvProvisioner }
 
@@ -120,7 +120,7 @@ func TestReconcileEnvsReflectsLiveContainerStatus(t *testing.T) {
 }
 
 // A failed status probe must record EnvUnknown, NOT carry a stale "running"
-// forward — the bug where an expired coder session froze dead workspaces as
+// forward — the bug where expired cluster credentials froze dead workspaces as
 // green "live" indefinitely.
 func TestReconcileEnvsUnknownWhenProbeFails(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))

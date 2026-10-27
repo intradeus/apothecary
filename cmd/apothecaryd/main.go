@@ -151,6 +151,7 @@ func registry(dev bool, boot *config.Boot) *kinds.Registry {
 	reg.RegisterProvisioner(kinds.Kubernetes{Defaults: kubernetesDefaults(boot)})
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
+	reg.RegisterHarness(kinds.Omp{})
 	reg.RegisterTicketSource(kinds.Jira{})
 	reg.RegisterTicketSource(kinds.GitHubIssues{})
 	reg.RegisterTicketSource(kinds.GitLabIssues{})

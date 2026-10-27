@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/ports"
 )
 
-// A "dirty" workspace (Coder's word): its container was built from a
+// A "dirty" workspace: its container was built from a
 // devcontainer configuration that has since changed — an agent edited the
 // Dockerfile, a human added a feature — so a rebuild would produce something
 // different. Provision records a digest of the build inputs next to the run

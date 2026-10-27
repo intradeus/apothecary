@@ -56,6 +56,8 @@ type Field struct {
 	Default     string `json:"default,omitempty"`
 	Secret      bool   `json:"secret"`
 	Required    bool   `json:"required"`
+	// Multiline renders a multi-line input (a `*_json` secret always is).
+	Multiline bool `json:"multiline,omitempty"`
 	// Help is a one-line hint rendered under the input. Plain text; bare URLs
 	// in it are linkified by the form.
 	Help string `json:"help,omitempty"`

@@ -1,6 +1,5 @@
 # Apothecary service image (DESIGN2.md §15): apothecaryd + built CPUI + the
-# pinned coder CLI + the docker CLI (workspace image builds via the mounted
-# socket) + Node & the pinned @devcontainers/cli (the docker provisioner
+# docker CLI (workspace image builds via the mounted socket) + Node & the pinned @devcontainers/cli (the docker provisioner
 # shells out to it) + kubectl (the Kubernetes provisioner). Build from the
 # repo root:
 #
@@ -26,9 +25,8 @@ RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/apothec
 # --- runtime -----------------------------------------------------------------
 FROM debian:bookworm-slim
 
-ARG CODER_VERSION=2.35.2
-# @devcontainers/cli is a Node CLI, so Node ships alongside it. Pinned like
-# the coder CLI; bump both per release.
+# @devcontainers/cli is a Node CLI, so Node ships alongside it. Pinned;
+# bump per release.
 ARG DEVCONTAINER_CLI_VERSION=0.86.0
 # Docker CLI plugins. Debian's docker.io ships ONLY the plain `docker` CLI —
 # no buildx, no compose — so Compose-based devcontainers (dockerComposeFile)
@@ -66,12 +64,6 @@ RUN mkdir -p /usr/local/lib/docker/cli-plugins \
 
 RUN curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl \
     && chmod 0755 /usr/local/bin/kubectl
-
-# coder CLI, pinned per release (CLI<->server minor skew is tolerated; see
-# the README for upgrade guidance). The archive member is "./coder".
-RUN curl -fsSL "https://github.com/coder/coder/releases/download/v${CODER_VERSION}/coder_${CODER_VERSION}_linux_amd64.tar.gz" \
-        | tar -xz -C /usr/local/bin ./coder \
-    && chmod 0755 /usr/local/bin/coder
 
 COPY --from=build /out/apothecaryd /usr/local/bin/apothecaryd
 COPY --from=cpui /src/build /opt/apothecary/cpui

@@ -24,12 +24,16 @@ import (
 )
 
 // MRRow is one open merge request: what the repository host says of it,
-// whether the factory itself opened it, and the runs done on it here.
+// whether the factory itself opened it, what it is stacked on, and the runs
+// done on it here.
 type MRRow struct {
 	MR ports.MRInfo `json:"mr"`
 	// Mine: the repository host integration's own account opened it (the
 	// factory's own runs did).
 	Mine bool `json:"mine,omitempty"`
+	// StackedOn is the open merge request it targets the branch of: it
+	// merges into that branch, not the repository's main line.
+	StackedOn *ports.MRBase `json:"stacked_on,omitempty"`
 	// TicketID is the merge request's ticket, once a run was started on it
 	// or an automation picked it; Run its newest run, Runs how many it has.
 	TicketID string `json:"ticket_id,omitempty"`
@@ -87,7 +91,8 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]MRRow, 0, len(mrs))
 	for _, mr := range mrs {
-		row := MRRow{MR: mr, Mine: me != "" && strings.EqualFold(mr.Author, me), TicketID: byKey[strings.ToLower(mr.Ref.URL)]}
+		row := MRRow{MR: mr, Mine: me != "" && strings.EqualFold(mr.Author, me), TicketID: byKey[strings.ToLower(mr.Ref.URL)],
+			StackedOn: ports.StackedOn(mr.Target, mrs)}
 		if row.TicketID != "" {
 			runs, err := s.Engine.RunsOfTicket(ctx, row.TicketID)
 			if err != nil {

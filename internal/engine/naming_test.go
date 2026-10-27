@@ -7,7 +7,7 @@ import (
 
 // workspaceName is the human-friendly workspace/container name policy: an
 // apo- marker, the slugified branch, and a short run-id tail for uniqueness,
-// all capped at coder's 32-char limit.
+// all capped at 32 chars.
 func TestWorkspaceName(t *testing.T) {
 	// Short branch fits whole: exact, no truncation. Suffix is the run-id's
 	// last 2 chars.

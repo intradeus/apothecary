@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +45,10 @@ type Profile struct {
 	// Preamble, when set, is prepended to a NEW session's first prompt —
 	// the role prompt, for harnesses with nowhere else to put it.
 	Preamble func(ctx context.Context, env ports.EnvID, spec ports.AgentSpec) (string, error)
+	// MCPServers ride EVERY session, ahead of the stage's own — for a
+	// harness that reads no MCP config file in ACP mode (omp), this is the
+	// only way ask_human reaches it.
+	MCPServers []ports.MCPServer
 }
 
 type Runner struct {
@@ -89,9 +94,17 @@ func (r *Runner) start(ctx context.Context, c *sidecar.Client) (sidecar.StartRes
 // reads. A remote server needs the agent to say it takes one (initialize:
 // agentCapabilities.mcpCapabilities.http); one that does not is refused
 // here, before the session, rather than silently dropped by the agent.
-func (r *Runner) mcpServers(init json.RawMessage, servers []ports.MCPServer) ([]sidecar.MCPServer, error) {
+func (r *Runner) mcpServers(init json.RawMessage, stage []ports.MCPServer) ([]sidecar.MCPServer, error) {
+	servers := append(slices.Clone(r.p.MCPServers), stage...)
 	if len(servers) == 0 {
 		return nil, nil
+	}
+	for _, m := range stage {
+		for _, own := range r.p.MCPServers {
+			if m.Name == own.Name {
+				return nil, fmt.Errorf("%s: mcp server %q is the harness's own; name the flow's server something else", r.p.Harness, m.Name)
+			}
+		}
 	}
 	var caps struct {
 		AgentCapabilities struct {

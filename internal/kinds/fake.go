@@ -13,7 +13,7 @@ import (
 )
 
 // Fake kinds back `serve -dev` and tests: the whole config plane works against
-// them with no Coder/harness/repository host. The fake harness honors §3.2
+// them with no provisioner/harness/repository host. The fake harness honors §3.2
 // output contracts by parsing the prompt's OUTPUT CONTRACT section (moved here
 // from the v1 devAdapters in cmd/apothecaryd).
 
