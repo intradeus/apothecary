@@ -1,52 +1,105 @@
-// Package egressgw is the engine-side lifecycle manager for the per-PROJECT
-// egress firewall gateway. One gateway container (apo-gw-<project id>) serves
-// all of a project's runs: each run gets its own --internal docker network
-// (apo-egress-<run>), and the gateway is multi-homed onto every one of them plus
-// one external uplink. All egress from a run's DinD sandbox (app + siblings)
-// routes through the gateway, which transparently filters by TLS SNI / HTTP Host
-// (workspace/gateway). The gateway can't be bypassed: a sandbox's only interface
-// is on an internal network with no external route, and enforcement lives
-// OUTSIDE the (privileged) sandbox.
+// Package egressgw is the engine-side manager of the per-PROJECT egress
+// gateway (workspace/gateway). One gateway serves all of a project's runs and
+// every run's sandbox egresses through it, so egress is filtered OUTSIDE the
+// (privileged) sandbox: transparently, by TLS SNI / HTTP Host, no MITM.
 //
-// The Manager performs only HOST-daemon docker calls and gw-folder file I/O; it
-// never touches a run's inner daemon. Policy in / denials out ride JSON files on
-// a per-project bind mount (<RunsDir>/gw/<project id>), reusing the same
-// bind-mount-over-run-folder seam the sandbox relies on (container→host-IP is
-// blocked on hardened hosts, so a shared file is the right control plane).
+// The package has two halves:
+//
+//   - a Host owns the gateway's lifetime and each run's link to it — docker
+//     (host_docker.go: a container multi-homed onto per-run --internal
+//     networks) or Kubernetes (host_k8s.go: a Deployment the run pods reach
+//     over WireGuard peers);
+//   - the Manager drives the gateway itself over its control API (policy and
+//     run routes in; denials, audit and build-cache facts out), the same way
+//     on every host.
 //
 // Every `project` argument in this package is the project's ID (projects.id).
-// ports.ProjectHostKey turns it into the token docker names and paths use; the
-// project's NAME is a docker label and nothing more.
+// ports.ProjectHostKey turns it into the token names use; the project's NAME is
+// a label and nothing more.
 package egressgw
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"apothecary/internal/egressgw/policyfile"
 	"apothecary/internal/ports"
 )
 
-// HostRun runs one docker CLI invocation against the HOST daemon (never a run's
-// inner daemon). It matches the devcontainer adapter's hostRun.
+// HostRun runs one CLI invocation (docker against the HOST daemon, or kubectl).
 type HostRun func(ctx context.Context, args []string) (stdout, stderr []byte, code int, err error)
 
-type Manager struct {
-	runsDir     string
-	run         HostRun
-	ensureImage func(context.Context) (string, error)
-
-	pmu   map[string]*sync.Mutex // per-project mutexes for network/routes edits
-	pmuMu sync.Mutex
+// Control is how to reach one project's gateway control API.
+type Control struct {
+	BaseURL string // e.g. http://127.0.0.1:49153
+	Token   string
 }
 
-func NewManager(runsDir string, run HostRun, ensureImage func(context.Context) (string, error)) *Manager {
-	return &Manager{runsDir: runsDir, run: run, ensureImage: ensureImage, pmu: map[string]*sync.Mutex{}}
+// Attachment is a run's link to its project gateway.
+type Attachment struct {
+	// GatewayIP is the gateway's address as the run's sandbox reaches it: its
+	// DNS server, image mirror and build cache live there.
+	GatewayIP string
+	// Subnet is the source range the run's traffic arrives from (attribution).
+	Subnet string
+	// Peer is the run's WireGuard identity (Kubernetes); nil on docker.
+	Peer *policyfile.Peer
+	// WGEndpoint (host:port) is where the run's pod sends its WireGuard
+	// traffic and WGSecret the Secret holding its WireGuard identity
+	// (Kubernetes only).
+	WGEndpoint string
+	WGSecret   string
+}
+
+// Host is where a project's gateway runs and how runs are linked to it.
+type Host interface {
+	// EnsureGateway brings the project's gateway up (creating or upgrading
+	// it) and returns its control API once it answers.
+	EnsureGateway(ctx context.Context, project, projectName string) (Control, error)
+	// Control finds a running gateway's API without creating anything; ok is
+	// false when the project has no gateway (never ran, or removed).
+	Control(ctx context.Context, project string) (Control, bool)
+	// AttachRun links a run to the (running) gateway.
+	AttachRun(ctx context.Context, project, projectName, run string) (Attachment, error)
+	// DetachRun undoes AttachRun. Best-effort, idempotent.
+	DetachRun(ctx context.Context, project, run string) error
+}
+
+// ErrNoGateway: the project has no gateway to ask.
+var ErrNoGateway = errors.New("egress gateway is not running for this project")
+
+type Manager struct {
+	host   Host
+	client *http.Client
+
+	pmu   map[string]*sync.Mutex // per-project: attach/detach and policy edits
+	pmuMu sync.Mutex
+
+	auditMu    sync.Mutex
+	auditCache map[string]auditSnap
+}
+
+type auditSnap struct {
+	at   time.Time
+	recs []policyfile.AuditRecord
+}
+
+func NewManager(host Host) *Manager {
+	return &Manager{
+		host:       host,
+		client:     &http.Client{Timeout: 20 * time.Second},
+		pmu:        map[string]*sync.Mutex{},
+		auditCache: map[string]auditSnap{},
+	}
 }
 
 func (m *Manager) projectMu(project string) *sync.Mutex {
@@ -60,427 +113,122 @@ func (m *Manager) projectMu(project string) *sync.Mutex {
 	return mu
 }
 
-// --- naming ---------------------------------------------------------------
-
-// Everything per project is named by ports.ProjectHostKey(project): the
-// project's ID, lowercased. Never its name — a rename must not move a project
-// off its gateway and caches, and two projects with the same name must not
-// share them.
-
-func (m *Manager) netName(run string) string    { return "apo-egress-" + run }
-func (m *Manager) gwName(project string) string { return "apo-gw-" + ports.ProjectHostKey(project) }
-func (m *Manager) gwDir(project string) string {
-	return filepath.Join(m.runsDir, "gw", ports.ProjectHostKey(project))
-}
-
-// projectLabels are the docker labels every per-project resource carries: the
-// id is what filters key on (`--filter label=apothecary.project=<id>`); the
-// name is for a human reading `docker ps`, omitted when unknown.
-func projectLabels(project, projectName string) []string {
-	ls := []string{"--label", "apothecary=true", "--label", "apothecary.project=" + project}
-	if projectName != "" {
-		ls = append(ls, "--label", "apothecary.project.name="+projectName)
-	}
-	return ls
-}
-func (m *Manager) policyPath(project string) string {
-	return filepath.Join(m.gwDir(project), "egress-policy.json")
-}
-func (m *Manager) denialsPath(project string) string {
-	return filepath.Join(m.gwDir(project), "egress-denials.json")
-}
-func (m *Manager) routesPath(project string) string {
-	return filepath.Join(m.gwDir(project), "routes.json")
-}
-func (m *Manager) auditPath(project string) string {
-	return filepath.Join(m.gwDir(project), "egress-audit.json")
-}
-func (m *Manager) mirrorConfigPath(project string) string {
-	return filepath.Join(m.gwDir(project), "registry-config.yml")
-}
-func (m *Manager) buildCacheConfigPath(project string) string {
-	return filepath.Join(m.gwDir(project), "buildcache-config.yml")
-}
-
-// cacheVolume backs the gateway's pull-through image cache. A named volume (not
-// gwDir) because it is the one piece of gateway state worth keeping when the
-// container is recreated for an image upgrade — and it must NOT be swept with
-// the rest of the folder.
-func (m *Manager) cacheVolume(project string) string { return m.gwName(project) + "-cache" }
-
-// buildCacheVolume backs the writable registry buildkit exports the
-// devcontainer build cache to. Separate from the mirror's volume because they
-// have different lifetimes: the mirror is pure derived data nobody asks about,
-// while THIS one is the thing a human deletes from the UI when a build starts
-// producing something stale.
-func (m *Manager) buildCacheVolume(project string) string { return m.gwName(project) + "-buildcache" }
-
-// buildCacheDir is where the build-cache registry stores blobs inside the
-// gateway container (the volume's mount point).
-const buildCacheDir = "/var/lib/buildcache"
-
-// BuildCachePort is the gateway-local port of the writable build-cache
-// registry — what a run's buildkit pushes to and pulls from.
-const BuildCachePort = "5001"
-
-// --- docker helper --------------------------------------------------------
-
-func (m *Manager) docker(ctx context.Context, args ...string) (string, error) {
-	stdout, stderr, code, err := m.run(ctx, args)
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("docker %s: exit %d: %s", strings.Join(args, " "), code, strings.TrimSpace(string(stderr)))
-	}
-	return strings.TrimSpace(string(stdout)), nil
-}
+// gwName is the gateway's name on every host: apo-gw-<project key>. Never the
+// project's name — a rename must not move a project off its gateway and
+// caches, and two projects with the same name must not share them.
+func gwName(project string) string { return "apo-gw-" + ports.ProjectHostKey(project) }
 
 // --- lifecycle ------------------------------------------------------------
 
-// EnsureRunEgress guarantees the project gateway exists, creates this run's
-// --internal network, connects it to the gateway, records the run→subnet
-// attribution, and returns the gateway's IP ON THIS run's network (for the
-// sandbox default route + --dns). Idempotent across the Provision reuse path.
-// project is the project's id; projectName is a label only (projectLabels).
-func (m *Manager) EnsureRunEgress(ctx context.Context, project, projectName, run string, f policyfile.File) (gwIP string, err error) {
-	if err := os.MkdirAll(m.gwDir(project), 0o755); err != nil {
-		return "", err
-	}
-	// Policy is per-project; write it (idempotent) so the gateway has a policy
-	// the moment it starts.
-	if err := m.WritePolicy(project, f); err != nil {
-		return "", err
-	}
-	// Same for the image-mirror config: present before the container starts, and
-	// re-checked every pass so an engine upgrade that changes it propagates.
-	if err := m.writeMirrorConfig(project); err != nil {
-		return "", err
-	}
-	if err := m.writeBuildCacheConfig(project); err != nil {
-		return "", err
-	}
-
+// EnsureRunEgress guarantees the project gateway is up, links the run to it,
+// registers the run's route (attribution, and its WireGuard peer on
+// Kubernetes) and installs the project policy — all before it returns, so the
+// sandbox about to start has a filter, a resolver and a policy waiting.
+// Returns the run's attachment (the gateway's address as the run sees it, and
+// on Kubernetes its WireGuard identity). Idempotent.
+func (m *Manager) EnsureRunEgress(ctx context.Context, project, projectName, run string, f policyfile.File) (Attachment, error) {
 	pm := m.projectMu(project)
 	pm.Lock()
 	defer pm.Unlock()
 
-	// Per-run internal network (no external route → sandbox can't bypass).
-	if err := m.ensureNetwork(ctx, project, projectName, run); err != nil {
-		return "", err
-	}
-	if err := m.ensureGateway(ctx, project, projectName); err != nil {
-		return "", err
-	}
-	// Connect this run's network to the gateway (idempotent).
-	if _, err := m.docker(ctx, "network", "connect", m.netName(run), m.gwName(project)); err != nil &&
-		!strings.Contains(err.Error(), "already exists") {
-		return "", err
-	}
-	if err := m.recordRoute(ctx, project, run); err != nil {
-		return "", err
-	}
-	gwIP, err = m.docker(ctx, "inspect", m.gwName(project), "--format",
-		fmt.Sprintf(`{{ (index .NetworkSettings.Networks "%s").IPAddress }}`, m.netName(run)))
+	ctl, err := m.host.EnsureGateway(ctx, project, projectName)
 	if err != nil {
-		return "", err
+		return Attachment{}, err
 	}
-	if gwIP == "" {
-		return "", fmt.Errorf("egressgw: gateway has no IP on %s", m.netName(run))
-	}
-	return gwIP, nil
-}
-
-func (m *Manager) ensureNetwork(ctx context.Context, project, projectName, run string) error {
-	args := append([]string{"network", "create", "--driver", "bridge", "--internal",
-		"--label", "apothecary.env=" + run},
-		projectLabels(project, projectName)...)
-	if _, err := m.docker(ctx, append(args, m.netName(run))...); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
-// ensureGateway brings the project's gateway up, creating it when absent and
-// RECREATING it when it runs a stale image. The recreate path exists because
-// gateways are no longer reaped when a project's last run goes away (they are
-// kept warm for their image cache), so nothing else would ever pick up a new
-// gateway build. Only the image tag is compared: argv changes here do not
-// trigger a recreate on their own — they always ride a gateway-source or
-// Dockerfile change, which bumps the content-addressed tag.
-func (m *Manager) ensureGateway(ctx context.Context, project, projectName string) error {
-	// Resolved on EVERY path (unlike before, when the warm path skipped it): the
-	// tag is the upgrade signal, and a cache hit is just one image inspect.
-	img, err := m.ensureImage(ctx)
+	att, err := m.host.AttachRun(ctx, project, projectName, run)
 	if err != nil {
-		return fmt.Errorf("egressgw: build gateway image: %w", err)
+		return Attachment{}, err
 	}
-	ids, err := m.docker(ctx, "ps", "-aq", "--filter", "name=^"+m.gwName(project)+"$")
-	if err != nil {
-		return err
-	}
-	// netIPs carries the gateway's per-run addresses across a recreate.
-	var netIPs map[string]string
-	if ids != "" {
-		cur, _ := m.docker(ctx, "inspect", m.gwName(project), "--format", "{{.Config.Image}}")
-		if cur == img {
-			_, err := m.docker(ctx, "start", m.gwName(project)) // no-op when running
-			return err
-		}
-		// Stale image. A `rm -f` would sever egress for every attached run, so
-		// upgrade only while the project is idle (no running sandbox carries its
-		// id label); a busy project keeps its old gateway until its runs are done.
-		if running, err := m.docker(ctx, "ps", "-q",
-			"--filter", "label=apothecary.project="+project,
-			"--filter", "label=apothecary.sandbox=true"); err == nil && running != "" {
-			_, err := m.docker(ctx, "start", m.gwName(project))
-			return err
-		}
-		// Stopped sandboxes baked --dns/--registry-mirror at their gwIP and
-		// cannot be re-flagged by `docker start`, so the new gateway must land
-		// on the same addresses.
-		netIPs = m.gatewayNetIPs(ctx, project)
-		if _, err := m.docker(ctx, "rm", "-f", m.gwName(project)); err != nil {
-			return err
-		}
-	}
-	// Both caches survive everything (idempotent create; never reaped).
-	for _, vol := range []string{m.cacheVolume(project), m.buildCacheVolume(project)} {
-		args := append([]string{"volume", "create"}, projectLabels(project, projectName)...)
-		if _, err := m.docker(ctx, append(args, vol)...); err != nil && !strings.Contains(err.Error(), "already exists") {
-			return err
-		}
-	}
-	dir := m.gwDir(project)
-	args := append([]string{"run", "-d", "--name", m.gwName(project)}, projectLabels(project, projectName)...)
-	args = append(args,
-		"--label", "apothecary.egressgw=true",
-		// Kept warm across host/daemon restarts: nothing reaps a gateway now, and
-		// a stopped one would leave its runs with no egress until the next
-		// provision. A fresh netns also means stale nft rules are impossible.
-		"--restart", "unless-stopped",
-		"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW",
-		"--network", "bridge",
-		"--sysctl", "net.ipv4.ip_forward=1",
-		"--sysctl", "net.ipv4.conf.all.rp_filter=0",
-		"--sysctl", "net.ipv4.conf.default.rp_filter=0",
-		"--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
-		"-v", dir+":"+dir,
-		"-v", m.cacheVolume(project)+":/var/lib/registry",
-		"-v", m.buildCacheVolume(project)+":"+buildCacheDir,
-		img,
-		"--policy", m.policyPath(project),
-		"--denials", m.denialsPath(project),
-		"--routes", m.routesPath(project),
-		"--audit", m.auditPath(project),
-		"--listen-port", "9040",
-		"--dns-upstream", "1.1.1.1:53",
-		"--mirror-config", m.mirrorConfigPath(project),
-		"--buildcache-config", m.buildCacheConfigPath(project),
-	)
-	if _, err = m.docker(ctx, args...); err != nil {
-		return err
-	}
-	// Re-attach the runs the replaced gateway served, at their old addresses.
-	for netName, ip := range netIPs {
-		if _, err := m.docker(ctx, "network", "connect", "--ip", ip, netName, m.gwName(project)); err != nil {
-			// Not fatal: the run being provisioned right now gets its own
-			// connect next, and a reused sandbox at worst loses DNS until it is
-			// recreated — but it must be visible when it happens.
-			return fmt.Errorf("egressgw: gateway upgraded but %s could not be re-attached at %s (its sandbox needs a rebuild): %w", netName, ip, err)
-		}
-	}
-	return nil
-}
-
-// gatewayNetIPs maps the gateway's run networks to its address on each, so an
-// upgrade can restore them. Best-effort: nil when the inspect fails.
-func (m *Manager) gatewayNetIPs(ctx context.Context, project string) map[string]string {
-	out, err := m.docker(ctx, "inspect", m.gwName(project), "--format",
-		`{{range $n, $v := .NetworkSettings.Networks}}{{$n}} {{$v.IPAddress}}{{"\n"}}{{end}}`)
-	if err != nil {
-		return nil
-	}
-	ips := map[string]string{}
-	for _, line := range strings.Split(out, "\n") {
-		name, ip, ok := strings.Cut(strings.TrimSpace(line), " ")
-		// Only run networks: the bridge uplink is re-created by docker run.
-		if ok && ip != "" && strings.HasPrefix(name, "apo-egress-") {
-			ips[name] = ip
-		}
-	}
-	return ips
-}
-
-// registryConfig configures the gateway's pull-through Docker Hub cache
-// (workspace/gateway/registry.go supervises `registry serve` with it).
-// proxy.remoteurl is what makes it a read-through mirror rather than a
-// registry; delete.enabled lets the proxy scheduler's TTL actually evict.
-const registryConfig = `version: 0.1
-log:
-  level: warn
-storage:
-  filesystem:
-    rootdirectory: /var/lib/registry
-  delete:
-    enabled: true
-  cache:
-    blobdescriptor: inmemory
-http:
-  addr: :5000
-  secret: apothecary-mirror
-proxy:
-  remoteurl: https://registry-1.docker.io
-`
-
-// buildCacheConfig is the WRITABLE registry: no proxy section (a registry in
-// proxy mode refuses pushes, which is exactly what a build cache needs to do),
-// its own storage root, and delete enabled so a wipe can be surgical if it
-// ever needs to be.
-const buildCacheConfig = `version: 0.1
-log:
-  level: warn
-storage:
-  filesystem:
-    rootdirectory: ` + buildCacheDir + `
-  delete:
-    enabled: true
-  cache:
-    blobdescriptor: inmemory
-http:
-  addr: :` + BuildCachePort + `
-  secret: apothecary-buildcache
-`
-
-// writeBuildCacheConfig materializes the build-cache registry config, on the
-// same only-when-different rule as the mirror: the gateway restarts the child
-// on any mtime bump, and that restart is also how ClearBuildCache makes the
-// registry forget what it had open.
-func (m *Manager) writeBuildCacheConfig(project string) error {
-	path := m.buildCacheConfigPath(project)
-	if cur, err := os.ReadFile(path); err == nil && string(cur) == buildCacheConfig {
-		return nil
-	}
-	return os.WriteFile(path, []byte(buildCacheConfig), 0o644)
-}
-
-// writeMirrorConfig materializes the mirror config in gwDir, ONLY when the
-// content differs: the gateway restarts its registry child on any mtime bump
-// (the registry has no config hot-reload), so a blind rewrite on every
-// provision would restart it needlessly.
-func (m *Manager) writeMirrorConfig(project string) error {
-	path := m.mirrorConfigPath(project)
-	if cur, err := os.ReadFile(path); err == nil && string(cur) == registryConfig {
-		return nil
-	}
-	return os.WriteFile(path, []byte(registryConfig), 0o644)
-}
-
-// recordRoute updates routes.json with this run's subnet so the gateway can
-// attribute denials to the run by source address.
-func (m *Manager) recordRoute(ctx context.Context, project, run string) error {
-	subnet, err := m.docker(ctx, "network", "inspect", m.netName(run), "--format",
-		"{{ (index .IPAM.Config 0).Subnet }}")
-	if err != nil {
-		return err
-	}
-	var r policyfile.Routes
-	_ = policyfile.Read(m.routesPath(project), &r)
-	if r.RunSubnets == nil {
-		r.RunSubnets = map[string]string{}
-	}
-	r.RunSubnets[run] = subnet
-	return policyfile.WriteAtomic(m.routesPath(project), r)
-}
-
-// DestroyRunEgress disconnects and removes this run's network and drops it from
-// the route map. The GATEWAY ITSELF IS KEPT: it holds the project's warm image
-// cache, and rebuilding that on the next run is far more expensive than an idle
-// alpine container (it also has --restart unless-stopped, so it survives daemon
-// restarts). Nothing reaps it automatically; `docker rm -f apo-gw-<project id>`
-// is the manual escape hatch, and the next provision recreates it.
-func (m *Manager) DestroyRunEgress(ctx context.Context, project, run string) error {
-	pm := m.projectMu(project)
-	pm.Lock()
-	defer pm.Unlock()
-
-	_, _ = m.docker(ctx, "network", "disconnect", "-f", m.netName(run), m.gwName(project))
-	_, _ = m.docker(ctx, "network", "rm", m.netName(run))
-
-	var r policyfile.Routes
-	if policyfile.Read(m.routesPath(project), &r) == nil && r.RunSubnets != nil {
-		delete(r.RunSubnets, run)
-		_ = policyfile.WriteAtomic(m.routesPath(project), r)
-	}
-
-	return nil
-}
-
-// --- policy / denials -----------------------------------------------------
-
-// WritePolicy atomically writes the project's policy file; the gateway hot-swaps
-// its in-memory policy within its poll interval (no restart).
-func (m *Manager) WritePolicy(project string, f policyfile.File) error {
-	if err := os.MkdirAll(m.gwDir(project), 0o755); err != nil {
-		return err
+	if err := m.call(ctx, ctl, http.MethodPut, "/runs/"+url.PathEscape(run),
+		policyfile.RunRoute{Subnet: att.Subnet, Peer: att.Peer}, nil); err != nil {
+		return Attachment{}, fmt.Errorf("egressgw: register run route: %w", err)
 	}
 	if f.Mode == "" {
 		f.Mode = policyfile.ModeAllow
 	}
-	return policyfile.WriteAtomic(m.policyPath(project), f)
+	if err := m.call(ctx, ctl, http.MethodPut, "/policy", f, nil); err != nil {
+		return Attachment{}, fmt.Errorf("egressgw: install policy: %w", err)
+	}
+	return att, nil
 }
 
-// Audit returns the project's aggregated egress audit records (all runs). The
-// engine ingests these into Postgres so the trail survives the gateway.
-func (m *Manager) Audit(project string) []policyfile.AuditRecord {
-	var af policyfile.AuditFile
-	if err := policyfile.Read(m.auditPath(project), &af); err != nil {
-		return nil
+// DestroyRunEgress drops the run's route and link. The GATEWAY ITSELF IS KEPT:
+// it holds the project's warm image and build caches, far more expensive to
+// rebuild than an idle gateway is to keep.
+func (m *Manager) DestroyRunEgress(ctx context.Context, project, run string) error {
+	pm := m.projectMu(project)
+	pm.Lock()
+	defer pm.Unlock()
+	if ctl, ok := m.host.Control(ctx, project); ok {
+		_ = m.call(ctx, ctl, http.MethodDelete, "/runs/"+url.PathEscape(run), nil, nil)
 	}
-	return af.Records
+	return m.host.DetachRun(ctx, project, run)
 }
 
-// Denials returns the project's recorded denials filtered to one run.
-func (m *Manager) Denials(project, run string) []policyfile.Denial {
-	var df policyfile.DenialsFile
-	if err := policyfile.Read(m.denialsPath(project), &df); err != nil {
-		return nil
-	}
-	out := df.Denials[:0:0]
-	for _, d := range df.Denials {
-		if d.Run == run {
-			out = append(out, d)
-		}
-	}
-	return out
-}
+// --- policy / denials / audit --------------------------------------------
 
-// Policy returns the project's current policy file — what the gateway is
-// enforcing (within its ~1s reload poll). A missing file reads as the
-// default deny-all allowlist, matching WritePolicy's default.
-func (m *Manager) Policy(project string) (policyfile.File, error) {
+// Policy is what the gateway is enforcing right now. A project with no
+// gateway reads as the default deny-all allowlist.
+func (m *Manager) Policy(ctx context.Context, project string) (policyfile.File, error) {
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return policyfile.File{Mode: policyfile.ModeAllow}, nil
+	}
 	var f policyfile.File
-	if err := policyfile.Read(m.policyPath(project), &f); err != nil {
-		if os.IsNotExist(err) {
-			return policyfile.File{Mode: policyfile.ModeAllow}, nil
-		}
+	if err := m.call(ctx, ctl, http.MethodGet, "/policy", nil, &f); err != nil {
 		return policyfile.File{}, err
 	}
 	f.Mode = f.NormMode()
 	return f, nil
 }
 
+// Denials returns the run's recorded denials (nil when unknown).
+func (m *Manager) Denials(ctx context.Context, project, run string) []policyfile.Denial {
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return nil
+	}
+	var df policyfile.DenialsFile
+	if err := m.call(ctx, ctl, http.MethodGet, "/denials?run="+url.QueryEscape(run), nil, &df); err != nil {
+		return nil
+	}
+	return df.Denials
+}
+
+// Audit returns the project's aggregated egress records (all runs). The
+// engine's ingester asks once per active run every few seconds, so a project's
+// snapshot is reused for a second instead of fetched per run.
+func (m *Manager) Audit(ctx context.Context, project string) []policyfile.AuditRecord {
+	m.auditMu.Lock()
+	if s, ok := m.auditCache[project]; ok && time.Since(s.at) < time.Second {
+		m.auditMu.Unlock()
+		return s.recs
+	}
+	m.auditMu.Unlock()
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return nil
+	}
+	var af policyfile.AuditFile
+	if err := m.call(ctx, ctl, http.MethodGet, "/audit", nil, &af); err != nil {
+		return nil
+	}
+	m.auditMu.Lock()
+	m.auditCache[project] = auditSnap{at: time.Now(), recs: af.Records}
+	m.auditMu.Unlock()
+	return af.Records
+}
+
 // Allow is the "add to egress" fast path (SetRule with allow=true).
-func (m *Manager) Allow(project, host string) error { return m.SetRule(project, host, true) }
+func (m *Manager) Allow(ctx context.Context, project, host string) error {
+	return m.SetRule(ctx, project, host, true)
+}
 
 // SetRule live-toggles a host's egress rule, project-wide, no restart. allow=true
 // permits it (clears any force-block, and for allow-mode adds it to the allowlist
 // / for deny-mode drops it from the denylist); allow=false force-blocks it via
 // the BlockedDomains override, which wins in either mode.
-func (m *Manager) SetRule(project, host string, allow bool) error {
+func (m *Manager) SetRule(ctx context.Context, project, host string, allow bool) error {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
 		return fmt.Errorf("empty host")
@@ -488,13 +236,20 @@ func (m *Manager) SetRule(project, host string, allow bool) error {
 	pm := m.projectMu(project)
 	pm.Lock()
 	defer pm.Unlock()
-	var f policyfile.File
-	if err := policyfile.Read(m.policyPath(project), &f); err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		f = policyfile.File{Mode: policyfile.ModeAllow}
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return ErrNoGateway
 	}
+	var f policyfile.File
+	if err := m.call(ctx, ctl, http.MethodGet, "/policy", nil, &f); err != nil {
+		return err
+	}
+	f = applyRule(f, host, allow)
+	return m.call(ctx, ctl, http.MethodPut, "/policy", f, nil)
+}
+
+// applyRule is SetRule's pure edit.
+func applyRule(f policyfile.File, host string, allow bool) policyfile.File {
 	if allow {
 		f.BlockedDomains = remove(f.BlockedDomains, host) // lift any block
 		if f.NormMode() == policyfile.ModeDeny {
@@ -508,7 +263,10 @@ func (m *Manager) SetRule(project, host string, allow bool) error {
 		}
 		f.Domains = remove(f.Domains, host) // drop any explicit allow of it
 	}
-	return policyfile.WriteAtomic(m.policyPath(project), f)
+	if f.Mode == "" {
+		f.Mode = policyfile.ModeAllow
+	}
+	return f
 }
 
 func contains(xs []string, x string) bool {
@@ -532,9 +290,13 @@ func remove(xs []string, x string) []string {
 
 // --- build cache -------------------------------------------------------------
 
+// BuildCachePort is the gateway-local port of the writable build-cache
+// registry — what a run's buildkit pushes to and pulls from.
+const BuildCachePort = "5001"
+
 // BuildCacheRef / BuildCacheImageRef are the two registry references a
 // project's devcontainer build reads, as seen from inside a run's sandbox.
-// gwIP is the gateway's address on THAT run's network.
+// gwIP is the gateway's address as THAT run reaches it.
 //
 // Two, because the devcontainer CLI supports two different mechanisms and the
 // one that works depends on the repository's own devcontainer:
@@ -568,45 +330,97 @@ func buildCacheRepo(gwIP, project string) string {
 }
 
 // BuildCacheSize reports how many bytes the project's build cache occupies.
-// Best-effort by design: a gateway that is down has no cache to report, and
-// that is a number (0), not an error the UI has to render.
 func (m *Manager) BuildCacheSize(ctx context.Context, project string) (int64, error) {
-	out, err := m.docker(ctx, "exec", m.gwName(project), "du", "-sk", buildCacheDir)
-	if err != nil {
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return 0, ErrNoGateway
+	}
+	var bc policyfile.BuildCacheInfo
+	if err := m.call(ctx, ctl, http.MethodGet, "/buildcache", nil, &bc); err != nil {
 		return 0, err
 	}
-	fields := strings.Fields(out)
-	if len(fields) == 0 {
-		return 0, nil
-	}
-	kb, err := strconv.ParseInt(fields[0], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("egressgw: build cache size %q: %w", out, err)
-	}
-	return kb * 1024, nil
+	return bc.Bytes, nil
 }
 
 // ClearBuildCache empties the project's build cache: the next build starts
-// from scratch and repopulates it.
-//
-// Empty-then-restart, in that order and both parts required. The registry
-// holds no lock we can take, so the wipe removes the storage under it and the
-// config touch makes the gateway restart the child — which is what stops it
-// serving a manifest whose blobs are gone. A build racing the wipe is covered
-// by ignore-error on the cache export: it loses its cache, it does not fail.
+// from scratch and repopulates it. The gateway wipes the storage and restarts
+// its registry child, so it stops serving manifests whose blobs are gone; a
+// build racing the wipe loses its cache (ignore-error on export), never fails.
 func (m *Manager) ClearBuildCache(ctx context.Context, project string) error {
 	pm := m.projectMu(project)
 	pm.Lock()
 	defer pm.Unlock()
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return ErrNoGateway
+	}
+	return m.call(ctx, ctl, http.MethodDelete, "/buildcache", nil, nil)
+}
 
-	if _, err := m.docker(ctx, "exec", m.gwName(project), "sh", "-c",
-		"rm -rf "+buildCacheDir+"/* "+buildCacheDir+"/.[!.]* 2>/dev/null; exit 0"); err != nil {
-		return fmt.Errorf("egressgw: clear build cache: %w", err)
+// --- control API client ----------------------------------------------------
+
+// call does one control-API request: in (when non-nil) is the JSON body, out
+// (when non-nil) receives the JSON answer.
+func (m *Manager) call(ctx context.Context, ctl Control, method, path string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
 	}
-	// Touch the config so the gateway's supervisor restarts the registry with
-	// a clean view. Writing the same bytes is enough — it watches mtime.
-	if err := os.WriteFile(m.buildCacheConfigPath(project), []byte(buildCacheConfig), 0o644); err != nil {
-		return fmt.Errorf("egressgw: restart build-cache registry: %w", err)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(ctl.BaseURL, "/")+path, body)
+	if err != nil {
+		return err
 	}
-	return nil
+	req.Header.Set("Authorization", "Bearer "+ctl.Token)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("egress gateway %s %s: %w", method, path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("egress gateway %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(msg)))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// WaitHealthy polls the gateway's /healthz until it answers or ctx/limit ends.
+func WaitHealthy(ctx context.Context, client *http.Client, baseURL string, limit time.Duration) error {
+	if client == nil {
+		client = &http.Client{Timeout: 3 * time.Second}
+	}
+	deadline := time.Now().Add(limit)
+	var last error
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(baseURL, "/")+"/healthz", nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+			err = fmt.Errorf("healthz: %s", resp.Status)
+		}
+		last = err
+		if time.Now().After(deadline) {
+			return fmt.Errorf("egress gateway at %s did not become healthy within %s: %w", baseURL, limit, last)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }

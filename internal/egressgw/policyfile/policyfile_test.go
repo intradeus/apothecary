@@ -68,3 +68,25 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// TestWireShapeControl pins the control-API and WireGuard additions, mirrored
+// in workspace/gateway/wire.go.
+func TestWireShapeControl(t *testing.T) {
+	r, _ := json.Marshal(Routes{RunSubnets: map[string]string{"r": "10.90.0.2/32"},
+		Peers: map[string]Peer{"r": {PublicKey: "k", IP: "10.90.0.2"}}})
+	for _, key := range []string{`"run_subnets"`, `"peers"`, `"public_key"`, `"ip"`} {
+		if !contains(string(r), key) {
+			t.Errorf("Routes JSON missing %s: %s", key, r)
+		}
+	}
+	rr, _ := json.Marshal(RunRoute{Subnet: "s", Peer: &Peer{}})
+	for _, key := range []string{`"subnet"`, `"peer"`} {
+		if !contains(string(rr), key) {
+			t.Errorf("RunRoute JSON missing %s: %s", key, rr)
+		}
+	}
+	b, _ := json.Marshal(BuildCacheInfo{Bytes: 1})
+	if !contains(string(b), `"bytes"`) {
+		t.Errorf("BuildCacheInfo JSON missing bytes: %s", b)
+	}
+}

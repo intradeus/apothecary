@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -44,10 +43,9 @@ type CheckRun struct {
 
 // EnvCheckOptions parameterize a check pass.
 type EnvCheckOptions struct {
-	EngineURL  string // written into run.env for the shim
-	EnginePort int    // tunnel probe target (workspace-local loopback)
-	Keep       bool   // keep the workspace for inspection
-	Timeout    time.Duration
+	EngineURL string // written into run.env for the shim
+	Keep      bool   // keep the workspace for inspection
+	Timeout   time.Duration
 	// Agents are the agent definitions to materialize during the bootstrap
 	// step, taken from the project's default flow (FLOWLANG §1, v3 — agents
 	// belong to a flow, not a project). Empty simply generates no configs.
@@ -165,10 +163,14 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		}
 	}
 
+	engineURL := opts.EngineURL
+	if p, ok := envp.(ports.EngineURLProvider); ok {
+		engineURL = p.EngineURL(env)
+	}
 	step("bootstrap", RunBootstrap(ctx, envp, env, BootstrapSpec{
 		RunID:        runID,
 		Token:        "envcheck-token",
-		EngineURL:    opts.EngineURL,
+		EngineURL:    engineURL,
 		RepoURL:      res.RepoRef.URL,
 		SourceBranch: res.RepoRef.DefaultBranch,
 		Branch:       branch,
@@ -270,12 +272,12 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	}
 	step("shim", execExpect(ctx, envp, env,
 		"test -x /opt/apothecary/shim", "", true), "")
-	// Loopback parity holds on every provisioner (coder: reverse tunnel;
-	// devcontainer: in-container relay over the mounted unix socket), so
-	// one probe fits all.
+	// The workspace reaches the engine at the URL run.env carries — its own
+	// loopback on docker (the in-container relay), the engine Service on
+	// Kubernetes — so the probe is that URL, whatever it is.
 	step("tunnel", execExpect(ctx, envp, env,
-		fmt.Sprintf("curl -m 10 -s -o /dev/null http://127.0.0.1:%d/", opts.EnginePort), "", true),
-		"engine reachable from the workspace's own loopback")
+		fmt.Sprintf("curl -m 10 -s -o /dev/null %s/", shellQuote(strings.TrimSuffix(engineURL, "/"))), "", true),
+		"engine reachable from the workspace at "+engineURL)
 
 	blob := []byte("round-trip \x00\x01\xfe binary ok\n")
 	step("rw_absolute", rwRoundTrip(ctx, envp, env, "/apothecary/roundtrip.bin", blob), "")
@@ -403,7 +405,6 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	}
 	e.mu.Unlock()
 
-	enginePort := enginePortOf(e.cfg.EngineURL)
 	checkRunID := "envck" + strings.ToLower(id[max(0, len(id)-11):])
 	// Egress is enforced by the per-project gateway the provisioner brings up at
 	// Provision time (from the EnvSpec egress fields) — nothing to prime here.
@@ -416,7 +417,7 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 			e.mu.Unlock()
 		}
 		failed, teardown := runEnvCheck(ctx, res, checkRunID,
-			EnvCheckOptions{EngineURL: e.cfg.EngineURL, EnginePort: enginePort, Keep: keep, Agents: agents, Stages: stages}, emit)
+			EnvCheckOptions{EngineURL: e.cfg.EngineURL, Keep: keep, Agents: agents, Stages: stages}, emit)
 		// The verdict is published now; destroying the workspace can take
 		// minutes and says nothing about the project.
 		now := e.clock()
@@ -482,29 +483,6 @@ func (e *Engine) LatestEnvCheck(projectID string) (CheckRun, bool) {
 		return CheckRun{}, false
 	}
 	return e.EnvCheck(id)
-}
-
-// enginePortOf extracts the port from the engine URL, honoring scheme
-// defaults ("https://engine.example.com" → 443, not the scheme colon).
-func enginePortOf(engineURL string) int {
-	u, err := url.Parse(engineURL)
-	if err != nil {
-		return 8080
-	}
-	if p := u.Port(); p != "" {
-		n := 0
-		fmt.Sscanf(p, "%d", &n)
-		if n > 0 {
-			return n
-		}
-	}
-	switch u.Scheme {
-	case "https":
-		return 443
-	case "http":
-		return 80
-	}
-	return 8080
 }
 
 // EnvCheck returns a snapshot of a check run.

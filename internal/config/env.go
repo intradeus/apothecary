@@ -37,14 +37,6 @@ type Boot struct {
 	// of only listing them for click-to-expose. APOTHECARY_PORT_AUTOEXPOSE
 	// ("on" enables); default off.
 	PortAutoExpose bool
-	// MaxConcurrentRuns / MaxEnvironments are the host's capacity: runs
-	// beyond the first queue as pending, FIFO; at the second, new runs are
-	// refused until a workspace is archived or reaped. Deployment-wide, the
-	// same for every user — they protect the machine, not a person's
-	// preference. APOTHECARY_MAX_CONCURRENT_RUNS (default 3) and
-	// APOTHECARY_MAX_ENVIRONMENTS (default 6); -1 = no cap.
-	MaxConcurrentRuns int
-	MaxEnvironments   int
 	// SandboxRuntime is the OCI runtime each run's Docker-in-Docker sandbox is
 	// created with. APOTHECARY_SANDBOX_RUNTIME; default "" = the daemon's
 	// default runtime, which needs `--privileged` to host a nested dockerd —
@@ -56,10 +48,87 @@ type Boot struct {
 	// of the deployment you can read off one line, not of whatever happened to
 	// be installed on the machine.
 	SandboxRuntime string
+
+	// Kubernetes: the deployment-wide facts a Kubernetes provisioner and the
+	// project browsers need. A provisioner integration may override most of
+	// them per integration; the browser has no integration, so these are its
+	// only source.
+	K8s K8s
+
+	// AppsDomain turns exposed workspace ports into host-routed URLs
+	// (<port>-<run>.<domain>) served by the engine itself instead of one
+	// loopback listener per port — what makes them reachable when the engine
+	// sits behind a Service and an Ingress. APOTHECARY_APPS_DOMAIN, default ""
+	// (loopback listeners); APOTHECARY_APPS_SCHEME, default "http".
+	AppsDomain string
+	AppsScheme string
+	// PublicURL is the UI's own origin as browsers reach it
+	// (APOTHECARY_PUBLIC_URL), where an app host sends a browser to sign in.
+	PublicURL string
 }
 
-// DefaultEgressProxyPort is the proxy's loopback port when unspecified.
-const DefaultEgressProxyPort = 8079
+// K8s is the Kubernetes part of the boot configuration.
+type K8s struct {
+	// Namespace is where sandboxes, gateways and browsers are created.
+	// APOTHECARY_K8S_NAMESPACE; set ⇒ the project browsers run on
+	// Kubernetes too.
+	Namespace string
+	// EngineNamespace is the engine's own namespace (the network policies
+	// that let workspaces reach it select its pods there).
+	// APOTHECARY_K8S_ENGINE_NAMESPACE, usually from the downward API.
+	EngineNamespace string
+	// EngineURL is how a workspace pod reaches the engine (its Service).
+	// APOTHECARY_K8S_ENGINE_URL, e.g. http://apothecaryd.apothecary.svc.cluster.local:8080.
+	EngineURL string
+	// Kubeconfig is a kubeconfig path ("" = in-cluster, or kubectl's
+	// default). APOTHECARY_K8S_KUBECONFIG.
+	Kubeconfig string
+	// ProtectCIDRs are destinations no workspace may reach through its
+	// gateway: the cluster's pod and service ranges and link-local metadata.
+	// APOTHECARY_K8S_PROTECT_CIDRS, default the k3s ranges + 169.254.0.0/16.
+	ProtectCIDRs []string
+	// Transport is how the engine dials a sandbox pod's sockets: "direct"
+	// (TCP to the pod, in-cluster) or "portforward" (kubectl port-forward,
+	// an engine outside the cluster). APOTHECARY_K8S_TRANSPORT; default:
+	// direct when running in a pod, portforward otherwise.
+	Transport string
+	// Images apothecary runs on the cluster (it cannot build there).
+	// APOTHECARY_SANDBOX_IMAGE, _SHIM_IMAGE, _GATEWAY_IMAGE, _BROWSER_IMAGE;
+	// defaults are the engine's own release (see DefaultImage).
+	SandboxImage, ShimImage, GatewayImage, BrowserImage string
+	// PullPolicy for those images (APOTHECARY_K8S_IMAGE_PULL_POLICY): ""
+	// = the cluster default; Always for a reused tag like :local.
+	PullPolicy string
+	// BrowserProxyListen is where the engine serves browser sessions' routing
+	// proxy (APOTHECARY_K8S_BROWSER_PROXY_LISTEN, default :7071) and
+	// BrowserProxyAddr how a browser pod reaches it
+	// (APOTHECARY_K8S_BROWSER_PROXY_ADDR, default the engine URL's host:7071).
+	BrowserProxyListen, BrowserProxyAddr string
+}
+
+// DefaultProtectCIDRs are k3s's default pod and service ranges plus
+// link-local (cloud metadata). Set APOTHECARY_K8S_PROTECT_CIDRS on clusters
+// with other ranges.
+var DefaultProtectCIDRs = []string{"10.42.0.0/16", "10.43.0.0/16", "169.254.0.0/16"}
+
+// ImageRepo is where release images are published.
+const ImageRepo = "ghcr.io/intradeus/apothecary"
+
+// DefaultImage is the published image <name> of an engine release: the
+// version's own tag, or :local for a development build ("dev").
+func DefaultImage(name, version string) string {
+	tag := version
+	if tag == "" || tag == "dev" {
+		tag = "local"
+	}
+	return ImageRepo + "/" + name + ":" + tag
+}
+
+// InCluster reports whether this process runs in a Kubernetes pod.
+func InCluster() bool {
+	_, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	return err == nil
+}
 
 // DefaultUploadMaxBytes caps an uploaded attachment when unset (25 MiB).
 const DefaultUploadMaxBytes = 25 << 20
@@ -112,37 +181,44 @@ func FromEnv() (*Boot, error) {
 	}
 	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"
 	b.SandboxRuntime = strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_RUNTIME"))
-	var err error
-	if b.MaxConcurrentRuns, err = limitEnv("APOTHECARY_MAX_CONCURRENT_RUNS", DefaultMaxConcurrentRuns); err != nil {
-		return nil, err
+	b.K8s = K8s{
+		Namespace:          strings.TrimSpace(os.Getenv("APOTHECARY_K8S_NAMESPACE")),
+		EngineNamespace:    strings.TrimSpace(os.Getenv("APOTHECARY_K8S_ENGINE_NAMESPACE")),
+		EngineURL:          strings.TrimSpace(os.Getenv("APOTHECARY_K8S_ENGINE_URL")),
+		Kubeconfig:         strings.TrimSpace(os.Getenv("APOTHECARY_K8S_KUBECONFIG")),
+		ProtectCIDRs:       DefaultProtectCIDRs,
+		Transport:          strings.TrimSpace(os.Getenv("APOTHECARY_K8S_TRANSPORT")),
+		SandboxImage:       strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_IMAGE")),
+		ShimImage:          strings.TrimSpace(os.Getenv("APOTHECARY_SHIM_IMAGE")),
+		GatewayImage:       strings.TrimSpace(os.Getenv("APOTHECARY_GATEWAY_IMAGE")),
+		BrowserImage:       strings.TrimSpace(os.Getenv("APOTHECARY_BROWSER_IMAGE")),
+		PullPolicy:         strings.TrimSpace(os.Getenv("APOTHECARY_K8S_IMAGE_PULL_POLICY")),
+		BrowserProxyListen: getenvDefault("APOTHECARY_K8S_BROWSER_PROXY_LISTEN", ":7071"),
+		BrowserProxyAddr:   strings.TrimSpace(os.Getenv("APOTHECARY_K8S_BROWSER_PROXY_ADDR")),
 	}
-	if b.MaxEnvironments, err = limitEnv("APOTHECARY_MAX_ENVIRONMENTS", DefaultMaxEnvironments); err != nil {
-		return nil, err
+	if raw := os.Getenv("APOTHECARY_K8S_PROTECT_CIDRS"); raw != "" {
+		b.K8s.ProtectCIDRs = splitComma(raw)
+	}
+	switch b.K8s.Transport {
+	case "":
+		b.K8s.Transport = "portforward"
+		if InCluster() {
+			b.K8s.Transport = "direct"
+		}
+	case "direct", "portforward":
+	default:
+		return nil, fmt.Errorf("config: APOTHECARY_K8S_TRANSPORT must be direct or portforward, got %q", b.K8s.Transport)
+	}
+	b.AppsDomain = strings.Trim(strings.TrimSpace(os.Getenv("APOTHECARY_APPS_DOMAIN")), ".")
+	b.AppsScheme = getenvDefault("APOTHECARY_APPS_SCHEME", "http")
+	b.PublicURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("APOTHECARY_PUBLIC_URL")), "/")
+	if b.AppsDomain != "" && b.PublicURL == "" {
+		return nil, fmt.Errorf("config: APOTHECARY_APPS_DOMAIN needs APOTHECARY_PUBLIC_URL (the UI's address, where app hosts send browsers to sign in)")
 	}
 	if b.PostgresDSN == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")
 	}
 	return b, nil
-}
-
-// Default capacity caps (the v1 config defaults).
-const (
-	DefaultMaxConcurrentRuns = 3
-	DefaultMaxEnvironments   = 6
-)
-
-// limitEnv reads a capacity cap: a positive count, or -1 for no cap. Zero
-// and other negatives are refused rather than read as "nothing may run".
-func limitEnv(name string, def int) (int, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return def, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n == 0 || n < -1 {
-		return 0, fmt.Errorf("config: %s must be a positive count or -1 (no cap), got %q", name, raw)
-	}
-	return n, nil
 }
 
 func splitComma(s string) []string {

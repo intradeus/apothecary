@@ -9,6 +9,13 @@ vars:
   PROD_COMPOSE: docker compose -p apothecary -f deploy/docker-compose.yaml
   DEV_PG: apothecary-dev-pg
   DEV_DSN: postgres://dev:dev@127.0.0.1:15433/dev
+  # Local Kubernetes (k3d). Every kubectl/helm call names this kubeconfig:
+  # these tasks never read, merge into or switch ~/.kube/config.
+  K3D_CLUSTER: apothecary
+  K3D_KUBECONFIG: deploy/.k3d-kubeconfig
+  K3D_REGISTRY: k3d-registry.localhost:5111
+  K3D_HTTP_PORT: '8090'
+  K3D_KUBECTL: kubectl --kubeconfig deploy/.k3d-kubeconfig
 
 tasks:
   default:
@@ -55,6 +62,90 @@ tasks:
     cmds:
       - '{{.LOCAL_COMPOSE}} down -v'
       - task: local:sweep-managed
+
+  # --- local Kubernetes (k3d: k3s in docker) ----------------------------------
+  # task k8s:cluster k8s:images k8s:deploy → http://apothecary.localhost:8090
+  k8s:cluster:
+    desc: Create the local k3d cluster and its image registry (kubeconfig in deploy/.k3d-kubeconfig)
+    preconditions:
+      - sh: command -v k3d
+        msg: "install k3d: https://k3d.io"
+    status:
+      - k3d cluster get {{.K3D_CLUSTER}} >/dev/null 2>&1
+    cmds:
+      # The wireguard module must be loadable on the host: k3d's nodes share
+      # its kernel, and every run's sandbox tunnels to its gateway with it.
+      - 'lsmod | grep -q "^wireguard" || echo "note: the wireguard module is not loaded; the first gateway loads it on demand (or: sudo modprobe wireguard)"'
+      - >-
+        k3d cluster create {{.K3D_CLUSTER}}
+        --registry-create k3d-registry.localhost:0.0.0.0:5111
+        -p "{{.K3D_HTTP_PORT}}:80@loadbalancer"
+        --kubeconfig-update-default=false --kubeconfig-switch-context=false
+        --wait
+      - k3d kubeconfig get {{.K3D_CLUSTER}} > {{.K3D_KUBECONFIG}}
+      - chmod 600 {{.K3D_KUBECONFIG}}
+
+  k8s:images:
+    desc: Build the five images from the working tree and push them to the k3d registry as :local
+    cmds:
+      - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local --push
+
+  k8s:deploy:
+    desc: Install or upgrade the Helm chart on the k3d cluster
+    preconditions:
+      - sh: command -v helm
+        msg: "install helm: https://helm.sh/docs/intro/install/"
+      - sh: test -s {{.K3D_KUBECONFIG}}
+        msg: "no cluster yet: task k8s:cluster"
+    cmds:
+      - test -s deploy/.k3d-master-key || (go run ./cmd/apothecaryd keygen > deploy/.k3d-master-key && chmod 600 deploy/.k3d-master-key)
+      - >-
+        helm upgrade --install apothecary deploy/helm/apothecary
+        --kubeconfig {{.K3D_KUBECONFIG}} -n apothecary --create-namespace
+        -f deploy/helm/apothecary/values-k3d.yaml
+        --set masterKey="$(cat deploy/.k3d-master-key)"
+        --set ingress.host=apothecary.localhost
+        --set ingress.appsPort={{.K3D_HTTP_PORT}}
+      # :local is rebuilt in place: restart so the engine pulls the new one.
+      - '{{.K3D_KUBECTL}} -n apothecary rollout restart deploy/apothecaryd'
+      - '{{.K3D_KUBECTL}} -n apothecary rollout status deploy/apothecaryd --timeout=5m'
+      - 'echo "UI: http://apothecary.localhost:{{.K3D_HTTP_PORT}}"'
+
+  k8s:logs:
+    desc: Follow the engine's logs on the k3d cluster
+    cmds:
+      - '{{.K3D_KUBECTL}} -n apothecary logs -f deploy/apothecaryd'
+
+  k8s:status:
+    desc: List the engine and every workspace object on the k3d cluster
+    cmds:
+      - '{{.K3D_KUBECTL}} -n apothecary get pods'
+      - '{{.K3D_KUBECTL}} -n apothecary-workspaces get pods,pvc,deploy,svc,netpol,secrets -l apothecary.io/managed=true'
+
+  k8s:sweep:
+    desc: Delete every engine-managed workspace object on the k3d cluster (the twin of local:sweep-managed)
+    cmds:
+      - '{{.K3D_KUBECTL}} -n apothecary-workspaces delete pods,deploy,svc,netpol,secrets,pvc -l apothecary.io/managed=true --ignore-not-found'
+
+  k8s:kubectl:
+    desc: 'kubectl against the k3d cluster: task k8s:kubectl -- get pods -A'
+    cmds:
+      - '{{.K3D_KUBECTL}} {{.CLI_ARGS}}'
+
+  k8s:test-live:
+    desc: Run the live Kubernetes provisioner test against the k3d cluster
+    cmds:
+      - >-
+        APOTHECARY_LIVE_KUBECONFIG=$PWD/{{.K3D_KUBECONFIG}}
+        APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
+        APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
+        go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/
+
+  k8s:down:
+    desc: Delete the k3d cluster (its registry and everything in it)
+    cmds:
+      - k3d cluster delete {{.K3D_CLUSTER}}
+      - rm -f {{.K3D_KUBECONFIG}}
 
   # --- go-run dev mode (fake kinds, no docker build) -------------------------
   dev:

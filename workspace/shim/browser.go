@@ -390,11 +390,20 @@ func (b *browserBridge) save(file string, data []byte) error {
 // --- in the browser container ---------------------------------------------------
 
 func runBrowserSession(args []string) {
-	sock, argv := "", []string(nil)
+	sock, engine, token, argv := "", "", "", []string(nil)
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
 			argv = args[i+1:]
 			break
+		}
+		if (args[i] == "--engine" || args[i] == "--token") && i+1 < len(args) {
+			if args[i] == "--engine" {
+				engine = args[i+1]
+			} else {
+				token = args[i+1]
+			}
+			i++
+			continue
 		}
 		if args[i] == "--sock" && i+1 < len(args) {
 			i++
@@ -404,24 +413,40 @@ func runBrowserSession(args []string) {
 		fmt.Fprintln(os.Stderr, "browser-session: unknown argument", args[i])
 		os.Exit(2)
 	}
-	if sock == "" || len(argv) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: shim browser-session --sock <proxy socket> -- <mcp server argv>")
+	if (sock == "") == (engine == "") || len(argv) == 0 || (engine != "" && token == "") {
+		fmt.Fprintln(os.Stderr, "usage: shim browser-session --sock <proxy socket> | --engine <host:port> --token <t> -- <mcp server argv>")
 		os.Exit(2)
 	}
-	os.Exit(browserSession(sock, argv, os.Stdin, os.Stdout, os.Stderr))
+	// The routing proxy is the engine's: a unix socket beside this container
+	// (docker), or a TCP listener the session's token opens (Kubernetes).
+	dial := func() (net.Conn, error) { return net.Dial("unix", sock) }
+	if engine != "" {
+		dial = func() (net.Conn, error) {
+			c, err := net.Dial("tcp", engine)
+			if err != nil {
+				return nil, err
+			}
+			if err := writePreamble(c, token, "proxy"); err != nil {
+				c.Close()
+				return nil, err
+			}
+			return c, nil
+		}
+	}
+	os.Exit(browserSession(dial, argv, os.Stdin, os.Stdout, os.Stderr))
 }
 
 // browserSession runs one MCP server (argv) on the given stdio with its
-// browser proxied, through a fresh loopback relay, to the unix socket sock.
-// It returns the server's exit code.
-func browserSession(sock string, argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// browser proxied, through a fresh loopback relay, to the engine's routing
+// proxy (dial). It returns the server's exit code.
+func browserSession(dial func() (net.Conn, error), argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		fmt.Fprintln(stderr, "browser-session: listen:", err)
 		return 1
 	}
 	defer ln.Close()
-	go serve(ln, func() (net.Conn, error) { return net.Dial("unix", sock) })
+	go serve(ln, dial)
 	port := ln.Addr().(*net.TCPAddr).Port
 
 	dir, err := os.MkdirTemp("", "apo-browser-*")

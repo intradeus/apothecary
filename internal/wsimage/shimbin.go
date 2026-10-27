@@ -34,14 +34,7 @@ const gojqVersion = "v0.12.19"
 // in a scratch image for `docker create`+`cp` extraction (create never
 // runs it, so scratch is fine). The pin is in this text, so bumping it
 // changes shimHash.
-const shimBuilderDockerfile = `FROM golang:1.26-alpine AS build
-COPY shim/ /src/
-RUN cd /src && go mod init apothecary-shim >/dev/null \
-    && go get github.com/itchyny/gojq/cli@` + gojqVersion + ` \
-    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /apothecary-shim .
-FROM scratch
-COPY --from=build /apothecary-shim /apothecary-shim
-`
+var shimBuilderDockerfile = workspace.Dockerfile("shim")
 
 // shimHash covers the shim source tree + the builder Dockerfile.
 func shimHash() string {
@@ -87,7 +80,7 @@ func (b *Builder) EnsureShim(ctx context.Context) (string, error) {
 		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(shimBuilderDockerfile), 0o644); err != nil {
 			return "", err
 		}
-		if err := b.build(ctx, dir, tag); err != nil {
+		if err := b.build(ctx, dir, tag, "SHIM_HASH="+workspace.ShimSourceHash()); err != nil {
 			return "", err
 		}
 	}

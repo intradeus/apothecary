@@ -1,0 +1,47 @@
+# The engine manages workspace objects in the workspaces namespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: apothecaryd
+  namespace: {{ .Values.workspaces.namespace }}
+  labels:
+    {{- include "apothecary.labels" . | nindent 4 }}
+rules:
+  # Sandbox and browser pods; exec is how the engine runs anything in them.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete, patch]
+  - apiGroups: [""]
+    resources: [pods/exec, pods/portforward]
+    verbs: [create, get]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # Run volumes, run and gateway secrets (relay tokens, WireGuard keys), gateway services.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, secrets, services]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The per-project egress gateways.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Every sandbox, gateway and browser is fenced by a network policy.
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: apothecaryd
+  namespace: {{ .Values.workspaces.namespace }}
+  labels:
+    {{- include "apothecary.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: apothecaryd
+subjects:
+  - kind: ServiceAccount
+    name: apothecaryd
+    namespace: {{ .Release.Namespace }}

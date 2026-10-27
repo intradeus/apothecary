@@ -21,6 +21,8 @@
 //	            through the engine to a Chromium in the project's browser
 //	browser-session  (in the browser container) one MCP session: Playwright's
 //	            MCP server, its Chromium proxied to the routing socket
+//	seed        copy this binary into a shim dir (Kubernetes init container)
+//	version     print the source hash this shim was built from
 package main
 
 import (
@@ -51,12 +53,16 @@ func main() {
 		runBrowserMCP()
 	case "browser-session":
 		runBrowserSession(os.Args[2:])
+	case "seed":
+		runSeed(os.Args[2:])
+	case "version":
+		fmt.Println(sourceHash)
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... | shim portscan [--exclude <ports>] | shim probe [--wait <dur>] <host:port> | shim sidecar [--daemon] [--listen <sock>] [--repo <dir>] | shim jq <jq args> | shim service start|stop|status|logs | shim browser-mcp | shim browser-session --sock <sock> -- <argv>")
+	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... [--serve <addr> --dir <dir> --token-file <f>] | shim relay --stdio <sock> | shim portscan [--exclude <ports>] | shim probe [--wait <dur>] <host:port> | shim sidecar [--daemon] [--listen <sock>] [--repo <dir>] | shim jq <jq args> | shim service start|stop|status|logs | shim browser-mcp | shim browser-session --sock <sock> | --engine <host:port> --token <t> -- <argv> | shim seed <dir> | shim version")
 	os.Exit(2)
 }

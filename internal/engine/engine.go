@@ -132,7 +132,7 @@ type Limits struct {
 	MaxEnvironments   int
 }
 
-// Unlimited is the Limits value meaning "no cap" (APOTHECARY_MAX_*=-1).
+// Unlimited is the Limits value meaning "no cap".
 const Unlimited = -1
 
 // RunsCapped reports whether concurrent runs are capped at all.
@@ -140,6 +140,18 @@ func (l Limits) RunsCapped() bool { return l.MaxConcurrentRuns >= 0 }
 
 // EnvsCapped reports whether live environments are capped at all.
 func (l Limits) EnvsCapped() bool { return l.MaxEnvironments >= 0 }
+
+// engineURLFor is the URL env's workspace reaches the engine at: the
+// provisioner's own when it supplies one (a Kubernetes pod reaches a Service,
+// not a loopback relay), the configured one otherwise.
+func (e *Engine) engineURLFor(envp ports.EnvProvisioner, env ports.EnvID) string {
+	if p, ok := envp.(ports.EngineURLProvider); ok {
+		if u := p.EngineURL(env); u != "" {
+			return u
+		}
+	}
+	return e.cfg.EngineURL
+}
 
 func (c *Config) withDefaults() Config {
 	out := *c

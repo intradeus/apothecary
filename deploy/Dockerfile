@@ -1,7 +1,8 @@
 # Apothecary service image (DESIGN2.md §15): apothecaryd + built CPUI + the
 # pinned coder CLI + the docker CLI (workspace image builds via the mounted
-# socket) + Node & the pinned @devcontainers/cli (the devcontainer
-# provisioner shells out to it). Build from the repo root:
+# socket) + Node & the pinned @devcontainers/cli (the docker provisioner
+# shells out to it) + kubectl (the Kubernetes provisioner). Build from the
+# repo root:
 #
 #   docker build -f deploy/Dockerfile -t apothecary/apothecaryd:dev .
 
@@ -35,6 +36,9 @@ ARG DEVCONTAINER_CLI_VERSION=0.86.0
 # into the CLI plugins dir; pin + bump per release like the CLIs above.
 ARG COMPOSE_VERSION=v2.40.0
 ARG BUILDX_VERSION=v0.20.1
+# kubectl drives the Kubernetes provisioner (sandbox pods, gateways, browsers)
+# the way the docker CLI drives the docker one. Pinned; bump per release.
+ARG KUBECTL_VERSION=v1.34.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl docker.io git \
@@ -59,6 +63,9 @@ RUN mkdir -p /usr/local/lib/docker/cli-plugins \
     && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose \
                   /usr/local/lib/docker/cli-plugins/docker-buildx \
     && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+
+RUN curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl \
+    && chmod 0755 /usr/local/bin/kubectl
 
 # coder CLI, pinned per release (CLI<->server minor skew is tolerated; see
 # the README for upgrade guidance). The archive member is "./coder".

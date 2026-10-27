@@ -45,10 +45,6 @@ services:
       # the host, its docker socket, or any other run. Empty = today's
       # privileged sandbox. Linux-only (see deploy/env.example).
       APOTHECARY_SANDBOX_RUNTIME: ${APOTHECARY_SANDBOX_RUNTIME:-}
-      # The host's capacity, the same for every user: runs beyond the first
-      # queue, at the second new runs are refused. -1 = no cap.
-      APOTHECARY_MAX_CONCURRENT_RUNS: ${APOTHECARY_MAX_CONCURRENT_RUNS:-3}
-      APOTHECARY_MAX_ENVIRONMENTS: ${APOTHECARY_MAX_ENVIRONMENTS:-6}
     volumes:
       # Workspace image builds (§8) go through the host's docker daemon —
       # the same one Coder's docker provider uses. This makes the engine

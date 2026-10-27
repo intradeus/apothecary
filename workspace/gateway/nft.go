@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -15,7 +16,7 @@ import (
 // in deny mode), MSS clamping for forwarded traffic, MASQUERADE, and an IPv6
 // blanket drop. Interfaces are matched "not EXT" because run-nets appear as
 // eth1/eth2/… inside the container (not by docker network name).
-func renderNFT(ext string, port int, f File) string {
+func renderNFT(ext string, port int, f File, protect []*net.IPNet, controlPort int) string {
 	var b strings.Builder
 	w := func(s string) { b.WriteString(s); b.WriteByte('\n') }
 
@@ -24,9 +25,27 @@ func renderNFT(ext string, port int, f File) string {
 	w("add chain ip apo prerouting { type nat hook prerouting priority dstnat ; policy accept ; }")
 	w(fmt.Sprintf("add rule ip apo prerouting iifname != %q tcp dport { 80, 443 } redirect to :%d", ext, port))
 
+	// The control API answers the engine only, which reaches it via the
+	// uplink (or, through kubectl port-forward, the pod's loopback): a run
+	// link — another sandbox's or the run's own — never gets to even try a
+	// token.
+	if controlPort > 0 {
+		w("add chain ip apo input { type filter hook input priority filter ; policy accept ; }")
+		w(fmt.Sprintf("add rule ip apo input iifname != { %q, \"lo\" } tcp dport %d drop", ext, controlPort))
+	}
+
 	w("add chain ip apo forward { type filter hook forward priority filter ; policy drop ; }")
 	w("add rule ip apo forward ct state established,related accept")
 	w("add rule ip apo forward tcp flags syn tcp option maxseg size set rt mtu")
+	// Protected destinations come before either mode's accepts: no policy can
+	// open them (the cluster's own networks, cloud metadata).
+	if len(protect) > 0 {
+		var cidrs []string
+		for _, n := range protect {
+			cidrs = append(cidrs, n.String())
+		}
+		w(fmt.Sprintf("add rule ip apo forward iifname != %q ip daddr { %s } drop", ext, strings.Join(cidrs, ", ")))
+	}
 	if f.normMode() == ModeDeny {
 		// allow-all raw egress except explicitly denied IP ranges.
 		w("add rule ip apo forward iifname != " + q(ext) + " accept")
@@ -53,7 +72,7 @@ func renderNFT(ext string, port int, f File) string {
 	return b.String()
 }
 
-func applyNFT(script string) error {
+var applyNFT = func(script string) error {
 	cmd := exec.Command("nft", "-f", "-")
 	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()

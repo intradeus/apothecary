@@ -1,0 +1,8 @@
+apiVersion: v2
+name: apothecary
+description: Apothecary — agent runs in per-run Docker-in-Docker sandbox pods, egress-filtered by a per-project gateway.
+type: application
+version: 0.1.0
+# The engine release the chart deploys by default (image.tag overrides).
+appVersion: "latest"
+keywords: [agents, devcontainer, sandbox]

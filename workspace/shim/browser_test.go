@@ -147,7 +147,7 @@ func TestBrowserSessionRelaysTheProxyPort(t *testing.T) {
 	code := make(chan int, 1)
 	// The "server" prints its arguments and waits for stdin to close.
 	go func() {
-		code <- browserSession(sock, []string{"sh", "-c", `echo "$@"; cat >/dev/null`, "sh"}, stdinR, stdoutW, io.Discard)
+		code <- browserSession(func() (net.Conn, error) { return net.Dial("unix", sock) }, []string{"sh", "-c", `echo "$@"; cat >/dev/null`, "sh"}, stdinR, stdoutW, io.Discard)
 		stdoutW.Close()
 	}()
 	line, err := bufio.NewReader(stdoutR).ReadString('\n')

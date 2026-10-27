@@ -18,6 +18,12 @@
 // Trust level: the listeners carry raw TCP to workspace apps with no auth
 // — exactly the CPUI's own posture (the API has none either); both bind
 // the same host. The default 127.0.0.1 keeps everything loopback.
+//
+// Host routing (RouteByHost) is the other mode, for an engine behind a
+// Service and an Ingress (Kubernetes), where a listener per port would be
+// unreachable: an exposure gets a hostname, <port>-<run>.<apps domain>, and
+// the engine's own HTTP server routes requests by Host to it (Lookup), behind
+// the user's session (internal/httpapi apps.go).
 package portrelay
 
 import (
@@ -28,6 +34,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +61,7 @@ type Exposure struct {
 }
 
 type exposure struct {
-	ln  net.Listener
+	ln  net.Listener // nil when host-routed
 	pc  ports.PortConn
 	url string
 }
@@ -69,6 +76,86 @@ type Manager struct {
 	// sync as exposures come and go.
 	remembered map[string]map[int]int
 	store      Store // nil = in-memory only
+
+	// domain/scheme switch exposures to host routing (RouteByHost).
+	domain, scheme string
+}
+
+// RouteByHost serves every exposure at <port>-<run label>.<domain> through
+// the engine's HTTP server instead of a listener of its own. domain may carry
+// a port ("apps.localhost:8090") that browsers need in the URL.
+func (m *Manager) RouteByHost(domain, scheme string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.domain = strings.Trim(strings.ToLower(domain), ".")
+	if scheme == "" {
+		scheme = "https"
+	}
+	m.scheme = scheme
+}
+
+// HostRouted reports host-routing mode.
+func (m *Manager) HostRouted() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.domain != ""
+}
+
+// RunLabel is the run's part of an app hostname: the tail of its id (a
+// ULID's random part), lowercased — DNS-label safe and unique enough among
+// live runs.
+func RunLabel(runID string) string {
+	id := strings.ToLower(runID)
+	if len(id) > 10 {
+		id = id[len(id)-10:]
+	}
+	return id
+}
+
+// Lookup resolves a request's Host to the exposure it names: the run, the
+// workspace port and its dialer. ok=false for any host outside the apps
+// domain or naming nothing exposed.
+func (m *Manager) Lookup(host string) (runID string, port int, pc ports.PortConn, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.domain == "" {
+		return "", 0, nil, false
+	}
+	label, found := strings.CutSuffix(stripPort(strings.ToLower(host)), "."+stripPort(m.domain))
+	if !found || strings.Contains(label, ".") {
+		return "", 0, nil, false
+	}
+	ps, run, found := strings.Cut(label, "-")
+	if !found {
+		return "", 0, nil, false
+	}
+	port, err := strconv.Atoi(ps)
+	if err != nil {
+		return "", 0, nil, false
+	}
+	for id, exs := range m.byRun {
+		if RunLabel(id) != run {
+			continue
+		}
+		if ex, ok := exs[port]; ok {
+			return id, port, ex.pc, true
+		}
+	}
+	return "", 0, nil, false
+}
+
+// InAppsDomain reports whether host is under the apps domain at all.
+func (m *Manager) InAppsDomain(host string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.domain != "" && strings.HasSuffix(stripPort(strings.ToLower(host)), "."+stripPort(m.domain))
+}
+
+func stripPort(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return hostport
 }
 
 func New(host string) *Manager {
@@ -135,6 +222,27 @@ func (m *Manager) Expose(runID string, port int, pc ports.PortConn) (string, err
 		m.mu.Unlock()
 		_ = pc.Close()
 		return ex.url, nil
+	}
+	if m.domain != "" {
+		url := fmt.Sprintf("%s://%d-%s.%s/", m.scheme, port, RunLabel(runID), m.domain)
+		if m.byRun[runID] == nil {
+			m.byRun[runID] = map[int]*exposure{}
+		}
+		m.byRun[runID][port] = &exposure{pc: pc, url: url}
+		if m.remembered[runID] == nil {
+			m.remembered[runID] = map[int]int{}
+		}
+		m.remembered[runID][port] = 0 // no host port; remembered so recovery re-exposes it
+		store := m.store
+		m.mu.Unlock()
+		if store != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
+			defer cancel()
+			if err := store.SaveExposedPort(ctx, runID, port, 0); err != nil {
+				slog.Warn("portrelay: persist exposure failed", "run", runID, "port", port, "err", err)
+			}
+		}
+		return url, nil
 	}
 	ln, hostPort, err := m.bind(m.remembered[runID][port])
 	if err != nil {
@@ -216,7 +324,9 @@ func (m *Manager) teardown(runID string) {
 	delete(m.byRun, runID)
 	m.mu.Unlock()
 	for _, ex := range exs {
-		_ = ex.ln.Close()
+		if ex.ln != nil {
+			_ = ex.ln.Close()
+		}
 		_ = ex.pc.Close()
 	}
 }

@@ -91,7 +91,12 @@ func (g *gateway) handle(c *net.TCPConn) {
 		return
 	}
 	allow := false
-	if host != "" {
+	if g.protected(orig.IP) {
+		// Never reachable through the gateway, whatever the policy says.
+		if host == "" {
+			host = orig.IP.String()
+		}
+	} else if host != "" {
 		allow = pol.verdict(host, orig.IP)
 	} else {
 		// No readable SNI/Host (ECH, IP-literal, oversized ClientHello): judge by

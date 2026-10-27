@@ -47,6 +47,21 @@ type DenialsFile struct {
 
 type Routes struct {
 	RunSubnets map[string]string `json:"run_subnets"`
+	Peers      map[string]Peer   `json:"peers,omitempty"`
+}
+
+type Peer struct {
+	PublicKey string `json:"public_key"`
+	IP        string `json:"ip"`
+}
+
+type RunRoute struct {
+	Subnet string `json:"subnet"`
+	Peer   *Peer  `json:"peer,omitempty"`
+}
+
+type BuildCacheInfo struct {
+	Bytes int64 `json:"bytes"`
 }
 
 type AuditRecord struct {

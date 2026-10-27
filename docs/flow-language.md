@@ -281,8 +281,9 @@ required — type: string"*). The engine-known names cannot be declared as
 another type, nor as lists, and the editor pins them at the top of the
 block.
 
-**Where a parameter is read.** `$name` — lower-case, the only thing `$`
-means — at these sites only:
+**Where a parameter is read.** `$name` — lower-case, as a field's whole
+value; the only other thing `$` spells is `${secrets.<name>}` inside an MCP
+server's `env` or `headers` (above) — at these sites only:
 
 | site | the parameter it takes |
 |---|---|
@@ -1268,7 +1269,9 @@ What the names are checked against follows from the stage type:
 The engine's sources are typed, and the port states that type. Who may read
 what is enforced: an agent reads any source; a gate shows files and a link; a
 command and an action read files only — a script has nothing to read a value
-the engine provides from. `$` means a parameter (§1) and nothing else.
+the engine provides from. A whole-value `$name` means a parameter (§1), a
+`${secrets.<name>}` inside an MCP server's `env` or `headers` a project
+secret, and `$` means nothing else.
 
 **`edge.failure` and `edge.verdict` are the retry channel.** They hold what
 the edge that entered the stage carried — on_fail and on_timeout a failure,

@@ -1,0 +1,118 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// The WireGuard run link (Kubernetes). A pod has no docker network to be
+// multi-homed onto, so each run's sandbox pod brings up its own wg0 whose
+// default route is a peer of this gateway's wg0: everything the pod (and every
+// container inside it) sends arrives here on wg0 — "not EXT" — and meets the
+// exact same nft REDIRECT, filter, MASQUERADE and drop backstop as a docker
+// run network. The pod's network policy only lets it talk to this gateway's
+// WireGuard port (and the engine), so the tunnel is the only way out.
+//
+// Each peer is allowed exactly its /32, which is also its routes.json subnet:
+// attribution is unchanged, and cryptokey routing makes it unforgeable — a
+// sandbox cannot send as another run.
+
+const wgDev = "wg0"
+
+type wgLink struct {
+	mtu int
+	run func(name string, args ...string) (string, error) // swapped in tests
+}
+
+func runCmd(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+// setupWG creates wg0 (idempotently: a restarted container gets a fresh
+// netns, a restarted daemon finds its own wg0 and reuses it).
+func setupWG(ext, keyFile string, listen int, addr string, mtu int) (*wgLink, error) {
+	l := &wgLink{run: runCmd}
+	if mtu <= 0 {
+		mtu = uplinkMTU(ext) - 60 // IPv4 outer header 20 + UDP 8 + WireGuard 32
+	}
+	l.mtu = mtu
+	if _, err := l.run("ip", "link", "show", wgDev); err != nil {
+		if _, err := l.run("ip", "link", "add", wgDev, "type", "wireguard"); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := l.run("wg", "set", wgDev, "private-key", keyFile, "listen-port", strconv.Itoa(listen)); err != nil {
+		return nil, err
+	}
+	if _, err := l.run("ip", "address", "replace", addr, "dev", wgDev); err != nil {
+		return nil, err
+	}
+	if _, err := l.run("ip", "link", "set", wgDev, "mtu", strconv.Itoa(mtu), "up"); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// uplinkMTU reads the uplink's MTU (1500 when unreadable).
+func uplinkMTU(ext string) int {
+	b, err := os.ReadFile("/sys/class/net/" + ext + "/mtu")
+	if err != nil {
+		return 1500
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n < 1280 {
+		return 1500
+	}
+	return n
+}
+
+// reconcilePeers makes wg0's peer set exactly peers: adds or updates each one
+// (allowed only its own /32) and removes any peer no longer routed.
+func (l *wgLink) reconcilePeers(peers map[string]Peer) {
+	out, err := l.run("wg", "show", wgDev, "peers")
+	if err != nil {
+		log.Printf("wg: list peers: %v", err)
+		return
+	}
+	have := map[string]bool{}
+	for _, k := range strings.Fields(out) {
+		have[k] = true
+	}
+	want := map[string]bool{}
+	runs := make([]string, 0, len(peers))
+	for run := range peers {
+		runs = append(runs, run)
+	}
+	sort.Strings(runs) // deterministic command order (tests, logs)
+	for _, run := range runs {
+		p := peers[run]
+		if p.PublicKey == "" || p.IP == "" {
+			continue
+		}
+		want[p.PublicKey] = true
+		if _, err := l.run("wg", "set", wgDev, "peer", p.PublicKey, "allowed-ips", p.IP+"/32"); err != nil {
+			log.Printf("wg: peer %s (run=%s): %v", p.IP, run, err)
+		}
+	}
+	var stale []string
+	for k := range have {
+		if !want[k] {
+			stale = append(stale, k)
+		}
+	}
+	sort.Strings(stale)
+	for _, k := range stale {
+		if _, err := l.run("wg", "set", wgDev, "peer", k, "remove"); err != nil {
+			log.Printf("wg: remove peer: %v", err)
+		}
+	}
+}

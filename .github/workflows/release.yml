@@ -2,6 +2,7 @@
 # version-stamped image to GHCR + a matching git tag. Versions are
 # monotonic: v2.0.<run_number>. Pin one in deploy/.env via
 #   APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v2.0.N
+# (or, on Kubernetes, the Helm chart's image.tag=v2.0.N).
 name: release
 
 on:
@@ -18,7 +19,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/intradeus/apothecary/apothecaryd
+  # Five images per release (deploy/images.sh): apothecaryd, sandbox, shim,
+  # egress-gw, browser. A Kubernetes deployment pulls all of them.
+  PREFIX: ghcr.io/intradeus/apothecary
 
 jobs:
   test:
@@ -53,19 +56,8 @@ jobs:
           echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Build image
-        run: |
-          docker build -f deploy/Dockerfile \
-            --build-arg "VERSION=${{ steps.v.outputs.version }}" \
-            -t "$IMAGE:${{ steps.v.outputs.version }}" \
-            -t "$IMAGE:${{ steps.v.outputs.sha }}" \
-            -t "$IMAGE:latest" .
-          docker run --rm "$IMAGE:${{ steps.v.outputs.version }}" version
-      - name: Push image
-        run: |
-          docker push "$IMAGE:${{ steps.v.outputs.version }}"
-          docker push "$IMAGE:${{ steps.v.outputs.sha }}"
-          docker push "$IMAGE:latest"
+      - name: Build and push the release images
+        run: EXTRA_TAGS="${{ steps.v.outputs.sha }} latest" deploy/images.sh "${{ steps.v.outputs.version }}" --push
       - name: Tag the release
         run: |
           git config user.name "github-actions[bot]"

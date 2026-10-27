@@ -2215,7 +2215,7 @@ func (x *exec) autoExpose(id ports.EnvID) []event.Link {
 // environment.
 func (x *exec) writeRunEnv(id ports.EnvID) error {
 	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
-		x.rs.runID, x.e.RunToken(x.rs.runID), x.e.cfg.EngineURL)
+		x.rs.runID, x.e.RunToken(x.rs.runID), x.e.engineURLFor(x.res.Envp, id))
 	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600)
 }
 
@@ -2241,7 +2241,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 	err := RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
 		RunID:        x.rs.runID,
 		Token:        x.e.RunToken(x.rs.runID),
-		EngineURL:    x.e.cfg.EngineURL,
+		EngineURL:    x.e.engineURLFor(res.Envp, id),
 		RepoURL:      res.RepoRef.URL,
 		SourceBranch: sourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
 		Branch:       x.rs.branch,

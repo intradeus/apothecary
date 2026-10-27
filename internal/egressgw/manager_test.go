@@ -2,11 +2,15 @@ package egressgw
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"apothecary/internal/egressgw/policyfile"
 )
@@ -16,188 +20,324 @@ import (
 // never from its name: a rename must not move a project off its gateway and
 // caches, and two projects called "api" must not share them.
 func TestNamesKeyOnTheProjectID(t *testing.T) {
-	m := NewManager("/runs", nil, nil)
 	const id = "01HZX4V8Q2M9N7P3R5T1W6Y0AB"
 	const key = "01hzx4v8q2m9n7p3r5t1w6y0ab"
-	if got := m.gwName(id); got != "apo-gw-"+key {
+	h := NewDockerHost("/runs", nil, nil)
+	if got := gwName(id); got != "apo-gw-"+key {
 		t.Errorf("gwName = %q", got)
 	}
-	if got := m.gwDir(id); got != "/runs/gw/"+key {
+	if got := h.gwDir(id); got != "/runs/gw/"+key {
 		t.Errorf("gwDir = %q", got)
 	}
-	if got := m.cacheVolume(id); got != "apo-gw-"+key+"-cache" {
-		t.Errorf("cacheVolume = %q", got)
-	}
-	if got := m.buildCacheVolume(id); got != "apo-gw-"+key+"-buildcache" {
-		t.Errorf("buildCacheVolume = %q", got)
+	for got, want := range map[string]string{
+		cacheVolume(id):      "apo-gw-" + key + "-cache",
+		buildCacheVolume(id): "apo-gw-" + key + "-buildcache",
+		stateVolume(id):      "apo-gw-" + key + "-state",
+	} {
+		if got != want {
+			t.Errorf("volume = %q, want %q", got, want)
+		}
 	}
 	if got, want := buildCacheRepo("172.20.0.2", id), "172.20.0.2:5001/"+key+"/devcontainer"; got != want {
 		t.Errorf("buildCacheRepo = %q, want %q", got, want)
 	}
 	// No project at all (direct and test callers) still gets a gateway.
-	if got := m.gwName(""); got != "apo-gw-default" {
+	if got := gwName(""); got != "apo-gw-default" {
 		t.Errorf("gwName(\"\") = %q", got)
 	}
 }
 
-func TestWritePolicyAndAllow(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, nil, nil)
-
-	if err := m.WritePolicy("proj", policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}}); err != nil {
-		t.Fatal(err)
+func TestBuildCacheRefIsStablePerProject(t *testing.T) {
+	if BuildCacheRef("10.90.0.1", "P") != "10.90.0.1:5001/p/devcontainer:cache" {
+		t.Errorf("cache ref = %q", BuildCacheRef("10.90.0.1", "P"))
 	}
-	// Allow (allow mode) appends.
-	if err := m.Allow("proj", "example.com"); err != nil {
-		t.Fatal(err)
-	}
-	var f policyfile.File
-	if err := policyfile.Read(m.policyPath("proj"), &f); err != nil {
-		t.Fatal(err)
-	}
-	if !contains(f.Domains, "github.com") || !contains(f.Domains, "example.com") {
-		t.Fatalf("allow-mode domains = %v", f.Domains)
-	}
-
-	// Allow (deny mode) removes.
-	_ = m.WritePolicy("d", policyfile.File{Mode: policyfile.ModeDeny, Domains: []string{"bad.com", "worse.com"}})
-	if err := m.Allow("d", "bad.com"); err != nil {
-		t.Fatal(err)
-	}
-	var g policyfile.File
-	_ = policyfile.Read(m.policyPath("d"), &g)
-	if contains(g.Domains, "bad.com") || !contains(g.Domains, "worse.com") {
-		t.Fatalf("deny-mode domains = %v, want bad.com removed", g.Domains)
+	if BuildCacheImageRef("10.90.0.1", "P") != "10.90.0.1:5001/p/devcontainer:image" {
+		t.Errorf("image ref = %q", BuildCacheImageRef("10.90.0.1", "P"))
 	}
 }
 
-func TestSetRuleToggles(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, nil, nil)
-	_ = m.WritePolicy("p", policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}})
-
-	// Block a base-allowed host → goes to BlockedDomains (wins), dropped from Domains.
-	if err := m.SetRule("p", "github.com", false); err != nil {
-		t.Fatal(err)
+func TestApplyRuleToggles(t *testing.T) {
+	allow := policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}}
+	f := applyRule(allow, "example.com", true)
+	if !contains(f.Domains, "example.com") || !contains(f.Domains, "github.com") {
+		t.Fatalf("allow-mode allow = %+v", f)
 	}
-	var f policyfile.File
-	_ = policyfile.Read(m.policyPath("p"), &f)
-	if !contains(f.BlockedDomains, "github.com") || contains(f.Domains, "github.com") {
-		t.Fatalf("block: blocked=%v domains=%v", f.BlockedDomains, f.Domains)
+	f = applyRule(f, "github.com", false)
+	if contains(f.Domains, "github.com") || !contains(f.BlockedDomains, "github.com") {
+		t.Fatalf("allow-mode block = %+v", f)
 	}
-	// Allow it back → lifts the block, adds to the allowlist. Fresh var: Unmarshal
-	// doesn't clear fields absent from the JSON (blocked_domains is now omitted).
-	if err := m.SetRule("p", "github.com", true); err != nil {
-		t.Fatal(err)
+	f = applyRule(f, "github.com", true)
+	if contains(f.BlockedDomains, "github.com") || !contains(f.Domains, "github.com") {
+		t.Fatalf("unblock = %+v", f)
 	}
-	var g policyfile.File
-	_ = policyfile.Read(m.policyPath("p"), &g)
-	if contains(g.BlockedDomains, "github.com") || !contains(g.Domains, "github.com") {
-		t.Fatalf("allow: blocked=%v domains=%v", g.BlockedDomains, g.Domains)
+	deny := policyfile.File{Mode: policyfile.ModeDeny, Domains: []string{"evil.example"}}
+	f = applyRule(deny, "evil.example", true)
+	if contains(f.Domains, "evil.example") {
+		t.Fatalf("deny-mode allow must drop from the denylist: %+v", f)
+	}
+	if f := applyRule(policyfile.File{}, "x.io", true); f.Mode != policyfile.ModeAllow {
+		t.Fatalf("empty mode not defaulted: %+v", f)
 	}
 }
 
-// Policy reads back what the gateway enforces — the run page renders each
-// host's CURRENT rule from it (audit rows only carry historical verdicts).
-func TestPolicyReadsBack(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, nil, nil)
+// fakeGateway is an in-memory control API (the real one is package main in
+// workspace/gateway) that records what the engine asked.
+type fakeGateway struct {
+	mu       sync.Mutex
+	srv      *httptest.Server
+	token    string
+	policy   policyfile.File
+	routes   policyfile.Routes
+	denials  []policyfile.Denial
+	audit    []policyfile.AuditRecord
+	bytes    int64
+	cleared  int
+	requests []string
+}
 
-	// No file yet: the default deny-all allowlist, never an error.
-	f, err := m.Policy("p")
-	if err != nil || f.Mode != policyfile.ModeAllow || len(f.Domains) != 0 {
-		t.Fatalf("empty policy = %+v, %v", f, err)
-	}
+func newFakeGateway(t *testing.T) *fakeGateway {
+	g := &fakeGateway{token: "tok", routes: policyfile.Routes{RunSubnets: map[string]string{}, Peers: map[string]policyfile.Peer{}}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(http.ResponseWriter, *http.Request) {})
+	mux.HandleFunc("GET /policy", func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(g.policy) })
+	mux.HandleFunc("PUT /policy", func(w http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&g.policy) })
+	mux.HandleFunc("PUT /runs/{run}", func(w http.ResponseWriter, r *http.Request) {
+		var rr policyfile.RunRoute
+		json.NewDecoder(r.Body).Decode(&rr)
+		g.routes.RunSubnets[r.PathValue("run")] = rr.Subnet
+		if rr.Peer != nil {
+			g.routes.Peers[r.PathValue("run")] = *rr.Peer
+		}
+	})
+	mux.HandleFunc("DELETE /runs/{run}", func(w http.ResponseWriter, r *http.Request) {
+		delete(g.routes.RunSubnets, r.PathValue("run"))
+		delete(g.routes.Peers, r.PathValue("run"))
+	})
+	mux.HandleFunc("GET /denials", func(w http.ResponseWriter, r *http.Request) {
+		var out []policyfile.Denial
+		for _, d := range g.denials {
+			if d.Run == r.URL.Query().Get("run") {
+				out = append(out, d)
+			}
+		}
+		json.NewEncoder(w).Encode(policyfile.DenialsFile{Denials: out})
+	})
+	mux.HandleFunc("GET /audit", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(policyfile.AuditFile{Records: g.audit})
+	})
+	mux.HandleFunc("GET /buildcache", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(policyfile.BuildCacheInfo{Bytes: g.bytes})
+	})
+	mux.HandleFunc("DELETE /buildcache", func(http.ResponseWriter, *http.Request) { g.cleared++ })
+	g.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.requests = append(g.requests, r.Method+" "+r.URL.RequestURI())
+		if r.URL.Path != "/healthz" && r.Header.Get("Authorization") != "Bearer "+g.token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
+	t.Cleanup(g.srv.Close)
+	return g
+}
 
-	_ = m.WritePolicy("p", policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}})
-	if err := m.SetRule("p", "github.com", false); err != nil {
+func (g *fakeGateway) control() Control { return Control{BaseURL: g.srv.URL, Token: g.token} }
+
+// fakeHost is a Host whose gateway is the fake one.
+type fakeHost struct {
+	gw       *fakeGateway
+	up       bool
+	att      Attachment
+	attached []string
+	detached []string
+}
+
+func (h *fakeHost) EnsureGateway(context.Context, string, string) (Control, error) {
+	h.up = true
+	return h.gw.control(), nil
+}
+func (h *fakeHost) Control(context.Context, string) (Control, bool) { return h.gw.control(), h.up }
+func (h *fakeHost) AttachRun(_ context.Context, _, _, run string) (Attachment, error) {
+	h.attached = append(h.attached, run)
+	return h.att, nil
+}
+func (h *fakeHost) DetachRun(_ context.Context, _, run string) error {
+	h.detached = append(h.detached, run)
+	return nil
+}
+
+func TestEnsureRunEgressRegistersRouteAndPolicy(t *testing.T) {
+	gw := newFakeGateway(t)
+	peer := &policyfile.Peer{PublicKey: "K", IP: "10.90.0.2"}
+	h := &fakeHost{gw: gw, att: Attachment{GatewayIP: "10.90.0.1", Subnet: "10.90.0.2/32", Peer: peer}}
+	m := NewManager(h)
+	att, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run1",
+		policyfile.File{Domains: []string{"github.com"}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	f, err = m.Policy("p")
-	if err != nil || !contains(f.BlockedDomains, "github.com") || contains(f.Domains, "github.com") {
-		t.Fatalf("after block: %+v, %v", f, err)
+	if att.GatewayIP != "10.90.0.1" {
+		t.Errorf("gwIP = %q", att.GatewayIP)
 	}
-	if err := m.SetRule("p", "github.com", true); err != nil {
+	if gw.routes.RunSubnets["run1"] != "10.90.0.2/32" || gw.routes.Peers["run1"] != *peer {
+		t.Errorf("routes = %+v", gw.routes)
+	}
+	if gw.policy.Mode != policyfile.ModeAllow || !contains(gw.policy.Domains, "github.com") {
+		t.Errorf("policy = %+v (mode must default to allow)", gw.policy)
+	}
+	// Route before policy: the policy PUT is what a starting sandbox waits on.
+	if i, j := slices.Index(gw.requests, "PUT /runs/run1"), slices.Index(gw.requests, "PUT /policy"); i < 0 || j < i {
+		t.Errorf("request order = %v", gw.requests)
+	}
+}
+
+func TestSetRuleRoundTripsThroughTheGateway(t *testing.T) {
+	gw := newFakeGateway(t)
+	gw.policy = policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}}
+	m := NewManager(&fakeHost{gw: gw, up: true})
+	ctx := context.Background()
+	if err := m.Allow(ctx, "acme", " Example.COM "); err != nil {
 		t.Fatal(err)
 	}
-	f, err = m.Policy("p")
-	if err != nil || contains(f.BlockedDomains, "github.com") || !contains(f.Domains, "github.com") {
-		t.Fatalf("after allow: %+v, %v", f, err)
+	if !contains(gw.policy.Domains, "example.com") {
+		t.Fatalf("allow not applied: %+v", gw.policy)
+	}
+	if err := m.SetRule(ctx, "acme", "github.com", false); err != nil {
+		t.Fatal(err)
+	}
+	f, err := m.Policy(ctx, "acme")
+	if err != nil || !contains(f.BlockedDomains, "github.com") {
+		t.Fatalf("Policy = %+v, %v", f, err)
+	}
+	if err := m.SetRule(ctx, "acme", "  ", true); err == nil {
+		t.Fatal("empty host accepted")
 	}
 }
 
-func TestAuditReadsFile(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, nil, nil)
-	_ = os.MkdirAll(m.gwDir("proj"), 0o755)
-	_ = policyfile.WriteAtomic(m.auditPath("proj"), policyfile.AuditFile{Records: []policyfile.AuditRecord{
-		{Run: "run1", Host: "github.com", Port: 443, Verdict: "allow", Count: 3},
-		{Run: "run2", Host: "x.com", Port: 443, Verdict: "deny", Count: 1},
-	}})
-	got := m.Audit("proj")
-	if len(got) != 2 {
-		t.Fatalf("audit records = %d, want 2", len(got))
+func TestReadsFilterAndCache(t *testing.T) {
+	gw := newFakeGateway(t)
+	gw.denials = []policyfile.Denial{{Run: "run1", Host: "a.com"}, {Run: "run2", Host: "b.com"}}
+	gw.audit = []policyfile.AuditRecord{{Run: "run1", Host: "a.com"}}
+	gw.bytes = 4096
+	m := NewManager(&fakeHost{gw: gw, up: true})
+	ctx := context.Background()
+	if got := m.Denials(ctx, "acme", "run1"); len(got) != 1 || got[0].Host != "a.com" {
+		t.Fatalf("Denials = %+v", got)
+	}
+	m.Audit(ctx, "acme")
+	m.Audit(ctx, "acme")
+	n := 0
+	for _, r := range gw.requests {
+		if r == "GET /audit" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("audit fetched %d times within a second, want 1 (cached)", n)
+	}
+	if b, err := m.BuildCacheSize(ctx, "acme"); err != nil || b != 4096 {
+		t.Errorf("BuildCacheSize = %d, %v", b, err)
+	}
+	if err := m.ClearBuildCache(ctx, "acme"); err != nil || gw.cleared != 1 {
+		t.Errorf("ClearBuildCache: %v, cleared=%d", err, gw.cleared)
 	}
 }
 
-func TestDenialsFilterByRun(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, nil, nil)
-	_ = m.WritePolicy("proj", policyfile.File{Mode: policyfile.ModeAllow})
-	_ = policyfile.WriteAtomic(m.denialsPath("proj"), policyfile.DenialsFile{Denials: []policyfile.Denial{
-		{Run: "run1", Host: "a.com", Count: 2},
-		{Run: "run2", Host: "b.com", Count: 1},
-	}})
-	got := m.Denials("proj", "run1")
-	if len(got) != 1 || got[0].Host != "a.com" {
-		t.Fatalf("Denials(run1) = %v", got)
+func TestNoGatewayIsAnAnswerNotACrash(t *testing.T) {
+	m := NewManager(&fakeHost{gw: newFakeGateway(t)}) // never brought up
+	ctx := context.Background()
+	if f, err := m.Policy(ctx, "acme"); err != nil || f.Mode != policyfile.ModeAllow {
+		t.Errorf("Policy = %+v, %v", f, err)
+	}
+	if d := m.Denials(ctx, "acme", "run1"); d != nil {
+		t.Errorf("Denials = %+v", d)
+	}
+	if err := m.SetRule(ctx, "acme", "x.io", true); !errors.Is(err, ErrNoGateway) {
+		t.Errorf("SetRule err = %v", err)
+	}
+	if _, err := m.BuildCacheSize(ctx, "acme"); !errors.Is(err, ErrNoGateway) {
+		t.Errorf("BuildCacheSize err = %v", err)
 	}
 }
 
-// testGatewayImage is the tag the fake ensureImage builds; a fakeDocker whose
-// existing gateway reports a DIFFERENT image is a staged upgrade.
+// Destroying the project's last run must NOT reap the gateway: it holds the
+// warm caches. Only the run's route and link go.
+func TestDestroyRunEgressKeepsGateway(t *testing.T) {
+	gw := newFakeGateway(t)
+	h := &fakeHost{gw: gw, att: Attachment{GatewayIP: "172.20.0.2", Subnet: "172.20.0.0/16"}}
+	m := NewManager(h)
+	ctx := context.Background()
+	if _, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DestroyRunEgress(ctx, "acme", "run1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gw.routes.RunSubnets["run1"]; ok {
+		t.Error("destroyed run still routed")
+	}
+	if !slices.Equal(h.detached, []string{"run1"}) {
+		t.Errorf("detached = %v", h.detached)
+	}
+	if !h.up {
+		t.Error("gateway taken down")
+	}
+}
+
+// --- DockerHost --------------------------------------------------------------
+
 const testGatewayImage = "apothecary/egress-gw:test"
 
+func testImageFn(context.Context) (string, error) { return testGatewayImage, nil }
+
 // fakeDocker answers docker calls and records them. Zero value = a host with no
-// gateway yet; the fields stage the states ensureGateway must distinguish.
+// gateway yet; the fields stage the states EnsureGateway must distinguish.
 type fakeDocker struct {
 	calls      [][]string
 	gatewayHas bool   // a gateway container exists (set by `run -d`, cleared by `rm`)
 	gatewayImg string // its image ("" = testGatewayImage, i.e. up to date)
+	shape      string // its shape label ("" = current)
 	running    string // running-sandbox probe output ("" = project idle)
 	netIPs     string // per-network address inspect output
-	failRun    bool   // `run -d` fails
+	ctlAddr    string // what `docker port` prints
 }
 
 func (f *fakeDocker) run(_ context.Context, args []string) ([]byte, []byte, int, error) {
 	f.calls = append(f.calls, args)
 	joined := strings.Join(args, " ")
 	switch {
-	// The running-sandbox probe (upgrade gate) — distinct from the gateway
-	// name probe, which is also a `ps`.
 	case args[0] == "ps" && strings.Contains(joined, "apothecary.sandbox=true"):
 		return []byte(f.running), nil, 0, nil
 	case args[0] == "ps":
 		if f.gatewayHas {
 			return []byte("gwid\n"), nil, 0, nil
 		}
-		return nil, nil, 0, nil // gateway missing
+		return nil, nil, 0, nil
 	case args[0] == "run" && args[1] == "-d":
-		if f.failRun {
-			return nil, []byte("boom"), 1, nil
-		}
 		f.gatewayHas = true
+		f.gatewayImg, f.shape = "", ""
 		return []byte("cid\n"), nil, 0, nil
 	case args[0] == "rm":
 		f.gatewayHas = false
 		return nil, nil, 0, nil
+	case args[0] == "port":
+		if !f.gatewayHas {
+			return nil, []byte("no such container"), 1, nil
+		}
+		return []byte(f.ctlAddr + "\n[::1]:1\n"), nil, 0, nil
 	case args[0] == "network" && args[1] == "inspect":
 		return []byte("172.20.0.0/16\n"), nil, 0, nil
 	case args[0] == "inspect" && strings.Contains(joined, ".Config.Image"):
-		if f.gatewayImg != "" {
-			return []byte(f.gatewayImg + "\n"), nil, 0, nil
+		img, shape := f.gatewayImg, f.shape
+		if img == "" {
+			img = testGatewayImage
 		}
-		return []byte(testGatewayImage + "\n"), nil, 0, nil
+		if shape == "" {
+			shape = gwShape
+		}
+		return []byte(img + " " + shape + "\n"), nil, 0, nil
 	case args[0] == "inspect" && strings.Contains(joined, "$v.IPAddress"):
 		return []byte(f.netIPs), nil, 0, nil
 	case args[0] == "inspect":
@@ -207,21 +347,16 @@ func (f *fakeDocker) run(_ context.Context, args []string) ([]byte, []byte, int,
 	}
 }
 
-// count tallies recorded calls whose argv starts with the given words.
 func (f *fakeDocker) count(prefix ...string) int {
 	n := 0
 	for _, c := range f.calls {
-		if len(c) < len(prefix) {
-			continue
-		}
-		if slices.Equal(c[:len(prefix)], prefix) {
+		if len(c) >= len(prefix) && slices.Equal(c[:len(prefix)], prefix) {
 			n++
 		}
 	}
 	return n
 }
 
-// findCall returns the first recorded call containing the substring.
 func (f *fakeDocker) findCall(t *testing.T, substr string) string {
 	t.Helper()
 	for _, c := range f.calls {
@@ -233,298 +368,145 @@ func (f *fakeDocker) findCall(t *testing.T, substr string) string {
 	return ""
 }
 
-func testImageFn(context.Context) (string, error) { return testGatewayImage, nil }
+func newDockerFixture(t *testing.T, fd *fakeDocker) (*DockerHost, *fakeGateway) {
+	gw := newFakeGateway(t)
+	fd.ctlAddr = strings.TrimPrefix(gw.srv.URL, "http://")
+	h := NewDockerHost(t.TempDir(), fd.run, testImageFn)
+	// The fake gateway takes the token the engine would have handed the
+	// container: create it the way EnsureGateway does, then adopt it.
+	tok, err := h.token("acme", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw.token = tok
+	return h, gw
+}
 
-func TestEnsureRunEgressSharesGatewayPerProject(t *testing.T) {
-	dir := t.TempDir()
+func TestDockerHostCreatesOneGatewayPerProject(t *testing.T) {
 	fd := &fakeDocker{}
-	img := testImageFn
-	m := NewManager(dir, fd.run, img)
-
-	pol := policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}}
-	gw1, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run1", pol)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gw2, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run2", pol)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gw1 != "172.20.0.2" || gw2 != "172.20.0.2" {
-		t.Errorf("gwIPs = %q, %q", gw1, gw2)
-	}
-
-	var runs, starts, connects int
-	for _, c := range fd.calls {
-		switch {
-		case c[0] == "run" && c[1] == "-d":
-			runs++
-		case c[0] == "start":
-			starts++
-		case c[0] == "network" && c[1] == "connect":
-			connects++
+	h, gw := newDockerFixture(t, fd)
+	m := NewManager(h)
+	ctx := context.Background()
+	for _, run := range []string{"run1", "run2"} {
+		att, err := m.EnsureRunEgress(ctx, "acme", "Acme", run, policyfile.File{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if att.GatewayIP != "172.20.0.2" {
+			t.Errorf("gwIP = %q", att.GatewayIP)
 		}
 	}
-	// ONE gateway created for the project; the second run starts it (idempotent);
-	// both run networks connect to it.
-	if runs != 1 {
-		t.Errorf("gateway run count = %d, want 1 (shared per project)", runs)
+	if n := fd.count("run", "-d"); n != 1 {
+		t.Errorf("gateway run count = %d, want 1 (shared per project)", n)
 	}
-	if starts != 1 {
-		t.Errorf("gateway start count = %d, want 1 (second run reuses it)", starts)
+	if n := fd.count("network", "connect"); n != 2 {
+		t.Errorf("network connect count = %d, want 2", n)
 	}
-	if connects != 2 {
-		t.Errorf("network connect count = %d, want 2", connects)
+	// Three volumes, each created once: mirror, build cache, state.
+	if n := fd.count("volume", "create"); n != 3 {
+		t.Errorf("volume create count = %d, want 3", n)
 	}
-
-	// The gateway also hosts the project's image mirror: kept warm across daemon
-	// restarts, cache on a named volume, config from gwDir.
 	run := fd.findCall(t, "run -d")
+	tok, _ := os.ReadFile(h.tokenPath("acme"))
 	for _, want := range []string{
 		"--restart unless-stopped",
-		// Keyed by the id; the name is for a human's `docker ps`.
 		"--label apothecary.project=acme",
 		"--label apothecary.project.name=Acme",
+		"--label apothecary.gw.shape=" + gwShape,
+		"-p 127.0.0.1::9041",
+		"-e APO_GW_TOKEN=" + strings.TrimSpace(string(tok)),
+		"-v apo-gw-acme-state:/state",
 		"-v apo-gw-acme-cache:/var/lib/registry",
 		"-v apo-gw-acme-buildcache:" + buildCacheDir,
-		"--mirror-config " + m.mirrorConfigPath("acme"),
-		"--buildcache-config " + m.buildCacheConfigPath("acme"),
+		"--state-dir /state --mirror --buildcache",
+		"--control-listen :9041",
 	} {
 		if !strings.Contains(run, want) {
 			t.Errorf("gateway run args missing %q:\n%s", want, run)
 		}
 	}
-	// Two volumes, each created once: the pull-through mirror's and the
-	// writable build cache's. They are separate because only one of them is
-	// something a human ever deletes.
-	if n := fd.count("volume", "create"); n != 2 {
-		t.Errorf("cache volume create count = %d, want 2 (mirror + build cache, each once)", n)
+	if len(strings.TrimSpace(string(tok))) != 64 {
+		t.Errorf("token = %q", tok)
 	}
-	if got := m.mirrorConfigPath("acme"); !strings.Contains(fd.findCall(t, "run -d"), got) {
-		t.Errorf("mirror config path %q not passed to the gateway", got)
-	}
-	if b, err := os.ReadFile(m.mirrorConfigPath("acme")); err != nil {
-		t.Errorf("mirror config not written: %v", err)
-	} else if !strings.Contains(string(b), "remoteurl: https://registry-1.docker.io") {
-		t.Errorf("mirror config is not a pull-through proxy:\n%s", b)
+	if gw.routes.RunSubnets["run2"] != "172.20.0.0/16" {
+		t.Errorf("routes = %+v", gw.routes)
 	}
 }
 
-// A gateway on a stale image must be REPLACED: nothing reaps gateways anymore,
-// so recreate-on-upgrade is the only path by which a new gateway build ships.
-func TestEnsureGatewayRecreatesOnStaleImage(t *testing.T) {
-	dir := t.TempDir()
-	fd := &fakeDocker{
-		gatewayHas: true,
-		gatewayImg: "apothecary/egress-gw:old",
-		netIPs:     "bridge 172.17.0.9\napo-egress-run0 172.20.0.2\n",
-	}
-	m := NewManager(dir, fd.run, testImageFn)
-
-	if _, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run1", policyfile.File{}); err != nil {
+// A gateway on a stale image must be REPLACED once the project is idle, its
+// runs re-attached at their old addresses (their sandboxes baked them in).
+func TestDockerHostRecreatesOnStaleImage(t *testing.T) {
+	fd := &fakeDocker{gatewayHas: true, gatewayImg: "apothecary/egress-gw:old",
+		netIPs: "bridge 172.17.0.9\napo-egress-run0 172.20.0.2\n"}
+	h, _ := newDockerFixture(t, fd)
+	if _, err := h.EnsureGateway(context.Background(), "acme", "Acme"); err != nil {
 		t.Fatal(err)
 	}
-	if n := fd.count("rm", "-f", m.gwName("acme")); n != 1 {
-		t.Fatalf("stale gateway not removed (rm count %d)", n)
+	if fd.count("rm", "-f", "apo-gw-acme") != 1 || fd.count("run", "-d") != 1 {
+		t.Fatalf("stale gateway not replaced: %v", fd.calls)
 	}
-	if n := fd.count("run", "-d"); n != 1 {
-		t.Fatalf("replacement gateway not created (run -d count %d)", n)
-	}
-	if !strings.Contains(fd.findCall(t, "run -d"), testGatewayImage) {
-		t.Error("replacement gateway does not use the current image")
-	}
-	if n := fd.count("start"); n != 0 {
-		t.Errorf("stale gateway was started instead of replaced (start count %d)", n)
-	}
-	// The run the old gateway served must come back at the SAME address: its
-	// sandbox baked --dns/--registry-mirror at that IP and `docker start` cannot
-	// re-flag it. The bridge uplink is docker's to assign, not ours to restore.
-	reattach := fd.findCall(t, "connect --ip")
-	if !strings.Contains(reattach, "--ip 172.20.0.2 apo-egress-run0") {
-		t.Errorf("run net not re-attached at its old IP: %s", reattach)
+	if !strings.Contains(fd.findCall(t, "connect --ip"), "--ip 172.20.0.2 apo-egress-run0") {
+		t.Error("run net not re-attached at its old IP")
 	}
 	for _, c := range fd.calls {
-		if joined := strings.Join(c, " "); strings.Contains(joined, "--ip 172.17.0.9") {
-			t.Errorf("bridge uplink should not be re-attached by hand: %s", joined)
+		if strings.Contains(strings.Join(c, " "), "--ip 172.17.0.9") {
+			t.Errorf("bridge uplink re-attached by hand: %v", c)
 		}
 	}
 }
 
 // Upgrading yanks egress from every attached run, so a project with a live
-// sandbox keeps its old gateway until it goes idle.
-func TestEnsureGatewayDefersUpgradeWhileRunning(t *testing.T) {
-	dir := t.TempDir()
-	fd := &fakeDocker{
-		gatewayHas: true,
-		gatewayImg: "apothecary/egress-gw:old",
-		running:    "sbx1\n",
-	}
-	m := NewManager(dir, fd.run, testImageFn)
-
-	if _, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run1", policyfile.File{}); err != nil {
+// sandbox keeps its old (same-shape) gateway until it goes idle.
+func TestDockerHostDefersImageUpgradeWhileRunning(t *testing.T) {
+	fd := &fakeDocker{gatewayHas: true, gatewayImg: "apothecary/egress-gw:old", running: "sbx1\n"}
+	h, _ := newDockerFixture(t, fd)
+	if _, err := h.EnsureGateway(context.Background(), "acme", "Acme"); err != nil {
 		t.Fatal(err)
 	}
-	if n := fd.count("rm", "-f", m.gwName("acme")); n != 0 {
-		t.Errorf("live project's gateway was removed mid-run (rm count %d)", n)
-	}
-	if n := fd.count("run", "-d"); n != 0 {
-		t.Errorf("gateway recreated while a sandbox is running (run -d count %d)", n)
-	}
-	if n := fd.count("start"); n != 1 {
-		t.Errorf("start count = %d, want 1 (old gateway kept)", n)
+	if fd.count("rm") != 0 || fd.count("run", "-d") != 0 || fd.count("start") != 1 {
+		t.Errorf("busy project's gateway touched: %v", fd.calls)
 	}
 }
 
-// Destroying the project's last run must NOT reap the gateway: it holds the warm
-// image cache, and its policy dir must survive for the project's next run.
-func TestDestroyRunEgressKeepsGateway(t *testing.T) {
-	dir := t.TempDir()
+// An older SHAPE cannot be driven at all (no control API), so it is replaced
+// even while runs use it.
+func TestDockerHostReplacesOldShapeEvenWhileRunning(t *testing.T) {
+	fd := &fakeDocker{gatewayHas: true, shape: "<no value>", running: "sbx1\n"}
+	h, _ := newDockerFixture(t, fd)
+	if _, err := h.EnsureGateway(context.Background(), "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	if fd.count("rm", "-f", "apo-gw-acme") != 1 || fd.count("run", "-d") != 1 {
+		t.Errorf("old-shape gateway kept: %v", fd.calls)
+	}
+}
+
+func TestDockerHostControlNeedsARunningGatewayAndToken(t *testing.T) {
 	fd := &fakeDocker{}
-	m := NewManager(dir, fd.run, testImageFn)
+	h, gw := newDockerFixture(t, fd)
 	ctx := context.Background()
-
-	if _, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{Mode: policyfile.ModeAllow}); err != nil {
+	if _, ok := h.Control(ctx, "acme"); ok {
+		t.Fatal("control found with no gateway")
+	}
+	if _, err := h.EnsureGateway(ctx, "acme", ""); err != nil {
 		t.Fatal(err)
 	}
-	before := len(fd.calls)
-	if err := m.DestroyRunEgress(ctx, "acme", "run1"); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range fd.calls[before:] {
-		if c[0] == "rm" {
-			t.Errorf("gateway reaped on last run destroy: %v", c)
-		}
-		if c[0] == "volume" {
-			t.Errorf("cache volume touched on destroy: %v", c)
-		}
-	}
-	if _, err := os.Stat(m.gwDir("acme")); err != nil {
-		t.Errorf("gwDir removed on destroy: %v", err)
-	}
-	if _, err := os.Stat(m.policyPath("acme")); err != nil {
-		t.Errorf("policy file removed on destroy: %v", err)
-	}
-	// The run's own network and route entry DO go away.
-	var r policyfile.Routes
-	_ = policyfile.Read(m.routesPath("acme"), &r)
-	if _, ok := r.RunSubnets["run1"]; ok {
-		t.Error("destroyed run still in routes.json")
+	h.forget("acme") // as after an engine restart
+	c, ok := h.Control(ctx, "acme")
+	if !ok || c.BaseURL != gw.srv.URL || c.Token == "" {
+		t.Fatalf("Control = %+v, %v", c, ok)
 	}
 }
 
-// An unchanged config must not be rewritten: the gateway restarts its registry
-// child on any mtime bump, and every provision calls through here.
-func TestWriteMirrorConfigOnlyOnChange(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, (&fakeDocker{}).run, testImageFn)
-	if err := os.MkdirAll(m.gwDir("acme"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.writeMirrorConfig("acme"); err != nil {
-		t.Fatal(err)
-	}
-	fi, err := os.Stat(m.mirrorConfigPath("acme"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.writeMirrorConfig("acme"); err != nil {
-		t.Fatal(err)
-	}
-	again, err := os.Stat(m.mirrorConfigPath("acme"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !again.ModTime().Equal(fi.ModTime()) {
-		t.Error("unchanged config was rewritten — would restart the registry child on every provision")
-	}
-
-	// A changed (or corrupted) file is restored.
-	if err := os.WriteFile(m.mirrorConfigPath("acme"), []byte("proxy: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.writeMirrorConfig("acme"); err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(m.mirrorConfigPath("acme"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(b) != registryConfig {
-		t.Errorf("stale config not restored:\n%s", b)
-	}
-}
-
-// The build cache is the reason a project's second run is fast: a run's inner
-// daemon is thrown away, so the cache has to live somewhere that outlives it.
-// That somewhere is the gateway's writable registry — separate from the
-// pull-through mirror, which cannot accept pushes at all.
-func TestBuildCacheRegistryIsWritableAndSeparate(t *testing.T) {
-	if strings.Contains(buildCacheConfig, "proxy:") {
-		t.Error("the build-cache registry must NOT be in proxy mode — a proxy refuses pushes")
-	}
-	if !strings.Contains(buildCacheConfig, "addr: :"+BuildCachePort) {
-		t.Errorf("build cache config does not listen on %s:\n%s", BuildCachePort, buildCacheConfig)
-	}
-	if !strings.Contains(buildCacheConfig, "rootdirectory: "+buildCacheDir) {
-		t.Error("the two registries must not share storage")
-	}
-	if !strings.Contains(registryConfig, "proxy:") {
-		t.Error("the mirror must stay a pull-through proxy")
-	}
-}
-
-// The cache reference has to survive a gateway that comes back on a different
-// address: the host:port is only how you reach the registry, the repository
-// path is where the manifest lives.
-func TestBuildCacheRefIsStablePerProject(t *testing.T) {
-	a := BuildCacheRef("172.20.0.2", "Acme Corp/web")
-	b := BuildCacheRef("172.21.0.9", "Acme Corp/web")
-	pathOf := func(ref string) string {
-		_, p, _ := strings.Cut(ref, "/")
-		return p
-	}
-	if pathOf(a) != pathOf(b) {
-		t.Errorf("repository path changed with the gateway address: %q vs %q", a, b)
-	}
-	if strings.ContainsAny(pathOf(a), " /") && !strings.HasPrefix(pathOf(a), "acme-corp-web/") {
-		t.Errorf("repository path is not registry-safe: %q", a)
-	}
-	// The path is the project's id, lowercased — never its name.
-	if got := pathOf(BuildCacheRef("172.20.0.2", "01HZX4V8Q2M9N7P3R5T1W6Y0AB")); got != "01hzx4v8q2m9n7p3r5t1w6y0ab/devcontainer:cache" {
-		t.Errorf("repository path = %q, want the lowercased project id", got)
-	}
-}
-
-// Clearing empties the storage AND restarts the registry: a registry left
-// serving manifests whose blobs are gone would hand out cache entries that
-// fail to pull, which is worse than no cache.
-func TestClearBuildCacheWipesThenRestarts(t *testing.T) {
-	dir := t.TempDir()
+func TestDockerHostDetachRemovesTheRunNetwork(t *testing.T) {
 	fd := &fakeDocker{}
-	m := NewManager(dir, fd.run, testImageFn)
-	ctx := context.Background()
-	if _, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{Mode: policyfile.ModeAllow}); err != nil {
+	h, _ := newDockerFixture(t, fd)
+	if err := h.DetachRun(context.Background(), "acme", "run1"); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := m.buildCacheConfigPath("acme")
-	before, err := os.Stat(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The supervisor restarts on an mtime bump, so the wipe must move it.
-	time.Sleep(10 * time.Millisecond)
-	if err := m.ClearBuildCache(ctx, "acme"); err != nil {
-		t.Fatal(err)
-	}
-	wipe := fd.findCall(t, "exec")
-	if !strings.Contains(wipe, buildCacheDir) || !strings.Contains(wipe, "rm -rf") {
-		t.Errorf("wipe call = %q", wipe)
-	}
-	after, err := os.Stat(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !after.ModTime().After(before.ModTime()) {
-		t.Error("the config was not touched, so the registry keeps serving a wiped cache")
+	fd.findCall(t, "network disconnect -f apo-egress-run1 apo-gw-acme")
+	fd.findCall(t, "network rm apo-egress-run1")
+	if fd.count("rm") != 0 {
+		t.Error("gateway removed on detach")
 	}
 }

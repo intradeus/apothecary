@@ -408,19 +408,24 @@ func loadView(ctx context.Context, q interface {
 }
 
 // viewColumns is what scanView reads: the JSON view plus its two json:"-"
-// companions. The typed columns exist for SQL to filter on, not to be read
-// back — the JSON is the row.
-const viewColumns = `run_id, view, dormant, rebuilding`
+// companions and the owner. The typed columns exist for SQL to filter on,
+// not to be read back — the JSON is the row — with one exception: user_id
+// is the authority when the JSON has none, so an owner set on the column
+// (a hand-run assignment) holds without a projection rebuild.
+const viewColumns = `run_id, view, dormant, rebuilding, user_id`
 
 func scanView(row pgx.Row) (run.View, error) {
 	var v run.View
-	var id string
+	var id, owner string
 	var view []byte
-	if err := row.Scan(&id, &view, &v.Dormant, &v.Rebuilding); err != nil {
+	if err := row.Scan(&id, &view, &v.Dormant, &v.Rebuilding, &owner); err != nil {
 		return v, err
 	}
 	if err := json.Unmarshal(view, &v); err != nil {
 		return v, fmt.Errorf("decode runs.view for %s: %w", id, err)
+	}
+	if v.UserID == "" {
+		v.UserID = owner
 	}
 	return v, nil
 }

@@ -28,17 +28,14 @@ exactly two touchpoints — plan approval and final review.
 ## Prerequisites
 
 - A Linux host with **Docker** (the reference deployment uses host
-  networking and the docker socket). The devcontainer provisioner runs each
+  networking and the docker socket), **or a Kubernetes cluster** (k3s
+  included — see [Kubernetes](#kubernetes)). The docker provisioner runs each
   run's workspace inside its own **Docker-in-Docker sandbox** (a
   `docker:dind` container), so repo compose files run verbatim with no
   cross-run collisions and teardown is total. By default that sandbox is
   `--privileged` — see [Unprivileged sandboxes](#unprivileged-sandboxes-optional)
   to drop that. Its `RunsDir` must be a **persistent path, not under `/tmp`**
   (dind masks `/tmp`) — the default `/var/lib/apothecary/runs` is fine.
-- A **[Coder](https://coder.com) deployment** the host can reach (a local
-  `docker compose` Coder works fine) and a **long-lived API token** for it
-  (see [Configure](#configure-all-in-the-ui) — a `coder login` session token
-  works but expires, silently stalling provisioning).
 - A **repository account**: GitLab PAT (`api` scope, Developer+ on the target
   project) or GitHub PAT (`repo` scope, or fine-grained Contents:RW +
   Pull requests:RW).
@@ -73,30 +70,75 @@ automatically. Database migrations apply at boot.
 > plane (it builds workspace images on your daemon — the same one Coder
 > uses). Workspaces themselves never see the socket.
 
+## Kubernetes
+
+Apothecary runs on any Kubernetes cluster — k3s included — from the Helm
+chart in `deploy/helm/apothecary`. The chart deploys the engine (and,
+optionally, a Postgres); the engine then creates every workspace object
+itself, in a namespace of its own:
+
+- **one sandbox pod per run**: `docker:dind` plus git and the devcontainer
+  CLI, privileged (or unprivileged under a sysbox `RuntimeClass`), with the
+  run's checkout and inner docker state on a volume. Compose devcontainers
+  run verbatim inside it, exactly as on the docker host;
+- **one egress gateway per project** (a Deployment): the same filter as on
+  docker. Each sandbox pod's default route is a WireGuard tunnel to it, and a
+  network policy lets the pod send nothing but that tunnel and HTTP to the
+  engine — so the gateway, which judges by TLS SNI / HTTP Host and records
+  every denial, is the only way out. The cluster's own pod and service ranges
+  and cloud metadata are never reachable through it;
+- **one browser pod per project**, reaching the engine's session proxy only.
+
+```sh
+helm upgrade --install apothecary deploy/helm/apothecary \
+  -n apothecary --create-namespace \
+  --set masterKey="$(docker run --rm ghcr.io/intradeus/apothecary/apothecaryd:latest keygen)" \
+  --set postgres.password=<strong> \
+  --set ingress.enabled=true --set ingress.host=apothecary.example.com \
+  --set ingress.appsDomain=apps.example.com
+```
+
+Exposed workspace ports and the browser editor are served by the engine at
+`<port>-<run>.<apps domain>`: point a wildcard DNS record (and certificate)
+at the ingress. Each app host asks the run's owner to sign in once.
+
+Cluster requirements:
+
+- **NetworkPolicy enforcement** (k3s has it built in; most CNIs do). Without
+  it the sandbox could route around its gateway.
+- The **`wireguard` kernel module** on the nodes (in-tree since Linux 5.6;
+  loaded on demand).
+- **Privileged pods** in the workspaces namespace (the chart labels it), or
+  [sysbox](https://github.com/nestybox/sysbox) on the nodes and the
+  integration's *runtime class* set with *privileged* off.
+- A **local or block storage class** for workspace volumes: the inner docker
+  daemon cannot run on NFS.
+- Clusters whose pod or service ranges differ from k3s's defaults:
+  `--set workspaces.protectCIDRs=<pods>,<services>,169.254.0.0/16`.
+
+Locally, with [k3d](https://k3d.io) and [helm](https://helm.sh) installed:
+
+```sh
+task k8s:cluster    # a k3d cluster + image registry; never touches ~/.kube/config
+task k8s:images     # build the five images from the working tree, push as :local
+task k8s:deploy     # helm install with values-k3d.yaml
+# → http://apothecary.localhost:8090
+task k8s:test-live  # the provisioner's live test against the cluster
+task k8s:down
+```
+
+Every kubectl call these tasks make names `deploy/.k3d-kubeconfig`
+explicitly; `task k8s:kubectl -- get pods -A` is the shortcut.
+
 ## Configure (all in the UI)
 
 1. **Integrations** — add and **Test** each:
    - *Repositories*: GitLab or GitHub + token.
-   - *Provisioner*: Coder URL + **API token** (+ template name, default
-     `apothecary` — the engine manages the template's content for you).
-
-     > **Use a long-lived API token, not a login session token.** The engine
-     > holds this token and drives the `coder` CLI with it for the life of the
-     > deployment. A token from `coder login` is a *session* token governed by
-     > the deployment's session-duration setting (24h by default): once it
-     > expires, provisioning fails and existing workspaces show as
-     > **`workspace?`** (status unknown) in the UI. Instead mint a dedicated
-     > token:
-     >
-     > ```sh
-     > coder tokens create --name apothecary --lifetime 1y
-     > ```
-     >
-     > Paste that into the *API token* field and **Test**. Its lifetime is
-     > capped by the deployment's `CODER_MAX_TOKEN_LIFETIME` (a Coder admin
-     > setting) — raise that server-side if you need longer than the default.
-     > Rotate by creating a new token and updating the integration; the old
-     > one can then be revoked with `coder tokens remove <name>`.
+   - *Provisioner*: **Docker** (a Docker-in-Docker sandbox per run on the
+     engine's docker daemon; nothing to fill in) or **Kubernetes** (a sandbox
+     pod per run; on a Helm install every field can stay empty — the chart's
+     `APOTHECARY_K8S_*` settings fill them). Either way the workspace inside
+     the sandbox is the repo's own `.devcontainer/devcontainer.json`.
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
      credentials) or codex (API key and/or ChatGPT `auth.json`).
    - *Ticket source* (optional): Jira, GitHub Issues or GitLab Issues. Lets you create a
@@ -343,15 +385,20 @@ one-offs):
 | `apothecaryd user list` | every account |
 | `apothecaryd user reset-password <handle>` | set an account's password from the terminal (the way back in after a lockout) |
 | `apothecaryd user set-admin <handle> [-off]` | make or unmake an instance admin |
+| `apothecaryd shim-hash` | the shim source hash a published shim image must carry |
 | `apothecaryd version` | build version |
 
 Boot environment (the whole deployment plane): `APOTHECARY_POSTGRES_DSN`,
 `APOTHECARY_MASTER_KEY` (required); `APOTHECARY_LISTEN` (default
 `127.0.0.1:8080`), `APOTHECARY_RUNS_DIR`, `APOTHECARY_CPUI_DIR`,
-`APOTHECARY_OTEL_ENDPOINT`, `APOTHECARY_BASE_IMAGE` (optional);
-`APOTHECARY_MAX_CONCURRENT_RUNS` (default 3) and
-`APOTHECARY_MAX_ENVIRONMENTS` (default 6) — the host's capacity, the same
-for every user, `-1` for no cap.
+`APOTHECARY_OTEL_ENDPOINT`, `APOTHECARY_BASE_IMAGE` (optional). The host's
+capacity — max concurrent runs (default 3) and max live environments
+(default 6) — is not an environment variable: an admin sets it in
+**System → Limits**, the same for every user, and it applies to the next run
+that starts. On Kubernetes the chart also sets the
+`APOTHECARY_K8S_*` variables (namespace, engine URL, images, protected
+ranges), `APOTHECARY_APPS_DOMAIN` and `APOTHECARY_PUBLIC_URL`
+(`internal/config/env.go` documents each).
 
 ## Accounts
 
@@ -433,7 +480,7 @@ building from source. Kernel ≥5.12. The default `docker:29-dind` sandbox
 image is verified under sysbox — the full provisioning path, egress gateway
 included (`docs/IMPLEMENTATION_NOTES.md`). If you override `dind_image`,
 re-verify it with the live test described at the top of
-`internal/adapters/devcontainer/live_test.go`. On a Linux host this is the
+`internal/adapters/workspace/live_test.go`. On a Linux host this is the
 recommended setting; it stays opt-in only because it is a host install we
 don't ship.
 

@@ -24,10 +24,62 @@ package main
 import (
 	"bufio"
 	"log"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
 )
+
+// mirrorRegistryConfig configures the pull-through Docker Hub cache.
+// proxy.remoteurl is what makes it a read-through mirror rather than a
+// registry; delete.enabled lets the proxy scheduler's TTL actually evict.
+const mirrorRegistryConfig = `version: 0.1
+log:
+  level: warn
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :5000
+  secret: apothecary-mirror
+proxy:
+  remoteurl: https://registry-1.docker.io
+`
+
+// buildCacheRegistryConfig is the WRITABLE registry: no proxy section (a
+// registry in proxy mode refuses pushes, which is exactly what a build cache
+// needs to do), its own storage root, and delete enabled so a wipe can be
+// surgical if it ever needs to be.
+func buildCacheRegistryConfig(dir string) string {
+	return `version: 0.1
+log:
+  level: warn
+storage:
+  filesystem:
+    rootdirectory: ` + dir + `
+  delete:
+    enabled: true
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :5001
+  secret: apothecary-buildcache
+`
+}
+
+// writeIfChanged writes content only when the file differs: the supervisor
+// restarts its registry child on any mtime bump, so a blind rewrite at every
+// start would restart it for nothing.
+func writeIfChanged(path, content string) error {
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == content {
+		return nil
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
 
 // registryBin is the distribution binary COPYed in by the gateway Dockerfile
 // (swapped in tests).

@@ -12,8 +12,8 @@ import (
 // read on every reaper pass — no cache, no watch.
 //
 // The capacity limits (max concurrent runs, max environments) are NOT here:
-// they protect the host, so they are the deployment's (APOTHECARY_MAX_*
-// in the boot env), the same for everyone.
+// they protect the host, so they are the instance's, one admin-set value for
+// everyone (engine.StoredLimits, the instance_limits table).
 type Settings struct {
 	DestroyCompletedAfter string `json:"destroy_completed_after"` // duration string
 	DestroyAbandoned      string `json:"destroy_abandoned"`       // only "never"

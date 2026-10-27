@@ -1,9 +1,16 @@
 // Command apothecary-gateway is the per-project egress firewall daemon. It runs
-// in the apo-gw-<project> container (CAP_NET_ADMIN, not privileged), multi-homed
-// onto every run's --internal network plus one external uplink. All egress from
-// every run's DinD sandbox (app + siblings) routes through it; it transparently
-// filters HTTPS by TLS SNI and HTTP by Host header (no MITM), hot-reloading a
-// per-project policy file with two modes (deny-all+allowlist / allow-all+denylist).
+// as the apo-gw-<project> container (CAP_NET_ADMIN, not privileged) and every
+// run's sandbox egresses through it: on docker the gateway is multi-homed onto
+// each run's --internal network; on Kubernetes each run's pod reaches it over
+// its own WireGuard peer on wg0 (--wg-key). Either way the run links are "not
+// the uplink", and the same transparent filter applies: HTTPS by TLS SNI, HTTP
+// by Host header (no MITM), from a hot-reloaded per-project policy with two
+// modes (deny-all+allowlist / allow-all+denylist).
+//
+// The engine drives it over a small HTTP control API (--control-listen, see
+// control.go): policy and run routes in, denials, audit and build-cache facts
+// out. The same state also lives as files under --state-dir, so a restarted
+// gateway comes back with its policy, its routes and its WireGuard peers.
 //
 // Self-contained (pure stdlib), like workspace/shim: it is built standalone by
 // wsimage.EnsureGatewayImage and cannot import apothecary packages.
@@ -14,6 +21,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,12 +34,27 @@ type gateway struct {
 	listenPort                                       int
 	logConns, logDNS                                 bool
 
+	// buildCacheDir / buildCacheConfig: the writable registry's storage and
+	// config (the control API sizes and wipes it).
+	buildCacheDir, buildCacheConfig string
+	// protect are destinations no run may reach, whatever the policy says —
+	// the cluster's pod and service ranges and link-local metadata, so the
+	// gateway is never a pivot into the network it runs on.
+	protect []*net.IPNet
+	// wg is the WireGuard run link (Kubernetes); nil on docker.
+	wg *wgLink
+	// controlPort is the control API's port (0 = none), closed to run links.
+	controlPort int
+	// cmu serializes control-API writes (policy, routes) against each other.
+	cmu sync.Mutex
+
 	ext        atomic.Pointer[string]
 	pol        atomic.Pointer[policy]
 	file       atomic.Pointer[File]
 	routesAttr atomic.Pointer[[]subnetRun]
-	dns        *dnsCache // IP→hostname learned from forwarded DNS, for no-SNI connections
-	audit      *auditor  // aggregated egress trail flushed for the engine to ingest
+	routesMem  atomic.Pointer[Routes] // the routes as last applied (no --state-dir)
+	dns        *dnsCache              // IP→hostname learned from forwarded DNS, for no-SNI connections
+	audit      *auditor               // aggregated egress trail flushed for the engine to ingest
 
 	dmu          sync.Mutex
 	denials      map[string]*Denial // key: run + "\x00" + host
@@ -44,7 +68,7 @@ func main() {
 	flag.StringVar(&g.routesPath, "routes", "", "path to routes.json (run->subnet)")
 	var auditPath string
 	flag.StringVar(&auditPath, "audit", "", "path to egress-audit.json (aggregated audit trail, written)")
-	flag.StringVar(&g.dnsUpstream, "dns-upstream", "1.1.1.1:53", "upstream DNS resolver")
+	flag.StringVar(&g.dnsUpstream, "dns-upstream", "1.1.1.1:53", `upstream DNS resolver, or "resolv.conf" for the container's own (a cluster's DNS)`)
 	flag.IntVar(&g.listenPort, "listen-port", 9040, "transparent filter listen port")
 	flag.BoolVar(&g.logConns, "log-conns", true, "log every connection verdict (run/dst/host/allow|deny)")
 	flag.BoolVar(&g.logDNS, "log-dns", true, "log DNS resolutions (run/name/ips)")
@@ -53,7 +77,60 @@ func main() {
 	var mirrorConfig, buildCacheConfig string
 	flag.StringVar(&mirrorConfig, "mirror-config", "", "path to the registry mirror config.yml (empty = no image mirror)")
 	flag.StringVar(&buildCacheConfig, "buildcache-config", "", "path to the build-cache registry config.yml (empty = no build cache)")
+	var stateDir, controlListen, controlTokenFile, wgKey, wgAddr, protect string
+	var wgListen, wgMTU int
+	var mirror, buildCache bool
+	flag.StringVar(&stateDir, "state-dir", "", "directory for policy/routes/denials/audit and generated registry configs (defaults every path flag left empty)")
+	flag.BoolVar(&mirror, "mirror", false, "run the Docker Hub pull-through mirror on :5000, config generated into --state-dir")
+	flag.BoolVar(&buildCache, "buildcache", false, "run the writable build-cache registry on :5001, config generated into --state-dir")
+	flag.StringVar(&g.buildCacheDir, "buildcache-dir", "/var/lib/buildcache", "build-cache registry storage")
+	flag.StringVar(&controlListen, "control-listen", "", "control API address, e.g. :9041 (empty = no API)")
+	flag.StringVar(&controlTokenFile, "control-token-file", "", "file holding the control API bearer token (else $APO_GW_TOKEN)")
+	flag.StringVar(&wgKey, "wg-key", "", "WireGuard private key file: enables the wg0 run link (Kubernetes)")
+	flag.IntVar(&wgListen, "wg-listen", 51820, "WireGuard UDP port")
+	flag.StringVar(&wgAddr, "wg-addr", "10.90.0.1/16", "gateway address on wg0 (runs get /32s inside it)")
+	flag.IntVar(&wgMTU, "wg-mtu", 0, "wg0 MTU (0 = uplink MTU - 60)")
+	flag.StringVar(&protect, "protect-cidrs", "", "comma-separated destinations no run may reach (cluster pod/service ranges, metadata)")
 	flag.Parse()
+	if stateDir != "" {
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			log.Fatalf("gateway: state dir: %v", err)
+		}
+		def := func(p *string, name string) {
+			if *p == "" {
+				*p = filepath.Join(stateDir, name)
+			}
+		}
+		def(&g.policyPath, "egress-policy.json")
+		def(&g.denialsPath, "egress-denials.json")
+		def(&g.routesPath, "routes.json")
+		def(&auditPath, "egress-audit.json")
+		if mirror {
+			def(&mirrorConfig, "registry-config.yml")
+			if err := writeIfChanged(mirrorConfig, mirrorRegistryConfig); err != nil {
+				log.Fatalf("gateway: mirror config: %v", err)
+			}
+		}
+		if buildCache {
+			def(&buildCacheConfig, "buildcache-config.yml")
+			if err := writeIfChanged(buildCacheConfig, buildCacheRegistryConfig(g.buildCacheDir)); err != nil {
+				log.Fatalf("gateway: build-cache config: %v", err)
+			}
+		}
+	}
+	g.buildCacheConfig = buildCacheConfig
+	if controlListen != "" {
+		_, p, err := net.SplitHostPort(controlListen)
+		if err != nil {
+			log.Fatalf("gateway: --control-listen: %v", err)
+		}
+		g.controlPort, _ = strconv.Atoi(p)
+	}
+	nets, err := parseCIDRs(protect)
+	if err != nil {
+		log.Fatalf("gateway: --protect-cidrs: %v", err)
+	}
+	g.protect = nets
 	g.audit = newAuditor(auditPath)
 
 	ext := detectEXT()
@@ -67,11 +144,27 @@ func main() {
 	g.ext.Store(&ext)
 	log.Printf("gateway: EXT=%s listen=:%d policy=%s", ext, g.listenPort, g.policyPath)
 
+	if wgKey != "" {
+		link, err := setupWG(ext, wgKey, wgListen, wgAddr, wgMTU)
+		if err != nil {
+			log.Fatalf("gateway: wireguard: %v", err)
+		}
+		g.wg = link
+		log.Printf("gateway: wg0 %s listening on udp/%d (mtu %d)", wgAddr, wgListen, link.mtu)
+	}
 	g.loadRoutes()
 	if err := g.loadPolicy(); err != nil {
 		log.Fatalf("gateway: initial policy load/apply: %v", err)
 	}
 
+	if g.dnsUpstream == "resolv.conf" {
+		up, err := resolvConfUpstream("/etc/resolv.conf")
+		if err != nil {
+			log.Fatalf("gateway: --dns-upstream resolv.conf: %v", err)
+		}
+		g.dnsUpstream = up
+	}
+	log.Printf("gateway: DNS upstream %s", g.dnsUpstream)
 	g.serveDNS(g.dnsUpstream)
 	go g.watch()
 	if mirrorConfig != "" {
@@ -84,6 +177,14 @@ func main() {
 	if buildCacheConfig != "" {
 		log.Printf("gateway: build cache on :5001 (config %s)", buildCacheConfig)
 		go superviseRegistry("buildcache", buildCacheConfig)
+	}
+
+	if controlListen != "" {
+		token, err := controlToken(controlTokenFile)
+		if err != nil {
+			log.Fatalf("gateway: control token: %v", err)
+		}
+		go g.serveControl(controlListen, token)
 	}
 
 	ln, err := net.Listen("tcp", ":"+itoa(g.listenPort))
@@ -100,12 +201,18 @@ func main() {
 func (g *gateway) loadPolicy() error {
 	var f File
 	if err := readJSON(g.policyPath, &f); err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || g.policyPath == "" {
 			f = File{Mode: ModeAllow} // fail closed: deny-all until a policy arrives
 		} else {
 			return err
 		}
 	}
+	return g.installPolicy(f)
+}
+
+// installPolicy makes f the live policy: swaps it in, re-applies nft, logs
+// what changed and prunes denials it now allows.
+func (g *gateway) installPolicy(f File) error {
 	var prev *File
 	if p := g.file.Load(); p != nil {
 		prev = p
@@ -164,7 +271,7 @@ func diffDomains(a, b []string) []string {
 func (g *gateway) applyRules() error {
 	ext := *g.ext.Load()
 	f := *g.file.Load()
-	return applyNFT(renderNFT(ext, g.listenPort, f))
+	return applyNFT(renderNFT(ext, g.listenPort, f, g.protect, g.controlPort))
 }
 
 // watch polls the policy/routes files and the EXT interface, hot-reloading on
@@ -236,6 +343,9 @@ func (g *gateway) flushDenials() {
 	}
 	g.denialsDirty = false
 	g.dmu.Unlock()
+	if g.denialsPath == "" {
+		return // in memory only: the control API serves it
+	}
 	if err := writeAtomic(g.denialsPath, DenialsFile{Denials: out}); err != nil {
 		log.Printf("gateway: write denials: %v", err)
 	}

@@ -1,0 +1,16 @@
+Apothecary is starting in {{ .Release.Namespace }}; workspaces will run in {{ .Values.workspaces.namespace }}.
+
+{{- if .Values.ingress.enabled }}
+Open {{ .Values.ingress.scheme }}://{{ .Values.ingress.host }}{{ with .Values.ingress.appsPort }}:{{ . }}{{ end }}/ and create the first account.
+{{- else }}
+Reach it with:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/apothecaryd 8080:8080
+then open http://localhost:8080/ and create the first account.
+{{- end }}
+
+Then add a provisioner integration of kind "kubernetes" (System → Integrations):
+every field can stay empty — the engine's APOTHECARY_K8S_* settings fill them.
+
+Nodes need the wireguard kernel module (in-tree since Linux 5.6), and the
+workspace volumes a local or block storage class (the inner docker daemon
+cannot run on NFS).

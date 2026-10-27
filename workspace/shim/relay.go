@@ -30,8 +30,33 @@ import (
 
 func runRelay(args []string) {
 	started := 0
+	var serveAddr, dir, tokenFile string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--stdio":
+			// One connection over this process's stdio, then exit.
+			i++
+			if i >= len(args) {
+				fatal("--stdio needs <sock>")
+			}
+			if err := pumpStdio(args[i], os.Stdin, os.Stdout); err != nil {
+				fatal("stdio %s: %v", args[i], err)
+			}
+			os.Exit(0)
+		case "--serve", "--dir", "--token-file":
+			flag := args[i]
+			i++
+			if i >= len(args) {
+				fatal("%s needs a value", flag)
+			}
+			switch flag {
+			case "--serve":
+				serveAddr = args[i]
+			case "--dir":
+				dir = args[i]
+			default:
+				tokenFile = args[i]
+			}
 		case "--reverse":
 			i++
 			if i >= len(args) {
@@ -43,6 +68,15 @@ func runRelay(args []string) {
 			startForward(args[i])
 			started++
 		}
+	}
+	if serveAddr != "" {
+		if dir == "" || tokenFile == "" {
+			fatal("--serve needs --dir and --token-file")
+		}
+		if _, err := startMux(serveAddr, dir, readTokenFile(tokenFile)); err != nil {
+			fatal("serve %s: %v", serveAddr, err)
+		}
+		started++
 	}
 	if started == 0 {
 		fatal("no relay pairs given")

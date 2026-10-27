@@ -147,8 +147,11 @@ func (s *Server) routes() []Route {
 			Summary: "Revoke a personal API token",
 			Handler: s.deleteMyToken, Status: http.StatusNoContent},
 		{Method: "GET", Path: "/api/limits", ID: "getLimits", Tag: tagSystem,
-			Summary: "The deployment's capacity caps (-1: no cap)",
+			Summary: "The instance's capacity caps (-1: no cap)",
 			Handler: s.getLimits, Returns: LimitsInfo{}},
+		{Method: "PUT", Path: "/api/limits", ID: "setLimits", Tag: tagSystem,
+			Summary: "Set the instance's capacity caps (admin; -1: no cap)",
+			Handler: s.setLimits, Body: LimitsInfo{}, Returns: LimitsInfo{}, Auth: AccessAdmin},
 
 		// --- users (admin) ---------------------------------------------------
 		{Method: "GET", Path: "/api/users", ID: "listUsers", Tag: tagUsers,
@@ -630,6 +633,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /docs/", s.serveDocs)
 	if haveCPUI(s) {
 		mux.HandleFunc("GET /", s.serveCPUI)
+	}
+	if s.Apps != nil {
+		// The sign-in hand-off to an app host (apps.go), on the main host.
+		mux.HandleFunc("GET /api/apps/auth", s.Apps.authorize(s))
+		return s.Apps.wrap(s, mux)
 	}
 	return mux
 }

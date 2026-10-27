@@ -95,8 +95,12 @@ func (b *Builder) exists(ctx context.Context, ref string) bool {
 
 // build runs `docker build` and persists the full log under
 // runs_dir/builds/<tag-suffix>.log.
-func (b *Builder) build(ctx context.Context, dir, tag string) error {
-	out, code, err := b.docker.Run(ctx, dir, "build", "-t", tag, ".")
+func (b *Builder) build(ctx context.Context, dir, tag string, buildArgs ...string) error {
+	args := []string{"build", "-t", tag}
+	for _, a := range buildArgs {
+		args = append(args, "--build-arg", a)
+	}
+	out, code, err := b.docker.Run(ctx, dir, append(args, ".")...)
 	b.writeLog(tag, out)
 	if err != nil {
 		return fmt.Errorf("docker build %s: %w", tag, err)

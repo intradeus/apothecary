@@ -40,7 +40,7 @@ func newAuditor(path string) *auditor {
 }
 
 func (a *auditor) record(run, host, dstIP string, port int, proto, verdict string, bytesOut, bytesIn int64) {
-	if a == nil || a.path == "" {
+	if a == nil {
 		return
 	}
 	k := auditKey{run: run, host: host, port: port, verdict: verdict}
@@ -67,7 +67,7 @@ func (a *auditor) record(run, host, dstIP string, port int, proto, verdict strin
 // retain drops records for runs not in active (torn-down runs, already ingested
 // by the engine), bounding the aggregate to live runs.
 func (a *auditor) retain(active map[string]bool) {
-	if a == nil || a.path == "" {
+	if a == nil {
 		return
 	}
 	a.mu.Lock()
@@ -102,6 +102,24 @@ func (a *auditor) flush() {
 	if err := writeAtomic(a.path, AuditFile{Records: out}); err != nil {
 		return
 	}
+}
+
+// snapshot returns the aggregated records, all runs or one.
+func (a *auditor) snapshot(run string) []AuditRecord {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]AuditRecord, 0, len(a.recs))
+	for k, v := range a.recs {
+		if run != "" && k.run != run {
+			continue
+		}
+		out = append(out, AuditRecord{
+			Run: k.run, Host: k.host, DstIP: v.dstIP, Port: k.port, Proto: v.proto,
+			Verdict: k.verdict, Count: v.count, BytesOut: v.bytesOut, BytesIn: v.bytesIn,
+			First: v.first, Last: v.last,
+		})
+	}
+	return out
 }
 
 func protoFor(port int) string {

@@ -44,7 +44,7 @@ func cmdEnvcheck(args []string) error {
 	}
 	defer store.Close()
 
-	reg := registry(false)
+	reg := registry(false, boot)
 	conf := confstore.New(store, key)
 	conf.KindValid = reg.Valid
 
@@ -77,7 +77,7 @@ func cmdEnvcheck(args []string) error {
 	runID := "envck" + strings.ToLower(ulid.Make().String()[16:])
 	fmt.Printf("envcheck project %s, run id %s\n", project.Name, runID)
 	failed := engine.RunEnvCheck(ctx, res, runID,
-		engine.EnvCheckOptions{EngineURL: engineURL(boot.Listen), EnginePort: enginePort, Keep: *keep},
+		engine.EnvCheckOptions{EngineURL: engineURL(boot.Listen), Keep: *keep},
 		func(s engine.CheckStep) {
 			mark := map[string]string{"pass": "ok  ", "fail": "FAIL", "skip": "skip"}[s.Status]
 			fmt.Printf("%s  %-28s %s\n", mark, s.ID, s.Detail)

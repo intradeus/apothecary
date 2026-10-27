@@ -19,8 +19,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +42,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/httpapi"
 	"apothecary/internal/kinds"
+	"apothecary/internal/kube"
 	"apothecary/internal/pgstore"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
@@ -48,6 +51,7 @@ import (
 	"apothecary/internal/telemetry"
 	"apothecary/internal/tickets"
 	"apothecary/internal/wsimage"
+	wsassets "apothecary/workspace"
 )
 
 // version is stamped by the release build (deploy/release.sh, ldflags).
@@ -74,6 +78,10 @@ func main() {
 		err = cmdEnvcheck(os.Args[2:])
 	case "user":
 		err = cmdUser(os.Args[2:])
+	case "shim-hash":
+		// The shim source hash a published shim image must carry (CI passes it
+		// as SHIM_HASH; a Kubernetes sandbox's seeded shim is checked against it).
+		fmt.Println(wsassets.ShimSourceHash())
 	default:
 		usage()
 		os.Exit(2)
@@ -94,6 +102,7 @@ commands:
   rebuild-projections
   envcheck -project <name|id> [-keep]
   user list | user reset-password <handle> | user set-admin <handle> [-off]
+  shim-hash                        print the shim source hash (for publishing shim images)
   version`)
 }
 
@@ -134,11 +143,12 @@ func cmdRebuild(args []string) error {
 // registry builds the kind registry: real kinds always, fakes with -dev.
 // Model auth is harness-owned (post-M8 amendment) — there is no provider
 // port.
-func registry(dev bool) *kinds.Registry {
+func registry(dev bool, boot *config.Boot) *kinds.Registry {
 	reg := kinds.NewRegistry()
 	reg.RegisterRepoHost(kinds.GitLab{})
 	reg.RegisterRepoHost(kinds.GitHub{})
-	reg.RegisterProvisioner(kinds.Devcontainer{})
+	reg.RegisterProvisioner(kinds.Docker{})
+	reg.RegisterProvisioner(kinds.Kubernetes{Defaults: kubernetesDefaults(boot)})
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
 	reg.RegisterTicketSource(kinds.Jira{})
@@ -172,7 +182,7 @@ func cmdServe(args []string) error {
 	}
 	defer store.Close()
 
-	reg := registry(*dev)
+	reg := registry(*dev, boot)
 	conf := confstore.New(store, key)
 	conf.KindValid = reg.Valid
 
@@ -215,12 +225,13 @@ func cmdServe(args []string) error {
 		RunsDir:                 boot.RunsDir,
 		PortDiscoveryAutoExpose: boot.PortAutoExpose,
 	}
-	// The capacity caps are the deployment's (boot env), the same for every
-	// user: they protect the host, not a person's preference.
-	limits := engine.Limits{MaxConcurrentRuns: boot.MaxConcurrentRuns, MaxEnvironments: boot.MaxEnvironments}
+	// The capacity caps are an admin's setting (System → Limits), stored in
+	// the database and read on every admission: a change applies to the next
+	// run, no restart. Unset = the engine's defaults.
+	limits := engine.StoredLimits{Store: store}
 	// Flows resolve DB-first with the compiled-in templates underneath
 	// (internal/builtin): an empty database still has flows to run.
-	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), engine.StaticSettings{L: limits}, []ports.NotificationChannel{chreg})
+	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), limits, []ports.NotificationChannel{chreg})
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -248,6 +259,11 @@ func cmdServe(args []string) error {
 	}
 	portRelay := portrelay.New(relayHost)
 	defer portRelay.CloseAll()
+	if boot.AppsDomain != "" {
+		// Behind a Service and an Ingress a listener per port is unreachable:
+		// exposures become <port>-<run>.<apps domain>, served by this server.
+		portRelay.RouteByHost(boot.AppsDomain, boot.AppsScheme)
+	}
 	if err := portRelay.Persist(store); err != nil {
 		return fmt.Errorf("load persisted port exposures: %w", err)
 	}
@@ -270,12 +286,30 @@ func cmdServe(args []string) error {
 	// per project, a Chromium per agent session. Agent stages re-read the
 	// project's secrets their MCP servers name when they open a session.
 	e.SetProjectSecrets(conf)
-	browsers := browser.New(browser.Config{
+	bcfg := browser.Config{
 		RunsDir: boot.RunsDir,
 		Image:   wsimage.New(boot.RunsDir).EnsureBrowserImage,
 		Tag:     wsimage.BrowserImageTag,
 		Log:     log,
-	})
+	}
+	if boot.K8s.Namespace != "" {
+		// On Kubernetes the engine builds nothing: the browser is the release
+		// image, its pods live beside the sandboxes, and sessions reach the
+		// routing proxy over the engine's session mux.
+		host, closeMux, err := k8sBrowserHost(boot)
+		if err != nil {
+			return err
+		}
+		defer closeMux()
+		img := boot.K8s.BrowserImage
+		if img == "" {
+			img = config.DefaultImage("browser", version)
+		}
+		bcfg.Host = host
+		bcfg.Image = func(context.Context) (string, error) { return img, nil }
+		bcfg.Tag = func() string { return img }
+	}
+	browsers := browser.New(bcfg)
 	browsers.Start(ctx)
 	defer browsers.Close()
 	e.SetBrowser(browsers)
@@ -298,6 +332,9 @@ func cmdServe(args []string) error {
 	api.Attachments = attachments
 	api.Snapshots = snapshots
 	api.CPUIDir = boot.CPUIDir
+	if boot.AppsDomain != "" {
+		api.Apps = httpapi.NewApps(portRelay, boot.PublicURL)
+	}
 	if boot.CPUIDir != "" {
 		log.Info("serving CPUI", "dir", boot.CPUIDir)
 	}
@@ -612,4 +649,58 @@ func splitHostPort(addr string) (string, string, error) {
 		return "", "", fmt.Errorf("no port in %q", addr)
 	}
 	return addr[:i], addr[i+1:], nil
+}
+
+// kubernetesDefaults are the boot env's answers for a Kubernetes integration;
+// images default to this engine's own release.
+func kubernetesDefaults(boot *config.Boot) kinds.KubernetesDefaults {
+	if boot == nil {
+		return kinds.KubernetesDefaults{}
+	}
+	k := boot.K8s
+	img := func(set, name string) string {
+		if set != "" {
+			return set
+		}
+		return config.DefaultImage(name, version)
+	}
+	return kinds.KubernetesDefaults{
+		Namespace:       k.Namespace,
+		EngineNamespace: k.EngineNamespace,
+		EngineURL:       k.EngineURL,
+		Kubeconfig:      k.Kubeconfig,
+		SandboxImage:    img(k.SandboxImage, "sandbox"),
+		ShimImage:       img(k.ShimImage, "shim"),
+		GatewayImage:    img(k.GatewayImage, "egress-gw"),
+		PullPolicy:      k.PullPolicy,
+		ProtectCIDRs:    k.ProtectCIDRs,
+		Transport:       k.Transport,
+	}
+}
+
+// k8sBrowserHost runs project browsers as pods in the workspaces namespace,
+// their routing proxies on one engine listener.
+func k8sBrowserHost(boot *config.Boot) (browser.Host, func(), error) {
+	k := boot.K8s
+	advertise := k.BrowserProxyAddr
+	if advertise == "" && k.EngineURL != "" {
+		if u, err := url.Parse(k.EngineURL); err == nil && u.Hostname() != "" {
+			_, port, _ := net.SplitHostPort(k.BrowserProxyListen)
+			advertise = net.JoinHostPort(u.Hostname(), port)
+		}
+	}
+	kubeconfig, _, err := kube.Kubeconfig(filepath.Join(boot.RunsDir, "k8s"), k.Kubeconfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("browser kubeconfig: %w", err)
+	}
+	mux, err := browser.NewSessionMux(k.BrowserProxyListen, advertise)
+	if err != nil {
+		return nil, nil, fmt.Errorf("browser session listener %s: %w", k.BrowserProxyListen, err)
+	}
+	return &browser.K8sHost{
+		Kube:            &kube.Client{Kubeconfig: kubeconfig, Namespace: k.Namespace},
+		Mux:             mux,
+		EngineNamespace: k.EngineNamespace,
+		PullPolicy:      k.PullPolicy,
+	}, func() { mux.Close() }, nil
 }

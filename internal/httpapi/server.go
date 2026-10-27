@@ -64,11 +64,15 @@ type Server struct {
 	// answers every user route 503 — a server without it is misconfigured,
 	// never open.
 	Auth *auth.Service
-	// Limits are the deployment's capacity caps, reported to the UI.
-	Limits engine.Limits
+	// Limits are the instance's capacity caps: read by every user, set by
+	// an admin. nil = the engine defaults, read-only (bare test servers).
+	Limits LimitsSetting
 	// HoldTimeout is the ping long-poll hold (§8: 55 s).
 	HoldTimeout time.Duration
 	Log         *slog.Logger
+	// Apps serves host-routed exposed ports (apps.go); nil = exposures are
+	// loopback listeners the engine binds itself.
+	Apps *Apps
 
 	logins loginLimiter
 }

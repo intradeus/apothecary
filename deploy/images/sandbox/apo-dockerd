@@ -1,0 +1,19 @@
+#!/bin/sh
+# The sandbox pod's daemon: the dind entrypoint (cgroup and iptables set-up)
+# running dockerd on the default socket, with
+#   - a CGNAT address pool, so no inner network can shadow the cluster's pod
+#     and service ranges (or the engine's Service address);
+#   - with a gateway (APO_GATEWAY_IP): its resolver, its pull-through image
+#     mirror and its build-cache registry, and the WireGuard tunnel's MTU.
+set -eu
+set -- dockerd --host=unix:///var/run/docker.sock --default-address-pool base=100.64.0.0/10,size=24
+if [ -n "${APO_GATEWAY_IP:-}" ]; then
+  set -- "$@" --dns "$APO_GATEWAY_IP" \
+    --registry-mirror "http://$APO_GATEWAY_IP:5000" \
+    --insecure-registry "$APO_GATEWAY_IP:5000" \
+    --insecure-registry "$APO_GATEWAY_IP:5001"
+fi
+if [ -s /run/apo/mtu ]; then
+  set -- "$@" --mtu "$(cat /run/apo/mtu)"
+fi
+exec dockerd-entrypoint.sh "$@"

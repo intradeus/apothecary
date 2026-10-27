@@ -37,6 +37,16 @@ func (g *gateway) loadRoutes() {
 	if err := readJSON(g.routesPath, &r); err != nil {
 		return
 	}
+	g.applyRoutes(r)
+}
+
+// applyRoutes installs a routes table: attribution, WireGuard peers, and the
+// eviction of torn-down runs' audit and denials.
+func (g *gateway) applyRoutes(r Routes) {
+	g.routesMem.Store(&r)
+	if g.wg != nil {
+		g.wg.reconcilePeers(r.Peers)
+	}
 	var attr []subnetRun
 	active := make(map[string]bool, len(r.RunSubnets))
 	for run, cidr := range r.RunSubnets {
@@ -78,4 +88,31 @@ func (g *gateway) attributeIP(ip net.IP) string {
 		}
 	}
 	return ""
+}
+
+// protected reports a destination no run may reach (--protect-cidrs).
+func (g *gateway) protected(ip net.IP) bool {
+	for _, n := range g.protect {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCIDRs parses a comma-separated CIDR list ("" → none).
+func parseCIDRs(s string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(part)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }

@@ -27,6 +27,7 @@ import (
 
 	"apothecary/internal/auth"
 	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
 	"apothecary/internal/run"
 )
 
@@ -730,12 +731,49 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 
 // --- handlers: limits ---------------------------------------------------------------
 
-// getLimits reports the deployment's capacity caps (the capacity strip).
+// LimitsSetting is where the instance's caps live (engine.StoredLimits).
+type LimitsSetting interface {
+	Limits(ctx context.Context) (engine.Limits, error)
+	Set(ctx context.Context, l engine.Limits) error
+}
+
+// getLimits reports the instance's capacity caps (the capacity strip).
 func (s *Server) getLimits(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, LimitsInfo{
-		MaxConcurrentRuns: s.Limits.MaxConcurrentRuns,
-		MaxEnvironments:   s.Limits.MaxEnvironments,
-	})
+	l, err := s.currentLimits(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, LimitsInfo{MaxConcurrentRuns: l.MaxConcurrentRuns, MaxEnvironments: l.MaxEnvironments})
+}
+
+func (s *Server) currentLimits(ctx context.Context) (engine.Limits, error) {
+	if s.Limits == nil {
+		return engine.StaticSettings{}.Limits(ctx)
+	}
+	return s.Limits.Limits(ctx)
+}
+
+// setLimits changes them (admin). They apply to the next admission.
+func (s *Server) setLimits(w http.ResponseWriter, r *http.Request) {
+	if s.Limits == nil {
+		writeErr(w, http.StatusServiceUnavailable, "limits are not configurable on this server")
+		return
+	}
+	var in LimitsInfo
+	if !readJSON(w, r, &in) {
+		return
+	}
+	l := engine.Limits{MaxConcurrentRuns: in.MaxConcurrentRuns, MaxEnvironments: in.MaxEnvironments}
+	if err := engine.ValidateLimits(l); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Limits.Set(r.Context(), l); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.getLimits(w, r)
 }
 
 // Compile-time anchor: ownership lookups read config-plane rows.

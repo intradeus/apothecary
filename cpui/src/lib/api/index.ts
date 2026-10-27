@@ -775,8 +775,12 @@ export const system = {
 	saveSettings: async (s: Settings): Promise<Settings> =>
 		map.toSettings(await unwrap(gen.updateSettings({ body: map.fromSettings(s) }))),
 
-	/** The deployment's capacity caps (the boot env; null = no cap). */
+	/** The instance's capacity caps (null = no cap). */
 	limits: async (): Promise<Limits> => map.toLimits(await unwrap(gen.getLimits())),
+
+	/** Set them (admin); they apply to the next run admission. */
+	setLimits: async (l: Limits): Promise<Limits> =>
+		map.toLimits(await unwrap(gen.setLimits({ body: map.fromLimits(l) }))),
 
 	channels: async (): Promise<ChannelEntry[]> =>
 		many(await unwrap(gen.listChannels()), map.toChannelEntry),

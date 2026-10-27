@@ -110,7 +110,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	if berr := RunBootstrap(ctx, res.Envp, id, BootstrapSpec{
 		RunID:        runID,
 		Token:        e.RunToken(runID),
-		EngineURL:    e.cfg.EngineURL,
+		EngineURL:    e.engineURLFor(res.Envp, id),
 		RepoURL:      res.RepoRef.URL,
 		SourceBranch: sourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
 		Branch:       v.Branch,

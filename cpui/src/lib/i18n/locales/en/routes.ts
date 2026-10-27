@@ -201,10 +201,15 @@ export default {
 		'Abandoned and failed runs are inspection material: their workspaces stay until you archive the run. The engine accepts only “never” today.',
 	'page.reaper.abandonedNote': 'Archive a run to destroy its workspace by hand.',
 	'page.limits.head': 'Capacity',
-	'page.limits.headSub': 'set in the deployment env, the same for everyone',
+	'page.limits.headSub': 'one setting for the whole instance, set by an admin',
 	'page.limits.unlimited': 'no cap',
 	'page.limits.envNote':
-		'These protect the machine, not a preference: change APOTHECARY_MAX_CONCURRENT_RUNS and APOTHECARY_MAX_ENVIRONMENTS in deploy/.env (−1 for no cap) and restart.',
+		'These protect the machine, not a preference: they are the same for every account, and only an admin changes them. A change applies to the next run that starts.',
+	'page.limits.adminOnly': 'Only an admin can change these.',
+	'page.limits.noCap': 'No cap',
+	'page.limits.saved': 'Limits saved',
+	'page.limits.saveFail': 'The limits were not saved',
+	'page.limits.applyNote': 'Applies to the next run that starts; running ones are not stopped.',
 	'page.limits.concLabel': 'Max concurrent runs',
 	'page.limits.concHelp':
 		'Runs actively working at once. Beyond this, runs queue as pending, first in first out. A run waiting on a human or paused gives its slot back.',

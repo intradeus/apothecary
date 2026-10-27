@@ -24,19 +24,7 @@ const playwrightMCPVersion = "0.0.83"
 // session is exec'd into it. The browser comes from Playwright's own CLI —
 // the copy @playwright/mcp depends on — so its build is the one the server
 // expects.
-const browserDockerfile = `FROM golang:1.26-alpine AS shim
-COPY shim/ /src/
-RUN cd /src && go mod init apothecary-shim >/dev/null \
-    && go get github.com/itchyny/gojq/cli@` + gojqVersion + ` \
-    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /apothecary-shim .
-FROM node:22-bookworm-slim
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright NODE_ENV=production
-RUN npm install -g @playwright/mcp@` + playwrightMCPVersion + ` \
-    && node /usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright/cli.js install --with-deps chromium \
-    && npm cache clean --force && rm -rf /var/lib/apt/lists/*
-COPY --from=shim /apothecary-shim /usr/local/bin/apothecary-shim
-CMD ["sleep", "infinity"]
-`
+var browserDockerfile = workspace.Dockerfile("browser")
 
 // browserHash covers the shim source tree (the image carries a shim) and
 // the Dockerfile.
@@ -79,7 +67,7 @@ func (b *Builder) EnsureBrowserImage(ctx context.Context) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(browserDockerfile), 0o644); err != nil {
 		return "", err
 	}
-	if err := b.build(ctx, dir, tag); err != nil {
+	if err := b.build(ctx, dir, tag, "SHIM_HASH="+workspace.ShimSourceHash()); err != nil {
 		return "", err
 	}
 	return tag, nil

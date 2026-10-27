@@ -341,6 +341,9 @@ import type {
 	SetEgressRuleData,
 	SetEgressRuleErrors,
 	SetEgressRuleResponses,
+	SetLimitsData,
+	SetLimitsErrors,
+	SetLimitsResponses,
 	SetProjectSecretData,
 	SetProjectSecretErrors,
 	SetProjectSecretResponses,
@@ -1164,7 +1167,7 @@ export const listKinds = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * The deployment's capacity caps (-1: no cap)
+ * The instance's capacity caps (-1: no cap)
  */
 export const getLimits = <ThrowOnError extends boolean = false>(
 	options?: Options<GetLimitsData, ThrowOnError>
@@ -1184,6 +1187,33 @@ export const getLimits = <ThrowOnError extends boolean = false>(
 		],
 		url: '/api/limits',
 		...options
+	});
+
+/**
+ * Set the instance's capacity caps (admin; -1: no cap)
+ */
+export const setLimits = <ThrowOnError extends boolean = false>(
+	options: Options<SetLimitsData, ThrowOnError>
+): RequestResult<SetLimitsResponses, SetLimitsErrors, ThrowOnError> =>
+	(options.client ?? client).put<SetLimitsResponses, SetLimitsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/limits',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**

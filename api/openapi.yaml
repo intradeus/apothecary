@@ -4149,7 +4149,48 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: 'The deployment''s capacity caps (-1: no cap)'
+      summary: 'The instance''s capacity caps (-1: no cap)'
+      tags:
+        - system
+    put:
+      operationId: setLimits
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitsInfo'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitsInfo'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Set the instance''s capacity caps (admin; -1: no cap)'
       tags:
         - system
   /api/me:

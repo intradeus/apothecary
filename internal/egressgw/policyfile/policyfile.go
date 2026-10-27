@@ -70,7 +70,29 @@ type DenialsFile struct {
 // gateway connects/disconnects run networks, so the gateway can attribute a
 // denial (by source subnet) to the right run.
 type Routes struct {
-	RunSubnets map[string]string `json:"run_subnets"` // run id -> CIDR of apo-egress-<run>
+	RunSubnets map[string]string `json:"run_subnets"` // run id -> source CIDR the run's traffic arrives from
+	// Peers are the runs that reach the gateway over a WireGuard link (the
+	// Kubernetes host): the gateway keeps exactly these peers on wg0, each
+	// allowed its one tunnel address — which is also its RunSubnets entry, so
+	// attribution is the same lookup and cannot be forged by a sandbox.
+	Peers map[string]Peer `json:"peers,omitempty"`
+}
+
+// Peer is one run's WireGuard identity on the gateway's wg0.
+type Peer struct {
+	PublicKey string `json:"public_key"` // base64 X25519, as `wg` prints it
+	IP        string `json:"ip"`         // the run's tunnel address (no prefix)
+}
+
+// RunRoute is the body of the control API's PUT /runs/{run}: attach a run.
+type RunRoute struct {
+	Subnet string `json:"subnet"`
+	Peer   *Peer  `json:"peer,omitempty"`
+}
+
+// BuildCacheInfo is the control API's GET /buildcache answer.
+type BuildCacheInfo struct {
+	Bytes int64 `json:"bytes"`
 }
 
 // AuditRecord is one aggregated egress fact for the audit trail: a (run, host,

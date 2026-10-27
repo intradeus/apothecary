@@ -892,6 +892,13 @@ export function fromSettings(s: Settings): Wire.Settings {
 }
 
 /** -1 on the wire is "no cap"; the UI reads that as null. */
+export function fromLimits(l: Limits): Wire.LimitsInfo {
+	return {
+		max_concurrent_runs: l.maxConcurrentRuns ?? -1,
+		max_environments: l.maxEnvironments ?? -1
+	};
+}
+
 export function toLimits(w: Wire.LimitsInfo): Limits {
 	return {
 		maxConcurrentRuns: w.max_concurrent_runs < 0 ? null : w.max_concurrent_runs,

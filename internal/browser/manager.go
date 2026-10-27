@@ -20,20 +20,14 @@
 package browser
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +56,31 @@ type Config struct {
 	// holds only node — but there is no reason to hold even that.
 	IdleAfter time.Duration
 	Log       *slog.Logger
+	// Host is where browsers run; nil = containers on the docker daemon (Run,
+	// Stream, RunsDir).
+	Host Host
+}
+
+// Host is where project browsers run: a container on the engine's docker
+// daemon (host_docker.go) or a pod on Kubernetes (host_k8s.go). The manager
+// keeps the policy — when to start, recreate, stop — and the host does it.
+type Host interface {
+	// Ensure brings the project's browser up from img: created when absent,
+	// started when stopped, recreated on another image only when replace.
+	Ensure(ctx context.Context, project, projectName, img string, replace bool) error
+	// Stop stops it (idle); it may be removed — Ensure brings it back.
+	Stop(ctx context.Context, project string) error
+	// Running lists the projects whose browser is running.
+	Running(ctx context.Context) ([]string, error)
+	// Inspect reports the browser's image and whether it runs ("" = absent).
+	Inspect(ctx context.Context, project string) (image string, running bool, err error)
+	// Listen opens one session's routing-proxy listener and returns the
+	// browser-session arguments that reach it from inside the browser.
+	Listen(ctx context.Context, project, sid string) (net.Listener, []string, error)
+	// Exec runs argv in the project's browser wired to the stream.
+	Exec(ctx context.Context, project string, argv []string, stdin io.Reader, stdout io.Writer) error
+	// Name is the browser's name, for the settings page.
+	Name(project string) string
 }
 
 // Manager runs every project's browser.
@@ -91,6 +110,9 @@ func New(cfg Config) *Manager {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
+	if cfg.Host == nil {
+		cfg.Host = &dockerHost{runsDir: cfg.RunsDir, run: cfg.Run, stream: cfg.Stream}
+	}
 	return &Manager{cfg: cfg, projects: map[string]*project{}}
 }
 
@@ -105,15 +127,6 @@ var _ ports.Browser = (*Manager)(nil)
 
 func containerName(project string) string { return "apo-browser-" + ports.ProjectHostKey(project) }
 
-// dir is the project's bind mount: the sessions' proxy sockets, at the same
-// path in the daemon and the container.
-func (m *Manager) dir(project string) string {
-	return filepath.Join(m.cfg.RunsDir, "browser", ports.ProjectHostKey(project))
-}
-
-// maxSockPath is sun_path's limit, less the terminating NUL.
-const maxSockPath = 107
-
 // playwrightArgs start one MCP server with its own in-memory Chromium. The
 // session adds --proxy-server (its relay's port, known only inside).
 var playwrightArgs = []string{"playwright-mcp", "--headless", "--isolated", "--browser", "chromium",
@@ -121,49 +134,6 @@ var playwrightArgs = []string{"playwright-mcp", "--headless", "--isolated", "--b
 
 // shimInImage is where the browser image carries the shim.
 const shimInImage = "/usr/local/bin/apothecary-shim"
-
-// --- docker -----------------------------------------------------------------
-
-func dockerRun(ctx context.Context, args []string) ([]byte, []byte, int, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return out.Bytes(), errb.Bytes(), ee.ExitCode(), nil
-	}
-	return out.Bytes(), errb.Bytes(), 0, err
-}
-
-func dockerStream(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdin, cmd.Stdout = stdin, stdout
-	errb := &tailBuffer{max: 4 << 10}
-	cmd.Stderr = errb
-	// The stdin copier blocks on the agent's side of the stream, which only
-	// the caller closes: do not wait on it once the exec is gone.
-	cmd.WaitDelay = 2 * time.Second
-	err := cmd.Run()
-	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
-		if msg := strings.TrimSpace(errb.String()); msg != "" {
-			return fmt.Errorf("%w: %s", err, msg)
-		}
-		return err
-	}
-	return nil
-}
-
-func (m *Manager) docker(ctx context.Context, args ...string) (string, error) {
-	out, errb, code, err := m.cfg.Run(ctx, args)
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("docker %s: exit %d: %s", args[0], code, strings.TrimSpace(string(errb)))
-	}
-	return strings.TrimSpace(string(out)), nil
-}
 
 // --- lifecycle ----------------------------------------------------------------
 
@@ -226,7 +196,7 @@ func (m *Manager) armIdleLocked(name string, p *project) {
 		if busy {
 			return
 		}
-		if _, err := m.docker(ctx, "stop", "-t", "5", containerName(name)); err != nil {
+		if err := m.cfg.Host.Stop(ctx, name); err != nil {
 			m.cfg.Log.Warn("browser: idle stop failed", "project", name, "err", err)
 			return
 		}
@@ -239,13 +209,12 @@ func (m *Manager) armIdleLocked(name string, p *project) {
 // a previous engine process left behind has no session to count it out. The
 // label it reads back is the project id.
 func (m *Manager) Start(ctx context.Context) {
-	out, err := m.docker(ctx, "ps", "--filter", "label=apothecary.browser=true",
-		"--format", `{{.Label "apothecary.project"}}`)
+	names, err := m.cfg.Host.Running(ctx)
 	if err != nil {
 		m.cfg.Log.Warn("browser: listing running browsers failed", "err", err)
 		return
 	}
-	for _, name := range strings.Fields(out) {
+	for _, name := range names {
 		p := m.project(name)
 		m.mu.Lock()
 		if p.sessions == 0 {
@@ -292,45 +261,10 @@ func (m *Manager) ensure(ctx context.Context, name, projectName string, p *proje
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	dir := m.dir(name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	c := containerName(name)
-	cur, err := m.docker(ctx, "ps", "-a", "--filter", "name=^"+c+"$", "--format", "{{.Image}}")
-	if err != nil {
-		return err
-	}
-	if cur != "" {
-		m.mu.Lock()
-		alone := p.sessions <= 1
-		m.mu.Unlock()
-		if cur == img || !alone {
-			_, err := m.docker(ctx, "start", c) // a no-op when running
-			return err
-		}
-		if _, err := m.docker(ctx, "rm", "-f", c); err != nil {
-			return err
-		}
-	}
-	args := []string{"run", "-d", "--name", c,
-		"--label", "apothecary=true",
-		"--label", "apothecary.project=" + name, // the id: what Start finds it by
-		"--label", "apothecary.browser=true",
-	}
-	if projectName != "" {
-		args = append(args, "--label", "apothecary.project.name="+projectName) // for a human's docker ps
-	}
-	_, err = m.docker(ctx, append(args,
-		// No network at all: the routing proxy is the only way out.
-		"--network", "none",
-		"--init",
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--shm-size", "1g",
-		"-v", dir+":"+dir,
-		img)...)
-	return err
+	m.mu.Lock()
+	alone := p.sessions <= 1
+	m.mu.Unlock()
+	return m.cfg.Host.Ensure(ctx, name, projectName, img, alone)
 }
 
 // --- sessions ---------------------------------------------------------------
@@ -351,27 +285,20 @@ func (m *Manager) Session(ctx context.Context, s ports.BrowserSession, stdio io.
 		return err
 	}
 	sid := newSessionID()
-	sock := filepath.Join(m.dir(s.Project), "s-"+sid+".sock")
-	if len(sock) > maxSockPath {
-		return fmt.Errorf("browser: socket path %s is longer than a unix socket allows (%d) — use a shorter runs dir", sock, maxSockPath)
-	}
-	_ = os.Remove(sock)
-	ln, err := net.Listen("unix", sock)
+	ln, reach, err := m.cfg.Host.Listen(ctx, s.Project, sid)
 	if err != nil {
-		return fmt.Errorf("browser: proxy socket: %w", err)
+		return err
 	}
-	defer os.Remove(sock)
-	// The container's user is whoever its image says; open the socket to it.
-	_ = os.Chmod(sock, 0o666)
+	defer ln.Close()
 	log := m.cfg.Log.With("project", s.Project, "run", s.Run, "session", sid)
 	srv := &http.Server{Handler: newProxy(Dial(s.Dial), log), ReadHeaderTimeout: 30 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	log.Info("browser: session started")
-	args := append([]string{"exec", "-i", containerName(s.Project),
-		shimInImage, "browser-session", "--sock", sock, "--"}, playwrightArgs...)
-	err = m.cfg.Stream(ctx, args, stdio, stdio)
+	argv := append(append([]string{shimInImage, "browser-session"}, reach...), "--")
+	argv = append(argv, playwrightArgs...)
+	err = m.cfg.Host.Exec(ctx, s.Project, argv, stdio, stdio)
 	log.Info("browser: session ended", "err", err)
 	if err != nil && ctx.Err() == nil {
 		return fmt.Errorf("browser session: %w", err)
@@ -382,7 +309,7 @@ func (m *Manager) Session(ctx context.Context, s ports.BrowserSession, stdio io.
 // Status is the project's browser as the settings page shows it (name is
 // the project id).
 func (m *Manager) Status(ctx context.Context, name string) (ports.BrowserStatus, error) {
-	st := ports.BrowserStatus{Container: containerName(name), State: "absent"}
+	st := ports.BrowserStatus{Container: m.cfg.Host.Name(name), State: "absent"}
 	if m.cfg.Tag != nil {
 		st.Current = m.cfg.Tag()
 	}
@@ -391,16 +318,12 @@ func (m *Manager) Status(ctx context.Context, name string) (ports.BrowserStatus,
 		st.Sessions = p.sessions
 	}
 	m.mu.Unlock()
-	out, err := m.docker(ctx, "ps", "-a", "--filter", "name=^"+st.Container+"$", "--format", "{{.Image}}\t{{.State}}")
-	if err != nil {
+	img, running, err := m.cfg.Host.Inspect(ctx, name)
+	if err != nil || img == "" {
 		return st, err
 	}
-	if out == "" {
-		return st, nil
-	}
-	img, state, _ := strings.Cut(out, "\t")
 	st.Image = img
-	if state == "running" {
+	if running {
 		st.State = "running"
 	} else {
 		st.State = "stopped"

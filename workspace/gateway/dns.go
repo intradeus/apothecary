@@ -1,11 +1,31 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
+	"strings"
 	"time"
 )
+
+// resolvConfUpstream is the first nameserver of a resolv.conf, as host:53. On
+// Kubernetes that is the cluster DNS, so a run's lookups of cluster names (the
+// engine's Service) resolve too — reaching them is still the filter's call.
+func resolvConfUpstream(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == "nameserver" && net.ParseIP(f[1]) != nil {
+			return net.JoinHostPort(f[1], "53"), nil
+		}
+	}
+	return "", fmt.Errorf("%s has no nameserver", path)
+}
 
 // serveDNS runs a minimal UDP+TCP :53 forwarder to upstream. DNS is deliberately
 // NOT a filtering point (a resolver/enforcer parser-differential is the classic

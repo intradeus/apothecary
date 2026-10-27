@@ -37,7 +37,7 @@ func TestRunEnvCheckDerivedCatalog(t *testing.T) {
 
 	var steps []CheckStep
 	failed := RunEnvCheck(context.Background(), h.res, "envck-test",
-		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", EnginePort: 9},
+		EnvCheckOptions{EngineURL: "http://127.0.0.1:9"},
 		func(s CheckStep) { steps = append(steps, s) })
 	if failed != 0 {
 		t.Fatalf("failed = %d, steps = %+v", failed, steps)
@@ -76,7 +76,7 @@ func TestRunEnvCheckDenyModeSkipsEgressDeny(t *testing.T) {
 
 	var steps []CheckStep
 	failed := RunEnvCheck(context.Background(), h.res, "envck-deny",
-		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", EnginePort: 9},
+		EnvCheckOptions{EngineURL: "http://127.0.0.1:9"},
 		func(s CheckStep) { steps = append(steps, s) })
 	if failed != 0 {
 		t.Fatalf("failed = %d, steps = %+v", failed, steps)
@@ -102,7 +102,7 @@ func TestRunEnvCheckNamesInducedFailure(t *testing.T) {
 
 	var steps []CheckStep
 	failed := RunEnvCheck(context.Background(), h.res, "envck-bad",
-		EnvCheckOptions{EnginePort: 9}, func(s CheckStep) { steps = append(steps, s) })
+		EnvCheckOptions{}, func(s CheckStep) { steps = append(steps, s) })
 	if failed != 1 {
 		t.Fatalf("failed = %d", failed)
 	}
@@ -149,7 +149,7 @@ func TestEnvCheckInstallsTheHarnessLikeARun(t *testing.T) {
 	h.res.HarnessInstall = []ports.HarnessInstall{{Binary: "opencode", Commands: []string{"npm install -g opencode-ai"}}}
 	var prov CheckStep
 	RunEnvCheck(context.Background(), h.res, "envck-hi",
-		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", EnginePort: 9, Keep: true},
+		EnvCheckOptions{EngineURL: "http://127.0.0.1:9", Keep: true},
 		func(s CheckStep) {
 			if s.ID == "provision" {
 				prov = s

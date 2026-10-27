@@ -1,0 +1,79 @@
+# Apothecary on Kubernetes. The chart deploys the ENGINE (and optionally a
+# Postgres); the engine itself creates every workspace object at runtime —
+# one sandbox pod per run, one egress gateway and one browser per project —
+# in the workspaces namespace.
+
+image:
+  # Five images per release, all under this prefix: apothecaryd, sandbox,
+  # shim, egress-gw, browser (see deploy/images.sh).
+  repository: ghcr.io/intradeus/apothecary
+  tag: ""            # default: the chart's appVersion
+  pullPolicy: IfNotPresent
+  # Per-image overrides (full references), e.g. a mirror.
+  overrides:
+    apothecaryd: ""
+    sandbox: ""
+    shim: ""
+    gateway: ""
+    browser: ""
+imagePullSecrets: []
+
+# Secrets: the master key (`apothecaryd keygen`) and the Postgres DSN. Either
+# set them here, or point existingSecret at a Secret holding the keys
+# APOTHECARY_MASTER_KEY and APOTHECARY_POSTGRES_DSN.
+masterKey: ""
+existingSecret: ""
+
+postgres:
+  # A single-instance Postgres in the release's namespace. For production,
+  # disable it and set externalDSN (or existingSecret).
+  enabled: true
+  image: postgres:16
+  user: apothecary
+  password: ""        # required when enabled
+  database: apothecary
+  storage: 10Gi
+  storageClass: ""
+externalDSN: ""
+
+workspaces:
+  # Where sandboxes, gateways and browsers live. Sandboxes are privileged
+  # Docker-in-Docker pods unless a sysbox runtime class is used, so the
+  # namespace must admit privileged pods.
+  namespace: apothecary-workspaces
+  createNamespace: true
+  podSecurity: privileged
+  # Destinations no workspace may reach through its gateway: the cluster's
+  # pod and service ranges and link-local metadata. The defaults are k3s's.
+  protectCIDRs: "10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"
+  clusterDomain: cluster.local
+
+engine:
+  replicas: 1          # one engine per workspaces namespace
+  runsDir:
+    size: 20Gi
+    storageClass: ""
+  portAutoExpose: false
+  otelEndpoint: ""
+  extraEnv: {}
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: apothecary.example.com
+  # Exposed workspace ports are served at <port>-<run>.<appsDomain> by the
+  # engine itself; point a wildcard record (and certificate) at the ingress.
+  appsDomain: ""
+  # The port browsers use when it is not the scheme's default (k3d: 8090).
+  appsPort: ""
+  scheme: https
+  tls: []
+  #  - secretName: apothecary-tls
+  #    hosts: [apothecary.example.com, "*.apps.example.com"]

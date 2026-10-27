@@ -2455,6 +2455,45 @@ export type GetLimitsResponses = {
 
 export type GetLimitsResponse = GetLimitsResponses[keyof GetLimitsResponses];
 
+export type SetLimitsData = {
+	body: LimitsInfo;
+	path?: never;
+	query?: never;
+	url: '/api/limits';
+};
+
+export type SetLimitsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SetLimitsResponses = {
+	/**
+	 * OK
+	 */
+	200: LimitsInfo;
+};
+
+export type SetLimitsResponse = SetLimitsResponses[keyof SetLimitsResponses];
+
 export type GetMeData = {
 	body?: never;
 	path?: never;

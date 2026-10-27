@@ -1,6 +1,9 @@
 # --- secrets ---------------------------------------------------------------
 # deployment secrets (APOTHECARY_MASTER_KEY, PG password) — never committed
 deploy/.env
+# local k3d cluster: its kubeconfig and the engine's master key
+deploy/.k3d-kubeconfig
+deploy/.k3d-master-key
 
 # --- Go --------------------------------------------------------------------
 # locally built binaries go to build/ (`task build`; the image builds its own).

@@ -1034,6 +1034,15 @@ type Sidecar interface {
 	Sidecar(ctx context.Context, env EnvID) (PortConn, error)
 }
 
+// EngineURLProvider is an OPTIONAL EnvProvisioner capability: the URL this
+// env's workspace reaches the engine at (written into run.env as
+// APOTHECARY_ENGINE_URL). A provisioner whose workspaces are not on the
+// engine's machine supplies its own — a Kubernetes pod reaches the engine's
+// Service, not a loopback relay. Absent ⇒ the engine's configured URL.
+type EngineURLProvider interface {
+	EngineURL(env EnvID) string
+}
+
 type RepoHost interface {
 	// CheckAccess verifies token validity, project reachability and scopes (§1 preflight).
 	CheckAccess(ctx context.Context, repo RepoRef) error

@@ -1,0 +1,18 @@
+# The engine's runs dir: uploaded files and snapshots, exec logs, and its
+# per-run markers. Must survive engine restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: apothecaryd-runs
+  labels:
+    {{- include "apothecary.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.engine.runsDir.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.engine.runsDir.size }}

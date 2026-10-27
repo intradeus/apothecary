@@ -78,3 +78,46 @@ flowchart TB
     mirror -.->|"cache miss → registry-1.docker.io<br/>gateway-originated: NOT SNI-filtered"| internet
 
 ```
+## On Kubernetes
+
+The same gateway daemon; runs reach it over a WireGuard peer instead of a docker network, and the engine drives everything with kubectl.
+
+```mermaid
+flowchart TB
+    human["👤 Human / CPUI browser"]
+    ingress["Ingress<br/>UI host + *.apps host"]
+
+    subgraph ENG["namespace apothecary"]
+        apod["apothecaryd (Deployment)<br/>API · engine · kubectl<br/>app-host router · browser session mux :7071"]
+        pg[("Postgres")]
+        runs[("PVC runs dir<br/>blobs · exec logs · markers")]
+    end
+
+    subgraph WS["namespace apothecary-workspaces (PSA privileged)"]
+        subgraph GW["apo-gw-&lt;project&gt; (Deployment, NET_ADMIN)"]
+            wg0["wg0 10.90.0.1/16<br/>one peer per run, /32 each"]
+            filt["nft REDIRECT → SNI/Host filter<br/>protect-cidrs drop · DNS · mirror :5000 · build cache :5001"]
+            ctl["control API :9041<br/>policy · routes · denials · audit"]
+        end
+        subgraph SBX["sandbox pod &lt;run&gt; (privileged or sysbox)"]
+            seed["init: shim-seed"]
+            wgc["sidecar: wg (apo-wg-up)<br/>default route → wg0"]
+            relay["sidecar: relay :7070<br/>APO1 token socket → shim dir"]
+            dind["sandbox: dockerd<br/>devcontainer + compose siblings"]
+        end
+        br["apo-browser-&lt;project&gt; pod"]
+    end
+
+    internet(["🌐 Internet"])
+
+    human --> ingress --> apod
+    apod <--> pg
+    apod --- runs
+    apod -->|"kubectl apply / exec"| SBX
+    apod -->|"control API (Service)"| ctl
+    apod -->|"dial-in: pod IP :7070"| relay
+    dind -->|"APOTHECARY_ENGINE_URL (Service)"| apod
+    wgc -->|"UDP 51820 (only egress the policy allows)"| wg0
+    wg0 --> filt -->|"allow"| internet
+    br -->|":7071 only"| apod
+```

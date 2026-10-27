@@ -1,0 +1,46 @@
+#!/bin/sh
+# The run's WireGuard link to its project's egress gateway — set up once, then
+# watched. Runs as a native sidecar (privileged, or NET_ADMIN under sysbox)
+# before the sandbox's dockerd starts, in the pod's shared network namespace.
+#
+#   /secrets/wg/{wg-private-key,wg-ip,gw-public-key}   the run's identity
+#   GW_ENDPOINT   the gateway Service's ClusterIP:51820
+#   GW_SVC_IP     that ClusterIP alone
+#   ENGINE_IP     the engine Service's ClusterIP (or an outside engine's IP)
+#
+# Afterwards the pod's default route is wg0: everything the sandbox and every
+# container in it sends goes through the gateway. Two /32 routes stay on eth0:
+# the gateway's endpoint (else the tunnel's own packets would loop into wg0)
+# and the engine. The CNI's pod-network routes stay too (replies to the
+# engine's dial-in); the network policy is what keeps the pod from using them.
+set -eu
+mkdir -p /run/apo
+if [ ! -s /run/apo/orig-gw ]; then
+  ip -4 route show default | awk '/via/ {print $3; exit}' > /run/apo/orig-gw
+fi
+ORIG_GW=$(cat /run/apo/orig-gw)
+[ -n "$ORIG_GW" ] || { echo "apo-wg-up: no default gateway on eth0" >&2; exit 1; }
+MTU=$(( $(cat /sys/class/net/eth0/mtu) - 60 ))   # outer IPv4 20 + UDP 8 + WireGuard 32
+
+sysctl -qw net.ipv6.conf.all.disable_ipv6=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0 net.ipv4.conf.eth0.rp_filter=0
+ip link show wg0 >/dev/null 2>&1 || ip link add wg0 type wireguard
+wg set wg0 private-key /secrets/wg/wg-private-key \
+  peer "$(cat /secrets/wg/gw-public-key)" endpoint "$GW_ENDPOINT" allowed-ips 0.0.0.0/0 persistent-keepalive 25
+ip address replace "$(cat /secrets/wg/wg-ip)/32" dev wg0
+ip link set wg0 mtu "$MTU" up
+ip route replace "$GW_SVC_IP/32" via "$ORIG_GW" dev eth0
+ip route replace "$ENGINE_IP/32" via "$ORIG_GW" dev eth0
+ip route replace default dev wg0
+echo "$MTU" > /run/apo/mtu
+touch /run/apo/wg-ready
+echo "apo-wg-up: wg0 $(cat /secrets/wg/wg-ip) → $GW_ENDPOINT (mtu $MTU)"
+
+# Watchdog: a replaced gateway pod leaves a stale UDP conntrack entry behind
+# the Service IP; a new source port is a new flow, freshly translated.
+while sleep 60; do
+  hs=$(wg show wg0 latest-handshakes | awk '{print $2; exit}')
+  if [ $(( $(date +%s) - ${hs:-0} )) -gt 180 ]; then
+    echo "apo-wg-up: no handshake for 3m; rebinding" >&2
+    wg set wg0 listen-port 0 || true
+  fi
+done
