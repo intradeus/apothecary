@@ -9,6 +9,7 @@
 // index.ts, because a request body is only ever built at one call site.
 
 import type * as Wire from './generated/types.gen';
+import type { AuthStatus, Limits, Me, Token, User } from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
 import { answerKindOf, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
 import type {
@@ -874,8 +875,6 @@ export function toEgressPolicy(w: Wire.EgressPolicy): EgressPolicy {
 
 export function toSettings(w: Wire.Settings): Settings {
 	return {
-		maxConcurrentRuns: w.max_concurrent_runs ?? 0,
-		maxEnvironments: w.max_environments ?? 0,
 		destroyCompletedAfter: w.destroy_completed_after ?? '',
 		destroyAbandoned: w.destroy_abandoned ?? '',
 		orphanUploadsAfter: w.orphan_uploads_after ?? '',
@@ -885,12 +884,52 @@ export function toSettings(w: Wire.Settings): Settings {
 
 export function fromSettings(s: Settings): Wire.Settings {
 	return {
-		max_concurrent_runs: s.maxConcurrentRuns,
-		max_environments: s.maxEnvironments,
 		destroy_completed_after: s.destroyCompletedAfter,
 		destroy_abandoned: s.destroyAbandoned,
 		orphan_uploads_after: s.orphanUploadsAfter,
 		snapshots_after: s.snapshotsAfter
+	};
+}
+
+/** -1 on the wire is "no cap"; the UI reads that as null. */
+export function toLimits(w: Wire.LimitsInfo): Limits {
+	return {
+		maxConcurrentRuns: w.max_concurrent_runs < 0 ? null : w.max_concurrent_runs,
+		maxEnvironments: w.max_environments < 0 ? null : w.max_environments
+	};
+}
+
+// --- accounts ----------------------------------------------------------------
+
+export function toUser(w: Wire.User): User {
+	return {
+		id: w.id,
+		handle: w.handle,
+		email: w.email,
+		name: w.name,
+		admin: w.admin,
+		disabled: !!w.disabled_at,
+		lastSeenAt: w.last_seen_at || undefined,
+		createdAt: w.created_at
+	};
+}
+
+export function toMe(w: Wire.Me): Me {
+	return { user: toUser(w.user), methods: w.methods ?? [] };
+}
+
+export function toAuthStatus(w: Wire.AuthStatus): AuthStatus {
+	return { setupRequired: w.setup_required, methods: w.methods ?? [] };
+}
+
+export function toToken(w: Wire.Token): Token {
+	return {
+		id: w.id,
+		name: w.name,
+		prefix: w.prefix,
+		createdAt: w.created_at,
+		lastUsedAt: w.last_used_at || undefined,
+		expiresAt: w.expires_at || undefined
 	};
 }
 

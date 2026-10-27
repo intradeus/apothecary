@@ -1,7 +1,8 @@
 <script lang="ts">
-	// The sidebar (DESIGN §5): brand, guild switcher, search, guild-scoped nav,
-	// workshops (the current one expanded into its live runs), capacity and
-	// the user row with the theme toggle. Collapses to a 60px rail.
+	// The sidebar (DESIGN §5): brand, search, nav, workshops (the current one
+	// expanded into its live runs), capacity and the user row — whose menu
+	// holds the account page, the admin's users page and sign-out. Collapses
+	// to a 60px rail.
 	//
 	// Collapsing is one surface changing shape, not a swap: the aside's width
 	// rides the spring while the full and rail contents cross-fade. Each
@@ -10,13 +11,14 @@
 	// Selection slides: one bead springs between nav items and workshops.
 	import { fade } from 'svelte/transition';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { session } from '$lib/session.svelte';
 	import { i18n, LOCALES, t, type Locale } from '$lib/i18n/index.svelte';
 	import { NAV, type NavItem } from '$lib/nav';
-	import { currentGuild, GUILDS, ME, to } from '$lib/guild';
+	import { initialsOf, to } from '$lib/urls';
 	import { shortId, stateLabel } from '$lib/format';
-	import GuildAvatar from '$lib/ui/GuildAvatar.svelte';
 	import UserAvatar from '$lib/ui/UserAvatar.svelte';
 	import Logo from '$lib/ui/Logo.svelte';
 	import Meter from '$lib/ui/Meter.svelte';
@@ -41,12 +43,14 @@
 	const localeNames = localeIds.map((id) => ({ value: id, label: LOCALES[id].label }));
 
 	const rail = $derived(prefs.collapsed && !drawer);
-	const guild = $derived(currentGuild());
 	const xfade = { duration: ms('--dur-fade', 160) };
 
-	let orgOpen = $state(false);
-	let orgBtnFull = $state<HTMLElement | null>(null);
-	let orgBtnRail = $state<HTMLElement | null>(null);
+	const user = $derived(session.user);
+	const initials = $derived(initialsOf(user?.name ?? user?.handle ?? '?'));
+
+	let menuOpen = $state(false);
+	let userBtnFull = $state<HTMLElement | null>(null);
+	let userBtnRail = $state<HTMLElement | null>(null);
 
 	const path = $derived(page.url.pathname);
 	/** A destination's count: pending pings on the inbox, live runs on runs. */
@@ -69,6 +73,16 @@
 			return lb - la || a.name.localeCompare(b.name);
 		})
 	);
+
+	function open(href: string) {
+		menuOpen = false;
+		onnavigate?.();
+		void goto(href);
+	}
+	async function signOut() {
+		menuOpen = false;
+		await session.logout();
+	}
 </script>
 
 <aside class="sb lg" class:rail class:drawer>
@@ -81,15 +95,6 @@
 				aria-label={t('shell.sidebar.expand')}
 				onclick={() => prefs.toggleCollapsed()}>{I.expand}</button
 			>
-			<button
-				bind:this={orgBtnRail}
-				class="btn-sel rguild"
-				title={guild.name}
-				aria-label={t('shell.sidebar.switchGuild')}
-				onclick={() => (orgOpen = !orgOpen)}
-			>
-				<GuildAvatar {guild} size={24} />
-			</button>
 			<button
 				class="btn-icon rb"
 				title={t('shell.sidebar.searchTitle')}
@@ -149,7 +154,15 @@
 				aria-label={t('shell.sidebar.changeTheme')}
 				onclick={() => prefs.cycleTheme()}>{prefs.themeDef.icon}</button
 			>
-			<UserAvatar name={ME.name} initials={ME.initials} />
+			<button
+				bind:this={userBtnRail}
+				class="btn-sel ruser"
+				title={user?.name}
+				aria-label={t('shell.sidebar.userMenu')}
+				onclick={() => (menuOpen = !menuOpen)}
+			>
+				<UserAvatar name={user?.name ?? ''} {initials} />
+			</button>
 		</div>
 	{:else}
 		<div class="layer fl" transition:fade={xfade}>
@@ -168,17 +181,6 @@
 					>
 				{/if}
 			</div>
-
-			<button bind:this={orgBtnFull} class="btn-sel guild" onclick={() => (orgOpen = !orgOpen)}>
-				<GuildAvatar {guild} size={26} />
-				<span class="gt">
-					<span class="gn ell">{guild.name}</span>
-					<span class="gs ell"
-						>{t('shell.sidebar.workshopCount', { count: fleet.projects.length })}</span
-					>
-				</span>
-				<span class="sw">{I.switcher}</span>
-			</button>
 
 			<button class="search" onclick={onsearch}>
 				<span>{t('shell.sidebar.searchPlaceholder')}</span><span class="kbd">⌘K</span>
@@ -269,11 +271,21 @@
 			</div>
 
 			<div class="user">
-				<UserAvatar name={ME.name} initials={ME.initials} presence />
-				<span class="ut">
-					<span class="un">{ME.name}</span>
-					<span class="ur ell">{guild.role} · {guild.name}</span>
-				</span>
+				<button
+					bind:this={userBtnFull}
+					class="btn-sel who"
+					aria-label={t('shell.sidebar.userMenu')}
+					onclick={() => (menuOpen = !menuOpen)}
+				>
+					<UserAvatar name={user?.name ?? ''} {initials} presence />
+					<span class="ut">
+						<span class="un ell">{user?.name}</span>
+						<span class="ur ell"
+							>@{user?.handle}{#if user?.admin} · {t('shell.sidebar.admin')}{/if}</span
+						>
+					</span>
+					<span class="sw">{I.switcher}</span>
+				</button>
 				{#if multiLocale}
 					<span class="lang">
 						<Select
@@ -298,53 +310,26 @@
 </aside>
 
 <Popover
-	anchor={rail ? orgBtnRail : orgBtnFull}
-	bind:open={orgOpen}
-	at={{ left: rail ? 72 : 248, top: 56 }}
-	width={312}
-	title={t('shell.sidebar.guilds')}
-	legend="{I.runs} {t('shell.sidebar.legendLive')}  {I.inbox} {t('shell.sidebar.legendPings')}"
+	anchor={rail ? userBtnRail : userBtnFull}
+	bind:open={menuOpen}
+	placement="above-start"
+	flip
+	width={240}
+	title={user?.name}
+	legend="@{user?.handle}"
 >
-	{#if GUILDS.length > 1}
-		<a class="mi" href={to.allGuilds()} onclick={() => (orgOpen = false)}>
-			<span class="alltile">{I.desk}</span>
-			<span class="col"
-				><span>{t('shell.sidebar.allGuilds')}</span><span class="sub"
-					>{t('shell.sidebar.allGuildsSub')}</span
-				></span
-			>
-		</a>
-		<div class="menu-div"></div>
+	<button class="mi" onclick={() => open(to.account())}>
+		<span class="ic">{I.members}</span><span>{t('shell.sidebar.account')}</span>
+	</button>
+	{#if session.admin}
+		<button class="mi" onclick={() => open(to.users())}>
+			<span class="ic">{I.members}</span><span>{t('shell.sidebar.users')}</span>
+		</button>
 	{/if}
-	{#each GUILDS as g (g.slug)}
-		<a
-			class="mi"
-			class:on={g.slug === guild.slug}
-			href={to.desk(g.slug)}
-			onclick={() => (orgOpen = false)}
-		>
-			<GuildAvatar guild={g} size={26} />
-			<span class="col"
-				><span>{g.name}</span><span class="sub"
-					>{t('shell.sidebar.guildSub', {
-						role: g.role,
-						workshops: t('shell.sidebar.workshopCount', { count: fleet.projects.length })
-					})}</span
-				></span
-			>
-			<span class="mono hue-az live-n">{fleet.active.length || ''}</span>
-			{#if fleet.pending.length}<span class="count hot">{fleet.pending.length}</span>{/if}
-		</a>
-	{/each}
 	<div class="menu-div"></div>
-	<div class="row nowrap foot">
-		<button class="btn-ghost btn-sm" disabled title={t('shell.sidebar.orgSoon')}
-			>{t('shell.sidebar.foundGuild')}</button
-		>
-		<button class="btn-ghost btn-sm" disabled title={t('shell.sidebar.orgSoon')}
-			>{t('shell.sidebar.joinGuild')}</button
-		>
-	</div>
+	<button class="mi" onclick={signOut}>
+		<span class="ic">{I.back}</span><span>{t('shell.sidebar.signOut')}</span>
+	</button>
 </Popover>
 
 <style>
@@ -413,7 +398,7 @@
 		background: var(--railActive);
 		color: var(--railTx);
 	}
-	.rguild {
+	.ruser {
 		width: 40px;
 		height: 38px;
 		padding: 0;
@@ -495,37 +480,6 @@
 		font-style: italic;
 		font-size: var(--fs-body);
 		color: var(--railMut);
-	}
-
-	.guild {
-		flex: none;
-		display: flex;
-		justify-content: flex-start;
-		gap: 9px;
-		margin: 0 10px 8px;
-		padding: 7px 9px;
-		text-align: left;
-		font-weight: 400;
-	}
-	.gt {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		line-height: 1.2;
-	}
-	.gn {
-		font-weight: 600;
-		font-size: var(--fs-body);
-	}
-	.gs {
-		font-size: var(--fs-meta);
-		color: var(--railMut);
-	}
-	.sw {
-		flex: none;
-		color: var(--railMut);
-		font-size: var(--fs-meta);
 	}
 
 	/* The command bar: a field in rail ink that opens the palette. */
@@ -677,10 +631,21 @@
 	.user {
 		flex: none;
 		border-top: 1px solid var(--railLn);
-		padding: 10px 10px 10px 12px;
+		padding: 8px 10px 10px 8px;
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
+	}
+	/* The user row is the menu's trigger: avatar, name, handle. */
+	.who {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		justify-content: flex-start;
+		gap: 9px;
+		padding: 5px 7px;
+		text-align: left;
+		font-weight: 400;
 	}
 	.ut {
 		flex: 1;
@@ -697,6 +662,11 @@
 		font-size: var(--fs-meta);
 		color: var(--railMut);
 	}
+	.sw {
+		flex: none;
+		color: var(--railMut);
+		font-size: var(--fs-meta);
+	}
 	.lang {
 		display: inline-flex;
 		max-width: 96px;
@@ -708,27 +678,13 @@
 	.theme {
 		font-size: var(--fs-meta);
 	}
-
-	.alltile {
-		flex: none;
-		width: 26px;
-		height: 26px;
-		border-radius: var(--r-tab);
-		border: 1px dashed var(--ln2);
+	/* Menu rows: base .mi is a link row; a button needs the same reset. */
+	button.mi {
+		width: 100%;
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		color: var(--mut);
-	}
-	.live-n {
-		font-size: var(--fs-id);
-	}
-	/* A two-line menu row: base .col's gap is for page columns. */
-	.col {
-		gap: 0;
-	}
-	.foot {
-		padding: 2px 4px;
-		gap: 4px;
+		gap: 10px;
+		text-align: left;
+		font-weight: 400;
 	}
 </style>

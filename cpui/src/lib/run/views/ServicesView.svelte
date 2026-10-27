@@ -9,7 +9,7 @@
 	// and refetched by the store on every service_* event of the stream.
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs } from '$lib/format';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';

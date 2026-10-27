@@ -8,7 +8,7 @@
 	import { ago, fmtAbs, fmtClock } from '$lib/format';
 	import { answerMeta, isAgentPing, isDocumentPing } from '$lib/ping';
 	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import { I } from '$lib/ui/icons';
 	import type { RunStore } from '../store.svelte';

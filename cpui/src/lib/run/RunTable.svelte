@@ -7,7 +7,7 @@
 	// A dense runs table (DESIGN 4.13): one grid per row so long titles
 	// ellipsise, the whole row opens the run (a stretched title link), the MR
 	// link sits above it. Columns are picked per page.
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { t } from '$lib/i18n/index.svelte';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';

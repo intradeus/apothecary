@@ -27,7 +27,7 @@ func TestSaveLandsUnclaimedAndDedups(t *testing.T) {
 	att, _, _, blobs := newStores(t)
 	ctx := context.Background()
 
-	a1, err := att.Save(ctx, "spec.md", "text/markdown", strings.NewReader("hello"))
+	a1, err := att.Save(ctx, "", "spec.md", "text/markdown", strings.NewReader("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestSaveLandsUnclaimedAndDedups(t *testing.T) {
 		t.Fatalf("a1 = %+v", a1)
 	}
 	// Identical content from a second upload: new row, SAME blob.
-	a2, err := att.Save(ctx, "copy.md", "text/markdown", strings.NewReader("hello"))
+	a2, err := att.Save(ctx, "", "copy.md", "text/markdown", strings.NewReader("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,11 +58,11 @@ func TestSavePolicies(t *testing.T) {
 	att, _, _, _ := newStores(t)
 	ctx := context.Background()
 
-	if _, err := att.Save(ctx, "big.txt", "text/plain",
+	if _, err := att.Save(ctx, "", "big.txt", "text/plain",
 		strings.NewReader(strings.Repeat("x", 1<<20+1))); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("oversize err = %v, want ErrTooLarge", err)
 	}
-	if _, err := att.Save(ctx, "app.zip", "application/zip",
+	if _, err := att.Save(ctx, "", "app.zip", "application/zip",
 		strings.NewReader("PK...")); !errors.Is(err, ErrMimeType) {
 		t.Errorf("off-list err = %v, want ErrMimeType", err)
 	}
@@ -72,7 +72,7 @@ func TestClaimIsOneShot(t *testing.T) {
 	att, _, _, _ := newStores(t)
 	ctx := context.Background()
 
-	a, err := att.Save(ctx, "spec.md", "text/markdown", strings.NewReader("hi"))
+	a, err := att.Save(ctx, "", "spec.md", "text/markdown", strings.NewReader("hi"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestClaimIsOneShot(t *testing.T) {
 	}
 
 	// Answer claim carries run+ping together.
-	b, _ := att.Save(ctx, "note.txt", "text/plain", strings.NewReader("n"))
+	b, _ := att.Save(ctx, "", "note.txt", "text/plain", strings.NewReader("n"))
 	if err := att.ClaimForRun(ctx, []string{b.ID}, "run-1", "ping-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestDeleteForTicketAndSweepReclaimBlobs(t *testing.T) {
 	att, _, mem, blobs := newStores(t)
 	ctx := context.Background()
 
-	a, _ := att.Save(ctx, "doc.md", "text/markdown", strings.NewReader("ticket file"))
+	a, _ := att.Save(ctx, "", "doc.md", "text/markdown", strings.NewReader("ticket file"))
 	if err := att.ClaimForTicket(ctx, []string{a.ID}, "tick-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -134,12 +134,12 @@ func TestSweepKeepsReferencedAndFreshBlobs(t *testing.T) {
 	att, _, mem, blobs := newStores(t)
 	ctx := context.Background()
 
-	kept, _ := att.Save(ctx, "kept.md", "text/markdown", strings.NewReader("kept"))
+	kept, _ := att.Save(ctx, "", "kept.md", "text/markdown", strings.NewReader("kept"))
 	_ = att.ClaimForTicket(ctx, []string{kept.ID}, "tick-1")
 
 	// An unreferenced blob (rejected upload) — but FRESH: the grace window
 	// protects in-flight writes, so the first sweep must leave it.
-	if _, err := att.Save(ctx, "app.zip", "application/zip", strings.NewReader("zipzip")); !errors.Is(err, ErrMimeType) {
+	if _, err := att.Save(ctx, "", "app.zip", "application/zip", strings.NewReader("zipzip")); !errors.Is(err, ErrMimeType) {
 		t.Fatal("setup: want a rejected upload leaving a stray blob")
 	}
 	if removed, _ := blobs.Sweep(liveSHAs(mem)); removed != 0 {
@@ -160,13 +160,13 @@ func TestGCOrphans(t *testing.T) {
 	att, _, _, _ := newStores(t)
 	ctx := context.Background()
 
-	old, _ := att.Save(ctx, "old.txt", "text/plain", strings.NewReader("old"))
-	claimed, _ := att.Save(ctx, "claimed.txt", "text/plain", strings.NewReader("c"))
+	old, _ := att.Save(ctx, "", "old.txt", "text/plain", strings.NewReader("old"))
+	claimed, _ := att.Save(ctx, "", "claimed.txt", "text/plain", strings.NewReader("c"))
 	_ = att.ClaimForRun(ctx, []string{claimed.ID}, "run-1", "")
 
 	// Age both rows, then GC: only the unclaimed one goes.
 	att.now = func() time.Time { return time.Now().Add(48 * time.Hour) }
-	n, err := att.GCOrphans(ctx, 24*time.Hour)
+	n, err := att.GCOrphans(ctx, "", 24*time.Hour)
 	if err != nil || n != 1 {
 		t.Fatalf("gc = %d (%v), want 1", n, err)
 	}
@@ -182,7 +182,7 @@ func TestOpenVerifiesContent(t *testing.T) {
 	att, _, _, blobs := newStores(t)
 	ctx := context.Background()
 
-	a, _ := att.Save(ctx, "doc.txt", "text/plain", strings.NewReader("integrity"))
+	a, _ := att.Save(ctx, "", "doc.txt", "text/plain", strings.NewReader("integrity"))
 	f, got, err := att.Open(ctx, a.ID)
 	if err != nil {
 		t.Fatal(err)

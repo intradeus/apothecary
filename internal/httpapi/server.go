@@ -1,6 +1,7 @@
 // Package httpapi is the engine's HTTP surface (DESIGN.md §8): stdlib
-// net/http, hand-rolled SSE. No auth except the ping endpoints, which
-// require the per-run bearer token (localhost mode, §8/§15).
+// net/http, hand-rolled SSE. Every route is reached as a signed-in user
+// unless its table entry says otherwise (auth.go): the instance admin, the
+// in-workspace shim's per-run bearer token, or anyone for sign-in itself.
 package httpapi
 
 import (
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/auth"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
@@ -58,9 +60,17 @@ type Server struct {
 	// CPUIDir, when set, is served at / with an SPA fallback to index.html
 	// (the built SvelteKit bundle; the CPUI talks only to this API).
 	CPUIDir string
+	// Auth is who a request is (TODO 25): sessions, tokens, accounts. nil
+	// answers every user route 503 — a server without it is misconfigured,
+	// never open.
+	Auth *auth.Service
+	// Limits are the deployment's capacity caps, reported to the UI.
+	Limits engine.Limits
 	// HoldTimeout is the ping long-poll hold (§8: 55 s).
 	HoldTimeout time.Duration
 	Log         *slog.Logger
+
+	logins loginLimiter
 }
 
 func New(e *engine.Engine, store event.Store, reg *channels.Registry, runsDir string) *Server {
@@ -133,7 +143,8 @@ func (s *Server) authPing(w http.ResponseWriter, r *http.Request, runID string) 
 // M15): pgstore in production, EventPingStore over any event.Store in
 // tests/tools.
 type PingStore interface {
-	ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error)
+	// ListPings is one user's pings ("" = everyone's).
+	ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error)
 	GetPing(ctx context.Context, id string) (run.PingView, error)
 }
 
@@ -141,7 +152,7 @@ type PingStore interface {
 // pgstore's SQL view via the shared run.ReducePings reducer.
 type EventPingStore struct{ Store event.Store }
 
-func (e EventPingStore) ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error) {
+func (e EventPingStore) ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error) {
 	ids, err := e.Store.RunIDs(ctx)
 	if err != nil {
 		return nil, err
@@ -153,6 +164,9 @@ func (e EventPingStore) ListPings(ctx context.Context, status string, limit int)
 			return nil, err
 		}
 		for _, v := range run.ReducePings(evs) {
+			if userID != "" && v.UserID != userID {
+				continue
+			}
 			if status == "" || status == "all" || v.Status == status {
 				out = append(out, v)
 			}
@@ -169,7 +183,7 @@ func (e EventPingStore) ListPings(ctx context.Context, status string, limit int)
 }
 
 func (e EventPingStore) GetPing(ctx context.Context, id string) (run.PingView, error) {
-	all, err := e.ListPings(ctx, "all", 500)
+	all, err := e.ListPings(ctx, "", "all", 500)
 	if err != nil {
 		return run.PingView{}, err
 	}
@@ -250,8 +264,12 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	me := auth.UserID(r.Context())
 	views := make([]run.View, 0, len(all))
 	for _, v := range all {
+		if v.UserID != me {
+			continue // someone else's
+		}
 		if project != "" && v.ProjectID != project {
 			continue
 		}
@@ -1058,11 +1076,15 @@ func (s *Server) listPings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "status must be pending|answered|all")
 		return
 	}
+	me := auth.UserID(r.Context())
 	if s.Pings == nil {
 		// Bare test servers: pending only, from the live registry.
 		pings := s.Engine.PendingPings()
 		out := make([]pingJSON, 0, len(pings))
 		for _, p := range pings {
+			if owner, err := s.runOwner(r.Context(), p.RunID); err != nil || owner != me {
+				continue
+			}
 			out = append(out, toPingJSON(p))
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].RaisedAt.Before(out[j].RaisedAt) })
@@ -1073,7 +1095,7 @@ func (s *Server) listPings(w http.ResponseWriter, r *http.Request) {
 		status = "pending" // inbox default; history is opt-in
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	rows, err := s.Pings.ListPings(r.Context(), status, limit)
+	rows, err := s.Pings.ListPings(r.Context(), me, status, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1127,8 +1149,8 @@ func maskChannel(e *channels.Entry) map[string]any {
 	return map[string]any{"id": e.ID, "kind": e.Kind, "config": cfg}
 }
 
-func (s *Server) listChannels(w http.ResponseWriter, _ *http.Request) {
-	entries := s.Registry.List()
+func (s *Server) listChannels(w http.ResponseWriter, r *http.Request) {
+	entries := s.Registry.List(auth.UserID(r.Context()))
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, maskChannel(e))
@@ -1149,7 +1171,7 @@ func (s *Server) addChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(body, "kind")
-	e, err := s.Registry.Add(kind, body)
+	e, err := s.Registry.Add(auth.UserID(r.Context()), kind, body)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

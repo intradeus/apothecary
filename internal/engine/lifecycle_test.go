@@ -188,7 +188,7 @@ func TestPollersReadTheProjection(t *testing.T) {
 	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.e.ReapOnce(ctx, 48*time.Hour); err != nil {
+	if err := h.e.ReapOnce(ctx, Window(48*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.e.SampleResourcesOnce(ctx); err != nil {

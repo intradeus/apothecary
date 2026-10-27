@@ -9,7 +9,7 @@
 	//
 	// Used by the inbox and the run page. The required props (ping, busy,
 	// onanswer) keep their old semantics; the rest are optional context.
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { api } from '$lib/api';
 	import { ago, fmtAbs } from '$lib/format';
 	import AttachFiles from '$lib/AttachFiles.svelte';

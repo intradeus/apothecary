@@ -124,11 +124,22 @@ type Config struct {
 }
 
 // Limits are the §14 caps: runs beyond MaxConcurrentRuns queue in pending
-// FIFO; at MaxEnvironments live environments new tickets are refused.
+// FIFO; at MaxEnvironments live environments new tickets are refused. They
+// protect the host, so they are the deployment's (the boot env), the same
+// for every user. Negative means no cap; zero takes the default.
 type Limits struct {
 	MaxConcurrentRuns int
 	MaxEnvironments   int
 }
+
+// Unlimited is the Limits value meaning "no cap" (APOTHECARY_MAX_*=-1).
+const Unlimited = -1
+
+// RunsCapped reports whether concurrent runs are capped at all.
+func (l Limits) RunsCapped() bool { return l.MaxConcurrentRuns >= 0 }
+
+// EnvsCapped reports whether live environments are capped at all.
+func (l Limits) EnvsCapped() bool { return l.MaxEnvironments >= 0 }
 
 func (c *Config) withDefaults() Config {
 	out := *c
@@ -548,8 +559,23 @@ func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
 	}
 }
 
-// limits reads the §6.4 policy settings, falling back to defaults on error
-// (a broken settings row must not brick admission).
+// runOwner is a run's owner (its run_created user_id), "" when unknown:
+// the store's row when it keeps one, else the reduced log.
+func (e *Engine) runOwner(ctx context.Context, runID string) string {
+	if vl, ok := e.store.(run.ViewLookup); ok {
+		if v, found, err := vl.RunView(ctx, runID); err == nil && found {
+			return v.UserID
+		}
+	}
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil || len(evs) == 0 {
+		return ""
+	}
+	return run.Reduce(evs).UserID
+}
+
+// limits reads the deployment's caps, falling back to defaults on error
+// (a broken source must not brick admission).
 func (e *Engine) limits(ctx context.Context) Limits {
 	l, err := e.settings.Limits(ctx)
 	if err != nil {
@@ -603,7 +629,8 @@ type SnapshotStore interface {
 // scans (pgstore's SQL view is the real implementation).
 type PingLookup interface {
 	GetPing(ctx context.Context, id string) (run.PingView, error)
-	ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error)
+	// ListPings is one user's pings ("" = everyone's: the engine's own passes).
+	ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error)
 }
 
 // SetPingLookup installs the durable ping projection; call before Recover.
@@ -613,7 +640,7 @@ func (e *Engine) SetPingLookup(l PingLookup) { e.pingIndex = l }
 // wired and by folding the log when not.
 func (e *Engine) pingViews(ctx context.Context, status string) []run.PingView {
 	if e.pingIndex != nil {
-		vs, err := e.pingIndex.ListPings(ctx, status, 500)
+		vs, err := e.pingIndex.ListPings(ctx, "", status, 500)
 		if err != nil {
 			e.log.Warn("ping projection list failed", "err", err)
 			return nil
@@ -771,8 +798,8 @@ func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressCont
 // buildCacheCtrl resolves a project to its provisioner's build-cache
 // controller. ErrBuildCacheOff when the provisioner has none — a k8s or remote
 // provisioner may cache elsewhere, or not at all.
-// It returns the project NAME alongside: the gateway that holds the cache is
-// keyed by the name Provision passed it, not by the id.
+// It returns the project id alongside: the gateway that holds the cache is
+// keyed by it (the same value Provision stamped on the run's EnvSpec).
 func (e *Engine) buildCacheCtrl(ctx context.Context, projectID string) (ports.BuildCacheController, string, func(), error) {
 	res, err := e.resolver.Resolve(ctx, projectID)
 	if err != nil {
@@ -783,7 +810,7 @@ func (e *Engine) buildCacheCtrl(ctx context.Context, projectID string) (ports.Bu
 		res.release()
 		return nil, "", nil, ErrBuildCacheOff
 	}
-	return ctrl, res.ProjectName, res.release, nil
+	return ctrl, res.ProjectID, res.release, nil
 }
 
 // BuildCache reports what the project's devcontainer build cache holds. The
@@ -1013,7 +1040,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 		by = "human"
 	}
 
-	if err := e.checkEnvCapacity(ctx); err != nil {
+	if err := e.checkEnvCapacity(ctx, res.UserID); err != nil {
 		return "", err
 	}
 
@@ -1071,6 +1098,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 		SourceBranch:        sourceBranch,
 		Checkouts:           checkouts,
 		ProjectID:           projectID,
+		UserID:              res.UserID,
 		TicketID:            t.TicketID,
 		TicketAttachmentIDs: t.TicketAttachmentIDs,
 		TicketSourceID:      t.SourceID,
@@ -1204,8 +1232,9 @@ var ErrEnvCapacity = errors.New("environment capacity reached")
 
 // checkEnvCapacity counts live environments (env_ready without a later
 // env_destroyed) across all runs; at the cap it refuses and raises a
-// blocker notification naming the runs whose archiving would free envs.
-func (e *Engine) checkEnvCapacity(ctx context.Context) error {
+// blocker notification, to the would-be run's owner, naming the runs whose
+// archiving would free envs.
+func (e *Engine) checkEnvCapacity(ctx context.Context, userID string) error {
 	ids, err := e.store.RunIDs(ctx)
 	if err != nil {
 		return err
@@ -1226,14 +1255,16 @@ func (e *Engine) checkEnvCapacity(ctx context.Context) error {
 			archivable = append(archivable, id)
 		}
 	}
-	maxEnvs := e.limits(ctx).MaxEnvironments
-	if live < maxEnvs {
+	lim := e.limits(ctx)
+	maxEnvs := lim.MaxEnvironments
+	if !lim.EnvsCapped() || live < maxEnvs {
 		return nil
 	}
 	e.notify(ctx, ports.Notification{
-		Type:  "blocker",
-		Title: fmt.Sprintf("environment capacity reached (%d/%d)", live, maxEnvs),
-		Body:  "archive finished runs to free environments: " + strings.Join(archivable, ", "),
+		UserID: userID,
+		Type:   "blocker",
+		Title:  fmt.Sprintf("environment capacity reached (%d/%d)", live, maxEnvs),
+		Body:   "archive finished runs to free environments: " + strings.Join(archivable, ", "),
 	})
 	return fmt.Errorf("%w (%d live, max %d); archivable runs: %s",
 		ErrEnvCapacity, live, maxEnvs, strings.Join(archivable, ", "))
@@ -1700,7 +1731,7 @@ func (e *Engine) scheduleLocked(lim Limits) {
 		// nobody will cancel or wait for; it recovers on next boot.
 		return
 	}
-	for e.busyLocked() < lim.MaxConcurrentRuns && len(e.queue) > 0 {
+	for (!lim.RunsCapped() || e.busyLocked() < lim.MaxConcurrentRuns) && len(e.queue) > 0 {
 		id := e.queue[0]
 		e.queue = e.queue[1:]
 		e.startLocked(id)
@@ -2317,7 +2348,13 @@ func (e *Engine) RunToken(runID string) string {
 // (inspection material); archived runs lose their env at archive time.
 // Appending env_destroyed for a terminal run is safe — no writer goroutine
 // exists anymore.
-func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter time.Duration) error {
+// Window is the one-window-for-everyone shape of ReapOnce's argument
+// (tests, a single-user install).
+func Window(d time.Duration) func(string) time.Duration {
+	return func(string) time.Duration { return d }
+}
+
+func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID string) time.Duration) error {
 	views, err := e.views(ctx)
 	if err != nil {
 		return err
@@ -2327,7 +2364,9 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter time.Durati
 		if v.EnvID == "" || v.State != run.Completed {
 			continue
 		}
-		if e.clock().Sub(v.UpdatedAt) < destroyCompletedAfter {
+		// The window is the run owner's setting: each person decides how
+		// long their finished workspaces stand.
+		if e.clock().Sub(v.UpdatedAt) < destroyCompletedAfter(v.UserID) {
 			continue
 		}
 		if err := e.destroyEnv(ctx, v); err != nil {
@@ -2563,6 +2602,11 @@ func (e *Engine) EnvBadges() map[string]string {
 }
 
 func (e *Engine) notify(ctx context.Context, n ports.Notification) {
+	// A run's notifications go to its owner's channels: fill the owner in
+	// from the run when the caller did not.
+	if n.UserID == "" && n.RunID != "" {
+		n.UserID = e.runOwner(ctx, n.RunID)
+	}
 	for _, ch := range e.channels {
 		if err := ch.Send(ctx, n); err != nil {
 			e.log.Error("notification send failed", "run", n.RunID, "err", err)

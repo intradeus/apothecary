@@ -5,7 +5,7 @@
 	// places on the spring when the list reorders.
 	import { flip } from 'svelte/animate';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fmtCost, fmtDuration } from '$lib/format';
 	import type { Project, Run } from '$lib/domain';
 	import StageChip from '$lib/ui/StageChip.svelte';

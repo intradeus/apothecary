@@ -11,8 +11,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"time"
 
 	"apothecary/internal/actionspec"
+	"apothecary/internal/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
@@ -444,6 +446,93 @@ type SignalList []signalspec.Signal
 // ChannelRequest adds a notification channel. The kind picks the driver; the
 // remaining keys are that driver's own config (secrets are masked on read).
 type ChannelRequest map[string]any
+
+// --- accounts (TODO 25) -----------------------------------------------------
+
+// AuthStatus is what the UI asks before anything else.
+type AuthStatus struct {
+	// SetupRequired: no account exists yet; the setup page is the only page.
+	SetupRequired bool `json:"setup_required"`
+	// Methods are the authentication methods this instance can verify.
+	Methods []string `json:"methods"`
+}
+
+// SetupRequest claims a fresh instance: its first account, an admin.
+type SetupRequest struct {
+	Handle   string `json:"handle"`
+	Email    string `json:"email"`
+	Name     string `json:"name,omitempty"`
+	Password string `json:"password"`
+}
+
+// LoginRequest is one attempt to sign in: the method (password when
+// omitted), the account (handle or email) and the proof (the password).
+type LoginRequest struct {
+	Method string `json:"method,omitempty"`
+	Login  string `json:"login"`
+	Proof  string `json:"proof"`
+}
+
+// Me is the signed-in user, with the kinds of method they can sign in by.
+type Me struct {
+	User    auth.User `json:"user"`
+	Methods []string  `json:"methods"`
+}
+
+// ProfileRequest changes one's own handle, email or name (absent = keep).
+type ProfileRequest struct {
+	Handle string `json:"handle,omitempty"`
+	Email  string `json:"email,omitempty"`
+	Name   string `json:"name,omitempty"`
+}
+
+// PasswordChangeRequest changes one's own password.
+type PasswordChangeRequest struct {
+	Current  string `json:"current"`
+	Password string `json:"password"`
+}
+
+// TokenRequest mints a personal API token.
+type TokenRequest struct {
+	Name      string     `json:"name"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// TokenCreated carries the secret, the one time it is ever shown.
+type TokenCreated struct {
+	Token  auth.Token `json:"token"`
+	Secret string     `json:"secret"`
+}
+
+// UserCreateRequest is an admin creating an account.
+type UserCreateRequest struct {
+	Handle   string `json:"handle"`
+	Email    string `json:"email"`
+	Name     string `json:"name,omitempty"`
+	Password string `json:"password"`
+	Admin    bool   `json:"admin,omitempty"`
+}
+
+// UserUpdateRequest is an admin changing an account: profile fields
+// (absent = keep), the admin flag, and whether it is disabled.
+type UserUpdateRequest struct {
+	Handle   string `json:"handle,omitempty"`
+	Email    string `json:"email,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Admin    *bool  `json:"admin,omitempty"`
+	Disabled *bool  `json:"disabled,omitempty"`
+}
+
+// PasswordResetRequest is an admin setting an account's password.
+type PasswordResetRequest struct {
+	Password string `json:"password"`
+}
+
+// LimitsInfo is the deployment's capacity: -1 means no cap.
+type LimitsInfo struct {
+	MaxConcurrentRuns int `json:"max_concurrent_runs"`
+	MaxEnvironments   int `json:"max_environments"`
+}
 
 // Compile-time proof that the config-plane types the spec names are the ones
 // the handlers actually write.

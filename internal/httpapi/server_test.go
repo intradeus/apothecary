@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/auth"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
@@ -44,6 +45,10 @@ main:
 // testProject is the id served by the test resolver (DESIGN2 §6.1).
 const testProject = "prj-test"
 
+// testUser owns everything the suite seeds; every request is made as them
+// (a personal token, set by signIn and sent by do).
+const testUser = "usr-test"
+
 type env struct {
 	e        *engine.Engine
 	store    *event.MemStore
@@ -56,6 +61,41 @@ type env struct {
 	settings *varSettings
 	srv      *Server
 	ts       *httptest.Server
+	// token is testUser's personal API token; users is the account store,
+	// for tests that make a second account.
+	token string
+	users *auth.Mem
+}
+
+// signIn wires accounts onto the server: the test user (an admin) with a
+// personal token every request carries. Called before the httptest server
+// starts, by both harnesses.
+func (x *env) signIn(t *testing.T) {
+	t.Helper()
+	x.users = auth.NewMem()
+	svc := auth.New(x.users)
+	now := time.Now().UTC()
+	if err := x.users.CreateUser(context.Background(), auth.User{
+		ID: testUser, Handle: "tester", Email: "tester@example.test", Name: "Tester", Admin: true,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secret, _, err := svc.NewToken(context.Background(), testUser, "tests", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.srv.Auth = svc
+	x.token = secret
+}
+
+// authed stamps the test user's token on a request (unless it already
+// carries an Authorization header — the shim's run token).
+func (x *env) authed(req *http.Request) *http.Request {
+	if req.Header.Get("Authorization") == "" && x.token != "" {
+		req.Header.Set("Authorization", "Bearer "+x.token)
+	}
+	return req
 }
 
 // varSettings is a mutable engine.SettingsSource for tests.
@@ -90,6 +130,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	x.res = &engine.Resolution{
 		ProjectID:    testProject,
 		ProjectName:  "test",
+		UserID:       testUser,
 		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  "loop",
@@ -110,12 +151,13 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.
 	mem := confstore.NewMem()
-	_ = mem.UpsertProject(context.Background(), confstore.Project{ID: testProject, Name: "test"})
+	_ = mem.UpsertProject(context.Background(), confstore.Project{ID: testProject, UserID: testUser, Name: "test"})
 	key, err := secrets.ParseKey(secrets.GenerateKey())
 	if err != nil {
 		t.Fatal(err)
 	}
 	x.srv.Conf = confstore.New(mem, key)
+	x.signIn(t)
 	x.ts = httptest.NewServer(x.srv.Handler())
 	t.Cleanup(x.ts.Close)
 	return x
@@ -123,21 +165,34 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 
 func TestExposePortEndpoint(t *testing.T) {
 	x := newEnv(t, engine.Config{})
+	runID := x.createTicket(t, "T")
 
 	// Bad port: 400 before touching the engine.
-	res, _ := x.do(t, "POST", "/api/runs/r1/expose-port", map[string]any{"port": 0}, nil)
+	res, _ := x.do(t, "POST", "/api/runs/"+runID+"/expose-port", map[string]any{"port": 0}, nil)
 	if res.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad port status = %d", res.StatusCode)
 	}
 	// No relay configured on the fixture engine: honest 503.
-	res, _ = x.do(t, "POST", "/api/runs/r1/expose-port", map[string]any{"port": 3000}, nil)
+	res, _ = x.do(t, "POST", "/api/runs/"+runID+"/expose-port", map[string]any{"port": 3000}, nil)
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("relay-off status = %d", res.StatusCode)
 	}
 	// Ports listing always answers (empty without a relay).
-	res, body := x.do(t, "GET", "/api/runs/r1/ports", nil, nil)
+	res, body := x.do(t, "GET", "/api/runs/"+runID+"/ports", nil, nil)
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"ports":[]`) {
 		t.Errorf("ports = %d %s", res.StatusCode, body)
+	}
+}
+
+// seedIntegration puts an integration row of the test user's in the config
+// store, for routes addressed by integration id.
+func (x *env) seedIntegration(t *testing.T, id, port string) {
+	t.Helper()
+	if err := x.srv.Conf.DB().UpsertIntegration(context.Background(), confstore.StoredIntegration{
+		ID: id, UserID: testUser, Port: port, Kind: "fake", Name: id,
+		Config: map[string]any{}, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -158,7 +213,7 @@ func (x *env) do(t *testing.T, method, path string, body any, hdr map[string]str
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(x.authed(req))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +431,7 @@ func TestSSEReplayAndLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", x.ts.URL+"/api/runs/"+runID+"/events?after_seq=1", nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(x.authed(req))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +705,7 @@ func TestObservedPortsEndpoint(t *testing.T) {
 func TestAbortAndArchiveAndCapacity(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	x.settings.L.MaxEnvironments = 1
-	if _, err := x.reg.Add("test", nil); err != nil {
+	if _, err := x.reg.Add(testUser, "test", nil); err != nil {
 		t.Fatal(err)
 	}
 	runID := x.createTicket(t, "first")
@@ -1293,11 +1348,18 @@ func TestWorkspaceReposListsTheCheckouts(t *testing.T) {
 }
 
 // Starting a phase by hand takes its subject in the body; a run with no
-// loop to take the request is a 409 like every other refusal.
+// loop to take the request is a 409 like every other refusal — and a run
+// that does not exist (or is not the caller's) is a 404 before anything.
 func TestStartPhaseTakesASubjectBody(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	resp, data := x.do(t, "POST", "/api/runs/nope/phases/polish/start", map[string]string{"subject": "repo"}, nil)
-	if resp.StatusCode != http.StatusConflict {
+	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("start phase on an unknown run = %d: %s", resp.StatusCode, data)
+	}
+	runID := x.createTicket(t, "T")
+	x.e.Wait(runID)
+	resp, data = x.do(t, "POST", "/api/runs/"+runID+"/phases/polish/start", map[string]string{"subject": "repo"}, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("start phase on a finished run = %d: %s", resp.StatusCode, data)
 	}
 }

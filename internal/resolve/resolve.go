@@ -219,6 +219,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	res := &engine.Resolution{
 		ProjectID:            p.ID,
 		ProjectName:          p.Name,
+		UserID:               p.UserID,
 		RepoRef:              repoRef,
 		AgentsMDPath:         p.Repo.AgentsMDPath,
 		DefaultFlow:          p.DefaultFlow,

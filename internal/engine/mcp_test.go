@@ -56,7 +56,7 @@ func (b *fakeBrowser) Session(_ context.Context, s ports.BrowserSession, stdio i
 	}
 	return nil
 }
-func (b *fakeBrowser) Warm(project string) {
+func (b *fakeBrowser) Warm(project, _ string) {
 	b.mu.Lock()
 	b.warmed = append(b.warmed, project)
 	b.mu.Unlock()
@@ -124,7 +124,7 @@ func TestAgentSessionsGetTheirMCPServersResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
-	if !slices.Equal(b.warmed, []string{"test"}) {
+	if !slices.Equal(b.warmed, []string{testProject}) {
 		t.Errorf("warmed = %v, want the project's browser warmed at creation", b.warmed)
 	}
 	shooter := got["shooter"]
@@ -202,7 +202,7 @@ func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
 	if err := h.e.BrowserMCP(context.Background(), runID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if b.session.Project != "test" || b.session.Run != runID {
+	if b.session.Project != testProject || b.session.Run != runID {
 		t.Errorf("session = %+v", b.session)
 	}
 	if exp.exposed.Load() != 1 {

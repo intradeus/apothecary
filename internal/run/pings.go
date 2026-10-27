@@ -10,8 +10,10 @@ import (
 // ping, both sides. Postgres maintains it transactionally (pgstore); tests
 // and event-store-only setups derive it with ReducePings.
 type PingView struct {
-	PingID   string `json:"ping_id"`
-	RunID    string `json:"run_id"`
+	PingID string `json:"ping_id"`
+	RunID  string `json:"run_id"`
+	// UserID is the run's owner: whose inbox the question is in.
+	UserID   string `json:"user_id,omitempty"`
 	Type     string `json:"type"`
 	StageID  string `json:"stage_id,omitempty"`
 	Question string `json:"question"`
@@ -61,12 +63,15 @@ func Primary(files []string, link string) string {
 func ReducePings(evs []event.Event) []PingView {
 	var out []PingView
 	idx := map[string]int{}
+	owner := ""
 	for i := range evs {
 		switch p := evs[i].Payload.(type) {
+		case *event.RunCreated:
+			owner = p.UserID
 		case *event.PingRaised:
 			idx[p.PingID] = len(out)
 			out = append(out, PingView{
-				PingID: p.PingID, RunID: evs[i].RunID, Type: p.Type, StageID: p.StageID,
+				PingID: p.PingID, RunID: evs[i].RunID, UserID: owner, Type: p.Type, StageID: p.StageID,
 				Question: p.Question, Context: p.Context,
 				Files: p.Files, Link: p.Link, PayloadRef: Primary(p.Files, p.Link),
 				Form: p.Form, AnswerKind: p.Kind(), Phase: p.Phase, EndsPhase: p.EndsPhase,

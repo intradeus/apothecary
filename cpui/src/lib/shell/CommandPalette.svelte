@@ -9,7 +9,7 @@
 	import { prefs } from '$lib/prefs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { THEMES } from '$lib/themes';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { shortId, stateLabel, stateTab } from '$lib/format';
 	import type { Ticket } from '$lib/domain';
 	import { NAV } from '$lib/nav';

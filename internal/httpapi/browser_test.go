@@ -69,7 +69,7 @@ func TestProjectBrowserStatus(t *testing.T) {
 	x.e.SetBrowser(&echoBrowser{})
 	_, data = x.do(t, "GET", "/api/projects/"+pid+"/browser", nil, nil)
 	var info BrowserInfo
-	if err := json.Unmarshal(data, &info); err != nil || !info.Available || info.State != "running" || info.Container != "apo-browser-web" || info.Sessions != 1 {
+	if err := json.Unmarshal(data, &info); err != nil || !info.Available || info.State != "running" || info.Container != "apo-browser-"+pid || info.Sessions != 1 {
 		t.Fatalf("with a browser = %s (%v)", data, err)
 	}
 }
@@ -89,7 +89,7 @@ func (b *echoBrowser) Session(_ context.Context, _ ports.BrowserSession, stdio i
 	}
 	return nil
 }
-func (b *echoBrowser) Warm(string) {}
+func (b *echoBrowser) Warm(string, string) {}
 func (b *echoBrowser) Status(_ context.Context, project string) (ports.BrowserStatus, error) {
 	return ports.BrowserStatus{Container: "apo-browser-" + project, State: "running", Sessions: 1}, nil
 }

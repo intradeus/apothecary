@@ -283,7 +283,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	gp, err := s.GetProjectByName(ctx, "web")
+	gp, err := s.GetProjectByName(ctx, "", "web")
 	if err != nil || gp.Repo.Locator != "42" || gp.Workspace.ExtraDomains[0] != "pypi.org" ||
 		len(gp.HarnessIDs) != 1 || gp.HarnessIDs[0] != "int1" {
 		t.Fatalf("project roundtrip = %+v, %v", gp, err)
@@ -308,11 +308,11 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	}
 
 	// Settings.
-	if err := s.PutSetting(ctx, "limits.max_concurrent_runs", "7"); err != nil {
+	if err := s.PutSetting(ctx, "u1", "reaper.destroy_completed_after", "\"7h\""); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.GetSettings(ctx)
-	if err != nil || rows["limits.max_concurrent_runs"] != "7" {
+	rows, err := s.GetSettings(ctx, "u1")
+	if err != nil || rows["reaper.destroy_completed_after"] != `"7h"` {
 		t.Fatalf("settings = %v, %v", rows, err)
 	}
 

@@ -129,9 +129,10 @@ func TestLiveLifecycle(t *testing.T) {
 		// Nothing reaps a project's gateway (egressgw/manager.go); this test
 		// owns its project, so it removes the gateway + caches it created.
 		defer func() {
+			gw := "apo-gw-" + ports.ProjectHostKey(project)
 			for _, args := range [][]string{
-				{"rm", "-f", "apo-gw-" + project},
-				{"volume", "rm", "-f", "apo-gw-" + project + "-cache", "apo-gw-" + project + "-buildcache"},
+				{"rm", "-f", gw},
+				{"volume", "rm", "-f", gw + "-cache", gw + "-buildcache"},
 			} {
 				_ = exec.Command("docker", args...).Run()
 			}

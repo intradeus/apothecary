@@ -1,6 +1,6 @@
 // Package egressgw is the engine-side lifecycle manager for the per-PROJECT
-// egress firewall gateway. One gateway container (apo-gw-<project>) serves all
-// of a project's runs: each run gets its own --internal docker network
+// egress firewall gateway. One gateway container (apo-gw-<project id>) serves
+// all of a project's runs: each run gets its own --internal docker network
 // (apo-egress-<run>), and the gateway is multi-homed onto every one of them plus
 // one external uplink. All egress from a run's DinD sandbox (app + siblings)
 // routes through the gateway, which transparently filters by TLS SNI / HTTP Host
@@ -10,9 +10,13 @@
 //
 // The Manager performs only HOST-daemon docker calls and gw-folder file I/O; it
 // never touches a run's inner daemon. Policy in / denials out ride JSON files on
-// a per-project bind mount (<RunsDir>/gw/<project>), reusing the same
+// a per-project bind mount (<RunsDir>/gw/<project id>), reusing the same
 // bind-mount-over-run-folder seam the sandbox relies on (container→host-IP is
 // blocked on hardened hosts, so a shared file is the right control plane).
+//
+// Every `project` argument in this package is the project's ID (projects.id).
+// ports.ProjectHostKey turns it into the token docker names and paths use; the
+// project's NAME is a docker label and nothing more.
 package egressgw
 
 import (
@@ -25,6 +29,7 @@ import (
 	"sync"
 
 	"apothecary/internal/egressgw/policyfile"
+	"apothecary/internal/ports"
 )
 
 // HostRun runs one docker CLI invocation against the HOST daemon (never a run's
@@ -57,34 +62,26 @@ func (m *Manager) projectMu(project string) *sync.Mutex {
 
 // --- naming ---------------------------------------------------------------
 
-// sanitize reduces an arbitrary project name to a docker-safe token.
-func sanitize(s string) string {
-	s = strings.ToLower(s)
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '-' || r == '_' || r == '.':
-			b.WriteRune('-')
-		default:
-			b.WriteByte('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		out = "default"
-	}
-	if len(out) > 40 {
-		out = out[:40]
-	}
-	return out
-}
+// Everything per project is named by ports.ProjectHostKey(project): the
+// project's ID, lowercased. Never its name — a rename must not move a project
+// off its gateway and caches, and two projects with the same name must not
+// share them.
 
 func (m *Manager) netName(run string) string    { return "apo-egress-" + run }
-func (m *Manager) gwName(project string) string { return "apo-gw-" + sanitize(project) }
+func (m *Manager) gwName(project string) string { return "apo-gw-" + ports.ProjectHostKey(project) }
 func (m *Manager) gwDir(project string) string {
-	return filepath.Join(m.runsDir, "gw", sanitize(project))
+	return filepath.Join(m.runsDir, "gw", ports.ProjectHostKey(project))
+}
+
+// projectLabels are the docker labels every per-project resource carries: the
+// id is what filters key on (`--filter label=apothecary.project=<id>`); the
+// name is for a human reading `docker ps`, omitted when unknown.
+func projectLabels(project, projectName string) []string {
+	ls := []string{"--label", "apothecary=true", "--label", "apothecary.project=" + project}
+	if projectName != "" {
+		ls = append(ls, "--label", "apothecary.project.name="+projectName)
+	}
+	return ls
 }
 func (m *Manager) policyPath(project string) string {
 	return filepath.Join(m.gwDir(project), "egress-policy.json")
@@ -145,7 +142,8 @@ func (m *Manager) docker(ctx context.Context, args ...string) (string, error) {
 // --internal network, connects it to the gateway, records the run→subnet
 // attribution, and returns the gateway's IP ON THIS run's network (for the
 // sandbox default route + --dns). Idempotent across the Provision reuse path.
-func (m *Manager) EnsureRunEgress(ctx context.Context, project, run string, f policyfile.File) (gwIP string, err error) {
+// project is the project's id; projectName is a label only (projectLabels).
+func (m *Manager) EnsureRunEgress(ctx context.Context, project, projectName, run string, f policyfile.File) (gwIP string, err error) {
 	if err := os.MkdirAll(m.gwDir(project), 0o755); err != nil {
 		return "", err
 	}
@@ -168,10 +166,10 @@ func (m *Manager) EnsureRunEgress(ctx context.Context, project, run string, f po
 	defer pm.Unlock()
 
 	// Per-run internal network (no external route → sandbox can't bypass).
-	if err := m.ensureNetwork(ctx, project, run); err != nil {
+	if err := m.ensureNetwork(ctx, project, projectName, run); err != nil {
 		return "", err
 	}
-	if err := m.ensureGateway(ctx, project); err != nil {
+	if err := m.ensureGateway(ctx, project, projectName); err != nil {
 		return "", err
 	}
 	// Connect this run's network to the gateway (idempotent).
@@ -193,12 +191,11 @@ func (m *Manager) EnsureRunEgress(ctx context.Context, project, run string, f po
 	return gwIP, nil
 }
 
-func (m *Manager) ensureNetwork(ctx context.Context, project, run string) error {
-	if _, err := m.docker(ctx, "network", "create", "--driver", "bridge", "--internal",
-		"--label", "apothecary=true",
-		"--label", "apothecary.env="+run,
-		"--label", "apothecary.project="+project,
-		m.netName(run)); err != nil {
+func (m *Manager) ensureNetwork(ctx context.Context, project, projectName, run string) error {
+	args := append([]string{"network", "create", "--driver", "bridge", "--internal",
+		"--label", "apothecary.env=" + run},
+		projectLabels(project, projectName)...)
+	if _, err := m.docker(ctx, append(args, m.netName(run))...); err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			return nil
 		}
@@ -214,7 +211,7 @@ func (m *Manager) ensureNetwork(ctx context.Context, project, run string) error 
 // gateway build. Only the image tag is compared: argv changes here do not
 // trigger a recreate on their own — they always ride a gateway-source or
 // Dockerfile change, which bumps the content-addressed tag.
-func (m *Manager) ensureGateway(ctx context.Context, project string) error {
+func (m *Manager) ensureGateway(ctx context.Context, project, projectName string) error {
 	// Resolved on EVERY path (unlike before, when the warm path skipped it): the
 	// tag is the upgrade signal, and a cache hit is just one image inspect.
 	img, err := m.ensureImage(ctx)
@@ -234,8 +231,8 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 			return err
 		}
 		// Stale image. A `rm -f` would sever egress for every attached run, so
-		// upgrade only while the project is idle; a busy project keeps its old
-		// gateway until its runs are done.
+		// upgrade only while the project is idle (no running sandbox carries its
+		// id label); a busy project keeps its old gateway until its runs are done.
 		if running, err := m.docker(ctx, "ps", "-q",
 			"--filter", "label=apothecary.project="+project,
 			"--filter", "label=apothecary.sandbox=true"); err == nil && running != "" {
@@ -252,17 +249,14 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 	}
 	// Both caches survive everything (idempotent create; never reaped).
 	for _, vol := range []string{m.cacheVolume(project), m.buildCacheVolume(project)} {
-		if _, err := m.docker(ctx, "volume", "create",
-			"--label", "apothecary=true",
-			"--label", "apothecary.project="+project,
-			vol); err != nil && !strings.Contains(err.Error(), "already exists") {
+		args := append([]string{"volume", "create"}, projectLabels(project, projectName)...)
+		if _, err := m.docker(ctx, append(args, vol)...); err != nil && !strings.Contains(err.Error(), "already exists") {
 			return err
 		}
 	}
 	dir := m.gwDir(project)
-	if _, err = m.docker(ctx, "run", "-d", "--name", m.gwName(project),
-		"--label", "apothecary=true",
-		"--label", "apothecary.project="+project,
+	args := append([]string{"run", "-d", "--name", m.gwName(project)}, projectLabels(project, projectName)...)
+	args = append(args,
 		"--label", "apothecary.egressgw=true",
 		// Kept warm across host/daemon restarts: nothing reaps a gateway now, and
 		// a stopped one would leave its runs with no egress until the next
@@ -286,7 +280,8 @@ func (m *Manager) ensureGateway(ctx context.Context, project string) error {
 		"--dns-upstream", "1.1.1.1:53",
 		"--mirror-config", m.mirrorConfigPath(project),
 		"--buildcache-config", m.buildCacheConfigPath(project),
-	); err != nil {
+	)
+	if _, err = m.docker(ctx, args...); err != nil {
 		return err
 	}
 	// Re-attach the runs the replaced gateway served, at their old addresses.
@@ -405,8 +400,8 @@ func (m *Manager) recordRoute(ctx context.Context, project, run string) error {
 // the route map. The GATEWAY ITSELF IS KEPT: it holds the project's warm image
 // cache, and rebuilding that on the next run is far more expensive than an idle
 // alpine container (it also has --restart unless-stopped, so it survives daemon
-// restarts). Nothing reaps it automatically; `docker rm -f apo-gw-<project>` is
-// the manual escape hatch, and the next provision recreates it.
+// restarts). Nothing reaps it automatically; `docker rm -f apo-gw-<project id>`
+// is the manual escape hatch, and the next provision recreates it.
 func (m *Manager) DestroyRunEgress(ctx context.Context, project, run string) error {
 	pm := m.projectMu(project)
 	pm.Lock()
@@ -565,30 +560,11 @@ func BuildCacheImageRef(gwIP, project string) string {
 	return buildCacheRepo(gwIP, project) + ":image"
 }
 
+// buildCacheRepo keys the repository by ports.ProjectHostKey(project) — the
+// lowercased project id, which is also all the distribution spec allows in a
+// path component. Not the name: a rename must not orphan the cache.
 func buildCacheRepo(gwIP, project string) string {
-	return gwIP + ":" + BuildCachePort + "/" + repoPath(project) + "/devcontainer"
-}
-
-// repoPath makes a project name safe as a registry repository path component:
-// lowercase alphanumerics plus separators, which is all the distribution spec
-// allows.
-func repoPath(project string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(project) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '-' || r == '_' || r == '.':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-._")
-	if out == "" {
-		return "project"
-	}
-	return out
+	return gwIP + ":" + BuildCachePort + "/" + ports.ProjectHostKey(project) + "/devcontainer"
 }
 
 // BuildCacheSize reports how many bytes the project's build cache occupies.

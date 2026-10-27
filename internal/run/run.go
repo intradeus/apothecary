@@ -38,9 +38,12 @@ func (s State) Terminal() bool {
 // View is the runs read-model row (§6): a projection, updated in the same
 // transaction as each append in the Postgres store.
 type View struct {
-	RunID       string `json:"run_id"`
-	ProjectID   string `json:"project_id,omitempty"` // DESIGN2 §6.3; "" on pre-v2 runs
-	TicketID    string `json:"ticket_id,omitempty"`  // parent ticket; "" on pre-ticket/direct runs
+	RunID     string `json:"run_id"`
+	ProjectID string `json:"project_id,omitempty"` // DESIGN2 §6.3; "" on pre-v2 runs
+	// UserID is the owner (from run_created): whose list the run is on, and
+	// who may act on it. A projected column, for the per-user list.
+	UserID      string `json:"user_id,omitempty"`
+	TicketID    string `json:"ticket_id,omitempty"` // parent ticket; "" on pre-ticket/direct runs
 	State       State  `json:"state"`
 	TicketTitle string `json:"ticket_title"`
 	TicketGoal  string `json:"-"` // not a read-model column; carried for prompt assembly on recovery
@@ -147,6 +150,7 @@ func Apply(v *View, e *event.Event) {
 	case *event.RunCreated:
 		v.State = Pending
 		v.ProjectID = p.ProjectID
+		v.UserID = p.UserID
 		v.TicketID = p.TicketID
 		v.TicketTitle = p.TicketTitle
 		v.TicketGoal = p.TicketGoal
@@ -337,4 +341,11 @@ func Apply(v *View, e *event.Event) {
 // projection is checked against.
 type ViewSource interface {
 	RunViews(ctx context.Context) ([]View, error)
+}
+
+// ViewLookup is the OPTIONAL single-run companion of ViewSource: one run's
+// row, for the request paths that need one run's owner and state without
+// reducing its log (the API's ownership check on every run route).
+type ViewLookup interface {
+	RunView(ctx context.Context, runID string) (View, bool, error)
 }

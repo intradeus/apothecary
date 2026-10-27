@@ -188,7 +188,7 @@ func TestImportWithoutSourcesIsHonest(t *testing.T) {
 // claimed for the ticket.
 func TestCreateRaw(t *testing.T) {
 	f, att := newFactory(t, nil)
-	up, err := att.Save(context.Background(), "design.md", "text/markdown", strings.NewReader("# d"))
+	up, err := att.Save(context.Background(), "", "design.md", "text/markdown", strings.NewReader("# d"))
 	if err != nil {
 		t.Fatal(err)
 	}

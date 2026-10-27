@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { shortId, times } from '$lib/format';
 	import Banner from '$lib/ui/Banner.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';

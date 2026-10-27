@@ -4,7 +4,7 @@
 	// and the files you attached. Snapshots outlive the workspace.
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fmtAbs, fmtBytes, fmtClock } from '$lib/format';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import type { Hue } from '$lib/ui/hues';

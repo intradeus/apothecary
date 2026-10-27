@@ -77,7 +77,7 @@ func (s *Server) getProjectBrowser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	info := BrowserInfo{Enabled: p.Workspace.Browser.Enabled}
-	st, err := s.Engine.BrowserStatus(r.Context(), p.Name)
+	st, err := s.Engine.BrowserStatus(r.Context(), p.ID)
 	switch {
 	case errors.Is(err, engine.ErrBrowserOff):
 	case err != nil:

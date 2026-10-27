@@ -121,6 +121,8 @@ components:
           type: integer
         ticket_id:
           type: string
+        user_id:
+          type: string
       required:
         - created_at
         - filename
@@ -138,6 +140,19 @@ components:
           type: array
       required:
         - attachments
+      type: object
+    AuthStatus:
+      properties:
+        methods:
+          items:
+            type: string
+          nullable: true
+          type: array
+        setup_required:
+          type: boolean
+      required:
+        - methods
+        - setup_required
       type: object
     Automation:
       properties:
@@ -279,6 +294,8 @@ components:
         id:
           type: string
         kind:
+          type: string
+        user_id:
           type: string
       required:
         - config
@@ -1167,6 +1184,28 @@ components:
         - label
         - port
       type: object
+    LimitsInfo:
+      properties:
+        max_concurrent_runs:
+          type: integer
+        max_environments:
+          type: integer
+      required:
+        - max_concurrent_runs
+        - max_environments
+      type: object
+    LoginRequest:
+      properties:
+        login:
+          type: string
+        method:
+          type: string
+        proof:
+          type: string
+      required:
+        - login
+        - proof
+      type: object
     MRInfo:
       properties:
         author:
@@ -1303,6 +1342,19 @@ components:
         - run_id
         - ticket_id
       type: object
+    Me:
+      properties:
+        methods:
+          items:
+            type: string
+          nullable: true
+          type: array
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+        - methods
+        - user
+      type: object
     MessageAccepted:
       properties:
         message_id:
@@ -1392,6 +1444,23 @@ components:
       required:
         - field
         - param
+      type: object
+    PasswordChangeRequest:
+      properties:
+        current:
+          type: string
+        password:
+          type: string
+      required:
+        - current
+        - password
+      type: object
+    PasswordResetRequest:
+      properties:
+        password:
+          type: string
+      required:
+        - password
       type: object
     PhaseInfo:
       properties:
@@ -1643,6 +1712,8 @@ components:
           type: string
         type:
           type: string
+        user_id:
+          type: string
       required:
         - answer_kind
         - ping_id
@@ -1703,6 +1774,15 @@ components:
         - id
         - ok
       type: object
+    ProfileRequest:
+      properties:
+        email:
+          type: string
+        handle:
+          type: string
+        name:
+          type: string
+      type: object
     Project:
       properties:
         commands:
@@ -1737,6 +1817,8 @@ components:
         updated_at:
           format: date-time
           type: string
+        user_id:
+          type: string
         workspace:
           $ref: '#/components/schemas/WorkspaceConfig'
       required:
@@ -1750,6 +1832,7 @@ components:
         - repo
         - repo_account_id
         - updated_at
+        - user_id
         - workspace
       type: object
     ProjectRequest:
@@ -2149,6 +2232,8 @@ components:
         updated_at:
           format: date-time
           type: string
+        user_id:
+          type: string
       required:
         - created_at
         - flow_hash
@@ -2302,10 +2387,6 @@ components:
           type: string
         destroy_completed_after:
           type: string
-        max_concurrent_runs:
-          type: integer
-        max_environments:
-          type: integer
         orphan_uploads_after:
           type: string
         snapshots_after:
@@ -2313,10 +2394,23 @@ components:
       required:
         - destroy_abandoned
         - destroy_completed_after
-        - max_concurrent_runs
-        - max_environments
         - orphan_uploads_after
         - snapshots_after
+      type: object
+    SetupRequest:
+      properties:
+        email:
+          type: string
+        handle:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+      required:
+        - email
+        - handle
+        - password
       type: object
     Signal:
       properties:
@@ -2503,6 +2597,8 @@ components:
         updated_at:
           format: date-time
           type: string
+        user_id:
+          type: string
       required:
         - base_branch
         - created_at
@@ -2511,6 +2607,7 @@ components:
         - project_id
         - title
         - updated_at
+        - user_id
       type: object
     TicketDetail:
       properties:
@@ -2544,6 +2641,8 @@ components:
           type: string
         updated_at:
           format: date-time
+          type: string
+        user_id:
           type: string
         warnings:
           items:
@@ -2579,6 +2678,49 @@ components:
         - source_id
         - source_key
         - title
+      type: object
+    Token:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        last_used_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+      required:
+        - created_at
+        - id
+        - name
+        - prefix
+      type: object
+    TokenCreated:
+      properties:
+        secret:
+          type: string
+        token:
+          $ref: '#/components/schemas/Token'
+      required:
+        - secret
+        - token
+      type: object
+    TokenRequest:
+      properties:
+        expires_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+      required:
+        - name
       type: object
     TriggerHold:
       properties:
@@ -2634,6 +2776,71 @@ components:
           type: array
       required:
         - attachments
+      type: object
+    User:
+      properties:
+        admin:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        disabled_at:
+          format: date-time
+          type: string
+        email:
+          type: string
+        handle:
+          type: string
+        id:
+          type: string
+        last_seen_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - admin
+        - created_at
+        - email
+        - handle
+        - id
+        - name
+        - updated_at
+      type: object
+    UserCreateRequest:
+      properties:
+        admin:
+          type: boolean
+        email:
+          type: string
+        handle:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+      required:
+        - email
+        - handle
+        - password
+      type: object
+    UserUpdateRequest:
+      properties:
+        admin:
+          nullable: true
+          type: boolean
+        disabled:
+          nullable: true
+          type: boolean
+        email:
+          type: string
+        handle:
+          type: string
+        name:
+          type: string
       type: object
     ValidateFlowRequest:
       properties:
@@ -2808,10 +3015,19 @@ components:
         - filename
       type: object
   securitySchemes:
+    personalToken:
+      description: A personal API token (POST /api/me/tokens), sent as a bearer token.
+      scheme: bearer
+      type: http
     runToken:
       description: Per-run token, issued to the in-workspace shim. Not a user credential.
       scheme: bearer
       type: http
+    session:
+      description: A browser session, started by POST /api/auth/login (or setup).
+      in: cookie
+      name: apothecary_session
+      type: apiKey
 info:
   description: The engine's whole surface. The control-plane UI talks only to this API, and its client is generated from this document.
   title: Apothecary engine API
@@ -2835,10 +3051,17 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Actions an `action` stage may name
       tags:
         - system
@@ -2868,6 +3091,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -2876,6 +3103,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Upload files to attach to a ticket, a goal or an answer
       tags:
         - files
@@ -2900,6 +3130,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -2908,6 +3142,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Download one uploaded file
       tags:
         - files
@@ -2925,13 +3162,136 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'Upload policy: size cap and accepted types'
       tags:
         - files
+  /api/auth/login:
+    post:
+      description: method is password unless the instance offers another; login is a handle or an email; proof the password. Repeated failures for one account from one address are throttled (429).
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security: []
+      summary: Sign in and start a browser session
+      tags:
+        - auth
+  /api/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: End the browser session
+      tags:
+        - auth
+  /api/auth/setup:
+    post:
+      description: Only while no account exists (409 after).
+      operationId: setupInstance
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security: []
+      summary: 'Claim a fresh instance: create its first account, an admin, and sign in'
+      tags:
+        - auth
+  /api/auth/status:
+    get:
+      operationId: getAuthStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStatus'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security: []
+      summary: Whether the instance needs its first account, and how one may sign in
+      tags:
+        - auth
   /api/channels:
     get:
       operationId: listChannels
@@ -2949,11 +3309,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: Configured notification channels (secrets masked)
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's notification channels (secrets masked)
       tags:
         - channels
     post:
@@ -2977,6 +3344,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -2985,6 +3356,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Add a notification channel
       tags:
         - channels
@@ -3004,6 +3378,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3016,6 +3394,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Remove a notification channel
       tags:
         - channels
@@ -3033,10 +3414,17 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The built-in allowlist every project starts from
       tags:
         - egress
@@ -3057,6 +3445,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3069,6 +3461,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Cancel a running workspace check
       tags:
         - projects
@@ -3091,6 +3486,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3099,6 +3498,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Poll a workspace check
       tags:
         - projects
@@ -3119,10 +3521,17 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The compiled-in flow templates a project can adopt or copy
       tags:
         - flows
@@ -3153,6 +3562,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3165,6 +3578,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Copy a compiled-in template into a project
       tags:
         - flows
@@ -3185,11 +3601,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: Every project's flows, for the cross-project overview
+      security:
+        - session: []
+        - personalToken: []
+      summary: Every flow of one's projects, for the cross-project overview
       tags:
         - flows
   /api/flows/schema:
@@ -3209,10 +3632,17 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The JSON Schema of a flow document as it is written
       tags:
         - flows
@@ -3237,6 +3667,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -3245,6 +3679,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Validate a flow document without saving it
       tags:
         - flows
@@ -3265,11 +3702,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: Configured integrations (secrets masked)
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's integrations (secrets masked)
       tags:
         - integrations
     post:
@@ -3291,6 +3735,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -3299,6 +3747,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Configure an integration
       tags:
         - integrations
@@ -3318,6 +3769,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3330,6 +3785,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Delete an integration
       tags:
         - integrations
@@ -3352,6 +3810,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3360,6 +3822,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One integration
       tags:
         - integrations
@@ -3388,6 +3853,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3400,6 +3869,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'Change an integration (secrets merge: present replaces, "" deletes, absent keeps)'
       tags:
         - integrations
@@ -3426,6 +3898,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3434,6 +3910,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Models a harness integration's credentials can reach
       tags:
         - integrations
@@ -3460,6 +3939,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3468,6 +3951,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Repositories a repository integration (GitLab, GitHub) can see
       tags:
         - integrations
@@ -3491,6 +3977,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3503,6 +3993,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Check an integration's credentials against the real service
       tags:
         - integrations
@@ -3539,6 +4032,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3547,6 +4044,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Search a tracker for tickets to import (read-only)
       tags:
         - tickets
@@ -3575,6 +4075,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3583,6 +4087,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One tracker ticket by key
       tags:
         - tickets
@@ -3603,13 +4110,255 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Every port kind this build carries, with its config fields
       tags:
         - system
+  /api/limits:
+    get:
+      operationId: getLimits
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitsInfo'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'The deployment''s capacity caps (-1: no cap)'
+      tags:
+        - system
+  /api/me:
+    get:
+      operationId: getMe
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The signed-in user
+      tags:
+        - auth
+    put:
+      operationId: updateMe
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Change one's own handle, email or name
+      tags:
+        - auth
+  /api/me/password:
+    put:
+      description: Every other session is signed out; this one continues.
+      operationId: changeMyPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Change one's own password
+      tags:
+        - auth
+  /api/me/tokens:
+    get:
+      operationId: listMyTokens
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Token'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's personal API tokens (never their secrets)
+      tags:
+        - auth
+    post:
+      description: 'The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token.'
+      operationId: createMyToken
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCreated'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Mint a personal API token
+      tags:
+        - auth
+  /api/me/tokens/{id}:
+    delete:
+      operationId: deleteMyToken
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Revoke a personal API token
+      tags:
+        - auth
   /api/pings:
     get:
       operationId: listPings
@@ -3642,11 +4391,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: 'The inbox: questions waiting on a human'
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'The inbox: one''s questions waiting on a human'
       tags:
         - pings
   /api/pings/{pid}:
@@ -3669,6 +4425,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3677,6 +4437,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One question with its answer, if it has one
       tags:
         - pings
@@ -3706,6 +4469,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3718,6 +4485,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Answer a question
       tags:
         - pings
@@ -3741,6 +4511,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3749,6 +4523,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The files a question attached, as captured when it was raised
       tags:
         - pings
@@ -3769,11 +4546,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: All projects
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's projects
       tags:
         - projects
     post:
@@ -3795,6 +4579,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -3803,6 +4591,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Create a project
       tags:
         - projects
@@ -3822,6 +4613,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3834,6 +4629,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Delete a project
       tags:
         - projects
@@ -3856,6 +4654,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3864,6 +4666,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One project
       tags:
         - projects
@@ -3892,6 +4697,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3904,6 +4713,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Replace a project
       tags:
         - projects
@@ -3930,6 +4742,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3938,6 +4754,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'The project''s automations: how runs begin without a person'
       tags:
         - automations
@@ -3967,6 +4786,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -3979,6 +4802,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Create an automation
       tags:
         - automations
@@ -4003,6 +4829,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4015,6 +4845,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Delete an automation (the tickets it imported stay)
       tags:
         - automations
@@ -4042,6 +4875,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4050,6 +4887,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One automation, with what the watcher last did with it
       tags:
         - automations
@@ -4083,6 +4923,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4095,6 +4939,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Replace an automation (its last poll, firing and error are kept)
       tags:
         - automations
@@ -4121,6 +4968,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4129,6 +4980,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Branches of the project's repository
       tags:
         - projects
@@ -4153,6 +5007,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4161,6 +5019,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'The project''s browser: its toggle and its container'
       tags:
         - projects
@@ -4181,6 +5042,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4193,6 +5058,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Empty the project's build cache
       tags:
         - projects
@@ -4216,6 +5084,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4224,6 +5096,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: What the project's devcontainer build cache holds
       tags:
         - projects
@@ -4268,6 +5143,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4276,6 +5155,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Everything this project's workspaces reached or were blocked from
       tags:
         - egress
@@ -4300,6 +5182,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4308,6 +5194,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The project's most recent workspace check
       tags:
         - projects
@@ -4337,6 +5226,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4349,6 +5242,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Prove the project's workspace actually builds (throwaway provision)
       tags:
         - projects
@@ -4375,6 +5271,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4383,6 +5283,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The project's parameter bindings, one per configured flow
       tags:
         - flows
@@ -4411,6 +5314,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4419,6 +5326,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One flow version by content hash
       tags:
         - flows
@@ -4445,6 +5355,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4453,6 +5367,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: A project's flows, with the templates it has not adopted
       tags:
         - flows
@@ -4481,6 +5398,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4493,6 +5414,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Create a flow in a project
       tags:
         - flows
@@ -4517,6 +5441,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4529,6 +5457,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Delete a project's flow (resets to the template, when there is one)
       tags:
         - flows
@@ -4557,6 +5488,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4565,6 +5500,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One of a project's flows
       tags:
         - flows
@@ -4599,6 +5537,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4611,6 +5553,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Replace one of a project's flows
       tags:
         - flows
@@ -4635,6 +5580,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4647,6 +5596,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Put the project back to the flow's declared defaults
       tags:
         - flows
@@ -4675,6 +5627,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4683,6 +5639,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The project's values for a flow's parameters
       tags:
         - flows
@@ -4717,6 +5676,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4729,6 +5692,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Bind values to a flow's parameters for this project
       tags:
         - flows
@@ -4763,6 +5729,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4775,6 +5745,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Copy a flow into another project
       tags:
         - flows
@@ -4806,6 +5779,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4814,6 +5791,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: A flow's version history within its project
       tags:
         - flows
@@ -4846,6 +5826,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4854,6 +5838,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Open merge requests of a project's repository, with the runs on each
       tags:
         - projects
@@ -4889,6 +5876,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4901,6 +5892,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Start a run of a flow on a merge request
       tags:
         - projects
@@ -4924,6 +5918,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4936,6 +5934,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Check a project is ready to run, step by step
       tags:
         - projects
@@ -4963,6 +5964,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -4971,6 +5976,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The project's secrets, by name
       tags:
         - projects
@@ -4996,6 +6004,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5008,6 +6020,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Remove one project secret
       tags:
         - projects
@@ -5042,6 +6057,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5054,6 +6073,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Set one project secret
       tags:
         - projects
@@ -5085,11 +6107,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: List runs, newest first
+      security:
+        - session: []
+        - personalToken: []
+      summary: List one's runs, newest first
       tags:
         - runs
   /api/runs/{id}:
@@ -5112,6 +6141,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5120,6 +6153,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One run with the tail of its event log
       tags:
         - runs
@@ -5139,6 +6175,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5151,6 +6191,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Stop a run for good
       tags:
         - runs
@@ -5170,6 +6213,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5182,6 +6229,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Archive a finished run and destroy its workspace
       tags:
         - runs
@@ -5211,6 +6261,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5223,6 +6277,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Unblock a host for a live run and persist it to the project
       tags:
         - egress
@@ -5267,6 +6324,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5275,6 +6336,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Everything this run's workspace reached or was blocked from
       tags:
         - egress
@@ -5301,6 +6365,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5309,6 +6377,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Hosts the gateway blocked for this run
       tags:
         - egress
@@ -5332,6 +6403,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5340,6 +6415,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The firewall policy in force for a run right now
       tags:
         - egress
@@ -5369,6 +6447,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5381,6 +6463,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Allow or force-block a host for a run
       tags:
         - egress
@@ -5410,6 +6495,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5418,6 +6507,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Server-sent event stream of a run's events
       tags:
         - runs
@@ -5447,6 +6539,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5459,6 +6555,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Publish a workspace port and get its browsable URL
       tags:
         - workspace
@@ -5482,6 +6581,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5490,6 +6593,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'Everything filed under a run: human uploads and engine captures'
       tags:
         - files
@@ -5523,6 +6629,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5531,6 +6641,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: A stage's captured log (latest attempt)
       tags:
         - runs
@@ -5561,6 +6674,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5573,6 +6690,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Send a message to the run's running agent
       tags:
         - runs
@@ -5599,6 +6719,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5607,6 +6731,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'Each merge request as its repository reports it now: mergeability and pending review threads'
       tags:
         - runs
@@ -5673,6 +6800,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5685,6 +6816,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Start code-server in the workspace and get its URL
       tags:
         - workspace
@@ -5705,6 +6839,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5717,6 +6855,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Park a run; nothing moves until play
       tags:
         - runs
@@ -5743,6 +6884,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5751,6 +6896,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'Every phase of the run''s flow: what opens it, its runs per merge request, its live run and the signals holding for it'
       tags:
         - runs
@@ -5782,6 +6930,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5794,6 +6946,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Start a phase now, by hand
       tags:
         - runs
@@ -5912,6 +7067,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5924,6 +7083,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Continue a paused run where it left off
       tags:
         - runs
@@ -5947,6 +7109,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5955,6 +7121,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Exposed and newly observed workspace ports
       tags:
         - workspace
@@ -5981,6 +7150,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5993,6 +7166,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Recreate the run's container in place, keeping the checkout
       tags:
         - workspace
@@ -6022,6 +7198,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6034,6 +7214,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Run the ticket again as a new run in a fresh workspace
       tags:
         - runs
@@ -6057,6 +7240,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6065,6 +7252,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Rolling window of workspace cpu/memory/network samples
       tags:
         - workspace
@@ -6084,6 +7274,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6096,6 +7290,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: 'Try again: re-enter the failed stage in the same workspace'
       tags:
         - runs
@@ -6120,6 +7317,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6128,6 +7329,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The project's services and how each stands in the run's workspace
       tags:
         - workspace
@@ -6161,6 +7365,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6169,6 +7377,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The last lines of a service's output
       tags:
         - workspace
@@ -6197,6 +7408,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6209,6 +7424,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Stop a service and start it again
       tags:
         - workspace
@@ -6238,6 +7456,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6250,6 +7472,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Start a service by hand
       tags:
         - workspace
@@ -6278,6 +7503,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6290,6 +7519,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Stop a service, whoever started it
       tags:
         - workspace
@@ -6318,6 +7550,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6326,6 +7562,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Live tail of the workspace's exec log
       tags:
         - workspace
@@ -6355,6 +7594,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6363,6 +7606,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: A checkout's changes against the branch it forked from
       tags:
         - workspace
@@ -6396,6 +7642,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6404,6 +7654,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One file's unified diff against the branch the checkout forked from
       tags:
         - workspace
@@ -6437,6 +7690,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6445,6 +7702,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One file of a run checkout
       tags:
         - workspace
@@ -6471,6 +7731,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6479,6 +7743,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: The run's checkouts (one per repository)
       tags:
         - workspace
@@ -6515,6 +7782,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6523,6 +7794,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One directory level of a run checkout
       tags:
         - workspace
@@ -6540,11 +7814,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: Engine-wide policy settings
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'One''s policy settings: the reaper and retention windows'
       tags:
         - system
     put:
@@ -6566,6 +7847,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -6574,7 +7859,10 @@ paths:
           content:
             application/json: {}
           description: error
-      summary: Replace the engine-wide policy settings
+      security:
+        - session: []
+        - personalToken: []
+      summary: Replace one's policy settings
       tags:
         - system
   /api/signals:
@@ -6594,10 +7882,17 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Signals a `wait` stage or a gate's auto-answer may name
       tags:
         - system
@@ -6622,6 +7917,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6630,6 +7929,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Download one engine-captured record
       tags:
         - files
@@ -6656,11 +7958,18 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
           description: error
-      summary: All tickets
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's tickets
       tags:
         - tickets
     post:
@@ -6682,6 +7991,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -6690,6 +8003,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Create a ticket
       tags:
         - tickets
@@ -6709,6 +8025,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6721,6 +8041,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Delete a ticket
       tags:
         - tickets
@@ -6743,6 +8066,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6751,6 +8078,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: One ticket
       tags:
         - tickets
@@ -6779,6 +8109,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6791,6 +8125,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Replace a ticket
       tags:
         - tickets
@@ -6814,6 +8151,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6822,6 +8163,9 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Files attached to a ticket
       tags:
         - tickets
@@ -6851,6 +8195,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6863,13 +8211,195 @@ paths:
           content:
             application/json: {}
           description: error
+      security:
+        - session: []
+        - personalToken: []
       summary: Start one attempt on a ticket
       tags:
         - tickets
+  /api/users:
+    get:
+      operationId: listUsers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/User'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Every account
+      tags:
+        - users
+    post:
+      operationId: createUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreateRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Create an account with a password
+      tags:
+        - users
+  /api/users/{id}:
+    put:
+      description: Disabling an account signs it out everywhere, revokes its tokens, aborts its active runs and switches its automations off; its history and workspaces stay.
+      operationId: updateUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Change an account: its profile, whether it is an admin, whether it is disabled'
+      tags:
+        - users
+  /api/users/{id}/password:
+    post:
+      description: Signs the account out everywhere.
+      operationId: resetUserPassword
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Set an account's password
+      tags:
+        - users
 servers:
   - description: the engine, same origin as the UI
     url: /
 tags:
+  - name: auth
   - name: automations
   - name: channels
   - name: egress
@@ -6881,4 +8411,5 @@ tags:
   - name: runs
   - name: system
   - name: tickets
+  - name: users
   - name: workspace

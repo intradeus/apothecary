@@ -15,6 +15,7 @@ import * as gen from './generated/sdk.gen';
 import type * as Wire from './generated/types.gen';
 import { unwrap, unwrapOptional, unwrapVoid } from './client';
 import * as map from './mappers';
+import type { AuthStatus, Limits, Me, Token, User } from '$lib/domain';
 import type {
 	OpenMergeRequest,
 	MergeRequestRow,
@@ -774,6 +775,9 @@ export const system = {
 	saveSettings: async (s: Settings): Promise<Settings> =>
 		map.toSettings(await unwrap(gen.updateSettings({ body: map.fromSettings(s) }))),
 
+	/** The deployment's capacity caps (the boot env; null = no cap). */
+	limits: async (): Promise<Limits> => map.toLimits(await unwrap(gen.getLimits())),
+
 	channels: async (): Promise<ChannelEntry[]> =>
 		many(await unwrap(gen.listChannels()), map.toChannelEntry),
 
@@ -825,6 +829,81 @@ export const automations = {
 		unwrapVoid(gen.deleteAutomation({ path: { id: projectId, aid: id } }))
 };
 
+// --- accounts ----------------------------------------------------------------
+//
+// Who is signed in (TODO 25). The browser's proof is a session cookie the
+// engine sets on setup and login; the SDK sends it with every call.
+
+export const auth = {
+	/** Whether the instance still needs its first account, and how one may
+	 *  sign in. The one call that needs no session. */
+	status: async (): Promise<AuthStatus> => map.toAuthStatus(await unwrap(gen.getAuthStatus())),
+
+	/** Claim a fresh instance: the first account, an admin, signed in at once. */
+	setup: async (d: { handle: string; email: string; name: string; password: string }): Promise<Me> =>
+		map.toMe(
+			await unwrap(
+				gen.setupInstance({
+					body: { handle: d.handle, email: d.email, name: d.name, password: d.password }
+				})
+			)
+		),
+
+	/** Sign in with a handle or an email and a password. */
+	login: async (login: string, password: string): Promise<Me> =>
+		map.toMe(await unwrap(gen.login({ body: { method: 'password', login, proof: password } }))),
+
+	logout: () => unwrapVoid(gen.logout()),
+
+	me: async (): Promise<Me> => map.toMe(await unwrap(gen.getMe())),
+
+	/** Change one's own profile (absent fields keep their value). */
+	updateMe: async (d: { handle?: string; email?: string; name?: string }): Promise<Me> =>
+		map.toMe(await unwrap(gen.updateMe({ body: d }))),
+
+	changePassword: (current: string, password: string) =>
+		unwrapVoid(gen.changeMyPassword({ body: { current, password } })),
+
+	tokens: async (): Promise<Token[]> => many(await unwrap(gen.listMyTokens()), map.toToken),
+
+	/** Mint a token; the secret is in the answer and nowhere else. */
+	createToken: async (name: string): Promise<{ token: Token; secret: string }> => {
+		const w = await unwrap(gen.createMyToken({ body: { name } }));
+		return { token: map.toToken(w.token), secret: w.secret };
+	},
+
+	revokeToken: (id: string) => unwrapVoid(gen.deleteMyToken({ path: { id } }))
+};
+
+/** Accounts, for the instance admin. */
+export const users = {
+	list: async (): Promise<User[]> => many(await unwrap(gen.listUsers()), map.toUser),
+
+	create: async (d: {
+		handle: string;
+		email: string;
+		name: string;
+		password: string;
+		admin: boolean;
+	}): Promise<User> =>
+		map.toUser(
+			await unwrap(
+				gen.createUser({
+					body: { handle: d.handle, email: d.email, name: d.name, password: d.password, admin: d.admin }
+				})
+			)
+		),
+
+	/** Change an account: profile fields, the admin flag, whether it is disabled. */
+	update: async (
+		id: string,
+		d: { handle?: string; email?: string; name?: string; admin?: boolean; disabled?: boolean }
+	): Promise<User> => map.toUser(await unwrap(gen.updateUser({ path: { id }, body: d }))),
+
+	resetPassword: (id: string, password: string) =>
+		unwrapVoid(gen.resetUserPassword({ path: { id }, body: { password } }))
+};
+
 export const api = {
 	runs,
 	workspace,
@@ -836,5 +915,7 @@ export const api = {
 	flows,
 	automations,
 	files,
-	system
+	system,
+	auth,
+	users
 };

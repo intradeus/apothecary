@@ -1,9 +1,8 @@
-// The engine settings, shared by the Limits, Reaper and Storage sections of
-// the System hub. One draft and one Save across all three: moving between
-// sections keeps unsaved edits, and saving writes them together.
+// One's settings, shared by the Reaper and Storage sections of the System
+// hub. One draft and one Save across both: moving between sections keeps
+// unsaved edits, and saving writes them together.
 
 import { api } from '$lib/api';
-import { fleet } from '$lib/fleet.svelte';
 import type { Settings } from '$lib/domain';
 
 class SettingsDraft {
@@ -40,15 +39,10 @@ class SettingsDraft {
 		this.busy = true;
 		this.error = '';
 		try {
-			const s = await api.system.saveSettings({
-				...this.draft,
-				maxConcurrentRuns: Number(this.draft.maxConcurrentRuns),
-				maxEnvironments: Number(this.draft.maxEnvironments)
-			});
+			const s = await api.system.saveSettings({ ...this.draft });
 			this.saved = s;
 			this.draft = { ...s };
 			this.savedAt = Date.now();
-			fleet.invalidateSettings();
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : String(e);
 		} finally {

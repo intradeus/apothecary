@@ -3,21 +3,30 @@
 	// the sidebar, the main column the pages fill, and the cursor light on top.
 	// On a phone the sidebar becomes a sheet (flick it away) and the nav a
 	// bottom tab bar whose bead slides between tabs.
+	//
+	// Before any of it: who is here (TODO 25). The session check decides
+	// between the setup page (no account yet), the sign-in page, and the app;
+	// a 401 later drops back to sign-in in place, so a deep link survives.
 	import '../app.css';
 	import { goto, afterNavigate } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { session } from '$lib/session.svelte';
 	import { i18n, t } from '$lib/i18n/index.svelte';
 	import { NAV, navByChord } from '$lib/nav';
 	import Sigils from '$lib/ui/Sigils.svelte';
 	import ConfirmHost from '$lib/ui/ConfirmHost.svelte';
 	import Toaster from '$lib/ui/Toaster.svelte';
 	import Sheet from '$lib/ui/Sheet.svelte';
+	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import Loading from '$lib/ui/Loading.svelte';
 	import { I } from '$lib/ui/icons';
 	import { bump, indicator } from '$lib/ui/motion';
 	import Sidebar from '$lib/shell/Sidebar.svelte';
 	import CommandPalette from '$lib/shell/CommandPalette.svelte';
+	import SignIn from '$lib/shell/SignIn.svelte';
+	import Setup from '$lib/shell/Setup.svelte';
 	import { page } from '$app/state';
 
 	let { children } = $props();
@@ -29,11 +38,23 @@
 	onMount(() => {
 		document.documentElement.dataset.theme = prefs.theme;
 		void i18n.init();
-		const stop = fleet.use();
+		void session.load();
+	});
 
+	// The fleet polls only while someone is signed in, and starts over for
+	// whoever signs in next.
+	$effect(() => {
+		if (!session.user) return;
+		fleet.reset();
+		const stop = fleet.use();
+		return stop;
+	});
+
+	onMount(() => {
 		// "G then I/R/T/D" chords (from $lib/nav): the G arms for a second.
 		let gArmed = 0;
 		const key = (e: KeyboardEvent) => {
+			if (!session.user) return;
 			const mod = e.metaKey || e.ctrlKey;
 			if (mod && e.key.toLowerCase() === 'k') {
 				e.preventDefault();
@@ -62,10 +83,7 @@
 			}
 		};
 		window.addEventListener('keydown', key);
-		return () => {
-			stop();
-			window.removeEventListener('keydown', key);
-		};
+		return () => window.removeEventListener('keydown', key);
 	});
 
 	afterNavigate(() => (drawerOpen = false));
@@ -78,45 +96,67 @@
 	const tabs = NAV.filter((n) => n.mobile);
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="app" bind:this={root} onmousemove={light}>
-	<Sigils />
-	<div class="shell">
-		<div class="side-slot">
-			<Sidebar onsearch={() => (paletteOpen = true)} />
-		</div>
-		<main class="main">
-			{@render children()}
-		</main>
+{#if session.error}
+	<div class="gate">
+		<ErrorCard cause={t('auth.unreachable')} detail={session.error} onretry={() => session.load()} />
 	</div>
-	<div class="cursor-light" aria-hidden="true"></div>
+{:else if !session.ready}
+	<div class="gate"><Loading /></div>
+{:else if session.setupRequired}
+	<Setup />
+{:else if !session.user}
+	<SignIn />
+{:else}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="app" bind:this={root} onmousemove={light}>
+		<Sigils />
+		<div class="shell">
+			<div class="side-slot">
+				<Sidebar onsearch={() => (paletteOpen = true)} />
+			</div>
+			<main class="main">
+				{@render children()}
+			</main>
+		</div>
+		<div class="cursor-light" aria-hidden="true"></div>
 
-	<nav class="mtabs lg" aria-label={t('page.layout.primary')} use:indicator>
-		{#each tabs as tab (tab.id)}
-			{@const on = tab.match(page.url.pathname)}
-			{@const n = tab.id === 'inbox' ? fleet.pending.length : 0}
-			<a class:on href={tab.href()} aria-current={on ? 'page' : undefined}
-				><span class="ti">{tab.icon}</span>{tab.label}{#if tab.id === 'inbox'}<span
-						class="count hot sm"
-						class:gone={!n}
-						use:bump={n}>{n}</span
-					>{/if}</a
+		<nav class="mtabs lg" aria-label={t('page.layout.primary')} use:indicator>
+			{#each tabs as tab (tab.id)}
+				{@const on = tab.match(page.url.pathname)}
+				{@const n = tab.id === 'inbox' ? fleet.pending.length : 0}
+				<a class:on href={tab.href()} aria-current={on ? 'page' : undefined}
+					><span class="ti">{tab.icon}</span>{tab.label}{#if tab.id === 'inbox'}<span
+							class="count hot sm"
+							class:gone={!n}
+							use:bump={n}>{n}</span
+						>{/if}</a
+				>
+			{/each}
+			<button onclick={() => (drawerOpen = true)}
+				><span class="ti">{I.more}</span>{t('page.layout.more')}</button
 			>
-		{/each}
-		<button onclick={() => (drawerOpen = true)}
-			><span class="ti">{I.more}</span>{t('page.layout.more')}</button
-		>
-	</nav>
-	<Sheet bind:open={drawerOpen} side="left" label={t('page.layout.navigation')}>
-		<Sidebar drawer onsearch={() => (paletteOpen = true)} onnavigate={() => (drawerOpen = false)} />
-	</Sheet>
+		</nav>
+		<Sheet bind:open={drawerOpen} side="left" label={t('page.layout.navigation')}>
+			<Sidebar drawer onsearch={() => (paletteOpen = true)} onnavigate={() => (drawerOpen = false)} />
+		</Sheet>
 
-	<CommandPalette bind:open={paletteOpen} />
-	<ConfirmHost />
-	<Toaster />
-</div>
+		<CommandPalette bind:open={paletteOpen} />
+	</div>
+{/if}
+<ConfirmHost />
+<Toaster />
 
 <style>
+	.gate {
+		position: fixed;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 16px;
+		background: var(--scene);
+		color: var(--tx);
+	}
 	.app {
 		position: fixed;
 		inset: 0;

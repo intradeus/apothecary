@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -21,11 +22,11 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	att, _, _ := newFilesFor(t, x, 1<<20, []string{"text/*"})
 	ctx := context.Background()
-	tickUp, err := att.Save(ctx, "design.md", "text/markdown", strings.NewReader("# D"))
+	tickUp, err := att.Save(ctx, "", "design.md", "text/markdown", strings.NewReader("# D"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	runUp, err := att.Save(ctx, "trace.log", "text/plain", strings.NewReader("t"))
+	runUp, err := att.Save(ctx, "", "trace.log", "text/plain", strings.NewReader("t"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +130,7 @@ func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 // hand-uploaded file.
 func TestImportTicketFromSource(t *testing.T) {
 	x := newEnv(t, engine.Config{})
+	x.seedIntegration(t, "int-1", confstore.PortTicketSource)
 	att, _, _ := newFilesFor(t, x, 1<<20, []string{"text/*"})
 	x.srv.Sources = stubSources{src: &fake.TicketSource{
 		Tickets: []ports.SourceTicket{{
@@ -240,6 +242,7 @@ func TestImportTicketFromSource(t *testing.T) {
 // than 404ing or pretending the tracker is empty.
 func TestTicketSourceRoutesWithoutWiring(t *testing.T) {
 	x := newEnv(t, engine.Config{})
+	x.seedIntegration(t, "int-1", confstore.PortTicketSource)
 	resp, data := x.do(t, "GET", "/api/integrations/int-1/tickets", nil, nil)
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("search = %d: %s", resp.StatusCode, data)

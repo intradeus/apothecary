@@ -161,7 +161,7 @@ func TestPingsProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := s.ListPings(ctx, "pending", 0)
+	pending, err := s.ListPings(ctx, "", "pending", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,12 +174,12 @@ func TestPingsProjection(t *testing.T) {
 		Content: map[string]any{"db": "pg", "n": 2.0}}); err != nil {
 		t.Fatal(err)
 	}
-	pending, _ = s.ListPings(ctx, "pending", 0)
+	pending, _ = s.ListPings(ctx, "", "pending", 0)
 	if len(pending) != 0 {
 		t.Errorf("pending after answer = %+v", pending)
 	}
 	// The pair is durable (PLAN4 M15): answered listing + by-id fetch.
-	answered, _ := s.ListPings(ctx, "answered", 0)
+	answered, _ := s.ListPings(ctx, "", "answered", 0)
 	if len(answered) != 1 || answered[0].Answer != "accept" || answered[0].Feedback != "v16" || answered[0].AnsweredAt == nil ||
 		answered[0].Content["db"] != "pg" || answered[0].Content["n"] != 2.0 {
 		t.Errorf("answered = %+v", answered)
@@ -216,7 +216,7 @@ func TestPingReviewProjection(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(one.Review, review) {
 			t.Errorf("%s: GetPing review = %+v, %v", when, one.Review, err)
 		}
-		list, _ := s.ListPings(ctx, "answered", 0)
+		list, _ := s.ListPings(ctx, "", "answered", 0)
 		if len(list) != 1 || !reflect.DeepEqual(list[0].Review, review) {
 			t.Errorf("%s: ListPings = %+v", when, list)
 		}
@@ -286,7 +286,7 @@ func TestRebuildProjections(t *testing.T) {
 		t.Errorf("rebuilt %d runs, want 3", n)
 	}
 	views, _ := s.RunViews(ctx)
-	pending, _ := s.ListPings(ctx, "pending", 0)
+	pending, _ := s.ListPings(ctx, "", "pending", 0)
 	if len(views) != 3 || len(pending) != 3 {
 		t.Errorf("after rebuild: %d views, %d pings", len(views), len(pending))
 	}
@@ -299,7 +299,7 @@ func TestRebuildProjections(t *testing.T) {
 func TestChannelsCRUD(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	if err := s.SaveChannel(ctx, "c1", "matrix",
+	if err := s.SaveChannel(ctx, "c1", "", "matrix",
 		map[string]any{"homeserver": "https://m.local", "room_id": "!r:m.local"}); err != nil {
 		t.Fatal(err)
 	}
@@ -392,11 +392,11 @@ func TestAttachmentsCRUD(t *testing.T) {
 		t.Errorf("GetAttachment(nope) err = %v, want ErrNotFound", err)
 	}
 	// a3 is still unclaimed.
-	if orphans, _ := s.UnclaimedAttachmentIDsBefore(ctx, time.Now().Add(time.Hour)); len(orphans) != 1 || orphans[0] != "a3" {
+	if orphans, _ := s.UnclaimedAttachmentIDsBefore(ctx, "", time.Now().Add(time.Hour)); len(orphans) != 1 || orphans[0] != "a3" {
 		t.Errorf("unclaimed = %v, want [a3]", orphans)
 	}
 	// Live sha set covers every row (blob sweep mark set).
-	if live, _ := s.LiveBlobSHAs(ctx, time.Time{}); !live["ab12"] {
+	if live, _ := s.LiveBlobSHAs(ctx, nil); !live["ab12"] {
 		t.Errorf("live shas = %v", live)
 	}
 	if err := s.DeleteAttachmentsForRun(ctx, "run1"); err != nil {
@@ -447,7 +447,7 @@ func TestSnapshotsCRUDAndProjection(t *testing.T) {
 		t.Errorf("ForPing = %+v", forPing)
 	}
 	// Retention cutoff drops old snapshot shas from the mark set.
-	if live, _ := s.LiveBlobSHAs(ctx, time.Now().Add(time.Hour)); live["cd34"] {
+	if live, _ := s.LiveBlobSHAs(ctx, map[string]time.Time{"": time.Now().Add(time.Hour)}); live["cd34"] {
 		t.Errorf("expired snapshot sha still live: %v", live)
 	}
 }

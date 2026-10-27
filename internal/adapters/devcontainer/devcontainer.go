@@ -84,12 +84,19 @@ const idLabel = "apothecary.env"
 // Metadata labels stamped on every container at `up` (as --id-label, so they
 // land on repo-authored containers too, which we can't inject runArgs into):
 // a marker to find ALL apothecary containers regardless of provisioner
-// (`docker ps --filter label=apothecary`) and the run's project name. They
+// (`docker ps --filter label=apothecary`) and the run's project ID. They
 // ride the id-label set so they're set at create time, but every lookup keys
 // off idLabel alone, so their presence never widens a match.
+//
+// projectNameLabel carries the project's human name for `docker ps`. It goes
+// ONLY on containers created with --label (the sandbox; the gateway and the
+// browser do the same): the CLI matches an existing container on EVERY
+// id-label, so a renamed project would stop matching its own workspace
+// container and `up` would create a second one beside it.
 const (
-	managedLabel = "apothecary"
-	projectLabel = "apothecary.project"
+	managedLabel     = "apothecary"
+	projectLabel     = "apothecary.project"
+	projectNameLabel = "apothecary.project.name"
 )
 
 type Config struct {
@@ -452,7 +459,7 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	plog("→ bringing up per-run sandbox + egress gateway\n")
 	var gwIP string
 	if a.gw != nil {
-		ip, gerr := a.gw.EnsureRunEgress(ctx, spec.Project, name, policyFor(spec))
+		ip, gerr := a.gw.EnsureRunEgress(ctx, spec.Project, spec.ProjectName, name, policyFor(spec))
 		if gerr != nil {
 			return "", gerr
 		}
@@ -705,14 +712,15 @@ func policyFor(spec ports.EnvSpec) policyfile.File {
 	}
 }
 
-// recordProject persists which project owns an env (a tiny marker in the run
-// folder), so EgressDenials/AllowEgress can locate the per-project gateway after
-// an engine restart without a docker call.
+// recordProject persists which project (by id) owns an env — a tiny marker in
+// the run folder — so EgressDenials/AllowEgress can locate the per-project
+// gateway after an engine restart without a docker call.
 func (a *Adapter) recordProject(name, project string) {
 	_ = os.WriteFile(filepath.Join(a.folderFor(name), "gwproject"), []byte(project), 0o644)
 }
 
-// projectFor reads the env's owning project (from the marker); "" when unknown.
+// projectFor reads the env's owning project id (from the marker); "" when
+// unknown.
 func (a *Adapter) projectFor(name string) string {
 	b, err := os.ReadFile(filepath.Join(a.folderFor(name), "gwproject"))
 	if err != nil {

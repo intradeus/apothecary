@@ -65,7 +65,7 @@ func TestTicketAttachmentsReachEveryRun(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	att, snaps, _ := newFiles(t)
 	h.e.SetFiles(att, snaps)
-	up, err := att.Save(context.Background(), "design.md", "text/markdown", strings.NewReader("# Design"))
+	up, err := att.Save(context.Background(), "", "design.md", "text/markdown", strings.NewReader("# Design"))
 	if err != nil {
 		t.Fatal(err)
 	}

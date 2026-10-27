@@ -50,13 +50,13 @@ func (m *Mem) UpsertIntegration(_ context.Context, r StoredIntegration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, x := range m.integrations {
-		if x.Port == r.Port && x.Name == r.Name && x.ID != r.ID {
+		if x.UserID == r.UserID && x.Port == r.Port && x.Name == r.Name && x.ID != r.ID {
 			return fmt.Errorf("integration %s/%s: %w", r.Port, r.Name, ErrConflict)
 		}
 	}
-	// Parity with the pg upsert: port and kind are immutable on update.
+	// Parity with the pg upsert: owner, port and kind are immutable on update.
 	if old, ok := m.integrations[r.ID]; ok {
-		r.Port, r.Kind = old.Port, old.Kind
+		r.UserID, r.Port, r.Kind = old.UserID, old.Port, old.Kind
 	}
 	m.integrations[r.ID] = r
 	return nil
@@ -72,12 +72,14 @@ func (m *Mem) GetIntegration(_ context.Context, id string) (StoredIntegration, e
 	return r, nil
 }
 
-func (m *Mem) ListIntegrations(_ context.Context) ([]StoredIntegration, error) {
+func (m *Mem) ListIntegrations(_ context.Context, userID string) ([]StoredIntegration, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]StoredIntegration, 0, len(m.integrations))
 	for _, r := range m.integrations {
-		out = append(out, r)
+		if userID == "" || r.UserID == userID {
+			out = append(out, r)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
@@ -114,9 +116,13 @@ func (m *Mem) UpsertProject(_ context.Context, p Project) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, x := range m.projects {
-		if x.Name == p.Name && x.ID != p.ID {
+		if x.UserID == p.UserID && x.Name == p.Name && x.ID != p.ID {
 			return fmt.Errorf("project %s: %w", p.Name, ErrConflict)
 		}
+	}
+	// Parity with pg: the owner never changes on update.
+	if old, ok := m.projects[p.ID]; ok {
+		p.UserID = old.UserID
 	}
 	m.projects[p.ID] = p
 	return nil
@@ -132,23 +138,25 @@ func (m *Mem) GetProject(_ context.Context, id string) (Project, error) {
 	return p, nil
 }
 
-func (m *Mem) GetProjectByName(_ context.Context, name string) (Project, error) {
+func (m *Mem) GetProjectByName(_ context.Context, userID, name string) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, p := range m.projects {
-		if p.Name == name {
+		if p.Name == name && (userID == "" || p.UserID == userID) {
 			return p, nil
 		}
 	}
 	return Project{}, notFound("project", name)
 }
 
-func (m *Mem) ListProjects(_ context.Context) ([]Project, error) {
+func (m *Mem) ListProjects(_ context.Context, userID string) ([]Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Project, 0, len(m.projects))
 	for _, p := range m.projects {
-		out = append(out, p)
+		if userID == "" || p.UserID == userID {
+			out = append(out, p)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
@@ -222,9 +230,11 @@ func (m *Mem) DeleteProjectSecret(_ context.Context, projectID, name string) err
 func (m *Mem) UpsertTicket(_ context.Context, t Ticket) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.projects[t.ProjectID]; !ok {
+	p, ok := m.projects[t.ProjectID]
+	if !ok {
 		return fmt.Errorf("ticket %s references a missing project: %w", t.ID, ErrInvalid)
 	}
+	t.UserID = p.UserID
 	m.tickets[t.ID] = t
 	return nil
 }
@@ -239,12 +249,14 @@ func (m *Mem) GetTicket(_ context.Context, id string) (Ticket, error) {
 	return t, nil
 }
 
-func (m *Mem) ListTickets(_ context.Context) ([]Ticket, error) {
+func (m *Mem) ListTickets(_ context.Context, userID string) ([]Ticket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Ticket, 0, len(m.tickets))
 	for _, t := range m.tickets {
-		out = append(out, t)
+		if userID == "" || t.UserID == userID {
+			out = append(out, t)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
@@ -462,18 +474,22 @@ func flowKey(projectID, name string) string { return projectID + "\x00" + name }
 
 func agentKey(projectID, name string) string { return projectID + "\x00" + name }
 
-func (m *Mem) GetSettings(_ context.Context) (map[string]string, error) {
+func (m *Mem) GetSettings(_ context.Context, userID string) (map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := map[string]string{}
-	maps.Copy(out, m.settings)
+	for k, v := range m.settings {
+		if strings.HasPrefix(k, userID+"\x00") {
+			out[strings.TrimPrefix(k, userID+"\x00")] = v
+		}
+	}
 	return out, nil
 }
 
-func (m *Mem) PutSetting(_ context.Context, key, value string) error {
+func (m *Mem) PutSetting(_ context.Context, userID, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.settings[key] = value
+	m.settings[userID+"\x00"+key] = value
 	return nil
 }
 

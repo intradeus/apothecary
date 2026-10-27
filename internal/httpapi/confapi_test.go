@@ -67,7 +67,8 @@ func newConfEnv(t *testing.T) *confEnv {
 
 	store := event.NewMemStore()
 	chreg := channels.NewRegistry()
-	e := engine.New(engine.Config{}, store, resolver, conf.FlowSource(), resolve.Settings{Conf: conf}, nil)
+	e := engine.New(engine.Config{}, store, resolver, conf.FlowSource(),
+		engine.StaticSettings{L: engine.Limits{MaxConcurrentRuns: 3, MaxEnvironments: 6}}, nil)
 	e.SetFlowBindings(conf)
 	t.Cleanup(e.Shutdown)
 
@@ -76,9 +77,11 @@ func newConfEnv(t *testing.T) *confEnv {
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
-	return &confEnv{env: &env{e: e, store: store, srv: srv, ts: ts}, conf: conf, resolver: resolver}
+	x := &env{e: e, store: store, srv: srv, reg: chreg}
+	x.signIn(t)
+	x.ts = httptest.NewServer(srv.Handler())
+	t.Cleanup(x.ts.Close)
+	return &confEnv{env: x, conf: conf, resolver: resolver}
 }
 
 // waitPingType polls the inbox for a pending ping of the given type, skipping
@@ -228,18 +231,21 @@ func TestConfigPlaneCRUDAndMasking(t *testing.T) {
 
 	// Settings roundtrip + validation.
 	resp, _ = x.do(t, "PUT", "/api/settings", map[string]any{
-		"max_concurrent_runs": 2, "max_environments": 4,
 		"destroy_completed_after": "24h", "destroy_abandoned": "never",
 	}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("settings put = %d", resp.StatusCode)
 	}
 	resp, data = x.do(t, "GET", "/api/settings", nil, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), `"max_concurrent_runs":2`) {
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"destroy_completed_after":"24h"`) {
 		t.Fatalf("settings get = %d: %s", resp.StatusCode, data)
 	}
+	// The capacity caps are the deployment's, not a setting.
+	resp, data = x.do(t, "GET", "/api/limits", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"max_concurrent_runs"`) {
+		t.Fatalf("limits get = %d: %s", resp.StatusCode, data)
+	}
 	resp, _ = x.do(t, "PUT", "/api/settings", map[string]any{
-		"max_concurrent_runs": 2, "max_environments": 4,
 		"destroy_completed_after": "24h", "destroy_abandoned": "sometimes",
 	}, nil)
 	if resp.StatusCode != 400 {

@@ -6,7 +6,7 @@
 	// what the gateway does today.
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, fmtBytes } from '$lib/format';
 	import Segmented from '$lib/ui/Segmented.svelte';

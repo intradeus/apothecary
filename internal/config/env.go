@@ -37,6 +37,14 @@ type Boot struct {
 	// of only listing them for click-to-expose. APOTHECARY_PORT_AUTOEXPOSE
 	// ("on" enables); default off.
 	PortAutoExpose bool
+	// MaxConcurrentRuns / MaxEnvironments are the host's capacity: runs
+	// beyond the first queue as pending, FIFO; at the second, new runs are
+	// refused until a workspace is archived or reaped. Deployment-wide, the
+	// same for every user — they protect the machine, not a person's
+	// preference. APOTHECARY_MAX_CONCURRENT_RUNS (default 3) and
+	// APOTHECARY_MAX_ENVIRONMENTS (default 6); -1 = no cap.
+	MaxConcurrentRuns int
+	MaxEnvironments   int
 	// SandboxRuntime is the OCI runtime each run's Docker-in-Docker sandbox is
 	// created with. APOTHECARY_SANDBOX_RUNTIME; default "" = the daemon's
 	// default runtime, which needs `--privileged` to host a nested dockerd —
@@ -104,10 +112,37 @@ func FromEnv() (*Boot, error) {
 	}
 	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"
 	b.SandboxRuntime = strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_RUNTIME"))
+	var err error
+	if b.MaxConcurrentRuns, err = limitEnv("APOTHECARY_MAX_CONCURRENT_RUNS", DefaultMaxConcurrentRuns); err != nil {
+		return nil, err
+	}
+	if b.MaxEnvironments, err = limitEnv("APOTHECARY_MAX_ENVIRONMENTS", DefaultMaxEnvironments); err != nil {
+		return nil, err
+	}
 	if b.PostgresDSN == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")
 	}
 	return b, nil
+}
+
+// Default capacity caps (the v1 config defaults).
+const (
+	DefaultMaxConcurrentRuns = 3
+	DefaultMaxEnvironments   = 6
+)
+
+// limitEnv reads a capacity cap: a positive count, or -1 for no cap. Zero
+// and other negatives are refused rather than read as "nothing may run".
+func limitEnv(name string, def int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n == 0 || n < -1 {
+		return 0, fmt.Errorf("config: %s must be a positive count or -1 (no cap), got %q", name, raw)
+	}
+	return n, nil
 }
 
 func splitComma(s string) []string {

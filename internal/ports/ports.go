@@ -33,6 +33,32 @@ type HarnessInstall struct {
 	Commands []string
 }
 
+// ProjectHostKey is the ONE token host-side, per-project resources are named
+// by: the egress gateway and browser containers, their volumes and folders
+// (<RunsDir>/gw/<key>, <RunsDir>/browser/<key>) and the build-cache registry's
+// repository path. It is the project's ID (projects.id, a ULID) lowercased —
+// docker names and registry paths want lowercase, and a ULID is uppercase
+// Crockford base32 — with anything else mapped to '-' for safety; an empty id
+// (direct and test callers with no project) reads as "default". The project's
+// NAME keys nothing: two users' "api" projects must never share a gateway, and
+// renaming a project must not move it off its caches. The name survives only
+// as the apothecary.project.name docker label, for `docker ps`.
+func ProjectHostKey(projectID string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(projectID) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "default"
+	}
+	return out
+}
+
 // EnvSpec carries the §11 provisioning inputs. Everything the adapter may
 // expose to the vendor (template parameters, labels, generated configs)
 // must be non-secret; GitUser/GitPass are the one engine-held exception,
@@ -52,11 +78,17 @@ type EnvSpec struct {
 	// env identity. Empty ⇒ the adapter falls back to WorkspaceName(RunID),
 	// the legacy run-id scheme, so direct and test callers keep working.
 	Name string
-	// Project is the run's project name, stamped on the container as the
-	// apothecary.project docker label so containers can be grouped by project
-	// (`docker ps --filter label=apothecary.project=<name>`). Empty ⇒ the
-	// label is omitted.
+	// Project is the run's project ID (projects.id): what every host-side
+	// per-project resource is keyed by (ProjectHostKey — the egress gateway,
+	// the build cache, the browser) and the apothecary.project docker label
+	// containers are grouped by (`docker ps --filter
+	// label=apothecary.project=<id>`). Empty ⇒ no label, the "default" key.
 	Project string
+	// ProjectName is the project's human name, stamped as the
+	// apothecary.project.name label where a container is created with --label,
+	// so `docker ps` reads well. It keys NOTHING: a rename changes the label on
+	// the next create and nothing else. Empty ⇒ omitted.
+	ProjectName string
 	// NoCache builds the workspace image from scratch, ignoring the project's
 	// build cache. The cache is keyed by what the build actually reads, so a
 	// changed Dockerfile or context file already rebuilds on its own — this is
@@ -793,7 +825,8 @@ type BuildCacheInfo struct {
 // the image from scratch. It is also the one piece of derived state a human
 // occasionally has to delete: a base image that moved under a floating tag, a
 // feature install that cached a bad layer. Provisioners without one simply
-// don't implement this and the engine says so honestly.
+// don't implement this and the engine says so honestly. project is the
+// project's id — the same value EnvSpec.Project carried at Provision.
 type BuildCacheController interface {
 	BuildCache(ctx context.Context, project string) (BuildCacheInfo, error)
 	ClearBuildCache(ctx context.Context, project string) error
@@ -839,16 +872,22 @@ type Browser interface {
 	// bringing the project's browser up first. One session is one Chromium.
 	Session(ctx context.Context, s BrowserSession, stdio io.ReadWriter) error
 	// Warm brings the project's browser up (building its image on first
-	// use) in the background, so a session does not wait on it.
-	Warm(project string)
-	// Status is the project's browser as the settings page shows it.
+	// use) in the background, so a session does not wait on it. project is
+	// the project's id (what names the container, via ProjectHostKey);
+	// projectName is a docker label only.
+	Warm(project, projectName string)
+	// Status is the project's browser as the settings page shows it, by
+	// project id.
 	Status(ctx context.Context, project string) (BrowserStatus, error)
 }
 
 // BrowserSession is who a browser session is for.
 type BrowserSession struct {
-	Project string // the project's name, which names its container
-	Run     string
+	// Project is the project's id: what names its container (ProjectHostKey).
+	Project string
+	// ProjectName is the human name, a docker label on the container only.
+	ProjectName string
+	Run         string
 	// Dial reaches a TCP port the run's workspace serves: where the
 	// browser's http://localhost:<port> goes.
 	Dial func(ctx context.Context, port int) (net.Conn, error)
@@ -1083,6 +1122,9 @@ func (a Attachment) Target() string {
 // Notification is the one-way fan-out payload; the CPUI inbox is canonical,
 // channels are best-effort mirrors.
 type Notification struct {
+	// UserID is whose channels the notification goes to: the run's owner.
+	// Empty is an instance-wide notice (every channel).
+	UserID string
 	RunID  string
 	PingID string
 	Type   string // ping type

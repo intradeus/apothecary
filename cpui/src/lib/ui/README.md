@@ -90,7 +90,7 @@ A theme is one `:root[data-theme='id']` block in `tokens.css` plus one entry in 
 | `StageChip`, `StageFlask`                                                                                           | Stage type (3.3) and stage status flask (3.4)                                                                                                                                                                             |
 | `PingPill` (+ `pingMeta()`)                                                                                         | Ping type (3.5)                                                                                                                                                                                                           |
 | `StatusMark`                                                                                                        | A round ✓ / ✕ / ! / live / pending glyph (timelines, checklists, steps)                                                                                                                                                   |
-| `Vial`, `GuildAvatar`, `UserAvatar`, `Logo`                                                                         | Identity glyphs                                                                                                                                                                                                           |
+| `Vial`, `UserAvatar`, `Logo`                                                                         | Identity glyphs                                                                                                                                                                                                           |
 | `PageHeader`, `Breadcrumbs`, `SectionHeader`                                                                        | Page and section headings                                                                                                                                                                                                 |
 | `GlassGroup`, `Segmented`, `Tabs`, `SideNav`, `Popover`, `Modal`, `Sheet`                                           | Controls and surfaces, all with motion built in. `Segmented` picks (a filter, a view: a radio group); `Tabs` are a page's or pane's sections (links or buttons). `Popover` takes `portal`, `matchWidth`, `flip` for lists |
 | `confirmDialog()` + `ConfirmHost`                                                                                   | Destructive confirms                                                                                                                                                                                                      |
@@ -108,9 +108,10 @@ Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bu
 
 ## App modules
 
-- `$lib/guild`: `to.*` builds every in-app URL. Never hand-write `/g/…`.
+- `$lib/urls`: `to.*` builds every in-app URL. Never hand-write a path.
+- `$lib/session.svelte`: who is signed in (`session.user`, `session.admin`), the setup/sign-in/sign-out flow; the root layout gates the shell on it.
 - `$lib/nav`: the top-level destinations (sidebar, tab bar, palette, chords).
-- `$lib/fleet.svelte`: the shared polled state. It provides runs, pings, projects and settings, plus `projectName()`, `capacity`, `runsByTicket`, `liveByProject` and `pingsByProject`. Call `fleet.refresh()` after an action that changes any of them.
+- `$lib/fleet.svelte`: the shared polled state. It provides runs, pings, projects and the deployment's limits, plus `projectName()`, `capacity`, `runsByTicket`, `liveByProject` and `pingsByProject`. Call `fleet.refresh()` after an action that changes any of them.
 - `$lib/format`: `stateLabel`, `stateHue` (`stateHueClass`: the same as a `.hue-*` class), `shortId`, `ago`, `age`, `fmtCost`, `fmtClock`, `fmtDuration`, `fmtBytes`.
 - `$lib/markdown`: the one safe markdown renderer.
 - `$lib/themes`, `$lib/prefs.svelte`: the theme registry, plus the theme and sidebar preferences.

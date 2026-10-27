@@ -124,7 +124,12 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 	t.SourceID, t.SourceKind = sourceID, kind
 	t.SourceKey, t.SourceURL = remote.Key, remote.URL
 
-	imported, warnings := f.importAttachments(ctx, src, remote)
+	// The copied files belong to the project's owner, like the ticket.
+	owner := t.UserID
+	if p, err := f.Conf.GetProject(ctx, t.ProjectID); err == nil {
+		owner = p.UserID
+	}
+	imported, warnings := f.importAttachments(ctx, owner, src, remote)
 
 	created, err := f.Conf.CreateTicket(ctx, t)
 	if err != nil {
@@ -182,7 +187,7 @@ func (f *Factory) checkDuplicate(ctx context.Context, projectID, key string) err
 	if key == "" || projectID == "" {
 		return nil
 	}
-	rows, err := f.Conf.ListTickets(ctx)
+	rows, err := f.Conf.ListTickets(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -196,7 +201,7 @@ func (f *Factory) checkDuplicate(ctx context.Context, projectID, key string) err
 
 // importAttachments pulls each of the source's files through the upload
 // policy, returning the ids that landed and a warning per file that did not.
-func (f *Factory) importAttachments(ctx context.Context, src ports.TicketSource, remote ports.SourceTicket) ([]string, []string) {
+func (f *Factory) importAttachments(ctx context.Context, owner string, src ports.TicketSource, remote ports.SourceTicket) ([]string, []string) {
 	if len(remote.Attachments) == 0 {
 		return nil, nil
 	}
@@ -205,7 +210,7 @@ func (f *Factory) importAttachments(ctx context.Context, src ports.TicketSource,
 	}
 	var ids, warnings []string
 	for _, a := range remote.Attachments {
-		id, err := f.importOne(ctx, src, a)
+		id, err := f.importOne(ctx, owner, src, a)
 		switch {
 		case errors.Is(err, filestore.ErrTooLarge):
 			warnings = append(warnings, fmt.Sprintf("%s: too large for this server's upload limit — attach it by hand if you need it", a.Filename))
@@ -221,13 +226,13 @@ func (f *Factory) importAttachments(ctx context.Context, src ports.TicketSource,
 	return ids, warnings
 }
 
-func (f *Factory) importOne(ctx context.Context, src ports.TicketSource, a ports.SourceAttachment) (string, error) {
+func (f *Factory) importOne(ctx context.Context, owner string, src ports.TicketSource, a ports.SourceAttachment) (string, error) {
 	rc, err := src.OpenAttachment(ctx, a)
 	if err != nil {
 		return "", err
 	}
 	defer rc.Close()
-	att, err := f.Attachments.Save(ctx, a.Filename, a.Mime, io.Reader(rc))
+	att, err := f.Attachments.Save(ctx, owner, a.Filename, a.Mime, io.Reader(rc))
 	if err != nil {
 		return "", err
 	}

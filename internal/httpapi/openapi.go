@@ -54,6 +54,16 @@ func Spec() (*openapi3.T, error) {
 			WithType("http").WithScheme("bearer").
 			WithDescription("Per-run token, issued to the in-workspace shim. Not a user credential."),
 	}
+	doc.Components.SecuritySchemes["session"] = &openapi3.SecuritySchemeRef{
+		Value: openapi3.NewSecurityScheme().
+			WithType("apiKey").WithIn("cookie").WithName(sessionCookie).
+			WithDescription("A browser session, started by POST /api/auth/login (or setup)."),
+	}
+	doc.Components.SecuritySchemes["personalToken"] = &openapi3.SecuritySchemeRef{
+		Value: openapi3.NewSecurityScheme().
+			WithType("http").WithScheme("bearer").
+			WithDescription("A personal API token (POST /api/me/tokens), sent as a bearer token."),
+	}
 
 	// Every named Go type becomes a named component, referenced by $ref. That
 	// is what makes the generated client's types nameable — and therefore
@@ -142,8 +152,15 @@ func addRoute(doc *openapi3.T, rt Route, schemaFor func(any) (*openapi3.SchemaRe
 			Description: q.Doc, Schema: schema.NewRef(),
 		})
 	}
-	if rt.RunToken {
+	switch rt.Auth {
+	case AccessRunToken:
 		op.Security = openapi3.NewSecurityRequirements().With(openapi3.NewSecurityRequirement().Authenticate("runToken"))
+	case AccessPublic:
+		op.Security = openapi3.NewSecurityRequirements() // explicitly none
+	default:
+		op.Security = openapi3.NewSecurityRequirements().
+			With(openapi3.NewSecurityRequirement().Authenticate("session")).
+			With(openapi3.NewSecurityRequirement().Authenticate("personalToken"))
 	}
 
 	// Request body.
@@ -232,8 +249,11 @@ func errorCodes(rt Route) []int {
 	if rt.Method != http.MethodGet {
 		codes = append(codes, http.StatusConflict)
 	}
-	if rt.RunToken {
+	if rt.Auth != AccessPublic {
 		codes = append(codes, http.StatusUnauthorized)
+	}
+	if rt.Auth == AccessAdmin {
+		codes = append(codes, http.StatusForbidden)
 	}
 	// Any endpoint can be served by an engine that lacks the dependency it
 	// needs (no file store, no relay, no config plane): the handler says so

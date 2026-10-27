@@ -113,12 +113,12 @@ func (m *Mem) DeleteAttachmentsForTicket(_ context.Context, ticketID string) err
 	return nil
 }
 
-func (m *Mem) UnclaimedAttachmentIDsBefore(_ context.Context, cutoff time.Time) ([]string, error) {
+func (m *Mem) UnclaimedAttachmentIDsBefore(_ context.Context, userID string, cutoff time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []string
 	for id, a := range m.attachments {
-		if a.Unclaimed() && a.CreatedAt.Before(cutoff) {
+		if a.Unclaimed() && a.CreatedAt.Before(cutoff) && (userID == "" || a.UserID == userID) {
 			out = append(out, id)
 		}
 	}

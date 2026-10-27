@@ -45,7 +45,9 @@ func TestPostArtifacts(t *testing.T) {
 
 	upload := func(name, ctype string, data []byte) (*http.Response, []byte) {
 		body, ct := multipartBody(name, ctype, data)
-		res, err := http.Post(x.ts.URL+"/api/attachments", ct, body)
+		req, _ := http.NewRequest("POST", x.ts.URL+"/api/attachments", body)
+		req.Header.Set("Content-Type", ct)
+		res, err := http.DefaultClient.Do(x.authed(req))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +80,8 @@ func TestPostArtifacts(t *testing.T) {
 
 	// The stored bytes stream back from the byte route, verified.
 	id := out.Attachments[0]["id"].(string)
-	got, err := http.Get(x.ts.URL + "/api/attachments/" + id)
+	getReq, _ := http.NewRequest("GET", x.ts.URL+"/api/attachments/"+id, nil)
+	got, err := http.DefaultClient.Do(x.authed(getReq))
 	if err != nil {
 		t.Fatal(err)
 	}

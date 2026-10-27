@@ -10,7 +10,7 @@
 	import { api } from '$lib/api';
 	import type { Flow, Project } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { ago, fmtAbs } from '$lib/format';
 	import CopyFlow from '$lib/CopyFlow.svelte';
 	import FlowBindingSheet from '$lib/workshop/FlowBindingSheet.svelte';

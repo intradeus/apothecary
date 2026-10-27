@@ -10,7 +10,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { flip } from 'svelte/animate';
 	import { goto, replaceState } from '$app/navigation';
-	import { currentGuild, to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, age, fmtAbs, fmtCost, shortId } from '$lib/format';
@@ -186,7 +186,7 @@
 </script>
 
 <PageHeader
-	crumbs={[{ label: currentGuild().name, href: to.desk() }, { label: t('inbox.crumb') }]}
+	crumbs={[{ label: t('nav.desk'), href: to.desk() }, { label: t('inbox.crumb') }]}
 	title={t('inbox.title')}
 	accent={t('inbox.accent')}
 >

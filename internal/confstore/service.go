@@ -69,7 +69,7 @@ func (s *Service) CreateIntegration(ctx context.Context, in Integration) (Integr
 		return Integration{}, err
 	}
 	if err := s.db.UpsertIntegration(ctx, StoredIntegration{
-		ID: in.ID, Port: in.Port, Kind: in.Kind, Name: in.Name,
+		ID: in.ID, UserID: in.UserID, Port: in.Port, Kind: in.Kind, Name: in.Name,
 		Config: in.Config, Sealed: sealed,
 		CreatedAt: in.CreatedAt, UpdatedAt: in.UpdatedAt,
 	}); err != nil {
@@ -108,7 +108,7 @@ func (s *Service) UpdateIntegration(ctx context.Context, id, name string, config
 		return Integration{}, err
 	}
 	if err := s.db.UpsertIntegration(ctx, StoredIntegration{
-		ID: cur.ID, Port: cur.Port, Kind: cur.Kind, Name: cur.Name,
+		ID: cur.ID, UserID: cur.UserID, Port: cur.Port, Kind: cur.Kind, Name: cur.Name,
 		Config: cur.Config, Sealed: sealed,
 		CreatedAt: cur.CreatedAt, UpdatedAt: cur.UpdatedAt,
 	}); err != nil {
@@ -125,8 +125,10 @@ func (s *Service) GetIntegration(ctx context.Context, id string) (Integration, e
 	return s.open(r)
 }
 
-func (s *Service) ListIntegrations(ctx context.Context) ([]Integration, error) {
-	rows, err := s.db.ListIntegrations(ctx)
+// ListIntegrations is one user's integrations ("" = everyone's, for the
+// daemon's own passes).
+func (s *Service) ListIntegrations(ctx context.Context, userID string) ([]Integration, error) {
+	rows, err := s.db.ListIntegrations(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +157,7 @@ func (s *Service) open(r StoredIntegration) (Integration, error) {
 		cfg = map[string]any{}
 	}
 	return Integration{
-		ID: r.ID, Port: r.Port, Kind: r.Kind, Name: r.Name,
+		ID: r.ID, UserID: r.UserID, Port: r.Port, Kind: r.Kind, Name: r.Name,
 		Config: cfg, Secrets: sec,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}, nil
@@ -215,6 +217,7 @@ func (s *Service) UpdateProject(ctx context.Context, id string, upd Project) (Pr
 		return Project{}, err
 	}
 	upd.ID = cur.ID
+	upd.UserID = cur.UserID // ownership never changes through an edit
 	upd.CreatedAt = cur.CreatedAt
 	if err := s.validateProject(ctx, &upd); err != nil {
 		return Project{}, err
@@ -230,17 +233,25 @@ func (s *Service) GetProject(ctx context.Context, id string) (Project, error) {
 	return s.db.GetProject(ctx, id)
 }
 
-func (s *Service) GetProjectByName(ctx context.Context, name string) (Project, error) {
-	return s.db.GetProjectByName(ctx, name)
+// GetProjectByName finds a user's project by name; userID "" matches any
+// owner (the CLI, dev seeding).
+func (s *Service) GetProjectByName(ctx context.Context, userID, name string) (Project, error) {
+	return s.db.GetProjectByName(ctx, userID, name)
 }
 
-func (s *Service) ListProjects(ctx context.Context) ([]Project, error) {
-	return s.db.ListProjects(ctx)
+// ListProjects is one user's projects ("" = everyone's, for the daemon's
+// own passes).
+func (s *Service) ListProjects(ctx context.Context, userID string) ([]Project, error) {
+	return s.db.ListProjects(ctx, userID)
 }
 
 func (s *Service) DeleteProject(ctx context.Context, id string) error {
 	return s.db.DeleteProject(ctx, id)
 }
+
+// sameOwner reports whether a referenced row belongs to the referrer's
+// owner (an ownerless pair — dev seeding, tests — counts as one person's).
+func sameOwner(have, want string) bool { return have == want }
 
 // repoNameRe is the shape of an extra repo's name: it is a directory name
 // under ~/repos and a token in flows and prompts.
@@ -315,10 +326,11 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 			return invalidf("project: %s is required", r.field)
 		}
 		in, err := s.db.GetIntegration(ctx, r.id)
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || (err == nil && !sameOwner(in.UserID, p.UserID)) {
 			// A dangling reference on a write is a validation failure (400),
-			// not a 404 on the project route.
-			return invalidf("project: %s: %v", r.field, err)
+			// not a 404 on the project route. Someone else's integration is
+			// dangling too: a person's credentials are theirs alone.
+			return invalidf("project: %s: integration %s: %v", r.field, r.id, ErrNotFound)
 		}
 		if err != nil {
 			return fmt.Errorf("project: %s: %w", r.field, err)
@@ -340,8 +352,8 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 		}
 		seenID[id] = true
 		in, err := s.db.GetIntegration(ctx, id)
-		if errors.Is(err, ErrNotFound) {
-			return invalidf("project: harness_ids: %v", err)
+		if errors.Is(err, ErrNotFound) || (err == nil && !sameOwner(in.UserID, p.UserID)) {
+			return invalidf("project: harness_ids: integration %s: %v", id, ErrNotFound)
 		}
 		if err != nil {
 			return fmt.Errorf("project: harness_ids: %w", err)

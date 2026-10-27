@@ -9,7 +9,20 @@ import { client } from './generated/client.gen';
 import { t } from '$lib/i18n/index.svelte';
 
 // Same origin: the engine serves the UI, and the dev server proxies /api.
+// The session cookie rides along on every call by itself.
 client.setConfig({ baseUrl: '' });
+
+/** Called when the engine answers 401: the session is gone (signed out
+ *  elsewhere, expired, the account disabled). The session store registers
+ *  itself here rather than being imported, so the transport stays below it. */
+let unauthorized: (() => void) | null = null;
+export function onUnauthorized(fn: () => void) {
+	unauthorized = fn;
+}
+client.interceptors.response.use((response) => {
+	if (response.status === 401) unauthorized?.();
+	return response;
+});
 
 /** The shape every generated SDK call resolves to: data or error, plus the
  *  raw exchange. Declared structurally rather than imported, so the ACL does

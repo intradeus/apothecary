@@ -2,7 +2,7 @@
 // the command palette and the "G then …" chords all read this list, so a
 // renamed page or a new section changes one entry.
 
-import { to } from '$lib/guild';
+import { to } from '$lib/urls';
 import { t } from '$lib/i18n/index.svelte';
 import { I } from '$lib/ui/icons';
 
@@ -51,7 +51,7 @@ export const NAV: readonly NavItem[] = [
 		href: () => to.runs(),
 		chord: 'r',
 		mobile: true,
-		match: (p) => p.startsWith(`${to.desk()}/runs`)
+		match: (p) => p.startsWith('/runs')
 	},
 	{
 		id: 'tickets',
@@ -62,7 +62,7 @@ export const NAV: readonly NavItem[] = [
 		href: () => to.tickets(),
 		chord: 't',
 		mobile: true,
-		match: (p) => p.startsWith(`${to.desk()}/tickets`)
+		match: (p) => p.startsWith('/tickets')
 	},
 	{
 		id: 'system',
@@ -72,7 +72,7 @@ export const NAV: readonly NavItem[] = [
 		icon: I.system,
 		href: () => to.system(),
 		mobile: false,
-		match: (p) => p.startsWith(`${to.desk()}/system`)
+		match: (p) => p.startsWith('/system')
 	}
 ];
 

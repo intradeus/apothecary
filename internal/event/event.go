@@ -174,6 +174,9 @@ type RunCreated struct {
 	// ProjectID scopes the run to its project (DESIGN2 §6.3); absent in
 	// pre-v2 events, projected as "".
 	ProjectID string `json:"project_id,omitempty"`
+	// UserID is the run's owner: the project's owner when the run was
+	// created.
+	UserID string `json:"user_id,omitempty"`
 	// TicketID links the run to its parent ticket (a ticket owns many runs);
 	// absent on pre-ticket runs and on direct/test runs, projected as "".
 	TicketID string `json:"ticket_id,omitempty"`

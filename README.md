@@ -340,12 +340,29 @@ one-offs):
 | `apothecaryd envcheck -project <name> [-keep]` | the compliance gate, from the terminal |
 | `apothecaryd validate <flow.yaml>` | check a flow file before pasting it into the UI |
 | `apothecaryd rebuild-projections` | rebuild read models from the event log |
+| `apothecaryd user list` | every account |
+| `apothecaryd user reset-password <handle>` | set an account's password from the terminal (the way back in after a lockout) |
+| `apothecaryd user set-admin <handle> [-off]` | make or unmake an instance admin |
 | `apothecaryd version` | build version |
 
 Boot environment (the whole deployment plane): `APOTHECARY_POSTGRES_DSN`,
 `APOTHECARY_MASTER_KEY` (required); `APOTHECARY_LISTEN` (default
 `127.0.0.1:8080`), `APOTHECARY_RUNS_DIR`, `APOTHECARY_CPUI_DIR`,
-`APOTHECARY_OTEL_ENDPOINT`, `APOTHECARY_BASE_IMAGE` (optional).
+`APOTHECARY_OTEL_ENDPOINT`, `APOTHECARY_BASE_IMAGE` (optional);
+`APOTHECARY_MAX_CONCURRENT_RUNS` (default 3) and
+`APOTHECARY_MAX_ENVIRONMENTS` (default 6) — the host's capacity, the same
+for every user, `-1` for no cap.
+
+## Accounts
+
+The first visit to the UI claims the instance: it creates the first
+account, an admin. From then on every request is a signed-in user's —
+a browser session (cookie) or a personal API token (Account page; sent as
+`Authorization: Bearer apo_…`). Each user owns their integrations,
+workshops, tickets, runs, channels and settings and sees nothing of anyone
+else's; an admin manages accounts (System → Users) and nothing more. There
+is no organisation level and no role matrix. Passwords are the one sign-in
+method today; the method table is built for OAuth and passkeys to join it.
 
 ## Development
 
@@ -371,11 +388,16 @@ bypass it because enforcement lives outside it; a per-run bearer token
 scoped to their own ping endpoints,
 and secrets injected as files at bootstrap — never through provisioner
 parameters; when a run ends its agent process is stopped and the
-credential files removed. The run page's terminal and workspace views go
-through the same API, which — like the rest of it — assumes a trusted
-network (bind it to localhost or put auth in front). Integration secrets are secretbox-encrypted at rest under
-`APOTHECARY_MASTER_KEY` and never leave the engine unmasked. Residual risks
-and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
+credential files removed. Every API route needs a signed-in user (the run
+token reaches only its own run's ping endpoints), and a resource that is
+not the caller's answers 404 — so a workspace, which can reach the API
+through its bridge, can do nothing with it but ask its own questions.
+Browser sessions are HttpOnly cookies; writes with a cookie must come from
+the UI's own origin. The engine itself still speaks plain HTTP: put TLS in
+front of it before leaving localhost, and the workspace-port relay stays
+bound to the listen host. Integration secrets are secretbox-encrypted at
+rest under `APOTHECARY_MASTER_KEY` and never leave the engine unmasked.
+Residual risks and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
 
 ### Unprivileged sandboxes (optional)
 

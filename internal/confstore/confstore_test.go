@@ -69,14 +69,14 @@ func seedProject(t *testing.T, svc *Service) Project {
 func TestIntegrationSecretsSealedAtRest(t *testing.T) {
 	svc, mem := newSvc(t)
 	seedProject(t, svc)
-	rows, _ := mem.ListIntegrations(context.Background())
+	rows, _ := mem.ListIntegrations(context.Background(), "")
 	for _, r := range rows {
 		if strings.Contains(string(r.Sealed), "glpat") || strings.Contains(string(r.Sealed), "sk-or") {
 			t.Fatalf("integration %s stores plaintext secrets", r.Name)
 		}
 	}
 	// And they decrypt through the service.
-	list, err := svc.ListIntegrations(context.Background())
+	list, err := svc.ListIntegrations(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,28 +289,32 @@ func TestFlowNameIsImmutableID(t *testing.T) {
 func TestSettingsDefaultsAndValidation(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	set, err := svc.Settings(ctx)
+	set, err := svc.Settings(ctx, "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if set != DefaultSettings() {
 		t.Errorf("empty table settings = %+v", set)
 	}
-	set.MaxConcurrentRuns = 5
-	if err := svc.PutSettings(ctx, set); err != nil {
+	set.DestroyCompletedAfter = "5h"
+	if err := svc.PutSettings(ctx, "u1", set); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := svc.Settings(ctx)
-	if got.MaxConcurrentRuns != 5 {
+	got, _ := svc.Settings(ctx, "u1")
+	if got.DestroyCompletedAfter != "5h" {
 		t.Errorf("roundtrip = %+v", got)
 	}
+	// Settings are per user: another account still reads the defaults.
+	if other, _ := svc.Settings(ctx, "u2"); other != DefaultSettings() {
+		t.Errorf("u2 sees u1's settings: %+v", other)
+	}
 	set.DestroyAbandoned = "1h"
-	if err := svc.PutSettings(ctx, set); err == nil {
+	if err := svc.PutSettings(ctx, "u1", set); err == nil {
 		t.Error(`destroy_abandoned must accept only "never"`)
 	}
 	set = DefaultSettings()
 	set.DestroyCompletedAfter = "banana"
-	if err := svc.PutSettings(ctx, set); err == nil {
+	if err := svc.PutSettings(ctx, "u1", set); err == nil {
 		t.Error("invalid duration accepted")
 	}
 }

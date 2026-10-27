@@ -1,13 +1,15 @@
-// The guild at a glance: runs, pending pings, workshops and limits, polled
-// once for the whole shell. The sidebar, the desk, the runs list and the
-// capacity strip all read this one copy, so their counts never disagree.
+// One's desk at a glance: runs, pending pings, workshops and the deployment's
+// caps, polled once for the whole shell. The sidebar, the desk, the runs
+// list and the capacity strip all read this one copy, so their counts never
+// disagree. Everything in it is the signed-in user's: the engine lists
+// nothing of anyone else's.
 //
 // Polling pauses while the tab is hidden; on return `paused` stays true until
 // the first refresh lands (DESIGN 4.17 "Live indicators").
 
 import { api } from '$lib/api';
 import { stateTab } from '$lib/format';
-import type { Ping, Project, Run, Settings } from '$lib/domain';
+import type { Limits, Ping, Project, Run } from '$lib/domain';
 
 const POLL_MS = 4000;
 
@@ -15,7 +17,8 @@ class Fleet {
 	runs = $state<Run[]>([]);
 	pending = $state<Ping[]>([]);
 	projects = $state<Project[]>([]);
-	settings = $state<Settings | null>(null);
+	/** The deployment's caps, read once: they come from the boot env. */
+	limits = $state<Limits | null>(null);
 	/** ms epoch of the last successful refresh; null before the first. */
 	updatedAt = $state<number | null>(null);
 	/** The tab was hidden and nothing has refreshed since it came back. */
@@ -25,9 +28,6 @@ class Fleet {
 	#users = 0;
 	#timer: ReturnType<typeof setInterval> | null = null;
 	#inflight: Promise<void> | null = null;
-	/** Bumped by invalidateSettings(): a load that started before the bump
-	 *  carries settings read before the save and must not write them back. */
-	#settingsGen = 0;
 
 	readonly active = $derived(this.runs.filter((r) => stateTab[r.state] === 'active'));
 	readonly finished = $derived(this.runs.filter((r) => stateTab[r.state] === 'finished'));
@@ -52,10 +52,11 @@ class Fleet {
 		return this.projectById.get(id)?.name ?? id.slice(-6);
 	}
 
-	/** The engine's caps against what holds them now (sidebar, desk). */
+	/** The deployment's caps against what holds them now (sidebar, desk). A
+	 *  cap of 0 is "none": the meter shows the count alone. */
 	readonly capacity = $derived({
-		runs: { used: this.slots.length, max: this.settings?.maxConcurrentRuns ?? 0 },
-		envs: { used: this.envs.length, max: this.settings?.maxEnvironments ?? 0 },
+		runs: { used: this.slots.length, max: this.limits?.maxConcurrentRuns ?? 0 },
+		envs: { used: this.envs.length, max: this.limits?.maxEnvironments ?? 0 },
 		queued: this.queued.length
 	});
 
@@ -121,18 +122,17 @@ class Fleet {
 	}
 
 	async #load() {
-		const gen = this.#settingsGen;
 		try {
-			const [runs, pending, projects, settings] = await Promise.all([
+			const [runs, pending, projects, limits] = await Promise.all([
 				api.runs.list(),
 				api.pings.pending(),
 				api.projects.list(),
-				this.settings ? Promise.resolve(this.settings) : api.system.settings().catch(() => null)
+				this.limits ? Promise.resolve(this.limits) : api.system.limits().catch(() => null)
 			]);
 			this.runs = runs;
 			this.pending = pending;
 			this.projects = projects;
-			if (gen === this.#settingsGen) this.settings = settings;
+			this.limits = limits;
 			this.updatedAt = Date.now();
 			this.paused = false;
 			this.error = '';
@@ -141,14 +141,13 @@ class Fleet {
 		}
 	}
 
-	/** Settings changed elsewhere (the limits page): drop the cached copy
-	 *  and load it again — after any load already underway, which may hold the
-	 *  pre-save values (its write-back is discarded by the generation check). */
-	async invalidateSettings() {
-		this.#settingsGen++;
-		this.settings = null;
-		await this.#inflight;
-		await this.refresh();
+	/** Forget everything: the next poll is someone else's (sign-out, sign-in). */
+	reset() {
+		this.runs = [];
+		this.pending = [];
+		this.projects = [];
+		this.updatedAt = null;
+		this.error = '';
 	}
 }
 

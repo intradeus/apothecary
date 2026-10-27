@@ -28,7 +28,7 @@
 		title,
 		legend,
 		children,
-		/** Explicit fixed position, overriding the anchor (e.g. the guild switcher). */
+		/** Explicit fixed position, overriding the anchor. */
 		at,
 		/** Stay open on outside clicks (a floating composer); Esc still closes. */
 		sticky = false,

@@ -17,3 +17,4 @@ export * from './egress';
 export * from './settings';
 export * from './workspace';
 export * from './service';
+export * from './user';

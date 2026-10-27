@@ -84,7 +84,7 @@ func (rr *reviewRun) promptsOf(agent string) []string {
 // attach uploads a file and claims it for the ping's answer, as the API does.
 func (rr *reviewRun) attach(t *testing.T, runID, pingID, name string) string {
 	t.Helper()
-	up, err := rr.att.Save(context.Background(), name, "text/plain", strings.NewReader("note"))
+	up, err := rr.att.Save(context.Background(), "", name, "text/plain", strings.NewReader("note"))
 	if err != nil {
 		t.Fatal(err)
 	}

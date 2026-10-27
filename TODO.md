@@ -1,6 +1,5 @@
 - 7) redo everything in clean architecture
-- 25) multi-user / org based
 - 30) k8s/k3s deployment / worktree
 - 23) new run on observability (full flow data + resource stats)
 - 36) Resquash migrations
-- 37) Test cleanup & redo.
+- 37) frontend test cleanup & redo. full tested suite.

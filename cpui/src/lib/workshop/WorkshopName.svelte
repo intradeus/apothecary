@@ -3,7 +3,7 @@
 	// projects load. With `link` it opens the workshop (above a row's
 	// stretched link).
 	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import Vial from '$lib/ui/Vial.svelte';
 
 	let {

@@ -325,6 +325,10 @@ func (w *Watcher) blocker(ctx context.Context, a confstore.Automation, err error
 		Title: fmt.Sprintf("Automation %q could not start a run", a.Name),
 		Body:  err.Error(),
 	}
+	// To the automation's owner's channels: the project's.
+	if p, perr := w.Conf.GetProject(ctx, a.ProjectID); perr == nil {
+		n.UserID = p.UserID
+	}
 	if serr := w.Notify.Send(ctx, n); serr != nil {
 		w.log().Warn("automation blocker notification failed", "automation", a.ID, "err", serr)
 	}

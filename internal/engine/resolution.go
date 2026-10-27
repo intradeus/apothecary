@@ -20,8 +20,11 @@ import (
 // (internal/resolve) flattens harness capabilities into plain funcs, so the
 // scenario tests keep running on bare fakes.
 type Resolution struct {
-	ProjectID    string
-	ProjectName  string
+	ProjectID   string
+	ProjectName string
+	// UserID is the project's owner: what a run created on this resolution
+	// is owned by, and whose channels its notifications reach.
+	UserID       string
 	RepoRef      ports.RepoRef
 	AgentsMDPath string
 	DefaultFlow  string

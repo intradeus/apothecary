@@ -18,7 +18,7 @@ import (
 
 // --- attachments ------------------------------------------------------------
 
-const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at`
+const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at, user_id`
 
 // nullStr maps Go's zero-string convention to the schema's NULLs: the CHECKs
 // reason about NULL, not ”.
@@ -32,7 +32,7 @@ func nullStr(s string) any {
 func scanAttachment(row pgx.Row) (filestore.Attachment, error) {
 	var a filestore.Attachment
 	var ticket, run, ping sql.NullString
-	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt)
+	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt, &a.UserID)
 	if err != nil {
 		return a, err
 	}
@@ -60,9 +60,9 @@ func (s *Store) queryAttachments(ctx context.Context, q string, args ...any) ([]
 func (s *Store) InsertAttachment(ctx context.Context, a filestore.Attachment) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO attachments (`+attachmentCols+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		a.ID, nullStr(a.TicketID), nullStr(a.RunID), nullStr(a.PingID),
-		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt)
+		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt, a.UserID)
 	return err
 }
 
@@ -114,10 +114,10 @@ func (s *Store) DeleteAttachmentsForTicket(ctx context.Context, ticketID string)
 	return err
 }
 
-func (s *Store) UnclaimedAttachmentIDsBefore(ctx context.Context, cutoff time.Time) ([]string, error) {
+func (s *Store) UnclaimedAttachmentIDsBefore(ctx context.Context, userID string, cutoff time.Time) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id FROM attachments
-		WHERE ticket_id IS NULL AND run_id IS NULL AND created_at < $1`, cutoff)
+		WHERE ticket_id IS NULL AND run_id IS NULL AND created_at < $1 AND ($2 = '' OR user_id = $2)`, cutoff, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -208,14 +208,24 @@ func (s *Store) SnapshotsForPing(ctx context.Context, pingID string) ([]filestor
 
 // LiveBlobSHAs is the blob sweep's mark set: every sha a row still
 // references. keepSnapshotsAfter narrows the snapshot side for content
-// retention (DESIGN-FILES §6) — snapshot ROWS older than the window keep
-// their metadata but stop pinning bytes; the zero time keeps everything
-// (retention "never").
-func (s *Store) LiveBlobSHAs(ctx context.Context, keepSnapshotsAfter time.Time) (map[string]bool, error) {
+// retention (DESIGN-FILES §6), per owner: a snapshot ROW older than its
+// owner's window keeps its metadata but stops pinning bytes. An owner
+// absent from the map keeps everything (retention "never").
+func (s *Store) LiveBlobSHAs(ctx context.Context, keepSnapshotsAfter map[string]time.Time) (map[string]bool, error) {
+	owners := make([]string, 0, len(keepSnapshotsAfter))
+	cutoffs := make([]time.Time, 0, len(keepSnapshotsAfter))
+	for owner, at := range keepSnapshotsAfter {
+		owners = append(owners, owner)
+		cutoffs = append(cutoffs, at)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT sha256 FROM attachments
 		UNION
-		SELECT sha256 FROM snapshots WHERE created_at >= $1`, keepSnapshotsAfter)
+		SELECT sn.sha256 FROM snapshots sn
+		  LEFT JOIN runs r ON r.run_id = sn.run_id
+		  LEFT JOIN unnest($1::text[], $2::timestamptz[]) AS c(user_id, keep_after)
+		         ON c.user_id = COALESCE(r.user_id, '')
+		 WHERE c.keep_after IS NULL OR sn.created_at >= c.keep_after`, owners, cutoffs)
 	if err != nil {
 		return nil, err
 	}

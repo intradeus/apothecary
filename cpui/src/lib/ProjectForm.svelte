@@ -7,7 +7,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { ExtraRepo, Flow, Integration, Project, ProjectDraft, Repo } from '$lib/domain';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import TagInput from '$lib/ui/TagInput.svelte';

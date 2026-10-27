@@ -29,6 +29,9 @@ import type {
 	CancelEnvCheckData,
 	CancelEnvCheckErrors,
 	CancelEnvCheckResponses,
+	ChangeMyPasswordData,
+	ChangeMyPasswordErrors,
+	ChangeMyPasswordResponses,
 	ClearBuildCacheData,
 	ClearBuildCacheErrors,
 	ClearBuildCacheResponses,
@@ -47,12 +50,18 @@ import type {
 	CreateIntegrationData,
 	CreateIntegrationErrors,
 	CreateIntegrationResponses,
+	CreateMyTokenData,
+	CreateMyTokenErrors,
+	CreateMyTokenResponses,
 	CreateProjectData,
 	CreateProjectErrors,
 	CreateProjectResponses,
 	CreateTicketData,
 	CreateTicketErrors,
 	CreateTicketResponses,
+	CreateUserData,
+	CreateUserErrors,
+	CreateUserResponses,
 	DeleteAutomationData,
 	DeleteAutomationErrors,
 	DeleteAutomationResponses,
@@ -68,6 +77,9 @@ import type {
 	DeleteIntegrationData,
 	DeleteIntegrationErrors,
 	DeleteIntegrationResponses,
+	DeleteMyTokenData,
+	DeleteMyTokenErrors,
+	DeleteMyTokenResponses,
 	DeleteProjectData,
 	DeleteProjectErrors,
 	DeleteProjectResponses,
@@ -89,6 +101,9 @@ import type {
 	GetAttachmentLimitsData,
 	GetAttachmentLimitsErrors,
 	GetAttachmentLimitsResponses,
+	GetAuthStatusData,
+	GetAuthStatusErrors,
+	GetAuthStatusResponses,
 	GetAutomationData,
 	GetAutomationErrors,
 	GetAutomationResponses,
@@ -119,6 +134,12 @@ import type {
 	GetLatestEnvCheckData,
 	GetLatestEnvCheckErrors,
 	GetLatestEnvCheckResponses,
+	GetLimitsData,
+	GetLimitsErrors,
+	GetLimitsResponses,
+	GetMeData,
+	GetMeErrors,
+	GetMeResponses,
 	GetPingData,
 	GetPingErrors,
 	GetPingFilesData,
@@ -236,6 +257,9 @@ import type {
 	ListKindsData,
 	ListKindsErrors,
 	ListKindsResponses,
+	ListMyTokensData,
+	ListMyTokensErrors,
+	ListMyTokensResponses,
 	ListPingsData,
 	ListPingsErrors,
 	ListPingsResponses,
@@ -260,6 +284,15 @@ import type {
 	ListTicketsData,
 	ListTicketsErrors,
 	ListTicketsResponses,
+	ListUsersData,
+	ListUsersErrors,
+	ListUsersResponses,
+	LoginData,
+	LoginErrors,
+	LoginResponses,
+	LogoutData,
+	LogoutErrors,
+	LogoutResponses,
 	OpenEditorData,
 	OpenEditorErrors,
 	OpenEditorResponses,
@@ -290,6 +323,9 @@ import type {
 	RerunRunData,
 	RerunRunErrors,
 	RerunRunResponses,
+	ResetUserPasswordData,
+	ResetUserPasswordErrors,
+	ResetUserPasswordResponses,
 	RestartRunServiceData,
 	RestartRunServiceErrors,
 	RestartRunServiceResponses,
@@ -308,6 +344,9 @@ import type {
 	SetProjectSecretData,
 	SetProjectSecretErrors,
 	SetProjectSecretResponses,
+	SetupInstanceData,
+	SetupInstanceErrors,
+	SetupInstanceResponses,
 	StartEnvCheckData,
 	StartEnvCheckErrors,
 	StartEnvCheckResponses,
@@ -342,6 +381,9 @@ import type {
 	UpdateIntegrationData,
 	UpdateIntegrationErrors,
 	UpdateIntegrationResponses,
+	UpdateMeData,
+	UpdateMeErrors,
+	UpdateMeResponses,
 	UpdateProjectData,
 	UpdateProjectErrors,
 	UpdateProjectResponses,
@@ -351,6 +393,9 @@ import type {
 	UpdateTicketData,
 	UpdateTicketErrors,
 	UpdateTicketResponses,
+	UpdateUserData,
+	UpdateUserErrors,
+	UpdateUserResponses,
 	UploadAttachmentsData,
 	UploadAttachmentsErrors,
 	UploadAttachmentsResponses,
@@ -384,6 +429,18 @@ export const listActions = <ThrowOnError extends boolean = false>(
 	options?: Options<ListActionsData, ThrowOnError>
 ): RequestResult<ListActionsResponses, ListActionsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListActionsResponses, ListActionsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/actions',
 		...options
 	});
@@ -400,6 +457,18 @@ export const uploadAttachments = <ThrowOnError extends boolean = false>(
 		ThrowOnError
 	>({
 		...formDataBodySerializer,
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/attachments',
 		...options,
 		headers: {
@@ -418,7 +487,22 @@ export const downloadAttachment = <ThrowOnError extends boolean = false>(
 		DownloadAttachmentResponses,
 		DownloadAttachmentErrors,
 		ThrowOnError
-	>({ url: '/api/attachments/{id}', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/attachments/{id}',
+		...options
+	});
 
 /**
  * Upload policy: size cap and accepted types
@@ -430,15 +514,110 @@ export const getAttachmentLimits = <ThrowOnError extends boolean = false>(
 		GetAttachmentLimitsResponses,
 		GetAttachmentLimitsErrors,
 		ThrowOnError
-	>({ url: '/api/attachments/limits', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/attachments/limits',
+		...options
+	});
 
 /**
- * Configured notification channels (secrets masked)
+ * Sign in and start a browser session
+ *
+ * method is password unless the instance offers another; login is a handle or an email; proof the password. Repeated failures for one account from one address are throttled (429).
+ */
+export const login = <ThrowOnError extends boolean = false>(
+	options: Options<LoginData, ThrowOnError>
+): RequestResult<LoginResponses, LoginErrors, ThrowOnError> =>
+	(options.client ?? client).post<LoginResponses, LoginErrors, ThrowOnError>({
+		url: '/api/auth/login',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * End the browser session
+ */
+export const logout = <ThrowOnError extends boolean = false>(
+	options?: Options<LogoutData, ThrowOnError>
+): RequestResult<LogoutResponses, LogoutErrors, ThrowOnError> =>
+	(options?.client ?? client).post<LogoutResponses, LogoutErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/auth/logout',
+		...options
+	});
+
+/**
+ * Claim a fresh instance: create its first account, an admin, and sign in
+ *
+ * Only while no account exists (409 after).
+ */
+export const setupInstance = <ThrowOnError extends boolean = false>(
+	options: Options<SetupInstanceData, ThrowOnError>
+): RequestResult<SetupInstanceResponses, SetupInstanceErrors, ThrowOnError> =>
+	(options.client ?? client).post<SetupInstanceResponses, SetupInstanceErrors, ThrowOnError>({
+		url: '/api/auth/setup',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Whether the instance needs its first account, and how one may sign in
+ */
+export const getAuthStatus = <ThrowOnError extends boolean = false>(
+	options?: Options<GetAuthStatusData, ThrowOnError>
+): RequestResult<GetAuthStatusResponses, GetAuthStatusErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetAuthStatusResponses, GetAuthStatusErrors, ThrowOnError>({
+		url: '/api/auth/status',
+		...options
+	});
+
+/**
+ * One's notification channels (secrets masked)
  */
 export const listChannels = <ThrowOnError extends boolean = false>(
 	options?: Options<ListChannelsData, ThrowOnError>
 ): RequestResult<ListChannelsResponses, ListChannelsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListChannelsResponses, ListChannelsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/channels',
 		...options
 	});
@@ -450,6 +629,18 @@ export const addChannel = <ThrowOnError extends boolean = false>(
 	options: Options<AddChannelData, ThrowOnError>
 ): RequestResult<AddChannelResponses, AddChannelErrors, ThrowOnError> =>
 	(options.client ?? client).post<AddChannelResponses, AddChannelErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/channels',
 		...options,
 		headers: {
@@ -465,6 +656,18 @@ export const deleteChannel = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteChannelData, ThrowOnError>
 ): RequestResult<DeleteChannelResponses, DeleteChannelErrors, ThrowOnError> =>
 	(options.client ?? client).delete<DeleteChannelResponses, DeleteChannelErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/channels/{id}',
 		...options
 	});
@@ -479,7 +682,22 @@ export const getEgressDefaults = <ThrowOnError extends boolean = false>(
 		GetEgressDefaultsResponses,
 		GetEgressDefaultsErrors,
 		ThrowOnError
-	>({ url: '/api/egress-defaults', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/egress-defaults',
+		...options
+	});
 
 /**
  * Cancel a running workspace check
@@ -490,6 +708,18 @@ export const cancelEnvCheck = <ThrowOnError extends boolean = false>(
 	options: Options<CancelEnvCheckData, ThrowOnError>
 ): RequestResult<CancelEnvCheckResponses, CancelEnvCheckErrors, ThrowOnError> =>
 	(options.client ?? client).delete<CancelEnvCheckResponses, CancelEnvCheckErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/envchecks/{id}',
 		...options
 	});
@@ -501,6 +731,18 @@ export const getEnvCheck = <ThrowOnError extends boolean = false>(
 	options: Options<GetEnvCheckData, ThrowOnError>
 ): RequestResult<GetEnvCheckResponses, GetEnvCheckErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetEnvCheckResponses, GetEnvCheckErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/envchecks/{id}',
 		...options
 	});
@@ -515,7 +757,22 @@ export const listFlowTemplates = <ThrowOnError extends boolean = false>(
 		ListFlowTemplatesResponses,
 		ListFlowTemplatesErrors,
 		ThrowOnError
-	>({ url: '/api/flow-templates', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/flow-templates',
+		...options
+	});
 
 /**
  * Copy a compiled-in template into a project
@@ -526,6 +783,18 @@ export const copyFlowTemplate = <ThrowOnError extends boolean = false>(
 	options: Options<CopyFlowTemplateData, ThrowOnError>
 ): RequestResult<CopyFlowTemplateResponses, CopyFlowTemplateErrors, ThrowOnError> =>
 	(options.client ?? client).post<CopyFlowTemplateResponses, CopyFlowTemplateErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/flow-templates/{name}/copy',
 		...options,
 		headers: {
@@ -535,12 +804,24 @@ export const copyFlowTemplate = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Every project's flows, for the cross-project overview
+ * Every flow of one's projects, for the cross-project overview
  */
 export const listAllFlows = <ThrowOnError extends boolean = false>(
 	options?: Options<ListAllFlowsData, ThrowOnError>
 ): RequestResult<ListAllFlowsResponses, ListAllFlowsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListAllFlowsResponses, ListAllFlowsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/flows',
 		...options
 	});
@@ -554,6 +835,18 @@ export const getFlowSchema = <ThrowOnError extends boolean = false>(
 	options?: Options<GetFlowSchemaData, ThrowOnError>
 ): RequestResult<GetFlowSchemaResponses, GetFlowSchemaErrors, ThrowOnError> =>
 	(options?.client ?? client).get<GetFlowSchemaResponses, GetFlowSchemaErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/flows/schema',
 		...options
 	});
@@ -567,6 +860,18 @@ export const validateFlow = <ThrowOnError extends boolean = false>(
 	options: Options<ValidateFlowData, ThrowOnError>
 ): RequestResult<ValidateFlowResponses, ValidateFlowErrors, ThrowOnError> =>
 	(options.client ?? client).post<ValidateFlowResponses, ValidateFlowErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/flows/validate',
 		...options,
 		headers: {
@@ -576,12 +881,24 @@ export const validateFlow = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Configured integrations (secrets masked)
+ * One's integrations (secrets masked)
  */
 export const listIntegrations = <ThrowOnError extends boolean = false>(
 	options?: Options<ListIntegrationsData, ThrowOnError>
 ): RequestResult<ListIntegrationsResponses, ListIntegrationsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListIntegrationsResponses, ListIntegrationsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/integrations',
 		...options
 	});
@@ -597,6 +914,18 @@ export const createIntegration = <ThrowOnError extends boolean = false>(
 		CreateIntegrationErrors,
 		ThrowOnError
 	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/integrations',
 		...options,
 		headers: {
@@ -615,7 +944,22 @@ export const deleteIntegration = <ThrowOnError extends boolean = false>(
 		DeleteIntegrationResponses,
 		DeleteIntegrationErrors,
 		ThrowOnError
-	>({ url: '/api/integrations/{id}', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}',
+		...options
+	});
 
 /**
  * One integration
@@ -624,6 +968,18 @@ export const getIntegration = <ThrowOnError extends boolean = false>(
 	options: Options<GetIntegrationData, ThrowOnError>
 ): RequestResult<GetIntegrationResponses, GetIntegrationErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetIntegrationResponses, GetIntegrationErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/integrations/{id}',
 		...options
 	});
@@ -636,6 +992,18 @@ export const updateIntegration = <ThrowOnError extends boolean = false>(
 ): RequestResult<UpdateIntegrationResponses, UpdateIntegrationErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateIntegrationResponses, UpdateIntegrationErrors, ThrowOnError>(
 		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
 			url: '/api/integrations/{id}',
 			...options,
 			headers: {
@@ -655,7 +1023,22 @@ export const listIntegrationModels = <ThrowOnError extends boolean = false>(
 		ListIntegrationModelsResponses,
 		ListIntegrationModelsErrors,
 		ThrowOnError
-	>({ url: '/api/integrations/{id}/models', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/models',
+		...options
+	});
 
 /**
  * Repositories a repository integration (GitLab, GitHub) can see
@@ -667,7 +1050,22 @@ export const listIntegrationRepos = <ThrowOnError extends boolean = false>(
 		ListIntegrationReposResponses,
 		ListIntegrationReposErrors,
 		ThrowOnError
-	>({ url: '/api/integrations/{id}/repos', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/repos',
+		...options
+	});
 
 /**
  * Check an integration's credentials against the real service
@@ -676,6 +1074,18 @@ export const testIntegration = <ThrowOnError extends boolean = false>(
 	options: Options<TestIntegrationData, ThrowOnError>
 ): RequestResult<TestIntegrationResponses, TestIntegrationErrors, ThrowOnError> =>
 	(options.client ?? client).post<TestIntegrationResponses, TestIntegrationErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/integrations/{id}/test',
 		...options
 	});
@@ -690,7 +1100,22 @@ export const searchSourceTickets = <ThrowOnError extends boolean = false>(
 		SearchSourceTicketsResponses,
 		SearchSourceTicketsErrors,
 		ThrowOnError
-	>({ url: '/api/integrations/{id}/tickets', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/tickets',
+		...options
+	});
 
 /**
  * One tracker ticket by key
@@ -699,6 +1124,18 @@ export const getSourceTicket = <ThrowOnError extends boolean = false>(
 	options: Options<GetSourceTicketData, ThrowOnError>
 ): RequestResult<GetSourceTicketResponses, GetSourceTicketErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetSourceTicketResponses, GetSourceTicketErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/integrations/{id}/tickets/{key}',
 		...options
 	});
@@ -710,17 +1147,218 @@ export const listKinds = <ThrowOnError extends boolean = false>(
 	options?: Options<ListKindsData, ThrowOnError>
 ): RequestResult<ListKindsResponses, ListKindsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListKindsResponses, ListKindsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/kinds',
 		...options
 	});
 
 /**
- * The inbox: questions waiting on a human
+ * The deployment's capacity caps (-1: no cap)
+ */
+export const getLimits = <ThrowOnError extends boolean = false>(
+	options?: Options<GetLimitsData, ThrowOnError>
+): RequestResult<GetLimitsResponses, GetLimitsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetLimitsResponses, GetLimitsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/limits',
+		...options
+	});
+
+/**
+ * The signed-in user
+ */
+export const getMe = <ThrowOnError extends boolean = false>(
+	options?: Options<GetMeData, ThrowOnError>
+): RequestResult<GetMeResponses, GetMeErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetMeResponses, GetMeErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me',
+		...options
+	});
+
+/**
+ * Change one's own handle, email or name
+ */
+export const updateMe = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateMeData, ThrowOnError>
+): RequestResult<UpdateMeResponses, UpdateMeErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateMeResponses, UpdateMeErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Change one's own password
+ *
+ * Every other session is signed out; this one continues.
+ */
+export const changeMyPassword = <ThrowOnError extends boolean = false>(
+	options: Options<ChangeMyPasswordData, ThrowOnError>
+): RequestResult<ChangeMyPasswordResponses, ChangeMyPasswordErrors, ThrowOnError> =>
+	(options.client ?? client).put<ChangeMyPasswordResponses, ChangeMyPasswordErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/password',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * One's personal API tokens (never their secrets)
+ */
+export const listMyTokens = <ThrowOnError extends boolean = false>(
+	options?: Options<ListMyTokensData, ThrowOnError>
+): RequestResult<ListMyTokensResponses, ListMyTokensErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListMyTokensResponses, ListMyTokensErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/tokens',
+		...options
+	});
+
+/**
+ * Mint a personal API token
+ *
+ * The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token.
+ */
+export const createMyToken = <ThrowOnError extends boolean = false>(
+	options: Options<CreateMyTokenData, ThrowOnError>
+): RequestResult<CreateMyTokenResponses, CreateMyTokenErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateMyTokenResponses, CreateMyTokenErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/tokens',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Revoke a personal API token
+ */
+export const deleteMyToken = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteMyTokenData, ThrowOnError>
+): RequestResult<DeleteMyTokenResponses, DeleteMyTokenErrors, ThrowOnError> =>
+	(options.client ?? client).delete<DeleteMyTokenResponses, DeleteMyTokenErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/tokens/{id}',
+		...options
+	});
+
+/**
+ * The inbox: one's questions waiting on a human
  */
 export const listPings = <ThrowOnError extends boolean = false>(
 	options?: Options<ListPingsData, ThrowOnError>
 ): RequestResult<ListPingsResponses, ListPingsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListPingsResponses, ListPingsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/pings',
 		...options
 	});
@@ -732,6 +1370,18 @@ export const getPing = <ThrowOnError extends boolean = false>(
 	options: Options<GetPingData, ThrowOnError>
 ): RequestResult<GetPingResponses, GetPingErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetPingResponses, GetPingErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/pings/{pid}',
 		...options
 	});
@@ -743,6 +1393,18 @@ export const answerPing = <ThrowOnError extends boolean = false>(
 	options: Options<AnswerPingData, ThrowOnError>
 ): RequestResult<AnswerPingResponses, AnswerPingErrors, ThrowOnError> =>
 	(options.client ?? client).post<AnswerPingResponses, AnswerPingErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/pings/{pid}/answer',
 		...options,
 		headers: {
@@ -758,17 +1420,41 @@ export const getPingFiles = <ThrowOnError extends boolean = false>(
 	options: Options<GetPingFilesData, ThrowOnError>
 ): RequestResult<GetPingFilesResponses, GetPingFilesErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetPingFilesResponses, GetPingFilesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/pings/{pid}/files',
 		...options
 	});
 
 /**
- * All projects
+ * One's projects
  */
 export const listProjects = <ThrowOnError extends boolean = false>(
 	options?: Options<ListProjectsData, ThrowOnError>
 ): RequestResult<ListProjectsResponses, ListProjectsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListProjectsResponses, ListProjectsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects',
 		...options
 	});
@@ -780,6 +1466,18 @@ export const createProject = <ThrowOnError extends boolean = false>(
 	options: Options<CreateProjectData, ThrowOnError>
 ): RequestResult<CreateProjectResponses, CreateProjectErrors, ThrowOnError> =>
 	(options.client ?? client).post<CreateProjectResponses, CreateProjectErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects',
 		...options,
 		headers: {
@@ -795,6 +1493,18 @@ export const deleteProject = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteProjectData, ThrowOnError>
 ): RequestResult<DeleteProjectResponses, DeleteProjectErrors, ThrowOnError> =>
 	(options.client ?? client).delete<DeleteProjectResponses, DeleteProjectErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}',
 		...options
 	});
@@ -806,6 +1516,18 @@ export const getProject = <ThrowOnError extends boolean = false>(
 	options: Options<GetProjectData, ThrowOnError>
 ): RequestResult<GetProjectResponses, GetProjectErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetProjectResponses, GetProjectErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}',
 		...options
 	});
@@ -817,6 +1539,18 @@ export const updateProject = <ThrowOnError extends boolean = false>(
 	options: Options<UpdateProjectData, ThrowOnError>
 ): RequestResult<UpdateProjectResponses, UpdateProjectErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateProjectResponses, UpdateProjectErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}',
 		...options,
 		headers: {
@@ -832,6 +1566,18 @@ export const listAutomations = <ThrowOnError extends boolean = false>(
 	options: Options<ListAutomationsData, ThrowOnError>
 ): RequestResult<ListAutomationsResponses, ListAutomationsErrors, ThrowOnError> =>
 	(options.client ?? client).get<ListAutomationsResponses, ListAutomationsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/automations',
 		...options
 	});
@@ -845,6 +1591,18 @@ export const createAutomation = <ThrowOnError extends boolean = false>(
 	options: Options<CreateAutomationData, ThrowOnError>
 ): RequestResult<CreateAutomationResponses, CreateAutomationErrors, ThrowOnError> =>
 	(options.client ?? client).post<CreateAutomationResponses, CreateAutomationErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/automations',
 		...options,
 		headers: {
@@ -863,7 +1621,22 @@ export const deleteAutomation = <ThrowOnError extends boolean = false>(
 		DeleteAutomationResponses,
 		DeleteAutomationErrors,
 		ThrowOnError
-	>({ url: '/api/projects/{id}/automations/{aid}', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/automations/{aid}',
+		...options
+	});
 
 /**
  * One automation, with what the watcher last did with it
@@ -872,6 +1645,18 @@ export const getAutomation = <ThrowOnError extends boolean = false>(
 	options: Options<GetAutomationData, ThrowOnError>
 ): RequestResult<GetAutomationResponses, GetAutomationErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetAutomationResponses, GetAutomationErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/automations/{aid}',
 		...options
 	});
@@ -883,6 +1668,18 @@ export const updateAutomation = <ThrowOnError extends boolean = false>(
 	options: Options<UpdateAutomationData, ThrowOnError>
 ): RequestResult<UpdateAutomationResponses, UpdateAutomationErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateAutomationResponses, UpdateAutomationErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/automations/{aid}',
 		...options,
 		headers: {
@@ -901,7 +1698,22 @@ export const listProjectBranches = <ThrowOnError extends boolean = false>(
 		ListProjectBranchesResponses,
 		ListProjectBranchesErrors,
 		ThrowOnError
-	>({ url: '/api/projects/{id}/branches', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/branches',
+		...options
+	});
 
 /**
  * The project's browser: its toggle and its container
@@ -912,7 +1724,22 @@ export const getProjectBrowser = <ThrowOnError extends boolean = false>(
 	options: Options<GetProjectBrowserData, ThrowOnError>
 ): RequestResult<GetProjectBrowserResponses, GetProjectBrowserErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetProjectBrowserResponses, GetProjectBrowserErrors, ThrowOnError>(
-		{ url: '/api/projects/{id}/browser', ...options }
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/projects/{id}/browser',
+			...options
+		}
 	);
 
 /**
@@ -924,6 +1751,18 @@ export const clearBuildCache = <ThrowOnError extends boolean = false>(
 	options: Options<ClearBuildCacheData, ThrowOnError>
 ): RequestResult<ClearBuildCacheResponses, ClearBuildCacheErrors, ThrowOnError> =>
 	(options.client ?? client).delete<ClearBuildCacheResponses, ClearBuildCacheErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/build-cache',
 		...options
 	});
@@ -937,6 +1776,18 @@ export const getBuildCache = <ThrowOnError extends boolean = false>(
 	options: Options<GetBuildCacheData, ThrowOnError>
 ): RequestResult<GetBuildCacheResponses, GetBuildCacheErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetBuildCacheResponses, GetBuildCacheErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/build-cache',
 		...options
 	});
@@ -951,7 +1802,22 @@ export const getProjectEgressAudit = <ThrowOnError extends boolean = false>(
 		GetProjectEgressAuditResponses,
 		GetProjectEgressAuditErrors,
 		ThrowOnError
-	>({ url: '/api/projects/{id}/egress-audit', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/egress-audit',
+		...options
+	});
 
 /**
  * The project's most recent workspace check
@@ -962,7 +1828,22 @@ export const getLatestEnvCheck = <ThrowOnError extends boolean = false>(
 	options: Options<GetLatestEnvCheckData, ThrowOnError>
 ): RequestResult<GetLatestEnvCheckResponses, GetLatestEnvCheckErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetLatestEnvCheckResponses, GetLatestEnvCheckErrors, ThrowOnError>(
-		{ url: '/api/projects/{id}/envcheck', ...options }
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/projects/{id}/envcheck',
+			...options
+		}
 	);
 
 /**
@@ -974,6 +1855,18 @@ export const startEnvCheck = <ThrowOnError extends boolean = false>(
 	options: Options<StartEnvCheckData, ThrowOnError>
 ): RequestResult<StartEnvCheckResponses, StartEnvCheckErrors, ThrowOnError> =>
 	(options.client ?? client).post<StartEnvCheckResponses, StartEnvCheckErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/envcheck',
 		...options,
 		headers: {
@@ -989,6 +1882,18 @@ export const listFlowBindings = <ThrowOnError extends boolean = false>(
 	options: Options<ListFlowBindingsData, ThrowOnError>
 ): RequestResult<ListFlowBindingsResponses, ListFlowBindingsErrors, ThrowOnError> =>
 	(options.client ?? client).get<ListFlowBindingsResponses, ListFlowBindingsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flow-bindings',
 		...options
 	});
@@ -1000,6 +1905,18 @@ export const getFlowVersion = <ThrowOnError extends boolean = false>(
 	options: Options<GetFlowVersionData, ThrowOnError>
 ): RequestResult<GetFlowVersionResponses, GetFlowVersionErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetFlowVersionResponses, GetFlowVersionErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flow-versions/{hash}',
 		...options
 	});
@@ -1011,6 +1928,18 @@ export const listFlows = <ThrowOnError extends boolean = false>(
 	options: Options<ListFlowsData, ThrowOnError>
 ): RequestResult<ListFlowsResponses, ListFlowsErrors, ThrowOnError> =>
 	(options.client ?? client).get<ListFlowsResponses, ListFlowsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows',
 		...options
 	});
@@ -1022,6 +1951,18 @@ export const createFlow = <ThrowOnError extends boolean = false>(
 	options: Options<CreateFlowData, ThrowOnError>
 ): RequestResult<CreateFlowResponses, CreateFlowErrors, ThrowOnError> =>
 	(options.client ?? client).post<CreateFlowResponses, CreateFlowErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows',
 		...options,
 		headers: {
@@ -1037,6 +1978,18 @@ export const deleteFlow = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteFlowData, ThrowOnError>
 ): RequestResult<DeleteFlowResponses, DeleteFlowErrors, ThrowOnError> =>
 	(options.client ?? client).delete<DeleteFlowResponses, DeleteFlowErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows/{name}',
 		...options
 	});
@@ -1050,6 +2003,18 @@ export const getFlow = <ThrowOnError extends boolean = false>(
 	options: Options<GetFlowData, ThrowOnError>
 ): RequestResult<GetFlowResponses, GetFlowErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetFlowResponses, GetFlowErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows/{name}',
 		...options
 	});
@@ -1063,6 +2028,18 @@ export const updateFlow = <ThrowOnError extends boolean = false>(
 	options: Options<UpdateFlowData, ThrowOnError>
 ): RequestResult<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateFlowResponses, UpdateFlowErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows/{name}',
 		...options,
 		headers: {
@@ -1081,7 +2058,22 @@ export const deleteFlowBinding = <ThrowOnError extends boolean = false>(
 		DeleteFlowBindingResponses,
 		DeleteFlowBindingErrors,
 		ThrowOnError
-	>({ url: '/api/projects/{id}/flows/{name}/binding', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/flows/{name}/binding',
+		...options
+	});
 
 /**
  * The project's values for a flow's parameters
@@ -1092,6 +2084,18 @@ export const getFlowBinding = <ThrowOnError extends boolean = false>(
 	options: Options<GetFlowBindingData, ThrowOnError>
 ): RequestResult<GetFlowBindingResponses, GetFlowBindingErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetFlowBindingResponses, GetFlowBindingErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows/{name}/binding',
 		...options
 	});
@@ -1105,6 +2109,18 @@ export const putFlowBinding = <ThrowOnError extends boolean = false>(
 	options: Options<PutFlowBindingData, ThrowOnError>
 ): RequestResult<PutFlowBindingResponses, PutFlowBindingErrors, ThrowOnError> =>
 	(options.client ?? client).put<PutFlowBindingResponses, PutFlowBindingErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows/{name}/binding',
 		...options,
 		headers: {
@@ -1120,6 +2136,18 @@ export const copyFlow = <ThrowOnError extends boolean = false>(
 	options: Options<CopyFlowData, ThrowOnError>
 ): RequestResult<CopyFlowResponses, CopyFlowErrors, ThrowOnError> =>
 	(options.client ?? client).post<CopyFlowResponses, CopyFlowErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows/{name}/copy',
 		...options,
 		headers: {
@@ -1135,6 +2163,18 @@ export const listFlowVersions = <ThrowOnError extends boolean = false>(
 	options: Options<ListFlowVersionsData, ThrowOnError>
 ): RequestResult<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError> =>
 	(options.client ?? client).get<ListFlowVersionsResponses, ListFlowVersionsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/flows/{name}/versions',
 		...options
 	});
@@ -1148,6 +2188,18 @@ export const listProjectMrs = <ThrowOnError extends boolean = false>(
 	options: Options<ListProjectMrsData, ThrowOnError>
 ): RequestResult<ListProjectMrsResponses, ListProjectMrsErrors, ThrowOnError> =>
 	(options.client ?? client).get<ListProjectMrsResponses, ListProjectMrsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/mrs',
 		...options
 	});
@@ -1161,6 +2213,18 @@ export const startMrRun = <ThrowOnError extends boolean = false>(
 	options: Options<StartMrRunData, ThrowOnError>
 ): RequestResult<StartMrRunResponses, StartMrRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<StartMrRunResponses, StartMrRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/mrs/{iid}/runs',
 		...options,
 		headers: {
@@ -1176,6 +2240,18 @@ export const preflightProject = <ThrowOnError extends boolean = false>(
 	options: Options<PreflightProjectData, ThrowOnError>
 ): RequestResult<PreflightProjectResponses, PreflightProjectErrors, ThrowOnError> =>
 	(options.client ?? client).post<PreflightProjectResponses, PreflightProjectErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/preflight',
 		...options
 	});
@@ -1192,7 +2268,22 @@ export const listProjectSecrets = <ThrowOnError extends boolean = false>(
 		ListProjectSecretsResponses,
 		ListProjectSecretsErrors,
 		ThrowOnError
-	>({ url: '/api/projects/{id}/secrets', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/secrets',
+		...options
+	});
 
 /**
  * Remove one project secret
@@ -1206,7 +2297,22 @@ export const deleteProjectSecret = <ThrowOnError extends boolean = false>(
 		DeleteProjectSecretResponses,
 		DeleteProjectSecretErrors,
 		ThrowOnError
-	>({ url: '/api/projects/{id}/secrets/{name}', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/secrets/{name}',
+		...options
+	});
 
 /**
  * Set one project secret
@@ -1217,6 +2323,18 @@ export const setProjectSecret = <ThrowOnError extends boolean = false>(
 	options: Options<SetProjectSecretData, ThrowOnError>
 ): RequestResult<SetProjectSecretResponses, SetProjectSecretErrors, ThrowOnError> =>
 	(options.client ?? client).put<SetProjectSecretResponses, SetProjectSecretErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/projects/{id}/secrets/{name}',
 		...options,
 		headers: {
@@ -1226,12 +2344,24 @@ export const setProjectSecret = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * List runs, newest first
+ * List one's runs, newest first
  */
 export const listRuns = <ThrowOnError extends boolean = false>(
 	options?: Options<ListRunsData, ThrowOnError>
 ): RequestResult<ListRunsResponses, ListRunsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListRunsResponses, ListRunsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs',
 		...options
 	});
@@ -1243,6 +2373,18 @@ export const getRun = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunData, ThrowOnError>
 ): RequestResult<GetRunResponses, GetRunErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunResponses, GetRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}',
 		...options
 	});
@@ -1254,6 +2396,18 @@ export const abortRun = <ThrowOnError extends boolean = false>(
 	options: Options<AbortRunData, ThrowOnError>
 ): RequestResult<AbortRunResponses, AbortRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<AbortRunResponses, AbortRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/abort',
 		...options
 	});
@@ -1265,6 +2419,18 @@ export const archiveRun = <ThrowOnError extends boolean = false>(
 	options: Options<ArchiveRunData, ThrowOnError>
 ): RequestResult<ArchiveRunResponses, ArchiveRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<ArchiveRunResponses, ArchiveRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/archive',
 		...options
 	});
@@ -1276,6 +2442,18 @@ export const allowEgressHost = <ThrowOnError extends boolean = false>(
 	options: Options<AllowEgressHostData, ThrowOnError>
 ): RequestResult<AllowEgressHostResponses, AllowEgressHostErrors, ThrowOnError> =>
 	(options.client ?? client).post<AllowEgressHostResponses, AllowEgressHostErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/egress-allow',
 		...options,
 		headers: {
@@ -1291,7 +2469,22 @@ export const getRunEgressAudit = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunEgressAuditData, ThrowOnError>
 ): RequestResult<GetRunEgressAuditResponses, GetRunEgressAuditErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunEgressAuditResponses, GetRunEgressAuditErrors, ThrowOnError>(
-		{ url: '/api/runs/{id}/egress-audit', ...options }
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/runs/{id}/egress-audit',
+			...options
+		}
 	);
 
 /**
@@ -1301,7 +2494,22 @@ export const listEgressDenials = <ThrowOnError extends boolean = false>(
 	options: Options<ListEgressDenialsData, ThrowOnError>
 ): RequestResult<ListEgressDenialsResponses, ListEgressDenialsErrors, ThrowOnError> =>
 	(options.client ?? client).get<ListEgressDenialsResponses, ListEgressDenialsErrors, ThrowOnError>(
-		{ url: '/api/runs/{id}/egress-denials', ...options }
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/runs/{id}/egress-denials',
+			...options
+		}
 	);
 
 /**
@@ -1314,7 +2522,22 @@ export const getRunEgressPolicy = <ThrowOnError extends boolean = false>(
 		GetRunEgressPolicyResponses,
 		GetRunEgressPolicyErrors,
 		ThrowOnError
-	>({ url: '/api/runs/{id}/egress-policy', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/egress-policy',
+		...options
+	});
 
 /**
  * Allow or force-block a host for a run
@@ -1323,6 +2546,18 @@ export const setEgressRule = <ThrowOnError extends boolean = false>(
 	options: Options<SetEgressRuleData, ThrowOnError>
 ): RequestResult<SetEgressRuleResponses, SetEgressRuleErrors, ThrowOnError> =>
 	(options.client ?? client).post<SetEgressRuleResponses, SetEgressRuleErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/egress-rule',
 		...options,
 		headers: {
@@ -1340,7 +2575,22 @@ export const streamRunEvents = <ThrowOnError extends boolean = false>(
 	options: Options<StreamRunEventsData, ThrowOnError, StreamRunEventsResponse>
 ): Promise<ServerSentEventsResult<StreamRunEventsResponses>> =>
 	(options.client ?? client).sse.get<StreamRunEventsResponses, StreamRunEventsErrors, ThrowOnError>(
-		{ url: '/api/runs/{id}/events', ...options }
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/runs/{id}/events',
+			...options
+		}
 	);
 
 /**
@@ -1350,6 +2600,18 @@ export const exposeRunPort = <ThrowOnError extends boolean = false>(
 	options: Options<ExposeRunPortData, ThrowOnError>
 ): RequestResult<ExposeRunPortResponses, ExposeRunPortErrors, ThrowOnError> =>
 	(options.client ?? client).post<ExposeRunPortResponses, ExposeRunPortErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/expose-port',
 		...options,
 		headers: {
@@ -1365,6 +2627,18 @@ export const getRunFiles = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunFilesData, ThrowOnError>
 ): RequestResult<GetRunFilesResponses, GetRunFilesErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunFilesResponses, GetRunFilesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/files',
 		...options
 	});
@@ -1376,6 +2650,18 @@ export const getStageLog = <ThrowOnError extends boolean = false>(
 	options: Options<GetStageLogData, ThrowOnError>
 ): RequestResult<GetStageLogResponses, GetStageLogErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetStageLogResponses, GetStageLogErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/logs/{stage}',
 		...options
 	});
@@ -1389,6 +2675,18 @@ export const sendRunMessage = <ThrowOnError extends boolean = false>(
 	options: Options<SendRunMessageData, ThrowOnError>
 ): RequestResult<SendRunMessageResponses, SendRunMessageErrors, ThrowOnError> =>
 	(options.client ?? client).post<SendRunMessageResponses, SendRunMessageErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/messages',
 		...options,
 		headers: {
@@ -1404,6 +2702,18 @@ export const getRunMrStatus = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunMrStatusData, ThrowOnError>
 ): RequestResult<GetRunMrStatusResponses, GetRunMrStatusErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunMrStatusResponses, GetRunMrStatusErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/mrs/status',
 		...options
 	});
@@ -1419,7 +2729,13 @@ export const reportObservedPorts = <ThrowOnError extends boolean = false>(
 		ReportObservedPortsErrors,
 		ThrowOnError
 	>({
-		security: [{ scheme: 'bearer', type: 'http' }],
+		security: [
+			{
+				key: 'runToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/observed-ports',
 		...options,
 		headers: {
@@ -1435,6 +2751,18 @@ export const openEditor = <ThrowOnError extends boolean = false>(
 	options: Options<OpenEditorData, ThrowOnError>
 ): RequestResult<OpenEditorResponses, OpenEditorErrors, ThrowOnError> =>
 	(options.client ?? client).post<OpenEditorResponses, OpenEditorErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/open-editor',
 		...options
 	});
@@ -1448,6 +2776,18 @@ export const pauseRun = <ThrowOnError extends boolean = false>(
 	options: Options<PauseRunData, ThrowOnError>
 ): RequestResult<PauseRunResponses, PauseRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<PauseRunResponses, PauseRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/pause',
 		...options
 	});
@@ -1459,6 +2799,18 @@ export const getRunPhases = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunPhasesData, ThrowOnError>
 ): RequestResult<GetRunPhasesResponses, GetRunPhasesErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunPhasesResponses, GetRunPhasesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/phases',
 		...options
 	});
@@ -1472,6 +2824,18 @@ export const startPhase = <ThrowOnError extends boolean = false>(
 	options: Options<StartPhaseData, ThrowOnError>
 ): RequestResult<StartPhaseResponses, StartPhaseErrors, ThrowOnError> =>
 	(options.client ?? client).post<StartPhaseResponses, StartPhaseErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/phases/{phase}/start',
 		...options,
 		headers: {
@@ -1489,7 +2853,13 @@ export const raisePing = <ThrowOnError extends boolean = false>(
 	options: Options<RaisePingData, ThrowOnError>
 ): RequestResult<RaisePingResponses, RaisePingErrors, ThrowOnError> =>
 	(options.client ?? client).post<RaisePingResponses, RaisePingErrors, ThrowOnError>({
-		security: [{ scheme: 'bearer', type: 'http' }],
+		security: [
+			{
+				key: 'runToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/pings',
 		...options,
 		headers: {
@@ -1507,7 +2877,13 @@ export const repollPing = <ThrowOnError extends boolean = false>(
 	options: Options<RepollPingData, ThrowOnError>
 ): RequestResult<RepollPingResponses, RepollPingErrors, ThrowOnError> =>
 	(options.client ?? client).get<RepollPingResponses, RepollPingErrors, ThrowOnError>({
-		security: [{ scheme: 'bearer', type: 'http' }],
+		security: [
+			{
+				key: 'runToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/pings/{pid}',
 		...options
 	});
@@ -1519,6 +2895,18 @@ export const playRun = <ThrowOnError extends boolean = false>(
 	options: Options<PlayRunData, ThrowOnError>
 ): RequestResult<PlayRunResponses, PlayRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<PlayRunResponses, PlayRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/play',
 		...options
 	});
@@ -1530,6 +2918,18 @@ export const getRunPorts = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunPortsData, ThrowOnError>
 ): RequestResult<GetRunPortsResponses, GetRunPortsErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunPortsResponses, GetRunPortsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/ports',
 		...options
 	});
@@ -1543,6 +2943,18 @@ export const rebuildWorkspace = <ThrowOnError extends boolean = false>(
 	options: Options<RebuildWorkspaceData, ThrowOnError>
 ): RequestResult<RebuildWorkspaceResponses, RebuildWorkspaceErrors, ThrowOnError> =>
 	(options.client ?? client).post<RebuildWorkspaceResponses, RebuildWorkspaceErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/rebuild',
 		...options,
 		headers: {
@@ -1558,6 +2970,18 @@ export const rerunRun = <ThrowOnError extends boolean = false>(
 	options: Options<RerunRunData, ThrowOnError>
 ): RequestResult<RerunRunResponses, RerunRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<RerunRunResponses, RerunRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/rerun',
 		...options,
 		headers: {
@@ -1573,6 +2997,18 @@ export const getRunResources = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunResourcesData, ThrowOnError>
 ): RequestResult<GetRunResourcesResponses, GetRunResourcesErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunResourcesResponses, GetRunResourcesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/resources',
 		...options
 	});
@@ -1584,6 +3020,18 @@ export const retryRun = <ThrowOnError extends boolean = false>(
 	options: Options<RetryRunData, ThrowOnError>
 ): RequestResult<RetryRunResponses, RetryRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<RetryRunResponses, RetryRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/retry',
 		...options
 	});
@@ -1597,6 +3045,18 @@ export const getRunServices = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunServicesData, ThrowOnError>
 ): RequestResult<GetRunServicesResponses, GetRunServicesErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunServicesResponses, GetRunServicesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/services',
 		...options
 	});
@@ -1608,7 +3068,22 @@ export const getRunServiceLogs = <ThrowOnError extends boolean = false>(
 	options: Options<GetRunServiceLogsData, ThrowOnError>
 ): RequestResult<GetRunServiceLogsResponses, GetRunServiceLogsErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetRunServiceLogsResponses, GetRunServiceLogsErrors, ThrowOnError>(
-		{ url: '/api/runs/{id}/services/{name}/logs', ...options }
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/runs/{id}/services/{name}/logs',
+			...options
+		}
 	);
 
 /**
@@ -1621,7 +3096,22 @@ export const restartRunService = <ThrowOnError extends boolean = false>(
 		RestartRunServiceResponses,
 		RestartRunServiceErrors,
 		ThrowOnError
-	>({ url: '/api/runs/{id}/services/{name}/restart', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/services/{name}/restart',
+		...options
+	});
 
 /**
  * Start a service by hand
@@ -1632,6 +3122,18 @@ export const startRunService = <ThrowOnError extends boolean = false>(
 	options: Options<StartRunServiceData, ThrowOnError>
 ): RequestResult<StartRunServiceResponses, StartRunServiceErrors, ThrowOnError> =>
 	(options.client ?? client).post<StartRunServiceResponses, StartRunServiceErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/services/{name}/start',
 		...options
 	});
@@ -1643,6 +3145,18 @@ export const stopRunService = <ThrowOnError extends boolean = false>(
 	options: Options<StopRunServiceData, ThrowOnError>
 ): RequestResult<StopRunServiceResponses, StopRunServiceErrors, ThrowOnError> =>
 	(options.client ?? client).post<StopRunServiceResponses, StopRunServiceErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/services/{name}/stop',
 		...options
 	});
@@ -1654,6 +3168,18 @@ export const getWorkspaceLog = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceLogData, ThrowOnError>
 ): RequestResult<GetWorkspaceLogResponses, GetWorkspaceLogErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetWorkspaceLogResponses, GetWorkspaceLogErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/workspace-log',
 		...options
 	});
@@ -1670,7 +3196,22 @@ export const getWorkspaceChanges = <ThrowOnError extends boolean = false>(
 		GetWorkspaceChangesResponses,
 		GetWorkspaceChangesErrors,
 		ThrowOnError
-	>({ url: '/api/runs/{id}/workspace/changes', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/workspace/changes',
+		...options
+	});
 
 /**
  * One file's unified diff against the branch the checkout forked from
@@ -1679,6 +3220,18 @@ export const getWorkspaceDiff = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceDiffData, ThrowOnError>
 ): RequestResult<GetWorkspaceDiffResponses, GetWorkspaceDiffErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetWorkspaceDiffResponses, GetWorkspaceDiffErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/workspace/diff',
 		...options
 	});
@@ -1690,6 +3243,18 @@ export const getWorkspaceFile = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceFileData, ThrowOnError>
 ): RequestResult<GetWorkspaceFileResponses, GetWorkspaceFileErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetWorkspaceFileResponses, GetWorkspaceFileErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/workspace/file',
 		...options
 	});
@@ -1701,7 +3266,22 @@ export const getWorkspaceRepos = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceReposData, ThrowOnError>
 ): RequestResult<GetWorkspaceReposResponses, GetWorkspaceReposErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetWorkspaceReposResponses, GetWorkspaceReposErrors, ThrowOnError>(
-		{ url: '/api/runs/{id}/workspace/repos', ...options }
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/runs/{id}/workspace/repos',
+			...options
+		}
 	);
 
 /**
@@ -1711,28 +3291,64 @@ export const getWorkspaceTree = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceTreeData, ThrowOnError>
 ): RequestResult<GetWorkspaceTreeResponses, GetWorkspaceTreeErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetWorkspaceTreeResponses, GetWorkspaceTreeErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/runs/{id}/workspace/tree',
 		...options
 	});
 
 /**
- * Engine-wide policy settings
+ * One's policy settings: the reaper and retention windows
  */
 export const getSettings = <ThrowOnError extends boolean = false>(
 	options?: Options<GetSettingsData, ThrowOnError>
 ): RequestResult<GetSettingsResponses, GetSettingsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<GetSettingsResponses, GetSettingsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/settings',
 		...options
 	});
 
 /**
- * Replace the engine-wide policy settings
+ * Replace one's policy settings
  */
 export const updateSettings = <ThrowOnError extends boolean = false>(
 	options: Options<UpdateSettingsData, ThrowOnError>
 ): RequestResult<UpdateSettingsResponses, UpdateSettingsErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateSettingsResponses, UpdateSettingsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/settings',
 		...options,
 		headers: {
@@ -1748,6 +3364,18 @@ export const listSignals = <ThrowOnError extends boolean = false>(
 	options?: Options<ListSignalsData, ThrowOnError>
 ): RequestResult<ListSignalsResponses, ListSignalsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListSignalsResponses, ListSignalsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/signals',
 		...options
 	});
@@ -1759,17 +3387,41 @@ export const downloadSnapshot = <ThrowOnError extends boolean = false>(
 	options: Options<DownloadSnapshotData, ThrowOnError>
 ): RequestResult<DownloadSnapshotResponses, DownloadSnapshotErrors, ThrowOnError> =>
 	(options.client ?? client).get<DownloadSnapshotResponses, DownloadSnapshotErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/snapshots/{id}',
 		...options
 	});
 
 /**
- * All tickets
+ * One's tickets
  */
 export const listTickets = <ThrowOnError extends boolean = false>(
 	options?: Options<ListTicketsData, ThrowOnError>
 ): RequestResult<ListTicketsResponses, ListTicketsErrors, ThrowOnError> =>
 	(options?.client ?? client).get<ListTicketsResponses, ListTicketsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/tickets',
 		...options
 	});
@@ -1781,6 +3433,18 @@ export const createTicket = <ThrowOnError extends boolean = false>(
 	options: Options<CreateTicketData, ThrowOnError>
 ): RequestResult<CreateTicketResponses, CreateTicketErrors, ThrowOnError> =>
 	(options.client ?? client).post<CreateTicketResponses, CreateTicketErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/tickets',
 		...options,
 		headers: {
@@ -1796,6 +3460,18 @@ export const deleteTicket = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteTicketData, ThrowOnError>
 ): RequestResult<DeleteTicketResponses, DeleteTicketErrors, ThrowOnError> =>
 	(options.client ?? client).delete<DeleteTicketResponses, DeleteTicketErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/tickets/{id}',
 		...options
 	});
@@ -1807,6 +3483,18 @@ export const getTicket = <ThrowOnError extends boolean = false>(
 	options: Options<GetTicketData, ThrowOnError>
 ): RequestResult<GetTicketResponses, GetTicketErrors, ThrowOnError> =>
 	(options.client ?? client).get<GetTicketResponses, GetTicketErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/tickets/{id}',
 		...options
 	});
@@ -1818,6 +3506,18 @@ export const updateTicket = <ThrowOnError extends boolean = false>(
 	options: Options<UpdateTicketData, ThrowOnError>
 ): RequestResult<UpdateTicketResponses, UpdateTicketErrors, ThrowOnError> =>
 	(options.client ?? client).put<UpdateTicketResponses, UpdateTicketErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/tickets/{id}',
 		...options,
 		headers: {
@@ -1836,7 +3536,22 @@ export const getTicketAttachments = <ThrowOnError extends boolean = false>(
 		GetTicketAttachmentsResponses,
 		GetTicketAttachmentsErrors,
 		ThrowOnError
-	>({ url: '/api/tickets/{id}/attachments', ...options });
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/tickets/{id}/attachments',
+		...options
+	});
 
 /**
  * Start one attempt on a ticket
@@ -1845,7 +3560,131 @@ export const startTicketRun = <ThrowOnError extends boolean = false>(
 	options: Options<StartTicketRunData, ThrowOnError>
 ): RequestResult<StartTicketRunResponses, StartTicketRunErrors, ThrowOnError> =>
 	(options.client ?? client).post<StartTicketRunResponses, StartTicketRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
 		url: '/api/tickets/{id}/runs',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Every account
+ */
+export const listUsers = <ThrowOnError extends boolean = false>(
+	options?: Options<ListUsersData, ThrowOnError>
+): RequestResult<ListUsersResponses, ListUsersErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListUsersResponses, ListUsersErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/users',
+		...options
+	});
+
+/**
+ * Create an account with a password
+ */
+export const createUser = <ThrowOnError extends boolean = false>(
+	options: Options<CreateUserData, ThrowOnError>
+): RequestResult<CreateUserResponses, CreateUserErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateUserResponses, CreateUserErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/users',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Change an account: its profile, whether it is an admin, whether it is disabled
+ *
+ * Disabling an account signs it out everywhere, revokes its tokens, aborts its active runs and switches its automations off; its history and workspaces stay.
+ */
+export const updateUser = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateUserData, ThrowOnError>
+): RequestResult<UpdateUserResponses, UpdateUserErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateUserResponses, UpdateUserErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/users/{id}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Set an account's password
+ *
+ * Signs the account out everywhere.
+ */
+export const resetUserPassword = <ThrowOnError extends boolean = false>(
+	options: Options<ResetUserPasswordData, ThrowOnError>
+): RequestResult<ResetUserPasswordResponses, ResetUserPasswordErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		ResetUserPasswordResponses,
+		ResetUserPasswordErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/users/{id}/password',
 		...options,
 		headers: {
 			'Content-Type': 'application/json',

@@ -201,7 +201,7 @@ func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
 		call.Ticket.SourceKey != "DEV-1" || call.Ticket.Title != "First" || call.Ticket.TicketID == "" {
 		t.Errorf("first run = %+v", call)
 	}
-	all, _ := h.conf.ListTickets(context.Background())
+	all, _ := h.conf.ListTickets(context.Background(), "")
 	if len(all) != 2 {
 		t.Fatalf("tickets = %d, want 2", len(all))
 	}
@@ -220,7 +220,7 @@ func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
 	if n := h.eng.count(); n != 2 {
 		t.Errorf("second pass created runs: %d", n)
 	}
-	if all, _ := h.conf.ListTickets(context.Background()); len(all) != 2 {
+	if all, _ := h.conf.ListTickets(context.Background(), ""); len(all) != 2 {
 		t.Errorf("second pass imported again: %d tickets", len(all))
 	}
 	if len(h.ch.sent) != 0 {
@@ -236,7 +236,7 @@ func TestRefusedRunIsNotifiedOnceAndRecovered(t *testing.T) {
 	h.eng.Fail = errors.New("preflight: stage \"test\": run_ref \"verify\" not found in project.commands")
 	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
 	h.pass(t)
-	if all, _ := h.conf.ListTickets(context.Background()); len(all) != 2 {
+	if all, _ := h.conf.ListTickets(context.Background(), ""); len(all) != 2 {
 		t.Fatalf("tickets = %d, want the imports kept", len(all))
 	}
 	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "preflight") || got.LastFiredAt != nil {
@@ -254,7 +254,7 @@ func TestRefusedRunIsNotifiedOnceAndRecovered(t *testing.T) {
 	if n := h.eng.count(); n != 2 {
 		t.Fatalf("runs after recovery = %d, want 2", n)
 	}
-	if all, _ := h.conf.ListTickets(context.Background()); len(all) != 2 {
+	if all, _ := h.conf.ListTickets(context.Background(), ""); len(all) != 2 {
 		t.Errorf("recovery imported again: %d tickets", len(all))
 	}
 	if got := h.get(t, a.ID); got.LastError != "" || got.LastFiredAt == nil {

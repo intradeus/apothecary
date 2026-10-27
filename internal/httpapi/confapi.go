@@ -9,6 +9,7 @@ import (
 
 	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
+	"apothecary/internal/auth"
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
@@ -127,7 +128,7 @@ func toIntegrationJSON(in confstore.Integration) integrationJSON {
 }
 
 func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Conf.ListIntegrations(r.Context())
+	rows, err := s.Conf.ListIntegrations(r.Context(), auth.UserID(r.Context()))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -145,7 +146,8 @@ func (s *Server) createIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in, err := s.Conf.CreateIntegration(r.Context(), confstore.Integration{
-		Port: body.Port, Kind: body.Kind, Name: body.Name,
+		UserID: auth.UserID(r.Context()),
+		Port:   body.Port, Kind: body.Kind, Name: body.Name,
 		Config: body.Config, Secrets: body.Secrets,
 	})
 	if err != nil {
@@ -273,7 +275,7 @@ func (b projectBody) toProject() confstore.Project {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Conf.ListProjects(r.Context())
+	rows, err := s.Conf.ListProjects(r.Context(), auth.UserID(r.Context()))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -289,7 +291,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	p, err := s.Conf.CreateProject(r.Context(), body.toProject())
+	p := body.toProject()
+	p.UserID = auth.UserID(r.Context())
+	p, err := s.Conf.CreateProject(r.Context(), p)
 	if err != nil {
 		confErr(w, err)
 		return
@@ -409,15 +413,35 @@ func (s *Server) getFlowSchema(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(flow.Schema())
 }
 
-// listFlows serves one project's flows, or every project's when no project is
-// addressed (the overview). Built-in templates ride along on a project listing
-// as the names that project could adopt but has not.
+// listFlows serves one project's flows, or every one of the caller's
+// projects' when no project is addressed (the overview). Built-in templates
+// ride along on a project listing as the names that project could adopt but
+// has not.
 func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 	rows, err := s.Conf.ListFlows(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if projectID == "" {
+		// The overview: every flow of the caller's projects, no one else's.
+		mine, err := s.Conf.ListProjects(r.Context(), auth.UserID(r.Context()))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		owned := map[string]bool{}
+		for _, p := range mine {
+			owned[p.ID] = true
+		}
+		kept := rows[:0]
+		for _, row := range rows {
+			if owned[row.ProjectID] {
+				kept = append(kept, row)
+			}
+		}
+		rows = kept
 	}
 	out := make([]flowResp, 0, len(rows)+1)
 	have := map[string]bool{}
@@ -485,8 +509,8 @@ func (s *Server) copyFlow(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if body.ToProjectID == "" {
-		writeErr(w, http.StatusBadRequest, "to_project_id is required")
+	// The target is named in the body: the guard covered the source only.
+	if !s.ownsProject(w, r, body.ToProjectID) {
 		return
 	}
 	row, err := s.Conf.CopyFlow(r.Context(), r.PathValue("id"), r.PathValue("name"),
@@ -508,8 +532,7 @@ func (s *Server) copyFlowTemplate(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if body.ToProjectID == "" {
-		writeErr(w, http.StatusBadRequest, "to_project_id is required")
+	if !s.ownsProject(w, r, body.ToProjectID) {
 		return
 	}
 	row, err := s.Conf.CopyTemplate(r.Context(), r.PathValue("name"), body.ToProjectID, body.Name)
@@ -678,7 +701,7 @@ func (s *Server) getFlowVersion(w http.ResponseWriter, r *http.Request) {
 // --- settings ---------------------------------------------------------------
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
-	set, err := s.Conf.Settings(r.Context())
+	set, err := s.Conf.Settings(r.Context(), auth.UserID(r.Context()))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -689,7 +712,8 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	// Decode over the *stored* settings so absent fields keep their current
 	// values instead of reverting to compile-time defaults.
-	set, err := s.Conf.Settings(r.Context())
+	me := auth.UserID(r.Context())
+	set, err := s.Conf.Settings(r.Context(), me)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -697,7 +721,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &set) {
 		return
 	}
-	if err := s.Conf.PutSettings(r.Context(), set); err != nil {
+	if err := s.Conf.PutSettings(r.Context(), me, set); err != nil {
 		confErr(w, err)
 		return
 	}

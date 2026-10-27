@@ -33,7 +33,7 @@ func TestTicketCRUD(t *testing.T) {
 		t.Fatalf("get = %+v, %v", got, err)
 	}
 
-	list, err := svc.ListTickets(ctx)
+	list, err := svc.ListTickets(ctx, "")
 	if err != nil || len(list) != 1 || list[0].ID != tk.ID {
 		t.Fatalf("list = %+v, %v", list, err)
 	}

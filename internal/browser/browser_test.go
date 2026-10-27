@@ -247,7 +247,7 @@ func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
 		io.Reader
 		io.Writer
 	}{strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n"), &out}
-	if err := m.Session(context.Background(), ports.BrowserSession{Project: "Web App", Run: "r1", Dial: dial}, stdio); err != nil {
+	if err := m.Session(context.Background(), ports.BrowserSession{Project: "01HWEBAPP", ProjectName: "Web App", Run: "r1", Dial: dial}, stdio); err != nil {
 		t.Fatal(err)
 	}
 	if want := "app GET /home host=localhost:3000\n" + `{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n"; out.String() != want {
@@ -259,15 +259,17 @@ func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
 			runCall = c
 		}
 	}
-	dir := filepath.Join(m.cfg.RunsDir, "browser", "web-app")
-	for _, want := range []string{"--name apo-browser-web-app", "--network none", "--label apothecary=true",
-		"--label apothecary.project=Web App", "--label apothecary.browser=true", "-v " + dir + ":" + dir, "apothecary/browser:aaa"} {
+	// Named by the project's id, lowercased; the name is a label for docker ps.
+	dir := filepath.Join(m.cfg.RunsDir, "browser", "01hwebapp")
+	for _, want := range []string{"--name apo-browser-01hwebapp", "--network none", "--label apothecary=true",
+		"--label apothecary.project=01HWEBAPP", "--label apothecary.project.name=Web App",
+		"--label apothecary.browser=true", "-v " + dir + ":" + dir, "apothecary/browser:aaa"} {
 		if !strings.Contains(runCall, want) {
 			t.Errorf("docker run lacks %q: %s", want, runCall)
 		}
 	}
 	ex := strings.Join(d.streams[0], " ")
-	if !strings.HasPrefix(ex, "exec -i apo-browser-web-app /usr/local/bin/apothecary-shim browser-session --sock "+dir+"/s-") ||
+	if !strings.HasPrefix(ex, "exec -i apo-browser-01hwebapp /usr/local/bin/apothecary-shim browser-session --sock "+dir+"/s-") ||
 		!strings.Contains(ex, " -- playwright-mcp --headless --isolated --browser chromium") {
 		t.Errorf("exec = %s", ex)
 	}

@@ -4,7 +4,7 @@
 	// earlier ones queue behind it (the inbox's rule). The whole row opens the
 	// ping; the workshop link and the call to action sit above it.
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fleet } from '$lib/fleet.svelte';
 	import { age, fmtAbs, shortId } from '$lib/format';
 	import { pingCta, pingHeadline } from '$lib/ping';

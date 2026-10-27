@@ -43,7 +43,10 @@ var (
 // Integration is a credentialed connection (§2) with decrypted secrets —
 // service-layer only; at rest and over the API secrets are sealed/masked.
 type Integration struct {
-	ID        string            `json:"id"`
+	ID string `json:"id"`
+	// UserID is the owner: integrations are a person's credentials, seen and
+	// used by no one else.
+	UserID    string            `json:"user_id"`
 	Port      string            `json:"port"`
 	Kind      string            `json:"kind"`
 	Name      string            `json:"name"`
@@ -55,10 +58,10 @@ type Integration struct {
 
 // StoredIntegration is the at-rest shape: secrets sealed (§3).
 type StoredIntegration struct {
-	ID, Port, Kind, Name string
-	Config               map[string]any
-	Sealed               []byte
-	CreatedAt, UpdatedAt time.Time
+	ID, UserID, Port, Kind, Name string
+	Config                       map[string]any
+	Sealed                       []byte
+	CreatedAt, UpdatedAt         time.Time
 }
 
 // RepoConfig is projects.repo (§2).
@@ -188,7 +191,10 @@ type EditorConfig struct {
 // Project picks one integration per port and adds repo/commands/workspace
 // specifics (§2).
 type Project struct {
-	ID            string `json:"id"`
+	ID string `json:"id"`
+	// UserID is the owner. Everything under the project — flows, bindings,
+	// automations, secrets, tickets, runs — is theirs through it.
+	UserID        string `json:"user_id"`
 	Name          string `json:"name"`
 	RepoAccountID string `json:"repo_account_id"`
 	ProvisionerID string `json:"provisioner_id"`
@@ -253,21 +259,27 @@ type FlowBinding struct {
 // DB is the persistence boundary. Implementations enforce the §2 delete
 // rules that need adjacent tables (project→runs, integration→projects,
 // flow→projects/runs) and return ErrNotFound/ErrReferenced/ErrConflict.
+//
+// Lists take the owner: a userID scopes them to one person's rows, and ""
+// is every row — for the daemon's own passes (the automation watcher, the
+// reaper), never for a request.
 type DB interface {
 	UpsertIntegration(ctx Ctx, r StoredIntegration) error
 	GetIntegration(ctx Ctx, id string) (StoredIntegration, error)
-	ListIntegrations(ctx Ctx) ([]StoredIntegration, error)
+	ListIntegrations(ctx Ctx, userID string) ([]StoredIntegration, error)
 	DeleteIntegration(ctx Ctx, id string) error
 
 	UpsertProject(ctx Ctx, p Project) error
 	GetProject(ctx Ctx, id string) (Project, error)
-	GetProjectByName(ctx Ctx, name string) (Project, error)
-	ListProjects(ctx Ctx) ([]Project, error)
+	// GetProjectByName finds a user's project by name ("" matches any
+	// owner: the CLI's envcheck and dev seeding).
+	GetProjectByName(ctx Ctx, userID, name string) (Project, error)
+	ListProjects(ctx Ctx, userID string) ([]Project, error)
 	DeleteProject(ctx Ctx, id string) error
 
 	UpsertTicket(ctx Ctx, t Ticket) error
 	GetTicket(ctx Ctx, id string) (Ticket, error)
-	ListTickets(ctx Ctx) ([]Ticket, error)
+	ListTickets(ctx Ctx, userID string) ([]Ticket, error)
 	DeleteTicket(ctx Ctx, id string) error
 
 	UpsertFlow(ctx Ctx, row FlowRow) error // also inserts the immutable version (ON CONFLICT DO NOTHING)
@@ -302,8 +314,9 @@ type DB interface {
 	ListAutomations(ctx Ctx, projectID string) ([]Automation, error)
 	DeleteAutomation(ctx Ctx, id string) error
 
-	GetSettings(ctx Ctx) (map[string]string, error) // key -> raw JSON value
-	PutSetting(ctx Ctx, key, value string) error
+	// Settings are per user: key -> raw JSON value.
+	GetSettings(ctx Ctx, userID string) (map[string]string, error)
+	PutSetting(ctx Ctx, userID, key, value string) error
 }
 
 // Ctx aliases context.Context (brevity in the wide DB interface).

@@ -1,4 +1,5 @@
-// The app shell: sidebar, command palette, workshop filter, nav + theme names.
+// The app shell: sidebar, command palette, workshop filter, nav + theme
+// names, the sign-in and setup pages.
 export default {
 	'nav.desk': 'Desk',
 	'nav.inbox': 'Inbox',
@@ -16,7 +17,6 @@ export default {
 	'shell.sidebar.expandTitle': 'Expand sidebar  ⌘\\',
 	'shell.sidebar.collapse': 'Collapse sidebar',
 	'shell.sidebar.collapseTitle': 'Collapse sidebar  ⌘\\',
-	'shell.sidebar.switchGuild': 'Switch guild',
 	'shell.sidebar.search': 'Search',
 	'shell.sidebar.searchTitle': 'Search  ⌘K',
 	'shell.sidebar.searchPlaceholder': 'Search, jump, do…',
@@ -35,15 +35,11 @@ export default {
 	'shell.sidebar.firstWorkshop': 'Set up your first workshop {arrow}',
 	'shell.sidebar.runs': 'Runs',
 	'shell.sidebar.envs': 'Envs',
-	'shell.sidebar.guilds': 'Guilds',
-	'shell.sidebar.legendLive': 'live',
-	'shell.sidebar.legendPings': 'pings',
-	'shell.sidebar.allGuilds': 'All guilds',
-	'shell.sidebar.allGuildsSub': 'Your desk across every guild',
-	'shell.sidebar.guildSub': '{role} · {workshops}',
-	'shell.sidebar.foundGuild': '+ Found a guild',
-	'shell.sidebar.joinGuild': 'Join with invite',
-	'shell.sidebar.orgSoon': 'Organisations arrive with multi-user support',
+	'shell.sidebar.userMenu': 'Account menu',
+	'shell.sidebar.admin': 'admin',
+	'shell.sidebar.account': 'Account',
+	'shell.sidebar.users': 'Users',
+	'shell.sidebar.signOut': 'Sign out',
 
 	'shell.palette.goTo': 'Go to',
 	'shell.palette.do': 'Do',
@@ -60,5 +56,27 @@ export default {
 	'shell.palette.aria': 'Command palette',
 	'shell.palette.placeholder': 'Search runs, tickets, workshops, actions…',
 	'shell.palette.search': 'Search',
-	'shell.palette.none': 'Nothing matches “{query}”.'
+	'shell.palette.none': 'Nothing matches “{query}”.',
+
+	// Sign-in, setup, the account.
+	'auth.unreachable': 'The engine could not be reached',
+	'auth.handle': 'Handle',
+	'auth.handleHelp': 'Lowercase letters, digits and dashes. How you sign in, and how you are named.',
+	'auth.name': 'Name',
+	'auth.email': 'Email',
+	'auth.password': 'Password',
+	'auth.passwordHelp': 'At least 8 characters. Length is the one rule.',
+	'auth.passwordAgain': 'Password, again',
+	'auth.signIn.docTitle': 'Sign in · Apothecary',
+	'auth.signIn.title': 'Sign in',
+	'auth.signIn.lede': 'Your workshops, tickets and runs are yours alone: sign in to see them.',
+	'auth.signIn.login': 'Handle or email',
+	'auth.signIn.action': 'Sign in',
+	'auth.signIn.lockedOut':
+		'Locked out? Whoever runs the engine can reset a password from the terminal: apothecaryd user reset-password <handle>.',
+	'auth.setup.docTitle': 'Set up · Apothecary',
+	'auth.setup.title': 'Claim this apothecary',
+	'auth.setup.lede': 'No account exists yet. Make the first one: it administers the instance.',
+	'auth.setup.action': 'Create the first account',
+	'auth.setup.mismatch': 'The two passwords differ.'
 } as const;

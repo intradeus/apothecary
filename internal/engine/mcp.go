@@ -78,7 +78,7 @@ func (r *Resolution) mcpAvailable(fl *flow.Flow, haveBrowser bool) error {
 // an agent's MCP client does not wait that long for its server.
 func (e *Engine) warmBrowser(res *Resolution, fl *flow.Flow) {
 	if e.browser != nil && fl.UsesBuiltin(flow.MCPBrowser) {
-		e.browser.Warm(res.ProjectName)
+		e.browser.Warm(res.ProjectID, res.ProjectName)
 	}
 }
 
@@ -207,7 +207,7 @@ func (e *Engine) OpenBrowserMCP(ctx context.Context, runID string) (*BrowserMCPS
 			return exposer.ExposePort(ctx, env, port)
 		})
 	}
-	return &BrowserMCPSession{e: e, s: ports.BrowserSession{Project: res.ProjectName, Run: runID, Dial: dial}, release: res.release}, nil
+	return &BrowserMCPSession{e: e, s: ports.BrowserSession{Project: res.ProjectID, ProjectName: res.ProjectName, Run: runID, Dial: dial}, release: res.release}, nil
 }
 
 // Serve bridges the session's stdio — the workspace's `shim browser-mcp` —
@@ -236,6 +236,7 @@ func (e *Engine) BrowserMCP(ctx context.Context, runID string, stdio io.ReadWrit
 }
 
 // BrowserStatus is the project browser's state, for the settings page.
+// project is the project's id.
 func (e *Engine) BrowserStatus(ctx context.Context, project string) (ports.BrowserStatus, error) {
 	if e.browser == nil {
 		return ports.BrowserStatus{}, ErrBrowserOff

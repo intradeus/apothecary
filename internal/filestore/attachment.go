@@ -13,7 +13,10 @@ import (
 // unclaimed, GC-eligible. There are deliberately no stage fields here — an
 // attachment cannot be confused with the engine's record (DESIGN-FILES §2).
 type Attachment struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+	// UserID is whoever uploaded it: the owner from the moment it lands,
+	// before anything claims it.
+	UserID    string    `json:"user_id,omitempty"`
 	TicketID  string    `json:"ticket_id,omitempty"`
 	RunID     string    `json:"run_id,omitempty"`
 	PingID    string    `json:"ping_id,omitempty"`
@@ -41,9 +44,9 @@ type AttachmentDB interface {
 	AttachmentsForPing(ctx context.Context, pingID string) ([]Attachment, error)
 	DeleteAttachmentsForRun(ctx context.Context, runID string) error
 	DeleteAttachmentsForTicket(ctx context.Context, ticketID string) error
-	// UnclaimedAttachmentIDsBefore lists never-claimed uploads older than
-	// cutoff (the orphan GC).
-	UnclaimedAttachmentIDsBefore(ctx context.Context, cutoff time.Time) ([]string, error)
+	// UnclaimedAttachmentIDsBefore lists one user's never-claimed uploads
+	// older than cutoff (the orphan GC; "" = everyone's).
+	UnclaimedAttachmentIDsBefore(ctx context.Context, userID string, cutoff time.Time) ([]string, error)
 	DeleteAttachments(ctx context.Context, ids []string) error
 }
 
@@ -90,7 +93,7 @@ func (s *Attachments) Limits() UploadLimits {
 // sniffs + allowlists its MIME type, and records an unclaimed row. A
 // rejected upload may leave an unreferenced blob behind — that is the
 // sweep's problem, not a correctness one (never-unlink rule).
-func (s *Attachments) Save(ctx context.Context, filename, declaredMime string, r io.Reader) (Attachment, error) {
+func (s *Attachments) Save(ctx context.Context, userID, filename, declaredMime string, r io.Reader) (Attachment, error) {
 	sha, size, err := s.blobs.PutStream(r, s.max)
 	if err != nil {
 		return Attachment{}, err
@@ -100,7 +103,7 @@ func (s *Attachments) Save(ctx context.Context, filename, declaredMime string, r
 		return Attachment{}, ErrMimeType
 	}
 	a := Attachment{
-		ID: newID(), Filename: SafeName(filename), Mime: mimeType,
+		ID: newID(), UserID: userID, Filename: SafeName(filename), Mime: mimeType,
 		Size: size, SHA256: sha, CreatedAt: s.now().UTC(),
 	}
 	if err := s.db.InsertAttachment(ctx, a); err != nil {
@@ -182,10 +185,10 @@ func (s *Attachments) DeleteForTicket(ctx context.Context, ticketID string) erro
 	return s.db.DeleteAttachmentsForTicket(ctx, ticketID)
 }
 
-// GCOrphans removes never-claimed uploads older than olderThan (rows only;
-// the blob sweep reclaims the bytes).
-func (s *Attachments) GCOrphans(ctx context.Context, olderThan time.Duration) (int, error) {
-	ids, err := s.db.UnclaimedAttachmentIDsBefore(ctx, s.now().Add(-olderThan))
+// GCOrphans removes one user's never-claimed uploads older than olderThan
+// ("" = everyone's; rows only, the blob sweep reclaims the bytes).
+func (s *Attachments) GCOrphans(ctx context.Context, userID string, olderThan time.Duration) (int, error) {
+	ids, err := s.db.UnclaimedAttachmentIDsBefore(ctx, userID, s.now().Add(-olderThan))
 	if err != nil || len(ids) == 0 {
 		return 0, err
 	}

@@ -47,7 +47,7 @@ func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {
 	}
 
 	// Inside the window: nothing reaped.
-	if err := h.e.ReapOnce(ctx, time.Hour); err != nil {
+	if err := h.e.ReapOnce(ctx, Window(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.envp.Destroyed) != 0 {
@@ -56,7 +56,7 @@ func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {
 
 	// Outside the window: only the completed run's env goes.
 	time.Sleep(5 * time.Millisecond)
-	if err := h.e.ReapOnce(ctx, time.Millisecond); err != nil {
+	if err := h.e.ReapOnce(ctx, Window(time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.envp.Destroyed) != 1 {
@@ -70,7 +70,7 @@ func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {
 	}
 
 	// Idempotent: second pass has nothing left to do.
-	if err := h.e.ReapOnce(ctx, time.Millisecond); err != nil {
+	if err := h.e.ReapOnce(ctx, Window(time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.envp.Destroyed) != 1 {

@@ -12,7 +12,10 @@ import (
 // ticket's BaseBranch. Flow is deliberately NOT here — it's a per-run choice
 // made when a run is started.
 type Ticket struct {
-	ID         string `json:"id"`
+	ID string `json:"id"`
+	// UserID is the owner: the project's, copied onto the row so the
+	// per-user list needs no join. Set on every write from the project.
+	UserID     string `json:"user_id"`
 	ProjectID  string `json:"project_id"`
 	Title      string `json:"title"`
 	Goal       string `json:"goal"`
@@ -77,8 +80,10 @@ func (s *Service) GetTicket(ctx context.Context, id string) (Ticket, error) {
 	return s.db.GetTicket(ctx, id)
 }
 
-func (s *Service) ListTickets(ctx context.Context) ([]Ticket, error) {
-	return s.db.ListTickets(ctx)
+// ListTickets is one user's tickets ("" = everyone's, for the daemon's own
+// passes).
+func (s *Service) ListTickets(ctx context.Context, userID string) ([]Ticket, error) {
+	return s.db.ListTickets(ctx, userID)
 }
 
 // DeleteTicket removes the ticket. Runs that referenced it keep their own
@@ -94,9 +99,13 @@ func (s *Service) validateTicket(ctx context.Context, t *Ticket) error {
 	if t.ProjectID == "" {
 		return invalidf("ticket: project_id is required")
 	}
-	if _, err := s.db.GetProject(ctx, t.ProjectID); err != nil {
+	p, err := s.db.GetProject(ctx, t.ProjectID)
+	if err != nil {
 		return invalidf("ticket: project %s not found", t.ProjectID)
 	}
+	// A ticket belongs to whoever owns its project — whatever the caller
+	// put on the row.
+	t.UserID = p.UserID
 	t.Title = strings.TrimSpace(t.Title)
 	t.BaseBranch = strings.TrimSpace(t.BaseBranch)
 	return nil

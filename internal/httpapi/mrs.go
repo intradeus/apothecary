@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -73,7 +74,7 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 	me, _ := s.Engine.RepoHostUser(ctx, projectID, repo)
 	byKey := map[string]string{}
 	if s.Conf != nil {
-		all, err := s.Conf.ListTickets(ctx)
+		all, err := s.Conf.ListTickets(ctx, auth.UserID(ctx))
 		if err != nil {
 			confErr(w, err)
 			return

@@ -213,6 +213,9 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.Env
 	if spec.Project != "" {
 		args = append(args, "--label", projectLabel+"="+spec.Project)
 	}
+	if spec.ProjectName != "" {
+		args = append(args, "--label", projectNameLabel+"="+spec.ProjectName)
+	}
 	// When a gateway is active the sandbox's ONLY NIC is the run's --internal
 	// network (no external route → no bypass) and its resolver is the gateway.
 	if gwIP != "" {

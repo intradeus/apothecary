@@ -5,7 +5,7 @@
 	// the WORKSPACE's apart — plus the merge requests the run opened.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import { currentGuild, to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fleet } from '$lib/fleet.svelte';
 	import { onMount } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
@@ -29,13 +29,12 @@
 	let { rs, desk, onretried }: { rs: RunStore; desk: DeskState; onretried: () => void } = $props();
 
 	const run = $derived(rs.run!);
-	const guild = $derived(currentGuild());
 	const project = $derived(run.projectId ? fleet.projectById.get(run.projectId) : undefined);
 	const sid = $derived(shortId(run.id));
 	const [plain, accent] = $derived(accentSplit(run.title));
 	const ticketKey = $derived(rs.ticket?.source?.key);
 	const crumbs = $derived<Crumb[]>([
-		{ label: guild.name, href: to.desk() },
+		{ label: t('nav.desk'), href: to.desk() },
 		...(run.projectId
 			? [
 					{

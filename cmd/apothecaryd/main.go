@@ -5,6 +5,7 @@
 //	apothecaryd validate <flow.yaml>            parse and validate a flow file
 //	apothecaryd rebuild-projections
 //	apothecaryd envcheck -project <name|id>     environment compliance check against the live workspace
+//	apothecaryd user <list|reset-password|set-admin>   accounts, from the terminal (a lockout's way back in)
 //
 // -dev registers the fake kinds and seeds a dev project so a full flow runs
 // end-to-end with no real workspace/harness/repository host.
@@ -27,6 +28,7 @@ import (
 	discordadapter "apothecary/internal/adapters/discord"
 	matrixadapter "apothecary/internal/adapters/matrix"
 	slackadapter "apothecary/internal/adapters/slack"
+	"apothecary/internal/auth"
 	"apothecary/internal/automation"
 	"apothecary/internal/browser"
 	"apothecary/internal/builtin"
@@ -70,6 +72,8 @@ func main() {
 		err = cmdRebuild(os.Args[2:])
 	case "envcheck":
 		err = cmdEnvcheck(os.Args[2:])
+	case "user":
+		err = cmdUser(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -89,6 +93,7 @@ commands:
   validate <flow.yaml>             parse and validate a flow file
   rebuild-projections
   envcheck -project <name|id> [-keep]
+  user list | user reset-password <handle> | user set-admin <handle> [-off]
   version`)
 }
 
@@ -190,7 +195,7 @@ func cmdServe(args []string) error {
 		return err
 	}
 	for _, r := range rows {
-		if err := chreg.Restore(r.ID, r.Kind, r.Config); err != nil {
+		if err := chreg.Restore(r.ID, r.UserID, r.Kind, r.Config); err != nil {
 			return err
 		}
 	}
@@ -210,9 +215,12 @@ func cmdServe(args []string) error {
 		RunsDir:                 boot.RunsDir,
 		PortDiscoveryAutoExpose: boot.PortAutoExpose,
 	}
+	// The capacity caps are the deployment's (boot env), the same for every
+	// user: they protect the host, not a person's preference.
+	limits := engine.Limits{MaxConcurrentRuns: boot.MaxConcurrentRuns, MaxEnvironments: boot.MaxEnvironments}
 	// Flows resolve DB-first with the compiled-in templates underneath
 	// (internal/builtin): an empty database still has flows to run.
-	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), resolve.Settings{Conf: conf}, []ports.NotificationChannel{chreg})
+	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), engine.StaticSettings{L: limits}, []ports.NotificationChannel{chreg})
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -276,7 +284,12 @@ func cmdServe(args []string) error {
 		return fmt.Errorf("crash recovery: %w", err)
 	}
 
+	// Accounts (TODO 25): sessions, tokens, the setup of a fresh instance.
+	authsvc := auth.New(store)
+
 	api := httpapi.New(e, store, chreg, boot.RunsDir)
+	api.Auth = authsvc
+	api.Limits = limits
 	api.Conf = conf
 	api.Kinds = reg
 	api.Ops = resolver
@@ -298,31 +311,55 @@ func cmdServe(args []string) error {
 		for {
 			select {
 			case <-t.C:
-				set, err := conf.Settings(reaperCtx)
+				// Settings are per user: each owner's windows apply to their
+				// runs and uploads. One read per owner per pass, then every
+				// decision looks its owner up (defaults for an unknown one).
+				owners, err := store.SettingsOwners(reaperCtx)
 				if err != nil {
-					log.Error("reaper: settings read failed", "err", err)
+					log.Error("reaper: owners read failed", "err", err)
 					continue
 				}
-				if err := e.ReapOnce(reaperCtx, set.CompletedWindow()); err != nil {
+				settings := map[string]confstore.Settings{}
+				for _, uid := range owners {
+					set, err := conf.Settings(reaperCtx, uid)
+					if err != nil {
+						log.Error("reaper: settings read failed", "user", uid, "err", err)
+						set = confstore.DefaultSettings()
+					}
+					settings[uid] = set
+				}
+				settingsOf := func(uid string) confstore.Settings {
+					if set, ok := settings[uid]; ok {
+						return set
+					}
+					return confstore.DefaultSettings()
+				}
+				if err := e.ReapOnce(reaperCtx, func(uid string) time.Duration {
+					return settingsOf(uid).CompletedWindow()
+				}); err != nil {
 					log.Error("reaper pass failed", "err", err)
 				}
 				// Uploads never claimed by a ticket/run/answer age out
 				// (retention.orphan_uploads_after; rows only — bytes go in
 				// the blob sweep below).
-				if n, err := attachments.GCOrphans(reaperCtx, set.OrphanWindow()); err != nil {
-					log.Error("reaper: upload GC failed", "err", err)
-				} else if n > 0 {
-					log.Info("reaper: swept unclaimed uploads", "count", n)
+				for _, uid := range owners {
+					if n, err := attachments.GCOrphans(reaperCtx, uid, settingsOf(uid).OrphanWindow()); err != nil {
+						log.Error("reaper: upload GC failed", "user", uid, "err", err)
+					} else if n > 0 {
+						log.Info("reaper: swept unclaimed uploads", "user", uid, "count", n)
+					}
 				}
 				// Blob sweep: delete bytes no live row references. The mark
-				// set honors snapshot content retention — rows older than
-				// retention.snapshots_after stop pinning their blobs while
-				// the rows/events keep the record (DESIGN-FILES §6).
-				keepAfter := time.Time{}
-				if window, ok := set.SnapshotWindow(); ok {
-					keepAfter = time.Now().Add(-window)
+				// set honors each owner's snapshot content retention — rows
+				// older than their retention.snapshots_after stop pinning
+				// blobs while the rows/events keep the record (DESIGN-FILES §6).
+				cutoffs := map[string]time.Time{}
+				for _, uid := range owners {
+					if window, ok := settingsOf(uid).SnapshotWindow(); ok {
+						cutoffs[uid] = time.Now().Add(-window)
+					}
 				}
-				live, err := store.LiveBlobSHAs(reaperCtx, keepAfter)
+				live, err := store.LiveBlobSHAs(reaperCtx, cutoffs)
 				if err != nil {
 					log.Error("reaper: live blob set failed", "err", err)
 				} else if n, err := blobs.Sweep(live); err != nil {
@@ -493,10 +530,10 @@ main:
 // seedDevProject creates a dev flow, fake integrations and a "dev" project
 // on first -dev boot, so tickets can be filed immediately (compose smoke).
 func seedDevProject(ctx context.Context, conf *confstore.Service) error {
-	if _, err := conf.GetProjectByName(ctx, "dev"); err == nil {
+	if _, err := conf.GetProjectByName(ctx, "", "dev"); err == nil {
 		return nil
 	}
-	projects, err := conf.ListProjects(ctx)
+	projects, err := conf.ListProjects(ctx, "")
 	if err != nil {
 		return err
 	}

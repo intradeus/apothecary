@@ -298,7 +298,7 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	armSandbox(t, a, name)
 	seedDevcontainer(t, a, name)
 	id, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "RUN1", Name: name, Project: "Acme Web",
+		RunID: "RUN1", Name: name, Project: "01HACMEWEB", ProjectName: "Acme Web",
 		RepoURL: "https://g.local/r.git",
 	})
 	if err != nil {
@@ -325,8 +325,13 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	if !strings.Contains(upJoined, "--id-label apothecary=true") {
 		t.Errorf("up must mark the container apothecary-managed: %v", up.args)
 	}
-	if !strings.Contains(upJoined, "--id-label apothecary.project=Acme Web") {
-		t.Errorf("up must label the project: %v", up.args)
+	if !strings.Contains(upJoined, "--id-label apothecary.project=01HACMEWEB") {
+		t.Errorf("up must label the project by id: %v", up.args)
+	}
+	// The name is NOT an id-label: the CLI matches an existing container on
+	// every id-label, so a renamed project would lose its own container.
+	if strings.Contains(upJoined, "apothecary.project.name") {
+		t.Errorf("up must not id-label the project name: %v", up.args)
 	}
 	// ...and the container is renamed to it for docker ps.
 	rn := find(t, r.calls, "docker", "rename")
@@ -892,7 +897,7 @@ func provisionRepoDinD(t *testing.T, rest []response) (*Adapter, *scriptRunner) 
 	armSandbox(t, a, "apothecary-run1")
 	seedRepoDevcontainer(t, a, "apothecary-run1")
 	if _, err := a.Provision(context.Background(), ports.EnvSpec{
-		RunID: "run1", Project: "Acme", RepoURL: "https://g.local/r.git",
+		RunID: "run1", Project: "01HACME", ProjectName: "Acme", RepoURL: "https://g.local/r.git",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -916,7 +921,8 @@ func TestProvisionCreatesSandbox(t *testing.T) {
 		"--privileged",
 		"--label apothecary.sandbox=true",
 		"--label apothecary.env=apothecary-run1",
-		"--label apothecary.project=Acme",
+		"--label apothecary.project=01HACME",
+		"--label apothecary.project.name=Acme",
 		"-v apothecary-run1-docker:/var/lib/docker",
 		"-v " + root + ":" + root,
 		"docker:29-dind dockerd --host=unix://" + a.sockPath("apothecary-run1"),

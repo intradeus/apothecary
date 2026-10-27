@@ -2104,7 +2104,9 @@ func (x *exec) ensureEnv() error {
 		RepoURL: x.res.RepoRef.URL,
 		Branch:  rs.branch,
 		Name:    workspaceName(nameBranch, rs.runID),
-		Project: x.res.ProjectName,
+		Project: x.res.ProjectID,
+		// The name is a docker label only; the id keys the gateway and caches.
+		ProjectName: x.res.ProjectName,
 		// Only used by provisioners that don't get the §8 image: a
 		// repo-authored devcontainer must install the harness itself.
 		HarnessInstall:       x.res.HarnessInstall,

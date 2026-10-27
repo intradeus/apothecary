@@ -5,7 +5,7 @@
 	// the run; links in the trailing slot stay clickable above it.
 	import type { Snippet } from 'svelte';
 	import type { Run } from '$lib/domain';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { age, ago, fmtAbs, shortId, stateHueClass, stateLabel } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';

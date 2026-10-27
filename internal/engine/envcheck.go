@@ -128,7 +128,9 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 		RepoURL: res.RepoRef.URL,
 		Branch:  branch,
 		Name:    name,
-		Project: res.ProjectName,
+		Project: res.ProjectID,
+		// The name is a docker label only; the id keys the gateway and caches.
+		ProjectName: res.ProjectName,
 		// The workspace a run would get: a repo-authored devcontainer
 		// installs the harness itself, so without this the harness_binary
 		// probe could only ever fail on images that don't ship it.

@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Workspace/project glyph (DESIGN 2.6). An idle workshop is an empty vial.
-	import { workshopVial } from '$lib/guild';
+	import { workshopVial } from '$lib/urls';
 
 	let { projectId, idle = false }: { projectId: string; idle?: boolean } = $props();
 	const v = $derived(workshopVial(projectId));

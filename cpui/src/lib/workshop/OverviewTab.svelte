@@ -4,7 +4,7 @@
 	// read-only summary of the setup — repositories, commands, default flow,
 	// egress — each pane linking to its section of the setup form.
 	import type { Flow, Integration, Project, Run } from '$lib/domain';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { stateTab } from '$lib/format';
 	import { I } from '$lib/ui/icons';
 	import RunRow from '$lib/run/RunRow.svelte';

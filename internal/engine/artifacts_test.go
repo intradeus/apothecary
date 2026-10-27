@@ -50,7 +50,7 @@ func TestGoalAttachmentsDeliveredAndPrompted(t *testing.T) {
 	att, snaps, _ := newFiles(t)
 	h.e.SetFiles(att, snaps)
 
-	up, err := att.Save(context.Background(), "spec.pdf", "application/pdf", strings.NewReader("%PDF-1.4"))
+	up, err := att.Save(context.Background(), "", "spec.pdf", "application/pdf", strings.NewReader("%PDF-1.4"))
 	if err != nil {
 		t.Fatal(err)
 	}

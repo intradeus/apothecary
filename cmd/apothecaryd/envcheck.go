@@ -48,7 +48,7 @@ func cmdEnvcheck(args []string) error {
 	conf := confstore.New(store, key)
 	conf.KindValid = reg.Valid
 
-	project, err := conf.GetProjectByName(ctx, *projectRef)
+	project, err := conf.GetProjectByName(ctx, "", *projectRef)
 	if err != nil {
 		if project, err = conf.GetProject(ctx, *projectRef); err != nil {
 			return fmt.Errorf("project %q not found (by name or id)", *projectRef)

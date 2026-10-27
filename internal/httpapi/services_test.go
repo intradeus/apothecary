@@ -28,10 +28,10 @@ func TestServiceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := x.store.Append(ctx, "r1", &event.RunCreated{ProjectID: testProject, FlowName: "loop"}, &event.EnvReady{EnvID: string(env)}); err != nil {
+	if _, err := x.store.Append(ctx, "r1", &event.RunCreated{ProjectID: testProject, UserID: testUser, FlowName: "loop"}, &event.EnvReady{EnvID: string(env)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := x.store.Append(ctx, "r2", &event.RunCreated{ProjectID: testProject, FlowName: "loop"}); err != nil {
+	if _, err := x.store.Append(ctx, "r2", &event.RunCreated{ProjectID: testProject, UserID: testUser, FlowName: "loop"}); err != nil {
 		t.Fatal(err)
 	}
 	list := func(id string) engine.RunServices {

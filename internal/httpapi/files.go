@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/auth"
 	"apothecary/internal/filestore"
 	"apothecary/internal/run"
 )
@@ -61,7 +62,7 @@ func (s *Server) postAttachments(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("at most %d files per upload", filestore.MaxUploadFiles))
 			return
 		}
-		a, err := s.Attachments.Save(r.Context(), name, part.Header.Get("Content-Type"), part)
+		a, err := s.Attachments.Save(r.Context(), auth.UserID(r.Context()), name, part.Header.Get("Content-Type"), part)
 		part.Close()
 		switch {
 		case errors.Is(err, filestore.ErrTooLarge):

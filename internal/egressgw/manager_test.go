@@ -11,18 +11,32 @@ import (
 	"apothecary/internal/egressgw/policyfile"
 )
 
-func TestSanitize(t *testing.T) {
-	cases := map[string]string{
-		"Acme Corp":  "acme-corp",
-		"a/b:c":      "a-b-c",
-		"":           "default",
-		"--weird--":  "weird",
-		"UPPER_case": "upper-case",
+// Every per-project name derives from the project's ID, lowercased (a ULID is
+// uppercase Crockford base32; docker names and registry paths are not), and
+// never from its name: a rename must not move a project off its gateway and
+// caches, and two projects called "api" must not share them.
+func TestNamesKeyOnTheProjectID(t *testing.T) {
+	m := NewManager("/runs", nil, nil)
+	const id = "01HZX4V8Q2M9N7P3R5T1W6Y0AB"
+	const key = "01hzx4v8q2m9n7p3r5t1w6y0ab"
+	if got := m.gwName(id); got != "apo-gw-"+key {
+		t.Errorf("gwName = %q", got)
 	}
-	for in, want := range cases {
-		if got := sanitize(in); got != want {
-			t.Errorf("sanitize(%q) = %q, want %q", in, got, want)
-		}
+	if got := m.gwDir(id); got != "/runs/gw/"+key {
+		t.Errorf("gwDir = %q", got)
+	}
+	if got := m.cacheVolume(id); got != "apo-gw-"+key+"-cache" {
+		t.Errorf("cacheVolume = %q", got)
+	}
+	if got := m.buildCacheVolume(id); got != "apo-gw-"+key+"-buildcache" {
+		t.Errorf("buildCacheVolume = %q", got)
+	}
+	if got, want := buildCacheRepo("172.20.0.2", id), "172.20.0.2:5001/"+key+"/devcontainer"; got != want {
+		t.Errorf("buildCacheRepo = %q, want %q", got, want)
+	}
+	// No project at all (direct and test callers) still gets a gateway.
+	if got := m.gwName(""); got != "apo-gw-default" {
+		t.Errorf("gwName(\"\") = %q", got)
 	}
 }
 
@@ -228,11 +242,11 @@ func TestEnsureRunEgressSharesGatewayPerProject(t *testing.T) {
 	m := NewManager(dir, fd.run, img)
 
 	pol := policyfile.File{Mode: policyfile.ModeAllow, Domains: []string{"github.com"}}
-	gw1, err := m.EnsureRunEgress(context.Background(), "acme", "run1", pol)
+	gw1, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run1", pol)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gw2, err := m.EnsureRunEgress(context.Background(), "acme", "run2", pol)
+	gw2, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run2", pol)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,6 +282,9 @@ func TestEnsureRunEgressSharesGatewayPerProject(t *testing.T) {
 	run := fd.findCall(t, "run -d")
 	for _, want := range []string{
 		"--restart unless-stopped",
+		// Keyed by the id; the name is for a human's `docker ps`.
+		"--label apothecary.project=acme",
+		"--label apothecary.project.name=Acme",
 		"-v apo-gw-acme-cache:/var/lib/registry",
 		"-v apo-gw-acme-buildcache:" + buildCacheDir,
 		"--mirror-config " + m.mirrorConfigPath("acme"),
@@ -304,7 +321,7 @@ func TestEnsureGatewayRecreatesOnStaleImage(t *testing.T) {
 	}
 	m := NewManager(dir, fd.run, testImageFn)
 
-	if _, err := m.EnsureRunEgress(context.Background(), "acme", "run1", policyfile.File{}); err != nil {
+	if _, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run1", policyfile.File{}); err != nil {
 		t.Fatal(err)
 	}
 	if n := fd.count("rm", "-f", m.gwName("acme")); n != 1 {
@@ -344,7 +361,7 @@ func TestEnsureGatewayDefersUpgradeWhileRunning(t *testing.T) {
 	}
 	m := NewManager(dir, fd.run, testImageFn)
 
-	if _, err := m.EnsureRunEgress(context.Background(), "acme", "run1", policyfile.File{}); err != nil {
+	if _, err := m.EnsureRunEgress(context.Background(), "acme", "Acme", "run1", policyfile.File{}); err != nil {
 		t.Fatal(err)
 	}
 	if n := fd.count("rm", "-f", m.gwName("acme")); n != 0 {
@@ -366,7 +383,7 @@ func TestDestroyRunEgressKeepsGateway(t *testing.T) {
 	m := NewManager(dir, fd.run, testImageFn)
 	ctx := context.Background()
 
-	if _, err := m.EnsureRunEgress(ctx, "acme", "run1", policyfile.File{Mode: policyfile.ModeAllow}); err != nil {
+	if _, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{Mode: policyfile.ModeAllow}); err != nil {
 		t.Fatal(err)
 	}
 	before := len(fd.calls)
@@ -472,8 +489,9 @@ func TestBuildCacheRefIsStablePerProject(t *testing.T) {
 	if strings.ContainsAny(pathOf(a), " /") && !strings.HasPrefix(pathOf(a), "acme-corp-web/") {
 		t.Errorf("repository path is not registry-safe: %q", a)
 	}
-	if got := repoPath("///"); got != "project" {
-		t.Errorf("a name with nothing usable in it = %q, want a fallback", got)
+	// The path is the project's id, lowercased — never its name.
+	if got := pathOf(BuildCacheRef("172.20.0.2", "01HZX4V8Q2M9N7P3R5T1W6Y0AB")); got != "01hzx4v8q2m9n7p3r5t1w6y0ab/devcontainer:cache" {
+		t.Errorf("repository path = %q, want the lowercased project id", got)
 	}
 }
 
@@ -485,7 +503,7 @@ func TestClearBuildCacheWipesThenRestarts(t *testing.T) {
 	fd := &fakeDocker{}
 	m := NewManager(dir, fd.run, testImageFn)
 	ctx := context.Background()
-	if _, err := m.EnsureRunEgress(ctx, "acme", "run1", policyfile.File{Mode: policyfile.ModeAllow}); err != nil {
+	if _, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{Mode: policyfile.ModeAllow}); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := m.buildCacheConfigPath("acme")

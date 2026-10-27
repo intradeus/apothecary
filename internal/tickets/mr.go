@@ -20,7 +20,7 @@ import (
 // FindByKey is the project's ticket whose source key is key (compared
 // without case), if there is one.
 func (f *Factory) FindByKey(ctx context.Context, projectID, key string) (confstore.Ticket, bool, error) {
-	all, err := f.Conf.ListTickets(ctx)
+	all, err := f.Conf.ListTickets(ctx, "")
 	if err != nil {
 		return confstore.Ticket{}, false, err
 	}

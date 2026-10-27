@@ -309,14 +309,14 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO runs (run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at, view, dormant, rebuilding)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		INSERT INTO runs (run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at, view, dormant, rebuilding, user_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (run_id) DO UPDATE SET
 			project_id=$2, state=$3, ticket_title=$4, flow_name=$5, flow_hash=$6,
 			current_stage=$7, mr_url=$8, env_id=$9, created_at=$10, updated_at=$11,
-			view=$12, dormant=$13, rebuilding=$14`,
+			view=$12, dormant=$13, rebuilding=$14, user_id=$15`,
 		v.RunID, v.ProjectID, string(v.State), v.TicketTitle, v.FlowName, v.FlowHash,
-		v.CurrentStage, v.MRURL, v.EnvID, v.CreatedAt, v.UpdatedAt, view, v.Dormant, v.Rebuilding); err != nil {
+		v.CurrentStage, v.MRURL, v.EnvID, v.CreatedAt, v.UpdatedAt, view, v.Dormant, v.Rebuilding, v.UserID); err != nil {
 		return err
 	}
 	for i := range evs {
@@ -331,10 +331,10 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 				files, _ = json.Marshal(p.Files)
 			}
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, form, answer_kind, phase, ends_phase, status, raised_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13)
+				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, form, answer_kind, phase, ends_phase, status, raised_at, user_id)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14)
 				ON CONFLICT (ping_id) DO NOTHING`,
-				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, form, p.Kind(), p.Phase, p.EndsPhase, evs[i].TS); err != nil {
+				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, form, p.Kind(), p.Phase, p.EndsPhase, evs[i].TS, v.UserID); err != nil {
 				return err
 			}
 		case *event.PingAnswered:
@@ -560,6 +560,12 @@ func (s *Store) RebuildProjections(ctx context.Context) (int, error) {
 	return len(ids), tx.Commit(ctx)
 }
 
+// RunView reads one run's row (run.ViewLookup): the API's ownership check
+// on every run route, without reducing the log.
+func (s *Store) RunView(ctx context.Context, runID string) (run.View, bool, error) {
+	return loadView(ctx, s.pool, runID)
+}
+
 // RunViews reads the runs read-model table: every run's view in one query
 // (run.ViewSource — the list endpoint's and the engine pollers' backing).
 func (s *Store) RunViews(ctx context.Context) ([]run.View, error) {
@@ -581,13 +587,13 @@ func (s *Store) RunViews(ctx context.Context) ([]run.View, error) {
 
 // --- channels persistence (§9) ----------------------------------------------
 
-func (s *Store) SaveChannel(ctx context.Context, id, kind string, config map[string]any) error {
+func (s *Store) SaveChannel(ctx context.Context, id, userID, kind string, config map[string]any) error {
 	data, err := json.Marshal(config)
 	if err != nil {
 		return err
 	}
 	_, err = s.pool.Exec(ctx,
-		`INSERT INTO channels (id, kind, config) VALUES ($1,$2,$3)`, id, kind, data)
+		`INSERT INTO channels (id, kind, config, user_id) VALUES ($1,$2,$3,$4)`, id, kind, data, userID)
 	return err
 }
 
@@ -598,12 +604,13 @@ func (s *Store) DeleteChannel(ctx context.Context, id string) error {
 
 type ChannelRow struct {
 	ID     string
+	UserID string
 	Kind   string
 	Config map[string]any
 }
 
 func (s *Store) LoadChannels(ctx context.Context) ([]ChannelRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, kind, config FROM channels ORDER BY created_at`)
+	rows, err := s.pool.Query(ctx, `SELECT id, user_id, kind, config FROM channels ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +619,7 @@ func (s *Store) LoadChannels(ctx context.Context) ([]ChannelRow, error) {
 	for rows.Next() {
 		var r ChannelRow
 		var data []byte
-		if err := rows.Scan(&r.ID, &r.Kind, &data); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Kind, &data); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(data, &r.Config); err != nil {
@@ -666,20 +673,29 @@ func (s *Store) LoadExposedPorts(ctx context.Context) (map[string]map[int]int, e
 	return out, rows.Err()
 }
 
+const pingCols = `ping_id, run_id, user_id, type, stage_id, question, context, files, link,
+	             form, answer_kind, phase, ends_phase, status, answer, feedback, content, answer_attachment_ids, raised_at, answered_at`
+
 // ListPings reads the pings projection (PLAN4 M15): the durable
-// request/response surface. status filters pending|answered; "" or "all"
-// returns both. Newest first, capped by limit.
-func (s *Store) ListPings(ctx context.Context, status string, limit int) ([]run.PingView, error) {
+// request/response surface, one user's ("" = everyone's). status filters
+// pending|answered; "" or "all" returns both. Newest first, capped by limit.
+func (s *Store) ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q := `SELECT ping_id, run_id, type, stage_id, question, context, files, link,
-	             form, answer_kind, phase, ends_phase, status, answer, feedback, content, answer_attachment_ids, raised_at, answered_at
-	      FROM pings`
+	q := `SELECT ` + pingCols + ` FROM pings`
+	var where []string
 	args := []any{}
+	if userID != "" {
+		args = append(args, userID)
+		where = append(where, fmt.Sprintf("user_id=$%d", len(args)))
+	}
 	if status != "" && status != "all" {
-		q += ` WHERE status=$1`
 		args = append(args, status)
+		where = append(where, fmt.Sprintf("status=$%d", len(args)))
+	}
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, " AND ")
 	}
 	q += ` ORDER BY raised_at DESC LIMIT ` + fmt.Sprint(limit)
 	rows, err := s.pool.Query(ctx, q, args...)
@@ -739,10 +755,7 @@ func (s *Store) loadReviews(ctx context.Context, vs []run.PingView) error {
 
 // GetPing reads one projected request/response pair by id.
 func (s *Store) GetPing(ctx context.Context, id string) (run.PingView, error) {
-	v, err := scanPing(s.pool.QueryRow(ctx, `
-		SELECT ping_id, run_id, type, stage_id, question, context, files, link,
-		       form, answer_kind, phase, ends_phase, status, answer, feedback, content, answer_attachment_ids, raised_at, answered_at
-		FROM pings WHERE ping_id=$1`, id))
+	v, err := scanPing(s.pool.QueryRow(ctx, `SELECT `+pingCols+` FROM pings WHERE ping_id=$1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.PingView{}, fmt.Errorf("ping %s: %w", id, ErrPingNotFound)
 	}
@@ -761,7 +774,7 @@ func scanPing(row pgx.Row) (run.PingView, error) {
 	var v run.PingView
 	var form, files, content, ansIDs []byte
 	var link sql.NullString
-	err := row.Scan(&v.PingID, &v.RunID, &v.Type, &v.StageID, &v.Question, &v.Context,
+	err := row.Scan(&v.PingID, &v.RunID, &v.UserID, &v.Type, &v.StageID, &v.Question, &v.Context,
 		&files, &link, &form, &v.AnswerKind, &v.Phase, &v.EndsPhase, &v.Status, &v.Answer, &v.Feedback, &content, &ansIDs, &v.RaisedAt, &v.AnsweredAt)
 	if err == nil {
 		if len(form) > 0 {

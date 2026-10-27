@@ -101,7 +101,7 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 				}
 				rd = bytes.NewReader(data)
 			}
-			req := httptest.NewRequest(p.method, p.path, rd)
+			req := x.authed(httptest.NewRequest(p.method, p.path, rd))
 			if p.body != nil {
 				req.Header.Set("Content-Type", "application/json")
 			}

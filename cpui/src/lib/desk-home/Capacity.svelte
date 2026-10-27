@@ -1,8 +1,8 @@
 <script lang="ts">
 	// Capacity strip (DESIGN 7.3): concurrent runs, environments and the FIFO
-	// queue, against the guild's limits. Reads the shared fleet poll.
+	// queue, against the deployment's limits. Reads the shared fleet poll.
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fleet } from '$lib/fleet.svelte';
 	import Meter from '$lib/ui/Meter.svelte';
 	import Updated from '$lib/ui/Updated.svelte';

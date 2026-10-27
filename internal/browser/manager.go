@@ -1,5 +1,5 @@
 // Package browser is the project browser: ONE container per project
-// (apo-browser-<project>) that its runs share, a Chromium launched per agent
+// (apo-browser-<project id>) that its runs share, a Chromium launched per agent
 // session inside it, driven through Playwright's MCP server — what a flow's
 // builtin `browser` MCP server is (FLOWLANG §1 mcp_servers).
 //
@@ -98,32 +98,17 @@ var _ ports.Browser = (*Manager)(nil)
 
 // --- naming ---------------------------------------------------------------
 
-// sanitize reduces a project name to a docker-safe token.
-func sanitize(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		out = "default"
-	}
-	if len(out) > 40 {
-		out = out[:40]
-	}
-	return out
-}
+// Everything per project is named by ports.ProjectHostKey(project): the
+// project's ID, lowercased — never its name (a rename must not strand a
+// browser, and two projects called "api" must not share one). Every
+// `project`/`name` argument in this file is that id.
 
-func containerName(project string) string { return "apo-browser-" + sanitize(project) }
+func containerName(project string) string { return "apo-browser-" + ports.ProjectHostKey(project) }
 
 // dir is the project's bind mount: the sessions' proxy sockets, at the same
 // path in the daemon and the container.
 func (m *Manager) dir(project string) string {
-	return filepath.Join(m.cfg.RunsDir, "browser", sanitize(project))
+	return filepath.Join(m.cfg.RunsDir, "browser", ports.ProjectHostKey(project))
 }
 
 // maxSockPath is sun_path's limit, less the terminating NUL.
@@ -251,7 +236,8 @@ func (m *Manager) armIdleLocked(name string, p *project) {
 }
 
 // Start arms the idle stop for every project browser already running — one
-// a previous engine process left behind has no session to count it out.
+// a previous engine process left behind has no session to count it out. The
+// label it reads back is the project id.
 func (m *Manager) Start(ctx context.Context) {
 	out, err := m.docker(ctx, "ps", "--filter", "label=apothecary.browser=true",
 		"--format", `{{.Label "apothecary.project"}}`)
@@ -282,15 +268,16 @@ func (m *Manager) Close() {
 	}
 }
 
-// Warm brings the project's browser up in the background.
-func (m *Manager) Warm(name string) {
+// Warm brings the project's browser up in the background. project is the
+// id; projectName is a docker label only.
+func (m *Manager) Warm(project, projectName string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		p := m.acquire(name)
-		defer m.release(name, p)
-		if err := m.ensure(ctx, name, p); err != nil {
-			m.cfg.Log.Warn("browser: warming the project browser failed", "project", name, "err", err)
+		p := m.acquire(project)
+		defer m.release(project, p)
+		if err := m.ensure(ctx, project, projectName, p); err != nil {
+			m.cfg.Log.Warn("browser: warming the project browser failed", "project", project, "err", err)
 		}
 	}()
 }
@@ -298,7 +285,7 @@ func (m *Manager) Warm(name string) {
 // ensure brings the project's container up: created when absent, started
 // when stopped, recreated when it runs a stale image and only the caller
 // is using it (a busy browser keeps its image until it is idle).
-func (m *Manager) ensure(ctx context.Context, name string, p *project) error {
+func (m *Manager) ensure(ctx context.Context, name, projectName string, p *project) error {
 	img, err := m.cfg.Image(ctx)
 	if err != nil {
 		return fmt.Errorf("build the browser image: %w", err)
@@ -326,10 +313,15 @@ func (m *Manager) ensure(ctx context.Context, name string, p *project) error {
 			return err
 		}
 	}
-	_, err = m.docker(ctx, "run", "-d", "--name", c,
+	args := []string{"run", "-d", "--name", c,
 		"--label", "apothecary=true",
-		"--label", "apothecary.project="+name,
+		"--label", "apothecary.project=" + name, // the id: what Start finds it by
 		"--label", "apothecary.browser=true",
+	}
+	if projectName != "" {
+		args = append(args, "--label", "apothecary.project.name="+projectName) // for a human's docker ps
+	}
+	_, err = m.docker(ctx, append(args,
 		// No network at all: the routing proxy is the only way out.
 		"--network", "none",
 		"--init",
@@ -337,7 +329,7 @@ func (m *Manager) ensure(ctx context.Context, name string, p *project) error {
 		"--security-opt", "no-new-privileges",
 		"--shm-size", "1g",
 		"-v", dir+":"+dir,
-		img)
+		img)...)
 	return err
 }
 
@@ -355,7 +347,7 @@ func newSessionID() string {
 func (m *Manager) Session(ctx context.Context, s ports.BrowserSession, stdio io.ReadWriter) error {
 	p := m.acquire(s.Project)
 	defer m.release(s.Project, p)
-	if err := m.ensure(ctx, s.Project, p); err != nil {
+	if err := m.ensure(ctx, s.Project, s.ProjectName, p); err != nil {
 		return err
 	}
 	sid := newSessionID()
@@ -387,7 +379,8 @@ func (m *Manager) Session(ctx context.Context, s ports.BrowserSession, stdio io.
 	return nil
 }
 
-// Status is the project's browser as the settings page shows it.
+// Status is the project's browser as the settings page shows it (name is
+// the project id).
 func (m *Manager) Status(ctx context.Context, name string) (ports.BrowserStatus, error) {
 	st := ports.BrowserStatus{Container: containerName(name), State: "absent"}
 	if m.cfg.Tag != nil {

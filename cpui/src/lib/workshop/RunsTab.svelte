@@ -4,7 +4,7 @@
 	// workshop. Runs start from tickets, so there is no "New run" here.
 	import type { Project, Run } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { shortId, stateTab } from '$lib/format';
 	import RunTable from '$lib/run/RunTable.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';

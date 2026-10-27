@@ -7,11 +7,14 @@ import (
 	"time"
 )
 
-// Settings are the policy plane (DESIGN2 §6.4): stored as one row per key,
-// read on every admission decision and reaper pass — no cache, no watch.
+// Settings are one user's policy plane: what happens to their finished
+// workspaces and their stored bytes. Stored as one row per (user, key),
+// read on every reaper pass — no cache, no watch.
+//
+// The capacity limits (max concurrent runs, max environments) are NOT here:
+// they protect the host, so they are the deployment's (APOTHECARY_MAX_*
+// in the boot env), the same for everyone.
 type Settings struct {
-	MaxConcurrentRuns     int    `json:"max_concurrent_runs"`
-	MaxEnvironments       int    `json:"max_environments"`
 	DestroyCompletedAfter string `json:"destroy_completed_after"` // duration string
 	DestroyAbandoned      string `json:"destroy_abandoned"`       // only "never"
 	// OrphanUploadsAfter is how long a never-claimed upload survives before
@@ -26,8 +29,6 @@ type Settings struct {
 }
 
 const (
-	keyMaxConcurrent   = "limits.max_concurrent_runs"
-	keyMaxEnvs         = "limits.max_environments"
 	keyDestroyAfter    = "reaper.destroy_completed_after"
 	keyDestroyAbandond = "reaper.destroy_abandoned"
 	keyOrphanUploads   = "retention.orphan_uploads_after"
@@ -37,8 +38,6 @@ const (
 // DefaultSettings mirror the v1 config defaults.
 func DefaultSettings() Settings {
 	return Settings{
-		MaxConcurrentRuns:     3,
-		MaxEnvironments:       6,
 		DestroyCompletedAfter: "48h",
 		DestroyAbandoned:      "never",
 		OrphanUploadsAfter:    "24h",
@@ -79,12 +78,6 @@ func (s Settings) SnapshotWindow() (time.Duration, bool) {
 
 // Validate applies the v1 config rules (§6.4).
 func (s Settings) Validate() error {
-	if s.MaxConcurrentRuns < 1 {
-		return invalidf("settings: max_concurrent_runs must be >= 1")
-	}
-	if s.MaxEnvironments < 1 {
-		return invalidf("settings: max_environments must be >= 1")
-	}
 	if d, err := time.ParseDuration(s.DestroyCompletedAfter); err != nil || d <= 0 {
 		return invalidf("settings: destroy_completed_after: invalid duration %q", s.DestroyCompletedAfter)
 	}
@@ -102,9 +95,9 @@ func (s Settings) Validate() error {
 	return nil
 }
 
-// Settings reads the settings rows, filling defaults for absent keys.
-func (s *Service) Settings(ctx context.Context) (Settings, error) {
-	rows, err := s.db.GetSettings(ctx)
+// Settings reads a user's settings rows, filling defaults for absent keys.
+func (s *Service) Settings(ctx context.Context, userID string) (Settings, error) {
+	rows, err := s.db.GetSettings(ctx, userID)
 	if err != nil {
 		return DefaultSettings(), err
 	}
@@ -112,12 +105,10 @@ func (s *Service) Settings(ctx context.Context) (Settings, error) {
 	assign := func(key string, into any) {
 		if raw, ok := rows[key]; ok {
 			if err := json.Unmarshal([]byte(raw), into); err != nil {
-				slog.Warn("settings: corrupt stored value, using default", "key", key, "err", err)
+				slog.Warn("settings: corrupt stored value, using default", "key", key, "user", userID, "err", err)
 			}
 		}
 	}
-	assign(keyMaxConcurrent, &out.MaxConcurrentRuns)
-	assign(keyMaxEnvs, &out.MaxEnvironments)
 	assign(keyDestroyAfter, &out.DestroyCompletedAfter)
 	assign(keyDestroyAbandond, &out.DestroyAbandoned)
 	assign(keyOrphanUploads, &out.OrphanUploadsAfter)
@@ -132,8 +123,8 @@ func (s *Service) Settings(ctx context.Context) (Settings, error) {
 	return out, nil
 }
 
-// PutSettings validates and persists every key.
-func (s *Service) PutSettings(ctx context.Context, set Settings) error {
+// PutSettings validates and persists every key of a user's settings.
+func (s *Service) PutSettings(ctx context.Context, userID string, set Settings) error {
 	if err := set.Validate(); err != nil {
 		return err
 	}
@@ -141,8 +132,6 @@ func (s *Service) PutSettings(ctx context.Context, set Settings) error {
 		key string
 		val any
 	}{
-		{keyMaxConcurrent, set.MaxConcurrentRuns},
-		{keyMaxEnvs, set.MaxEnvironments},
 		{keyDestroyAfter, set.DestroyCompletedAfter},
 		{keyDestroyAbandond, set.DestroyAbandoned},
 		{keyOrphanUploads, set.OrphanUploadsAfter},
@@ -153,7 +142,7 @@ func (s *Service) PutSettings(ctx context.Context, set Settings) error {
 		if err != nil {
 			return err
 		}
-		if err := s.db.PutSetting(ctx, p.key, string(raw)); err != nil {
+		if err := s.db.PutSetting(ctx, userID, p.key, string(raw)); err != nil {
 			return err
 		}
 	}

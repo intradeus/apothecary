@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"apothecary/internal/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/filestore"
@@ -77,7 +78,7 @@ func (s *Server) tickets() *tickets.Factory {
 }
 
 func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Conf.ListTickets(r.Context())
+	rows, err := s.Conf.ListTickets(r.Context(), auth.UserID(r.Context()))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -111,6 +112,11 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
 			return
 		}
+	}
+	// The project is in the body, so the guard could not check it: a
+	// ticket lands only in one of the caller's own projects.
+	if !s.ownsProject(w, r, body.ProjectID) {
+		return
 	}
 	if body.SourceID != "" || body.SourceKey != "" {
 		s.importTicket(w, r, body)

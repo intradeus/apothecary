@@ -23,7 +23,6 @@ The UI is professional and dense (an IDE-grade power tool). The lore appears onl
 
 | Domain object | UI label |
 |---|---|
-| Organisation | **Guild** |
 | Project | **Workshop** |
 | Run | Batch (badge) · "brewing" (running) · "batch spoiled" (failed) |
 | Flow | The formula |
@@ -32,21 +31,20 @@ The UI is professional and dense (an IDE-grade power tool). The lore appears onl
 | Composer placeholder | Whisper to the builder… |
 | Empty window desk | "An empty bench" |
 | Egress blocked | "toxic hosts, kept off the shelf" |
-| Create org | + Found a guild |
+| First account | "Claim this apothecary" |
 
 Rules:
 - Ticket, stage, ping, workspace, MR, egress and all state names stay technical. Never rename status vocabulary.
 - Copy is short, sentence case, and uses no exclamation marks.
 - Destructive dialogs say exactly what happens to the **run** vs the **workspace**.
 
-**Domain hierarchy** (multi-tenant):
+**Domain hierarchy** (multi-user, no organisation level — TODO 25, 2026-10-27):
 
 ```
-User ─┬─ member of N Guilds (orgs), with a role per guild (Owner / Maintainer / Engineer)
-      └─ Guild ── N Workshops (projects) ── N Tickets ── N Runs
+User ── N Workshops (projects) ── N Tickets ── N Runs
 ```
 
-Integrations, channels and limits live at guild level. Projects own flows, commands and egress policy.
+A user owns their integrations, channels, settings and workshops; a workshop owns flows, commands, automations and egress policy. Nothing is shared between users: each person's lists show their own things and no one else's. The one distinction is the **instance admin**, who manages accounts (Users page) and nothing more. The capacity limits are the deployment's, set in the boot env, the same for everyone.
 
 ---
 
@@ -635,32 +633,33 @@ Naming fixes the old ambiguity. Use these names in the UI:
   - **Mobile:** the same sidebar becomes an off-canvas drawer, and the rail becomes a bottom tab bar (Desk, Inbox, Runs, Tickets, More).
 - **Main:** `flex:1; min-width:0; display:flex; flex-direction:column`. It is transparent; the scene shows through between panes.
 
-### 5.1 Guild switcher popover
+### 5.1 User menu popover
 
-- 312px wide, positioned **to the right of the sidebar** (left 248px, or 72px when collapsed), top 56px.
-- Contents:
-  - Title "Guilds" (serif 19px) + a legend "▶ live ✉ pings".
-  - Row **"All guilds"**: a dashed ◈ tile, "Your desk across every guild", the total live count (az mono) and the total pings (amber pill).
-  - A divider, then one row per guild: avatar, name, "role · N workshops", live count, ping pill. The current guild uses the selected style.
-  - A divider, then a footer with two ghost buttons: "+ Found a guild" and "Join with invite".
-- Picking a guild re-scopes the sidebar nav, workshops list, Desk, Inbox, Runs, Tickets and System to that guild.
+- Opens above the user row at the bottom of the sidebar (above the rail avatar when collapsed), 240px wide, flipping below when there is no room.
+- Contents: title = the user's name, legend = their `@handle`; rows **Account** (profile, password, personal tokens), **Users** (admins only), a divider, **Sign out**.
+- There is no switcher: a person has exactly one desk, their own.
+
+### 5.1b Sign-in and setup
+
+- A browser without a session sees only the **sign-in** page: handle or email, password, one button. A locked-out hint names the terminal command (`apothecaryd user reset-password <handle>`).
+- An instance with no account yet shows the **setup** page instead ("Claim this apothecary"): handle, name, email, password twice.
+- Both are centred cards on the scene, with the logo and tagline; no sidebar until signed in. A 401 from any later call drops the shell back to sign-in in place, so a deep link survives.
 
 ### 5.2 Routing
 
 | Route | Page |
 |---|---|
-| `/` | All-guilds desk (default landing for multi-guild users; single-guild users land on their guild desk) |
-| `/g/:guild` | Guild desk |
-| `/g/:guild/inbox` · `/g/:guild/inbox/:pingId` | Inbox · plan/document review |
-| `/g/:guild/runs` · `/g/:guild/runs/:runId` | Runs list · **live run** |
-| `/g/:guild/tickets` · `/new` · `/:ticketId` | Tickets |
-| `/g/:guild/w/:workshop` | Workshop overview (runs, tickets, flows, agents, health) |
-| `/g/:guild/w/:workshop/flows/:name` | Flow editor |
-| `/g/:guild/w/:workshop/settings` | Workshop setup (repo, commands, execution, workspace and egress) |
-| `/g/:guild/system/{integrations,channels,limits,storage,members}` | System hub |
-| `/inbox` | Cross-guild inbox (from the "All guilds" desk) |
+| `/` | The desk |
+| `/inbox` · `/inbox/:pingId` | Inbox · plan/document review |
+| `/runs` · `/runs/:runId` | Runs list · **live run** |
+| `/tickets` · `/new` · `/:ticketId` | Tickets |
+| `/w/:workshop` | Workshop overview (runs, tickets, flows, agents, health) |
+| `/w/:workshop/flows/:name` | Flow editor |
+| `/w/:workshop/settings` | Workshop setup (repo, commands, execution, workspace and egress) |
+| `/system/{integrations,channels,account,users,limits,reaper,storage}` | System hub (`users` for admins only) |
+| `/g/…` | Old guild-scoped links redirect to the same page without the segment |
 
-Breadcrumbs always follow the hierarchy: **Guild / Workshop / Ticket key / Run id**. Each segment is a link (12px `--mut`, "/" in `--fnt`, current segment in `--tx` mono), and the row is `nowrap` with overflow hidden.
+Breadcrumbs always follow the hierarchy: **Desk / Workshop / Ticket key / Run id**. Each segment is a link (12px `--mut`, "/" in `--fnt`, current segment in `--tx` mono), and the row is `nowrap` with overflow hidden.
 
 ---
 
@@ -894,15 +893,16 @@ A stepped form with a left step-rail and section anchors: **1 Repository → 2 W
 ### 7.10 System hub: `/g/:guild/system/*`
 
 Layout: row [section nav 220px | content]. The section nav is a vertical list in the sidebar nav style:
-**Integrations · Channels · Members & roles · Limits · Reaper · Storage**.
+**Integrations · Channels · Account · Users (admins) · Limits · Reaper · Storage**. Everything but Users and Limits is the signed-in user's own.
 
 - **Integrations:** four groups (Repositories, Provisioner, Harness, Ticket source), each with "+ Add \<kind\>" buttons for its kinds.
   - **Integration card** (content glass): name, kind chip, config summary (secrets masked), **persisted test result** chip (✓ ok / ✕ error + "tested 3h ago"), Test (secondary), Edit (inline expand), Delete….
   - Forms are generated from descriptors: a "How to set this up" help panel, then fields (text / secret / JSON secret).
   - A skeleton list shows while loading.
 - **Channels** (folded in from the old page): Matrix, Slack and Discord, as one-way mirrors ("Pings are always answered in Apothecary"). Each card has Test, Edit and Remove… (confirm).
-- **Members & roles:** a table of avatar, name, email, role select (Owner / Maintainer / Engineer / Viewer) and last active; an Invite button. (This is new for multi-tenant.)
-- **Limits:** max concurrent runs (stepper; "beyond this, runs queue as pending, FIFO") and max environments ("at the cap, new runs are refused").
+- **Account:** three panes — Profile (handle, name, email; which methods the account signs in with), Password (current, new twice; every other session is signed out), Personal tokens (name + "Mint a token"; the secret shows once in an amber callout with Copy, then a row per token with prefix, created/last used, Revoke).
+- **Users (admins only):** a table of avatar, name + `@handle`, email, role pill (Admin / Member, plus Disabled), last seen, and per-row actions: Make/Remove admin, Disable…/Enable, Reset password… (inline field). "+ Add account" opens an AddCard: handle, name, email, initial password, Admin checkbox. Disabling says exactly what happens (signed out, tokens revoked, runs aborted, automations off; workshops and history stay).
+- **Limits:** read-only — max concurrent runs and max environments as set in the deployment env (`APOTHECARY_MAX_CONCURRENT_RUNS`, `APOTHECARY_MAX_ENVIRONMENTS`, −1 = "no cap"), with the current counts beside them and a callout saying where to change them.
 - **Reaper:** destroy completed environments after a duration; destroy abandoned environments (`never` only today, shown disabled with a reason).
 - **Storage:** sweep unclaimed uploads after a duration; expire snapshot content after a duration or never.
 - **Duration inputs:** a number + unit select (m / h / d / never) replaces free text. Show "Applies immediately — no restart".

@@ -9,7 +9,7 @@
 
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	// Guild / Workshop / Ticket key / Run id (DESIGN 5.2). The last crumb is
+	// Desk / Workshop / Ticket key / Run id (DESIGN 5.2). The last crumb is
 	// the current page.
 	let { crumbs }: { crumbs: Crumb[] } = $props();
 </script>

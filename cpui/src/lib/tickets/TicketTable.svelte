@@ -8,7 +8,7 @@
 	// title link covers the row, columns picked per page. Status is derived:
 	// the latest run's state, "×N" when there are several, "no runs" before.
 	import type { Ticket } from '$lib/domain';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs } from '$lib/format';
 	import StatusChip from '$lib/ui/StatusChip.svelte';

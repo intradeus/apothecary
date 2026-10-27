@@ -37,25 +37,27 @@ func (s *Store) UpsertIntegration(ctx context.Context, r confstore.StoredIntegra
 	if sealed == nil {
 		sealed = []byte{}
 	}
+	// The owner is set at insert and never by an update: an edit cannot
+	// hand a credential to someone else.
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO integrations (id, port, kind, name, config, secrets, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		INSERT INTO integrations (id, port, kind, name, config, secrets, created_at, updated_at, user_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (id) DO UPDATE SET
 			name=$4, config=$5, secrets=$6, updated_at=$8`,
-		r.ID, r.Port, r.Kind, r.Name, cfg, sealed, r.CreatedAt, r.UpdatedAt)
+		r.ID, r.Port, r.Kind, r.Name, cfg, sealed, r.CreatedAt, r.UpdatedAt, r.UserID)
 	if isUnique(err) {
 		return fmt.Errorf("integration %s/%s: %w", r.Port, r.Name, confstore.ErrConflict)
 	}
 	return err
 }
 
+const integrationCols = `id, port, kind, name, config, secrets, created_at, updated_at, user_id`
+
 func (s *Store) GetIntegration(ctx context.Context, id string) (confstore.StoredIntegration, error) {
 	var r confstore.StoredIntegration
 	var cfg []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, port, kind, name, config, secrets, created_at, updated_at
-		FROM integrations WHERE id=$1`, id).
-		Scan(&r.ID, &r.Port, &r.Kind, &r.Name, &cfg, &r.Sealed, &r.CreatedAt, &r.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT `+integrationCols+` FROM integrations WHERE id=$1`, id).
+		Scan(&r.ID, &r.Port, &r.Kind, &r.Name, &cfg, &r.Sealed, &r.CreatedAt, &r.UpdatedAt, &r.UserID)
 	if err == pgx.ErrNoRows {
 		return r, fmt.Errorf("integration %s: %w", id, confstore.ErrNotFound)
 	}
@@ -68,10 +70,18 @@ func (s *Store) GetIntegration(ctx context.Context, id string) (confstore.Stored
 	return r, nil
 }
 
-func (s *Store) ListIntegrations(ctx context.Context) ([]confstore.StoredIntegration, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, port, kind, name, config, secrets, created_at, updated_at
-		FROM integrations ORDER BY created_at`)
+// ownerClause scopes a list to one owner; "" lists every row (the daemon's
+// own passes). $n is the placeholder number the user id takes.
+func ownerClause(userID string, n int) (string, []any) {
+	if userID == "" {
+		return "", nil
+	}
+	return fmt.Sprintf(` WHERE user_id=$%d`, n), []any{userID}
+}
+
+func (s *Store) ListIntegrations(ctx context.Context, userID string) ([]confstore.StoredIntegration, error) {
+	where, args := ownerClause(userID, 1)
+	rows, err := s.pool.Query(ctx, `SELECT `+integrationCols+` FROM integrations`+where+` ORDER BY created_at`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +90,7 @@ func (s *Store) ListIntegrations(ctx context.Context) ([]confstore.StoredIntegra
 	for rows.Next() {
 		var r confstore.StoredIntegration
 		var cfg []byte
-		if err := rows.Scan(&r.ID, &r.Port, &r.Kind, &r.Name, &cfg, &r.Sealed, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Port, &r.Kind, &r.Name, &cfg, &r.Sealed, &r.CreatedAt, &r.UpdatedAt, &r.UserID); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(cfg, &r.Config); err != nil {
@@ -164,17 +174,18 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	// between the service-layer validation and this write, and isn't a
 	// built-in) nothing is inserted, no conflict fires, and RowsAffected
 	// reads 0.
+	// The owner (user_id) is set at insert and never by an update.
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO projects (id, name, repo_account_id, provisioner_id,
-		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13
+		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos, user_id)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13,$14
 		WHERE EXISTS (SELECT 1 FROM flows WHERE project_id=$1 AND name=$8) OR $8 = ANY($12)
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, repo_account_id=$3, provisioner_id=$4,
 			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11, repos=$13`,
 		p.ID, p.Name, p.RepoAccountID, p.ProvisionerID,
 		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt, harnesses,
-		builtin.FlowNames(), repos)
+		builtin.FlowNames(), repos, p.UserID)
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
 	}
@@ -196,7 +207,7 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 	var p confstore.Project
 	var repo, cmds, ws, harnesses, repos []byte
 	err := row.Scan(&p.ID, &p.Name, &p.RepoAccountID, &p.ProvisionerID,
-		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses, &repos)
+		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses, &repos, &p.UserID)
 	if err != nil {
 		return p, err
 	}
@@ -223,7 +234,7 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 }
 
 const projectCols = `id, name, repo_account_id, provisioner_id,
-	repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos`
+	repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos, user_id`
 
 func (s *Store) GetProject(ctx context.Context, id string) (confstore.Project, error) {
 	p, err := scanProject(s.pool.QueryRow(ctx,
@@ -234,17 +245,18 @@ func (s *Store) GetProject(ctx context.Context, id string) (confstore.Project, e
 	return p, err
 }
 
-func (s *Store) GetProjectByName(ctx context.Context, name string) (confstore.Project, error) {
+func (s *Store) GetProjectByName(ctx context.Context, userID, name string) (confstore.Project, error) {
 	p, err := scanProject(s.pool.QueryRow(ctx,
-		`SELECT `+projectCols+` FROM projects WHERE name=$1`, name))
+		`SELECT `+projectCols+` FROM projects WHERE name=$1 AND ($2 = '' OR user_id=$2) ORDER BY created_at LIMIT 1`, name, userID))
 	if err == pgx.ErrNoRows {
 		return p, fmt.Errorf("project %s: %w", name, confstore.ErrNotFound)
 	}
 	return p, err
 }
 
-func (s *Store) ListProjects(ctx context.Context) ([]confstore.Project, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+projectCols+` FROM projects ORDER BY created_at`)
+func (s *Store) ListProjects(ctx context.Context, userID string) ([]confstore.Project, error) {
+	where, args := ownerClause(userID, 1)
+	rows, err := s.pool.Query(ctx, `SELECT `+projectCols+` FROM projects`+where+` ORDER BY created_at`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -338,26 +350,28 @@ func (s *Store) DeleteProjectSecret(ctx context.Context, projectID, name string)
 // --- tickets ----------------------------------------------------------------
 
 const ticketCols = `id, project_id, title, goal, base_branch, ` +
-	`source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at`
+	`source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id`
 
 func scanTicket(row pgx.Row) (confstore.Ticket, error) {
 	var t confstore.Ticket
 	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Goal, &t.BaseBranch,
 		&t.SourceID, &t.SourceKind, &t.SourceKey, &t.SourceURL, &t.AutomationID,
-		&t.CreatedAt, &t.UpdatedAt)
+		&t.CreatedAt, &t.UpdatedAt, &t.UserID)
 	return t, err
 }
 
 func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
+	// user_id follows the project (the service copies it on validation);
+	// written on update too, so a ticket moved between projects follows.
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO tickets (id, project_id, title, goal, base_branch,
-			source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (id) DO UPDATE SET
 			project_id=$2, title=$3, goal=$4, base_branch=$5,
-			source_id=$6, source_kind=$7, source_key=$8, source_url=$9, automation_id=$10, updated_at=$12`,
+			source_id=$6, source_kind=$7, source_key=$8, source_url=$9, automation_id=$10, updated_at=$12, user_id=$13`,
 		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch,
-		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.AutomationID, t.CreatedAt, t.UpdatedAt)
+		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.AutomationID, t.CreatedAt, t.UpdatedAt, t.UserID)
 	if isFK(err) {
 		// FK backstop: the referenced project vanished between service-layer
 		// validation and this write.
@@ -375,8 +389,9 @@ func (s *Store) GetTicket(ctx context.Context, id string) (confstore.Ticket, err
 	return t, err
 }
 
-func (s *Store) ListTickets(ctx context.Context) ([]confstore.Ticket, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+ticketCols+` FROM tickets ORDER BY created_at DESC`)
+func (s *Store) ListTickets(ctx context.Context, userID string) ([]confstore.Ticket, error) {
+	where, args := ownerClause(userID, 1)
+	rows, err := s.pool.Query(ctx, `SELECT `+ticketCols+` FROM tickets`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -715,8 +730,8 @@ func (s *Store) ListFlowVersions(ctx context.Context, projectID, name string) ([
 
 // --- settings ---------------------------------------------------------------
 
-func (s *Store) GetSettings(ctx context.Context) (map[string]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT key, value FROM settings`)
+func (s *Store) GetSettings(ctx context.Context, userID string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT key, value FROM settings WHERE user_id=$1`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -733,11 +748,33 @@ func (s *Store) GetSettings(ctx context.Context) (map[string]string, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) PutSetting(ctx context.Context, key, value string) error {
+func (s *Store) PutSetting(ctx context.Context, userID, key, value string) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO settings (key, value) VALUES ($1,$2)
-		ON CONFLICT (key) DO UPDATE SET value=$2`, key, []byte(value))
+		INSERT INTO settings (user_id, key, value) VALUES ($1,$2,$3)
+		ON CONFLICT (user_id, key) DO UPDATE SET value=$3`, userID, key, []byte(value))
 	return err
+}
+
+// SettingsOwners lists every user with settings rows plus every owner of a
+// run or an upload — the people a reaper pass reads settings for.
+func (s *Store) SettingsOwners(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT user_id FROM settings
+		UNION SELECT user_id FROM runs
+		UNION SELECT user_id FROM attachments`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // --- agents (DESIGN3 §1) ----------------------------------------------------

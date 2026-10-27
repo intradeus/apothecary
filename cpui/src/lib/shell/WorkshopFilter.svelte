@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The "which workshop" filter of a guild-wide list (runs, tickets): a
+	// The "which workshop" filter of a desk-wide list (runs, tickets): a
 	// select over the fleet's workshops, '' meaning all of them. The page owns
 	// the value (it mirrors ?project=).
 	import { fleet } from '$lib/fleet.svelte';

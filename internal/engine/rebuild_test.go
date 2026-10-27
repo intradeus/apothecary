@@ -160,7 +160,7 @@ func TestReaperSkipsRebuildingEnv(t *testing.T) {
 
 	// Reaper runs while the rebuild holds the gate — must not destroy.
 	time.Sleep(5 * time.Millisecond) // ensure the completed-window elapses
-	if err := h.e.ReapOnce(context.Background(), time.Millisecond); err != nil {
+	if err := h.e.ReapOnce(context.Background(), Window(time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.envp.Destroyed) != 0 {

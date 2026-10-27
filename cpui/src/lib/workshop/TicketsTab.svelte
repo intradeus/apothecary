@@ -4,7 +4,7 @@
 	// status is derived: the latest run's state, or "no runs".
 	import type { Project, Ticket } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { stateTab } from '$lib/format';
 	import TicketTable from '$lib/tickets/TicketTable.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';

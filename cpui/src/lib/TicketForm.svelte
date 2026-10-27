@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { to } from '$lib/guild';
+	import { to } from '$lib/urls';
 	import { t, th } from '$lib/i18n/index.svelte';
 	// Ticket create/edit form. A ticket is a unit of work; flow is NOT chosen
 	// here — it's picked per run when a run is started.

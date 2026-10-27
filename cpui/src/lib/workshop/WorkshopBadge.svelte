@@ -2,7 +2,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	// The workshop's vial at header size, on a control-glass tile — the
 	// workshop page's counterpart of the run badge.
-	import { workshopVial } from '$lib/guild';
+	import { workshopVial } from '$lib/urls';
 	import Vial from '$lib/ui/Vial.svelte';
 
 	let { projectId, live = 0 }: { projectId: string; live?: number } = $props();
