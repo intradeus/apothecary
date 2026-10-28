@@ -116,7 +116,9 @@
 
 	// What a stage running the agent appends to the prompt, per declared
 	// port (the engine's assemblePrompt): the ticket as the TASK, each input
-	// as an INPUT section, the outputs as the OUTPUT CONTRACT.
+	// as an INPUT section, the outputs as the OUTPUT CONTRACT — and, from
+	// the harness, the standing ASKING THE HUMAN rules (FLOWLANG §9): how
+	// ask_human works, so the prompt says only when to ask.
 	const appended = $derived.by(() => {
 		const lines: string[] = [];
 		for (const d of a.inputs ?? []) {
@@ -136,6 +138,7 @@
 					`- <path${d.type === 'files' ? '/' : ''}> — ${d.name}: ${d.schema ?? d.type ?? 'file'}`
 				);
 		}
+		lines.push(t('flow.agents.addsAskHuman'));
 		return lines;
 	});
 	const promptStats = $derived.by(() => {
@@ -220,13 +223,11 @@
 			placeholder={t('flow.insp.promptPlaceholder')}></textarea>
 		<div class="help">{t('flow.insp.promptHelp')}</div>
 	</div>
-	{#if appended.length}
-		<div class="field">
-			<div class="lbl">{t('flow.agents.addsTitle')}</div>
-			<div class="help">{t('flow.agents.addsHelp')}</div>
-			<pre class="adds mono card-in">{appended.join('\n')}</pre>
-		</div>
-	{/if}
+	<div class="field">
+		<div class="lbl">{t('flow.agents.addsTitle')}</div>
+		<div class="help">{t('flow.agents.addsHelp')}</div>
+		<pre class="adds mono card-in">{appended.join('\n')}</pre>
+	</div>
 {/snippet}
 
 {#snippet inputs()}

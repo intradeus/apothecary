@@ -59,7 +59,7 @@ func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	// read_only/allow_bash are instruction-level for codex (§13 residual).
-	for _, want := range []string{"# ROLE", "Plan carefully.", "READ-ONLY", "Do not run shell commands"} {
+	for _, want := range []string{"# ROLE", "Plan carefully.", "READ-ONLY", "Do not run shell commands", "# ASKING THE HUMAN", "ask_human"} {
 		if !strings.Contains(string(planner), want) {
 			t.Errorf("planner.role missing %q:\n%s", want, planner)
 		}

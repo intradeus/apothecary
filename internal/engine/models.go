@@ -125,7 +125,7 @@ func contains(xs []string, x string) bool {
 }
 
 // closestModels suggests replacements: the same provider first, ranked by how
-// long a prefix they share with the missing id (glm-5.2 → glm-5.2, glm-5.3).
+// long a prefix they share with the missing id (glm-5.0 → glm-5.2, glm-5.3).
 func closestModels(want string, models []string, n int) []string {
 	provider, _, _ := strings.Cut(want, "/")
 	type cand struct {

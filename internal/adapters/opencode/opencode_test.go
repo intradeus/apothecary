@@ -91,7 +91,7 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mode: primary", "edit: false", "patch: false", "write: true", "bash: false", "Plan carefully."} {
+	for _, want := range []string{"mode: primary", "edit: false", "patch: false", "write: true", "bash: false", "Plan carefully.", "# ASKING THE HUMAN", "listed as ask_human_ask_human"} {
 		if !strings.Contains(string(planner), want) {
 			t.Errorf("planner.md missing %q:\n%s", want, planner)
 		}
@@ -106,6 +106,11 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 		if !strings.Contains(string(askMD), want) {
 			t.Errorf("ask.md missing %q:\n%s", want, askMD)
 		}
+	}
+	// It answers, it does not ask: its definition denies ask_human and its
+	// prompt is not told how to call it.
+	if strings.Contains(string(askMD), "ASKING THE HUMAN") {
+		t.Errorf("ask.md must not carry the ask_human rules:\n%s", askMD)
 	}
 	builder, _ := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/builder.md")
 	if strings.Contains(string(builder), "edit: false") || !strings.Contains(string(builder), "bash: true") {

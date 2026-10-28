@@ -13,7 +13,7 @@ import (
 
 const modelFlowDoc = `name: models
 version: 2
-parameters: { harness: fake, model: zen/glm-5.2 }
+parameters: { harness: fake, model: zen/glm-5.0 }
 main:
   - { id: build, type: agent, agent: builder }
   - { id: review, type: agent, agent: builder, model: zen/glm-5.3 }
@@ -24,13 +24,13 @@ main:
 func TestRunRefusedForAModelItsHarnessCannotReach(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
 	h.res.Models = func(context.Context, string) ([]string, error) {
-		return []string{"zen/glm-5.2", "zen/glm-5.3", "zen/kimi-k3", "other/glm-5.2"}, nil
+		return []string{"zen/glm-5.2", "zen/glm-5.3", "zen/kimi-k3", "other/glm-5.0"}, nil
 	}
 	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
 	if err == nil {
 		t.Fatal("run created with a model the harness cannot reach")
 	}
-	for _, want := range []string{`stage "build"`, `"zen/glm-5.2"`, "zen/glm-5.2, zen/glm-5.3"} {
+	for _, want := range []string{`stage "build"`, `"zen/glm-5.0"`, "zen/glm-5.2, zen/glm-5.3"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err, want)
 		}
@@ -43,7 +43,7 @@ func TestRunRefusedForAModelItsHarnessCannotReach(t *testing.T) {
 	}
 
 	steps := h.e.PreflightProject(context.Background(), testProject)
-	if s := stepNamed(steps, "models"); s == nil || s.OK || !strings.Contains(s.Error, "zen/glm-5.2") {
+	if s := stepNamed(steps, "models"); s == nil || s.OK || !strings.Contains(s.Error, "zen/glm-5.0") {
 		t.Errorf("preflight models step = %+v", s)
 	}
 }
@@ -72,7 +72,7 @@ func TestUnlistableModelsDoNotBlockTheRun(t *testing.T) {
 func TestPreflightModelsPass(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
 	h.res.Models = func(context.Context, string) ([]string, error) {
-		return []string{"zen/glm-5.2", "zen/glm-5.3"}, nil
+		return []string{"zen/glm-5.0", "zen/glm-5.3"}, nil
 	}
 	if s := stepNamed(h.e.PreflightProject(context.Background(), testProject), "models"); s == nil || !s.OK {
 		t.Errorf("models step = %+v", s)
@@ -136,7 +136,7 @@ func TestRunFailsBeforeItsFirstStageOnAModelTheAgentDoesNotOffer(t *testing.T) {
 
 func TestAgentModelCheckPassesAndToleratesAnUnaskableAgent(t *testing.T) {
 	for _, lr := range []*listingRunner{
-		{models: []string{"zen/glm-5.2", "zen/glm-5.3"}}, // offered
+		{models: []string{"zen/glm-5.0", "zen/glm-5.3"}}, // offered
 		{err: errors.New("agent would not start")},       // cannot ask: the stage will say
 		{models: nil}, // says nothing
 	} {
@@ -169,7 +169,7 @@ func TestEnvCheckAgentModelsStep(t *testing.T) {
 				step = s
 			}
 		})
-	if step.Status != "fail" || !strings.Contains(step.Detail, "zen/glm-5.2") || strings.Contains(step.Detail, `"review"`) {
+	if step.Status != "fail" || !strings.Contains(step.Detail, "zen/glm-5.0") || strings.Contains(step.Detail, `"review"`) {
 		t.Fatalf("agent_models = %+v", step)
 	}
 }
@@ -183,7 +183,7 @@ func TestAgentAccepts(t *testing.T) {
 		{[]string{"opencode-go/glm-5.2"}, "opencode-go/glm-5.2", true},
 		{[]string{"gpt-5-codex/high", "gpt-5-codex/low"}, "openai/gpt-5-codex", true}, // codex: bare + effort
 		{[]string{"gpt-5"}, "openai/gpt-5", true},
-		{[]string{"opencode-go/glm-5.2"}, "opencode-go/glm-5.2", false},
+		{[]string{"opencode-go/glm-5.2"}, "opencode-go/glm-5.0", false},
 		{[]string{"gpt-5-codex/high"}, "openai/gpt-5", false}, // a prefix is not a match
 	} {
 		if got := agentAccepts(c.advertised, c.model); got != c.want {
@@ -200,13 +200,13 @@ func TestRunRefusedWhenTheProviderRejectsTheCredential(t *testing.T) {
 	var asked []string
 	h.res.CheckAuth = func(_ context.Context, kind string, models []string) ([]string, []string) {
 		asked = append(asked, kind+":"+strings.Join(models, ","))
-		return []string{"opencode model zen/glm-5.2: credential rejected (401 Invalid credential)"}, nil
+		return []string{"opencode model zen/glm-5.0: credential rejected (401 Invalid credential)"}, nil
 	}
 	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
 	if err == nil || !strings.Contains(err.Error(), "Invalid credential") {
 		t.Fatalf("err = %v, want the provider's refusal", err)
 	}
-	if len(asked) != 1 || asked[0] != "fake:zen/glm-5.2,zen/glm-5.3" {
+	if len(asked) != 1 || asked[0] != "fake:zen/glm-5.0,zen/glm-5.3" {
 		t.Errorf("asked %v", asked)
 	}
 	if len(h.envp.ExecCalls) != 0 {

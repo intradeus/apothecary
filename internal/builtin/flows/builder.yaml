@@ -1,7 +1,6 @@
 name: builder
 version: 5
 description: "plan-gated build with cross-vendor adversarial review, then the merge request's life: conflicts fixed on your go, review comments fixed and answered once the review goes quiet"
-ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow's harness
 # The flow's one settings block: what every agent stage inherits, the run's
 # ceilings (the whole life of the ticket, review rounds included), and this
 # flow's own knobs, read where $name appears below. A project binds any of
@@ -86,6 +85,7 @@ parameters:
 # the merge request carries every one.
 mcp_servers:
   - { name: browser, builtin: browser, description: "the project's browser, reaching the run's app at localhost" }
+ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow's harness
 agents:
   - name: planner
     description: explores the repository and writes the implementation plan
@@ -121,11 +121,6 @@ agents:
       every point in it.
       If the ticket is ambiguous in a way that changes the design, ask the
       human (type=clarification) BEFORE writing the plan rather than guessing.
-      Your harness may expose the tool under a prefixed name (opencode calls it
-      ask_human_ask_human) — use whatever name it lists, and never conclude the
-      tool is unavailable because the bare name failed. The tool waits for the
-      human and returns their answer, however long that takes: a guess is worse
-      than a wait.
   - name: builder
     description: implements the approved plan
     read_only: false
@@ -148,10 +143,7 @@ agents:
       Rules:
       - Follow the plan's steps in order. If the plan turns out to be wrong or
         incomplete in a way you cannot resolve within its intent, ask the human
-        (type=blocker) instead of improvising a redesign. Your harness may
-        expose the tool under a prefixed name (opencode calls it
-        ask_human_ask_human); the tool waits for the human's answer and
-        returns it.
+        (type=blocker) instead of improvising a redesign.
       - Follow the conventions in AGENTS.md and mirror the style of the
         surrounding code.
       - Do NOT run `git commit`, `git add` or `git push`. Leave your changes in

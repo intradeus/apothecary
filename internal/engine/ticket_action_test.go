@@ -83,7 +83,7 @@ func TestTicketTransitionRunsBeforeAnyWorkspace(t *testing.T) {
 func TestModelCheckSurvivesALeadingRemoteStage(t *testing.T) {
 	doc := `name: tkm
 version: 2
-parameters: { harness: fake, model: zen/glm-5.2 }
+parameters: { harness: fake, model: zen/glm-5.0 }
 main:
   - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
   - { id: build, type: agent, agent: builder }
@@ -96,7 +96,7 @@ main:
 	}
 	h.e.Wait(runID)
 	evs := h.events(t, runID)
-	if rf, ok := findPayload[*event.RunFailed](evs); !ok || !strings.Contains(rf.Reason, "zen/glm-5.2") {
+	if rf, ok := findPayload[*event.RunFailed](evs); !ok || !strings.Contains(rf.Reason, "zen/glm-5.0") {
 		t.Fatalf("run_failed = %+v; events %v", rf, eventTypes(evs))
 	}
 	if len(h.runner.SnapshotRunCalls()) != 0 {

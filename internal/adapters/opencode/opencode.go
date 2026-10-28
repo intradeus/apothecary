@@ -175,8 +175,18 @@ func agentMarkdown(s *agentspec.Spec, servers []string) string {
 	}
 	b.WriteString("---\n")
 	b.WriteString(s.Prompt)
+	if s.Name != agentspec.AskAgent {
+		// opencode namespaces MCP tools <server>_<tool>, so the agent is
+		// told the exact name it will see (FLOWLANG §9).
+		b.WriteString("\n")
+		b.WriteString(acpagent.AskHumanRules(askHumanListedAs))
+	}
 	return b.String()
 }
+
+// askHumanListedAs is the name opencode lists the shim's ask_human tool
+// under: the MCP server's name, an underscore, the tool's.
+const askHumanListedAs = "ask_human_ask_human"
 
 // --- running it ----------------------------------------------------------------
 

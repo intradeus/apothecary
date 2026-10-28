@@ -916,7 +916,7 @@ export default {
 	'flow.insp.prompt': 'Prompt',
 	'flow.insp.promptPlaceholder': 'You are …',
 	'flow.insp.promptHelp':
-		'Required. The inputs a stage binds and the outputs it must write are added to it, named and described.',
+		'Required. The inputs a stage binds and the outputs it must write are added to it, named and described — and how to ask the human; say only when this agent should.',
 	'flow.insp.agentInputsHelp':
 		'What it reads, each typed — never where: a stage running it says. One a stage feeds from edge.failure or edge.verdict must be optional — it is empty unless that edge entered.',
 	'flow.insp.agentOutputsHelp':
@@ -974,7 +974,7 @@ export default {
 	'flow.agents.promptStats': '{lines} lines · {words} words',
 	'flow.agents.addsTitle': 'What a stage adds after the prompt',
 	'flow.agents.addsHelp':
-		'The prompt is followed by a section per input and the output contract, from the ports of the stage that runs it — paths and contents filled in at run time.',
+		'The prompt is followed by a section per input and the output contract, from the ports of the stage that runs it — paths and contents filled in at run time — and by the standing rules on asking the human.',
 	'flow.agents.addsTask':
 		'# TASK — the ticket: title, goal, direction for this attempt, attached files',
 	'flow.agents.addsFeed': 'the {type} the edge carried, when one entered (attempt n of m)',
@@ -982,6 +982,8 @@ export default {
 	'flow.agents.addsLink': 'the link',
 	'flow.agents.addsFile': 'the file’s path and its content',
 	'flow.agents.addsFiles': 'the directory’s path, its files to read',
+	'flow.agents.addsAskHuman':
+		'# ASKING THE HUMAN — the ask_human tool as the harness lists it, its three types, that it waits for the answer',
 	'flow.agents.mcpSummary': 'mcp: {names}',
 	'flow.agents.mcp': 'MCP servers',
 	'flow.agents.mcpHelp':

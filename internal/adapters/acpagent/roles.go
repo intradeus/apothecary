@@ -43,7 +43,9 @@ func RolePreamble(envp ports.EnvProvisioner, harness string) func(context.Contex
 // RoleText renders the in-band system preamble. read_only/allow_bash are
 // instruction-level only here — weaker than opencode's tool config; a
 // documented residual (§13), mitigated as ever by human review of the
-// branch.
+// branch. Every role but the Ask pane's ends with AskHumanRules: the name
+// codex and omp list the tool under is not known here, so the text says it
+// may be prefixed.
 func RoleText(s *agentspec.Spec) string {
 	var b strings.Builder
 	b.WriteString("# ROLE\n")
@@ -54,6 +56,10 @@ func RoleText(s *agentspec.Spec) string {
 	}
 	if !s.AllowBash {
 		b.WriteString("Do not run shell commands for this task.\n")
+	}
+	if s.Name != agentspec.AskAgent {
+		b.WriteString("\n")
+		b.WriteString(AskHumanRules(""))
 	}
 	b.WriteString("\n")
 	return b.String()

@@ -2009,6 +2009,18 @@ harness, owns the exchange:
   error string and the agent proceeds — a broken control plane stalls the work
   but never wedges it forever.
 
+**A flow says *when* to ask, never *how*.** Every agent's role ends with a
+standing `# ASKING THE HUMAN` section the harness renderer appends after the
+prompt (the Ask pane's excepted — it answers, it does not ask): the name the
+harness lists the tool under (opencode namespaces MCP tools by server, so
+there it is `ask_human_ask_human`; where the renderer cannot know, that it may
+be prefixed), the three types and when each applies, and that the call waits
+for the human however long that takes. The tool's own description carries the
+form and decline semantics. A prompt therefore states only its stage's
+policy — "if the ticket is ambiguous in a way that changes the design, ask
+the human (type=clarification) before writing the plan" — and nothing about
+the tool. The flow editor's "what a stage adds" preview lists the section.
+
 A gate (§2) and an ask_human ping are the same machinery pointed the other way:
 a gate is the *flow* stopping to ask at a declared point, a ping is the *agent*
 stopping to ask at a point only it can know. Both are pings in the event
