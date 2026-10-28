@@ -120,7 +120,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		GitEmail:     res.GitEmail,
 		SeedAuth:     res.SeedAuth,
 		Prepare:      res.Prepare,
-		Agents:       fl.AgentSpecs(),
+		Agents:       agentsFor(fl),
 		Timeout:      fl.Defaults.Timeout,
 		Extras:       viewExtras(v),
 	}); berr != nil {

@@ -49,7 +49,30 @@ type Profile struct {
 	// harness that reads no MCP config file in ACP mode (omp), this is the
 	// only way ask_human reaches it.
 	MCPServers []ports.MCPServer
+	// ReadOnlyBy says how the harness honours a read-only session
+	// (ports.AgentInput.ReadOnly, the Ask pane's): ReadOnlyByMode puts the
+	// session in ReadOnlyMode; ReadOnlyByAgent relies on the agent
+	// definition the engine prepared (its mutating tools denied);
+	// ReadOnlyByProcess runs the session in a SEPARATE agent process started
+	// with ReadOnlyCommand — a command line that loads no mutating tool
+	// (omp's --tools). "" = the harness cannot promise it, and the engine
+	// keeps Ask off for it. A read-only session never gets the profile's own
+	// MCP servers either (ask_human): it answers, it does not ask.
+	ReadOnlyBy      string
+	ReadOnlyMode    string
+	ReadOnlyCommand string
 }
+
+// How a Profile honours a read-only session.
+const (
+	ReadOnlyByMode    = "mode"
+	ReadOnlyByAgent   = "agent"
+	ReadOnlyByProcess = "process"
+)
+
+// CanReadOnly reports whether the harness can run a session that cannot
+// change the workspace (ports.ReadOnlyCapable).
+func (r *Runner) CanReadOnly() bool { return r.p.ReadOnlyBy != "" }
 
 type Runner struct {
 	envp ports.EnvProvisioner
@@ -80,8 +103,15 @@ func (r *Runner) client(ctx context.Context, env ports.EnvID) (*sidecar.Client, 
 	return sidecar.New(conn), nil
 }
 
-func (r *Runner) start(ctx context.Context, c *sidecar.Client) (sidecar.StartResponse, error) {
-	st, err := c.Start(ctx, sidecar.StartRequest{Argv: []string{"bash", "-c", envPrelude + "exec " + r.p.Command}})
+// start launches (or reuses) the harness process a session runs in: the
+// read-only command line's own process for a read-only session, when that
+// is how the profile promises read-only.
+func (r *Runner) start(ctx context.Context, c *sidecar.Client, readOnly bool) (sidecar.StartResponse, error) {
+	cmd := r.p.Command
+	if readOnly && r.p.ReadOnlyBy == ReadOnlyByProcess {
+		cmd = r.p.ReadOnlyCommand
+	}
+	st, err := c.Start(ctx, sidecar.StartRequest{Argv: []string{"bash", "-c", envPrelude + "exec " + cmd}})
 	if err != nil {
 		return st, fmt.Errorf("%s: start agent: %w", r.p.Harness, err)
 	}
@@ -94,8 +124,11 @@ func (r *Runner) start(ctx context.Context, c *sidecar.Client) (sidecar.StartRes
 // reads. A remote server needs the agent to say it takes one (initialize:
 // agentCapabilities.mcpCapabilities.http); one that does not is refused
 // here, before the session, rather than silently dropped by the agent.
-func (r *Runner) mcpServers(init json.RawMessage, stage []ports.MCPServer) ([]sidecar.MCPServer, error) {
-	servers := append(slices.Clone(r.p.MCPServers), stage...)
+func (r *Runner) mcpServers(init json.RawMessage, stage []ports.MCPServer, readOnly bool) ([]sidecar.MCPServer, error) {
+	servers := stage
+	if !readOnly {
+		servers = append(slices.Clone(r.p.MCPServers), stage...)
+	}
 	if len(servers) == 0 {
 		return nil, nil
 	}
@@ -149,11 +182,11 @@ func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec,
 	if err != nil {
 		return ports.AgentResult{}, err
 	}
-	st, err := r.start(ctx, c)
+	st, err := r.start(ctx, c, in.ReadOnly)
 	if err != nil {
 		return ports.AgentResult{}, err
 	}
-	mcp, err := r.mcpServers(st.Init, in.MCPServers)
+	mcp, err := r.mcpServers(st.Init, in.MCPServers, in.ReadOnly)
 	if err != nil {
 		return ports.AgentResult{}, err
 	}
@@ -161,7 +194,10 @@ func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec,
 	if r.p.Mode != nil {
 		mode = r.p.Mode(spec)
 	}
-	sess, err := c.Session(ctx, sidecar.SessionRequest{Mode: mode, Model: spec.Model, MCPServers: mcp})
+	if in.ReadOnly && r.p.ReadOnlyBy == ReadOnlyByMode {
+		mode = r.p.ReadOnlyMode
+	}
+	sess, err := c.Session(ctx, sidecar.SessionRequest{Proc: st.Proc, Mode: mode, Model: spec.Model, MCPServers: mcp, ReadOnly: in.ReadOnly})
 	if err != nil {
 		return ports.AgentResult{}, fmt.Errorf("%s: %w", r.p.Harness, err)
 	}
@@ -173,7 +209,7 @@ func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec,
 		}
 		prompt = pre + prompt
 	}
-	return r.drive(ctx, c, sess.SessionID, sess.CostUSD, prompt, "", "", in)
+	return r.drive(ctx, c, st.Proc, sess.SessionID, sess.CostUSD, prompt, "", "", in)
 }
 
 func (r *Runner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
@@ -184,22 +220,27 @@ func (r *Runner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID,
 	if err != nil {
 		return ports.AgentResult{}, err
 	}
-	st, err := r.start(ctx, c)
+	st, err := r.start(ctx, c, in.ReadOnly)
 	if err != nil {
 		return ports.AgentResult{}, err
 	}
-	mcp, err := r.mcpServers(st.Init, in.MCPServers)
+	mcp, err := r.mcpServers(st.Init, in.MCPServers, in.ReadOnly)
 	if err != nil {
 		return ports.AgentResult{Session: s}, err
 	}
-	// Live in the process: a no-op. Otherwise (the container restarted, the
-	// harness was swapped) the agent reloads it from its own store — with the
-	// stage's MCP servers again, which a reloaded session does not keep.
-	sess, err := c.Session(ctx, sidecar.SessionRequest{SessionID: string(s), MCPServers: mcp})
+	// Live in the process: a no-op (but for a model switch asked for).
+	// Otherwise (the container restarted, the harness was swapped) the agent
+	// reloads it from its own store — with the stage's MCP servers again,
+	// which a reloaded session does not keep, and read-only again if it was.
+	req := sidecar.SessionRequest{SessionID: string(s), Proc: st.Proc, MCPServers: mcp, ReadOnly: in.ReadOnly, Model: in.Model}
+	if in.ReadOnly && r.p.ReadOnlyBy == ReadOnlyByMode {
+		req.Mode = r.p.ReadOnlyMode
+	}
+	sess, err := c.Session(ctx, req)
 	if err != nil {
 		return ports.AgentResult{Session: s}, fmt.Errorf("%s: resume session: %w", r.p.Harness, err)
 	}
-	return r.drive(ctx, c, sess.SessionID, sess.CostUSD, in.Prompt, "", "", in)
+	return r.drive(ctx, c, st.Proc, sess.SessionID, sess.CostUSD, in.Prompt, "", "", in)
 }
 
 // attachable finds what Reattach would follow: the turn of s in flight, or
@@ -210,8 +251,8 @@ func (r *Runner) attachable(ctx context.Context, c *sidecar.Client, s, cursor st
 	if err != nil {
 		return "", 0, false
 	}
-	if st.Turn != nil && st.Turn.Session == s {
-		return st.Turn.ID, st.Sessions[s], true
+	if t := st.Turn(s); t != nil {
+		return t.ID, st.Sessions[s], true
 	}
 	boot, seq, okc := sidecar.ParseCursor(cursor)
 	if !okc {
@@ -256,10 +297,16 @@ func (r *Runner) Reattach(ctx context.Context, env ports.EnvID, s ports.SessionI
 	if !ok {
 		return ports.AgentResult{Session: s}, false, nil
 	}
+	// The process is the one the turn runs in (a reuse); its id keeps
+	// another harness's exit out of this session's transcript.
+	st, err := r.start(ctx, c, in.ReadOnly)
+	if err != nil {
+		return ports.AgentResult{Session: s}, false, nil
+	}
 	// Spend before the cursor was already banked by the engine; what the
 	// session cost meanwhile is not recoverable, so this undercounts by at
 	// most the turn's own spend up to the restart.
-	res, err := r.drive(ctx, c, string(s), cost, "", turn, cursor, in)
+	res, err := r.drive(ctx, c, st.Proc, string(s), cost, "", turn, cursor, in)
 	return res, true, err
 }
 
@@ -271,10 +318,11 @@ func (r *Runner) AgentModels(ctx context.Context, env ports.EnvID) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	if _, err := r.start(ctx, c); err != nil {
+	st, err := r.start(ctx, c, false)
+	if err != nil {
 		return nil, err
 	}
-	sess, err := c.Session(ctx, sidecar.SessionRequest{})
+	sess, err := c.Session(ctx, sidecar.SessionRequest{Proc: st.Proc})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", r.p.Harness, err)
 	}
@@ -352,8 +400,10 @@ func (s *stream) pump(out chan<- sidecar.Event, errc chan<- error) {
 
 // drive runs turns in one session until the agent has nothing left to do:
 // the first turn is text (or, when attaching, the turn already in flight),
-// and each human message queued meanwhile becomes the next turn.
-func (r *Runner) drive(ctx context.Context, c *sidecar.Client, sid string, costBase float64,
+// and each human message queued meanwhile becomes the next turn. proc is
+// the agent process the session runs in: another process's exit (a second
+// harness in the same workspace) is not this session's news.
+func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string, costBase float64,
 	text, attachTurn, cursor string, in ports.AgentInput) (ports.AgentResult, error) {
 	res := ports.AgentResult{Session: ports.SessionID(sid)}
 	cost := costBase
@@ -429,6 +479,7 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, sid string, costB
 			}
 		}
 		res.TurnsUsed++
+		turnCost := cost
 		interrupted := false
 		var end *sidecar.Event
 		for end == nil {
@@ -492,6 +543,9 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, sid string, costB
 						emit(ports.AgentEvent{Kind: ports.AgentEvTurnStart, Turn: turn, Cursor: cur})
 					}
 				case "agent_exit":
+					if ev.Proc != "" && proc != "" && ev.Proc != proc {
+						continue
+					}
 					msg := strings.TrimSpace(ev.Error)
 					if t := strings.TrimSpace(ev.Text); t != "" {
 						msg += "\n" + tail(t, 2000)
@@ -501,8 +555,15 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, sid string, costB
 					if ev.Turn == turn {
 						e := ev
 						end = &e
+						// What this one turn spent, for the engine's account
+						// of the turns a take-over prompted.
+						spent := &ports.Usage{CostUSD: cost - turnCost}
+						if u := ev.Usage; u != nil {
+							spent.InputTokens = int(u.InputTokens + u.CachedWriteTokens)
+							spent.OutputTokens = int(u.OutputTokens + u.ThoughtTokens)
+						}
 						emit(ports.AgentEvent{Kind: ports.AgentEvTurnEnd, Turn: turn, StopReason: ev.StopReason,
-							Error: ev.Error, Cursor: cur})
+							Error: ev.Error, Cursor: cur, Usage: spent})
 					}
 				}
 			}
@@ -521,23 +582,60 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, sid string, costB
 			return done(nil)
 		}
 		msgs := in.Inbox.Take()
-		if len(msgs) == 0 {
-			return done(nil)
+		for len(msgs) == 0 {
+			if !in.Inbox.Held() {
+				// One last look: a release queues the handback and lets go
+				// in the same breath, and the runner must not miss it.
+				if msgs = in.Inbox.Take(); len(msgs) == 0 {
+					return done(nil)
+				}
+				break
+			}
+			// A human holds the session: the turn's end is not the task's
+			// end. Wait for their next word, or the release.
+			select {
+			case <-wake:
+			case <-ctxDone:
+				return done(ctx.Err())
+			case err := <-perr:
+				return done(fmt.Errorf("%s: %w", r.p.Harness, err))
+			}
+			msgs = in.Inbox.Take()
 		}
 		text = FormatMessages(msgs)
 		emit(ports.AgentEvent{Kind: ports.AgentEvUserMessage, Messages: msgs, Text: text})
 	}
 }
 
-// FormatMessages renders human messages as the agent's next prompt.
+// FormatMessages renders human messages as the agent's next prompt. Text
+// the engine composed (Verbatim — the handback that ends a take-over)
+// follows the human's, as it is.
 func FormatMessages(msgs []ports.UserMessage) string {
-	if len(msgs) == 1 {
-		return "Message from the human operator:\n\n" + msgs[0].Text
+	var human []ports.UserMessage
+	var verbatim []string
+	for _, m := range msgs {
+		if m.Verbatim {
+			verbatim = append(verbatim, m.Text)
+		} else {
+			human = append(human, m)
+		}
 	}
 	var b strings.Builder
-	b.WriteString("Messages from the human operator:\n")
-	for i, m := range msgs {
-		fmt.Fprintf(&b, "\n%d. %s\n", i+1, m.Text)
+	switch len(human) {
+	case 0:
+	case 1:
+		b.WriteString("Message from the human operator:\n\n" + human[0].Text)
+	default:
+		b.WriteString("Messages from the human operator:\n")
+		for i, m := range human {
+			fmt.Fprintf(&b, "\n%d. %s\n", i+1, m.Text)
+		}
+	}
+	for _, v := range verbatim {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(v)
 	}
 	return b.String()
 }

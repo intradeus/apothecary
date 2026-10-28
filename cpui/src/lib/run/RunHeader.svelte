@@ -10,7 +10,15 @@
 	import { onMount } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import type { MergeRequestLive } from '$lib/domain';
-	import { ago, fmtAbs, fmtCost, fmtHoursMinutes, shortId, stateHue } from '$lib/format';
+	import {
+		ago,
+		fmtAbs,
+		fmtClockDuration,
+		fmtCost,
+		fmtHoursMinutes,
+		shortId,
+		stateHue
+	} from '$lib/format';
 	import { I } from '$lib/ui/icons';
 	import { toast } from '$lib/ui/toast.svelte';
 	import Breadcrumbs, { type Crumb } from '$lib/ui/Breadcrumbs.svelte';
@@ -284,6 +292,15 @@
 				{plain}{#if accent}{' '}<span class="accent">{accent}</span>{/if}
 			</h1>
 			<StatusChip state={run.state} suffix />
+			{#if run.hold && !rs.terminal}
+				<span
+					class="pill sc t-amb heldchip"
+					title={t('run.header.heldTitle', { ago: ago(run.hold.since, rs.now) })}
+					><span class="ldot sm pulse hue-amb"></span>{t('run.header.held')} ·
+					<span class="mono">{fmtClockDuration(rs.now - new Date(run.hold.since).getTime())}</span
+					></span
+				>
+			{/if}
 		</div>
 		<div class="meta">
 			{#if run.ticketId}
@@ -508,6 +525,12 @@
 		grid-template-columns: auto minmax(0, 1fr) auto;
 		gap: 16px;
 		align-items: center;
+	}
+	.heldchip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-left: 8px;
 	}
 	.rbadge {
 		width: 96px;

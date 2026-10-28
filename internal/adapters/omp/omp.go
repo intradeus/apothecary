@@ -155,6 +155,15 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 // the human answers (the engine parks the run if that takes too long, by
 // cancelling the turn), and omp's 30 s per-call default would cut it short.
 // OMP_SKIP_SETUP: never the first-run wizard.
+//
+// A read-only session (the Ask pane's) is a second omp process beside the
+// stage's: omp has no per-session mode and its named agents cannot start a
+// session, but --tools loads only the tools named — none that writes a
+// file or runs a shell — and --approval-mode=always-ask makes it ask the
+// sidecar for anything else, which refuses. browser reads pages and drives
+// the app, never the repository (it needs a Chromium the workspace may not
+// have; then the tool simply fails). Pinned omp 18.13.1 takes these flags
+// on `omp acp`; checked on 18.12.2.
 func (a *Adapter) Profile() acpagent.Profile {
 	return acpagent.Profile{
 		Harness:  "omp",
@@ -163,5 +172,11 @@ func (a *Adapter) Profile() acpagent.Profile {
 		MCPServers: []ports.MCPServer{
 			{Name: "ask_human", Command: []string{"/opt/apothecary/shim", "ask-human"}},
 		},
+		ReadOnlyBy:      acpagent.ReadOnlyByProcess,
+		ReadOnlyCommand: "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --tools=" + readOnlyTools + " --approval-mode=always-ask",
 	}
 }
+
+// readOnlyTools are omp's built-in tools a read-only session loads: reading
+// and searching the repository, the web, and a browser for the app.
+const readOnlyTools = "read,grep,glob,web_search,browser"

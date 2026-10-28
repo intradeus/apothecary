@@ -97,15 +97,23 @@ func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte
 
 // --- running it ----------------------------------------------------------------
 
-// fullAccessMode is codex-acp's session mode without approvals or sandbox.
-const fullAccessMode = "agent-full-access"
+// fullAccessMode is codex-acp's session mode without approvals or sandbox;
+// readOnlyMode its read-only sandbox (the Ask pane's session) — spelled
+// without the agent- prefix in codex-acp 2.2.2. The sidecar also accepts
+// either id under the other spelling, should codex-acp rename them.
+const (
+	fullAccessMode = "agent-full-access"
+	readOnlyMode   = "read-only"
+)
 
 // Profile is how the ACP runner starts and addresses codex.
 func (a *Adapter) Profile() acpagent.Profile {
 	return acpagent.Profile{
-		Harness:  "codex",
-		Command:  "codex-acp",
-		Mode:     func(ports.AgentSpec) string { return fullAccessMode },
-		Preamble: acpagent.RolePreamble(a.envp, "codex"),
+		Harness:      "codex",
+		Command:      "codex-acp",
+		Mode:         func(ports.AgentSpec) string { return fullAccessMode },
+		Preamble:     acpagent.RolePreamble(a.envp, "codex"),
+		ReadOnlyBy:   acpagent.ReadOnlyByMode,
+		ReadOnlyMode: readOnlyMode,
 	}
 }

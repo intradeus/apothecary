@@ -8,6 +8,7 @@ import { t } from '$lib/i18n/index.svelte';
 export const VIEWS = [
 	'flow',
 	'session',
+	'ask',
 	'pings',
 	'phases',
 	'timeline',
@@ -29,6 +30,9 @@ export const VIEW_LABEL: Record<ViewId, string> = {
 	},
 	get session() {
 		return t('desk.view.session');
+	},
+	get ask() {
+		return t('desk.view.ask');
 	},
 	get pings() {
 		return t('desk.view.pings');
@@ -125,6 +129,7 @@ export const PRESETS = {
 						[
 							leaf([
 								'session',
+								'ask',
 								'pings',
 								'phases',
 								'timeline',
@@ -161,7 +166,10 @@ export const PRESETS = {
 					split(
 						'row',
 						[0.6, 0.4],
-						[leaf(['session', 'pings', 'phases', 'timeline', 'record']), leaf(['changes', 'files'])]
+						[
+							leaf(['session', 'ask', 'pings', 'phases', 'timeline', 'record']),
+							leaf(['changes', 'files'])
+						]
 					),
 					split(
 						'row',
@@ -181,7 +189,7 @@ export const PRESETS = {
 				[0.19, 0.45, 0.36],
 				[
 					leaf(['flow']),
-					leaf(['session', 'pings', 'phases', 'timeline', 'record', 'logs']),
+					leaf(['session', 'ask', 'pings', 'phases', 'timeline', 'record', 'logs']),
 					split(
 						'col',
 						[0.68, 0.32],
@@ -202,7 +210,7 @@ export const PRESETS = {
 				'row',
 				[0.34, 0.66],
 				[
-					leaf(['session', 'pings', 'phases']),
+					leaf(['session', 'ask', 'pings', 'phases']),
 					split(
 						'col',
 						[0.17, 0.83],

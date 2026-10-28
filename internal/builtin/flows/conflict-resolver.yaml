@@ -2,6 +2,7 @@ name: conflict-resolver
 version: 5
 description: "bring a merge request up to date with its target: take the target in, resolve what conflicts, test, push — again each time it conflicts, until it merges or closes"
 operates_on: merge_request
+ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow's harness
 # A run of this flow is started on a merge request — from the workshop's
 # Repositories tab, or by a merge-request automation watching the
 # repository. It checks out the merge request's branch, takes its target

@@ -62,6 +62,9 @@ export class RunStore {
 	/** Ticks every second: live clocks. */
 	now = $state(Date.now());
 	answering = $state(false);
+	/** A release was clicked and the engine has not yet recorded it (it
+	 *  waits for the agent's turn in flight to end). */
+	releasing = $state(false);
 	/** Counts the views report about themselves (tab badges). */
 	changesCount = $state<number | null>(null);
 	/** The Logs view's source: 'workspace', '_provision' or a stage id. */
@@ -156,10 +159,12 @@ export class RunStore {
 				this.events = [...this.events, ev];
 				this.live = pruneLive(this.live, ev);
 				// State-changing events refresh the header.
+				if (ev.type === 'hold_released') this.releasing = false;
 				if (
 					ev.type.startsWith('run_') ||
 					ev.type.startsWith('ping_') ||
-					ev.type.startsWith('env_')
+					ev.type.startsWith('env_') ||
+					ev.type.startsWith('hold_')
 				) {
 					void this.refreshRun();
 					if (ev.type.startsWith('run_') || ev.type.startsWith('ping_')) void fleet.refresh();
@@ -294,6 +299,20 @@ export class RunStore {
 			this.error = errText(e);
 			return false;
 		}
+	}
+
+	/** Take over the running agent's session (the composer's Take over). */
+	takeOver(): Promise<boolean> {
+		return this.act(() => api.runs.takeOver(this.runId));
+	}
+
+	/** Hand the task back. The hold closes when the agent's turn in flight
+	 *  ends; until the engine records it the composer shows "handing back". */
+	async release(): Promise<boolean> {
+		this.releasing = true;
+		const ok = await this.act(() => api.runs.release(this.runId));
+		if (!ok) this.releasing = false;
+		return ok;
 	}
 
 	async answer(

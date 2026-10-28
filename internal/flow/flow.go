@@ -145,6 +145,17 @@ var (
 	ParamNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 )
 
+// Ask is a flow's `ask:` section: the harness kind the Ask pane's read-only
+// session runs on. Its model is picked in the pane, not here.
+type Ask struct {
+	Harness string
+}
+
+// AskAgent is the name of the agent the engine prepares for the Ask pane in
+// a flow that has one — reserved, so a flow with ask: cannot declare its
+// own agent by that name.
+const AskAgent = agentspec.AskAgent
+
 type Defaults struct {
 	Timeout  time.Duration // per-stage wall clock; suspended while a ping is pending
 	Harness  string
@@ -783,6 +794,10 @@ type Flow struct {
 	// OperatesOn is what its runs are started on: OperatesOnTicket or
 	// OperatesOnMR (FLOWLANG §1 operates_on).
 	OperatesOn string
+	// Ask is the flow's Ask pane (FLOWLANG §1 ask): a read-only session
+	// beside the run that answers questions about the code, on the harness
+	// named; nil when the flow has none.
+	Ask *Ask
 	// Phases are the main chain (MainPhase, absent in a flow that only
 	// watches), then the watchers, then the outcomes, in document order.
 	Phases []Phase

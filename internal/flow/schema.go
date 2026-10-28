@@ -231,6 +231,15 @@ func schema() obj {
 			"version":     obj{"const": CurrentVersion, "description": "the grammar this document is written in"},
 			"description": str("what the flow does"),
 			"operates_on": stringsOf("what each run works on — picked by whoever starts it (default: ticket)", OperatesOnTicket, OperatesOnMR),
+			"ask": obj{
+				"type":                 "object",
+				"description":          "the Ask pane: a read-only session beside the run that answers questions about the code; its model is picked in the pane",
+				"additionalProperties": false,
+				"required":             []string{"harness"},
+				"properties": obj{
+					"harness": str("the harness kind it runs on, or a $parameter"),
+				},
+			},
 			"parameters": obj{
 				"type":                 "object",
 				"description":          "the flow's settings: the six the engine reads (harness and model required) and its own, read where $name appears",

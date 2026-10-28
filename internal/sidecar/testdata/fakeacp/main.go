@@ -73,7 +73,9 @@ func main() {
 		case "session/new":
 			mu.Lock()
 			nsess++
-			sid := fmt.Sprintf("s%d", nsess)
+			// Unique across processes: a sidecar may host two fakes (a stage's
+			// and a read-only session's), and session ids are the only key.
+			sid := fmt.Sprintf("s%d-%d", nsess, os.Getpid())
 			mcps[sid] = p.MCPServers
 			mu.Unlock()
 			res(map[string]any{"sessionId": sid,

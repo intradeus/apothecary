@@ -72,6 +72,8 @@ export interface Run {
 	startedBy?: string;
 	/** Idle: between phases, or parked at a wait point. */
 	idle: boolean;
+	/** The take-over in force: someone holds the agent's session. */
+	hold?: RunHold;
 	envId?: string;
 	envStatus?: EnvStatus;
 	/** The devcontainer configuration changed since the workspace's container
@@ -79,6 +81,17 @@ export interface Run {
 	envDirty: boolean;
 	createdAt: string;
 	updatedAt: string;
+}
+
+/** A take-over as the run page shows it: who holds the agent's session,
+ *  since when, and what the hold has banked so far across parks. */
+export interface RunHold {
+	stageId: string;
+	userId?: string;
+	since: string;
+	turns: number;
+	messages: number;
+	costUsd: number;
 }
 
 export interface RunMergeRequest {

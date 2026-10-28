@@ -14,6 +14,7 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -251,6 +253,8 @@ type sideEvent struct {
 	TS      time.Time `json:"ts"`
 	Session string    `json:"session,omitempty"`
 	Turn    string    `json:"turn,omitempty"`
+	// Proc: the agent process an agent_exit is about (several may run).
+	Proc string `json:"proc,omitempty"`
 	// Type: message | thought | tool_call | tool_update | plan | usage |
 	// turn_start | turn_end | permission | agent_exit | gap
 	Type    string      `json:"type"`
@@ -377,16 +381,21 @@ func (l *eventLog) last() int64 {
 
 // --- the agent host -----------------------------------------------------------------
 
+// agentHost runs the ACP agent processes of one workspace: one process per
+// command line (a harness), any number of sessions on each, and one turn in
+// flight per session — so a stage's session and the Ask pane's can work at
+// the same time, on the same harness or on two.
 type agentHost struct {
 	log *eventLog
 
 	mu       sync.Mutex
-	proc     *agentProc
-	sessions map[string]*sessState
-	turn     *turnState
+	procs    map[string]*agentProc // by id
+	sessions map[string]*sessState // by session id
+	turns    map[string]*turnState // by session id: one turn per session
 }
 
 type agentProc struct {
+	id     string // short, what the engine addresses sessions to
 	key    string // identity of the command line: same key = reuse
 	cmd    *exec.Cmd
 	conn   *rpcConn
@@ -396,8 +405,12 @@ type agentProc struct {
 }
 
 type sessState struct {
+	proc    *agentProc
 	cwd     string
 	costUSD float64
+	// readOnly: the session must not change anything (the Ask pane's). The
+	// harness is configured not to; this is the backstop for one that asks.
+	readOnly bool
 	// replaying is set while session/load replays history: those updates are
 	// the past, which the engine already has, so they are not re-emitted.
 	replaying bool
@@ -415,7 +428,13 @@ type turnState struct {
 }
 
 func newAgentHost(log *eventLog) *agentHost {
-	return &agentHost{log: log, sessions: map[string]*sessState{}}
+	return &agentHost{log: log, procs: map[string]*agentProc{}, sessions: map[string]*sessState{}, turns: map[string]*turnState{}}
+}
+
+// procID names a process by its command line, short enough to travel.
+func procID(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:6])
 }
 
 type startReq struct {
@@ -424,24 +443,21 @@ type startReq struct {
 	Cwd  string            `json:"cwd,omitempty"`
 }
 
-// start launches (or reuses) the agent process and runs ACP initialize.
-func (h *agentHost) start(req startReq) (json.RawMessage, error) {
+// start launches (or reuses) the agent process for a command line and runs
+// ACP initialize. Another command line is another process beside it, not a
+// replacement: a harness the Ask pane runs on lives next to the stage's.
+func (h *agentHost) start(req startReq) (*agentProc, error) {
 	if len(req.Argv) == 0 {
 		return nil, errors.New("argv is required")
 	}
 	key := strings.Join(req.Argv, "\x00")
+	id := procID(key)
 	h.mu.Lock()
-	if p := h.proc; p != nil && p.key == key && p.alive() {
+	if p := h.procs[id]; p != nil && p.alive() {
 		h.mu.Unlock()
-		return p.init, nil
+		return p, nil
 	}
-	old := h.proc
-	h.proc = nil
-	h.sessions = map[string]*sessState{}
 	h.mu.Unlock()
-	if old != nil {
-		old.kill()
-	}
 
 	cmd := exec.Command(req.Argv[0], req.Argv[1:]...)
 	cmd.Dir = req.Cwd
@@ -460,7 +476,7 @@ func (h *agentHost) start(req startReq) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &agentProc{key: key, cmd: cmd, exited: make(chan struct{}), stderr: newTailBuffer(16 << 10)}
+	p := &agentProc{id: id, key: key, cmd: cmd, exited: make(chan struct{}), stderr: newTailBuffer(16 << 10)}
 	cmd.Stderr = io.MultiWriter(p.stderr, os.Stderr)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start agent %q: %w", req.Argv[0], err)
@@ -477,10 +493,15 @@ func (h *agentHost) start(req startReq) (json.RawMessage, error) {
 			code = cmd.ProcessState.ExitCode()
 		}
 		h.mu.Lock()
-		current := h.proc == p
+		current := h.procs[id] == p
 		if current {
-			h.proc = nil
-			h.sessions = map[string]*sessState{}
+			delete(h.procs, id)
+			for sid, st := range h.sessions {
+				if st.proc == p {
+					delete(h.sessions, sid)
+					delete(h.turns, sid)
+				}
+			}
 		}
 		h.mu.Unlock()
 		if current {
@@ -488,7 +509,7 @@ func (h *agentHost) start(req startReq) (json.RawMessage, error) {
 			if err != nil && code == -1 {
 				msg = "agent exited: " + err.Error()
 			}
-			h.log.emit(sideEvent{Type: "agent_exit", Error: msg, Text: p.stderr.String()})
+			h.log.emit(sideEvent{Type: "agent_exit", Proc: id, Error: msg, Text: p.stderr.String()})
 		}
 	}()
 
@@ -512,9 +533,15 @@ func (h *agentHost) start(req startReq) (json.RawMessage, error) {
 	}
 	p.init = res
 	h.mu.Lock()
-	h.proc = p
+	if old := h.procs[id]; old != nil && old != p && old.alive() {
+		// Two starts raced; the first one in wins.
+		h.mu.Unlock()
+		p.kill()
+		return old, nil
+	}
+	h.procs[id] = p
 	h.mu.Unlock()
-	return res, nil
+	return p, nil
 }
 
 func stderrHint(t *tailBuffer) string {
@@ -545,25 +572,59 @@ func (p *agentProc) kill() {
 	}
 }
 
+// stop kills every agent process.
 func (h *agentHost) stop() {
 	h.mu.Lock()
-	p := h.proc
-	h.proc = nil
+	procs := h.procs
+	h.procs = map[string]*agentProc{}
 	h.sessions = map[string]*sessState{}
-	h.turn = nil
+	h.turns = map[string]*turnState{}
 	h.mu.Unlock()
-	if p != nil {
+	for _, p := range procs {
 		p.kill()
 	}
 }
 
-func (h *agentHost) current() (*agentProc, error) {
+// procFor is the process a request addresses: by id, or the one live
+// process when the request names none (one harness, the common case).
+func (h *agentHost) procFor(id string) (*agentProc, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.proc == nil || !h.proc.alive() {
+	if id != "" {
+		p := h.procs[id]
+		if p == nil || !p.alive() {
+			return nil, errAgentGone
+		}
+		return p, nil
+	}
+	var only *agentProc
+	for _, p := range h.procs {
+		if !p.alive() {
+			continue
+		}
+		if only != nil {
+			return nil, errors.New("several agent processes are running; say which (proc)")
+		}
+		only = p
+	}
+	if only == nil {
 		return nil, errAgentGone
 	}
-	return h.proc, nil
+	return only, nil
+}
+
+// sessionProc is the process a live session runs in.
+func (h *agentHost) sessionProc(sid string) (*agentProc, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.sessions[sid]
+	if st == nil {
+		return nil, fmt.Errorf("session %s is not live in this agent process", sid)
+	}
+	if !st.proc.alive() {
+		return nil, errAgentGone
+	}
+	return st.proc, nil
 }
 
 // mcpServer is one MCP server for a session, as the engine sends it: a
@@ -615,11 +676,17 @@ type envVar struct {
 
 type sessionReq struct {
 	// SessionID set = load that session (resume); empty = a new one.
-	SessionID  string      `json:"session_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	// Proc is the agent process (from /agent/start) the session runs in;
+	// empty = the one process running.
+	Proc       string      `json:"proc,omitempty"`
 	Cwd        string      `json:"cwd"`
 	Mode       string      `json:"mode,omitempty"`  // ACP session mode (opencode: the agent)
 	Model      string      `json:"model,omitempty"` // provider/model as the flow says it
 	MCPServers []mcpServer `json:"mcp_servers,omitempty"`
+	// ReadOnly: the session must not change anything; a permission request
+	// for a mutating tool is refused.
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 type sessionResp struct {
@@ -634,11 +701,10 @@ type sessionResp struct {
 }
 
 // session creates or loads an ACP session and applies the mode and model.
+// A session already live in its process is left as it is, except that a
+// mode or model given now is switched to (the Ask pane changing model
+// mid-conversation).
 func (h *agentHost) session(req sessionReq) (sessionResp, error) {
-	p, err := h.current()
-	if err != nil {
-		return sessionResp{}, err
-	}
 	if req.MCPServers == nil {
 		req.MCPServers = []mcpServer{}
 	}
@@ -648,12 +714,37 @@ func (h *agentHost) session(req sessionReq) (sessionResp, error) {
 	if sid != "" {
 		h.mu.Lock()
 		st, live := h.sessions[sid]
+		if live && req.ReadOnly {
+			st.readOnly = true
+		}
 		h.mu.Unlock()
 		if live {
-			return sessionResp{SessionID: sid, CostUSD: st.costUSD}, nil
+			lp := st.proc
+			if !lp.alive() {
+				return sessionResp{}, errAgentGone
+			}
+			if req.Mode != "" {
+				if err := h.setMode(lp, sid, req.Mode, sessionCaps{}); err != nil {
+					return sessionResp{}, err
+				}
+			}
+			model := ""
+			if req.Model != "" {
+				var err error
+				if model, err = h.setModel(lp, sid, req.Model, sessionCaps{}); err != nil {
+					return sessionResp{}, err
+				}
+			}
+			return sessionResp{SessionID: sid, CostUSD: st.costUSD, Model: model}, nil
 		}
+	}
+	p, err := h.procFor(req.Proc)
+	if err != nil {
+		return sessionResp{}, err
+	}
+	if sid != "" {
 		h.mu.Lock()
-		h.sessions[sid] = &sessState{cwd: req.Cwd, replaying: true}
+		h.sessions[sid] = &sessState{proc: p, cwd: req.Cwd, replaying: true, readOnly: req.ReadOnly}
 		h.mu.Unlock()
 		raw, err = p.conn.call("session/load", map[string]any{
 			"sessionId": sid, "cwd": req.Cwd, "mcpServers": req.MCPServers,
@@ -685,7 +776,7 @@ func (h *agentHost) session(req sessionReq) (sessionResp, error) {
 		}
 		sid = nr.SessionID
 		h.mu.Lock()
-		h.sessions[sid] = &sessState{cwd: req.Cwd}
+		h.sessions[sid] = &sessState{proc: p, cwd: req.Cwd, readOnly: req.ReadOnly}
 		h.mu.Unlock()
 	}
 	caps := parseSessionCaps(raw)
@@ -773,6 +864,15 @@ func (h *agentHost) setMode(p *agentProc, sid, mode string, caps sessionCaps) er
 	if err == nil {
 		return nil
 	}
+	// The same mode under another spelling (codex-acp: "agent-read-only" one
+	// release, "read-only" the next).
+	for _, id := range caps.modes {
+		if id != mode && (strings.HasSuffix(id, "-"+mode) || strings.HasSuffix(mode, "-"+id)) {
+			if _, aerr := p.conn.call("session/set_mode", map[string]any{"sessionId": sid, "modeId": id}, p.exited); aerr == nil {
+				return nil
+			}
+		}
+	}
 	if id := configID(caps, "mode"); id != "" {
 		if _, cerr := p.conn.call("session/set_config_option",
 			map[string]any{"sessionId": sid, "configId": id, "value": mode}, p.exited); cerr == nil {
@@ -858,26 +958,23 @@ type promptReq struct {
 	Text      string `json:"text"`
 }
 
-var errBusy = errors.New("a turn is already in progress")
+var errBusy = errors.New("a turn is already in progress in this session")
 
 // prompt starts a turn and returns at once; the turn's end arrives as a
-// turn_end event. One turn at a time per host: the engine queues the rest.
+// turn_end event. One turn at a time per SESSION: the engine queues the rest
+// of a session's, while another session's turn runs beside it.
 func (h *agentHost) prompt(req promptReq) error {
-	p, err := h.current()
+	p, err := h.sessionProc(req.SessionID)
 	if err != nil {
 		return err
 	}
 	h.mu.Lock()
-	if h.turn != nil {
+	if h.turns[req.SessionID] != nil {
 		h.mu.Unlock()
 		return errBusy
 	}
-	if _, ok := h.sessions[req.SessionID]; !ok {
-		h.mu.Unlock()
-		return fmt.Errorf("session %s is not live in this agent process", req.SessionID)
-	}
-	h.turn = &turnState{id: req.Turn, session: req.SessionID, since: time.Now(), stderrMark: p.stderr.mark()}
-	turn := h.turn
+	turn := &turnState{id: req.Turn, session: req.SessionID, since: time.Now(), stderrMark: p.stderr.mark()}
+	h.turns[req.SessionID] = turn
 	h.mu.Unlock()
 	h.log.emit(sideEvent{Type: "turn_start", Session: req.SessionID, Turn: req.Turn})
 	go func() {
@@ -921,8 +1018,8 @@ func (h *agentHost) prompt(req promptReq) error {
 			}
 		}
 		h.mu.Lock()
-		if h.turn != nil && h.turn.id == req.Turn {
-			h.turn = nil
+		if h.turns[req.SessionID] == turn {
+			delete(h.turns, req.SessionID)
 		}
 		h.mu.Unlock()
 		h.log.emit(ev)
@@ -931,7 +1028,7 @@ func (h *agentHost) prompt(req promptReq) error {
 }
 
 func (h *agentHost) cancel(sessionID string) error {
-	p, err := h.current()
+	p, err := h.sessionProc(sessionID)
 	if err != nil {
 		return err
 	}
@@ -940,10 +1037,13 @@ func (h *agentHost) cancel(sessionID string) error {
 
 type hostStatus struct {
 	Boot     string             `json:"boot"`
-	Running  bool               `json:"running"`
+	Running  bool               `json:"running"` // at least one agent process is alive
 	LastSeq  int64              `json:"last_seq"`
 	Sessions map[string]float64 `json:"sessions"` // live session id -> cumulative cost
-	Turn     *turnStatus        `json:"turn,omitempty"`
+	// Turns are the turns in flight, one per session at most, oldest first.
+	Turns []turnStatus `json:"turns,omitempty"`
+	// Procs are the live agent processes' ids.
+	Procs []string `json:"procs,omitempty"`
 }
 
 type turnStatus struct {
@@ -956,13 +1056,20 @@ func (h *agentHost) status() hostStatus {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	st := hostStatus{Boot: h.log.boot, LastSeq: h.log.last(), Sessions: map[string]float64{}}
-	st.Running = h.proc != nil && h.proc.alive()
+	for id, p := range h.procs {
+		if p.alive() {
+			st.Running = true
+			st.Procs = append(st.Procs, id)
+		}
+	}
+	sort.Strings(st.Procs)
 	for id, s := range h.sessions {
 		st.Sessions[id] = s.costUSD
 	}
-	if h.turn != nil {
-		st.Turn = &turnStatus{ID: h.turn.id, Session: h.turn.session, Since: h.turn.since}
+	for _, t := range h.turns {
+		st.Turns = append(st.Turns, turnStatus{ID: t.id, Session: t.session, Since: t.since})
 	}
+	sort.Slice(st.Turns, func(i, j int) bool { return st.Turns[i].Since.Before(st.Turns[j].Since) })
 	return st
 }
 
@@ -986,16 +1093,32 @@ func (h *agentHost) onRequest(method string, params json.RawMessage, done <-chan
 			} `json:"options"`
 		}
 		_ = json.Unmarshal(params, &r)
-		choice := ""
-		for _, want := range []string{"allow_always", "allow_once"} {
-			for _, o := range r.Options {
-				if o.Kind == want && choice == "" {
-					choice = o.OptionID
+		pick := func(kinds ...string) string {
+			for _, want := range kinds {
+				for _, o := range r.Options {
+					if o.Kind == want {
+						return o.OptionID
+					}
 				}
 			}
+			return ""
 		}
 		tool := normalizeTool(r.ToolCall)
-		ev := sideEvent{Type: "permission", Session: r.SessionID, Tool: tool, Turn: h.turnID()}
+		ev := sideEvent{Type: "permission", Session: r.SessionID, Tool: tool, Turn: h.turnIDFor(r.SessionID)}
+		h.mu.Lock()
+		readOnly := h.sessions[r.SessionID] != nil && h.sessions[r.SessionID].readOnly
+		h.mu.Unlock()
+		if readOnly && !readOnlyAllows(tool) {
+			// The session was opened read-only: whatever the harness's own
+			// config let through is refused here.
+			ev.Text = "denied (read-only session)"
+			h.log.emit(ev)
+			if no := pick("reject_once", "reject_always"); no != "" {
+				return map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": no}}, nil
+			}
+			return map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}, nil
+		}
+		choice := pick("allow_always", "allow_once")
 		if choice == "" {
 			ev.Text = "denied (no allow option offered)"
 			h.log.emit(ev)
@@ -1009,11 +1132,12 @@ func (h *agentHost) onRequest(method string, params json.RawMessage, done <-chan
 	}
 }
 
-func (h *agentHost) turnID() string {
+// turnIDFor is the id of the turn in flight in a session, "" when none.
+func (h *agentHost) turnIDFor(sid string) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.turn != nil {
-		return h.turn.id
+	if t := h.turns[sid]; t != nil {
+		return t.id
 	}
 	return ""
 }
@@ -1033,8 +1157,8 @@ func (h *agentHost) onNotify(method string, params json.RawMessage) {
 	st := h.sessions[n.SessionID]
 	replaying := st != nil && st.replaying
 	turn := ""
-	if h.turn != nil && h.turn.session == n.SessionID {
-		turn = h.turn.id
+	if t := h.turns[n.SessionID]; t != nil {
+		turn = t.id
 	}
 	h.mu.Unlock()
 	ev, ok := normalizeUpdate(n.Update)
@@ -1053,13 +1177,28 @@ func (h *agentHost) onNotify(method string, params json.RawMessage) {
 	}
 	if ev.Type != "usage" {
 		h.mu.Lock()
-		if h.turn != nil && h.turn.session == n.SessionID {
-			h.turn.produced = true
+		if t := h.turns[n.SessionID]; t != nil {
+			t.produced = true
 		}
 		h.mu.Unlock()
 	}
 	ev.Session, ev.Turn = n.SessionID, turn
 	h.log.emit(ev)
+}
+
+// readOnlyAllows reports whether a read-only session may be granted a tool
+// call the harness asks permission for: only one that plainly reads. A kind
+// it does not know (or none at all) is refused — the harness thought the
+// call worth asking about.
+func readOnlyAllows(t *toolInfo) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case "read", "search", "fetch", "think":
+		return true
+	}
+	return false
 }
 
 // normalizeUpdate maps one ACP session/update to the engine's vocabulary.

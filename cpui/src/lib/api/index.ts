@@ -15,7 +15,16 @@ import * as gen from './generated/sdk.gen';
 import type * as Wire from './generated/types.gen';
 import { unwrap, unwrapOptional, unwrapVoid } from './client';
 import * as map from './mappers';
-import type { AuthStatus, Limits, Me, Token, User } from '$lib/domain';
+import type {
+	AskFrame,
+	AskMessage,
+	AskState,
+	AuthStatus,
+	Limits,
+	Me,
+	Token,
+	User
+} from '$lib/domain';
 import type {
 	OpenMergeRequest,
 	MergeRequestRow,
@@ -305,7 +314,59 @@ export const runs = {
 	 *  the current turn ends — or at once, cancelling the turn, with interrupt.
 	 *  Rejects (409) when no agent is running to take it. */
 	sendMessage: async (id: string, text: string, interrupt = false): Promise<string> =>
-		(await unwrap(gen.sendRunMessage({ path: { id }, body: { text, interrupt } }))).message_id
+		(await unwrap(gen.sendRunMessage({ path: { id }, body: { text, interrupt } }))).message_id,
+
+	/** Take over the running agent's session: its turns no longer end the
+	 *  stage, they wait for your next message — until you release. Rejects
+	 *  (409) when no agent is running, or someone already holds it. */
+	takeOver: (id: string) => unwrapVoid(gen.takeOverRun({ path: { id } })),
+	/** Hand the task back: the hold closes on the record and the agent gets
+	 *  the handback prompt (after its turn in flight, if one). */
+	release: (id: string) => unwrapVoid(gen.releaseRun({ path: { id } }))
+};
+
+// --- ask (a read-only session beside the run) ---------------------------------
+
+export const ask = {
+	/** The pane: on or off (and why), its conversation, model and models. */
+	state: async (runId: string): Promise<AskState> =>
+		map.toAskState(await unwrap(gen.getAsk({ path: { id: runId } }))),
+	/** Ask a question; the answer arrives on the stream. Rejects (409) when
+	 *  the pane is off or an answer is being written. */
+	send: async (runId: string, text: string): Promise<AskMessage> =>
+		map.toAskMessage(await unwrap(gen.askRun({ path: { id: runId }, body: { text } }))),
+	setModel: (runId: string, model: string) =>
+		unwrapVoid(gen.setAskModel({ path: { id: runId }, body: { model } })),
+	/** Follow the pane: messages as they land (replayed from afterSeq), an
+	 *  answer's text as it is written, the state as it changes. onReconnect
+	 *  fires when the browser re-opens the stream, so the caller can refetch
+	 *  what a dropped connection may have missed. */
+	stream(
+		runId: string,
+		onFrame: (f: AskFrame) => void,
+		onReconnect?: () => void,
+		afterSeq = 0
+	): () => void {
+		const es = new EventSource(`/api/runs/${runId}/ask/stream?after_seq=${afterSeq}`);
+		let opened = false;
+		es.onopen = () => {
+			if (opened) onReconnect?.();
+			opened = true;
+		};
+		es.onmessage = (m) => {
+			const w = JSON.parse(m.data) as { message?: Wire.Message };
+			if (w.message) onFrame({ kind: 'message', message: map.toAskMessage(w.message) });
+		};
+		es.addEventListener('delta', (m) => {
+			const w = JSON.parse((m as MessageEvent).data) as { text?: string; tool?: string };
+			onFrame({ kind: 'delta', text: w.text ?? '', tool: w.tool || undefined });
+		});
+		es.addEventListener('state', (m) => {
+			const w = JSON.parse((m as MessageEvent).data) as { busy?: boolean; model?: string };
+			onFrame({ kind: 'state', busy: !!w.busy, model: w.model || undefined });
+		});
+		return () => es.close();
+	}
 };
 
 // --- workspace (files, changes, terminal) -------------------------------------
@@ -844,7 +905,12 @@ export const auth = {
 	status: async (): Promise<AuthStatus> => map.toAuthStatus(await unwrap(gen.getAuthStatus())),
 
 	/** Claim a fresh instance: the first account, an admin, signed in at once. */
-	setup: async (d: { handle: string; email: string; name: string; password: string }): Promise<Me> =>
+	setup: async (d: {
+		handle: string;
+		email: string;
+		name: string;
+		password: string;
+	}): Promise<Me> =>
 		map.toMe(
 			await unwrap(
 				gen.setupInstance({
@@ -893,7 +959,13 @@ export const users = {
 		map.toUser(
 			await unwrap(
 				gen.createUser({
-					body: { handle: d.handle, email: d.email, name: d.name, password: d.password, admin: d.admin }
+					body: {
+						handle: d.handle,
+						email: d.email,
+						name: d.name,
+						password: d.password,
+						admin: d.admin
+					}
 				})
 			)
 		),
@@ -921,5 +993,6 @@ export const api = {
 	files,
 	system,
 	auth,
-	users
+	users,
+	ask
 };

@@ -1754,3 +1754,41 @@ func TestDocJSONShapes(t *testing.T) {
 		t.Errorf("short form: %v %+v", err, short.Parameters.Entries)
 	}
 }
+
+// The Ask pane (FLOWLANG §1 ask): a harness kind, or a $parameter; its
+// agent name is reserved.
+func TestAskSection(t *testing.T) {
+	cmd := "main:\n  - { id: s, type: command, run: x }\n"
+	f, err := Parse("t.yaml", []byte(header+"ask: { harness: opencode }\n"+cmd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Ask == nil || f.Ask.Harness != "opencode" {
+		t.Fatalf("ask = %+v", f.Ask)
+	}
+	f, err = Parse("t.yaml", []byte(header+"ask: { harness: $harness }\n"+cmd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Ask == nil || f.Ask.Harness != "fake" {
+		t.Fatalf("ask via parameter = %+v", f.Ask)
+	}
+	if f, err := Parse("t.yaml", []byte(header+cmd)); err != nil || f.Ask != nil {
+		t.Fatalf("no ask section: %+v, %v", f.Ask, err)
+	}
+	for _, tc := range []struct{ name, doc, want string }{
+		{"no harness", header + "ask: {}\n" + cmd, "ask: harness is required"},
+		{"not a slug", header + "ask: { harness: 'not a kind' }\n" + cmd, "is not a slug"},
+		{"undeclared parameter", header + "ask: { harness: $nope }\n" + cmd, "not declared"},
+		{"reserved agent name", header + "ask: { harness: fake }\nagents:\n  - { name: ask, description: d, prompt: p }\n" + cmd, "the name is the Ask pane's"},
+	} {
+		_, err := Parse("t.yaml", []byte(tc.doc))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
+		}
+	}
+	// Without ask:, an agent may be called ask.
+	if _, err := Parse("t.yaml", []byte(header+"agents:\n  - { name: ask, description: d, prompt: p }\n"+cmd)); err != nil {
+		t.Errorf("agent named ask without an ask section: %v", err)
+	}
+}

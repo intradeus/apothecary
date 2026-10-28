@@ -48,6 +48,24 @@ export type Approval = {
 	by?: Array<string>;
 };
 
+export type AskModelRequest = {
+	model: string;
+};
+
+export type AskRequest = {
+	text: string;
+};
+
+export type AskState = {
+	busy: boolean;
+	enabled: boolean;
+	harness?: string;
+	messages: Array<Message> | null;
+	model?: string;
+	models?: Array<string>;
+	reason?: string;
+};
+
 export type Attachment = {
 	created_at: string;
 	filename: string;
@@ -168,6 +186,10 @@ export type CreateFlowRequest = {
 	layout?: unknown;
 	name: string;
 	yaml: string;
+};
+
+export type DocAsk = {
+	harness: string;
 };
 
 export type DocEdge = {
@@ -447,6 +469,7 @@ export type FlowBindingRequest = {
 
 export type FlowDoc = {
 	agents?: Array<Spec>;
+	ask?: DocAsk;
 	description?: string;
 	main?: Array<DocStage>;
 	mcp_servers?: Array<DocMcpServer>;
@@ -481,6 +504,16 @@ export type FlowVersion = {
 	name: string;
 	project_id: string;
 	yaml: string;
+};
+
+export type HoldView = {
+	cost_usd?: number;
+	iteration?: number;
+	messages?: number;
+	since: string;
+	stage_id: string;
+	turns?: number;
+	user_id?: string;
 };
 
 export type IoPair = {
@@ -631,6 +664,19 @@ export type MrRunStarted = {
 export type Me = {
 	methods: Array<string> | null;
 	user: User;
+};
+
+export type Message = {
+	at: string;
+	cost_usd?: number;
+	error?: string;
+	id: string;
+	model?: string;
+	role: string;
+	seq: number;
+	text: string;
+	turns?: number;
+	user_id?: string;
 };
 
 export type MessageAccepted = {
@@ -1000,6 +1046,7 @@ export type RunView = {
 	env_status?: string;
 	flow_hash: string;
 	flow_name: string;
+	hold?: HoldView;
 	idle?: boolean;
 	mr_url?: string;
 	mrs?: Array<RunMergeRequest>;
@@ -4417,6 +4464,167 @@ export type ArchiveRunResponses = {
 	202: unknown;
 };
 
+export type GetAskData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/ask';
+};
+
+export type GetAskErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetAskResponses = {
+	/**
+	 * OK
+	 */
+	200: AskState;
+};
+
+export type GetAskResponse = GetAskResponses[keyof GetAskResponses];
+
+export type AskRunData = {
+	body: AskRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/ask';
+};
+
+export type AskRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AskRunResponses = {
+	/**
+	 * Accepted
+	 */
+	202: Message;
+};
+
+export type AskRunResponse = AskRunResponses[keyof AskRunResponses];
+
+export type SetAskModelData = {
+	body: AskModelRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/ask/model';
+};
+
+export type SetAskModelErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SetAskModelResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type SetAskModelResponse = SetAskModelResponses[keyof SetAskModelResponses];
+
+export type StreamAskData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * resume after this message sequence number
+		 */
+		after_seq?: number;
+	};
+	url: '/api/runs/{id}/ask/stream';
+};
+
+export type StreamAskErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StreamAskResponses = {
+	/**
+	 * No Content
+	 */
+	204: string;
+};
+
+export type StreamAskResponse = StreamAskResponses[keyof StreamAskResponses];
+
 export type AllowEgressHostData = {
 	body: EgressHostRequest;
 	path: {
@@ -4745,6 +4953,84 @@ export type GetRunFilesResponses = {
 };
 
 export type GetRunFilesResponse = GetRunFilesResponses[keyof GetRunFilesResponses];
+
+export type ReleaseRunData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/hold';
+};
+
+export type ReleaseRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ReleaseRunResponses = {
+	/**
+	 * Accepted
+	 */
+	202: unknown;
+};
+
+export type TakeOverRunData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/hold';
+};
+
+export type TakeOverRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type TakeOverRunResponses = {
+	/**
+	 * Accepted
+	 */
+	202: unknown;
+};
 
 export type GetStageLogData = {
 	body?: never;

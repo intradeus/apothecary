@@ -17,6 +17,7 @@ import (
 type inbox struct {
 	mu   sync.Mutex
 	q    []ports.UserMessage
+	held bool
 	wake chan struct{}
 }
 
@@ -26,10 +27,38 @@ func (b *inbox) push(m ports.UserMessage) {
 	b.mu.Lock()
 	b.q = append(b.q, m)
 	b.mu.Unlock()
+	b.signal()
+}
+
+func (b *inbox) signal() {
 	select {
 	case b.wake <- struct{}{}:
 	default:
 	}
+}
+
+// setHeld flips the take-over flag; letting go wakes a runner waiting on
+// the holder so it can return.
+func (b *inbox) setHeld(held bool) {
+	b.mu.Lock()
+	b.held = held
+	b.mu.Unlock()
+	if !held {
+		b.signal()
+	}
+}
+
+func (b *inbox) Held() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.held
+}
+
+// pending reports whether anything is queued and not yet taken.
+func (b *inbox) pending() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.q) > 0
 }
 
 func (b *inbox) Wake() <-chan struct{} { return b.wake }
@@ -60,15 +89,34 @@ type msgReq struct {
 }
 
 // formatMessages renders human messages for the agent. Kept identical to
-// the ACP runner's rendering of messages it delivers mid-invocation.
+// the ACP runner's rendering of messages it delivers mid-invocation. Text
+// the engine composed (Verbatim) follows the human's, as it is.
 func formatMessages(msgs []ports.UserMessage) string {
-	if len(msgs) == 1 {
-		return "Message from the human operator:\n\n" + msgs[0].Text
+	var human []ports.UserMessage
+	var verbatim []string
+	for _, m := range msgs {
+		if m.Verbatim {
+			verbatim = append(verbatim, m.Text)
+		} else {
+			human = append(human, m)
+		}
 	}
 	var b strings.Builder
-	b.WriteString("Messages from the human operator:\n")
-	for i, m := range msgs {
-		fmt.Fprintf(&b, "\n%d. %s\n", i+1, m.Text)
+	switch len(human) {
+	case 0:
+	case 1:
+		b.WriteString("Message from the human operator:\n\n" + human[0].Text)
+	default:
+		b.WriteString("Messages from the human operator:\n")
+		for i, m := range human {
+			fmt.Fprintf(&b, "\n%d. %s\n", i+1, m.Text)
+		}
+	}
+	for _, v := range verbatim {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(v)
 	}
 	return b.String()
 }
@@ -266,7 +314,12 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 		}
 		ids := make([]string, 0, len(ev.Messages))
 		for _, m := range ev.Messages {
-			ids = append(ids, m.ID)
+			if m.ID != "" {
+				ids = append(ids, m.ID)
+			}
+		}
+		if len(ids) == 0 {
+			return nil // engine-composed text (the handback) is recorded as agent_prompted
 		}
 		if err := t.x.append(&event.MessageDelivered{MessageIDs: ids, StageID: t.st, Iteration: t.iter}); err != nil {
 			return err

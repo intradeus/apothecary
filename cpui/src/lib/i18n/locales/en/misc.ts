@@ -42,6 +42,7 @@ export default {
 	'transcript.prompt.answer': 'Your answers, delivered',
 	'transcript.prompt.restart': 'Engine restarted — continue',
 	'transcript.prompt.messages': 'Your messages',
+	'transcript.prompt.handback': 'Handed back — finish the task',
 	'transcript.stageCompleted': '{stage} completed',
 	'transcript.stageSkipped': '{stage} skipped',
 	'transcript.turns_one': '{count} turn',
@@ -50,8 +51,18 @@ export default {
 	'transcript.exitCode': ' (exit {code})',
 	'transcript.provisionFailed': 'Workspace failed to provision',
 	'transcript.parked': 'Parked — waiting for your answer. The session resumes with it.',
+	'transcript.parkedHeld':
+		'Parked — the agent is in your hands and waits for your word. Your next message resumes it.',
 	'transcript.resumedRestart': 'Engine restarted — picked the session back up',
 	'transcript.resumedAnswer': 'Resumed with your answer',
+	'transcript.resumedMessage': 'Resumed with your message',
+	'transcript.resumedReleased': 'Resumed — handed back',
+	'transcript.holdTaken':
+		'You took over — the agent waits for your word between turns; the stage cannot end until you release it',
+	'transcript.holdReleased': 'Handed back — the agent finishes its task',
+	'transcript.holdEnded': 'Take-over ended with the attempt',
+	'transcript.messages_one': '{count} message',
+	'transcript.messages_other': '{count} messages',
 	'transcript.runCompleted': 'Run completed',
 	'transcript.runFailed': 'Run failed — {reason}',
 	'transcript.runAbandoned': 'Run abandoned',
@@ -621,6 +632,10 @@ export default {
 		'A chain that runs while the run is open, on each new occurrence of its signal on one of the run’s merge requests — one at a time, in the run’s workspace. It never ends the run: its chain closes with end.',
 	'flow.insp.outcomeHelp':
 		'What ends the run: it fires once, when its signal holds — after its chain, when it has one.',
+	'flow.insp.ask': 'Ask pane',
+	'flow.insp.askPlaceholder': 'off — name a harness to turn it on',
+	'flow.insp.askHelp':
+		"A read-only session beside each run that answers questions about the code, on this harness (a kind, or $harness for the flow's). The model is picked in the pane. Empty: no pane.",
 	'flow.insp.operatesOn': 'Operates on',
 	'flow.insp.operatesOn.ticket': 'a ticket',
 	'flow.insp.operatesOn.merge_request': 'a merge request someone opened',

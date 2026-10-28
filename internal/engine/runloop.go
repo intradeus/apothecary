@@ -29,6 +29,13 @@ var recoveryReprobeDelay = 2 * time.Second
 const resumeReply = "The apothecary engine restarted while this stage was in flight. " +
 	"Continue the task from where you left off: re-check the repository state and make sure you produce the required outputs."
 
+// handbackPrompt is what the session is sent when the holder of a take-over
+// releases it: the one turn that stands between the hold and the stage's
+// output check. Fixed on purpose — the holder's words were the turns before.
+const handbackPrompt = "The operator has handed the task back to you. " +
+	"Continue the task this stage gave you, taking into account everything the operator said and changed while they held the session. " +
+	"Re-check the repository state and make sure you produce the required outputs."
+
 // exec bundles the per-run goroutine's context so stage executors stay short.
 // bg survives cancellation for terminal event appends. res is the project's
 // resolved configuration (DESIGN2 §6.1), held for the run's whole life —
@@ -270,7 +277,12 @@ func (x *exec) exit(cause error) {
 	switch {
 	case errors.Is(cause, errAborted):
 		// A deliberate stop is abandonment, not failure (PLAN5 M24) — the
-		// same terminal the flow's own `abort` edge reaches.
+		// same terminal the flow's own `abort` edge reaches. A take-over in
+		// force ends with it, on the record.
+		for id, h := range x.rs.holds {
+			_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.iters[id], UserID: h.taken.UserID,
+				Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.takenAt).Milliseconds(), 0), HoldSpend: h.banked})
+		}
 		_ = x.append(&event.RunAbandoned{StalledAt: x.rs.view.CurrentStage, Reason: "aborted by user"})
 	case errors.Is(cause, errPaused):
 		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage, Reason: event.PauseUser})
@@ -601,6 +613,135 @@ type invocation struct {
 	outcome agentOutcome
 	open    []*Ping
 	left    time.Duration
+	// holdPark: a pause on the holder of a take-over (they went quiet past
+	// the live hold), not on the agent's own questions.
+	holdPark bool
+	// holdSpend is what the take-over in force spent during this invocation.
+	holdSpend event.HoldSpend
+}
+
+// liveHold is the engine's in-flight view of a take-over during one
+// invocation: the turns the holder's messages prompted and what they spent,
+// whether the agent sits idle waiting on the holder (the stage clock is
+// suspended then, as for a pending question), and a release waiting for the
+// turn in flight to end.
+type liveHold struct {
+	st        *heldState
+	spend     event.HoldSpend
+	heldTurns map[string]bool
+	idle      bool
+	releasing bool
+	releaseBy string
+}
+
+func (x *exec) liveHold(st *flow.Stage) *liveHold {
+	h := x.rs.holds[st.ID]
+	if h == nil {
+		return nil
+	}
+	return &liveHold{st: h, heldTurns: map[string]bool{}}
+}
+
+// holdReq is a take-over request on its way into the run loop: take, or
+// release (the handback follows).
+type holdReq struct {
+	take   bool
+	userID string
+	ack    chan error
+}
+
+// takeHold records a take-over of the stage's live session.
+func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
+	taken := &event.HoldTaken{StageID: st.ID, Iteration: iter, UserID: userID}
+	if err := x.append(taken); err != nil {
+		return err
+	}
+	x.rs.holds[st.ID] = &heldState{taken: taken, takenAt: x.e.clock()}
+	return nil
+}
+
+// releaseHold closes a take-over with its account: every leg's spend, the
+// time since it was taken, and why it ended. A release by the holder owes
+// the session the handback prompt.
+func (x *exec) releaseHold(st *flow.Stage, iter int, h *heldState, by, reason string, leg event.HoldSpend) error {
+	total := h.banked
+	total.Add(leg)
+	if by == "" && h.taken != nil {
+		by = h.taken.UserID
+	}
+	rel := &event.HoldReleased{StageID: st.ID, Iteration: iter, UserID: by, Reason: reason,
+		DurationMS: max(x.e.clock().Sub(h.takenAt).Milliseconds(), 0), HoldSpend: total}
+	if err := x.append(rel); err != nil {
+		return err
+	}
+	delete(x.rs.holds, st.ID)
+	if reason == event.HoldReleasedByUser {
+		x.rs.handbackOwed[st.ID] = true
+	}
+	return nil
+}
+
+// endHold closes a take-over the attempt ended underneath: the harness
+// returned, died or timed out while someone held it.
+func (x *exec) endHold(st *flow.Stage, iter int, leg event.HoldSpend) error {
+	h := x.rs.holds[st.ID]
+	if h == nil {
+		return nil
+	}
+	return x.releaseHold(st, iter, h, "", event.HoldEndedWithStage, leg)
+}
+
+// holdReentry is what a session under a take-over is sent when the loop
+// (re-)enters its stage.
+type holdReentry struct {
+	reply, kind, reason string
+	// park: nothing to send — the attempt parks on its holder.
+	park bool
+}
+
+// holdReentry decides what a session under a take-over (or owed its
+// handback) gets next: the handback its release owes, the holder's pending
+// messages, or nothing yet — then the attempt parks on the holder, unless a
+// turn from before a restart is still live to be followed (mayReattach).
+func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ports.AgentRunner, session ports.SessionID) (holdReentry, error) {
+	rs := x.rs
+	switch {
+	case rs.handbackOwed[st.ID]:
+		return holdReentry{reply: handbackPrompt, kind: event.PromptHandback, reason: event.ResumeReleased}, nil
+	case rs.holds[st.ID] == nil:
+		return holdReentry{}, nil
+	case len(rs.pendingMsgs) > 0:
+		n := len(rs.pendingMsgs)
+		text, err := x.withPendingMessages(st, iter, "")
+		if err != nil {
+			return holdReentry{}, err
+		}
+		rs.holds[st.ID].banked.Messages += n // delivered on the hold's account
+		return holdReentry{reply: strings.TrimPrefix(text, "\n\n---\n\n"), kind: event.PromptMessages, reason: event.ResumeMessage}, nil
+	case rs.pausedHold[st.ID]:
+		return holdReentry{park: true}, nil
+	case mayReattach:
+		if ra, ok := runner.(ports.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
+			return holdReentry{}, nil // the crashed path follows the live turn
+		}
+		return holdReentry{park: true}, nil
+	default:
+		return holdReentry{park: true}, nil
+	}
+}
+
+// parkOnHold parks an attempt whose holder has nothing queued for it when
+// no invocation is there to do the parking (a restart, a play, a loop
+// re-entry). The hold stays in force.
+func (x *exec) parkOnHold(st *flow.Stage, iter int, session ports.SessionID) error {
+	if !x.rs.pausedHold[st.ID] {
+		if err := x.append(&event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseHeld,
+			SessionID: string(session)}); err != nil {
+			return err
+		}
+		x.rs.pausedHold[st.ID] = true
+	}
+	return errWaitingOnHuman
 }
 
 // invIO is what flows between a running invocation and the loop: the
@@ -725,7 +866,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	// an answer given in that window exists only as an event; the live ping
 	// registry never saw it.
 	asks := x.pausedAsks(st)
-	reply, replyKind := "", ""
+	reply, replyKind, resumeReason := "", "", ""
 	crashed := reenter && len(asks) == 0
 	if crashed {
 		reply, replyKind = resumeReply, event.PromptRestart
@@ -757,6 +898,23 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			reply, replyKind = x.answerReply(asks, x.writtenOutputs(st)), event.PromptAnswer
 		}
 		session, haveSession := rs.sessions[st.ID]
+
+		// A take-over in force (or its handback owed) decides what the
+		// session gets next, ahead of the restart reply: the holder's words,
+		// the handback — or nothing yet, and the attempt parks on them.
+		if len(asks) == 0 {
+			hr, err := x.holdReentry(st, iter, crashed && haveSession, runner, session)
+			if err != nil {
+				return err
+			}
+			if hr.park {
+				return x.parkOnHold(st, iter, session)
+			}
+			if hr.reply != "" {
+				reply, replyKind, resumeReason = hr.reply, hr.kind, hr.reason
+				crashed = false
+			}
+		}
 
 		if crashed && haveSession {
 			crashed = false
@@ -804,17 +962,21 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 
 		resuming := reply != "" && haveSession
 		if resuming {
-			reason := event.ResumeAnswered
-			if len(asks) == 0 {
-				reason = event.ResumeRestart
+			reason := resumeReason
+			if reason == "" {
+				reason = event.ResumeAnswered
+				if len(asks) == 0 {
+					reason = event.ResumeRestart
+				}
 			}
 			if err := x.append(&event.StageResumed{StageID: st.ID, Iteration: iter, Reason: reason,
 				PingIDs: askIDs(asks), SessionID: string(session)}); err != nil {
 				return err
 			}
 			delete(rs.pausedAsks, st.ID) // consumed
+			delete(rs.pausedHold, st.ID)
 		}
-		asks = nil
+		asks, resumeReason = nil, ""
 
 		text, kind := prompt, event.PromptStage
 		if resuming {
@@ -852,6 +1014,11 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		asks, reply = x.pausedAsks(st), ""
 	}
 	res := inv.res
+	// A take-over the attempt ended underneath is closed with its account
+	// before anything routes.
+	if err := x.endHold(st, iter, inv.holdSpend); err != nil {
+		return err
+	}
 	x.publishLog(st.ID, iter, res.r.Output)
 	// Capture whatever this attempt produced BEFORE routing: a failed
 	// attempt's partial outputs are the interesting ones (M27).
@@ -981,11 +1148,22 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 		p.handedBack.Store(true)
 	}
 	x.publishLog(st.ID, iter, inv.res.r.Output)
-	paused := &event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseAskHuman,
+	reason := event.PauseAskHuman
+	if inv.holdPark {
+		reason = event.PauseHeld
+	}
+	paused := &event.StagePaused{StageID: st.ID, Iteration: iter, Reason: reason,
 		PingIDs: pingIDs(inv.open), TurnsUsed: inv.res.r.TurnsUsed, SessionID: string(inv.res.r.Session)}
 	if inv.res.r.Usage != (ports.Usage{}) {
 		paused.Usage = &event.Usage{InputTokens: inv.res.r.Usage.InputTokens,
 			OutputTokens: inv.res.r.Usage.OutputTokens, CostUSD: inv.res.r.Usage.CostUSD}
+	}
+	// A take-over in force banks this leg's spend on the pause, whatever
+	// the pause is on: the release that closes it accounts for every leg.
+	if h := rs.holds[st.ID]; h != nil {
+		leg := inv.holdSpend
+		paused.Hold = &leg
+		h.banked.Add(leg)
 	}
 	if err := x.append(paused); err != nil {
 		return false, err
@@ -1000,7 +1178,11 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 	if stop, err := x.checkBudget(st); stop || err != nil {
 		return true, err
 	}
-	rs.pausedAsks[st.ID] = pingIDs(inv.open)
+	if inv.holdPark {
+		rs.pausedHold[st.ID] = true
+	} else {
+		rs.pausedAsks[st.ID] = pingIDs(inv.open)
+	}
 	return false, nil
 }
 
@@ -1064,6 +1246,19 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	timer := time.NewTimer(remaining)
 	defer timer.Stop()
 	lastArm := time.Now()
+	// The take-over in force, if any: carried in from the log (taken in an
+	// earlier leg of this attempt) and tracked live from here.
+	hold := x.liveHold(st)
+	if hold != nil {
+		io.inbox.setHeld(true)
+	}
+	holdLeg := func() event.HoldSpend {
+		if hold != nil {
+			return hold.spend
+		}
+		return event.HoldSpend{}
+	}
+	turnOpen := false
 
 	suspend := func() {
 		if !timer.Stop() {
@@ -1087,7 +1282,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// left is what the caller carries to the next invocation: the timer is
 	// already stopped-and-debited whenever a ping is open.
 	left := func() time.Duration {
-		if len(open) > 0 {
+		if len(open) > 0 || (hold != nil && hold.idle) {
 			return remaining
 		}
 		return remaining - time.Since(lastArm)
@@ -1109,6 +1304,43 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		suspend()
 		armPark()
 	}
+	// idleOnHolder: the agent's turn ended with nothing queued while someone
+	// holds the session. The clock stops for the holder's thinking time,
+	// and past the live hold the run parks on them.
+	idleOnHolder := func() {
+		if hold == nil || hold.idle || len(open) > 0 {
+			return
+		}
+		hold.idle = true
+		suspend()
+		armPark()
+	}
+	busyAgain := func() {
+		if hold == nil || !hold.idle {
+			return
+		}
+		hold.idle = false
+		resume()
+		disarmPark()
+	}
+	// handBack ends the hold: its account is recorded, the handback prompt
+	// is queued as the session's next turn (before the runner is let go of,
+	// so a runner that sees the hold gone always finds it), and the stage
+	// clock runs again.
+	handBack := func(by string) error {
+		if err := x.releaseHold(st, io.tr.iter, hold.st, by, event.HoldReleasedByUser, hold.spend); err != nil {
+			return err
+		}
+		if err := x.prompted(st.ID, io.tr.iter, event.PromptHandback, handbackPrompt); err != nil {
+			return err
+		}
+		delete(x.rs.handbackOwed, st.ID)
+		io.inbox.push(ports.UserMessage{Text: handbackPrompt, Verbatim: true})
+		busyAgain()
+		hold = nil
+		io.inbox.setHeld(false)
+		return nil
+	}
 
 	// collect waits for a cancelled invocation to wind down, still recording
 	// its transcript — but doesn't trust the harness to honor the
@@ -1123,14 +1355,14 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				if err := io.drain(); err != nil {
 					return invocation{}, err
 				}
-				return invocation{res: res, outcome: out, open: open, left: left()}, nil
+				return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 			case ev := <-io.events:
 				if err := io.tr.handle(ev); err != nil {
 					return invocation{}, err
 				}
 			case <-grace.C:
 				x.e.log.Warn("harness ignored cancellation; abandoning attempt", "run", x.rs.runID, "stage", st.ID)
-				return invocation{outcome: out, open: open, left: left()}, nil
+				return invocation{outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 			}
 		}
 	}
@@ -1149,7 +1381,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			if len(open) > 0 && res.err == nil {
 				out = outcomePaused
 			}
-			return invocation{res: res, outcome: out, open: open, left: left()}, nil
+			return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 		case ev := <-io.events:
 			if ev.Kind == ports.AgentEvSession && ev.Text != "" && x.rs.sessions[st.ID] != ports.SessionID(ev.Text) {
 				// Recorded the moment it exists, so a crash mid-invocation
@@ -1163,6 +1395,55 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			if err := io.tr.handle(ev); err != nil {
 				return invocation{}, err
 			}
+			switch ev.Kind {
+			case ports.AgentEvUserMessage:
+				// The holder's words reaching the agent, on the hold's account.
+				if hold != nil {
+					for _, m := range ev.Messages {
+						if !m.Verbatim {
+							hold.spend.Messages++
+						}
+					}
+				}
+			case ports.AgentEvTurnStart:
+				turnOpen = true
+				if hold != nil {
+					// A turn starting under the hold is the holder's: it is
+					// what their message prompted.
+					busyAgain()
+					if !hold.heldTurns[ev.Turn] {
+						hold.heldTurns[ev.Turn] = true
+						hold.spend.Turns++
+					}
+				}
+			case ports.AgentEvTurnEnd:
+				turnOpen = false
+				if hold == nil {
+					break
+				}
+				if hold.heldTurns[ev.Turn] && ev.Usage != nil {
+					hold.spend.Add(event.HoldSpend{Usage: &event.Usage{InputTokens: ev.Usage.InputTokens,
+						OutputTokens: ev.Usage.OutputTokens, CostUSD: ev.Usage.CostUSD}})
+				}
+				if len(open) > 0 {
+					// The turn ended on the agent's own open question. The
+					// holder is the one to answer it, but the tool call it came
+					// in on is gone: park on the question as any attempt does,
+					// and resume with the answer under the same hold.
+					for _, p := range open {
+						p.handedBack.Store(true)
+					}
+					cancelRun(errParked)
+					return collect(outcomePaused)
+				}
+				if hold.releasing {
+					if err := handBack(hold.releaseBy); err != nil {
+						return invocation{}, err
+					}
+				} else if !io.inbox.pending() {
+					idleOnHolder()
+				}
+			}
 		case req := <-x.h.messages:
 			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, Interrupt: req.msg.Interrupt, StageID: st.ID}
 			if err := x.append(q); err != nil {
@@ -1172,6 +1453,34 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			x.rs.pendingMsgs = append(x.rs.pendingMsgs, q)
 			io.inbox.push(req.msg)
 			req.ack <- nil
+		case req := <-x.h.holds:
+			var err error
+			switch {
+			case req.take && hold != nil:
+				err = ErrAlreadyHeld
+			case req.take:
+				if err = x.takeHold(st, io.tr.iter, req.userID); err == nil {
+					hold = x.liveHold(st)
+					io.inbox.setHeld(true)
+					if !turnOpen && !io.inbox.pending() {
+						idleOnHolder()
+					}
+				}
+			case hold == nil:
+				err = ErrNotHeld
+			case hold.releasing:
+				// Already handing back when the turn in flight ends.
+			case turnOpen || io.inbox.pending():
+				// The handback follows the turn in flight (or the one the
+				// queued message is about to start).
+				hold.releasing, hold.releaseBy = true, req.userID
+			default:
+				err = handBack(req.userID)
+			}
+			req.ack <- err
+			if err != nil && !errors.Is(err, ErrAlreadyHeld) && !errors.Is(err, ErrNotHeld) {
+				return invocation{}, err
+			}
 		case req := <-x.h.mailbox:
 			x.e.mu.Lock()
 			req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
@@ -1219,10 +1528,17 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				}
 			}
 		case <-parkC:
+			parkC = nil
+			if hold != nil && hold.idle {
+				// The holder went quiet: park on them, hold in force.
+				cancelRun(errParked)
+				inv, err := collect(outcomePaused)
+				inv.holdPark = true
+				return inv, err
+			}
 			// Nobody answered while the turn stayed live: park. The open
 			// questions are handed back first, so an answer racing the
 			// cancel is delivered by resume rather than lost in the tool call.
-			parkC = nil
 			for _, p := range open {
 				p.handedBack.Store(true)
 			}
@@ -1232,6 +1548,11 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			cancelRun(errStageTimeout)
 			return collect(outcomeTimedOut)
 		case <-x.ctx.Done():
+			if hold != nil {
+				// Bank the leg for whoever closes the hold next (an abort's
+				// account; a pause re-reads the log and starts the leg over).
+				hold.st.banked.Add(hold.spend)
+			}
 			cancelRun(context.Cause(x.ctx))
 			return invocation{}, context.Cause(x.ctx)
 		}
@@ -2250,7 +2571,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		GitEmail:     res.GitEmail,
 		SeedAuth:     res.SeedAuth,
 		Prepare:      res.Prepare,
-		Agents:       x.rs.fl.AgentSpecs(),
+		Agents:       agentsFor(x.rs.fl),
 		Timeout:      x.rs.fl.Defaults.Timeout,
 		Extras:       x.extraCheckouts(),
 	})

@@ -330,7 +330,7 @@ func TestSidecarAgentTurn(t *testing.T) {
 	}
 	var st hostStatus
 	ts.get("/agent/status", &st)
-	if st.Turn != nil || st.Sessions["s1"] != 0.25 || !st.Running {
+	if len(st.Turns) != 0 || st.Sessions["s1"] != 0.25 || !st.Running {
 		t.Errorf("status after turn = %+v", st)
 	}
 
@@ -349,13 +349,13 @@ func TestSidecarCancelAndBusy(t *testing.T) {
 	if code, _ := ts.post("/agent/prompt", promptReq{SessionID: "s1", Turn: "T1", Text: "WAIT"}); code != 202 {
 		t.Fatalf("prompt = %d", code)
 	}
-	// One turn at a time: the engine queues, the host refuses.
+	// One turn at a time per session: the engine queues, the host refuses.
 	if code, _ := ts.post("/agent/prompt", promptReq{SessionID: "s1", Turn: "T2", Text: "x"}); code != http.StatusConflict {
 		t.Fatalf("second prompt = %d, want 409", code)
 	}
 	var st hostStatus
 	ts.get("/agent/status", &st)
-	if st.Turn == nil || st.Turn.ID != "T1" {
+	if len(st.Turns) != 1 || st.Turns[0].ID != "T1" || st.Turns[0].Session != "s1" {
 		t.Fatalf("status mid-turn = %+v", st)
 	}
 	if code, _ := ts.post("/agent/cancel", map[string]string{"session_id": "s1"}); code != http.StatusNoContent {
@@ -364,6 +364,109 @@ func TestSidecarCancelAndBusy(t *testing.T) {
 	evs := ts.collect(0, func(ev sideEvent) bool { return ev.Type == "turn_end" })
 	if last := evs[len(evs)-1]; last.StopReason != "cancelled" {
 		t.Fatalf("turn_end = %+v", last)
+	}
+}
+
+// Two sessions of one process run their turns at the same time (a stage's
+// and the Ask pane's), each turn's events attributed to its own session.
+func TestSidecarSessionsRunTurnsSideBySide(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	ts.post("/agent/start", startReq{Argv: fakeAgentArgv(t)})
+	ts.post("/agent/session", sessionReq{})                 // s1
+	ts.post("/agent/session", sessionReq{SessionID: "ask"}) // loaded
+	if code, _ := ts.post("/agent/prompt", promptReq{SessionID: "s1", Turn: "T1", Text: "WAIT"}); code != 202 {
+		t.Fatalf("prompt s1 = %d", code)
+	}
+	if code, _ := ts.post("/agent/prompt", promptReq{SessionID: "ask", Turn: "A1", Text: "hi"}); code != 202 {
+		t.Fatalf("prompt ask while s1 is in flight = %d, want 202", code)
+	}
+	evs := ts.collect(0, func(ev sideEvent) bool { return ev.Type == "turn_end" && ev.Session == "ask" })
+	for _, ev := range evs {
+		switch ev.Session {
+		case "ask":
+			if ev.Turn != "A1" {
+				t.Errorf("ask event on turn %q: %+v", ev.Turn, ev)
+			}
+		case "s1":
+			if ev.Turn != "T1" {
+				t.Errorf("s1 event on turn %q: %+v", ev.Turn, ev)
+			}
+		}
+	}
+	var st hostStatus
+	ts.get("/agent/status", &st)
+	if len(st.Turns) != 1 || st.Turns[0].Session != "s1" {
+		t.Fatalf("status after ask's turn = %+v", st)
+	}
+	ts.post("/agent/cancel", map[string]string{"session_id": "s1"})
+	ts.collect(0, func(ev sideEvent) bool { return ev.Type == "turn_end" && ev.Session == "s1" })
+}
+
+// Two command lines are two processes side by side, each with its own
+// sessions; a session request says which (proc).
+func TestSidecarHostsSeveralAgentProcesses(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	_, a := ts.post("/agent/start", startReq{Argv: fakeAgentArgv(t)})
+	_, b := ts.post("/agent/start", startReq{Argv: append(fakeAgentArgv(t), "--second")})
+	pa, pb := fmt.Sprint(a["proc"]), fmt.Sprint(b["proc"])
+	if pa == "" || pb == "" || pa == pb {
+		t.Fatalf("procs = %q, %q", pa, pb)
+	}
+	// Ambiguous without a proc; fine with one.
+	if code, out := ts.post("/agent/session", sessionReq{}); code != http.StatusBadGateway || !strings.Contains(fmt.Sprint(out["error"]), "several") {
+		t.Fatalf("session with no proc = %d %v", code, out)
+	}
+	if code, _ := ts.post("/agent/session", sessionReq{Proc: pa, SessionID: "sa"}); code != 200 {
+		t.Fatalf("session on a = %d", code)
+	}
+	if code, _ := ts.post("/agent/session", sessionReq{Proc: pb, SessionID: "sb"}); code != 200 {
+		t.Fatalf("session on b = %d", code)
+	}
+	ts.post("/agent/prompt", promptReq{SessionID: "sa", Turn: "TA", Text: "hi"})
+	ts.post("/agent/prompt", promptReq{SessionID: "sb", Turn: "TB", Text: "hi"})
+	ends := 0
+	ts.collect(0, func(ev sideEvent) bool {
+		if ev.Type == "turn_end" {
+			ends++
+		}
+		return ends == 2
+	})
+	var st hostStatus
+	ts.get("/agent/status", &st)
+	if !st.Running || len(st.Sessions) != 2 {
+		t.Errorf("status = %+v", st)
+	}
+	// Starting a's command line again reuses a; b is untouched.
+	_, again := ts.post("/agent/start", startReq{Argv: fakeAgentArgv(t)})
+	if fmt.Sprint(again["proc"]) != pa {
+		t.Errorf("restart reused %v, want %s", again["proc"], pa)
+	}
+	ts.get("/agent/status", &st)
+	if len(st.Sessions) != 2 {
+		t.Errorf("sessions after reuse = %+v", st.Sessions)
+	}
+}
+
+// A read-only session's permission requests for mutating tools are refused.
+func TestSidecarReadOnlySessionRefusesMutatingTools(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	ts.post("/agent/start", startReq{Argv: fakeAgentArgv(t)})
+	if code, _ := ts.post("/agent/session", sessionReq{SessionID: "ro", ReadOnly: true}); code != 200 {
+		t.Fatalf("session = %d", code)
+	}
+	ts.post("/agent/prompt", promptReq{SessionID: "ro", Turn: "T1", Text: "PERMISSION please"})
+	evs := ts.collect(0, func(ev sideEvent) bool { return ev.Type == "turn_end" })
+	var denied, answered bool
+	for _, ev := range evs {
+		if ev.Type == "permission" {
+			denied = ev.Text == "denied (read-only session)"
+		}
+		if ev.Type == "message" && strings.Contains(ev.Text, "permission:") {
+			answered = strings.Contains(ev.Text, `"optionId":"no"`)
+		}
+	}
+	if !denied || !answered {
+		t.Errorf("read-only permission: denied=%v answered-with-reject=%v in %+v", denied, answered, evs)
 	}
 }
 

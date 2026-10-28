@@ -3,25 +3,72 @@
 	// agent's turn, ⌘↵ sends it now (interrupting the turn), ⇧↵ is a newline.
 	// Sending is optimistic: the box clears and the bubble shows at once; if
 	// the engine refuses, the text comes back with the reason.
+	//
+	// Take over holds the agent's session: while held (amber), its turns
+	// wait for your next message instead of ending the stage, and Release
+	// hands the task back — the stage can only end after that.
 	import { api } from '$lib/api';
+	import { fmtClockDuration } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
+	import type { RunHold } from '$lib/domain';
 
 	let {
 		runId,
 		onsent,
-		onfailed
+		onfailed,
+		canTakeOver = false,
+		hold,
+		releasing = false,
+		now = Date.now(),
+		ontakeover,
+		onrelease
 	}: {
 		runId: string;
 		/** Fired as the message leaves (before the engine confirms). */
 		onsent: (text: string, interrupt: boolean) => void;
 		/** The engine refused it: the bubble should go. */
 		onfailed?: (text: string) => void;
+		/** An agent stage is running: its session can be taken over. */
+		canTakeOver?: boolean;
+		/** The take-over in force, if any. */
+		hold?: RunHold;
+		/** Release clicked, not yet on the record. */
+		releasing?: boolean;
+		/** A ticking clock, for the hold's duration. */
+		now?: number;
+		ontakeover?: () => Promise<boolean>;
+		onrelease?: () => Promise<boolean>;
 	} = $props();
 
 	let draft = $state('');
 	let sending = $state<'' | 'queue' | 'now'>('');
+	let holding = $state(false);
 	let error = $state('');
 	let ta = $state<HTMLTextAreaElement | null>(null);
+
+	const held = $derived(!!hold);
+	const heldFor = $derived(hold ? fmtClockDuration(now - new Date(hold.since).getTime()) : '');
+
+	async function takeOver() {
+		if (!ontakeover || holding) return;
+		holding = true;
+		error = '';
+		try {
+			await ontakeover();
+		} finally {
+			holding = false;
+		}
+	}
+	async function release() {
+		if (!onrelease || holding || releasing) return;
+		holding = true;
+		error = '';
+		try {
+			await onrelease();
+		} finally {
+			holding = false;
+		}
+	}
 
 	async function send(interrupt: boolean) {
 		const text = draft.trim();
@@ -58,13 +105,22 @@
 	});
 </script>
 
-<div class="comp lg">
+<div class="comp lg" class:held>
+	{#if held}
+		<div class="hold">
+			<span class="ldot sm pulse hue-amb"></span>
+			<span class="hue-amb">{t('run.composer.held', { duration: heldFor })}</span>
+			{#if hold && hold.messages}
+				<span class="mut">· {t('run.composer.heldMessages', { count: hold.messages })}</span>
+			{/if}
+		</div>
+	{/if}
 	<textarea
 		class="bare"
 		bind:this={ta}
 		bind:value={draft}
 		rows="1"
-		placeholder={t('run.composer.placeholder')}
+		placeholder={t(held ? 'run.composer.placeholderHeld' : 'run.composer.placeholder')}
 		onkeydown={onKey}
 		aria-label={t('run.composer.aria')}></textarea>
 	<div class="foot">
@@ -75,6 +131,24 @@
 		</span>
 		{#if error}<span class="err" title={error}>{error}</span>{/if}
 		<span class="spacer"></span>
+		{#if held}
+			<button
+				class="btn-md hue-amb"
+				onclick={release}
+				aria-busy={holding || releasing}
+				disabled={holding || releasing}
+				title={t('run.composer.releaseTitle')}
+				>{t(releasing ? 'run.composer.releasing' : 'run.composer.release')}</button
+			>
+		{:else if canTakeOver}
+			<button
+				class="btn-md"
+				onclick={takeOver}
+				aria-busy={holding}
+				disabled={holding}
+				title={t('run.composer.takeOverTitle')}>{t('run.composer.takeOver')}</button
+			>
+		{/if}
 		<button
 			class="btn-md"
 			onclick={() => send(true)}
@@ -109,6 +183,24 @@
 	}
 	.comp:focus-within {
 		border-color: var(--brandLn);
+	}
+	/* Held: the agent is in your hands — the attention colour, as a
+	 * waiting ping's card. */
+	.comp.held {
+		border-color: var(--ambLn);
+		background: radial-gradient(ellipse 70% 140% at 0% 0%, var(--ambBg), transparent 70%);
+		box-shadow: 0 0 44px var(--ambGlow);
+	}
+	.comp.held:focus-within {
+		border-color: var(--amb);
+	}
+	.hold {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 14px 0;
+		font-size: var(--fs-meta);
+		font-weight: 600;
 	}
 	.foot {
 		display: flex;

@@ -120,7 +120,8 @@ const promptLabelKeys = {
 	stage: 'transcript.prompt.stage',
 	answer: 'transcript.prompt.answer',
 	restart: 'transcript.prompt.restart',
-	messages: 'transcript.prompt.messages'
+	messages: 'transcript.prompt.messages',
+	handback: 'transcript.prompt.handback'
 } as const;
 export const promptLabel = (k: string) =>
 	k in promptLabelKeys ? t(promptLabelKeys[k as keyof typeof promptLabelKeys]) : k;
@@ -229,7 +230,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'status',
 					key,
 					glyph: I.pause,
-					text: t('transcript.parked'),
+					text: p.reason === 'held' ? t('transcript.parkedHeld') : t('transcript.parked'),
 					tone: 'warn'
 				});
 				break;
@@ -241,7 +242,38 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					text:
 						p.reason === 'engine_restart'
 							? t('transcript.resumedRestart')
-							: t('transcript.resumedAnswer'),
+							: p.reason === 'message'
+								? t('transcript.resumedMessage')
+								: p.reason === 'released'
+									? t('transcript.resumedReleased')
+									: t('transcript.resumedAnswer'),
+					tone: 'info'
+				});
+				break;
+			case 'hold_taken':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: I.hold,
+					text: t('transcript.holdTaken'),
+					tone: 'warn'
+				});
+				break;
+			case 'hold_released':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: I.hold,
+					text:
+						p.reason === 'stage_ended' ? t('transcript.holdEnded') : t('transcript.holdReleased'),
+					meta: [
+						dur(p.duration_ms),
+						p.turns ? t('transcript.turns', { count: Number(p.turns) }) : '',
+						p.messages ? t('transcript.messages', { count: Number(p.messages) }) : '',
+						cost(p.usage)
+					]
+						.filter(Boolean)
+						.join(' · '),
 					tone: 'info'
 				});
 				break;

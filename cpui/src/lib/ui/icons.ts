@@ -45,6 +45,8 @@ export const I = {
 	splitDown: '⊟',
 	maximise: '⤢',
 	restore: '⤡',
+	// a take-over: the agent's session in your hands
+	hold: '◉',
 	// status
 	ok: '✓',
 	bad: '✕',

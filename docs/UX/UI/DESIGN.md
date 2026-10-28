@@ -293,6 +293,7 @@ Pill (999px), 12px / 600, `padding:3px 11px 3px 9px`, 7px leading dot.
 | `provisioning` | azure tint (`--azBg` / `--az` / `--azLn`) | pulsing | — |
 | `running` | azure tint | pulsing azure + glow | "· brewing" (serif italic 14px, .85 opacity) |
 | `waiting_on_human` | **solid amber** fill, ink `#1d1406`, 700, amber glow | pulsing ink dot | label "Waiting on you" |
+| *(held)* | an extra amber **tint** pill beside the state chip, "● In your hands · 4:12" (live clock) — not a state: the run is running (or waiting, when parked on its holder) AND in someone's hands | pulsing amber | — |
 | `in_review` | violet tint (`--vioBg` / `--vio` / `--vioLn`), label "In review" | static | — |
 | `paused` | `--p2` tint, `--mut` text, ❚❚ glyph | static | — |
 | `completed` | green tint | ✓ | — |
@@ -503,7 +504,9 @@ Naming fixes the old ambiguity. Use these names in the UI:
   - Title in serif 18px, plus "v4 · 2 of 5".
   - Items are 15px circles. Done: green fill + ✓, text struck through and muted. In progress: az ring + pulsing dot, text az / 600. Todo: `--ln2` ring.
 - **Stage divider (transcript):** a hairline gradient, then the serif italic stage name (19px), then "attempt 2 · builder · gpt-5-codex · 14:02:11", then a hairline gradient.
-- **Status line:** 12px in the hue with a glyph (↩ loop, ✓ done, ✕ failed, ⏸ parked, ↻ resumed, ⟳ engine restarted).
+- **Status line:** 12px in the hue with a glyph (↩ loop, ✓ done, ✕ failed, ⏸ parked, ↻ resumed, ⟳ engine restarted, ◉ take-over).
+  - A take-over brackets its turns: amber "You took over — the agent waits for your word between turns; the stage cannot end until you release it", then "Handed back — the agent finishes its task · 12m 08s · 3 turns · 2 messages · $0.42" (the hold's own account, from `hold_released`). A holder who went quiet reads "Parked — the agent is in your hands and waits for your word".
+  - The handback is a prompt card ("Handed back — finish the task"), like the stage prompt.
 - **User message bubble:**
   - right-aligned, max-width 70%
   - `--brandBg` + `--brandLn`, radius `10px 14px 4px 14px`
@@ -529,10 +532,13 @@ Naming fixes the old ambiguity. Use these names in the UI:
 ### 4.12 Composer
 
 - Control glass, radius 20px, margin 0 12px 12px.
-- Textarea area: `min-height:44px`, placeholder in `--fnt`.
-- Footer row: key hints ("↵ send · ⌘↵ send now (interrupts) · ⇧↵ newline", 11px `--fnt`), an attach button, then **Send** (secondary) and **Send now** (primary).
+- Textarea area: `min-height:44px`, placeholder in `--fnt` ("Whisper to the agent…").
+- Footer row: key hints ("↵ send · ⌘↵ send now (interrupts) · ⇧↵ newline", 11px `--fnt`), an attach button, then **Take over** (tertiary, only while an agent stage runs), **Send now** (secondary) and **Send** (primary).
 - Shown only while the run is active.
 - Sending snaps the transcript back to auto-follow. If the user has scrolled up, show a floating "↓ Follow" pill.
+- **Whisper vs take-over.** A whisper is one message: read at the end of the agent's turn (or now, interrupting), and the agent carries on — the end of its next turn ends the stage as usual. **Take over** holds the session: while held, a turn ending with nothing queued is NOT the stage's end; the agent waits for your next message, every message is a turn in the same session, and the stage can only end once you **Release** — the engine then sends the fixed handback prompt, and when that turn ends the stage's output check runs as usual.
+- **Held state:** the composer takes the attention colour (amber border, `--ambBg` wash, amber glow, as the ping card 4.11), a head line "● In your hands · 4:12 · 2 messages" (live clock), the placeholder "The agent is in your hands. Say what to change…", and **Release** (amber) replaces Take over. After Release the button reads "Handing back…" until the engine records it — the agent's turn in flight ends first.
+- A holder who says nothing for the live hold (30m) parks the run: it reads Waiting on you, the slot is freed, the composer stays held; the next message (or Release) wakes it.
 
 ### 4.13 Tables and lists
 
@@ -667,7 +673,7 @@ Breadcrumbs always follow the hierarchy: **Desk / Workshop / Ticket key / Run id
 
 The run page body is a **user-arrangeable tiling desk**, like an IDE.
 
-- **Views** (13): Flow, Session, Pings, Timeline, Record, Changes, Files, Terminal, Logs, Egress, Ports, Resources, Vitals. Each view lives in exactly one leaf at a time, or is hidden.
+- **Views** (14): Flow, Session, Ask, Pings, Timeline, Record, Changes, Files, Terminal, Logs, Egress, Ports, Resources, Vitals. Each view lives in exactly one leaf at a time, or is hidden.
 - **Model:** a binary-ish split tree.
   ```
   leaf  = { k:'leaf', id, tabs:[view…], act:view }
@@ -714,6 +720,7 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
 | View | Contents |
 |---|---|
 | Session | Transcript (4.10) + ping card + composer. Auto-follows the bottom. |
+| Ask | A read-only session beside the run (a flow's `ask:` section) that answers questions about the code as it stands. Head: serif "Ask", the harness in mono, a model select (the harness's reachable models; a free field when unknown). Thread: your questions as right-aligned brand bubbles ("you · 14:05"), answers as markdown with "model · $0.012 · 14:05" under each; the answer being written streams in with a pulsing "thinking…" / "Read main.go…" line. One question at a time: the box and Ask button wait while an answer is written. Off state: an empty state with the reason (no `ask:` section, no workspace, a harness that cannot be read-only). The conversation persists with the run and outlives it while the workspace does. |
 | Pings | All pings raised by this run (ping cards); summary "1 pending · 2 answered". |
 | Timeline | Event rows: 24h time (mono), a tone dot (ok grn / bad ros / warn amb / info az), text, and inline "log" / "open" actions. |
 | Record | Snapshots and attachments table: name, kind chip, source ("build · attempt 2", "ping answer", "run goal"), size, time, open/download. Kind filter segmented control. Note "Kept after the workspace is destroyed". |
@@ -746,6 +753,7 @@ Every page uses the shell (section 5). The page header pattern is: breadcrumb ro
 3. **Desk** (section 6) fills the rest.
 - **Paused:** the Flow view's current stage shows "paused — will re-enter build". The Run group shows ▶ Resume (primary) + Stop….
 - **Waiting:** the chip turns solid amber, the ping card docks above the composer, and the sidebar Inbox count increments.
+- **Taken over:** an amber "In your hands · 4:12" pill beside the state chip, the composer in its held state (4.12), and the run row's second line ends "· in your hands". The timeline carries `hold_taken` / `hold_released` with duration, turns, messages and cost.
 - **Terminal states:** the composer is hidden and the Session shows a closing status line. Run group: Retry \<stage\> / New run from this… / Archive…. When the workspace is destroyed, workspace-only views (Changes, Files, Terminal, Ports, Egress live) show an empty state: "Workspace destroyed 2h ago — the Record keeps every snapshot". The Record stays.
 
 ### 7.2 All-guilds desk: `/` (reference: v10, "All guilds" in the switcher)

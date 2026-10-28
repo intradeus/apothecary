@@ -412,6 +412,9 @@ export interface FlowDoc {
 	description?: string;
 	/** What the flow's runs are started on; absent = a ticket. */
 	operates_on?: OperatesOn;
+	/** The Ask pane: a read-only session beside each run, on this harness
+	 *  (a kind or a $parameter); absent = no pane. */
+	ask?: { harness: string };
 	/** The flow's one settings block, in document order. */
 	parameters: Record<string, DocParam>;
 	/** The flow's structures, in document order. */
@@ -768,6 +771,7 @@ export function docToYaml(doc: FlowDoc): string {
 	const obj: Record<string, unknown> = { name: doc.name, version: doc.version ?? CURRENT_VERSION };
 	if (doc.description) obj.description = doc.description;
 	if (doc.operates_on && doc.operates_on !== 'ticket') obj.operates_on = doc.operates_on;
+	if (doc.ask?.harness) obj.ask = { harness: doc.ask.harness };
 	// The one settings block: the six the engine reads, in their order (the
 	// order the editor shows them in), then the flow's own in document order
 	// — a bare default when that is all a parameter has.

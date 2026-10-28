@@ -357,7 +357,12 @@ export function describe(e: RunEvent): Described {
 			]
 				.filter(Boolean)
 				.join(' · ');
-			const why = p.reason === 'ask_human' ? t('run.event.ownQuestion') : String(p.reason ?? '');
+			const why =
+				p.reason === 'ask_human'
+					? t('run.event.ownQuestion')
+					: p.reason === 'held'
+						? t('run.event.quietHolder')
+						: String(p.reason ?? '');
 			return {
 				text: spent
 					? t('run.event.stagePausedSpent', { stage: String(p.stage_id), why, spent })
@@ -369,12 +374,43 @@ export function describe(e: RunEvent): Described {
 		case 'stage_resumed':
 			return {
 				text: t(
-					p.reason === 'engine_restart' ? 'run.event.resumedRestart' : 'run.event.resumedAnswer',
+					p.reason === 'engine_restart'
+						? 'run.event.resumedRestart'
+						: p.reason === 'message'
+							? 'run.event.resumedMessage'
+							: p.reason === 'released'
+								? 'run.event.resumedReleased'
+								: 'run.event.resumedAnswer',
 					{ stage: String(p.stage_id) }
 				),
 				tone: 'info',
 				stage: p.stage_id as string
 			};
+		case 'hold_taken':
+			return {
+				text: t('run.event.holdTaken', { stage: String(p.stage_id) }),
+				tone: 'warn',
+				stage: p.stage_id as string
+			};
+		case 'hold_released': {
+			const u = p.usage as { cost_usd?: number } | undefined;
+			const bits = [
+				fmtDuration(Number(p.duration_ms ?? 0)),
+				p.turns ? t('run.event.turns', { count: Number(p.turns) }) : '',
+				p.messages ? t('run.event.messages', { count: Number(p.messages) }) : '',
+				u?.cost_usd ? fmtCost(u.cost_usd) : ''
+			]
+				.filter(Boolean)
+				.join(' · ');
+			return {
+				text: t(p.reason === 'stage_ended' ? 'run.event.holdEnded' : 'run.event.holdReleased', {
+					stage: String(p.stage_id),
+					bits
+				}),
+				tone: 'info',
+				stage: p.stage_id as string
+			};
+		}
 		case 'stage_failed':
 			return {
 				text: `${t('run.event.stageFailed', { stage: String(p.stage_id), reason: String(p.reason) })}${p.error ? ` — ${String(p.error).slice(0, 200)}` : ''}`,
@@ -527,6 +563,7 @@ export function describe(e: RunEvent): Described {
 						tone: ''
 					};
 		case 'run_unpaused':
+			if (p.reason === 'hold') return { text: t('run.event.pickedUpHold'), tone: 'info' };
 			return p.reason === 'answered'
 				? { text: t('run.event.pickedUp'), tone: 'info' }
 				: { text: t('run.event.play'), tone: 'info' };

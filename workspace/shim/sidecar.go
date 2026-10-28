@@ -204,12 +204,12 @@ func (s *sidecar) agentStart(w http.ResponseWriter, r *http.Request) {
 	if req.Cwd == "" {
 		req.Cwd = s.repo
 	}
-	init, err := s.agent.start(req)
+	p, err := s.agent.start(req)
 	if err != nil {
 		writeErrResp(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSONResp(w, 200, map[string]any{"boot": s.log.boot, "init": init})
+	writeJSONResp(w, 200, map[string]any{"boot": s.log.boot, "init": p.init, "proc": p.id})
 }
 
 func (s *sidecar) agentSession(w http.ResponseWriter, r *http.Request) {

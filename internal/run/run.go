@@ -101,6 +101,10 @@ type View struct {
 	// container was built (a rebuild would pick it up). Like EnvStatus, live
 	// state from the reconciler, never a projected column.
 	EnvDirty bool `json:"env_dirty,omitempty"`
+	// Hold is the take-over in force: a human holds the running agent's
+	// session (hold_taken without its hold_released). What it has banked so
+	// far is every parked leg's spend; the live leg lands with the release.
+	Hold *HoldView `json:"hold,omitempty"`
 	// Dormant: the run has no loop goroutine and none is owed to it until
 	// something wakes it (play, or the answer it is waiting for). NOT a
 	// projected column — recovery, pause/play and the answer path all derive
@@ -116,6 +120,17 @@ type View struct {
 	Rebuilding bool      `json:"-"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// HoldView is a take-over as the run page and the runs list show it.
+type HoldView struct {
+	StageID   string    `json:"stage_id"`
+	Iteration int       `json:"iteration,omitempty"`
+	UserID    string    `json:"user_id,omitempty"`
+	Since     time.Time `json:"since"`
+	Turns     int       `json:"turns,omitempty"`
+	Messages  int       `json:"messages,omitempty"`
+	CostUSD   float64   `json:"cost_usd,omitempty"`
 }
 
 // MRView is one merge request as the run page shows it.
@@ -278,12 +293,16 @@ func Apply(v *View, e *event.Event) {
 		}
 	case *event.RunCompleted:
 		v.State = Completed
+		v.Hold = nil
 	case *event.RunAbandoned:
 		v.State = Abandoned
+		v.Hold = nil
 	case *event.RunFailed:
 		v.State = Failed
+		v.Hold = nil
 	case *event.RunArchived:
 		v.State = Archived
+		v.Hold = nil
 	case *event.RunRetried:
 		// Back to work: re-entering StageID in the same workspace. The env
 		// persisted (abandoned/failed runs are never reaped).
@@ -294,12 +313,33 @@ func Apply(v *View, e *event.Event) {
 		if p.FlowHash != "" {
 			v.FlowHash = p.FlowHash
 		}
-	case *event.StagePaused, *event.StageResumed:
+	case *event.StagePaused:
 		// An attempt parking on an open question and picking up again. State
 		// is driven by the ping events that bracket it (ping_raised →
 		// waiting_on_human, ping_answered → running), so touching it here
 		// would only fight them: a pause recorded after its answer already
 		// landed would drag a running run back to waiting.
+		//
+		// A park on the holder of a take-over has no ping: the state is set
+		// here, and its leg's spend is banked on the hold.
+		if p.Reason == event.PauseHeld {
+			v.State = WaitingOnHuman
+			if v.Hold != nil && p.Hold != nil {
+				v.Hold.Turns += p.Hold.Turns
+				v.Hold.Messages += p.Hold.Messages
+				if p.Hold.Usage != nil {
+					v.Hold.CostUSD += p.Hold.Usage.CostUSD
+				}
+			}
+		}
+	case *event.StageResumed:
+		if p.Reason == event.ResumeMessage || p.Reason == event.ResumeReleased {
+			v.State = Running
+		}
+	case *event.HoldTaken:
+		v.Hold = &HoldView{StageID: p.StageID, Iteration: p.Iteration, UserID: p.UserID, Since: e.TS}
+	case *event.HoldReleased:
+		v.Hold = nil
 	case *event.RunPaused:
 		// Both flavours park the loop; only the user's reads as paused. The
 		// engine's own parking leaves the state the ping events set

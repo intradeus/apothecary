@@ -167,7 +167,25 @@ type runState struct {
 	// ride into the next prompt.
 	pendingMsgs []*event.MessageQueued
 
+	// holds is the take-over in force per stage (hold_taken without its
+	// hold_released), with what its parked legs have banked so far.
+	holds map[string]*heldState
+	// pausedHold marks a stage parked on its holder (stage_paused held, no
+	// stage_resumed since): re-entry waits for the holder's word.
+	pausedHold map[string]bool
+	// handbackOwed marks a stage whose hold was released but whose session
+	// has not yet been sent the handback prompt (agent_prompted handback).
+	handbackOwed map[string]bool
+
 	done bool
+}
+
+// heldState is a take-over as replay knows it: who took it, when, and the
+// spend of every leg that parked (each stage_paused{held} banks its own).
+type heldState struct {
+	taken   *event.HoldTaken
+	takenAt time.Time
+	banked  event.HoldSpend
 }
 
 // chainKey identifies one link of an edge chain: depth 0 is the edge
@@ -340,6 +358,9 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		pushed:        map[string]string{},
 		heads:         map[string]bool{},
 		skipped:       map[string]string{},
+		holds:         map[string]*heldState{},
+		pausedHold:    map[string]bool{},
+		handbackOwed:  map[string]bool{},
 	}
 	raised := map[string]*event.PingRaised{}
 	for i := range evs {
@@ -431,11 +452,20 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 				rs.cost += p.Usage.CostUSD
 			}
 			rs.turns += p.TurnsUsed
+			// A park on the holder of a take-over: re-entry waits for their
+			// word. Either park banks what the hold's leg spent.
+			if p.Reason == event.PauseHeld {
+				rs.pausedHold[p.StageID] = true
+			}
+			if h := rs.holds[p.StageID]; h != nil && p.Hold != nil {
+				h.banked.Add(*p.Hold)
+			}
 		case *event.StageResumed:
 			// The pause it answers is consumed: leaving it set would make a
 			// LATER attempt of the same stage re-enter as if it were still
 			// parked on those long-answered questions.
 			delete(rs.pausedAsks, p.StageID)
+			delete(rs.pausedHold, p.StageID)
 			// Bookkeeping only — the pause already set everything the
 			// re-entry needs, and the invocation this event opens reports its
 			// own spend when it ends (stage_paused again, or stage_completed).
@@ -567,6 +597,17 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.pendingMsgs = append(rs.pendingMsgs, p)
 		case *event.MessageDelivered:
 			rs.delivered(p.MessageIDs)
+		case *event.HoldTaken:
+			rs.holds[p.StageID] = &heldState{taken: p, takenAt: ev.TS}
+		case *event.HoldReleased:
+			delete(rs.holds, p.StageID)
+			if p.Reason == event.HoldReleasedByUser {
+				rs.handbackOwed[p.StageID] = true
+			}
+		case *event.AgentPrompted:
+			if p.Kind == event.PromptHandback {
+				delete(rs.handbackOwed, p.StageID)
+			}
 		case *event.RunPaused, *event.RunUnpaused:
 			// View-level only: ph/pos/counters stay exactly as the stage
 			// events left them, so play re-enters like crash recovery.

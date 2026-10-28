@@ -16,6 +16,7 @@
 	import NoWorkspace from './NoWorkspace.svelte';
 	import FlowView from './views/FlowView.svelte';
 	import SessionView from './views/SessionView.svelte';
+	import AskView from './views/AskView.svelte';
 	import PingsView from './views/PingsView.svelte';
 	import PhasesView from './views/PhasesView.svelte';
 	import TimelineView from './views/TimelineView.svelte';
@@ -59,6 +60,8 @@
 				};
 			case 'session':
 				return { hint: t(rs.terminal ? 'run.page.closed' : 'run.page.following') };
+			case 'ask':
+				return { hint: t('run.page.askHint') };
 			case 'pings':
 				return rs.pendingPings.length
 					? { count: rs.pendingPings.length, alert: 'amb', hint: t('run.page.waitingOnYou') }
@@ -185,6 +188,8 @@
 						onlog={openLog}
 						onphases={() => desk.reveal('phases')}
 					/>
+				{:else if v === 'ask'}
+					<AskView {rs} visible={p.visible} />
 				{:else if v === 'pings'}
 					<PingsView {rs} />
 				{:else if v === 'phases'}

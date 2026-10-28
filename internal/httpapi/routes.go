@@ -14,6 +14,7 @@ package httpapi
 // labels.
 
 import (
+	"apothecary/internal/ask"
 	"net/http"
 
 	"apothecary/internal/actionspec"
@@ -258,8 +259,32 @@ func (s *Server) routes() []Route {
 			Handler: s.postOpenEditor, Returns: EditorURL{}, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/messages", ID: "sendRunMessage", Tag: tagRuns,
 			Summary: "Send a message to the run's running agent",
-			Doc:     "Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it.",
+			Doc:     "Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it (a run parked on the holder of a take-over is woken by it).",
 			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted, Scope: ScopeRun},
+		{Method: "POST", Path: "/api/runs/{id}/hold", ID: "takeOverRun", Tag: tagRuns,
+			Summary: "Take over the running agent's session",
+			Doc:     "While held, the end of the agent's turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. 409 when no agent is running, or someone already holds it.",
+			Handler: s.postHold, Status: http.StatusAccepted, Scope: ScopeRun},
+		{Method: "DELETE", Path: "/api/runs/{id}/hold", ID: "releaseRun", Tag: tagRuns,
+			Summary: "Hand the task back to the agent",
+			Doc:     "Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.",
+			Handler: s.deleteHold, Status: http.StatusAccepted, Scope: ScopeRun},
+		{Method: "GET", Path: "/api/runs/{id}/ask", ID: "getAsk", Tag: tagRuns,
+			Summary: "The Ask pane: its conversation, model and whether it is on",
+			Doc:     "A flow with an ask: section gives the run a read-only session beside its stages that answers questions about the code. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.",
+			Handler: s.getAsk, Returns: engine.AskState{}, Scope: ScopeRun},
+		{Method: "POST", Path: "/api/runs/{id}/ask", ID: "askRun", Tag: tagRuns,
+			Summary: "Ask the run's read-only session a question",
+			Doc:     "The question is recorded and returned at once; the answer arrives on the pane's stream. 409 when the pane is off or an answer is being written.",
+			Handler: s.postAsk, Body: AskRequest{}, Returns: ask.Message{}, Status: http.StatusAccepted, Scope: ScopeRun},
+		{Method: "PUT", Path: "/api/runs/{id}/ask/model", ID: "setAskModel", Tag: tagRuns,
+			Summary: "Pick the model the Ask session answers with",
+			Handler: s.putAskModel, Body: AskModelRequest{}, Status: http.StatusNoContent, Scope: ScopeRun},
+		{Method: "GET", Path: "/api/runs/{id}/ask/stream", ID: "streamAsk", Tag: tagRuns,
+			Summary: "Server-sent event stream of the Ask pane",
+			Doc:     "Replays the messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, the pane's state as it changes.",
+			Query:   []Param{{Name: "after_seq", Doc: "resume after this message sequence number", Type: "integer"}},
+			Handler: s.streamAsk, Produces: "text/event-stream", Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/mrs/status", ID: "getRunMRStatus", Tag: tagRuns,
 			Summary: "Each merge request as its repository reports it now: mergeability and pending review threads",
 			Handler: s.getRunMRStatus, Returns: []engine.MRLive{}, Scope: ScopeRun},

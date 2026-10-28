@@ -9,7 +9,7 @@
 // index.ts, because a request body is only ever built at one call site.
 
 import type * as Wire from './generated/types.gen';
-import type { AuthStatus, Limits, Me, Token, User } from '$lib/domain';
+import type { AskMessage, AskState, AuthStatus, Limits, Me, Token, User } from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
 import { answerKindOf, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
 import type {
@@ -131,6 +131,33 @@ const list = <T>(v: T[] | null | undefined): T[] => v ?? [];
 
 // --- runs --------------------------------------------------------------------
 
+export function toAskMessage(w: Wire.Message): AskMessage {
+	return {
+		seq: w.seq,
+		id: w.id,
+		role: w.role === 'answer' ? 'answer' : 'question',
+		text: w.text,
+		userId: w.user_id || undefined,
+		model: w.model || undefined,
+		costUsd: w.cost_usd ?? 0,
+		turns: w.turns ?? 0,
+		error: w.error || undefined,
+		at: w.at
+	};
+}
+
+export function toAskState(w: Wire.AskState): AskState {
+	return {
+		enabled: w.enabled,
+		reason: w.reason || undefined,
+		harness: w.harness || undefined,
+		model: w.model || undefined,
+		models: list(w.models),
+		busy: w.busy,
+		messages: list(w.messages).map(toAskMessage)
+	};
+}
+
 export function toRun(w: Wire.RunView): Run {
 	return {
 		id: w.run_id,
@@ -176,6 +203,16 @@ export function toRun(w: Wire.RunView): Run {
 		params: w.params ?? undefined,
 		startedBy: w.started_by || undefined,
 		idle: w.idle ?? false,
+		hold: w.hold
+			? {
+					stageId: w.hold.stage_id,
+					userId: w.hold.user_id || undefined,
+					since: w.hold.since,
+					turns: w.hold.turns ?? 0,
+					messages: w.hold.messages ?? 0,
+					costUsd: w.hold.cost_usd ?? 0
+				}
+			: undefined,
 		envId: w.env_id,
 		envStatus: w.env_status as Run['envStatus'],
 		envDirty: w.env_dirty ?? false,

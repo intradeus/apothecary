@@ -116,6 +116,7 @@ type recorder struct {
 	mu     sync.Mutex
 	events []ports.AgentEvent
 	queue  []ports.UserMessage
+	held   bool
 	wake   chan struct{}
 	onText func(string)
 }
@@ -160,6 +161,24 @@ func (r *recorder) Interrupting() bool {
 	}
 	return false
 }
+func (r *recorder) Held() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.held
+}
+
+// hold flips the take-over flag; letting go wakes the runner.
+func (r *recorder) hold(held bool) {
+	r.mu.Lock()
+	r.held = held
+	r.mu.Unlock()
+	if !held {
+		select {
+		case r.wake <- struct{}{}:
+		default:
+		}
+	}
+}
 
 func (r *recorder) kinds() string {
 	r.mu.Lock()
@@ -198,7 +217,7 @@ func TestRunStreamsTheTranscript(t *testing.T) {
 	if rec.text() != "echo: hello| done|" {
 		t.Errorf("text = %q", rec.text())
 	}
-	if res.Session != "s1" || res.Usage.CostUSD < 0.0999 || res.Usage.CostUSD > 0.1001 ||
+	if !strings.HasPrefix(string(res.Session), "s1-") || res.Usage.CostUSD < 0.0999 || res.Usage.CostUSD > 0.1001 ||
 		res.Usage.InputTokens != 7 || res.Usage.OutputTokens != 3 || res.TurnsUsed != 2 {
 		t.Errorf("result = %+v", res)
 	}
@@ -282,6 +301,123 @@ func TestInterruptingMessage(t *testing.T) {
 	}
 }
 
+// A take-over: while the inbox is held, a turn ending with nothing queued is
+// not the invocation's end — the runner waits for the holder's next message
+// and runs it as the next turn in the same session; letting go ends it.
+func TestHeldSessionWaitsForTheNextMessage(t *testing.T) {
+	h := startSidecar(t)
+	rec := newRecorder()
+	rec.hold(true)
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "hello", Events: rec.on, Inbox: rec})
+		done <- err
+	}()
+	turnEnds := func() int {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		n := 0
+		for _, e := range rec.events {
+			if e.Kind == ports.AgentEvTurnEnd {
+				n++
+			}
+		}
+		return n
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for turnEnds() < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	// The turn is over, nothing is queued, and the runner has not returned.
+	select {
+	case err := <-done:
+		t.Fatalf("a held session returned at the end of its turn (err=%v)", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	rec.push(ports.UserMessage{ID: "m1", Text: "and again"})
+	for turnEnds() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if turnEnds() != 2 {
+		t.Fatalf("turn ends = %d, want 2", turnEnds())
+	}
+	// Letting go with the handback queued: it is the last turn, then the
+	// runner returns.
+	rec.push(ports.UserMessage{Text: "FINISH", Verbatim: true})
+	rec.hold(false)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the runner never returned after the hold ended")
+	}
+	if turnEnds() != 3 {
+		t.Errorf("turn ends = %d, want 3", turnEnds())
+	}
+	if got := rec.text(); !strings.Contains(got, "echo: hello|") || !strings.Contains(got, "and again") || !strings.Contains(got, "echo: FINISH") {
+		t.Errorf("text = %q", got)
+	}
+	// The handback went verbatim, not framed as the operator's words.
+	for _, e := range rec.events {
+		if e.Kind == ports.AgentEvUserMessage && len(e.Messages) == 1 && e.Messages[0].Verbatim && e.Text != "FINISH" {
+			t.Errorf("verbatim message rendered as %q", e.Text)
+		}
+	}
+	for _, e := range rec.events {
+		if e.Kind == ports.AgentEvTurnEnd && e.Usage == nil {
+			t.Errorf("turn_end without its usage: %+v", e)
+		}
+	}
+}
+
+// A profile that promises read-only by process: a read-only session runs in
+// its own agent process, started with the read-only command line, and gets
+// none of the profile's own MCP servers (it answers, it does not ask).
+func TestReadOnlySessionRunsInItsOwnProcessWithoutProfileServers(t *testing.T) {
+	h := startSidecar(t)
+	r := New(env{sock: h.sock}, Profile{Harness: "fake", Command: h.fakeACP,
+		ReadOnlyBy: ReadOnlyByProcess, ReadOnlyCommand: h.fakeACP + " --read-only",
+		MCPServers: []ports.MCPServer{{Name: "ask_human", Command: []string{"/bin/true"}}}})
+	r.cancelGrace = 5 * time.Second
+	ctx := context.Background()
+	normal := newRecorder()
+	if _, err := r.Run(ctx, "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "MCP", Events: normal.on, Inbox: normal}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(normal.text(), "ask_human") {
+		t.Errorf("a normal session has the profile's servers: %q", normal.text())
+	}
+	ro := newRecorder()
+	res, err := r.Run(ctx, "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "MCP", Events: ro.on, Inbox: ro, ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ro.text(), "ask_human") {
+		t.Errorf("a read-only session got the profile's servers: %q", ro.text())
+	}
+	c := sidecar.New(unixConn(h.sock))
+	st, err := c.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Procs) != 2 || len(st.Sessions) != 2 {
+		t.Errorf("status = %+v, want two processes and two sessions", st)
+	}
+	// Continuing the read-only session stays read-only and server-less.
+	again := newRecorder()
+	if _, err := r.Resume(ctx, "e", res.Session, ports.AgentInput{Prompt: "MCP", Events: again.on, Inbox: again, ReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(again.text(), "ask_human") {
+		t.Errorf("a resumed read-only session got the profile's servers: %q", again.text())
+	}
+	if st, _ := c.Status(ctx); len(st.Procs) != 2 {
+		t.Errorf("resume started another process: %+v", st)
+	}
+}
+
 // The engine cancelling (timeout, park, abort) winds the turn down and still
 // reports the session and spend.
 func TestContextCancelEndsTheTurn(t *testing.T) {
@@ -321,7 +457,7 @@ func TestReattachFollowsTheTurnInFlight(t *testing.T) {
 	r := h.runner()
 	c := sidecar.New(unixConn(h.sock))
 	ctx := context.Background()
-	if _, err := r.start(ctx, c); err != nil {
+	if _, err := r.start(ctx, c, false); err != nil {
 		t.Fatal(err)
 	}
 	sess, err := c.Session(ctx, sidecar.SessionRequest{})
@@ -366,7 +502,7 @@ func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
 	r := h.runner()
 	c := sidecar.New(unixConn(h.sock))
 	ctx := context.Background()
-	if _, err := r.start(ctx, c); err != nil {
+	if _, err := r.start(ctx, c, false); err != nil {
 		t.Fatal(err)
 	}
 	sess, _ := c.Session(ctx, sidecar.SessionRequest{})
@@ -377,7 +513,7 @@ func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
 	}
 	for i := 0; ; i++ {
 		st, _ = c.Status(ctx)
-		if st.Turn == nil {
+		if st.Turn(sess.SessionID) == nil {
 			break
 		}
 		if i > 200 {

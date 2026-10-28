@@ -44,6 +44,8 @@
 				· <span title={fmtAbs(run.updatedAt)}>{ago(run.updatedAt)}</span>
 			{:else if detail ?? run.currentStage}
 				· <span class="mono">{detail ?? run.currentStage}</span>
+			{/if}{#if run.hold && variant !== 'finished'}
+				· <span class="hue-amb">{t('run.row.held')}</span>
 			{/if}</span
 		>
 	</span>

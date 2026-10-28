@@ -33,6 +33,13 @@
 	const items = $derived(buildTranscript(rs.events, rs.live));
 	const ping = $derived(rs.terminal ? undefined : rs.pendingPings[0]);
 	const run = $derived(rs.run);
+	// An agent stage in flight is what can be taken over.
+	const canTakeOver = $derived(
+		!!run &&
+			run.state === 'running' &&
+			!!rs.current &&
+			Boolean(rs.current.payload.agent || rs.current.payload.harness)
+	);
 	// Between phases (idle, or parked at a wait point) a one-line nudge points
 	// at the Phases window: what may start next lives there. Dismissed, it
 	// stays away until another phase has ended.
@@ -149,6 +156,12 @@
 				follow(false);
 			}}
 			onfailed={(text) => (sending = sending.filter((s) => s.text !== text))}
+			{canTakeOver}
+			hold={rs.run.hold}
+			releasing={rs.releasing}
+			now={rs.now}
+			ontakeover={() => rs.takeOver()}
+			onrelease={() => rs.release()}
 		/>
 	{:else if rs.run}
 		<div class="closed">

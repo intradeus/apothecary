@@ -55,6 +55,11 @@ var idPathRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
 // are exported with JSON tags as the graph editor's document model
 // (DESIGN3 §2.3): ParseDoc hands the raw shape to the UI, which serializes
 // its edits back to YAML.
+// DocAsk is the `ask:` section as written.
+type DocAsk struct {
+	Harness string `yaml:"harness" json:"harness"`
+}
+
 type Doc struct {
 	Name string `yaml:"name" json:"name"`
 	// Version is the grammar the document is written in; it must equal
@@ -84,6 +89,9 @@ type Doc struct {
 	// starts the run, a person or an automation; nothing the flow listens
 	// for starts one.
 	OperatesOn string `yaml:"operates_on" json:"operates_on,omitempty"`
+	// Ask is the Ask pane (FLOWLANG §1): a read-only session beside the run,
+	// on the harness named — a kind, or a $parameter.
+	Ask *DocAsk `yaml:"ask" json:"ask,omitempty"`
 	// Main is the chain that runs when the run starts. Watchers run theirs
 	// on each new occurrence of a signal while the run is open; outcomes
 	// fire once and end it.
@@ -1191,6 +1199,20 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if err = p.buildParameters(f, &raw.Parameters); err != nil {
 		return nil, err
 	}
+	if raw.Ask != nil {
+		at := p.keyLine("ask")
+		if raw.Ask.Harness == "" {
+			return nil, p.errf(at, "ask: harness is required — the harness kind the Ask pane runs on, or a $parameter")
+		}
+		v, via, err := p.lookup(raw.Ask.Harness, paramSite{field: "ask.harness", typ: ParamString})
+		if err != nil {
+			return nil, p.errf(at, "ask: harness: %v", err)
+		}
+		if !slugRe.MatchString(v) {
+			return nil, p.errf(at, "ask: harness %q%s is not a slug (kind existence is checked at run creation)", v, via)
+		}
+		f.Ask = &Ask{Harness: v}
+	}
 	if f.Schemas, err = p.buildSchemas(raw.Schemas); err != nil {
 		return nil, err
 	}
@@ -1688,6 +1710,9 @@ func (p *parser) buildAgents(raw []agentspec.Spec, f *Flow) ([]agentspec.Spec, e
 		}
 		if prev, dup := seen[sp.Name]; dup {
 			return nil, p.errf(at, "agent %q: declared twice (first at line %d)", sp.Name, prev)
+		}
+		if f.Ask != nil && sp.Name == AskAgent {
+			return nil, p.errf(at, "agent %q: the name is the Ask pane's (ask:) — call the agent something else", sp.Name)
 		}
 		seen[sp.Name] = at
 	}

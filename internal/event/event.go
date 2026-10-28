@@ -138,12 +138,23 @@ const (
 	// (or the agent ended it itself). It waits, untimed, until every open ping
 	// is answered, then resumes the same session with the answers.
 	PauseAskHuman = "ask_human"
+	// PauseHeld: a human holds the session (hold_taken) and has said nothing
+	// for longer than the live hold — the agent sat idle waiting for them.
+	// The run parks until their next message or the release; the hold
+	// itself stays in force.
+	PauseHeld = "held"
 	// ResumeAnswered: the questions that paused the attempt came back
 	// answered and are being delivered into the harness session.
 	ResumeAnswered = "answered"
 	// ResumeRestart: the engine restarted while the attempt was in flight and
 	// re-entered its session (recovery, not a human's doing).
 	ResumeRestart = "engine_restart"
+	// ResumeMessage: the holder of a parked take-over spoke again; their
+	// message is the prompt the session resumes with.
+	ResumeMessage = "message"
+	// ResumeReleased: the holder of a parked take-over handed the task back;
+	// the handback prompt is what the session resumes with.
+	ResumeReleased = "released"
 )
 
 type Link struct {
@@ -336,13 +347,17 @@ type StageFailed struct {
 type StagePaused struct {
 	StageID   string `json:"stage_id"`
 	Iteration int    `json:"iteration,omitempty"`
-	Reason    string `json:"reason"` // ask_human
+	Reason    string `json:"reason"` // ask_human|held
 	// PingIDs are the open questions the attempt is waiting on: what has to
 	// be answered before a stage_resumed can follow.
 	PingIDs   []string `json:"ping_ids,omitempty"`
 	TurnsUsed int      `json:"turns_used,omitempty"`
 	Usage     *Usage   `json:"usage,omitempty"`
 	SessionID string   `json:"session_id,omitempty"`
+	// Hold is what a take-over in force spent in this leg of the attempt —
+	// banked here so the hold_released that eventually closes it can account
+	// for every leg, not just the last.
+	Hold *HoldSpend `json:"hold,omitempty"`
 }
 
 // StageResumed is the other half: the same stage and the same iteration
@@ -778,13 +793,15 @@ type RunUnpaused struct {
 	// Reason says what woke it: a human pressing play, or the answer a parked
 	// run was waiting for arriving. Empty means play — every unpause before
 	// this field was one.
-	Reason string `json:"reason,omitempty"` // play|answered
+	Reason string `json:"reason,omitempty"` // play|answered|hold
 }
 
 // RunUnpaused reasons.
 const (
 	UnpausePlay     = "play"
 	UnpauseAnswered = "answered"
+	// UnpauseHold: the holder of a parked take-over spoke, or released it.
+	UnpauseHold = "hold"
 )
 
 type EnvDestroyed struct {

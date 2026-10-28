@@ -27,6 +27,14 @@ const (
 	// turn, or at once when it asked to interrupt).
 	TypeMessageQueued    Type = "message_queued"
 	TypeMessageDelivered Type = "message_delivered"
+	// TypeHoldTaken / TypeHoldReleased bracket a TAKE-OVER: a human holding
+	// the running agent's session. While held, the end of a turn is not the
+	// end of the stage — the agent waits for the holder's next message — and
+	// the stage can only end once the hold is released, which hands the
+	// task back with a fixed prompt. The pair is the timeline's record of the
+	// hold: who, how long, how many turns, what it cost.
+	TypeHoldTaken    Type = "hold_taken"
+	TypeHoldReleased Type = "hold_released"
 )
 
 // AgentPrompted kinds: why the engine sent the agent this text.
@@ -35,6 +43,7 @@ const (
 	PromptAnswer   = "answer"   // answers to the questions the attempt parked on
 	PromptRestart  = "restart"  // re-entry after an engine restart
 	PromptMessages = "messages" // human messages carried into the prompt
+	PromptHandback = "handback" // the take-over ended: finish the task
 )
 
 type AgentSession struct {
@@ -125,6 +134,57 @@ type MessageDelivered struct {
 	Iteration  int      `json:"iteration,omitempty"`
 }
 
+// HoldTaken: a human took over the agent stage's live session. From here
+// the agent's turns end into a wait for the holder, not into the stage's
+// output check.
+type HoldTaken struct {
+	StageID   string `json:"stage_id"`
+	Iteration int    `json:"iteration,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+}
+
+// HoldReleased closes a hold with its account: how long it lasted (from
+// hold_taken to here), and what the holder's turns spent — every leg of it,
+// across any park. Reason says how it ended: the holder handing the task
+// back (the handback prompt follows), or the attempt ending underneath it
+// (a harness error, a timeout, an abort).
+type HoldReleased struct {
+	StageID    string `json:"stage_id"`
+	Iteration  int    `json:"iteration,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
+	Reason     string `json:"reason"` // released|stage_ended
+	DurationMS int64  `json:"duration_ms"`
+	HoldSpend
+}
+
+// HoldSpend is what a hold's turns cost: the turns the holder's messages
+// prompted, the messages themselves, and their token/cost usage.
+type HoldSpend struct {
+	Turns    int    `json:"turns,omitempty"`
+	Messages int    `json:"messages,omitempty"`
+	Usage    *Usage `json:"usage,omitempty"`
+}
+
+// Add folds another leg's spend in.
+func (s *HoldSpend) Add(o HoldSpend) {
+	s.Turns += o.Turns
+	s.Messages += o.Messages
+	if o.Usage != nil {
+		if s.Usage == nil {
+			s.Usage = &Usage{}
+		}
+		s.Usage.InputTokens += o.Usage.InputTokens
+		s.Usage.OutputTokens += o.Usage.OutputTokens
+		s.Usage.CostUSD += o.Usage.CostUSD
+	}
+}
+
+// HoldReleased reasons.
+const (
+	HoldReleasedByUser = "released"
+	HoldEndedWithStage = "stage_ended"
+)
+
 func (*AgentSession) EventType() Type     { return TypeAgentSession }
 func (*AgentPrompted) EventType() Type    { return TypeAgentPrompted }
 func (*AgentMessage) EventType() Type     { return TypeAgentMessage }
@@ -133,6 +193,8 @@ func (*AgentPlan) EventType() Type        { return TypeAgentPlan }
 func (*AgentNotice) EventType() Type      { return TypeAgentNotice }
 func (*MessageQueued) EventType() Type    { return TypeMessageQueued }
 func (*MessageDelivered) EventType() Type { return TypeMessageDelivered }
+func (*HoldTaken) EventType() Type        { return TypeHoldTaken }
+func (*HoldReleased) EventType() Type     { return TypeHoldReleased }
 
 func init() {
 	registry[TypeAgentSession] = func() Payload { return &AgentSession{} }
@@ -143,4 +205,6 @@ func init() {
 	registry[TypeAgentNotice] = func() Payload { return &AgentNotice{} }
 	registry[TypeMessageQueued] = func() Payload { return &MessageQueued{} }
 	registry[TypeMessageDelivered] = func() Payload { return &MessageDelivered{} }
+	registry[TypeHoldTaken] = func() Payload { return &HoldTaken{} }
+	registry[TypeHoldReleased] = func() Payload { return &HoldReleased{} }
 }

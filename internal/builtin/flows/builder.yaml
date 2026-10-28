@@ -1,6 +1,7 @@
 name: builder
 version: 5
 description: "plan-gated build with cross-vendor adversarial review, then the merge request's life: conflicts fixed on your go, review comments fixed and answered once the review goes quiet"
+ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow's harness
 # The flow's one settings block: what every agent stage inherits, the run's
 # ceilings (the whole life of the ticket, review rounds included), and this
 # flow's own knobs, read where $name appears below. A project binds any of

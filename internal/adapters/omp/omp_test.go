@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
@@ -37,6 +38,16 @@ func TestProfile(t *testing.T) {
 	if len(p.MCPServers) != 1 || p.MCPServers[0].Name != "ask_human" ||
 		strings.Join(p.MCPServers[0].Command, " ") != "/opt/apothecary/shim ask-human" {
 		t.Errorf("mcp servers = %+v", p.MCPServers)
+	}
+	// A read-only session is a second process that loads no mutating tool.
+	if p.ReadOnlyBy != acpagent.ReadOnlyByProcess || !strings.Contains(p.ReadOnlyCommand, "omp acp --tools=") ||
+		!strings.Contains(p.ReadOnlyCommand, "--approval-mode=always-ask") || strings.Contains(p.ReadOnlyCommand, "--yolo") {
+		t.Errorf("read-only profile = %q (%s)", p.ReadOnlyCommand, p.ReadOnlyBy)
+	}
+	for _, tool := range []string{"bash", "edit", "write", "python", "task"} {
+		if strings.Contains(p.ReadOnlyCommand, tool) {
+			t.Errorf("read-only command loads %s: %q", tool, p.ReadOnlyCommand)
+		}
 	}
 	pre, err := p.Preamble(context.Background(), id, ports.AgentSpec{Agent: "planner"})
 	if err != nil || !strings.Contains(pre, "Plan carefully.") {

@@ -87,6 +87,13 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		// The fake provisioner hosts no sidecar: an honest 503.
 		{method: "GET", path: "/api/runs/" + runID + "/workspace/tree", want: 503},
 		{method: "POST", path: "/api/runs/" + runID + "/messages", body: map[string]any{"text": "hi"}, want: 409},
+		// No agent is running to take over, and nothing to release.
+		{method: "POST", path: "/api/runs/" + runID + "/hold", want: 409},
+		{method: "DELETE", path: "/api/runs/" + runID + "/hold", want: 409},
+		// The fixture's flow has no ask: section: the pane is off, honestly.
+		{method: "GET", path: "/api/runs/" + runID + "/ask", want: 200},
+		{method: "POST", path: "/api/runs/" + runID + "/ask", body: map[string]any{"text": "why?"}, want: 409},
+		{method: "PUT", path: "/api/runs/" + runID + "/ask/model", body: map[string]any{"model": "x/y"}, want: 409},
 		// An error body is part of the contract as much as a success one.
 		{method: "GET", path: "/api/runs/nope", want: 404},
 	}

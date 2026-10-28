@@ -40,7 +40,16 @@ func (e *Engine) SendMessage(runID, text string, interrupt bool) (string, error)
 	h, ok := e.handles[runID]
 	e.mu.Unlock()
 	if !ok {
-		return "", fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+		// No loop: a run parked on the holder of a take-over is woken by
+		// their next message, as a run parked on a question is by its answer.
+		id := e.newID()
+		err := e.wakeHeld(context.Background(), runID, func(run.View) []event.Payload {
+			return []event.Payload{&event.MessageQueued{MessageID: id, Text: text, Interrupt: interrupt}}
+		})
+		if err != nil {
+			return "", err
+		}
+		return id, nil
 	}
 	if !h.agentLive.Load() {
 		return "", ErrNoAgentRunning

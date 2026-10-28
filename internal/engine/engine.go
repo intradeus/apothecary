@@ -19,6 +19,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	askstore "apothecary/internal/ask"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
@@ -217,6 +218,11 @@ type Engine struct {
 	projectSecrets ProjectSecretSource
 	browser        ports.Browser
 	browserPorts   *portCache
+	// askStore keeps the Ask panes' conversations; asks is their in-flight
+	// state and askHub their viewers (ask.go).
+	askStore askstore.Store
+	asks     map[string]*askRun
+	askHub   askHub
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -333,6 +339,9 @@ type runHandle struct {
 	// messages carries a human's messages to the running agent. Unbuffered:
 	// a send succeeds only when an agent invocation is there to take it.
 	messages chan msgReq
+	// holds carries a take-over (or its release) to the running agent's
+	// invocation, unbuffered for the same reason.
+	holds chan holdReq
 	// agentLive is set while an agent invocation runs (messages can land).
 	agentLive atomic.Bool
 	// idle is set while the run sits between phases with its merge requests
@@ -568,6 +577,8 @@ func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
 		envDirty:  map[string]bool{},
 		resources: map[string][]ports.ResourceSample{},
 		observed:  map[string]*observedRun{},
+		askStore:  askstore.NewMemStore(),
+		asks:      map[string]*askRun{},
 	}
 }
 
@@ -1566,6 +1577,10 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 	if err := res.servicesAvailable(fl); err != nil {
 		return fmt.Errorf("preflight: %w", err)
 	}
+	// The Ask pane's harness (FLOWLANG §1 ask) is checked like a stage's.
+	if fl.Ask != nil && !res.harnessInSet(fl.Ask.Harness) {
+		return fmt.Errorf("ask: harness %q is not in the project's harness set %v", fl.Ask.Harness, res.harnessSet())
+	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		if st.Type == flow.StageCommand && st.RunRef != "" {
@@ -1772,6 +1787,7 @@ func (e *Engine) startLocked(runID string) {
 		mailbox:     make(chan raiseReq, 8),
 		answers:     make(chan answerReq, 8),
 		messages:    make(chan msgReq),
+		holds:       make(chan holdReq),
 		phaseStarts: make(chan phaseStartReq),
 		done:        make(chan struct{}),
 	}
@@ -2745,6 +2761,10 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 	}
 	if err := res.mcpAvailable(fl, e.browser != nil); err != nil {
 		return err
+	}
+	// The Ask pane's harness (FLOWLANG §1 ask) is checked like a stage's.
+	if fl.Ask != nil && !res.harnessInSet(fl.Ask.Harness) {
+		return fmt.Errorf("ask: harness %q is not in the project's harness set %v", fl.Ask.Harness, res.harnessSet())
 	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]

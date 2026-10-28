@@ -246,6 +246,8 @@ func cmdServe(args []string) error {
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
+	// The Ask panes' conversations live beside the run log.
+	e.SetAskStore(store)
 	if boot.OtelEndpoint != "" {
 		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {

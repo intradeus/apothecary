@@ -73,7 +73,8 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	// repo — no exec involved.
 	specs := []*agentspec.Spec{
 		{Name: "builder", Description: "builds", ReadOnly: false, AllowBash: true, Prompt: "Build it.\n"},
-		{Name: "planner", Description: "plans", ReadOnly: true, AllowBash: false, Prompt: "Plan carefully.\n"},
+		{Name: "planner", Description: "plans", ReadOnly: true, AllowBash: false, Prompt: "Plan carefully.\n",
+			Outputs: []agentspec.OutputDecl{{Name: "plan", Type: "file"}}},
 	}
 	a := New(envp, Config{})
 	if err := a.PrepareEnv(context.Background(), id, specs); err != nil {
@@ -93,6 +94,17 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	for _, want := range []string{"mode: primary", "edit: false", "patch: false", "write: true", "bash: false", "Plan carefully."} {
 		if !strings.Contains(string(planner), want) {
 			t.Errorf("planner.md missing %q:\n%s", want, planner)
+		}
+	}
+	// A read-only agent with nothing to write (the Ask pane's) gets no
+	// write tool either.
+	if err := a.PrepareEnv(context.Background(), id, []*agentspec.Spec{{Name: "ask", ReadOnly: true, Prompt: "Answer.\n"}}); err != nil {
+		t.Fatal(err)
+	}
+	askMD, _ := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/ask.md")
+	for _, want := range []string{"edit: false", "patch: false", "write: false", "bash: false"} {
+		if !strings.Contains(string(askMD), want) {
+			t.Errorf("ask.md missing %q:\n%s", want, askMD)
 		}
 	}
 	builder, _ := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/builder.md")

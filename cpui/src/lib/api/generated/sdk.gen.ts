@@ -26,6 +26,9 @@ import type {
 	ArchiveRunData,
 	ArchiveRunErrors,
 	ArchiveRunResponses,
+	AskRunData,
+	AskRunErrors,
+	AskRunResponses,
 	CancelEnvCheckData,
 	CancelEnvCheckErrors,
 	CancelEnvCheckResponses,
@@ -98,6 +101,9 @@ import type {
 	ExposeRunPortData,
 	ExposeRunPortErrors,
 	ExposeRunPortResponses,
+	GetAskData,
+	GetAskErrors,
+	GetAskResponses,
 	GetAttachmentLimitsData,
 	GetAttachmentLimitsErrors,
 	GetAttachmentLimitsResponses,
@@ -314,6 +320,9 @@ import type {
 	RebuildWorkspaceData,
 	RebuildWorkspaceErrors,
 	RebuildWorkspaceResponses,
+	ReleaseRunData,
+	ReleaseRunErrors,
+	ReleaseRunResponses,
 	RepollPingData,
 	RepollPingErrors,
 	RepollPingResponses,
@@ -338,6 +347,9 @@ import type {
 	SendRunMessageData,
 	SendRunMessageErrors,
 	SendRunMessageResponses,
+	SetAskModelData,
+	SetAskModelErrors,
+	SetAskModelResponses,
 	SetEgressRuleData,
 	SetEgressRuleErrors,
 	SetEgressRuleResponses,
@@ -368,10 +380,17 @@ import type {
 	StopRunServiceData,
 	StopRunServiceErrors,
 	StopRunServiceResponses,
+	StreamAskData,
+	StreamAskErrors,
+	StreamAskResponse,
+	StreamAskResponses,
 	StreamRunEventsData,
 	StreamRunEventsErrors,
 	StreamRunEventsResponse,
 	StreamRunEventsResponses,
+	TakeOverRunData,
+	TakeOverRunErrors,
+	TakeOverRunResponses,
 	TestIntegrationData,
 	TestIntegrationErrors,
 	TestIntegrationResponses,
@@ -2466,6 +2485,112 @@ export const archiveRun = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The Ask pane: its conversation, model and whether it is on
+ *
+ * A flow with an ask: section gives the run a read-only session beside its stages that answers questions about the code. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.
+ */
+export const getAsk = <ThrowOnError extends boolean = false>(
+	options: Options<GetAskData, ThrowOnError>
+): RequestResult<GetAskResponses, GetAskErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetAskResponses, GetAskErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/ask',
+		...options
+	});
+
+/**
+ * Ask the run's read-only session a question
+ *
+ * The question is recorded and returned at once; the answer arrives on the pane's stream. 409 when the pane is off or an answer is being written.
+ */
+export const askRun = <ThrowOnError extends boolean = false>(
+	options: Options<AskRunData, ThrowOnError>
+): RequestResult<AskRunResponses, AskRunErrors, ThrowOnError> =>
+	(options.client ?? client).post<AskRunResponses, AskRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/ask',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Pick the model the Ask session answers with
+ */
+export const setAskModel = <ThrowOnError extends boolean = false>(
+	options: Options<SetAskModelData, ThrowOnError>
+): RequestResult<SetAskModelResponses, SetAskModelErrors, ThrowOnError> =>
+	(options.client ?? client).put<SetAskModelResponses, SetAskModelErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/ask/model',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Server-sent event stream of the Ask pane
+ *
+ * Replays the messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, the pane's state as it changes.
+ */
+export const streamAsk = <ThrowOnError extends boolean = false>(
+	options: Options<StreamAskData, ThrowOnError, StreamAskResponse>
+): Promise<ServerSentEventsResult<StreamAskResponses>> =>
+	(options.client ?? client).sse.get<StreamAskResponses, StreamAskErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/ask/stream',
+		...options
+	});
+
+/**
  * Unblock a host for a live run and persist it to the project
  */
 export const allowEgressHost = <ThrowOnError extends boolean = false>(
@@ -2674,6 +2799,56 @@ export const getRunFiles = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * Hand the task back to the agent
+ *
+ * Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.
+ */
+export const releaseRun = <ThrowOnError extends boolean = false>(
+	options: Options<ReleaseRunData, ThrowOnError>
+): RequestResult<ReleaseRunResponses, ReleaseRunErrors, ThrowOnError> =>
+	(options.client ?? client).delete<ReleaseRunResponses, ReleaseRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/hold',
+		...options
+	});
+
+/**
+ * Take over the running agent's session
+ *
+ * While held, the end of the agent's turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. 409 when no agent is running, or someone already holds it.
+ */
+export const takeOverRun = <ThrowOnError extends boolean = false>(
+	options: Options<TakeOverRunData, ThrowOnError>
+): RequestResult<TakeOverRunResponses, TakeOverRunErrors, ThrowOnError> =>
+	(options.client ?? client).post<TakeOverRunResponses, TakeOverRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/hold',
+		...options
+	});
+
+/**
  * A stage's captured log (latest attempt)
  */
 export const getStageLog = <ThrowOnError extends boolean = false>(
@@ -2699,7 +2874,7 @@ export const getStageLog = <ThrowOnError extends boolean = false>(
 /**
  * Send a message to the run's running agent
  *
- * Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it.
+ * Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it (a run parked on the holder of a take-over is woken by it).
  */
 export const sendRunMessage = <ThrowOnError extends boolean = false>(
 	options: Options<SendRunMessageData, ThrowOnError>

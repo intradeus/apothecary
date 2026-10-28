@@ -19,6 +19,10 @@ import (
 	"strings"
 )
 
+// AskAgent is the name of the agent the engine prepares for a flow's Ask
+// pane (FLOWLANG §1 ask): read-only, no shell, no questions of its own.
+const AskAgent = "ask"
+
 type Spec struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description,omitempty"`

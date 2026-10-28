@@ -117,6 +117,9 @@ type StartRequest struct {
 type StartResponse struct {
 	Boot string          `json:"boot"`
 	Init json.RawMessage `json:"init"`
+	// Proc names the agent process started (or reused): what a session
+	// request addresses, since a workspace may run several harnesses.
+	Proc string `json:"proc"`
 }
 
 func (c *Client) Start(ctx context.Context, req StartRequest) (StartResponse, error) {
@@ -143,11 +146,18 @@ type EnvVar struct {
 }
 
 type SessionRequest struct {
-	SessionID  string      `json:"session_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	// Proc is the agent process (StartResponse.Proc) the session runs in;
+	// empty = the one process running.
+	Proc       string      `json:"proc,omitempty"`
 	Cwd        string      `json:"cwd,omitempty"`
 	Mode       string      `json:"mode,omitempty"`
 	Model      string      `json:"model,omitempty"`
 	MCPServers []MCPServer `json:"mcp_servers,omitempty"`
+	// ReadOnly: the session must not change the workspace; the sidecar
+	// refuses a permission request for a mutating tool (the harness is
+	// configured not to make one in the first place).
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 type SessionResponse struct {
@@ -188,7 +198,20 @@ type Status struct {
 	Running  bool               `json:"running"`
 	LastSeq  int64              `json:"last_seq"`
 	Sessions map[string]float64 `json:"sessions"`
-	Turn     *TurnStatus        `json:"turn,omitempty"`
+	// Turns are the turns in flight, at most one per session, oldest first.
+	Turns []TurnStatus `json:"turns,omitempty"`
+	// Procs are the live agent processes (StartResponse.Proc ids).
+	Procs []string `json:"procs,omitempty"`
+}
+
+// Turn is the turn in flight in a session, nil when none.
+func (s Status) Turn(session string) *TurnStatus {
+	for i := range s.Turns {
+		if s.Turns[i].Session == session {
+			return &s.Turns[i]
+		}
+	}
+	return nil
 }
 
 type TurnStatus struct {
@@ -210,6 +233,7 @@ type Event struct {
 	TS          time.Time  `json:"ts"`
 	Session     string     `json:"session,omitempty"`
 	Turn        string     `json:"turn,omitempty"`
+	Proc        string     `json:"proc,omitempty"` // agent_exit: which process
 	Type        string     `json:"type"`
 	Text        string     `json:"text,omitempty"`
 	Tool        *Tool      `json:"tool,omitempty"`

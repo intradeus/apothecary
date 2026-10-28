@@ -17,6 +17,10 @@ export default {
 	'run.header.default': 'default',
 	'run.header.turns_one': '{count} turn',
 	'run.header.turns_other': '{count} turns',
+	'run.header.held': 'In your hands',
+	'run.header.heldTitle':
+		'You took over the agent {ago}; the stage cannot end until you release it',
+	'run.header.heldBy': "In {who}'s hands",
 	'run.header.groupRun': 'Run',
 	'run.header.play': 'Play',
 	'run.header.playTitle':
@@ -162,6 +166,7 @@ export default {
 	// Run page
 	'run.page.closed': 'closed',
 	'run.page.following': 'following',
+	'run.page.askHint': 'read-only · the code as it stands',
 	'run.page.waitingOnYou': 'waiting on you',
 	'run.page.betweenPhases': 'between chains',
 	'run.page.whatCanStart': 'what each watcher waits for',
@@ -280,6 +285,17 @@ export default {
 
 	// Composer
 	'run.composer.placeholder': 'Whisper to the agent…',
+	'run.composer.placeholderHeld': 'The agent is in your hands. Say what to change…',
+	'run.composer.takeOver': 'Take over',
+	'run.composer.takeOverTitle':
+		"Hold the agent's session: its turns wait for your next message, and the stage cannot end until you release it",
+	'run.composer.release': 'Release',
+	'run.composer.releasing': 'Handing back…',
+	'run.composer.releaseTitle':
+		'Hand the task back: the agent finishes what it was given, then the stage ends as usual',
+	'run.composer.held': 'In your hands · {duration}',
+	'run.composer.heldMessages_one': '{count} message',
+	'run.composer.heldMessages_other': '{count} messages',
 	'run.composer.aria': 'Message the agent',
 	'run.composer.keyQueue': 'send, queued',
 	'run.composer.keyNow': 'send now, interrupts',
@@ -291,6 +307,7 @@ export default {
 
 	// Runs list / table
 	'run.row.untitled': 'Untitled run',
+	'run.row.held': 'in your hands',
 	'run.table.run': 'Run',
 	'run.table.id': 'Id',
 	'run.table.state': 'State',
@@ -387,6 +404,15 @@ export default {
 	'run.event.stagePausedSpent': '{stage} paused — {why} ({spent} so far)',
 	'run.event.resumedRestart': '{stage} resumed — engine restarted, picking the session back up',
 	'run.event.resumedAnswer': '{stage} resumed — the answer landed',
+	'run.event.resumedMessage': '{stage} resumed — your message landed',
+	'run.event.resumedReleased': '{stage} resumed — handed back',
+	'run.event.quietHolder': 'in your hands, waiting for your word',
+	'run.event.holdTaken': '{stage}: you took over the agent',
+	'run.event.holdReleased': '{stage}: handed back ({bits})',
+	'run.event.holdEnded': '{stage}: take-over ended with the attempt ({bits})',
+	'run.event.messages_one': '{count} message',
+	'run.event.messages_other': '{count} messages',
+	'run.event.pickedUpHold': 'picked back up — your word landed',
 	'run.event.stageFailed': '{stage} failed: {reason}',
 	'run.event.actionStarted': '{stage}: action {action} started',
 	'run.event.thenDepth': '(then #{depth})',

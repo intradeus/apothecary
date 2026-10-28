@@ -154,14 +154,20 @@ func agentMarkdown(s *agentspec.Spec, servers []string) string {
 	b.WriteString("mode: primary\n")
 	b.WriteString("tools:\n")
 	if s.ReadOnly {
-		// read_only denies edit/patch but keeps write: §5.3's read-only
-		// agents (planner, reviewer, redactor) must still create their
-		// artifact outputs. write must be re-enabled EXPLICITLY — in
-		// opencode, edit:false disables the whole file-modification tool
-		// group. See IMPLEMENTATION_NOTES.
-		b.WriteString("  edit: false\n  patch: false\n  write: true\n")
+		// read_only denies edit/patch but keeps write for an agent that
+		// declares outputs: §5.3's read-only agents (planner, reviewer,
+		// redactor) must still create their artifact files. write must be
+		// re-enabled EXPLICITLY — in opencode, edit:false disables the whole
+		// file-modification tool group. An agent with nothing to write (the
+		// Ask pane's) gets none of it. See IMPLEMENTATION_NOTES.
+		fmt.Fprintf(&b, "  edit: false\n  patch: false\n  write: %v\n", len(s.Outputs) > 0)
 	}
 	fmt.Fprintf(&b, "  bash: %v\n", s.AllowBash)
+	if s.Name == agentspec.AskAgent {
+		// The Ask pane answers; a question it raised would land on the
+		// stage's run as if the stage had asked it.
+		b.WriteString("  \"ask_human_*\": false\n")
+	}
 	for _, m := range servers {
 		if !slices.Contains(s.MCP, m) {
 			fmt.Fprintf(&b, "  %q: false\n", m+"_*")
@@ -183,5 +189,8 @@ func Profile() acpagent.Profile {
 		// so the sidecar reads them to tell a silent failure from a turn.
 		Command: "opencode acp --print-logs --log-level WARN",
 		Mode:    func(spec ports.AgentSpec) string { return spec.Agent },
+		// A read-only session runs a read-only agent definition (its tools
+		// denied above): the engine prepares one for the Ask pane.
+		ReadOnlyBy: acpagent.ReadOnlyByAgent,
 	}
 }

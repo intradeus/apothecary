@@ -64,6 +64,7 @@ name: builder              # required, slug: the flow's permanent id
 version: 5                 # required int: the grammar this document is written in
 description: "..."         # optional
 operates_on: ticket        # what each run works on: ticket (default) | merge_request (below)
+ask: { harness: opencode } # optional: the Ask pane, a read-only session beside the run (below)
 parameters:                # the flow's ONE settings block (below): every entry is a knob
   harness: opencode        #   required: the harness kind agent stages run on
   model: provider/model    #   required: the model they run, unless a stage pins another
@@ -86,6 +87,29 @@ outcomes: [...]            # optional: what ends the run, each firing once
 instead of being half-understood — a version-4 one with a word on where its
 phases went. That is the entire purpose of the field: it is the seam a
 breaking change hangs off.
+
+### Ask: a read-only session beside the run
+
+```yaml
+ask:
+  harness: opencode        # the harness kind it runs on — a kind, or a $parameter
+```
+
+A flow with an `ask:` section gives every run an **Ask** pane: a session of
+its own in the run's workspace, there from the moment the workspace is up
+until it is destroyed, that answers questions about the code as it stands.
+It is not a stage and runs beside whatever stage is working: the engine
+prepares a read-only agent for it (no edit, write or shell tools) and opens
+its session read-only, so it cannot step on the stage's changes. The model is
+picked in the pane, not here — the flow only says which harness. The
+conversation persists with the run.
+
+Each harness keeps the promise its own way: opencode by the agent's tool
+definition, codex by its read-only session mode, omp by a second process
+that loads only reading tools. A harness that can promise none of that
+keeps the pane off, with the reason shown; an unknown harness kind is
+refused at run creation like a stage's. The name `ask` is the pane's agent: a flow with `ask:` cannot
+declare an agent by that name.
 
 ### Agents live in the flow
 

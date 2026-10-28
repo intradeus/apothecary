@@ -3,7 +3,9 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 
+	"apothecary/internal/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/sidecar"
 )
@@ -33,6 +35,39 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 	default:
 		writeJSON(w, http.StatusAccepted, MessageAccepted{MessageID: id})
+	}
+}
+
+// postHold takes over the run's live agent session for the signed-in user.
+func (s *Server) postHold(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	err := s.Engine.TakeOver(r.PathValue("id"), p.User.ID)
+	switch {
+	case errors.Is(err, engine.ErrRunNotActive), errors.Is(err, engine.ErrNoAgentRunning), errors.Is(err, engine.ErrAlreadyHeld):
+		writeErr(w, http.StatusConflict, err.Error())
+	case err != nil && strings.Contains(err.Error(), "not found"):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case err != nil:
+		writeErr(w, http.StatusBadRequest, err.Error())
+	default:
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
+// deleteHold releases a take-over: the hold is closed on the record and the
+// agent is handed the task back.
+func (s *Server) deleteHold(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	err := s.Engine.Release(r.PathValue("id"), p.User.ID)
+	switch {
+	case errors.Is(err, engine.ErrRunNotActive), errors.Is(err, engine.ErrNoAgentRunning), errors.Is(err, engine.ErrNotHeld):
+		writeErr(w, http.StatusConflict, err.Error())
+	case err != nil && strings.Contains(err.Error(), "not found"):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case err != nil:
+		writeErr(w, http.StatusBadRequest, err.Error())
+	default:
+		w.WriteHeader(http.StatusAccepted)
 	}
 }
 

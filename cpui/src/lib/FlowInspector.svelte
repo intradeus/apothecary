@@ -2188,6 +2188,21 @@
 					/>
 					<div class="help">{t('flow.insp.operatesOnHelp')}</div>
 				</div>
+				<div class="field">
+					<label for="fl-ask">{t('flow.insp.ask')}</label>
+					<input
+						id="fl-ask"
+						list="flow-params"
+						value={doc.ask?.harness ?? ''}
+						placeholder={t('flow.insp.askPlaceholder')}
+						oninput={(e) => {
+							const v = e.currentTarget.value.trim();
+							doc.ask = v ? { harness: v } : undefined;
+							onchange();
+						}}
+					/>
+					<div class="help">{t('flow.insp.askHelp')}</div>
+				</div>
 				<div class="lbl">{t('flow.insp.params')}</div>
 				<div class="help">{t('flow.insp.paramsHelp')}</div>
 				<ParamsEditor {doc} {onchange} />

@@ -208,6 +208,19 @@ type AgentInput struct {
 	// never takes them, and the engine carries them into the next prompt.
 	// nil = no messages.
 	Inbox Inbox
+	// ReadOnly: the session must not change the workspace (the Ask pane's
+	// session, beside a stage's). A runner that cannot promise it says so
+	// (ReadOnlyCapable) and is never asked.
+	ReadOnly bool
+	// Model, on a Resume, switches the session to this model before the
+	// prompt; "" keeps the session's.
+	Model string
+}
+
+// ReadOnlyCapable is an OPTIONAL AgentRunner capability: whether it can run
+// a session that cannot change the workspace (AgentInput.ReadOnly).
+type ReadOnlyCapable interface {
+	CanReadOnly() bool
 }
 
 // MCPServer is one MCP server an agent session can call: a local command
@@ -228,17 +241,26 @@ type UserMessage struct {
 	// Interrupt asks for the turn in flight to be cancelled so the message
 	// is read now, rather than queued until the agent finishes the turn.
 	Interrupt bool
+	// Verbatim marks text the engine composed (the handback prompt that
+	// ends a take-over): delivered as it is, not framed as a human's words.
+	Verbatim bool
 }
 
 // Inbox is the engine-owned queue of human messages for one invocation.
 type Inbox interface {
-	// Wake is signalled (buffered, coalescing) whenever a message is queued.
+	// Wake is signalled (buffered, coalescing) whenever a message is queued
+	// — and when a hold ends.
 	Wake() <-chan struct{}
 	// Take removes and returns every queued message: taking IS delivering,
 	// so a runner takes only what it is about to send.
 	Take() []UserMessage
 	// Interrupting reports whether a queued message asked to interrupt.
 	Interrupting() bool
+	// Held reports whether a human holds the session (a take-over). While
+	// held, a turn that ends with nothing queued is not the invocation's
+	// end: the runner waits for the holder's next message (Wake) and keeps
+	// going in the same session. The hold ends with a Wake and Held false.
+	Held() bool
 }
 
 // AgentEvent kinds.
@@ -268,6 +290,9 @@ type AgentEvent struct {
 	Error      string
 	Messages   []UserMessage
 	Cursor     string
+	// Usage, on a turn_end, is what that one turn spent — so the engine can
+	// account for the turns a take-over prompted.
+	Usage *Usage
 }
 
 type AgentTool struct {
