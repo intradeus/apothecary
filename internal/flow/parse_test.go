@@ -11,7 +11,7 @@ import (
 // header is a minimal valid preamble; tests append stages to it.
 const header = `name: t
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 `
 
 // commonAgents is the agents block the stage-shape tests splice in: since v3
@@ -70,7 +70,7 @@ func TestCanonicalV5(t *testing.T) {
 		t.Errorf("hash = %q, want 64 hex chars", f.Hash)
 	}
 	if f.Defaults.Timeout != 30*time.Minute || f.Defaults.MaxTurns != 50 ||
-		f.Defaults.Harness != "fake" || f.Defaults.Model != "anthropic/claude-sonnet-4-6" {
+		f.Defaults.Harness != "fake" || f.Defaults.Model != "fake/model" {
 		t.Errorf("defaults = %+v", f.Defaults)
 	}
 	if f.Budget.MaxCostUSD != 10.0 || f.Budget.MaxTotalTurns != 300 {
@@ -89,7 +89,7 @@ func TestCanonicalV5(t *testing.T) {
 	}
 
 	plan := f.Stage("plan")
-	if plan.Model != "anthropic/claude-sonnet-4-6" || plan.MaxTurns != 25 || plan.Timeout != 30*time.Minute {
+	if plan.Model != "fake/model" || plan.MaxTurns != 25 || plan.Timeout != 30*time.Minute {
 		t.Errorf("plan defaults not resolved: %+v", plan)
 	}
 	// The agent says what it writes; the stage says where.
@@ -117,7 +117,7 @@ func TestCanonicalV5(t *testing.T) {
 	}
 
 	review := f.Stage("review")
-	if review.Model != "openai/gpt-5" {
+	if review.Model != "fake/other" {
 		t.Errorf("review model override = %q", review.Model)
 	}
 	// on_reject needs no stage flag: the agent's verdict output makes it fire,
@@ -234,7 +234,7 @@ func TestReferenceFlowParses(t *testing.T) {
 
 func TestStagePorts(t *testing.T) {
 	doc := header + commonAgents + `main:
-  - { id: build, type: agent, agent: builder,
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder,
       input: { plan: { from: repo:docs/plan.md, type: file }, changes: { from: run.git.diff_target, type: changeset } },
       output: { patch: { to: artifacts/patch.md, type: file } }, on_success: done }
 `
@@ -287,7 +287,7 @@ func TestCommandPorts(t *testing.T) {
 
 func TestPortShapeErrors(t *testing.T) {
 	agent := func(ports string) string {
-		return header + "main:\n  - { id: a, type: agent, agent: x, " + ports + ", on_success: done }\n"
+		return header + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: x, " + ports + ", on_success: done }\n"
 	}
 	cases := []struct{ name, doc, want string }{
 		{"dup key", agent("input: { plan: { from: repo:a.md, type: file }, plan: { from: repo:b.md, type: file } }"), `port "plan" stated twice`},
@@ -333,7 +333,7 @@ func TestPortShapeErrors(t *testing.T) {
 // than a bare "unknown field", so an old document tells you how to fix itself.
 func TestRetiredSpellings(t *testing.T) {
 	cases := []struct{ name, doc, want string }{
-		{"verdict", header + "main:\n  - { id: a, type: agent, agent: x, verdict: true }\n",
+		{"verdict", header + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: x, verdict: true }\n",
 			"declare a verdict-typed output on the agent"},
 		{"ping", header + "main:\n  - { id: g, type: human_gate, ping: plan_approval }\n",
 			`say what you are asking in "question"`},
@@ -341,7 +341,7 @@ func TestRetiredSpellings(t *testing.T) {
 			"a gate shows an input port"},
 		{"body", header + "main:\n  - { id: m, type: action, action: create_mr, body: artifacts/mr.md }\n",
 			"with input: { body: { from: <path>, type: file } }"},
-		{"feed", header + "main:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
+		{"feed", header + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
 			"read edge.verdict from an input port"},
 		{"auto_complete", header + "main:\n  - { id: g, type: human_gate, auto_complete: mr_merged }\n",
 			`use "auto_approve"`},
@@ -400,7 +400,7 @@ func TestDocIOJSONForms(t *testing.T) {
 // asserting the port objects survive with their keys in order.
 func TestParseDocMapRoundTrip(t *testing.T) {
 	doc := header + commonAgents + `main:
-  - { id: build, type: agent, agent: builder, input: { plan: { from: repo:docs/plan.md, type: file }, changes: { from: run.git.diff_target, type: changeset } },
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: repo:docs/plan.md, type: file }, changes: { from: run.git.diff_target, type: changeset } },
       output: { patch: { to: artifacts/patch.md, type: file } }, on_success: done }
 `
 	d, err := ParseDoc("t.yaml", []byte(doc))
@@ -450,10 +450,12 @@ func TestValidationErrors(t *testing.T) {
 	}{
 		{"missing name", "version: 2\nparameters: { harness: fake, model: a/b }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"flow name is required", 0},
-		{"missing harness", "name: t\nversion: 5\nparameters: { model: a/b }\nmain:\n  - { id: s, type: command, run: x }\n",
-			"harness is required", 3},
-		{"missing model", "name: t\nversion: 5\nparameters: { harness: fake }\nmain:\n  - { id: s, type: command, run: x }\n",
-			"model is required", 0},
+		// An agent stage states its harness and its model (a literal or a
+		// $parameter); the parameters block owes neither a value.
+		{"missing harness", header + "main:\n  - { id: a, type: agent, agent: x, model: $model }\n",
+			"harness is required", 5},
+		{"missing model", header + "main:\n  - { id: a, type: agent, agent: x, harness: $harness }\n",
+			"model is required", 5},
 		{"bad model format", "name: t\nversion: 5\nparameters: { harness: fake, model: nomodel }\nmain:\n  - { id: s, type: command, run: x }\n",
 			"provider/model", 3},
 		{"bad timeout", "name: t\nversion: 5\nparameters: { model: a/b, timeout: soon }\nmain:\n  - { id: s, type: command, run: x }\n",
@@ -473,7 +475,7 @@ func TestValidationErrors(t *testing.T) {
 			"exactly one of run / run_ref", 5},
 		{"neither run nor run_ref", header + "main:\n  - { id: s, type: command }\n",
 			"exactly one of run / run_ref", 5},
-		{"agent missing", header + "main:\n  - { id: s, type: agent }\n",
+		{"agent missing", header + "main:\n  - { id: s, type: agent, harness: $harness, model: $model }\n",
 			"agent is required", 5},
 		{"bad input path", header + "main:\n  - { id: s, type: command, run: x, input: { p: { from: /etc/passwd, type: file } } }\n",
 			"must be a path some stage writes", 5},
@@ -530,13 +532,13 @@ func TestValidationErrors(t *testing.T) {
 			`on_success cannot be "debug"`, 5},
 		{"on_timeout on gate", header + "main:\n  - { id: g, type: human_gate, on_timeout: { to: g, max: 1 } }\n",
 			`field "on_timeout" does not apply`, 5},
-		{"each_repo on an agent", header + "main:\n  - { id: a, type: agent, agent: x, each_repo: true }\n",
+		{"each_repo on an agent", header + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: x, each_repo: true }\n",
 			"each_repo", 5},
 		{"then target missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: ghost, max: 1 } } }\n",
 			`on_fail target "ghost" does not exist`, 5},
 		{"then max missing", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, then: { to: s } } }\n",
 			"then #1", 5},
-		{"feed on a then link", header + "main:\n  - { id: a, type: agent, agent: x, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
+		{"feed on a then link", header + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: x, on_reject: { to: a, max: 1, then: { to: a, max: 1, feed: output } } }\n",
 			"is retired: read edge.verdict from an input port", 5},
 		{"unknown edge field", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
 			"bogus", 0},
@@ -656,7 +658,7 @@ func TestWaitStage(t *testing.T) {
 // target the run comes back from, not a terminal.
 func TestDebugLeaf(t *testing.T) {
 	doc := header + commonAgents + `main:
-  - { id: build, type: agent, agent: b,
+  - { id: build, type: agent, harness: $harness, model: $model, agent: b,
       on_fail: { to: build, max: 2, then: debug } }
   - { id: test,  type: command, run: t, on_fail: debug,
       on_timeout: { to: test, max: 1, then: debug } }
@@ -682,13 +684,13 @@ func TestDebugLeaf(t *testing.T) {
 	// Inside a watcher: its routes stay in its chain, and the leaf (like
 	// done/abort) is in every chain.
 	phased := header + commonAgents + `main:
-  - { id: build, type: agent, agent: b, on_fail: debug }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: b, on_fail: debug }
   - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }
 watchers:
   - id: fixes
     on: { signal: mr_review_settled }
     stages:
-      - { id: fix, type: agent, agent: b, on_fail: { to: fix, max: 1, then: debug } }
+      - { id: fix, type: agent, harness: $harness, model: $model, agent: b, on_fail: { to: fix, max: 1, then: debug } }
 outcomes:
   - id: shipped
     on: mr_merged
@@ -703,7 +705,7 @@ outcomes:
 // retry-then-escalate chains.
 func TestAbortAndThenChains(t *testing.T) {
 	doc := header + commonAgents + `main:
-  - { id: build, type: agent, agent: b }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: b }
   - { id: test,  type: command, run: t,
       on_fail: { to: test, max: 2, then: { to: build, max: 3 } },
       on_timeout: { to: test, max: 1, then: abort } }
@@ -748,7 +750,7 @@ func TestAbortAndThenChains(t *testing.T) {
 	// Unlimited is also legal when the SOURCE is a human_gate (the link
 	// only fires when a human rejects it), regardless of the target type.
 	gsrc := header + "agents:\n  - { name: a, prompt: do a }\n" + `main:
-  - { id: work, type: agent, agent: a, on_success: gate }
+  - { id: work, type: agent, harness: $harness, model: $model, agent: a, on_success: gate }
   - { id: gate, type: human_gate, on_success: done,
       on_reject: { to: work, max: -1 } }
 `
@@ -1391,7 +1393,7 @@ agents:
   - name: b
     prompt: do b
 main:
-  - { id: build, type: agent, agent: b, model: $review_model, max_turns: $turns, run_if: $plan_gate }
+  - { id: build, type: agent, harness: $harness, agent: b, model: $review_model, max_turns: $turns, run_if: $plan_gate }
   - { id: test, type: command, run_ref: $verify }
   - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }
 watchers:
@@ -1440,7 +1442,7 @@ outcomes:
 	for _, r := range f.Refs {
 		refs[r.Param] = r.Phase + "/" + r.Stage + "/" + r.Field
 	}
-	if len(f.Refs) != 5 || refs["review_model"] != "main/build/model" || refs["plan_gate"] != "main/build/run_if" ||
+	if len(f.Refs) != 6 || refs["review_model"] != "main/build/model" || refs["plan_gate"] != "main/build/run_if" || refs["harness"] != "main/build/harness" ||
 		refs["verify"] != "main/test/run_ref" || refs["mode"] != "conflicts//start" || refs["turns"] != "main/build/max_turns" {
 		t.Errorf("refs = %+v", f.Refs)
 	}
@@ -1456,9 +1458,9 @@ outcomes:
 
 	stages := "main:\n  - { id: s, type: command, run: x }\n"
 	for _, tc := range []struct{ name, params, substr string }{
-		{"harness missing", "{ model: a/b }", "harness is required"},
 		{"bad name", "{ harness: fake, model: a/b, Bad: 1 }", "is not a parameter name"},
-		{"no default", "{ harness: fake, model: a/b, x: { description: hi } }", "default is required"},
+		{"no default, no type", "{ harness: fake, model: a/b, x: { description: hi } }", "x: type is required (bool | int | float | string | duration)"},
+		{"known, no default", "{ harness: fake, model: a/b, timeout: { type: duration } }", "timeout: default is required"},
 		{"enum on an int", "{ harness: fake, model: a/b, x: { type: int, default: 1, enum: [1, 2] } }", "enum applies to a string"},
 		{"default not in enum", "{ harness: fake, model: a/b, x: { type: string, default: c, enum: [a, b] } }", "is not one of its enum"},
 		{"list default not in enum", "{ harness: fake, model: a/b, x: { type: string, list: true, default: [a, c], enum: [a, b] } }", `default "c" is not one of its enum`},
@@ -1551,17 +1553,17 @@ func TestNoParamWhereNoneIsRead(t *testing.T) {
 func TestParamSites(t *testing.T) {
 	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, s: { type: string, default: text }, d: { type: duration, default: 5m }, n: { type: int, default: 2 }, b: { type: bool, default: true }, e: { type: string, default: auto, enum: [auto, confirm] }, big: { type: string, default: auto, enum: [auto, confirm, manual] } }\n" + commonAgents
 	for _, tc := range []struct{ name, doc, substr string }{
-		{"sentinel at a site", head + "main:\n  - { id: a, type: agent, agent: b, model: $DIFF_TARGET }\n", "$DIFF_TARGET is not a parameter"},
-		{"undeclared", head + "main:\n  - { id: a, type: agent, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
-		{"wrong type", head + "main:\n  - { id: a, type: agent, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
-		{"bool at a string site", head + "main:\n  - { id: a, type: agent, agent: b, harness: $b }\n", "is a bool"},
-		{"param in a path", head + "main:\n  - { id: a, type: agent, agent: b, input: { plan: { from: $s, type: file } } }\n", "$s is a parameter, and this field reads none"},
+		{"sentinel at a site", head + "main:\n  - { id: a, type: agent, harness: $harness, agent: b, model: $DIFF_TARGET }\n", "$DIFF_TARGET is not a parameter"},
+		{"undeclared", head + "main:\n  - { id: a, type: agent, harness: $harness, agent: b, model: $nope }\n", `parameter "nope" is not declared`},
+		{"wrong type", head + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: b, max_turns: $s }\n", `parameter "s" is a string, and this field takes a int`},
+		{"bool at a string site", head + "main:\n  - { id: a, type: agent, model: $model, agent: b, harness: $b }\n", "is a bool"},
+		{"param in a path", head + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: b, input: { plan: { from: $s, type: file } } }\n", "$s is a parameter, and this field reads none"},
 		{"enum site needs an enum", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, start: $s }, stages: [{ id: x, type: command, run: x }] }\n", "needs an enum within"},
 		{"enum wider than the site", head + "main:\n  - { id: s, type: action, action: sync_target, with: { strategy: $big } }\n", `allows "auto", which this field does not`},
-		{"mixed case ref", head + "main:\n  - { id: a, type: agent, agent: b, model: $Mixed }\n", "is not a parameter reference"},
-		{"value fails the site rule", head + "main:\n  - { id: a, type: agent, agent: b, model: $s }\n", `model: "text" (parameter "s") is not of the form provider/model`},
-		{"duration via param", head + "main:\n  - { id: a, type: agent, agent: b, timeout: $s }\n", `parameter "s" is a string, and this field takes a duration`},
-		{"max_turns via param zero", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, z: { type: int, default: 0 } }\n" + commonAgents + "main:\n  - { id: a, type: agent, agent: b, max_turns: $z }\n", `max_turns must be > 0, got 0 (parameter "z")`},
+		{"mixed case ref", head + "main:\n  - { id: a, type: agent, harness: $harness, agent: b, model: $Mixed }\n", "is not a parameter reference"},
+		{"value fails the site rule", head + "main:\n  - { id: a, type: agent, harness: $harness, agent: b, model: $s }\n", `model: "text" (parameter "s") is not of the form provider/model`},
+		{"duration via param", head + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: b, timeout: $s }\n", `parameter "s" is a string, and this field takes a duration`},
+		{"max_turns via param zero", "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, z: { type: int, default: 0 } }\n" + commonAgents + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: b, max_turns: $z }\n", `max_turns must be > 0, got 0 (parameter "z")`},
 		{"on.max via string", head + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\nwatchers:\n  - { id: c, on: { signal: mr_conflicts, max: $s }, stages: [{ id: x, type: command, run: x }] }\n", "takes a int"},
 		{"action enum via plain string", head + "main:\n  - { id: s, type: action, action: sync_target, with: { strategy: $s } }\n", "needs an enum within"},
 	} {
@@ -1615,7 +1617,7 @@ parameters:
   mode: { type: string, default: confirm, enum: [auto, confirm, manual] }
   turns: { type: int, default: 2 }
 ` + commonAgents + `main:
-  - { id: a, type: agent, agent: b, max_turns: $turns, run_if: $gate }
+  - { id: a, type: agent, harness: $harness, model: $model, agent: b, max_turns: $turns, run_if: $gate }
   - { id: t, type: command, run_ref: $verify }
   - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }
 watchers:
@@ -1705,7 +1707,7 @@ func TestWhen(t *testing.T) {
 			t.Errorf("err = %v, want %q", err, tc.substr)
 		}
 	}
-	cond := header + commonAgents + "main:\n  - { id: p, type: agent, agent: builder, run_if: tracker, output: { patch: { to: artifacts/patch.md, type: file } } }\n" +
+	cond := header + commonAgents + "main:\n  - { id: p, type: agent, harness: $harness, model: $model, agent: builder, run_if: tracker, output: { patch: { to: artifacts/patch.md, type: file } } }\n" +
 		"  - { id: c, type: command, run: x, input: { patch: { from: artifacts/patch.md, type: file } } }\n"
 	if _, err := Parse("t.yaml", []byte(cond)); err == nil || !strings.Contains(err.Error(), `"artifacts/patch.md" is not written on every route reaching this stage`) {
 		t.Errorf("a conditional writer should not count: %v", err)
@@ -1720,7 +1722,7 @@ func TestWhen(t *testing.T) {
 // forms with typed defaults, int fields as a number or a "$name" string.
 func TestDocJSONShapes(t *testing.T) {
 	doc := "name: t\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  turns: { type: int, default: 3 }\n  cost: { type: float, default: 1.5 }\n  gate: { type: bool, default: true }\n  mode: { type: string, default: a, enum: [a, b], description: pick }\n  labels: { type: string, list: true, default: [x, y] }\n" + commonAgents +
-		"main:\n  - { id: s, type: agent, agent: b, max_turns: $turns, run_if: $gate }\n" +
+		"main:\n  - { id: s, type: agent, harness: $harness, model: $model, agent: b, max_turns: $turns, run_if: $gate }\n" +
 		"watchers:\n  - id: c\n    on: { signal: mr_conflicts, max: $turns }\n    stages: [{ id: x, type: command, run: x }]\n" +
 		"outcomes:\n  - { id: o, on: mr_merged, then: done }\n"
 	d, err := ParseDoc("t.yaml", []byte(doc))

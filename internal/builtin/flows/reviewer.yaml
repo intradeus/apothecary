@@ -15,9 +15,10 @@ ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow
 # first, with its earlier review in hand so it says what is new rather than
 # repeating itself. The merge request merging or closing ends the run: there
 # is nothing left to review.
+# model has no default on purpose: the project binds it (Workshop → Flows →
+# Configure), a run may override it, and the agent stage reads it as $model.
 parameters:
   harness: opencode
-  model: opencode-go/glm-5.2
   timeout: 20m
   max_turns: 40
   max_cost_usd: 3.0
@@ -90,6 +91,8 @@ sequences:
     stages:
       - id: read
         type: agent
+        harness: $harness
+        model: $model
         agent: pr_reviewer
         input:
           ticket:    { from: run.ticket, type: ticket }

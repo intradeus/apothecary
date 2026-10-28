@@ -9,6 +9,7 @@
 	import type { Flow, Integration, Model, OpenMergeRequest, ParamDecl } from '$lib/domain';
 	import { KNOWN_PARAMS } from '$lib/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
+	import { modelHarnessKinds } from '$lib/flow/paramValues';
 	import { t } from '$lib/i18n/index.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 
@@ -44,7 +45,7 @@
 	let flow = $state<Flow | null>(null);
 	let bound = $state<Record<string, string>>({});
 	let harnesses = $state<{ kind: string; label: string; id: string }[]>([]);
-	let models = $state<Model[]>([]);
+	let modelsByKind = $state<Record<string, Model[]>>({});
 	let loadError = $state('');
 
 	// A flow whose runs are started on a merge request someone opened: the
@@ -85,12 +86,9 @@
 	const own = $derived((flow?.parameters ?? []).filter((p) => !p.known));
 	const layer = $derived(under ?? bound);
 	const overridden = $derived(Object.values(params).filter((v) => v.trim() !== '').length);
-	const effectiveHarness = $derived(
-		params.harness ||
-			layer.harness ||
-			flow?.parameters.find((p) => p.name === 'harness')?.default ||
-			''
-	);
+	// The harness kinds the flow's model parameters run on, as the form
+	// stands: this run's overrides over the layer underneath.
+	const neededKinds = $derived(modelHarnessKinds(flow?.parameters ?? [], [params, layer]));
 
 	$effect(() => {
 		const pid = projectId;
@@ -132,26 +130,20 @@
 		};
 	});
 
-	// The model field suggests what the effective harness lists — best
-	// effort: a harness that cannot list leaves the field free text.
+	// Each model field suggests what its harness lists — best effort: a
+	// harness that cannot list leaves the field free text. Fetched once per
+	// kind.
+	const asked = new Set<string>();
 	$effect(() => {
-		const h = harnesses.find((x) => x.kind === effectiveHarness);
-		if (!h) {
-			models = [];
-			return;
+		for (const kind of neededKinds) {
+			const h = harnesses.find((x) => x.kind === kind);
+			if (!h || asked.has(kind)) continue;
+			asked.add(kind);
+			api.integrations.models(h.id).then(
+				(m) => (modelsByKind = { ...modelsByKind, [kind]: m }),
+				() => (modelsByKind = { ...modelsByKind, [kind]: [] })
+			);
 		}
-		let live = true;
-		api.integrations.models(h.id).then(
-			(m) => {
-				if (live) models = m;
-			},
-			() => {
-				if (live) models = [];
-			}
-		);
-		return () => {
-			live = false;
-		};
 	});
 
 	function set(name: string, value: string) {
@@ -202,20 +194,24 @@
 		</p>
 		<ParamFields
 			params={known}
+			all={flow.parameters}
 			values={params}
 			under={layer}
 			{underLabel}
 			{harnesses}
-			{models}
+			{modelsByKind}
 			idPrefix={`${idPrefix}-p`}
 			onchange={set}
 		/>
 		{#if own.length}
 			<ParamFields
 				params={own}
+				all={flow.parameters}
 				values={params}
 				under={layer}
 				{underLabel}
+				{harnesses}
+				{modelsByKind}
 				idPrefix={`${idPrefix}-p`}
 				onchange={set}
 			/>

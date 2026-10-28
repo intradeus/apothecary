@@ -707,11 +707,15 @@ export type OutputDecl = {
 
 export type Param = {
 	default: string;
+	default_ref?: string;
 	description?: string;
 	enum?: Array<string>;
+	harness?: string;
 	known?: boolean;
 	list?: boolean;
 	name: string;
+	required?: boolean;
+	role?: string;
 	type: string;
 };
 

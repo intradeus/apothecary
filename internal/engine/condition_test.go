@@ -27,11 +27,11 @@ func skipped(evs []event.Event, stage string) (bool, string) {
 func TestWhenTrackerSkipsWithoutASource(t *testing.T) {
 	doc := `name: cond
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - { name: b, prompt: build it }
 main:
-  - { id: note, type: agent, agent: b, run_if: tracker }
+  - { id: note, type: agent, harness: $harness, model: $model, agent: b, run_if: tracker }
   - { id: test, type: command, run: "true" }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -81,7 +81,7 @@ main:
 func TestWhenSubjectSkipsInASubjectlessPhaseRun(t *testing.T) {
 	doc := `name: subj
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: build, type: command, run: "true" }
 watchers:
@@ -144,7 +144,7 @@ outcomes:
 func TestWhenParamFalseSkips(t *testing.T) {
 	doc := `name: gated
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6, gate: { type: bool, default: true } }
+parameters: { harness: fake, model: fake/model, gate: { type: bool, default: true } }
 main:
   - { id: approve, type: human_gate, question: "Go?", run_if: $gate }
   - { id: build, type: command, run: "true" }

@@ -742,7 +742,11 @@ function toParamDecl(p: Wire.Param): ParamDecl {
 		default: p.default,
 		description: p.description || undefined,
 		enum: p.enum ?? undefined,
-		known: p.known ?? false
+		known: p.known ?? false,
+		required: p.required || undefined,
+		defaultRef: p.default_ref || undefined,
+		role: p.role === 'model' || p.role === 'harness' ? p.role : undefined,
+		harness: p.harness || undefined
 	};
 }
 

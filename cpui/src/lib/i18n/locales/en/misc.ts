@@ -710,6 +710,10 @@ export default {
 	'flow.insp.flowDefault': 'flow default',
 	'flow.insp.flowDefaultWith': 'flow default · {value}',
 	'flow.insp.overrideDefault': 'Overrides the flow default; empty = {value}',
+	'flow.insp.stageHarnessHelp':
+		'What this stage runs on: a harness kind, or a parameter the workshop binds ($harness).',
+	'flow.insp.stageModelHelp':
+		'provider/model, or a parameter the workshop binds ($model). Stages reading the same model parameter must run on the same harness.',
 	'flow.insp.maxTurns': 'Max turns',
 	'flow.insp.timeout': 'Timeout',
 	'flow.insp.inputs': 'Inputs',
@@ -777,6 +781,10 @@ export default {
 	'flow.insp.textInputHelp': 'A literal written in the flow, not a file.',
 	'flow.insp.exactlyOne': 'Bind exactly one of {names}.',
 	'flow.fields.unset': '— not set here',
+	'flow.fields.unbound': 'no value yet — bind it here, or set it when starting a run',
+	'flow.fields.follows': 'follows ${name} unless set',
+	'flow.fields.modelsOf': 'suggestions: what harness {harness} lists',
+	'flow.fields.modelsNoHarness': 'pick the harness first to see its models',
 	'flow.fields.flowDefault': 'flow default: {value}',
 	'flow.fields.fromWorkshop': 'workshop: {value}',
 	'flow.fields.fromRun': 'this run: {value}',
@@ -829,9 +837,12 @@ export default {
 	'flow.insp.nothingSelected': 'nothing selected',
 	'flow.insp.params': 'Parameters',
 	'flow.insp.paramsHelp':
-		"The flow's one settings block. Each entry is declared here with its default; a workshop binds its own values without touching the document, and a run may override them.",
+		"The flow's one settings block. Each entry is declared here with its default — a model or a harness may have none, and waits for the workshop; a workshop binds its own values without touching the document, and a run may override them.",
 	'flow.insp.knownParams': 'What the engine reads',
 	'flow.insp.engineDefault': 'engine default · {value}',
+	'flow.insp.leftToWorkshop': 'no default · the workshop binds it, or a run sets it',
+	'flow.insp.paramUnboundHelp':
+		'No default: read as a model or a harness, it waits for the workshop’s binding or the run.',
 	'flow.insp.customParams': "This flow's own",
 	'flow.insp.paramName': 'Name',
 	'flow.insp.paramDefault': 'Default',

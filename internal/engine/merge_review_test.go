@@ -70,7 +70,7 @@ func TestMRMergeRefusedRoutesOnFail(t *testing.T) {
 // puts the good one on the merge request, named after the phase run.
 func TestPostReviewFromAReviewOutput(t *testing.T) {
 	doc := observeFlowDoc("  - id: look\n    on: manual\n    stages:\n" +
-		"      - { id: read, type: agent, agent: pr_reviewer, input: { failure: { from: edge.failure, type: failure, optional: true } },\n" +
+		"      - { id: read, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { failure: { from: edge.failure, type: failure, optional: true } },\n" +
 		"          output: { review: { to: artifacts/review.yaml, type: review_threads } }, on_fail: { to: read, max: 1 } }\n" +
 		"      - { id: publish_review, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }\n")
 	doc = strings.Replace(doc, "agents:\n",
@@ -127,7 +127,7 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 const shipFlowDoc = `name: shipper
 version: 5
 operates_on: merge_request
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: look, type: command, run: "true" }
 watchers:

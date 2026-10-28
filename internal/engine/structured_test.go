@@ -16,7 +16,7 @@ import (
 // it, and a committer whose message the commit action reads.
 const structuredDoc = `name: structured
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 schemas:
   - name: report
     json_schema:
@@ -57,7 +57,7 @@ func stageFailures(evs []event.Event) []*event.StageFailed {
 // was told the schema in the first place.
 func TestSchemaOutputInvalidIsRetriedWithTheViolations(t *testing.T) {
 	doc := structuredDoc + `main:
-  - { id: write, type: agent, agent: writer, input: { failure: { from: edge.failure, type: failure, optional: true } },
+  - { id: write, type: agent, harness: $harness, model: $model, agent: writer, input: { failure: { from: edge.failure, type: failure, optional: true } },
       output: { report: { to: artifacts/report.json, schema: report } }, on_fail: { to: write, max: 1 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -106,7 +106,7 @@ func TestSchemaOutputInvalidIsRetriedWithTheViolations(t *testing.T) {
 func TestSchemaInputInvalidFailsBeforeTheAgentRuns(t *testing.T) {
 	doc := structuredDoc + `main:
   - { id: make, type: command, run: "make-report" }
-  - { id: read, type: agent, agent: reader, input: { report: { from: repo:artifacts/report.json, schema: report } }, on_fail: abort }
+  - { id: read, type: agent, harness: $harness, model: $model, agent: reader, input: { report: { from: repo:artifacts/report.json, schema: report } }, on_fail: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	h.envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
@@ -137,7 +137,7 @@ func TestSchemaInputInvalidFailsBeforeTheAgentRuns(t *testing.T) {
 // line, body — read from stdin, and leaves a clean tree alone.
 func TestCommitActionCommitsTheMessage(t *testing.T) {
 	doc := structuredDoc + `main:
-  - { id: msg,    type: agent, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message } } }
+  - { id: msg,    type: agent, harness: $harness, model: $model, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message } } }
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -206,7 +206,7 @@ func TestCommitActionRefusesAMalformedMessage(t *testing.T) {
 // A refused commit (a hook said no) fails the stage with git's words.
 func TestCommitActionRefusedByGit(t *testing.T) {
 	doc := structuredDoc + `main:
-  - { id: msg,    type: agent, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message } } }
+  - { id: msg,    type: agent, harness: $harness, model: $model, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message } } }
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } }, on_fail: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -294,7 +294,7 @@ func TestCommandSchemaInputInvalidFailsBeforeTheScript(t *testing.T) {
 func TestTypedOutputNarrowedBySchema(t *testing.T) {
 	doc := `name: structured
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 schemas:
   - name: conventional
     json_schema:
@@ -305,7 +305,7 @@ agents:
     outputs:
       - { name: commit, type: commit_message, schema: conventional }
 main:
-  - { id: msg,    type: agent, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message, schema: conventional } }, on_fail: abort }
+  - { id: msg,    type: agent, harness: $harness, model: $model, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message, schema: conventional } }, on_fail: abort }
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -335,6 +335,8 @@ func TestMissingOutputIsFedToTheRetry(t *testing.T) {
 	doc := structuredDoc + `main:
   - id: write
     type: agent
+    harness: $harness
+    model: $model
     agent: writer
     input:
       failure: { from: edge.failure, type: failure, optional: true }

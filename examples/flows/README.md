@@ -14,8 +14,8 @@ a flow carries its agents, so there is nothing to install separately and
 no copies here to drift.
 
 Before running the flow on a project: set a `verify` command on the
-project, and check the review stage's model pin is routable by your
-harness auth (or change/remove it).
+project, and bind `model` (Workshop → Flows → Configure) — the flow carries
+no model id of its own, so a run is refused until the project says which.
 
 The two tracker stages (`in_progress`, `ticket_done`) move the ticket's
 tracker issue in canonical statuses that the ticket's tracker translates

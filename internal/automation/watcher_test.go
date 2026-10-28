@@ -345,7 +345,7 @@ func TestDisabledAndStale(t *testing.T) {
 const reviewerYAML = `name: rev
 version: 5
 operates_on: merge_request
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: pr_reviewer
     prompt: review it
@@ -354,7 +354,7 @@ agents:
     outputs:
       - { name: review, type: review_threads }
 main:
-  - { id: read, type: agent, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } }, output: { review: { to: artifacts/review.yaml, type: review_threads } } }
+  - { id: read, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } }, output: { review: { to: artifacts/review.yaml, type: review_threads } } }
   - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 outcomes:
   - { id: merged, on: mr_merged, then: done }

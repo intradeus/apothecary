@@ -7,15 +7,17 @@ description: "plan-gated build with cross-vendor adversarial review, then the me
 # them (Workshop → Flows → Configure) without touching this document, and a
 # run may override — so one flow serves a GitHub project with no tracker and
 # a GitLab + Jira one alike.
+# model has no default on purpose: model ids change, and this document must
+# not. The project binds it (Workshop → Flows → Configure), a run may
+# override it, and every agent stage below reads it as $model.
 parameters:
   harness: opencode
-  model: opencode-go/qwen3.7-plus
-  timeout: 30m
+  timeout: 120m
   max_turns: 50
-  max_cost_usd: 20.0
+  max_cost_usd: 10.0
   max_total_turns: 600
   verify:          { type: string, default: verify, description: "the project command that runs the tests (project.commands)" }
-  review_model:    { type: string, default: opencode-go/glm-5.2, description: "a second vendor reviews the change" }
+  review_model:    { type: string, default: $model, description: "the reviewer's model — bind a second vendor's for a real cross-check; unbound, the review runs on $model" }
   plan_gate:       { type: bool, default: true, description: "stop for a human to approve the plan before building" }
   conflicts_start: { type: string, default: confirm, enum: [auto, confirm, manual], description: "how a conflict fix begins: by itself, after asking, or by hand from the run page" }
   review_start:    { type: string, default: auto, enum: [auto, confirm, manual], description: "how a review-fix round begins" }
@@ -394,6 +396,8 @@ main:
   # writes and to where — the agent's contract says only what.
   - id: plan
     type: agent
+    harness: $harness
+    model: $model
     agent: planner
     max_turns: 25
     description: "explore the repo and write the implementation plan"
@@ -417,6 +421,8 @@ main:
 
   - id: build
     type: agent
+    harness: $harness
+    model: $model
     agent: builder
     max_turns: 80
     description: "implement the approved plan, leaving the changes uncommitted"
@@ -430,6 +436,8 @@ main:
 
   - id: commit_msg
     type: agent
+    harness: $harness
+    model: $model
     agent: committer
     max_turns: 10
     description: "write the commit message for the build's uncommitted work"
@@ -466,6 +474,7 @@ main:
   # rejected rounds, and a human looks rather than the run being dropped.
   - id: review
     type: agent
+    harness: $harness
     agent: reviewer
     model: $review_model
     max_turns: 30
@@ -495,6 +504,8 @@ main:
 
   - id: shoot
     type: agent
+    harness: $harness
+    model: $model
     agent: photographer
     run_if: $screenshots
     max_turns: 30
@@ -512,6 +523,8 @@ main:
 
   - id: redact
     type: agent
+    harness: $harness
+    model: $model
     agent: redactor
     max_turns: 15
     description: "write the merge request description"
@@ -574,6 +587,8 @@ watchers:
 
       - id: resolve
         type: agent
+        harness: $harness
+        model: $model
         agent: resolver
         max_turns: 30
         description: "remove the conflict markers, keeping both intents — no git"
@@ -614,6 +629,8 @@ watchers:
 
       - id: fix
         type: agent
+        harness: $harness
+        model: $model
         agent: builder
         max_turns: 60
         description: "address every review thread"
@@ -627,6 +644,8 @@ watchers:
 
       - id: fix_commit_msg
         type: agent
+        harness: $harness
+        model: $model
         agent: committer
         max_turns: 10
         input:
@@ -662,6 +681,8 @@ watchers:
 
       - id: reply
         type: agent
+        harness: $harness
+        model: $model
         agent: replier
         max_turns: 15
         description: "answer each thread with what was done"
@@ -691,6 +712,8 @@ watchers:
     stages:
       - id: ci_repair
         type: agent
+        harness: $harness
+        model: $model
         agent: ci_fixer
         max_turns: 60
         description: "run the failed job's steps, fix what they report"
@@ -703,6 +726,8 @@ watchers:
 
       - id: ci_commit_msg
         type: agent
+        harness: $harness
+        model: $model
         agent: committer
         max_turns: 10
         input:

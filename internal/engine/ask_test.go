@@ -23,10 +23,10 @@ import (
 
 const askPaneFlowDoc = `name: askpane
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 ask: { harness: fake }
 main:
-  - { id: build, type: agent, agent: builder, input: { ticket: { from: run.ticket, type: ticket } } }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder, input: { ticket: { from: run.ticket, type: ticket } } }
 `
 
 func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
@@ -77,7 +77,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Harness != "fake" || st.Model != "anthropic/claude-sonnet-4-6" || st.Busy || len(st.Messages) != 0 {
+	if st.Harness != "fake" || st.Model != "fake/model" || st.Busy || len(st.Messages) != 0 {
 		t.Fatalf("state = %+v", st)
 	}
 	frames, stop := h.e.AskWatch(runID)
@@ -105,7 +105,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	})
 	st, _ = h.e.AskState(ctx, runID)
 	a := st.Messages[1]
-	if a.Role != askstore.RoleAnswer || a.Text != "It lives in main.go, line 12." || a.CostUSD != 0.05 || a.Turns != 1 || a.Model != "anthropic/claude-sonnet-4-6" || a.Error != "" {
+	if a.Role != askstore.RoleAnswer || a.Text != "It lives in main.go, line 12." || a.CostUSD != 0.05 || a.Turns != 1 || a.Model != "fake/model" || a.Error != "" {
 		t.Fatalf("answer = %+v", a)
 	}
 	mu.Lock()

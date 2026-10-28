@@ -287,14 +287,22 @@ tasks:
       - gofmt -w ./cmd ./internal ./workspace 2>/dev/null || gofmt -w .
       - cd cpui && npm run format
 
+  lint:models:
+    desc: 'Fail on a real model id anywhere in the tree — models live in a project’s flow binding, never in code, flows, tests or docs'
+    cmds:
+      - |
+        hits="$(grep -rnE --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.svelte-kit --exclude-dir=build --exclude-dir=generated --exclude-dir=UX --exclude=IMPLEMENTATION_NOTES.md --exclude=TODO.md 'glm-[0-9]|gpt-[0-9]|claude-(sonnet|opus|haiku|[0-9])|qwen[0-9]|kimi-k[0-9]|gemini-[0-9]' cmd internal cpui/src docs examples workspace api README.md 2>/dev/null || true)"
+        if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
+
   verify:
-    desc: 'The full pre-commit gate: gofmt, vet, go tests, API contract, svelte-check, UI build'
+    desc: 'The full pre-commit gate: gofmt, vet, go tests, model-id lint, API contract, svelte-check, UI build'
     cmds:
       - |
         out="$(gofmt -l ./cmd ./internal)"
         if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
       - go vet ./...
       - go test ./...
+      - task: lint:models
       - task: api:check
       - cd cpui && npm run check
       - cd cpui && npm run build

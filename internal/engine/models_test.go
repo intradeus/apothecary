@@ -13,10 +13,10 @@ import (
 
 const modelFlowDoc = `name: models
 version: 2
-parameters: { harness: fake, model: zen/glm-5.0 }
+parameters: { harness: fake, model: acme/alpha-1 }
 main:
-  - { id: build, type: agent, agent: builder }
-  - { id: review, type: agent, agent: builder, model: zen/glm-5.3 }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
+  - { id: review, type: agent, harness: $harness, agent: builder, model: acme/alpha-3 }
 `
 
 // A model the provider retired is refused when the run is created — before a
@@ -24,13 +24,13 @@ main:
 func TestRunRefusedForAModelItsHarnessCannotReach(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
 	h.res.Models = func(context.Context, string) ([]string, error) {
-		return []string{"zen/glm-5.2", "zen/glm-5.3", "zen/kimi-k3", "other/glm-5.0"}, nil
+		return []string{"acme/alpha-2", "acme/alpha-3", "acme/kappa-3", "other/alpha-1"}, nil
 	}
 	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
 	if err == nil {
 		t.Fatal("run created with a model the harness cannot reach")
 	}
-	for _, want := range []string{`stage "build"`, `"zen/glm-5.0"`, "zen/glm-5.2, zen/glm-5.3"} {
+	for _, want := range []string{`stage "build"`, `"acme/alpha-1"`, "acme/alpha-2, acme/alpha-3"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err, want)
 		}
@@ -43,7 +43,7 @@ func TestRunRefusedForAModelItsHarnessCannotReach(t *testing.T) {
 	}
 
 	steps := h.e.PreflightProject(context.Background(), testProject)
-	if s := stepNamed(steps, "models"); s == nil || s.OK || !strings.Contains(s.Error, "zen/glm-5.0") {
+	if s := stepNamed(steps, "models"); s == nil || s.OK || !strings.Contains(s.Error, "acme/alpha-1") {
 		t.Errorf("preflight models step = %+v", s)
 	}
 }
@@ -72,7 +72,7 @@ func TestUnlistableModelsDoNotBlockTheRun(t *testing.T) {
 func TestPreflightModelsPass(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
 	h.res.Models = func(context.Context, string) ([]string, error) {
-		return []string{"zen/glm-5.0", "zen/glm-5.3"}, nil
+		return []string{"acme/alpha-1", "acme/alpha-3"}, nil
 	}
 	if s := stepNamed(h.e.PreflightProject(context.Background(), testProject), "models"); s == nil || !s.OK {
 		t.Errorf("models step = %+v", s)
@@ -114,7 +114,7 @@ func (r *listingRunner) AgentModels(context.Context, ports.EnvID) ([]string, err
 // (version skew): the run fails before its first stage, not three stages in.
 func TestRunFailsBeforeItsFirstStageOnAModelTheAgentDoesNotOffer(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
-	lr := &listingRunner{AgentRunner: h.runner, models: []string{"zen/glm-5.2", "zen/glm-5.3"}}
+	lr := &listingRunner{AgentRunner: h.runner, models: []string{"acme/alpha-2", "acme/alpha-3"}}
 	h.res.Runner = lr
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestRunFailsBeforeItsFirstStageOnAModelTheAgentDoesNotOffer(t *testing.T) {
 	h.e.Wait(runID)
 	evs := h.events(t, runID)
 	rf, ok := findPayload[*event.RunFailed](evs)
-	if !ok || !strings.Contains(rf.Reason, `stage "build"`) || !strings.Contains(rf.Reason, "zen/glm-5.2") {
+	if !ok || !strings.Contains(rf.Reason, `stage "build"`) || !strings.Contains(rf.Reason, "acme/alpha-2") {
 		t.Fatalf("run_failed = %+v; events %v", rf, eventTypes(evs))
 	}
 	if _, started := findPayload[*event.StageStarted](evs); started {
@@ -136,8 +136,8 @@ func TestRunFailsBeforeItsFirstStageOnAModelTheAgentDoesNotOffer(t *testing.T) {
 
 func TestAgentModelCheckPassesAndToleratesAnUnaskableAgent(t *testing.T) {
 	for _, lr := range []*listingRunner{
-		{models: []string{"zen/glm-5.0", "zen/glm-5.3"}}, // offered
-		{err: errors.New("agent would not start")},       // cannot ask: the stage will say
+		{models: []string{"acme/alpha-1", "acme/alpha-3"}}, // offered
+		{err: errors.New("agent would not start")},         // cannot ask: the stage will say
 		{models: nil}, // says nothing
 	} {
 		h := newHarness(t, mustFlow(t, modelFlowDoc))
@@ -160,7 +160,7 @@ func TestAgentModelCheckPassesAndToleratesAnUnaskableAgent(t *testing.T) {
 func TestEnvCheckAgentModelsStep(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
 	h.envp.ExecFunc = firewallAwareExec()
-	h.res.Runner = &listingRunner{AgentRunner: h.runner, models: []string{"zen/glm-5.3"}}
+	h.res.Runner = &listingRunner{AgentRunner: h.runner, models: []string{"acme/alpha-3"}}
 	var step CheckStep
 	RunEnvCheck(context.Background(), h.res, "envck-m",
 		EnvCheckOptions{Stages: h.flowOf(t, "models").Stages},
@@ -169,7 +169,7 @@ func TestEnvCheckAgentModelsStep(t *testing.T) {
 				step = s
 			}
 		})
-	if step.Status != "fail" || !strings.Contains(step.Detail, "zen/glm-5.0") || strings.Contains(step.Detail, `"review"`) {
+	if step.Status != "fail" || !strings.Contains(step.Detail, "acme/alpha-1") || strings.Contains(step.Detail, `"review"`) {
 		t.Fatalf("agent_models = %+v", step)
 	}
 }
@@ -180,11 +180,11 @@ func TestAgentAccepts(t *testing.T) {
 		model      string
 		want       bool
 	}{
-		{[]string{"opencode-go/glm-5.2"}, "opencode-go/glm-5.2", true},
-		{[]string{"gpt-5-codex/high", "gpt-5-codex/low"}, "openai/gpt-5-codex", true}, // codex: bare + effort
-		{[]string{"gpt-5"}, "openai/gpt-5", true},
-		{[]string{"opencode-go/glm-5.2"}, "opencode-go/glm-5.0", false},
-		{[]string{"gpt-5-codex/high"}, "openai/gpt-5", false}, // a prefix is not a match
+		{[]string{"acme/alpha-2"}, "acme/alpha-2", true},
+		{[]string{"alpha-codex/high", "alpha-codex/low"}, "acme/alpha-codex", true}, // codex: bare + effort
+		{[]string{"alpha-5"}, "acme/alpha-5", true},
+		{[]string{"acme/alpha-2"}, "acme/alpha-1", false},   // another version is not a match
+		{[]string{"alpha-codex/high"}, "acme/alpha", false}, // a prefix is not a match
 	} {
 		if got := agentAccepts(c.advertised, c.model); got != c.want {
 			t.Errorf("agentAccepts(%v, %q) = %v", c.advertised, c.model, got)
@@ -200,13 +200,13 @@ func TestRunRefusedWhenTheProviderRejectsTheCredential(t *testing.T) {
 	var asked []string
 	h.res.CheckAuth = func(_ context.Context, kind string, models []string) ([]string, []string) {
 		asked = append(asked, kind+":"+strings.Join(models, ","))
-		return []string{"opencode model zen/glm-5.0: credential rejected (401 Invalid credential)"}, nil
+		return []string{"opencode model acme/alpha-1: credential rejected (401 Invalid credential)"}, nil
 	}
 	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
 	if err == nil || !strings.Contains(err.Error(), "Invalid credential") {
 		t.Fatalf("err = %v, want the provider's refusal", err)
 	}
-	if len(asked) != 1 || asked[0] != "fake:zen/glm-5.0,zen/glm-5.3" {
+	if len(asked) != 1 || asked[0] != "fake:acme/alpha-1,acme/alpha-3" {
 		t.Errorf("asked %v", asked)
 	}
 	if len(h.envp.ExecCalls) != 0 {

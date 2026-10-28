@@ -35,6 +35,13 @@ func (e *Engine) SetFlowBindings(b FlowBindings) { e.bindings = b }
 func (e *Engine) resolveParams(ctx context.Context, fl *flow.Flow, projectID string, override map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(fl.Params))
 	for _, pr := range fl.Params {
+		// A parameter with no default (the model, the harness a flow leaves
+		// to the project) has no value until a layer below gives one; one
+		// whose default reads another parameter is filled in last, from the
+		// value that parameter ends up with.
+		if pr.Required || pr.DefaultRef != "" {
+			continue
+		}
 		out[pr.Name] = pr.Default
 	}
 	if e.bindings != nil {
@@ -57,6 +64,24 @@ func (e *Engine) resolveParams(ctx context.Context, fl *flow.Flow, projectID str
 		}
 		out[k] = v
 	}
+	// default: $other — follow the chain to a value, when there is one (the
+	// parser refuses cycles, so this terminates).
+	for _, pr := range fl.Params {
+		if _, has := out[pr.Name]; has || pr.DefaultRef == "" {
+			continue
+		}
+		for name := pr.DefaultRef; name != ""; {
+			if v, ok := out[name]; ok {
+				out[pr.Name] = v
+				break
+			}
+			target := fl.Param(name)
+			if target == nil {
+				break
+			}
+			name = target.DefaultRef
+		}
+	}
 	return out, nil
 }
 
@@ -68,7 +93,17 @@ func (e *Engine) bindFlow(ctx context.Context, fl *flow.Flow, projectID string) 
 	if err != nil {
 		return nil, err
 	}
-	return fl.Resolve(params)
+	bound, err := fl.Resolve(params)
+	if err != nil {
+		return nil, err
+	}
+	// What the project has not bound and no run could run without: the
+	// model, the harness (FLOWLANG §1). A run may still set it; the
+	// project-level check says so.
+	if err := flow.UnboundError(bound.Unbound()); err != nil {
+		return nil, err
+	}
+	return bound, nil
 }
 
 // boundFlow is the project's current document for name, resolved with its

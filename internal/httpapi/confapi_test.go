@@ -24,7 +24,7 @@ import (
 // gated build ending in an MR — enough to drive both human gates.
 const v1FlowDoc = `name: v1
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: planner
     prompt: plan the work
@@ -35,10 +35,10 @@ agents:
     inputs:
       - { name: plan, type: file, optional: true }
 main:
-  - { id: plan,       type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: plan,       type: agent, harness: $harness, model: $model, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
   - { id: plan_gate,  type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 3 } }
-  - { id: build,      type: agent, agent: builder, input: { plan: { from: artifacts/plan.md, type: file } } }
+  - { id: build,      type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: artifacts/plan.md, type: file } } }
   - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
   - { id: mr,         type: action, action: create_mr, input: { body: { from: artifacts/plan.md, type: file } } }
   - { id: final_gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged }
@@ -376,7 +376,7 @@ func TestBuiltinDefaultsAPI(t *testing.T) {
 	}
 
 	// Saving under the template's name creates this project's own copy.
-	override := "name: builder\nversion: 5\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
+	override := "name: builder\nversion: 5\nparameters: { harness: fake, model: fake/model }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
 	resp, data = x.do(t, "PUT", "/api/projects/"+projectID+"/flows/builder", map[string]string{"yaml": override}, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("shadow put = %d: %s", resp.StatusCode, data)
@@ -627,7 +627,7 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 
 	// Binding an input the agent does not declare: refused, not advised.
 	code, vr := post("name: w\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"main:\n  - { id: b, type: agent, agent: builder, input: { ghost: { from: repo:x.md, type: file } }, on_success: done }\n")
+		"main:\n  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { ghost: { from: repo:x.md, type: file } }, on_success: done }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
@@ -638,8 +638,8 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 	// on_reject on an agent that declares no verdict can never fire: also an
 	// error now that the contract is in the document.
 	code, vr = post("name: r\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: { from: repo:docs/plan.md, type: file } }, on_success: j }\n" +
-		"  - { id: j, type: agent, agent: plain, on_success: done, on_reject: { to: b, max: 1 } }\n")
+		"main:\n  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: repo:docs/plan.md, type: file } }, on_success: j }\n" +
+		"  - { id: j, type: agent, harness: $harness, model: $model, agent: plain, on_success: done, on_reject: { to: b, max: 1 } }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
@@ -650,7 +650,7 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 	// Reading a path nothing in the flow writes is refused too: a file of
 	// the repository says so with repo:.
 	code, vr = post("name: n\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"main:\n  - { id: b, type: agent, agent: builder, input: { plan: { from: artifacts/nobody.md, type: file } }, on_success: done }\n")
+		"main:\n  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: artifacts/nobody.md, type: file } }, on_success: done }\n")
 	if code != 200 || vr.OK {
 		t.Fatalf("validate = %d ok=%v, want ok:false", code, vr.OK)
 	}
@@ -661,7 +661,7 @@ func TestFlowValidateReportsErrorsHonestly(t *testing.T) {
 	// A legal-but-suspicious document still validates, with the finding as a
 	// warning: the gate shows a merge request no route opens.
 	code, vr = post("name: ok\nversion: 5\nparameters: { harness: fake, model: a/b }\n" + agents +
-		"main:\n  - { id: b, type: agent, agent: plain }\n" +
+		"main:\n  - { id: b, type: agent, harness: $harness, model: $model, agent: plain }\n" +
 		"  - { id: g, type: human_gate, question: \"Merge?\", input: { mr: { from: run.mr.url, type: link } }, on_success: done }\n")
 	if code != 200 || !vr.OK {
 		t.Fatalf("validate = %d ok=%v errors=%v, want ok:true", code, vr.OK, vr.Errors)
@@ -711,7 +711,7 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	x := newConfEnv(t)
 	doc := "name: p\nversion: 5\nparameters:\n  harness: fake\n  model: a/b\n  mode: { type: string, default: confirm, enum: [auto, confirm, manual] }\n  turns: { type: int, default: 3 }\n" +
 		"agents:\n  - { name: b, prompt: build, outputs: [ { name: mr, type: file } ] }\n" +
-		"main:\n  - { id: build, type: agent, agent: b, max_turns: $turns, output: { mr: { to: artifacts/mr.md, type: file } } }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n" +
+		"main:\n  - { id: build, type: agent, harness: $harness, model: $model, agent: b, max_turns: $turns, output: { mr: { to: artifacts/mr.md, type: file } } }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n" +
 		"watchers:\n  - id: conflicts\n    on: { signal: mr_conflicts, start: $mode }\n    stages:\n      - { id: sync, type: action, action: sync_target }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
 	var vr struct {
@@ -743,7 +743,7 @@ func TestValidateFlowReportsParametersAndPhases(t *testing.T) {
 	if len(vr.Parameters) != 8 || vr.Parameters[0].Name != "harness" || !vr.Parameters[0].Known || vr.Parameters[2].Name != "mode" || vr.Parameters[3].Type != "int" {
 		t.Errorf("parameters = %+v", vr.Parameters)
 	}
-	if len(vr.Refs) != 2 || len(vr.Phases) != 3 || vr.Phases[0].Kind != "main" || vr.Phases[0].Signal != "" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
+	if len(vr.Refs) != 4 || len(vr.Phases) != 3 || vr.Phases[0].Kind != "main" || vr.Phases[0].Signal != "" || vr.Phases[0].Start != "manual" || vr.Phases[0].Max != -1 || vr.Phases[0].Stages != 2 ||
 		vr.Phases[1].Start != "confirm" || !vr.Phases[1].Subject || vr.Phases[1].Max != -1 ||
 		vr.Phases[2].Kind != "outcome" || vr.Phases[2].Then != "done" || vr.Phases[2].Stages != 0 || vr.Phases[2].Start != "auto" || vr.Phases[2].Subject {
 		t.Errorf("refs = %+v phases = %+v", vr.Refs, vr.Phases)

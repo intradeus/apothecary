@@ -19,7 +19,7 @@ const labelsFlowDoc = `name: lb
 version: 5
 parameters:
   harness: fake
-  model: anthropic/claude-sonnet-4-6
+  model: fake/model
   mr_labels: { type: string, list: true, default: [apothecary] }
 agents:
   - name: redactor
@@ -27,7 +27,7 @@ agents:
     outputs:
       - { name: mr, type: file }
 main:
-  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
   - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, with: { labels: $mr_labels } }
 `
 

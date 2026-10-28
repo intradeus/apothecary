@@ -9,10 +9,11 @@ version: 5
 # moved in canonical statuses (in_progress as the run starts, done once the
 # merge request merges) — moves that skip on a ticket without a tracker.
 description: expanded-form reference flow (editor output shape)
+# model has no default on purpose: the project binds it (Workshop → Flows →
+# Configure), a run may override it, and every agent stage reads it as $model.
 parameters:
   timeout: 30m
   harness: opencode
-  model: opencode-go/qwen3.7-plus
   max_turns: 50
   max_cost_usd: 10
   max_total_turns: 300
@@ -240,6 +241,8 @@ main:
       max: 1
   - id: plan
     type: agent
+    harness: $harness
+    model: $model
     agent: planner
     max_turns: 25
     input:
@@ -276,6 +279,8 @@ main:
       max: -1
   - id: build
     type: agent
+    harness: $harness
+    model: $model
     agent: builder
     max_turns: 80
     input:
@@ -300,6 +305,8 @@ main:
       then: debug
   - id: commit_msg
     type: agent
+    harness: $harness
+    model: $model
     agent: committer
     max_turns: 10
     input:
@@ -347,8 +354,9 @@ main:
         max: 2
   - id: review
     type: agent
+    harness: $harness
     agent: reviewer
-    model: opencode-go/glm-5.2
+    model: $model
     max_turns: 30
     input:
       ticket:
@@ -378,6 +386,8 @@ main:
       max: 3
   - id: redact
     type: agent
+    harness: $harness
+    model: $model
     agent: redactor
     max_turns: 15
     input:

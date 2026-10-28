@@ -21,7 +21,7 @@ func TestFlowsAreOwnedPerProject(t *testing.T) {
 
 	const shape = `name: verify
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: check, type: command, run: %q }
 `

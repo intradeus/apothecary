@@ -20,7 +20,7 @@ import (
 
 const reviewFlowDoc = `name: rv
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: writer
     prompt: write the plan and take the shots
@@ -34,12 +34,12 @@ agents:
     inputs:
       - { name: review, type: verdict, optional: true }
 main:
-  - { id: write, type: agent, agent: writer, input: { review: { from: edge.verdict, type: verdict, optional: true } },
+  - { id: write, type: agent, harness: $harness, model: $model, agent: writer, input: { review: { from: edge.verdict, type: verdict, optional: true } },
       output: { plan: { to: artifacts/plan.md, type: file }, shots: { to: artifacts/shots/, type: files } } }
   - { id: gate, type: human_gate, question: "ok?",
       input: { plan: { from: artifacts/plan.md, type: file }, shots: { from: artifacts/shots/, type: files } },
       on_reject: { to: write, max: 1 } }
-  - { id: build, type: agent, agent: builder, input: { review: { from: edge.verdict, type: verdict, optional: true } } }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder, input: { review: { from: edge.verdict, type: verdict, optional: true } } }
 `
 
 type reviewRun struct {
@@ -246,7 +246,7 @@ func TestAnApprovalsDecisionSurvivesRecovery(t *testing.T) {
 
 const verdictApproveDoc = `name: va
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: reviewer
     prompt: review it
@@ -257,8 +257,8 @@ agents:
     inputs:
       - { name: notes, type: verdict, optional: true }
 main:
-  - { id: review, type: agent, agent: reviewer, output: { verdict: { to: artifacts/verdict.json, type: verdict } } }
-  - { id: build, type: agent, agent: builder, input: { notes: { from: edge.verdict, type: verdict, optional: true } } }
+  - { id: review, type: agent, harness: $harness, model: $model, agent: reviewer, output: { verdict: { to: artifacts/verdict.json, type: verdict } } }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder, input: { notes: { from: edge.verdict, type: verdict, optional: true } } }
 `
 
 // A verdict that approves with comments hands them to the next stage.

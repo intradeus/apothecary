@@ -149,7 +149,7 @@ func TestADeadEndInAnOutcomeAbandonsTheRun(t *testing.T) {
 // `on_success: abort` is the flow abandoning the run from a success — the
 // main chain here, with its required route to done on the edge.
 func TestOnSuccessAbortAbandonsTheRun(t *testing.T) {
-	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nmain:\n" +
+	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: fake/model }\nmain:\n" +
 		"  - { id: s, type: command, run: \"true\", on_success: abort, on_fail: done }\n"
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Short"}, "short", testProject)

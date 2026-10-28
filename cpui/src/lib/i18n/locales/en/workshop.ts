@@ -81,7 +81,7 @@ export default {
 	'workshop.flows.configuredTitle': 'This workshop binds some of this flow’s parameters',
 	'workshop.flows.binding.title': 'Configure {name}',
 	'workshop.flows.binding.intro':
-		'The flow declares these parameters with defaults. Values bound here are this workshop’s and never touch the document; a run may still override any of them.',
+		'The flow declares these parameters. Values bound here are this workshop’s and never touch the document; a run may still override any of them. A model or a harness the flow leaves without a default must be bound here, or set when a run starts.',
 	'workshop.flows.binding.known': 'Engine parameters',
 	'workshop.flows.binding.own': 'The flow’s own parameters',
 	'workshop.flows.binding.none': 'This flow declares no parameters of its own.',

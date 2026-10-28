@@ -80,7 +80,7 @@ func TestCIFailedOpensOncePerHeadAndFailure(t *testing.T) {
 // so a recovered chain is told the same.
 func TestCIFixReadsWhatFailed(t *testing.T) {
 	ph := newPhasedHarness(t, observeFlowDoc("  - id: ci_fix\n    on: ci_failed\n    stages:\n"+
-		"      - { id: ci_patch, type: agent, agent: builder, input: { failure: { from: run.ci.failure, type: failure } } }\n"))
+		"      - { id: ci_patch, type: agent, harness: $harness, model: $model, agent: builder, input: { failure: { from: run.ci.failure, type: failure } } }\n"))
 	runID := ph.start(t)
 	ph.repoHost.SetHead(1, "3f2a91c0ffee1234")
 	ph.repoHost.SetCIFailures(1, ports.CIFailure{Name: "test", URL: "https://gh/job/11", File: ".github/workflows/ci.yml",
@@ -108,7 +108,7 @@ func TestCIFixReadsWhatFailed(t *testing.T) {
 
 func TestCIFailureIsAWatchersOnCIFailed(t *testing.T) {
 	doc := observeFlowDoc("  - id: other\n    on: mr_conflicts\n    stages:\n" +
-		"      - { id: ci_patch, type: agent, agent: builder, input: { failure: { from: run.ci.failure, type: failure } } }\n")
+		"      - { id: ci_patch, type: agent, harness: $harness, model: $model, agent: builder, input: { failure: { from: run.ci.failure, type: failure } } }\n")
 	if _, err := flow.Parse("t.yaml", []byte(doc)); err == nil || !strings.Contains(err.Error(), "run.ci.failure is what failed when a ci_failed watcher opened") {
 		t.Fatalf("err = %v", err)
 	}

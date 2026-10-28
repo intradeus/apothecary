@@ -131,14 +131,14 @@ func TestRerunCarriesDirection(t *testing.T) {
 func TestUncommittedRendersWorkingTreeStatus(t *testing.T) {
 	h := newHarness(t, mustFlow(t, `name: uncommitted
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: committer
     prompt: name it
     inputs:
       - { name: changes, type: changeset, description: the uncommitted files }
 main:
-  - { id: commit_msg, type: agent, agent: committer, input: { changes: { from: run.git.status, type: changeset } } }
+  - { id: commit_msg, type: agent, harness: $harness, model: $model, agent: committer, input: { changes: { from: run.git.status, type: changeset } } }
 `))
 	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.HasPrefix(cmd.Script, "git status --short") {
@@ -165,7 +165,7 @@ func TestDiffSourcesMeasureTheirOwnRange(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "  - name: redactor\n",
 		"  - name: replier\n    prompt: reply\n    inputs:\n      - { name: all, type: changeset }\n      - { name: round, type: changeset }\n  - name: redactor\n", 1)
 	doc = strings.Replace(doc, "outcomes:\n",
-		"  - id: answer\n    on: manual\n    stages:\n      - { id: say, type: agent, agent: replier, input: { all: { from: run.git.diff_target, type: changeset }, round: { from: run.git.diff_phase, type: changeset } } }\noutcomes:\n", 1)
+		"  - id: answer\n    on: manual\n    stages:\n      - { id: say, type: agent, harness: $harness, model: $model, agent: replier, input: { all: { from: run.git.diff_target, type: changeset }, round: { from: run.git.diff_phase, type: changeset } } }\noutcomes:\n", 1)
 	ph := newPhasedHarness(t, doc)
 	ph.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		switch cmd.Script {

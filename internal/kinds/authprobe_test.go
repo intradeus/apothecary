@@ -28,7 +28,7 @@ func fakeGoGateway(t *testing.T) *httptest.Server {
 			t.Errorf("auth probe sent %d messages — it would spend tokens", len(body.Messages))
 		}
 		switch {
-		case body.Model != "qwen3.7-plus":
+		case body.Model != "go-model-7":
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"Upstream request failed: Model is unavailable."}}`))
 		case r.Header.Get("Authorization") != "Bearer good":
@@ -65,7 +65,7 @@ func stubCatalog(t *testing.T, doc string) {
 func TestOpencodeCheckAuth(t *testing.T) {
 	gw := fakeGoGateway(t)
 	defer gw.Close()
-	stubCatalog(t, fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"qwen3.7-plus":{}}},
+	stubCatalog(t, fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"go-model-7":{}}},
 		"anthropic":{"name":"Anthropic","models":{}}}`, gw.URL))
 
 	check := func(auth string, models ...string) AuthResult {
@@ -73,26 +73,26 @@ func TestOpencodeCheckAuth(t *testing.T) {
 		return h.(AuthChecker).CheckAuth(context.Background(), models)
 	}
 
-	if r := check(`{"opencode-go":{"type":"api","key":"good"}}`, "opencode-go/qwen3.7-plus"); len(r.Rejected)+len(r.Unverified) != 0 {
+	if r := check(`{"opencode-go":{"type":"api","key":"good"}}`, "opencode-go/go-model-7"); len(r.Rejected)+len(r.Unverified) != 0 {
 		t.Errorf("good key: %+v", r)
 	}
 
-	r := check(`{"opencode-go":{"type":"api","key":"revoked-key"}}`, "opencode-go/qwen3.7-plus")
-	if len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0], "Invalid credential") || !strings.Contains(r.Rejected[0], "opencode-go/qwen3.7-plus") {
+	r := check(`{"opencode-go":{"type":"api","key":"revoked-key"}}`, "opencode-go/go-model-7")
+	if len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0], "Invalid credential") || !strings.Contains(r.Rejected[0], "opencode-go/go-model-7") {
 		t.Fatalf("revoked key: %+v", r)
 	}
 	if strings.Contains(r.Rejected[0], "revoked-key") {
 		t.Errorf("the key leaked into the verdict: %q", r.Rejected[0])
 	}
 
-	r = check(`{"opencode-go":{"type":"api","key":"good"}}`, "opencode-go/qwen3.5-plus")
+	r = check(`{"opencode-go":{"type":"api","key":"good"}}`, "opencode-go/go-model-5")
 	if len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0], "Model is unavailable") {
 		t.Errorf("retired model: %+v", r)
 	}
 
 	// A subscription login has nothing to probe: said, not failed. A
 	// provider the flow does not use is not probed at all.
-	r = check(`{"anthropic":{"type":"oauth","refresh":"x"},"opencode-go":{"type":"api","key":"revoked"}}`, "anthropic/claude-opus-5-5")
+	r = check(`{"anthropic":{"type":"oauth","refresh":"x"},"opencode-go":{"type":"api","key":"revoked"}}`, "anthropic/alpha-5")
 	if len(r.Rejected) != 0 || len(r.Unverified) != 1 || !strings.Contains(r.Unverified[0], "anthropic") {
 		t.Errorf("oauth: %+v", r)
 	}
@@ -108,7 +108,7 @@ func TestOpencodeCheckCredentials(t *testing.T) {
 		h, _ := Opencode{}.New(Config{Secrets: map[string]string{"auth_json": auth}}, nil)
 		return h.(AuthChecker).CheckCredentials(context.Background())
 	}
-	served := fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"qwen3.7-plus":{}}}}`, gw.URL)
+	served := fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"go-model-7":{}}}}`, gw.URL)
 
 	if r := check(served, `{"opencode-go":{"type":"api","key":"good"}}`); len(r.Rejected)+len(r.Unverified) != 0 {
 		t.Errorf("good key: %+v", r)
@@ -121,9 +121,9 @@ func TestOpencodeCheckCredentials(t *testing.T) {
 
 	// The borrowed model is retired: the gateway refuses it before looking
 	// at the key, so the key is neither passed nor failed.
-	retired := fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"qwen3.5-plus":{}}}}`, gw.URL)
+	retired := fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"go-model-5":{}}}}`, gw.URL)
 	r = check(retired, `{"opencode-go":{"type":"api","key":"revoked-key"}}`)
-	if len(r.Rejected) != 0 || len(r.Unverified) != 1 || !strings.Contains(r.Unverified[0], "qwen3.5-plus") {
+	if len(r.Rejected) != 0 || len(r.Unverified) != 1 || !strings.Contains(r.Unverified[0], "go-model-5") {
 		t.Errorf("retired probe model: %+v", r)
 	}
 }

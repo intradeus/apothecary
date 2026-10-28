@@ -976,35 +976,35 @@
 							</div>
 						{/if}
 					</div>
+					<!-- Every agent stage says what it runs on: a kind or a model, or
+					     the parameter the workshop binds. No silent fallback. -->
 					<div class="field">
-						<label for="st-harness">{t('flow.insp.harness')}</label>
+						<label for="st-harness"
+							>{t('flow.insp.harness')}
+							{#if !s.harness}<span class="hue-amb">{t('flow.insp.required')}</span>{/if}</label
+						>
 						<input
 							id="st-harness"
 							list="flow-params"
 							bind:value={s.harness}
 							oninput={onchange}
-							placeholder={paramDefault(doc, 'harness') || 'opencode'}
+							placeholder="$harness"
 						/>
-						<div class="help">
-							{t('flow.insp.overrideDefault', {
-								value: paramDefault(doc, 'harness') || t('flow.insp.flowDefault')
-							})}
-						</div>
+						<div class="help">{t('flow.insp.stageHarnessHelp')}</div>
 					</div>
 					<div class="field">
-						<label for="st-model">{t('flow.insp.model')}</label>
+						<label for="st-model"
+							>{t('flow.insp.model')}
+							{#if !s.model}<span class="hue-amb">{t('flow.insp.required')}</span>{/if}</label
+						>
 						<input
 							id="st-model"
 							list="flow-params"
 							bind:value={s.model}
 							oninput={onchange}
-							placeholder={paramDefault(doc, 'model')}
+							placeholder="$model"
 						/>
-						<div class="help">
-							{t('flow.insp.overrideDefault', {
-								value: paramDefault(doc, 'model') || t('flow.insp.flowDefault')
-							})}
-						</div>
+						<div class="help">{t('flow.insp.stageModelHelp')}</div>
 					</div>
 					<div class="field">
 						<label for="st-turns">{t('flow.insp.maxTurns')}</label>

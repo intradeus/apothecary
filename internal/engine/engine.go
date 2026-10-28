@@ -1051,6 +1051,12 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if fl, err = fl.Resolve(params); err != nil {
 		return "", fmt.Errorf("preflight: parameters: %w", err)
 	}
+	// A model or a harness the flow left to the project, still unbound: the
+	// run cannot say what its agents run on. Refused here, before any
+	// workspace, naming where a value comes from.
+	if err := flow.UnboundError(fl.Unbound()); err != nil {
+		return "", fmt.Errorf("preflight: parameters: %w", err)
+	}
 	if err := e.preflight(ctx, res, fl); err != nil {
 		return "", err
 	}

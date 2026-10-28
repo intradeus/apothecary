@@ -21,7 +21,7 @@ import (
 // (after a quiet hour, at most twice) react to it.
 const phasedFlowDoc = `name: phased
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: builder
     prompt: build it
@@ -32,8 +32,8 @@ agents:
     outputs:
       - { name: mr, type: file }
 main:
-  - { id: build, type: agent, agent: builder }
-  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
   - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
 watchers:
   - id: conflicts
@@ -43,7 +43,7 @@ watchers:
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1h, max: 2 }
     stages:
-      - { id: fix, type: agent, agent: builder, input: { failure: { from: edge.failure, type: failure, optional: true } }, on_fail: { to: fix, max: 1 } }
+      - { id: fix, type: agent, harness: $harness, model: $model, agent: builder, input: { failure: { from: edge.failure, type: failure, optional: true } }, on_fail: { to: fix, max: 1 } }
       - { id: post, type: command, run: "./post.sh" }
 outcomes:
   - id: shipped
@@ -240,7 +240,7 @@ func TestRunCompletesWhenNothingIsArmed(t *testing.T) {
 // A document with nothing but a main chain is one phase, "main": the run
 // opens it, ends it, and completes.
 func TestStagesOnlyDocumentRunsAsOnePhase(t *testing.T) {
-	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
+	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: fake/model }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
 	ph := newPhasedHarness(t, doc)
 	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Short"}, "short", testProject)
 	if err != nil {
@@ -411,8 +411,8 @@ func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {
 
 // The start policy may come from a parameter the project binds.
 func TestStartPolicyFromAParam(t *testing.T) {
-	doc := strings.Replace(phasedFlowDoc, "parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }",
-		"parameters: { harness: fake, model: anthropic/claude-sonnet-4-6, rebase: { type: string, default: confirm, enum: [auto, confirm, manual] } }", 1)
+	doc := strings.Replace(phasedFlowDoc, "parameters: { harness: fake, model: fake/model }",
+		"parameters: { harness: fake, model: fake/model, rebase: { type: string, default: confirm, enum: [auto, confirm, manual] } }", 1)
 	doc = strings.Replace(doc, "on: { signal: mr_conflicts, start: confirm }", "on: { signal: mr_conflicts, start: $rebase }", 1)
 	ph := newPhasedHarness(t, doc)
 	ph.e.SetFlowBindings(staticBindings{"rebase": "auto"})
@@ -480,7 +480,7 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 func TestPhasedRunWithoutAnMRCompletes(t *testing.T) {
 	doc := `name: phased
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: s, type: command, run: "true" }
 outcomes:
@@ -617,8 +617,8 @@ func TestSimultaneousTriggersRunInDocumentOrder(t *testing.T) {
 // checkout, and they take turns, the primary first (R3, R12).
 func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "start: confirm", "start: auto", 1)
-	doc = strings.Replace(doc, "  - { id: build, type: agent, agent: builder }\n",
-		"  - { id: build, type: agent, agent: builder }\n  - { id: commit, type: command, each_repo: true, run: \"git add -A && git commit -m x\" }\n", 1)
+	doc = strings.Replace(doc, "  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }\n",
+		"  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }\n  - { id: commit, type: command, each_repo: true, run: \"git add -A && git commit -m x\" }\n", 1)
 	ph := newPhasedHarness(t, doc)
 	apiRepoHost := &fake.RepoHost{}
 	ph.res.ExtraRepos = []ExtraRepo{{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"}}

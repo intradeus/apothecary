@@ -11,7 +11,7 @@ const reviewDoc = `name: t
 version: 5
 parameters:
   harness: fake
-  model: anthropic/claude-sonnet-4-6
+  model: fake/model
 agents:
   - name: writer
     prompt: write the plan and take the shots
@@ -26,6 +26,8 @@ agents:
 main:
   - id: write
     type: agent
+    harness: $harness
+    model: $model
     agent: writer
     output:
       plan: { to: artifacts/plan.md, type: file }
@@ -39,6 +41,8 @@ main:
     on_reject: { to: write, max: 2 }
   - id: build
     type: agent
+    harness: $harness
+    model: $model
     agent: builder
     input:
       plan: { from: artifacts/plan.md, type: file }

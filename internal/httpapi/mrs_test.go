@@ -19,7 +19,7 @@ agents:
     inputs:
       - { name: changes, type: changeset }
 main:
-  - { id: read, type: agent, agent: reader, input: { changes: { from: run.git.diff_target, type: changeset } }, on_fail: debug }
+  - { id: read, type: agent, harness: $harness, model: $model, agent: reader, input: { changes: { from: run.git.diff_target, type: changeset } }, on_fail: debug }
 outcomes:
   - { id: merged, on: mr_merged, then: done }
   - { id: closed, on: mr_closed, then: done }

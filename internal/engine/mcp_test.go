@@ -20,7 +20,7 @@ import (
 
 const mcpFlowDoc = `name: shots
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 mcp_servers:
   - { name: browser, builtin: browser }
   - name: figma
@@ -34,9 +34,9 @@ agents:
   - { name: querier, prompt: Query., mcp: [db] }
   - { name: plain, prompt: Plain. }
 main:
-  - { id: shoot, type: agent, agent: shooter }
-  - { id: query, type: agent, agent: querier }
-  - { id: other, type: agent, agent: plain }
+  - { id: shoot, type: agent, harness: $harness, model: $model, agent: shooter }
+  - { id: query, type: agent, harness: $harness, model: $model, agent: querier }
+  - { id: other, type: agent, harness: $harness, model: $model, agent: plain }
 `
 
 // fakeBrowser stands in for internal/browser.

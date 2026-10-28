@@ -13,7 +13,7 @@ const knobsFlow = `name: knobs
 version: 5
 parameters:
   harness: fake
-  model: anthropic/claude-sonnet-4-6
+  model: fake/model
   verify: { type: string, default: verify, description: "the project command that runs the tests" }
   gate: { type: bool, default: true }
   mode: { type: string, default: confirm, enum: [auto, confirm, manual] }

@@ -23,7 +23,7 @@ var png = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
 
 const shotsDoc = `name: shots
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: shooter
     prompt: take screenshots
@@ -37,9 +37,9 @@ agents:
       - { name: shots, type: files }
 main:
   - { id: stale, type: command, run: leave-a-stale-shot }
-  - { id: shoot, type: agent, agent: shooter, input: { failure: { from: edge.failure, type: failure, optional: true } },
+  - { id: shoot, type: agent, harness: $harness, model: $model, agent: shooter, input: { failure: { from: edge.failure, type: failure, optional: true } },
       output: { shots: { to: artifacts/shots/, type: files } }, on_fail: { to: shoot, max: 1 } }
-  - { id: view, type: agent, agent: viewer, input: { shots: { from: artifacts/shots/, type: files } } }
+  - { id: view, type: agent, harness: $harness, model: $model, agent: viewer, input: { shots: { from: artifacts/shots/, type: files } } }
 `
 
 // A files output is emptied before an attempt — a file an earlier stage
@@ -165,9 +165,9 @@ func TestFilesOutputIsEmptiedBetweenPasses(t *testing.T) {
 
 const attachDoc = `name: at
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
   - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file },
       attachments: { from: repo:artifacts/shots/, type: files, optional: true } } }
 `
@@ -278,9 +278,9 @@ func TestCreateMRRefusesTooManyAttachments(t *testing.T) {
 func TestTicketCommentAttachesFiles(t *testing.T) {
 	doc := `name: cm
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: write, type: agent, agent: redactor, output: { mr: { to: artifacts/ticket_comment.md, type: file } } }
+  - { id: write, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/ticket_comment.md, type: file } } }
   - { id: post,  type: action, action: ticket_comment, input: { body: { from: artifacts/ticket_comment.md, type: file },
       attachments: { from: repo:artifacts/shots/, type: files } } }
 `

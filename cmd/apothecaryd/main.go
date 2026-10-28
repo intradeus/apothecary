@@ -542,7 +542,7 @@ func cmdServe(args []string) error {
 const devFlowYAML = `name: dev
 version: 5
 description: dev-mode sandbox flow (fake adapters)
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: planner
     description: plans the work
@@ -561,13 +561,13 @@ agents:
     inputs:
       - { name: plan, type: file, description: "the plan to implement" }
 main:
-  - { id: plan, type: agent, agent: planner,
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner,
       input: { ticket: { from: run.ticket, type: ticket } },
       output: { plan: { to: artifacts/plan.md, type: file } } }
   - { id: plan_gate, type: human_gate, question: "Approve the plan?",
       input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 3 } }
-  - { id: build, type: agent, agent: builder,
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder,
       input: { plan: { from: artifacts/plan.md, type: file } } }
   - { id: test, type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
   - { id: mr, type: action, action: create_mr,

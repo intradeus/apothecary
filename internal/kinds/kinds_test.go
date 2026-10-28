@@ -111,11 +111,11 @@ func TestOpencodeModels(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
 			"openrouter": {"name": "OpenRouter", "models": {
-				"anthropic/claude-sonnet-4-5": {"name": "Claude Sonnet 4.5"},
-				"openai/gpt-5": {"name": "GPT-5"}
+				"acme/alpha-1": {"name": "Alpha One"},
+				"beta/gamma-2": {"name": "Gamma Two"}
 			}},
 			"anthropic": {"name": "Anthropic", "models": {
-				"claude-sonnet-4-5": {"name": "Claude Sonnet 4.5"}
+				"alpha-1": {"name": "Alpha One"}
 			}}
 		}`))
 	}))
@@ -145,7 +145,7 @@ func TestOpencodeModels(t *testing.T) {
 	for i, m := range models {
 		ids[i] = m.ID
 	}
-	want := []string{"openrouter/anthropic/claude-sonnet-4-5", "openrouter/openai/gpt-5"}
+	want := []string{"openrouter/acme/alpha-1", "openrouter/beta/gamma-2"}
 	if !slices.Equal(ids, want) {
 		t.Fatalf("ids = %v, want %v (anthropic must be absent: not in auth_json)", ids, want)
 	}
@@ -167,13 +167,13 @@ func TestOpencodeModelsLive(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"qwen3.6-plus"},{"id":"qwen3.7-plus"}]}`))
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"go-model-6"},{"id":"go-model-7"}]}`))
 	}))
 	defer live.Close()
 	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(w, `{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{
-			"qwen3.5-plus":{"name":"Qwen 3.5 Plus (retired)"},
-			"qwen3.6-plus":{"name":"Qwen 3.6 Plus"}
+			"go-model-5":{"name":"Go Model 5 (retired)"},
+			"go-model-6":{"name":"Go Model 6"}
 		}}}`, live.URL)
 	}))
 	defer catalog.Close()
@@ -203,17 +203,17 @@ func TestOpencodeModelsLive(t *testing.T) {
 		ids[i] = m.ID
 		byID[m.ID] = m.Name
 	}
-	want := []string{"opencode-go/qwen3.6-plus", "opencode-go/qwen3.7-plus"}
+	want := []string{"opencode-go/go-model-6", "opencode-go/go-model-7"}
 	if !slices.Equal(ids, want) {
-		t.Fatalf("ids = %v, want %v (retired qwen3.5-plus must be gone; live list wins)", ids, want)
+		t.Fatalf("ids = %v, want %v (retired go-model-5 must be gone; live list wins)", ids, want)
 	}
 	// Catalog still supplies the display name when it knows the model; the
 	// live-only model falls back to its id.
-	if byID["opencode-go/qwen3.6-plus"] != "OpenCode Go · Qwen 3.6 Plus" {
-		t.Errorf("name = %q", byID["opencode-go/qwen3.6-plus"])
+	if byID["opencode-go/go-model-6"] != "OpenCode Go · Go Model 6" {
+		t.Errorf("name = %q", byID["opencode-go/go-model-6"])
 	}
-	if byID["opencode-go/qwen3.7-plus"] != "OpenCode Go · qwen3.7-plus" {
-		t.Errorf("name = %q", byID["opencode-go/qwen3.7-plus"])
+	if byID["opencode-go/go-model-7"] != "OpenCode Go · go-model-7" {
+		t.Errorf("name = %q", byID["opencode-go/go-model-7"])
 	}
 }
 
@@ -226,7 +226,7 @@ func TestOpencodeModelsFallback(t *testing.T) {
 	defer dead.Close()
 	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(w, `{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{
-			"qwen3.6-plus":{"name":"Qwen 3.6 Plus"}
+			"go-model-6":{"name":"Go Model 6"}
 		}}}`, dead.URL)
 	}))
 	defer catalog.Close()
@@ -250,8 +250,8 @@ func TestOpencodeModelsFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(models) != 1 || models[0].ID != "opencode-go/qwen3.6-plus" {
-		t.Fatalf("fallback models = %v, want [opencode-go/qwen3.6-plus]", models)
+	if len(models) != 1 || models[0].ID != "opencode-go/go-model-6" {
+		t.Fatalf("fallback models = %v, want [opencode-go/go-model-6]", models)
 	}
 }
 
@@ -360,10 +360,10 @@ func TestOmpModels(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asked = r.URL.Path
 		_, _ = w.Write([]byte(`{
-			"anthropic": {"claude-sonnet-4-5": {"name": "Claude Sonnet 4.5", "baseUrl": "https://api.anthropic.com"}},
-			"openai": {"gpt-5": {"name": "GPT-5"}, "gpt-image": {"name": "Image"}},
-			"openai-codex": {"gpt-5.6-luna": {"name": "GPT-5.6 Luna", "baseUrl": "https://chatgpt.com/backend-api"}},
-			"together": {"kimi-k2": {"name": "Kimi K2"}},
+			"anthropic": {"alpha-1": {"name": "Alpha One", "baseUrl": "https://api.anthropic.com"}},
+			"openai": {"gamma-2": {"name": "Gamma Two"}, "gamma-image": {"name": "Image"}},
+			"openai-codex": {"luna-6": {"name": "Luna Six", "baseUrl": "https://chatgpt.com/backend-api"}},
+			"together": {"kappa-2": {"name": "Kappa Two"}},
 			"groq": {"llama": {"name": "Llama"}}
 		}`))
 	}))
@@ -395,12 +395,12 @@ func TestOmpModels(t *testing.T) {
 	for i, m := range models {
 		ids[i] = m.ID
 	}
-	want := []string{"anthropic/claude-sonnet-4-5", "openai-codex/gpt-5.6-luna", "together/kimi-k2"}
+	want := []string{"anthropic/alpha-1", "openai-codex/luna-6", "together/kappa-2"}
 	if !slices.Equal(ids, want) {
 		t.Fatalf("ids = %v, want %v", ids, want)
 	}
 	// A login has no zero-token probe: unverified, never rejected.
-	res := h.(AuthChecker).CheckAuth(context.Background(), []string{"openai-codex/gpt-5.6-luna"})
+	res := h.(AuthChecker).CheckAuth(context.Background(), []string{"openai-codex/luna-6"})
 	if len(res.Rejected) != 0 || len(res.Unverified) != 1 || !strings.Contains(res.Unverified[0], "subscription login") {
 		t.Errorf("check auth = %+v", res)
 	}

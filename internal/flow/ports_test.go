@@ -10,7 +10,7 @@ import (
 // a writer of a plan, a reader of it, and a reviewer whose verdict routes.
 const portsDoc = `name: t
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 schemas:
   - { name: report, json_schema: { type: object, required: [passed] } }
 agents:
@@ -38,6 +38,8 @@ main:
 const (
 	writeStage = `  - id: write
     type: agent
+    harness: $harness
+    model: $model
     agent: writer
     input:
       ticket:  { from: run.ticket, type: ticket }
@@ -48,6 +50,8 @@ const (
 `
 	readStage = `  - id: read
     type: agent
+    harness: $harness
+    model: $model
     agent: reader
     input:
       plan: { from: artifacts/plan.md, type: file }
@@ -102,7 +106,7 @@ func TestPortShapeRules(t *testing.T) {
 		name, stages, want string
 	}{
 		{"a bare value", cmd("plan: artifacts/plan.md", ""), `a port is a mapping — plan: { from: artifacts/plan.md, type: … }`},
-		{"a retired sentinel", writeStage + "  - id: r\n    type: agent\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file }, rejection: $DECISION }\n",
+		{"a retired sentinel", writeStage + "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file }, rejection: $DECISION }\n",
 			`$DECISION is now edge.verdict`},
 		{"an action literal written as a port", "  - id: m\n    type: action\n    action: ticket_transition\n    input: { to: done }\n",
 			`or, for an action's literal setting, with: { to: done }`},
@@ -117,9 +121,9 @@ func TestPortShapeRules(t *testing.T) {
 		{"a structured path", cmd("plan: { from: repo:a.md, schema: report }", ""), `must end in .json, .yaml or .yml`},
 		{"a value type from a file", cmd("plan: { from: repo:a.md, type: ticket }", ""), `a ticket is a value the engine provides, not a file: from: run.ticket`},
 		{"a value type written", cmd("", "plan: { to: a.md, type: changeset }"), `what is written is a file`},
-		{"an engine source mistyped", readStage[:0] + "  - id: r\n    type: agent\n    agent: writer\n    input: { ticket: { from: run.ticket, type: file } }\n    output: { plan: { to: a.md, type: file } }\n",
+		{"an engine source mistyped", readStage[:0] + "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: writer\n    input: { ticket: { from: run.ticket, type: file } }\n    output: { plan: { to: a.md, type: file } }\n",
 			`run.ticket is a ticket — type: ticket`},
-		{"an edge source not optional", "  - id: r\n    type: agent\n    agent: writer\n    input: { ticket: { from: run.ticket, type: ticket }, failure: { from: edge.failure, type: failure } }\n    output: { plan: { to: a.md, type: file } }\n    on_fail: { to: r, max: 1 }\n",
+		{"an edge source not optional", "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: writer\n    input: { ticket: { from: run.ticket, type: ticket }, failure: { from: edge.failure, type: failure } }\n    output: { plan: { to: a.md, type: file } }\n    on_fail: { to: r, max: 1 }\n",
 			`mark the port optional: true`},
 		{"a command reading the engine", cmd("t: { from: run.ticket, type: ticket }", ""), `a command reads files; run.ticket is a value the engine provides`},
 		{"a gate shown a changeset", "  - id: g\n    type: human_gate\n    input: { c: { from: run.git.status, type: changeset } }\n", `a gate shows a file or a link`},
@@ -141,15 +145,15 @@ func TestAgentPortContract(t *testing.T) {
 	tests := []struct {
 		name, stages, want string
 	}{
-		{"an output left out", "  - id: w\n    type: agent\n    agent: writer\n    input: { ticket: { from: run.ticket, type: ticket } }\n",
+		{"an output left out", "  - id: w\n    type: agent\n    harness: $harness\n    model: $model\n    agent: writer\n    input: { ticket: { from: run.ticket, type: ticket } }\n",
 			`agent "writer" writes "plan" — state where: output: { plan: { to: …, type: file } }`},
-		{"a required input left out", writeStage + "  - id: r\n    type: agent\n    agent: reader\n",
+		{"a required input left out", writeStage + "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: reader\n",
 			`agent "reader" requires input "plan"`},
-		{"a port the agent lacks", writeStage + "  - id: r\n    type: agent\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file }, extra: { from: repo:x.md, type: file } }\n",
+		{"a port the agent lacks", writeStage + "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file }, extra: { from: repo:x.md, type: file } }\n",
 			`input "extra" is not an input of agent "reader" (inputs: plan, rejection)`},
-		{"an output of another type", "  - id: w\n    type: agent\n    agent: writer\n    input: { ticket: { from: run.ticket, type: ticket } }\n    output: { plan: { to: a.json, type: verdict } }\n",
+		{"an output of another type", "  - id: w\n    type: agent\n    harness: $harness\n    model: $model\n    agent: writer\n    input: { ticket: { from: run.ticket, type: ticket } }\n    output: { plan: { to: a.json, type: verdict } }\n",
 			""},
-		{"an on_reject with no verdict port", writeStage + "  - id: r\n    type: agent\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file } }\n    on_reject: { to: write, max: 1 }\n",
+		{"an on_reject with no verdict port", writeStage + "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file } }\n    on_reject: { to: write, max: 1 }\n",
 			`on_reject can never fire: agent "reader" writes no verdict`},
 	}
 	for _, tt := range tests {
@@ -178,7 +182,7 @@ func TestPortSources(t *testing.T) {
 		{"nothing writes it", readStage, `nothing in this flow writes "artifacts/plan.md" — a file of the repository is from: repo:artifacts/plan.md`},
 		{"a mistyped engine source", "  - id: c\n    type: command\n    run: \"true\"\n    input: { t: { from: run.tiket, type: file } }\n",
 			""},
-		{"repo: on a file the flow writes", writeStage + "  - id: r\n    type: agent\n    agent: reader\n    input: { plan: { from: repo:artifacts/plan.md, type: file } }\n",
+		{"repo: on a file the flow writes", writeStage + "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: reader\n    input: { plan: { from: repo:artifacts/plan.md, type: file } }\n",
 			`stage "write" writes artifacts/plan.md — read it as from: artifacts/plan.md`},
 		{"a writer of another shape", "  - id: a\n    type: command\n    run: \"true\"\n    output: { r: { to: artifacts/r.json, type: file } }\n  - id: b\n    type: command\n    run: \"true\"\n    input: { r: { from: artifacts/r.json, type: verdict } }\n",
 			`stage "a" writes "artifacts/r.json" as a file; the port reads a verdict`},
@@ -186,7 +190,7 @@ func TestPortSources(t *testing.T) {
 			`both write "artifacts/r.json", as a file and as a verdict`},
 		{"not written before it is read", readStage + writeStage,
 			`"artifacts/plan.md" is not written on every route reaching this stage (written by "write")`},
-		{"an edge source nothing fills", writeStage + "  - id: r\n    type: agent\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file }, rejection: { from: edge.verdict, type: verdict, optional: true } }\n",
+		{"an edge source nothing fills", writeStage + "  - id: r\n    type: agent\n    harness: $harness\n    model: $model\n    agent: reader\n    input: { plan: { from: artifacts/plan.md, type: file }, rejection: { from: edge.verdict, type: verdict, optional: true } }\n",
 			`no on_reject edge enters stage "r", nor the success of a gate or a verdict, so edge.verdict is never filled`},
 	}
 	for _, tt := range tests {
@@ -214,12 +218,16 @@ func TestPortSourcesAccept(t *testing.T) {
 		// A reviewer's REJECT carries its decision to the stage it routes to.
 		"a decision carried by on_reject": writeStage + `  - id: r
     type: agent
+    harness: $harness
+    model: $model
     agent: reader
     input:
       plan:      { from: artifacts/plan.md, type: file }
       rejection: { from: edge.verdict, type: verdict, optional: true }
   - id: review
     type: agent
+    harness: $harness
+    model: $model
     agent: reviewer
     input: { changes: { from: run.git.diff_target, type: changeset } }
     output: { verdict: { to: artifacts/verdict.json, type: verdict } }
@@ -235,6 +243,8 @@ watchers:
     stages:
       - id: r
         type: agent
+        harness: $harness
+        model: $model
         agent: reader
         input: { plan: { from: artifacts/plan.md, type: file } }
 outcomes:

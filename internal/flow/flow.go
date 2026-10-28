@@ -305,8 +305,10 @@ type Setting struct {
 }
 
 // Stage is one validated flow stage. Model, Harness, MaxTurns and Timeout are
-// resolved: for agent stages they carry the effective value (stage override or
-// flow default); for other types they are zero.
+// resolved: for agent stages they carry the effective value — Model and
+// Harness are the stage's own (a literal, or the parameter it names), "" while
+// that parameter is unbound (Flow.Unbound); MaxTurns and Timeout fall back to
+// the flow's parameters. For other types they are zero.
 type Stage struct {
 	ID   string
 	Type StageType
@@ -469,8 +471,33 @@ type Param struct {
 	Description string    `json:"description,omitempty"`
 	Enum        []string  `json:"enum,omitempty"`
 	Known       bool      `json:"known,omitempty"`
-	Line        int       `json:"-"`
+	// Required: the declaration gives no default, so the parameter has no
+	// value until a project binds it or a run sets it. Only a parameter read
+	// as a model or a harness may stay unbound — the document still parses;
+	// run creation refuses until a value exists (FLOWLANG §1).
+	Required bool `json:"required,omitempty"`
+	// DefaultRef names the parameter this one's default reads (`default:
+	// $model`): its value follows that one's, bound or not, unless bound
+	// itself. Default is then empty.
+	DefaultRef string `json:"default_ref,omitempty"`
+	// Role is how the document reads the parameter — "model" at agent
+	// stages' model, "harness" at their harness or the Ask pane's — or ""
+	// (derived by the parser, like Refs). It is what tells a form which
+	// picker to show.
+	Role string `json:"role,omitempty"`
+	// Harness, on a model parameter, is the harness every stage reading it
+	// runs on: a kind, or `$name` for a harness parameter — stages sharing
+	// a model parameter share a harness (FLOWLANG §1), so there is one. A
+	// form lists that harness's models for the parameter.
+	Harness string `json:"harness,omitempty"`
+	Line    int    `json:"-"`
 }
+
+// Model and harness sites may read an unbound parameter (Param.Required).
+const (
+	RoleModel   = "model"
+	RoleHarness = "harness"
+)
 
 // KnownParams are the engine-read parameters and their types.
 var KnownParams = map[string]ParamType{
@@ -833,6 +860,104 @@ func (f *Flow) Param(name string) *Param {
 		}
 	}
 	return nil
+}
+
+// ParamValue is the value a parameter resolves to in this flow: its binding,
+// else the parameter its default reads (DefaultRef), else its default. ok is
+// false when nothing gives it one (Param.Required, nothing bound).
+func (f *Flow) ParamValue(name string) (v string, ok bool) {
+	return resolveParamValue(f.Params, f.Bindings, name)
+}
+
+// resolveParamValue is ParamValue over a parameter list and a binding map; a
+// DefaultRef chain is followed (the parser refuses cycles).
+func resolveParamValue(params []Param, bindings map[string]string, name string) (string, bool) {
+	for range params {
+		if v, bound := bindings[name]; bound {
+			return v, true
+		}
+		var pr *Param
+		for i := range params {
+			if params[i].Name == name {
+				pr = &params[i]
+			}
+		}
+		if pr == nil {
+			return "", false
+		}
+		if pr.DefaultRef != "" {
+			name = pr.DefaultRef
+			continue
+		}
+		if pr.Required {
+			return "", false
+		}
+		return pr.Default, true
+	}
+	return "", false
+}
+
+// Unbound is one parameter the flow needs a value for and has none: no
+// default, nothing bound. Sites are where it is read — stage ids, or "ask".
+type Unbound struct {
+	Param string   `json:"param"`
+	Sites []string `json:"sites"`
+}
+
+// Unbound lists the parameters read as a model or a harness that resolve to
+// nothing in this flow (as parsed, or as bound by Resolve): what a project
+// must bind, or a run set, before the flow can run. Stable order: by first
+// use.
+func (f *Flow) Unbound() []Unbound {
+	var out []Unbound
+	idx := map[string]int{}
+	for _, r := range f.Refs {
+		var site string
+		switch r.Field {
+		case "model", "harness":
+			site = r.Stage
+		case "ask.harness":
+			site = "ask"
+		default:
+			continue
+		}
+		if _, ok := f.ParamValue(r.Param); ok {
+			continue
+		}
+		// A default that reads another parameter is not what is missing:
+		// the parameter at the end of the chain is. review_model following
+		// $model reports model, with the review stage among its sites.
+		name := r.Param
+		for pr := f.Param(name); pr != nil && pr.DefaultRef != ""; pr = f.Param(name) {
+			if _, bound := f.Bindings[name]; bound {
+				break
+			}
+			name = pr.DefaultRef
+		}
+		i, seen := idx[name]
+		if !seen {
+			idx[name] = len(out)
+			out = append(out, Unbound{Param: name})
+			i = len(out) - 1
+		}
+		if !contains(out[i].Sites, site) {
+			out[i].Sites = append(out[i].Sites, site)
+		}
+	}
+	return out
+}
+
+// UnboundError says what Unbound found, as a run's refusal reads: the
+// parameters, where each is read, and where a value comes from.
+func UnboundError(ub []Unbound) error {
+	if len(ub) == 0 {
+		return nil
+	}
+	parts := make([]string, len(ub))
+	for i, u := range ub {
+		parts[i] = fmt.Sprintf("%q has no value (read by %s)", u.Param, strings.Join(u.Sites, ", "))
+	}
+	return fmt.Errorf("%s: bind it in Workshop → Flows → Configure, or set it when starting the run", strings.Join(parts, "; "))
 }
 
 // Resolve returns the flow with bindings applied — the document re-parsed

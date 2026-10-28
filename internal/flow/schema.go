@@ -103,8 +103,8 @@ func schema() obj {
 			"description":  str("what the stage is for — documentation only"),
 			"run_if":       str("run only when this holds: tracker, subject, or a bool $parameter — each may be negated, `not x`"),
 			"agent":        str("agent: the agent it runs, declared under agents"),
-			"model":        str("agent: the model, provider/model, or a $parameter (default: the model parameter)"),
-			"harness":      str("agent: the harness, or a $parameter (default: the harness parameter)"),
+			"model":        str("agent: required — the model, provider/model, or a $parameter ($model); stages sharing a model parameter share a harness"),
+			"harness":      str("agent: required — the harness kind, or a $parameter ($harness)"),
 			"max_turns":    intOrParam("agent: the turn budget (default: the max_turns parameter)"),
 			"timeout":      str("how long it may take: a duration (30m) or a $parameter — agent and command (default: the timeout parameter), wait (default: forever), service (how long a start may take to be healthy; default: the service's own)"),
 			"input":        ports("what it reads, each port with where it comes from and what it is (a human_gate: the files and folders the person reviews, and at most one link)", "port_in"),
@@ -174,7 +174,7 @@ func schema() obj {
 			obj{
 				"type":                 "object",
 				"additionalProperties": false,
-				"required":             []string{"type", "default"},
+				"required":             []string{"type"},
 				"properties": obj{
 					"type":        stringsOf("what it holds", types...),
 					"list":        obj{"type": "boolean", "description": "any number of values of its type (default: one)"},
@@ -242,11 +242,10 @@ func schema() obj {
 			},
 			"parameters": obj{
 				"type":                 "object",
-				"description":          "the flow's settings: the six the engine reads (harness and model required) and its own, read where $name appears",
+				"description":          "the flow's settings: the six the engine reads and its own, read where $name appears; harness and model may have no default — the project binds them",
 				"propertyNames":        obj{"pattern": `^[a-z][a-z0-9_]*$`},
 				"properties":           known,
 				"additionalProperties": obj{"$ref": "#/$defs/param"},
-				"required":             []string{"harness", "model"},
 			},
 			"schemas": obj{"type": "array", "description": "the structures the flow's own files hold, named by the agents' inputs and outputs", "items": obj{
 				"type": "object", "additionalProperties": false, "required": []string{"name", "json_schema"},
@@ -361,8 +360,8 @@ func withDesc(s obj, desc string) obj {
 
 // knownParamDocs says what each engine-read parameter is.
 var knownParamDocs = map[string]string{
-	"harness":         "the harness agent stages run on, unless a stage names its own (required)",
-	"model":           "the model agent stages use, provider/model, unless a stage names its own (required)",
+	"harness":         "the harness kind agent stages read as $harness; no default means the project binds it",
+	"model":           "the model agent stages read as $model, provider/model; no default means the project binds it (model ids change — leave it to the project)",
 	"timeout":         "how long an agent or a command stage may take (default " + knownDefaults["timeout"] + ")",
 	"max_turns":       "an agent stage's turn budget (default " + knownDefaults["max_turns"] + ")",
 	"max_cost_usd":    "what the whole run may cost, in USD (default " + knownDefaults["max_cost_usd"] + ")",

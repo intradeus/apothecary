@@ -124,7 +124,7 @@ func gitPerDir(gits map[string]*fakeGit) func(*fake.Env, ports.Command) (ports.E
 
 const multiRepoFlowDoc = `name: multi
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: builder
     prompt: build it
@@ -133,10 +133,10 @@ agents:
     outputs:
       - { name: mr, type: file }
 main:
-  - { id: build, type: agent, agent: builder, on_success: commit }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder, on_success: commit }
   - { id: commit, type: command, each_repo: true, run: "git add -A && if ! git diff --cached --quiet; then git commit -F artifacts/commit.md; fi", on_success: push }
   - { id: push, type: command, each_repo: true, run: "git push -u origin HEAD", on_success: redact }
-  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
   - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: final_gate }
   - { id: final_gate, type: human_gate, input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, auto_reject: mr_closed, on_success: done, on_reject: abort }
 `

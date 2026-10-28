@@ -18,9 +18,10 @@ ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow
 #
 # A merge request from a fork cannot be pushed to: the push fails and a
 # person gets the workspace, resolution and all, to decide what to do.
+# model has no default on purpose: the project binds it (Workshop → Flows →
+# Configure), a run may override it, and the agent stage reads it as $model.
 parameters:
   harness: opencode
-  model: opencode-go/qwen3.7-plus
   timeout: 30m
   max_turns: 40
   max_cost_usd: 5.0
@@ -73,7 +74,7 @@ sequences:
           description: "the engine takes the target in; a conflict pauses it with the files named",
           on_success: test,
           on_fail: { to: resolve, max: 6, then: debug } }
-      - { id: resolve, type: agent, agent: resolver, max_turns: 30,
+      - { id: resolve, type: agent, harness: $harness, model: $model, agent: resolver, max_turns: 30,
           input: { changes:  { from: run.git.diff_target, type: changeset },
                    conflict: { from: edge.failure, type: failure, optional: true } },
           description: "remove the conflict markers, keeping both intents — no git",

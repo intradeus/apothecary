@@ -4,8 +4,9 @@
 - 37) frontend rewrite. full tested suite.
 - 38) Skills support
 - 39) code-server extensions for harnesses > if we use claude, it should also install the claude extension, codex > codex extension. omp has none. And those should be connected right ? Since we're already logged into the cli tool. 
-- 40) Add a new flow to builder : connect git branch to jira ticket. So jira gets the context.
-
+- 40) Add a new flow to builder : connect git branch to jira ticket. So jira gets the branch context, we already have jira ticket field writes setup, not sure if a git branch connect is the same.
+- 41) performance check : how will this perform with 100 parallel runs ? 
+- 42) harness provider authentication management.
 
 ------ 
 After 1.0.0 : 

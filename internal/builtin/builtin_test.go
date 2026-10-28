@@ -401,3 +401,49 @@ func TestConflictResolverTemplate(t *testing.T) {
 		t.Errorf("strategy = %+v: someone's commits are not rewritten unless a workshop asks", p)
 	}
 }
+
+// TestBuiltinFlowsCarryNoModel: a template names no model — model ids change
+// under a document that must not. The model parameter has no default (the
+// project binds it), every agent stage reads its harness and model from a
+// parameter, and every model parameter either waits for the project or
+// follows another ($model). The shipped example flows leave model unbound
+// too.
+func TestBuiltinFlowsCarryNoModel(t *testing.T) {
+	check := func(t *testing.T, f *flow.Flow) {
+		if pr := f.Param("model"); pr == nil || !pr.Required {
+			t.Errorf("model parameter = %+v, want no default", pr)
+		}
+		for _, pr := range f.Params {
+			if pr.Role == flow.RoleModel && !pr.Required && pr.DefaultRef == "" {
+				t.Errorf("model parameter %q has a literal default %q — leave it to the project, or follow another ($model)", pr.Name, pr.Default)
+			}
+		}
+		read := map[string]bool{}
+		for _, r := range f.Refs {
+			read[r.Stage+"/"+r.Field] = true
+		}
+		for i := range f.Stages {
+			st := &f.Stages[i]
+			if st.Type != flow.StageAgent {
+				continue
+			}
+			for _, field := range []string{"harness", "model"} {
+				if !read[st.ID+"/"+field] {
+					t.Errorf("stage %q writes its %s as a literal — read a parameter ($%s)", st.ID, field, field)
+				}
+			}
+		}
+	}
+	for _, name := range FlowNames() {
+		t.Run(name, func(t *testing.T) { check(t, Flow(name)) })
+	}
+	for _, path := range []string{"../../examples/flows/v5.yaml"} {
+		t.Run(path, func(t *testing.T) {
+			f, err := flow.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, f)
+		})
+	}
+}

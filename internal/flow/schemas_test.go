@@ -40,8 +40,8 @@ func (d schemaDoc) render() string {
 		d.readPort = `{ from: artifacts/report.json, schema: report }`
 	}
 	if d.stages == "" {
-		d.stages = `  - { id: write, type: agent, agent: writer, output: { report: ` + d.writePort + ` } }
-  - { id: read,  type: agent, agent: reader, input: { report: ` + d.readPort + ` } }
+		d.stages = `  - { id: write, type: agent, harness: $harness, model: $model, agent: writer, output: { report: ` + d.writePort + ` } }
+  - { id: read,  type: agent, harness: $harness, model: $model, agent: reader, input: { report: ` + d.readPort + ` } }
 `
 	}
 	return header + d.schemas + `agents:
@@ -166,7 +166,7 @@ func TestSchemaRules(t *testing.T) {
 				writePort: `{ to: artifacts/report.md, type: verdict, schema: report }`},
 			want: "must end in .json, .yaml or .yml"},
 		{name: "a typed reader needs the type, whatever the schema",
-			doc: schemaDoc{stages: `  - { id: write,  type: agent, agent: writer, output: { report: { to: artifacts/report.json, schema: report } } }
+			doc: schemaDoc{stages: `  - { id: write,  type: agent, harness: $harness, model: $model, agent: writer, output: { report: { to: artifacts/report.json, schema: report } } }
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/report.json, type: commit_message } } }
 `},
 			want: `stage "write" writes "artifacts/report.json" as schema "report"; the port reads a commit_message`},
@@ -187,7 +187,7 @@ func TestSchemaRules(t *testing.T) {
 			doc: schemaDoc{
 				schemas:   twoSchemas,
 				writerOut: `{ name: report, schema: other }`,
-				stages: `  - { id: write, type: agent, agent: writer, output: { report: { to: artifacts/report.json, schema: other } } }
+				stages: `  - { id: write, type: agent, harness: $harness, model: $model, agent: writer, output: { report: { to: artifacts/report.json, schema: other } } }
   - { id: use,   type: command, run: "true", input: { report: { from: artifacts/report.json, schema: report } } }
 `},
 			want: `stage "use": input "report": stage "write" writes "artifacts/report.json" as schema "other"; the port reads schema "report"`},
@@ -198,7 +198,7 @@ func TestSchemaRules(t *testing.T) {
 			want: `stage "write" writes "artifacts/report.json" as a file; the port reads schema "report"`},
 		{name: "a command writer without the schema",
 			doc: schemaDoc{stages: `  - { id: make, type: command, run: "true", output: { report: { to: artifacts/report.json, type: file } } }
-  - { id: read, type: agent, agent: reader, input: { report: { from: artifacts/report.json, schema: report } } }
+  - { id: read, type: agent, harness: $harness, model: $model, agent: reader, input: { report: { from: artifacts/report.json, schema: report } } }
 `},
 			want: `stage "make" writes "artifacts/report.json" as a file; the port reads schema "report"`},
 		{name: "a schema on a value the engine provides",
@@ -237,13 +237,13 @@ func TestSchemaRulesAccept(t *testing.T) {
 		// A stage may narrow an agent's file output with a schema of the
 		// flow's, and a reader of that schema takes it.
 		"a stage narrows a file output": {writerOut: `{ name: report, type: file }`},
-		"the commit action reads a commit_message": {stages: `  - { id: msg,    type: agent, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message } } }
+		"the commit action reads a commit_message": {stages: `  - { id: msg,    type: agent, harness: $harness, model: $model, agent: committer, output: { commit: { to: artifacts/commit.json, type: commit_message } } }
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } } }
 `},
 		// A command states its structure on its port like any stage, and one
 		// command hands a structure to another.
 		"command to agent": {stages: `  - { id: write, type: command, run: "true", output: { report: { to: artifacts/report.json, schema: report } } }
-  - { id: read,  type: agent, agent: reader, input: { report: { from: artifacts/report.json, schema: report } } }
+  - { id: read,  type: agent, harness: $harness, model: $model, agent: reader, input: { report: { from: artifacts/report.json, schema: report } } }
 `},
 		"command to command": {stages: `  - { id: make, type: command, run: "true", output: { report: { to: artifacts/report.json, schema: report } } }
   - { id: use,  type: command, run: "true", input: { report: { from: artifacts/report.json, schema: report } } }
@@ -260,7 +260,7 @@ func TestSchemaRulesAccept(t *testing.T) {
 			schemas:   "schemas:\n  - { name: report, json_schema: {} }\n  - { name: conventional, json_schema: { properties: { subject: { pattern: '^(feat|fix|chore)' } } } }\n",
 			writerOut: `{ name: report, type: commit_message, schema: conventional }`,
 			readerIn:  `{ name: report, type: file }`,
-			stages: `  - { id: write,  type: agent, agent: writer, output: { report: { to: artifacts/commit.json, type: commit_message, schema: conventional } } }
+			stages: `  - { id: write,  type: agent, harness: $harness, model: $model, agent: writer, output: { report: { to: artifacts/commit.json, type: commit_message, schema: conventional } } }
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } } }
 `},
 	} {

@@ -152,9 +152,9 @@ func TestProvisionLogPublishedOnBootstrapFailure(t *testing.T) {
 func TestAttemptSnapshotsSurviveRetries(t *testing.T) {
 	doc := `name: snap
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } }, input: { failure: { from: edge.failure, type: failure, optional: true } }, on_success: check }
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } }, input: { failure: { from: edge.failure, type: failure, optional: true } }, on_success: check }
   - { id: check, type: command, run: verify, on_success: done,
       on_fail: { to: plan, max: 1 } }
 `
@@ -241,9 +241,9 @@ main:
 func TestPingAttachmentsAreSnapshotted(t *testing.T) {
 	doc := `name: ping
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	att, snaps, _ := newFiles(t)

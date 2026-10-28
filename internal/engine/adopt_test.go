@@ -22,7 +22,7 @@ import (
 const reviewerFlowDoc = `name: rev
 version: 5
 operates_on: merge_request
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: pr_reviewer
     prompt: review it
@@ -31,14 +31,14 @@ agents:
     outputs:
       - { name: review, type: review_threads }
 main:
-  - { id: read, type: agent, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
+  - { id: read, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
       output: { review: { to: artifacts/review.yaml, type: review_threads } } }
   - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 watchers:
   - id: again
     on: mr_head_moved
     stages:
-      - { id: reread, type: agent, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
+      - { id: reread, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
           output: { review: { to: artifacts/review.yaml, type: review_threads } } }
       - { id: repost, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 outcomes:
@@ -189,7 +189,7 @@ func TestBuiltinReviewerTemplateRuns(t *testing.T) {
 	if !ok {
 		t.Fatal("no built-in reviewer")
 	}
-	src = strings.NewReplacer("harness: opencode", "harness: fake", "model: opencode-go/glm-5.2", "model: anthropic/claude-sonnet-4-6").Replace(src)
+	src = strings.NewReplacer("  harness: opencode\n", "  harness: fake\n  model: fake/model\n").Replace(src)
 	ph, _ := newReviewerHarness(t, src)
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
 	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching (!1 by alice)"}, "reviewer", testProject, RunInput{MR: &RunMR{IID: ref.IID}})

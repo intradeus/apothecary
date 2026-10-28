@@ -8,7 +8,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Select from '$lib/ui/Select.svelte';
-	import { KNOWN_PARAMS, type DocParam, type FlowDoc } from '$lib/flowdoc';
+	import { KNOWN_PARAMS, readAsModelOrHarness, type DocParam, type FlowDoc } from '$lib/flowdoc';
 	import {
 		customParams,
 		defaultText,
@@ -31,7 +31,10 @@
 		max_cost_usd: '10',
 		max_total_turns: '300'
 	};
-	const required = (name: string) => name === 'harness' || name === 'model';
+	// harness and model have no engine default: left empty, the workshop
+	// binds them (or a run sets them) — the stages read them as $harness and
+	// $model.
+	const leftToWorkshop = (name: string) => name === 'harness' || name === 'model';
 
 	function setKnown(name: string, text: string) {
 		const v = text.trim();
@@ -114,14 +117,14 @@
 	<div class="field">
 		<label for="kp-{name}"
 			><span class="mono">{name}</span>
-			{#if required(name)}<span class="hue-amb">{t('flow.insp.required')}</span>{:else}<span
+			{#if leftToWorkshop(name)}<span class="fnt">{t('flow.insp.leftToWorkshop')}</span>{:else}<span
 					class="fnt">{t('flow.insp.engineDefault', { value: KNOWN_PLACEHOLDER[name] })}</span
 				>{/if}</label
 		>
 		<input
 			id="kp-{name}"
 			class="mono"
-			value={p == null ? '' : String(p.default)}
+			value={p == null ? '' : defaultText(p)}
 			placeholder={KNOWN_PLACEHOLDER[name]}
 			onchange={(e) => setKnown(name, e.currentTarget.value)}
 		/>
@@ -218,6 +221,9 @@
 				/>
 			{/if}
 			{#if p.list}<div class="help">{t('flow.insp.paramListHelp')}</div>{/if}
+			{#if type === 'string' && !p.list && defaultText(p) === '' && readAsModelOrHarness(doc, name)}
+				<div class="help">{t('flow.insp.paramUnboundHelp')}</div>
+			{/if}
 		</div>
 		{#if type === 'string'}
 			<div class="field">

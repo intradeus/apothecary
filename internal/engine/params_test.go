@@ -22,7 +22,7 @@ const paramFlowDoc = `name: knobs
 version: 5
 parameters:
   harness: fake
-  model: anthropic/claude-sonnet-4-6
+  model: fake/model
   verify: { type: string, default: verify }
   gate: { type: bool, default: true }
   mode: { type: string, default: confirm, enum: [auto, confirm, manual] }
@@ -42,7 +42,7 @@ func TestParamsResolvedAtCreation(t *testing.T) {
 	}
 	h.e.Wait(id)
 	v := h.view(t, id)
-	want := map[string]string{"harness": "fake", "model": "anthropic/claude-sonnet-4-6", "verify": "check", "gate": "false", "mode": "manual",
+	want := map[string]string{"harness": "fake", "model": "fake/model", "verify": "check", "gate": "false", "mode": "manual",
 		"timeout": "30m", "max_turns": "50", "max_cost_usd": "10", "max_total_turns": "300"}
 	if len(v.Params) != len(want) {
 		t.Errorf("params = %v, want %v", v.Params, want)
@@ -133,9 +133,9 @@ const boundAgentDoc = `name: bound
 version: 5
 parameters:
   harness: fake
-  model: anthropic/claude-sonnet-4-6
+  model: fake/model
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 
 // A bound harness lands on every agent stage the way the flow's own would,
@@ -162,17 +162,17 @@ func TestBoundHarnessOutsideTheSetIsRefused(t *testing.T) {
 // own pin: before any workspace exists, and in the project's preflight.
 func TestBoundModelIsCheckedAgainstTheHarnessList(t *testing.T) {
 	h := newHarness(t, mustFlow(t, boundAgentDoc))
-	h.res.Models = func(context.Context, string) ([]string, error) { return []string{"anthropic/claude-sonnet-4-6"}, nil }
+	h.res.Models = func(context.Context, string) ([]string, error) { return []string{"fake/model"}, nil }
 	ctx := context.Background()
 	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "models"); s == nil || !s.OK {
 		t.Fatalf("the flow's own model refused: %+v", s)
 	}
-	h.e.SetFlowBindings(staticBindings{"model": "anthropic/claude-opus-4-2"})
+	h.e.SetFlowBindings(staticBindings{"model": "fake/other"})
 	_, err := h.e.CreateRun(ctx, Ticket{Title: "x"}, "bound", testProject)
-	if err == nil || !strings.Contains(err.Error(), "preflight") || !strings.Contains(err.Error(), "anthropic/claude-opus-4-2") {
+	if err == nil || !strings.Contains(err.Error(), "preflight") || !strings.Contains(err.Error(), "fake/other") {
 		t.Fatalf("err = %v, want a preflight refusal naming the bound model", err)
 	}
-	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "models"); s == nil || s.OK || !strings.Contains(s.Error, "anthropic/claude-opus-4-2") {
+	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "models"); s == nil || s.OK || !strings.Contains(s.Error, "fake/other") {
 		t.Errorf("models step = %+v", s)
 	}
 }

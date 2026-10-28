@@ -309,13 +309,17 @@ export type OperatesOn = (typeof OPERATES_ON)[number];
 export interface DocParam {
 	type?: 'bool' | 'int' | 'float' | 'string' | 'duration';
 	list?: boolean;
-	default: boolean | number | string | (boolean | number | string)[];
+	/** Absent: no default — the parameter waits for the workshop's binding
+	 *  or the run (only one read as a model or a harness may). A string
+	 *  `$name` reads another parameter's value. */
+	default?: boolean | number | string | (boolean | number | string)[];
 	description?: string;
 	enum?: string[];
 }
 
-/** The six parameters the engine reads itself. harness and model are
- *  required; the rest exist at the engine's defaults when omitted. */
+/** The six parameters the engine reads itself. They exist declared or not:
+ *  harness and model without a value until the workshop binds them, the
+ *  rest at the engine's defaults. */
 export const KNOWN_PARAMS = [
 	'harness',
 	'model',
@@ -646,8 +650,17 @@ export function fires(w: DocWait): boolean {
  *  (a known one then runs at the engine's default). */
 export function paramDefault(doc: FlowDoc, name: string): string | undefined {
 	const p = doc.parameters?.[name];
-	if (p == null) return undefined;
+	if (p == null || p.default === undefined) return undefined;
 	return Array.isArray(p.default) ? p.default.join(', ') : String(p.default);
+}
+
+/** Whether the document reads the parameter as a model or a harness — at an
+ *  agent stage, or the Ask pane: the sites that may wait for a value. */
+export function readAsModelOrHarness(doc: FlowDoc, name: string): boolean {
+	const ref = '$' + name;
+	if (doc.ask?.harness === ref) return true;
+	const stages = [...doc.stages, ...(doc.sequences ?? []).flatMap((q) => q.stages)];
+	return stages.some((s) => s.model === ref || s.harness === ref);
 }
 
 /** The flow's definition of an agent by name, or undefined. */
@@ -783,13 +796,18 @@ export function docToYaml(doc: FlowDoc): string {
 	for (const name of [...known, ...own]) {
 		const p = doc.parameters[name];
 		const isKnown = (KNOWN_PARAMS as readonly string[]).includes(name);
+		// No default — none given, or an empty one on a parameter read as a
+		// model or a harness: the workshop binds it. Written without one.
+		const unbound =
+			p.default === undefined || (p.default === '' && readAsModelOrHarness(doc, name));
 		// The engine's own take a bare default; the flow's declare what they hold.
-		if (isKnown && !p.description && !p.enum?.length) params[name] = p.default;
-		else {
+		if (isKnown && !p.description && !p.enum?.length) {
+			if (!unbound) params[name] = p.default;
+		} else {
 			const o: Record<string, unknown> = {};
 			if (!isKnown && p.type) o.type = p.type;
 			if (!isKnown && p.list) o.list = true;
-			o.default = p.default;
+			if (!unbound) o.default = p.default;
 			if (p.description) o.description = p.description;
 			if (p.enum?.length) o.enum = p.enum;
 			params[name] = o;

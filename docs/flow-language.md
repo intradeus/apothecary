@@ -31,12 +31,15 @@ Four rules shape everything below:
    goes; the stage it lands on says what to do with what arrived. An agent
    declares what it needs; the stage that runs it says where to find it.
 4. **A flow is valid on its own; a project binds its parameters.** The
-   document declares every knob with a default and parses and runs as written.
-   What varies between projects — the harness, the test command, how a review
-   round begins, where the tracker issue goes — is a parameter the workshop
-   binds *outside* the document, and a run may override. Nothing
-   project-specific is written into the YAML, so one flow fits a GitHub
-   project with no tracker and a GitLab + Jira one alike.
+   document declares every knob — with a default, or, for a model or a
+   harness, without one — and parses as written; it runs once the project
+   has bound what it left open. What varies between projects — the harness,
+   the model, the test command, how a review round begins, where the tracker
+   issue goes — is a parameter the workshop binds *outside* the document,
+   and a run may override. Nothing project-specific is written into the
+   YAML, so one flow fits a GitHub project with no tracker and a GitLab +
+   Jira one alike — and nothing that changes under the document, a model id
+   above all, is written into it either.
 
 ---
 
@@ -66,8 +69,9 @@ description: "..."         # optional
 operates_on: ticket        # what each run works on: ticket (default) | merge_request (below)
 ask: { harness: opencode } # optional: the Ask pane, a read-only session beside the run (below)
 parameters:                # the flow's ONE settings block (below): every entry is a knob
-  harness: opencode        #   required: the harness kind agent stages run on
-  model: provider/model    #   required: the model they run, unless a stage pins another
+  harness: opencode        #   the harness kind stages read as $harness
+                           #   model: left out on purpose — no default; the project binds
+                           #   it, a run may override, and stages read it as $model
   timeout: 30m             #   wall clock per agent/command stage (suspended while a ping waits)
   max_turns: 50            #   per agent stage
   max_cost_usd: 10.0       #   run-wide ceilings; exceeding either abandons the run
@@ -270,8 +274,8 @@ without being referenced anywhere:
 
 | name | type | default | read by |
 |---|---|---|---|
-| `harness` | string, a harness kind | *required* | every agent stage that pins none |
-| `model` | string, `provider/model` | *required* | every agent stage that pins none |
+| `harness` | string, a harness kind | *none*: unbound until the project binds it, or a run sets it | every agent stage, and the Ask pane, written `harness: $harness` |
+| `model` | string, `provider/model` | *none*: unbound until the project binds it, or a run sets it | every agent stage written `model: $model` |
 | `timeout` | duration | `30m` | every agent and command stage that declares none |
 | `max_turns` | int | `50` | every agent stage that declares none |
 | `max_cost_usd` | float | `10` | the run: exceeding it abandons the run |
@@ -285,9 +289,8 @@ holds**: a `type` — `bool | int | float | string | duration` — and, with
 ```yaml
 parameters:
   harness: opencode
-  model: opencode-go/qwen3.7-plus
   verify:          { type: string, default: verify, description: "the project command that runs the tests" }
-  review_model:    { type: string, default: opencode-go/glm-5.2 }
+  review_model:    { type: string, default: $model, description: "the reviewer's model — bind a second vendor's" }
   plan_gate:       { type: bool, default: true }
   conflicts_start: { type: string, default: confirm, enum: [auto, confirm, manual] }
   rereview_quiet:  { type: duration, default: 10m }
@@ -304,6 +307,41 @@ without a type is refused with the one it would have had (*"verify: type is
 required — type: string"*). The engine-known names cannot be declared as
 another type, nor as lists, and the editor pins them at the top of the
 block.
+
+**No default: the project's to bind.** A parameter may be declared without a
+default — `model: { description: "..." }`, or simply left out of the block
+for `harness` and `model`, which exist regardless. It then has **no value**
+until the project binds it or a run sets it, and the document is still valid:
+it parses, it is saved and edited, the editor shows the parameter as *no
+value yet*. Only a parameter read as a **model** or a **harness** may wait
+like this (anywhere else — a `run_ref`, a timeout — the parser demands a
+value now); run creation refuses while one is unbound, naming it, the stages
+reading it, and where a value comes from (*"model" has no value (read by
+build, review): bind it in Workshop → Flows → Configure, or set it when
+starting the run*), and the project's preflight reports the same under its
+`parameters` step. This is why no template carries a model: model ids change
+under a document that must not, and a run that pinned yesterday's model
+would fail before its first stage.
+
+**A default that reads another parameter.** `default: $name` makes a
+parameter's value follow another's — `review_model: { type: string, default:
+$model }` runs the review on the build's model until the project binds a
+second vendor's. The other must be declared, of the same type and shape, and
+the chain may not loop back; a bound value still wins over the followed one,
+and an unbound end of the chain is reported as that parameter, not as the one
+following it.
+
+**Stages sharing a model parameter share a harness.** Two harnesses rarely
+list the same model ids, so one value cannot be right for both. Two agent
+stages reading the same model parameter must therefore run on the same
+harness *as written* — the same kind at both, or the same harness parameter:
+`harness: $harness` at both is one harness, `harness: codex` at one and
+`$harness` at the other is not, even on a day the binding happens to say
+`codex`. The parser refuses the document otherwise and says which stage to
+give its own parameter. What follows for free is what the forms show: a
+model parameter belongs to exactly one harness, so Configure and the
+start-run form list that harness's models beside it — the one named at its
+stages, or the current value of the harness parameter they read.
 
 **Where a parameter is read.** `$name` — lower-case, as a field's whole
 value; the only other thing `$` spells is `${secrets.<name>}` inside an MCP
@@ -578,20 +616,20 @@ sequences:
           on_timeout: { to: test, max: 1, then: fail } }
   - id: make
     stages:
-      - { id: build,  type: agent, agent: builder,
+      - { id: build,  type: agent, harness: $harness, model: $model, agent: builder,
           input: { failure: { from: edge.failure, type: failure, optional: true } },
           on_fail: { to: build, max: 2, then: debug } }
       - { id: ship,   sequence: ship, on_fail: { to: build, max: 5, then: debug } }
-      - { id: review, type: agent, agent: reviewer, on_reject: { to: build, max: 3, then: debug } }
+      - { id: review, type: agent, harness: $harness, model: $model, agent: reviewer, on_reject: { to: build, max: 3, then: debug } }
 
 main:
-  - { id: plan, type: agent, agent: planner }
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner }
   - { id: make, sequence: make }                        # runs make.build, make.ship.commit, …
 watchers:
   - id: review_fixes
     on: mr_review_settled
     stages:
-      - { id: address,  type: agent, agent: builder }
+      - { id: address,  type: agent, harness: $harness, model: $model, agent: builder }
       - { id: fix_ship, sequence: ship, on_fail: { to: address, max: 3, then: debug } }
 ```
 
@@ -685,11 +723,17 @@ command, `question` on an agent, and so on).
     rejection: { from: edge.verdict, type: verdict, optional: true }   # what an edge brings back
   output:                               # every output the agent declares, and where it goes
     notes:     { to: artifacts/build-notes.md, type: file }
-  model: $review_model                  # optional overrides of the flow's parameters —
-  harness: codex                        #   a literal, or a parameter of the right type
-  max_turns: 80
-  timeout: 45m
+  harness: $harness                     # required: the harness kind, or a parameter ($harness)
+  model: $review_model                  # required: provider/model, or a parameter — stages reading
+                                        #   the same model parameter run on the same harness (§1)
+  max_turns: 80                         # optional overrides of the flow's parameters —
+  timeout: 45m                          #   a literal, or a parameter of the right type
 ```
+
+An agent stage **states its harness and its model**; neither falls back to a
+flow-wide default. The usual spelling is the parameters, `harness: $harness`
+and `model: $model`, so that what every stage runs on is read off the stage
+and bound by the project in one place.
 
 The agent's definition in this document's `agents:` block — its **contract** —
 declares what it reads and writes (§1, §4). The stage states that contract as
@@ -1030,6 +1074,8 @@ main:
     on_fail: { to: fix_app, max: 2 }   # never healthy: the log's tail is edge.failure
   - id: shoot
     type: agent
+    harness: $harness
+    model: $model
     agent: shooter
     input:
       app: { from: run.service.$app, type: link }   # its address while it runs
@@ -1075,7 +1121,7 @@ service the project does not declare.
 - { id: plan_gate,   type: human_gate, run_if: $plan_gate, … }       # a bool parameter
 - { id: in_progress, type: action, action: ticket_transition, run_if: tracker, … }
 - { id: sync,        type: action, action: sync_target, run_if: subject, … }
-- { id: note,        type: agent, agent: writer, run_if: not tracker, … }
+- { id: note,        type: agent, harness: $harness, model: $model, agent: writer, run_if: not tracker, … }
 ```
 
 `run_if:` names one condition: `tracker` (the ticket has a tracker issue),
@@ -1248,6 +1294,8 @@ recent.
 ```yaml
 - id: commit_msg
   type: agent
+  harness: $harness
+  model: $model
   agent: committer
   input:
     ticket:  { from: run.ticket, type: ticket }
@@ -1311,6 +1359,8 @@ from "the tests broke":
 ```yaml
 - id: build
   type: agent
+  harness: $harness
+  model: $model
   agent: builder
   input:
     plan:      { from: artifacts/plan.md, type: file }
@@ -1776,14 +1826,13 @@ operates_on: ticket                # the default: a run works on a ticket
 # One settings block. A project binds any of these in the workshop without
 # touching this document; a run may override.
 parameters:
-  harness: opencode
-  model: opencode-go/qwen3.7-plus
+  harness: opencode                # model: none here — the project binds it, stages read $model
   timeout: 30m
   max_turns: 50
   max_cost_usd: 20.0
   max_total_turns: 600
   verify:          { default: verify, description: "the project command that runs the tests" }
-  review_model:    { default: opencode-go/glm-5.2, description: "a second vendor reviews the change" }
+  review_model:    { type: string, default: $model, description: "the reviewer's model — bind a second vendor's" }
   plan_gate:       { default: true, description: "stop for a human to approve the plan before building" }
   conflicts_start: { default: confirm, enum: [auto, confirm, manual] }
   review_start:    { default: auto,    enum: [auto, confirm, manual] }
@@ -1833,6 +1882,8 @@ main:
   # then the debug leaf.
   - id: plan
     type: agent
+    harness: $harness
+    model: $model
     agent: planner
     max_turns: 25
     input:
@@ -1855,6 +1906,8 @@ main:
 
   - id: build
     type: agent
+    harness: $harness
+    model: $model
     agent: builder
     max_turns: 80
     input:
@@ -1883,6 +1936,7 @@ main:
   # Three rejected rounds, then a human: no chain ends without a person.
   - id: review
     type: agent
+    harness: $harness
     agent: reviewer
     model: $review_model
     max_turns: 30
@@ -1917,7 +1971,7 @@ watchers:
     stages:
       - { id: sync,      type: action, action: sync_target, with: { strategy: merge },
           on_success: sync_test, on_fail: { to: resolve, max: 6, then: debug } }
-      - { id: resolve,   type: agent, agent: resolver, max_turns: 30,
+      - { id: resolve,   type: agent, harness: $harness, model: $model, agent: resolver, max_turns: 30,
           input: { plan:     { from: artifacts/plan.md, type: file },
                    conflict: { from: edge.failure, type: failure, optional: true } },
           on_success: sync, on_fail: debug }
@@ -1932,7 +1986,7 @@ watchers:
     stages:
       - { id: load, type: action, action: load_review_comments, with: { select: human },
           output: { review: { to: artifacts/review.md, type: file } } }
-      - { id: fix,  type: agent, agent: builder, max_turns: 60,
+      - { id: fix,  type: agent, harness: $harness, model: $model, agent: builder, max_turns: 60,
           input: { ticket:   { from: run.ticket, type: ticket },
                    plan:     { from: artifacts/plan.md, type: file },
                    comments: { from: artifacts/review.md, type: file },

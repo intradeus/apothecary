@@ -80,6 +80,17 @@ export interface ParamDecl {
 	enum?: string[];
 	/** One of the six the engine reads itself. */
 	known: boolean;
+	/** No default: unbound until the workshop binds it or a run sets it
+	 *  (only a model or a harness may wait). */
+	required?: boolean;
+	/** The parameter this one's default reads (`default: $model`). */
+	defaultRef?: string;
+	/** How the document reads it: at agent stages' model, at their harness
+	 *  (or the Ask pane's), or neither. Picks the form's control. */
+	role?: 'model' | 'harness';
+	/** On a model parameter: the harness its stages run on — a kind, or
+	 *  `$name` of a harness parameter — whose models a form lists for it. */
+	harness?: string;
 }
 
 /** One place a document reads a parameter. */

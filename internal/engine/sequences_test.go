@@ -18,7 +18,7 @@ import (
 func TestSequenceRunsAsItsStages(t *testing.T) {
 	doc := `name: seq
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 sequences:
   - id: check
     stages:

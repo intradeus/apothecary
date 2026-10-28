@@ -70,6 +70,7 @@ export function parseValue(text: string, type: ParamType): boolean | number | st
 
 /** A default as it is shown in a field: a list's items joined. */
 export function defaultText(p: DocParam): string {
+	if (p.default === undefined) return '';
 	return Array.isArray(p.default) ? p.default.join(', ') : String(p.default);
 }
 

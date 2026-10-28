@@ -187,10 +187,10 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 
 const twoAgentFlowDoc = `name: two
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: scout, type: agent, agent: builder }
-  - { id: build, type: agent, agent: builder }
+  - { id: scout, type: agent, harness: $harness, model: $model, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 
 // A message the agent never took (the invocation ended first) rides into the

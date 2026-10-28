@@ -41,10 +41,10 @@ func newTracker() *fake.TicketSource {
 
 const transitionFirstDoc = `name: tk
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 
 // The move lands before any workspace exists: a remote action with no file
@@ -83,20 +83,20 @@ func TestTicketTransitionRunsBeforeAnyWorkspace(t *testing.T) {
 func TestModelCheckSurvivesALeadingRemoteStage(t *testing.T) {
 	doc := `name: tkm
 version: 2
-parameters: { harness: fake, model: zen/glm-5.0 }
+parameters: { harness: fake, model: acme/alpha-1 }
 main:
   - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 	h, _ := trackerHarness(t, doc)
-	h.res.Runner = &listingRunner{AgentRunner: h.runner, models: []string{"zen/glm-5.2"}}
+	h.res.Runner = &listingRunner{AgentRunner: h.runner, models: []string{"acme/alpha-2"}}
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tkm", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
 	evs := h.events(t, runID)
-	if rf, ok := findPayload[*event.RunFailed](evs); !ok || !strings.Contains(rf.Reason, "zen/glm-5.0") {
+	if rf, ok := findPayload[*event.RunFailed](evs); !ok || !strings.Contains(rf.Reason, "acme/alpha-1") {
 		t.Fatalf("run_failed = %+v; events %v", rf, eventTypes(evs))
 	}
 	if len(h.runner.SnapshotRunCalls()) != 0 {
@@ -122,10 +122,10 @@ func TestTicketTransitionAlreadyThereIsANoop(t *testing.T) {
 
 const routedDoc = `name: routed
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: kick, type: action, action: ticket_transition, with: { to: %s }, on_success: build, on_fail: { to: build, max: 1 } }
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 
 // A status the workflow cannot reach is the flow's wiring, not the tracker's
@@ -332,9 +332,9 @@ func TestRerunKeepsTheTicketSource(t *testing.T) {
 
 const commentDoc = `name: cm
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: write, type: agent, agent: redactor, output: { mr: { to: artifacts/ticket_comment.md, type: file } } }
+  - { id: write, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/ticket_comment.md, type: file } } }
   - { id: post,  type: action, action: ticket_comment, input: { body: { from: artifacts/ticket_comment.md, type: file } } }
 `
 
@@ -418,9 +418,9 @@ func TestTicketCommentReconcilesAfterCrashOrFailedAttempt(t *testing.T) {
 
 const setFieldDoc = `name: sf
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: write, type: agent, agent: redactor, output: { mr: { to: artifacts/feature_flags.txt, type: file } } }
+  - { id: write, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/feature_flags.txt, type: file } } }
   - { id: flags, type: action, action: ticket_set_field, with: { field: "Feature flags", mode: append }, input: { value: { from: artifacts/feature_flags.txt, type: file } } }
   - { id: team,  type: action, action: ticket_set_field, with: { field: Team, text: Platform } }
 `
@@ -458,7 +458,7 @@ func TestTicketSetFieldFromArtifactAndLiteral(t *testing.T) {
 func TestTicketSetFieldUnknownFieldIsInputInvalid(t *testing.T) {
 	doc := `name: sfu
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: team, type: action, action: ticket_set_field, with: { field: Squad, text: Platform } }
 `
@@ -481,9 +481,9 @@ main:
 func TestTicketLinkAttachesTheMergeRequest(t *testing.T) {
 	doc := `name: lk
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
   - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
   - { id: link,   type: action, action: ticket_link }
 `
@@ -514,7 +514,7 @@ main:
 	// No merge request yet: input_missing, and the parser already warned.
 	first := `name: lk1
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: link, type: action, action: ticket_link }
 `
@@ -539,9 +539,9 @@ main:
 func TestTicketDoneAfterTheFinalGateNeedsNoWorkspace(t *testing.T) {
 	doc := `name: dn
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: build,  type: agent, agent: builder }
+  - { id: build,  type: agent, harness: $harness, model: $model, agent: builder }
   - { id: gate,   type: human_gate, question: "Merge?", on_success: finish, on_reject: abort }
   - { id: finish, type: action, action: ticket_transition, with: { to: done } }
 `

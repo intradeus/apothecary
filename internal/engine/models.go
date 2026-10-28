@@ -125,7 +125,7 @@ func contains(xs []string, x string) bool {
 }
 
 // closestModels suggests replacements: the same provider first, ranked by how
-// long a prefix they share with the missing id (glm-5.0 → glm-5.2, glm-5.3).
+// long a prefix they share with the missing id (alpha-1 → alpha-2, alpha-3).
 func closestModels(want string, models []string, n int) []string {
 	provider, _, _ := strings.Cut(want, "/")
 	type cand struct {
@@ -161,7 +161,7 @@ func closestModels(want string, models []string, n int) []string {
 
 // agentAccepts reports whether an agent's advertised ids cover a flow model:
 // exactly, by its bare id (codex spells models without the provider), or as
-// a variant of it ("gpt-5/high").
+// a variant of it ("alpha/high").
 func agentAccepts(advertised []string, model string) bool {
 	bare := model
 	if _, rest, ok := strings.Cut(model, "/"); ok {

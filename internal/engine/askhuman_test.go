@@ -15,9 +15,9 @@ import (
 
 const askFlowDoc = `name: ask
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
-  - { id: build, type: agent, agent: builder, input: { ticket: { from: run.ticket, type: ticket } } }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder, input: { ticket: { from: run.ticket, type: ticket } } }
 `
 
 // waitEvent polls the log for the first payload of type T.
@@ -281,7 +281,7 @@ func TestAnswerWithNoSessionToResumeFailsTheAttempt(t *testing.T) {
 func TestDisobedientAgentStillPausesAndIsToldWhatItGuessed(t *testing.T) {
 	doc := `name: askout
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: planner
     description: writes the plan
@@ -290,7 +290,7 @@ agents:
     outputs:
       - { name: plan, type: file, description: the plan }
 main:
-  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	runIDCh := make(chan string, 1)
@@ -425,7 +425,7 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 func TestGateParksAndAnswerResumes(t *testing.T) {
 	doc := `name: gated
 version: 2
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: plan_gate, type: human_gate, question: "Approve?", on_success: done, on_reject: abort }
 `

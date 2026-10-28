@@ -65,7 +65,7 @@ func TestValidateContracts(t *testing.T) {
 		Outputs: []agentspec.OutputDecl{{Name: "verdict", Type: agentspec.TypeVerdict}}}
 	reviewerNotes := &agentspec.Spec{Name: "reviewer", Outputs: []agentspec.OutputDecl{{Name: "notes", Type: file}}}
 
-	plan := "  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }\n"
+	plan := "  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }\n"
 	tests := []struct {
 		name       string
 		stages     string
@@ -75,32 +75,32 @@ func TestValidateContracts(t *testing.T) {
 	}{
 		{
 			name:    "required input not stated",
-			stages:  "  - { id: b, type: agent, agent: builder, input: { changes: { from: run.git.diff_target, type: changeset } }, on_success: done }\n",
+			stages:  "  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { changes: { from: run.git.diff_target, type: changeset } }, on_success: done }\n",
 			specs:   specMap(builderTwo),
 			wantErr: `agent "builder" requires input "plan"`,
 		},
 		{
 			name:    "no input at all still misses the required one",
-			stages:  "  - { id: b, type: agent, agent: builder, on_success: done }\n",
+			stages:  "  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, on_success: done }\n",
 			specs:   specMap(builderPlan),
 			wantErr: `requires input "plan"`,
 		},
 		{
 			// An agent with no contract cannot answer for a named port.
 			name:    "a port against a contract-less agent",
-			stages:  "  - { id: b, type: agent, agent: builder, input: { x: { from: repo:a.md, type: file } }, on_success: done }\n",
+			stages:  "  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { x: { from: repo:a.md, type: file } }, on_success: done }\n",
 			specs:   specMap(noDecls),
 			wantErr: `input "x" is not an input of agent "builder" (inputs: none)`,
 		},
 		{
 			name:       "optional inputs need no port",
-			stages:     plan + "  - { id: b, type: agent, agent: builder, input: { plan: { from: artifacts/plan.md, type: file } }, on_success: done }\n",
+			stages:     plan + "  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: artifacts/plan.md, type: file } }, on_success: done }\n",
 			specs:      specMap(builderOpt, plannerOut),
 			noWarnings: true,
 		},
 		{
 			name:    "unknown output",
-			stages:  "  - { id: r, type: agent, agent: red, output: { a: { to: artifacts/a.md, type: file }, b: { to: artifacts/b.md, type: file }, ghost: { to: artifacts/x.md, type: file } }, on_success: done }\n",
+			stages:  "  - { id: r, type: agent, harness: $harness, model: $model, agent: red, output: { a: { to: artifacts/a.md, type: file }, b: { to: artifacts/b.md, type: file }, ghost: { to: artifacts/x.md, type: file } }, on_success: done }\n",
 			specs:   specMap(twoOut),
 			wantErr: `output "ghost" is not an output of agent "red" (outputs: a, b)`,
 		},
@@ -108,7 +108,7 @@ func TestValidateContracts(t *testing.T) {
 			// Two outputs of one stage to one file: the agent is told to
 			// write both, and whichever it writes last is all there is.
 			name:    "one path for two outputs",
-			stages:  "  - { id: r, type: agent, agent: red, output: { a: { to: artifacts/same.md, type: file }, b: { to: artifacts/same.md, type: file } }, on_success: done }\n",
+			stages:  "  - { id: r, type: agent, harness: $harness, model: $model, agent: red, output: { a: { to: artifacts/same.md, type: file }, b: { to: artifacts/same.md, type: file } }, on_success: done }\n",
 			specs:   specMap(twoOut),
 			wantErr: `"artifacts/same.md"`,
 		},
@@ -120,7 +120,7 @@ func TestValidateContracts(t *testing.T) {
 		},
 		{
 			name:    "an agent input nothing writes",
-			stages:  "  - { id: b, type: agent, agent: builder, input: { plan: { from: artifacts/ghost.md, type: file } }, on_success: done }\n",
+			stages:  "  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: artifacts/ghost.md, type: file } }, on_success: done }\n",
 			specs:   specMap(builderPlan),
 			wantErr: `input "plan": nothing in this flow writes "artifacts/ghost.md" — a file of the repository is from: repo:artifacts/ghost.md`,
 		},
@@ -168,7 +168,7 @@ func TestValidateContracts(t *testing.T) {
 			// The agent is in the document, so "this edge can never fire" is
 			// decidable at parse time — an error, not a suspicion.
 			name:    "on_reject without a verdict port is refused",
-			stages:  "  - { id: r, type: agent, agent: reviewer, output: { notes: { to: artifacts/notes.md, type: file } }, on_reject: { to: r, max: 1 }, on_success: done }\n",
+			stages:  "  - { id: r, type: agent, harness: $harness, model: $model, agent: reviewer, output: { notes: { to: artifacts/notes.md, type: file } }, on_reject: { to: r, max: 1 }, on_success: done }\n",
 			specs:   specMap(reviewerNotes),
 			wantErr: "on_reject can never fire",
 		},
@@ -176,22 +176,22 @@ func TestValidateContracts(t *testing.T) {
 			// What fires on_reject is the stage's port: an agent that writes
 			// a file may be run by a stage that reads it as a verdict.
 			name:       "a stage's verdict port makes on_reject reachable",
-			stages:     "  - { id: r, type: agent, agent: reviewer, output: { notes: { to: artifacts/notes.json, type: verdict } }, on_reject: { to: r, max: 1 }, on_success: done }\n",
+			stages:     "  - { id: r, type: agent, harness: $harness, model: $model, agent: reviewer, output: { notes: { to: artifacts/notes.json, type: verdict } }, on_reject: { to: r, max: 1 }, on_success: done }\n",
 			specs:      specMap(reviewerNotes),
 			noWarnings: true,
 		},
 		{
 			// Nothing can ever fill it: no failing edge enters this stage.
 			name:    "edge.failure with no edge to fill it",
-			stages:  plan + "  - { id: b, type: agent, agent: builder, input: { plan: { from: artifacts/plan.md, type: file }, failure: { from: edge.failure, type: failure, optional: true } }, on_success: done }\n",
+			stages:  plan + "  - { id: b, type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: artifacts/plan.md, type: file }, failure: { from: edge.failure, type: failure, optional: true } }, on_success: done }\n",
 			specs:   specMap(builderOpt, plannerOut),
 			wantErr: `no on_fail or on_timeout edge enters stage "b", so edge.failure is never filled`,
 		},
 		{
 			name: "clean: writer, readers and a reachable rejection",
 			stages: plan +
-				"  - { id: build,  type: agent, agent: builder, input: { plan: { from: artifacts/plan.md, type: file }, rejection: { from: edge.verdict, type: verdict, optional: true } }, on_success: review }\n" +
-				"  - { id: review, type: agent, agent: reviewer, input: { plan: { from: artifacts/plan.md, type: file } },\n" +
+				"  - { id: build,  type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: artifacts/plan.md, type: file }, rejection: { from: edge.verdict, type: verdict, optional: true } }, on_success: review }\n" +
+				"  - { id: review, type: agent, harness: $harness, model: $model, agent: reviewer, input: { plan: { from: artifacts/plan.md, type: file } },\n" +
 				"      output: { verdict: { to: artifacts/verdict.json, type: verdict } }, on_success: done,\n" +
 				"      on_reject: { to: build, max: 2 } }\n",
 			specs:      specMap(plannerOut, builderOpt, reviewerV),
@@ -224,7 +224,7 @@ func TestValidateContracts(t *testing.T) {
 // declare is a parse error — the document is the whole contract, so there is
 // nothing left to defer to a later, project-aware pass.
 func TestUndeclaredAgentRefused(t *testing.T) {
-	_, err := parseWith("  - { id: b, type: agent, agent: ghost, input: { x: { from: repo:a.md, type: file } }, on_success: done }\n", nil)
+	_, err := parseWith("  - { id: b, type: agent, harness: $harness, model: $model, agent: ghost, input: { x: { from: repo:a.md, type: file } }, on_success: done }\n", nil)
 	if err == nil || !strings.Contains(err.Error(), `agent "ghost" is not declared in this flow`) {
 		t.Errorf("err = %v, want an undeclared-agent refusal", err)
 	}

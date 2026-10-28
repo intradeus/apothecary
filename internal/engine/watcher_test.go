@@ -209,7 +209,7 @@ func (g *mergeGit) snapshot() (merges, rebases int, pushes []string, paused stri
 // conflicts) and a review round (load, fix, reply, post).
 const watcherFlowDoc = `name: phased
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: builder
     prompt: build it
@@ -232,10 +232,10 @@ agents:
     outputs:
       - { name: replies, type: review_replies }
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
   - { id: commit, type: command, run: "git add -A && git commit -m build" }
   - { id: push, type: action, action: push_branch }
-  - { id: redact, type: agent, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
   - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
 watchers:
   - id: conflicts
@@ -243,17 +243,17 @@ watchers:
     stages:
       - { id: sync, type: action, action: sync_target, with: { strategy: STRATEGY }, on_success: sync_test,
           on_fail: { to: resolve, max: 2, then: debug } }
-      - { id: resolve, type: agent, agent: resolver, input: { conflict: { from: edge.failure, type: failure, optional: true } }, on_success: sync }
+      - { id: resolve, type: agent, harness: $harness, model: $model, agent: resolver, input: { conflict: { from: edge.failure, type: failure, optional: true } }, on_success: sync }
       - { id: sync_test, type: command, run: "./verify.sh" }
       - { id: sync_push, type: action, action: push_branch, on_success: end, on_fail: debug }
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1m }
     stages:
       - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } } }
-      - { id: fix, type: agent, agent: builder, input: { comments: { from: artifacts/review.md, type: file } } }
+      - { id: fix, type: agent, harness: $harness, model: $model, agent: builder, input: { comments: { from: artifacts/review.md, type: file } } }
       - { id: fix_commit, type: command, run: "git add -A && git commit -m fix" }
       - { id: fix_push, type: action, action: push_branch }
-      - { id: reply, type: agent, agent: replier, input: { comments: { from: artifacts/review.md, type: file }, failure: { from: edge.failure, type: failure, optional: true } },
+      - { id: reply, type: agent, harness: $harness, model: $model, agent: replier, input: { comments: { from: artifacts/review.md, type: file }, failure: { from: edge.failure, type: failure, optional: true } },
           output: { replies: { to: artifacts/replies.yaml, type: review_replies } }, on_fail: { to: reply, max: 1 } }
       - { id: post, type: action, action: reply_review_comments, input: { replies: { from: artifacts/replies.yaml, type: review_replies } } }
 outcomes:

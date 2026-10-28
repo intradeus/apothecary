@@ -23,7 +23,7 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 	if !ok {
 		t.Fatal("no built-in conflict-resolver")
 	}
-	src = strings.NewReplacer("harness: opencode", "harness: fake", "model: opencode-go/qwen3.7-plus", "model: anthropic/claude-sonnet-4-6").Replace(src)
+	src = strings.NewReplacer("  harness: opencode\n", "  harness: fake\n  model: fake/model\n").Replace(src)
 	ph := newPhasedHarness(t, src)
 	git := newMergeGit("main")
 	// alice's branch: one commit on main as it was; main has moved since.

@@ -27,7 +27,7 @@ import (
 
 const loopFlowDoc = `name: loop
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: planner
     prompt: plan the work
@@ -38,7 +38,7 @@ agents:
     inputs:
       - { name: plan, type: file, optional: true }
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
 `
 
@@ -484,7 +484,7 @@ func TestSSEReplayAndLive(t *testing.T) {
 func TestShimProtocol(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: ping
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: planner
     prompt: plan the work
@@ -495,7 +495,7 @@ agents:
     inputs:
       - { name: plan, type: file, optional: true }
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `)
 	x.srv.HoldTimeout = 5 * time.Millisecond
 
@@ -832,7 +832,7 @@ func TestLogsEndpoint(t *testing.T) {
 func TestPingArtifact(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: planner
     prompt: plan the work
@@ -843,7 +843,7 @@ agents:
     inputs:
       - { name: plan, type: file, optional: true }
 main:
-  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 2 } }
 `)
@@ -910,7 +910,7 @@ main:
 func TestPingHistory(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: gated
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: planner
     prompt: plan the work
@@ -921,7 +921,7 @@ agents:
     inputs:
       - { name: plan, type: file, optional: true }
 main:
-  - { id: plan, type: agent, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner, output: { plan: { to: artifacts/plan.md, type: file } } }
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 2 } }
 `)
@@ -1214,12 +1214,12 @@ func TestHoldForClampsGraceHold(t *testing.T) {
 func TestPingLongPollStaysLiveUntilTheRunParks(t *testing.T) {
 	x := newEnv(t, engine.Config{AskHumanHold: 150 * time.Millisecond}, `name: hold
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: builder
     prompt: build the thing
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `)
 	x.srv.HoldTimeout = 5 * time.Millisecond
 
@@ -1270,12 +1270,12 @@ main:
 func TestSendMessageToTheRunningAgent(t *testing.T) {
 	x := newEnv(t, engine.Config{}, `name: msg
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: builder
     prompt: build the thing
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `)
 	got := make(chan string, 1)
 	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {

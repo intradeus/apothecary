@@ -1535,17 +1535,25 @@ components:
       properties:
         default:
           type: string
+        default_ref:
+          type: string
         description:
           type: string
         enum:
           items:
             type: string
           type: array
+        harness:
+          type: string
         known:
           type: boolean
         list:
           type: boolean
         name:
+          type: string
+        required:
+          type: boolean
+        role:
           type: string
         type:
           type: string

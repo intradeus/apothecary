@@ -12,7 +12,7 @@ const servicesDoc = `name: t
 version: 5
 parameters:
   harness: fake
-  model: anthropic/claude-sonnet-4-6
+  model: fake/model
   app: { type: string, default: default, description: the project service the run brings up }
 mcp_servers:
   - { name: browser, builtin: browser }
@@ -38,6 +38,8 @@ main:
     on_fail: abort
   - id: shoot
     type: agent
+    harness: $harness
+    model: $model
     agent: shooter
     input:
       app: { from: run.service.$app, type: link }
@@ -142,6 +144,8 @@ func TestFilesSatisfiesFilesOnly(t *testing.T) {
 	doc := strings.Replace(servicesDoc, "    inputs:\n      - { name: app, type: link }\n", "    inputs:\n      - { name: app, type: link }\n      - { name: notes, type: file, optional: true }\n", 1) +
 		`  - id: again
     type: agent
+    harness: $harness
+    model: $model
     agent: shooter
     input:
       app: { from: run.service.$app, type: link }

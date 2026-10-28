@@ -49,7 +49,7 @@ func TestResolutionRunnerSelection(t *testing.T) {
 
 const phaseSignalDoc = `name: sig
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: build, type: command, run: "true" }
 watchers:
@@ -93,7 +93,7 @@ func TestFlowRefsCheckPhaseSignals(t *testing.T) {
 	if err := h.e.preflightFlowRefs(h.res, noFire); err != nil {
 		t.Errorf("manual phases without a repository host: %v", err)
 	}
-	onMR := mustFlow(t, "name: rev\nversion: 5\noperates_on: merge_request\nparameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }\n"+
+	onMR := mustFlow(t, "name: rev\nversion: 5\noperates_on: merge_request\nparameters: { harness: fake, model: fake/model }\n"+
 		"main:\n  - { id: look, type: command, run: \"true\", on_success: done }\n")
 	if err := h.e.preflightFlowRefs(h.res, onMR); err == nil || !strings.Contains(err.Error(), "the main chain") || !strings.Contains(err.Error(), "operates_on: merge_request") {
 		t.Errorf("a flow started on merge requests, without a repository host: err = %v", err)

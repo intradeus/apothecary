@@ -6,23 +6,29 @@
 	// the label says what applies then — the layer underneath (the workshop's
 	// value on the start form), else the flow's default. The engine-known
 	// names get their pickers by name: the harness from the workshop's set,
-	// the model from what that harness lists, the timeout as a duration.
+	// the model from what the harness its stages run on lists (the role the
+	// document gives each parameter says which), the timeout as a duration.
 	import type { Model, ParamDecl } from '$lib/domain';
 	import DurationInput from '$lib/ui/DurationInput.svelte';
 	import Select from '$lib/ui/Select.svelte';
 	import { t } from '$lib/i18n/index.svelte';
+	import { harnessKindOf } from './paramValues';
 
 	let {
 		params,
+		all = params,
 		values,
 		under,
 		underLabel = 'workshop',
 		harnesses = [],
-		models = [],
+		modelsByKind = {},
 		idPrefix = 'pf',
 		onchange
 	}: {
 		params: ParamDecl[];
+		/** Every parameter of the flow, when `params` is a part of them: a
+		 *  model parameter's harness may be another parameter's value. */
+		all?: ParamDecl[];
 		values: Record<string, string>;
 		/** The layer underneath, per name: what applies when a value is left
 		 *  empty here (the workshop's binding, on the start form). The flow's
@@ -32,8 +38,9 @@
 		underLabel?: 'workshop' | 'run';
 		/** The harness kinds the workshop can run, for the harness picker. */
 		harnesses?: { kind: string; label: string }[];
-		/** What the effective harness lists, for the model field. */
-		models?: Model[];
+		/** What each harness kind lists, for the model fields: a model
+		 *  parameter suggests the models of the harness its stages run on. */
+		modelsByKind?: Record<string, Model[]>;
 		idPrefix?: string;
 		onchange: (name: string, value: string) => void;
 	} = $props();
@@ -42,12 +49,13 @@
 		'bool' | 'int' | 'float' | 'enum' | 'duration' | 'harness' | 'model' | 'string' | 'list';
 	function kindOf(p: ParamDecl): Kind {
 		if (p.list) return 'list';
-		if (p.name === 'harness') return 'harness';
-		if (p.name === 'model') return 'model';
+		if (p.role) return p.role;
 		if (p.type !== 'string') return p.type;
 		if (p.enum?.length) return 'enum';
 		return 'string';
 	}
+	// The harness a model parameter's models come from, as the form stands.
+	const harnessFor = (p: ParamDecl) => harnessKindOf(p, all, [values, under]);
 	// A list's value is a JSON array; it is shown, and typed, as its items.
 	function items(json: string | undefined): string[] | undefined {
 		if (!json) return undefined;
@@ -59,13 +67,16 @@
 		}
 	}
 	const shown = (p: ParamDecl, v: string) => (p.list ? (items(v) ?? []).join(', ') : v);
-	const applies = (p: ParamDecl) => shown(p, under?.[p.name] ?? p.default);
+	const applies = (p: ParamDecl) => shown(p, under?.[p.name] ?? (p.required ? '' : p.default));
 	function appliesLabel(p: ParamDecl): string {
 		const u = under?.[p.name];
-		if (u === undefined) return t('flow.fields.flowDefault', { value: shown(p, p.default) });
-		return underLabel === 'run'
-			? t('flow.fields.fromRun', { value: shown(p, u) })
-			: t('flow.fields.fromWorkshop', { value: shown(p, u) });
+		if (u !== undefined)
+			return underLabel === 'run'
+				? t('flow.fields.fromRun', { value: shown(p, u) })
+				: t('flow.fields.fromWorkshop', { value: shown(p, u) });
+		if (p.defaultRef) return t('flow.fields.follows', { name: p.defaultRef });
+		if (p.required) return t('flow.fields.unbound');
+		return t('flow.fields.flowDefault', { value: shown(p, p.default) });
 	}
 	/** Toggle one enum value of a list, starting from what applies. */
 	function toggle(p: ParamDecl, v: string, value: string, on: boolean) {
@@ -145,17 +156,21 @@
 				onchange={(nv) => onchange(p.name, nv)}
 			/>
 		{:else if kind === 'model'}
+			{@const hk = harnessFor(p)}
 			<input
 				id={id(p)}
 				list="{id(p)}-list"
 				value={v}
-				placeholder={applies(p)}
+				placeholder={applies(p) || 'provider/model'}
 				autocomplete="off"
 				oninput={(e) => onchange(p.name, e.currentTarget.value.trim())}
 			/>
 			<datalist id="{id(p)}-list">
-				{#each models as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
+				{#each modelsByKind[hk] ?? [] as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
 			</datalist>
+			<div class="help">
+				{hk ? t('flow.fields.modelsOf', { harness: hk }) : t('flow.fields.modelsNoHarness')}
+			</div>
 		{:else if kind === 'duration'}
 			<div class="dur">
 				<DurationInput

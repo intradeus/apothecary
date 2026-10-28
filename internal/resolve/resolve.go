@@ -187,12 +187,13 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		kindList = append(kindList, k)
 	}
 	sort.Strings(kindList)
-	// The project has no default; the flow's defaults.harness drives selection
-	// per stage (runnerFor(stage.Harness)). The Resolution's default fields
+	// The project has no default; each agent stage names its harness (a
+	// kind, or the parameter the project binds) and drives selection
+	// (runnerFor(stage.Harness)). The Resolution's default fields
 	// (Runner/HarnessKind/HarnessBinary) are a FALLBACK — the first-configured
-	// harness — reached only by a stage with no harness kind, which the
-	// required flow default (parse.go) prevents; envcheck also probes it.
-	// Preflight refuses a flow harness kind that is not in this set.
+	// harness — reached only by a stage with no harness kind, which run
+	// creation prevents (flow.Unbound); envcheck also probes it. Preflight
+	// refuses a flow harness kind that is not in this set.
 	defaultKind := firstKind
 	runners := make(map[string]ports.AgentRunner, len(byKind))
 	providerEnv := map[string]string{}

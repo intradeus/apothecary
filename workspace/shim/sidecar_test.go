@@ -506,8 +506,8 @@ func TestSidecarAgentExit(t *testing.T) {
 }
 
 func TestModelCandidates(t *testing.T) {
-	got := modelCandidates("openai/gpt-5", []string{"gpt-5/high", "gpt-5", "o3"})
-	if strings.Join(got, ",") != "openai/gpt-5,gpt-5,gpt-5/high" {
+	got := modelCandidates("acme/alpha-5", []string{"alpha-5/high", "alpha-5", "o3"})
+	if strings.Join(got, ",") != "acme/alpha-5,alpha-5,alpha-5/high" {
 		t.Errorf("candidates = %v", got)
 	}
 }

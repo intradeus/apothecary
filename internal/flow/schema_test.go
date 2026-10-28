@@ -92,7 +92,7 @@ func TestSchemaRefusesMistakes(t *testing.T) {
 		"action setting name":  head + "main:\n  - { id: a, type: action, action: sync_target, with: { stratgy: merge } }\n",
 		"setting as a port":    head + "main:\n  - { id: a, type: action, action: sync_target, input: { strategy: { from: repo:s.md, type: file } } }\n",
 		"action input name":    head + "main:\n  - { id: a, type: action, action: create_mr, input: { bdy: { from: repo:mr.md, type: file } } }\n",
-		"agent without one":    head + "main:\n  - { id: a, type: agent }\n",
+		"agent without one":    head + "main:\n  - { id: a, type: agent, harness: $harness, model: $model }\n",
 		"outcome's then":       head + "outcomes:\n  - { id: m, on: mr_merged, then: finish }\n",
 		"version":              strings.Replace(head, "version: 5", "version: 4", 1) + "main:\n  - { id: a, type: command, run: x }\n",
 		"bare port":            head + "main:\n  - { id: a, type: command, run: x, input: { r: artifacts/a.md } }\n",
@@ -136,6 +136,8 @@ main:
       output: { r: { to: artifacts/r.json, schema: report }, log: { to: artifacts/l.txt, type: file, description: the log } } }
   - id: w
     type: agent
+    harness: $harness
+    model: $model
     agent: w
     input:
       r: { from: artifacts/r.json, schema: report }

@@ -8,6 +8,7 @@
 	import type { Flow, FlowBinding, Integration, Model, ParamDecl, Project } from '$lib/domain';
 	import { KNOWN_PARAMS } from '$lib/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
+	import { modelHarnessKinds } from '$lib/flow/paramValues';
 	import Modal from '$lib/ui/Modal.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
@@ -31,7 +32,7 @@
 	let values = $state<Record<string, string>>({});
 	let stale = $state<string[]>([]);
 	let integrations = $state<Integration[]>([]);
-	let models = $state<Model[]>([]);
+	let modelsByKind = $state<Record<string, Model[]>>({});
 	let loading = $state(true);
 	let busy = $state(false);
 	let error = $state('');
@@ -48,9 +49,9 @@
 			.filter((i) => i.port === 'harness' && project.harnessIds.includes(i.id))
 			.map((i) => ({ kind: i.kind, label: `${i.kind} · ${i.name}`, id: i.id }))
 	);
-	const effectiveHarness = $derived(
-		values.harness || flow.parameters.find((p) => p.name === 'harness')?.default || ''
-	);
+	// The harness kinds the flow's model parameters run on, as the sheet
+	// stands: each model field suggests its own harness's models.
+	const neededKinds = $derived(modelHarnessKinds(flow.parameters, [values]));
 
 	onMount(async () => {
 		const declared = new Set(flow.parameters.map((p) => p.name));
@@ -75,26 +76,20 @@
 		}
 	});
 
-	// The model field suggests what the effective harness lists — best
-	// effort: a harness that cannot list leaves the field free text.
+	// Each model field suggests what its harness lists — best effort: a
+	// harness that cannot list leaves the field free text. Fetched once per
+	// kind.
+	const asked = new Set<string>();
 	$effect(() => {
-		const h = harnesses.find((x) => x.kind === effectiveHarness);
-		if (!h) {
-			models = [];
-			return;
+		for (const kind of neededKinds) {
+			const h = harnesses.find((x) => x.kind === kind);
+			if (!h || asked.has(kind)) continue;
+			asked.add(kind);
+			api.integrations.models(h.id).then(
+				(m) => (modelsByKind = { ...modelsByKind, [kind]: m }),
+				() => (modelsByKind = { ...modelsByKind, [kind]: [] })
+			);
 		}
-		let live = true;
-		api.integrations.models(h.id).then(
-			(m) => {
-				if (live) models = m;
-			},
-			() => {
-				if (live) models = [];
-			}
-		);
-		return () => {
-			live = false;
-		};
 	});
 
 	async function save(e: SubmitEvent) {
@@ -143,15 +138,24 @@
 			<h3>{t('workshop.flows.binding.known')}</h3>
 			<ParamFields
 				params={known}
+				all={flow.parameters}
 				{values}
 				{harnesses}
-				{models}
+				{modelsByKind}
 				idPrefix="fb"
 				onchange={(n, v) => (values[n] = v)}
 			/>
 			<h3>{t('workshop.flows.binding.own')}</h3>
 			{#if own.length}
-				<ParamFields params={own} {values} idPrefix="fb" onchange={(n, v) => (values[n] = v)} />
+				<ParamFields
+					params={own}
+					all={flow.parameters}
+					{values}
+					{harnesses}
+					{modelsByKind}
+					idPrefix="fb"
+					onchange={(n, v) => (values[n] = v)}
+				/>
 			{:else}
 				<p class="fnt">{t('workshop.flows.binding.none')}</p>
 			{/if}

@@ -12,7 +12,7 @@ import (
 
 const parkFlowDoc = `name: park
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: build, type: command, run: "true" }
   - { id: mr, type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } } }

@@ -19,12 +19,12 @@ import (
 
 const testFlowDoc = `name: v1
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 agents:
   - name: builder
     prompt: build the thing
 main:
-  - { id: build, type: agent, agent: builder }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 
 // countingProvisioner observes construction/close for the cache tests.

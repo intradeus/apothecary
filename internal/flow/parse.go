@@ -1204,11 +1204,11 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		if raw.Ask.Harness == "" {
 			return nil, p.errf(at, "ask: harness is required — the harness kind the Ask pane runs on, or a $parameter")
 		}
-		v, via, err := p.lookup(raw.Ask.Harness, paramSite{field: "ask.harness", typ: ParamString})
+		v, via, err := p.lookup(raw.Ask.Harness, paramSite{field: "ask.harness", typ: ParamString, unbound: true})
 		if err != nil {
 			return nil, p.errf(at, "ask: harness: %v", err)
 		}
-		if !slugRe.MatchString(v) {
+		if v != "" && !slugRe.MatchString(v) {
 			return nil, p.errf(at, "ask: harness %q%s is not a slug (kind existence is checked at run creation)", v, via)
 		}
 		f.Ask = &Ask{Harness: v}
@@ -1312,6 +1312,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	if err := p.validatePhases(f, ids); err != nil {
 		return nil, err
 	}
+	if err := p.deriveParamRoles(f); err != nil {
+		return nil, err
+	}
 	// Contracts are checked here rather than in a second, project-aware pass:
 	// v3 flows carry their agents, so a binding that violates one is a parse
 	// error like any other (PLAN5 M26).
@@ -1356,11 +1359,18 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 		if !ParamNameRe.MatchString(e.Name) {
 			return errf(e.Line, "%q is not a parameter name (lowercase [a-z0-9_], starting with a letter)", e.Name)
 		}
-		if !e.Param.Default.Set {
-			return errf(e.Line, "%s: default is required", e.Name)
-		}
 		pr := Param{Name: e.Name, Type: e.Param.Type, List: e.Param.List,
 			Description: e.Param.Description, Enum: e.Param.Enum, Line: e.Line}
+		// No default: the parameter has no value until a project binds it or
+		// a run sets it — allowed only where a model or a harness is read,
+		// which the site checks (lookup). A default of $name reads another
+		// parameter's value instead (checked below, once every one is
+		// declared).
+		if !e.Param.Default.Set {
+			pr.Required = true
+		} else if !e.Param.Default.IsList && IsParamRef(e.Param.Default.Text) {
+			pr.DefaultRef = e.Param.Default.Text[1:]
+		}
 		if kt, known := KnownParams[e.Name]; known {
 			// The engine's own: their type is the engine's, a bare default
 			// is enough, and a declaration may only agree with it.
@@ -1371,12 +1381,18 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 			if pr.List || e.Param.Default.IsList {
 				return errf(e.Line, "%s is the engine's: one %s, not a list", e.Name, kt)
 			}
+			if pr.Required && knownDefaults[e.Name] != "" {
+				return errf(e.Line, "%s: default is required (omit the entry for the engine's own, %s)", e.Name, knownDefaults[e.Name])
+			}
 			pr.Type = kt
 		} else {
 			if custom++; custom > maxParams {
 				return errf(e.Line, "declares more than %d parameters of its own", maxParams)
 			}
 			if pr.Type == "" {
+				if pr.Required || pr.DefaultRef != "" {
+					return errf(e.Line, "%s: type is required (%s)", e.Name, joinTypes())
+				}
 				hint := fmt.Sprintf("type: %s", e.Param.Default.Hint)
 				if e.Param.Default.IsList {
 					hint += ", list: true"
@@ -1386,7 +1402,7 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 			if !slices.Contains(ParamTypes, pr.Type) {
 				return errf(e.Line, "%s: type %q must be one of %s", e.Name, pr.Type, joinTypes())
 			}
-			if pr.List != e.Param.Default.IsList {
+			if e.Param.Default.Set && pr.DefaultRef == "" && pr.List != e.Param.Default.IsList {
 				if pr.List {
 					return errf(e.Line, "%s is a list: its default is a list too (default: [a, b])", e.Name)
 				}
@@ -1398,7 +1414,10 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 		}
 		// The default reads as the declared type, however the YAML spelled it.
 		var err error
-		if e.Param.Default.IsList {
+		if pr.Required || pr.DefaultRef != "" {
+			// The value comes from a binding or another parameter: nothing
+			// to parse here.
+		} else if e.Param.Default.IsList {
 			items := make([]string, 0, len(e.Param.Default.Items))
 			for _, it := range e.Param.Default.Items {
 				v, ierr := parseParamItem(&Param{Name: pr.Name, Type: pr.Type}, it)
@@ -1425,9 +1444,12 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 				}
 				seen[v] = true
 			}
-			defaults := []string{pr.Default}
-			if pr.List {
-				defaults, _ = DecodeParamList(pr.Default)
+			var defaults []string
+			if !pr.Required && pr.DefaultRef == "" {
+				defaults = []string{pr.Default}
+				if pr.List {
+					defaults, _ = DecodeParamList(pr.Default)
+				}
 			}
 			for _, d := range defaults {
 				if !contains(pr.Enum, d) {
@@ -1439,19 +1461,59 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 	}
 	// The known ones the document omitted exist all the same, at the
 	// engine's defaults — so a project can bind, say, max_cost_usd on a flow
-	// that never mentions it. harness and model have no default: a flow that
-	// does not say what runs its agents is incomplete.
+	// that never mentions it. harness and model have no default: they exist
+	// unbound, for the stages that read them ($harness, $model) to get their
+	// value from the project's binding or the run.
 	have := map[string]bool{}
 	for _, pr := range p.plist {
 		have[pr.Name] = true
 	}
 	for _, name := range KnownParamOrder {
 		if !have[name] {
-			p.plist = append(p.plist, Param{Name: name, Type: KnownParams[name], Default: knownDefaults[name], Known: true, Line: line})
+			p.plist = append(p.plist, Param{Name: name, Type: KnownParams[name], Default: knownDefaults[name], Known: true, Line: line,
+				Required: knownDefaults[name] == ""})
 		}
 	}
 	for i := range p.plist {
 		p.params[p.plist[i].Name] = &p.plist[i]
+	}
+	// A default that reads another parameter: declared, of the same type and
+	// shape, within this one's enum, and never back to itself. Reading it
+	// counts as a use of the other.
+	for i := range p.plist {
+		pr := &p.plist[i]
+		if pr.DefaultRef == "" {
+			continue
+		}
+		seen := map[string]bool{pr.Name: true}
+		for name := pr.DefaultRef; ; {
+			target := p.params[name]
+			if target == nil {
+				return errf(pr.Line, "%s: default $%s names no parameter (declared: %s)", pr.Name, name, p.paramNames())
+			}
+			if target.Type != pr.Type || target.List != pr.List {
+				return errf(pr.Line, "%s: default $%s is %s, and this parameter is %s", pr.Name, name, typeWords(target.Type, target.List), typeWords(pr.Type, pr.List))
+			}
+			if seen[name] {
+				return errf(pr.Line, "%s: default $%s loops back to itself", pr.Name, name)
+			}
+			seen[name] = true
+			if len(pr.Enum) > 0 {
+				for _, v := range target.Enum {
+					if !contains(pr.Enum, v) {
+						return errf(pr.Line, "%s: default $%s allows %q, which is not in its enum (%s)", pr.Name, name, v, strings.Join(pr.Enum, " | "))
+					}
+				}
+				if len(target.Enum) == 0 {
+					return errf(pr.Line, "%s: default $%s needs an enum within %s to be read here", pr.Name, name, strings.Join(pr.Enum, " | "))
+				}
+			}
+			if target.DefaultRef == "" {
+				break
+			}
+			name = target.DefaultRef
+		}
+		p.used[pr.DefaultRef] = true
 	}
 	// Bound values: declared, and of their parameter's type — checked once,
 	// here, so a bad binding is one error at the block rather than a
@@ -1466,7 +1528,8 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 		if v, ok := p.bindings[pr.Name]; ok {
 			return v, " (bound)"
 		}
-		return pr.Default, ""
+		v, _ := resolveParamValue(p.plist, p.bindings, pr.Name)
+		return v, ""
 	}
 	var d Defaults
 	var b Budget
@@ -1478,18 +1541,14 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 		v, via := val(pr)
 		switch pr.Name {
 		case "harness":
-			if pr.Default == "" {
-				return errf(0, "harness is required (the harness kind stages run on unless they override it)")
-			}
-			if !slugRe.MatchString(v) {
+			// No value yet is fine: the project binds it, or the run sets
+			// it; Flow.Unbound says so until then.
+			if v != "" && !slugRe.MatchString(v) {
 				return errf(pr.Line, "harness: %q%s is not a slug (lowercase [a-z0-9_-], starting with a letter)", v, via)
 			}
 			d.Harness = v
 		case "model":
-			if pr.Default == "" {
-				return errf(0, "model is required (format provider/model)")
-			}
-			if !validModel(v) {
+			if v != "" && !validModel(v) {
 				return errf(pr.Line, "model: %q%s is not of the form provider/model", v, via)
 			}
 			d.Model = v
@@ -1526,7 +1585,8 @@ func joinTypes() string {
 }
 
 // knownDefaults are the engine-known parameters' values when a document
-// omits them (harness and model have none: they are required).
+// omits them (harness and model have none: the stages that read them get a
+// value from the project's binding or the run).
 var knownDefaults = map[string]string{
 	"timeout":         "30m",
 	"max_turns":       strconv.Itoa(defaultMaxTurns),
@@ -1544,6 +1604,10 @@ type paramSite struct {
 	// list: the site takes a list of typ (a list setting); every other
 	// takes one value.
 	list bool
+	// unbound: the site may read a parameter with no value yet (a model, a
+	// harness — Flow.Unbound reports it; run creation refuses until bound).
+	// Every other site needs the value now.
+	unbound bool
 }
 
 // lookup resolves a field's raw text: a literal is returned as is; a
@@ -1582,10 +1646,11 @@ func (p *parser) lookup(raw string, site paramSite) (value, via string, err erro
 	p.used[name] = true
 	p.refs = append(p.refs, ParamRef{Param: name, Phase: site.phase, Stage: site.stage, Field: site.field, Input: site.input})
 	via = fmt.Sprintf(" (parameter %q)", name)
-	if v, ok := p.bindings[name]; ok {
-		return v, via, nil
+	v, ok := resolveParamValue(p.plist, p.bindings, name)
+	if !ok && !site.unbound {
+		return "", "", fmt.Errorf("parameter %q has no value: give it a default, or bind it — only a model or a harness may wait for one", name)
 	}
-	return pr.Default, via, nil
+	return v, via, nil
 }
 
 // listSetting resolves a list setting: a YAML list of literals, or a list
@@ -1876,26 +1941,35 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			return fail("agent %q is not a slug", raw.Agent)
 		}
 		s.Agent = raw.Agent
-		s.Model, s.Harness, s.MaxTurns, s.Timeout = d.Model, d.Harness, d.MaxTurns, d.Timeout
-		if raw.Model != "" {
-			v, via, err := p.lookup(raw.Model, site("model", ParamString, nil))
-			if err != nil {
-				return fail("model: %v", err)
-			}
-			if !validModel(v) {
-				return fail("model: %q%s is not of the form provider/model", v, via)
-			}
-			s.Model = v
+		s.MaxTurns, s.Timeout = d.MaxTurns, d.Timeout
+		// Harness and model are the stage's to state — a kind or a
+		// provider/model, or the parameter it reads ($harness, $model): no
+		// stage runs on something the document does not say (FLOWLANG §2).
+		// The parameter may have no value yet; the field is then "" until
+		// the project or the run gives one (Flow.Unbound).
+		if raw.Harness == "" {
+			return fail("harness is required — a harness kind, or a $parameter such as $harness")
 		}
-		if raw.Harness != "" {
-			v, via, err := p.lookup(raw.Harness, site("harness", ParamString, nil))
-			if err != nil {
-				return fail("harness: %v", err)
-			}
-			if !slugRe.MatchString(v) {
-				return fail("harness %q%s is not a slug (kind existence is checked at run creation)", v, via)
-			}
+		hs := site("harness", ParamString, nil)
+		hs.unbound = true
+		if v, via, err := p.lookup(raw.Harness, hs); err != nil {
+			return fail("harness: %v", err)
+		} else if v != "" && !slugRe.MatchString(v) {
+			return fail("harness %q%s is not a slug (kind existence is checked at run creation)", v, via)
+		} else {
 			s.Harness = v
+		}
+		if raw.Model == "" {
+			return fail("model is required — provider/model, or a $parameter such as $model")
+		}
+		ms := site("model", ParamString, nil)
+		ms.unbound = true
+		if v, via, err := p.lookup(raw.Model, ms); err != nil {
+			return fail("model: %v", err)
+		} else if v != "" && !validModel(v) {
+			return fail("model: %q%s is not of the form provider/model", v, via)
+		} else {
+			s.Model = v
 		}
 		if raw.MaxTurns != nil {
 			n, via, err := p.lookupInt(raw.MaxTurns, site("max_turns", ParamInt, nil))

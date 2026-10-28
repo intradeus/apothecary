@@ -20,7 +20,7 @@ agents:
     outputs:
       - { name: mr, type: file }
 main:
-  - { id: write, type: agent, agent: w, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: write, type: agent, harness: $harness, model: $model, agent: w, output: { mr: { to: artifacts/mr.md, type: file } } }
   - id: mr
     type: action
     action: create_mr
@@ -63,7 +63,7 @@ func TestListsRefused(t *testing.T) {
 		{"a scalar parameter for a list", "with: { labels: $labels }", "with: { labels: $wait }", `parameter "wait" is a duration, and this field takes a list of strings`},
 		{"a blank item", "with: { labels: $labels }", `with: { labels: [a, " "] }`, `item " " must be a literal`},
 		{"a parameter inside a list", "with: { labels: $labels }", "with: { labels: [$labels] }", `item "$labels" must be a literal`},
-		{"a list for one value", "type: agent, agent: w,", "type: agent, agent: w, timeout: $labels,", `parameter "labels" is a list of strings, and this field takes a duration`},
+		{"a list for one value", "type: agent, harness: $harness, model: $model, agent: w,", "type: agent, harness: $harness, model: $model, agent: w, timeout: $labels,", `parameter "labels" is a list of strings, and this field takes a duration`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			src := strings.Replace(labelsDoc, c.from, c.to, 1)

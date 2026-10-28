@@ -21,7 +21,7 @@ const servicesFlowDoc = `name: svc
 version: 5
 parameters:
   harness: fake
-  model: anthropic/claude-sonnet-4-6
+  model: fake/model
   app: { type: string, default: default, description: the project service the run brings up }
 agents:
   - name: shooter
@@ -40,12 +40,16 @@ main:
     on_fail: { to: fix, max: 1 }
   - id: look
     type: agent
+    harness: $harness
+    model: $model
     agent: shooter
     input:
       app: { from: run.service.$app, type: link }
     on_success: done
   - id: fix
     type: agent
+    harness: $harness
+    model: $model
     agent: fixer
     input:
       failure: { from: edge.failure, type: failure, optional: true }
@@ -163,7 +167,7 @@ func TestServiceThatDoesNotComeUpFeedsTheFix(t *testing.T) {
 // run's services while its chain is live.
 const gateFlowDoc = `name: gate
 version: 5
-parameters: { harness: fake, model: anthropic/claude-sonnet-4-6 }
+parameters: { harness: fake, model: fake/model }
 main:
   - { id: up, type: service, service: default }
   - { id: ok, type: human_gate, question: "Does it look right?", input: { app: { from: run.service.default, type: link } } }
