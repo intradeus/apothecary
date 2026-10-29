@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/skills"
 )
 
 // ErrEgressOff marks an allow request when proxy mode is disabled.
@@ -87,6 +88,18 @@ type RunInput struct {
 	// operates_on: merge_request: Repo is the checkout it belongs to ("" =
 	// the primary), IID its number.
 	MR *RunMR
+	// Skillsets are the skillsets to install into the workspace, each at a
+	// version (0 = latest). On a rerun, nil means the original run's,
+	// re-pinned to their latest; an empty non-nil list means none.
+	Skillsets []skills.Ref
+}
+
+// SkillStore is the skill library as the engine sees it (TODO 38): turn a
+// request's skillset refs into pins at run creation, and pins into the
+// trees bootstrap lays down. Implemented by skillstore.Store.
+type SkillStore interface {
+	ResolveSkillsets(ctx context.Context, userID string, refs []skills.Ref) ([]event.SkillsetPin, error)
+	SkillTrees(ctx context.Context, pins []event.SkillsetPin) ([]skills.Tree, error)
 }
 
 // RunMR names a merge request to create a run on.
@@ -206,6 +219,7 @@ type Engine struct {
 	portRelay   *portrelay.Manager
 	attachments AttachmentStore
 	snapshots   SnapshotStore
+	skillLib    SkillStore
 	pingIndex   PingLookup
 	// wakeMu serializes the dormant answer path: two humans answering the
 	// two questions of one parked run must not both decide they were the
@@ -717,6 +731,35 @@ func (e *Engine) SetFiles(a AttachmentStore, s SnapshotStore) {
 	e.snapshots = s
 }
 
+// SetSkills installs the skill library; nil (the default) refuses any run
+// that asks for skillsets and installs none.
+func (e *Engine) SetSkills(s SkillStore) { e.skillLib = s }
+
+// resolveSkillsets pins a request's skillsets: the owner's only, at the
+// head version unless one is named.
+func (e *Engine) resolveSkillsets(ctx context.Context, userID string, refs []skills.Ref) ([]event.SkillsetPin, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if e.skillLib == nil {
+		return nil, errors.New("skills are not available on this server")
+	}
+	return e.skillLib.ResolveSkillsets(ctx, userID, refs)
+}
+
+// skillTrees is what bootstrap installs for a run's pins. A server with no
+// library configured installs nothing rather than failing a workspace.
+func (e *Engine) skillTrees(ctx context.Context, pins []event.SkillsetPin) ([]skills.Tree, error) {
+	if len(pins) == 0 {
+		return nil, nil
+	}
+	if e.skillLib == nil {
+		e.log.Warn("skills: run pins skillsets but no skill library is configured; installing none")
+		return nil, nil
+	}
+	return e.skillLib.SkillTrees(ctx, pins)
+}
+
 // EgressAuditStore persists and queries the durable egress audit trail (what
 // each workspace reached / was blocked from). nil = audit off. Implemented by
 // *pgstore.Store.
@@ -1069,6 +1112,10 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if err := e.preflightTicket(ctx, res, fl, t); err != nil {
 		return "", err
 	}
+	pins, err := e.resolveSkillsets(ctx, res.UserID, in.Skillsets)
+	if err != nil {
+		return "", fmt.Errorf("preflight: skillsets: %w", err)
+	}
 	e.warmBrowser(res, fl)
 	by := in.By
 	if by == "" {
@@ -1143,6 +1190,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 		Params:              params,
 		By:                  by,
 		MR:                  adopted,
+		Skillsets:           pins,
 	}); err != nil {
 		return "", err
 	}
@@ -1396,10 +1444,18 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	// The attempt runs with the original's parameter values — unless the
 	// flow changed, or the request says otherwise. Values the flow no
 	// longer declares drop.
-	next := RunInput{Params: map[string]string{}, By: in.By, MR: in.MR}
+	next := RunInput{Params: map[string]string{}, By: in.By, MR: in.MR, Skillsets: in.Skillsets}
 	// A run started on someone's merge request is rerun on it.
 	if next.MR == nil && v.Adopted != nil {
 		next.MR = &RunMR{Repo: v.Adopted.Repo, IID: v.Adopted.IID}
+	}
+	// The original's skillsets carry over, re-pinned to their latest
+	// version (as the flow is re-read by name) — unless the request says
+	// which (an empty list clears them).
+	if next.Skillsets == nil {
+		for _, p := range v.Skillsets {
+			next.Skillsets = append(next.Skillsets, skills.Ref{ID: p.ID})
+		}
 	}
 	if in.Flow == "" || in.Flow == v.FlowName {
 		if fl, ferr := e.flows.Get(ctx, v.ProjectID, flowName); ferr == nil {

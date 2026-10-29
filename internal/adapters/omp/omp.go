@@ -64,6 +64,15 @@ marketplace:
   autoUpdate: "off"
 `
 
+// InstallSkills copies the run's skills into ~/.omp/agent/skills, omp's
+// native user-level skills directory. omp also reads the codex and
+// opencode compat directories, where the same skills may sit when those
+// harnesses share the project: same name, same bytes, and the native copy
+// shadows the rest.
+func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+	return acpagent.InstallSkills(ctx, a.envp, env, path.Join(a.agentDir(ctx, env), "skills"), names)
+}
+
 // PrepareEnv generates omp-native config: config.yml, plus one role file per
 // agent spec (delivered in-band, see the package doc). A flow's mcp_servers
 // and ask_human are not here: omp reads no MCP config in ACP mode, so they
@@ -117,5 +126,6 @@ func (a *Adapter) Profile() acpagent.Profile {
 }
 
 // readOnlyTools are omp's built-in tools a read-only session loads: reading
-// and searching the repository, the web, and a browser for the app.
-const readOnlyTools = "read,grep,glob,web_search,browser"
+// and searching the repository, and the web. omp has no built-in "browser"
+// tool — naming an unknown tool fails session/new outright.
+const readOnlyTools = "read,grep,glob,web_search"

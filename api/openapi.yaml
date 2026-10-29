@@ -1005,6 +1005,25 @@ components:
         - required
         - secret
       type: object
+    FileEntry:
+      properties:
+        mode:
+          maximum: 4.294967295e+09
+          minimum: 0
+          type: integer
+        path:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - mode
+        - path
+        - sha256
+        - size
+      type: object
     Flow:
       properties:
         builtin:
@@ -1212,6 +1231,21 @@ components:
         - Line
         - Name
         - Value
+      type: object
+    ImportResult:
+      properties:
+        skill:
+          $ref: '#/components/schemas/Skill'
+        skills:
+          items:
+            $ref: '#/components/schemas/Skill'
+          type: array
+        skillset:
+          $ref: '#/components/schemas/Skillset'
+        warnings:
+          items:
+            type: string
+          type: array
       type: object
     InputDecl:
       properties:
@@ -1485,6 +1519,10 @@ components:
           type: object
         repo:
           type: string
+        skillsets:
+          items:
+            $ref: '#/components/schemas/Ref'
+          type: array
       type: object
     MRRunStarted:
       properties:
@@ -2195,6 +2233,15 @@ components:
         no_cache:
           type: boolean
       type: object
+    Ref:
+      properties:
+        id:
+          type: string
+        seq:
+          type: integer
+      required:
+        - id
+      type: object
     RepoConfig:
       properties:
         agents_md_path:
@@ -2243,6 +2290,10 @@ components:
           additionalProperties:
             type: string
           type: object
+        skillsets:
+          items:
+            $ref: '#/components/schemas/Ref'
+          type: array
         source_branch:
           type: string
       type: object
@@ -2490,6 +2541,10 @@ components:
           type: string
         run_id:
           type: string
+        skillsets:
+          items:
+            $ref: '#/components/schemas/SkillsetPin'
+          type: array
         source_branch:
           type: string
         started_by:
@@ -2733,6 +2788,167 @@ components:
         - slug
         - title
       type: object
+    Skill:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        description:
+          type: string
+        files:
+          items:
+            $ref: '#/components/schemas/FileEntry'
+          nullable: true
+          type: array
+        hash:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        source:
+          $ref: '#/components/schemas/Source'
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+      required:
+        - created_at
+        - description
+        - files
+        - hash
+        - id
+        - name
+        - updated_at
+        - user_id
+      type: object
+    SkillDetail:
+      properties:
+        contents:
+          items:
+            $ref: '#/components/schemas/SkillFileRequest'
+          nullable: true
+          type: array
+        skill:
+          $ref: '#/components/schemas/Skill'
+      required:
+        - contents
+        - skill
+      type: object
+    SkillFileRequest:
+      properties:
+        content_b64:
+          type: string
+        mode:
+          maximum: 4.294967295e+09
+          minimum: 0
+          type: integer
+        path:
+          type: string
+      required:
+        - content_b64
+        - path
+      type: object
+    SkillImportRequest:
+      properties:
+        path:
+          type: string
+        url:
+          type: string
+      required:
+        - url
+      type: object
+    SkillRequest:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/SkillFileRequest'
+          nullable: true
+          type: array
+        name:
+          type: string
+      required:
+        - files
+        - name
+      type: object
+    Skillset:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        description:
+          type: string
+        head_seq:
+          type: integer
+        id:
+          type: string
+        name:
+          type: string
+        skill_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        source:
+          $ref: '#/components/schemas/Source'
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+      required:
+        - created_at
+        - description
+        - head_seq
+        - id
+        - name
+        - skill_ids
+        - updated_at
+        - user_id
+      type: object
+    SkillsetPin:
+      properties:
+        hash:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        seq:
+          type: integer
+      required:
+        - hash
+        - id
+        - name
+        - seq
+      type: object
+    SkillsetRefreshResult:
+      properties:
+        skillset:
+          $ref: '#/components/schemas/Skillset'
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+        - skillset
+      type: object
+    SkillsetRequest:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        skill_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - name
+        - skill_ids
+      type: object
     Snapshot:
       properties:
         created_at:
@@ -2775,6 +2991,32 @@ components:
         - sha256
         - size
         - stage_id
+      type: object
+    Source:
+      properties:
+        commit:
+          type: string
+        fetched_at:
+          format: date-time
+          type: string
+        host:
+          type: string
+        kind:
+          type: string
+        owner:
+          type: string
+        path:
+          type: string
+        ref:
+          type: string
+        repo:
+          type: string
+        url:
+          type: string
+      required:
+        - fetched_at
+        - kind
+        - url
       type: object
     SourceTicket:
       properties:
@@ -2851,6 +3093,10 @@ components:
           additionalProperties:
             type: string
           type: object
+        skillsets:
+          items:
+            $ref: '#/components/schemas/Ref'
+          type: array
         source_branch:
           type: string
       type: object
@@ -3150,6 +3396,51 @@ components:
           type: string
       required:
         - yaml
+      type: object
+    Version:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        hash:
+          type: string
+        members:
+          items:
+            $ref: '#/components/schemas/VersionMember'
+          nullable: true
+          type: array
+        seq:
+          type: integer
+        skillset_id:
+          type: string
+      required:
+        - created_at
+        - hash
+        - members
+        - seq
+        - skillset_id
+      type: object
+    VersionMember:
+      properties:
+        description:
+          type: string
+        files:
+          items:
+            $ref: '#/components/schemas/FileEntry'
+          nullable: true
+          type: array
+        hash:
+          type: string
+        name:
+          type: string
+        skill_id:
+          type: string
+      required:
+        - description
+        - files
+        - hash
+        - name
+        - skill_id
       type: object
     WorkspaceChangedFile:
       properties:
@@ -8994,6 +9285,594 @@ paths:
       summary: Signals a `wait` stage or a gate's auto-answer may name
       tags:
         - system
+  /api/skills:
+    get:
+      operationId: listSkills
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Skill'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's skills
+      tags:
+        - skills
+    post:
+      description: 'A skill is a folder: SKILL.md (frontmatter name + description) plus any support files. The name must match the frontmatter.'
+      operationId: createSkill
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Create a skill from its files
+      tags:
+        - skills
+  /api/skills/{id}:
+    delete:
+      operationId: deleteSkill
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Delete a skill no skillset lists
+      tags:
+        - skills
+    get:
+      operationId: getSkill
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillDetail'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One skill, with its file contents
+      tags:
+        - skills
+    put:
+      operationId: updateSkill
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Replace a skill's files (every skillset listing it gets a new version if its content changed)
+      tags:
+        - skills
+  /api/skills/{id}/refresh:
+    post:
+      operationId: refreshSkill
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Re-download an imported skill
+      tags:
+        - skills
+  /api/skills/import:
+    post:
+      description: A folder holding SKILL.md becomes one skill; a folder of such folders becomes a skillset. Fetched over plain HTTP from the host's public archive — no tokens, public repositories only.
+      operationId: importSkills
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillImportRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Import a skill or a folder of skills from a public URL
+      tags:
+        - skills
+  /api/skillsets:
+    get:
+      operationId: listSkillsets
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Skillset'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's skillsets
+      tags:
+        - skills
+    post:
+      operationId: createSkillset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillsetRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skillset'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Create a skillset (cuts v1)
+      tags:
+        - skills
+  /api/skillsets/{id}:
+    delete:
+      operationId: deleteSkillset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Delete a skillset no live run pins
+      tags:
+        - skills
+    get:
+      operationId: getSkillset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skillset'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One skillset
+      tags:
+        - skills
+    put:
+      operationId: updateSkillset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillsetRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skillset'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Rename a skillset or change its members (a new version if the content changed)
+      tags:
+        - skills
+  /api/skillsets/{id}/refresh:
+    post:
+      operationId: refreshSkillset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillsetRefreshResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Re-download an imported skillset's folder and reconcile its members
+      tags:
+        - skills
+  /api/skillsets/{id}/versions:
+    get:
+      operationId: listSkillsetVersions
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Version'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A skillset's versions, newest first
+      tags:
+        - skills
+  /api/skillsets/{id}/versions/{seq}:
+    get:
+      operationId: getSkillsetVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Version'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One version of a skillset (seq 0 = latest)
+      tags:
+        - skills
   /api/snapshots/{id}:
     get:
       operationId: downloadSnapshot
@@ -9507,6 +10386,7 @@ tags:
   - name: pings
   - name: projects
   - name: runs
+  - name: skills
   - name: system
   - name: tickets
   - name: users

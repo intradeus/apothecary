@@ -27,6 +27,16 @@ import type {
 } from '$lib/domain';
 import type { Credential, CredentialImport, ProviderInfo, SignInPending } from '$lib/domain';
 import type {
+	Skill,
+	SkillDetail,
+	SkillDraft,
+	SkillImportResult,
+	Skillset,
+	SkillsetDraft,
+	SkillsetRefresh,
+	SkillsetVersion
+} from '$lib/domain';
+import type {
 	OpenMergeRequest,
 	MergeRequestRow,
 	ActionSpec,
@@ -102,7 +112,28 @@ const runInputBody = (o?: RunInput) => ({
 	...(o?.sourceBranch ? { source_branch: o.sourceBranch } : {}),
 	...(o?.attachmentIds?.length ? { attachment_ids: o.attachmentIds } : {}),
 	...(o?.params && Object.keys(o.params).length ? { params: o.params } : {}),
-	...(o?.mr ? { mr: { iid: o.mr.iid, ...(o.mr.repo ? { repo: o.mr.repo } : {}) } } : {})
+	...(o?.mr ? { mr: { iid: o.mr.iid, ...(o.mr.repo ? { repo: o.mr.repo } : {}) } } : {}),
+	// Defined travels, empty included: on a rerun, [] clears the original's
+	// skillsets where an absent key would keep them.
+	...(o?.skillsets !== undefined
+		? { skillsets: o.skillsets.map((s) => ({ id: s.id, ...(s.seq ? { seq: s.seq } : {}) })) }
+		: {})
+});
+
+// A skill's whole folder, bytes base64'd; the engine normalises modes.
+const skillBody = (d: SkillDraft): Wire.SkillRequest => ({
+	name: d.name,
+	files: d.files.map((f) => ({
+		path: f.path,
+		content_b64: map.base64FromBytes(f.bytes),
+		...(f.mode ? { mode: f.mode } : {})
+	}))
+});
+
+const skillsetBody = (d: SkillsetDraft): Wire.SkillsetRequest => ({
+	name: d.name,
+	...(d.description ? { description: d.description } : {}),
+	skill_ids: d.skillIds
 });
 
 // Every field always travels: the endpoint replaces the ticket, so an absent
@@ -1029,6 +1060,63 @@ export const users = {
 		unwrapVoid(gen.resetUserPassword({ path: { id }, body: { password } }))
 };
 
+// --- skills -------------------------------------------------------------------
+
+export const skills = {
+	list: async (): Promise<Skill[]> => many(await unwrap(gen.listSkills()), map.toSkill),
+
+	/** One skill with its file contents. */
+	get: async (id: string): Promise<SkillDetail> =>
+		map.toSkillDetail(await unwrap(gen.getSkill({ path: { id } }))),
+
+	create: async (draft: SkillDraft): Promise<Skill> =>
+		map.toSkill(await unwrap(gen.createSkill({ body: skillBody(draft) }))),
+
+	/** Replace the folder. Every skillset listing the skill gets a new
+	 *  version if its content changed. */
+	update: async (id: string, draft: SkillDraft): Promise<Skill> =>
+		map.toSkill(await unwrap(gen.updateSkill({ path: { id }, body: skillBody(draft) }))),
+
+	remove: (id: string) => unwrapVoid(gen.deleteSkill({ path: { id } })),
+
+	/** Re-download an imported skill. */
+	refresh: async (id: string): Promise<Skill> =>
+		map.toSkill(await unwrap(gen.refreshSkill({ path: { id } }))),
+
+	/** Import a skill or a folder of skills from a public URL. */
+	import: async (url: string, path?: string): Promise<SkillImportResult> =>
+		map.toSkillImportResult(
+			await unwrap(gen.importSkills({ body: { url, ...(path ? { path } : {}) } }))
+		)
+};
+
+export const skillsets = {
+	list: async (): Promise<Skillset[]> => many(await unwrap(gen.listSkillsets()), map.toSkillset),
+
+	get: async (id: string): Promise<Skillset> =>
+		map.toSkillset(await unwrap(gen.getSkillset({ path: { id } }))),
+
+	create: async (draft: SkillsetDraft): Promise<Skillset> =>
+		map.toSkillset(await unwrap(gen.createSkillset({ body: skillsetBody(draft) }))),
+
+	update: async (id: string, draft: SkillsetDraft): Promise<Skillset> =>
+		map.toSkillset(await unwrap(gen.updateSkillset({ path: { id }, body: skillsetBody(draft) }))),
+
+	remove: (id: string) => unwrapVoid(gen.deleteSkillset({ path: { id } })),
+
+	/** Newest first. */
+	versions: async (id: string): Promise<SkillsetVersion[]> =>
+		many(await unwrap(gen.listSkillsetVersions({ path: { id } })), map.toSkillsetVersion),
+
+	/** One version; seq 0 = the latest. */
+	version: async (id: string, seq: number): Promise<SkillsetVersion> =>
+		map.toSkillsetVersion(await unwrap(gen.getSkillsetVersion({ path: { id, seq: String(seq) } }))),
+
+	/** Re-download an imported skillset's folder and reconcile its members. */
+	refresh: async (id: string): Promise<SkillsetRefresh> =>
+		map.toSkillsetRefresh(await unwrap(gen.refreshSkillset({ path: { id } })))
+};
+
 export const api = {
 	runs,
 	workspace,
@@ -1044,5 +1132,7 @@ export const api = {
 	system,
 	auth,
 	users,
-	ask
+	ask,
+	skills,
+	skillsets
 };

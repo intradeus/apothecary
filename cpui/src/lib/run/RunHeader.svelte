@@ -318,6 +318,13 @@
 				>{t('run.header.flow')} <span class="tx">{run.flowName}</span>{#if run.flowHash}
 					<span class="mono hash fnt">@{run.flowHash.slice(0, 6)}</span>{/if}</span
 			>
+			{#if run.skillsets?.length}
+				<span class="sk" title={t('run.header.skillsets')}
+					>{#each run.skillsets as p (p.id)}<span class="pill sm t-mut"
+							>{p.name} <span class="mono">v{p.seq}</span></span
+						>{/each}</span
+				>
+			{/if}
 			{#if run.branch}
 				<span
 					class="mono br ell"
@@ -656,6 +663,11 @@
 		display: inline-flex;
 		gap: 6px;
 		align-items: center;
+	}
+	.sk {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: 4px;
 	}
 	.hash {
 		font-size: var(--fs-meta);

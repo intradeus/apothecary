@@ -103,3 +103,17 @@ func TestCodexHomeFollowsWorkspaceHome(t *testing.T) {
 		}
 	}
 }
+
+// Skills land in the user-level directory codex discovers: $HOME/.agents/skills.
+func TestInstallSkillsTargetsAgentsDir(t *testing.T) {
+	envp, id := envWith(t)
+	a := New(envp, Config{})
+	if err := a.InstallSkills(context.Background(), id, []string{"pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := envp.Execs()
+	last := calls[len(calls)-1].Cmd.Script
+	if !strings.Contains(last, "cp -R '/apothecary/skills/pdf' '/home/apothecary/.agents/skills/pdf'") {
+		t.Errorf("script = %q", last)
+	}
+}

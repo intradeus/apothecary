@@ -198,6 +198,12 @@ type Harness interface {
 	// the target repo). Implementations must write their base config (e.g.
 	// the ask_human MCP registration) even for zero specs.
 	Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
+	// InstallSkills makes the run's skills — laid down by the engine at
+	// acpagent.SkillsDir/<name>, one directory per skill — visible to this
+	// harness, by copying them into the directory IT discovers skills in
+	// (bootstrap step 4, after Prepare). Each harness owns that location.
+	// Zero names = nothing to do.
+	InstallSkills(ctx context.Context, env ports.EnvID, names []string) error
 }
 
 // AnyModel is an OPTIONAL Harness capability: the harness runs whatever

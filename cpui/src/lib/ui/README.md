@@ -119,3 +119,4 @@ Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bu
   - `$lib/run`: `RunTable` (`detail`), `RunRow`, `MrLink`, `runFacts`
   - `$lib/workshop`: `WorkshopName`
   - `$lib/tickets`: `TicketTable`
+  - `$lib/skills`: `SkillsetPicker` (what a run takes along), `SkillFileEditor` (CodeMirror for a skill's files), `files.ts` (bytes ↔ text)

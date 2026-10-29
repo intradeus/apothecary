@@ -199,3 +199,18 @@ func TestAgentsTurnOffTheMCPServersTheyDoNotList(t *testing.T) {
 		}
 	}
 }
+
+// Skills land in opencode's global skills directory under its config dir.
+func TestInstallSkillsTargetsConfigSkillsDir(t *testing.T) {
+	envp := fake.NewEnvProvisioner()
+	id, _ := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	a := New(envp, Config{})
+	if err := a.InstallSkills(context.Background(), id, []string{"pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := envp.Execs()
+	last := calls[len(calls)-1].Cmd.Script
+	if !strings.Contains(last, "cp -R '/apothecary/skills/pdf' '/home/apothecary/.config/opencode/skills/pdf'") {
+		t.Errorf("script = %q", last)
+	}
+}

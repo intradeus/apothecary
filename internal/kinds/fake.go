@@ -187,6 +187,11 @@ func (h *fakeHarness) Prepare(_ context.Context, _ ports.EnvID, specs []*agentsp
 	return nil
 }
 
+func (h *fakeHarness) InstallSkills(_ context.Context, _ ports.EnvID, names []string) error {
+	h.runner.RecordInstallSkills(names)
+	return nil
+}
+
 // AcceptsAnyModel: the fake runs any model string; its Models are examples.
 func (h *fakeHarness) AcceptsAnyModel() bool { return true }
 

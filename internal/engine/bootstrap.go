@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/skills"
+	"encoding/json"
 )
 
 // BootstrapSpec parameterizes the §11 bootstrap sequence. It is pure port
@@ -57,6 +60,13 @@ type BootstrapSpec struct {
 	// Prepare, when set, runs after the clone (§11 step 4): harness config
 	// generation for Agents (FLOWLANG §1, v3 — the flow carries them).
 	Prepare func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
+	// Skills are the run's skills (TODO 38), laid down at skills.WorkspaceDir
+	// one directory each, right before Prepare; SkillPins say which skillset
+	// versions they came from (the manifest beside them). InstallSkills,
+	// when set, then copies them into every harness's own directory.
+	Skills        []skills.Tree
+	SkillPins     []event.SkillsetPin
+	InstallSkills func(ctx context.Context, env ports.EnvID, names []string) error
 	// Agents are the flow's agent definitions, materialized by Prepare.
 	Agents []*agentspec.Spec
 
@@ -206,10 +216,65 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 		}
 	}
 
+	if err := writeSkills(ctx, envp, id, spec); err != nil {
+		return fmt.Errorf("bootstrap skills: %w", err)
+	}
 	if spec.Prepare != nil {
 		if err := spec.Prepare(ctx, id, spec.Agents); err != nil {
 			return fmt.Errorf("bootstrap harness-config: %w", err)
 		}
+	}
+	if spec.InstallSkills != nil && len(spec.Skills) > 0 {
+		names := make([]string, 0, len(spec.Skills))
+		for _, t := range spec.Skills {
+			names = append(names, t.Name)
+		}
+		if err := spec.InstallSkills(ctx, id, names); err != nil {
+			return fmt.Errorf("bootstrap skills: %w", err)
+		}
+	}
+	return nil
+}
+
+// skillsManifest is what bootstrap writes beside the skill trees: which
+// skillset versions the run pinned and which skills they amounted to.
+type skillsManifest struct {
+	Skillsets []event.SkillsetPin `json:"skillsets"`
+	Skills    []string            `json:"skills"`
+}
+
+// writeSkills replaces skills.WorkspaceDir with the run's skill trees — the
+// neutral copy every harness installs from — plus a manifest. Always
+// starts from an empty directory (a re-bootstrap of the same container
+// must not keep a previous selection); with no skills that is all it does.
+func writeSkills(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
+	q := shellQuote(skills.WorkspaceDir)
+	res, err := envp.Exec(ctx, id, ports.Command{Script: "rm -rf " + q + " && mkdir -p " + q, Timeout: spec.Timeout})
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("reset %s: exit %d: %s", skills.WorkspaceDir, res.ExitCode, tail(res.Output, 1<<10))
+	}
+	if len(spec.Skills) == 0 {
+		return nil
+	}
+	m := skillsManifest{Skillsets: spec.SkillPins, Skills: []string{}}
+	for _, t := range spec.Skills {
+		if err := envp.WriteTree(ctx, id, skills.WorkspaceDir+"/"+t.Name, t.Files); err != nil {
+			return fmt.Errorf("skill %s: %w", t.Name, err)
+		}
+		m.Skills = append(m.Skills, t.Name)
+	}
+	if m.Skillsets == nil {
+		m.Skillsets = []event.SkillsetPin{}
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := envp.WriteFile(ctx, id, skills.WorkspaceDir+"/manifest.json", append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("manifest: %w", err)
 	}
 	return nil
 }

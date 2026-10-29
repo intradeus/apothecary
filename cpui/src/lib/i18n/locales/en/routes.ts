@@ -98,6 +98,11 @@ export default {
 	'page.system.integrations.accent': 'you trust',
 	'page.system.integrations.sub':
 		'Credentialed connections: repositories, provisioners, harnesses and trackers. Secrets are write-only — stored encrypted, shown only as a mask.',
+	'page.system.skills.label': 'Skills',
+	'page.system.skills.title': 'Skills',
+	'page.system.skills.accent': 'the hands remember',
+	'page.system.skills.sub':
+		'Agent Skills folders you keep, grouped into versioned skillsets. A run picks skillsets at the start and every harness in the workshop gets them.',
 	'page.system.channels.label': 'Channels',
 	'page.system.channels.title': 'Channels',
 	'page.system.channels.accent': 'that echo the inbox',

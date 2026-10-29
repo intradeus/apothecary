@@ -301,4 +301,8 @@ func (h *ompHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*agen
 	return h.adapter.PrepareEnv(ctx, env, specs)
 }
 
+func (h *ompHarness) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+	return h.adapter.InstallSkills(ctx, env, names)
+}
+
 var _ HarnessKind = Omp{}

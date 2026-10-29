@@ -74,6 +74,12 @@ import type {
 	CreateProjectData,
 	CreateProjectErrors,
 	CreateProjectResponses,
+	CreateSkillData,
+	CreateSkillErrors,
+	CreateSkillResponses,
+	CreateSkillsetData,
+	CreateSkillsetErrors,
+	CreateSkillsetResponses,
 	CreateTicketData,
 	CreateTicketErrors,
 	CreateTicketResponses,
@@ -107,6 +113,12 @@ import type {
 	DeleteProjectSecretData,
 	DeleteProjectSecretErrors,
 	DeleteProjectSecretResponses,
+	DeleteSkillData,
+	DeleteSkillErrors,
+	DeleteSkillResponses,
+	DeleteSkillsetData,
+	DeleteSkillsetErrors,
+	DeleteSkillsetResponses,
 	DeleteTicketData,
 	DeleteTicketErrors,
 	DeleteTicketResponses,
@@ -215,6 +227,15 @@ import type {
 	GetSettingsData,
 	GetSettingsErrors,
 	GetSettingsResponses,
+	GetSkillData,
+	GetSkillErrors,
+	GetSkillResponses,
+	GetSkillsetData,
+	GetSkillsetErrors,
+	GetSkillsetResponses,
+	GetSkillsetVersionData,
+	GetSkillsetVersionErrors,
+	GetSkillsetVersionResponses,
 	GetSourceTicketData,
 	GetSourceTicketErrors,
 	GetSourceTicketResponses,
@@ -248,6 +269,9 @@ import type {
 	ImportCredentialsData,
 	ImportCredentialsErrors,
 	ImportCredentialsResponses,
+	ImportSkillsData,
+	ImportSkillsErrors,
+	ImportSkillsResponses,
 	ListActionsData,
 	ListActionsErrors,
 	ListActionsResponses,
@@ -317,6 +341,15 @@ import type {
 	ListSignalsData,
 	ListSignalsErrors,
 	ListSignalsResponses,
+	ListSkillsData,
+	ListSkillsErrors,
+	ListSkillsetsData,
+	ListSkillsetsErrors,
+	ListSkillsetsResponses,
+	ListSkillsetVersionsData,
+	ListSkillsetVersionsErrors,
+	ListSkillsetVersionsResponses,
+	ListSkillsResponses,
 	ListTicketsData,
 	ListTicketsErrors,
 	ListTicketsResponses,
@@ -350,6 +383,12 @@ import type {
 	RebuildWorkspaceData,
 	RebuildWorkspaceErrors,
 	RebuildWorkspaceResponses,
+	RefreshSkillData,
+	RefreshSkillErrors,
+	RefreshSkillResponses,
+	RefreshSkillsetData,
+	RefreshSkillsetErrors,
+	RefreshSkillsetResponses,
 	ReleaseRunData,
 	ReleaseRunErrors,
 	ReleaseRunResponses,
@@ -451,6 +490,12 @@ import type {
 	UpdateSettingsData,
 	UpdateSettingsErrors,
 	UpdateSettingsResponses,
+	UpdateSkillData,
+	UpdateSkillErrors,
+	UpdateSkillResponses,
+	UpdateSkillsetData,
+	UpdateSkillsetErrors,
+	UpdateSkillsetResponses,
 	UpdateTicketData,
 	UpdateTicketErrors,
 	UpdateTicketResponses,
@@ -3947,6 +3992,383 @@ export const listSignals = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/signals',
+		...options
+	});
+
+/**
+ * One's skills
+ */
+export const listSkills = <ThrowOnError extends boolean = false>(
+	options?: Options<ListSkillsData, ThrowOnError>
+): RequestResult<ListSkillsResponses, ListSkillsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListSkillsResponses, ListSkillsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skills',
+		...options
+	});
+
+/**
+ * Create a skill from its files
+ *
+ * A skill is a folder: SKILL.md (frontmatter name + description) plus any support files. The name must match the frontmatter.
+ */
+export const createSkill = <ThrowOnError extends boolean = false>(
+	options: Options<CreateSkillData, ThrowOnError>
+): RequestResult<CreateSkillResponses, CreateSkillErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateSkillResponses, CreateSkillErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skills',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Delete a skill no skillset lists
+ */
+export const deleteSkill = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteSkillData, ThrowOnError>
+): RequestResult<DeleteSkillResponses, DeleteSkillErrors, ThrowOnError> =>
+	(options.client ?? client).delete<DeleteSkillResponses, DeleteSkillErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skills/{id}',
+		...options
+	});
+
+/**
+ * One skill, with its file contents
+ */
+export const getSkill = <ThrowOnError extends boolean = false>(
+	options: Options<GetSkillData, ThrowOnError>
+): RequestResult<GetSkillResponses, GetSkillErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetSkillResponses, GetSkillErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skills/{id}',
+		...options
+	});
+
+/**
+ * Replace a skill's files (every skillset listing it gets a new version if its content changed)
+ */
+export const updateSkill = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateSkillData, ThrowOnError>
+): RequestResult<UpdateSkillResponses, UpdateSkillErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateSkillResponses, UpdateSkillErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skills/{id}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Re-download an imported skill
+ */
+export const refreshSkill = <ThrowOnError extends boolean = false>(
+	options: Options<RefreshSkillData, ThrowOnError>
+): RequestResult<RefreshSkillResponses, RefreshSkillErrors, ThrowOnError> =>
+	(options.client ?? client).post<RefreshSkillResponses, RefreshSkillErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skills/{id}/refresh',
+		...options
+	});
+
+/**
+ * Import a skill or a folder of skills from a public URL
+ *
+ * A folder holding SKILL.md becomes one skill; a folder of such folders becomes a skillset. Fetched over plain HTTP from the host's public archive — no tokens, public repositories only.
+ */
+export const importSkills = <ThrowOnError extends boolean = false>(
+	options: Options<ImportSkillsData, ThrowOnError>
+): RequestResult<ImportSkillsResponses, ImportSkillsErrors, ThrowOnError> =>
+	(options.client ?? client).post<ImportSkillsResponses, ImportSkillsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skills/import',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * One's skillsets
+ */
+export const listSkillsets = <ThrowOnError extends boolean = false>(
+	options?: Options<ListSkillsetsData, ThrowOnError>
+): RequestResult<ListSkillsetsResponses, ListSkillsetsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListSkillsetsResponses, ListSkillsetsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets',
+		...options
+	});
+
+/**
+ * Create a skillset (cuts v1)
+ */
+export const createSkillset = <ThrowOnError extends boolean = false>(
+	options: Options<CreateSkillsetData, ThrowOnError>
+): RequestResult<CreateSkillsetResponses, CreateSkillsetErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateSkillsetResponses, CreateSkillsetErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Delete a skillset no live run pins
+ */
+export const deleteSkillset = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteSkillsetData, ThrowOnError>
+): RequestResult<DeleteSkillsetResponses, DeleteSkillsetErrors, ThrowOnError> =>
+	(options.client ?? client).delete<DeleteSkillsetResponses, DeleteSkillsetErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets/{id}',
+		...options
+	});
+
+/**
+ * One skillset
+ */
+export const getSkillset = <ThrowOnError extends boolean = false>(
+	options: Options<GetSkillsetData, ThrowOnError>
+): RequestResult<GetSkillsetResponses, GetSkillsetErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetSkillsetResponses, GetSkillsetErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets/{id}',
+		...options
+	});
+
+/**
+ * Rename a skillset or change its members (a new version if the content changed)
+ */
+export const updateSkillset = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateSkillsetData, ThrowOnError>
+): RequestResult<UpdateSkillsetResponses, UpdateSkillsetErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateSkillsetResponses, UpdateSkillsetErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets/{id}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Re-download an imported skillset's folder and reconcile its members
+ */
+export const refreshSkillset = <ThrowOnError extends boolean = false>(
+	options: Options<RefreshSkillsetData, ThrowOnError>
+): RequestResult<RefreshSkillsetResponses, RefreshSkillsetErrors, ThrowOnError> =>
+	(options.client ?? client).post<RefreshSkillsetResponses, RefreshSkillsetErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets/{id}/refresh',
+		...options
+	});
+
+/**
+ * A skillset's versions, newest first
+ */
+export const listSkillsetVersions = <ThrowOnError extends boolean = false>(
+	options: Options<ListSkillsetVersionsData, ThrowOnError>
+): RequestResult<ListSkillsetVersionsResponses, ListSkillsetVersionsErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListSkillsetVersionsResponses,
+		ListSkillsetVersionsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets/{id}/versions',
+		...options
+	});
+
+/**
+ * One version of a skillset (seq 0 = latest)
+ */
+export const getSkillsetVersion = <ThrowOnError extends boolean = false>(
+	options: Options<GetSkillsetVersionData, ThrowOnError>
+): RequestResult<GetSkillsetVersionResponses, GetSkillsetVersionErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetSkillsetVersionResponses,
+		GetSkillsetVersionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/skillsets/{id}/versions/{seq}',
 		...options
 	});
 

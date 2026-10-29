@@ -7,7 +7,7 @@
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';
-	import type { Attachment, Branch, Ticket } from '$lib/domain';
+	import type { Attachment, Branch, SkillsetRef, Ticket } from '$lib/domain';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import FlowSelect from '$lib/FlowSelect.svelte';
 	import TicketForm from '$lib/TicketForm.svelte';
@@ -40,6 +40,7 @@
 	let flow = $state(''); // per-run flow; empty = project default
 	let runParams = $state<Record<string, string>>({}); // parameter overrides for THIS run
 	let runMR = $state(0); // the merge request to start the run on, for a flow started on one
+	let runSkillsets = $state<SkillsetRef[]>([]); // skillsets installed into THIS run's workspace
 	let sourceBranch = $state(''); // branch to fork this run off from; '' until branches load
 	let branches = $state<Branch[]>([]);
 	const branchOptions = $derived<SelectOption[]>(
@@ -118,7 +119,8 @@
 				sourceBranch: sourceBranch.trim() || undefined,
 				attachmentIds,
 				params: Object.keys(runParams).length ? runParams : undefined,
-				mr: runMR ? { iid: runMR } : undefined
+				mr: runMR ? { iid: runMR } : undefined,
+				skillsets: runSkillsets.length ? runSkillsets : undefined
 			});
 			void fleet.refresh();
 			toast(t('page.ticket.runStarted', { id: shortId(runId) }), {
@@ -286,6 +288,7 @@
 								flowName={flow.trim() || project.defaultFlow}
 								bind:params={runParams}
 								bind:mr={runMR}
+								bind:skillsets={runSkillsets}
 								idPrefix="tk"
 							/>
 						{/if}

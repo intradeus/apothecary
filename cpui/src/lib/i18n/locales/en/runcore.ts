@@ -155,6 +155,14 @@ export default {
 	'run.start.mrNone': 'The repository has no open merge request to start on.',
 	'run.start.mrDraft': 'draft',
 	'run.start.mrFork': 'from a fork',
+	'run.start.skillsets': 'Skillsets',
+	'run.start.skillsetsHelp':
+		'Installed into the workspace for every harness of the workshop. The latest version unless you pick one.',
+	'run.start.skillsetsNone': 'No skillsets yet — make some under System → Skills.',
+	'run.start.skillsetVersion': 'Version of {name}',
+	'run.start.latest': 'latest',
+	'run.start.versionOf': 'v{seq} · {ago}',
+	'run.header.skillsets': 'Skillsets installed in this run',
 	'run.start.advanced': 'Advanced · parameters',
 	'run.start.advancedHelp':
 		'Override the workshop’s values for this run only. An empty field keeps what applies underneath.',

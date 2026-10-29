@@ -32,6 +32,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
+	"apothecary/internal/skillstore"
 	"apothecary/internal/tickets"
 )
 
@@ -58,6 +59,11 @@ type Server struct {
 	// (uploads → 503, lists → empty).
 	Attachments *filestore.Attachments
 	Snapshots   *filestore.Snapshots
+	// Skills is the skill library (TODO 38); nil disables its routes.
+	// SkillImports brings public folders in and refreshes them; nil = the
+	// import and refresh routes answer 503.
+	Skills       *skillstore.Store
+	SkillImports *skillstore.Importer
 	// CPUIDir, when set, is served at / with an SPA fallback to index.html
 	// (the built SvelteKit bundle; the CPUI talks only to this API).
 	CPUIDir string
@@ -411,7 +417,7 @@ func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
 
 	newID, err := s.Engine.Rerun(r.Context(), r.PathValue("id"), engine.RunInput{
 		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
-		Params: body.Params, MR: body.MR,
+		Params: body.Params, MR: body.MR, Skillsets: body.Skillsets,
 	})
 	if err != nil {
 		msg := err.Error()

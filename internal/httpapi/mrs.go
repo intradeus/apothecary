@@ -21,6 +21,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/skills"
 )
 
 // MRRow is one open merge request: what the repository host says of it,
@@ -57,6 +58,8 @@ type MRRunRequest struct {
 	Repo   string            `json:"repo,omitempty"`
 	Flow   string            `json:"flow,omitempty"`
 	Params map[string]string `json:"params,omitempty"`
+	// Skillsets to install into the workspace (seq 0 = latest).
+	Skillsets []skills.Ref `json:"skillsets,omitempty"`
 }
 
 // MRRunStarted names the run started and the ticket it belongs to.
@@ -175,7 +178,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := s.Engine.CreateRunWith(ctx, engine.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal,
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, flowName, projectID, engine.RunInput{Params: body.Params, MR: &engine.RunMR{Repo: body.Repo, IID: iid}})
+	}, flowName, projectID, engine.RunInput{Params: body.Params, MR: &engine.RunMR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())

@@ -27,6 +27,9 @@ type Env struct {
 	Spec   ports.EnvSpec
 	Status ports.EnvStatus
 	Files  map[string][]byte
+	// Modes holds the permission bits WriteTree recorded per path (WriteFile
+	// records none: callers assert on Files alone there).
+	Modes map[string]fs.FileMode
 	// execLog is the live transcript (ports.ExecLogTailer): header + output
 	// per Exec.
 	execLog []byte
@@ -53,6 +56,8 @@ type EnvProvisioner struct {
 
 	ExecCalls []ExecCall
 	Destroyed []ports.EnvID
+	// Trees records WriteTree calls in order (env, dir, file count).
+	Trees []TreeCall
 
 	// Allowed records AllowEgress calls per env; Rules records SetEgressRule
 	// calls ("host=allow|deny"); Denied seeds EgressDenials — for the run-page
@@ -385,7 +390,18 @@ type AgentRunner struct {
 	// PreparedSpecs records the agent specs each Prepare call received
 	// (DESIGN3 §1: proves the DB→harness path without a real adapter).
 	PreparedSpecs [][]*agentspec.Spec
-	sessions      int
+	// InstalledSkills records the skill names each InstallSkills call
+	// received (TODO 38: proves the pins reach every harness).
+	InstalledSkills [][]string
+	sessions        int
+}
+
+// RecordInstallSkills stores one InstallSkills call's names (used by the
+// fake harness kind).
+func (r *AgentRunner) RecordInstallSkills(names []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.InstalledSkills = append(r.InstalledSkills, append([]string(nil), names...))
 }
 
 // RecordPrepare stores one Prepare call's specs (used by the fake harness

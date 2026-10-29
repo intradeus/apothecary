@@ -16,7 +16,15 @@ const q = (params: Record<string, string | undefined>) => {
 export type WorkshopTab =
 	'overview' | 'runs' | 'tickets' | 'mrs' | 'flows' | 'automations' | 'health';
 export type SystemSection =
-	'integrations' | 'providers' | 'channels' | 'account' | 'users' | 'limits' | 'reaper' | 'storage';
+	| 'integrations'
+	| 'providers'
+	| 'skills'
+	| 'channels'
+	| 'account'
+	| 'users'
+	| 'limits'
+	| 'reaper'
+	| 'storage';
 
 /** Route builders. */
 export const to = {
@@ -37,7 +45,13 @@ export const to = {
 	flow: (projectId: string, name: string) => `/w/${projectId}/flows/${encodeURIComponent(name)}`,
 	system: (section: SystemSection = 'integrations') => `/system/${section}`,
 	account: () => '/system/account',
-	users: () => '/system/users'
+	users: () => '/system/users',
+	// The skill library (TODO 38): one's skills and skillsets, under System.
+	skills: () => '/system/skills',
+	newSkill: () => '/system/skills/new',
+	skill: (skillId: string) => `/system/skills/${skillId}`,
+	newSkillset: () => '/system/skills/sets/new',
+	skillset: (skillsetId: string) => `/system/skills/sets/${skillsetId}`
 };
 
 // --- workshop identity ------------------------------------------------------

@@ -70,7 +70,11 @@ type View struct {
 	// created it (both from run_created).
 	Params    map[string]string `json:"params,omitempty"`
 	StartedBy string            `json:"started_by,omitempty"`
-	MRURL     string            `json:"mr_url,omitempty"`
+	// Skillsets are the skillset versions the run installs (run_created).
+	// In the view JSON so the skill library can tell a pinned skillset from
+	// a deletable one.
+	Skillsets []event.SkillsetPin `json:"skillsets,omitempty"`
+	MRURL     string              `json:"mr_url,omitempty"`
 	// MRs are every merge request the run opened (a multi-repo run has one
 	// per changed repo), in creation order;
 	// MRURL is the first. Checkouts are the run's repositories. Neither is a
@@ -182,6 +186,9 @@ func Apply(v *View, e *event.Event) {
 		v.SourceBranch = p.SourceBranch
 		v.Params = p.Params
 		v.StartedBy = p.By
+		if len(p.Skillsets) > 0 {
+			v.Skillsets = append([]event.SkillsetPin(nil), p.Skillsets...)
+		}
 		if len(p.Checkouts) > 0 {
 			v.Checkouts = append([]event.Checkout(nil), p.Checkouts...)
 		} else {

@@ -63,6 +63,14 @@ func (a *Adapter) authFile(ctx context.Context, env ports.EnvID) string {
 	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".local", "share", "opencode", "auth.json")
 }
 
+// InstallSkills copies the run's skills into ~/.config/opencode/skills,
+// opencode's global skills directory. opencode also scans ~/.agents/skills
+// (codex's), so with both harnesses in a project it sees each skill twice
+// — same name, same bytes: it warns and keeps one.
+func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+	return acpagent.InstallSkills(ctx, a.envp, env, path.Join(a.configDir(ctx, env), "skills"), names)
+}
+
 // PrepareEnv generates harness-native config from the project's agent
 // library specs (§5.2, DESIGN3 §1): one agent markdown per spec plus the
 // ask_human MCP registration (written even for zero specs). Config

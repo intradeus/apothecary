@@ -53,7 +53,7 @@ func openConf(t *testing.T) *Store {
 	if _, err := s.pool.Exec(context.Background(),
 		// CASCADE: tickets (and through them attachments) FK projects, so a
 		// plain TRUNCATE of the subset errors.
-		`TRUNCATE projects, integrations, flows, flow_versions, flow_bindings, automations, settings, provider_credentials CASCADE`); err != nil {
+		`TRUNCATE projects, integrations, flows, flow_versions, flow_bindings, automations, settings, provider_credentials, skills, skillsets CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return s

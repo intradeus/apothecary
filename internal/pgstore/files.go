@@ -225,7 +225,11 @@ func (s *Store) LiveBlobSHAs(ctx context.Context, keepSnapshotsAfter map[string]
 		  LEFT JOIN runs r ON r.run_id = sn.run_id
 		  LEFT JOIN unnest($1::text[], $2::timestamptz[]) AS c(user_id, keep_after)
 		         ON c.user_id = COALESCE(r.user_id, '')
-		 WHERE c.keep_after IS NULL OR sn.created_at >= c.keep_after`, owners, cutoffs)
+		 WHERE c.keep_after IS NULL OR sn.created_at >= c.keep_after
+		UNION
+		SELECT f->>'sha256' FROM skills sk, jsonb_array_elements(sk.files) f
+		UNION
+		SELECT f->>'sha256' FROM skillset_versions sv, jsonb_array_elements(sv.manifest) m, jsonb_array_elements(m->'files') f`, owners, cutoffs)
 	if err != nil {
 		return nil, err
 	}

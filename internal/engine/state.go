@@ -34,7 +34,9 @@ type runState struct {
 	sourceBranch string // branch this run forks off from (origin/<sourceBranch>)
 	// params are the parameter values the run runs with (run_created).
 	params map[string]string
-	envID  ports.EnvID
+	// skillsets are the skillset versions the run installs (run_created).
+	skillsets []event.SkillsetPin
+	envID     ports.EnvID
 	// envRequested: the run asked for its workspace once (env_requested is
 	// on the log), whatever its state is now.
 	envRequested bool
@@ -372,6 +374,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			rs.branch = p.Branch
 			rs.sourceBranch = p.SourceBranch
 			rs.params = p.Params
+			rs.skillsets = p.Skillsets
 			rs.checkouts = checkoutsOf(p)
 			if m := p.MR; m != nil {
 				rs.adopted = m

@@ -237,6 +237,20 @@ type RunCreated struct {
 	// it is the run's merge request from the start. Nil for a run that opens
 	// its own.
 	MR *AdoptedMR `json:"mr,omitempty"`
+	// Skillsets are the skillset versions this run installs into its
+	// workspace (TODO 38), pinned at creation: the id and name for display,
+	// the version number and its content hash so a rebuild lays down the
+	// same files whatever the library did since. Absent = none.
+	Skillsets []SkillsetPin `json:"skillsets,omitempty"`
+}
+
+// SkillsetPin is one skillset version a run installs: v{Seq} of the
+// skillset, identified by content hash.
+type SkillsetPin struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Seq  int    `json:"seq"`
+	Hash string `json:"hash"`
 }
 
 // AdoptedMR is a merge request a run was created on: which checkout it is

@@ -2467,6 +2467,14 @@ func (x *exec) ensureEnv() error {
 	if rs.done {
 		return nil
 	}
+	if err := probeEgress(x.ctx, x.res.Envp, id, x.res); err != nil {
+		if x.ctx.Err() != nil {
+			return context.Cause(x.ctx)
+		}
+		rs.done = true
+		// Kept, like a failed bootstrap's: the workspace is the evidence.
+		return x.append(&event.EnvFailed{Error: err.Error(), EnvID: string(id)})
+	}
 	// After bootstrap (repo cloned, .apothecary/ git-excluded): deliver the
 	// human's goal + answer artifacts into the workspace for the agent.
 	x.deliverRunAttachments()
@@ -2565,27 +2573,35 @@ func (x *exec) registerSecret(s string) { x.redact.add(s, "harness-auth") }
 func (x *exec) bootstrap(id ports.EnvID) error {
 	res := x.res
 	x.e.setAuthSink(x.rs.runID, res, id, x.redact)
-	err := RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
-		RunID:        x.rs.runID,
-		Token:        x.e.RunToken(x.rs.runID),
-		EngineURL:    x.e.engineURLFor(res.Envp, id),
-		RepoURL:      res.RepoRef.URL,
-		SourceBranch: sourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
-		Branch:       x.rs.branch,
-		Fetch:        x.primaryFetch(),
-		AgentsMDPath: res.AgentsMDPath,
-		ProviderEnv:  x.e.providerEnvFor(res, x.rs.runID, x.e.engineURLFor(res.Envp, id)),
-		GitUser:      res.GitUser,
-		GitPass:      res.GitPass,
-		GitName:      res.GitName,
-		GitEmail:     res.GitEmail,
-		SeedAuth:     res.SeedAuth,
-		Register:     x.registerSecret,
-		Prepare:      res.Prepare,
-		Agents:       agentsFor(x.rs.fl),
-		Timeout:      x.rs.fl.Defaults.Timeout,
-		Extras:       x.extraCheckouts(),
-	})
+	trees, err := x.e.skillTrees(x.ctx, x.rs.skillsets)
+	if err != nil {
+		err = fmt.Errorf("bootstrap skills: %w", err)
+	} else {
+		err = RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
+			RunID:         x.rs.runID,
+			Token:         x.e.RunToken(x.rs.runID),
+			EngineURL:     x.e.engineURLFor(res.Envp, id),
+			RepoURL:       res.RepoRef.URL,
+			SourceBranch:  sourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
+			Branch:        x.rs.branch,
+			Fetch:         x.primaryFetch(),
+			AgentsMDPath:  res.AgentsMDPath,
+			ProviderEnv:   x.e.providerEnvFor(res, x.rs.runID, x.e.engineURLFor(res.Envp, id)),
+			GitUser:       res.GitUser,
+			GitPass:       res.GitPass,
+			GitName:       res.GitName,
+			GitEmail:      res.GitEmail,
+			SeedAuth:      res.SeedAuth,
+			Register:      x.registerSecret,
+			Prepare:       res.Prepare,
+			Agents:        agentsFor(x.rs.fl),
+			Timeout:       x.rs.fl.Defaults.Timeout,
+			Extras:        x.extraCheckouts(),
+			Skills:        trees,
+			SkillPins:     x.rs.skillsets,
+			InstallSkills: res.InstallSkills,
+		})
+	}
 	if err != nil {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)

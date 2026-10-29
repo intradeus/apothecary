@@ -49,6 +49,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/resolve"
 	"apothecary/internal/secrets"
+	"apothecary/internal/skillstore"
 	"apothecary/internal/telemetry"
 	"apothecary/internal/tickets"
 	"apothecary/internal/wsimage"
@@ -304,6 +305,8 @@ func cmdServe(args []string) error {
 	attachments := filestore.NewAttachments(store, blobs, boot.UploadMaxBytes, boot.UploadMimeAllow)
 	snapshots := filestore.NewSnapshots(store, blobs, boot.SnapshotMaxBytes)
 	e.SetFiles(attachments, snapshots)
+	skillLib := skillstore.New(store, blobs)
+	e.SetSkills(skillLib)
 	e.SetEgressAudit(store) // durable egress audit trail (pgstore)
 	// The durable ping projection. A run parked on a human has no loop and no
 	// in-memory ping, so this is what makes its question listable and
@@ -358,6 +361,8 @@ func cmdServe(args []string) error {
 	api.Sources = resolver // ticket sources for the import factory (Jira)
 	api.Pings = store      // durable request/response projection (PLAN4 M15)
 	api.Attachments = attachments
+	api.Skills = skillLib
+	api.SkillImports = &skillstore.Importer{Store: skillLib, Fetch: skillstore.Fetch}
 	api.Snapshots = snapshots
 	api.Keeper = keeper
 	api.SignIns = logins.NewSignIns()

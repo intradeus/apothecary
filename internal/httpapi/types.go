@@ -25,6 +25,8 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
+	"apothecary/internal/skills"
+	"apothecary/internal/skillstore"
 )
 
 // --- errors -----------------------------------------------------------------
@@ -61,6 +63,9 @@ type RerunRequest struct {
 	// MR moves the rerun to another merge request ("" = the one the
 	// original was started on, if it was).
 	MR *engine.RunMR `json:"mr,omitempty"`
+	// Skillsets replace the original's (absent = the original's at their
+	// latest version; an empty list = none).
+	Skillsets []skills.Ref `json:"skillsets,omitempty"`
 }
 
 // StartRunRequest starts one attempt on a ticket.
@@ -74,6 +79,56 @@ type StartRunRequest struct {
 	// MR starts the run on a merge request someone opened, for a flow
 	// whose runs are started on one (operates_on: merge_request).
 	MR *engine.RunMR `json:"mr,omitempty"`
+	// Skillsets are the caller's skillsets to install into the workspace,
+	// each at a version (seq 0 or absent = latest).
+	Skillsets []skills.Ref `json:"skillsets,omitempty"`
+}
+
+// --- skills -----------------------------------------------------------------
+
+// SkillFileRequest is one file of a skill, bytes base64-encoded. Mode is
+// advisory: files under scripts/ and files sent executable install 0755,
+// everything else 0644.
+type SkillFileRequest struct {
+	Path       string `json:"path"`
+	ContentB64 string `json:"content_b64"`
+	Mode       uint32 `json:"mode,omitempty"`
+}
+
+// SkillRequest is a skill's whole content: the name it installs under (must
+// equal SKILL.md's frontmatter name) and every file, SKILL.md included.
+type SkillRequest struct {
+	Name  string             `json:"name"`
+	Files []SkillFileRequest `json:"files"`
+}
+
+// SkillDetail is one skill with its file contents.
+type SkillDetail struct {
+	Skill    skillstore.Skill   `json:"skill"`
+	Contents []SkillFileRequest `json:"contents"`
+}
+
+// SkillImportRequest names a public folder to import: a github.com or
+// GitLab folder URL, or a link to a .tar.gz/.zip, with an optional
+// subfolder inside it.
+type SkillImportRequest struct {
+	URL  string `json:"url"`
+	Path string `json:"path,omitempty"`
+}
+
+// SkillsetRequest is a skillset's editable surface: its name, description
+// and ordered members.
+type SkillsetRequest struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	SkillIDs    []string `json:"skill_ids"`
+}
+
+// SkillsetRefreshResult is a refreshed skillset plus what the folder held
+// that could not become a member.
+type SkillsetRefreshResult struct {
+	Skillset skillstore.Skillset `json:"skillset"`
+	Warnings []string            `json:"warnings,omitempty"`
 }
 
 // --- egress -----------------------------------------------------------------

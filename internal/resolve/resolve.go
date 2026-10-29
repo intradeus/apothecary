@@ -385,6 +385,14 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			}
 			return nil
 		},
+		InstallSkills: func(ctx context.Context, env ports.EnvID, names []string) error {
+			for _, k := range kindList {
+				if err := byKind[k].InstallSkills(ctx, env, names); err != nil {
+					return fmt.Errorf("install %s skills: %w", k, err)
+				}
+			}
+			return nil
+		},
 		Release: release,
 	}
 	ok = true

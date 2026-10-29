@@ -67,6 +67,7 @@ export const I = {
 	// system sections
 	integrations: '⌁',
 	providers: '⚿',
+	skills: '✧',
 	channels: '✉' + T,
 	members: '☺' + T,
 	limits: '▤',

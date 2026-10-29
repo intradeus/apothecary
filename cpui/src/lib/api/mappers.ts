@@ -11,6 +11,18 @@
 import type * as Wire from './generated/types.gen';
 import type { AskMessage, AskState, AuthStatus, Limits, Me, Token, User } from '$lib/domain';
 import type { Credential, ProviderInfo, SignInPending } from '$lib/domain';
+import type {
+	Skill,
+	SkillDetail,
+	SkillFileContent,
+	SkillFileEntry,
+	SkillImportResult,
+	SkillSource,
+	Skillset,
+	SkillsetPin,
+	SkillsetRefresh,
+	SkillsetVersion
+} from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
 import { answerKindOf, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
 import type {
@@ -203,6 +215,7 @@ export function toRun(w: Wire.RunView): Run {
 		phaseSubject: w.phase_subject || undefined,
 		params: w.params ?? undefined,
 		startedBy: w.started_by || undefined,
+		skillsets: w.skillsets?.length ? w.skillsets.map(toSkillsetPin) : undefined,
 		idle: w.idle ?? false,
 		hold: w.hold
 			? {
@@ -1113,4 +1126,108 @@ export function toSignInPending(w: Wire.Pending): SignInPending {
 		intervalSeconds: w.interval_seconds || 5,
 		expiresAt: w.expires_at
 	};
+}
+
+// --- skills -------------------------------------------------------------------
+
+/** Base64 (the wire's bytes) → bytes. */
+export function bytesFromBase64(b64: string): Uint8Array {
+	const bin = atob(b64);
+	const out = new Uint8Array(bin.length);
+	for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+	return out;
+}
+
+/** Bytes → base64, for a skill write. */
+export function base64FromBytes(bytes: Uint8Array): string {
+	let bin = '';
+	const chunk = 0x8000;
+	for (let i = 0; i < bytes.length; i += chunk)
+		bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	return btoa(bin);
+}
+
+export function toSkillSource(w: Wire.Source): SkillSource {
+	return {
+		kind: w.kind,
+		url: w.url,
+		host: w.host || undefined,
+		owner: w.owner || undefined,
+		repo: w.repo || undefined,
+		ref: w.ref || undefined,
+		path: w.path || undefined,
+		commit: w.commit || undefined,
+		fetchedAt: w.fetched_at
+	};
+}
+
+export function toSkillFileEntry(w: Wire.FileEntry): SkillFileEntry {
+	return { path: w.path, sha256: w.sha256, size: w.size, mode: w.mode };
+}
+
+export function toSkillFileContent(w: Wire.SkillFileRequest): SkillFileContent {
+	return { path: w.path, bytes: bytesFromBase64(w.content_b64), mode: w.mode };
+}
+
+export function toSkill(w: Wire.Skill): Skill {
+	return {
+		id: w.id,
+		name: w.name,
+		description: w.description,
+		files: list(w.files).map(toSkillFileEntry),
+		hash: w.hash,
+		source: w.source ? toSkillSource(w.source) : undefined,
+		createdAt: w.created_at,
+		updatedAt: w.updated_at
+	};
+}
+
+export function toSkillDetail(w: Wire.SkillDetail): SkillDetail {
+	return { skill: toSkill(w.skill), contents: list(w.contents).map(toSkillFileContent) };
+}
+
+export function toSkillset(w: Wire.Skillset): Skillset {
+	return {
+		id: w.id,
+		name: w.name,
+		description: w.description,
+		source: w.source ? toSkillSource(w.source) : undefined,
+		headSeq: w.head_seq,
+		skillIds: list(w.skill_ids),
+		createdAt: w.created_at,
+		updatedAt: w.updated_at
+	};
+}
+
+export function toSkillsetVersion(w: Wire.Version): SkillsetVersion {
+	return {
+		skillsetId: w.skillset_id,
+		seq: w.seq,
+		hash: w.hash,
+		members: list(w.members).map((m) => ({
+			skillId: m.skill_id,
+			name: m.name,
+			description: m.description,
+			hash: m.hash,
+			files: list(m.files).map(toSkillFileEntry)
+		})),
+		createdAt: w.created_at
+	};
+}
+
+export function toSkillsetPin(w: Wire.SkillsetPin): SkillsetPin {
+	return { id: w.id, name: w.name, seq: w.seq, hash: w.hash };
+}
+
+export function toSkillImportResult(w: Wire.ImportResult): SkillImportResult {
+	return {
+		skill: w.skill ? toSkill(w.skill) : undefined,
+		skillset: w.skillset ? toSkillset(w.skillset) : undefined,
+		skills: list(w.skills).map(toSkill),
+		warnings: w.warnings ?? []
+	};
+}
+
+export function toSkillsetRefresh(w: Wire.SkillsetRefreshResult): SkillsetRefresh {
+	return { skillset: toSkillset(w.skillset), warnings: w.warnings ?? [] };
 }

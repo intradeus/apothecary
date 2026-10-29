@@ -6,7 +6,15 @@
 	// workshop's binding, or the run a rerun comes from) itself, so the forms
 	// that mount it only carry a flow name.
 	import { api } from '$lib/api';
-	import type { Flow, Integration, Model, OpenMergeRequest, ParamDecl } from '$lib/domain';
+	import type {
+		Flow,
+		Integration,
+		Model,
+		OpenMergeRequest,
+		ParamDecl,
+		SkillsetRef
+	} from '$lib/domain';
+	import SkillsetPicker from '$lib/skills/SkillsetPicker.svelte';
 	import { KNOWN_PARAMS } from '$lib/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { modelHarnessKinds } from '$lib/flow/paramValues';
@@ -19,6 +27,8 @@
 		params = $bindable({}),
 		mr = $bindable(0),
 		askMR = true,
+		skillsets = $bindable([]),
+		askSkillsets = true,
 		under,
 		underLabel = 'workshop',
 		idPrefix = 'sro'
@@ -35,6 +45,10 @@
 		/** Ask which merge request (a person starting a run does; an
 		 *  automation picks them itself). */
 		askMR?: boolean;
+		/** The skillsets to install into the workspace (TODO 38), each at
+		 *  the latest version unless one is picked. */
+		skillsets?: SkillsetRef[];
+		askSkillsets?: boolean;
 		/** What applies when a field is left empty: the workshop's binding
 		 *  (loaded here when absent), or the run a rerun comes from. */
 		under?: Record<string, string>;
@@ -180,6 +194,12 @@
 			{:else}
 				<span class="help hue-amb">{mrError || t('run.start.mrNone')}</span>
 			{/if}
+		</div>
+	{/if}
+	{#if askSkillsets}
+		<div class="field">
+			<span class="flabel">{t('run.start.skillsets')}</span>
+			<SkillsetPicker bind:value={skillsets} {idPrefix} />
 		</div>
 	{/if}
 	<details class="card-in adv">

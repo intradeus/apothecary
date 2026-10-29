@@ -427,4 +427,8 @@ func (h *opencodeHarness) Prepare(ctx context.Context, env ports.EnvID, specs []
 	return h.adapter.PrepareEnv(ctx, env, specs)
 }
 
+func (h *opencodeHarness) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+	return h.adapter.InstallSkills(ctx, env, names)
+}
+
 var _ HarnessKind = Opencode{}

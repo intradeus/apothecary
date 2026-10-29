@@ -1612,6 +1612,60 @@ func TestBootstrapFailureIsEnvFailed(t *testing.T) {
 	}
 }
 
+// A workspace whose traffic never leaves (found live: br_netfilter dropping it
+// before the egress gateway) fails at provisioning, naming the host — not an
+// agent hung on its model request until the stage timeout.
+func TestEgressCheckFailureIsEnvFailed(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	var probe string
+	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+		if strings.Contains(cmd.Script, "shim probe") {
+			probe = cmd.Script
+			return ports.ExecResult{ExitCode: 1, Output: "probe gitlab.local:443: dial tcp: i/o timeout"}, nil
+		}
+		return ports.ExecResult{ExitCode: 0}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	if !strings.Contains(probe, "--tls 'gitlab.local:443'") {
+		t.Errorf("probe should handshake with the repository host, ran %q", probe)
+	}
+	if v := h.view(t, runID); v.State != run.Failed {
+		t.Fatalf("state = %s", v.State)
+	}
+	ef, _ := findPayload[*event.EnvFailed](h.events(t, runID))
+	if ef == nil || !strings.Contains(ef.Error, "i/o timeout") || ef.EnvID == "" {
+		t.Errorf("env_failed should carry the probe's reason and keep the workspace, got %+v", ef)
+	}
+	if len(h.runner.RunCalls) != 0 {
+		t.Error("no agent may run when the workspace cannot reach the network")
+	}
+}
+
+func TestEgressProbeTarget(t *testing.T) {
+	for _, tc := range []struct {
+		url     string
+		domains []string
+		addr    string
+		tls     bool
+	}{
+		{"https://gitlab.com/g/p.git", nil, "gitlab.com:443", true},
+		{"https://git.corp:8443/g/p.git", nil, "git.corp:8443", true},
+		{"http://git.corp/g/p.git", nil, "git.corp:80", false},
+		{"git@github.com:o/r.git", []string{"*.npmjs.org", "github.com"}, "github.com:443", true},
+		{"/srv/repo.git", []string{"*.npmjs.org"}, "", false},
+	} {
+		addr, tls := egressProbeTarget(&Resolution{RepoRef: ports.RepoRef{URL: tc.url}, EgressDomains: tc.domains})
+		if addr != tc.addr || tls != tc.tls {
+			t.Errorf("%s: got %q tls=%v, want %q tls=%v", tc.url, addr, tls, tc.addr, tc.tls)
+		}
+	}
+}
+
 func TestStageStartedCarriesAgentHash(t *testing.T) {
 	// DESIGN3 §1: stage events pin the agent-library content version so
 	// analytics can correlate outcomes with prompt versions.

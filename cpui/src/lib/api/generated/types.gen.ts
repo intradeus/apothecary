@@ -466,6 +466,13 @@ export type Field = {
 	type?: string;
 };
 
+export type FileEntry = {
+	mode: number;
+	path: string;
+	sha256: string;
+	size: number;
+};
+
 export type Flow = {
 	builtin?: boolean;
 	hash?: string;
@@ -550,6 +557,13 @@ export type IoPair = {
 	Line: number;
 	Name: string;
 	Value: string;
+};
+
+export type ImportResult = {
+	skill?: Skill;
+	skills?: Array<Skill>;
+	skillset?: Skillset;
+	warnings?: Array<string>;
 };
 
 export type InputDecl = {
@@ -682,6 +696,7 @@ export type MrRunRequest = {
 		[key: string]: string;
 	};
 	repo?: string;
+	skillsets?: Array<Ref>;
 };
 
 export type MrRunStarted = {
@@ -995,6 +1010,11 @@ export type RebuildRequest = {
 	no_cache?: boolean;
 };
 
+export type Ref = {
+	id: string;
+	seq?: number;
+};
+
 export type RepoConfig = {
 	agents_md_path: string;
 	default_branch: string;
@@ -1017,6 +1037,7 @@ export type RerunRequest = {
 	params?: {
 		[key: string]: string;
 	};
+	skillsets?: Array<Ref>;
 	source_branch?: string;
 };
 
@@ -1121,6 +1142,7 @@ export type RunView = {
 	project_id?: string;
 	run_goal?: string;
 	run_id: string;
+	skillsets?: Array<SkillsetPin>;
 	source_branch?: string;
 	started_by?: string;
 	state: string;
@@ -1235,6 +1257,69 @@ export type Signal = {
 	title: string;
 };
 
+export type Skill = {
+	created_at: string;
+	description: string;
+	files: Array<FileEntry> | null;
+	hash: string;
+	id: string;
+	name: string;
+	source?: Source;
+	updated_at: string;
+	user_id: string;
+};
+
+export type SkillDetail = {
+	contents: Array<SkillFileRequest> | null;
+	skill: Skill;
+};
+
+export type SkillFileRequest = {
+	content_b64: string;
+	mode?: number;
+	path: string;
+};
+
+export type SkillImportRequest = {
+	path?: string;
+	url: string;
+};
+
+export type SkillRequest = {
+	files: Array<SkillFileRequest> | null;
+	name: string;
+};
+
+export type Skillset = {
+	created_at: string;
+	description: string;
+	head_seq: number;
+	id: string;
+	name: string;
+	skill_ids: Array<string> | null;
+	source?: Source;
+	updated_at: string;
+	user_id: string;
+};
+
+export type SkillsetPin = {
+	hash: string;
+	id: string;
+	name: string;
+	seq: number;
+};
+
+export type SkillsetRefreshResult = {
+	skillset: Skillset;
+	warnings?: Array<string>;
+};
+
+export type SkillsetRequest = {
+	description?: string;
+	name: string;
+	skill_ids: Array<string> | null;
+};
+
 export type Snapshot = {
 	created_at: string;
 	filename: string;
@@ -1250,6 +1335,18 @@ export type Snapshot = {
 	size: number;
 	stage_id: string;
 	truncated?: boolean;
+};
+
+export type Source = {
+	commit?: string;
+	fetched_at: string;
+	host?: string;
+	kind: string;
+	owner?: string;
+	path?: string;
+	ref?: string;
+	repo?: string;
+	url: string;
 };
 
 export type SourceTicket = {
@@ -1287,6 +1384,7 @@ export type StartRunRequest = {
 	params?: {
 		[key: string]: string;
 	};
+	skillsets?: Array<Ref>;
 	source_branch?: string;
 };
 
@@ -1415,6 +1513,22 @@ export type ValidateFlowRequest = {
 		[key: string]: string;
 	};
 	yaml: string;
+};
+
+export type Version = {
+	created_at: string;
+	hash: string;
+	members: Array<VersionMember> | null;
+	seq: number;
+	skillset_id: string;
+};
+
+export type VersionMember = {
+	description: string;
+	files: Array<FileEntry> | null;
+	hash: string;
+	name: string;
+	skill_id: string;
 };
 
 export type WorkspaceChangedFile = {
@@ -6813,6 +6927,570 @@ export type ListSignalsResponses = {
 };
 
 export type ListSignalsResponse = ListSignalsResponses[keyof ListSignalsResponses];
+
+export type ListSkillsData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/skills';
+};
+
+export type ListSkillsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListSkillsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Skill> | null;
+};
+
+export type ListSkillsResponse = ListSkillsResponses[keyof ListSkillsResponses];
+
+export type CreateSkillData = {
+	body: SkillRequest;
+	path?: never;
+	query?: never;
+	url: '/api/skills';
+};
+
+export type CreateSkillErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CreateSkillResponses = {
+	/**
+	 * Created
+	 */
+	201: Skill;
+};
+
+export type CreateSkillResponse = CreateSkillResponses[keyof CreateSkillResponses];
+
+export type DeleteSkillData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skills/{id}';
+};
+
+export type DeleteSkillErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteSkillResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteSkillResponse = DeleteSkillResponses[keyof DeleteSkillResponses];
+
+export type GetSkillData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skills/{id}';
+};
+
+export type GetSkillErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetSkillResponses = {
+	/**
+	 * OK
+	 */
+	200: SkillDetail;
+};
+
+export type GetSkillResponse = GetSkillResponses[keyof GetSkillResponses];
+
+export type UpdateSkillData = {
+	body: SkillRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skills/{id}';
+};
+
+export type UpdateSkillErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateSkillResponses = {
+	/**
+	 * OK
+	 */
+	200: Skill;
+};
+
+export type UpdateSkillResponse = UpdateSkillResponses[keyof UpdateSkillResponses];
+
+export type RefreshSkillData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skills/{id}/refresh';
+};
+
+export type RefreshSkillErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RefreshSkillResponses = {
+	/**
+	 * OK
+	 */
+	200: Skill;
+};
+
+export type RefreshSkillResponse = RefreshSkillResponses[keyof RefreshSkillResponses];
+
+export type ImportSkillsData = {
+	body: SkillImportRequest;
+	path?: never;
+	query?: never;
+	url: '/api/skills/import';
+};
+
+export type ImportSkillsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ImportSkillsResponses = {
+	/**
+	 * Created
+	 */
+	201: ImportResult;
+};
+
+export type ImportSkillsResponse = ImportSkillsResponses[keyof ImportSkillsResponses];
+
+export type ListSkillsetsData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/skillsets';
+};
+
+export type ListSkillsetsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListSkillsetsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Skillset> | null;
+};
+
+export type ListSkillsetsResponse = ListSkillsetsResponses[keyof ListSkillsetsResponses];
+
+export type CreateSkillsetData = {
+	body: SkillsetRequest;
+	path?: never;
+	query?: never;
+	url: '/api/skillsets';
+};
+
+export type CreateSkillsetErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CreateSkillsetResponses = {
+	/**
+	 * Created
+	 */
+	201: Skillset;
+};
+
+export type CreateSkillsetResponse = CreateSkillsetResponses[keyof CreateSkillsetResponses];
+
+export type DeleteSkillsetData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skillsets/{id}';
+};
+
+export type DeleteSkillsetErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteSkillsetResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteSkillsetResponse = DeleteSkillsetResponses[keyof DeleteSkillsetResponses];
+
+export type GetSkillsetData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skillsets/{id}';
+};
+
+export type GetSkillsetErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetSkillsetResponses = {
+	/**
+	 * OK
+	 */
+	200: Skillset;
+};
+
+export type GetSkillsetResponse = GetSkillsetResponses[keyof GetSkillsetResponses];
+
+export type UpdateSkillsetData = {
+	body: SkillsetRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skillsets/{id}';
+};
+
+export type UpdateSkillsetErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateSkillsetResponses = {
+	/**
+	 * OK
+	 */
+	200: Skillset;
+};
+
+export type UpdateSkillsetResponse = UpdateSkillsetResponses[keyof UpdateSkillsetResponses];
+
+export type RefreshSkillsetData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skillsets/{id}/refresh';
+};
+
+export type RefreshSkillsetErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RefreshSkillsetResponses = {
+	/**
+	 * OK
+	 */
+	200: SkillsetRefreshResult;
+};
+
+export type RefreshSkillsetResponse = RefreshSkillsetResponses[keyof RefreshSkillsetResponses];
+
+export type ListSkillsetVersionsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/skillsets/{id}/versions';
+};
+
+export type ListSkillsetVersionsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListSkillsetVersionsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Version> | null;
+};
+
+export type ListSkillsetVersionsResponse =
+	ListSkillsetVersionsResponses[keyof ListSkillsetVersionsResponses];
+
+export type GetSkillsetVersionData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/skillsets/{id}/versions/{seq}';
+};
+
+export type GetSkillsetVersionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetSkillsetVersionResponses = {
+	/**
+	 * OK
+	 */
+	200: Version;
+};
+
+export type GetSkillsetVersionResponse =
+	GetSkillsetVersionResponses[keyof GetSkillsetVersionResponses];
 
 export type DownloadSnapshotData = {
 	body?: never;

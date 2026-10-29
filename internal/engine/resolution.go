@@ -155,6 +155,11 @@ type Resolution struct {
 	// them, because agents are a property of the flow and not of the project.
 	// nil = nothing to generate (fakes).
 	Prepare func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
+	// InstallSkills makes the run's skills (already at acpagent.SkillsDir)
+	// visible to every harness in the project's set, each in its own
+	// directory (bootstrap step 4, after Prepare). nil = nothing to install
+	// (fakes).
+	InstallSkills func(ctx context.Context, env ports.EnvID, names []string) error
 	// Release decrements the resolver's provisioner refcount (§6.1 adapter
 	// cache); nil is fine.
 	Release func()

@@ -33,6 +33,7 @@
 	const SECTIONS: Section[] = $derived([
 		section('providers', I.providers),
 		section('integrations', I.integrations),
+		section('skills', I.skills),
 		section('channels', I.channels),
 		section('account', I.members),
 		...(session.admin ? [section('users', I.members)] : []),
@@ -41,8 +42,13 @@
 		section('storage', I.storage)
 	]);
 
+	// A section's pages may nest (a skill under Skills): the section is the
+	// one whose path the page is in, not only the one it ends with.
 	const current = $derived(
-		SECTIONS.find((s) => page.url.pathname.endsWith(`/system/${s.id}`)) ?? SECTIONS[0]
+		SECTIONS.find(
+			(s) =>
+				page.url.pathname === `/system/${s.id}` || page.url.pathname.startsWith(`/system/${s.id}/`)
+		) ?? SECTIONS[0]
 	);
 </script>
 

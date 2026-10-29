@@ -105,26 +105,38 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	// configs, git creds — they live in the container FS, not the bind mount).
 	// Re-run the idempotent bootstrap: the surviving checkout means the clone
 	// no-ops and agent commits are preserved.
+	trees, terr := e.skillTrees(ctx, v.Skillsets)
+	if terr != nil {
+		err = fmt.Errorf("rebuild %s: skills: %w", runID, terr)
+		return e.finishRebuild(ctx, runID, v.EnvID, err)
+	}
 	if berr := RunBootstrap(ctx, res.Envp, id, BootstrapSpec{
-		RunID:        runID,
-		Token:        e.RunToken(runID),
-		EngineURL:    e.engineURLFor(res.Envp, id),
-		RepoURL:      res.RepoRef.URL,
-		SourceBranch: sourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
-		Branch:       v.Branch,
-		AgentsMDPath: res.AgentsMDPath,
-		ProviderEnv:  e.providerEnvFor(res, runID, e.engineURLFor(res.Envp, id)),
-		GitUser:      res.GitUser,
-		GitPass:      res.GitPass,
-		GitName:      res.GitName,
-		GitEmail:     res.GitEmail,
-		SeedAuth:     res.SeedAuth,
-		Prepare:      res.Prepare,
-		Agents:       agentsFor(fl),
-		Timeout:      fl.Defaults.Timeout,
-		Extras:       viewExtras(v),
+		RunID:         runID,
+		Token:         e.RunToken(runID),
+		EngineURL:     e.engineURLFor(res.Envp, id),
+		RepoURL:       res.RepoRef.URL,
+		SourceBranch:  sourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
+		Branch:        v.Branch,
+		AgentsMDPath:  res.AgentsMDPath,
+		ProviderEnv:   e.providerEnvFor(res, runID, e.engineURLFor(res.Envp, id)),
+		GitUser:       res.GitUser,
+		GitPass:       res.GitPass,
+		GitName:       res.GitName,
+		GitEmail:      res.GitEmail,
+		SeedAuth:      res.SeedAuth,
+		Prepare:       res.Prepare,
+		Agents:        agentsFor(fl),
+		Timeout:       fl.Defaults.Timeout,
+		Extras:        viewExtras(v),
+		Skills:        trees,
+		SkillPins:     v.Skillsets,
+		InstallSkills: res.InstallSkills,
 	}); berr != nil {
 		err = fmt.Errorf("rebuild %s: bootstrap: %w", runID, berr)
+		return e.finishRebuild(ctx, runID, v.EnvID, err)
+	}
+	if perr := probeEgress(ctx, res.Envp, id, res); perr != nil {
+		err = fmt.Errorf("rebuild %s: %w", runID, perr)
 		return e.finishRebuild(ctx, runID, v.EnvID, err)
 	}
 

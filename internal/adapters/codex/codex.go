@@ -47,6 +47,14 @@ func (a *Adapter) codexHome(ctx context.Context, env ports.EnvID) string {
 	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".codex")
 }
 
+// InstallSkills copies the run's skills into $HOME/.agents/skills, the
+// user-level directory codex discovers skills in (its project-level one is
+// the repo's own .agents/skills, which stays the repo's).
+func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+	dir := path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".agents", "skills")
+	return acpagent.InstallSkills(ctx, a.envp, env, dir, names)
+}
+
 // PrepareEnv generates codex-native config (§13): config.toml registering
 // the ask_human MCP server, plus one role file per .apothecary/agents spec —
 // codex has no named-agent registry, so the role prompt is delivered

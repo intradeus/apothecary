@@ -165,6 +165,10 @@ func (h *codexHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*ag
 	return h.adapter.PrepareEnv(ctx, env, specs)
 }
 
+func (h *codexHarness) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+	return h.adapter.InstallSkills(ctx, env, names)
+}
+
 // chatgptModelsURL is the account-scoped model catalog codex itself reads
 // (codex-rs codex-api endpoint/models.rs: GET {base}/models?client_version=),
 // a variable for tests.

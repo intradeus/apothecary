@@ -3,6 +3,7 @@
 // $lib/api/generated; the mappers translate.
 
 import type { PhaseKind } from '$lib/flowdoc';
+import type { SkillsetPin, SkillsetRef } from './skill';
 
 /** Every state a run can be in. Exhaustive: a new one is a type error here. */
 export type RunState =
@@ -70,6 +71,8 @@ export interface Run {
 	/** The parameter values it runs with and who began it (run_created). */
 	params?: Record<string, string>;
 	startedBy?: string;
+	/** The skillset versions installed in its workspace (run_created). */
+	skillsets?: SkillsetPin[];
 	/** Idle: between phases, or parked at a wait point. */
 	idle: boolean;
 	/** The take-over in force: someone holds the agent's session. */
@@ -222,6 +225,9 @@ export interface RunInput {
 	 *  operates_on: merge_request): its number, in the primary unless repo
 	 *  says otherwise. */
 	mr?: { repo?: string; iid: number };
+	/** Skillsets to install into the workspace. On a rerun, undefined keeps
+	 *  the original's (at their latest), an empty list clears them. */
+	skillsets?: SkillsetRef[];
 }
 
 /** An open merge request of a project's repository with the runs done on

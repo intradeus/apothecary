@@ -155,6 +155,12 @@ type EnvProvisioner interface {
 	// (artifacts/plan.md), absolute = absolute (/apothecary/run.env).
 	ReadFile(ctx context.Context, env EnvID, path string) ([]byte, error)
 	WriteFile(ctx context.Context, env EnvID, path string, data []byte, mode fs.FileMode) error
+	// WriteTree replaces the ABSOLUTE directory dir with exactly files, in
+	// one round trip: whatever was there is removed and the tree is laid
+	// down as the remote user. Engine-owned locations only
+	// (/apothecary/...); a relative dir is refused, and so is any file path
+	// that is not a clean relative path (see TreeFile).
+	WriteTree(ctx context.Context, env EnvID, dir string, files []TreeFile) error
 	// ListFiles lists the regular files under dir, recursively, sorted by
 	// path — what a files port holds. Symlinks are never followed; a dir
 	// that is not there is fs.ErrNotExist. At most ListFilesLimit entries.
@@ -162,6 +168,15 @@ type EnvProvisioner interface {
 	Links(ctx context.Context, env EnvID) ([]AccessLink, error)
 	Status(ctx context.Context, env EnvID) (EnvStatus, error)
 	Destroy(ctx context.Context, env EnvID) error
+}
+
+// TreeFile is one file of a directory tree WriteTree lays down: a clean
+// relative path (forward slashes, no empty, "." or ".." segments, no leading
+// "/"), its permission bits (0 = 0644) and its bytes.
+type TreeFile struct {
+	Path string
+	Mode fs.FileMode
+	Data []byte
 }
 
 // FileEntry is one file ListFiles found: its path as ReadFile takes it (the

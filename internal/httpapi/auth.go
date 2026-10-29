@@ -65,6 +65,8 @@ const (
 	ScopeSnapshot
 	ScopeEnvCheck
 	ScopeCredential
+	ScopeSkill
+	ScopeSkillset
 )
 
 // sessionCookie is the browser session's cookie.
@@ -138,6 +140,10 @@ func scopeName(sc Scope) string {
 		return "integration"
 	case ScopeCredential:
 		return "credential"
+	case ScopeSkill:
+		return "skill"
+	case ScopeSkillset:
+		return "skillset"
 	case ScopeChannel:
 		return "channel"
 	case ScopeAttachment:
@@ -294,6 +300,24 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (string, erro
 			return "", errors.New("envcheck not found")
 		}
 		return s.projectOwner(ctx, cr.ProjectID)
+	case ScopeSkill:
+		if s.Skills == nil {
+			return "", errors.New("no skill library")
+		}
+		sk, err := s.Skills.GetSkill(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return sk.UserID, nil
+	case ScopeSkillset:
+		if s.Skills == nil {
+			return "", errors.New("no skill library")
+		}
+		set, err := s.Skills.GetSkillset(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return set.UserID, nil
 	}
 	return "", fmt.Errorf("unknown scope %d", sc)
 }

@@ -14,6 +14,7 @@
 	import type { RunStore } from './store.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { untrack } from 'svelte';
+	import type { SkillsetRef } from '$lib/domain';
 
 	let {
 		rs,
@@ -24,6 +25,9 @@
 	let goal = $state('');
 	let flow = $state('');
 	let params = $state<Record<string, string>>({});
+	// The original's skillsets, re-pinned to their latest; clearing them all
+	// sends an empty list, which the engine reads as none.
+	let skillsets = $state<SkillsetRef[]>([]);
 	let files = $state<File[]>([]);
 	let busy = $state(false);
 	let error = $state('');
@@ -33,6 +37,7 @@
 		if (!open) return;
 		untrack(() => {
 			params = {};
+			skillsets = (rs.run?.skillsets ?? []).map((p) => ({ id: p.id }));
 		});
 	});
 
@@ -46,7 +51,8 @@
 				flow: flow.trim() || undefined,
 				goal: goal.trim() || undefined,
 				attachmentIds,
-				params: Object.keys(params).length ? params : undefined
+				params: Object.keys(params).length ? params : undefined,
+				skillsets
 			});
 			void fleet.refresh();
 			open = false;
@@ -91,6 +97,7 @@
 				projectId={rs.run.projectId}
 				flowName={flow.trim() || rs.run.flowName}
 				bind:params
+				bind:skillsets
 				under={rs.run.params ?? {}}
 				underLabel="run"
 				idPrefix="nr"

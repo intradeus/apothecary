@@ -83,3 +83,18 @@ func TestPrepareEnvWritesConfigInWorkspaceHome(t *testing.T) {
 
 // Logins are staged as files and imported by omp itself; a login omp skips
 // fails the seed with omp's reason.
+
+// Skills land in omp's native user-level skills directory.
+func TestInstallSkillsTargetsAgentSkillsDir(t *testing.T) {
+	envp := fake.NewEnvProvisioner()
+	id, _ := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	a := New(envp, Config{})
+	if err := a.InstallSkills(context.Background(), id, []string{"pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := envp.Execs()
+	last := calls[len(calls)-1].Cmd.Script
+	if !strings.Contains(last, "cp -R '/apothecary/skills/pdf' '/home/apothecary/.omp/agent/skills/pdf'") {
+		t.Errorf("script = %q", last)
+	}
+}

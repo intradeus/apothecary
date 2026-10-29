@@ -448,6 +448,21 @@ bound to the listen host. Integration secrets are secretbox-encrypted at
 rest under `APOTHECARY_MASTER_KEY` and never leave the engine unmasked.
 Residual risks and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
 
+**Docker host requirement: no bridge netfilter.** The sandbox reaches its
+gateway across the `--internal` bridge with the gateway as next hop. If
+`br_netfilter` is loaded with `net.bridge.bridge-nf-call-iptables=1`, the
+host's iptables also judge that bridged traffic, and Docker's internal-network
+rule drops everything addressed outside the subnet before the gateway sees it.
+The module loads as a side effect of `-m physdev` iptables rules, which a k3s
+network-policy controller writes; the local `task k8s:cluster` (k3d) does
+this, and the module then stays loaded until reboot. Every run then fails its
+post-provisioning egress check. To let traffic that stays on one bridge
+through (the rule does not survive a reboot):
+
+```sh
+sudo iptables -I DOCKER-USER -m physdev --physdev-is-bridged -j ACCEPT
+```
+
 ### Unprivileged sandboxes (optional)
 
 By default the per-run sandbox is `--privileged`, because a nested dockerd
