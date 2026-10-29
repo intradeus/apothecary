@@ -76,12 +76,61 @@ func TestOpenEditor(t *testing.T) {
 		t.Errorf("exposed ports = %v, want [%d]", l, ports.CodeServerPort)
 	}
 
-	// Idempotent: same URL, and code-server is NOT started again.
+	// Idempotent: same URL — and code-server is started again if it is not
+	// listening (StartEditor is the adapter's idempotent probe-then-start),
+	// since an exposure can outlive the code-server behind it.
 	if u2, err := h.e.OpenEditor(ctx, "r1"); err != nil || u2 != u {
 		t.Errorf("second OpenEditor = %q, %v (want %q)", u2, err, u)
 	}
-	if ed.starts != 1 {
-		t.Errorf("StartEditor re-called on idempotent open: %d", ed.starts)
+	if ed.starts != 2 {
+		t.Errorf("StartEditor called %d times over two opens, want 2", ed.starts)
+	}
+	if l := h.e.RunPorts("r1"); len(l) != 1 {
+		t.Errorf("second open exposed again: %v", l)
+	}
+}
+
+// rebuildEditorEnvp is a rebuildable workspace with exposable ports and an
+// editor, counting re-exposures.
+type rebuildEditorEnvp struct {
+	*editorEnvp
+	exposes int32
+}
+
+func (r *rebuildEditorEnvp) Rebuild(context.Context, ports.EnvSpec) error { return nil }
+func (r *rebuildEditorEnvp) ExposePort(ctx context.Context, id ports.EnvID, port int) (ports.PortConn, error) {
+	atomic.AddInt32(&r.exposes, 1)
+	return r.editorEnvp.ExposePort(ctx, id, port)
+}
+
+// A rebuild recreates the container: the relays behind the run's exposures
+// and the code-server die with it. Every exposure comes back on its old URL,
+// through a fresh relay, and an editor that was open is started again.
+func TestRebuildRestoresExposuresAndEditor(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	id := completedWithEnv(t, h)
+	ctx := context.Background()
+	relay := portrelay.New("127.0.0.1")
+	defer relay.CloseAll()
+	h.e.SetPortRelay(relay)
+	env := &rebuildEditorEnvp{editorEnvp: &editorEnvp{exposerEnvp: &exposerEnvp{EnvProvisioner: h.envp, target: "127.0.0.1:1"}}}
+	h.res.Envp = env
+
+	u, err := h.e.OpenEditor(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.e.RebuildEnv(ctx, id, false); err != nil {
+		t.Fatalf("RebuildEnv: %v", err)
+	}
+	if env.exposes != 2 {
+		t.Errorf("ExposePort called %d times, want 2 (the rebuild re-exposes)", env.exposes)
+	}
+	if env.starts != 2 {
+		t.Errorf("StartEditor called %d times, want 2 (the rebuild restarts it)", env.starts)
+	}
+	if got := relay.Existing(id, ports.CodeServerPort); got != u {
+		t.Errorf("editor URL after rebuild = %q, want the old %q", got, u)
 	}
 }
 

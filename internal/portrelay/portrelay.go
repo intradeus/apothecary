@@ -331,6 +331,12 @@ func (m *Manager) teardown(runID string) {
 	}
 }
 
+// Reset tears down a run's live exposures but KEEPS its saved allocation:
+// the environment was recreated in place (Rebuild), so the in-container
+// relays behind every exposure died with the old container. Re-exposing the
+// saved ports (SavedPorts) rebinds the same host ports — the URLs survive.
+func (m *Manager) Reset(runID string) { m.teardown(runID) }
+
 // CloseRun tears down a run's exposures AND prunes its saved allocation —
 // the environment is gone (destroy/archive/reap), so the ports must not
 // come back on the next restart.

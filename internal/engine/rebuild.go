@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
@@ -141,10 +142,25 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	}
 
 	// Re-deliver artifacts + re-expose ports into the fresh container, reusing
-	// the run-loop helpers via a minimal exec (these append no events).
+	// the run-loop helpers via a minimal exec (these append no events). The
+	// old exposures dial relays that died with the old container: drop them
+	// first, or autoExpose takes them for live and keeps them. The saved
+	// allocation stays, so every port comes back on its old URL.
 	x := &exec{e: e, rs: &runState{runID: runID, view: v, fl: fl, envID: id}, res: res, ctx: ctx, bg: ctx}
 	x.deliverRunAttachments()
+	editorWasOpen := false
+	if e.portRelay != nil {
+		editorWasOpen = slices.Contains(e.portRelay.SavedPorts(runID), ports.CodeServerPort)
+		e.portRelay.Reset(runID)
+	}
 	x.autoExpose(id)
+	// code-server died with the old container too: bring it back, so an
+	// editor tab left open reconnects instead of facing a dead port.
+	if starter, ok := res.Envp.(ports.EditorStarter); ok && editorWasOpen {
+		if serr := starter.StartEditor(ctx, id, ports.CodeServerPort, res.EditorSettings); serr != nil {
+			e.log.Warn("rebuild: restart editor", "run", runID, "err", serr)
+		}
+	}
 
 	// One targeted probe so the badge returns to live immediately instead of
 	// waiting up to 30s for the next reconcile pass — and the "config changed"

@@ -10,20 +10,17 @@ import (
 
 // OpenEditor lazily starts code-server (VS Code in the browser) in the run's
 // workspace and exposes it, returning the browser URL — the run page's "Open
-// editor" action. Idempotent: an already-exposed editor returns its URL
-// immediately (e.g. after a plain engine restart, where the container +
-// code-server survive and autoExpose rebuilt the relay). Otherwise it starts
-// code-server if not listening, waits for it, and exposes it through the same
-// portrelay path as any workspace port.
+// editor" action. Idempotent: it always (re)starts code-server if it is not
+// listening — an exposure outliving it (a recreated container, a crash) must
+// not hand out a dead editor — and reuses an existing exposure's URL;
+// otherwise it exposes the port through the same portrelay path as any
+// workspace port.
 //
 // No op-gate: it neither recreates the container nor races the reaper/rebuild;
 // it is safe to open the editor alongside a live run.
 func (e *Engine) OpenEditor(ctx context.Context, runID string) (string, error) {
 	if e.portRelay == nil {
 		return "", ErrPortsOff
-	}
-	if url := e.portRelay.Existing(runID, ports.CodeServerPort); url != "" {
-		return url, nil
 	}
 	evs, err := e.store.Events(ctx, runID, 0)
 	if err != nil {
@@ -55,6 +52,9 @@ func (e *Engine) OpenEditor(ctx context.Context, runID string) (string, error) {
 	// like a discovered app port.
 	if err := starter.StartEditor(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort, res.EditorSettings); err != nil {
 		return "", err
+	}
+	if url := e.portRelay.Existing(runID, ports.CodeServerPort); url != "" {
+		return url, nil
 	}
 	pc, err := exposer.ExposePort(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort)
 	if err != nil {
