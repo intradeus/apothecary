@@ -761,7 +761,12 @@ func (a *Adapter) ensureTools(ctx context.Context) (string, error) {
 // linked into /opt/apothecary — the libc variant the image can run, picked by
 // probing for musl's loader; the links are absolute container paths into the
 // mount, so they stay valid across engine upgrades (the mount target never
-// changes) and Rebuild simply relinks. /opt/apothecary is APPENDED to every
+// changes) and Rebuild simply relinks. Each harness entry is a wrapper that
+// loads provider.env at launch, so a human running omp/codex/opencode in a
+// terminal has the run's API keys and omp's broker, as the agent does, for as
+// long as the run holds them (the end-of-run scrub deletes the file). The
+// editor stays a plain link: code-server lives on past that scrub, and keys
+// in its environment would too. /opt/apothecary is APPENDED to every
 // Exec'd PATH, so an image that ships its own harness still wins. A musl
 // image gets no code-server link (there is no musl build). `devcontainer
 // exec` has no --user, so this one call goes through docker directly.
@@ -779,7 +784,15 @@ ln -sfn %[2]s "$H/repo"
 libc=gnu
 if [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ]; then libc=musl; fi
 for f in /opt/apothecary/tools/$libc/bin/*; do
-  [ -e "$f" ] && ln -sfn "$f" "/opt/apothecary/$(basename "$f")"
+  [ -e "$f" ] || continue
+  b="/opt/apothecary/$(basename "$f")"
+  rm -f "$b"
+  if [ "$(basename "$f")" = code-server ]; then
+    ln -s "$f" "$b"
+    continue
+  fi
+  printf '#!/bin/sh\nset -a\n[ -r /apothecary/provider.env ] && . /apothecary/provider.env\nset +a\nexec %%s "$@"\n' "$f" > "$b"
+  chmod 0755 "$b"
 done
 true`, shellQuote(user), shellQuote(res.WorkspaceFolder), codeServerState)
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,

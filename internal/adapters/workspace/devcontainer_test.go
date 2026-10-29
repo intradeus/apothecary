@@ -246,6 +246,9 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 		// The bundle's entries, linked into /opt/apothecary for the libc the
 		// image can run; the editor's per-run state dir, owned by the remote user.
 		"/opt/apothecary/tools/$libc/bin", "ld-musl-x86_64", "/apothecary/code-server", "chown 'vscode' /apothecary /apothecary/code-server",
+		// Harness entries load the run's provider.env (a human's terminal
+		// omp/codex gets the keys); the editor does not.
+		". /apothecary/provider.env", `exec %s "$@"`, "= code-server ]",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("root-init missing %q: %v", want, init.args)

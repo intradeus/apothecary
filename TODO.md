@@ -6,6 +6,7 @@
 - 43) SECURITY
 - 44) egress improvements : block by default but add a mark as reviewed for blocks, so it doesnt ask a 2nd time. - maybe keep it as (refused) in orange, in between allow and block.
 - 45) AI reviewer should pull existing comments threads to avoid duplicates.
+- 46) remote vscode connection ("open in vscode" URL) by ssh.
 
 ------ 
 After 1.0.0 : 
