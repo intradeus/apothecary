@@ -256,6 +256,10 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	providerEnv := map[string]string{}
 	var harnessSecrets []string
 	var harnessBinaries []string
+	// The editor installs the project's extensions plus every harness's own
+	// (kinds.EditorExtender), so each harness the project can run is one
+	// click away in the browser editor, signed in as its agent is.
+	editorExtensions := append([]string(nil), p.Workspace.CodeServerExtensions...)
 	egressContribs := [][]string{account.EgressDomains()}
 	for _, k := range kindList {
 		h := byKind[k]
@@ -270,6 +274,9 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 			harnessSecrets = append(harnessSecrets, sh.SecretValues()...)
 		}
 		harnessBinaries = append(harnessBinaries, h.Binary())
+		if ee, ok := h.(kinds.EditorExtender); ok {
+			editorExtensions = append(editorExtensions, ee.EditorExtensions()...)
+		}
 	}
 	harness := byKind[defaultKind] // default: Runner, HarnessBinary, provider.env base
 
@@ -303,7 +310,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		EgressAllowedPorts:   p.Workspace.EgressAllowedPorts,
 		CodeServerExtensions: p.Workspace.CodeServerExtensions,
 		EditorSettings: ports.EditorSettings{
-			Extensions:     p.Workspace.CodeServerExtensions,
+			Extensions:     editorExtensions,
 			Theme:          p.Workspace.Editor.Theme,
 			FontSize:       p.Workspace.Editor.FontSize,
 			TabSize:        p.Workspace.Editor.TabSize,

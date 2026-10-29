@@ -101,8 +101,9 @@ func (altHarnessKind) New(cfg kinds.Config, envp ports.EnvProvisioner) (kinds.Ha
 
 type altHarness struct{ kinds.Harness }
 
-func (altHarness) Binary() string          { return "alt-bin" }
-func (altHarness) EgressDomains() []string { return []string{"alt.example.com"} }
+func (altHarness) Binary() string             { return "alt-bin" }
+func (altHarness) EgressDomains() []string    { return []string{"alt.example.com"} }
+func (altHarness) EditorExtensions() []string { return []string{"alt.ext"} }
 
 func TestResolveMultiHarness(t *testing.T) {
 	key, _ := secrets.ParseKey(secrets.GenerateKey())
@@ -140,9 +141,10 @@ func TestResolveMultiHarness(t *testing.T) {
 	}
 	defer res.Release()
 
-	// The project's extensions reach the editor through its settings (the
-	// adapter installs them when the editor opens; nothing is baked).
-	if !slices.Equal(res.EditorSettings.Extensions, []string{"golang.go"}) {
+	// The project's extensions and its harnesses' own (alt is an
+	// EditorExtender, the fake is not) reach the editor through its settings
+	// (the adapter installs them when the editor opens; nothing is baked).
+	if !slices.Equal(res.EditorSettings.Extensions, []string{"golang.go", "alt.ext"}) {
 		t.Errorf("editor extensions = %v", res.EditorSettings.Extensions)
 	}
 	if res.HarnessKind != "fake" {

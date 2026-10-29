@@ -28,6 +28,13 @@ const CodexVersion = "0.160.1"
 // the engine drives codex through, compiled into the tools bundle.
 const CodexACPVersion = "2.2.2"
 
+// CodexEditorExtension is OpenAI's Codex extension. It runs its own bundled
+// codex, which reads ~/.codex/auth.json — the file SeedAuth writes — so a
+// ChatGPT login reaches the editor as it reaches the agent (and leaves with
+// it when the run ends). An API key does not: it rides provider.env, which
+// only the agent's process sources.
+const CodexEditorExtension = "openai.chatgpt"
+
 // Codex is the harness/codex kind (DESIGN2 §13). Its credentials are an
 // OpenAI API key (rides OPENAI_API_KEY via provider.env) and/or a ChatGPT
 // login (rendered into $CODEX_HOME/auth.json, refresh token withheld).
@@ -93,6 +100,9 @@ func (h *codexHarness) EnvVars() map[string]string {
 	}
 	return map[string]string{"OPENAI_API_KEY": h.apiKey}
 }
+
+// EditorExtensions (kinds.EditorExtender): the Codex extension.
+func (h *codexHarness) EditorExtensions() []string { return []string{CodexEditorExtension} }
 
 // AuthFiles (kinds.AuthLocator): auth.json, removed when the run ends. The
 // API key needs no entry — it lives in provider.env, which the engine owns.

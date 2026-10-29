@@ -236,6 +236,16 @@ type AuthLocator interface {
 	AuthFiles(ctx context.Context, env ports.EnvID) []string
 }
 
+// EditorExtender is an OPTIONAL Harness capability: the VS Code extensions
+// (Open VSX ids) that front this harness in the browser editor, installed
+// with the project's own list when the editor first opens in a run. Only an
+// extension that reads the auth SeedAuth writes — same user, same home, so
+// the editor is signed in the way the agent is — belongs here; a harness
+// with no such extension does not implement it.
+type EditorExtender interface {
+	EditorExtensions() []string
+}
+
 type HarnessKind interface {
 	Descriptor() Descriptor
 	New(cfg Config, envp ports.EnvProvisioner) (Harness, error)

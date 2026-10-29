@@ -954,8 +954,9 @@ const CodeServerPort = 8471
 // editor adapter maps the same neutral fields to its own. Zero value ⇒ leave
 // the editor's own defaults untouched.
 type EditorSettings struct {
-	// Extensions are the project-declared VS Code extension ids; the adapter
-	// unions them with the ones the workspace definition itself declares
+	// Extensions are the VS Code extension ids the project declares plus its
+	// harnesses' own; the adapter unions them with the ones the workspace
+	// definition itself declares
 	// (a devcontainer's customizations.vscode.extensions) and installs the
 	// union when the editor first opens in a run. Non-secret.
 	Extensions []string

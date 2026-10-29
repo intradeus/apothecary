@@ -107,6 +107,25 @@ func TestGalleryCachesVersionedFilesAndFollowsStorageRedirects(t *testing.T) {
 	}
 }
 
+func TestGalleryCacheablePaths(t *testing.T) {
+	g := newGallery("https://open-vsx.org", t.TempDir())
+	for p, want := range map[string]bool{
+		"/api/golang/go/1.0.0/file/golang.go-1.0.0.vsix":                                      true,
+		"/api/openai/chatgpt/linux-x64/26.5.1/file/openai.chatgpt-26.5.1@linux-x64.vsix":      true,
+		"/api/anthropic/claude-code/alpine-arm64/2.1.3/file/anthropic.claude-code-2.1.3.vsix": true,
+		"/api/redhat/java/universal/1.2.0/file/redhat.java-1.2.0.vsix":                        true,
+		"/vscode/asset/golang/go/1.0.0/Microsoft.VisualStudio.Services.VSIXPackage":           true,
+		"/api/golang/go/latest/file/golang.go-latest.vsix":                                    false,
+		"/api/openai/chatgpt/linux-x64/latest/file/openai.chatgpt.vsix":                       false,
+		"/api/openai/chatgpt/linux-x64":                                                       false,
+	} {
+		r := httptest.NewRequest(http.MethodGet, p, nil)
+		if got := g.cacheable(r); got != want {
+			t.Errorf("cacheable(%s) = %v, want %v", p, got, want)
+		}
+	}
+}
+
 func TestGalleryNeverCachesMovingVersions(t *testing.T) {
 	var hits atomic.Int32
 	up := fakeOpenVSX(t, &hits)

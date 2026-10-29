@@ -70,7 +70,7 @@ type Resolution struct {
 	// run, together with the definition's own list.
 	CodeServerExtensions []string
 	// EditorSettings are the project's code-server UI defaults (theme + common
-	// prefs) and extensions, applied to the browser editor at OpenEditor time
+	// prefs) and extensions (its own ∪ its harnesses'), applied to the browser editor at OpenEditor time
 	// (no rebuild).
 	EditorSettings ports.EditorSettings
 	// Secrets are the project's secrets, opened: what a flow's MCP servers

@@ -22,6 +22,11 @@ import (
 // TestToolsDockerfilePinsMatchKinds holds the Dockerfile's ARG to it).
 const OpencodeVersion = "1.17.8"
 
+// OpencodeEditorExtension is opencode's own extension: it opens a terminal
+// running the `opencode` on PATH (the bundled one), which reads the
+// auth.json SeedAuth writes — keys and logins alike.
+const OpencodeEditorExtension = "sst-dev.opencode"
+
 // Opencode is the harness/opencode kind (DESIGN2 §4.1).
 type Opencode struct{}
 
@@ -355,6 +360,9 @@ func sortModels(out []ModelInfo) {
 // EnvVars: opencode's credentials live entirely in auth.json — nothing
 // rides provider.env.
 func (h *opencodeHarness) EnvVars() map[string]string { return nil }
+
+// EditorExtensions (kinds.EditorExtender): opencode's extension.
+func (h *opencodeHarness) EditorExtensions() []string { return []string{OpencodeEditorExtension} }
 
 // AuthFiles (kinds.AuthLocator): auth.json, removed when the run ends.
 func (h *opencodeHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {

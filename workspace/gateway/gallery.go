@@ -73,8 +73,11 @@ func newGallery(upstream, dir string) *gallery {
 }
 
 // cacheablePath matches a version-addressed (immutable) resource. The
-// version segment must be a concrete one: "latest" and other aliases move.
-var cacheablePath = regexp.MustCompile(`^/(?:api/[^/]+/[^/]+/([^/]+)/file/|vscode/(?:asset|unpkg)/[^/]+/[^/]+/([^/]+)/)`)
+// version segment must be a concrete one: "latest" and other aliases move. A
+// platform-specific extension (openai.chatgpt, anthropic.claude-code — the
+// big ones, with native binaries) names its target before the version:
+// /api/{ns}/{name}/linux-x64/{ver}/file/….
+var cacheablePath = regexp.MustCompile(`^/(?:api/[^/]+/[^/]+/(?:(?:win32|linux|alpine|darwin)-[a-z0-9]+/|web/|universal/)?([^/]+)/file/|vscode/(?:asset|unpkg)/[^/]+/[^/]+/([^/]+)/)`)
 
 func (g *gallery) cacheable(r *http.Request) bool {
 	if g.dir == "" || r.Method != http.MethodGet {

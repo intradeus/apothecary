@@ -385,6 +385,31 @@ func TestOmpKindCapabilities(t *testing.T) {
 	}
 }
 
+// The browser editor gets each harness's own extension — one that reads the
+// auth the harness seeds — and omp, which has none, adds nothing.
+func TestHarnessEditorExtensions(t *testing.T) {
+	for _, c := range []struct {
+		kind HarnessKind
+		want []string
+	}{
+		{Codex{}, []string{"openai.chatgpt"}},
+		{Opencode{}, []string{"sst-dev.opencode"}},
+		{Omp{}, nil},
+	} {
+		h, err := c.kind.New(Config{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		if ee, ok := h.(EditorExtender); ok {
+			got = ee.EditorExtensions()
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s editor extensions = %v, want %v", c.kind.Descriptor().Kind, got, c.want)
+		}
+	}
+}
+
 func TestOmpModels(t *testing.T) {
 	var asked string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
